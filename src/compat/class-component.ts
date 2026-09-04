@@ -31,7 +31,7 @@ export function setClassScheduleUpdate(fn: (inst: any) => void): void {
 }
 
 /** Object marker on `Component.prototype` (React parity; Jest-automock safe). */
-export const IS_REACT_COMPONENT: Record<never, never> = {};
+const IS_REACT_COMPONENT: Record<never, never> = {};
 
 /** denext-internal per-instance state, stashed non-enumerably on a class instance. */
 interface ClassInternals {
@@ -144,7 +144,7 @@ export function hasErrorLifecycle(type: unknown): boolean {
  * @param inst The owning reconciler Instance (or null for SSR).
  * @returns The constructed class instance (with `__denext` internals).
  */
-export function instantiateClass(
+function instantiateClass(
   Ctor: unknown,
   props: unknown,
   context: unknown,
@@ -173,7 +173,7 @@ export function instantiateClass(
  * @param b Second value.
  * @returns Whether they are the same reference or shallow-equal objects.
  */
-export function shallowEqual(a: unknown, b: unknown): boolean {
+function shallowEqual(a: unknown, b: unknown): boolean {
   if (Object.is(a, b)) return true;
   if (typeof a !== "object" || a === null || typeof b !== "object" || b === null) return false;
   const ao = a as Record<string, unknown>, bo = b as Record<string, unknown>;
@@ -257,18 +257,7 @@ export function renderClassInstance(inst: ReconcilerInstance): ClassRenderResult
     if (derived != null) nextState = { ...nextState, ...derived };
   }
 
-  if (!isMount && !i.forced && typeof c.shouldComponentUpdate === "function") {
-    if (!c.shouldComponentUpdate(nextProps, nextState, c.context)) {
-      c.props = nextProps;
-      c.state = nextState;
-      flushCallbacks(i);
-      return { vnode: null, bailed: true };
-    }
-  }
-  if (
-    !isMount && !i.forced && (c as Any).isPureReactComponent &&
-    shallowEqual(prevProps, nextProps) && shallowEqual(prevState, nextState)
-  ) {
+  if (!isMount && !i.forced && bailsOut(c, nextProps, nextState, prevProps, prevState)) {
     c.props = nextProps;
     c.state = nextState;
     flushCallbacks(i);
@@ -282,24 +271,36 @@ export function renderClassInstance(inst: ReconcilerInstance): ClassRenderResult
   inst.__prevState = prevState;
 
   const vnode = c.render();
-
-  inst.pendingEffects ??= [];
-  if (isMount) {
-    inst.pendingEffects.push(() => {
-      i.mounted = true;
-      if (typeof c.componentDidMount === "function") c.componentDidMount();
-      flushCallbacks(i);
-    });
-  } else {
-    inst.pendingEffects.push(() => {
-      if (typeof c.componentDidUpdate === "function") {
-        c.componentDidUpdate(inst.__prevProps, inst.__prevState, inst.__snapshot);
-      }
-      flushCallbacks(i);
-    });
-  }
-
+  (inst.pendingEffects ??= []).push(
+    isMount ? mountEffect(c, i) : updateEffect(inst, c, i),
+  );
   return { vnode, bailed: false };
+}
+
+/** `shouldComponentUpdate` says no, or a PureComponent sees shallow-equal props + state. */
+function bailsOut(c: Any, nextProps: Any, nextState: Any, prevProps: Any, prevState: Any): boolean {
+  if (typeof c.shouldComponentUpdate === "function") {
+    return !c.shouldComponentUpdate(nextProps, nextState, c.context);
+  }
+  return c.isPureReactComponent === true &&
+    shallowEqual(prevProps, nextProps) && shallowEqual(prevState, nextState);
+}
+
+function mountEffect(c: Any, i: ClassInternals): () => void {
+  return () => {
+    i.mounted = true;
+    if (typeof c.componentDidMount === "function") c.componentDidMount();
+    flushCallbacks(i);
+  };
+}
+
+function updateEffect(inst: ReconcilerInstance, c: Any, i: ClassInternals): () => void {
+  return () => {
+    if (typeof c.componentDidUpdate === "function") {
+      c.componentDidUpdate(inst.__prevProps, inst.__prevState, inst.__snapshot);
+    }
+    flushCallbacks(i);
+  };
 }
 
 /** Capture `getSnapshotBeforeUpdate` (after render, before DOM mutation). */

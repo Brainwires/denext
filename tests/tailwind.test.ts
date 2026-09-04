@@ -66,25 +66,19 @@ Deno.test("tailwindPaths resolves relative input/output against the project", ()
   );
 });
 
-// A stub Tailwind binary: a tiny shell script that honors `-i`/`-o`, so the whole
-// buildAppCss compile+exclude path runs without a real download. POSIX only.
-Deno.test({
-  name: "buildAppCss compiles Tailwind and excludes the input from the walk",
-  ignore: Deno.build.os === "windows",
-  fn: async () => {
-    const dir = await Deno.makeTempDir({ prefix: "denext_tw_" });
-    const prevBin = Deno.env.get("TAILWIND_BIN");
-    try {
-      // Project: a Tailwind input (raw directives) + one ordinary stylesheet.
-      await Deno.mkdir(join(dir, "styles"), { recursive: true });
-      await Deno.mkdir(join(dir, "app"), { recursive: true });
-      await Deno.writeTextFile(join(dir, "styles", "tailwind.css"), '@import "tailwindcss";\n');
-      await Deno.writeTextFile(join(dir, "app", "site.css"), ".site{color:blue}\n");
+type CssAssets = NonNullable<Awaited<ReturnType<typeof buildAppCss>>>;
 
-      const stub = join(dir, "tw-stub.sh");
-      await Deno.writeTextFile(
-        stub,
-        `#!/bin/sh
+/** Project: a Tailwind input (raw directives) + one ordinary stylesheet + the stub binary. */
+async function writeStubProject(dir: string): Promise<string> {
+  await Deno.mkdir(join(dir, "styles"), { recursive: true });
+  await Deno.mkdir(join(dir, "app"), { recursive: true });
+  await Deno.writeTextFile(join(dir, "styles", "tailwind.css"), '@import "tailwindcss";\n');
+  await Deno.writeTextFile(join(dir, "app", "site.css"), ".site{color:blue}\n");
+
+  const stub = join(dir, "tw-stub.sh");
+  await Deno.writeTextFile(
+    stub,
+    `#!/bin/sh
 while [ $# -gt 0 ]; do
   case "$1" in
     -i) IN="$2"; shift 2;;
@@ -95,8 +89,61 @@ while [ $# -gt 0 ]; do
 done
 printf '.tw-generated{color:green}\\n' > "$OUT"
 `,
-      );
-      await Deno.chmod(stub, 0o755);
+  );
+  await Deno.chmod(stub, 0o755);
+  return stub;
+}
+
+/** The compiled output exists; the raw input is excluded while output + ordinary css are in. */
+async function assertCompiledAndExcluded(dir: string, assets: CssAssets): Promise<void> {
+  // The compiled output exists and contains the stub's generated CSS.
+  const compiled = await Deno.readTextFile(join(dir, "app", "globals.css"));
+  assertStringIncludes(compiled, ".tw-generated");
+
+  // The raw Tailwind INPUT must be excluded from the pipeline; the compiled
+  // OUTPUT and the ordinary stylesheet are included.
+  assert(
+    !assets.cssFiles.includes(join(dir, "styles", "tailwind.css")),
+    "the Tailwind input must be excluded from the walk",
+  );
+  assert(assets.cssFiles.includes(join(dir, "app", "globals.css")), "output included");
+  assert(assets.cssFiles.includes(join(dir, "app", "site.css")), "ordinary css included");
+}
+
+/** An app importing the Tailwind INPUT it authored still gets the compiled stylesheet. */
+async function assertInputAliasedToOutput(dir: string, assets: CssAssets): Promise<void> {
+  // An app that imports the Tailwind INPUT it authored (`import "./tailwind.css"`)
+  // must still get the compiled stylesheet: the input is aliased to the output, so
+  // it resolves to the same shim (bundler) AND collects the same compiled CSS.
+  const inURL = toFileUrl(join(dir, "styles", "tailwind.css")).href;
+  const outURL = toFileUrl(join(dir, "app", "globals.css")).href;
+  assertEquals(
+    assets.importMap[inURL],
+    assets.importMap[outURL],
+    "the Tailwind input resolves to the output's shim",
+  );
+  await Deno.writeTextFile(
+    join(dir, "app", "usesInput.tsx"),
+    `import "../styles/tailwind.css";\nexport default function P() { return null; }\n`,
+  );
+  const routeCss = await extractRouteCss([join(dir, "app", "usesInput.tsx")], assets);
+  assertStringIncludes(
+    routeCss,
+    ".tw-generated",
+    "importing the Tailwind input collects the compiled output CSS (not an unstyled build)",
+  );
+}
+
+// A stub Tailwind binary: a tiny shell script that honors `-i`/`-o`, so the whole
+// buildAppCss compile+exclude path runs without a real download. POSIX only.
+Deno.test({
+  name: "buildAppCss compiles Tailwind and excludes the input from the walk",
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: "denext_tw_" });
+    const prevBin = Deno.env.get("TAILWIND_BIN");
+    try {
+      const stub = await writeStubProject(dir);
       Deno.env.set("TAILWIND_BIN", stub);
 
       const outDir = join(dir, ".denext");
@@ -111,39 +158,8 @@ printf '.tw-generated{color:green}\\n' > "$OUT"
       });
       assert(assets, "expected CSS assets");
 
-      // The compiled output exists and contains the stub's generated CSS.
-      const compiled = await Deno.readTextFile(join(dir, "app", "globals.css"));
-      assertStringIncludes(compiled, ".tw-generated");
-
-      // The raw Tailwind INPUT must be excluded from the pipeline; the compiled
-      // OUTPUT and the ordinary stylesheet are included.
-      assert(
-        !assets.cssFiles.includes(join(dir, "styles", "tailwind.css")),
-        "the Tailwind input must be excluded from the walk",
-      );
-      assert(assets.cssFiles.includes(join(dir, "app", "globals.css")), "output included");
-      assert(assets.cssFiles.includes(join(dir, "app", "site.css")), "ordinary css included");
-
-      // An app that imports the Tailwind INPUT it authored (`import "./tailwind.css"`)
-      // must still get the compiled stylesheet: the input is aliased to the output, so
-      // it resolves to the same shim (bundler) AND collects the same compiled CSS.
-      const inURL = toFileUrl(join(dir, "styles", "tailwind.css")).href;
-      const outURL = toFileUrl(join(dir, "app", "globals.css")).href;
-      assertEquals(
-        assets.importMap[inURL],
-        assets.importMap[outURL],
-        "the Tailwind input resolves to the output's shim",
-      );
-      await Deno.writeTextFile(
-        join(dir, "app", "usesInput.tsx"),
-        `import "../styles/tailwind.css";\nexport default function P() { return null; }\n`,
-      );
-      const routeCss = await extractRouteCss([join(dir, "app", "usesInput.tsx")], assets);
-      assertStringIncludes(
-        routeCss,
-        ".tw-generated",
-        "importing the Tailwind input collects the compiled output CSS (not an unstyled build)",
-      );
+      await assertCompiledAndExcluded(dir, assets);
+      await assertInputAliasedToOutput(dir, assets);
     } finally {
       if (prevBin === undefined) Deno.env.delete("TAILWIND_BIN");
       else Deno.env.set("TAILWIND_BIN", prevBin);

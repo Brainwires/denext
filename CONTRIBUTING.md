@@ -23,6 +23,11 @@ deno task hooks:install   # install the pre-commit hook (once per clone)
   the `pre-commit` hook runs `check:fix` (fast — no tests) so a commit can't
   land with a formatting or lint problem, then runs the **Fallow gate** (below).
   Run the full `deno task check` before pushing.
+- **`deno task coverage:fallow`** — run it **before committing** (and again after
+  large edits or a disk sweep of git-ignored files). It writes the measured
+  per-function coverage map the Fallow gate scores CRAP with; without it fallow
+  _estimates_ coverage and can block a commit on framework internals that tests
+  reach only transitively. Details under _The Fallow gate_ below.
 
 ### The Fallow gate
 
@@ -48,7 +53,27 @@ npm i -g fallow          # or: cargo install fallow-cli
 
 By default the audit gates **new-only**: only findings _introduced_ by your
 changeset block the commit; pre-existing findings on touched files are reported
-but don't block. The full task map (trace an "unused" export, prove a symbol's
+but don't block.
+
+**Measured coverage for CRAP.** Fallow's CRAP score (complexity × untested-ness)
+needs per-function coverage; without a coverage file it _estimates_ coverage from
+the import graph, which under-scores internals that tests reach only transitively
+(the fiber reconciler is driven through `createRoot()`, never imported by a test)
+and then flags any function with cyclomatic ≥ 10 there. Before committing to such
+code, generate the real numbers once:
+
+```sh
+deno task coverage:fallow   # unit suite → lcov → coverage/coverage-final.json
+```
+
+Fallow auto-discovers `coverage/coverage-final.json`, so every `fallow audit` —
+the pre-commit hook (which also passes it explicitly), an agent's gate, a manual
+run — scores with the measured numbers while the file exists (it is git-ignored;
+Deno's own V8 profiles live under `coverage/profile/` so the two don't collide, and
+`deno task test:coverage` no longer deletes it). A disk sweep of git-ignored files
+removes it; that only matters when a commit touches a function with cyclomatic ≥ 10
+in a transitively-tested module — regenerate then. Re-run the task after large edits — coverage is pinned
+to source lines, and a function whose lines drifted falls back to the estimate. The full task map (trace an "unused" export, prove a symbol's
 consumers, etc.) lives in [`AGENTS.md`](./AGENTS.md).
 
 If a report is a **genuine false positive**, scope the suppression as narrowly
@@ -65,6 +90,49 @@ as text** rather than `import`ed (`tests/fixtures/**`), which fallow flags as
 rather than annotating each file. Run `fallow explain <issue-type>` for the
 rationale and fix guidance on any finding, and `fallow audit --explain` to see
 what a failing commit tripped on.
+
+### The health score
+
+The README badge is [`fallow health`](https://docs.fallow.tools/explanations/health)'s
+score for the whole repository — `src/`, `packages/`, `examples/`, `bench/`,
+`scripts/` and `tests/` alike, with the default thresholds (cyclomatic 20,
+cognitive 15, CRAP 30, 60-line units), no `fallow-ignore` markers, no
+`[health] ignore` and no per-file threshold overrides. `fallow.toml` only states
+runtime facts static analysis can't see — file-convention entry points, generated
+wasm glue, Deno import-map dependencies, and a few `ignoreExports` entries for
+same-named exports that its duplicate-export check can't tell apart (each one is
+explained inline). Reproduce it with:
+
+```sh
+deno task coverage:fallow                    # measured coverage (see above)
+fallow health --coverage coverage/coverage-final.json   # the full report
+fallow health --score                        # the score alone, hotspot-free
+deno task badge:fallow                       # rewrite .github/badges/fallow.json
+```
+
+The score is `100 − penalties`. denext sits at **zero** for every code-quality
+penalty — no complexity or CRAP findings, no dead files or exports, no function
+over 60 lines, no unused or circular dependencies, no duplication above the
+floor — and the two penalties that remain are structural, not fixable by editing
+code:
+
+- **Hotspots (−10).** A hotspot is a file in the top ⌈1 %⌉ by _relative_ churn ×
+  complexity density over the last six months. The measure is relative, so in
+  any repository where at least ten files changed three or more times the top ten
+  always score above zero and the penalty is always the maximum. It decays with
+  time (90-day half-life), never with refactoring. `fallow health --score`
+  reports the score without it (and is what `--format badge` renders).
+- **Coupling (−2.3).** The share of files whose fan-in exceeds the 95th
+  percentile — a percentile cut-off puts ~5 % of files above it by construction.
+  denext's hubs (`h`, the runtime hooks, the request context) are meant to be
+  imported everywhere; splitting them would add indirection, not remove coupling.
+
+So the honest ceiling for an actively developed repo is ≈ 88 (A), and the
+number to watch is not the score but the finding counts: `fallow health` must
+exit 0 with zero findings and `fallow dead-code` must report zero issues. The
+[unit-size](#the-fallow-gate) rule is the one most likely to bite a new
+contribution — a function over 60 lines (blank and comment lines count) is a
+finding even when it is simple, so split long builders into named steps.
 
 ## Lint rules that can't be auto-fixed
 

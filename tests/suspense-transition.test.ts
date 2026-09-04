@@ -18,26 +18,101 @@ type Any = any;
 
 const tick = () => new Promise((r) => setTimeout(r, 5));
 
-Deno.test("Suspense: a transition re-suspend keeps the old content (no fallback flash)", async () => {
-  const { doc, container } = makeDom();
-  setDocument(doc as Any);
-
+/** Per-key data sources. "a" is already resolved; "b" stays pending until we let it. */
+type Pending = {
+  resolveB: (v: string) => void;
+  pB: Promise<string>;
+  resources: Record<string, Promise<string>>;
+};
+function pendingResources(): Pending {
   let resolveB: (v: string) => void = () => {};
   const pB = new Promise<string>((r) => (resolveB = r));
-  // Per-key data sources. "a" is already resolved; "b" stays pending until we let it.
-  const resources: Record<string, Promise<string>> = {
-    a: Promise.resolve("A"),
-    b: pB,
-  };
+  return { resolveB, pB, resources: { a: Promise.resolve("A"), b: pB } };
+}
 
-  let setId: (v: string) => void = () => {};
-  let startFn: (cb: () => void) => void = () => {};
+/** Mount `tree` and drive the initial mount past its first suspend so the boundary is REVEALED. */
+async function mountRevealed(tree: VNode, p: Pending) {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  createRoot(container as Any).render(tree);
+  await p.resources.a;
+  await Promise.resolve();
+  flushSync();
+  return container;
+}
 
-  function Child(): VNode {
+/** Resolve "b" and let the retry settle (callers then flushSync() or tick()). */
+async function settleB(p: Pending) {
+  p.resolveB("B");
+  await p.pB;
+  await Promise.resolve();
+}
+
+/** A sibling holding local state, independent of the suspending data. */
+function makeCounter() {
+  const api = { bump: () => {}, Counter };
+  function Counter(): VNode {
+    const [n, set] = useState(0);
+    api.bump = () => set((x) => x + 1);
+    return h("b", null, String(n));
+  }
+  return api;
+}
+
+/** A reader keyed by its own state; `setId` switches it inside a transition. */
+function makeTransitionReader(resources: Record<string, Promise<string>>) {
+  const api = { setId: (_v: string) => {}, Data };
+  function Data(): VNode {
     const [id, set] = useState("a");
-    setId = (v) => set(() => v);
+    api.setId = (v) => set(() => v);
     return h("span", null, use(resources[id]));
   }
+  return api;
+}
+
+/** A reader of `resources[key]` (external key) with an urgent re-read trigger. */
+function makeUrgentReader(resources: Record<string, Promise<string>>) {
+  const api = { key: "a", reread: () => {}, Data };
+  function Data(): VNode {
+    const [, set] = useState(0);
+    api.reread = () => set((x) => x + 1); // urgent update that re-reads the resource
+    return h("span", null, use(resources[api.key]));
+  }
+  return api;
+}
+
+/**
+ * A "ticking" side effect standing in for a timer/subscription: registered on
+ * setup, removed on cleanup. `drive()` bumps every registered ticker — so while
+ * the subtree is hidden (effect disconnected) it must be a no-op.
+ */
+function makeTicker() {
+  const log: string[] = [];
+  const subscribers = new Set<() => void>();
+  const drive = () => {
+    for (const cb of [...subscribers]) cb();
+  };
+  function Ticker(): VNode {
+    const [n, setN] = useState(0);
+    useEffect(() => {
+      log.push("setup");
+      const cb = () => setN((x) => x + 1);
+      subscribers.add(cb);
+      return () => {
+        log.push("cleanup");
+        subscribers.delete(cb);
+      };
+    }, []);
+    return h("b", null, String(n));
+  }
+  return { log, drive, Ticker };
+}
+
+Deno.test("Suspense: a transition re-suspend keeps the old content (no fallback flash)", async () => {
+  const p = pendingResources();
+  const reader = makeTransitionReader(p.resources);
+  let startFn: (cb: () => void) => void = () => {};
+
   function Parent(): VNode {
     const [pending, start] = useTransition();
     startFn = start;
@@ -45,16 +120,11 @@ Deno.test("Suspense: a transition re-suspend keeps the old content (no fallback 
       "div",
       null,
       h("i", null, pending ? "P" : "-"),
-      h(Suspense, { fallback: h("p", null, "wait"), children: h(Child, null) }),
+      h(Suspense, { fallback: h("p", null, "wait"), children: h(reader.Data, null) }),
     );
   }
 
-  createRoot(container as Any).render(h(Parent, null));
-
-  // Drive the initial mount past its first suspend so the boundary is REVEALED.
-  await resources.a;
-  await Promise.resolve();
-  flushSync();
+  const container = await mountRevealed(h(Parent, null), p);
   assertEquals(
     container.innerHTML,
     "<div><i>-</i><span>A</span></div>",
@@ -63,7 +133,7 @@ Deno.test("Suspense: a transition re-suspend keeps the old content (no fallback 
 
   // Transition to "b" (still pending): keep showing A, and isPending is true —
   // NOT the fallback.
-  startFn(() => setId("b"));
+  startFn(() => reader.setId("b"));
   await tick();
   assertEquals(
     container.innerHTML,
@@ -72,9 +142,7 @@ Deno.test("Suspense: a transition re-suspend keeps the old content (no fallback 
   );
 
   // Resolve "b": the pending transition retries and commits B; isPending clears.
-  resolveB("B");
-  await pB;
-  await Promise.resolve();
+  await settleB(p);
   await tick();
   assertEquals(
     container.innerHTML,
@@ -179,51 +247,28 @@ Deno.test("Suspense: Offscreen hide preserves an element's own inline style on r
 });
 
 Deno.test("Suspense: an URGENT re-suspend preserves the primary subtree's local state (Offscreen)", async () => {
-  const { doc, container } = makeDom();
-  setDocument(doc as Any);
-
-  let resolveB: (v: string) => void = () => {};
-  const pB = new Promise<string>((r) => (resolveB = r));
-  const resources: Record<string, Promise<string>> = {
-    a: Promise.resolve("A"),
-    b: pB,
-  };
-  let key = "a";
-  let bump: () => void = () => {};
-  let reread: () => void = () => {};
-
-  // A sibling holding local state, independent of the suspending data.
-  function Counter(): VNode {
-    const [n, set] = useState(0);
-    bump = () => set((x) => x + 1);
-    return h("b", null, String(n));
-  }
-  function Data(): VNode {
-    const [, set] = useState(0);
-    reread = () => set((x) => x + 1); // urgent update that re-reads the resource
-    return h("span", null, use(resources[key]));
-  }
+  const p = pendingResources();
+  const counter = makeCounter();
+  const reader = makeUrgentReader(p.resources);
   function Content(): VNode {
-    return h("div", null, h(Counter, null), h(Data, null));
+    return h("div", null, h(counter.Counter, null), h(reader.Data, null));
   }
 
-  createRoot(container as Any).render(
+  const container = await mountRevealed(
     h(Suspense, { fallback: h("p", null, "wait"), children: h(Content, null) }),
+    p,
   );
-  await resources.a;
-  await Promise.resolve();
-  flushSync();
 
   // Give the counter local state.
-  bump();
-  bump();
+  counter.bump();
+  counter.bump();
   flushSync();
   assertEquals(container.innerHTML, "<div><b>2</b><span>A</span></div>");
 
   // Urgent re-suspend on the data: the whole subtree (incl. the counter) is kept
   // mounted-hidden, so the counter's state survives.
-  key = "b";
-  reread();
+  reader.key = "b";
+  reader.reread();
   flushSync();
   assertEquals(
     container.innerHTML,
@@ -232,9 +277,7 @@ Deno.test("Suspense: an URGENT re-suspend preserves the primary subtree's local 
   );
 
   // On resolve, the SAME instances are revealed — the counter still reads 2.
-  resolveB("B");
-  await pB;
-  await Promise.resolve();
+  await settleB(p);
   flushSync();
   assertEquals(
     container.innerHTML,
@@ -244,54 +287,17 @@ Deno.test("Suspense: an URGENT re-suspend preserves the primary subtree's local 
 });
 
 Deno.test("Suspense: Offscreen hide tears down subtree effects; reveal reconnects them (SEC-M3)", async () => {
-  const { doc, container } = makeDom();
-  setDocument(doc as Any);
-
-  let resolveB: (v: string) => void = () => {};
-  const pB = new Promise<string>((r) => (resolveB = r));
-  const resources: Record<string, Promise<string>> = {
-    a: Promise.resolve("A"),
-    b: pB,
-  };
-  let key = "a";
-  let reread: () => void = () => {};
-
-  const log: string[] = [];
-  // A "ticking" side effect standing in for a timer/subscription: registered on
-  // setup, removed on cleanup. `drive()` bumps every registered ticker — so while
-  // the subtree is hidden (effect disconnected) it must be a no-op.
-  const subscribers = new Set<() => void>();
-  const drive = () => {
-    for (const cb of [...subscribers]) cb();
-  };
-  function Ticker(): VNode {
-    const [n, setN] = useState(0);
-    useEffect(() => {
-      log.push("setup");
-      const cb = () => setN((x) => x + 1);
-      subscribers.add(cb);
-      return () => {
-        log.push("cleanup");
-        subscribers.delete(cb);
-      };
-    }, []);
-    return h("b", null, String(n));
-  }
-  function Data(): VNode {
-    const [, set] = useState(0);
-    reread = () => set((x) => x + 1);
-    return h("span", null, use(resources[key]));
-  }
+  const p = pendingResources();
+  const reader = makeUrgentReader(p.resources);
+  const { log, drive, Ticker } = makeTicker();
   function Content(): VNode {
-    return h("div", null, h(Ticker, null), h(Data, null));
+    return h("div", null, h(Ticker, null), h(reader.Data, null));
   }
 
-  createRoot(container as Any).render(
+  const container = await mountRevealed(
     h(Suspense, { fallback: h("p", null, "wait"), children: h(Content, null) }),
+    p,
   );
-  await resources.a;
-  await Promise.resolve();
-  flushSync();
   assertEquals(log, ["setup"], "effect set up once on mount");
 
   // The ticker is live: drive() bumps its state.
@@ -300,8 +306,8 @@ Deno.test("Suspense: Offscreen hide tears down subtree effects; reveal reconnect
   assertEquals(container.innerHTML, "<div><b>1</b><span>A</span></div>");
 
   // Urgent re-suspend → the primary goes Offscreen: its effect is torn down.
-  key = "b";
-  reread();
+  reader.key = "b";
+  reader.reread();
   flushSync();
   assertEquals(log, ["setup", "cleanup"], "hidden subtree's effect cleaned up");
   assertEquals(
@@ -320,9 +326,7 @@ Deno.test("Suspense: Offscreen hide tears down subtree effects; reveal reconnect
   );
 
   // Reveal: the effect reconnects (setup re-runs) and state (1) is preserved.
-  resolveB("B");
-  await pB;
-  await Promise.resolve();
+  await settleB(p);
   flushSync();
   assertEquals(log, ["setup", "cleanup", "setup"], "effect reconnected on reveal");
   assertEquals(
@@ -338,33 +342,13 @@ Deno.test("Suspense: Offscreen hide tears down subtree effects; reveal reconnect
 });
 
 Deno.test("Suspense: transition re-suspend preserves the revealed subtree's local state", async () => {
-  const { doc, container } = makeDom();
-  setDocument(doc as Any);
-
-  let resolveB: (v: string) => void = () => {};
-  const pB = new Promise<string>((r) => (resolveB = r));
-  const resources: Record<string, Promise<string>> = {
-    a: Promise.resolve("A"),
-    b: pB,
-  };
-
-  let setId: (v: string) => void = () => {};
+  const p = pendingResources();
   let startFn: (cb: () => void) => void = () => {};
-  let bump: () => void = () => {};
-
   // A sibling inside the boundary that holds local state independent of the data.
-  function Counter(): VNode {
-    const [n, set] = useState(0);
-    bump = () => set((x) => x + 1);
-    return h("b", null, String(n));
-  }
-  function Data(): VNode {
-    const [id, set] = useState("a");
-    setId = (v) => set(() => v);
-    return h("span", null, use(resources[id]));
-  }
+  const counter = makeCounter();
+  const reader = makeTransitionReader(p.resources);
   function Content(): VNode {
-    return h("div", null, h(Counter, null), h(Data, null));
+    return h("div", null, h(counter.Counter, null), h(reader.Data, null));
   }
   function Parent(): VNode {
     const [, start] = useTransition();
@@ -372,20 +356,17 @@ Deno.test("Suspense: transition re-suspend preserves the revealed subtree's loca
     return h(Suspense, { fallback: h("p", null, "wait"), children: h(Content, null) });
   }
 
-  createRoot(container as Any).render(h(Parent, null));
-  await resources.a;
-  await Promise.resolve();
-  flushSync();
+  const container = await mountRevealed(h(Parent, null), p);
 
   // Give the counter some local state.
-  bump();
-  bump();
+  counter.bump();
+  counter.bump();
   flushSync();
   assertEquals(container.innerHTML, "<div><b>2</b><span>A</span></div>");
 
   // Transition-suspend on the data: the whole subtree (incl. the counter) is kept
   // mounted, so its state survives.
-  startFn(() => setId("b"));
+  startFn(() => reader.setId("b"));
   await tick();
   assertEquals(
     container.innerHTML,
@@ -393,9 +374,7 @@ Deno.test("Suspense: transition re-suspend preserves the revealed subtree's loca
     "counter state (2) is preserved — the subtree was never unmounted",
   );
 
-  resolveB("B");
-  await pB;
-  await Promise.resolve();
+  await settleB(p);
   await tick();
   assertEquals(
     container.innerHTML,

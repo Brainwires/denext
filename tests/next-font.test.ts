@@ -187,12 +187,10 @@ Deno.test("selfHostFonts is best-effort: a fetch failure is skipped, never throw
   }
 });
 
-Deno.test("staticExport self-hosts next/font/google — no runtime Google <link>", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "denext_font_export_" });
-  const origFetch = globalThis.fetch;
-  // Stub Google's endpoints: the css2 stylesheet → an @font-face referencing a gstatic
-  // woff2, and that woff2 → bytes. Anything else falls through to the real fetch.
-  globalThis.fetch = ((input: Request | URL | string, init?: RequestInit) => {
+// Stub Google's endpoints: the css2 stylesheet → an @font-face referencing a gstatic
+// woff2, and that woff2 → bytes. Anything else falls through to the real fetch.
+function stubGoogleFetch(origFetch: typeof fetch): typeof fetch {
+  return ((input: Request | URL | string, init?: RequestInit) => {
     const u = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     if (u.includes("fonts.googleapis.com")) {
       return Promise.resolve(
@@ -208,28 +206,39 @@ Deno.test("staticExport self-hosts next/font/google — no runtime Google <link>
     }
     return origFetch(input, init);
   }) as typeof fetch;
+}
+
+/** A one-page app using next/font/google, with an import map aliased to this checkout. */
+async function writeFontApp(dir: string): Promise<void> {
+  const root = new URL("../", import.meta.url).pathname;
+  await Deno.writeTextFile(
+    join(dir, "deno.json"),
+    JSON.stringify({
+      compilerOptions: { jsx: "react-jsx", jsxImportSource: "denext" },
+      imports: {
+        "denext": `${root}mod.ts`,
+        "denext/jsx-runtime": `${root}src/jsx/jsx-runtime.ts`,
+        "denext/server": `${root}src/server/mod.ts`,
+        "denext/client": `${root}src/client/mod.ts`,
+        "next/font/google": `${root}src/compat/next/font/google.ts`,
+      },
+    }),
+  );
+  await Deno.mkdir(join(dir, "app"), { recursive: true });
+  await Deno.writeTextFile(
+    join(dir, "app", "page.tsx"),
+    `import { Inter } from "next/font/google";\n` +
+      `const inter = Inter({ subsets: ["latin"] });\n` +
+      `export default function Page(){ return <main className={inter.className}>FONT_PAGE</main>; }\n`,
+  );
+}
+
+Deno.test("staticExport self-hosts next/font/google — no runtime Google <link>", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_font_export_" });
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = stubGoogleFetch(origFetch);
   try {
-    const root = new URL("../", import.meta.url).pathname;
-    await Deno.writeTextFile(
-      join(dir, "deno.json"),
-      JSON.stringify({
-        compilerOptions: { jsx: "react-jsx", jsxImportSource: "denext" },
-        imports: {
-          "denext": `${root}mod.ts`,
-          "denext/jsx-runtime": `${root}src/jsx/jsx-runtime.ts`,
-          "denext/server": `${root}src/server/mod.ts`,
-          "denext/client": `${root}src/client/mod.ts`,
-          "next/font/google": `${root}src/compat/next/font/google.ts`,
-        },
-      }),
-    );
-    await Deno.mkdir(join(dir, "app"), { recursive: true });
-    await Deno.writeTextFile(
-      join(dir, "app", "page.tsx"),
-      `import { Inter } from "next/font/google";\n` +
-        `const inter = Inter({ subsets: ["latin"] });\n` +
-        `export default function Page(){ return <main className={inter.className}>FONT_PAGE</main>; }\n`,
-    );
+    await writeFontApp(dir);
 
     const result = await staticExport(dir);
     const html = await Deno.readTextFile(join(result.outDir, "index.html"));

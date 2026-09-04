@@ -5,6 +5,7 @@
 
 import { join } from "@std/path";
 import { VERSION } from "../../mod.ts";
+import { reactCompatImportMap } from "./react-specifiers.ts";
 
 /** Options controlling what {@linkcode scaffoldProject} generates. */
 /** Named starter templates `denext create --template <name>` can choose. */
@@ -56,7 +57,8 @@ export interface ScaffoldFile {
 
 const dep = `jsr:@denext/denext@^${VERSION}`;
 
-function denoJson(opts: ScaffoldOptions): string {
+/** The `deno task` entries for a scaffolded project (dev/build/start + native targets). */
+function scaffoldTasks(opts: ScaffoldOptions): Record<string, string> {
   const tasks: Record<string, string> = {
     // `dev`/`build` compile, write `.denext`, and spawn tooling (Tailwind, esbuild),
     // so they use broad permissions. `start` only serves, so it runs least-privilege:
@@ -89,9 +91,38 @@ function denoJson(opts: ScaffoldOptions): string {
     tasks["mobile:ios"] = `${cap} open ios`;
     tasks["mobile:android"] = `${cap} open android`;
   }
+  return tasks;
+}
 
+/** The import map for a scaffolded project (denext entries + native / compat aliases). */
+function scaffoldImports(opts: ScaffoldOptions): Record<string, string> {
+  return {
+    "denext": dep,
+    "denext/jsx-runtime": `${dep}/jsx-runtime`,
+    "denext/jsx-dev-runtime": `${dep}/jsx-dev-runtime`,
+    "denext/server": `${dep}/server`,
+    "denext/client": `${dep}/client`,
+    // Native-target deps as bare, versioned specifiers (the lint plugin forbids
+    // inline `jsr:`/`npm:` in source).
+    ...(opts.desktop ? { "denext/desktop": `${dep}/desktop` } : {}),
+    ...(opts.capacitor ? { "@capacitor/cli": "npm:@capacitor/cli@^7" } : {}),
+    // React + Next compatibility: alias those specifiers to denext. The
+    // react-family entries come from the single canonical specifier list.
+    ...(opts.compatibilityMode
+      ? {
+        ...reactCompatImportMap(dep),
+        "next/": `${dep}/next/`,
+        "next-intl": `${dep}/next-intl`,
+        "next-intl/": `${dep}/next-intl/`,
+        "better-sqlite3": `${dep}/better-sqlite3`,
+      }
+      : {}),
+  };
+}
+
+function denoJson(opts: ScaffoldOptions): string {
   const config: Record<string, unknown> = {
-    tasks,
+    tasks: scaffoldTasks(opts),
     compilerOptions: {
       jsx: "react-jsx",
       jsxImportSource: "denext",
@@ -105,36 +136,7 @@ function denoJson(opts: ScaffoldOptions): string {
         "dom.asynciterable",
       ],
     },
-    imports: {
-      "denext": dep,
-      "denext/jsx-runtime": `${dep}/jsx-runtime`,
-      "denext/jsx-dev-runtime": `${dep}/jsx-dev-runtime`,
-      "denext/server": `${dep}/server`,
-      "denext/client": `${dep}/client`,
-      // Native-target deps as bare, versioned specifiers (the lint plugin forbids
-      // inline `jsr:`/`npm:` in source).
-      ...(opts.desktop ? { "denext/desktop": `${dep}/desktop` } : {}),
-      ...(opts.capacitor ? { "@capacitor/cli": "npm:@capacitor/cli@^7" } : {}),
-      // React + Next compatibility: alias those specifiers to denext.
-      ...(opts.compatibilityMode
-        ? {
-          "react": `${dep}/react`,
-          "react-dom": `${dep}/react-dom`,
-          "react-dom/client": `${dep}/react-dom/client`,
-          "react-dom/server": `${dep}/react-dom/server`,
-          "react-dom/server.browser": `${dep}/react-dom/server.browser`,
-          "react-dom/server.edge": `${dep}/react-dom/server.edge`,
-          "react-dom/test-utils": `${dep}/react-dom/test-utils`,
-          "react/jsx-runtime": `${dep}/react/jsx-runtime`,
-          "react/jsx-dev-runtime": `${dep}/react/jsx-dev-runtime`,
-          "react-is": `${dep}/react-is`,
-          "next/": `${dep}/next/`,
-          "next-intl": `${dep}/next-intl`,
-          "next-intl/": `${dep}/next-intl/`,
-          "better-sqlite3": `${dep}/better-sqlite3`,
-        }
-        : {}),
-    },
+    imports: scaffoldImports(opts),
     lint: { plugins: [`${dep}/lint-plugin`] },
   };
   if (opts.desktop) {
@@ -381,15 +383,15 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
     files.push({ path: "icons/README.md", content: desktopIcons() });
     files.push({
       path: "scripts/package-macos.ts",
-      content: macosPackageScript(),
+      content: MACOS_PACKAGE_SCRIPT,
     });
     files.push({
       path: "scripts/package-linux.ts",
-      content: linuxPackageScript(),
+      content: LINUX_PACKAGE_SCRIPT,
     });
     files.push({
       path: "scripts/package-windows.ts",
-      content: windowsPackageScript(),
+      content: WINDOWS_PACKAGE_SCRIPT,
     });
   }
   if (opts.capacitor) {
@@ -451,8 +453,7 @@ async function exists(path: string): Promise<boolean> {
 /** The scaffolded macOS packaging script (scripts/package-macos.ts). Builds one or
  * more arch .apps, code-signs, and (with a Developer ID identity + notarytool profile)
  * notarizes + staples. See the macOS distribution docs. */
-function macosPackageScript(): string {
-  return `#!/usr/bin/env -S deno run -A
+const MACOS_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
 /**
  * Package this \`deno desktop\` app for macOS distribution: build (for one or more
  * architectures), code-sign, and optionally notarize + staple. Run on a macOS host.
@@ -487,7 +488,6 @@ const TARGETS: Record<string, string> = {
   arm64: "aarch64-apple-darwin",
   x86_64: "x86_64-apple-darwin",
 };
-const hostArch = Deno.build.arch === "aarch64" ? "arm64" : "x86_64";
 
 interface Opts {
   arch: "host" | "arm64" | "x86_64" | "both" | "universal";
@@ -704,19 +704,16 @@ async function makeDmg(app: string): Promise<void> {
   ]);
 }
 
-async function main(): Promise<void> {
-  if (Deno.build.os !== "darwin") {
-    console.error(
-      "package-macos.ts must run on macOS (it shells out to codesign/notarytool).",
-    );
-    Deno.exit(1);
-  }
-  const opts = parseOpts(Deno.args);
-  const identity = Deno.env.get("DENEXT_CODESIGN_IDENTITY") || undefined;
-  const entitlements = Deno.env.get("DENEXT_ENTITLEMENTS") || undefined;
-  const notaryProfile = Deno.env.get("DENEXT_NOTARY_PROFILE") || undefined;
-  const name = await appName();
+/** The signing setup, from env (nothing secret is hard-coded). */
+interface Signing {
+  identity: string | undefined;
+  entitlements: string | undefined;
+  notaryProfile: string | undefined;
+}
 
+function signingFromEnv(): Signing {
+  const identity = Deno.env.get("DENEXT_CODESIGN_IDENTITY") || undefined;
+  const notaryProfile = Deno.env.get("DENEXT_NOTARY_PROFILE") || undefined;
   if (!identity) {
     console.warn(
       "⚠  DENEXT_CODESIGN_IDENTITY is unset → ad-hoc signature only. The app runs\\n" +
@@ -729,72 +726,104 @@ async function main(): Promise<void> {
       "notarization needs DENEXT_CODESIGN_IDENTITY (a real Developer ID identity).",
     );
   }
+  return {
+    identity,
+    entitlements: Deno.env.get("DENEXT_ENTITLEMENTS") || undefined,
+    notaryProfile,
+  };
+}
 
-  if (opts.export) await run(["deno", "task", "export"]);
-  await Deno.mkdir("dist", { recursive: true });
+/** One .app whose binaries are lipo-merged from an arm64 and an x86_64 build. */
+async function buildUniversal(name: string): Promise<string> {
+  const arm = "dist/.tmp-arm64.app";
+  const x86 = "dist/.tmp-x86_64.app";
+  try {
+    await buildApp(arm, TARGETS.arm64);
+    await buildApp(x86, TARGETS.x86_64);
+    const uni = \`dist/\${name}.app\`;
+    await mergeUniversal(arm, x86, uni);
+    return uni;
+  } finally {
+    // Always clear the per-arch temp bundles (hundreds of MB each) — even if a
+    // build/merge threw partway, so a failed run doesn't litter dist/.
+    await Deno.remove(arm, { recursive: true }).catch(() => {});
+    await Deno.remove(x86, { recursive: true }).catch(() => {});
+  }
+}
 
-  const artifacts: string[] = [];
-  if (opts.arch === "universal") {
-    const arm = "dist/.tmp-arm64.app";
-    const x86 = "dist/.tmp-x86_64.app";
-    try {
-      await buildApp(arm, TARGETS.arm64);
-      await buildApp(x86, TARGETS.x86_64);
-      const uni = \`dist/\${name}.app\`;
-      await mergeUniversal(arm, x86, uni);
-      artifacts.push(uni);
-    } finally {
-      // Always clear the per-arch temp bundles (hundreds of MB each) — even if a
-      // build/merge threw partway, so a failed run doesn't litter dist/.
-      await Deno.remove(arm, { recursive: true }).catch(() => {});
-      await Deno.remove(x86, { recursive: true }).catch(() => {});
-    }
-  } else if (opts.arch === "both") {
+/** Build the .app bundle(s) for the requested arch mode; returns their paths. */
+async function buildArtifacts(opts: Opts, name: string): Promise<string[]> {
+  if (opts.arch === "universal") return [await buildUniversal(name)];
+  if (opts.arch === "both") {
+    const artifacts: string[] = [];
     for (const a of ["arm64", "x86_64"] as const) {
       const app = \`dist/\${name}-\${a}.app\`;
       await buildApp(app, TARGETS[a]);
       artifacts.push(app);
     }
-  } else {
-    const a = opts.arch === "host" ? hostArch : opts.arch;
-    const app = \`dist/\${name}.app\`;
-    await buildApp(app, opts.arch === "host" ? undefined : TARGETS[a]);
-    artifacts.push(app);
+    return artifacts;
   }
+  const app = \`dist/\${name}.app\`;
+  await buildApp(app, opts.arch === "host" ? undefined : TARGETS[opts.arch]);
+  return [app];
+}
 
+/**
+ * Sign, notarize and wrap each bundle. A lipo-merged (universal) bundle always needs
+ * re-signing; for others we re-sign only when a real identity is provided (deno desktop
+ * already applied ad-hoc).
+ */
+async function finishArtifacts(
+  artifacts: string[],
+  opts: Opts,
+  s: Signing,
+): Promise<void> {
   for (const app of artifacts) {
-    // A lipo-merged (universal) bundle always needs re-signing; for others we re-sign
-    // only when a real identity is provided (deno desktop already applied ad-hoc).
-    if (identity || opts.arch === "universal") {
-      await sign(app, identity, entitlements);
+    if (s.identity || opts.arch === "universal") {
+      await sign(app, s.identity, s.entitlements);
     }
-    if (notaryProfile && identity) await notarize(app, notaryProfile);
+    if (s.notaryProfile && s.identity) await notarize(app, s.notaryProfile);
     if (opts.dmg) await makeDmg(app);
   }
+}
 
+function distributionNote(s: Signing): string {
+  if (!s.identity) {
+    return "  (ad-hoc — not distributable; see the macOS distribution doc)";
+  }
+  if (!s.notaryProfile) {
+    return "  (signed, NOT notarized — set DENEXT_NOTARY_PROFILE to notarize)";
+  }
+  return "  (signed + notarized + stapled — ready to distribute)";
+}
+
+async function main(): Promise<void> {
+  if (Deno.build.os !== "darwin") {
+    console.error(
+      "package-macos.ts must run on macOS (it shells out to codesign/notarytool).",
+    );
+    Deno.exit(1);
+  }
+  const opts = parseOpts(Deno.args);
+  const signing = signingFromEnv();
+  const name = await appName();
+  if (opts.export) await run(["deno", "task", "export"]);
+  await Deno.mkdir("dist", { recursive: true });
+  const artifacts = await buildArtifacts(opts, name);
+  await finishArtifacts(artifacts, opts, signing);
   console.log("\\n✓ Packaged:");
   for (const a of artifacts) console.log("  " + a);
-  if (!identity) {
-    console.log(
-      "  (ad-hoc — not distributable; see the macOS distribution doc)",
-    );
-  } else if (!notaryProfile) {
-    console.log(
-      "  (signed, NOT notarized — set DENEXT_NOTARY_PROFILE to notarize)",
-    );
-  } else console.log("  (signed + notarized + stapled — ready to distribute)");
+  console.log(distributionNote(signing));
 }
 
 if (import.meta.main) await main();
 `;
-}
 
 /** The scaffolded Linux packaging script (scripts/package-linux.ts). `deno desktop`
  * emits a complete Linux app bundle directory (executable + `.so` + `.desktop`), so
  * this builds one or both arches and wraps each as a distributable `.tar.gz` (and an
  * AppImage when `appimagetool` is on PATH). Cross-builds from any OS. */
-function linuxPackageScript(): string {
-  return `#!/usr/bin/env -S deno run -A
+const LINUX_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
 /**
  * Package this \`deno desktop\` app for Linux distribution. \`deno desktop\` produces a
  * complete bundle directory (the executable, its \`.so\`, and a freedesktop \`.desktop\`
@@ -985,13 +1014,11 @@ async function main(): Promise<void> {
 
 if (import.meta.main) await main();
 `;
-}
 
 /** Windows packaging script — kept byte-identical to
  * examples/native/scripts/package-windows.ts (asserted by scaffold.test.ts). Builds the
  * `.exe` via `deno desktop --target`, zips it, and Authenticode-signs when a cert is set. */
-function windowsPackageScript(): string {
-  return `#!/usr/bin/env -S deno run -A
+const WINDOWS_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
 /**
  * Package this \`deno desktop\` app for Windows distribution. \`deno desktop\` produces a
  * complete bundle directory (the \`.exe\`, its \`.dll\`s, and resources); this builds one or
@@ -1194,4 +1221,3 @@ async function main(): Promise<void> {
 
 if (import.meta.main) await main();
 `;
-}

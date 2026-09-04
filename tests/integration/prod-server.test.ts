@@ -11,10 +11,64 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { copy } from "@std/fs";
 import { join } from "@std/path";
 import { build } from "../../src/build/build.ts";
-import { startProdServer } from "../../src/build/prod-server.ts";
+import { startProdOrigin } from "../helpers/prod-origin.ts";
 
 const SOURCE = new URL("../../examples/hello", import.meta.url).pathname;
 const APP = new URL("../../examples/.hello-prod-test", import.meta.url).pathname;
+
+async function healthProbeIsHardened(origin: string) {
+  const res = await fetch(`${origin}/_denext/health`);
+  assertEquals(res.status, 200);
+  assertEquals(res.headers.get("x-content-type-options"), "nosniff");
+  const body = await res.json();
+  assertEquals(body.status, "ok");
+  assert(body.cache === "ok" || body.cache === "degraded", "reports cache reachability");
+}
+
+async function imageEndpointRejectsNoUrl(origin: string) {
+  const res = await fetch(`${origin}/_denext/image`);
+  assertEquals(res.status, 400);
+  assertEquals(res.headers.get("x-content-type-options"), "nosniff");
+  await res.body?.cancel();
+}
+
+async function missingClientAssetIsHardened404(origin: string) {
+  const res = await fetch(`${origin}/_denext/client/does-not-exist.js`);
+  assertEquals(res.status, 404);
+  assertEquals(res.headers.get("x-content-type-options"), "nosniff");
+  assertStringIncludes(await res.text(), "not found");
+}
+
+async function pageCarriesHardeningHeaders(origin: string) {
+  const res = await fetch(`${origin}/`);
+  assertEquals(res.status, 200);
+  assertStringIncludes(res.headers.get("content-type") ?? "", "text/html");
+  assertEquals(res.headers.get("x-content-type-options"), "nosniff");
+  assertEquals(res.headers.get("x-frame-options"), "SAMEORIGIN");
+  assertStringIncludes(await res.text(), "<!DOCTYPE html>");
+}
+
+async function headReturnsHeadersOnly(origin: string) {
+  const res = await fetch(`${origin}/`, { method: "HEAD" });
+  assertEquals(res.status, 200);
+  assertEquals(res.headers.get("x-content-type-options"), "nosniff");
+  assertEquals(await res.text(), "");
+}
+
+async function unknownRouteIs404(origin: string) {
+  const res = await fetch(`${origin}/definitely/not/a/route`);
+  assertEquals(res.status, 404);
+  await res.body?.cancel();
+}
+
+const STEPS: Array<[string, (origin: string) => Promise<void>]> = [
+  ["health probe reports status + cache reachability, hardened", healthProbeIsHardened],
+  ["image endpoint rejects a request with no url (400), hardened", imageEndpointRejectsNoUrl],
+  ["a missing client asset is a hardened 404", missingClientAssetIsHardened404],
+  ["a real page renders with the default hardening headers", pageCarriesHardeningHeaders],
+  ["HEAD on a page returns headers with no body", headReturnsHeadersOnly],
+  ["an unknown route is a 404", unknownRouteIs404],
+];
 
 Deno.test({
   name: "prod server: framework endpoints behave and carry hardening headers",
@@ -29,62 +83,11 @@ Deno.test({
   let server: Deno.HttpServer | undefined;
   try {
     await build(APP);
+    const started = await startProdOrigin(APP, controller.signal);
+    server = started.server;
+    const { origin } = started;
 
-    const { promise, resolve } = Promise.withResolvers<{ hostname: string; port: number }>();
-    server = await startProdServer({
-      projectDir: APP,
-      port: 0,
-      hostname: "127.0.0.1",
-      signal: controller.signal,
-      onListen: (info) => resolve(info),
-    });
-    const { hostname, port } = await promise;
-    const origin = `http://${hostname}:${port}`;
-
-    await t.step("health probe reports status + cache reachability, hardened", async () => {
-      const res = await fetch(`${origin}/_denext/health`);
-      assertEquals(res.status, 200);
-      assertEquals(res.headers.get("x-content-type-options"), "nosniff");
-      const body = await res.json();
-      assertEquals(body.status, "ok");
-      assert(body.cache === "ok" || body.cache === "degraded", "reports cache reachability");
-    });
-
-    await t.step("image endpoint rejects a request with no url (400), hardened", async () => {
-      const res = await fetch(`${origin}/_denext/image`);
-      assertEquals(res.status, 400);
-      assertEquals(res.headers.get("x-content-type-options"), "nosniff");
-      await res.body?.cancel();
-    });
-
-    await t.step("a missing client asset is a hardened 404", async () => {
-      const res = await fetch(`${origin}/_denext/client/does-not-exist.js`);
-      assertEquals(res.status, 404);
-      assertEquals(res.headers.get("x-content-type-options"), "nosniff");
-      assertStringIncludes(await res.text(), "not found");
-    });
-
-    await t.step("a real page renders with the default hardening headers", async () => {
-      const res = await fetch(`${origin}/`);
-      assertEquals(res.status, 200);
-      assertStringIncludes(res.headers.get("content-type") ?? "", "text/html");
-      assertEquals(res.headers.get("x-content-type-options"), "nosniff");
-      assertEquals(res.headers.get("x-frame-options"), "SAMEORIGIN");
-      assertStringIncludes(await res.text(), "<!DOCTYPE html>");
-    });
-
-    await t.step("HEAD on a page returns headers with no body", async () => {
-      const res = await fetch(`${origin}/`, { method: "HEAD" });
-      assertEquals(res.status, 200);
-      assertEquals(res.headers.get("x-content-type-options"), "nosniff");
-      assertEquals(await res.text(), "");
-    });
-
-    await t.step("an unknown route is a 404", async () => {
-      const res = await fetch(`${origin}/definitely/not/a/route`);
-      assertEquals(res.status, 404);
-      await res.body?.cancel();
-    });
+    for (const [name, fn] of STEPS) await t.step(name, () => fn(origin));
   } finally {
     controller.abort();
     await server?.finished;

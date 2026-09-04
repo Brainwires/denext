@@ -21,33 +21,8 @@ export default function Home(_props: PageProps) {
 
   return (
     <AccentProvider>
-      {enabled && (
-        <div class="scoreboard" aria-live="polite">
-          <img src="/cat.png" alt="cat" width={22} height={22} />
-          <span class="sb-score" key={score}>{score}</span>
-          <span class="sb-hint">
-            {score === 0
-              ? "corner a rabbit!"
-              : score === 1
-              ? "rabbit cornered"
-              : "rabbits cornered"}
-          </span>
-        </div>
-      )}
-      <header>
-        <h1>
-          denext, <span class="accent">everywhere</span>.
-        </h1>
-        <p class="muted">
-          One codebase — web, desktop, and mobile. A pile of React hooks, a time-sliced 2,000-row
-          list, and a cat that hunts the rabbits hopping around the page (and chases your pointer,
-          if you let it).
-        </p>
-        <p class="small muted">
-          <code>deno task dev</code> · <code>deno task desktop</code> ·{" "}
-          <code>deno task mobile:sync</code>
-        </p>
-      </header>
+      {enabled && <Scoreboard score={score} />}
+      <Intro />
 
       <Showcase
         enabled={enabled}
@@ -70,5 +45,36 @@ export default function Home(_props: PageProps) {
         ref={catRef}
       />
     </AccentProvider>
+  );
+}
+
+function Scoreboard({ score }: { score: number }) {
+  return (
+    <div class="scoreboard" aria-live="polite">
+      <img src="/cat.png" alt="cat" width={22} height={22} />
+      <span class="sb-score" key={score}>{score}</span>
+      <span class="sb-hint">
+        {score === 0 ? "corner a rabbit!" : score === 1 ? "rabbit cornered" : "rabbits cornered"}
+      </span>
+    </div>
+  );
+}
+
+function Intro() {
+  return (
+    <header>
+      <h1>
+        denext, <span class="accent">everywhere</span>.
+      </h1>
+      <p class="muted">
+        One codebase — web, desktop, and mobile. A pile of React hooks, a time-sliced 2,000-row
+        list, and a cat that hunts the rabbits hopping around the page (and chases your pointer, if
+        you let it).
+      </p>
+      <p class="small muted">
+        <code>deno task dev</code> · <code>deno task desktop</code> ·{" "}
+        <code>deno task mobile:sync</code>
+      </p>
+    </header>
   );
 }

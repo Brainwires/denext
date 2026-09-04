@@ -3,7 +3,7 @@
 // The provider network calls are stubbed via `dangerouslyAllowInsecureProviders`
 // (which routes provider fetches through the platform `fetch`) + a fetch stub.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import {
   createRequestContext,
   type RequestContext,
@@ -64,6 +64,37 @@ async function makeIdp() {
   return { jwks, mintIdToken };
 }
 
+/** Decode a signed tx cookie pair (`__Host-denext_auth_tx=<payload>.<sig>`) to its data. */
+function decodeTx(cookiePair: string): { nonce?: string; returnTo?: string } {
+  const payloadB64 = cookiePair.split("=")[1].split(".")[0];
+  const b64 = payloadB64.replace(/-/g, "+").replace(/_/g, "/");
+  const pad = b64.length % 4 === 0 ? "" : "=".repeat(4 - (b64.length % 4));
+  return (JSON.parse(
+    new TextDecoder().decode(Uint8Array.from(atob(b64 + pad), (c) => c.charCodeAt(0))),
+  ) as { d: { nonce?: string; returnTo?: string } }).d;
+}
+
+/** The `__Host-denext_auth_tx=…` pair a signin response set. */
+function txPairOf(ctx: RequestContext): string {
+  return setCookies(ctx).find((c) => c.startsWith("__Host-denext_auth_tx="))!.split(";")[0];
+}
+
+/** A `fetch` responder serving the mock IdP's token + JWKS endpoints. */
+function idpResponder(
+  idp: Awaited<ReturnType<typeof makeIdp>>,
+  idToken: string,
+): (url: string) => Response {
+  const json = (body: unknown) =>
+    new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
+  return (url) => {
+    if (url === "https://idp.test/token") {
+      return json({ access_token: "at", id_token: idToken, token_type: "bearer" });
+    }
+    if (url === "https://idp.test/jwks") return json(idp.jwks);
+    return new Response("not found", { status: 404 });
+  };
+}
+
 function oidcProvider(): ReturnType<typeof oidc> {
   return oidc({
     id: "testidp",
@@ -90,7 +121,7 @@ async function withFetch(
   }
 }
 
-Deno.test("OIDC round-trip: signin sets a tx cookie; callback verifies id_token and issues a session", async () => {
+Deno.test("OIDC round-trip: signin sets a tx cookie; callback verifies id_token and issues a session", async (t) => {
   const idp = await makeIdp();
   const config: AuthConfig = {
     secret: "test-secret-value-at-least-32-chars-long",
@@ -98,75 +129,56 @@ Deno.test("OIDC round-trip: signin sets a tx cookie; callback verifies id_token 
     dangerouslyAllowInsecureProviders: true, // route provider fetches via stub `fetch`
     providers: [oidcProvider()],
   };
+  let state = "";
+  let txPair = "";
 
-  // 1) Sign-in → redirect to the IdP with a state, and a tx cookie set.
-  const signin = await run(new Request(`${ORIGIN}/auth/signin/testidp`), config);
-  assertEquals(signin.res!.status, 303);
-  const authUrl = new URL(signin.res!.headers.get("location")!);
-  assertEquals(authUrl.host, "idp.test");
-  const state = authUrl.searchParams.get("state")!;
-  assert(state, "state present");
-  assertEquals(authUrl.searchParams.get("code_challenge_method"), "S256");
-  assertEquals(
-    authUrl.searchParams.get("redirect_uri"),
-    `${ORIGIN}/auth/callback/testidp`,
-    "redirect_uri is pinned to canonicalOrigin",
-  );
-  const txCookie = setCookies(signin.ctx).find((c) => c.startsWith("__Host-denext_auth_tx="))!;
-  assert(txCookie, "tx cookie set (origin-locked via __Host-)");
-  const txPair = txCookie.split(";")[0];
-
-  // 2) Callback with the tx cookie + matching state → session issued. The tx cookie
-  // is now a signed session token (`base64url({d,e}).signature`); decode the payload
-  // to read the nonce the server stored, so we can mint a matching id_token.
-  const payloadB64 = txPair.split("=")[1].split(".")[0];
-  const b64 = payloadB64.replace(/-/g, "+").replace(/_/g, "/");
-  const pad = b64.length % 4 === 0 ? "" : "=".repeat(4 - (b64.length % 4));
-  const tx = (JSON.parse(
-    new TextDecoder().decode(Uint8Array.from(atob(b64 + pad), (c) => c.charCodeAt(0))),
-  ) as { d: { nonce?: string } }).d;
-  const idToken = await idp.mintIdToken({
-    iss: "https://idp.test",
-    aud: "client-123",
-    sub: "user-42",
-    email: "u@idp.test",
-    name: "Test User",
-    nonce: tx.nonce,
-    exp: Math.floor(Date.now() / 1000) + 3600,
-  });
-
-  let issued: string[] = [];
-  await withFetch((url) => {
-    if (url === "https://idp.test/token") {
-      return new Response(
-        JSON.stringify({ access_token: "at", id_token: idToken, token_type: "bearer" }),
-        {
-          headers: { "content-type": "application/json" },
-        },
-      );
-    }
-    if (url === "https://idp.test/jwks") {
-      return new Response(JSON.stringify(idp.jwks), {
-        headers: { "content-type": "application/json" },
-      });
-    }
-    return new Response("not found", { status: 404 });
-  }, async () => {
-    const cb = await run(
-      new Request(`${ORIGIN}/auth/callback/testidp?code=abc&state=${state}`, {
-        headers: { cookie: txPair },
-      }),
-      config,
+  await t.step("signin → redirect to the IdP with a state, and a tx cookie set", async () => {
+    const signin = await run(new Request(`${ORIGIN}/auth/signin/testidp`), config);
+    assertEquals(signin.res!.status, 303);
+    const authUrl = new URL(signin.res!.headers.get("location")!);
+    assertEquals(authUrl.host, "idp.test");
+    state = authUrl.searchParams.get("state")!;
+    assert(state, "state present");
+    assertEquals(authUrl.searchParams.get("code_challenge_method"), "S256");
+    assertEquals(
+      authUrl.searchParams.get("redirect_uri"),
+      `${ORIGIN}/auth/callback/testidp`,
+      "redirect_uri is pinned to canonicalOrigin",
     );
-    assertEquals(cb.res!.status, 303);
-    issued = setCookies(cb.ctx);
+    txPair = txPairOf(signin.ctx);
+    assert(txPair, "tx cookie set (origin-locked via __Host-)");
   });
-  assert(
-    issued.some((c) =>
-      c.startsWith("__Host-denext_auth=") && !c.startsWith("__Host-denext_auth=;")
-    ),
-    `a session cookie was issued; got: ${issued.join(" | ")}`,
-  );
+
+  await t.step("callback with the tx cookie + matching state → session issued", async () => {
+    // The tx cookie is a signed session token (`base64url({d,e}).signature`); decode the
+    // payload to read the nonce the server stored, so we can mint a matching id_token.
+    const idToken = await idp.mintIdToken({
+      iss: "https://idp.test",
+      aud: "client-123",
+      sub: "user-42",
+      email: "u@idp.test",
+      name: "Test User",
+      nonce: decodeTx(txPair).nonce,
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    });
+    let issued: string[] = [];
+    await withFetch(idpResponder(idp, idToken), async () => {
+      const cb = await run(
+        new Request(`${ORIGIN}/auth/callback/testidp?code=abc&state=${state}`, {
+          headers: { cookie: txPair },
+        }),
+        config,
+      );
+      assertEquals(cb.res!.status, 303);
+      issued = setCookies(cb.ctx);
+    });
+    assert(
+      issued.some((c) =>
+        c.startsWith("__Host-denext_auth=") && !c.startsWith("__Host-denext_auth=;")
+      ),
+      `a session cookie was issued; got: ${issued.join(" | ")}`,
+    );
+  });
 });
 
 Deno.test("OIDC callback rejects a mismatched state (CSRF)", async () => {
@@ -177,13 +189,10 @@ Deno.test("OIDC callback rejects a mismatched state (CSRF)", async () => {
   };
   // Mint a real, signed tx cookie via the signin step (state chosen by the server).
   const signin = await run(new Request(`${ORIGIN}/auth/signin/testidp`), config);
-  const txPair = setCookies(signin.ctx)
-    .find((c) => c.startsWith("__Host-denext_auth_tx="))!
-    .split(";")[0];
   // Callback whose `state` does not match the one inside the valid tx cookie.
   const cb = await run(
     new Request(`${ORIGIN}/auth/callback/testidp?code=abc&state=WRONG`, {
-      headers: { cookie: txPair },
+      headers: { cookie: txPairOf(signin.ctx) },
     }),
     config,
   );
@@ -323,32 +332,12 @@ Deno.test("auth() returns null when signed out", async () => {
 // log the victim in as the attacker (login CSRF). denext binds `state` to a signed
 // __Host- tx cookie and refuses any callback whose state/provider/code doesn't
 // match it (routes.ts:268) — no session is issued.
-Deno.test("CVE-2023-27490: an OAuth callback with a bad/absent/foreign state issues no session", async () => {
-  const config: AuthConfig = {
-    secret: "test-secret-value-at-least-32-chars-long",
-    canonicalOrigin: ORIGIN,
-    providers: [
-      oidcProvider(),
-      oidc({
-        id: "otheridp",
-        issuer: "https://other.test",
-        authorizationUrl: "https://other.test/authorize",
-        tokenUrl: "https://other.test/token",
-        jwksUrl: "https://other.test/jwks",
-        clientId: "client-xyz",
-        clientSecret: "shh2",
-      }),
-    ],
-  };
-  // A valid, server-signed tx cookie + its state (from a real signin to testidp).
-  const signin = await run(new Request(`${ORIGIN}/auth/signin/testidp`), config);
-  const authUrl = new URL(signin.res!.headers.get("location")!);
-  const state = authUrl.searchParams.get("state")!;
-  const txPair = setCookies(signin.ctx)
-    .find((c) => c.startsWith("__Host-denext_auth_tx="))!
-    .split(";")[0];
-
-  const bypasses: Array<{ label: string; url: string; cookie?: string }> = [
+/** The state-bypass shapes an attacker can send to the callback, for a real tx + state. */
+function stateBypasses(
+  state: string,
+  txPair: string,
+): Array<{ label: string; url: string; cookie?: string }> {
+  return [
     // No tx cookie at all — nothing to compare the state against.
     { label: "no tx cookie", url: `${ORIGIN}/auth/callback/testidp?code=abc&state=${state}` },
     // Valid tx, but the returned state doesn't match it (classic CSRF).
@@ -376,7 +365,31 @@ Deno.test("CVE-2023-27490: an OAuth callback with a bad/absent/foreign state iss
       cookie: txPair,
     },
   ];
-  for (const b of bypasses) {
+}
+
+Deno.test("CVE-2023-27490: an OAuth callback with a bad/absent/foreign state issues no session", async () => {
+  const config: AuthConfig = {
+    secret: "test-secret-value-at-least-32-chars-long",
+    canonicalOrigin: ORIGIN,
+    providers: [
+      oidcProvider(),
+      oidc({
+        id: "otheridp",
+        issuer: "https://other.test",
+        authorizationUrl: "https://other.test/authorize",
+        tokenUrl: "https://other.test/token",
+        jwksUrl: "https://other.test/jwks",
+        clientId: "client-xyz",
+        clientSecret: "shh2",
+      }),
+    ],
+  };
+  // A valid, server-signed tx cookie + its state (from a real signin to testidp).
+  const signin = await run(new Request(`${ORIGIN}/auth/signin/testidp`), config);
+  const authUrl = new URL(signin.res!.headers.get("location")!);
+  const state = authUrl.searchParams.get("state")!;
+
+  for (const b of stateBypasses(state, txPairOf(signin.ctx))) {
     const { res, ctx } = await run(
       new Request(b.url, b.cookie ? { headers: { cookie: b.cookie } } : undefined),
       config,
@@ -475,15 +488,6 @@ Deno.test("auth open-redirect: a hostile OAuth callbackUrl is coerced to a same-
     canonicalOrigin: ORIGIN,
     providers: [oidcProvider()],
   };
-  // Decode a signed tx cookie's payload to read the stored returnTo.
-  function txReturnTo(cookiePair: string): string | undefined {
-    const payloadB64 = cookiePair.split("=")[1].split(".")[0];
-    const b64 = payloadB64.replace(/-/g, "+").replace(/_/g, "/");
-    const pad = b64.length % 4 === 0 ? "" : "=".repeat(4 - (b64.length % 4));
-    return (JSON.parse(
-      new TextDecoder().decode(Uint8Array.from(atob(b64 + pad), (c) => c.charCodeAt(0))),
-    ) as { d: { returnTo?: string } }).d.returnTo;
-  }
   const cases: Array<[string, (v: string | undefined) => boolean]> = [
     ["https://evil.example/phish", (v) => v === "/" || v === undefined],
     ["//evil.example/x", (v) => v === "/evil.example/x"],
@@ -495,10 +499,7 @@ Deno.test("auth open-redirect: a hostile OAuth callbackUrl is coerced to a same-
       new Request(`${ORIGIN}/auth/signin/testidp?callbackUrl=${encodeURIComponent(callbackUrl)}`),
       config,
     );
-    const txPair = setCookies(signin.ctx)
-      .find((c) => c.startsWith("__Host-denext_auth_tx="))!
-      .split(";")[0];
-    const returnTo = txReturnTo(txPair);
+    const returnTo = decodeTx(txPairOf(signin.ctx)).returnTo;
     assert(
       ok(returnTo),
       `callbackUrl ${callbackUrl} stored a non-same-origin returnTo: ${returnTo}`,
@@ -534,4 +535,22 @@ Deno.test("session-fixation: login mints a fresh session and ignores a planted c
   assertStringIncludes(set, "Secure");
   assertStringIncludes(set, "Path=/");
   assert(!/;\s*Domain=/i.test(set), "no Domain attribute on a __Host- cookie");
+});
+
+Deno.test("denextAuth rejects an OAuth provider whose credential reads as an unset env var", () => {
+  const bad = oidc({
+    id: "badidp",
+    issuer: "https://idp.test",
+    authorizationUrl: "https://idp.test/authorize",
+    tokenUrl: "https://idp.test/token",
+    jwksUrl: "https://idp.test/jwks",
+    clientId: "client-123",
+    clientSecret: "undefined", // `String(Deno.env.get("MISSING"))`
+  });
+  assertThrows(
+    () => denextAuth({ ...credConfig(), providers: [bad] }),
+    Error,
+    "invalid clientSecret",
+  );
+  denextAuth(credConfig()); // restore the active config for any later test
 });

@@ -3,22 +3,10 @@
 // useDraggable). CI-excluded (needs npm + esbuild).
 
 import { assert, assertStringIncludes } from "@std/assert";
-import { buildNextCompatPages, renderNextCompatPage } from "../../src/build/next-compat-build.ts";
+import { renderNextCompatPage } from "../../src/build/next-compat-build.ts";
+import { buildCompatIndexPage, cacheNpm, writeCompatProject } from "./harness.ts";
 
-Deno.test("next-compat: @dnd-kit/core (DndContext + useDraggable) renders on denext", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "denext_ncdnd_" });
-  try {
-    await Deno.writeTextFile(
-      `${dir}/deno.json`,
-      JSON.stringify({ nodeModulesDir: "auto", imports: {} }),
-    );
-    await Deno.writeTextFile(
-      `${dir}/package.json`,
-      JSON.stringify({ dependencies: { "@dnd-kit/core": "6.3.1" } }),
-    );
-    await Deno.writeTextFile(
-      `${dir}/page.tsx`,
-      `import { createElement as h } from "react";
+const PAGE_SRC = `import { createElement as h } from "react";
 import { DndContext, useDraggable } from "@dnd-kit/core";
 function Item() {
   const { attributes, listeners, setNodeRef } = useDraggable({ id: "item-1" });
@@ -27,28 +15,18 @@ function Item() {
 export default function Page() {
   return h(DndContext, null, h("section", null, h(Item, null)));
 }
-`,
-    );
+`;
 
-    const install = await new Deno.Command(Deno.execPath(), {
-      args: [
-        "cache",
-        "--no-lock",
-        "--allow-scripts",
-        "--config",
-        `${dir}/deno.json`,
-        "npm:@dnd-kit/core@6.3.1",
-      ],
-      cwd: dir,
-    }).output();
+Deno.test("next-compat: @dnd-kit/core (DndContext + useDraggable) renders on denext", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_ncdnd_" });
+  try {
+    await writeCompatProject(dir, { "@dnd-kit/core": "6.3.1" });
+    await Deno.writeTextFile(`${dir}/page.tsx`, PAGE_SRC);
+
+    const install = await cacheNpm(dir, ["npm:@dnd-kit/core@6.3.1"], true);
     assert(install.success, "npm install failed");
 
-    const [page] = await buildNextCompatPages({
-      projectDir: dir,
-      configPath: `${dir}/deno.json`,
-      outDir: `${dir}/.denext`,
-      pages: [{ routePath: "/", filePath: `${dir}/page.tsx` }],
-    });
+    const [page] = await buildCompatIndexPage(dir);
     const html = await renderNextCompatPage(page, {}, "/c.js");
 
     // DndContext (heavy context) + useDraggable (hooks) rendered the draggable —

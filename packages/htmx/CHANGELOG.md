@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.11
+
+- Requires denext ≥ 2.0.0-rc.7: the plugin no longer imports `FRAGMENT` from the `denext/server` barrel (removed there in rc.7), so it links against rc.7's trimmed public surface.
+
 ## 2.0.10
 
 Initial release. First-class [htmx](https://htmx.org) support for denext as a

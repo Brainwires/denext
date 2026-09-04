@@ -20,6 +20,13 @@ The latest results live in [`REPORT.md`](./REPORT.md).
 | **2 — SSR throughput**      | Renders/second of equivalent component trees | One portable timing harness; denext under Deno, React under Node (both V8); streaming + string APIs                                 | moderate (GC)         |
 | **3 — Client runtime**      | Time-to-interactive and interaction latency  | Headless Chromium on each production build; the same `.on` hydration marker and counter drive both                                  | high (report p50/p95) |
 
+**Run it on an idle machine.** `deno task bench` refuses to start while the 1-minute load
+average is 2.0 or higher (it polls every 10 s, up to 30 min) — a run made behind a test
+suite or a build depresses both frameworks' absolute numbers and pollutes the committed
+baseline. `--max-load=N` changes the threshold; `--no-wait` skips the check (the load is
+still recorded in the report's provenance table). Never commit a `REPORT.md` whose
+"Load (1-min, at start)" is above 2.
+
 Plus a **load & memory tier** (`load/run.ts`, run via `deno task bench:load`):
 fires a high-volume burst of concurrent requests (default **5000** at
 concurrency **100**) at each framework's production server and reports

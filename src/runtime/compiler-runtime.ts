@@ -13,6 +13,21 @@ import { MEMO_CACHE_SENTINEL, useMemoCache } from "./hooks.ts";
 export { MEMO_CACHE_SENTINEL, useMemoCache };
 
 /**
+ * The AsyncContext helpers the `experimental.asyncContext` build transform's output
+ * imports: a scope per async function body, plus the `await` / `for await` / `yield`
+ * wrappers that carry the scope across each suspension point.
+ */
+export {
+  __asyncAwait,
+  __asyncIter,
+  __asyncResume,
+  __asyncScope,
+  __asyncScopeEnd,
+  __asyncYield,
+} from "./async-context.ts";
+export type { AsyncScope, Bindings } from "./async-context.ts";
+
+/**
  * Short alias for {@link useMemoCache} used in generated code (mirrors the React
  * Compiler's `_c`): `const $ = c(4);`.
  */

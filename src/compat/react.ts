@@ -319,36 +319,34 @@ export function cache<A extends unknown[], R>(fn: (...args: A) => R): (...args: 
     return r;
   };
 
+  /** The child node for one argument, created on first sight. */
+  const childFor = (node: Node, arg: unknown, persistent: boolean): Node => {
+    if (typeof arg === "object" && arg !== null || typeof arg === "function") {
+      node.objects ??= new WeakMap<object, Node>();
+      let next = node.objects.get(arg as object);
+      if (!next) node.objects.set(arg as object, next = newNode());
+      return next;
+    }
+    const primitives = node.primitives ??= new Map<unknown, Node>();
+    let next = primitives.get(arg);
+    if (!next) {
+      primitives.set(arg, next = newNode());
+      // Off-request only: bound the persistent memo so distinct primitive args
+      // can't accumulate without limit. Map preserves insertion order, so the
+      // oldest key is evicted first (LRU-ish). Request-scoped roots are left
+      // uncapped — they're freed with the request (React's semantics).
+      if (persistent && primitives.size > CACHE_MAX_PER_NODE) {
+        primitives.delete(primitives.keys().next().value);
+      }
+    }
+    return next;
+  };
+
   return (...args: A): R => {
     const root = rootFor();
     const persistent = isPersistent(root);
     let node = root;
-    for (const arg of args) {
-      if (typeof arg === "object" && arg !== null || typeof arg === "function") {
-        node.objects ??= new WeakMap<object, Node>();
-        let next = node.objects.get(arg as object);
-        if (!next) {
-          next = { hasValue: false, value: undefined as unknown as R };
-          node.objects.set(arg as object, next);
-        }
-        node = next;
-      } else {
-        const primitives = node.primitives ??= new Map<unknown, Node>();
-        let next = primitives.get(arg);
-        if (!next) {
-          next = { hasValue: false, value: undefined as unknown as R };
-          primitives.set(arg, next);
-          // Off-request only: bound the persistent memo so distinct primitive args
-          // can't accumulate without limit. Map preserves insertion order, so the
-          // oldest key is evicted first (LRU-ish). Request-scoped roots are left
-          // uncapped — they're freed with the request (React's semantics).
-          if (persistent && primitives.size > CACHE_MAX_PER_NODE) {
-            primitives.delete(primitives.keys().next().value);
-          }
-        }
-        node = next;
-      }
-    }
+    for (const arg of args) node = childFor(node, arg, persistent);
     if (!node.hasValue) {
       node.value = fn(...args);
       node.hasValue = true;
@@ -390,16 +388,7 @@ export function cloneElement(
   // Start from the original props, then overlay config — but pull key/ref out so they
   // never merge into the component-visible prop bag (React keeps them off props).
   const nextProps: Record<string, unknown> = { ...(element.props as Record<string, unknown>) };
-  let key = element.key;
-  let ref = (element.props as { ref?: unknown }).ref;
-  if (config != null) {
-    if (config.key !== undefined) key = config.key as Key;
-    if (config.ref !== undefined) ref = config.ref;
-    for (const k in config) {
-      if (k === "key" || k === "ref") continue;
-      nextProps[k] = config[k];
-    }
-  }
+  const { key, ref } = overlayConfig(nextProps, element, config);
   // Re-attach ref via props (denext threads ref through props.ref), and drop key from
   // props so it stays a top-level field only.
   if (ref !== undefined) nextProps.ref = ref;
@@ -409,26 +398,123 @@ export function cloneElement(
   return { ...element, props: nextProps, key: key ?? null };
 }
 
-function toChildArray(children: VNodeChildren): VNodeChild[] {
-  const out: VNodeChild[] = [];
-  const walk = (c: VNodeChild | VNodeChildren) => {
-    if (c == null || c === false || c === true) return;
-    if (Array.isArray(c)) c.forEach(walk);
-    else out.push(c as VNodeChild);
-  };
-  walk(children as VNodeChild);
-  return out;
+/** Overlay `config` onto `props` in place; `key`/`ref` are returned, not merged. */
+function overlayConfig(
+  props: Record<string, unknown>,
+  element: VNode,
+  config: Record<string, unknown> | undefined,
+): { key: Key | null | undefined; ref: unknown } {
+  let key = element.key;
+  let ref = (element.props as { ref?: unknown }).ref;
+  if (config == null) return { key, ref };
+  if (config.key !== undefined) key = config.key as Key;
+  if (config.ref !== undefined) ref = config.ref;
+  for (const k in config) {
+    if (k !== "key" && k !== "ref") props[k] = config[k];
+  }
+  return { key, ref };
 }
+
+// ── React.Children ─────────────────────────────────────────────────────────────
+// `map`/`toArray` reproduce React's `mapChildren` key scheme exactly: every element in
+// the output is a clone keyed by its POSITION — `.` + (its escaped user key `$k`, else
+// its base-36 index), `:` between nested-array levels — so a server render and a client
+// hydrate over the same tree derive byte-identical keys. A callback that returns an
+// element carrying a different key than its input prepends `<thatKey>/`, as React does.
+
+/** React's `getElementKey`: `$` + the user key (`=` → `=0`, `:` → `=2`), else the index. */
+function elementKey(child: VNodeChild, index: number): string {
+  const key = isValidElement(child) ? child.key : null;
+  if (key == null) return index.toString(36);
+  return "$" + String(key).replace(/[=:]/g, (m) => (m === "=" ? "=0" : "=2"));
+}
+
+/** React's `escapeUserProvidedKey`: double every `/` run so it can't read as a separator. */
+const escapeKeyPrefix = (text: string): string => text.replace(/\/+/g, "$&/");
+
+/** React treats `undefined` and booleans as an empty (`null`) leaf — the callback still runs. */
+const asLeaf = (c: unknown): VNodeChild =>
+  c === undefined || typeof c === "boolean" ? null : (c as VNodeChild);
+
+/** A non-array, non-string iterable (a `Set`, a generator) React flattens like an array. */
+function iterableChildren(c: unknown): Iterable<VNodeChild> | null {
+  if (c == null || typeof c !== "object" || Array.isArray(c)) return null;
+  const it = (c as { [Symbol.iterator]?: unknown })[Symbol.iterator];
+  return typeof it === "function" ? (c as Iterable<VNodeChild>) : null;
+}
+
+type ChildMapper = (child: VNodeChild, index: number) => unknown;
+
+/** The accumulator threaded through one `mapChildren` walk. */
+interface MapWalk {
+  out: unknown[];
+  fn: ChildMapper;
+  /** Running leaf index handed to `fn`. */
+  count: number;
+}
+
+/**
+ * Clone `mapped` under React's combined key: `prefix` + (`<own key>/` when it differs
+ * from the input's) + `childKey`.
+ */
+function rekey(mapped: VNode, child: VNodeChild, prefix: string, childKey: string): VNode {
+  const inputKey = isValidElement(child) ? child.key : null;
+  const own = mapped.key != null && mapped.key !== inputKey
+    ? escapeKeyPrefix(String(mapped.key)) + "/"
+    : "";
+  return cloneElement(mapped, { key: prefix + own + childKey });
+}
+
+/**
+ * React's `mapIntoArray`: walk `children`, call `walk.fn` on every leaf, and push the
+ * re-keyed results onto `walk.out`. `prefix` is the escaped key prefix inherited from an
+ * enclosing callback-returned array; `name` is the positional name accumulated so far.
+ */
+function mapIntoArray(children: VNodeChildren, prefix: string, name: string, walk: MapWalk): void {
+  const list = Array.isArray(children) ? children : iterableChildren(children);
+  if (list) {
+    const next = name === "" ? "." : name + ":";
+    let i = 0;
+    for (const c of list) mapIntoArray(c, prefix, next + elementKey(c, i++), walk);
+    return;
+  }
+  const leaf = asLeaf(children);
+  if (leaf !== null && typeof leaf === "object" && !isValidElement(leaf)) {
+    throw new Error(
+      "Objects are not valid as a React child (found: object). If you meant to render a " +
+        "collection of children, use an array instead.",
+    );
+  }
+  // A lone top-level child is named as if it were wrapped in an array (so does React).
+  const childKey = name === "" ? "." + elementKey(leaf, 0) : name;
+  const mapped = walk.fn(leaf, walk.count++);
+  if (Array.isArray(mapped)) {
+    const sub: MapWalk = { out: walk.out, fn: (c) => c, count: 0 };
+    mapIntoArray(mapped as VNodeChildren, escapeKeyPrefix(childKey) + "/", "", sub);
+  } else if (mapped != null) {
+    walk.out.push(isValidElement(mapped) ? rekey(mapped, leaf, prefix, childKey) : mapped);
+  }
+}
+
+/** React's `mapChildren`: flatten, call `fn` per leaf, and re-key every element result. */
+function mapChildren(children: VNodeChildren, fn: ChildMapper): unknown[] {
+  const walk: MapWalk = { out: [], fn, count: 0 };
+  mapIntoArray(children, "", "", walk);
+  return walk.out;
+}
+
+/** True when `children` is a single valid element — what `Children.only` accepts. */
+const isOnlyChild = (c: unknown): c is VNode => isValidElement(c);
 
 /** The `React.Children` utility surface. */
 export interface ChildrenApi {
-  /** Map over children (flattening arrays/holes). */
+  /** Map over children (flattening arrays/iterables); element results are re-keyed by position. */
   map<T>(children: VNodeChildren, fn: (child: VNodeChild, index: number) => T): T[];
-  /** Iterate over children. */
+  /** Iterate over children (holes are visited as `null`, like React). */
   forEach(children: VNodeChildren, fn: (child: VNodeChild, index: number) => void): void;
-  /** Count the children. */
+  /** Count the leaves, holes included (React counts `[null, "a"]` as 2). */
   count(children: VNodeChildren): number;
-  /** Children as a flat array. */
+  /** Children as a flat array; every element is a clone keyed by its position. */
   toArray(children: VNodeChildren): VNodeChild[];
   /** The single child, or throw. */
   only(children: VNodeChildren): VNodeChild;
@@ -436,27 +522,35 @@ export interface ChildrenApi {
 
 /** `React.Children` utilities over denext children. */
 export const Children: ChildrenApi = {
-  /** Map over children (flattening arrays/holes), like `React.Children.map`. */
+  /**
+   * Map over children, like `React.Children.map`: arrays and iterables are flattened, the
+   * callback also runs for `null`/`undefined`/boolean leaves (as `null`), and `null`/
+   * `undefined` results are dropped. `null`/`undefined` children return them unchanged.
+   */
   map<T>(children: VNodeChildren, fn: (child: VNodeChild, index: number) => T): T[] {
-    return toChildArray(children).map(fn);
+    if (children == null) return children as unknown as T[];
+    return mapChildren(children, fn) as T[];
   },
-  /** Iterate over children, like `React.Children.forEach`. */
+  /** Iterate over children, like `React.Children.forEach` (no cloning). */
   forEach(children: VNodeChildren, fn: (child: VNodeChild, index: number) => void): void {
-    toChildArray(children).forEach(fn);
+    mapChildren(children, (c, i) => void fn(c, i));
   },
   /** Count the children, like `React.Children.count`. */
   count(children: VNodeChildren): number {
-    return toChildArray(children).length;
+    let n = 0;
+    Children.forEach(children, () => void n++);
+    return n;
   },
-  /** Children as a flat array, like `React.Children.toArray`. */
+  /** Children as a flat array, like `React.Children.toArray` (elements re-keyed). */
   toArray(children: VNodeChildren): VNodeChild[] {
-    return toChildArray(children);
+    return mapChildren(children, (c) => c) as VNodeChild[];
   },
-  /** The single child, or throw — like `React.Children.only`. */
+  /** The single ELEMENT child (as authored), or throw — like `React.Children.only`. */
   only(children: VNodeChildren): VNodeChild {
-    const arr = toChildArray(children);
-    if (arr.length !== 1) throw new Error("React.Children.only expected exactly one child");
-    return arr[0];
+    if (!isOnlyChild(children)) {
+      throw new Error("React.Children.only expected to receive a single React element child.");
+    }
+    return children;
   },
 };
 

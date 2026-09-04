@@ -63,7 +63,7 @@ export interface I18nDomain {
 }
 
 /** Match a request `host` against the configured `i18n.domains` (port-stripped, case-insensitive). */
-export function matchDomain(i18n: I18nConfig, host?: string): I18nDomain | undefined {
+function matchDomain(i18n: I18nConfig, host?: string): I18nDomain | undefined {
   if (!i18n.domains || !host) return undefined;
   const h = host.toLowerCase().replace(/:\d+$/, "");
   return i18n.domains.find((d) => d.domain.toLowerCase() === h);

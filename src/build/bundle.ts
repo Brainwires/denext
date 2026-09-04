@@ -6,6 +6,7 @@
 // intact, which separate dynamic imports would break.
 
 import { basename, dirname, fromFileUrl, join, resolve, toFileUrl } from "@std/path";
+import { walk } from "@std/fs";
 import type { PageRoute } from "../router/manifest.ts";
 import type { BoundaryManifest } from "./module-graph.ts";
 
@@ -31,7 +32,7 @@ export function frameworkFileUrl(relative: string): string {
  * `fetch()` when the framework is served remotely (JSR). Lets the build read its own
  * `deno.json`/assets whether denext runs from disk or straight from JSR.
  */
-export async function readFrameworkText(relative: string): Promise<string> {
+async function readFrameworkText(relative: string): Promise<string> {
   const url = frameworkFileUrl(relative);
   if (url.startsWith("file://")) return await Deno.readTextFile(fromFileUrl(url));
   const res = await fetch(url);
@@ -218,40 +219,39 @@ export function routeServerModules(route: PageRoute): string[] {
  *   (`enablePerModuleRefresh`, which adds the reconciler's family-current substitution)
  *   instead of the whole-entry `enableFastRefresh`. Only meaningful with `dev`.
  */
-export function generateRouteEntry(route: PageRoute, dev = false, perModule = false): string {
-  const pageUrl = toFileUrl(route.filePath).href;
-  const layoutImports = route.layoutChain
-    .map((p, i) => `import Layout${i} from ${JSON.stringify(toFileUrl(p).href)};`)
-    .join("\n");
-  const templateImports = route.templateChain
-    .map((p, i) => `import Template${i} from ${JSON.stringify(toFileUrl(p).href)};`)
-    .join("\n");
+type SlotEntry = readonly [name: string, file: string];
 
-  const specialImports: string[] = [];
-  if (route.loading) {
-    specialImports.push(
-      `import Loading from ${JSON.stringify(toFileUrl(route.loading).href)};`,
-    );
-  }
-  if (route.error) {
-    specialImports.push(
-      `import ErrorComp from ${JSON.stringify(toFileUrl(route.error).href)};`,
-    );
-  }
-  // Parallel-route slots: for the isomorphic client bundle, render each slot's
-  // `default` (or its most-specific page). Per-URL slot matching + intercepts are
-  // resolved on the server (SSR/Flight); interactive slots use the Flight path.
-  const slotEntries = Object.entries(route.slots ?? {})
+/**
+ * Parallel-route slots: for the isomorphic client bundle, render each slot's `default`
+ * (or its most-specific page). Per-URL slot matching + intercepts are resolved on the
+ * server (SSR/Flight); interactive slots use the Flight path.
+ */
+function routeSlotEntries(route: PageRoute): SlotEntry[] {
+  return Object.entries(route.slots ?? {})
     .map(([name, slot]) => [name, slot.default ?? slot.pages[0]?.filePath] as const)
-    .filter(([, file]) => !!file);
-  const slotImports = slotEntries
-    .map(([, file], i) => `import Slot${i} from ${JSON.stringify(toFileUrl(file!).href)};`)
-    .join("\n");
-  const slotProps = slotEntries
+    .filter((e): e is SlotEntry => !!e[1]);
+}
+
+function importLine(ident: string, file: string): string {
+  return `import ${ident} from ${JSON.stringify(toFileUrl(file).href)};`;
+}
+
+/** The route entry's static imports: page, layouts, templates, slots, loading/error. */
+function routeEntryImports(route: PageRoute, slots: SlotEntry[]): string {
+  const lines = [importLine("Page", route.filePath)];
+  route.layoutChain.forEach((p, i) => lines.push(importLine(`Layout${i}`, p)));
+  route.templateChain.forEach((p, i) => lines.push(importLine(`Template${i}`, p)));
+  slots.forEach(([, file], i) => lines.push(importLine(`Slot${i}`, file)));
+  if (route.loading) lines.push(importLine("Loading", route.loading));
+  if (route.error) lines.push(importLine("ErrorComp", route.error));
+  return lines.join("\n");
+}
+
+/** Wrap the page innermost → outermost, mirroring the server's composition. */
+function routeEntryTree(route: PageRoute, slots: SlotEntry[]): string {
+  const slotProps = slots
     .map(([name], i) => `${JSON.stringify(name)}: h(Slot${i}, { params: data.params })`)
     .join(", ");
-
-  // Wrap innermost -> outermost, mirroring the server's composition.
   let wrap = "let tree = h(Page, { params: data.params, searchParams: sp });\n";
   if (route.loading) {
     wrap += "  tree = h(Suspense, { fallback: h(Loading, {}), children: tree });\n";
@@ -273,54 +273,68 @@ export function generateRouteEntry(route: PageRoute, dev = false, perModule = fa
     wrap +=
       `  tree = provideLayoutSegments({ pathname: location.pathname, depth: ${depth} }, tree);\n`;
   }
+  return wrap;
+}
 
-  // Fast Refresh (dev only): register each route-structural component under a
-  // stable family id (module URL + export) so a re-imported edit reconciles onto
-  // the existing fiber and preserves hook state, then enable the reconciler seam.
-  let refreshImport = "";
-  let refreshReg = "";
-  if (dev) {
-    // Also install the first-party DevTools (inspector + in-page panel). Imported only
-    // here in dev, so it never enters a production bundle.
-    if (perModule) {
-      // Unbundled dev server: each source module is served (and re-imported) on its
-      // own, so the PER-MODULE footer (spaRefreshPlugin/refreshFooter) registers each
-      // component under its export-named family id. The entry must NOT also register
-      // them under `#default` — that second registration would win on `familiesByType`
-      // and shadow the footer's, so an edit's re-registration (keyed by export name)
-      // would never reach the ref the tree actually rendered. Just enable the seam.
-      refreshImport = `import { enablePerModuleRefresh, installDevtools } from "denext/client";\n`;
-      refreshReg = `enablePerModuleRefresh();\ninstallDevtools();\n`;
-    } else {
-      refreshImport =
-        `import { enableFastRefresh, registerFamily, installDevtools } from "denext/client";\n`;
-      const fam = (ident: string, file: string) =>
-        `registerFamily(${ident}, ${JSON.stringify(toFileUrl(file).href + "#default")});`;
-      const lines = [fam("Page", route.filePath)];
-      route.layoutChain.forEach((p, i) => lines.push(fam(`Layout${i}`, p)));
-      route.templateChain.forEach((p, i) => lines.push(fam(`Template${i}`, p)));
-      if (route.loading) lines.push(fam("Loading", route.loading));
-      if (route.error) lines.push(fam("ErrorComp", route.error));
-      slotEntries.forEach(([, file], i) => lines.push(fam(`Slot${i}`, file!)));
-      refreshReg = `enableFastRefresh();\ninstallDevtools();\n${lines.join("\n")}\n`;
-    }
+/**
+ * Fast Refresh imports + setup (dev only). Bundled mode registers each route-structural
+ * component under a stable family id (module URL + export) so a re-imported edit
+ * reconciles onto the existing fiber and preserves hook state, then enables the seam.
+ * Unbundled (per-module) mode: each source module is served (and re-imported) on its own,
+ * so the PER-MODULE footer (spaRefreshPlugin/refreshFooter) registers each component under
+ * its export-named family id. The entry must NOT also register them under `#default` —
+ * that second registration would win on `familiesByType` and shadow the footer's, so an
+ * edit's re-registration (keyed by export name) would never reach the ref the tree
+ * actually rendered. Just enable the seam. Both also install the first-party DevTools
+ * (inspector + in-page panel), imported only here in dev so it never ships in production.
+ */
+function routeRefreshBlock(
+  route: PageRoute,
+  slots: SlotEntry[],
+  dev: boolean,
+  perModule: boolean,
+): { refreshImport: string; refreshReg: string } {
+  if (!dev) return { refreshImport: "", refreshReg: "" };
+  if (perModule) {
+    return {
+      refreshImport:
+        `import { enablePerModuleRefresh } from "denext/client-runtime";\nimport { installDevtools } from "denext/devtools";\n`,
+      refreshReg: `enablePerModuleRefresh();\ninstallDevtools();\n`,
+    };
   }
-  // On a Fast Refresh re-import (marked by the dev client), a hydration/render
-  // error is unrecoverable in place — fall back to a full reload; on first load
-  // keep the async-server-component skip.
-  const catchBody = dev
-    ? `if (window.__denextRefreshing) location.reload();
-    else console.warn("denext: skipping hydration for this route:", err && err.message);`
-    : `console.warn("denext: skipping hydration for this route:", err && err.message);`;
+  const fam = (ident: string, file: string) =>
+    `registerFamily(${ident}, ${JSON.stringify(toFileUrl(file).href + "#default")});`;
+  const lines = [fam("Page", route.filePath)];
+  route.layoutChain.forEach((p, i) => lines.push(fam(`Layout${i}`, p)));
+  route.templateChain.forEach((p, i) => lines.push(fam(`Template${i}`, p)));
+  if (route.loading) lines.push(fam("Loading", route.loading));
+  if (route.error) lines.push(fam("ErrorComp", route.error));
+  slots.forEach(([, file], i) => lines.push(fam(`Slot${i}`, file)));
+  return {
+    refreshImport:
+      `import { enableFastRefresh, registerFamily } from "denext/client-runtime";\nimport { installDevtools } from "denext/devtools";\n`,
+    refreshReg: `enableFastRefresh();\ninstallDevtools();\n${lines.join("\n")}\n`,
+  };
+}
 
+/**
+ * The hydration `catch` body. On a Fast Refresh re-import (marked by the dev client), a
+ * hydration/render error is unrecoverable in place — fall back to a full reload; on first
+ * load keep the warning (async-server-component skip / flight failure).
+ */
+function hydrationCatch(dev: boolean, message: string): string {
+  const warn = `console.warn(${JSON.stringify(message)}, err && err.message);`;
+  return dev ? `if (window.__denextRefreshing) location.reload();\n    else ${warn}` : warn;
+}
+
+export function generateRouteEntry(route: PageRoute, dev = false, perModule = false): string {
+  const slots = routeSlotEntries(route);
+  const { refreshImport, refreshReg } = routeRefreshBlock(route, slots, dev, perModule);
   return `// denext generated route entry — do not edit.
-import { startClient, Suspense, ErrorBoundary, provideLayoutSegments } from "denext/client";
+import { startClient, provideLayoutSegments } from "denext/client-runtime";
+import { Suspense, ErrorBoundary } from "denext/client";
 import { h } from "denext/jsx-runtime";
-${refreshImport}import Page from ${JSON.stringify(pageUrl)};
-${layoutImports}
-${templateImports}
-${slotImports}
-${specialImports.join("\n")}
+${refreshImport}${routeEntryImports(route, slots)}
 ${refreshReg}
 function main() {
   const el = document.getElementById("__denext");
@@ -330,11 +344,11 @@ function main() {
     ? JSON.parse(dataEl.textContent || "{}")
     : { params: {}, searchParams: "" };
   const sp = new URLSearchParams(data.searchParams || "");
-  ${wrap}
+  ${routeEntryTree(route, slots)}
   try {
     startClient(el, tree);
   } catch (err) {
-    ${catchBody}
+    ${hydrationCatch(dev, "denext: skipping hydration for this route:")}
   }
 }
 
@@ -353,72 +367,103 @@ main();
  * @param dev When true, emit Fast Refresh registration for client islands (dev only).
  * @returns The generated entry module source.
  */
-export function generateFlightEntry(
-  boundary: BoundaryManifest,
-  dev = false,
-  perModule = false,
-): string {
-  const entries = [...boundary.client.entries()];
-  const imports = entries
-    .map(([, ref], i) => `import * as M${i} from ${JSON.stringify(ref.url)};`)
-    .join("\n");
-  const registrations = entries
-    .map(([clientId], i) => `  reg(M${i}, ${JSON.stringify(clientId)});`)
-    .join("\n");
-
-  // Fast Refresh (dev only): register each client island's exports as a family so an
-  // edited island preserves state. Two modes:
-  //  - bundled: the whole flight entry is re-imported on refresh, so it registers
-  //    each export under its client-reference id (`clientId#k`) here.
-  //  - perModule (unbundled): each island module is served on its OWN @fs URL with the
-  //    per-module footer that registers `moduleUrl#k`, and only that module is
-  //    re-imported on edit. The entry must NOT also register under `clientId#k` — a
-  //    second family would shadow the footer's on `familiesByType`, so the edit's
-  //    re-registration would never reach the ref the tree rendered. Just enable the
-  //    seam; the flight `registry` (clientId#k -> fn, for Flight parsing) is separate
-  //    from the fiber family and is still built below in both modes.
-  const refreshImport = !dev
-    ? ""
-    : perModule
-    ? `import { enablePerModuleRefresh, installDevtools } from "denext/client";\n`
-    : `import { enableFastRefresh, registerFamily, installDevtools } from "denext/client";\n`;
-  const regFamily = dev && !perModule ? '    registerFamily(mod[k], clientId + "#" + k);\n' : "";
-  const enableRefresh = !dev
-    ? ""
-    : perModule
-    ? "enablePerModuleRefresh();\ninstallDevtools();\n"
-    : "enableFastRefresh();\ninstallDevtools();\n";
-
-  return `// denext generated Flight entry — do not edit.
-import { startClient, parseFlight, setFlightParser, navigate } from "denext/client";
-import { Live, configureLive } from "denext/live";
-${refreshImport}
-const registry = new Map();
-function reg(mod, clientId) {
-  for (const k of Object.keys(mod)) {
-    if (typeof mod[k] === "function") {
-      registry.set(clientId + "#" + k, mod[k]);
-${regFamily}    }
+/**
+ * Whether any source file under `rootDir` imports `denext/live` — the build-time
+ * signal that decides if the Flight entry bundles the Live WebSocket transport
+ * (see {@linkcode generateFlightEntry}'s `usesLive`). A deliberate
+ * over-approximation: it keeps Live whenever the specifier appears anywhere (the
+ * substring also matches the full `@denext/denext/live` JSR form), and only drops
+ * it when the app never mentions live at all — so it can never false-drop a live
+ * feature. Early-returns on the first match; skips `.denext`/`node_modules`/`.git`.
+ * `extraFiles` are modules outside `rootDir` (sibling workspace packages the routes
+ * import) that must be checked too.
+ */
+export async function appImportsLive(rootDir: string, extraFiles: string[] = []): Promise<boolean> {
+  for (const file of extraFiles) {
+    if ((await Deno.readTextFile(file).catch(() => "")).includes("denext/live")) return true;
   }
+  for await (
+    const entry of walk(rootDir, {
+      exts: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
+      includeDirs: false,
+      skip: [/[/\\]\.denext[/\\]/, /[/\\]node_modules[/\\]/, /[/\\]\.git[/\\]/],
+    })
+  ) {
+    if ((await Deno.readTextFile(entry.path)).includes("denext/live")) return true;
+  }
+  return false;
 }
-${imports}
-${enableRefresh}${registrations}
-// The framework <Live> island resolves through the same registry.
-registry.set("denext#Live", Live);
 
-// Register the soft-nav Flight parser so a client navigation to another Flight
-// route reconstructs its tree through this app-wide registry (no bundle re-run).
-setFlightParser((flight) => parseFlight(flight, registry));
+/**
+ * Fast Refresh (dev only) for the Flight entry: register each client island's exports as
+ * a family so an edited island preserves state. Two modes:
+ *  - bundled: the whole flight entry is re-imported on refresh, so it registers each
+ *    export under its client-reference id (`clientId#k`) via `regFamily`.
+ *  - perModule (unbundled): each island module is served on its OWN @fs URL with the
+ *    per-module footer that registers `moduleUrl#k`, and only that module is re-imported
+ *    on edit. The entry must NOT also register under `clientId#k` — a second family would
+ *    shadow the footer's on `familiesByType`, so the edit's re-registration would never
+ *    reach the ref the tree rendered. Just enable the seam; the flight `registry`
+ *    (clientId#k -> fn, for Flight parsing) is separate from the fiber family and is
+ *    still built in both modes.
+ */
+function flightRefreshBlock(
+  dev: boolean,
+  perModule: boolean,
+): { refreshImport: string; regFamily: string; enableRefresh: string } {
+  if (!dev) return { refreshImport: "", regFamily: "", enableRefresh: "" };
+  const devtools = `import { installDevtools } from "denext/devtools";\n`;
+  if (perModule) {
+    return {
+      refreshImport: `import { enablePerModuleRefresh } from "denext/client-runtime";\n` + devtools,
+      regFamily: "",
+      enableRefresh: "enablePerModuleRefresh();\ninstallDevtools();\n",
+    };
+  }
+  return {
+    refreshImport: `import { enableFastRefresh, registerFamily } from "denext/client-runtime";\n` +
+      devtools,
+    regFamily: '    registerFamily(mod[k], clientId + "#" + k);\n',
+    enableRefresh: "enableFastRefresh();\ninstallDevtools();\n",
+  };
+}
 
-// Live Server Components: parse pushed boundary payloads through the app registry,
+/**
+ * Live Server Components ship the WebSocket transport (live-client + presence + data
+ * subscriptions). It is pulled in ONLY when the app actually uses a live feature
+ * (`usesLive`, a build-time scan for the `denext/live` specifier) — a Flight app that
+ * never renders `<Live>`/`useLiveData` bundles none of it. The decision is build-time,
+ * not runtime, because the Flight entry is app-wide: a soft navigation into a live route
+ * reconstructs its tree through this same registry, so `Live` must already be registered
+ * whenever any route uses it. `navigate` is imported only when `configureLive` (its sole
+ * user here) is emitted.
+ */
+function flightLiveBlock(usesLive: boolean) {
+  const clientImport =
+    `import { startClient, parseFlight, setFlightParser } from "denext/client-runtime";${
+      usesLive ? `\nimport { navigate } from "denext/client";` : ""
+    }`;
+  if (!usesLive) return { clientImport, liveImport: "", liveRegister: "", liveConfigure: "" };
+  return {
+    clientImport,
+    liveImport: `import { Live, configureLive } from "denext/live";\n`,
+    liveRegister:
+      `\n// The framework <Live> island resolves through the same registry.\nregistry.set("denext#Live", Live);\n`,
+    liveConfigure:
+      `// Live Server Components: parse pushed boundary payloads through the app registry,
 // and refresh the current route for coarse updates. No socket opens until a <Live>
 // boundary mounts.
 configureLive({
   parse: (flight) => parseFlight(flight, registry),
   refresh: () => navigate(location.href, { history: false }),
 });
+`,
+  };
+}
 
-function main() {
+/** The Flight entry's `main()`: read the island, adopt signal state, hydrate, boot resumability. */
+function flightMain(catchBody: string): string {
+  return `function main() {
   const el = document.getElementById("__denext");
   const flightEl = document.getElementById("__denext_flight");
   if (!el || !flightEl) return;
@@ -452,12 +497,7 @@ function main() {
   try {
     startClient(el, tree);
   } catch (err) {
-    ${
-    dev
-      ? `if (window.__denextRefreshing) location.reload();
-    else console.warn("denext: flight hydration failed:", err && err.message);`
-      : `console.warn("denext: flight hydration failed:", err && err.message);`
-  }
+    ${catchBody}
   }
   // Resumability runtime — deferred (client:*) island hydration AND delegated qrl
   // dispatch (data-dnx-h handlers that run without hydration). Lives in a separate
@@ -469,7 +509,43 @@ function main() {
       .catch((err) => console.warn("denext: resumability boot failed:", err && err.message));
   }
 }
+`;
+}
 
+export function generateFlightEntry(
+  boundary: BoundaryManifest,
+  dev = false,
+  perModule = false,
+  usesLive = true,
+): string {
+  const entries = [...boundary.client.entries()];
+  const imports = entries
+    .map(([, ref], i) => `import * as M${i} from ${JSON.stringify(ref.url)};`)
+    .join("\n");
+  const registrations = entries
+    .map(([clientId], i) => `  reg(M${i}, ${JSON.stringify(clientId)});`)
+    .join("\n");
+  const { refreshImport, regFamily, enableRefresh } = flightRefreshBlock(dev, perModule);
+  const { clientImport, liveImport, liveRegister, liveConfigure } = flightLiveBlock(usesLive);
+  return `// denext generated Flight entry — do not edit.
+${clientImport}
+${liveImport}${refreshImport}
+const registry = new Map();
+function reg(mod, clientId) {
+  for (const k of Object.keys(mod)) {
+    if (typeof mod[k] === "function") {
+      registry.set(clientId + "#" + k, mod[k]);
+${regFamily}    }
+  }
+}
+${imports}
+${enableRefresh}${registrations}${liveRegister}
+// Register the soft-nav Flight parser so a client navigation to another Flight
+// route reconstructs its tree through this app-wide registry (no bundle re-run).
+setFlightParser((flight) => parseFlight(flight, registry));
+
+${liveConfigure}
+${flightMain(hydrationCatch(dev, "denext: flight hydration failed:"))}
 main();
 `;
 }
@@ -492,6 +568,14 @@ export interface BundleOptions {
    * production `denext build`, so its entries carry none of the refresh runtime.
    */
   dev?: boolean;
+  /**
+   * Whether the app uses any Live Server Components feature (from an
+   * {@linkcode appImportsLive} scan). When false, the generated Flight entry omits
+   * the `denext/live` import and its WebSocket transport — so a Flight app that
+   * never renders `<Live>`/`useLiveData` bundles none of it. Defaults to `true`
+   * (safe: keep Live) when unset — dev and callers that don't scan.
+   */
+  usesLive?: boolean;
 }
 
 /**
@@ -509,7 +593,7 @@ export function generateServerStub(moduleId: string, exports: string[]): string 
       ? `export default clientActionStub(${JSON.stringify(moduleId + "#default")});`
       : `export const ${name} = clientActionStub(${JSON.stringify(moduleId + "#" + name)});`
   );
-  return `import { clientActionStub } from "denext/client";\n${lines.join("\n")}\n`;
+  return `import { clientActionStub } from "denext/client-runtime";\n${lines.join("\n")}\n`;
 }
 
 /**
@@ -533,12 +617,15 @@ export async function bundleFlightEntry(
       await Deno.writeTextFile(stubPath, generateServerStub(moduleId, ref.exports));
       importMap[ref.url] = toFileUrl(stubPath).href;
     }
-    return await bundleSourceFiles(generateFlightEntry(boundary, opts.dev), {
-      configPath: opts.configPath,
-      minify: opts.minify,
-      // Merge any CSS redirects from the caller with the server-stub redirects.
-      importMap: { ...opts.importMap, ...importMap },
-    });
+    return await bundleSourceFiles(
+      generateFlightEntry(boundary, opts.dev, false, opts.usesLive ?? true),
+      {
+        configPath: opts.configPath,
+        minify: opts.minify,
+        // Merge any CSS redirects from the caller with the server-stub redirects.
+        importMap: { ...opts.importMap, ...importMap },
+      },
+    );
   } finally {
     await Deno.remove(stubDir, { recursive: true });
   }
@@ -575,6 +662,32 @@ export function entryCode(output: BundleOutput): string {
  * config elsewhere. Bare specifiers (jsr:, npm:, https:, and already-absolute
  * file URLs) pass through unchanged.
  */
+/**
+ * The import-map PREFIX aliases of a deno config (`"~/": "./src/"` → `["~/", absDir]`), for
+ * resolving alias imports the way `denext migrate` emits them. A value may be an absolute
+ * `file://` URL or a relative `./`/`../` path (resolved against the config's own directory);
+ * anything else (jsr:/npm:/https:) is not a directory alias. Empty when the config is absent
+ * or unparseable — only relative imports resolve then.
+ */
+export async function readAliasPrefixes(configPath: string): Promise<Array<[string, string]>> {
+  const out: Array<[string, string]> = [];
+  let imports: Record<string, unknown> = {};
+  try {
+    imports =
+      (JSON.parse(await Deno.readTextFile(configPath)) as { imports?: Record<string, unknown> })
+        .imports ?? {};
+  } catch {
+    return out;
+  }
+  const baseDir = dirname(configPath);
+  for (const [k, v] of Object.entries(imports)) {
+    if (typeof v !== "string" || !k.endsWith("/")) continue;
+    if (v.startsWith("file://")) out.push([k, fromFileUrl(v.endsWith("/") ? v : v + "/")]);
+    else if (v.startsWith("./") || v.startsWith("../")) out.push([k, resolve(baseDir, v)]);
+  }
+  return out;
+}
+
 export function absolutizeImports(
   imports: Record<string, string> | undefined,
   baseDir: string,
@@ -624,6 +737,11 @@ async function prepareConfig(tmpDir: string, opts: BundleOptions): Promise<strin
     // Same discipline for `denext/lazy`: the generated entry dynamically imports it
     // only when a page has client:* islands, so non-lazy apps bundle none of it.
     "denext/lazy": frameworkFileUrl("src/lazy.ts"),
+    // The GENERATED entries import their boot/HMR plumbing from `denext/client-runtime`
+    // and the dev inspector from `denext/devtools`; an app's own import map need not
+    // (and usually does not) list those subpaths, so resolve them against the framework.
+    "denext/client-runtime": frameworkFileUrl("src/client/client-runtime.ts"),
+    "denext/devtools": frameworkFileUrl("src/devtools.ts"),
     ...absolutizeImports(base.imports, dirname(configFsPath)),
     ...opts.importMap,
   };

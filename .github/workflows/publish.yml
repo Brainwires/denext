@@ -47,7 +47,7 @@ jobs:
       - name: Set up Deno
         uses: denoland/setup-deno@v2
         with:
-          deno-version: "2.9.5" # pinned for reproducible fmt/lint; bump deliberately and re-run `deno fmt`
+          deno-version: "2.9.6" # pinned for reproducible fmt/lint; bump deliberately and re-run `deno fmt`
 
       - name: Cache Deno dependencies
         uses: actions/cache@v5

@@ -48,7 +48,7 @@ export interface ClientEntryInput {
 }
 
 /** The specifier a bundled entry imports the shared runtime from. */
-export const RUNTIME_SPECIFIER = "@denext/pages-router/client-runtime";
+const RUNTIME_SPECIFIER = "@denext/pages-router/client-runtime";
 
 /**
  * Build the source of a route's browser hydration entry. Pass the result to
@@ -70,7 +70,7 @@ export function generateClientEntry(input: ClientEntryInput): string {
     // Dev only: register each component's Fast Refresh family, then enable it. A
     // hook-signature change triggers a full reload (enableFastRefresh's fallback).
     lines.push(
-      `import { enableFastRefresh, registerFamily } from "@denext/denext/client";`,
+      `import { enableFastRefresh, registerFamily } from "@denext/denext/client-runtime";`,
     );
     lines.push(`registerPage(${JSON.stringify(input.routePath)}, Page);`);
     lines.push(

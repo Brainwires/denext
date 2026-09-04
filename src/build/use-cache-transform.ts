@@ -24,16 +24,15 @@
 
 import { frameworkFileUrl } from "./bundle.ts";
 import {
+  absolutizeSpecifiers,
   applyEdits,
   type Ctx,
   type Edit,
-  encoder,
   endOf,
-  MARKER,
-  MARKER_LEN,
   type Node,
+  parseModule,
+  prologueEnd,
   startOf,
-  swcParse,
   walkAst,
 } from "./swc-ast.ts";
 
@@ -118,6 +117,102 @@ function unwrapParens(n: Node): Node {
   return cur;
 }
 
+/** The per-module rewrite state. */
+interface CacheState {
+  readonly ctx: Ctx;
+  readonly body: Node[];
+  readonly edits: Edit[];
+  readonly modId: string;
+  /** A module-top `"use cache"`: every function the module declares is cached. */
+  readonly moduleLevel: boolean;
+  anon: number;
+  wrappedAny: boolean;
+}
+
+function idFor(st: CacheState, name: string | undefined): string {
+  return `${st.modId}#${name ?? `anon${st.anon++}`}`;
+}
+
+function shouldCache(st: CacheState, fn: Node): boolean {
+  return st.moduleLevel || fnHasUseCache(fn);
+}
+
+/** Surround `[start, end)` of `fn` with `prefix` … `suffix` and mark the module changed. */
+function surround(st: CacheState, fn: Node, prefix: string, suffix: string): void {
+  st.edits.push({ start: startOf(st.ctx, fn), end: startOf(st.ctx, fn), text: prefix });
+  st.edits.push({ start: endOf(st.ctx, fn), end: endOf(st.ctx, fn), text: suffix });
+  st.wrappedAny = true;
+}
+
+/**
+ * Wrap a function *expression* (arrow / function expression) in place: it becomes
+ * `_dnxUseCache("id", <expr>, {})`, preserving the surrounding binding/export.
+ */
+function wrapExpr(st: CacheState, fn: Node, name: string | undefined): void {
+  surround(st, fn, `_dnxUseCache(${JSON.stringify(idFor(st, name))}, `, `, {})`);
+}
+
+/**
+ * Wrap a function *declaration* (`(export)? function name(){}`) by prefixing a
+ * `const name = _dnxUseCache("id", ` before it and `, {});` after — the trailing
+ * `function name(){}` becomes a named function expression argument. An `export`
+ * keyword, if present, sits before `fn` and is preserved (⇒ `export const name`).
+ */
+function wrapDecl(st: CacheState, fn: Node): void {
+  const name = fn.identifier?.value as string | undefined;
+  if (!name) return; // an anonymous declaration can't be re-bound by name
+  surround(st, fn, `const ${name} = _dnxUseCache(${JSON.stringify(idFor(st, name))}, `, `, {});`);
+}
+
+/** Wrap each cached function initializer of a `const`/`let`/`var` declaration. */
+function wrapVariableDecls(st: CacheState, decl: Node): void {
+  for (const d of decl.declarations ?? []) {
+    if (isFn(d.init) && shouldCache(st, d.init)) {
+      wrapExpr(st, d.init, d.id?.type === "Identifier" ? d.id.value : undefined);
+    }
+  }
+}
+
+/**
+ * `export default function [name](){}` (swc exposes it as `.decl`). Demoting a
+ * name-referenced default to an expression would break other references; bail in that
+ * (rare) case.
+ */
+function wrapDefaultDecl(st: CacheState, item: Node): void {
+  const decl = item.decl;
+  if (!isFn(decl) || !shouldCache(st, decl)) return;
+  const name = decl.identifier?.value as string | undefined;
+  if (name && referencedOutside(st.body, name, item)) return;
+  surround(st, decl, `_dnxUseCache(${JSON.stringify(idFor(st, name ?? "default"))}, `, `, {})`);
+}
+
+/** Wrap whatever cached functions a top-level item declares. */
+function wrapItem(st: CacheState, item: Node): void {
+  switch (item.type) {
+    case "FunctionDeclaration":
+      if (shouldCache(st, item)) wrapDecl(st, item);
+      return;
+    case "VariableDeclaration":
+      wrapVariableDecls(st, item);
+      return;
+    case "ExportDeclaration": {
+      const decl = item.declaration;
+      if (decl?.type === "FunctionDeclaration" && shouldCache(st, decl)) wrapDecl(st, decl);
+      else if (decl?.type === "VariableDeclaration") wrapVariableDecls(st, decl);
+      return;
+    }
+    case "ExportDefaultDeclaration":
+      wrapDefaultDecl(st, item);
+      return;
+    case "ExportDefaultExpression": {
+      // `export default <arrow|fnExpr>` (possibly parenthesized).
+      const expr = unwrapParens(item.expression);
+      if (isFn(expr) && shouldCache(st, expr)) wrapExpr(st, expr, "default");
+      return;
+    }
+  }
+}
+
 /**
  * Transform one module's source, wrapping each `"use cache"` function in a
  * `__useCache(...)` call. Returns the rewritten code and whether anything changed
@@ -139,150 +234,41 @@ export async function transformUseCache(
   moduleUrl: string,
   opts: { resolveSpecifier?: (absUrl: string) => string; alwaysRewriteImports?: boolean } = {},
 ): Promise<{ code: string; changed: boolean }> {
-  const resolveSpecifier = opts.resolveSpecifier ?? ((u) => u);
+  const identity = { code: source, changed: false };
   // Cheap pre-filter: with no directive text and no request to rewrite imports,
   // there is nothing to do (avoids parsing the vast majority of modules).
-  if (!opts.alwaysRewriteImports && !source.includes("use cache")) {
-    return { code: source, changed: false };
-  }
-
-  const parse = await swcParse();
-  let ast: Node;
-  try {
-    ast = await parse(MARKER + source);
-  } catch {
-    return { code: source, changed: false }; // unparseable → identity
-  }
-  if (!ast.body || ast.body.length === 0) return { code: source, changed: false };
-
-  const base = ast.body[0].span.start; // the marker sits at parsed byte 0
-  const ctx: Ctx = { bytes: encoder.encode(source), base: base + MARKER_LEN };
-  const body: Node[] = ast.body.slice(1); // drop the marker statement
-
-  const moduleLevel = moduleHasUseCache(body);
-  const modId = moduleId(moduleUrl);
-  const edits: Edit[] = [];
-  let anon = 0;
-  let wrappedAny = false;
-
-  const idFor = (name: string | undefined): string => `${modId}#${name ?? `anon${anon++}`}`;
-
-  // Wrap a function *expression* (arrow / function expression) in place: it becomes
-  // `_dnxUseCache("id", <expr>, {})`, preserving the surrounding binding/export.
-  const wrapExpr = (fn: Node, name: string | undefined): void => {
-    edits.push({
-      start: startOf(ctx, fn),
-      end: startOf(ctx, fn),
-      text: `_dnxUseCache(${JSON.stringify(idFor(name))}, `,
-    });
-    edits.push({ start: endOf(ctx, fn), end: endOf(ctx, fn), text: `, {})` });
-    wrappedAny = true;
+  if (!opts.alwaysRewriteImports && !source.includes("use cache")) return identity;
+  const parsed = await parseModule(source);
+  if (!parsed) return identity; // unparseable/empty → identity
+  const { ctx, body } = parsed;
+  const st: CacheState = {
+    ctx,
+    body,
+    edits: [],
+    modId: moduleId(moduleUrl),
+    moduleLevel: moduleHasUseCache(body),
+    anon: 0,
+    wrappedAny: false,
   };
-
-  // Wrap a function *declaration* (`(export)? function name(){}`) by prefixing a
-  // `const name = _dnxUseCache("id", ` before it and `, {});` after — the trailing
-  // `function name(){}` becomes a named function expression argument. An `export`
-  // keyword, if present, sits before `fn` and is preserved (⇒ `export const name`).
-  const wrapDecl = (fn: Node): void => {
-    const name = fn.identifier?.value as string | undefined;
-    if (!name) return; // an anonymous declaration can't be re-bound by name
-    edits.push({
-      start: startOf(ctx, fn),
-      end: startOf(ctx, fn),
-      text: `const ${name} = _dnxUseCache(${JSON.stringify(idFor(name))}, `,
-    });
-    edits.push({ start: endOf(ctx, fn), end: endOf(ctx, fn), text: `, {});` });
-    wrappedAny = true;
-  };
-
-  const shouldCache = (fn: Node): boolean => moduleLevel || fnHasUseCache(fn);
-
-  for (const item of body) {
-    if (item.type === "FunctionDeclaration") {
-      if (isFn(item) && shouldCache(item)) wrapDecl(item);
-    } else if (item.type === "VariableDeclaration") {
-      for (const d of item.declarations ?? []) {
-        if (isFn(d.init) && shouldCache(d.init)) {
-          wrapExpr(d.init, d.id?.type === "Identifier" ? d.id.value : undefined);
-        }
-      }
-    } else if (item.type === "ExportDeclaration") {
-      const decl = item.declaration;
-      if (decl?.type === "FunctionDeclaration") {
-        if (shouldCache(decl)) wrapDecl(decl);
-      } else if (decl?.type === "VariableDeclaration") {
-        for (const d of decl.declarations ?? []) {
-          if (isFn(d.init) && shouldCache(d.init)) {
-            wrapExpr(d.init, d.id?.type === "Identifier" ? d.id.value : undefined);
-          }
-        }
-      }
-    } else if (item.type === "ExportDefaultDeclaration") {
-      // `export default function [name](){}` — swc exposes it as `.decl`.
-      const decl = item.decl;
-      if (isFn(decl) && shouldCache(decl)) {
-        const name = decl.identifier?.value as string | undefined;
-        // Demoting a name-referenced default to an expression would break other
-        // references; bail in that (rare) case.
-        if (!name || !referencedOutside(body, name, item)) {
-          edits.push({
-            start: startOf(ctx, decl),
-            end: startOf(ctx, decl),
-            text: `_dnxUseCache(${JSON.stringify(idFor(name ?? "default"))}, `,
-          });
-          edits.push({ start: endOf(ctx, decl), end: endOf(ctx, decl), text: `, {})` });
-          wrappedAny = true;
-        }
-      }
-    } else if (item.type === "ExportDefaultExpression") {
-      // `export default <arrow|fnExpr>` (possibly parenthesized).
-      const expr = unwrapParens(item.expression);
-      if (isFn(expr) && shouldCache(expr)) wrapExpr(expr, "default");
-    }
-  }
-
+  for (const item of body) wrapItem(st, item);
   // Nothing to wrap and the caller didn't ask for a bare import rewrite ⇒ identity.
-  if (!wrappedAny && !opts.alwaysRewriteImports) return { code: source, changed: false };
-
-  // Rewrite relative import/export specifiers, resolved to absolute then mapped
-  // through `resolveSpecifier` (to a transformed sibling for transitive caching).
-  // The transformed module is written to a temp dir, so relative paths would
-  // otherwise break regardless.
-  let rewroteImport = false;
-  for (const item of body) {
-    const src = item.source;
-    if (src?.type !== "StringLiteral") continue;
-    const spec = src.value as string;
-    if (!spec.startsWith("./") && !spec.startsWith("../")) continue;
-    const abs = new URL(spec, moduleUrl).href;
-    const final = resolveSpecifier(abs);
-    edits.push({ start: startOf(ctx, src), end: endOf(ctx, src), text: JSON.stringify(final) });
-    rewroteImport = true;
-  }
-
-  // A bare-import-rewrite request that found no local imports to rewrite and wrapped
-  // nothing leaves the module byte-identical — report unchanged so the caller can
-  // import the original.
-  if (!wrappedAny && !rewroteImport) return { code: source, changed: false };
-
-  // Inject the runtime import (only when something was actually wrapped) after any
-  // leading directive prologue.
-  if (wrappedAny) {
-    let importAt = 0;
-    for (const item of body) {
-      if (item.type === "ExpressionStatement" && item.expression?.type === "StringLiteral") {
-        importAt = endOf(ctx, item);
-      } else break;
-    }
-    edits.push({
+  if (!st.wrappedAny && !opts.alwaysRewriteImports) return identity;
+  // Relative specifiers → absolute, mapped through `resolveSpecifier` (to a transformed
+  // sibling for transitive caching). A bare-import-rewrite request that found no local
+  // imports and wrapped nothing leaves the module byte-identical — report unchanged.
+  const rewroteImport = absolutizeSpecifiers(ctx, body, moduleUrl, st.edits, opts.resolveSpecifier);
+  if (!st.wrappedAny && !rewroteImport) return identity;
+  if (st.wrappedAny) {
+    // The runtime import goes after any leading directive prologue; order:-1 so it
+    // precedes a wrapper prefix inserted at the same offset (a cached function
+    // declaration at the very top of a prologue-less module).
+    const importAt = prologueEnd(ctx, body);
+    st.edits.push({
       start: importAt,
       end: importAt,
-      // order:-1 so the import precedes a wrapper prefix inserted at the same offset
-      // (a cached function declaration at the very top of a prologue-less module).
       order: -1,
       text: `\nimport { __useCache as _dnxUseCache } from ${JSON.stringify(runtimeUrl())};\n`,
     });
   }
-
-  return { code: applyEdits(ctx.bytes, edits), changed: true };
+  return { code: applyEdits(ctx.bytes, st.edits), changed: true };
 }

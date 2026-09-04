@@ -76,21 +76,20 @@ Deno.test("<Live> emits an island whose id path is the boundary id the client de
 
 function firstLiveNode(node: FlightNode): { p: unknown; c: FlightNode[] } | null {
   if (node === null || typeof node !== "object") return null;
-  if (Array.isArray(node)) {
-    for (const c of node) {
-      const f = firstLiveNode(c);
-      if (f) return f;
-    }
-    return null;
+  if (!Array.isArray(node) && node.$ === "c" && node.i === LIVE_REF_ID) {
+    return { p: node.p, c: node.c };
   }
-  if (node.$ === "c" && node.i === LIVE_REF_ID) return { p: node.p, c: node.c };
-  if (node.$ === "h" || node.$ === "c") {
-    for (const c of node.c) {
-      const f = firstLiveNode(c);
-      if (f) return f;
-    }
+  for (const c of childNodes(node)) {
+    const f = firstLiveNode(c);
+    if (f) return f;
   }
   return null;
+}
+
+/** An array's items, or a host/client node's children; a leaf has none. */
+function childNodes(node: FlightNode & object): FlightNode[] {
+  if (Array.isArray(node)) return node;
+  return node.$ === "h" || node.$ === "c" ? node.c : [];
 }
 
 // ---- WebSocket hub end-to-end ----------------------------------------------

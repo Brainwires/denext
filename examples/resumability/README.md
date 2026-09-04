@@ -36,12 +36,12 @@ buttons are the proof.
   `onClick`, `useEffect`. No `qrl`, no `client:*` directive.
 - `export const resumable = true` in `app/page.tsx` is the only change from a
   normal app.
-- The server carves each island into a foreign `<dnx-island>` the page root
-  never executes, and stamps handler hosts with `data-dnx-h`.
+- The server carves each island into a `<div data-dnx-island … style="display:contents">`
+  wrapper the page root never executes, and stamps handler hosts with `data-dnx-h`.
 - A single delegated listener resumes the touched island synchronously and
   **replays** the event, so the real (closure-capturing) handler fires.
   Effect-only islands are auto-scheduled on idle instead.
 
 `view-source:` the page: the counters are present as HTML with `data-dnx-h`,
-wrapped in `<dnx-island …>`, and the resumability runtime is a separate
-`lazy-*.js` chunk that a non-resumable app never loads.
+wrapped in `data-dnx-island` divs, and the resumability runtime is a separate
+`lazy.js` chunk that a non-resumable app never loads.

@@ -10,9 +10,9 @@
   **no `react`/`react-dom` package** (a drop-in aliases them; new code imports `denext`).
 - **No `package.json`/npm** — a `deno.json` with URL/`jsr:`/`npm:` imports; run with
   `deno task dev|build|start`.
-- Server-only helpers (`cookies`, `headers`, `redirect`, `revalidatePath`) come from
+- Server-only helpers (`cookies`, `headers`, `revalidatePath`) come from
   `denext/server`; client-only from `denext/client`.
-- File conventions are **identical to the Next.js App Router** (`app/page.tsx`,
+- File conventions are **the same as the Next.js App Router** (`app/page.tsx`,
   `app/layout.tsx`, `app/api/x/route.ts`, `app/blog/[slug]/page.tsx`, `middleware.ts`).
 - Route handlers return a web `Response`; use `Request`/`fetch`/`URL`/`Deno.env.get`.
 - Calls to your own API are type-checked: return `TypedResponse<T>` from a handler and use
@@ -29,7 +29,7 @@
 ## Tooling for agents
 
 - **MCP server** — `deno run -A jsr:@denext/denext/cli mcp`. Tools (derived from the live
-  registry so this never drifts): `denext_check_snippet`, `denext_import_map`, `denext_generate`, `denext_doctor`, `denext_codemod`, `denext_list_routes`, `denext_dev_logs`, `denext_render`, `denext_route_map`. It can lint a
+  registry so this never drifts): `denext_check_snippet`, `denext_import_map`, `denext_generate`, `denext_doctor`, `denext_codemod`, `denext_list_routes`, `denext_dev_logs`, `denext_render`, `denext_route_map`, `denext_search_docs`, `denext_index_codebase`, `denext_query_codebase`, `denext_find_definition`, `denext_find_references`. It can lint a
   snippet for Next-isms, map imports, scaffold, run doctor/codemod, list an app's routes, read a
   running dev server's errors + console, and render a route/component server-side.
 - **Migrate** a Next.js / Remix / Pages-Router app in one pass: `denext migrate`.

@@ -14,7 +14,11 @@ import { commandCwd, spawnDenoAndExit } from "../shared.ts";
  * positionals are files/dirs handed to `deno` (not a project dir), so cwd comes from
  * `--cwd` (or the real cwd). Never returns.
  */
-function runDeno(sub: string, ctx: CommandContext, leading: string[] = []): Promise<never> {
+function runDeno(
+  sub: string,
+  ctx: CommandContext,
+  leading: string[] = [],
+): Promise<never> {
   const args = [sub, ...leading];
   if (ctx.global.config) args.push("--config", ctx.global.config);
   // Passthrough verbs fold positionals + unknown flags into `rest` in original
@@ -41,7 +45,10 @@ export const lintCommand: CommandSpec = {
   name: "lint",
   summary: "Lint the app (deno lint)",
   passthrough: true,
-  positionals: [{ name: "paths", help: "Files/dirs to lint (default: project)" }],
+  positionals: [{
+    name: "paths",
+    help: "Files/dirs to lint (default: project)",
+  }],
   run: (ctx) => runDeno("lint", ctx),
 };
 
@@ -50,7 +57,10 @@ export const fmtCommand: CommandSpec = {
   summary: "Format the app (deno fmt)",
   passthrough: true,
   usage: "Forwards to `deno fmt`. Pass `--check` to verify without writing.",
-  positionals: [{ name: "paths", help: "Files/dirs to format (default: project)" }],
+  positionals: [{
+    name: "paths",
+    help: "Files/dirs to format (default: project)",
+  }],
   run: (ctx) => runDeno("fmt", ctx),
 };
 

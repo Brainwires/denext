@@ -9,7 +9,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import type { Page } from "@astral/astral";
-import { buildAndServe, launchBrowser } from "./harness.ts";
+import { buildAndServe, collectConsoleLogs, launchBrowser, type RunningServer } from "./harness.ts";
 
 /**
  * Poll a boolean `expr` in the page until it's truthy, or `ms` elapses. astral's
@@ -42,6 +42,86 @@ async function texts(
   return JSON.parse(String(json)) as string[];
 }
 
+async function stepServerHtml(server: RunningServer): Promise<void> {
+  const html = await (await fetch(server.origin + "/")).text();
+  assertStringIncludes(html, "data-dnx-island"); // islands carved out
+  assertStringIncludes(html, 'data-dnx-h="click"'); // handler hosts stamped
+  assertStringIncludes(html, 'id="__denext_islands"'); // deferred payload
+  // Every island (and the page shell) rendered exactly once on the server.
+  assertStringIncludes(html, "renders: 1");
+  assertStringIncludes(
+    html,
+    "page shell renders (server-only): <strong>1</strong>",
+  );
+}
+
+async function stepClockResumes(page: Page): Promise<void> {
+  // The effect island hydrates on idle and ticks — its badge climbs past 1.
+  await page.waitForFunction(
+    "document.querySelector('.badge.idle') && " +
+      "document.querySelector('.badge.idle').textContent.trim() !== 'renders: 1'",
+  );
+}
+
+async function stepCountersFrozen(page: Page): Promise<void> {
+  const badges = await texts(page, ".badge.live");
+  assertEquals(
+    badges,
+    ["renders: 1", "renders: 1", "renders: 1"],
+    badges.join(" | "),
+  );
+  const buttons = await texts(page, "button");
+  for (const b of buttons) assertStringIncludes(b, "Clicked 0");
+}
+
+async function stepClickResumesOne(page: Page): Promise<void> {
+  const first = await page.$("button");
+  assert(first, "counter button should exist");
+  await first.click();
+  await page.waitForFunction(
+    "document.querySelector('button').textContent.indexOf('Clicked 1') !== -1",
+  );
+
+  const badges = await texts(page, ".badge.live");
+  // The clicked counter re-rendered (>= 2); the untouched two stay frozen at 1.
+  assert(
+    badges[0] !== "renders: 1",
+    `clicked counter should climb, got ${badges[0]}`,
+  );
+  assertEquals(badges[1], "renders: 1");
+  assertEquals(badges[2], "renders: 1");
+
+  const buttons = await texts(page, "button");
+  assertStringIncludes(buttons[0], "Clicked 1 time");
+  assertStringIncludes(buttons[1], "Clicked 0");
+  assertStringIncludes(buttons[2], "Clicked 0");
+}
+
+async function stepShellServerOnly(page: Page): Promise<void> {
+  const shell = await page.evaluate(
+    "document.querySelector('.pagestat strong').textContent",
+  );
+  assertEquals(String(shell), "1");
+}
+
+function stepConsoleLogs(logs: string[]): void {
+  const joined = logs.join("\n");
+  assertStringIncludes(joined, "counter 1 resumed");
+  assertStringIncludes(joined, "clock resumed on idle");
+  assert(
+    !joined.includes("counter 2 resumed"),
+    "counter 2 must not have resumed",
+  );
+  assert(
+    !joined.includes("counter 3 resumed"),
+    "counter 3 must not have resumed",
+  );
+  assert(
+    !/hydration mismatch/i.test(joined),
+    `no hydration mismatch expected; logs:\n${joined}`,
+  );
+}
+
 Deno.test({
   name: "e2e: examples/resumability — no hydration on load, per-island resume, no mismatch",
   sanitizeOps: false,
@@ -53,109 +133,32 @@ Deno.test({
   try {
     await t.step(
       "server HTML carries the resumable payload, all islands at render 1",
-      async () => {
-        const html = await (await fetch(server.origin + "/")).text();
-        assertStringIncludes(html, "data-dnx-island"); // islands carved out
-        assertStringIncludes(html, 'data-dnx-h="click"'); // handler hosts stamped
-        assertStringIncludes(html, 'id="__denext_islands"'); // deferred payload
-        // Every island (and the page shell) rendered exactly once on the server.
-        assertStringIncludes(html, "renders: 1");
-        assertStringIncludes(
-          html,
-          "page shell renders (server-only): <strong>1</strong>",
-        );
-      },
+      () => stepServerHtml(server),
     );
 
     // Attach the console listener BEFORE navigating, so early messages (the clock's
     // idle-resume log, and any hydration-mismatch warning) are captured — they fire
     // right after load and would be missed if we listened only after newPage(url).
     const page = await browser.newPage();
-    const logs: string[] = [];
-    page.addEventListener("console", (e) => {
-      // deno-lint-ignore no-explicit-any
-      const d = (e as any).detail;
-      logs.push(String(d?.text ?? ""));
-    });
+    const logs = collectConsoleLogs(page);
     await page.goto(server.origin + "/", { waitUntil: "load" });
 
     await t.step(
       "the clock resumes on idle on its own (render count climbs)",
-      async () => {
-        // The effect island hydrates on idle and ticks — its badge climbs past 1.
-        await page.waitForFunction(
-          "document.querySelector('.badge.idle') && " +
-            "document.querySelector('.badge.idle').textContent.trim() !== 'renders: 1'",
-        );
-      },
+      () => stepClockResumes(page),
     );
-
     await t.step(
       "the counters did NOT hydrate on load — frozen at render 1",
-      async () => {
-        const badges = await texts(page, ".badge.live");
-        assertEquals(
-          badges,
-          ["renders: 1", "renders: 1", "renders: 1"],
-          badges.join(" | "),
-        );
-        const buttons = await texts(page, "button");
-        for (const b of buttons) assertStringIncludes(b, "Clicked 0");
-      },
+      () => stepCountersFrozen(page),
     );
-
-    await t.step("clicking one counter resumes only that island", async () => {
-      const first = await page.$("button");
-      assert(first, "counter button should exist");
-      await first.click();
-      await page.waitForFunction(
-        "document.querySelector('button').textContent.indexOf('Clicked 1') !== -1",
-      );
-
-      const badges = await texts(page, ".badge.live");
-      // The clicked counter re-rendered (>= 2); the untouched two stay frozen at 1.
-      assert(
-        badges[0] !== "renders: 1",
-        `clicked counter should climb, got ${badges[0]}`,
-      );
-      assertEquals(badges[1], "renders: 1");
-      assertEquals(badges[2], "renders: 1");
-
-      const buttons = await texts(page, "button");
-      assertStringIncludes(buttons[0], "Clicked 1 time");
-      assertStringIncludes(buttons[1], "Clicked 0");
-      assertStringIncludes(buttons[2], "Clicked 0");
-    });
-
+    await t.step("clicking one counter resumes only that island", () => stepClickResumesOne(page));
     await t.step(
       "the page shell (a Server Component) never ran on the client",
-      async () => {
-        const shell = await page.evaluate(
-          "document.querySelector('.pagestat strong').textContent",
-        );
-        assertEquals(String(shell), "1");
-      },
+      () => stepShellServerOnly(page),
     );
-
     await t.step(
       "console shows only the resumed islands, and NO hydration mismatch",
-      () => {
-        const joined = logs.join("\n");
-        assertStringIncludes(joined, "counter 1 resumed");
-        assertStringIncludes(joined, "clock resumed on idle");
-        assert(
-          !joined.includes("counter 2 resumed"),
-          "counter 2 must not have resumed",
-        );
-        assert(
-          !joined.includes("counter 3 resumed"),
-          "counter 3 must not have resumed",
-        );
-        assert(
-          !/hydration mismatch/i.test(joined),
-          `no hydration mismatch expected; logs:\n${joined}`,
-        );
-      },
+      () => stepConsoleLogs(logs),
     );
   } finally {
     await browser.close();
@@ -177,11 +180,7 @@ Deno.test({
   const browser = await launchBrowser();
   try {
     const page = await browser.newPage();
-    const logs: string[] = [];
-    page.addEventListener("console", (e) => {
-      // deno-lint-ignore no-explicit-any
-      logs.push(String((e as any).detail?.text ?? ""));
-    });
+    const logs = collectConsoleLogs(page);
     await page.goto(server.origin + "/", { waitUntil: "load" });
 
     // Soft-navigate via the in-app <Link> (no full reload).

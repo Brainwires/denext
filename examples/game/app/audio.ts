@@ -3,9 +3,11 @@
 // short original chiptune loop. Created lazily on the first user gesture (Play), to
 // satisfy browser autoplay rules.
 
+import type { SoundFx } from "./physics.ts";
+
 type Ctx = AudioContext;
 
-export class Sound {
+export class Sound implements SoundFx {
   private ctx: Ctx | null = null;
   private master: GainNode | null = null;
   private muted = false;
@@ -21,11 +23,15 @@ export class Sound {
       return;
     }
     const AC = (globalThis as { AudioContext?: typeof AudioContext }).AudioContext;
-    if (!AC) return;
-    this.ctx = new AC();
-    this.master = this.ctx.createGain();
+    if (AC) this.open(new AC());
+  }
+
+  /** Wire the master gain to a fresh context (muted state carries over). */
+  private open(ctx: Ctx): void {
+    this.ctx = ctx;
+    this.master = ctx.createGain();
     this.master.gain.value = this.muted ? 0 : 0.5;
-    this.master.connect(this.ctx.destination);
+    this.master.connect(ctx.destination);
   }
 
   setMuted(v: boolean): void {
@@ -120,18 +126,20 @@ export class Sound {
     const bass = [131, 131, 165, 131, 175, 131, 196, 165];
     const lead = [523, 0, 659, 0, 587, 0, 784, 659];
     this.timer = setInterval(() => {
-      if (!this.ctx || !this.musicOn) return;
-      while (this.nextNoteAt < this.ctx.currentTime + 0.2) {
-        const i = this.step % 8;
-        const dt = this.nextNoteAt - this.ctx.currentTime;
-        this.tone(bass[i], 0.22, "triangle", 0.22, undefined, Math.max(0, dt));
-        if (lead[i]) {
-          this.tone(lead[i], 0.12, "square", 0.12, undefined, Math.max(0, dt));
-        }
-        this.nextNoteAt += 0.16;
-        this.step++;
-      }
+      if (this.ctx && this.musicOn) this.scheduleNotes(this.ctx, bass, lead);
     }, 60) as unknown as number;
+  }
+
+  /** Queue every note due in the next 200 ms (the sequencer runs ahead of the clock). */
+  private scheduleNotes(ctx: Ctx, bass: number[], lead: number[]): void {
+    while (this.nextNoteAt < ctx.currentTime + 0.2) {
+      const i = this.step % 8;
+      const dt = Math.max(0, this.nextNoteAt - ctx.currentTime);
+      this.tone(bass[i], 0.22, "triangle", 0.22, undefined, dt);
+      if (lead[i]) this.tone(lead[i], 0.12, "square", 0.12, undefined, dt);
+      this.nextNoteAt += 0.16;
+      this.step++;
+    }
   }
 
   stopMusic(): void {

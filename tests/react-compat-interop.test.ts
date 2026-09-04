@@ -16,6 +16,7 @@ import * as ReactIs from "../src/compat/react-is.ts";
 import { StrictMode } from "../src/runtime/strict-mode.ts";
 import { createResource, Suspense } from "../src/runtime/suspense.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
+import { useId } from "../src/runtime/hooks.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -350,4 +351,14 @@ Deno.test("react-dom/server: an aborted render rejects allReady", async () => {
   await readAll(stream).catch(() => {});
   await assertRejects(() => stream.allReady);
   assert(seen != null, "onError is called on abort");
+});
+
+Deno.test("react-dom/server: renderToReadableStream honors identifierPrefix for useId", async () => {
+  const Id = () => h("i", { id: useId() });
+  const read = async (opts?: { identifierPrefix?: string }) =>
+    await new Response(await renderToReadableStream(h(Id, null), opts)).text();
+  const plain = await read();
+  const prefixed = await read({ identifierPrefix: "pfx" });
+  assert(prefixed.includes("pfx"), `prefix missing: ${prefixed}`);
+  assert(!plain.includes("pfx"));
 });

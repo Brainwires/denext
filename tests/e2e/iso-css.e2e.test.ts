@@ -20,20 +20,24 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
+import type { Page } from "@astral/astral";
 import { build } from "../../src/build/build.ts";
 import { startProdServer } from "../../src/build/prod-server.ts";
 import type { IsoNavPayload } from "../../src/server/document.ts";
-import { launchBrowser } from "./harness.ts";
+import {
+  assertNoConsoleErrors,
+  collectConsoleErrors,
+  launchBrowser,
+  type RunningServer,
+} from "./harness.ts";
 
 const FIXTURE = new URL("./fixtures/iso-css", import.meta.url).pathname;
 
-Deno.test({
-  name: "e2e: isomorphic soft nav sends the compact iso payload and swaps per-route CSS",
-  sanitizeOps: false,
-  sanitizeResources: false,
-}, async (t) => {
-  // Build, then write the two per-route stylesheet artifacts the CSS pipeline would
-  // otherwise emit (see the header note), then serve — mirroring harness.buildAndServe.
+/**
+ * Build, then write the two per-route stylesheet artifacts the CSS pipeline would
+ * otherwise emit (see the header note), then serve — mirroring harness.buildAndServe.
+ */
+async function buildAndServeWithRouteCss(): Promise<RunningServer> {
   const { outDir } = await build(FIXTURE);
   const clientDir = join(outDir, "client");
   await Deno.writeTextFile(join(clientDir, "index.css"), ".probe{color:rgb(255,0,0)}");
@@ -50,97 +54,111 @@ Deno.test({
   });
   const { hostname, port } = await listening.promise;
   const origin = `http://${hostname}:${port}`;
-  const server = {
+  return {
     origin,
     close: async () => {
       controller.abort();
       await prod.finished;
     },
   };
+}
 
+/** The hrefs of the per-route stylesheet <link>s currently in the document. */
+function routeCssLinks(page: Page): Promise<string[]> {
+  return page.evaluate(
+    "Array.from(document.querySelectorAll('link[data-dnx-css]')).map((l) => l.href)",
+  ) as Promise<string[]>;
+}
+
+async function stepIsoPayload(server: RunningServer): Promise<void> {
+  const res = await fetch(server.origin + "/about", { headers: { "x-denext-nav": "1" } });
+  assertEquals(res.headers.get("x-denext-iso"), "1");
+  assertStringIncludes(res.headers.get("content-type") ?? "", "application/json");
+  const payload = await res.json() as IsoNavPayload;
+  assert(!JSON.stringify(payload).includes("<!DOCTYPE"), "iso payload must not be HTML");
+  assertEquals(payload.data.pathname, "/about");
+  assert(
+    (payload.styles ?? []).some((h) => h.includes("about.css")),
+    `iso payload should carry the route's stylesheet; got ${JSON.stringify(payload.styles)}`,
+  );
+}
+
+async function stepHomeStyles(page: Page): Promise<void> {
+  await page.waitForFunction("!!document.querySelector('[data-testid=\"counter\"]')");
+  await page.waitForFunction(
+    "getComputedStyle(document.querySelector('.probe')).color === 'rgb(255, 0, 0)'",
+  );
+  const css = await routeCssLinks(page);
+  assertEquals(css.length, 1, "one per-route stylesheet on the home route");
+  assertStringIncludes(css[0], "index.css");
+}
+
+async function stepSoftNavAbout(page: Page): Promise<void> {
+  // A full reload would wipe this flag; a soft nav preserves it.
+  await page.evaluate("window.__noReload = true");
+  await page.evaluate(
+    "document.querySelector('[data-testid=\"to-about\"]').click()",
+  );
+  await page.waitForFunction("location.pathname === '/about'");
+  // The new route rendered (its own text) and its swapped-in stylesheet applied.
+  await page.waitForFunction(
+    "document.querySelector('.probe') && document.querySelector('.probe').textContent === 'about'",
+  );
+  await page.waitForFunction(
+    "getComputedStyle(document.querySelector('.probe')).color === 'rgb(0, 128, 0)'",
+  );
+  const survived = await page.evaluate("window.__noReload === true");
+  assert(survived, "soft nav must not trigger a full page reload");
+  // The previous route's stylesheet was removed; only about's remains.
+  const css = await routeCssLinks(page);
+  assertEquals(css.length, 1, "the previous route's stylesheet was removed");
+  assertStringIncludes(css[0], "about.css");
+}
+
+async function stepSoftNavHome(page: Page): Promise<void> {
+  await page.evaluate("document.querySelector('[data-testid=\"to-home\"]').click()");
+  await page.waitForFunction("location.pathname === '/'");
+  await page.waitForFunction(
+    "getComputedStyle(document.querySelector('.probe')).color === 'rgb(255, 0, 0)'",
+  );
+  const css = await routeCssLinks(page);
+  assertEquals(css.length, 1);
+  assertStringIncludes(css[0], "index.css");
+}
+
+Deno.test({
+  name: "e2e: isomorphic soft nav sends the compact iso payload and swaps per-route CSS",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async (t) => {
+  const server = await buildAndServeWithRouteCss();
   const browser = await launchBrowser();
 
   try {
-    await t.step("server answers a soft nav with the compact iso JSON, not HTML", async () => {
-      const res = await fetch(server.origin + "/about", { headers: { "x-denext-nav": "1" } });
-      assertEquals(res.headers.get("x-denext-iso"), "1");
-      assertStringIncludes(res.headers.get("content-type") ?? "", "application/json");
-      const payload = await res.json() as IsoNavPayload;
-      assert(!JSON.stringify(payload).includes("<!DOCTYPE"), "iso payload must not be HTML");
-      assertEquals(payload.data.pathname, "/about");
-      assert(
-        (payload.styles ?? []).some((h) => h.includes("about.css")),
-        `iso payload should carry the route's stylesheet; got ${JSON.stringify(payload.styles)}`,
-      );
-    });
-
-    const page = await browser.newPage(server.origin + "/");
-
-    const consoleErrors: string[] = [];
-    page.addEventListener("console", (e) => {
-      // deno-lint-ignore no-explicit-any
-      const detail = (e as any).detail;
-      if (detail?.type === "error") consoleErrors.push(String(detail.text ?? ""));
-    });
-
-    await t.step("home route: its stylesheet is linked and applied (probe is red)", async () => {
-      await page.waitForFunction("!!document.querySelector('[data-testid=\"counter\"]')");
-      await page.waitForFunction(
-        "getComputedStyle(document.querySelector('.probe')).color === 'rgb(255, 0, 0)'",
-      );
-      const css = await page.evaluate(
-        "Array.from(document.querySelectorAll('link[data-dnx-css]')).map((l) => l.href)",
-      ) as string[];
-      assertEquals(css.length, 1, "one per-route stylesheet on the home route");
-      assertStringIncludes(css[0], "index.css");
-    });
-
     await t.step(
-      "soft nav to /about swaps the stylesheet (probe turns green, no reload)",
-      async () => {
-        // A full reload would wipe this flag; a soft nav preserves it.
-        await page.evaluate("window.__noReload = true");
-        await page.evaluate(
-          "document.querySelector('[data-testid=\"to-about\"]').click()",
-        );
-        await page.waitForFunction("location.pathname === '/about'");
-        // The new route rendered (its own text) and its swapped-in stylesheet applied.
-        await page.waitForFunction(
-          "document.querySelector('.probe') && document.querySelector('.probe').textContent === 'about'",
-        );
-        await page.waitForFunction(
-          "getComputedStyle(document.querySelector('.probe')).color === 'rgb(0, 128, 0)'",
-        );
-        const survived = await page.evaluate("window.__noReload === true");
-        assert(survived, "soft nav must not trigger a full page reload");
-        // The previous route's stylesheet was removed; only about's remains.
-        const css = await page.evaluate(
-          "Array.from(document.querySelectorAll('link[data-dnx-css]')).map((l) => l.href)",
-        ) as string[];
-        assertEquals(css.length, 1, "the previous route's stylesheet was removed");
-        assertStringIncludes(css[0], "about.css");
-      },
+      "server answers a soft nav with the compact iso JSON, not HTML",
+      () => stepIsoPayload(server),
     );
 
-    await t.step("soft nav back home swaps the stylesheet back (probe red again)", async () => {
-      await page.evaluate("document.querySelector('[data-testid=\"to-home\"]').click()");
-      await page.waitForFunction("location.pathname === '/'");
-      await page.waitForFunction(
-        "getComputedStyle(document.querySelector('.probe')).color === 'rgb(255, 0, 0)'",
-      );
-      const css = await page.evaluate(
-        "Array.from(document.querySelectorAll('link[data-dnx-css]')).map((l) => l.href)",
-      ) as string[];
-      assertEquals(css.length, 1);
-      assertStringIncludes(css[0], "index.css");
-    });
+    const page = await browser.newPage(server.origin + "/");
+    const consoleErrors = collectConsoleErrors(page);
 
-    await t.step("no console errors during hydration and the CSS-swapping navs", () => {
-      assert(
-        consoleErrors.length === 0,
-        `unexpected console errors: ${consoleErrors.join(" | ")}`,
-      );
-    });
+    await t.step(
+      "home route: its stylesheet is linked and applied (probe is red)",
+      () => stepHomeStyles(page),
+    );
+    await t.step(
+      "soft nav to /about swaps the stylesheet (probe turns green, no reload)",
+      () => stepSoftNavAbout(page),
+    );
+    await t.step(
+      "soft nav back home swaps the stylesheet back (probe red again)",
+      () => stepSoftNavHome(page),
+    );
+    await t.step(
+      "no console errors during hydration and the CSS-swapping navs",
+      () => assertNoConsoleErrors(consoleErrors),
+    );
   } finally {
     await browser.close();
     await server.close();

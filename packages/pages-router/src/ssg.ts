@@ -5,7 +5,8 @@
 // PageCache for stale-while-revalidate ISR). Mirrors the App Router's
 // `src/build/export.ts` param-expansion pattern.
 
-import { join, resolve, SEPARATOR } from "@std/path";
+import { join } from "@std/path";
+import { staticPageDir } from "./static-dir.ts";
 import { matchSegments, type Segment } from "@denext/denext/plugin-kit";
 import type { I18nConfig } from "@denext/denext/server";
 import { type NextData, type PageComponent, renderPage } from "./render.ts";
@@ -154,104 +155,140 @@ function errMsg(err: unknown): string {
 export async function prerenderStaticPages(
   opts: PrerenderOptions,
 ): Promise<{ prerendered: string[] }> {
-  const base = opts.basePath?.replace(/\/$/, "") || "";
-  const withBase = (
-    p: string | null,
-  ): string | null => (p && base ? base + p : p);
-  const staticDir = join(opts.outDir, "pages-static");
-  const App = await loadDefault(opts.scan.app, opts.load);
-  const Document = await loadDefault(opts.scan.document, opts.load);
+  const ctx: SsgContext = {
+    opts,
+    base: opts.basePath?.replace(/\/$/, "") || "",
+    staticDir: join(opts.outDir, "pages-static"),
+    App: await loadDefault(opts.scan.app, opts.load),
+    Document: await loadDefault(opts.scan.document, opts.load),
+  };
   const prerendered: string[] = [];
-
   for (const entry of opts.scan.pages) {
     const mod = (await opts.load(entry.filePath)) as PageModule;
-    if (
-      typeof mod.getStaticProps !== "function" ||
-      typeof mod.default !== "function"
-    ) continue;
+    if (typeof mod.getStaticProps !== "function" || typeof mod.default !== "function") continue;
     const targets = await resolveTargets(entry, mod);
     if (!targets) continue;
-
-    for (const { params, pathname } of targets) {
-      if (!isSafePathname(pathname)) {
-        throw new Error(
-          `getStaticPaths for "${entry.routePath}" produced an unsafe path "${pathname}"`,
-        );
-      }
-      const locale = opts.i18n?.defaultLocale;
-      let result: GspResult;
-      try {
-        result = await mod.getStaticProps!({
-          params,
-          query: { ...params },
-          locale,
-          locales: opts.i18n?.locales,
-          defaultLocale: opts.i18n?.defaultLocale,
-        });
-      } catch (err) {
-        throw new Error(
-          `getStaticProps failed for "${entry.routePath}" (${pathname}): ${errMsg(err)}`,
-          { cause: err },
-        );
-      }
-      if (result.notFound || result.redirect) continue; // resolved at runtime instead
-      const pageProps = result.props ?? {};
-      const rawBundle = opts.bundleUrlFor(entry.routePath);
-      const rawCss = opts.cssUrlFor(entry.routePath);
-      const css = withBase(rawCss);
-      const nextData: NextData = {
-        props: { pageProps },
-        page: entry.routePath,
-        query: { ...params },
-        asPath: pathname,
-        isServer: false,
-        basePath: base || undefined,
-        locale,
-        locales: opts.i18n?.locales,
-        defaultLocale: opts.i18n?.defaultLocale,
-      };
-      const bodyHtml = await renderPage({
-        Page: mod.default,
-        pageProps,
-        App,
-        nextData,
-        clientBundle: withBase(rawBundle),
-        styles: css ? [css] : undefined,
-        lang: opts.lang,
-        Document,
-      });
-
-      const dir = join(staticDir, pathname === "/" ? "" : pathname);
-      // Defense-in-depth: never write outside pages-static/, even if the checks above
-      // are bypassed by an unusual segment.
-      const rootDir = resolve(staticDir);
-      const resolvedDir = resolve(dir);
-      if (
-        resolvedDir !== rootDir && !resolvedDir.startsWith(rootDir + SEPARATOR)
-      ) {
-        throw new Error(`SSG target "${pathname}" escapes the output dir`);
-      }
-      await Deno.mkdir(dir, { recursive: true });
-      await Deno.writeTextFile(join(dir, "index.html"), bodyHtml);
-      // props.json doubles as the soft-nav data response (+ `revalidate` for ISR).
-      await Deno.writeTextFile(
-        join(dir, "props.json"),
-        JSON.stringify({
-          page: entry.routePath,
-          entryUrl: rawBundle,
-          cssUrl: rawCss,
-          pageProps,
-          query: { ...params },
-          asPath: pathname,
-          isServer: false,
-          revalidate: result.revalidate,
-          locale,
-          locales: opts.i18n?.locales,
-          defaultLocale: opts.i18n?.defaultLocale,
-        }),
-      );
-      prerendered.push(pathname);
+    for (const target of targets) {
+      if (await prerenderTarget(ctx, entry, mod, target)) prerendered.push(target.pathname);
     }
   }
   return { prerendered };
+}
+
+/** What every prerendered page shares: the options, the output dir and the wrappers. */
+interface SsgContext {
+  opts: PrerenderOptions;
+  /** The configured base path without its trailing slash ("" when none). */
+  base: string;
+  /** `<outDir>/pages-static`. */
+  staticDir: string;
+  App: PageComponent | null;
+  Document: PageComponent | null;
+}
+
+/**
+ * Prerender one concrete path: run `getStaticProps`, render the document, and write
+ * `index.html` + `props.json`. False when the page resolves at runtime instead
+ * (`notFound`/`redirect`).
+ */
+async function prerenderTarget(
+  ctx: SsgContext,
+  entry: PageEntry,
+  mod: PageModule,
+  { params, pathname }: Target,
+): Promise<boolean> {
+  if (!isSafePathname(pathname)) {
+    throw new Error(
+      `getStaticPaths for "${entry.routePath}" produced an unsafe path "${pathname}"`,
+    );
+  }
+  const { opts } = ctx;
+  const locale = opts.i18n?.defaultLocale;
+  const result = await runGetStaticProps(ctx, entry, mod, params, pathname);
+  if (result.notFound || result.redirect) return false; // resolved at runtime instead
+  const pageProps = result.props ?? {};
+  const rawBundle = opts.bundleUrlFor(entry.routePath);
+  const rawCss = opts.cssUrlFor(entry.routePath);
+  const css = withBase(ctx, rawCss);
+  const nextData: NextData = {
+    props: { pageProps },
+    page: entry.routePath,
+    query: { ...params },
+    asPath: pathname,
+    isServer: false,
+    basePath: ctx.base || undefined,
+    locale,
+    locales: opts.i18n?.locales,
+    defaultLocale: opts.i18n?.defaultLocale,
+  };
+  const bodyHtml = await renderPage({
+    Page: mod.default!,
+    pageProps,
+    App: ctx.App,
+    nextData,
+    clientBundle: withBase(ctx, rawBundle),
+    styles: css ? [css] : undefined,
+    lang: opts.lang,
+    Document: ctx.Document,
+  });
+  // props.json doubles as the soft-nav data response (+ `revalidate` for ISR).
+  await writePrerendered(ctx, pathname, bodyHtml, {
+    page: entry.routePath,
+    entryUrl: rawBundle,
+    cssUrl: rawCss,
+    pageProps,
+    query: { ...params },
+    asPath: pathname,
+    isServer: false,
+    revalidate: result.revalidate,
+    locale,
+    locales: opts.i18n?.locales,
+    defaultLocale: opts.i18n?.defaultLocale,
+  });
+  return true;
+}
+
+/** Prefix an app-absolute URL with the base path (null passes through). */
+function withBase(ctx: SsgContext, p: string | null): string | null {
+  return p && ctx.base ? ctx.base + p : p;
+}
+
+/** Run a page's `getStaticProps` for one path, with build-time diagnostics on failure. */
+async function runGetStaticProps(
+  ctx: SsgContext,
+  entry: PageEntry,
+  mod: PageModule,
+  params: SsgParams,
+  pathname: string,
+): Promise<GspResult> {
+  try {
+    return await mod.getStaticProps!({
+      params,
+      query: { ...params },
+      locale: ctx.opts.i18n?.defaultLocale,
+      locales: ctx.opts.i18n?.locales,
+      defaultLocale: ctx.opts.i18n?.defaultLocale,
+    });
+  } catch (err) {
+    throw new Error(
+      `getStaticProps failed for "${entry.routePath}" (${pathname}): ${errMsg(err)}`,
+      { cause: err },
+    );
+  }
+}
+
+/** Write a prerendered page's `index.html` + `props.json` under `pages-static/`. */
+async function writePrerendered(
+  ctx: SsgContext,
+  pathname: string,
+  bodyHtml: string,
+  props: Record<string, unknown>,
+): Promise<void> {
+  // Defense-in-depth: never write outside pages-static/, even if the checks above
+  // are bypassed by an unusual segment.
+  const dir = staticPageDir(ctx.staticDir, pathname);
+  if (!dir) throw new Error(`SSG target "${pathname}" escapes the output dir`);
+  await Deno.mkdir(dir, { recursive: true });
+  await Deno.writeTextFile(join(dir, "index.html"), bodyHtml);
+  await Deno.writeTextFile(join(dir, "props.json"), JSON.stringify(props));
 }

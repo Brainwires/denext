@@ -11,8 +11,11 @@
 // in `mode:"spa"` (see {@link matchesProxyPrefix}/{@link proxyToBackend}).
 
 import { fromFileUrl, join } from "@std/path";
-import { serveStatic } from "../server/static.ts";
 import type { SpaProxyConfig } from "../server/config.ts";
+import { serveStatic } from "../server/static.ts";
+import { wantsShell } from "./spa/shared.ts";
+
+type ProxyModule = typeof import("./dev-proxy.ts");
 
 export interface RunDesktopOptions {
   /**
@@ -44,14 +47,6 @@ export interface RunDesktopOptions {
   ) => Response | null | undefined | Promise<Response | null | undefined>;
 }
 
-/** Only GET/HEAD navigations (Accept: text/html, or an extensionless path) get the shell. */
-function wantsShell(request: Request, pathname: string): boolean {
-  if (request.method !== "GET" && request.method !== "HEAD") return false;
-  if ((request.headers.get("accept") ?? "").includes("text/html")) return true;
-  const last = pathname.slice(pathname.lastIndexOf("/") + 1);
-  return !last.includes(".");
-}
-
 // The SPA entry is stably named (`/_denext/client/index.js`), so the WebView would
 // otherwise serve a cached copy after a repackage — force revalidation every load.
 function noStore(res: Response): Response {
@@ -62,24 +57,20 @@ function noStore(res: Response): Response {
   return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
 }
 
-/**
- * Serve a denext SPA export in a `deno desktop` window. Adopts the initial
- * `Deno.BrowserWindow` and quits the process on window close; under a plain
- * `deno run` (no desktop runtime) it just starts the server.
- */
-export async function runDesktop(options: RunDesktopOptions = {}): Promise<void> {
+/** The export dir: `outDir` (relative to the entry module when given), else `out/`. */
+/** The static-export dir to serve: `outDir` (relative to `importMetaUrl` when given), else `out/`. */
+export function resolveOutDir(options: RunDesktopOptions): string {
   const base = options.importMetaUrl ? new URL(".", options.importMetaUrl) : undefined;
-  const outDir = options.outDir
-    ? (base ? fromFileUrl(new URL(options.outDir, base)) : options.outDir)
-    : (base ? fromFileUrl(new URL("out", base)) : join(Deno.cwd(), "out"));
-  const port = options.port ?? Number(Deno.env.get("PORT") ?? 8000);
-  const proxyCfg = options.proxy;
-  const proxy = proxyCfg ? await import("./dev-proxy.ts") : undefined;
-  const indexHtmlPath = join(outDir, "index.html");
+  if (options.outDir) return base ? fromFileUrl(new URL(options.outDir, base)) : options.outDir;
+  return base ? fromFileUrl(new URL("out", base)) : join(Deno.cwd(), "out");
+}
 
-  // Closing the window (macOS red light / Cmd-W) quits the app. `Deno.serve` below is
-  // a permanently-live task, so deno desktop won't auto-exit on close; adopt the
-  // initial window and exit on its `close`. Guarded so a non-desktop run is a no-op.
+/**
+ * Closing the window (macOS red light / Cmd-W) quits the app. `Deno.serve` is a
+ * permanently-live task, so deno desktop won't auto-exit on close; adopt the initial
+ * window and exit on its `close`. Guarded so a non-desktop run is a no-op.
+ */
+function installWindowCloseHandler(): void {
   try {
     // deno-lint-ignore no-explicit-any
     const BrowserWindow = (Deno as any).BrowserWindow;
@@ -90,14 +81,21 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<void>
   } catch (err) {
     console.error("desktop: window-close handler not installed", err);
   }
+}
 
-  // A stray WebSocket/proxy rejection must never take down the server process.
-  globalThis.addEventListener("unhandledrejection", (e) => {
-    e.preventDefault();
-    console.error("desktop: unhandledrejection", (e as PromiseRejectionEvent).reason);
-  });
-
-  const handle = async (request: Request, url: URL): Promise<Response> => {
+/**
+ * The desktop request handler: the `onRequest` escape hatch, the backend proxy, the export's
+ * static assets (`no-store`), the `index.html` shell for navigations, else 404. Exported
+ * for tests; {@linkcode runDesktop} wires it to `Deno.serve`.
+ */
+export function createDesktopHandler(
+  options: RunDesktopOptions,
+  outDir: string,
+  proxy: ProxyModule | undefined,
+): (request: Request, url: URL) => Promise<Response> {
+  const proxyCfg = options.proxy;
+  const indexHtmlPath = join(outDir, "index.html");
+  return async (request, url) => {
     if (options.onRequest) {
       const r = await options.onRequest(request, url);
       if (r) return r;
@@ -105,11 +103,8 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<void>
     if (proxyCfg && proxy && proxy.matchesProxyPrefix(url.pathname, proxyCfg.prefixes)) {
       return await proxy.proxyToBackend(request, url, proxyCfg);
     }
-    const asset = await serveStatic(
-      outDir,
-      url.pathname,
-      request.headers.get("accept-encoding") ?? undefined,
-    );
+    const accEnc = request.headers.get("accept-encoding") ?? undefined;
+    const asset = await serveStatic(outDir, url.pathname, accEnc);
     if (asset) return noStore(asset);
     if (wantsShell(request, url.pathname)) {
       const html = await Deno.readTextFile(indexHtmlPath).catch(() => null);
@@ -123,7 +118,25 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<void>
     }
     return new Response("not found", { status: 404 });
   };
+}
 
+/**
+ * Serve a denext SPA export in a `deno desktop` window. Adopts the initial
+ * `Deno.BrowserWindow` and quits the process on window close; under a plain
+ * `deno run` (no desktop runtime) it just starts the server.
+ */
+export async function runDesktop(options: RunDesktopOptions = {}): Promise<void> {
+  const outDir = resolveOutDir(options);
+  const port = options.port ?? Number(Deno.env.get("PORT") ?? 8000);
+  // Imported lazily so proxy-less apps never pull in the proxy module (and its `npm:ws`).
+  const proxy = options.proxy ? await import("./dev-proxy.ts") : undefined;
+  installWindowCloseHandler();
+  // A stray WebSocket/proxy rejection must never take down the server process.
+  globalThis.addEventListener("unhandledrejection", (e) => {
+    e.preventDefault();
+    console.error("desktop: unhandledrejection", (e as PromiseRejectionEvent).reason);
+  });
+  const handle = createDesktopHandler(options, outDir, proxy);
   Deno.serve({
     port,
     hostname: "127.0.0.1",

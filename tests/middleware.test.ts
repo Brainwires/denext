@@ -1,10 +1,11 @@
-import { assertEquals, assertStringIncludes } from "@std/assert";
+import { assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { createApp } from "../src/server/app.ts";
 import {
   composeMiddleware,
   createMiddlewareRunner,
   matcherToRegExp,
+  matches,
   MIDDLEWARE_NEXT_HEADER,
   MIDDLEWARE_OVERRIDE_HEADER,
   MIDDLEWARE_REQUEST_PREFIX,
@@ -74,6 +75,56 @@ Deno.test("matcherToRegExp compiles patterns", () => {
   assertEquals(matcherToRegExp("/blog/:slug").test("/blog/hi"), true);
   assertEquals(matcherToRegExp("/blog/:slug").test("/blog/a/b"), false);
   assertEquals(matcherToRegExp("/api/:path*").test("/api/a/b/c"), true);
+  // path-to-regexp modifiers (Next.js semantics): `*` and `?` make the segment AND its
+  // leading slash optional, `+` needs at least one segment.
+  assertEquals(matcherToRegExp("/api/:path*").test("/api"), true);
+  // A trailing slash is always optional (path-to-regexp non-strict, what Next does): the
+  // router serves `/api/` as the `/api` page, so a guard must cover both spellings.
+  assertEquals(matcherToRegExp("/api/:path*").test("/api/"), true);
+  assertEquals(matcherToRegExp("/about").test("/about/"), true);
+  assertEquals(matcherToRegExp("/:path*").test("/"), true);
+  assertEquals(matcherToRegExp("/api/:path*").test("/apix"), false);
+  assertEquals(matcherToRegExp("/api/:path+").test("/api"), false);
+  assertEquals(matcherToRegExp("/api/:path+").test("/api/a"), true);
+  assertEquals(matcherToRegExp("/api/:path+").test("/api/a/b"), true);
+  assertEquals(matcherToRegExp("/docs/:page?").test("/docs"), true);
+  assertEquals(matcherToRegExp("/docs/:page?").test("/docs/intro"), true);
+  assertEquals(matcherToRegExp("/docs/:page?").test("/docs/a/b"), false);
+});
+
+Deno.test("matcherToRegExp: regex groups, custom param patterns, object entries", () => {
+  // Next's canonical "everything except" matcher from its middleware docs.
+  const except = matcherToRegExp("/((?!api|_next/static|_next/image|favicon.ico).*)");
+  for (const p of ["/", "/about", "/blog/x"]) assertEquals(except.test(p), true, p);
+  for (const p of ["/api", "/api/x", "/_next/static/a.js", "/favicon.ico"]) {
+    assertEquals(except.test(p), false, p);
+  }
+  assertEquals(matcherToRegExp("/blog/:id(\\d+)").test("/blog/12"), true);
+  assertEquals(matcherToRegExp("/blog/:id(\\d+)").test("/blog/abc"), false);
+  assertEquals(matcherToRegExp("/:lang(en|de)/:path*").test("/de/a/b"), true);
+  assertEquals(matcherToRegExp("/:lang(en|de)/:path*").test("/fr"), false);
+  assertEquals(matcherToRegExp("/(.*)").test("/anything/here"), true);
+  // Object entries (`{ source, has, missing }`): `source` is honored; has/missing are
+  // accepted but not evaluated (the middleware runs for every matching path).
+  assertEquals(matches({ matcher: [{ source: "/admin/:path*", has: [] }] }, "/admin/x"), true);
+  assertEquals(matches({ matcher: { source: "/admin/:path*" } }, "/other"), false);
+  assertThrows(() => matcherToRegExp("/((?!api.*)"), Error, "unbalanced");
+});
+
+Deno.test("trailing-slash path is canonicalized (308) so middleware can't be bypassed", async () => {
+  // `/secret/` resolves to the `/secret` page (empty segments are dropped) — a guard on
+  // `/secret` must not be skippable by appending a slash (CVE-2024-51479 class). With
+  // `trailingSlash` unset the pipeline 308s to the canonical form, and the matcher itself
+  // treats the slash as optional, so both layers hold.
+  const app = appWith({
+    default: (req: Request) =>
+      new URL(req.url).pathname === "/secret" ? new Response("blocked", { status: 401 }) : next(),
+    config: { matcher: "/secret" },
+  });
+  assertEquals((await app(new Request("http://localhost/secret"))).status, 401);
+  const slashed = await app(new Request("http://localhost/secret/"));
+  assertEquals(slashed.status, 308);
+  assertEquals(new URL(slashed.headers.get("location")!, "http://localhost").pathname, "/secret");
 });
 
 Deno.test("duplicate-slash path is canonicalized (308) so middleware can't be bypassed", async () => {
@@ -326,8 +377,10 @@ Deno.test("matcherToRegExp escapes regex metacharacters in literal patterns", ()
   const re = matcherToRegExp("/a.b");
   assertEquals(re.test("/a.b"), true, "the literal dot matches a literal dot");
   assertEquals(re.test("/aXb"), false, "the dot is escaped, not a wildcard");
-  // Parentheses / plus in a literal are escaped too.
-  assertEquals(matcherToRegExp("/x(y)").test("/x(y)"), true);
+  // Parentheses open a regex group (path-to-regexp); escape them for a literal paren.
+  assertEquals(matcherToRegExp("/x(y)").test("/xy"), true);
+  assertEquals(matcherToRegExp("/x\\(y\\)").test("/x(y)"), true);
+  assertEquals(matcherToRegExp("/x\\(y\\)").test("/xy"), false);
   assertEquals(matcherToRegExp("/a+b").test("/a+b"), true);
   assertEquals(matcherToRegExp("/a+b").test("/aaab"), false);
 });

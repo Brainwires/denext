@@ -48,7 +48,10 @@ export function installShutdown(controller: AbortController): void {
  * framework stack trace for what is usually a problem in the user's code. An
  * already-formatted `denext:` error (config load/validation) passes through.
  */
-export async function runBuildStep<T>(step: () => Promise<T>, label: string): Promise<T> {
+export async function runBuildStep<T>(
+  step: () => Promise<T>,
+  label: string,
+): Promise<T> {
   try {
     return await step();
   } catch (err) {
@@ -63,7 +66,10 @@ export async function runBuildStep<T>(step: () => Promise<T>, label: string): Pr
  * with the child's status code. The shared engine behind the verbs that delegate to
  * Deno (`test`/`lint`/`fmt`/`check`, `add`/`remove`/`update`). Never returns.
  */
-export async function spawnDenoAndExit(args: string[], cwd?: string): Promise<never> {
+export async function spawnDenoAndExit(
+  args: string[],
+  cwd?: string,
+): Promise<never> {
   const child = new Deno.Command(denoExecutable(), {
     args,
     cwd: cwd ?? Deno.cwd(),
@@ -94,11 +100,15 @@ async function isDir(path: string): Promise<boolean> {
  * tree (Pages Router, served by the `@denext/pages-router` plugin). SPA mode skips
  * this gate at the call site.
  */
-export async function ensureAppDir(appDir: string, projectDir?: string): Promise<void> {
+export async function ensureAppDir(
+  appDir: string,
+  projectDir?: string,
+): Promise<void> {
   if (await isDir(appDir)) return;
   if (
     projectDir &&
-    (await isDir(join(projectDir, "pages")) || await isDir(join(projectDir, "src", "pages")))
+    (await isDir(join(projectDir, "pages")) ||
+      await isDir(join(projectDir, "src", "pages")))
   ) {
     return; // Pages Router app — the pages-router plugin handles routing.
   }

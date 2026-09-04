@@ -59,6 +59,66 @@ async function writeViteApp(dir: string, opts: { pnpm?: boolean } = {}): Promise
   if (opts.pnpm) await Deno.writeTextFile(join(dir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
 }
 
+/** The deno.json a pnpm + --desktop migration writes: manual node_modules, aliases, tasks. */
+async function assertPnpmDesktopDenoJson(dir: string): Promise<void> {
+  const cfg = JSON.parse(await Deno.readTextFile(join(dir, "deno.json")));
+  assertEquals(cfg.nodeModulesDir, "manual");
+  assert(cfg.unstable.includes("sloppy-imports"));
+  assertEquals(cfg.compilerOptions.jsx, "react-jsx");
+  assertEquals(cfg.compilerOptions.jsxImportSource, "react");
+  assert(String(cfg.imports["react"]).includes("@denext/denext"), "react → denext");
+  assert(String(cfg.imports["react-dom/client"]).includes("/react-dom/client"));
+  assertEquals(cfg.imports["~/"], "./src/");
+  assert(String(cfg.imports["denext/desktop"]).includes("/desktop"));
+  // manual mode → npm deps resolve from node_modules, no npm: passthrough entries.
+  assert(!("lucide-react" in cfg.imports), "no npm passthrough under manual");
+  assert(cfg.tasks.dev && cfg.tasks.desktop, "dev + desktop tasks");
+  assertDesktopTask(cfg.tasks.desktop);
+}
+
+/**
+ * The desktop bundle must trim the app's npm snapshot (`--exclude-unused-npm`), embed the
+ * static export it serves at runtime (`--include out`), bake the runtime permissions the
+ * compiled app needs (env/net/read), and wire the composed app icon.
+ */
+function assertDesktopTask(task: string): void {
+  assert(task.includes("--exclude-unused-npm"), "desktop task trims unused npm");
+  assert(task.includes("--include out"), "desktop task embeds the export");
+  assert(
+    task.includes("--allow-env") && task.includes("--allow-net=127.0.0.1,localhost") &&
+      task.includes("--allow-read"),
+    "desktop task bakes the runtime permissions (net scoped to loopback)",
+  );
+  assert(
+    task.includes("--icon desktop-icon.png"),
+    "desktop task wires the composed icon (built by `export`)",
+  );
+}
+
+/** The denext.config.ts for the Vite app: spa mode, compat, tailwind, env, proxy, icon hint. */
+async function assertSpaConfig(dir: string): Promise<void> {
+  const config = await Deno.readTextFile(join(dir, "denext.config.ts"));
+  const expected = [
+    'mode: "spa"',
+    // Surfaces the icon override so it's discoverable (commented → the build-time
+    // auto-detection stays the default).
+    "desktop: { icon:",
+    "compatibilityMode: true",
+    'tailwind: { input: "./src/index.css", output: "./src/index.gen.css" }',
+    'entry: "./src/main.tsx"',
+    'title: "My App"',
+    'VITE_FOO: ""',
+    'VITE_BAR: ""',
+    "APP_VERSION: pkg.version",
+    'import pkg from "./package.json"',
+    'prefixes: ["/api", "/ws"]',
+    'target: "http://127.0.0.1:3773"',
+  ];
+  for (const snippet of expected) {
+    assert(config.includes(snippet), `denext.config.ts has ${snippet}`);
+  }
+}
+
 Deno.test("migrate SPA (pnpm + --desktop): config, aliases, env union, tailwind, parsed proxy", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_spa_" });
   try {
@@ -74,59 +134,8 @@ Deno.test("migrate SPA (pnpm + --desktop): config, aliases, env union, tailwind,
     // proxy prefixes parsed from the literal vite.config proxy.
     assertEquals(r.spa?.proxy, { prefixes: ["/api", "/ws"], target: "http://127.0.0.1:3773" });
 
-    // deno.json
-    const cfg = JSON.parse(await Deno.readTextFile(join(dir, "deno.json")));
-    assertEquals(cfg.nodeModulesDir, "manual");
-    assert(cfg.unstable.includes("sloppy-imports"));
-    assertEquals(cfg.compilerOptions.jsx, "react-jsx");
-    assertEquals(cfg.compilerOptions.jsxImportSource, "react");
-    assert(String(cfg.imports["react"]).includes("@denext/denext"), "react → denext");
-    assert(String(cfg.imports["react-dom/client"]).includes("/react-dom/client"));
-    assertEquals(cfg.imports["~/"], "./src/");
-    assert(String(cfg.imports["denext/desktop"]).includes("/desktop"));
-    // manual mode → npm deps resolve from node_modules, no npm: passthrough entries.
-    assert(!("lucide-react" in cfg.imports), "no npm passthrough under manual");
-    assert(cfg.tasks.dev && cfg.tasks.desktop, "dev + desktop tasks");
-    // The desktop bundle must trim the app's npm snapshot (`--exclude-unused-npm`),
-    // embed the static export it serves at runtime (`--include out`), bake the runtime
-    // permissions the compiled app needs (env/net/read), and wire the composed app icon.
-    assert(
-      cfg.tasks.desktop.includes("--exclude-unused-npm"),
-      "desktop task trims unused npm",
-    );
-    assert(cfg.tasks.desktop.includes("--include out"), "desktop task embeds the export");
-    assert(
-      cfg.tasks.desktop.includes("--allow-env") &&
-        cfg.tasks.desktop.includes("--allow-net=127.0.0.1,localhost") &&
-        cfg.tasks.desktop.includes("--allow-read"),
-      "desktop task bakes the runtime permissions (net scoped to loopback)",
-    );
-    assert(
-      cfg.tasks.desktop.includes("--icon desktop-icon.png"),
-      "desktop task wires the composed icon (built by `export`)",
-    );
-
-    // denext.config.ts
-    const config = await Deno.readTextFile(join(dir, "denext.config.ts"));
-    assert(config.includes('mode: "spa"'));
-    // Surfaces the icon override so it's discoverable (commented → the build-time
-    // auto-detection stays the default).
-    assert(
-      config.includes("desktop: { icon:"),
-      "denext.config.ts shows the spa.desktop.icon override",
-    );
-    assert(config.includes("compatibilityMode: true"));
-    assert(
-      config.includes('tailwind: { input: "./src/index.css", output: "./src/index.gen.css" }'),
-    );
-    assert(config.includes('entry: "./src/main.tsx"'));
-    assert(config.includes('title: "My App"'));
-    assert(config.includes('VITE_FOO: ""') && config.includes('VITE_BAR: ""'));
-    assert(config.includes("APP_VERSION: pkg.version"));
-    assert(config.includes('import pkg from "./package.json"'));
-    assert(config.includes('prefixes: ["/api", "/ws"]'));
-    assert(config.includes('target: "http://127.0.0.1:3773"'));
-
+    await assertPnpmDesktopDenoJson(dir);
+    await assertSpaConfig(dir);
     // desktop.ts
     const desktop = await Deno.readTextFile(join(dir, "desktop.ts"));
     assert(desktop.includes("runDesktop"));

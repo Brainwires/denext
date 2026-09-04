@@ -144,7 +144,7 @@ export default function DevTools() {
         in dev, for editor integrations, tests, or custom tooling.
       </p>
       <Code lang="ts">
-        {`import { installInspector } from "@denext/denext/devtools";
+        {`import { installInspector } from "denext/devtools";
 
 const dt = installInspector(); // null in production / before dev is active
 if (dt) {

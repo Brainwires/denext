@@ -9,53 +9,32 @@
 // This mirrors `render-to-stream.ts` (HTML-only) for the Flight world. It is a
 // capability module; the default request path renders non-streaming.
 
-import { FRAGMENT, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
-import {
-  type Context,
-  type Dispatcher,
-  MEMO_CACHE_SENTINEL,
-  setDispatcher,
-} from "../runtime/hooks.ts";
-import { PROVIDER } from "../runtime/context.ts";
-import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
-import {
-  ERROR_BOUNDARY,
-  isControlSignal,
-  reportBoundaryError,
-  toClientError,
-} from "../runtime/error-boundary.ts";
+import type { VNode, VNodeChildren } from "./types.ts";
 import {
   beginServerInsertCollection,
   escapeHtml,
   flushServerInsertedHTML,
   type HeadCollector,
-  HOISTED_TAGS,
-  resolveContextType,
-  serializeAttributes,
-  VOID_ELEMENTS,
-  warnDangerousHtml,
 } from "./render-to-string.ts";
-import "../runtime/class-flag.ts";
-import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
-import { renderClassToVNode } from "../compat/class-component.ts";
-import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
-import { isServerAction } from "../runtime/server-action.ts";
-import { DNX_H_ATTR, isQrl } from "../runtime/qrl.ts";
 import { beginSignalCollection, endSignalCollection } from "../runtime/signal-state.ts";
-import { clientRefOf } from "../runtime/client-reference.ts";
-import { type HydrationStrategy, parseStrategy } from "../runtime/lazy-directive.ts";
-import { islandWrapper, warnClientOnlySeoContent } from "./island-wrapper.ts";
-import { type IslandPayload, serializeFlight } from "./render-to-html-flight.ts";
-import { deferErrorMarker } from "./flight-scalar.ts";
-import type { FlightNode, FlightProps, FlightValue } from "./render-to-flight.ts";
+import type { ClientRefInfo } from "../runtime/client-reference.ts";
+import { serializeFlight } from "./render-to-html-flight.ts";
+import { deferErrorMarker, serializeScalar } from "./flight-scalar.ts";
 import {
-  enterScope,
-  ID_PATH_PROP,
-  type IdHolder,
-  nextId,
-  rootScope,
-  scopePrefix,
-} from "./tree-id.ts";
+  type CarvedIsland,
+  type Dual,
+  type IslandPayload,
+  type IslandRenderer,
+  renderClientIsland,
+  renderDualChildren,
+  renderHostDual,
+  serializeCompound,
+  type Serialized,
+  SKIP,
+} from "./render-shared.ts";
+import { takeSettled, VNodeRenderer } from "./renderer-base.ts";
+import type { FlightNode, FlightProps, FlightValue } from "./render-to-flight.ts";
+import { enterScope, rootScope, scopePrefix } from "./tree-id.ts";
 
 import { SWAP_RUNTIME } from "../server/swap-runtime.ts";
 
@@ -85,23 +64,8 @@ interface FlightValueHole {
   r: string;
 }
 
-interface Dual {
-  html: string;
-  flight: FlightNode;
-}
-
-const SKIP = Symbol("skip");
-
-class StreamFlightRenderer {
+class StreamFlightRenderer extends VNodeRenderer<Dual> implements IslandRenderer {
   private id = 0;
-  /**
-   * Path-based useId state. The shell renders sequentially so its scopes are
-   * deterministic; a streamed boundary's content is rooted at the boundary's
-   * position. (Multiple boundaries streaming concurrently share this one holder,
-   * so their interior useId ordering keeps the pre-existing streaming caveat — the
-   * shell and any single boundary are correct.)
-   */
-  readonly ids: IdHolder = { scope: rootScope() };
   /**
    * In-flight boundary renders: each **resolves, never rejects**, to id + streamed
    * html + resolved flight + an `ok` flag (a failed boundary streams nothing extra,
@@ -131,495 +95,137 @@ class StreamFlightRenderer {
    */
   readonly islands: IslandPayload[] = [];
   /** Effect-hook invocations so far (for per-island resumable strategy selection). */
-  readonly effects = { count: 0 };
+  readonly effects: { count: number };
   /** Resumable mode: auto-defer islands + stamp handler hosts. */
-  private readonly resumable: boolean;
+  readonly resumable: boolean;
   /** True while rendering inside a client island's subtree — see render-to-html-flight. */
-  private insideIsland = false;
+  insideIsland = false;
   /**
    * Nested islands carved during a parent island's dual render, keyed by the child
    * VNode. The Flight-children re-walk (pass 2) re-enters scope with an advanced
    * counter, so it would assign a different prefix; this pins each nested island's
    * foreign host to the id its HTML wrapper (pass 1) got. See render-to-html-flight.
    */
-  private carvedNested = new WeakMap<
-    VNode,
-    { id: string; strategy: HydrationStrategy; param?: string }
-  >();
-  private activeScopes: ProviderScope[] = [];
-  private readonly dispatcher: Dispatcher;
+  readonly carvedNested = new WeakMap<VNode, CarvedIsland>();
+
+  // Path-based useId state: the shell renders sequentially so its scopes are deterministic;
+  // a streamed boundary's content is rooted at the boundary's position. (Multiple boundaries
+  // streaming concurrently share this one holder, so their interior useId ordering keeps the
+  // pre-existing streaming caveat — the shell and any single boundary are correct.)
 
   constructor(resumable = false) {
+    // `effects` makes effect hooks bump the counter so an island that runs an effect is
+    // picked for hydration.
+    const effects = { count: 0 };
+    super("", effects);
+    this.effects = effects;
     this.resumable = resumable;
-    this.dispatcher = this.makeDispatcher();
   }
 
-  private makeDispatcher(): Dispatcher {
-    // deno-lint-ignore no-this-alias -- captured for the closures below.
-    const self = this;
-    return {
-      useState<S>(initial: S | (() => S)) {
-        const value = typeof initial === "function" ? (initial as () => S)() : initial;
-        return [value, () => {}] as [S, () => void];
-      },
-      useReducer<S, A, I>(
-        _r: (s: S, a: A) => S,
-        initialArg: I,
-        init?: (arg: I) => S,
-      ) {
-        return [
-          init ? init(initialArg) : (initialArg as unknown as S),
-          () => {},
-        ] as [
-          S,
-          () => void,
-        ];
-      },
-      useEffect() {
-        self.effects.count++;
-      },
-      useMemo<T>(factory: () => T) {
-        return factory();
-      },
-      useRef<T>(initial: T) {
-        return { current: initial };
-      },
-      useContext<T>(context: Context<T>): T {
-        const scopes = self.activeScopes;
-        for (let i = scopes.length - 1; i >= 0; i--) {
-          if (scopes[i].has(context._id)) {
-            return scopes[i].get(context._id) as T;
-          }
-        }
-        return context._defaultValue;
-      },
-      useId(): string {
-        return nextId(self.ids.scope);
-      },
-      useSyncExternalStore<T>(
-        _s: (o: () => void) => () => void,
-        getSnapshot: () => T,
-        getServerSnapshot?: () => T,
-      ): T {
-        self.effects.count++; // subscribes on mount → needs hydration
-        return (getServerSnapshot ?? getSnapshot)();
-      },
-      useLayoutEffect() {
-        self.effects.count++;
-      },
-      useInsertionEffect() {
-        self.effects.count++;
-      },
-      useMemoCache(size: number): unknown[] {
-        return new Array(size).fill(MEMO_CACHE_SENTINEL);
-      },
-    };
-  }
-
-  async resolve(
-    children: VNodeChildren,
-    scopes: ProviderScope[],
-    idRoot?: IdHolder["scope"],
-    head: HeadCollector | null = null,
-  ): Promise<Dual> {
-    for (;;) {
-      if (idRoot) {
-        idRoot.count = 0;
-        idRoot.local = 0;
-        this.ids.scope = idRoot;
-      }
-      try {
-        return await this.renderChildren(children, scopes, head);
-      } catch (err) {
-        if (isThenable(err)) {
-          await err;
-          continue;
-        }
-        throw err;
-      }
-    }
-  }
-
-  async renderChildren(
+  renderChildren(
     children: VNodeChildren,
     scopes: ProviderScope[],
     head: HeadCollector | null = null,
   ): Promise<Dual> {
-    const arr = Array.isArray(children) ? children : children == null ? [] : [children];
-    let html = "";
-    const flight: FlightNode[] = [];
-    for (const c of arr) {
-      const d = await this.renderChild(c, scopes, head);
-      html += d.html;
-      flight.push(d.flight);
-    }
-    return { html, flight };
+    return renderDualChildren(children, (child) => this.renderChild(child, scopes, head));
   }
 
-  renderChild(
-    child: VNodeChild,
-    scopes: ProviderScope[],
-    head: HeadCollector | null = null,
-  ): Dual | Promise<Dual> {
-    if (child == null || child === false || child === true) {
-      return { html: "", flight: null };
-    }
-    if (typeof child === "string") {
-      return { html: escapeHtml(child), flight: child };
-    }
-    if (typeof child === "number") {
-      return { html: escapeHtml(String(child)), flight: child };
-    }
-    if (Array.isArray(child)) return this.renderChildren(child, scopes, head);
-    return this.renderVNode(child as VNode, scopes, head);
+  protected empty(): Dual {
+    return { html: "", flight: null };
   }
 
-  async renderVNode(
-    node: VNode,
+  protected text(value: string | number): Dual {
+    return { html: escapeHtml(String(value)), flight: value };
+  }
+
+  /**
+   * Suspense: stream the HTML; the Flight tree gets a hole filled on resolve. The boundary
+   * is its own id scope (one slot in its parent); its streamed content is rooted at that
+   * position so it reproduces the client's ids.
+   */
+  protected async renderSuspense(
+    props: Record<string, unknown>,
     scopes: ProviderScope[],
-    head: HeadCollector | null = null,
   ): Promise<Dual> {
-    const { type } = node;
-    // Null `props` (some npm libs) is treated as {} — parity with render-to-string.
-    const props = node.props ?? {};
-
-    // Suspense: stream the HTML; the Flight tree gets a hole filled on resolve. The
-    // boundary is its own id scope (one slot in its parent); its streamed content is
-    // rooted at that position so it reproduces the client's ids.
-    if ((type as unknown) === SUSPENSE) {
-      const id = `dnx${this.id++}`;
-      const parentScope = this.ids.scope;
-      const boundaryScope = enterScope(parentScope);
-      // The id is captured in closure, so a rejected boundary still reports it
-      // (ok:false): its shell fallback stays and the rest of the stream is unaffected.
-      this.active.add(
-        this.resolve(
-          props.children,
-          scopes,
-          rootScope(scopePrefix(boundaryScope)),
-        )
-          .then((d) => {
-            this.holes.set(id, d.flight);
-            return { id, html: d.html, flight: d.flight, ok: true };
-          })
-          .catch((err) => {
-            console.error(
-              "denext: streamed Flight boundary failed to resolve:",
-              id,
-              err,
-            );
-            return { id, html: "", flight: null, ok: false };
-          }),
-      );
-      this.ids.scope = boundaryScope;
-      let fallback: Dual;
-      try {
-        fallback = await this.renderChildren(
-          props.fallback as VNodeChildren,
-          scopes,
-        );
-      } finally {
-        this.ids.scope = parentScope;
-      }
+    const id = `dnx${this.id++}`;
+    const parentScope = this.ids.scope;
+    const boundaryScope = enterScope(parentScope);
+    // The id is captured in closure, so a rejected boundary still reports it (ok:false):
+    // its shell fallback stays and the rest of the stream is unaffected.
+    this.active.add(
+      this.resolve(props.children as VNodeChildren, scopes, rootScope(scopePrefix(boundaryScope)))
+        .then((d) => {
+          this.holes.set(id, d.flight);
+          return { id, html: d.html, flight: d.flight, ok: true };
+        })
+        .catch((err) => {
+          console.error("denext: streamed Flight boundary failed to resolve:", id, err);
+          return { id, html: "", flight: null, ok: false };
+        }),
+    );
+    this.ids.scope = boundaryScope;
+    try {
+      const fallback = await this.renderChildren(props.fallback as VNodeChildren, scopes);
+      // The hole is a transient node type filled by fillHoles before emit.
       const hole = { $: "$", r: id } as FlightHole;
       return {
         html: `<div data-dnx-b="${id}">${fallback.html}</div>`,
-        // The hole is a transient node type filled by fillHoles before emit.
         flight: hole as unknown as FlightNode,
       };
+    } finally {
+      this.ids.scope = parentScope;
     }
-
-    // Fragment / context provider.
-    if (type === FRAGMENT) {
-      const info = props[PROVIDER as unknown as string] as
-        | { id: symbol; value: unknown }
-        | undefined;
-      if (info) {
-        const scope: ProviderScope = new Map([[info.id, info.value]]);
-        return this.renderChildren(props.children, [...scopes, scope], head);
-      }
-      return this.renderChildren(props.children, scopes, head);
-    }
-
-    // Error boundary (id-transparent; the fallback renders from the pre-children
-    // scope state so its ids line up with the client's).
-    if ((type as unknown) === ERROR_BOUNDARY) {
-      const idScope = this.ids.scope;
-      const savedCount = idScope.count;
-      const savedLocal = idScope.local;
-      try {
-        return await this.renderChildren(props.children, scopes, head);
-      } catch (err) {
-        if (isThenable(err) || isControlSignal(err)) throw err;
-        this.ids.scope = idScope;
-        idScope.count = savedCount;
-        idScope.local = savedLocal;
-        const Fallback = props.fallback as (
-          p: { error: Error; reset: () => void },
-        ) => VNode;
-        setDispatcher(this.dispatcher);
-        this.activeScopes = scopes;
-        reportBoundaryError(props, err);
-        const fb = Fallback({ error: toClientError(err), reset: () => {} });
-        const resolved = fb instanceof Promise ? await fb : fb;
-        return this.renderChild(resolved as VNodeChild, scopes, head);
-      }
-    }
-
-    // Function component (or a memo/forwardRef object wrapper). Each opens a fresh
-    // id scope (one slot in its parent) so its ids derive from its tree position.
-    if (isComponentType(type)) {
-      const ref = clientRefOf(type);
-      const parentScope = this.ids.scope;
-      const scope = enterScope(parentScope);
-      this.ids.scope = scope;
-      try {
-        if (ref) {
-          // Client island: render it to HTML for first paint, emit only a REFERENCE
-          // in the Flight tree (tagged with its tree-path prefix so the client roots
-          // the island's id scope there). A `client:*` directive (or resumable mode)
-          // strips the island out for deferred per-island hydration. Mirrors
-          // renderToHtmlFlight's carve-out so streamed + buffered Flight agree.
-          // Already carved on the HTML pass (this is the Flight-children re-walk):
-          // emit the matching foreign host with the SAME id, no re-carve/new prefix.
-          const already = this.carvedNested.get(node);
-          if (already) {
-            return {
-              html: "",
-              flight: islandWrapper(already.id, already.strategy, already.param, "")
-                .flight,
-            };
-          }
-          setDispatcher(this.dispatcher);
-          this.activeScopes = scopes;
-          const parsed = parseStrategy(props, ref.moduleHydrate);
-          const rest = parsed.rest;
-          const prefix = scopePrefix(scope);
-          // A nested `client:*` island carves independently (its own wrapper +
-          // strategy). The Flight-children re-walk (pass 2) re-enters scope with an
-          // advanced counter, so it would assign a different prefix; the `carvedNested`
-          // guard above pins it to the HTML pass's id. `wasInside` marks it as nested.
-          const wasInside = this.insideIsland;
-          const recordNested = (
-            strategy: HydrationStrategy,
-            param?: string,
-          ): void => {
-            if (wasInside) {
-              this.carvedNested.set(node, { id: prefix, strategy, param });
-            }
-          };
-
-          // client:only — skip SSR: no island HTML, empty foreign wrapper + Flight.
-          if (parsed.strategy === "only") {
-            this.insideIsland = true;
-            const p = await this.serializeProps(rest, scopes);
-            p[ID_PATH_PROP] = prefix;
-            const childFlight = await this.flightChildren(
-              rest.children as VNodeChildren,
-              scopes,
-            );
-            this.insideIsland = wasInside;
-            const islandFlight: FlightNode = {
-              $: "c",
-              i: ref.id,
-              p,
-              c: childFlight,
-            };
-            this.islands.push({
-              id: prefix,
-              strategy: "only",
-              flight: islandFlight,
-            });
-            recordNested("only");
-            warnClientOnlySeoContent(rest.children as VNodeChildren, prefix);
-            return islandWrapper(prefix, "only", undefined, "");
-          }
-
-          const effectsBefore = this.effects.count;
-          const rendered = invokeComponent(resolveComponentType(type), rest);
-          const out = rendered instanceof Promise ? await rendered : rendered;
-          const ranEffect = this.effects.count > effectsBefore;
-          this.insideIsland = true; // this island's subtree + children are "inside" it
-          const htmlDual = await this.renderChild(
-            out as VNodeChild,
-            scopes,
-            head,
-          );
-          const hasHandlers = htmlDual.html.includes(DNX_H_ATTR);
-          const strategy = parsed.strategy ??
-            (this.resumable ? (ranEffect || !hasHandlers ? "idle" : "interaction") : null);
-          const p = await this.serializeProps(rest, scopes);
-          p[ID_PATH_PROP] = prefix;
-          const childFlight = await this.flightChildren(
-            rest.children as VNodeChildren,
-            scopes,
-          );
-          this.insideIsland = wasInside;
-          const islandFlight: FlightNode = {
-            $: "c",
-            i: ref.id,
-            p,
-            c: childFlight,
-          };
-          if (strategy) {
-            // Lazy island: nest its server HTML in a foreign-host wrapper the page
-            // root adopts but doesn't own, and stash its Flight for a per-island
-            // hydrateRoot when the strategy fires (emitted as #__denext_islands).
-            this.islands.push({
-              id: prefix,
-              strategy,
-              param: parsed.param,
-              flight: islandFlight,
-            });
-            recordNested(strategy, parsed.param);
-            return islandWrapper(prefix, strategy, parsed.param, htmlDual.html);
-          }
-          return { html: htmlDual.html, flight: islandFlight };
-        }
-        setDispatcher(this.dispatcher);
-        this.activeScopes = scopes;
-        if (isClassComponent(type)) {
-          if (__DENEXT_CLASS_COMPONENTS__) {
-            return await this.renderChild(
-              renderClassToVNode(
-                type,
-                props,
-                resolveContextType(type, scopes),
-              ) as VNodeChild,
-              scopes,
-              head,
-            );
-          }
-          throw classComponentsDisabledError();
-        }
-        const result = invokeComponent(resolveComponentType(type), props);
-        const resolved = result instanceof Promise ? await result : result;
-        return await this.renderChild(resolved as VNodeChild, scopes, head);
-      } finally {
-        this.ids.scope = parentScope;
-      }
-    }
-
-    // Host element.
-    const tag = type as string;
-    let attrs = serializeAttributes(props, tag, this.resumable);
-    // A <form> posting to a server action needs method=post for the no-JS path
-    // (parity with render-to-html-flight / render-to-string / render-to-stream).
-    if (
-      tag === "form" && isServerAction(props.action) && props.method == null
-    ) {
-      attrs += ` method="post"`;
-    }
-    // React 19 document metadata: hoist in-tree <title>/<meta>/<link> into the head
-    // collector (shell render only) instead of emitting them inline — parity with
-    // render-to-html-flight and the HTML stream renderer.
-    if (head && HOISTED_TAGS.has(tag)) {
-      if (tag === "title") {
-        head.title = (await this.renderChildren(props.children, scopes, null)).html;
-      } else {
-        head.tags.push(`<${tag}${attrs}>`);
-      }
-      return { html: "", flight: null };
-    }
-    const p = await this.serializeProps(props, scopes);
-    if (VOID_ELEMENTS.has(tag)) {
-      return { html: `<${tag}${attrs}>`, flight: { $: "h", t: tag, p, c: [] } };
-    }
-    const dangerous = props.dangerouslySetInnerHTML as
-      | { __html: string }
-      | undefined;
-    if (dangerous && typeof dangerous.__html === "string") {
-      warnDangerousHtml(tag);
-      return {
-        html: `<${tag}${attrs}>${dangerous.__html}</${tag}>`,
-        flight: { $: "h", t: tag, p, c: [] },
-      };
-    }
-    const inner = await this.renderChildren(props.children, scopes, head);
-    return {
-      html: `<${tag}${attrs}>${inner.html}</${tag}>`,
-      flight: {
-        $: "h",
-        t: tag,
-        p,
-        c: Array.isArray(inner.flight) ? inner.flight : [inner.flight],
-      },
-    };
   }
 
-  // Flight-only child serialization (for client-island holes).
-  async flightChildren(
-    children: VNodeChildren,
+  /**
+   * <title>/<meta>/<link> hoist into the head collector (shell render only) — parity with
+   * render-to-html-flight and the HTML stream renderer.
+   */
+  protected renderHost(
+    node: VNode,
     scopes: ProviderScope[],
-  ): Promise<FlightNode[]> {
-    const arr = Array.isArray(children) ? children : children == null ? [] : [children];
-    const out: FlightNode[] = [];
-    for (const c of arr) out.push((await this.renderChild(c, scopes)).flight);
-    return out;
+    head: HeadCollector | null,
+  ): Promise<Dual> {
+    return renderHostDual(this, node, this.resumable, scopes, head);
   }
 
-  async serializeProps(
+  /** A client island (mirrors renderToHtmlFlight's carve-out so streamed + buffered agree). */
+  protected override renderClientRef(
+    node: VNode,
+    type: unknown,
+    ref: ClientRefInfo,
     props: Record<string, unknown>,
+    prefix: string,
     scopes: ProviderScope[],
-  ): Promise<FlightProps> {
-    const out: FlightProps = {};
-    for (const [name, value] of Object.entries(props)) {
-      if (
-        name === "children" || name === "key" || name === "ref" ||
-        name === PROVIDER.toString()
-      ) {
-        continue;
-      }
-      const sv = await this.serializeValue(value, scopes);
-      if (sv !== SKIP) out[name] = sv as FlightValue;
-    }
-    return out;
+    head: HeadCollector | null,
+  ): Promise<Dual> {
+    return renderClientIsland(this, node, type, ref, props, prefix, scopes, head);
   }
 
-  async serializeValue(
-    value: unknown,
-    scopes: ProviderScope[],
-  ): Promise<FlightValue | typeof SKIP> {
-    if (value === undefined) return SKIP;
-    if (value === null) return null;
-    const t = typeof value;
-    if (t === "string" || t === "number" || t === "boolean") {
-      return value as FlightValue;
-    }
-    if (isServerAction(value)) return { $: "a", i: value.denextActionId };
-    if (isQrl(value)) return { $: "e", i: value.denextQrlId };
-    if (t === "function") return SKIP;
-    if (value instanceof Date) return { $: "D", v: value.toISOString() };
-    // A thenable (a Remix `defer()` field / promise data): DON'T await it here —
-    // that would block the shell. Leave a value hole; the promise settles as the
-    // deferred `<Await>`'s Suspense hole streams, and its resolved value is
-    // substituted into the tail Flight (see resolveValueHoles / substituteValueHoles).
-    if (isThenable(value)) {
+  /** Lazy islands are emitted as `#__denext_islands` in the tail (shell and hole renders alike). */
+  recordIsland(island: IslandPayload): void {
+    this.islands.push(island);
+  }
+
+  /**
+   * Like the buffered serializers, except a thenable (a Remix `defer()` field / promise
+   * data) is NOT awaited here — that would block the shell. It leaves a value hole; the
+   * promise settles as the deferred `<Await>`'s Suspense hole streams, and its resolved value
+   * is substituted into the tail Flight (see resolveValueHoles / substituteValueHoles).
+   */
+  async serializeValue(value: unknown, scopes: ProviderScope[]): Promise<Serialized> {
+    const scalar = serializeScalar(value);
+    if (scalar.kind === "value") return scalar.value;
+    if (scalar.kind === "skip") return SKIP;
+    if (scalar.kind === "thenable") {
       const id = `dnxv${this.valueHoleId++}`;
-      this.valueHoles.set(id, { promise: value, scopes });
+      this.valueHoles.set(id, { promise: scalar.promise, scopes });
       return { $: "vh", r: id } as unknown as FlightValue;
     }
-    if (Array.isArray(value)) {
-      const items: FlightValue[] = [];
-      for (const el of value) {
-        const sv = await this.serializeValue(el, scopes);
-        if (sv !== SKIP) items.push(sv as FlightValue);
-      }
-      return items;
-    }
-    if (isVNode(value)) {
-      return (await this.renderChild(value as VNode, scopes))
-        .flight as FlightValue;
-    }
-    if (t === "object") {
-      const obj: Record<string, FlightValue> = {};
-      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-        const sv = await this.serializeValue(v, scopes);
-        if (sv !== SKIP) obj[k] = sv as FlightValue;
-      }
-      return obj;
-    }
-    return SKIP;
+    return await serializeCompound(value, {
+      value: (v) => this.serializeValue(v, scopes),
+      vnode: async (n) => (await this.renderChild(n, scopes)).flight as FlightValue,
+    });
   }
 
   /**
@@ -692,11 +298,6 @@ function substitutePropsValueHoles(
   const out: FlightProps = {};
   for (const [k, v] of Object.entries(props)) out[k] = substituteValueHoles(v, resolved);
   return out;
-}
-
-function isVNode(value: unknown): value is VNode {
-  return typeof value === "object" && value !== null && "type" in value &&
-    "props" in value;
 }
 
 /** Recursively fill `{$:"$",r}` Suspense holes with their resolved Flight. */
@@ -803,43 +404,55 @@ export async function renderFlightShell(
     hasHoles: renderer.active.size > 0,
     async streamHoles(controller, encoder, signal) {
       try {
-        while (renderer.active.size > 0) {
-          if (signal?.aborted) break;
-          const settled = await Promise.race(
-            [...renderer.active].map((p) => p.then((v) => ({ p, v }))),
-          );
-          renderer.active.delete(settled.p);
-          const { id, html, ok } = settled.v;
-          if (!ok) continue; // failed hole: leave its shell fallback
-          controller.enqueue(
-            encoder.encode(`<template data-dnx-r="${id}">${html}</template>`),
-          );
-        }
-        // All Suspense holes resolved: build the complete Flight tree (holes filled)
-        // and the islands/signal-state accumulated across the shell and every hole.
-        let root = shell.flight;
-        if (Array.isArray(root) && root.length === 1) root = root[0];
-        let flight = fillHoles(root, renderer.holes);
-        // Deferred `defer()` props left value-hole placeholders so the shell could
-        // flush; their promises have settled as the holes streamed, so substitute the
-        // resolved values into the tail Flight (the client hydrates with real data, not
-        // the `{}` a bare promise would serialize to). Resolve BEFORE endSignalCollection
-        // in case a resolved deferred VNode touched a signal.
-        const resolvedValues = await renderer.resolveValueHoles();
-        if (resolvedValues.size > 0) {
-          flight = substituteValueHoles(flight, resolvedValues) as FlightNode;
-        }
-        const signalState = endSignalCollection();
-        return {
-          flight,
-          islands: renderer.islands.length > 0 ? renderer.islands : undefined,
-          signalState: Object.keys(signalState).length > 0 ? signalState : undefined,
-        };
+        await drainShellHoles(renderer, controller, encoder, signal);
+        return await finishFlightTail(renderer, shell.flight);
       } catch (err) {
         endSignalCollection();
         throw err;
       }
     },
+  };
+}
+
+/** Stream each Suspense hole as it settles; a failed hole leaves its shell fallback. */
+async function drainShellHoles(
+  renderer: StreamFlightRenderer,
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  encoder: TextEncoder,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  while (renderer.active.size > 0) {
+    if (signal?.aborted) break;
+    const { id, html, ok } = await takeSettled(renderer.active);
+    if (!ok) continue; // failed hole: leave its shell fallback
+    controller.enqueue(encoder.encode(`<template data-dnx-r="${id}">${html}</template>`));
+  }
+}
+
+/**
+ * All Suspense holes resolved: build the complete Flight tree (holes filled) and the
+ * islands/signal-state accumulated across the shell and every hole. Deferred `defer()`
+ * props left value-hole placeholders so the shell could flush; their promises have
+ * settled as the holes streamed, so substitute the resolved values into the tail Flight
+ * (the client hydrates with real data, not the `{}` a bare promise would serialize to).
+ * Resolved BEFORE endSignalCollection in case a resolved deferred VNode touched a signal.
+ */
+async function finishFlightTail(
+  renderer: StreamFlightRenderer,
+  shellFlight: FlightNode,
+): Promise<Awaited<ReturnType<FlightShellRender["streamHoles"]>>> {
+  let root = shellFlight;
+  if (Array.isArray(root) && root.length === 1) root = root[0];
+  let flight = fillHoles(root, renderer.holes);
+  const resolvedValues = await renderer.resolveValueHoles();
+  if (resolvedValues.size > 0) {
+    flight = substituteValueHoles(flight, resolvedValues) as FlightNode;
+  }
+  const signalState = endSignalCollection();
+  return {
+    flight,
+    islands: renderer.islands.length > 0 ? renderer.islands : undefined,
+    signalState: Object.keys(signalState).length > 0 ? signalState : undefined,
   };
 }
 

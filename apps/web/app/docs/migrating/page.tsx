@@ -1,6 +1,10 @@
 import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
 
-export const metadata = { title: "Migrating from Next.js" };
+export const metadata = {
+  title: "Migrating from Next.js",
+  description:
+    "If you know the App Router, you already know denext. The conventions are the same; the runtime underneath is Deno with its own small React.",
+};
 
 export default function Migrating() {
   return (
@@ -76,7 +80,9 @@ deno task dev`}
         <code>index.html</code>, no Vite/CRA/Next) — seeding <code>spa.env</code> from{" "}
         <code>process.env.REACT_APP_*</code> / <code>import.meta.env.VITE_*</code>{" "}
         as appropriate. Pass <code>--from vite|cra|generic</code>{" "}
-        to force the source when detection is ambiguous. (Remix is not supported.)
+        to force the source when detection is ambiguous. (Migrating from Remix? See{" "}
+        <a href="/docs/migrating-remix">Migrating from Remix</a>; it is a route-tree transform, not
+        a SPA import.)
       </p>
 
       <h2>What's the same</h2>

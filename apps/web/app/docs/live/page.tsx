@@ -39,8 +39,8 @@ export default function LiveComponents() {
         that tagged, cached data.
       </p>
       <Code lang="tsx">
-        {`import { Live } from "@denext/denext/live";
-import { cacheTag, unstable_cache } from "@denext/denext/server";
+        {`import { Live } from "denext/live";
+import { cacheTag, unstable_cache } from "denext/server";
 
 const getOrders = unstable_cache(
   async () => db.orders.recent(),
@@ -66,7 +66,7 @@ export default async function Dashboard() {
       </p>
       <Code lang="tsx">
         {`"use server";
-import { revalidateTag } from "@denext/denext/server";
+import { revalidateTag } from "denext/server";
 
 export async function placeOrder(form: FormData) {
   await db.orders.insert(form);
@@ -122,7 +122,7 @@ export async function placeOrder(form: FormData) {
       </p>
       <Code lang="tsx">
         {`"use client";
-import { useLive } from "@denext/denext/live";
+import { useLive } from "denext/live";
 import { recentOrders } from "./actions.ts"; // a serverAction, used as a query
 
 export function Orders({ initial }: { initial: Order[] }) {
@@ -145,7 +145,7 @@ export function Orders({ initial }: { initial: Order[] }) {
       </p>
       <Code lang="tsx">
         {`"use client";
-import { usePresence } from "@denext/denext/live";
+import { usePresence } from "denext/live";
 
 export function Cursors({ docId }: { docId: string }) {
   const { others, setState } = usePresence<{ x: number; y: number }>(docId, {
@@ -210,7 +210,7 @@ export default {
         policy, mark individual read-only fetchers as readable over the live channel:
       </p>
       <Code lang="ts">
-        {`import { liveReadable, serverAction } from "@denext/denext";
+        {`import { liveReadable, serverAction } from "denext";
 
 export const stats = liveReadable(
   serverAction("dashboard#stats", async () => ({ online: await countOnline() })),

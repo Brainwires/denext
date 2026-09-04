@@ -17,7 +17,7 @@ image/CI, then run `start`.
 ### Docker
 
 ```dockerfile
-FROM denoland/deno:2.9.5
+FROM denoland/deno:2.9.6
 WORKDIR /app
 
 # Cache dependencies first (better layer caching).
@@ -126,7 +126,7 @@ it in the exported `safeFetch` so a hostile host/redirect can't reach your
 metadata endpoint or internal network:
 
 ```ts
-import { safeFetch } from "@denext/denext/server";
+import { safeFetch } from "denext/server";
 
 // Refuses if any resolved A/AAAA is loopback/private/link-local/CGNAT/etc.
 const res = await safeFetch(userProvidedUrl);
@@ -146,10 +146,11 @@ For fixed, trusted URLs plain `fetch` is fine.
 - `NextResponse.redirect(url)` keeps Next.js's stricter contract: `url` must be
   absolute and a relative string throws.
 
-## 5. CSP is applied to buffered page responses, not streaming/Flight
+## 5. CSP is applied to page responses, not Flight/API/static
 
-denext computes a strict Content-Security-Policy for **buffered** HTML page
-responses. **Streaming** responses (`renderToReadableStream`), **Flight/RSC**
+denext computes a strict Content-Security-Policy for HTML page responses,
+**buffered and streamed** alike (a streamed page carries the same hash-based
+policy; see §CSP below). **Flight/RSC**
 responses, and **streamed Cache Components / PPR** responses (a cached shell with
 per-request dynamic holes) do not carry a framework-generated CSP — the full
 document isn't known when the first bytes flush. If you rely on CSP for those
@@ -193,8 +194,7 @@ ones (the swap runtime is a hashed constant). A fully synchronous route (no hole
 is still delivered buffered, so it stays shared-cacheable, and ISR/PPR-cacheable
 routes take their own path first — so streaming never bypasses the page cache. A
 streamed route is rendered per request (`no-store`), not ISR-cached. Opt the whole
-app out with `streaming: false` (top-level config; the legacy
-`experimental.streaming` is still honored).
+app out with `streaming: false` (a top-level config field).
 
 ## 6. Tell denext about your proxy (origin + forwarded headers)
 
@@ -229,7 +229,7 @@ For sessions, prefer the built-in signed-cookie helper instead of hand-rolling:
 ```ts
 import { getSession } from "denext/server";
 const session = await getSession<{ userId: string }>({
-  secret: Deno.env.get("SESSION_SECRET")!, // long + random (≥32 chars; a short one warns)
+  secret: Deno.env.get("SESSION_SECRET")!, // long + random (≥32 chars; shorter warns in dev, throws in prod)
   hostPrefix: true, // recommended: origin-lock the cookie (__Host- → Secure, Path=/, no Domain)
 });
 await session.set({ userId: user.id }); // signed (HMAC), httpOnly, Secure, SameSite=Lax

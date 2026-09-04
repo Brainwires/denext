@@ -19,58 +19,7 @@ export default function ImageDemo() {
         on any <code>&lt;img&gt;</code> to see the generated <code>srcset</code>.
       </p>
 
-      <div class="grid">
-        <figure>
-          <Image
-            loader={denextImageLoader}
-            src="/photo.png"
-            alt="A cat, optimized and served as WebP"
-            width={256}
-            height={251}
-            widths={[128, 256, 384]}
-            quality={80}
-            priority
-          />
-          <figcaption>
-            <strong>priority + responsive srcSet</strong>
-            <br />
-            eager load, <code>widths={"{[128, 256, 384]}"}</code>, q=80
-          </figcaption>
-        </figure>
-
-        <figure>
-          <Image
-            loader={denextImageLoader}
-            src="/photo.png"
-            alt="The same cat with a blurred placeholder while loading"
-            width={256}
-            height={251}
-            widths={[128, 256]}
-            placeholder="blur"
-            blurDataURL={BLUR}
-          />
-          <figcaption>
-            <strong>lazy + blur placeholder</strong>
-            <br />
-            deferred load behind a <code>blurDataURL</code>
-          </figcaption>
-        </figure>
-
-        <figure>
-          {/* No loader → a plain, layout-stable <img> (no optimization). */}
-          <Image
-            src="/photo.png"
-            alt="An unoptimized img with explicit dimensions"
-            width={256}
-            height={251}
-          />
-          <figcaption>
-            <strong>no loader</strong>
-            <br />
-            plain <code>&lt;img&gt;</code>, lazy + async-decoded
-          </figcaption>
-        </figure>
-      </div>
+      <Figures />
 
       <p class="note">
         Remote sources (e.g. an Unsplash URL) work too, but must be allowlisted in{" "}
@@ -78,5 +27,63 @@ export default function ImageDemo() {
         — the SSRF defense for the optimizer.
       </p>
     </section>
+  );
+}
+
+/** The three `<Image>` variants: optimized + priority, optimized + blur, and plain. */
+function Figures() {
+  return (
+    <div class="grid">
+      <figure>
+        <Image
+          loader={denextImageLoader}
+          src="/photo.png"
+          alt="A cat, optimized and served as WebP"
+          width={256}
+          height={251}
+          widths={[128, 256, 384]}
+          quality={80}
+          priority
+        />
+        <figcaption>
+          <strong>priority + responsive srcSet</strong>
+          <br />
+          eager load, <code>widths={"{[128, 256, 384]}"}</code>, q=80
+        </figcaption>
+      </figure>
+
+      <figure>
+        <Image
+          loader={denextImageLoader}
+          src="/photo.png"
+          alt="The same cat with a blurred placeholder while loading"
+          width={256}
+          height={251}
+          widths={[128, 256]}
+          placeholder="blur"
+          blurDataURL={BLUR}
+        />
+        <figcaption>
+          <strong>lazy + blur placeholder</strong>
+          <br />
+          deferred load behind a <code>blurDataURL</code>
+        </figcaption>
+      </figure>
+
+      <figure>
+        {/* No loader → a plain, layout-stable <img> (no optimization). */}
+        <Image
+          src="/photo.png"
+          alt="An unoptimized img with explicit dimensions"
+          width={256}
+          height={251}
+        />
+        <figcaption>
+          <strong>no loader</strong>
+          <br />
+          plain <code>&lt;img&gt;</code>, lazy + async-decoded
+        </figcaption>
+      </figure>
+    </div>
   );
 }

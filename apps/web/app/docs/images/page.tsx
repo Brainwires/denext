@@ -1,6 +1,10 @@
 import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
 
-export const metadata = { title: "Images" };
+export const metadata = {
+  title: "Images",
+  description:
+    "An optimizing Image component with a built-in, self-hosted optimization endpoint — modern formats, correct sizing, no external service.",
+};
 
 export default function Images() {
   return (
@@ -26,8 +30,9 @@ export default function Avatar() {
       <h2>The optimization endpoint</h2>
       <p>
         <code>{"<Image>"}</code> points at the built-in <code>/_denext/image</code>{" "}
-        optimizer, which decodes the source and re-encodes it to a modern raster format (WebP, and
-        AVIF when the browser advertises it) at the requested width.
+        optimizer, which decodes the source and re-encodes it to a modern raster format (WebP by
+        default; AVIF too when <code>images.formats</code> lists <code>"image/avif"</code>{" "}
+        and the browser advertises it) at the requested width.
       </p>
       <ul>
         <li>
@@ -79,8 +84,8 @@ export default {
       </Callout>
 
       <Callout kind="warn">
-        AVIF encoding is heavier than WebP. It's negotiated per-request from the <code>Accept</code>
-        {" "}
+        AVIF encoding is heavier than WebP, so it is opt-in (<code>images.formats</code>). Once
+        enabled it's negotiated per-request from the <code>Accept</code>{" "}
         header, so only browsers that ask for it pay the cost; everyone else gets WebP.
       </Callout>
     </DocsShell>

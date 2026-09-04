@@ -42,30 +42,30 @@ function parseHandlers(attr: string): Record<string, string> {
  * (strip `data-dnx-*`), the same caveat as any raw-HTML injection.
  */
 export function dispatchQrl(target: unknown, eventType: string, event: unknown): boolean {
-  let el = target as {
-    nodeType?: number;
-    parentNode?: unknown;
-    getAttribute?: (n: string) => string | null;
-  } | null;
-  while (el) {
-    if (el.nodeType === 1 && typeof el.getAttribute === "function") {
-      const attr = el.getAttribute(DNX_H_ATTR);
-      if (attr) {
-        const id = parseHandlers(attr)[eventType];
-        if (id) {
-          const loader = getQrlLoader(id);
-          if (loader) {
-            void loader().then((fn) => fn(event)).catch((err) =>
-              console.warn("denext: qrl handler failed:", (err as Error)?.message)
-            );
-            return true;
-          }
-        }
-      }
-    }
-    el = (el.parentNode ?? null) as typeof el;
+  for (let el = target as DomLike | null; el; el = (el.parentNode ?? null) as DomLike | null) {
+    const loader = qrlLoaderFor(el, eventType);
+    if (!loader) continue;
+    void loader().then((fn) => fn(event)).catch((err) =>
+      console.warn("denext: qrl handler failed:", (err as Error)?.message)
+    );
+    return true;
   }
   return false;
+}
+
+type DomLike = {
+  nodeType?: number;
+  parentNode?: unknown;
+  getAttribute?: (n: string) => string | null;
+};
+
+/** The registered qrl loader an element's `data-dnx-h` names for `eventType`, if any. */
+function qrlLoaderFor(el: DomLike, eventType: string): ReturnType<typeof getQrlLoader> {
+  if (el.nodeType !== 1 || typeof el.getAttribute !== "function") return undefined;
+  const attr = el.getAttribute(DNX_H_ATTR);
+  if (!attr) return undefined;
+  const id = parseHandlers(attr)[eventType];
+  return id ? getQrlLoader(id) : undefined;
 }
 
 /**
@@ -83,17 +83,27 @@ export function installQrlDispatch(): void {
   const w = globalThis as unknown as { __dnxQrlTypes?: Set<string>; document?: Document };
   const doc = w.document;
   if (typeof doc === "undefined") return;
-  const registered = (w.__dnxQrlTypes ??= new Set<string>());
+  const registered = registeredQrlTypes(w);
+  for (const type of neededEventTypes(doc)) {
+    if (registered.has(type)) continue; // a listener for this type is already live
+    registered.add(type);
+    doc.addEventListener(type, (event) => resumeEvent(event.target, event.type, event), false);
+  }
+}
+
+/** The page-global set of event types that already have a dispatch listener. */
+function registeredQrlTypes(w: { __dnxQrlTypes?: Set<string> }): Set<string> {
+  return w.__dnxQrlTypes ??= new Set<string>();
+}
+
+/** The interaction events plus every event type a stamped handler host declares. */
+function neededEventTypes(doc: Document): Set<string> {
   const needed = new Set<string>(INTERACTION_EVENTS);
   doc.querySelectorAll(`[${DNX_H_ATTR}]`).forEach((el) => {
     const attr = el.getAttribute(DNX_H_ATTR);
     if (attr) { for (const t of Object.keys(parseHandlers(attr))) needed.add(t); }
   });
-  for (const type of needed) {
-    if (registered.has(type)) continue; // a listener for this type is already live
-    registered.add(type);
-    doc.addEventListener(type, (event) => resumeEvent(event.target, event.type, event), false);
-  }
+  return needed;
 }
 
 /** The outcome of {@link resumeEvent}. */

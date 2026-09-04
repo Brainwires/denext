@@ -107,7 +107,11 @@ security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
 - `unstable_cache`, `revalidatePath`, `revalidateTag`, `updateTag`.
 - **Cache Components** (`"use cache"`, `cacheLife`, `cacheTag`) ⚑ and **Partial
   Prerendering (PPR)** — a cached static shell + per-request dynamic holes, now
-  **Flight-capable** (client islands in the shell and in resumed holes) ⚑.
+  **Flight-capable** (client islands in the shell and in resumed holes) ⚑. A
+  **stable opt-in** since 2.0 (top-level `cacheComponents: true`; the legacy
+  `experimental.cacheComponents` still works and dev-warns) — not default-on,
+  with its documented bounds in
+  [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
 - **ISR** (`revalidate` / `force-static`) with stale-while-revalidate.
 - Pluggable **cache stores**: the durable **`node:sqlite`** (real SQLite built
   into Deno; the default — bounded + stale-while-revalidate) with an in-memory
@@ -130,7 +134,19 @@ security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
   JWKS-verified across the RS/PS/ES `alg` families (RS/PS/ES 256/384/512; `none`
   and unknown algs rejected); provider calls go through the SSRF-safe
   `safeFetch`; the `redirect_uri` is pinned to a required `canonicalOrigin`.
-  Zero npm.
+  Zero npm. Production-ready out of the box: **password hashing** for the
+  Credentials provider (`hashPassword` / `verifyPassword` — salted scrypt via
+  `node:crypto`, self-describing hashes, constant-time verify), **brute-force
+  protection** on the login endpoint (`rateLimit`: on by default, a generic
+  `429` after 5 failures per client + identifier per 15 min — the client is the
+  socket peer, or the proxy's `x-forwarded-for` when `trustForwardedHeaders` is
+  set; pluggable `RateLimitStore`, or `false`), and **opt-in revocable sessions**
+  (`sessionStore`: `inMemorySessionStore` / the durable `sqliteSessionStore`
+  on `node:sqlite`, or your own — the cookie then carries only an id, and
+  `revokeSession` / `revokeAllSessions` end sessions immediately). Without a
+  store, sessions stay stateless signed cookies (zero-config, multi-replica
+  safe). A weak session secret throws in production; `__Host-` cookies pin
+  `Secure` regardless of proxy headers.
 - **`cookies()` / `headers()`** with **secure cookie defaults** (httpOnly,
   SameSite=Lax, Secure over HTTPS).
 - **Signed-cookie sessions**: `getSession()` (HMAC-SHA256, secret rotation) —
@@ -648,8 +664,8 @@ default").
   `src/build/hydration.ts:25, 60, 79, 87`, wired
   `src/build/build.ts:88, 92, 148`.
 - **Tiny self-contained React-equivalent** **[default]** — denext's own JSX
-  runtime, hooks, context, and reconciler; no npm React. **~16 KB first load**
-  vs ~60 KB React+ReactDOM / ~126 KB Next.js 16; **~15 KB** shared runtime
+  runtime, hooks, context, and reconciler; no npm React. **~20 KB first load**
+  vs ~60 KB React+ReactDOM / ~137 KB Next.js 16; **~19 KB** shared runtime
   baseline. — `src/runtime/*`, `src/jsx/*`, `src/client/fiber/*` (numbers:
   `README.md` "Tiny by default").
 - **Single shared runtime chunk cached across navigations** **[default]** — one

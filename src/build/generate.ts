@@ -315,68 +315,55 @@ export async function generateArtifact(
   kind: GenerateKind,
   name: string,
 ): Promise<GenerateResult> {
-  // Docker assets live at the project root and don't need an App Router `app/` dir
-  // (a SPA app may not have one), so handle them before `resolveProject`. `name`,
-  // when present, is the mode override (`server` | `spa`).
+  const written: string[] = [];
+  const skipped: string[] = [];
+  // Docker assets live at the project root and don't need an App Router `app/` dir (a SPA
+  // app may not have one), so handle them before `resolveProject`. `name`, when present,
+  // is the mode override (`server` | `spa`).
   if (kind === "docker") {
-    const written: string[] = [];
-    const skipped: string[] = [];
     await generateDocker(projectDir, name || undefined, written, skipped);
     return { written, skipped };
   }
-
   const paths = await resolveProject(projectDir);
-  const appDir = paths.appDir;
-  const srcBase = dirname(appDir);
-  const written: string[] = [];
-  const skipped: string[] = [];
   const segment = name.replace(/^[\\/]+|[\\/]+$/g, "");
-
   // Reject `..` path components early with a clear message (safeJoin also guards).
   if (segment.split(/[\\/]+/).some((s) => s === "..")) {
     throw new Error(`denext: generate name "${name}" must not contain ".." path segments.`);
   }
+  const target = artifactTarget(kind, name, segment, projectDir, paths.appDir);
+  if (target) await writeIfAbsent(target.path, target.content, written, skipped);
+  return { written, skipped };
+}
 
+/**
+ * Where an artifact goes and what it contains. Route-shaped kinds (page/route/layout/api)
+ * treat `name` as a route path under `app/`; `component`/`action`/`test` place files under
+ * the source base (`src/` when present, else the project root).
+ */
+function artifactTarget(
+  kind: Exclude<GenerateKind, "docker">,
+  name: string,
+  segment: string,
+  projectDir: string,
+  appDir: string,
+): { path: string; content: string } | null {
+  const srcBase = dirname(appDir);
   switch (kind) {
     case "page":
     case "route":
-      await writeIfAbsent(
-        safeJoin(appDir, segment, "page.tsx"),
-        pageSource(name),
-        written,
-        skipped,
-      );
-      break;
+      return { path: safeJoin(appDir, segment, "page.tsx"), content: pageSource(name) };
     case "layout":
-      await writeIfAbsent(
-        safeJoin(appDir, segment, "layout.tsx"),
-        layoutSource(name),
-        written,
-        skipped,
-      );
-      break;
+      return { path: safeJoin(appDir, segment, "layout.tsx"), content: layoutSource(name) };
     case "api":
-      await writeIfAbsent(safeJoin(appDir, segment, "route.ts"), apiSource(), written, skipped);
-      break;
-    case "component": {
-      const file = pascal(name) + ".tsx";
-      await writeIfAbsent(
-        safeJoin(srcBase, "components", file),
-        componentSource(name),
-        written,
-        skipped,
-      );
-      break;
-    }
+      return { path: safeJoin(appDir, segment, "route.ts"), content: apiSource() };
+    case "component":
+      return {
+        path: safeJoin(srcBase, "components", pascal(name) + ".tsx"),
+        content: componentSource(name),
+      };
     case "action": {
       const base = segment.replace(/\.ts$/, "") || "action";
-      await writeIfAbsent(
-        safeJoin(srcBase, "actions", base + ".ts"),
-        actionSource(name),
-        written,
-        skipped,
-      );
-      break;
+      return { path: safeJoin(srcBase, "actions", base + ".ts"), content: actionSource(name) };
     }
     case "test": {
       // A component test under tests/, importing the component from the conventional
@@ -385,9 +372,9 @@ export async function generateArtifact(
       const compPath = safeJoin(srcBase, "components", comp + ".tsx");
       const testPath = safeJoin(projectDir, "tests", comp + ".test.tsx");
       const importPath = relative(dirname(testPath), compPath).replaceAll("\\", "/");
-      await writeIfAbsent(testPath, testSource(name, importPath), written, skipped);
-      break;
+      return { path: testPath, content: testSource(name, importPath) };
     }
+    default:
+      return null;
   }
-  return { written, skipped };
 }

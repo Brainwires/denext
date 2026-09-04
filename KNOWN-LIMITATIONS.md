@@ -4,9 +4,8 @@ denext's promise is the **React/Next.js surface**: public APIs exist and behave
 correctly for correct usage. This file lists only the places that promise
 doesn't fully hold — a genuine **surface gap** (an API missing, throwing, or
 behaving observably wrong) — plus the **bounded scope** of denext's own
-capabilities (islands, resumability, Live, SPA mode) and the one that is still
-genuinely experimental (Cache Components). It is deliberately terse; a fixed
-entry is deleted, not annotated.
+capabilities (islands, resumability, Live, SPA mode, Cache Components). It is
+deliberately terse; a fixed entry is deleted, not annotated.
 
 Internal differences that **don't** break the surface — denext's own reconciler,
 its async SSR renderer, the two-mechanism soft-nav, request-scoped
@@ -103,25 +102,37 @@ next-compat interop path — denext's own apps are unaffected):
   token is silently ignored** rather than formatted, and deeply nested `plural`/`select`
   is depth-capped (beyond the cap is an error, not a wrong render). Standard messages
   format identically; exotic skeletons may differ.
-- **`next/head` does not dedupe by `key`.** Real Next's `<Head>` collapses tags sharing a
-  `key` (and singleton tags like `<title>`) to the last one. denext hoists **all** children
-  of every `<Head>`, so two `<Head>` blocks emitting the same-`key` tag produce duplicates.
-  Emit each head tag once (App Router `metadata`/`generateMetadata` is the preferred path
-  and is unaffected).
-- **A few React internals are shims.** `Children.map`/`Children.toArray` flatten and drop
-  nullish/boolean children but **don't re-key** the way React namespaces keys during
-  `toArray` (edge cases around reordering keyed children produced by `Children.map` differ);
-  and the introspection hooks `captureOwnerStack()` / `cacheSignal()` return `null` and
-  `addTransitionType()` is a no-op (rendering is unaffected — only dev tooling that reads
-  them gets nothing).
+- **`next/head` dedupes by `key` plus the `charSet`/`viewport` singletons — not Next's
+  full set.** Same-`key` `<meta>`/`<link>` collapse last-wins (also through
+  `Children.map` clones), and `<meta charSet>` / `<meta name="viewport">` collapse to one
+  each; `<title>` is last-wins. `<base>`/`<script>`/`<style>`/`<noscript>` inside `<Head>`
+  reach the document head through the server-inserted-HTML sink (server render only; a
+  client-side navigation does not update them). Unlike Next, keyless `<meta>` sharing a
+  `name`/`httpEquiv`/`itemProp` and duplicate `<base>` are **not** collapsed — denext's
+  collector also receives React-19-style in-tree `<meta>` that React itself never dedupes,
+  so the set is kept conservative on purpose.
+- **SSR attribute serialization follows ReactDOMServer for the common cases, not all.**
+  `defaultValue`/`defaultChecked`, textarea/select values, the camelCase → HTML/SVG name
+  map, `"true"`/`"false"` for enumerated and `aria-*`/`data-*` attributes, and CSS custom
+  properties match React. Still different: an element with both `dangerouslySetInnerHTML`
+  and children renders the HTML (React throws); `key` is visible on `props` of an
+  authored element (React strips it); `useId` emits `:d0_0:`-style ids (React 19.1's
+  `«r0»` format is CSS-selector-safe without `CSS.escape`, these are not); and
+  `defaultProps` on a **function** component is honored as a compat extension (React 19
+  removed it) because popular npm libraries still rely on it.
+- **Middleware `matcher` object entries ignore `has`/`missing`.** `{ source, has, missing }`
+  is accepted, but only `source` is evaluated — the middleware runs for every request the
+  path matches (never less often than in Next).
+- **A few React internals are shims.** The introspection hooks `captureOwnerStack()` /
+  `cacheSignal()` return `null` and `addTransitionType()` is a no-op (rendering is
+  unaffected — only dev tooling that reads them gets nothing).
 
 ## denext-original features — bounded scope
 
 These are **capabilities React/Next don't have** ([FEATURES.md](./FEATURES.md)).
 They're shipped and on by default in their contexts; the notes below are their
 **documented boundaries**, not a regression from React and not an "experimental"
-caveat — being a denext original is not the same as being incomplete. (The one
-still-experimental feature, Cache Components, is called out as such at the end.)
+caveat — being a denext original is not the same as being incomplete.
 
 ### Islands & resumability (`client:*`, `resumable`, `qrl`)
 
@@ -131,10 +142,13 @@ still-experimental feature, Cache Components, is called out as such at the end.)
 - **`client:only` skips SSR** (no first paint / SEO for that subtree);
   **`client:media`** hydrates eagerly when `matchMedia` is unavailable.
 
-### Cache Components (`use cache` + PPR) — experimental
+### Cache Components (`use cache` + PPR)
 
-Enabled with `experimental: { cacheComponents: true }`; off, `use cache` is
-inert and the render path is byte-for-byte unchanged.
+A stable, **opt-in** feature: enable it with top-level `cacheComponents: true`
+in `denext.config.ts` (the pre-2.0 `experimental.cacheComponents` still works
+and dev-warns to move). Off, `use cache` is inert and the render path is
+byte-for-byte unchanged. Caching is a choice, not a default — these are the
+three documented bounds of the opt-in:
 
 - **Reading request data inside `use cache` throws** — `cookies()`/`headers()`/
   `connection()` are request-specific; read them outside and pass the value in.
@@ -192,8 +206,8 @@ feature, not a non-goal. **React `taint*` is implemented**:
 that must never cross the server→client boundary, enforced in the Flight serializer
 (it throws rather than serialize a tainted object or secret string). Defense-in-depth,
 not a substitute for not passing secrets. **Genuinely not implemented by design:**
-Next `taint`. (Next `dynamicIO` isn't a non-goal either — it belongs to the
-experimental Cache Components work.)
+Next `taint`. (Next `dynamicIO` isn't a non-goal either — it is the precursor
+of Cache Components, which denext ships as the stable `cacheComponents` opt-in.)
 
 ## Security posture — accepted trade-offs
 
@@ -208,6 +222,14 @@ documented, not surprises. Full checklist in [DEPLOYMENT.md](./DEPLOYMENT.md).
   `hsts: false`.
 - **Session cookie isn't `__Host-`-locked by default** (would log everyone out
   on upgrade). Opt in with `hostPrefix: true` on `getSession`.
+- **`denextAuth` sessions are stateless by default, so they can't be revoked before
+  they expire.** Opt in to server-side sessions with `sessionStore`
+  (`inMemorySessionStore()` / `sqliteSessionStore()` or your own) to get
+  `revokeSession`/`revokeAllSessions`.
+- **The credentials rate limiter keys on the socket peer, not `x-forwarded-for`, unless
+  `trustForwardedHeaders: true`.** Behind a proxy without that flag every client shares
+  one IP key, so the limit is effectively per account (an attacker can lock an account
+  they know the email of for one window); set the flag when a proxy fronts the app.
 - **Graceful shutdown drains up to a deadline** (default 10s;
   `DENEXT_SHUTDOWN_DRAIN_MS`), then force-exits so a stuck client can't pin the
   process (plugin teardown is skipped on a forced exit).
@@ -310,3 +332,31 @@ A few capabilities aren't built yet (none affects the zero-npm runtime):
   a local fallback to cut CLS) needs a bundled font-metrics database to compute
   exact overrides; a guessed table would mis-size the fallback, so it's deferred
   until real metrics are bundled.
+
+## Post-2.0 (deferred, not gaps)
+
+Work that is **deliberately deferred past 2.0**. None of it is a surface gap —
+each is either a build-time purity item, an ecosystem package, or a documented
+trade-off above — so none blocks the release. One line each, with the reason:
+
+- **`esbuild` off npm.** Build-time only (it never enters a shipped bundle, so
+  the zero-npm _runtime_ claim already holds); native-backed with a large API
+  surface, isolated to `src/build/next-compat.ts` — the largest of the three
+  build-time codecs and the one deferred furthest. See
+  [ROADMAP.md](./ROADMAP.md) → "Build-time deps → first-party JSR/WASM".
+- **Node-stream `Writable` backpressure.** `renderToPipeableStream` /
+  `renderToStaticNodeStream` still buffer (see the first surface-gap entry
+  above): true end-to-end backpressure means making the core renderer
+  pull-gated and resolving the `await allReady`-then-read deadlock the current
+  eager drain avoids — an SSR-hot-path change with real regression risk and a
+  narrow payoff. Use `renderToReadableStream`.
+- **WASM codec finalization** (`lightningcss` / `swc` off npm). Both are
+  already WASM builds with a single import site each (`src/build/css.ts`,
+  `src/build/swc-ast.ts`) — a surgical repoint, teed up but **publish-gated**
+  (the same status as the shipped `@denext/*` codec packages).
+- **Ecosystem router plugins** (`@denext/react-router`,
+  `@denext/tanstack-router`). Client/library mode works today via SPA mode
+  (shell + client entry); framework mode (loaders + streaming SSR) goes through
+  the settled `plugin-kit` surface, with no core change needed. Soon, not now.
+- **`next/font` metric-matched fallback face** — needs a bundled font-metrics
+  database (see "Not yet available" above).

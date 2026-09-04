@@ -25,22 +25,7 @@ export default function Home() {
         each island logs the moment it resumes, and only the island you touch wakes up.
       </p>
 
-      <ol class="steps">
-        <li>
-          On load the console is <strong>silent</strong>{" "}
-          — no counter component has run. The page is already rendered and interactive.
-        </li>
-        <li>
-          Click <strong>one</strong>{" "}
-          counter. The count updates (the click is replayed to the now-live handler) and the console
-          logs <em>that single island</em> resuming — the other counters never ran.
-        </li>
-        <li>
-          The <strong>clock</strong>{" "}
-          resumes on its own, on idle: it is interactive via an effect, so the framework wakes it
-          without a click. Its time is a <code>useSignal</code>, adopted from the server render.
-        </li>
-      </ol>
+      <Steps />
       <p class="lead">
         The components render <strong>identically</strong>{" "}
         on the server and client — resumption is invisible, so there is no hydration mismatch. The
@@ -65,5 +50,27 @@ export default function Home() {
         <Link href="/second">Soft-navigate to a second resumable route →</Link>
       </p>
     </section>
+  );
+}
+
+/** What to do, and what the console proves at each step. */
+function Steps() {
+  return (
+    <ol class="steps">
+      <li>
+        On load the console is <strong>silent</strong>{" "}
+        — no counter component has run. The page is already rendered and interactive.
+      </li>
+      <li>
+        Click <strong>one</strong>{" "}
+        counter. The count updates (the click is replayed to the now-live handler) and the console
+        logs <em>that single island</em> resuming — the other counters never ran.
+      </li>
+      <li>
+        The <strong>clock</strong>{" "}
+        resumes on its own, on idle: it is interactive via an effect, so the framework wakes it
+        without a click. Its time is a <code>useSignal</code>, adopted from the server render.
+      </li>
+    </ol>
   );
 }

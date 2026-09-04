@@ -81,7 +81,7 @@ export function refreshFooter(sourceUrl: string, names: string[]): string {
   // Leading blank lines: the source may end without a newline (a registration must
   // not fuse onto a trailing `//` comment or expression).
   return `\n\n/* denext Fast Refresh (dev) */\n` +
-    `import { registerFamily as __dnxRegisterFamily } from "denext/client";\n` +
+    `import { registerFamily as __dnxRegisterFamily } from "denext/client-runtime";\n` +
     regs + "\n";
 }
 

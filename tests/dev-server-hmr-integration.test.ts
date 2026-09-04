@@ -69,6 +69,52 @@ class SseTap {
   }
 }
 
+type Ctx = {
+  origin: string;
+  tap: SseTap;
+  pageFile: string;
+  cssFile: string;
+  apiFile: string;
+};
+
+async function stepReconnectHint({ tap }: Ctx): Promise<void> {
+  // (An empty `data:` may precede; the retry hint is delivered as a comment/field.)
+  const ok = await tap.waitFor(() => true, 3000);
+  // Either way the stream is live — a subsequent edit produces a real frame below.
+  assert(ok !== null || tap.events.length >= 0);
+}
+
+async function stepTsxEdit({ tap, pageFile }: Ctx): Promise<void> {
+  tap.events.length = 0;
+  const src = await Deno.readTextFile(pageFile);
+  await Deno.writeTextFile(pageFile, src.replace("Hello from denext", "Hello again denext"));
+  const frame = await tap.waitFor((e) => e === "refresh" || e.startsWith("update:"));
+  assert(frame !== null, `expected update/refresh, got: ${tap.events.join(",")}`);
+  // A source-only edit must NOT be downgraded to a full reload.
+  assert(frame !== "reload");
+}
+
+async function stepCssEdit({ tap, cssFile }: Ctx): Promise<void> {
+  tap.events.length = 0;
+  const src = await Deno.readTextFile(cssFile);
+  await Deno.writeTextFile(cssFile, src + "\n.hmr-probe{color:red}\n");
+  const frame = await tap.waitFor((e) => e === "css");
+  assert(frame !== null, `expected css, got: ${tap.events.join(",")}`);
+}
+
+async function stepServerModuleEdit({ tap, apiFile }: Ctx): Promise<void> {
+  tap.events.length = 0;
+  const src = await Deno.readTextFile(apiFile);
+  await Deno.writeTextFile(apiFile, src + "\n// touched\n");
+  const frame = await tap.waitFor((e) => e === "reload");
+  assert(frame !== null, `expected reload, got: ${tap.events.join(",")}`);
+}
+
+async function stepRerenders({ origin }: Ctx): Promise<void> {
+  const html = await (await fetch(origin + "/")).text();
+  assertStringIncludes(html, "Hello again denext");
+}
+
 Deno.test({
   name: "dev server pushes the right live-reload frame per edit kind",
   sanitizeOps: false,
@@ -91,45 +137,23 @@ Deno.test({
   await (await fetch(server.origin + "/_denext/@fs" + pageFile)).text();
 
   const tap = new SseTap((await fetch(server.origin + "/_denext/reload")).body!);
+  const ctx: Ctx = { origin: server.origin, tap, pageFile, cssFile, apiFile };
 
   try {
-    await t.step("the SSE channel first sends the reconnect hint", async () => {
-      // (An empty `data:` may precede; the retry hint is delivered as a comment/field.)
-      const ok = await tap.waitFor(() => true, 3000);
-      // Either way the stream is live — a subsequent edit produces a real frame below.
-      assert(ok !== null || tap.events.length >= 0);
-    });
-
-    await t.step("editing a .tsx component pushes an in-place update/refresh", async () => {
-      tap.events.length = 0;
-      const src = await Deno.readTextFile(pageFile);
-      await Deno.writeTextFile(pageFile, src.replace("Hello from denext", "Hello again denext"));
-      const frame = await tap.waitFor((e) => e === "refresh" || e.startsWith("update:"));
-      assert(frame !== null, `expected update/refresh, got: ${tap.events.join(",")}`);
-      // A source-only edit must NOT be downgraded to a full reload.
-      assert(frame !== "reload");
-    });
-
-    await t.step("editing a .css asset pushes a css hot-swap frame", async () => {
-      tap.events.length = 0;
-      const src = await Deno.readTextFile(cssFile);
-      await Deno.writeTextFile(cssFile, src + "\n.hmr-probe{color:red}\n");
-      const frame = await tap.waitFor((e) => e === "css");
-      assert(frame !== null, `expected css, got: ${tap.events.join(",")}`);
-    });
-
-    await t.step("editing a .ts server module pushes a full reload frame", async () => {
-      tap.events.length = 0;
-      const src = await Deno.readTextFile(apiFile);
-      await Deno.writeTextFile(apiFile, src + "\n// touched\n");
-      const frame = await tap.waitFor((e) => e === "reload");
-      assert(frame !== null, `expected reload, got: ${tap.events.join(",")}`);
-    });
-
-    await t.step("after edits, the route still re-renders with the new content", async () => {
-      const html = await (await fetch(server.origin + "/")).text();
-      assertStringIncludes(html, "Hello again denext");
-    });
+    await t.step("the SSE channel first sends the reconnect hint", () => stepReconnectHint(ctx));
+    await t.step(
+      "editing a .tsx component pushes an in-place update/refresh",
+      () => stepTsxEdit(ctx),
+    );
+    await t.step("editing a .css asset pushes a css hot-swap frame", () => stepCssEdit(ctx));
+    await t.step(
+      "editing a .ts server module pushes a full reload frame",
+      () => stepServerModuleEdit(ctx),
+    );
+    await t.step(
+      "after edits, the route still re-renders with the new content",
+      () => stepRerenders(ctx),
+    );
   } finally {
     await tap.close();
     await server.close();

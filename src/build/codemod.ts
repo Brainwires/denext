@@ -13,8 +13,10 @@
 
 import { join, relative } from "@std/path";
 
-/** A single specifier rewrite, preserving the import clause. */
-const SPEC_REWRITE: Record<string, string> = {
+/** A single specifier rewrite, preserving the import clause. The react-family keys
+ * are the canonical `REACT_FAMILY_CORE` set (see `./react-specifiers.ts`);
+ * `tests/react-specifiers.test.ts` guards against drift. */
+export const SPEC_REWRITE: Record<string, string> = {
   "react": "denext",
   "react-dom": "denext/client",
   "react-dom/client": "denext/client",
@@ -221,6 +223,179 @@ export interface RewriteOptions {
   pagesRouter?: boolean;
 }
 
+/** The per-file rewrite state: the active spec maps and the collected rewrites/warnings. */
+interface RewriteCtx {
+  rewrites: Rewrite[];
+  warnings: Warning[];
+  specRewrite: Record<string, string>;
+  defaultComponent: Record<string, { target: string; name: string }>;
+  warnSpec: Record<string, string>;
+}
+
+function createRewriteCtx(options: RewriteOptions): RewriteCtx {
+  // In a Pages Router project, the plugin's compat maps take precedence.
+  const pages = options.pagesRouter === true;
+  return {
+    rewrites: [],
+    warnings: [],
+    specRewrite: pages ? { ...SPEC_REWRITE, ...PAGES_SPEC_REWRITE } : SPEC_REWRITE,
+    defaultComponent: pages
+      ? { ...DEFAULT_COMPONENT, ...PAGES_DEFAULT_COMPONENT }
+      : DEFAULT_COMPONENT,
+    warnSpec: pages ? PAGES_WARN_SPEC : WARN_SPEC,
+  };
+}
+
+/** Record one warning per specifier. */
+function warn(ctx: RewriteCtx, specifier: string, message: string): void {
+  if (ctx.warnings.some((w) => w.specifier === specifier)) return;
+  ctx.warnings.push({ specifier, message });
+}
+
+/**
+ * Flag a `next/*`/`next-intl/*` subpath the codemod left untouched: it still resolves
+ * through the `next/*` compat alias `denext migrate` writes, but it was not converted to
+ * a native denext import (nothing silently vanishes).
+ */
+function warnUnmappedNextish(ctx: RewriteCtx, spec: string): void {
+  if (!NEXTISH_SUBPATH.test(spec)) return;
+  if (ctx.specRewrite[spec] || ctx.defaultComponent[spec] || ctx.warnSpec[spec]) return;
+  warn(
+    ctx,
+    spec,
+    `${spec} has no native denext equivalent — left as-is (it resolves through the ` +
+      `\`next/*\` compat alias). Port it by hand if you want a native import.`,
+  );
+}
+
+/** Default-export component (`next/link` → `{ Link }`) → a named denext import. */
+function rewriteDefaultComponent(
+  ctx: RewriteCtx,
+  kind: "import" | "export",
+  c: Clause,
+  spec: string,
+  comp: { target: string; name: string },
+): string {
+  if (c.default) {
+    const local = c.default;
+    c.named.unshift({
+      name: comp.name,
+      alias: local === comp.name ? null : local,
+      typeOnly: false,
+    });
+    c.default = null;
+  }
+  ctx.rewrites.push({ from: spec, to: comp.target, note: `default import → { ${comp.name} }` });
+  return build(kind, c, comp.target);
+}
+
+/**
+ * A default `React` import has no denext equivalent — convert it to a namespace so
+ * `React.foo` still resolves. `import React, { useState }` becomes two statements (a `*`
+ * and a `{}` clause can't be combined); a mixed default + namespace import is flagged.
+ * Returns the statement(s), or null to fall through to the plain rewrite.
+ */
+function rewriteReactDefault(
+  ctx: RewriteCtx,
+  kind: "import" | "export",
+  c: Clause,
+  target: string,
+  indent: string,
+): string | null {
+  const name = c.default!;
+  c.default = null;
+  if (c.namespace) {
+    warn(ctx, "react", `mixed default + namespace React import — review \`${name}\` by hand.`);
+    return null;
+  }
+  c.namespace = name;
+  if (c.named.length === 0) return null;
+  const named = build(kind, { ...c, namespace: null }, target);
+  const ns = build(kind, { ...c, named: [] }, target);
+  ctx.rewrites.push({ from: "react", to: target, note: "default React → namespace" });
+  return indent + ns + ";\n" + indent + named;
+}
+
+/** Rewrite one static `import … from "spec"` / `export … from "spec"` statement. */
+function rewriteImportStatement(
+  ctx: RewriteCtx,
+  full: string,
+  indent: string,
+  kind: "import" | "export",
+  typeOnly: boolean,
+  clauseStr: string,
+  spec: string,
+): string {
+  if (ctx.warnSpec[spec]) {
+    warn(ctx, spec, ctx.warnSpec[spec]);
+    return full;
+  }
+  const comp = ctx.defaultComponent[spec];
+  if (comp) {
+    return indent +
+      rewriteDefaultComponent(ctx, kind, parseClause(clauseStr, typeOnly), spec, comp);
+  }
+  const target = ctx.specRewrite[spec];
+  if (!target) {
+    warnUnmappedNextish(ctx, spec);
+    return full;
+  }
+  const c = parseClause(clauseStr, typeOnly);
+  if (spec === "react" && c.default) {
+    const split = rewriteReactDefault(ctx, kind, c, target, indent);
+    if (split) return split;
+  }
+  ctx.rewrites.push({ from: spec, to: target });
+  return indent + build(kind, c, target);
+}
+
+/** Rewrite a side-effect `import "spec"`. */
+function rewriteSideEffect(ctx: RewriteCtx, full: string, indent: string, spec: string): string {
+  const target = ctx.specRewrite[spec] ?? ctx.defaultComponent[spec]?.target;
+  if (!target) {
+    if (ctx.warnSpec[spec]) warn(ctx, spec, ctx.warnSpec[spec]);
+    else warnUnmappedNextish(ctx, spec);
+    return full;
+  }
+  ctx.rewrites.push({ from: spec, to: target });
+  return `${indent}import "${target}"`;
+}
+
+/**
+ * `require("spec")` / dynamic `import("spec")`: rewrite the specifier when it's a plain
+ * module-identity remap (react → denext), where only the URL changes. A default-export
+ * component (next/link → { Link }) or a warn-listed specifier changes the module SHAPE,
+ * which can't be expressed inside a call expression — so those are flagged for a human,
+ * never silently half-rewritten.
+ */
+function rewriteCallForm(
+  ctx: RewriteCtx,
+  full: string,
+  kw: string,
+  quote: string,
+  spec: string,
+): string {
+  const target = ctx.specRewrite[spec];
+  if (target) {
+    ctx.rewrites.push({ from: spec, to: target });
+    return `${kw}(${quote}${target}${quote})`;
+  }
+  const comp = ctx.defaultComponent[spec];
+  if (comp) {
+    warn(
+      ctx,
+      spec,
+      `${kw}("${spec}") — this import's default export maps to the named denext export ` +
+        `\`${comp.name}\` from "${comp.target}", which can't be rewritten inside a call. ` +
+        `Convert it to a static \`import { ${comp.name} } from "${comp.target}"\` by hand.`,
+    );
+    return full;
+  }
+  if (ctx.warnSpec[spec]) warn(ctx, spec, ctx.warnSpec[spec]);
+  else warnUnmappedNextish(ctx, spec);
+  return full;
+}
+
 /**
  * Rewrite one file's `next/*` and `react` imports to native denext imports.
  *
@@ -229,138 +404,29 @@ export interface RewriteOptions {
  * @returns The {@linkcode RewriteResult}.
  */
 export function rewriteSource(code: string, options: RewriteOptions = {}): RewriteResult {
-  const rewrites: Rewrite[] = [];
-  const warnings: Warning[] = [];
-  const seenWarn = new Set<string>();
-
-  // In a Pages Router project, the plugin's compat maps take precedence.
-  const pages = options.pagesRouter === true;
-  const specRewrite = pages ? { ...SPEC_REWRITE, ...PAGES_SPEC_REWRITE } : SPEC_REWRITE;
-  const defaultComponent = pages
-    ? { ...DEFAULT_COMPONENT, ...PAGES_DEFAULT_COMPONENT }
-    : DEFAULT_COMPONENT;
-  const warnSpec = pages ? PAGES_WARN_SPEC : WARN_SPEC;
-
-  const warn = (specifier: string, message: string) => {
-    if (seenWarn.has(specifier)) return;
-    seenWarn.add(specifier);
-    warnings.push({ specifier, message });
-  };
-
-  // Flag a `next/*`/`next-intl/*` subpath the codemod left untouched: it still
-  // resolves through the `next/*` compat alias `denext migrate` writes, but it was
-  // not converted to a native denext import (nothing silently vanishes).
-  const warnUnmappedNextish = (spec: string) => {
-    if (!NEXTISH_SUBPATH.test(spec)) return;
-    if (specRewrite[spec] || defaultComponent[spec] || warnSpec[spec]) return;
-    warn(
-      spec,
-      `${spec} has no native denext equivalent — left as-is (it resolves through the ` +
-        `\`next/*\` compat alias). Port it by hand if you want a native import.`,
-    );
-  };
-
+  const ctx = createRewriteCtx(options);
   let out = code.replace(
     IMPORT_RE,
-    (full, indent: string, kind: string, typeKw: string | undefined, clauseStr, spec: string) => {
-      if (warnSpec[spec]) {
-        warn(spec, warnSpec[spec]);
-        return full;
-      }
-      const k = kind as "import" | "export";
-      const typeOnly = Boolean(typeKw);
-
-      // Default-export component → named denext import.
-      const comp = defaultComponent[spec];
-      if (comp) {
-        const c = parseClause(clauseStr, typeOnly);
-        if (c.default) {
-          const local = c.default;
-          c.named.unshift({
-            name: comp.name,
-            alias: local === comp.name ? null : local,
-            typeOnly: false,
-          });
-          c.default = null;
-        }
-        rewrites.push({
-          from: spec,
-          to: comp.target,
-          note: `default import → { ${comp.name} }`,
-        });
-        return indent + build(k, c, comp.target);
-      }
-
-      const target = specRewrite[spec];
-      if (!target) {
-        warnUnmappedNextish(spec);
-        return full;
-      }
-
-      const c = parseClause(clauseStr, typeOnly);
-      // A default `React` import has no denext equivalent — convert it to a
-      // namespace so `React.foo` still resolves.
-      if (spec === "react" && c.default) {
-        const name = c.default;
-        c.default = null;
-        if (c.namespace) {
-          warn("react", `mixed default + namespace React import — review \`${name}\` by hand.`);
-        } else {
-          c.namespace = name;
-          if (c.named.length > 0) {
-            // `import React, { useState }` → two statements (can't combine * and {}).
-            const named = build(k, { ...c, namespace: null }, target);
-            const ns = build(k, { ...c, named: [] }, target);
-            rewrites.push({ from: spec, to: target, note: "default React → namespace" });
-            return indent + ns + ";\n" + indent + named;
-          }
-        }
-      }
-      rewrites.push({ from: spec, to: target });
-      return indent + build(k, c, target);
-    },
-  );
-
-  out = out.replace(SIDE_EFFECT_RE, (full, indent: string, spec: string) => {
-    const target = specRewrite[spec] ?? defaultComponent[spec]?.target;
-    if (!target) {
-      if (warnSpec[spec]) warn(spec, warnSpec[spec]);
-      else warnUnmappedNextish(spec);
-      return full;
-    }
-    rewrites.push({ from: spec, to: target });
-    return `${indent}import "${target}"`;
-  });
-
-  // `require("spec")` / dynamic `import("spec")`: rewrite the specifier when it's a
-  // plain module-identity remap (react → denext), where only the URL changes. A
-  // default-export component (next/link → { Link }) or a warn-listed specifier
-  // changes the module SHAPE, which can't be expressed inside a call expression —
-  // so those are flagged for a human, never silently half-rewritten.
-  out = out.replace(CALL_RE, (full, kw: string, quote: string, spec: string) => {
-    const target = specRewrite[spec];
-    if (target) {
-      rewrites.push({ from: spec, to: target });
-      return `${kw}(${quote}${target}${quote})`;
-    }
-    if (defaultComponent[spec]) {
-      const comp = defaultComponent[spec];
-      warn(
+    (full, indent: string, kind: string, typeKw: string | undefined, clauseStr, spec: string) =>
+      rewriteImportStatement(
+        ctx,
+        full,
+        indent,
+        kind as "import" | "export",
+        Boolean(typeKw),
+        clauseStr,
         spec,
-        `${kw}("${spec}") — this import's default export maps to the named denext export ` +
-          `\`${comp.name}\` from "${comp.target}", which can't be rewritten inside a call. ` +
-          `Convert it to a static \`import { ${comp.name} } from "${comp.target}"\` by hand.`,
-      );
-      return full;
-    }
-    if (warnSpec[spec]) {
-      warn(spec, warnSpec[spec]);
-      return full;
-    }
-    warnUnmappedNextish(spec);
-    return full;
-  });
-
+      ),
+  );
+  out = out.replace(
+    SIDE_EFFECT_RE,
+    (full, indent: string, spec: string) => rewriteSideEffect(ctx, full, indent, spec),
+  );
+  out = out.replace(
+    CALL_RE,
+    (full, kw: string, quote: string, spec: string) => rewriteCallForm(ctx, full, kw, quote, spec),
+  );
+  const { rewrites, warnings } = ctx;
   return { code: out, changed: rewrites.length > 0, rewrites, warnings };
 }
 

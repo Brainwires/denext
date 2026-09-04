@@ -1,6 +1,10 @@
 import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
 
-export const metadata = { title: "Rendering strategies" };
+export const metadata = {
+  title: "Rendering strategies",
+  description:
+    "Every Next.js rendering strategy, on by default where Next is — plus denext's own islands and resumability that go beyond it.",
+};
 
 export default function Rendering() {
   return (
@@ -86,18 +90,20 @@ export default { streaming: false };`}
 
       <h3>PPR / Cache Components</h3>
       <p>
-        With{" "}
-        <code>experimental.cacheComponents</code>, a cacheable page renders a request- independent
-        {" "}
+        With <code>cacheComponents: true</code>{" "}
+        (a top-level config field), a cacheable page renders a request-independent{" "}
         <strong>static shell</strong> (cached once) with dynamic subtrees behind{" "}
         <code>&lt;Suspense&gt;</code> as{" "}
         <strong>per-request holes</strong>. A postpone-aware dual HTML+Flight renderer means this
         now works on routes with a <code>"use client"</code>{" "}
         boundary too — islands in the cached shell and inside resumed holes both hydrate.
       </p>
-      <Callout kind="warn">
-        Cache Components / PPR is experimental (flag-gated), matching Next's own posture. Streaming,
-        SSR, SSG, ISR, and CSR are stable.
+      <Callout kind="note">
+        Cache Components / PPR is a stable <strong>opt-in</strong> — off unless you set{" "}
+        <code>cacheComponents: true</code> (the legacy <code>experimental.cacheComponents</code>
+        {" "}
+        still works and warns in dev). Its documented bounds live in KNOWN-LIMITATIONS. Streaming,
+        SSR, SSG, ISR, and CSR are on by default.
       </Callout>
 
       <h3>Route segment config</h3>

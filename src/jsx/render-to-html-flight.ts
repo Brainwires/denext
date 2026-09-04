@@ -10,46 +10,45 @@
 // never re-runs the (elided) server components between islands.
 
 import { FRAGMENT, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
-import "../runtime/class-flag.ts";
-import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
-import { renderClassToVNode } from "../compat/class-component.ts";
-import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
-import {
-  type Context,
-  type Dispatcher,
-  MEMO_CACHE_SENTINEL,
-  setDispatcher,
-} from "../runtime/hooks.ts";
-import { PROVIDER } from "../runtime/context.ts";
-import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
-import {
-  ERROR_BOUNDARY,
-  isControlSignal,
-  reportBoundaryError,
-  toClientError,
-} from "../runtime/error-boundary.ts";
-import { actionEndpoint, isServerAction } from "../runtime/server-action.ts";
+import { isComponentType } from "../runtime/react-brands.ts";
+import { type Dispatcher, setDispatcher } from "../runtime/hooks.ts";
+import { SUSPENSE } from "../runtime/suspense.ts";
+import { ERROR_BOUNDARY } from "../runtime/error-boundary.ts";
 import { taintMessageFor } from "../runtime/taint.ts";
-import { DNX_H_ATTR } from "../runtime/qrl.ts";
-import { serializeScalar, serializeThenable } from "./flight-scalar.ts";
 import { beginSignalCollection, endSignalCollection } from "../runtime/signal-state.ts";
-import { clientRefOf } from "../runtime/client-reference.ts";
-import { type HydrationStrategy, parseStrategy } from "../runtime/lazy-directive.ts";
-import { islandWrapper, warnClientOnlySeoContent } from "./island-wrapper.ts";
+import { type ClientRefInfo, clientRefOf } from "../runtime/client-reference.ts";
+import { parseStrategy } from "../runtime/lazy-directive.ts";
+import { islandWrapper } from "./island-wrapper.ts";
+import {
+  type CarvedIsland,
+  type Dual,
+  type DualHost,
+  flightClientRef,
+  flightHost,
+  invokeServerComponent,
+  type IslandPayload,
+  type IslandRenderer,
+  providerScopeOf,
+  pushScope,
+  renderClientIsland,
+  renderDualChildren,
+  renderErrorBoundaryWith,
+  renderHostDual,
+  resolveInBoundaryScope,
+  type Serialized,
+  serializeFlightProps,
+  serializeFlightValue,
+} from "./render-shared.ts";
 import {
   beginServerInsertCollection,
+  createSSRDispatcher,
   escapeHtml,
   flushServerInsertedHTML,
   type HeadCollector,
-  HOISTED_TAGS,
   type IdHolder,
-  resolveContextType,
-  serializeAttributes,
-  VOID_ELEMENTS,
-  warnDangerousHtml,
 } from "./render-to-string.ts";
 import type { FlightNode, FlightProps, FlightValue } from "./render-to-flight.ts";
-import { enterScope, ID_PATH_PROP, nextId, rootScope, scopePrefix } from "./tree-id.ts";
+import { rootScope, scopePrefix } from "./tree-id.ts";
 
 /** Result of a unified render: SSR HTML plus the serializable Flight tree. */
 export interface HtmlFlight {
@@ -63,17 +62,7 @@ export interface HtmlFlight {
   signalState: Record<string, unknown>;
 }
 
-/** A deferred-hydration island: its tree-path id, strategy, and own Flight tree. */
-export interface IslandPayload {
-  /** The island's tree-path prefix (client discovery key = `data-dnx-id`). */
-  id: string;
-  /** When to hydrate it. */
-  strategy: HydrationStrategy;
-  /** Strategy parameter (the media query, for a `media` island). */
-  param?: string;
-  /** The island's own Flight tree, hydrated on its wrapper when the strategy fires. */
-  flight: FlightNode;
-}
+export type { IslandPayload } from "./render-shared.ts";
 
 /** Options for {@linkcode renderToHtmlFlight}. */
 export interface HtmlFlightOptions {
@@ -118,69 +107,7 @@ interface Ctx {
    * the *same* `data-dnx-id` the HTML wrapper got — the two tree walks agree on the
    * id via object identity.
    */
-  carvedNested?: WeakMap<VNode, { id: string; strategy: HydrationStrategy; param?: string }>;
-}
-
-/** A rendered node's dual output: its HTML string and its Flight node. */
-interface Dual {
-  html: string;
-  flight: FlightNode;
-}
-
-/**
- * Build the SSR dispatcher, reading the current id scope for `useId`. `effects`
- * counts effect-hook invocations so an island's strategy can be auto-picked (an
- * island that runs an effect must hydrate, not wait for an interaction).
- */
-function makeDispatcher(
-  scopes: ProviderScope[],
-  ids: IdHolder,
-  effects: { count: number },
-): Dispatcher {
-  return {
-    useState<S>(initial: S | (() => S)) {
-      const value = typeof initial === "function" ? (initial as () => S)() : initial;
-      return [value, () => {}];
-    },
-    useReducer<S, A, I>(_r: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
-      return [init ? init(initialArg) : (initialArg as unknown as S), () => {}];
-    },
-    useEffect() {
-      effects.count++;
-    },
-    useMemo<T>(factory: () => T) {
-      return factory();
-    },
-    useRef<T>(initial: T) {
-      return { current: initial };
-    },
-    useContext<T>(context: Context<T>): T {
-      for (let i = scopes.length - 1; i >= 0; i--) {
-        if (scopes[i].has(context._id)) return scopes[i].get(context._id) as T;
-      }
-      return context._defaultValue;
-    },
-    useId(): string {
-      return nextId(ids.scope);
-    },
-    useSyncExternalStore<T>(
-      _s: (o: () => void) => () => void,
-      getSnapshot: () => T,
-      getServerSnapshot?: () => T,
-    ): T {
-      effects.count++; // subscribes on mount → needs hydration
-      return (getServerSnapshot ?? getSnapshot)();
-    },
-    useLayoutEffect() {
-      effects.count++;
-    },
-    useInsertionEffect() {
-      effects.count++;
-    },
-    useMemoCache(size: number): unknown[] {
-      return new Array(size).fill(MEMO_CACHE_SENTINEL);
-    },
-  };
+  carvedNested?: WeakMap<VNode, CarvedIsland>;
 }
 
 /**
@@ -197,7 +124,7 @@ export async function renderToHtmlFlight(
   const scopes: ProviderScope[] = [];
   const ids: IdHolder = { scope: rootScope() };
   const effects = { count: 0 };
-  const dispatcher = makeDispatcher(scopes, ids, effects);
+  const dispatcher = createSSRDispatcher(scopes, ids, effects);
   const ctx: Ctx = {
     scopes,
     dispatcher,
@@ -229,18 +156,8 @@ export async function renderToHtmlFlight(
   }
 }
 
-async function renderChildrenDual(children: VNodeChildren, ctx: Ctx): Promise<Dual> {
-  const arr = Array.isArray(children) ? children : children == null ? [] : [children];
-  // Render sequentially so the shared useId counter advances in tree order
-  // (matching how the browser will re-run the islands).
-  const flights: FlightNode[] = [];
-  let html = "";
-  for (const child of arr) {
-    const d = await renderChildDual(child, ctx);
-    html += d.html;
-    flights.push(d.flight);
-  }
-  return { html, flight: flights };
+function renderChildrenDual(children: VNodeChildren, ctx: Ctx): Promise<Dual> {
+  return renderDualChildren(children, (child) => renderChildDual(child, ctx));
 }
 
 function renderChildDual(child: VNodeChild, ctx: Ctx): Dual | Promise<Dual> {
@@ -253,221 +170,98 @@ function renderChildDual(child: VNodeChild, ctx: Ctx): Dual | Promise<Dual> {
   return renderVNodeDual(child as VNode, ctx);
 }
 
-async function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
+function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
   const { type } = node;
   // Null `props` (some npm libs) is treated as {} — parity with render-to-string.
   const props = node.props ?? {};
-  const { scopes, dispatcher } = ctx;
-
-  // Fragment / context provider.
-  if (type === FRAGMENT) {
-    const providerInfo = props[PROVIDER as unknown as string] as
-      | { id: symbol; value: unknown }
-      | undefined;
-    if (providerInfo) {
-      const scope: ProviderScope = new Map();
-      scope.set(providerInfo.id, providerInfo.value);
-      scopes.push(scope);
-      try {
-        return await renderChildrenDual(props.children, ctx);
-      } finally {
-        scopes.pop();
-      }
-    }
-    return renderChildrenDual(props.children, ctx);
-  }
-
-  // Suspense: its own id scope (one slot in its parent; content rooted at its
-  // position). Resolve inline here, retrying on suspension — each retry resets the
-  // boundary scope's own counters (its parent slot is already fixed).
+  if (type === FRAGMENT) return renderFragmentDual(props, ctx);
+  // Suspense: its own id scope (one slot in its parent; content rooted at its position),
+  // resolved inline here, retrying on suspension.
   if ((type as unknown) === SUSPENSE) {
-    const parentScope = ctx.ids.scope;
-    const boundaryScope = enterScope(parentScope);
-    try {
-      for (;;) {
-        boundaryScope.count = 0;
-        boundaryScope.local = 0;
-        ctx.ids.scope = boundaryScope;
-        try {
-          return await renderChildrenDual(props.children, ctx);
-        } catch (err) {
-          if (isThenable(err)) {
-            await err;
-            continue;
-          }
-          throw err;
-        }
-      }
-    } finally {
-      ctx.ids.scope = parentScope;
-    }
+    return resolveInBoundaryScope(ctx.ids, () => renderChildrenDual(props.children, ctx));
   }
-
-  // Error boundary. The fallback renders from the pre-children scope state.
-  if ((type as unknown) === ERROR_BOUNDARY) {
-    const idScope = ctx.ids.scope;
-    const savedCount = idScope.count;
-    const savedLocal = idScope.local;
-    try {
-      return await renderChildrenDual(props.children, ctx);
-    } catch (err) {
-      if (isThenable(err) || isControlSignal(err)) throw err;
-      ctx.ids.scope = idScope;
-      idScope.count = savedCount;
-      idScope.local = savedLocal;
-      const Fallback = props.fallback as (p: { error: Error; reset: () => void }) => VNode;
-      setDispatcher(dispatcher);
-      reportBoundaryError(props, err);
-      const fb = await Fallback({ error: toClientError(err), reset: () => {} });
-      return renderChildDual(fb as VNodeChild, ctx);
-    }
-  }
-
-  // Function component (or a memo/forwardRef object wrapper). Each opens a fresh id
-  // scope, consuming a slot in its parent's scope, so ids derive from tree position.
-  if (isComponentType(type)) {
-    const ref = clientRefOf(type);
-    const parentScope = ctx.ids.scope;
-    const scope = enterScope(parentScope);
-    ctx.ids.scope = scope;
-    try {
-      if (ref) {
-        // Client island: render it to HTML for first paint, but emit only a
-        // REFERENCE in the Flight tree — tagged with its tree-path prefix so the
-        // client roots the island's id scope there and re-renders identical ids.
-        // A `client:*` directive strips out and defers the island (below).
-        setDispatcher(dispatcher);
-        const parsed = parseStrategy(props, ref.moduleHydrate);
-        const rest = parsed.rest;
-        const prefix = scopePrefix(scope);
-
-        // Record a carved nested island so the enclosing island's Flight children
-        // emit a matching foreign host (keyed by this VNode) instead of a client ref.
-        const recordNested = (strategy: HydrationStrategy, param?: string): void => {
-          if (ctx.insideIsland) ctx.carvedNested?.set(node, { id: prefix, strategy, param });
-        };
-
-        // client:only — skip SSR entirely: render no island HTML, emit an empty
-        // foreign wrapper + the island's own Flight. The client mounts it with
-        // createRoot (no server DOM to adopt). No first paint (SEO/CLS tradeoff).
-        if (parsed.strategy === "only") {
-          const p = await serializeProps(rest, ctx);
-          p[ID_PATH_PROP] = prefix;
-          const childFlights = await flightOfChildren(rest.children as VNodeChildren, ctx);
-          const islandFlight: FlightNode = { $: "c", i: ref.id, p, c: childFlights };
-          ctx.islands.push({ id: prefix, strategy: "only", flight: islandFlight });
-          recordNested("only");
-          warnClientOnlySeoContent(rest.children as VNodeChildren, prefix);
-          return islandWrapper(prefix, "only", undefined, "");
-        }
-
-        // Observe what this island actually does, to auto-pick its strategy in
-        // resumable mode: an effect (useEffect/useLayoutEffect/useSyncExternalStore)
-        // means it must hydrate to run, so it can't wait for an interaction.
-        const effectsBefore = ctx.effects.count;
-        const rendered = await invokeComponent(resolveComponentType(type), rest);
-        const ranEffect = ctx.effects.count > effectsBefore;
-        // Render the island's own subtree with `insideIsland` set, so any deeper
-        // `client:*` island records itself for the foreign-host placeholder pass.
-        const htmlDual = await renderChildDual(rendered as VNodeChild, {
-          ...ctx,
-          insideIsland: true,
-        });
-        // Resumable mode auto-defers every island: interaction if it only has
-        // handlers (maximal laziness), idle if it runs an effect (or neither).
-        const hasHandlers = htmlDual.html.includes(DNX_H_ATTR);
-        const strategy = parsed.strategy ??
-          (ctx.resumable ? (ranEffect || !hasHandlers ? "idle" : "interaction") : null);
-        const p = await serializeProps(rest, ctx);
-        p[ID_PATH_PROP] = prefix;
-        const childFlights = await flightOfChildren(rest.children as VNodeChildren, ctx);
-        const islandFlight: FlightNode = { $: "c", i: ref.id, p, c: childFlights };
-        if (strategy) {
-          // Lazy island (top-level OR nested): nest its server HTML in a
-          // layout-neutral wrapper the enclosing root adopts but does not own
-          // (foreign host), and stash the island's own Flight for a per-island
-          // hydrateRoot when the strategy fires.
-          ctx.islands.push({ id: prefix, strategy, param: parsed.param, flight: islandFlight });
-          recordNested(strategy, parsed.param);
-          return islandWrapper(prefix, strategy, parsed.param, htmlDual.html);
-        }
-        return { html: htmlDual.html, flight: islandFlight };
-      }
-      return await renderServerComponentDual(type, props, ctx);
-    } finally {
-      ctx.ids.scope = parentScope;
-    }
-  }
-
-  return renderHostDual(node, ctx);
+  if ((type as unknown) === ERROR_BOUNDARY) return renderErrorBoundaryDual(props, ctx);
+  if (isComponentType(type)) return renderComponentDual(node, type, props, ctx);
+  return renderHostDual(hostOf(ctx), node, ctx.resumable, ctx.scopes, ctx.head);
 }
 
-/** Invoke and expand a server component into both outputs (in the active scope). */
-async function renderServerComponentDual(
+/** The dual-render operations {@link renderHostDual} composes (a null `head` renders a hoisted `<title>`'s text). */
+function hostOf(ctx: Ctx): DualHost {
+  return {
+    serializeValue: (value) => serializeValue(value, ctx),
+    renderChildren: (children, _scopes, head) =>
+      renderChildrenDual(children, head === ctx.head ? ctx : { ...ctx, head }),
+  };
+}
+
+/** A fragment, or a context provider whose scope wraps its children. */
+async function renderFragmentDual(props: Record<string, unknown>, ctx: Ctx): Promise<Dual> {
+  const scope = providerScopeOf(props);
+  if (!scope) return renderChildrenDual(props.children as VNodeChildren, ctx);
+  ctx.scopes.push(scope);
+  try {
+    return await renderChildrenDual(props.children as VNodeChildren, ctx);
+  } finally {
+    ctx.scopes.pop();
+  }
+}
+
+/** Error boundary (see {@link renderErrorBoundaryWith}). */
+function renderErrorBoundaryDual(props: Record<string, unknown>, ctx: Ctx): Promise<Dual> {
+  return renderErrorBoundaryWith(props, ctx.ids, {
+    render: (children) => renderChildrenDual(children, ctx),
+    renderFallback: (child) => renderChildDual(child, ctx),
+    activate: () => setDispatcher(ctx.dispatcher),
+  });
+}
+
+/**
+ * Function component (or a memo/forwardRef object wrapper). Each opens a fresh id scope,
+ * consuming a slot in its parent's scope, so ids derive from tree position. A client island
+ * renders to HTML for first paint but emits only a REFERENCE in the Flight tree (see
+ * {@link renderClientIsland}); a server component is invoked and expanded in both outputs.
+ */
+async function renderComponentDual(
+  node: VNode,
   type: unknown,
   props: Record<string, unknown>,
   ctx: Ctx,
 ): Promise<Dual> {
-  const { scopes, dispatcher } = ctx;
-  // Server component: invoke and expand in both outputs.
-  setDispatcher(dispatcher);
-  if (isClassComponent(type)) {
-    if (__DENEXT_CLASS_COMPONENTS__) {
-      return renderChildDual(
-        renderClassToVNode(type, props, resolveContextType(type, scopes)) as VNodeChild,
-        ctx,
-      );
-    }
-    throw classComponentsDisabledError();
+  const { parent, scope } = pushScope(ctx.ids);
+  try {
+    setDispatcher(ctx.dispatcher);
+    const ref = clientRefOf(type);
+    if (ref) return await renderIslandDual(node, type, ref, props, scopePrefix(scope), ctx);
+    return await renderChildDual(await invokeServerComponent(type, props, ctx.scopes), ctx);
+  } finally {
+    ctx.ids.scope = parent;
   }
-  const result = await invokeComponent(resolveComponentType(type), props);
-  return renderChildDual(result as VNodeChild, ctx);
 }
 
-/** Render an intrinsic host element into both outputs. */
-async function renderHostDual(node: VNode, ctx: Ctx): Promise<Dual> {
-  const props = node.props ?? {};
-  const tag = node.type as string;
-  let attrs = serializeAttributes(props, tag, ctx.resumable);
-  if (tag === "form" && isServerAction(props.action) && props.method == null) {
-    attrs += ` method="post"`;
-  }
-
-  // Hoist <title>/<meta>/<link> into the head collector (in HTML only).
-  if (ctx.head && HOISTED_TAGS.has(tag)) {
-    if (tag === "title") {
-      ctx.head.title = (await renderChildrenDual(props.children, { ...ctx, head: null })).html;
-    } else {
-      ctx.head.tags.push(`<${tag}${attrs}>`);
-    }
-    return { html: "", flight: null };
-  }
-
-  const p = await serializeProps(props, ctx);
-
-  if (VOID_ELEMENTS.has(tag)) {
-    return { html: `<${tag}${attrs}>`, flight: { $: "h", t: tag, p, c: [] } };
-  }
-
-  const dangerous = props.dangerouslySetInnerHTML as { __html: string } | undefined;
-  if (dangerous && typeof dangerous.__html === "string") {
-    warnDangerousHtml(tag);
-    return {
-      html: `<${tag}${attrs}>${dangerous.__html}</${tag}>`,
-      flight: { $: "h", t: tag, p, c: [] },
-    };
-  }
-
-  const inner = await renderChildrenDual(props.children, ctx);
-  return {
-    html: `<${tag}${attrs}>${inner.html}</${tag}>`,
-    flight: { $: "h", t: tag, p, c: asFlightArray(inner.flight) },
+/**
+ * A client island via {@link renderClientIsland}. The island's own subtree renders with
+ * `insideIsland` set, so any deeper `client:*` island records itself for the foreign-host
+ * placeholder pass; its Flight children serialize through the Flight-only walk below.
+ */
+function renderIslandDual(
+  node: VNode,
+  type: unknown,
+  ref: ClientRefInfo,
+  props: Record<string, unknown>,
+  prefix: string,
+  ctx: Ctx,
+): Promise<Dual> {
+  const renderer: IslandRenderer = {
+    resumable: ctx.resumable,
+    effects: ctx.effects,
+    insideIsland: ctx.insideIsland ?? false,
+    carvedNested: ctx.carvedNested ?? new WeakMap(),
+    recordIsland: (island) => ctx.islands.push(island),
+    renderChild: (child) => renderChildDual(child, { ...ctx, insideIsland: true }),
+    serializeValue: (value) => serializeValue(value, ctx),
+    flightChildren: (children) => flightOfChildren(children, ctx),
   };
-}
-
-/** Normalize a children Dual's flight (always an array) for a host node's `c`. */
-function asFlightArray(flight: FlightNode): FlightNode[] {
-  return Array.isArray(flight) ? flight : [flight];
+  return renderClientIsland(renderer, node, type, ref, props, prefix, ctx.scopes, ctx.head);
 }
 
 // ---- Flight-only serialization for props and client-island children --------
@@ -476,8 +270,6 @@ function asFlightArray(flight: FlightNode): FlightNode[] {
 // children are what the browser passes to the client component. We serialize
 // them without also rendering HTML here (the HTML was produced when the island's
 // own render consumed its children).
-
-const SKIP = Symbol("skip");
 
 async function flightOfChildren(children: VNodeChildren, ctx: Ctx): Promise<FlightNode[]> {
   const arr = Array.isArray(children) ? children : children == null ? [] : [children];
@@ -498,116 +290,60 @@ async function flightOfVNode(node: VNode, ctx: Ctx): Promise<FlightNode> {
   const { type } = node;
   const props = node.props ?? {};
   if (type === FRAGMENT) return flightOfChildren(props.children, ctx);
-  if (isComponentType(type)) {
+  if (!isComponentType(type)) {
+    const p = await serializeProps(props, ctx);
+    return flightHost(type as string, p, await flightOfChildren(props.children, ctx));
+  }
+  const { parent, scope } = pushScope(ctx.ids);
+  try {
     const ref = clientRefOf(type);
-    const parentScope = ctx.ids.scope;
-    const scope = enterScope(parentScope);
-    ctx.ids.scope = scope;
-    try {
-      if (ref) {
-        // A nested `client:*` island that the parent's dual render already carved
-        // (wrapper + islands entry): emit a matching FOREIGN HOST — the same node
-        // `islandWrapper` puts in the page Flight for a top-level island — so the
-        // enclosing island's per-island `hydrateRoot` adopts the child's wrapper
-        // element without reconciling into it. It hydrates on its own strategy.
-        const carved = ctx.carvedNested?.get(node);
-        if (carved) {
-          return islandWrapper(carved.id, carved.strategy, carved.param, "").flight;
-        }
-        // Otherwise a client island in serialized children (an island's children
-        // that its component did not itself render, or a Suspense hole): emit a plain
-        // client ref, hydrated with the enclosing island's root (no separate record).
-        const { rest } = parseStrategy(props, ref.moduleHydrate);
-        const p = await serializeProps(rest, ctx);
-        p[ID_PATH_PROP] = scopePrefix(scope);
-        return {
-          $: "c",
-          i: ref.id,
-          p,
-          c: await flightOfChildren(rest.children as VNodeChildren, ctx),
-        };
-      }
-      // A server component nested inside a hole: expand it (flight-only).
-      setDispatcher(ctx.dispatcher);
-      if (isClassComponent(type)) {
-        if (__DENEXT_CLASS_COMPONENTS__) {
-          return await flightOfChild(
-            renderClassToVNode(type, props, resolveContextType(type, ctx.scopes)) as VNodeChild,
-            ctx,
-          );
-        }
-        throw classComponentsDisabledError();
-      }
-      const result = await invokeComponent(resolveComponentType(type), props);
-      return await flightOfChild(result as VNodeChild, ctx);
-    } finally {
-      ctx.ids.scope = parentScope;
-    }
+    if (ref) return await flightOfIsland(node, ref, props, scopePrefix(scope), ctx);
+    // A server component nested inside a hole: expand it (flight-only).
+    setDispatcher(ctx.dispatcher);
+    return await flightOfChild(await invokeServerComponent(type, props, ctx.scopes), ctx);
+  } finally {
+    ctx.ids.scope = parent;
   }
-  return {
-    $: "h",
-    t: type as string,
-    p: await serializeProps(props, ctx),
-    c: await flightOfChildren(props.children, ctx),
-  };
 }
 
-async function serializeProps(props: Record<string, unknown>, ctx: Ctx): Promise<FlightProps> {
-  const out: FlightProps = {};
-  for (const [name, value] of Object.entries(props)) {
-    if (name === "children" || name === "key" || name === "ref" || name === PROVIDER.toString()) {
-      continue;
-    }
-    const sv = await serializeValue(value, ctx);
-    if (sv !== SKIP) out[name] = sv as FlightValue;
-  }
-  return out;
+/**
+ * A client island inside serialized children. One the parent's dual render already carved
+ * (wrapper + islands entry) emits a matching FOREIGN HOST — the same node `islandWrapper` puts
+ * in the page Flight for a top-level island — so the enclosing island's per-island `hydrateRoot`
+ * adopts the child's wrapper element without reconciling into it (it hydrates on its own
+ * strategy). Otherwise — an island's children that its component did not itself render, or a
+ * Suspense hole — it is a plain client ref, hydrated with the enclosing island's root.
+ */
+async function flightOfIsland(
+  node: VNode,
+  ref: { id: string; moduleHydrate?: unknown },
+  props: Record<string, unknown>,
+  prefix: string,
+  ctx: Ctx,
+): Promise<FlightNode> {
+  const carved = ctx.carvedNested?.get(node);
+  if (carved) return islandWrapper(carved.id, carved.strategy, carved.param, "").flight;
+  const { rest } = parseStrategy(props, ref.moduleHydrate);
+  const p = await serializeProps(rest, ctx);
+  const children = await flightOfChildren(rest.children as VNodeChildren, ctx);
+  return flightClientRef(ref.id, p, prefix, children);
 }
 
-async function serializeValue(value: unknown, ctx: Ctx): Promise<FlightValue | typeof SKIP> {
+function serializeProps(props: Record<string, unknown>, ctx: Ctx): Promise<FlightProps> {
+  return serializeFlightProps(props, (v) => serializeValue(v, ctx));
+}
+
+function serializeValue(value: unknown, ctx: Ctx): Promise<Serialized> {
   // Taint check (React `taint*`): refuse to serialize a value marked as secret before it
   // can cross to the client. Two empty-map lookups when nothing is tainted. Runs first so
-  // even a tainted scalar / a tainted resolved deferred value is caught.
+  // even a tainted scalar / a tainted resolved deferred value (re-checked on the recursive
+  // call) is caught.
   const tainted = taintMessageFor(value);
   if (tainted !== undefined) throw new Error(tainted);
-  // Shared leaf cascade (primitives, action/qrl refs, dropped functions, Date, thenables).
-  const scalar = serializeScalar(value);
-  if (scalar.kind === "value") return scalar.value;
-  if (scalar.kind === "skip") return SKIP;
-  // A Remix `defer()` field / promise data: resolve then re-serialize (the resolved value is
-  // re-taint-checked on the recursive call); a rejection becomes the error marker so `<Await>`
-  // renders its `errorElement`.
-  if (scalar.kind === "thenable") {
-    return await serializeThenable(scalar.promise, (v) => serializeValue(v, ctx));
-  }
-  if (Array.isArray(value)) {
-    const items: FlightValue[] = [];
-    for (const el of value) {
-      const sv = await serializeValue(el, ctx);
-      if (sv !== SKIP) items.push(sv as FlightValue);
-    }
-    return items;
-  }
-  if (isVNode(value)) return flightOfVNode(value, ctx) as Promise<FlightValue>;
-  if (typeof value === "object") {
-    const obj: Record<string, FlightValue> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      const sv = await serializeValue(v, ctx);
-      if (sv === SKIP) continue;
-      // Escape a leading `$` in a user-object key. Otherwise a plain data object shaped
-      // like `{ $: "h", t: "div", p: {...}, c: [] }` — e.g. a document from a store that
-      // permits `$`-prefixed keys, or `searchParams` `?$=h` — would be re-read on the
-      // client as a Flight control tag and forge a VNode / client component (→ XSS) or
-      // crash hydration. Reversed by the parser's plain-object branch.
-      obj[k.startsWith("$") ? "$" + k : k] = sv as FlightValue;
-    }
-    return obj;
-  }
-  return SKIP;
-}
-
-function isVNode(value: unknown): value is VNode {
-  return typeof value === "object" && value !== null && "type" in value && "props" in value;
+  return serializeFlightValue(value, {
+    value: (v) => serializeValue(v, ctx),
+    vnode: (n) => flightOfVNode(n, ctx) as Promise<FlightValue>,
+  });
 }
 
 /** Serialize a Flight payload to a JSON string safe to embed in a `<script>`. */
@@ -616,4 +352,3 @@ export function serializeFlight(flight: FlightNode): string {
 }
 
 /** The `actionEndpoint` re-export, so callers can build no-JS form URLs. */
-export { actionEndpoint };

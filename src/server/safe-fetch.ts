@@ -89,23 +89,29 @@ function parseIPv6(input: string): number[] | null {
 function isForbiddenIPv6(ip: string): boolean {
   const g = parseIPv6(ip);
   if (g === null) return true; // unparseable → refuse (fail closed)
-
   if (g.every((h) => h === 0)) return true; // :: unspecified
-  const embeddedV4 = () => `${(g[6] >> 8) & 255}.${g[6] & 255}.${(g[7] >> 8) & 255}.${g[7] & 255}`;
-  const topZero = g[0] === 0 && g[1] === 0 && g[2] === 0 && g[3] === 0 && g[4] === 0;
-
-  // ::1 loopback; IPv4-mapped ::ffff:0:0/96 and deprecated IPv4-compatible ::/96;
-  // NAT64 64:ff9b::/96 — all carry an embedded IPv4 in the low 32 bits.
-  if (topZero && g[5] === 0 && g[6] === 0 && g[7] === 1) return true; // ::1
-  if (topZero && (g[5] === 0xffff || g[5] === 0)) return isForbiddenIPv4(embeddedV4());
-  if (g[0] === 0x0064 && g[1] === 0xff9b && g[2] === 0 && g[3] === 0 && g[4] === 0 && g[5] === 0) {
-    return isForbiddenIPv4(embeddedV4());
-  }
-
+  const embedded = embeddedIPv4(g);
+  if (embedded === "loopback") return true;
+  if (embedded) return isForbiddenIPv4(embedded);
   const hi = (g[0] >> 8) & 255;
   if (hi === 0xfc || hi === 0xfd) return true; // unique-local fc00::/7
-  if ((g[0] & 0xffc0) === 0xfe80) return true; // link-local fe80::/10
-  return false;
+  return (g[0] & 0xffc0) === 0xfe80; // link-local fe80::/10
+}
+
+/**
+ * The IPv4 carried in the low 32 bits of a `::1` loopback, IPv4-mapped `::ffff:0:0/96`,
+ * deprecated IPv4-compatible `::/96`, or NAT64 `64:ff9b::/96` address — `"loopback"` for
+ * `::1`, the dotted IPv4 for the embedding prefixes, null for a plain IPv6 address.
+ */
+function embeddedIPv4(g: number[]): string | "loopback" | null {
+  const topZero = g[0] === 0 && g[1] === 0 && g[2] === 0 && g[3] === 0 && g[4] === 0;
+  if (topZero && g[5] === 0 && g[6] === 0 && g[7] === 1) return "loopback";
+  const nat64 = g[0] === 0x0064 && g[1] === 0xff9b && g[2] === 0 && g[3] === 0 && g[4] === 0 &&
+    g[5] === 0;
+  if ((topZero && (g[5] === 0xffff || g[5] === 0)) || nat64) {
+    return `${(g[6] >> 8) & 255}.${g[6] & 255}.${(g[7] >> 8) & 255}.${g[7] & 255}`;
+  }
+  return null;
 }
 
 /** True if `host` is an IP literal (skip DNS resolution). */
@@ -195,31 +201,45 @@ export function connectWithAbort<T extends { close(): void }>(
   });
 }
 
-const defaultTransport: Transport = async (opts) => {
-  if (opts.signal?.aborted) throw new Error("aborted");
+function closeQuietly(conn: Deno.Conn): void {
+  try {
+    conn.close();
+  } catch { /* already closed */ }
+}
+
+/** TCP connect (abortable) and, for `tls`, the TLS handshake against `hostname`. */
+async function openConnection(opts: Parameters<Transport>[0]): Promise<Deno.Conn> {
   const tcp = await connectWithAbort(
     Deno.connect({ hostname: opts.ip, port: opts.port }),
     opts.signal,
   );
-  let conn: Deno.Conn = tcp;
-  const onAbort = () => {
-    try {
-      conn.close();
-    } catch { /* already closed */ }
-  };
+  if (!opts.tls) return tcp;
+  try {
+    return await Deno.startTls(tcp, { hostname: opts.hostname });
+  } catch (err) {
+    closeQuietly(tcp);
+    throw err;
+  }
+}
+
+const defaultTransport: Transport = async (opts) => {
+  throwIfAborted(opts.signal);
+  const conn = await openConnection(opts);
+  const onAbort = () => closeQuietly(conn);
   opts.signal?.addEventListener("abort", onAbort, { once: true });
   try {
-    if (opts.signal?.aborted) throw new Error("aborted");
-    if (opts.tls) conn = await Deno.startTls(tcp, { hostname: opts.hostname });
+    throwIfAborted(opts.signal);
     await writeAll(conn, opts.request);
     return await readToEnd(conn, opts.maxBytes);
   } finally {
     opts.signal?.removeEventListener("abort", onAbort);
-    try {
-      conn.close();
-    } catch { /* already closed */ }
+    closeQuietly(conn);
   }
 };
+
+function throwIfAborted(signal: AbortSignal | null | undefined): void {
+  if (signal?.aborted) throw new Error("aborted");
+}
 
 async function writeAll(conn: Deno.Conn, data: Uint8Array): Promise<void> {
   let n = 0;
@@ -239,6 +259,10 @@ async function readToEnd(conn: Deno.Conn, maxBytes: number): Promise<Uint8Array>
     total += n;
     if (total > limit) throw new Error("response too large");
   }
+  return concatChunks(chunks, total);
+}
+
+function concatChunks(chunks: Uint8Array[], total: number): Uint8Array {
   const out = new Uint8Array(total);
   let at = 0;
   for (const c of chunks) {
@@ -264,7 +288,12 @@ export interface ParsedResponse {
 export function parseHttpResponse(raw: Uint8Array): ParsedResponse {
   const sep = indexOfCRLFCRLF(raw);
   if (sep === -1) throw new Error("malformed HTTP response (no header terminator)");
-  const headerText = new TextDecoder().decode(raw.subarray(0, sep));
+  const { status, headers } = parseHeaderBlock(new TextDecoder().decode(raw.subarray(0, sep)));
+  return { status, headers, body: frameBody(headers, raw.subarray(sep + 4)) };
+}
+
+/** The status line + header lines (an invalid header name is skipped). */
+function parseHeaderBlock(headerText: string): { status: number; headers: Headers } {
   const lines = headerText.split("\r\n");
   const status = Number(lines[0]?.split(" ")[1]);
   if (!Number.isFinite(status)) throw new Error("malformed HTTP status line");
@@ -276,21 +305,22 @@ export function parseHttpResponse(raw: Uint8Array): ParsedResponse {
       headers.append(lines[i].slice(0, idx).trim(), lines[i].slice(idx + 1).trim());
     } catch { /* skip an invalid header name */ }
   }
-  let body = raw.subarray(sep + 4);
+  return { status, headers };
+}
+
+/**
+ * Frame the body: `Transfer-Encoding: chunked` is de-chunked; a pure non-negative-integer
+ * `Content-Length` truncates (the digit regex avoids JS's `Number("")` → 0, which would
+ * empty the body, and `Number("0x10")` hex coercion); otherwise the body is everything to EOF.
+ */
+function frameBody(headers: Headers, body: Uint8Array): Uint8Array {
   if ((headers.get("transfer-encoding") ?? "").toLowerCase().includes("chunked")) {
-    body = dechunk(body);
-  } else {
-    const clHeader = headers.get("content-length");
-    // Only a pure non-negative integer frames the body. Guarding with a digit
-    // regex avoids JS's `Number("")`/`Number(" ")` → 0 (which would truncate the
-    // body to empty) and `Number("0x10")` → 16 hex coercion.
-    if (clHeader !== null && /^\d+$/.test(clHeader.trim())) {
-      const len = Number(clHeader.trim());
-      if (Number.isFinite(len) && len < body.byteLength) body = body.subarray(0, len);
-    }
-    // No Content-Length and not chunked → body is everything up to EOF (as read).
+    return dechunk(body);
   }
-  return { status, headers, body };
+  const clHeader = headers.get("content-length");
+  if (clHeader === null || !/^\d+$/.test(clHeader.trim())) return body;
+  const len = Number(clHeader.trim());
+  return Number.isFinite(len) && len < body.byteLength ? body.subarray(0, len) : body;
 }
 
 function indexOfCRLFCRLF(b: Uint8Array): number {
@@ -437,34 +467,11 @@ export function makePinnedFetch(
   const allowLocalIP = cfg.allowLocalIP === true;
 
   return async (url, init) => {
-    if (url.protocol !== "http:" && url.protocol !== "https:") {
-      throw new SafeFetchError("unsupported-protocol", `refusing ${url.protocol} URL`);
-    }
+    assertHttpUrl(url);
     const tls = url.protocol === "https:";
     const port = url.port ? Number(url.port) : (tls ? 443 : 80);
-
-    let ips: string[];
-    try {
-      ips = await resolver(url.hostname);
-    } catch (e) {
-      throw new SafeFetchError("dns", `could not resolve ${url.hostname}: ${e}`);
-    }
-    if (ips.length === 0) {
-      throw new SafeFetchError("dns", `no DNS records for ${url.hostname}`);
-    }
-    // DNS-rebinding defense: refuse if ANY resolved address is internal. Skipped
-    // only under the explicit, dangerous allowLocalIP escape hatch.
-    if (!allowLocalIP && ips.some(isForbiddenAddress)) {
-      throw new SafeFetchError("blocked-address", `${url.hostname} resolves to a blocked address`);
-    }
-
+    const ips = await resolvePinned(resolver, url.hostname, allowLocalIP);
     const method = (init.method ?? "GET").toUpperCase();
-    const body = init.body == null
-      ? undefined
-      : (typeof init.body === "string"
-        ? new TextEncoder().encode(init.body)
-        : init.body as Uint8Array);
-
     let raw: Uint8Array;
     try {
       raw = await transport({
@@ -472,7 +479,7 @@ export function makePinnedFetch(
         port,
         tls,
         hostname: url.hostname,
-        request: buildRequest(url, { method, headers: init.headers, body }),
+        request: buildRequest(url, { method, headers: init.headers, body: bodyBytes(init.body) }),
         maxBytes,
         signal: init.signal,
       });
@@ -480,23 +487,62 @@ export function makePinnedFetch(
       if (e instanceof SafeFetchError) throw e;
       throw new SafeFetchError("network", `request to ${url.hostname} failed: ${e}`);
     }
-
-    let parsed: ParsedResponse;
-    try {
-      parsed = parseHttpResponse(raw);
-    } catch (e) {
-      throw new SafeFetchError("bad-response", `malformed response from ${url.hostname}: ${e}`);
-    }
-    // We already have the exact (framed) body; drop framing headers so the Response
-    // computes its own and a mismatched origin Content-Length can't confuse readers.
-    parsed.headers.delete("content-length");
-    parsed.headers.delete("transfer-encoding");
-    const hasBody = parsed.status >= 200 && parsed.status !== 204 && parsed.status !== 304;
-    return new Response(hasBody ? (parsed.body as BodyInit) : null, {
-      status: parsed.status,
-      headers: parsed.headers,
-    });
+    return responseFromRaw(raw, url.hostname);
   };
+}
+
+function assertHttpUrl(url: URL): void {
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new SafeFetchError("unsupported-protocol", `refusing ${url.protocol} URL`);
+  }
+}
+
+/**
+ * Resolve the host. DNS-rebinding defense: refuse if ANY resolved address is internal —
+ * skipped only under the explicit, dangerous allowLocalIP escape hatch.
+ */
+async function resolvePinned(
+  resolver: NonNullable<PinnedFetchConfig["resolver"]>,
+  hostname: string,
+  allowLocalIP: boolean,
+): Promise<string[]> {
+  let ips: string[];
+  try {
+    ips = await resolver(hostname);
+  } catch (e) {
+    throw new SafeFetchError("dns", `could not resolve ${hostname}: ${e}`);
+  }
+  if (ips.length === 0) throw new SafeFetchError("dns", `no DNS records for ${hostname}`);
+  if (!allowLocalIP && ips.some(isForbiddenAddress)) {
+    throw new SafeFetchError("blocked-address", `${hostname} resolves to a blocked address`);
+  }
+  return ips;
+}
+
+function bodyBytes(body: BodyInit | Uint8Array | null | undefined): Uint8Array | undefined {
+  if (body == null) return undefined;
+  return typeof body === "string" ? new TextEncoder().encode(body) : body as Uint8Array;
+}
+
+/**
+ * Parse the raw response into a `Response`. We already have the exact (framed) body, so the
+ * framing headers are dropped: the Response computes its own and a mismatched origin
+ * Content-Length can't confuse readers.
+ */
+function responseFromRaw(raw: Uint8Array, hostname: string): Response {
+  let parsed: ParsedResponse;
+  try {
+    parsed = parseHttpResponse(raw);
+  } catch (e) {
+    throw new SafeFetchError("bad-response", `malformed response from ${hostname}: ${e}`);
+  }
+  parsed.headers.delete("content-length");
+  parsed.headers.delete("transfer-encoding");
+  const hasBody = parsed.status >= 200 && parsed.status !== 204 && parsed.status !== 304;
+  return new Response(hasBody ? (parsed.body as BodyInit) : null, {
+    status: parsed.status,
+    headers: parsed.headers,
+  });
 }
 
 /** The default pinned fetch used by the image optimizer. */
@@ -560,6 +606,19 @@ export const safeFetch: (url: string | URL, opts?: SafeFetchOptions) => Promise<
   makeSafeFetch();
 
 /**
+ * Caller headers for one redirect hop. Credentials (`authorization`, `cookie`,
+ * `proxy-authorization`) are forwarded only while the hop stays on the ORIGINAL origin —
+ * a redirect to another host must not receive them (the fetch-spec rule).
+ */
+function hopHeaders(headers: HeadersInit | undefined, url: URL, origin: string): Headers {
+  const out = new Headers(headers);
+  if (url.origin !== origin) {
+    for (const name of ["authorization", "cookie", "proxy-authorization"]) out.delete(name);
+  }
+  return out;
+}
+
+/**
  * Build a {@linkcode safeFetch} with an injected resolver/transport (for tests) or
  * a custom default byte cap. Most callers use the default {@linkcode safeFetch}.
  *
@@ -575,52 +634,64 @@ export function makeSafeFetch(
       transport: cfg.transport,
       maxBytes: opts.maxBytes ?? cfg.maxBytes ?? 10 * 1024 * 1024,
     });
-
-    let current = typeof url === "string" ? new URL(url) : new URL(url.href);
-    let method = (opts.method ?? "GET").toUpperCase();
-    let body: Uint8Array | undefined = opts.body == null
-      ? undefined
-      : (typeof opts.body === "string" ? new TextEncoder().encode(opts.body) : opts.body);
-    const headers = opts.headers;
-
+    const hop: RedirectHop = {
+      url: typeof url === "string" ? new URL(url) : new URL(url.href),
+      method: (opts.method ?? "GET").toUpperCase(),
+      body: bodyBytes(opts.body),
+    };
+    const origin = hop.url.origin;
     const timeout = AbortSignal.timeout(opts.timeoutMs ?? 10_000);
     const signal = opts.signal ? AbortSignal.any([timeout, opts.signal]) : timeout;
-
-    for (let hop = 0; hop <= maxRedirects; hop++) {
-      if (current.protocol !== "http:" && current.protocol !== "https:") {
-        throw new SafeFetchError("unsupported-protocol", `refusing ${current.protocol} URL`);
+    for (let i = 0; i <= maxRedirects; i++) {
+      assertHttpUrl(hop.url);
+      if (!hostAllowed(hop.url.hostname, opts.allowedHosts)) {
+        throw new SafeFetchError("host-not-allowed", `host ${hop.url.hostname} is not allowlisted`);
       }
-      if (!hostAllowed(current.hostname, opts.allowedHosts)) {
-        throw new SafeFetchError("host-not-allowed", `host ${current.hostname} is not allowlisted`);
-      }
-      const res = await pinned(current, {
-        method,
-        headers,
-        body: body as BodyInit | undefined,
+      const res = await pinned(hop.url, {
+        method: hop.method,
+        headers: hopHeaders(opts.headers, hop.url, origin),
+        body: hop.body as BodyInit | undefined,
         signal,
       });
-      if (REDIRECT_STATUS.has(res.status) && res.headers.get("location")) {
-        const location = res.headers.get("location")!;
-        await res.body?.cancel().catch(() => {});
-        let next: URL;
-        try {
-          next = new URL(location, current);
-        } catch {
-          throw new SafeFetchError("bad-response", `invalid redirect location: ${location}`);
-        }
-        // 303, and 301/302 on a non-idempotent method, downgrade to GET (per fetch spec).
-        if (
-          res.status === 303 ||
-          ((res.status === 301 || res.status === 302) && method !== "GET" && method !== "HEAD")
-        ) {
-          method = "GET";
-          body = undefined;
-        }
-        current = next;
-        continue;
-      }
-      return res;
+      if (!(await followRedirect(hop, res))) return res;
     }
     throw new SafeFetchError("too-many-redirects", `exceeded ${maxRedirects} redirects`);
   };
+}
+
+/** The request as it stands on the current redirect hop. */
+interface RedirectHop {
+  url: URL;
+  method: string;
+  body: Uint8Array | undefined;
+}
+
+/**
+ * Advance `hop` to a redirect's target (discarding its body), or return false when `res` is
+ * the final response. 303, and 301/302 on a non-idempotent method, downgrade to GET (per the
+ * fetch spec).
+ */
+async function followRedirect(hop: RedirectHop, res: Response): Promise<boolean> {
+  const location = REDIRECT_STATUS.has(res.status) ? res.headers.get("location") : null;
+  if (!location) return false;
+  await res.body?.cancel().catch(() => {});
+  hop.url = redirectUrl(location, hop.url);
+  if (downgradesToGet(res.status, hop.method)) {
+    hop.method = "GET";
+    hop.body = undefined;
+  }
+  return true;
+}
+
+function redirectUrl(location: string, from: URL): URL {
+  try {
+    return new URL(location, from);
+  } catch {
+    throw new SafeFetchError("bad-response", `invalid redirect location: ${location}`);
+  }
+}
+
+function downgradesToGet(status: number, method: string): boolean {
+  return status === 303 ||
+    ((status === 301 || status === 302) && method !== "GET" && method !== "HEAD");
 }

@@ -190,7 +190,6 @@ export async function verifyIdToken(options: VerifyIdTokenOptions): Promise<IdTo
   const { header, claims, signingInput, signature } = parseJws(options.idToken);
   const params = header.alg ? algParams(header.alg) : null;
   if (!params) throw new Error(`unsupported id_token alg: ${header.alg}`);
-
   // Pin the token type: an id_token is `typ:"JWT"` (or unset, or `id_token+jwt`).
   // Rejecting a different JWT class (e.g. an access token `at+jwt`) minted from the
   // same issuer/JWKS blocks token-type-confusion substitution.
@@ -198,50 +197,71 @@ export async function verifyIdToken(options: VerifyIdTokenOptions): Promise<IdTo
   if (typ && typ !== "jwt" && typ !== "id_token+jwt") {
     throw new Error(`unexpected id_token typ: ${header.typ}`);
   }
-
   // Select the key by `kid`; fall back to the sole key when the token omits one.
   const candidates = header.kid ? options.jwks.filter((k) => k.kid === header.kid) : options.jwks;
   if (candidates.length === 0) throw new Error("no matching JWKS key for id_token");
+  if (!(await anyKeyVerifies(candidates, params, signingInput, signature))) {
+    throw new Error("id_token signature verification failed");
+  }
+  assertIdTokenClaims(claims, options);
+  return claims;
+}
 
-  let verified = false;
+/**
+ * Whether any candidate key (of the alg's key type) verifies the signature. A malformed /
+ * curve-mismatched candidate (e.g. mid-rollover two keys share a `kid`) is skipped rather
+ * than aborting a valid token.
+ */
+async function anyKeyVerifies(
+  candidates: VerifyIdTokenOptions["jwks"],
+  params: NonNullable<ReturnType<typeof algParams>>,
+  signingInput: Uint8Array,
+  signature: Uint8Array,
+): Promise<boolean> {
   for (const jwk of candidates) {
     if (jwk.kty !== params.kty) continue; // key type must match the alg family
     try {
       const key = await importJwk(jwk, params);
-      if (
-        await crypto.subtle.verify(
-          params.verifyAlgo,
-          key,
-          signature as BufferSource,
-          signingInput as BufferSource,
-        )
-      ) {
-        verified = true;
-        break;
-      }
+      const ok = await crypto.subtle.verify(
+        params.verifyAlgo,
+        key,
+        signature as BufferSource,
+        signingInput as BufferSource,
+      );
+      if (ok) return true;
     } catch {
-      // A malformed / curve-mismatched candidate (e.g. mid-rollover two keys share a
-      // `kid`): skip it and try the next rather than aborting a valid token.
       continue;
     }
   }
-  if (!verified) throw new Error("id_token signature verification failed");
+  return false;
+}
 
+/**
+ * `iss` / `aud` / `nonce`, then the time claims: `exp` (required — a token that omits
+ * it is rejected, not treated as non-expiring), `nbf`, and `iat` (when present it must
+ * not lie in the future — a forged/misclocked token can't claim to be minted later than
+ * now), all with clock tolerance.
+ */
+function assertIdTokenClaims(claims: IdTokenClaims, options: VerifyIdTokenOptions): void {
   if (claims.iss !== options.issuer) throw new Error("id_token issuer mismatch");
   const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
   if (!aud.includes(options.audience)) throw new Error("id_token audience mismatch");
   if (options.nonce !== undefined && claims.nonce !== options.nonce) {
     throw new Error("id_token nonce mismatch");
   }
+  assertTimeClaims(claims, options);
+}
+
+/** The `exp` / `nbf` / `iat` checks (split out to keep each check function small). */
+function assertTimeClaims(claims: IdTokenClaims, options: VerifyIdTokenOptions): void {
   const now = options.now ?? Date.now();
   const tolerance = (options.clockToleranceSec ?? 60) * 1000;
-  // OIDC requires `exp`. A token that omits it must be rejected, not treated as
-  // non-expiring (previously a missing `exp` slipped through the `typeof` guard).
   if (typeof claims.exp !== "number") throw new Error("id_token missing exp");
   if (claims.exp * 1000 + tolerance < now) throw new Error("id_token expired");
-  // Reject a token that is not yet valid (`nbf` in the future, beyond skew).
   if (typeof claims.nbf === "number" && claims.nbf * 1000 - tolerance > now) {
     throw new Error("id_token not yet valid");
   }
-  return claims;
+  if (typeof claims.iat === "number" && claims.iat * 1000 - tolerance > now) {
+    throw new Error("id_token issued in the future");
+  }
 }

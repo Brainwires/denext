@@ -27,18 +27,47 @@ export const deployCommand: CommandSpec = {
     "  denext deploy --list",
   positionals: [{ name: "dir", help: "Project directory (default: .)" }],
   flags: [
-    { name: "provider", type: "string", valueName: "<name>", help: "Deploy provider" },
-    { name: "project", type: "string", valueName: "<name>", help: "Provider project/site name" },
-    { name: "entry", type: "string", valueName: "<file>", help: "Server entrypoint to deploy" },
-    { name: "prod", type: "boolean", help: "Deploy to production (not a preview)" },
-    { name: "skip-build", type: "boolean", help: "Deploy without rebuilding first" },
-    { name: "dry-run", type: "boolean", help: "Print the plan without deploying" },
+    {
+      name: "provider",
+      type: "string",
+      valueName: "<name>",
+      help: "Deploy provider",
+    },
+    {
+      name: "project",
+      type: "string",
+      valueName: "<name>",
+      help: "Provider project/site name",
+    },
+    {
+      name: "entry",
+      type: "string",
+      valueName: "<file>",
+      help: "Server entrypoint to deploy",
+    },
+    {
+      name: "prod",
+      type: "boolean",
+      help: "Deploy to production (not a preview)",
+    },
+    {
+      name: "skip-build",
+      type: "boolean",
+      help: "Deploy without rebuilding first",
+    },
+    {
+      name: "dry-run",
+      type: "boolean",
+      help: "Print the plan without deploying",
+    },
     { name: "list", type: "boolean", help: "List available deploy providers" },
   ],
   run: async (ctx) => {
     if (ctx.flags.list === true) {
       console.log("\n  Deploy providers:");
-      for (const a of listAdapters()) console.log(`    ${a.name.padEnd(14)} ${a.summary}`);
+      for (const a of listAdapters()) {
+        console.log(`    ${a.name.padEnd(14)} ${a.summary}`);
+      }
       console.log("");
       return;
     }
@@ -47,7 +76,8 @@ export const deployCommand: CommandSpec = {
     const adapter = resolveAdapter(ctx.flags.provider as string | undefined);
 
     // Resolve the entrypoint before building, so a misconfig fails fast.
-    const entry = (ctx.flags.entry as string | undefined) ?? await detectEntrypoint(dir);
+    const entry = (ctx.flags.entry as string | undefined) ??
+      await detectEntrypoint(dir);
     if (!entry) {
       console.error(
         `denext: no deploy entrypoint found in ${dir}.\n` +

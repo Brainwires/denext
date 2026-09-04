@@ -56,14 +56,7 @@ async function loadTest(
       const i = issued++;
       if (i >= total) return;
       const t0 = performance.now();
-      try {
-        const res = await fetch(url);
-        // Drain the body so the connection is freed and the render fully completes.
-        await res.arrayBuffer();
-        if (res.status !== 200) errors++;
-      } catch {
-        errors++;
-      }
+      if (!(await fetchOk(url))) errors++;
       latencies[i] = performance.now() - t0;
     }
   };
@@ -86,17 +79,32 @@ async function loadTest(
   };
 }
 
+/** One request; the body is drained so the connection is freed and the render fully completes. */
+async function fetchOk(url: string): Promise<boolean> {
+  try {
+    const res = await fetch(url);
+    await res.arrayBuffer();
+    return res.status === 200;
+  } catch {
+    return false;
+  }
+}
+
 /** Resident set size (bytes) of a process via `ps`, or null if unavailable. */
 async function rss(pid: number): Promise<number | null> {
+  const kb = await psRssKb(pid);
+  return kb !== null && Number.isFinite(kb) && kb > 0 ? kb * 1024 : null;
+}
+
+/** `ps -o rss= -p <pid>` as a number, or null when ps is unavailable or fails. */
+async function psRssKb(pid: number): Promise<number | null> {
   try {
     const out = await new Deno.Command("ps", {
       args: ["-o", "rss=", "-p", String(pid)],
       stdout: "piped",
       stderr: "null",
     }).output();
-    if (!out.success) return null;
-    const kb = Number(new TextDecoder().decode(out.stdout).trim());
-    return Number.isFinite(kb) && kb > 0 ? kb * 1024 : null;
+    return out.success ? Number(new TextDecoder().decode(out.stdout).trim()) : null;
   } catch {
     return null;
   }

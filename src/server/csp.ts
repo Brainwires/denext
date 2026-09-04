@@ -49,7 +49,7 @@ async function sha256Base64(text: string): Promise<string> {
  * self-authorize, gutting the CSP's XSS defense. Author inline scripts must instead
  * use an external `src` or a per-route `csp.scriptSrc` opt-in.
  */
-export function extractInlineForCsp(html: string): { styles: string[] } {
+function extractInlineForCsp(html: string): { styles: string[] } {
   const styles: string[] = [];
   const styleRe = /<style\b[^>]*>([\s\S]*?)<\/style>/gi;
   for (let m = styleRe.exec(html); m; m = styleRe.exec(html)) {

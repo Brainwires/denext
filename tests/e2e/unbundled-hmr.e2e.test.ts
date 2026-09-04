@@ -12,7 +12,14 @@
 import { assert, assertStringIncludes } from "@std/assert";
 import { copy } from "@std/fs";
 import { join, toFileUrl } from "@std/path";
-import { launchBrowser, startDevOnDir } from "./harness.ts";
+import {
+  collectConsoleErrors,
+  editAndAssertHotSwap,
+  hydrateAndClick,
+  launchBrowser,
+  type RunningServer,
+  startDevOnDir,
+} from "./harness.ts";
 
 const FIXTURE = new URL("./fixtures/hmr", import.meta.url).pathname;
 const FRAMEWORK_ROOT = new URL("../../", import.meta.url).pathname;
@@ -33,14 +40,60 @@ async function patchImports(dir: string): Promise<void> {
   await Deno.writeTextFile(p, JSON.stringify(cfg, null, 2));
 }
 
+/** Copy the fixture to a fresh temp dir (so the test can edit its source) and patch it. */
+async function prepareApp(prefix: string): Promise<string> {
+  const dir = await Deno.makeTempDir({ prefix });
+  await copy(FIXTURE, dir, { overwrite: true });
+  await patchImports(dir);
+  return dir;
+}
+
+const LEAF_EDIT = {
+  from: "WIDGET_V1",
+  to: "WIDGET_V2",
+  watch: "widget",
+  counter: "counter",
+  count: "count: 3",
+  reloadMessage: "a leaf-module edit must NOT trigger a full page reload",
+};
+
+const PAGE_EDIT = {
+  from: "TITLE_V1",
+  to: "TITLE_V2",
+  watch: "title",
+  counter: "counter",
+  count: "count: 3",
+  reloadMessage: "a page-module edit must NOT trigger a full page reload",
+};
+
+const LAYOUT_EDIT = {
+  from: "LAYOUT_V1",
+  to: "LAYOUT_V2",
+  watch: "layout-tag",
+  counter: "item-counter",
+  count: "n: 2",
+  reloadMessage: "a nested-layout edit must NOT trigger a full page reload",
+};
+
+async function stepShell(server: RunningServer): Promise<void> {
+  const html = await (await fetch(server.origin + "/")).text();
+  assertStringIncludes(html, "/_denext/@entry?p=");
+  assertStringIncludes(html, "TITLE_V1"); // SSR rendered
+}
+
+async function stepDynamicRouteShell(server: RunningServer): Promise<void> {
+  const html = await (await fetch(server.origin + "/items/42")).text();
+  assertStringIncludes(html, "/_denext/@entry?p=");
+  assertStringIncludes(html, "id: 42"); // SSR rendered the param
+  assertStringIncludes(html, "LAYOUT_V1"); // nested layout rendered
+}
+
 Deno.test({
   name: "e2e: unbundled dev loop — single-module HMR preserves state, no reload",
   sanitizeOps: false,
   sanitizeResources: false,
 }, async (t) => {
-  const dir = await Deno.makeTempDir({ prefix: "denext_hmr_" });
-  await copy(FIXTURE, dir, { overwrite: true });
-  await patchImports(dir);
+  const dir = await prepareApp("denext_hmr_");
 
   const server = await startDevOnDir(dir, { DENEXT_DEV_UNBUNDLED: "1" });
   const browser = await launchBrowser();
@@ -48,65 +101,23 @@ Deno.test({
   const widgetFile = join(dir, "app/widget.tsx");
 
   try {
-    await t.step("shell serves the unbundled entry module", async () => {
-      const html = await (await fetch(server.origin + "/")).text();
-      assertStringIncludes(html, "/_denext/@entry?p=");
-      assertStringIncludes(html, "TITLE_V1"); // SSR rendered
-    });
+    await t.step("shell serves the unbundled entry module", () => stepShell(server));
 
     const page = await browser.newPage(server.origin + "/");
-    const consoleErrors: string[] = [];
-    page.addEventListener("console", (e) => {
-      // deno-lint-ignore no-explicit-any
-      const d = (e as any).detail;
-      if (d?.type === "error") consoleErrors.push(String(d.text ?? ""));
-    });
+    const consoleErrors = collectConsoleErrors(page);
 
-    await t.step("hydrates through the unbundled graph and is interactive", async () => {
-      await page.waitForFunction("!!document.querySelector('[data-testid=\"counter\"]')");
-      // A full page reload would clear this flag — we assert its survival across HMR below.
-      await page.evaluate("window.__noReload = true");
-      const btn = await page.$('[data-testid="counter"]');
-      assert(btn, "counter button exists");
-      await btn.click();
-      await btn.click();
-      await btn.click();
-      await page.waitForFunction(
-        "document.querySelector('[data-testid=\"counter\"]').textContent.includes('count: 3')",
-      );
-    });
-
-    await t.step("editing a LEAF module hot-swaps it, preserves state, no reload", async () => {
-      const src = await Deno.readTextFile(widgetFile);
-      await Deno.writeTextFile(widgetFile, src.replace("WIDGET_V1", "WIDGET_V2"));
-      // Wait for the widget text to update via HMR.
-      await page.waitForFunction(
-        "document.querySelector('[data-testid=\"widget\"]').textContent.includes('WIDGET_V2')",
-      );
-      // The parent page's counter state survived (single-module swap, not a remount).
-      const counter = await page.evaluate(
-        "document.querySelector('[data-testid=\"counter\"]').textContent",
-      );
-      assertStringIncludes(String(counter), "count: 3");
-      // No full page reload happened.
-      const noReload = await page.evaluate("window.__noReload === true");
-      assert(noReload, "a leaf-module edit must NOT trigger a full page reload");
-    });
-
-    await t.step("editing the PAGE module hot-swaps it, preserves counter state", async () => {
-      const src = await Deno.readTextFile(pageFile);
-      await Deno.writeTextFile(pageFile, src.replace("TITLE_V1", "TITLE_V2"));
-      await page.waitForFunction(
-        "document.querySelector('[data-testid=\"title\"]').textContent.includes('TITLE_V2')",
-      );
-      const counter = await page.evaluate(
-        "document.querySelector('[data-testid=\"counter\"]').textContent",
-      );
-      assertStringIncludes(String(counter), "count: 3");
-      const noReload = await page.evaluate("window.__noReload === true");
-      assert(noReload, "a page-module edit must NOT trigger a full page reload");
-    });
-
+    await t.step(
+      "hydrates through the unbundled graph and is interactive",
+      () => hydrateAndClick(page, "counter", 3, "count: 3", "counter button exists"),
+    );
+    await t.step(
+      "editing a LEAF module hot-swaps it, preserves state, no reload",
+      () => editAndAssertHotSwap(page, { file: widgetFile, ...LEAF_EDIT }),
+    );
+    await t.step(
+      "editing the PAGE module hot-swaps it, preserves counter state",
+      () => editAndAssertHotSwap(page, { file: pageFile, ...PAGE_EDIT }),
+    );
     await t.step("no console errors during hydration + HMR", () => {
       assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(" | ")}`);
     });
@@ -126,9 +137,7 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
 }, async (t) => {
-  const dir = await Deno.makeTempDir({ prefix: "denext_hmr_def_" });
-  await copy(FIXTURE, dir, { overwrite: true });
-  await patchImports(dir);
+  const dir = await prepareApp("denext_hmr_def_");
 
   // No env var — proves the unbundled loop is the default for the native App Router.
   const server = await startDevOnDir(dir, {});
@@ -136,48 +145,22 @@ Deno.test({
   const layoutFile = join(dir, "app/items/layout.tsx");
 
   try {
-    await t.step("dynamic route hydrates via the unbundled entry (default-on)", async () => {
-      const html = await (await fetch(server.origin + "/items/42")).text();
-      assertStringIncludes(html, "/_denext/@entry?p=");
-      assertStringIncludes(html, "id: 42"); // SSR rendered the param
-      assertStringIncludes(html, "LAYOUT_V1"); // nested layout rendered
-    });
+    await t.step(
+      "dynamic route hydrates via the unbundled entry (default-on)",
+      () => stepDynamicRouteShell(server),
+    );
 
     const page = await browser.newPage(server.origin + "/items/42");
-    const consoleErrors: string[] = [];
-    page.addEventListener("console", (e) => {
-      // deno-lint-ignore no-explicit-any
-      const d = (e as any).detail;
-      if (d?.type === "error") consoleErrors.push(String(d.text ?? ""));
-    });
+    const consoleErrors = collectConsoleErrors(page);
 
-    await t.step("param route is interactive after hydration", async () => {
-      await page.waitForFunction("!!document.querySelector('[data-testid=\"item-counter\"]')");
-      await page.evaluate("window.__noReload = true");
-      const btn = await page.$('[data-testid="item-counter"]');
-      assert(btn, "item counter exists");
-      await btn.click();
-      await btn.click();
-      await page.waitForFunction(
-        "document.querySelector('[data-testid=\"item-counter\"]').textContent.includes('n: 2')",
-      );
-    });
-
-    await t.step("editing a NESTED LAYOUT hot-swaps it, preserves child state", async () => {
-      const src = await Deno.readTextFile(layoutFile);
-      await Deno.writeTextFile(layoutFile, src.replace("LAYOUT_V1", "LAYOUT_V2"));
-      await page.waitForFunction(
-        "document.querySelector('[data-testid=\"layout-tag\"]').textContent.includes('LAYOUT_V2')",
-      );
-      // The child route's counter survived the layout swap (in-place, not a remount).
-      const counter = await page.evaluate(
-        "document.querySelector('[data-testid=\"item-counter\"]').textContent",
-      );
-      assertStringIncludes(String(counter), "n: 2");
-      const noReload = await page.evaluate("window.__noReload === true");
-      assert(noReload, "a nested-layout edit must NOT trigger a full page reload");
-    });
-
+    await t.step(
+      "param route is interactive after hydration",
+      () => hydrateAndClick(page, "item-counter", 2, "n: 2", "item counter exists"),
+    );
+    await t.step(
+      "editing a NESTED LAYOUT hot-swaps it, preserves child state",
+      () => editAndAssertHotSwap(page, { file: layoutFile, ...LAYOUT_EDIT }),
+    );
     await t.step("no console errors during hydration + HMR", () => {
       assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(" | ")}`);
     });

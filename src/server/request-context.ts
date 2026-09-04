@@ -6,9 +6,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { deleteCookie, getCookies, setCookie } from "@std/http/cookie";
 import { postponeDynamic, shouldPostpone } from "../runtime/prerender.ts";
 import type { SegmentConfig } from "./segment-config.ts";
-// Function-level cyclic import (cache.ts imports currentContext from here); safe
-// because neither side calls the other at module-init time.
-import { currentCacheScope } from "./cache.ts";
+import { currentCacheScope } from "./cache-scope.ts";
 
 /**
  * Reading request-specific data (`cookies()`/`headers()`/`connection()`) inside a

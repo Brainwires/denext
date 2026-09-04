@@ -216,72 +216,46 @@ function parseNumberSkeleton(skel: string): Intl.NumberFormatOptions {
   const o: any = {};
   for (const tok of skel.split(/\s+/)) {
     if (!tok) continue;
-    if (/^\.[0#]+$/.test(tok)) {
-      o.minimumFractionDigits = (tok.match(/0/g) ?? []).length;
-      o.maximumFractionDigits = tok.length - 1;
-      continue;
-    }
-    const cur = /^currency\/([A-Za-z]{3})$/.exec(tok);
-    if (cur) {
-      o.style = "currency";
-      o.currency = cur[1].toUpperCase();
-      continue;
-    }
-    const iw = /^integer-width\/\+?(0+)$/.exec(tok);
-    if (iw) {
-      o.minimumIntegerDigits = iw[1].length;
-      continue;
-    }
-    switch (tok) {
-      case "percent":
-        o.style = "percent";
-        break;
-      case "compact-short":
-        o.notation = "compact";
-        o.compactDisplay = "short";
-        break;
-      case "compact-long":
-        o.notation = "compact";
-        o.compactDisplay = "long";
-        break;
-      case "scientific":
-        o.notation = "scientific";
-        break;
-      case "engineering":
-        o.notation = "engineering";
-        break;
-      case "precision-integer":
-        o.maximumFractionDigits = 0;
-        break;
-      case "sign-always":
-        o.signDisplay = "always";
-        break;
-      case "sign-never":
-        o.signDisplay = "never";
-        break;
-      case "sign-except-zero":
-        o.signDisplay = "exceptZero";
-        break;
-      case "sign-auto":
-        o.signDisplay = "auto";
-        break;
-      case "sign-accounting":
-        o.currencySign = "accounting";
-        break;
-      case "group-off":
-        o.useGrouping = false;
-        break;
-      case "group-min2":
-        o.useGrouping = "min2";
-        break;
-      case "group-auto":
-      case "group-on-aligned":
-      case "group-thousands":
-        o.useGrouping = true;
-        break;
-    }
+    const fixed = NUMBER_SKELETON_TOKENS[tok];
+    if (fixed) Object.assign(o, fixed);
+    else Object.assign(o, parametricNumberToken(tok));
   }
   return o as Intl.NumberFormatOptions;
+}
+
+/** Fixed number-skeleton tokens → the `Intl.NumberFormat` options they set. */
+const NUMBER_SKELETON_TOKENS: Record<string, Record<string, unknown>> = {
+  percent: { style: "percent" },
+  "compact-short": { notation: "compact", compactDisplay: "short" },
+  "compact-long": { notation: "compact", compactDisplay: "long" },
+  scientific: { notation: "scientific" },
+  engineering: { notation: "engineering" },
+  "precision-integer": { maximumFractionDigits: 0 },
+  "sign-always": { signDisplay: "always" },
+  "sign-never": { signDisplay: "never" },
+  "sign-except-zero": { signDisplay: "exceptZero" },
+  "sign-auto": { signDisplay: "auto" },
+  "sign-accounting": { currencySign: "accounting" },
+  "group-off": { useGrouping: false },
+  "group-min2": { useGrouping: "min2" },
+  "group-auto": { useGrouping: true },
+  "group-on-aligned": { useGrouping: true },
+  "group-thousands": { useGrouping: true },
+};
+
+/** Parametric tokens: `.00#` fraction digits, `currency/EUR`, `integer-width/+000`. */
+function parametricNumberToken(tok: string): Record<string, unknown> {
+  if (/^\.[0#]+$/.test(tok)) {
+    return {
+      minimumFractionDigits: (tok.match(/0/g) ?? []).length,
+      maximumFractionDigits: tok.length - 1,
+    };
+  }
+  const cur = /^currency\/([A-Za-z]{3})$/.exec(tok);
+  if (cur) return { style: "currency", currency: cur[1].toUpperCase() };
+  const iw = /^integer-width\/\+?(0+)$/.exec(tok);
+  if (iw) return { minimumIntegerDigits: iw[1].length };
+  return {};
 }
 
 /** Map an ICU date/time style (named bucket or a `::` field skeleton) to `Intl` options. */
@@ -295,64 +269,49 @@ function dateOptions(type: string, style: string | undefined): Intl.DateTimeForm
 /** Parse an ICU date `::` field skeleton (`yMMMd`, `jm`, …) into `Intl.DateTimeFormat` options. */
 function parseDateSkeleton(skel: string): Intl.DateTimeFormatOptions {
   const o: Intl.DateTimeFormatOptions = {};
-  for (const run of skel.match(/([a-zA-Z])\1*/g) ?? []) {
-    const c = run[0];
-    const n = run.length;
-    switch (c) {
-      case "y":
-      case "Y":
-        o.year = n >= 2 ? "2-digit" : "numeric";
-        break;
-      case "M":
-      case "L":
-        o.month = n >= 5
-          ? "narrow"
-          : n === 4
-          ? "long"
-          : n === 3
-          ? "short"
-          : n === 2
-          ? "2-digit"
-          : "numeric";
-        break;
-      case "d":
-        o.day = n >= 2 ? "2-digit" : "numeric";
-        break;
-      case "E":
-      case "e":
-      case "c":
-        o.weekday = n >= 5 ? "narrow" : n === 4 ? "long" : "short";
-        break;
-      case "h":
-        o.hour = n >= 2 ? "2-digit" : "numeric";
-        o.hour12 = true;
-        break;
-      case "H":
-        o.hour = n >= 2 ? "2-digit" : "numeric";
-        o.hour12 = false;
-        break;
-      case "j":
-        o.hour = n >= 2 ? "2-digit" : "numeric";
-        break; // locale-default hour cycle
-      case "m":
-        o.minute = n >= 2 ? "2-digit" : "numeric";
-        break;
-      case "s":
-        o.second = n >= 2 ? "2-digit" : "numeric";
-        break;
-      case "G":
-        o.era = n >= 4 ? "long" : "short";
-        break;
-      case "z":
-      case "Z":
-      case "O":
-      case "v":
-        o.timeZoneName = n >= 4 ? "long" : "short";
-        break;
-    }
-  }
+  for (const run of skel.match(/([a-zA-Z])\1*/g) ?? []) DATE_FIELDS[run[0]]?.(o, run.length);
   return o;
 }
+
+type DateField = (o: Intl.DateTimeFormatOptions, n: number) => void;
+
+/** `n` repeats of a numeric field → `2-digit` from two on. */
+const digits = (n: number): "2-digit" | "numeric" => (n >= 2 ? "2-digit" : "numeric");
+
+/** Year: only exactly `yy` is 2-digit (`yyyy` is the full year, as in CLDR). */
+const yearDigits = (n: number): "2-digit" | "numeric" => (n === 2 ? "2-digit" : "numeric");
+
+/** A textual field's width: 5+ narrow, 4 long, else short. */
+const width = (n: number): "narrow" | "long" | "short" =>
+  n >= 5 ? "narrow" : n === 4 ? "long" : "short";
+
+/** Skeleton field letters → the option each run sets (CLDR field symbols). */
+const DATE_FIELDS: Record<string, DateField> = {
+  y: (o, n) => (o.year = yearDigits(n)),
+  Y: (o, n) => (o.year = yearDigits(n)),
+  M: (o, n) => (o.month = n >= 3 ? width(n) : digits(n)),
+  L: (o, n) => (o.month = n >= 3 ? width(n) : digits(n)),
+  d: (o, n) => (o.day = digits(n)),
+  E: (o, n) => (o.weekday = width(n)),
+  e: (o, n) => (o.weekday = width(n)),
+  c: (o, n) => (o.weekday = width(n)),
+  h: (o, n) => {
+    o.hour = digits(n);
+    o.hour12 = true;
+  },
+  H: (o, n) => {
+    o.hour = digits(n);
+    o.hour12 = false;
+  },
+  j: (o, n) => (o.hour = digits(n)), // locale-default hour cycle
+  m: (o, n) => (o.minute = digits(n)),
+  s: (o, n) => (o.second = digits(n)),
+  G: (o, n) => (o.era = n >= 4 ? "long" : "short"),
+  z: (o, n) => (o.timeZoneName = n >= 4 ? "long" : "short"),
+  Z: (o, n) => (o.timeZoneName = n >= 4 ? "long" : "short"),
+  O: (o, n) => (o.timeZoneName = n >= 4 ? "long" : "short"),
+  v: (o, n) => (o.timeZoneName = n >= 4 ? "long" : "short"),
+};
 
 // ---- spellout / ordinal (first-party number-to-words; no npm, no CLDR data) ------
 //
@@ -476,87 +435,112 @@ function render(nodes: Node[], values: IcuValues, locale: string, poundValue?: n
 
 function renderArg(node: ArgNode, values: IcuValues, locale: string, poundValue?: number): string {
   const value = values[node.name];
-  switch (node.type) {
-    case undefined:
-      return value == null ? `{${node.name}}` : String(value);
-    case "number": {
-      // Missing/non-numeric values render as empty rather than "NaN".
-      const n = Number(value);
-      if (value == null || Number.isNaN(n)) return "";
-      return new Intl.NumberFormat(locale, numberOptions(node.style)).format(n);
-    }
-    case "date":
-    case "time": {
-      if (value == null) return "";
-      const date = value instanceof Date ? value : new Date(value as string | number);
-      if (Number.isNaN(date.getTime())) return "";
-      return new Intl.DateTimeFormat(locale, dateOptions(node.type, node.style)).format(date);
-    }
-    case "select": {
-      // A nested select inherits the enclosing plural's `#` value.
-      const branch = node.options?.[String(value)] ?? node.options?.other ?? [];
-      return render(branch, values, locale, poundValue);
-    }
-    case "plural":
-    case "selectordinal": {
-      const n = Number(value);
-      // Non-numeric count falls back to the `other` branch with no `#` value.
-      if (value == null || Number.isNaN(n)) {
-        return render(node.options?.other ?? [], values, locale);
-      }
-      const adjusted = n - node.offset;
-      // Explicit `=N` matches take precedence over plural categories.
-      const exact = node.options?.[`=${n}`];
-      const branch = exact ??
-        node.options?.[
-          new Intl.PluralRules(locale, {
-            type: node.type === "selectordinal" ? "ordinal" : "cardinal",
-          }).select(adjusted)
-        ] ?? node.options?.other ?? [];
-      return render(branch, values, locale, adjusted);
-    }
-    case "duration": {
-      // Value = whole seconds → `H:MM:SS`. Uses `Intl.DurationFormat` (zero data) when
-      // present, with a byte-identical hand-rolled fallback so output is stable either way.
-      if (value == null) return "";
-      const total = Math.trunc(Number(value));
-      if (Number.isNaN(total)) return "";
-      const neg = total < 0;
-      const abs = Math.abs(total);
-      const parts = {
-        hours: Math.floor(abs / 3600),
-        minutes: Math.floor((abs % 3600) / 60),
-        seconds: abs % 60,
-      };
-      // deno-lint-ignore no-explicit-any -- Intl.DurationFormat may be absent from the lib types
-      const DF = (Intl as any).DurationFormat;
-      const body = typeof DF === "function"
-        ? new DF(locale, { style: "digital" }).format(parts) as string
-        : `${parts.hours}:${String(parts.minutes).padStart(2, "0")}:${
-          String(parts.seconds).padStart(2, "0")
-        }`;
-      return neg ? "-" + body : body;
-    }
-    case "spellout": {
-      // Number-to-words. English is spelled in full; other locales fall back to the
-      // localized numeral (per-language spelling rules are a bounded, extensible scope).
-      if (value == null) return "";
-      const n = Number(value);
-      if (Number.isNaN(n)) return "";
-      return /^en\b/i.test(locale) ? spelloutEnglish(n) : new Intl.NumberFormat(locale).format(n);
-    }
-    case "ordinal": {
-      // `1st`/`2nd`/… — English indicators over the locale-aware ordinal category.
-      if (value == null) return "";
-      const n = Number(value);
-      if (Number.isNaN(n)) return "";
-      return ordinalWord(n, locale);
-    }
-    default:
-      // Unknown type — fall back to the raw value.
-      return value == null ? "" : String(value);
-  }
+  if (node.type === undefined) return value == null ? `{${node.name}}` : String(value);
+  const renderer = ARG_RENDERERS[node.type];
+  // Unknown type — fall back to the raw value.
+  if (!renderer) return value == null ? "" : String(value);
+  return renderer({ node, value, values, locale, poundValue });
 }
+
+/** One argument to render: its node, the looked-up value, and the render context. */
+interface ArgRender {
+  node: ArgNode;
+  value: unknown;
+  values: IcuValues;
+  locale: string;
+  poundValue?: number;
+}
+
+/** A finite number from a value, or null (missing/non-numeric values render as empty rather than "NaN"). */
+function numberOf(value: unknown): number | null {
+  if (value == null) return null;
+  const n = Number(value);
+  return Number.isNaN(n) ? null : n;
+}
+
+function renderNumber({ node, value, locale }: ArgRender): string {
+  const n = numberOf(value);
+  return n === null ? "" : new Intl.NumberFormat(locale, numberOptions(node.style)).format(n);
+}
+
+function renderDate({ node, value, locale }: ArgRender): string {
+  if (value == null) return "";
+  const date = value instanceof Date ? value : new Date(value as string | number);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat(locale, dateOptions(node.type!, node.style)).format(date);
+}
+
+/** A nested select inherits the enclosing plural's `#` value. */
+function renderSelect({ node, value, values, locale, poundValue }: ArgRender): string {
+  const branch = node.options?.[String(value)] ?? node.options?.other ?? [];
+  return render(branch, values, locale, poundValue);
+}
+
+function renderPlural({ node, value, values, locale }: ArgRender): string {
+  const n = numberOf(value);
+  // Non-numeric count falls back to the `other` branch with no `#` value.
+  if (n === null) return render(node.options?.other ?? [], values, locale);
+  const adjusted = n - node.offset;
+  // Explicit `=N` matches take precedence over plural categories.
+  const category = new Intl.PluralRules(locale, {
+    type: node.type === "selectordinal" ? "ordinal" : "cardinal",
+  }).select(adjusted);
+  const branch = node.options?.[`=${n}`] ?? node.options?.[category] ?? node.options?.other ?? [];
+  return render(branch, values, locale, adjusted);
+}
+
+/**
+ * Value = whole seconds → `H:MM:SS`. Uses `Intl.DurationFormat` (zero data) when present,
+ * with a byte-identical hand-rolled fallback so output is stable either way.
+ */
+function renderDuration({ value, locale }: ArgRender): string {
+  if (value == null) return "";
+  const total = Math.trunc(Number(value));
+  if (Number.isNaN(total)) return "";
+  const abs = Math.abs(total);
+  const parts = {
+    hours: Math.floor(abs / 3600),
+    minutes: Math.floor((abs % 3600) / 60),
+    seconds: abs % 60,
+  };
+  // deno-lint-ignore no-explicit-any -- Intl.DurationFormat may be absent from the lib types
+  const DF = (Intl as any).DurationFormat;
+  const body = typeof DF === "function"
+    ? new DF(locale, { style: "digital" }).format(parts) as string
+    : `${parts.hours}:${String(parts.minutes).padStart(2, "0")}:${
+      String(parts.seconds).padStart(2, "0")
+    }`;
+  return total < 0 ? "-" + body : body;
+}
+
+/**
+ * Number-to-words. English is spelled in full; other locales fall back to the localized
+ * numeral (per-language spelling rules are a bounded, extensible scope).
+ */
+function renderSpellout({ value, locale }: ArgRender): string {
+  const n = numberOf(value);
+  if (n === null) return "";
+  return /^en\b/i.test(locale) ? spelloutEnglish(n) : new Intl.NumberFormat(locale).format(n);
+}
+
+/** `1st`/`2nd`/… — English indicators over the locale-aware ordinal category. */
+function renderOrdinal({ value, locale }: ArgRender): string {
+  const n = numberOf(value);
+  return n === null ? "" : ordinalWord(n, locale);
+}
+
+/** Per argument type. `date`/`time` share a renderer, as do `plural`/`selectordinal`. */
+const ARG_RENDERERS: Record<string, (arg: ArgRender) => string> = {
+  number: renderNumber,
+  date: renderDate,
+  time: renderDate,
+  select: renderSelect,
+  plural: renderPlural,
+  selectordinal: renderPlural,
+  duration: renderDuration,
+  spellout: renderSpellout,
+  ordinal: renderOrdinal,
+};
 
 // Bounded parse cache. Catalog messages are few and fixed, but an app formatting
 // dynamic/user-derived message strings must not grow this without limit — evict

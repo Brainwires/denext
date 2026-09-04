@@ -107,49 +107,16 @@ export function injectDevTools(): boolean {
       // affordances/warnings that don't apply to a shipped denext bundle.
       bundleType: isDevBuild() ? 1 : 0,
       // Element selection: resolve a hovered/clicked DOM node to our synthetic fiber.
-      findFiberByHostInstance: (host: unknown) => {
-        try {
-          return host ? hostToFiber.get(host as object) ?? null : null;
-        } catch {
-          return null;
-        }
-      },
+      findFiberByHostInstance,
       findHostInstanceByFiber: (f: { stateNode?: unknown }) => f?.stateNode ?? null,
       findHostInstancesForRefresh: () => [],
       scheduleRefresh: () => {},
       scheduleRoot: () => {},
       setRefreshHandler: () => {},
-      // Prop editing: RD passes (fiber, path, value); route a top-level primitive edit
-      // to the inspector's live prop override (keyed by our threaded fiber id).
-      overrideProps: (fiber: { __dnxId?: number }, path: unknown, value: unknown) => {
-        try {
-          const id = fiber?.__dnxId;
-          if (
-            inspectorBridge && typeof id === "number" && id >= 0 && Array.isArray(path) &&
-            path.length === 1
-          ) {
-            inspectorBridge.setPropOverride(id, String(path[0]), value);
-          }
-        } catch { /* RD backend variance — never surface to the app */ }
-      },
+      overrideProps,
       overridePropsDeletePath: () => {},
       overridePropsRenamePath: () => {},
-      // State editing: RD passes (fiber, hookIndex, path, value); route a top-level
-      // (path-empty) edit to the inspector's live useState setter.
-      overrideHookState: (
-        fiber: { __dnxId?: number },
-        hookIndex: number,
-        path: unknown,
-        value: unknown,
-      ) => {
-        try {
-          const id = fiber?.__dnxId;
-          const topLevel = !Array.isArray(path) || path.length === 0;
-          if (inspectorBridge && typeof id === "number" && id >= 0 && topLevel) {
-            inspectorBridge.setHookState(id, hookIndex, value);
-          }
-        } catch { /* RD backend variance — never surface to the app */ }
-      },
+      overrideHookState,
       overrideHookStateDeletePath: () => {},
       overrideHookStateRenamePath: () => {},
       setSuspenseHandler: () => {},
@@ -162,6 +129,49 @@ export function injectDevTools(): boolean {
     rendererId = null;
     return false;
   }
+}
+
+function findFiberByHostInstance(host: unknown): unknown {
+  try {
+    return host ? hostToFiber.get(host as object) ?? null : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Prop editing: RD passes (fiber, path, value); route a top-level primitive edit to the
+ * inspector's live prop override (keyed by our threaded fiber id).
+ */
+function overrideProps(fiber: { __dnxId?: number }, path: unknown, value: unknown): void {
+  try {
+    const id = fiber?.__dnxId;
+    if (
+      inspectorBridge && typeof id === "number" && id >= 0 && Array.isArray(path) &&
+      path.length === 1
+    ) {
+      inspectorBridge.setPropOverride(id, String(path[0]), value);
+    }
+  } catch { /* RD backend variance — never surface to the app */ }
+}
+
+/**
+ * State editing: RD passes (fiber, hookIndex, path, value); route a top-level
+ * (path-empty) edit to the inspector's live useState setter.
+ */
+function overrideHookState(
+  fiber: { __dnxId?: number },
+  hookIndex: number,
+  path: unknown,
+  value: unknown,
+): void {
+  try {
+    const id = fiber?.__dnxId;
+    const topLevel = !Array.isArray(path) || path.length === 0;
+    if (inspectorBridge && typeof id === "number" && id >= 0 && topLevel) {
+      inspectorBridge.setHookState(id, hookIndex, value);
+    }
+  } catch { /* RD backend variance — never surface to the app */ }
 }
 
 /** A named function whose `.name` is what DevTools shows for a component. */

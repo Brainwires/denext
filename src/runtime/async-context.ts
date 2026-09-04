@@ -141,10 +141,11 @@ export const AsyncContext: { Variable: typeof Variable; Snapshot: typeof Snapsho
 // back whenever it yields — so the global never leaks a frame's context to unrelated
 // code that runs between its suspensions or after it settles).
 
-type Bindings = Map<Variable<unknown>, unknown>;
+/** A frame's variable bindings: each {@linkcode Variable} to its current value. */
+export type Bindings = Map<Variable<unknown>, unknown>;
 
 /** Per-async-function bookkeeping created at entry by {@linkcode __asyncScope}. */
-interface AsyncScope {
+export interface AsyncScope {
   /** This frame's own context — restored each time the frame resumes. */
   readonly frame: Bindings;
   /** The context found at the frame's last resume — put back whenever it yields. */

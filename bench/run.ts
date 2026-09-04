@@ -26,6 +26,7 @@ import {
   realAppSection,
   summarySection,
 } from "./lib/report.ts";
+import { median } from "./lib/microbench.ts";
 
 const BENCH = new URL(".", import.meta.url).pathname;
 const DENO = Deno.execPath();
@@ -44,12 +45,6 @@ function argLayers(): Set<string> {
 // single unlucky GC-heavy run can't set the headline. Override with BENCH_SSR_RUNS.
 const SSR_RUNS = Number(Deno.env.get("BENCH_SSR_RUNS") ?? 3);
 
-function median(xs: number[]): number {
-  const s = [...xs].sort((a, b) => a - b);
-  const m = s.length >> 1;
-  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
-}
-
 /**
  * Collapse K independent SSR runs into one BenchRow per (framework, api,
  * workload): opsPerSec becomes the median across runs, and the p25/p75 band is
@@ -58,27 +53,24 @@ function median(xs: number[]): number {
  */
 function aggregateSsr(runs: BenchRow[][]): BenchRow[] {
   const byKey = new Map<string, BenchRow[]>();
-  for (const run of runs) {
-    for (const row of run) {
-      const key = `${row.framework}|${row.api}|${row.name}`;
-      const list = byKey.get(key) ?? [];
-      list.push(row);
-      byKey.set(key, list);
-    }
+  for (const row of runs.flat()) {
+    const key = `${row.framework}|${row.api}|${row.name}`;
+    byKey.set(key, [...(byKey.get(key) ?? []), row]);
   }
-  const out: BenchRow[] = [];
-  for (const rows of byKey.values()) {
-    const ops = rows.map((r) => r.opsPerSec);
-    const medOps = median(ops);
-    out.push({
-      ...rows[0],
-      opsPerSec: medOps,
-      nsPerOp: 1e9 / medOps,
-      p25NsPerOp: 1e9 / Math.max(...ops), // fastest run
-      p75NsPerOp: 1e9 / Math.min(...ops), // slowest run
-    });
-  }
-  return out;
+  return [...byKey.values()].map(aggregateRows);
+}
+
+/** One workload across runs: median ops/s, with the p25/p75 band as the fastest/slowest run. */
+function aggregateRows(rows: BenchRow[]): BenchRow {
+  const ops = rows.map((r) => r.opsPerSec);
+  const medOps = median(ops);
+  return {
+    ...rows[0],
+    opsPerSec: medOps,
+    nsPerOp: 1e9 / medOps,
+    p25NsPerOp: 1e9 / Math.max(...ops), // fastest run
+    p75NsPerOp: 1e9 / Math.min(...ops), // slowest run
+  };
 }
 
 async function nextVersion(): Promise<string | undefined> {
@@ -113,7 +105,42 @@ async function runJson(
   return JSON.parse(text);
 }
 
+/** `--max-load=N` (default 2.0): the 1-min load average the machine must be under first. */
+function argMaxLoad(): number {
+  const arg = Deno.args.find((a) => a.startsWith("--max-load="));
+  const n = arg ? Number(arg.slice("--max-load=".length)) : 2;
+  return Number.isFinite(n) && n > 0 ? n : 2;
+}
+
+/**
+ * Block until the 1-minute load average is below `maxLoad` (polling every 10 s, up to
+ * 30 min), so a run never starts behind a test suite or a build and depresses BOTH
+ * frameworks' absolute numbers into a noisy, non-reproducible baseline. `--no-wait`
+ * skips the check (the load is still recorded in the report's provenance).
+ */
+async function waitForIdle(maxLoad: number): Promise<void> {
+  if (Deno.args.includes("--no-wait")) return;
+  const deadline = Date.now() + 30 * 60_000;
+  while (!machineIdle(maxLoad, deadline)) await new Promise((r) => setTimeout(r, 10_000));
+}
+
+/** One poll: idle → true; over the deadline → throw; otherwise log and report false. */
+function machineIdle(maxLoad: number, deadline: number): boolean {
+  const load = Deno.loadavg()[0];
+  if (load < maxLoad) return true;
+  if (Date.now() > deadline) {
+    throw new Error(
+      `bench: load average still ${load.toFixed(2)} after 30 min (need < ${maxLoad})`,
+    );
+  }
+  console.error(
+    `bench: load average ${load.toFixed(2)} ≥ ${maxLoad} — waiting for an idle machine…`,
+  );
+  return false;
+}
+
 const layers = argLayers();
+await waitForIdle(argMaxLoad());
 const now = new Date().toISOString();
 const prov: Provenance = captureProvenance(now);
 prov.node = await nodeVersion();

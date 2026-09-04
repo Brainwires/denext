@@ -46,6 +46,52 @@ function chunkMetric(c: BundleChunk): number {
 }
 
 /**
+ * The role a client chunk plays, inferred from its emitted name. `chunk-*` is the
+ * shared runtime (the code-split common graph every interactive route imports —
+ * the piece the bundle-size budgets track); `island-*` is a lazily-hydrated island
+ * chunk; everything else (route/flight entries) is an app entry.
+ */
+export type ChunkRole = "shared" | "island" | "entry";
+
+/** Classify a chunk by its content-hashed name prefix. */
+export function classifyChunk(name: string): ChunkRole {
+  if (name.startsWith("chunk-")) return "shared";
+  if (name.startsWith("island-")) return "island";
+  return "entry";
+}
+
+const ROLE_LABEL: Record<ChunkRole, string> = {
+  shared: "shared runtime",
+  entry: "route entries",
+  island: "islands",
+};
+
+/**
+ * A per-role subtotal breakdown (shared runtime vs route entries vs islands) — the
+ * shared-runtime line is the number the bundle-size budgets track across the
+ * minimization work, which the flat per-chunk table above doesn't isolate. Sums
+ * gzip from the `.gz` siblings the way {@linkcode bundleAnalysisLines} does.
+ *
+ * @param chunks The emitted client chunks and their sizes.
+ * @returns Section lines (already indented for the body), or empty for a 0-JS app.
+ */
+export function bundleRoleLines(chunks: BundleChunk[]): string[] {
+  if (chunks.length === 0) return [];
+  const order: ChunkRole[] = ["shared", "entry", "island"];
+  const lines = ["By role:"];
+  for (const role of order) {
+    const group = chunks.filter((c) => classifyChunk(c.name) === role);
+    if (group.length === 0) continue;
+    const raw = group.reduce((s, c) => s + c.bytes, 0);
+    const gz = group.reduce((s, c) => s + (c.gzip ?? 0), 0);
+    const size = gz > 0 ? `${kb(raw)} raw · ${kb(gz)} gz` : kb(raw);
+    const n = `${group.length} chunk${group.length === 1 ? "" : "s"}`;
+    lines.push(`  ${ROLE_LABEL[role].padEnd(16)}${size}  (${n})`);
+  }
+  return lines;
+}
+
+/**
  * A detailed per-chunk breakdown for `denext analyze` — every chunk sorted largest-first
  * with a proportion bar and its share of the total (a terminal stand-in for a treemap),
  * plus the raw/gz totals. Ranks by gzip (over-the-wire) size when precompression ran.

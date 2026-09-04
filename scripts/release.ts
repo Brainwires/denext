@@ -13,6 +13,7 @@
 //   2. roll CHANGELOG.md  [Unreleased] → [<version>] - <today>  (fresh [Unreleased] on top)
 //   3. deno task docs:api  — regenerate the in-site API reference
 //   3b. deno task badge:tests — refresh the test-count badge (CI `check` gates it)
+//   3c. deno task badge:fallow — refresh the fallow health-score badge
 //   4. deno cache mod.ts   — refresh deno.lock
 //   5. deno task check     — fmt + lint + full test suite (ABORTS the release if it fails)
 //   6. confirm  → git add -A, commit, tag v<version>, push branch + tag
@@ -76,7 +77,7 @@ function die(message: string): never {
  * moving the accumulated notes under the new release and leaving a fresh empty
  * [Unreleased] on top. Returns the number of `- ` entries that became this release.
  */
-async function rollChangelog(version: string, dry: boolean): Promise<number> {
+export async function rollChangelog(version: string, dry: boolean): Promise<number> {
   const path = join(REPO_ROOT, "CHANGELOG.md");
   const text = await Deno.readTextFile(path);
   const marker = "## [Unreleased]";
@@ -84,135 +85,155 @@ async function rollChangelog(version: string, dry: boolean): Promise<number> {
   if (text.includes(`## [${version}]`)) {
     die(`CHANGELOG.md already has a '## [${version}]' section — already released?`);
   }
-  // Count entries currently under [Unreleased] (up to the next release header).
-  const after = text.slice(text.indexOf(marker) + marker.length);
-  const nextIdx = after.indexOf("\n## [");
-  const section = nextIdx === -1 ? after : after.slice(0, nextIdx);
-  const entries = (section.match(/^- /gm) ?? []).length;
-
   const date = new Date().toISOString().slice(0, 10);
   const updated = text.replace(marker, `${marker}\n\n## [${version}] - ${date}`);
   if (!dry) await Deno.writeTextFile(path, updated);
-  return entries;
+  return unreleasedEntries(text, marker);
+}
+
+/** The `- ` entries under [Unreleased] (up to the next release header). */
+function unreleasedEntries(text: string, marker: string): number {
+  const after = text.slice(text.indexOf(marker) + marker.length);
+  const nextIdx = after.indexOf("\n## [");
+  const section = nextIdx === -1 ? after : after.slice(0, nextIdx);
+  return (section.match(/^- /gm) ?? []).length;
 }
 
 async function main(): Promise<void> {
-  const flags = new Set(Deno.args.filter((a) => a.startsWith("--")));
-  const version = Deno.args.find((a) => !a.startsWith("--"));
-  const dry = flags.has("--dry");
-  const confirmed = flags.has("--confirm");
-
-  if (!version) die("usage: deno task release <version> [--confirm] [--dry]");
-  if (!VERSION_RE.test(version!)) die(`"${version}" is not a valid semver (e.g. 2.0.0-rc.5)`);
-
+  const { version, dry, confirmed } = parseReleaseArgs();
   const branch = await capture("git", "rev-parse", "--abbrev-ref", "HEAD");
   const tag = `v${version}`;
+  if (dry) return await dryRun(version, tag);
+  await checkPreconditions(tag, branch);
+  console.log(`\n=== Releasing denext ${version} ===\n`);
+  await prepareRelease(version, false);
+  await runGate();
+  if (await confirmRelease(tag, branch, confirmed)) await publish(version, tag, branch);
+}
 
-  // Preconditions (a real run only — --dry previews regardless of tree state).
-  if (!dry) {
-    const dirty = await capture("git", "status", "--porcelain");
-    if (dirty) {
-      die(
-        "working tree is not clean — commit or stash first so the release commit " +
-          "contains only the version bump.\n" + dirty,
-      );
-    }
-    const existing = await capture("git", "tag", "--list", tag);
-    if (existing) die(`tag ${tag} already exists`);
-    if (branch !== "development") {
-      console.warn(`release: warning — on branch "${branch}", not "development".`);
-    }
+/** `--dry`: preview steps 1–2 regardless of tree state; skip the gate; write nothing. */
+async function dryRun(version: string, tag: string): Promise<void> {
+  console.log(`\n=== Releasing denext ${version}  (dry run) ===\n`);
+  await prepareRelease(version, true);
+  console.log("3. docs:api          (skipped — dry run)");
+  console.log("3b. badge:tests      (skipped — dry run)");
+  console.log("3c. badge:fallow     (skipped — dry run)");
+  console.log("4. deno cache        (skipped — dry run)");
+  console.log("5. deno task check   (skipped — dry run)");
+  console.log(`\nDry run complete — nothing written, nothing committed. Would tag ${tag}.`);
+}
+
+function parseReleaseArgs(): { version: string; dry: boolean; confirmed: boolean } {
+  const flags = new Set(Deno.args.filter((a) => a.startsWith("--")));
+  const version = Deno.args.find((a) => !a.startsWith("--"));
+  if (!version) die("usage: deno task release <version> [--confirm] [--dry]");
+  if (!VERSION_RE.test(version!)) die(`"${version}" is not a valid semver (e.g. 2.0.0-rc.5)`);
+  return { version: version!, dry: flags.has("--dry"), confirmed: flags.has("--confirm") };
+}
+
+/** Preconditions (a real run only — --dry previews regardless of tree state). */
+async function checkPreconditions(tag: string, branch: string): Promise<void> {
+  const dirty = await capture("git", "status", "--porcelain");
+  if (dirty) {
+    die(
+      "working tree is not clean — commit or stash first so the release commit " +
+        "contains only the version bump.\n" + dirty,
+    );
   }
+  const existing = await capture("git", "tag", "--list", tag);
+  if (existing) die(`tag ${tag} already exists`);
+  if (branch !== "development") {
+    console.warn(`release: warning — on branch "${branch}", not "development".`);
+  }
+}
 
-  console.log(`\n=== Releasing denext ${version}${dry ? "  (dry run)" : ""} ===\n`);
-
-  // 1. Version pins.
-  const bump = await bumpVersion(version!, { dry });
+/** Steps 1–2: version pins (+ the effect example golden) and the CHANGELOG roll. */
+export async function prepareRelease(version: string, dry: boolean): Promise<void> {
+  const bump = await bumpVersion(version, { dry });
   console.log(
     `1. Bump ${bump.oldVersion} → ${version}: ${bump.total} spot(s) in ${bump.changed.length} file(s)`,
   );
   for (const { file, hits } of bump.changed) console.log(`     ${file} (${hits})`);
-
   // 1b. Refresh the version-pinned examples/effect migrate golden (else the gate fails).
-  const refreshed = await refreshEffectGolden(dry);
+  console.log(goldenLine(await refreshEffectGolden(dry), dry));
+  const entries = await rollChangelog(version, dry);
   console.log(
-    refreshed
-      ? `1b. Refreshed examples/effect golden${dry ? "  (skipped — dry run)" : ""}`
-      : "1b. examples/effect golden: not in this checkout — skipped",
-  );
-
-  // 2. CHANGELOG.
-  const entries = await rollChangelog(version!, dry);
-  console.log(
-    `2. CHANGELOG: rolled [Unreleased] → [${version}] (${entries} entr${
-      entries === 1 ? "y" : "ies"
-    })`,
+    `2. CHANGELOG: rolled [Unreleased] → [${version}] (${plural(entries, "entry", "entries")})`,
   );
   if (entries === 0) {
     console.warn("     warning — no entries under [Unreleased]; releasing empty notes.");
   }
+}
 
-  // 3–6. Reference, test-count badge, lock, gate (skipped in a dry run).
-  if (dry) {
-    console.log("3. docs:api          (skipped — dry run)");
-    console.log("3b. badge:tests      (skipped — dry run)");
-    console.log("4. deno cache        (skipped — dry run)");
-    console.log("5. deno task check   (skipped — dry run)");
-    console.log(`\nDry run complete — nothing written, nothing committed. Would tag ${tag}.`);
-    return;
-  }
+function goldenLine(refreshed: boolean, dry: boolean): string {
+  if (!refreshed) return "1b. examples/effect golden: not in this checkout — skipped";
+  return `1b. Refreshed examples/effect golden${dry ? "  (skipped — dry run)" : ""}`;
+}
 
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+/**
+ * Steps 3–5: regenerate the API reference and the two badges, refresh the lock,
+ * run the gate. The CI `check` job verifies `.github/badges/tests.json` matches the
+ * source-derived Deno.test count (`deno task badge:tests --check`), but `deno task check`
+ * does NOT — so a release that adds tests would ship a stale badge and turn CI red on the
+ * merge. Regenerating it here keeps the release commit current.
+ */
+async function runGate(): Promise<void> {
   console.log("\n3. Regenerating API reference (deno task docs:api)…");
   if (await run("deno", "task", "docs:api") !== 0) {
     die("docs:api failed — release aborted (changes left in tree).");
   }
-
-  // The CI `check` job verifies `.github/badges/tests.json` matches the source-derived
-  // Deno.test count (`deno task badge:tests --check`), but `deno task check` below does
-  // NOT — so a release that adds tests would ship a stale badge and turn CI red on the
-  // merge. Regenerate it here so the release commit always carries a current badge.
   console.log("\n3b. Regenerating the test-count badge (deno task badge:tests)…");
   if (await run("deno", "task", "badge:tests") !== 0) {
     die("badge:tests failed — release aborted (changes left in tree).");
   }
-
+  console.log("\n3c. Regenerating the fallow health badge (deno task badge:fallow)…");
+  if (await run("deno", "task", "badge:fallow") !== 0) {
+    die("badge:fallow failed — release aborted (changes left in tree).");
+  }
   console.log("\n4. Refreshing deno.lock (deno cache mod.ts)…");
   await run("deno", "cache", "mod.ts");
-
   console.log("\n5. Running the gate (deno task check)…");
   if (await run("deno", "task", "check") !== 0) {
     die("gate failed — release aborted BEFORE tagging. Prepared changes are in your working tree.");
   }
+}
 
-  // 6. Confirm, then commit + tag + push.
+/** Show the diff and ask (unless `--confirm`); false aborts with the tree left as prepared. */
+async function confirmRelease(tag: string, branch: string, confirmed: boolean): Promise<boolean> {
   console.log("\n=== Prepared. Review the changes: ===");
   await run("git", "--no-pager", "diff", "--stat");
-
-  if (!confirmed) {
-    const answer = prompt(
-      `\nCommit, tag ${tag}, and push to origin/${branch}? Type "yes" to release:`,
-    );
-    const ok = answer !== null && ["yes", "y"].includes(answer.trim().toLowerCase());
-    if (!ok) {
-      console.log(
-        "\nAborted — nothing committed or pushed. Prepared changes remain in your working " +
-          "tree (run `git checkout .` and `git clean -n` to discard, or commit by hand).",
-      );
-      return;
-    }
-  } else {
+  if (confirmed) {
     console.log("\n--confirm set — skipping the prompt.");
+    return true;
   }
+  const answer = prompt(
+    `\nCommit, tag ${tag}, and push to origin/${branch}? Type "yes" to release:`,
+  );
+  if (answer !== null && ["yes", "y"].includes(answer.trim().toLowerCase())) return true;
+  console.log(
+    "\nAborted — nothing committed or pushed. Prepared changes remain in your working " +
+      "tree (run `git checkout .` and `git clean -n` to discard, or commit by hand).",
+  );
+  return false;
+}
 
+/** Step 6: commit, tag and push; each command that fails aborts with its own message. */
+async function publish(version: string, tag: string, branch: string): Promise<void> {
   console.log("\n6. Committing, tagging, and pushing…");
-  if (await run("git", "add", "-A") !== 0) die("git add failed");
-  if (await run("git", "commit", "-m", `release: denext ${version}`) !== 0) {
-    die("git commit failed");
+  const steps: Array<[string[], string]> = [
+    [["git", "add", "-A"], "git add failed"],
+    [["git", "commit", "-m", `release: denext ${version}`], "git commit failed"],
+    [["git", "tag", "-a", tag, "-m", `denext ${version}`], "git tag failed"],
+    [["git", "push", "origin", branch], "git push (branch) failed"],
+    [["git", "push", "origin", tag], "git push (tag) failed"],
+  ];
+  for (const [[cmd, ...args], message] of steps) {
+    if (await run(cmd, ...args) !== 0) die(message);
   }
-  if (await run("git", "tag", "-a", tag, "-m", `denext ${version}`) !== 0) die("git tag failed");
-  if (await run("git", "push", "origin", branch) !== 0) die("git push (branch) failed");
-  if (await run("git", "push", "origin", tag) !== 0) die("git push (tag) failed");
-
   console.log(
     `\n✓ Released ${version}. The ${tag} tag fires the JSR publish workflow ` +
       "(it re-runs the gate, then publishes).\n" +

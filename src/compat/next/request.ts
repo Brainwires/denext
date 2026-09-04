@@ -8,9 +8,6 @@
 
 import { RequestCookies } from "./cookies.ts";
 
-export { RequestCookies } from "./cookies.ts";
-export type { RequestCookie } from "./cookies.ts";
-
 /**
  * A `URL` with the extras Next code reaches for: `clone()`, a `basePath`, and a
  * `locale` slot. It is a real `URL` subclass, so `pathname`, `searchParams`,

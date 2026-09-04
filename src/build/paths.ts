@@ -5,6 +5,7 @@ import { frameworkFileUrl } from "./bundle.ts";
 import type { I18nConfig } from "../server/i18n.ts";
 import type { DenextConfig } from "../server/config.ts";
 import { validateDenextConfig, warnUnknownConfigKeys } from "../server/config-validate.ts";
+import { CONFIG_KEYS } from "../server/config-keys.generated.ts";
 
 // Re-export so build-side importers keep resolving the validator from `paths.ts`.
 export { validateDenextConfig };
@@ -93,58 +94,58 @@ export async function resolveProject(projectDir: string): Promise<ProjectPaths> 
   };
 }
 
+// Every `DenextConfig` field a config module may export (named export or default-object
+// key) is the GENERATED list (deno task gen:config-schema), so a new interface field cannot be
+// silently dropped by `mergeConfigModule`. Both directions are still checked at compile time:
+// a compile error on `_everyFieldListed` means a `DenextConfig` field is missing from the
+// generated list (regenerate); one on `_everyKeyIsField` means the list names a field the
+// interface no longer has (regenerate).
+type MissingConfigKeys = Exclude<keyof DenextConfig, (typeof CONFIG_KEYS)[number]>;
+const _everyFieldListed: MissingConfigKeys extends never ? true : MissingConfigKeys = true;
+const _everyKeyIsField: readonly (keyof DenextConfig)[] = CONFIG_KEYS;
+
+type ConfigModule = DenextConfig & { default?: DenextConfig };
+
+/**
+ * Merge a config module's named exports over its default-export object (named exports
+ * take precedence). `??` (not `||`) so an explicit `false` (e.g. `streaming`) survives.
+ */
+function mergeConfigModule(mod: ConfigModule): DenextConfig {
+  const base = mod.default ?? {};
+  const config: Record<string, unknown> = {};
+  for (const key of CONFIG_KEYS) config[key] = mod[key] ?? base[key];
+  return config as DenextConfig;
+}
+
+/**
+ * Import one config file. Unknown keys on a plain `export default {…}` object are warned
+ * (the field whitelist silently drops them otherwise; `defineConfig` warns at its call
+ * site), and the result is validated up front so a malformed field (e.g. `basePath:
+ * "docs"`) fails with a clear, field-scoped message at boot rather than misbehaving at
+ * request time. A config that exists but fails to load throws — booting silently
+ * without its basePath/redirects/security headers would be worse.
+ */
+async function importConfigFile(path: string, name: string): Promise<DenextConfig> {
+  try {
+    const mod = await import(toFileUrl(path).href) as ConfigModule;
+    const config = mergeConfigModule(mod);
+    const base = mod.default;
+    if (base && typeof base === "object") warnUnknownConfigKeys(base, name);
+    validateDenextConfig(config, name);
+    return config;
+  } catch (err) {
+    throw new Error(
+      `denext: failed to load ${name}: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
+    );
+  }
+}
+
 /** Load `denext.config.{ts,js}` (named exports or a default object), if present. */
 async function loadDenextConfig(projectDir: string): Promise<DenextConfig | null> {
   for (const name of ["denext.config.ts", "denext.config.js"]) {
     const p = join(projectDir, name);
-    if (!(await exists(p))) continue;
-    try {
-      const mod = await import(toFileUrl(p).href) as
-        & DenextConfig
-        & { default?: DenextConfig };
-      const base = mod.default ?? {};
-      // Named exports take precedence over fields on a default-export object.
-      const config: DenextConfig = {
-        mode: mod.mode ?? base.mode,
-        spa: mod.spa ?? base.spa,
-        i18n: mod.i18n ?? base.i18n,
-        basePath: mod.basePath ?? base.basePath,
-        trailingSlash: mod.trailingSlash ?? base.trailingSlash,
-        assetPrefix: mod.assetPrefix ?? base.assetPrefix,
-        redirects: mod.redirects ?? base.redirects,
-        rewrites: mod.rewrites ?? base.rewrites,
-        headers: mod.headers ?? base.headers,
-        images: mod.images ?? base.images,
-        tailwind: mod.tailwind ?? base.tailwind,
-        mdx: mod.mdx ?? base.mdx,
-        cache: mod.cache ?? base.cache,
-        // `streaming` is a boolean, so `??` (not `||`) preserves an explicit `false`.
-        streaming: mod.streaming ?? base.streaming,
-        live: mod.live ?? base.live,
-        experimental: mod.experimental ?? base.experimental,
-        plugins: mod.plugins ?? base.plugins,
-        csp: mod.csp ?? base.csp,
-        hsts: mod.hsts ?? base.hsts,
-        publicEnv: mod.publicEnv ?? base.publicEnv,
-        compatibilityMode: mod.compatibilityMode ?? base.compatibilityMode,
-        classComponents: mod.classComponents ?? base.classComponents,
-      };
-      // Warn on unknown keys on the raw default-export object (the field whitelist
-      // above silently drops them otherwise). Config authored via `defineConfig` is
-      // already warned at its call site; this covers a plain `export default {…}`.
-      if (base && typeof base === "object") warnUnknownConfigKeys(base, name);
-      // Validate up front so a malformed field (e.g. `basePath: "docs"`) fails with
-      // a clear, field-scoped message at boot rather than misbehaving at request time.
-      validateDenextConfig(config, name);
-      return config;
-    } catch (err) {
-      // The config file exists but failed to load. Fail fast rather than boot
-      // silently without its basePath/redirects/security headers.
-      throw new Error(
-        `denext: failed to load ${name}: ${err instanceof Error ? err.message : String(err)}`,
-        { cause: err },
-      );
-    }
+    if (await exists(p)) return await importConfigFile(p, name);
   }
   return null;
 }

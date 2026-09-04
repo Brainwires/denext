@@ -110,58 +110,18 @@ export async function resolveNextMdx(
   baseUrl: string,
   relPath: string,
 ): Promise<MdxBuildOptions | undefined> {
-  let nextConfigUrl: URL;
-  try {
-    nextConfigUrl = new URL(relPath, baseUrl);
-  } catch {
-    return undefined;
-  }
-  let source: string;
-  try {
-    source = await Deno.readTextFile(nextConfigUrl);
-  } catch {
-    return undefined; // no readable next.config
-  }
-  // Only probe when MDX plugins are actually wired — a plain `@next/mdx` (or none) needs
-  // no recovery (the baseline loader handles it), and running an unrelated config is waste.
-  if (!/@next\/mdx|createMDX|(?:remark|rehype|recma)Plugins/.test(source)) return undefined;
-
+  const config = await readNextConfigSource(baseUrl, relPath);
+  if (!config) return undefined;
   // Point every `"@next/mdx"` specifier at THIS module (default = the capturing createMDX).
   // Only the module string is rewritten, so the config's own local import name is preserved
   // and all its OTHER imports (the plugin packages, local files) are untouched. Append an
   // app-context importer so string plugin specifiers (`"remark-codehike"`) resolve from the
   // APP's node_modules — the probe lives in the app dir, so its `import()` uses the app map.
-  const swapped = source.replace(/(["'])@next\/mdx\1/g, JSON.stringify(import.meta.url));
-  if (swapped === source) return undefined; // no @next/mdx import to capture through
+  const swapped = config.source.replace(/(["'])@next\/mdx\1/g, JSON.stringify(import.meta.url));
+  if (swapped === config.source) return undefined; // no @next/mdx import to capture through
   const rewritten = swapped + `\nexport const __denextImport = (s) => import(s);\n`;
-
-  // Write the rewritten config beside the original (same extension, so Deno picks the right
-  // loader; same dir, so the config's relative + bare plugin imports resolve identically).
-  const dir = new URL(".", nextConfigUrl);
-  const ext = (nextConfigUrl.pathname.match(/\.[^./]+$/)?.[0]) ?? ".mjs";
-  const probeUrl = new URL(`./.denext-mdx-probe-${crypto.randomUUID()}${ext}`, dir);
-
-  captured.length = 0;
-  let appImport: AppImport;
-  try {
-    await Deno.writeTextFile(probeUrl, rewritten);
-    // Importing runs the config top-to-bottom: `createMDX(opts)` (captured here) and the
-    // passthrough `withMDX(nextConfig)`. The probe filename is UUID-unique, so each import
-    // is a fresh module URL (no stale module cache) without a query-string cache-buster —
-    // a `file:` URL query would break Deno's on-disk lookup.
-    const probe = await import(probeUrl.href) as { __denextImport: AppImport };
-    appImport = probe.__denextImport;
-  } catch (err) {
-    console.warn(
-      `denext: could not recover MDX plugins from ${relPath} (${
-        err instanceof Error ? err.message : String(err)
-      }); building with baseline MDX.`,
-    );
-    return undefined;
-  } finally {
-    await Deno.remove(probeUrl).catch(() => {});
-  }
-
+  const appImport = await runProbe(config.url, rewritten, relPath);
+  if (!appImport) return undefined;
   const opts = captured[0];
   if (!opts) {
     console.warn(
@@ -171,4 +131,63 @@ export async function resolveNextMdx(
     return undefined;
   }
   return await pickMdxOptions(opts, appImport);
+}
+
+/**
+ * The app's `next.config` URL + source, or null when it can't be read or wires no MDX
+ * plugins — a plain `@next/mdx` (or none) needs no recovery (the baseline loader handles
+ * it), and running an unrelated config is waste.
+ */
+async function readNextConfigSource(
+  baseUrl: string,
+  relPath: string,
+): Promise<{ url: URL; source: string } | null> {
+  let url: URL;
+  try {
+    url = new URL(relPath, baseUrl);
+  } catch {
+    return null;
+  }
+  let source: string;
+  try {
+    source = await Deno.readTextFile(url);
+  } catch {
+    return null; // no readable next.config
+  }
+  if (!/@next\/mdx|createMDX|(?:remark|rehype|recma)Plugins/.test(source)) return null;
+  return { url, source };
+}
+
+/**
+ * Write the rewritten config beside the original (same extension, so Deno picks the right
+ * loader; same dir, so the config's relative + bare plugin imports resolve identically) and
+ * import it. Importing runs the config top-to-bottom: `createMDX(opts)` (captured) and the
+ * passthrough `withMDX(nextConfig)`. The probe filename is UUID-unique, so each import is a
+ * fresh module URL (no stale module cache) without a query-string cache-buster — a `file:`
+ * URL query would break Deno's on-disk lookup. Returns the app-context importer, or null
+ * (with a warning) when the config can't be run.
+ */
+async function runProbe(
+  nextConfigUrl: URL,
+  rewritten: string,
+  relPath: string,
+): Promise<AppImport | null> {
+  const dir = new URL(".", nextConfigUrl);
+  const ext = (nextConfigUrl.pathname.match(/\.[^./]+$/)?.[0]) ?? ".mjs";
+  const probeUrl = new URL(`./.denext-mdx-probe-${crypto.randomUUID()}${ext}`, dir);
+  captured.length = 0;
+  try {
+    await Deno.writeTextFile(probeUrl, rewritten);
+    const probe = await import(probeUrl.href) as { __denextImport: AppImport };
+    return probe.__denextImport;
+  } catch (err) {
+    console.warn(
+      `denext: could not recover MDX plugins from ${relPath} (${
+        err instanceof Error ? err.message : String(err)
+      }); building with baseline MDX.`,
+    );
+    return null;
+  } finally {
+    await Deno.remove(probeUrl).catch(() => {});
+  }
 }

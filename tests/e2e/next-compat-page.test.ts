@@ -10,6 +10,32 @@ import {
   renderNextCompatPage,
   routeToId,
 } from "../../src/build/next-compat-build.ts";
+import { buildCompatIndexPage, cacheNpm, writeCompatProject } from "./harness.ts";
+
+// A page using a REAL npm Radix component (default export, denext page contract).
+const RADIX_PAGE_SRC = `import { createElement as h } from "react";
+import * as Label from "@radix-ui/react-label";
+export default function Page(props) {
+  return h("main", { "data-route": props?.params?.slug ?? "home" },
+    h("h1", null, "Acme Site"),
+    h(Label.Root, { htmlFor: "email" }, "Your email"),
+    h("input", { id: "email", type: "email" }));
+}
+`;
+
+// Root layout (denext page contract: { children, params }).
+const ROOT_LAYOUT_SRC = `import { createElement as h } from "react";
+export default function RootLayout(props) {
+  return h("div", { className: "app-shell" }, h("header", null, "Acme Site"), props.children);
+}
+`;
+
+const LABEL_PAGE_SRC = `import { createElement as h } from "react";
+import * as Label from "@radix-ui/react-label";
+export default function Page() {
+  return h("main", null, h(Label.Root, { htmlFor: "e" }, "Email"));
+}
+`;
 
 Deno.test("routeToId maps routes to safe ids", () => {
   assertEquals(routeToId("/"), "index");
@@ -20,46 +46,13 @@ Deno.test("routeToId maps routes to safe ids", () => {
 Deno.test("next-compat page pipeline: real npm Radix page → SSR document + client bundle", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_ncpage_" });
   try {
-    await Deno.writeTextFile(
-      `${dir}/deno.json`,
-      JSON.stringify({ nodeModulesDir: "auto", imports: {} }),
-    );
-    await Deno.writeTextFile(
-      `${dir}/package.json`,
-      JSON.stringify({ dependencies: { "@radix-ui/react-label": "2.1.8" } }),
-    );
-    // A page using a REAL npm Radix component (default export, denext page contract).
-    await Deno.writeTextFile(
-      `${dir}/page.tsx`,
-      `import { createElement as h } from "react";
-import * as Label from "@radix-ui/react-label";
-export default function Page(props) {
-  return h("main", { "data-route": props?.params?.slug ?? "home" },
-    h("h1", null, "Acme Site"),
-    h(Label.Root, { htmlFor: "email" }, "Your email"),
-    h("input", { id: "email", type: "email" }));
-}
-`,
-    );
+    await writeCompatProject(dir, { "@radix-ui/react-label": "2.1.8" });
+    await Deno.writeTextFile(`${dir}/page.tsx`, RADIX_PAGE_SRC);
 
-    const install = await new Deno.Command(Deno.execPath(), {
-      args: [
-        "cache",
-        "--no-lock",
-        "--config",
-        `${dir}/deno.json`,
-        "npm:@radix-ui/react-label@2.1.8",
-      ],
-      cwd: dir,
-    }).output();
+    const install = await cacheNpm(dir, ["npm:@radix-ui/react-label@2.1.8"]);
     assert(install.success, "npm install failed");
 
-    const built = await buildNextCompatPages({
-      projectDir: dir,
-      configPath: `${dir}/deno.json`,
-      outDir: `${dir}/.denext`,
-      pages: [{ routePath: "/", filePath: `${dir}/page.tsx` }],
-    });
+    const built = await buildCompatIndexPage(dir);
     assert(built.length === 1);
 
     const html = await renderNextCompatPage(
@@ -142,50 +135,13 @@ export default function Page() {
 Deno.test("next-compat page pipeline: App Router layouts wrap the page", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_nclayout_" });
   try {
-    await Deno.writeTextFile(
-      `${dir}/deno.json`,
-      JSON.stringify({ nodeModulesDir: "auto", imports: {} }),
-    );
-    await Deno.writeTextFile(
-      `${dir}/package.json`,
-      JSON.stringify({ dependencies: { "@radix-ui/react-label": "2.1.8" } }),
-    );
-    // Root layout (denext page contract: { children, params }).
-    await Deno.writeTextFile(
-      `${dir}/layout.tsx`,
-      `import { createElement as h } from "react";
-export default function RootLayout(props) {
-  return h("div", { className: "app-shell" }, h("header", null, "Acme Site"), props.children);
-}
-`,
-    );
-    await Deno.writeTextFile(
-      `${dir}/page.tsx`,
-      `import { createElement as h } from "react";
-import * as Label from "@radix-ui/react-label";
-export default function Page() {
-  return h("main", null, h(Label.Root, { htmlFor: "e" }, "Email"));
-}
-`,
-    );
-    const install = await new Deno.Command(Deno.execPath(), {
-      args: [
-        "cache",
-        "--no-lock",
-        "--config",
-        `${dir}/deno.json`,
-        "npm:@radix-ui/react-label@2.1.8",
-      ],
-      cwd: dir,
-    }).output();
+    await writeCompatProject(dir, { "@radix-ui/react-label": "2.1.8" });
+    await Deno.writeTextFile(`${dir}/layout.tsx`, ROOT_LAYOUT_SRC);
+    await Deno.writeTextFile(`${dir}/page.tsx`, LABEL_PAGE_SRC);
+    const install = await cacheNpm(dir, ["npm:@radix-ui/react-label@2.1.8"]);
     assert(install.success, "npm install failed");
 
-    const [built] = await buildNextCompatPages({
-      projectDir: dir,
-      configPath: `${dir}/deno.json`,
-      outDir: `${dir}/.denext`,
-      pages: [{ routePath: "/", filePath: `${dir}/page.tsx`, layouts: [`${dir}/layout.tsx`] }],
-    });
+    const [built] = await buildCompatIndexPage(dir, [`${dir}/layout.tsx`]);
     const html = await renderNextCompatPage(built, {}, "/c.js");
     // Layout chrome wraps the page, which renders the real Radix Label.
     assertStringIncludes(html, 'class="app-shell"');

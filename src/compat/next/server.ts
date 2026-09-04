@@ -26,7 +26,7 @@ import {
   MIDDLEWARE_REQUEST_PREFIX,
   MIDDLEWARE_REWRITE_HEADER,
   setRequestAdapter,
-} from "../../server/mod.ts";
+} from "../../server/middleware.ts";
 import { NextRequest } from "./request.ts";
 import { ResponseCookies } from "./cookies.ts";
 

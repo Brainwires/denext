@@ -7,11 +7,7 @@
 //
 // Then open http://localhost:3003 — both cards animate on load; hover the motion one.
 import { fromFileUrl } from "@std/path";
-import {
-  buildNextCompatPages,
-  type BuiltNextCompatPage,
-  renderNextCompatPage,
-} from "../../src/build/next-compat-build.ts";
+import { buildExamplePage, serveCompat } from "../_shared/serve-compat.ts";
 
 const dir = fromFileUrl(new URL(".", import.meta.url)).replace(/\/$/, "");
 const dev = Deno.args.includes("--dev");
@@ -31,35 +27,11 @@ async function ensureDeps() {
   if (!r.success) throw new Error("failed to install npm deps");
 }
 
-function build(): Promise<BuiltNextCompatPage[]> {
-  return buildNextCompatPages({
-    projectDir: dir,
-    configPath: `${dir}/deno.json`,
-    outDir: `${dir}/.denext`,
-    pages: [{ routePath: "/", filePath: `${dir}/app/page.tsx` }],
-    minify: !dev,
-  });
-}
-
 await ensureDeps();
-let [page] = await build();
-console.log(
-  `animation example on http://localhost:3003${dev ? "  (dev: rebuilds per request)" : ""}`,
-);
-
-Deno.serve({ port: 3003 }, async (req) => {
-  const url = new URL(req.url);
-  if (dev && url.pathname === "/") [page] = await build();
-  if (url.pathname === CLIENT_SRC) {
-    return new Response(await Deno.readTextFile(page.clientBundle), {
-      headers: { "content-type": "text/javascript; charset=utf-8" },
-    });
-  }
-  if (url.pathname === "/") {
-    const html = await renderNextCompatPage(page, {}, CLIENT_SRC);
-    return new Response(html, {
-      headers: { "content-type": "text/html; charset=utf-8" },
-    });
-  }
-  return new Response("Not found", { status: 404 });
-});
+serveCompat({
+  port: 3003,
+  clientSrc: CLIENT_SRC,
+  page: await buildExamplePage(dir, dev),
+  dev,
+  rebuild: () => buildExamplePage(dir, dev),
+}, "animation");

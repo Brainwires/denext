@@ -1,0 +1,268 @@
+{
+  "tools": [
+    {
+      "name": "denext_check_snippet",
+      "description": "Check a denext code snippet for Next.js→denext mistakes (wrong import source, misplaced \"use client\", missing client boundary). Run this on code you are about to write.",
+      "params": [
+        {
+          "name": "code",
+          "type": "string",
+          "description": "The .ts/.tsx source to check.",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "denext_import_map",
+      "description": "Map a Next.js/React import specifier to its denext equivalent. Omit `specifier` to get the whole table.",
+      "params": [
+        {
+          "name": "specifier",
+          "type": "string",
+          "description": "A Next.js/React specifier, e.g. \"next/navigation\" or \"react\".",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_generate",
+      "description": "Scaffold a denext artifact into a project (writes files). kind = page|route|layout|component|api|action|test|docker.",
+      "params": [
+        {
+          "name": "kind",
+          "type": "string",
+          "description": "page|route|layout|component|api|action|test|docker",
+          "required": true
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "description": "Route/component/action name (optional for docker).",
+          "required": false
+        },
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: current directory).",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_doctor",
+      "description": "Run denext's project health check (config, app dir, route conformance) on a directory.",
+      "params": [
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: .)",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_codemod",
+      "description": "Report (dry-run, no writes) the Next.js→denext import rewrites a codemod would make in a project directory.",
+      "params": [
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: .)",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_list_routes",
+      "description": "List an app's routes (pages + API route handlers) with their dynamic params, by scanning app/. Works without a running dev server.",
+      "params": [
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: .)",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_dev_logs",
+      "description": "Read the RUNNING dev server's recent events — server errors (with codeframes), server + browser console, completed requests (method/path/status/ms), and HMR events. Use it to see what actually happened at runtime. Requires `deno task dev` to be running.",
+      "params": [
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: .)",
+          "required": false
+        },
+        {
+          "name": "kind",
+          "type": "string",
+          "description": "Filter: \"error\", \"console\", \"request\", or \"hmr\" (default: all).",
+          "required": false
+        },
+        {
+          "name": "limit",
+          "type": "number",
+          "description": "Max events to return (default 50).",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_render",
+      "description": "Render a route (by `path`) or a component (by `component` + `props`) server-side — NO browser — and return the HTML + status. Use it to SEE what your change actually produces (or the error it throws). Runs against the project you launched the server in.",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "description": "A route path to render, e.g. \"/blog/hello\".",
+          "required": false
+        },
+        {
+          "name": "component",
+          "type": "string",
+          "description": "A component module path (relative to dir) to render instead of a route.",
+          "required": false
+        },
+        {
+          "name": "props",
+          "type": "object",
+          "description": "Props for the component (with `component`).",
+          "required": false
+        },
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: .)",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_route_map",
+      "description": "Map everything that renders at a route path: the matched page + params, its layout and template chains (each tagged server/client), its loading/error/not-found boundaries and parallel slots, and any API route at the same path. Saves opening many files.",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "description": "The route path to map, e.g. \"/blog/hello\".",
+          "required": true
+        },
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: .)",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_search_docs",
+      "description": "Search the denext docs — the API reference + the authoring guide — by keyword and get the top matching symbols/sections with links and snippets. Use it to find the right denext API or rule before writing code, instead of guessing Next.js.",
+      "params": [
+        {
+          "name": "query",
+          "type": "string",
+          "description": "Keywords or a natural-language question, e.g. \"read a session cookie\".",
+          "required": true
+        },
+        {
+          "name": "limit",
+          "type": "number",
+          "description": "Max results (default 8).",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_index_codebase",
+      "description": "Build or refresh a searchable index of THIS project's own source code (honors the project's .gitignore). Optional — the query/definition/reference tools index on demand — but call it to warm the cache and see how many files were indexed.",
+      "params": [
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: current directory).",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_query_codebase",
+      "description": "Search THIS project's source code for the parts relevant to a task or concept, by keyword or natural-language question. Returns the top matching file locations with snippets — use it to find where something lives before editing.",
+      "params": [
+        {
+          "name": "query",
+          "type": "string",
+          "description": "What to look for, e.g. \"where is auth handled\".",
+          "required": true
+        },
+        {
+          "name": "limit",
+          "type": "number",
+          "description": "Max results (default 8).",
+          "required": false
+        },
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: current directory).",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_find_definition",
+      "description": "Find where a symbol (function, class, const, type, interface, enum) is declared in THIS project. Returns the declaration site(s), exported ones first.",
+      "params": [
+        {
+          "name": "symbol",
+          "type": "string",
+          "description": "The identifier to locate, e.g. `getSession`.",
+          "required": true
+        },
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: current directory).",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_find_references",
+      "description": "Find usages (call sites and other references) of a symbol across THIS project's source. Returns file locations with the matching line; results are capped.",
+      "params": [
+        {
+          "name": "symbol",
+          "type": "string",
+          "description": "The identifier to find references to.",
+          "required": true
+        },
+        {
+          "name": "limit",
+          "type": "number",
+          "description": "Max sites to list (default 50).",
+          "required": false
+        },
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: current directory).",
+          "required": false
+        }
+      ]
+    }
+  ],
+  "resources": [
+    {
+      "uri": "denext://guide",
+      "name": "denext authoring guide (for AI agents)",
+      "description": "AGENTS.md — the rules that make code denext, not Next, plus common tasks."
+    },
+    {
+      "uri": "denext://import-map",
+      "name": "Next.js → denext import map",
+      "description": "How each Next.js/React import maps to its denext equivalent."
+    }
+  ]
+}

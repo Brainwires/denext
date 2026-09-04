@@ -29,7 +29,7 @@
 import { createApp, defaultLoader, PageCache, scanRoutes } from "../server/mod.ts";
 import type { ModuleLoader, PageModule } from "../server/types.ts";
 import type { PageRoute, RouteManifest } from "../router/manifest.ts";
-import type { RouteParams } from "../router/segments.ts";
+import { fillPattern, type RouteParams } from "../router/segments.ts";
 import { resolveProject } from "../build/paths.ts";
 import {
   buildBoundaryManifest,
@@ -41,7 +41,7 @@ import { routeNeedsHydration } from "../build/hydration.ts";
 import { tagServerModules } from "../runtime/server-action.ts";
 import { createMiddlewareRunner } from "../server/mod.ts";
 import { resolve, toFileUrl } from "@std/path";
-import { createTestClient, type TestHandler } from "./mod.ts";
+import { createTestClient, type TestHandler } from "./client.ts";
 
 /** One conformance check applied to a single rendered route. */
 export interface ProbeCheck {
@@ -163,7 +163,7 @@ async function pathsForRoute(
   supplied: RouteParams[] | undefined,
 ): Promise<{ paths: string[]; skipped: boolean }> {
   const isDynamic = route.pattern.some((s) => s.kind !== "static");
-  if (!isDynamic) return { paths: [fillPath(route, {})], skipped: false };
+  if (!isDynamic) return { paths: [fillPattern(route.pattern, {})], skipped: false };
 
   let paramSets = supplied;
   if (!paramSets) {
@@ -173,20 +173,7 @@ async function pathsForRoute(
     }
   }
   if (!paramSets || paramSets.length === 0) return { paths: [], skipped: true };
-  return { paths: paramSets.map((p) => fillPath(route, p)), skipped: false };
-}
-
-/** Fill a route pattern with params to produce a concrete pathname. */
-function fillPath(route: PageRoute, params: RouteParams): string {
-  const parts: string[] = [];
-  for (const seg of route.pattern) {
-    if (seg.kind === "static") parts.push(seg.value);
-    else if (params[seg.value]) {
-      // A catch-all param may carry slash-joined segments already.
-      parts.push(params[seg.value]);
-    }
-  }
-  return "/" + parts.join("/");
+  return { paths: paramSets.map((p) => fillPattern(route.pattern, p)), skipped: false };
 }
 
 /** Count non-overlapping occurrences of a lowercase tag opener in `html`. */
@@ -268,16 +255,7 @@ export async function probeApp(
     const { paths, skipped } = await pathsForRoute(route, load, options.params?.[route.routePath]);
 
     if (skipped) {
-      record({
-        routePath: route.routePath,
-        path: route.routePath,
-        status: 0,
-        rendered: false,
-        interactive,
-        ok: true,
-        checks: [],
-        note: "dynamic route without generateStaticParams or supplied params — skipped",
-      });
+      record(skippedProbe(route.routePath, interactive));
       continue;
     }
 
@@ -290,15 +268,32 @@ export async function probeApp(
     record(await probePath(client, syntheticRoute(path), path, false, options.expect?.[path]));
   }
 
-  const passed = routes.filter((r) => r.rendered && r.ok).length;
+  return summarize(routes);
+}
+
+/** The probe recorded for a dynamic route with no params to render. */
+function skippedProbe(routePath: string, interactive: boolean): RouteProbe {
+  return {
+    routePath,
+    path: routePath,
+    status: 0,
+    rendered: false,
+    interactive,
+    ok: true,
+    checks: [],
+    note: "dynamic route without generateStaticParams or supplied params — skipped",
+  };
+}
+
+/** Roll the per-route probes up into the report totals. */
+function summarize(routes: RouteProbe[]): ConformanceReport {
   const failed = routes.filter((r) => !r.ok).length;
-  const skippedCount = routes.filter((r) => r.ok && !r.rendered).length;
   return {
     routes,
     total: routes.length,
-    passed,
+    passed: routes.filter((r) => r.rendered && r.ok).length,
     failed,
-    skipped: skippedCount,
+    skipped: routes.filter((r) => r.ok && !r.rendered).length,
     static: routes.filter((r) => !r.interactive).length,
     ok: failed === 0,
   };
@@ -384,6 +379,19 @@ function glyph(p: RouteProbe): string {
   return "✓";
 }
 
+/** One route's report line, plus one line per failed check. */
+function routeLines(p: ConformanceReport["routes"][number], width: number): string[] {
+  const tag = p.rendered ? (p.interactive ? "interactive" : "static") : "";
+  const status = p.status ? String(p.status) : "—";
+  const note = p.note ? `  (${p.note})` : "";
+  const line = `  ${glyph(p)} ${p.path.padEnd(width)}  ${status.padStart(3)}  ${tag}${note}`;
+  if (p.ok) return [line];
+  const failures = p.checks.filter((c) => !c.pass).map((c) =>
+    `      ✗ ${c.name}: ${c.detail ?? "failed"}`
+  );
+  return [line, ...failures];
+}
+
 /**
  * Render a {@linkcode ConformanceReport} as a human-readable table with a summary
  * line. Suitable for CLI output or a test failure message.
@@ -392,20 +400,8 @@ function glyph(p: RouteProbe): string {
  * @returns A multi-line string.
  */
 export function formatReport(report: ConformanceReport): string {
-  const lines: string[] = [];
   const width = Math.max(4, ...report.routes.map((r) => r.path.length));
-  for (const p of report.routes) {
-    const tag = p.rendered ? (p.interactive ? "interactive" : "static") : "";
-    const status = p.status ? String(p.status) : "—";
-    let line = `  ${glyph(p)} ${p.path.padEnd(width)}  ${status.padStart(3)}  ${tag}`;
-    if (p.note) line += `  (${p.note})`;
-    lines.push(line);
-    if (!p.ok) {
-      for (const c of p.checks.filter((c) => !c.pass)) {
-        lines.push(`      ✗ ${c.name}: ${c.detail ?? "failed"}`);
-      }
-    }
-  }
+  const lines = report.routes.flatMap((p) => routeLines(p, width));
   lines.push("");
   lines.push(
     `  ${report.passed} rendered · ${report.skipped} skipped · ${report.failed} failed` +

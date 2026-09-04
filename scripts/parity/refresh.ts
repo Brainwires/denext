@@ -68,34 +68,64 @@ function summarizeDrift(
   oldB: Baseline,
   next: { versions: Record<string, string>; surfaces: Surface[] },
 ): string {
-  const lines: string[] = ["parity drift report (live latest vs committed baseline):", ""];
-  let changed = false;
-
-  lines.push("versions:");
-  for (const p of REAL_PACKAGES) {
-    const was = oldB.versions[p] ?? "—";
-    const now = next.versions[p] ?? "—";
-    const mark = was === now ? "  " : "→ ";
-    if (was !== now) changed = true;
-    lines.push(`  ${mark}${p}: ${was}${was === now ? "" : `  →  ${now}`}`);
+  const versions = versionLines(oldB.versions, next.versions);
+  const surfaces = surfaceChangeLines(oldB.surfaces, next.surfaces);
+  const lines = [
+    "parity drift report (live latest vs committed baseline):",
+    "",
+    "versions:",
+    ...versions.lines,
+    "",
+    "surface changes:",
+    ...surfaces.lines,
+  ];
+  if (!versions.changed && !surfaces.changed) {
+    lines.push("  (no upstream drift — baseline is current)");
   }
-
-  const oldBySpec = new Map(oldB.surfaces.map((s) => [s.specifier, s]));
-  lines.push("", "surface changes:");
-  for (const s of next.surfaces) {
-    const prev = oldBySpec.get(s.specifier);
-    if (!prev) continue;
-    const added = Object.keys(s.symbols).filter((n) => !(n in prev.symbols));
-    const removed = Object.keys(prev.symbols).filter((n) => !(n in s.symbols));
-    if (added.length || removed.length) {
-      changed = true;
-      lines.push(`  ${s.specifier}:`);
-      if (added.length) lines.push(`    + ${added.join(", ")}`);
-      if (removed.length) lines.push(`    - ${removed.join(", ")}`);
-    }
-  }
-  if (!changed) lines.push("  (no upstream drift — baseline is current)");
   return lines.join("\n");
+}
+
+/** One line per real package: `→` marks a version that moved. */
+function versionLines(
+  was: Record<string, string>,
+  now: Record<string, string>,
+): { lines: string[]; changed: boolean } {
+  const lines = REAL_PACKAGES.map((p) => {
+    const a = was[p] ?? "—";
+    const b = now[p] ?? "—";
+    return a === b ? `    ${p}: ${a}` : `  → ${p}: ${a}  →  ${b}`;
+  });
+  return { lines, changed: REAL_PACKAGES.some((p) => (was[p] ?? "—") !== (now[p] ?? "—")) };
+}
+
+/** Added/removed symbols per specifier present in both baselines. */
+function surfaceChangeLines(
+  oldSurfaces: Surface[],
+  nextSurfaces: Surface[],
+): { lines: string[]; changed: boolean } {
+  const oldBySpec = new Map(oldSurfaces.map((s) => [s.specifier, s]));
+  const lines = nextSurfaces.flatMap((s) => {
+    const prev = oldBySpec.get(s.specifier);
+    return prev ? symbolDiffLines(s.specifier, prev.symbols, s.symbols) : [];
+  });
+  return { lines, changed: lines.length > 0 };
+}
+
+/** `  spec:` + `+ added` / `- removed` lines, or nothing when the symbol set is unchanged. */
+function symbolDiffLines(
+  specifier: string,
+  prev: Record<string, unknown>,
+  next: Record<string, unknown>,
+): string[] {
+  const added = Object.keys(next).filter((n) => !(n in prev));
+  const removed = Object.keys(prev).filter((n) => !(n in next));
+  const body = [...diffLine("+", added), ...diffLine("-", removed)];
+  return body.length ? [`  ${specifier}:`, ...body] : [];
+}
+
+/** `    + a, b` (or `-`), or nothing for an empty list. */
+function diffLine(sign: string, names: string[]): string[] {
+  return names.length ? [`    ${sign} ${names.join(", ")}`] : [];
 }
 
 async function main() {

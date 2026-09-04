@@ -120,17 +120,17 @@ export function Slot(props: SlotProps): VNode {
     return h(Fragment, null, ...(newChildren as VNode[]));
   }
 
-  const only = childArray.length === 1 ? childArray[0] : undefined;
-  if (!isValidElement(only)) {
-    // No single element to merge onto — throw rather than silently dropping the
-    // slot props (className/handlers/ref), which is the whole point of `asChild`.
-    // Matches Radix, whose Slot requires exactly one React element child.
+  if (childArray.length > 1) {
+    // Radix's Slot goes through `Children.only`, which throws for several children.
     throw new Error(
       "Slot (asChild) expects exactly one React element child. Received " +
         `${childArray.length} children — wrap the target in <Slottable> if you ` +
         "need siblings, or pass a single element.",
     );
   }
+  const only = childArray[0];
+  // Nothing (or a text node) to merge onto: Radix renders null here, not an error.
+  if (!isValidElement(only)) return null as unknown as VNode;
   return mergeOnto(only as VNode, slotProps, slotRef);
 }
 brand(Slot, REACT_FORWARD_REF_TYPE, {

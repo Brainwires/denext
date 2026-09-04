@@ -10,22 +10,24 @@
 
 import { FRAGMENT, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
 import { type Dispatcher, setDispatcher } from "../runtime/hooks.ts";
-import { createSSRDispatcher, type ProviderScope, resolveContextType } from "./render-to-string.ts";
-import "../runtime/class-flag.ts";
-import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
-import { renderClassToVNode } from "../compat/class-component.ts";
-import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
-import { PROVIDER } from "../runtime/context.ts";
-import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
-import {
-  ERROR_BOUNDARY,
-  isControlSignal,
-  reportBoundaryError,
-  toClientError,
-} from "../runtime/error-boundary.ts";
-import { serializeScalar, serializeThenable } from "./flight-scalar.ts";
+import { createSSRDispatcher, type ProviderScope } from "./render-to-string.ts";
+import { isComponentType } from "../runtime/react-brands.ts";
+import { SUSPENSE } from "../runtime/suspense.ts";
+import { ERROR_BOUNDARY } from "../runtime/error-boundary.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
-import { enterScope, ID_PATH_PROP, rootScope, scopePrefix } from "./tree-id.ts";
+import { rootScope, scopePrefix } from "./tree-id.ts";
+import {
+  flightClientRef,
+  flightHost,
+  invokeServerComponent,
+  providerScopeOf,
+  pushScope,
+  renderErrorBoundaryWith,
+  resolveInBoundaryScope,
+  type Serialized,
+  serializeFlightProps,
+  serializeFlightValue,
+} from "./render-shared.ts";
 import type { IdHolder } from "./render-to-string.ts";
 
 /** A JSON primitive leaf in a Flight tree. */
@@ -100,9 +102,6 @@ export type FlightValue =
 /** A serialized props object (VNode-valued props are themselves Flight nodes). */
 export type FlightProps = Record<string, FlightValue>;
 
-/** Sentinel marking a prop/array entry that must be dropped (non-serializable). */
-const SKIP = Symbol("skip");
-
 interface FlightCtx {
   scopes: ProviderScope[];
   dispatcher: Dispatcher;
@@ -152,178 +151,83 @@ async function flightVNode(node: VNode, ctx: FlightCtx): Promise<FlightNode> {
   const { type } = node;
   // Null `props` (some npm libs) is treated as {} — parity with render-to-string.
   const props = node.props ?? {};
-  const { scopes, dispatcher } = ctx;
-
-  // Fragment (and context providers, which are transparent in Flight — server
-  // context does not cross into client islands, mirroring React).
-  if (type === FRAGMENT) {
-    const providerInfo = props[PROVIDER as unknown as string] as
-      | { id: symbol; value: unknown }
-      | undefined;
-    if (providerInfo) {
-      const scope: ProviderScope = new Map();
-      scope.set(providerInfo.id, providerInfo.value);
-      scopes.push(scope);
-      try {
-        return await flightChildren(props.children, ctx);
-      } finally {
-        scopes.pop();
-      }
-    }
-    return flightChildren(props.children, ctx);
-  }
-
-  // Suspense: its own id scope (one slot in its parent; content rooted at its
-  // position). Resolve inline here, retrying on suspension — each retry resets the
-  // boundary scope's own counters (its parent slot is already fixed).
+  // Fragment (and context providers, which are transparent in Flight — server context does
+  // not cross into client islands, mirroring React).
+  if (type === FRAGMENT) return flightFragment(props, ctx);
+  // Suspense: its own id scope (one slot in its parent; content rooted at its position),
+  // resolved inline here, retrying on suspension.
   if ((type as unknown) === SUSPENSE) {
-    const parentScope = ctx.ids.scope;
-    const boundaryScope = enterScope(parentScope);
-    try {
-      for (;;) {
-        boundaryScope.count = 0;
-        boundaryScope.local = 0;
-        ctx.ids.scope = boundaryScope;
-        try {
-          return await flightChildren(props.children, ctx);
-        } catch (err) {
-          if (isThenable(err)) {
-            await err;
-            continue;
-          }
-          throw err;
-        }
-      }
-    } finally {
-      ctx.ids.scope = parentScope;
-    }
+    return resolveInBoundaryScope(ctx.ids, () => flightChildren(props.children, ctx));
   }
-
-  // Error boundary: render children; on a non-control throw, render the fallback
-  // (from the pre-children scope state, so its ids line up with the client's).
-  if ((type as unknown) === ERROR_BOUNDARY) {
-    const idScope = ctx.ids.scope;
-    const savedCount = idScope.count;
-    const savedLocal = idScope.local;
-    try {
-      return await flightChildren(props.children, ctx);
-    } catch (err) {
-      if (isThenable(err) || isControlSignal(err)) throw err;
-      ctx.ids.scope = idScope;
-      idScope.count = savedCount;
-      idScope.local = savedLocal;
-      const Fallback = props.fallback as (p: { error: Error; reset: () => void }) => VNode;
-      setDispatcher(dispatcher);
-      reportBoundaryError(props, err);
-      const fb = await Fallback({ error: toClientError(err), reset: () => {} });
-      return flightChild(fb as VNodeChild, ctx);
-    }
-  }
-
-  // Function component (or a memo/forwardRef object wrapper). Each opens a fresh id
-  // scope, consuming a slot in its parent's scope, so ids derive from tree position.
-  if (isComponentType(type)) {
-    const ref = clientRefOf(type);
-    const parentScope = ctx.ids.scope;
-    const scope = enterScope(parentScope);
-    ctx.ids.scope = scope;
-    try {
-      if (ref) {
-        // A `"use client"` component: emit a reference, do NOT invoke it. It still
-        // occupies a slot; tag it with its path prefix so the island seeds the same
-        // scope on the client. Its props/children render in the island's scope.
-        const p = await serializeProps(props, ctx);
-        p[ID_PATH_PROP] = scopePrefix(scope);
-        return { $: "c", i: ref.id, p, c: await flightChildren(props.children, ctx) };
-      }
-      // A server component: invoke and expand.
-      setDispatcher(dispatcher);
-      if (isClassComponent(type)) {
-        if (__DENEXT_CLASS_COMPONENTS__) {
-          return await flightChild(
-            renderClassToVNode(type, props, resolveContextType(type, scopes)) as VNodeChild,
-            ctx,
-          );
-        }
-        throw classComponentsDisabledError();
-      }
-      const result = await invokeComponent(resolveComponentType(type), props);
-      return await flightChild(result as VNodeChild, ctx);
-    } finally {
-      ctx.ids.scope = parentScope;
-    }
-  }
-
+  if ((type as unknown) === ERROR_BOUNDARY) return flightErrorBoundary(props, ctx);
+  if (isComponentType(type)) return flightComponent(type, props, ctx);
   // Intrinsic host element.
-  return {
-    $: "h",
-    t: type as string,
-    p: await serializeProps(props, ctx),
-    c: await flightChildren(props.children, ctx),
-  };
+  const p = await serializeProps(props, ctx);
+  return flightHost(type as string, p, await flightChildren(props.children, ctx));
 }
 
-async function serializeProps(
+/** A fragment, or a context provider whose scope wraps its children. */
+async function flightFragment(
   props: Record<string, unknown>,
   ctx: FlightCtx,
-): Promise<FlightProps> {
-  const out: FlightProps = {};
-  for (const [name, value] of Object.entries(props)) {
-    if (
-      name === "children" || name === "key" || name === "ref" ||
-      name === PROVIDER.toString()
-    ) continue;
-    const sv = await serializeValue(value, ctx);
-    if (sv !== SKIP) out[name] = sv as FlightValue;
+): Promise<FlightNode> {
+  const scope = providerScopeOf(props);
+  if (!scope) return flightChildren(props.children as VNodeChildren, ctx);
+  ctx.scopes.push(scope);
+  try {
+    return await flightChildren(props.children as VNodeChildren, ctx);
+  } finally {
+    ctx.scopes.pop();
   }
-  return out;
 }
 
-async function serializeValue(
-  value: unknown,
+/** Error boundary (see {@link renderErrorBoundaryWith}). */
+function flightErrorBoundary(props: Record<string, unknown>, ctx: FlightCtx): Promise<FlightNode> {
+  return renderErrorBoundaryWith(props, ctx.ids, {
+    render: (children) => flightChildren(children, ctx),
+    renderFallback: (child) => flightChild(child, ctx),
+    activate: () => setDispatcher(ctx.dispatcher),
+  });
+}
+
+/**
+ * Function component (or a memo/forwardRef object wrapper). Each opens a fresh id scope,
+ * consuming a slot in its parent's scope, so ids derive from tree position. A `"use client"`
+ * component is NOT invoked: it emits a reference tagged with its path prefix (so the island
+ * seeds the same scope on the client), and its props/children render in the island's scope.
+ * A server component is invoked and expanded.
+ */
+async function flightComponent(
+  type: unknown,
+  props: Record<string, unknown>,
   ctx: FlightCtx,
-): Promise<FlightValue | typeof SKIP> {
-  // Leaf cases (primitives, action/qrl refs, dropped functions, Date, thenables)
-  // are shared across every Flight serializer; only array/VNode/object differ here.
-  const scalar = serializeScalar(value);
-  if (scalar.kind === "value") return scalar.value;
-  if (scalar.kind === "skip") return SKIP;
-  // A Remix `defer()` field / promise prop: resolve it and serialize the result so deferred
-  // data crosses the boundary (awaited, not streamed as a placeholder); a rejection becomes
-  // the error marker so `<Await>` renders its `errorElement`.
-  if (scalar.kind === "thenable") {
-    return await serializeThenable(scalar.promise, (v) => serializeValue(v, ctx));
-  }
-
-  if (Array.isArray(value)) {
-    const items: FlightValue[] = [];
-    for (const el of value) {
-      const sv = await serializeValue(el, ctx);
-      if (sv !== SKIP) items.push(sv as FlightValue);
+): Promise<FlightNode> {
+  const { parent, scope } = pushScope(ctx.ids);
+  try {
+    const ref = clientRefOf(type);
+    if (ref) {
+      const p = await serializeProps(props, ctx);
+      const children = await flightChildren(props.children as VNodeChildren, ctx);
+      return flightClientRef(ref.id, p, scopePrefix(scope), children);
     }
-    return items;
+    setDispatcher(ctx.dispatcher);
+    return await flightChild(await invokeServerComponent(type, props, ctx.scopes), ctx);
+  } finally {
+    ctx.ids.scope = parent;
   }
-
-  // A VNode-valued prop (e.g. `icon={<Icon/>}`) is serialized as a Flight node.
-  if (isVNode(value)) return flightVNode(value, ctx) as Promise<FlightValue>;
-
-  if (typeof value === "object") {
-    const obj: Record<string, FlightValue> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      const sv = await serializeValue(v, ctx);
-      if (sv !== SKIP) obj[k] = sv as FlightValue;
-    }
-    return obj;
-  }
-
-  // Symbols, bigints, etc. — not serializable.
-  return SKIP;
 }
 
-/** Structural check for a VNode (has a `type` and `props`). */
-function isVNode(value: unknown): value is VNode {
-  return (
-    typeof value === "object" && value !== null &&
-    "type" in value && "props" in value
-  );
+function serializeProps(props: Record<string, unknown>, ctx: FlightCtx): Promise<FlightProps> {
+  return serializeFlightProps(props, (v) => serializeValue(v, ctx));
+}
+
+/**
+ * Leaf cases (primitives, action/qrl refs, dropped functions, Date, thenables) are shared
+ * across every Flight serializer; a VNode-valued prop (`icon={<Icon/>}`) is a Flight node.
+ */
+function serializeValue(value: unknown, ctx: FlightCtx): Promise<Serialized> {
+  return serializeFlightValue(value, {
+    value: (v) => serializeValue(v, ctx),
+    vnode: (n) => flightVNode(n, ctx) as Promise<FlightValue>,
+  });
 }

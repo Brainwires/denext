@@ -181,6 +181,26 @@ Deno.test("verifyIdToken: rejects a token missing exp, and one not yet valid (nb
   );
 });
 
+Deno.test("verifyIdToken: rejects an iat in the future (beyond clock tolerance); accepts a sane one", async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const verify = (t: { token: string; jwks: Jwk[] }) =>
+    verifyIdToken({
+      idToken: t.token,
+      jwks: t.jwks,
+      issuer: BASE.iss,
+      audience: BASE.aud,
+      nonce: BASE.nonce,
+    });
+  await assertRejects(
+    () => mintIdToken({ ...BASE, iat: now + 3600 }).then(verify),
+    Error,
+    "issued in the future",
+  );
+  // Within the default 60s tolerance (clock skew) and in the past are both fine.
+  assertEquals((await verify(await mintIdToken({ ...BASE, iat: now + 30 }))).sub, "user-1");
+  assertEquals((await verify(await mintIdToken({ ...BASE, iat: now - 600 }))).sub, "user-1");
+});
+
 Deno.test("verifyIdToken: rejects a non-JWT typ (token-type confusion)", async () => {
   // An access token (`typ: "at+jwt"`) minted from the same issuer/JWKS must not pass
   // as an id_token. `typ: "JWT"`, `id_token+jwt`, and an absent typ stay valid.
@@ -244,27 +264,43 @@ Deno.test("verifyIdToken: rejects when no JWKS key matches the kid", async () =>
 
 // ---- alg families beyond RS256 (ES*, PS*, RS384/512) -----------------------
 
+/** SHA hash + ECDSA curve + RSA-PSS salt length, keyed by the alg's bit size. */
+const ALG_BITS: Record<string, { hash: string; curve: string; salt: number }> = {
+  "256": { hash: "SHA-256", curve: "P-256", salt: 32 },
+  "384": { hash: "SHA-384", curve: "P-384", salt: 48 },
+  "512": { hash: "SHA-512", curve: "P-521", salt: 64 },
+};
+
+/** WebCrypto key-generation + signing parameters for an ES*, PS* or RS* alg. */
+function algParams(alg: string): {
+  keyAlgo: EcKeyGenParams | RsaHashedKeyGenParams;
+  signAlgo: AlgorithmIdentifier | RsaPssParams | EcdsaParams;
+} {
+  const { hash, curve, salt } = ALG_BITS[alg.slice(2)];
+  if (alg.startsWith("ES")) {
+    return { keyAlgo: { name: "ECDSA", namedCurve: curve }, signAlgo: { name: "ECDSA", hash } };
+  }
+  const name = alg.startsWith("PS") ? "RSA-PSS" : "RSASSA-PKCS1-v1_5";
+  return {
+    keyAlgo: { name, modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash },
+    signAlgo: alg.startsWith("PS") ? { name: "RSA-PSS", saltLength: salt } : { name },
+  };
+}
+
+/** The public JWK for a generated key (EC or RSA), tagged with `kid` + `alg`. */
+function publicJwk(jwk: JsonWebKey, kid: string, alg: string): Jwk {
+  return jwk.kty === "EC"
+    ? { kty: "EC", kid, crv: jwk.crv, x: jwk.x, y: jwk.y, alg }
+    : { kty: "RSA", kid, n: jwk.n, e: jwk.e, alg };
+}
+
 /** Mint an id_token signed with `alg` (an ES, PS, or RS family alg) + its public JWKS. */
 async function mintWithAlg(
   alg: string,
   claims: Record<string, unknown>,
   kid = "k",
 ): Promise<{ token: string; jwks: Jwk[] }> {
-  let keyAlgo: EcKeyGenParams | RsaHashedKeyGenParams;
-  let signAlgo: AlgorithmIdentifier | RsaPssParams | EcdsaParams;
-  if (alg.startsWith("ES")) {
-    const curve = alg === "ES256" ? "P-256" : alg === "ES384" ? "P-384" : "P-521";
-    const hash = alg === "ES256" ? "SHA-256" : alg === "ES384" ? "SHA-384" : "SHA-512";
-    keyAlgo = { name: "ECDSA", namedCurve: curve };
-    signAlgo = { name: "ECDSA", hash };
-  } else {
-    const hash = alg.endsWith("256") ? "SHA-256" : alg.endsWith("384") ? "SHA-384" : "SHA-512";
-    const name = alg.startsWith("PS") ? "RSA-PSS" : "RSASSA-PKCS1-v1_5";
-    keyAlgo = { name, modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash };
-    signAlgo = alg.startsWith("PS")
-      ? { name: "RSA-PSS", saltLength: hash === "SHA-256" ? 32 : hash === "SHA-384" ? 48 : 64 }
-      : { name: "RSASSA-PKCS1-v1_5" };
-  }
+  const { keyAlgo, signAlgo } = algParams(alg);
   const pair = await crypto.subtle.generateKey(keyAlgo, true, ["sign", "verify"]);
   const jwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
   const header = jsonSeg({ alg, typ: "JWT", kid });
@@ -272,10 +308,7 @@ async function mintWithAlg(
   const signingInput = new TextEncoder().encode(`${header}.${payload}`);
   const sig = await crypto.subtle.sign(signAlgo, pair.privateKey, signingInput);
   const token = `${header}.${payload}.${b64url(new Uint8Array(sig))}`;
-  const pub: Jwk = jwk.kty === "EC"
-    ? { kty: "EC", kid, crv: jwk.crv, x: jwk.x, y: jwk.y, alg }
-    : { kty: "RSA", kid, n: jwk.n, e: jwk.e, alg };
-  return { token, jwks: [pub] };
+  return { token, jwks: [publicJwk(jwk, kid, alg)] };
 }
 
 Deno.test("verifyIdToken: accepts ES256 / PS256 / RS384 tokens", async () => {

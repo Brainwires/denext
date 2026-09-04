@@ -6,6 +6,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { DEV_RELOAD_SCRIPT } from "../src/build/dev-server.ts";
+import { devOriginAllowed } from "../src/build/dev-server/dev-endpoints.ts";
 import { FakeElement } from "./helpers/dom.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -153,4 +154,19 @@ Deno.test("a reload frame triggers a full page reload", () => {
 Deno.test("dev script sets the __denextDev marker for the client reconciler", () => {
   const h = runDevScript();
   assertEquals(h.win.__denextDev, true);
+});
+
+Deno.test("devOriginAllowed: the Host must be loopback or an allowed dev origin (DNS rebinding)", () => {
+  const req = (host: string, site = "same-origin") =>
+    new Request(`http://${host}/_denext/dev-state`, { headers: { "sec-fetch-site": site } });
+  const url = (host: string) => new URL(`http://${host}/_denext/dev-state`);
+  assertEquals(devOriginAllowed(req("localhost:3000"), url("localhost:3000"), []), true);
+  assertEquals(devOriginAllowed(req("127.0.0.1:3000"), url("127.0.0.1:3000"), []), true);
+  assertEquals(devOriginAllowed(req("[::1]:3000"), url("[::1]:3000"), []), true);
+  // A rebound hostname resolving to 127.0.0.1 is "same-origin" to the browser — refused.
+  assertEquals(devOriginAllowed(req("evil.example:3000"), url("evil.example:3000"), []), false);
+  assertEquals(
+    devOriginAllowed(req("dev.lan:3000"), url("dev.lan:3000"), ["http://dev.lan:3000"]),
+    true,
+  );
 });

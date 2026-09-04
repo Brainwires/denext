@@ -3,10 +3,6 @@
 import { contentType } from "@std/media-types";
 import { extname, join, normalize, resolve } from "@std/path";
 
-export interface StaticResult {
-  response: Response;
-}
-
 /**
  * Try to serve `pathname` from `publicDir`. Returns a Response, or null if no
  * matching file exists (so the caller can fall through to routing).
@@ -22,74 +18,85 @@ export async function serveStatic(
 ): Promise<Response | null> {
   const decoded = safeDecode(pathname);
   if (decoded === null) return null;
-
-  // Resolve within publicDir and reject anything that escapes it.
   const rootAbs = resolve(publicDir);
-  const target = resolve(join(rootAbs, "." + normalize("/" + decoded)));
-  if (target !== rootAbs && !target.startsWith(rootAbs + separator())) {
-    return null;
-  }
-
-  let info: Deno.FileInfo;
-  try {
-    info = await Deno.stat(target);
-  } catch {
-    return null;
-  }
-  if (!info.isFile) return null;
-
-  // Defense in depth: the lexical check above blocks `../` traversal, but a
-  // symlink *inside* publicDir can still point outside it (stat/open follow
-  // symlinks). Resolve the real path and re-check it stays within publicDir.
-  try {
-    const realRoot = await Deno.realPath(rootAbs);
-    const realTarget = await Deno.realPath(target);
-    if (realTarget !== realRoot && !realTarget.startsWith(realRoot + separator())) {
-      return null;
-    }
-  } catch {
-    return null;
-  }
-
+  const target = resolveWithin(rootAbs, decoded);
+  if (target === null) return null;
+  const info = await statFile(target);
+  if (!info) return null;
+  // Defense in depth: the lexical check blocks `../` traversal, but a symlink *inside*
+  // publicDir can still point outside it (stat/open follow symlinks). Resolve the real
+  // path and re-check it stays within publicDir.
+  if (!(await realPathWithin(rootAbs, target))) return null;
   const type = contentType(extname(target)) ?? "application/octet-stream";
-
-  // Serve a precompressed `.gz` sibling when the client accepts gzip and one was
-  // emitted at build time. `Vary: Accept-Encoding` keeps shared caches from serving the
-  // gzipped body to a client that didn't ask for it.
   if (acceptEncoding && /(^|,)\s*gzip\b/i.test(acceptEncoding)) {
-    const gzPath = target + ".gz";
-    try {
-      const gzInfo = await Deno.stat(gzPath);
-      if (gzInfo.isFile) {
-        // Same symlink-escape recheck as the identity file: a `<file>.gz` symlink could
-        // point outside the served root even though its lexical path sits inside it. On
-        // any escape/error we throw and fall through to the validated identity file.
-        const realRootGz = await Deno.realPath(rootAbs);
-        const realGz = await Deno.realPath(gzPath);
-        if (realGz !== realRootGz && !realGz.startsWith(realRootGz + separator())) {
-          throw new Error("gz sibling escapes publicDir");
-        }
-        const gzFile = await Deno.open(gzPath, { read: true });
-        const headers = new Headers({
-          "content-type": type,
-          "content-encoding": "gzip",
-          "vary": "Accept-Encoding",
-          "content-length": String(gzInfo.size),
-        });
-        if (info.mtime) headers.set("last-modified", info.mtime.toUTCString());
-        return new Response(gzFile.readable, { status: 200, headers });
-      }
-    } catch {
-      // No `.gz` sibling (or unreadable) — fall through to the identity file.
-    }
+    const gz = await serveGzipSibling(rootAbs, target, type, info);
+    if (gz) return gz;
   }
-
   const file = await Deno.open(target, { read: true });
   const headers = new Headers({ "content-type": type });
   if (info.size != null) headers.set("content-length", String(info.size));
   if (info.mtime) headers.set("last-modified", info.mtime.toUTCString());
-
   return new Response(file.readable, { status: 200, headers });
+}
+
+/** Resolve `decoded` inside `rootAbs`, or null when the lexical path escapes it. */
+function resolveWithin(rootAbs: string, decoded: string): string | null {
+  const target = resolve(join(rootAbs, "." + normalize("/" + decoded)));
+  if (target !== rootAbs && !target.startsWith(rootAbs + separator())) return null;
+  return target;
+}
+
+/** `Deno.stat` for an existing regular file, else null. */
+async function statFile(path: string): Promise<Deno.FileInfo | null> {
+  try {
+    const info = await Deno.stat(path);
+    return info.isFile ? info : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether `target`'s REAL path (symlinks followed) stays under `rootAbs`'s real path. */
+async function realPathWithin(rootAbs: string, target: string): Promise<boolean> {
+  try {
+    const realRoot = await Deno.realPath(rootAbs);
+    const realTarget = await Deno.realPath(target);
+    return realTarget === realRoot || realTarget.startsWith(realRoot + separator());
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Serve a precompressed `.gz` sibling emitted at build time (immutable client bundles are
+ * gzipped once — see precompress.ts). `Vary: Accept-Encoding` keeps shared caches from
+ * serving the gzipped body to a client that didn't ask for it. The sibling gets the same
+ * symlink-escape recheck as the identity file. Null (fall through to the identity file)
+ * when absent, unreadable or escaping.
+ */
+async function serveGzipSibling(
+  rootAbs: string,
+  target: string,
+  type: string,
+  info: Deno.FileInfo,
+): Promise<Response | null> {
+  const gzPath = target + ".gz";
+  const gzInfo = await statFile(gzPath);
+  if (!gzInfo || !(await realPathWithin(rootAbs, gzPath))) return null;
+  let gzFile: Deno.FsFile;
+  try {
+    gzFile = await Deno.open(gzPath, { read: true });
+  } catch {
+    return null;
+  }
+  const headers = new Headers({
+    "content-type": type,
+    "content-encoding": "gzip",
+    "vary": "Accept-Encoding",
+    "content-length": String(gzInfo.size),
+  });
+  if (info.mtime) headers.set("last-modified", info.mtime.toUTCString());
+  return new Response(gzFile.readable, { status: 200, headers });
 }
 
 function separator(): string {

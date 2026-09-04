@@ -26,7 +26,7 @@ import "../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
 import { renderClassToVNode } from "../compat/class-component.ts";
 import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
-import { enterScope, type IdHolder, nextId, rootScope } from "./tree-id.ts";
+import { enterScope, type IdHolder, type IdScope, nextId, rootScope } from "./tree-id.ts";
 export type { IdHolder } from "./tree-id.ts";
 
 /** HTML void elements that must not have a closing tag. */
@@ -199,7 +199,7 @@ export function warnDangerousHtml(tag: string): void {
  * sink exactly like `dangerouslySetInnerHTML`, not something attribute-escaping
  * protects. Gated on `globalThis.__denextDev`, so production pays nothing.
  */
-export function warnSrcdoc(): void {
+function warnSrcdoc(): void {
   if ((globalThis as { __denextDev?: boolean }).__denextDev !== true) return;
   console.warn(
     `denext: <iframe srcdoc> renders an HTML document that runs its own scripts — ` +
@@ -211,8 +211,33 @@ export function warnSrcdoc(): void {
 /** A provider frame active during rendering: context id -> value. */
 export type ProviderScope = Map<symbol, unknown>;
 
-/** Build a read-only dispatcher used only during a single SSR pass. */
-export function createSSRDispatcher(scopes: ProviderScope[], ids: IdHolder): Dispatcher {
+/**
+ * Build the read-only dispatcher used during a single SSR pass. This is the ONE
+ * server dispatcher — every server renderer (string, stream, Flight, PPR, and
+ * their Flight variants) uses it instead of hand-rolling its own.
+ *
+ * @param scopes The active provider scopes (outermost first). Pass a **getter**
+ *   (`() => this.activeScopes`) when the caller reassigns its scopes array
+ *   between renders — the streaming/PPR renderers do — so `useContext` always
+ *   reads the live array rather than a stale reference captured at construction.
+ * @param ids The id holder read by `useId` (mutated in place, never reassigned).
+ * @param effects When provided, effect hooks (`useEffect`/`useLayoutEffect`/
+ *   `useInsertionEffect`, and a subscribing `useSyncExternalStore`) bump
+ *   `effects.count` so a Flight renderer can auto-pick an island's hydration
+ *   strategy (an island that runs an effect must hydrate). Omit it — the string
+ *   and non-Flight PPR passes do — to make every effect hook a pure no-op.
+ */
+export function createSSRDispatcher(
+  scopes: ProviderScope[] | (() => ProviderScope[]),
+  ids: IdHolder,
+  effects?: { count: number },
+): Dispatcher {
+  const readScopes = typeof scopes === "function" ? scopes : () => scopes;
+  // Effects never run on the server; a Flight renderer only counts them (so it knows
+  // the component needs hydration).
+  const countEffect = () => {
+    if (effects) effects.count++;
+  };
   return {
     useState<S>(initial: S | (() => S)) {
       const value = typeof initial === "function" ? (initial as () => S)() : initial;
@@ -222,9 +247,7 @@ export function createSSRDispatcher(scopes: ProviderScope[], ids: IdHolder): Dis
     useReducer<S, A, I>(_reducer: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
       return [init ? init(initialArg) : (initialArg as unknown as S), () => {}];
     },
-    useEffect() {
-      // Effects never run on the server.
-    },
+    useEffect: countEffect,
     useMemo<T>(factory: () => T) {
       return factory();
     },
@@ -232,12 +255,7 @@ export function createSSRDispatcher(scopes: ProviderScope[], ids: IdHolder): Dis
       return { current: initial };
     },
     useContext<T>(context: Context<T>): T {
-      for (let i = scopes.length - 1; i >= 0; i--) {
-        if (scopes[i].has(context._id)) {
-          return scopes[i].get(context._id) as T;
-        }
-      }
-      return context._defaultValue;
+      return readContext(readScopes(), context);
     },
     useId(): string {
       return nextId(ids.scope);
@@ -247,14 +265,11 @@ export function createSSRDispatcher(scopes: ProviderScope[], ids: IdHolder): Dis
       getSnapshot: () => T,
       getServerSnapshot?: () => T,
     ): T {
+      if (effects) effects.count++; // subscribes on mount → needs hydration
       return (getServerSnapshot ?? getSnapshot)();
     },
-    useLayoutEffect() {
-      // Layout effects never run on the server.
-    },
-    useInsertionEffect() {
-      // Insertion effects never run on the server.
-    },
+    useLayoutEffect: countEffect,
+    useInsertionEffect: countEffect,
     useMemoCache(size: number): unknown[] {
       // One-shot render: a fresh cache each time. Generated code still recomputes
       // correctly (every slot reads as the sentinel), it just never reuses across
@@ -262,6 +277,14 @@ export function createSSRDispatcher(scopes: ProviderScope[], ids: IdHolder): Dis
       return new Array(size).fill(MEMO_CACHE_SENTINEL);
     },
   };
+}
+
+/** The nearest provider's value for `context` (innermost scope wins), else its default. */
+function readContext<T>(scopes: ProviderScope[], context: Context<T>): T {
+  for (let i = scopes.length - 1; i >= 0; i--) {
+    if (scopes[i].has(context._id)) return scopes[i].get(context._id) as T;
+  }
+  return context._defaultValue;
 }
 
 /**
@@ -292,8 +315,13 @@ export function resolveContextType(type: unknown, scopes: ProviderScope[]): unkn
 export interface HeadCollector {
   /** The last in-tree `<title>` text, if any (it wins over other titles). */
   title?: string;
-  /** Serialized `<meta>`/`<link>` tags gathered from the tree. */
-  tags: string[];
+  /**
+   * Serialized `<meta>`/`<link>` tags gathered from the tree, in tree order. Entries that
+   * share a `dedup` identity collapse to the LAST one when the head is emitted (see
+   * {@link collapseHeadTags}) — `next/head`'s `key` de-duplication and its
+   * `charSet`/`viewport` singletons.
+   */
+  tags: HeadTag[];
   /**
    * HTML fragments contributed by {@link useServerInsertedHTML} callbacks (e.g. a
    * CSS-in-JS registry's collected `<style>` tags), rendered after the tree and
@@ -311,10 +339,6 @@ export interface HeadCollector {
 const INSERT_SINK_KEY = Symbol.for("denext.serverInsertSink");
 interface SinkHolder {
   [INSERT_SINK_KEY]?: ((cb: () => VNodeChildren) => void) | null;
-}
-/** Register a `useServerInsertedHTML` callback with the active render pass (SSR only). */
-export function registerServerInsertedHTML(cb: () => VNodeChildren): void {
-  (globalThis as SinkHolder)[INSERT_SINK_KEY]?.(cb);
 }
 
 /**
@@ -353,6 +377,72 @@ export function flushServerInsertedHTML(
 
 /** Element tags hoisted into the document head when a collector is present. */
 export const HOISTED_TAGS = new Set(["title", "meta", "link"]);
+
+/** One hoisted `<meta>`/`<link>` in a {@link HeadCollector}. */
+export interface HeadTag {
+  /** The serialized (already escaped) tag, e.g. `<meta name="description" content="…">`. */
+  html: string;
+  /**
+   * De-duplication identity, when the tag has one (see {@link headDedupKey}); tags with the
+   * same identity collapse to the last one. Absent for ordinary keyless tags, which always
+   * all survive.
+   */
+  dedup?: string;
+}
+
+/**
+ * The de-duplication identity of a hoisted `<meta>`/`<link>` — `next/head`'s semantics,
+ * captured BEFORE the element's props are serialized (the `key` never reaches the HTML):
+ * - `<meta charSet>` (either casing) → `charset`: a document has one charset, so it is a
+ *   singleton even when keyed.
+ * - a user `key` → `k:<key>`: same key, last wins (how `next/head` lets a page override a
+ *   layout's tag).
+ * - an unkeyed `<meta name="viewport">` → `meta:viewport` (the other `next/head` singleton).
+ * Anything else — including two keyless `<meta property="og:image">` or two stylesheet
+ * `<link>`s — has no identity and is never collapsed.
+ */
+export function headDedupKey(
+  tag: string,
+  props: Record<string, unknown>,
+  key: unknown = props.key,
+): string | undefined {
+  if (tag === "meta" && (props.charSet != null || props.charset != null)) return "charset";
+  if (key != null) return `k:${userKey(key)}`;
+  if (tag === "meta" && props.name === "viewport") return "meta:viewport";
+  return undefined;
+}
+
+/**
+ * The author's key behind a React-namespaced one: `Children.map`/`toArray` re-key their
+ * clones as `.$key` (or `.1:$key`), so — like `next/head`'s `unique()` — the identity is
+ * whatever follows the first `$`. A plain key passes through.
+ */
+function userKey(key: unknown): string {
+  const k = String(key);
+  const i = k.indexOf("$");
+  return i > 0 ? k.slice(i + 1) : k;
+}
+
+/**
+ * Join a {@link HeadCollector}'s tags into head HTML, collapsing entries that share a
+ * {@link HeadTag.dedup} identity to the LAST occurrence at its own position (the earlier
+ * duplicate is dropped — `next/head`'s reverse-filter order). Tags without an identity pass
+ * through in tree order. Operates on the already-serialized strings; nothing is re-escaped.
+ */
+export function collapseHeadTags(tags: HeadTag[]): string {
+  const out: string[] = [];
+  let seen: Map<string, number> | undefined;
+  for (const t of tags) {
+    if (t.dedup !== undefined) {
+      seen ??= new Map();
+      const prev = seen.get(t.dedup);
+      if (prev !== undefined) out[prev] = "";
+      seen.set(t.dedup, out.length);
+    }
+    out.push(t.html);
+  }
+  return out.join("");
+}
 
 /** Options for {@link renderToString}. */
 export interface RenderOptions {
@@ -552,244 +642,320 @@ function renderVNodeInto(node: VNode, ctx: RenderCtx): void | Promise<void> {
   // Some npm libraries (e.g. recharts) construct elements with a null `props`;
   // React treats an element's props as `{}` in that case, so normalize here.
   const props = node.props ?? {};
-
-  // Fragment (also the shape used by context providers).
-  if (type === FRAGMENT) {
-    const providerInfo = props[PROVIDER as unknown as string] as
-      | { id: symbol; value: unknown }
-      | undefined;
-    if (providerInfo) {
-      const scope: ProviderScope = new Map();
-      scope.set(providerInfo.id, providerInfo.value);
-      ctx.scopes.push(scope);
-      const pending = renderChildrenInto(props.children, ctx);
-      if (isThenable(pending)) {
-        return (pending as Promise<void>).finally(() => {
-          ctx.scopes.pop();
-        });
-      }
-      ctx.scopes.pop();
-      return;
-    }
-    return renderChildrenInto(props.children, ctx);
-  }
-
+  if (type === FRAGMENT) return renderFragmentInto(props, ctx);
   // Portal: its children target a client DOM node that doesn't exist during SSR,
   // so — like React's server renderer — a portal emits nothing.
   if ((type as unknown) === PORTAL) return;
-
-  // Suspense boundary: fully resolve children, retrying on suspension. The async string
-  // render always awaits the data (so the fallback isn't shown); the SYNCHRONOUS render
-  // (`ctx.sync`, {@link renderToStringSync}) can't await, so it shows the fallback in
-  // place — matching React's real `renderToString`.
-  if ((type as unknown) === SUSPENSE) {
-    // A Suspense boundary is its own id scope: it consumes exactly ONE slot in its
-    // parent (so content after it aligns regardless of how many ids are inside),
-    // and its children's ids are rooted at the boundary's position — which is what
-    // lets a streamed/isolated hole render reproduce them. Each retry resets the
-    // boundary scope's own counters (its parent slot is already fixed).
-    const parentScope = ctx.ids.scope;
-    const boundaryScope = enterScope(parentScope);
-    const restore = () => {
-      ctx.ids.scope = parentScope;
-    };
-    // Sync mode only: render the boundary's fallback in its place (scope reset so the
-    // fallback's ids start where the children's would). Throws if the fallback is async.
-    const renderFallbackSync = (): string => {
-      boundaryScope.count = 0;
-      boundaryScope.local = 0;
-      ctx.ids.scope = boundaryScope;
-      const fb = renderToStr(props.fallback as VNodeChildren, ctx);
-      restore();
-      if (isThenable(fb)) {
-        (fb as Promise<unknown>).catch(() => {});
-        throw new Error(
-          "denext: renderToStringSync() — a <Suspense> fallback is itself asynchronous; " +
-            "a fallback must render synchronously.",
-        );
-      }
-      return fb;
-    };
-    const retry = (): string | Promise<string> => {
-      boundaryScope.count = 0;
-      boundaryScope.local = 0;
-      ctx.ids.scope = boundaryScope;
-      return attempt();
-    };
-    const attempt = (): string | Promise<string> => {
-      ctx.ids.scope = boundaryScope;
-      let r: string | Promise<string>;
-      try {
-        r = renderToStr(props.children, ctx);
-      } catch (err) {
-        if (isThenable(err)) {
-          if (ctx.sync) {
-            (err as Promise<unknown>).catch(() => {});
-            return renderFallbackSync();
-          }
-          return (err as Promise<unknown>).then(retry);
-        }
-        throw err;
-      }
-      if (isThenable(r)) {
-        if (ctx.sync) {
-          (r as Promise<unknown>).catch(() => {});
-          return renderFallbackSync();
-        }
-        return (r as Promise<string>).then((s) => (restore(), s), (err) => {
-          if (isThenable(err)) return (err as Promise<unknown>).then(retry);
-          restore();
-          throw err;
-        });
-      }
-      restore();
-      return r;
-    };
-    return appendResult(attempt(), ctx);
-  }
-
-  // Error boundary: render children; on a (non-suspension) throw, render fallback.
+  if ((type as unknown) === SUSPENSE) return appendResult(renderSuspenseToStr(props, ctx), ctx);
   if ((type as unknown) === ERROR_BOUNDARY) {
-    // The fallback replaces the children, so rewind the active scope to its
-    // pre-children state — the fallback's ids then start where the children's did
-    // (matching a client that renders the fallback from that same position).
-    const idScope = ctx.ids.scope;
-    const savedCount = idScope.count;
-    const savedLocal = idScope.local;
-    const onError = (err: unknown): string | Promise<string> => {
-      // Suspensions go to <Suspense>; notFound()/forbidden()/unauthorized()
-      // bubble to the page handler for status-code rendering.
-      if (isThenable(err) || isControlSignal(err)) throw err;
-      ctx.ids.scope = idScope;
-      idScope.count = savedCount;
-      idScope.local = savedLocal;
-      const Fallback = props.fallback as (
-        p: { error: Error; reset: () => void },
-      ) => VNode | Promise<VNode>;
-      setDispatcher(ctx.dispatcher);
-      reportBoundaryError(props, err);
-      const fb = Fallback({ error: toClientError(err), reset: () => {} });
-      if (isThenable(fb)) {
-        return (fb as Promise<VNode>).then((n) => renderToStr(n as VNodeChildren, ctx));
-      }
-      return renderToStr(fb as VNodeChildren, ctx);
-    };
-    let r: string | Promise<string>;
-    try {
-      r = renderToStr(props.children, ctx);
-    } catch (err) {
-      r = onError(err);
-    }
-    if (isThenable(r)) r = (r as Promise<string>).catch(onError);
-    return appendResult(r, ctx);
+    return appendResult(renderErrorBoundaryToStr(props, ctx), ctx);
   }
+  if (isComponentType(type)) return renderComponentInto(type, props, ctx);
+  return renderHostInto(type as string, props, ctx, node.key);
+}
 
-  // Function component (or a memo/forwardRef object wrapper). Each component opens
-  // a fresh id scope (consuming a slot in its parent's scope) so its `useId` and
-  // its descendants' ids are derived from its tree position; the scope is restored
-  // once its subtree finishes (or unwinds, so a suspension leaves the parent clean).
-  if (isComponentType(type)) {
-    setDispatcher(ctx.dispatcher);
-    const parentScope = ctx.ids.scope;
-    ctx.ids.scope = enterScope(parentScope);
-    const restore = () => {
-      ctx.ids.scope = parentScope;
-    };
-    // Class components: cheap always-on detection; the runtime is gated (folds out
-    // when classComponents is off), and using a class off throws a guided error.
-    if (isClassComponent(type)) {
-      if (__DENEXT_CLASS_COMPONENTS__) {
-        let result: VNodeChild;
-        try {
-          result = renderClassToVNode(
-            type,
-            props,
-            resolveContextType(type, ctx.scopes),
-          ) as VNodeChild;
-        } catch (err) {
-          restore();
-          throw err;
-        }
-        return finishComponent(renderChildInto(result, ctx), restore);
-      }
-      restore();
-      throw classComponentsDisabledError();
-    }
-    // Resolve memo/forwardRef wrappers, then invoke. Sync components (the common
-    // case) return a VNode and never allocate a promise; async server components
-    // return one and are awaited.
-    let result: VNodeChild | Promise<VNodeChild>;
-    try {
-      result = invokeComponent(resolveComponentType(type), props) as
-        | VNodeChild
-        | Promise<VNodeChild>;
-    } catch (err) {
-      restore();
-      throw err;
-    }
-    if (isThenable(result)) {
-      return (result as Promise<VNodeChild>).then(
-        (r) => finishComponent(renderChildInto(r, ctx), restore),
-        (err) => {
-          restore();
-          throw err;
-        },
-      );
-    }
-    return finishComponent(renderChildInto(result as VNodeChild, ctx), restore);
+/** A VNode's props (null-normalized). */
+type Props = VNode["props"];
+
+/** Fragment (also the shape used by context providers). */
+function renderFragmentInto(props: Props, ctx: RenderCtx): void | Promise<void> {
+  const providerInfo = props[PROVIDER as unknown as string] as
+    | { id: symbol; value: unknown }
+    | undefined;
+  if (!providerInfo) return renderChildrenInto(props.children, ctx);
+  ctx.scopes.push(new Map([[providerInfo.id, providerInfo.value]]));
+  const pending = renderChildrenInto(props.children, ctx);
+  if (isThenable(pending)) {
+    return (pending as Promise<void>).finally(() => {
+      ctx.scopes.pop();
+    });
   }
+  ctx.scopes.pop();
+}
 
-  // Intrinsic element.
-  const tag = type as string;
+/** A Suspense boundary mid-render: its props, the render context, and its two id scopes. */
+interface BoundaryRender {
+  props: Props;
+  ctx: RenderCtx;
+  parentScope: IdScope;
+  boundaryScope: IdScope;
+}
+
+/**
+ * Suspense boundary: fully resolve children, retrying on suspension. The async string
+ * render always awaits the data (so the fallback isn't shown); the SYNCHRONOUS render
+ * (`ctx.sync`, {@link renderToStringSync}) can't await, so it shows the fallback in
+ * place — matching React's real `renderToString`.
+ *
+ * A Suspense boundary is its own id scope: it consumes exactly ONE slot in its parent (so
+ * content after it aligns regardless of how many ids are inside), and its children's ids
+ * are rooted at the boundary's position — which is what lets a streamed/isolated hole
+ * render reproduce them.
+ */
+function renderSuspenseToStr(props: Props, ctx: RenderCtx): string | Promise<string> {
+  const parentScope = ctx.ids.scope;
+  const boundaryScope = enterScope(parentScope);
+  return attemptBoundary({ props, ctx, parentScope, boundaryScope });
+}
+
+/** Enter the boundary scope with its own counters reset (its parent slot is already fixed). */
+function enterBoundary(b: BoundaryRender): void {
+  b.boundaryScope.count = 0;
+  b.boundaryScope.local = 0;
+  b.ctx.ids.scope = b.boundaryScope;
+}
+
+function restoreBoundary(b: BoundaryRender): void {
+  b.ctx.ids.scope = b.parentScope;
+}
+
+/**
+ * Sync mode only: render the boundary's fallback in its place (scope reset so the
+ * fallback's ids start where the children's would). Throws if the fallback is async.
+ */
+function renderFallbackSync(b: BoundaryRender): string {
+  enterBoundary(b);
+  const fb = renderToStr(b.props.fallback as VNodeChildren, b.ctx);
+  restoreBoundary(b);
+  if (isThenable(fb)) {
+    (fb as Promise<unknown>).catch(() => {});
+    throw new Error(
+      "denext: renderToStringSync() — a <Suspense> fallback is itself asynchronous; " +
+        "a fallback must render synchronously.",
+    );
+  }
+  return fb;
+}
+
+/** In sync mode a suspension can't be awaited: swallow the promise and show the fallback. */
+function suspendedSync(b: BoundaryRender, pending: unknown): string | null {
+  if (!b.ctx.sync) return null;
+  (pending as Promise<unknown>).catch(() => {});
+  return renderFallbackSync(b);
+}
+
+/** Retry after a suspension settles: reset the boundary's counters and render again. */
+function retryBoundary(b: BoundaryRender): string | Promise<string> {
+  enterBoundary(b);
+  return attemptBoundary(b);
+}
+
+function attemptBoundary(b: BoundaryRender): string | Promise<string> {
+  b.ctx.ids.scope = b.boundaryScope;
+  let r: string | Promise<string>;
+  try {
+    r = renderToStr(b.props.children, b.ctx);
+  } catch (err) {
+    if (!isThenable(err)) throw err;
+    return suspendedSync(b, err) ?? (err as Promise<unknown>).then(() => retryBoundary(b));
+  }
+  if (isThenable(r)) {
+    return suspendedSync(b, r) ??
+      (r as Promise<string>).then((s) => (restoreBoundary(b), s), (err) => {
+        if (isThenable(err)) return (err as Promise<unknown>).then(() => retryBoundary(b));
+        restoreBoundary(b);
+        throw err;
+      });
+  }
+  restoreBoundary(b);
+  return r;
+}
+
+/**
+ * Error boundary: render children; on a (non-suspension) throw, render fallback. The
+ * fallback replaces the children, so rewind the active scope to its pre-children state —
+ * the fallback's ids then start where the children's did (matching a client that renders
+ * the fallback from that same position).
+ */
+function renderErrorBoundaryToStr(props: Props, ctx: RenderCtx): string | Promise<string> {
+  const idScope = ctx.ids.scope;
+  const savedCount = idScope.count;
+  const savedLocal = idScope.local;
+  const onError = (err: unknown): string | Promise<string> => {
+    // Suspensions go to <Suspense>; notFound()/forbidden()/unauthorized()
+    // bubble to the page handler for status-code rendering.
+    if (isThenable(err) || isControlSignal(err)) throw err;
+    ctx.ids.scope = idScope;
+    idScope.count = savedCount;
+    idScope.local = savedLocal;
+    return renderFallbackToStr(props, err, ctx);
+  };
+  let r: string | Promise<string>;
+  try {
+    r = renderToStr(props.children, ctx);
+  } catch (err) {
+    r = onError(err);
+  }
+  return isThenable(r) ? (r as Promise<string>).catch(onError) : r;
+}
+
+/** Invoke the boundary's fallback for `err` (reported first) and render what it returns. */
+function renderFallbackToStr(props: Props, err: unknown, ctx: RenderCtx): string | Promise<string> {
+  const Fallback = props.fallback as (
+    p: { error: Error; reset: () => void },
+  ) => VNode | Promise<VNode>;
+  setDispatcher(ctx.dispatcher);
+  reportBoundaryError(props, err);
+  const fb = Fallback({ error: toClientError(err), reset: () => {} });
+  if (isThenable(fb)) {
+    return (fb as Promise<VNode>).then((n) => renderToStr(n as VNodeChildren, ctx));
+  }
+  return renderToStr(fb as VNodeChildren, ctx);
+}
+
+/**
+ * Function component (or a memo/forwardRef object wrapper). Each component opens
+ * a fresh id scope (consuming a slot in its parent's scope) so its `useId` and
+ * its descendants' ids are derived from its tree position; the scope is restored
+ * once its subtree finishes (or unwinds, so a suspension leaves the parent clean).
+ */
+function renderComponentInto(type: unknown, props: Props, ctx: RenderCtx): void | Promise<void> {
+  setDispatcher(ctx.dispatcher);
+  const parentScope = ctx.ids.scope;
+  ctx.ids.scope = enterScope(parentScope);
+  const restore = () => {
+    ctx.ids.scope = parentScope;
+  };
+  let result: VNodeChild | Promise<VNodeChild>;
+  try {
+    result = invokeSync(type, props, ctx);
+  } catch (err) {
+    restore();
+    throw err;
+  }
+  if (isThenable(result)) {
+    return (result as Promise<VNodeChild>).then(
+      (r) => finishComponent(renderChildInto(r, ctx), restore),
+      (err) => {
+        restore();
+        throw err;
+      },
+    );
+  }
+  return finishComponent(renderChildInto(result as VNodeChild, ctx), restore);
+}
+
+/**
+ * Invoke a component without awaiting. Class components: cheap always-on detection; the
+ * runtime is gated (folds out when classComponents is off), and using a class off throws
+ * a guided error. Otherwise resolve memo/forwardRef wrappers, then invoke: sync components
+ * (the common case) return a VNode and never allocate a promise; async server components
+ * return one and are awaited by the caller.
+ */
+function invokeSync(type: unknown, props: Props, ctx: RenderCtx): VNodeChild | Promise<VNodeChild> {
+  if (isClassComponent(type)) {
+    if (__DENEXT_CLASS_COMPONENTS__) {
+      return renderClassToVNode(type, props, resolveContextType(type, ctx.scopes)) as VNodeChild;
+    }
+    throw classComponentsDisabledError();
+  }
+  return invokeComponent(resolveComponentType(type), props) as VNodeChild | Promise<VNodeChild>;
+}
+
+/** Intrinsic element. */
+function renderHostInto(
+  tag: string,
+  props: Props,
+  ctx: RenderCtx,
+  key: unknown = props.key,
+): void | Promise<void> {
   let attrs = serializeAttributes(props, tag);
   // A <form> posting to a server action needs method=post for the no-JS path.
   if (tag === "form" && isServerAction(props.action) && props.method == null) {
     attrs += ` method="post"`;
   }
-
   // React 19 document metadata: hoist <title>/<meta>/<link> into the head
   // collector (when one is active) instead of emitting them inline.
-  if (ctx.head && HOISTED_TAGS.has(tag)) {
-    const head = ctx.head;
-    if (tag === "title") {
-      const t = renderToStr(props.children, { ...ctx, head: null });
-      if (isThenable(t)) {
-        return (t as Promise<string>).then((s) => {
-          head.title = s;
-        });
-      }
-      head.title = t;
-      return;
-    }
-    head.tags.push(`<${tag}${attrs}>`);
-    return;
-  }
-
+  if (ctx.head && HOISTED_TAGS.has(tag)) return hoistInto(ctx.head, tag, attrs, props, ctx, key);
   if (VOID_ELEMENTS.has(tag)) {
     ctx.out.push(`<${tag}${attrs}>`);
     return;
   }
-
   // dangerouslySetInnerHTML support (raw HTML injection).
-  const dangerous = props.dangerouslySetInnerHTML as
-    | { __html: string }
-    | undefined;
+  const dangerous = props.dangerouslySetInnerHTML as { __html: string } | undefined;
   if (dangerous && typeof dangerous.__html === "string") {
     warnDangerousHtml(tag);
     ctx.out.push(`<${tag}${attrs}>${dangerous.__html}</${tag}>`);
     return;
   }
-
   // Open tag, children appended in place, then close tag — the whole tree shares
   // one buffer, so no per-element intermediate string is built.
   ctx.out.push(`<${tag}${attrs}>`);
-  const pending = renderChildrenInto(props.children, ctx);
+  const pending = renderChildrenInto(hostChildren(tag, props), ctx);
   if (isThenable(pending)) {
     return (pending as Promise<void>).then(() => {
       ctx.out.push(`</${tag}>`);
     });
   }
   ctx.out.push(`</${tag}>`);
+}
+
+/**
+ * The children a host element actually renders. React folds a `<textarea>`'s
+ * `value`/`defaultValue` into its text content and marks the `<option>`s matching a
+ * `<select>`'s `value`/`defaultValue` as `selected`, so a form renders filled-in before
+ * hydration (and without JS). Every other tag renders `props.children` as authored.
+ */
+export function hostChildren(tag: string, props: Record<string, unknown>): VNodeChildren {
+  if (tag === "textarea") {
+    const v = props.value ?? props.defaultValue;
+    return v == null ? props.children as VNodeChildren : String(v);
+  }
+  if (tag === "select") {
+    const v = props.value ?? props.defaultValue;
+    if (v == null) return props.children as VNodeChildren;
+    const wanted = new Set((Array.isArray(v) ? v : [v]).map(String));
+    return markSelected(props.children as VNodeChildren, wanted);
+  }
+  return props.children as VNodeChildren;
+}
+
+/** Clone the `<option>`s (through arrays and `<optgroup>`s) whose value is in `wanted`. */
+function markSelected(children: VNodeChildren, wanted: Set<string>): VNodeChildren {
+  if (Array.isArray(children)) return children.map((c) => markSelected(c, wanted)) as VNodeChildren;
+  const node = children as VNode;
+  if (node == null || typeof node !== "object" || typeof node.type !== "string") return children;
+  const props = node.props ?? {};
+  if (node.type === "optgroup") {
+    return { ...node, props: { ...props, children: markSelected(props.children, wanted) } };
+  }
+  if (node.type !== "option") return children;
+  const value = props.value ?? optionText(props.children);
+  if (value == null || !wanted.has(String(value))) return children;
+  return { ...node, props: { ...props, selected: true } };
+}
+
+/** An `<option>` with no `value` attribute submits its text content. */
+function optionText(children: unknown): string | null {
+  if (typeof children === "string" || typeof children === "number") return String(children);
+  if (Array.isArray(children)) {
+    return children.every((c) => typeof c === "string" || typeof c === "number")
+      ? children.join("")
+      : null;
+  }
+  return null;
+}
+
+/** Hoist a `<title>` (rendered to text, without the collector) or a `<meta>`/`<link>` tag. */
+function hoistInto(
+  head: HeadCollector,
+  tag: string,
+  attrs: string,
+  props: Props,
+  ctx: RenderCtx,
+  key: unknown,
+): void | Promise<void> {
+  if (tag !== "title") {
+    head.tags.push({ html: `<${tag}${attrs}>`, dedup: headDedupKey(tag, props, key) });
+    return;
+  }
+  const t = renderToStr(props.children, { ...ctx, head: null });
+  if (isThenable(t)) {
+    return (t as Promise<string>).then((s) => {
+      head.title = s;
+    });
+  }
+  head.title = t;
 }
 
 /**
@@ -811,92 +977,93 @@ export function serializeAttributes(
   const keys = Object.keys(props);
   for (let i = 0; i < keys.length; i++) {
     const rawName = keys[i];
-    if (
-      rawName === "children" ||
-      rawName === "key" ||
-      rawName === "ref" ||
-      rawName === "dangerouslySetInnerHTML" ||
-      rawName === PROVIDER_KEY
-    ) continue;
+    if (STRUCTURAL_PROPS.has(rawName)) continue;
+    const value = props[rawName];
     // Event handlers are client-only; skip during SSR. Match case-INsensitively:
     // React-style `onClick` AND lowercase HTML-native names (`onmouseover`,
     // `onerror`, …). The lowercase forms would otherwise pass `isValidAttrName`
     // and emit a live handler attribute — an XSS sink for `<div {...untrusted}>`.
     if (ON_ATTR_RE.test(rawName)) {
-      const handler = props[rawName];
-      // A qrl dispatches without mounting (evt:id). In resumable mode a plain
-      // function handler is marked (evt) so the client hydrates its island and
-      // replays the event to the resumed handler.
-      if (isQrl(handler)) {
-        // A closure-free qrl dispatches without mounting (`evt:id`). A qrl that captures
-        // component-local state can't run without its LIVE captures (which exist only
-        // once the component mounts), so in resumable mode mark it `evt` instead — the
-        // client hydrates its island and re-runs the handler with live captures, like a
-        // plain resumable handler. (Dispatching `evt:id` would run the segment with no
-        // scope and throw in `capturedScope()`.)
-        const noMount = !(resumable && handler.denextCapture);
-        dnxH += (dnxH ? " " : "") + domEventType(rawName) +
-          (noMount ? ":" + handler.denextQrlId : "");
-      } else if (resumable && typeof handler === "function") {
-        dnxH += (dnxH ? " " : "") + domEventType(rawName);
-      }
+      const mark = handlerMark(rawName, value, resumable);
+      if (mark) dnxH += (dnxH ? " " : "") + mark;
       continue;
     }
-    const value = props[rawName];
-    // A server action as a form `action`/`formAction`: render the endpoint URL
-    // so the form works without JavaScript (progressive enhancement).
-    if ((rawName === "action" || rawName === "formAction") && isServerAction(value)) {
-      const attr = rawName === "action" ? "action" : "formaction";
-      out += ` ${attr}="${escapeHtml(actionEndpoint(value.denextActionId))}"`;
-      continue;
-    }
-    // A `useActionState` dispatch carrying a permalink (its React 19 3rd arg): render
-    // that URL as the form's action so a pre-hydration submit navigates there.
-    if (
-      (rawName === "action" || rawName === "formAction") && typeof value === "function"
-    ) {
-      const permalink = (value as { denextPermalink?: unknown }).denextPermalink;
-      if (typeof permalink === "string") {
-        const attr = rawName === "action" ? "action" : "formaction";
-        out += ` ${attr}="${escapeHtml(permalink)}"`;
-      }
-      continue;
-    }
-    // Function-valued props (e.g. a client-only form `action={fn}`) are skipped.
-    if (typeof value === "function") continue;
-    if (value == null || value === false) continue;
-
-    const name = normalizeAttrName(rawName);
-    // Drop attribute names that could break out of the tag (defends against a
-    // component spreading untrusted keys, e.g. `<div {...untrusted}>`).
-    if (!isValidAttrName(name)) continue;
-
-    // `<iframe srcdoc>` embeds a full HTML document that runs scripts — an XSS
-    // sink attribute-escaping can't neutralize. Nudge in dev (no-op in prod).
-    if (name === "srcdoc" && tag === "iframe") warnSrcdoc();
-
-    if (BOOLEAN_ATTRS.has(name)) {
-      if (value) out += ` ${name}`;
-      continue;
-    }
-    if (value === true) {
-      out += ` ${name}`;
-      continue;
-    }
-
-    if (name === "style" && typeof value === "object") {
-      out += ` style="${escapeHtml(serializeStyle(value as Record<string, unknown>))}"`;
-      continue;
-    }
-
-    // Drop a dangerous URL scheme (javascript:/vbscript:/executable data:) in a
-    // URL-bearing attribute; a no-op for every other attribute.
-    const safe = sanitizeUrlAttr(tag, name, String(value));
-    if (safe === null) continue;
-    out += ` ${name}="${escapeHtml(safe)}"`;
+    out += attributeFor(rawName, value, tag);
   }
   if (dnxH) out += ` ${DNX_H_ATTR}="${escapeHtml(dnxH)}"`;
   return out;
+}
+
+/** Props that are never attributes: children render separately; the rest are structural. */
+const STRUCTURAL_PROPS = new Set([
+  "children",
+  "key",
+  "ref",
+  "dangerouslySetInnerHTML",
+  PROVIDER_KEY,
+]);
+
+/**
+ * The `data-dnx-h` entry for an event prop. A qrl dispatches without mounting (`evt:id`).
+ * In resumable mode a plain function handler is marked (`evt`) so the client hydrates its
+ * island and replays the event to the resumed handler; so is a qrl that captures
+ * component-local state — it can't run without its LIVE captures (which exist only once
+ * the component mounts), and dispatching `evt:id` would run the segment with no scope and
+ * throw in `capturedScope()`. Null for a client-only handler.
+ */
+function handlerMark(rawName: string, handler: unknown, resumable: boolean): string | null {
+  if (isQrl(handler)) {
+    const noMount = !(resumable && handler.denextCapture);
+    return domEventType(rawName) + (noMount ? ":" + handler.denextQrlId : "");
+  }
+  if (resumable && typeof handler === "function") return domEventType(rawName);
+  return null;
+}
+
+/**
+ * A form `action`/`formAction` URL for a no-JS submit: a server action's endpoint
+ * (progressive enhancement), or the permalink a `useActionState` dispatch carries (its
+ * React 19 3rd arg) so a pre-hydration submit navigates there. Null when neither.
+ */
+function formActionUrl(value: unknown): string | null {
+  if (isServerAction(value)) return actionEndpoint(value.denextActionId);
+  if (typeof value !== "function") return null;
+  const permalink = (value as { denextPermalink?: unknown }).denextPermalink;
+  return typeof permalink === "string" ? permalink : null;
+}
+
+/** One prop's attribute text (leading space), or "" when it is dropped. */
+function attributeFor(rawName: string, value: unknown, tag: string | undefined): string {
+  if (rawName === "action" || rawName === "formAction") {
+    const url = formActionUrl(value);
+    if (url !== null) return ` ${rawName.toLowerCase()}="${escapeHtml(url)}"`;
+  }
+  // Function-valued props (e.g. a client-only form `action={fn}`) are skipped.
+  if (typeof value === "function" || value == null) return "";
+  const name = normalizeAttrName(rawName);
+  if (typeof value === "boolean" && isBooleanish(name)) return ` ${name}="${value}"`;
+  if (value === false) return "";
+  // A textarea's / select's value is its content / the selected option, not an attribute.
+  if ((tag === "textarea" || tag === "select") && name === "value") return "";
+  // Drop attribute names that could break out of the tag (defends against a
+  // component spreading untrusted keys, e.g. `<div {...untrusted}>`).
+  if (!isValidAttrName(name)) return "";
+  // `<iframe srcdoc>` embeds a full HTML document that runs scripts — an XSS
+  // sink attribute-escaping can't neutralize. Nudge in dev (no-op in prod).
+  if (name === "srcdoc" && tag === "iframe") warnSrcdoc();
+  return valueAttribute(name, value, tag);
+}
+
+/** A kept prop's attribute: boolean presence, a style object, or an (URL-sanitized) value. */
+function valueAttribute(name: string, value: unknown, tag: string | undefined): string {
+  if (BOOLEAN_ATTRS.has(name) || value === true) return value ? ` ${name}` : "";
+  if (name === "style" && typeof value === "object") {
+    return ` style="${escapeHtml(serializeStyle(value as Record<string, unknown>))}"`;
+  }
+  // Drop a dangerous URL scheme (javascript:/vbscript:/executable data:) in a
+  // URL-bearing attribute; a no-op for every other attribute.
+  const safe = sanitizeUrlAttr(tag, name, String(value));
+  return safe === null ? "" : ` ${name}="${escapeHtml(safe)}"`;
 }
 
 /** The DOM event type a React `on*` prop maps to (matches dom-props `parseEvent`). */
@@ -907,11 +1074,126 @@ function domEventType(onProp: string): string {
   return l === "change" ? "input" : l === "doubleclick" ? "dblclick" : l;
 }
 
-/** Map JSX prop names to HTML attribute names. */
+/**
+ * React's camelCase → HTML/SVG attribute names: the two HTML renames, the hyphenated HTML
+ * pair, the `xlink:`/`xml:`/`xmlns:` namespaced SVG attributes, and the hyphenated SVG
+ * presentation attributes (`strokeWidth` → `stroke-width`). Everything else is emitted as
+ * written (HTML attribute names are case-insensitive, so `autoComplete` is fine as-is).
+ */
+const ATTR_RENAMES: Record<string, string> = {
+  className: "class",
+  htmlFor: "for",
+  httpEquiv: "http-equiv",
+  acceptCharset: "accept-charset",
+  defaultValue: "value",
+  defaultChecked: "checked",
+  xlinkActuate: "xlink:actuate",
+  xlinkArcrole: "xlink:arcrole",
+  xlinkHref: "xlink:href",
+  xlinkRole: "xlink:role",
+  xlinkShow: "xlink:show",
+  xlinkTitle: "xlink:title",
+  xlinkType: "xlink:type",
+  xmlBase: "xml:base",
+  xmlLang: "xml:lang",
+  xmlSpace: "xml:space",
+  xmlnsXlink: "xmlns:xlink",
+};
+const HYPHENATED_SVG = new Set([
+  "accent-height",
+  "alignment-baseline",
+  "arabic-form",
+  "baseline-shift",
+  "cap-height",
+  "clip-path",
+  "clip-rule",
+  "color-interpolation",
+  "color-interpolation-filters",
+  "color-profile",
+  "color-rendering",
+  "dominant-baseline",
+  "enable-background",
+  "fill-opacity",
+  "fill-rule",
+  "flood-color",
+  "flood-opacity",
+  "font-family",
+  "font-size",
+  "font-size-adjust",
+  "font-stretch",
+  "font-style",
+  "font-variant",
+  "font-weight",
+  "glyph-name",
+  "glyph-orientation-horizontal",
+  "glyph-orientation-vertical",
+  "horiz-adv-x",
+  "horiz-origin-x",
+  "image-rendering",
+  "letter-spacing",
+  "lighting-color",
+  "marker-end",
+  "marker-mid",
+  "marker-start",
+  "overline-position",
+  "overline-thickness",
+  "paint-order",
+  "panose-1",
+  "pointer-events",
+  "rendering-intent",
+  "shape-rendering",
+  "stop-color",
+  "stop-opacity",
+  "strikethrough-position",
+  "strikethrough-thickness",
+  "stroke-dasharray",
+  "stroke-dashoffset",
+  "stroke-linecap",
+  "stroke-linejoin",
+  "stroke-miterlimit",
+  "stroke-opacity",
+  "stroke-width",
+  "text-anchor",
+  "text-decoration",
+  "text-rendering",
+  "underline-position",
+  "underline-thickness",
+  "unicode-bidi",
+  "unicode-range",
+  "units-per-em",
+  "v-alphabetic",
+  "v-hanging",
+  "v-ideographic",
+  "v-mathematical",
+  "vector-effect",
+  "vert-adv-y",
+  "vert-origin-x",
+  "vert-origin-y",
+  "word-spacing",
+  "writing-mode",
+  "x-height",
+]);
+
+/** Map JSX prop names to HTML attribute names (see {@link ATTR_RENAMES}). */
 function normalizeAttrName(name: string): string {
-  if (name === "className") return "class";
-  if (name === "htmlFor") return "for";
+  const renamed = ATTR_RENAMES[name];
+  if (renamed) return renamed;
+  if (/[A-Z]/.test(name)) {
+    const kebab = name.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
+    if (HYPHENATED_SVG.has(kebab)) return kebab;
+  }
   return name;
+}
+
+/**
+ * Attributes React serializes as the strings `"true"`/`"false"` rather than by presence:
+ * the enumerated HTML attributes plus every `aria-*`/`data-*` (`aria-hidden=""` is not
+ * "true", and a bare `draggable` is invalid HTML).
+ */
+const BOOLEANISH_ATTRS = new Set(["contenteditable", "draggable", "spellcheck", "autocapitalize"]);
+function isBooleanish(name: string): boolean {
+  return BOOLEANISH_ATTRS.has(name.toLowerCase()) || name.startsWith("aria-") ||
+    name.startsWith("data-");
 }
 
 /** Serialize a style object ({ marginTop: 4 }) to CSS text. */
@@ -922,8 +1204,14 @@ export function serializeStyle(style: Record<string, unknown>): string {
     const prop = keys[i];
     const value = style[prop];
     if (value == null || value === false) continue;
-    const kebab = prop.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
-    const unit = typeof value === "number" && !UNITLESS.has(kebab) ? "px" : "";
+    if (value === "") continue;
+    const custom = prop.startsWith("--");
+    // `msTransition` → `-ms-transition` (React's vendor rule); custom properties as written.
+    const kebab = custom ? prop : prop.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`)
+      .replace(/^ms-/, "-ms-");
+    const unit = typeof value === "number" && value !== 0 && !custom && !UNITLESS.has(kebab)
+      ? "px"
+      : "";
     css += `${kebab}:${value}${unit};`;
   }
   return css;

@@ -316,7 +316,13 @@ export function createWorkInProgress(current: Fiber, pendingVNode: VNode | null)
   wip.return = null;
   wip.lanes = current.lanes;
   wip.childLanes = current.childLanes;
-  // Carry mutable state by reference.
+  carryOver(wip, current);
+  wip.bailed = false;
+  return wip;
+}
+
+/** Carry the current fiber's mutable state onto its work-in-progress twin, by reference. */
+function carryOver(wip: Fiber, current: Fiber): void {
   wip.hooks = current.hooks;
   wip.readContexts = current.readContexts; // kept if the fiber bails (doesn't re-render)
   wip.insertionEffects = undefined;
@@ -353,8 +359,6 @@ export function createWorkInProgress(current: Fiber, pendingVNode: VNode | null)
   wip.idScope = current.idScope;
   wip.host = current.host;
   wip.boundary = current.boundary;
-  wip.bailed = false;
-  return wip;
 }
 
 /** Merge a completed fiber's flags into its own `subtreeFlags` accumulator. */

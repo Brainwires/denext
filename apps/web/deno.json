@@ -3,7 +3,9 @@
     "dev": "deno run -A ../../cli.ts dev .",
     "build": "deno run -A ../../cli.ts build .",
     "start": "deno run -A ../../cli.ts start .",
-    "export": "deno run -A ../../cli.ts export ."
+    "export": "deno run -A ../../cli.ts export .",
+    "seo": "deno run -A scripts/seo.ts",
+    "og": "deno run -A scripts/gen-og.tsx"
   },
   "compilerOptions": {
     "jsx": "react-jsx",
@@ -17,6 +19,7 @@
     ]
   },
   "imports": {
+    "deno-dom": "jsr:@b-fuze/deno-dom@^0.1.49",
     "denext": "../../mod.ts",
     "denext/jsx-runtime": "../../src/jsx/jsx-runtime.ts",
     "denext/jsx-dev-runtime": "../../src/jsx/jsx-runtime.ts",

@@ -168,13 +168,9 @@ function IslandRoot(props: { children?: unknown }): VNode {
 const rootMod = { IslandRoot };
 tagClientExports(rootMod as Record<string, unknown>, "c_root");
 
-Deno.test("streaming: a Flight route streams its shell then the trailing flight islands", async () => {
-  async function SlowChild(): Promise<VNode> {
-    await Promise.resolve();
-    return h("p", null, "streamed-flight-child");
-  }
-  const filePath = "/app/page.tsx";
-  const manifest: RouteManifest = {
+/** A one-page manifest for "/f" backed by `filePath`, optionally marked as a client boundary. */
+function flightManifest(filePath: string, directives: RouteManifest["directives"]): RouteManifest {
+  return {
     pages: [{
       kind: "page",
       pattern: parsePattern("f"),
@@ -192,8 +188,17 @@ Deno.test("streaming: a Flight route streams its shell then the trailing flight 
     rootLayout: null,
     rootNotFound: null,
     rootGlobalError: null,
-    directives: new Map([[filePath, "client"]]),
+    directives,
   };
+}
+
+Deno.test("streaming: a Flight route streams its shell then the trailing flight islands", async () => {
+  async function SlowChild(): Promise<VNode> {
+    await Promise.resolve();
+    return h("p", null, "streamed-flight-child");
+  }
+  const filePath = "/app/page.tsx";
+  const manifest = flightManifest(filePath, new Map([[filePath, "client"]]));
   const Page = () =>
     h(
       IslandRoot,
@@ -239,26 +244,7 @@ Deno.test("streaming: a hole-less Flight route is buffered (cache-friendly), not
   // A client-island route with NO Suspense has nothing to stream, so it is served
   // buffered — no swap runtime, not no-store — parity with the non-Flight branch.
   const filePath = "/app/page.tsx";
-  const manifest: RouteManifest = {
-    pages: [{
-      kind: "page",
-      pattern: parsePattern("f"),
-      routePath: "/f",
-      filePath,
-      layoutChain: [],
-      templateChain: [],
-      loading: null,
-      error: null,
-      notFound: null,
-      forbidden: null,
-      unauthorized: null,
-    }],
-    api: [],
-    rootLayout: null,
-    rootNotFound: null,
-    rootGlobalError: null,
-    directives: new Map(),
-  };
+  const manifest = flightManifest(filePath, new Map());
   const Page = () => h(IslandRoot, null, h("h1", null, "static"), h(Island, {}));
   const app = createApp({
     getManifest: () => manifest,

@@ -74,7 +74,7 @@ export type {
   VNodeType,
   VProps,
 } from "@denext/denext/server";
-export { FRAGMENT } from "@denext/denext/server";
+export { Fragment as FRAGMENT } from "@denext/denext";
 import { PageCache } from "@denext/denext/plugin-kit";
 import {
   buildNextCompatModules,
@@ -192,32 +192,8 @@ export function pagesRouter(options: PagesRouterOptions = {}): DenextPlugin {
         return (cached ??= await scanPagesDir(pagesDir));
       };
 
-      // Client hydration: bundle each route's browser entry via `deno bundle`.
-      // dev bundles lazily in-process; prod reads what the build step pre-wrote
-      // to `.denext/pages-client/` (falling back to an in-process bundle).
       const configPath = await resolveConfigPath(ctx.projectRoot);
-      // Tailwind: mirror the CLI's `tailwindPaths` — resolve input/output against
-      // the project root so `buildAppCss` can compile it before the CSS walk.
-      const tw = ctx.config.tailwind;
-      const tailwind = tw
-        ? {
-          input: resolve(ctx.projectRoot, tw.input),
-          output: resolve(ctx.projectRoot, tw.output),
-        }
-        : undefined;
-      let bundler: ClientBundler | undefined;
-      if (configPath) {
-        bundler = createClientBundler({
-          getScan,
-          configPath,
-          projectRoot: ctx.projectRoot,
-          dev: ctx.mode === "dev",
-          tailwind,
-          readDir: ctx.mode === "prod"
-            ? join(ctx.projectRoot, ".denext", "pages-client")
-            : undefined,
-        });
-      }
+      const bundler = configPath ? bundlerFor(ctx, getScan, configPath) : undefined;
 
       // Route SSR module loading through react→denext compat bundles for npm-React apps
       // (no-op for denext-native apps). Built once from the current scan.
@@ -245,17 +221,13 @@ export function pagesRouter(options: PagesRouterOptions = {}): DenextPlugin {
       // static (`getStaticProps`) pages to disk for `denext start` to serve.
       if (bundler) {
         ctx.addBuildStep(async ({ outDir }) => {
-          const { entryByRoute, cssByRoute } = await bundler!.prebuild(outDir);
-          const url = (map: Map<string, string>, rp: string): string | null => {
-            const b = map.get(rp);
-            return b ? PAGES_PREFIX + b : null;
-          };
+          const { entryByRoute, cssByRoute } = await bundler.prebuild(outDir);
           await prerenderStaticPages({
             scan: await getScan(),
             load,
             outDir,
-            bundleUrlFor: (rp) => url(entryByRoute, rp),
-            cssUrlFor: (rp) => url(cssByRoute, rp),
+            bundleUrlFor: (rp) => pagesUrl(entryByRoute, rp),
+            cssUrlFor: (rp) => pagesUrl(cssByRoute, rp),
             lang,
             basePath,
             i18n: ctx.config.i18n,
@@ -264,4 +236,36 @@ export function pagesRouter(options: PagesRouterOptions = {}): DenextPlugin {
       }
     },
   };
+}
+
+/**
+ * Client hydration: bundle each route's browser entry via `deno bundle`. dev bundles
+ * lazily in-process; prod reads what the build step pre-wrote to
+ * `.denext/pages-client/` (falling back to an in-process bundle).
+ */
+function bundlerFor(
+  ctx: PluginContext,
+  getScan: () => Promise<PagesScan>,
+  configPath: string,
+): ClientBundler {
+  // Tailwind: mirror the CLI's `tailwindPaths` — resolve input/output against
+  // the project root so `buildAppCss` can compile it before the CSS walk.
+  const tw = ctx.config.tailwind;
+  const tailwind = tw
+    ? { input: resolve(ctx.projectRoot, tw.input), output: resolve(ctx.projectRoot, tw.output) }
+    : undefined;
+  return createClientBundler({
+    getScan,
+    configPath,
+    projectRoot: ctx.projectRoot,
+    dev: ctx.mode === "dev",
+    tailwind,
+    readDir: ctx.mode === "prod" ? join(ctx.projectRoot, ".denext", "pages-client") : undefined,
+  });
+}
+
+/** A prebuilt route asset's public URL under the pages prefix, or null when absent. */
+function pagesUrl(map: Map<string, string>, routePath: string): string | null {
+  const b = map.get(routePath);
+  return b ? PAGES_PREFIX + b : null;
 }

@@ -7,6 +7,10 @@
   --accent: #7aa2ff;
   --accent2: #58e0b0;
   --code-bg: #0e1119;
+  --prose: #cdd3de; /* body/prose text (softer than --fg) */
+  --code-fg: #dfe6f2; /* code inside a fenced block */
+  --chip: #1b2029; /* inline `code` chip background */
+  --warn: #f0b45b; /* warning accent */
   color-scheme: dark;
 }
 
@@ -39,7 +43,7 @@ a:hover {
 code {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   font-size: 0.86em;
-  background: #1b2029;
+  background: var(--chip);
   padding: 1.5px 6px;
   border-radius: 6px;
 }
@@ -233,6 +237,11 @@ main {
 .sidebar {
   position: sticky;
   top: 76px;
+  /* Bound the sticky sidebar to the viewport and let it scroll internally — without this a
+     nav taller than the screen has its bottom items stuck off-screen and unreachable. */
+  max-height: calc(100vh - 76px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 34px 0;
 }
 
@@ -310,11 +319,11 @@ main {
 }
 
 .article p {
-  color: #cdd3de;
+  color: var(--prose);
 }
 
 .article ul {
-  color: #cdd3de;
+  color: var(--prose);
   padding-left: 20px;
 }
 
@@ -339,7 +348,7 @@ main {
   padding: 0;
   font-size: 13px;
   line-height: 1.65;
-  color: #dfe6f2;
+  color: var(--code-fg);
   white-space: pre;
 }
 
@@ -366,7 +375,7 @@ main {
   padding: 13px 16px;
   margin: 18px 0;
   font-size: 14.5px;
-  color: #cdd3de;
+  color: var(--prose);
   background: var(--panel);
 }
 
@@ -375,7 +384,7 @@ main {
 }
 
 .callout.warn {
-  border-left-color: #f0b45b;
+  border-left-color: var(--warn);
 }
 
 /* ---------- Markdown-authored docs (.md content) ---------- */
@@ -399,7 +408,7 @@ main {
   margin: 18px 0;
   padding: 2px 16px;
   border-left: 3px solid var(--line);
-  color: #aeb6c2;
+  color: var(--muted);
 }
 
 .md hr {
@@ -408,20 +417,43 @@ main {
   margin: 28px 0;
 }
 
+/* Below the 3-column breakpoint the right-rail TOC doesn't fit — fall back to 2 columns. */
+@media (max-width: 1000px) {
+  .docs.has-toc {
+    grid-template-columns: 220px 1fr;
+    max-width: 1120px;
+  }
+  .toc {
+    display: none;
+  }
+}
+
 @media (max-width: 780px) {
-  .docs {
+  .docs,
+  .docs.has-toc {
     grid-template-columns: 1fr;
     gap: 0;
+    max-width: 760px;
   }
   .sidebar {
     position: static;
-    padding: 20px 0 0;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
+    max-height: none;
+    overflow: visible;
+    padding: 14px 0 0;
   }
-  .navgroup {
-    margin-bottom: 0;
+  /* 0-JS mobile menu: show the toggle, hide the groups until the checkbox is checked. */
+  .nav-toggle {
+    display: inline-flex;
+  }
+  .navgroups {
+    display: none;
+    margin-top: 12px;
+  }
+  .nav-check:checked ~ .navgroups {
+    display: block;
+  }
+  .toc {
+    display: none;
   }
 }
 
@@ -449,4 +481,413 @@ main {
 }
 .table-wrap td code {
   white-space: nowrap;
+}
+
+/* API reference: entry-point index cards + per-module nav + symbols */
+.api-index {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+  margin: 24px 0;
+}
+.api-card {
+  display: block;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  text-decoration: none;
+  color: var(--fg);
+  transition: border-color 0.15s, transform 0.15s;
+}
+.api-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+.api-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.api-card-head code {
+  color: var(--accent);
+  font-size: 15px;
+}
+.api-card-count {
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--code-bg);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 9px;
+}
+.api-card-blurb {
+  display: block;
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.api-modnav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: center;
+  padding: 12px 0 18px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.api-modnav a {
+  color: var(--muted);
+  text-decoration: none;
+}
+.api-modnav a:hover {
+  color: var(--accent);
+}
+.api-modnav a.active {
+  font-weight: 600;
+}
+.api-modnav a.active code {
+  color: var(--accent2);
+}
+.api-symbol {
+  border-top: 1px solid var(--line);
+  margin-top: 18px;
+}
+.api-symbol h3 {
+  margin: 16px 0 8px;
+}
+.api-kind {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 6px;
+  vertical-align: middle;
+}
+
+/* "Unique to denext" marker — a migrating dev has no React/Next API to compare against. */
+.api-only {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent2);
+  background: color-mix(in srgb, var(--accent2) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent2) 45%, var(--line));
+  border-radius: 4px;
+  padding: 1px 6px;
+  vertical-align: middle;
+}
+
+.callout.denext-only-note {
+  border-left-color: var(--accent2);
+}
+
+/* Module page: symbols grouped by kind. */
+.api-section {
+  margin-top: 32px;
+}
+.api-section h2 {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.api-section-count {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+  background: var(--code-bg);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 9px;
+}
+.api-list {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 0;
+}
+.api-list-item {
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.api-list-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+.api-list-name {
+  text-decoration: none;
+}
+.api-list-name code {
+  color: var(--accent);
+  font-size: 14px;
+}
+.api-list-name:hover code {
+  text-decoration: underline;
+}
+.api-list-doc {
+  display: block;
+  margin-top: 4px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+/* Per-symbol detail page. */
+.api-crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.api-crumbs a {
+  color: var(--muted);
+  text-decoration: none;
+}
+.api-crumbs a:hover {
+  color: var(--accent);
+}
+.api-crumbs code {
+  font-size: 12.5px;
+}
+.api-crumb-current {
+  color: var(--fg);
+}
+.api-detail-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 18px;
+}
+.api-detail-import code {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.api-params {
+  margin: 12px 0;
+}
+.api-param {
+  display: grid;
+  grid-template-columns: minmax(120px, max-content) 1fr;
+  gap: 4px 16px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.api-param dt {
+  margin: 0;
+}
+.api-param dd {
+  margin: 0;
+  color: var(--prose);
+  line-height: 1.6;
+}
+.api-param-nodoc {
+  color: var(--muted);
+}
+.api-detail-back {
+  margin-top: 36px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+}
+.api-detail-back a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.api-detail-back a:hover {
+  text-decoration: underline;
+}
+
+/* MCP server reference (generated from the tool registry) */
+.mcp-tool {
+  border-top: 1px solid var(--line);
+  margin-top: 20px;
+}
+.mcp-tool h3 {
+  margin: 14px 0 8px;
+}
+.mcp-tool h3 code {
+  color: var(--accent);
+  font-size: 15px;
+}
+.mcp-params {
+  list-style: none;
+  padding: 0;
+  margin: 10px 0;
+}
+.mcp-params li {
+  padding: 5px 0;
+  color: var(--prose);
+  font-size: 14px;
+}
+.mcp-type {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+.mcp-noparams {
+  color: var(--muted);
+  font-size: 13.5px;
+}
+.mcp-resources code {
+  color: var(--accent2);
+}
+
+@media (max-width: 560px) {
+  .api-param {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- On-this-page TOC + 3-column layout ---------- */
+.docs.has-toc {
+  max-width: 1240px;
+  grid-template-columns: 210px minmax(0, 1fr) 190px;
+  gap: 40px;
+}
+.toc {
+  position: sticky;
+  top: 76px;
+  max-height: calc(100vh - 76px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 40px 0 34px;
+}
+.toc-title {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.toc ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.toc li {
+  margin: 1px 0;
+}
+.toc a {
+  display: block;
+  padding: 3px 10px;
+  border-left: 2px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.toc a:hover {
+  color: var(--fg);
+  border-left-color: var(--muted); /* subtle: distinct from the accent current-section bar */
+  text-decoration: none;
+}
+.toc-l3 a {
+  padding-left: 22px;
+  font-size: 12.5px;
+}
+
+/* ----- Nested API TOC: kind sections + their exports (0-JS, :target-driven) ----- */
+/* Each export sub-list is collapsed; only the CURRENT section's is revealed (below). */
+.toc-sublist {
+  list-style: none;
+  margin: 1px 0 6px;
+  padding: 0;
+  display: none;
+}
+.toc-subitem {
+  margin: 0;
+}
+.toc-sublink {
+  padding-left: 22px;
+  font-size: 12.5px;
+}
+
+/*
+ * A kind section is "current" — its sub-links show, and its own entry becomes a bold
+ * accent label instead of a link — when the URL points into it (its header or one of its
+ * exports is :target), or, when nothing is targeted, for the first section by default.
+ * The id set is fixed (lib/api.ts KIND_ORDER), so each is enumerated explicitly. Use
+ * `#kind-x:target` (header) and `#kind-x :target` (an export inside it) as TWO separate
+ * :has() args — a :has() may not contain another :has(), so `:has(#kind-x:has(...))` would
+ * silently invalidate the whole rule.
+ */
+:is(:root:not(:has(:target)) .toc-sec:first-child, :root:has(#kind-functions:target) .toc-sec[data-sec="functions"], :root:has(#kind-functions :target) .toc-sec[data-sec="functions"], :root:has(#kind-classes:target) .toc-sec[data-sec="classes"], :root:has(#kind-classes :target) .toc-sec[data-sec="classes"], :root:has(#kind-interfaces:target) .toc-sec[data-sec="interfaces"], :root:has(#kind-interfaces :target) .toc-sec[data-sec="interfaces"], :root:has(#kind-type-aliases:target) .toc-sec[data-sec="type-aliases"], :root:has(#kind-type-aliases :target) .toc-sec[data-sec="type-aliases"], :root:has(#kind-enums:target) .toc-sec[data-sec="enums"], :root:has(#kind-enums :target) .toc-sec[data-sec="enums"], :root:has(#kind-values:target) .toc-sec[data-sec="values"], :root:has(#kind-values :target) .toc-sec[data-sec="values"], :root:has(#kind-namespaces:target) .toc-sec[data-sec="namespaces"], :root:has(#kind-namespaces :target) .toc-sec[data-sec="namespaces"], :root:has(#kind-other:target) .toc-sec[data-sec="other"], :root:has(#kind-other :target) .toc-sec[data-sec="other"]) {
+  & > .toc-sublist {
+    display: block;
+  }
+  & > .toc-seclink {
+    color: var(--accent);
+    font-weight: 600;
+    border-left-color: var(--accent);
+    pointer-events: none; /* the current section's entry is a label, not a link */
+    cursor: default;
+  }
+}
+
+/* Anchor jumps clear the sticky topbar. */
+.article h2,
+.article h3,
+.article [id] {
+  scroll-margin-top: 76px;
+}
+
+/* ---------- Mobile nav (0-JS checkbox toggle; hidden on desktop) ---------- */
+.nav-check {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.nav-toggle {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--fg);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+.nav-toggle::after {
+  content: "▾";
+  color: var(--muted);
+}
+.nav-check:checked ~ .nav-toggle::after {
+  content: "▴";
+}
+
+/* ---------- Accessibility: visible keyboard focus ---------- */
+a:focus-visible,
+button:focus-visible,
+.nav-toggle:focus-visible,
+.toc a:focus-visible,
+.sidebar a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.nav-check:focus-visible ~ .nav-toggle {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }

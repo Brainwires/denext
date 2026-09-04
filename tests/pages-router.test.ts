@@ -433,6 +433,20 @@ Deno.test("getServerSideProps redirect → 307/308", async () => {
   assertEquals(res!.headers.get("location"), "/login");
 });
 
+Deno.test("getServerSideProps redirect honors Next's explicit `statusCode` form", async () => {
+  const scan: PagesScan = { ...EMPTY_SPECIALS, pages: [pageEntry("/", "", "r.tsx")], api: [] };
+  const handle = makeHandler(scan, {
+    "r.tsx": {
+      getServerSideProps: () =>
+        Promise.resolve({ redirect: { destination: "/moved", statusCode: 301 } }),
+      default: () => h("div", null, "never"),
+    },
+  });
+  const res = await handle(new Request("http://localhost/"));
+  assertEquals(res!.status, 301);
+  assertEquals(res!.headers.get("location"), "/moved");
+});
+
 // --- Preview Mode -----------------------------------------------------------
 
 Deno.test("Preview Mode: setPreviewData signs a cookie that enables context.preview", async () => {

@@ -8,11 +8,7 @@
 //
 // Then open http://localhost:3005
 import { extname, fromFileUrl } from "@std/path";
-import {
-  buildNextCompatPages,
-  type BuiltNextCompatPage,
-  renderNextCompatPage,
-} from "../../src/build/next-compat-build.ts";
+import { buildExamplePage, serveCompat } from "../_shared/serve-compat.ts";
 
 const dir = fromFileUrl(new URL(".", import.meta.url)).replace(/\/$/, "");
 const dev = Deno.args.includes("--dev");
@@ -42,22 +38,7 @@ async function ensureDeps() {
   if (!r.success) throw new Error("failed to install npm deps (three)");
 }
 
-function build(): Promise<BuiltNextCompatPage[]> {
-  return buildNextCompatPages({
-    projectDir: dir,
-    configPath: `${dir}/deno.json`,
-    outDir: `${dir}/.denext`,
-    pages: [{ routePath: "/", filePath: `${dir}/app/page.tsx` }],
-    minify: !dev,
-  });
-}
-
 await ensureDeps();
-let [page] = await build();
-console.log(
-  `game example on http://localhost:${PORT}${dev ? "  (dev: rebuilds per request)" : ""}`,
-);
-
 // Injected into <head> (renderNextCompatPage only emits <meta charset>): viewport
 // + a reset so the canvas fills the window.
 const HEAD =
@@ -66,37 +47,25 @@ const HEAD =
   `<style>*{box-sizing:border-box}html,body{margin:0;height:100%;background:#0b1020;` +
   `overflow:hidden;font-family:system-ui,sans-serif}</style>`;
 
-Deno.serve({ port: PORT }, async (req) => {
-  const url = new URL(req.url);
-  if (dev && url.pathname === "/") [page] = await build();
+serveCompat({
+  port: PORT,
+  clientSrc: CLIENT_SRC,
+  page: await buildExamplePage(dir, dev),
+  dev,
+  rebuild: () => buildExamplePage(dir, dev),
+  decorate: (html) => html.replace('<meta charset="utf-8">', `<meta charset="utf-8">${HEAD}`),
+  extra: serveAsset,
+}, "game");
 
-  if (url.pathname === CLIENT_SRC) {
-    return new Response(await Deno.readTextFile(page.clientBundle), {
-      headers: { "content-type": "text/javascript; charset=utf-8" },
+/** `/assets/*` from the example's public dir, with a content type by extension. */
+async function serveAsset(url: URL): Promise<Response | null> {
+  if (!url.pathname.startsWith("/assets/")) return null;
+  try {
+    const body = await Deno.readFile(`${dir}/public${url.pathname}`);
+    return new Response(body, {
+      headers: { "content-type": MIME[extname(url.pathname)] ?? "application/octet-stream" },
     });
+  } catch {
+    return new Response("Not found", { status: 404 });
   }
-
-  if (url.pathname.startsWith("/assets/")) {
-    try {
-      const body = await Deno.readFile(`${dir}/public${url.pathname}`);
-      return new Response(body, {
-        headers: {
-          "content-type": MIME[extname(url.pathname)] ??
-            "application/octet-stream",
-        },
-      });
-    } catch {
-      return new Response("Not found", { status: 404 });
-    }
-  }
-
-  if (url.pathname === "/") {
-    const html = (await renderNextCompatPage(page, {}, CLIENT_SRC))
-      .replace('<meta charset="utf-8">', `<meta charset="utf-8">${HEAD}`);
-    return new Response(html, {
-      headers: { "content-type": "text/html; charset=utf-8" },
-    });
-  }
-
-  return new Response("Not found", { status: 404 });
-});
+}

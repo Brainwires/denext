@@ -29,7 +29,7 @@ import { loadEnv } from "./src/server/env.ts";
 import { defaultLoader } from "./src/server/mod.ts";
 import { applyPlugins, getPluginCommands } from "./src/plugin/mod.ts";
 import { VERSION } from "./mod.ts";
-import type { CommandContext, CommandSpec } from "./src/cli/command.ts";
+import type { CommandContext, CommandSpec, ParseOutcome } from "./src/cli/command.ts";
 import type { CommandRegistry } from "./src/cli/command.ts";
 import { buildRegistry } from "./src/cli/register.ts";
 import { projectDir, SHUTDOWN_SIGNALS } from "./src/cli/shared.ts";
@@ -245,30 +245,29 @@ async function main(): Promise<void> {
     outcome = registry.parse(Deno.args);
   }
 
-  switch (outcome.kind) {
-    case "version":
-      console.log(`denext ${VERSION}`);
-      return;
-    case "help":
-      console.log(
-        outcome.command
-          ? registry.formatCommandHelp(outcome.command)
-          : registry.formatHelp(VERSION),
-      );
-      return;
-    case "error":
-      console.error(
-        `denext: ${outcome.message}` +
-          (outcome.suggestion ? `\n  Did you mean \`${outcome.suggestion}\`?` : "") +
-          `\n  Run \`denext --help\` for usage.`,
-      );
-      Deno.exit(1);
-      return;
-    case "run": {
-      if (await moduleGate(outcome.command, outcome.ctx)) return;
-      await outcome.command.run(outcome.ctx);
-      return;
-    }
+  if (outcome.kind !== "run") return printOutcome(registry, outcome);
+  if (await moduleGate(outcome.command, outcome.ctx)) return;
+  await outcome.command.run(outcome.ctx);
+}
+
+/** Print a non-run outcome: the version, help, or a usage error (exit 1). */
+function printOutcome(
+  registry: CommandRegistry,
+  outcome: Exclude<ParseOutcome, { kind: "run" }>,
+): void {
+  if (outcome.kind === "version") {
+    console.log(`denext ${VERSION}`);
+  } else if (outcome.kind === "help") {
+    console.log(
+      outcome.command ? registry.formatCommandHelp(outcome.command) : registry.formatHelp(VERSION),
+    );
+  } else {
+    console.error(
+      `denext: ${outcome.message}` +
+        (outcome.suggestion ? `\n  Did you mean \`${outcome.suggestion}\`?` : "") +
+        `\n  Run \`denext --help\` for usage.`,
+    );
+    Deno.exit(1);
   }
 }
 

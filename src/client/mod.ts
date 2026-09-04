@@ -20,7 +20,6 @@ export {
   hydrateRoot,
   type Root,
   type RootOptions,
-  setDocument,
 } from "./reconciler.ts";
 export type {
   Component,
@@ -48,7 +47,6 @@ export {
   useInsertionEffect,
   useLayoutEffect,
   useMemo,
-  useMemoCache,
   useOptimistic,
   useReducer,
   useRef,
@@ -72,6 +70,9 @@ export { createContext } from "../runtime/context.ts";
 export { AsyncContext } from "../runtime/async-context.ts";
 export { useActionState, useFormStatus } from "../runtime/actions.ts";
 export type { FormStatus } from "../runtime/actions.ts";
+// Typed Server Actions — client-safe result type + idle-state helper.
+export { idleActionState } from "../runtime/define-action.ts";
+export type { ActionResult, TypedAction } from "../runtime/define-action.ts";
 export { createResource, Suspense, SuspenseList, use } from "../runtime/suspense.ts";
 export type { SuspenseListProps, SuspenseProps } from "../runtime/suspense.ts";
 export { dynamic } from "../runtime/dynamic.ts";
@@ -82,49 +83,13 @@ export type { ErrorBoundaryProps, ErrorFallbackProps } from "../runtime/error-bo
 // not hand-written API — this entrypoint exposes only `h` and `Fragment`.
 export { Fragment, h } from "../jsx/jsx-runtime.ts";
 
-// Dev Fast Refresh runtime: family registration + state-preserving reconcile.
-// Emitted only into dev route entries; never referenced by a production bundle.
-export {
-  enableFastRefresh,
-  enablePerModuleRefresh,
-  performModuleRefresh,
-  registerFamily,
-} from "./refresh-runtime.ts";
-
-// Flight hydration: reconstruct a VNode tree from the server's Flight payload.
-export { type ClientRegistry, parseFlight } from "./flight-client.ts";
-export type { FlightNode } from "../jsx/render-to-flight.ts";
-// The browser dispatch stub for a server reference (used by generated stubs).
-export { clientActionStub } from "../runtime/server-action.ts";
-// qrl: a lazily-loaded, code-split event handler with a stable identity.
-// `capturedScope` reads a handler's captured scope inside an extracted segment
-// (normally the qrl build transform emits the call; also usable by hand).
+// qrl: a lazily-loaded, code-split event handler with a stable identity — normally
+// emitted by the qrl build transform, also usable by hand (see docs/resumability);
+// `capturedScope` reads a handler's captured scope inside an extracted segment.
 export { capturedScope, type Qrl, qrl } from "../runtime/qrl.ts";
 
-// Islands inspector (dev): the hydration timeline — which islands hydrated, when, and
-// under which client:* strategy (also on window.__denextIslands). Empty in production.
-export { getIslandTimeline, type IslandHydration } from "./lazy-hydrate.ts";
-// First-party DevTools (dev): the native inspector API + the in-page glass-box panel.
-// `installDevtools` is emitted only into dev route/Flight entries; a production bundle
-// never references it. The public `denext/devtools` module re-exports the same surface.
-export {
-  type DenextDevtoolsApi,
-  getInspectorTree,
-  getPageRenderMode,
-  getRenderModes,
-  type InspectContext,
-  type InspectHook,
-  type InspectNode,
-  installInspector,
-  type PageRenderMode,
-  type RenderModeEntry,
-  type SerializedValue,
-  setHookState,
-  subscribe,
-} from "./devtools-inspect.ts";
-export { installDevtools } from "./devtools-panel.ts";
-// Layout-relative segment provider (used by the generated route entry).
-export { type LayoutSegmentInfo, provideLayoutSegments } from "../runtime/layout-segments.ts";
+export type { FlightNode } from "../jsx/render-to-flight.ts";
+
 // i18n message catalog: provider + interpolation backing useTranslations().
 export {
   interpolate,
@@ -154,8 +119,6 @@ export {
   Link,
   navigate,
   prefetch,
-  setFlightParser,
-  startClient,
   useLocale,
   useParams,
   usePathname,

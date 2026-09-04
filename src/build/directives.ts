@@ -54,90 +54,110 @@ interface DirectiveScan {
  * statement or when a string is used as an expression; a boundary directive is
  * likewise conclusive. Running off the end of `source` is inconclusive.
  */
-function scanDirectiveCore(source: string): DirectiveScan {
-  let i = 0;
+/**
+ * Skip whitespace and comments from `i`, returning the index of the next significant
+ * char (or `n`). With `newlines: false` only same-line whitespace is skipped (the
+ * look-ahead after a string statement), though a comment may still span lines.
+ */
+function skipTrivia(source: string, i: number, newlines: boolean): number {
   const n = source.length;
-
-  // Skip a shebang line if present.
-  if (source.startsWith("#!")) {
-    while (i < n && source[i] !== "\n") i++;
-  }
-
-  // Skip whitespace and comments.
-  const skipTrivia = (): void => {
-    while (i < n) {
-      const c = source[i];
-      if (c === " " || c === "\t" || c === "\r" || c === "\n") {
-        i++;
-      } else if (c === "/" && source[i + 1] === "/") {
-        i += 2;
-        while (i < n && source[i] !== "\n") i++;
-      } else if (c === "/" && source[i + 1] === "*") {
-        i += 2;
-        while (i < n && !(source[i] === "*" && source[i + 1] === "/")) i++;
-        i += 2;
-      } else {
-        break;
-      }
-    }
-  };
-
   while (i < n) {
-    skipTrivia();
-    if (i >= n) break; // ran out inside trivia — need more source
-    const quote = source[i];
-    // First non-string statement: the prologue is definitively over.
-    if (quote !== '"' && quote !== "'") return { directive: null, truncated: false };
-
-    // Read the string literal (no escapes are valid inside a real directive, but
-    // handle them so an escaped quote does not end the scan early).
-    let value = "";
-    i++; // opening quote
-    while (i < n && source[i] !== quote) {
-      if (source[i] === "\\" && i + 1 < n) {
-        value += source[i + 1];
-        i += 2;
-      } else {
-        value += source[i];
-        i++;
-      }
-    }
-    if (i >= n) break; // unterminated string in this window — need more source
-    i++; // closing quote
-
-    // Look ahead (same-line trivia) to confirm this string is a standalone
-    // statement and not the start of an expression.
-    let j = i;
-    while (j < n) {
-      const c = source[j];
-      if (c === " " || c === "\t") {
-        j++;
-      } else if (c === "/" && source[j + 1] === "/") {
-        j += 2;
-        while (j < n && source[j] !== "\n") j++;
-      } else if (c === "/" && source[j + 1] === "*") {
-        j += 2;
-        while (j < n && !(source[j] === "*" && source[j + 1] === "/")) j++;
-        j += 2;
-      } else {
-        break;
-      }
-    }
-    const after = source[j];
-    // A string used as an expression ends the prologue (conclusive).
-    if (j < n && EXPR_CONTINUATION.has(after)) return { directive: null, truncated: false };
-
-    // Committed directive statement. Classify it.
-    if (value === "use client") return { directive: "client", truncated: false };
-    if (value === "use server") return { directive: "server", truncated: false };
-
-    // Some other directive (e.g. "use strict") — advance past a terminator and
-    // keep scanning the prologue for a boundary directive.
-    i = j;
-    if (source[i] === ";") i++;
+    const c = source[i];
+    const next = source[i + 1];
+    if (c === " " || c === "\t" || (newlines && (c === "\r" || c === "\n"))) i++;
+    else if (c === "/" && next === "/") i = skipLineComment(source, i);
+    else if (c === "/" && next === "*") i = skipBlockComment(source, i);
+    else break;
   }
+  return i;
+}
 
-  // Consumed everything without a definitive end: the answer may lie further in.
+/** The index of the newline ending the `//` comment at `i` (or `n`). */
+function skipLineComment(source: string, i: number): number {
+  const n = source.length;
+  i += 2;
+  while (i < n && source[i] !== "\n") i++;
+  return i;
+}
+
+/** The index just past the close of the block comment at `i` (unterminated → past `n`). */
+function skipBlockComment(source: string, i: number): number {
+  const n = source.length;
+  i += 2;
+  while (i < n && !(source[i] === "*" && source[i + 1] === "/")) i++;
+  return i + 2;
+}
+
+/**
+ * Read the string literal opening at `i` (its quote char at `source[i]`). No escapes are
+ * valid inside a real directive, but they are handled so an escaped quote does not end
+ * the scan early. Returns null when the string is unterminated in this window.
+ */
+function readStringLiteral(source: string, i: number): { value: string; end: number } | null {
+  const n = source.length;
+  const quote = source[i];
+  let value = "";
+  i++; // opening quote
+  while (i < n && source[i] !== quote) {
+    if (source[i] === "\\" && i + 1 < n) {
+      value += source[i + 1];
+      i += 2;
+    } else {
+      value += source[i];
+      i++;
+    }
+  }
+  if (i >= n) return null;
+  return { value, end: i + 1 }; // past the closing quote
+}
+
+/** One prologue statement's outcome: conclusive, keep scanning from `i`, or out of input. */
+type PrologueStep =
+  | { kind: "conclusive"; directive: Directive }
+  | { kind: "next"; i: number }
+  | { kind: "truncated" };
+
+const TRUNCATED: PrologueStep = { kind: "truncated" };
+
+function conclusive(directive: Directive): PrologueStep {
+  return { kind: "conclusive", directive };
+}
+
+/**
+ * Scan one prologue statement starting at `i`. The prologue definitively ends at the first
+ * non-string statement or when a string is used as an expression (the same-line look-ahead
+ * confirms the string is a standalone statement); a boundary directive is likewise
+ * conclusive. Some other directive (e.g. "use strict") advances past its terminator so the
+ * scan continues. Running out of input inside trivia or a string is inconclusive.
+ */
+function scanPrologueStatement(source: string, i: number): PrologueStep {
+  const n = source.length;
+  i = skipTrivia(source, i, true);
+  if (i >= n) return TRUNCATED;
+  const quote = source[i];
+  if (quote !== '"' && quote !== "'") return conclusive(null);
+  const lit = readStringLiteral(source, i);
+  if (!lit) return TRUNCATED;
+  const j = skipTrivia(source, lit.end, false);
+  if (j < n && EXPR_CONTINUATION.has(source[j])) return conclusive(null);
+  if (lit.value === "use client") return conclusive("client");
+  if (lit.value === "use server") return conclusive("server");
+  return { kind: "next", i: source[j] === ";" ? j + 1 : j };
+}
+
+/**
+ * Core prologue scan reporting whether the result is conclusive for the given
+ * `source`. Running off the end of `source` is inconclusive (the answer may lie further in).
+ */
+function scanDirectiveCore(source: string): DirectiveScan {
+  // Skip a shebang line if present.
+  let i = source.startsWith("#!") ? skipLineComment(source, 0) : 0;
+  while (i < source.length) {
+    const step = scanPrologueStatement(source, i);
+    if (step.kind === "conclusive") return { directive: step.directive, truncated: false };
+    if (step.kind === "truncated") break;
+    i = step.i;
+  }
   return { directive: null, truncated: true };
 }
 

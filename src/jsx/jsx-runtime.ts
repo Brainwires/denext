@@ -30,24 +30,7 @@ function createElement(
 ): VNode {
   const normalized: VProps = props ? { ...props } : {};
   if (key !== undefined) normalized.key = key;
-  // Apply a component's `defaultProps` for any missing/undefined prop, matching
-  // React's createElement. Many npm libraries rely on this (e.g. recharts'
-  // `XAxis.defaultProps = { xAxisId: 0 }`). For a `memo(Inner)` wrapper (now a
-  // non-callable object) the defaults live on the inner component (exposed as
-  // `.type`), so fall back to it.
-  if (typeof type === "function" || (typeof type === "object" && type !== null)) {
-    const t = type as {
-      defaultProps?: Record<string, unknown>;
-      type?: { defaultProps?: Record<string, unknown> };
-    };
-    const defaults = t.defaultProps ?? t.type?.defaultProps;
-    if (defaults) {
-      const p = normalized as Record<string, unknown>;
-      for (const k in defaults) {
-        if (p[k] === undefined) p[k] = defaults[k];
-      }
-    }
-  }
+  applyDefaultProps(type, normalized as Record<string, unknown>);
   const resolvedKey = normalized.key ?? null;
   // `$$typeof` is a literal own field (not `Object.defineProperty`) so V8 keeps a
   // monomorphic hidden class on this hot path — this is the shape React itself ships.
@@ -58,6 +41,25 @@ function createElement(
     props: normalized,
     key: resolvedKey,
   };
+}
+
+/**
+ * Apply a component's `defaultProps` for any missing/undefined prop, matching React's
+ * createElement. Many npm libraries rely on this (e.g. recharts' `XAxis.defaultProps =
+ * { xAxisId: 0 }`). For a `memo(Inner)` wrapper (now a non-callable object) the defaults
+ * live on the inner component (exposed as `.type`), so fall back to it.
+ */
+function applyDefaultProps(type: VNodeType, props: Record<string, unknown>): void {
+  if (typeof type !== "function" && (typeof type !== "object" || type === null)) return;
+  const t = type as {
+    defaultProps?: Record<string, unknown>;
+    type?: { defaultProps?: Record<string, unknown> };
+  };
+  const defaults = t.defaultProps ?? t.type?.defaultProps;
+  if (!defaults) return;
+  for (const k in defaults) {
+    if (props[k] === undefined) props[k] = defaults[k];
+  }
 }
 
 /** JSX factory for elements with zero or one child (automatic runtime). */

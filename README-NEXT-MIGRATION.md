@@ -75,7 +75,7 @@ promise is machine-verified".
 | Metadata: page + **layout** `generateMetadata`/`generateViewport`, file conventions (sitemap/robots/opengraph-image/…)                                                          | ✅                                                 |
 | ISR **stale-while-revalidate** (serve stale + background regen), `revalidatePath`/`revalidateTag`                                                                               | ✅                                                 |
 | Automatic `fetch()` caching — **uncached by default**, opt in via `next:{revalidate,tags}` / `cache:"force-cache"`                                                              | ✅ (matches Next 15/16 default)                    |
-| **Cache Components** — `use cache`, `cacheLife`/`cacheTag`, `updateTag`/`refresh`, and **PPR** (static shell + per-request dynamic holes)                                       | ✅ experimental (`experimental.cacheComponents`)   |
+| **Cache Components** — `use cache`, `cacheLife`/`cacheTag`, `updateTag`/`refresh`, and **PPR** (static shell + per-request dynamic holes)                                       | ✅ opt-in (`cacheComponents: true`)                |
 | `next/image` Next 16 knobs — `qualities`, `minimumCacheTTL`, `localPatterns`, `formats` (**AVIF**), `maximumRedirects`, `dangerouslyAllowLocalIP`                               | ✅                                                 |
 | Soft navigation — reconcile-in-place via a retained root (preserves state, no re-hydrate)                                                                                       | ✅                                                 |
 | `next/form` (`<Form>`), `connection()`, `after()` (from `next/server`), `useLinkStatus`                                                                                         | ✅                                                 |
@@ -374,9 +374,9 @@ Effects are split exactly as React splits them:
   ordering is deterministic. (In tests, assert a `useEffect` side effect only
   after a `flushSync()` or `await act(...)` — the same requirement as React.)
 
-### Nothing outstanding
+### Concurrent rendering
 
-denext now implements React's full concurrent-rendering model: a resumable fiber
+denext implements React's concurrent-rendering model: a resumable fiber
 work loop, time-slicing, priority lanes with interrupt-and-restart,
 double-buffering with atomic commit, and the render/commit + layout/passive
 phase split. The sync (default) lane still renders and commits synchronously, so

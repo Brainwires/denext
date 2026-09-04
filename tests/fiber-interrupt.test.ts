@@ -25,47 +25,49 @@ const microtasks = async () => {
   await Promise.resolve();
 };
 
-Deno.test("a sync update interrupts an in-flight transition and restarts it", async () => {
-  const { doc, container } = makeDom();
-  setDocument(doc as Any);
-
-  let aRenders = 0;
-  let setA: (v: string) => void = () => {};
-  let setB: (v: string) => void = () => {};
-
+/** Two independent stateful siblings; `aRenders` counts A's renders. */
+function makeApp() {
+  const api = { aRenders: 0, setA: (_v: string) => {}, setB: (_v: string) => {}, App };
   function A(): VNode {
     const [v, set] = useState("a0");
-    setA = (x) => set(() => x);
-    aRenders++;
+    api.setA = (x) => set(() => x);
+    api.aRenders++;
     return h("span", { id: "a" }, v);
   }
   function B(): VNode {
     const [v, set] = useState("b0");
-    setB = (x) => set(() => x);
+    api.setB = (x) => set(() => x);
     return h("span", { id: "b" }, v);
   }
   function App(): VNode {
     return h("div", null, h(A, null), h(B, null));
   }
+  return api;
+}
 
-  createRoot(container as Any).render(h(App, null));
+Deno.test("a sync update interrupts an in-flight transition and restarts it", async () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  const app = makeApp();
+
+  createRoot(container as Any).render(h(app.App, null));
   assertStringIncludes(container.innerHTML, "a0");
   assertStringIncludes(container.innerHTML, "b0");
-  const rendersAfterMount = aRenders;
+  const rendersAfterMount = app.aRenders;
 
   __setYieldEveryForTests(1);
   __setManualSlicingForTests(true);
   try {
     // Begin a transition that updates A; drive a couple of slices so it is
     // genuinely in flight but not yet committed.
-    startTransition(() => setA("a1"));
+    startTransition(() => app.setA("a1"));
     __pumpForTests(); // slice 1 (root)
     __pumpForTests(); // slice 2
     assertStringIncludes(container.innerHTML, "a0"); // transition not committed yet
-    const rendersDuringTransition = aRenders;
+    const rendersDuringTransition = app.aRenders;
 
     // Urgent sync update on B while the transition is paused mid-flight.
-    setB("b1");
+    app.setB("b1");
     await microtasks(); // sync microtask: abandon the transition, commit B urgently
 
     assertStringIncludes(container.innerHTML, "b1"); // urgent update committed
@@ -80,7 +82,7 @@ Deno.test("a sync update interrupts an in-flight transition and restarts it", as
     assertStringIncludes(container.innerHTML, "a1"); // transition finally commits
     assertStringIncludes(container.innerHTML, "b1"); // and the urgent value survives
     assert(
-      aRenders > rendersDuringTransition,
+      app.aRenders > rendersDuringTransition,
       "A re-rendered when the interrupted transition restarted",
     );
     assert(rendersDuringTransition >= rendersAfterMount);

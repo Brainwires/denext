@@ -33,7 +33,7 @@ Deno.test("generateServerStub emits client dispatch stubs per export", () => {
   const stub = generateServerStub("acts", ["save", "default"]);
   assertStringIncludes(stub, `clientActionStub("acts#save")`);
   assertStringIncludes(stub, `export default clientActionStub("acts#default")`);
-  assertStringIncludes(stub, `from "denext/client"`);
+  assertStringIncludes(stub, `from "denext/client-runtime"`);
 });
 
 // A client component importing a "use server" function bundles with a stub; the
@@ -50,6 +50,7 @@ Deno.test("bundleFlightEntry strips server-action code, keeps a dispatch stub", 
           "denext": `${root}mod.ts`,
           "denext/jsx-runtime": `${root}src/jsx/jsx-runtime.ts`,
           "denext/client": `${root}src/client/mod.ts`,
+          "denext/client-runtime": `${root}src/client/client-runtime.ts`,
         },
       }),
     );

@@ -94,7 +94,7 @@ export function getUser(id: number): User | undefined {
 }
 
 /** Insert a user, returning the new id. */
-export function createUser(email: string, passwordHash: string): number {
+function createUser(email: string, passwordHash: string): number {
   const { lastInsertRowid } = db
     .prepare("INSERT INTO users (email, password_hash) VALUES (?, ?)")
     .run(email, passwordHash);

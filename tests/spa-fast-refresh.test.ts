@@ -62,7 +62,7 @@ Deno.test("refreshFooter: emits an aliased import + one registration per compone
   const footer = refreshFooter("file:///app/Counter.tsx", ["Counter", "Card"]);
   assertStringIncludes(
     footer,
-    `import { registerFamily as __dnxRegisterFamily } from "denext/client";`,
+    `import { registerFamily as __dnxRegisterFamily } from "denext/client-runtime";`,
   );
   assertStringIncludes(footer, `__dnxRegisterFamily(Counter, "file:///app/Counter.tsx#Counter");`);
   assertStringIncludes(footer, `__dnxRegisterFamily(Card, "file:///app/Counter.tsx#Card");`);
@@ -83,7 +83,7 @@ Deno.test("generateSpaEntry(dev): installs Fast Refresh before the app mounts", 
   // enableFastRefresh() must run as inline code (before the app), and the user entry
   // is pulled in with a DYNAMIC import so its createRoot runs with the seam active
   // (a static import would hoist ahead of the inline enable call).
-  assertStringIncludes(src, 'import { enableFastRefresh } from "denext/client";');
+  assertStringIncludes(src, 'import { enableFastRefresh } from "denext/client-runtime";');
   assertStringIncludes(src, "enableFastRefresh();");
   assertStringIncludes(src, 'await import("file:///app/src/main.tsx");');
   const enableAt = src.indexOf("enableFastRefresh();");

@@ -366,6 +366,12 @@ export interface BuildNextCompatFlightOptions {
   mdxOptions?: MdxBuildOptions;
   /** CSS shim map, forwarded to {@link BundleNextCompatModulesOptions.cssImportMap}. */
   cssImportMap?: Record<string, string>;
+  /**
+   * Whether the app uses a Live feature (build-time `denext/live` scan). When false,
+   * the generated Flight entry omits the Live WebSocket transport. Defaults to
+   * `true` (safe: keep Live) when unset. See {@link generateFlightEntry}.
+   */
+  usesLive?: boolean;
 }
 
 /**
@@ -393,7 +399,10 @@ export async function buildNextCompatFlightEntry(
   const flightFile = options.flightFile ?? "flight.js";
   const flightId = flightFile.replace(/\.js$/, "");
   const entryPath = join(entriesDir, `${flightId}.tsx`);
-  await Deno.writeTextFile(entryPath, generateFlightEntry(options.boundary, options.dev));
+  await Deno.writeTextFile(
+    entryPath,
+    generateFlightEntry(options.boundary, options.dev, false, options.usesLive ?? true),
+  );
   await bundleNextCompatModules({
     entryPoints: { [flightId]: entryPath },
     runtimeDir,
@@ -411,6 +420,24 @@ export async function buildNextCompatFlightEntry(
   });
   await Deno.remove(entriesDir, { recursive: true }).catch(() => {});
 }
+
+// ===========================================================================
+// Single-page test harness (NOT the production route pipeline)
+// ---------------------------------------------------------------------------
+// Everything below builds and SSRs ONE next-compat page in-process on real
+// esbuild + real npm React, under its own `__denext_root` / `__DENEXT_PROPS__`
+// mount convention. It exists solely to back the focused library-compat e2e
+// tests (`tests/e2e/next-compat-*.test.ts`, `tests/integration/next-compat-build.test.ts`):
+// dnd-kit, recharts, radix, framer-motion, class components — cases that need a
+// real page rendered but not routing/Flight/streaming or a project on disk.
+//
+// It is deliberately co-located: it reuses this module's private build helpers
+// (`withEsbuild`, `prebuildDenextRuntime`, `bundleNextCompat`, `serverStubPlugin`,
+// …), so moving it to a test-support file would force exporting those internals.
+// The REAL App Router pipeline is `generateRouteEntry` (`bundle.ts`) driven by
+// `buildNextCompatModules` / `buildNextCompatClientEntries` / `buildNextCompatFlightEntry`
+// above — production code must use those, never `buildNextCompatPages`.
+// ===========================================================================
 
 /** Import lines + a `wrap(props)` expression composing the layout chain over the page. */
 function composition(filePath: string, layouts: string[]): { imports: string; tree: string } {

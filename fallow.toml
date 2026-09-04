@@ -1,5 +1,10 @@
 # fallow configuration for denext.
 #
+# CRAP scoring uses MEASURED coverage when the pre-commit hook finds
+# `coverage/coverage-final.json` (`deno task coverage:fallow`). It is passed on the
+# command line, not configured here on purpose: a `[health] coverage` path that is
+# missing is a hard error, which the agent gate treats as non-blocking (a silent skip).
+#
 # denext is a Deno project: its dependencies live in `deno.json`'s import map as
 # `npm:`/`jsr:` specifiers, NOT in a `package.json`. fallow's dependency analysis is
 # package.json-oriented, so it reports these real, declared build dependencies as
@@ -10,4 +15,209 @@ ignoreDependencies = [
   "@mdx-js/mdx", # deno.json: npm:@mdx-js/mdx@^3 — MDX compilation on the compat build
   "esbuild", # deno.json: npm:esbuild@^0.24.0 — the compat/SPA bundler
   "@std/http", # deno.json: jsr:@std/http@^1.0.0 — std HTTP (file-server, etc.)
+  "@std/fs", # deno.json: jsr:@std/fs@^1.0.0
+  "@std/encoding", # deno.json: jsr:@std/encoding@^1.0.0
+  "@swc/wasm-web", # deno.json: npm:@swc/wasm-web@^1.13.5 — the swc AST transforms
+  "lightningcss-wasm", # deno.json: npm:lightningcss-wasm@^1.33.0 — CSS minifier
+  "sass", # deno.json: npm:sass@^1.80.0 — optional .scss support
+  "ws", # deno.json: npm:ws@^8 — dev proxy WebSocket relay
+  # Workspace packages and examples import the published framework by its JSR name
+  # (their own deno.json maps it); there is no package.json for fallow to read.
+  "denext",
+  "@denext/denext",
+  # Example-only specifiers mapped in that example's deno.json (jsr:/npm:), or resolved by
+  # the tool that consumes the file (`@import "tailwindcss"` is read by the Tailwind binary).
+  "@db/postgres", # examples/postgres-load/deno.json: jsr:@db/postgres@^0.19
+  "effect", # examples/effect*/deno.json + packages/effect/deno.json: npm:effect@^3.22.0
+  "drizzle-orm", # examples/drizzle/deno.json: npm:drizzle-orm@^0.44.7
+  "@prisma/adapter-better-sqlite3", # examples/prisma/deno.json: npm:@prisma/adapter-better-sqlite3
+  "@capacitor/cli", # examples/native/deno.json: npm:@capacitor/cli@^7
+  "tailwindcss", # examples/tailwind/styles/tailwind.css `@import "tailwindcss"` (Tailwind CLI)
+  # per-directory package.json / test-written import maps — see the note below the list
+  "@radix-ui/react-dialog",
+  "@radix-ui/react-collapsible",
+  "@radix-ui/react-slot",
+  "@base-ui/react",
+  "lucide-react",
+  "react-hook-form",
+  "recharts",
+  "motion",
+  "@react-spring/web",
+  "three",
+  "better-sqlite3",
+  "next",
+  "react",
+  "react-dom",
 ]
+
+# bench/ and several examples carry a package.json for the npm dependencies their compat
+# builds install per directory (React/Next for the benchmarks, motion/three/recharts/Radix for
+# the drop-in demos, see bench/README.md). fallow reports each such directory as an
+# "undeclared workspace" (informational, not a finding) and those imports as unlisted. Declaring
+# them as `[workspaces]` is worse: workspace mode re-roots every entry glob and un-ignores
+# apps/web. So the manifests stay per-directory and the packages are listed here, each verified
+# against the package.json / deno.json of the directory that imports it.
+#   bench/package.json:
+#     "@radix-ui/react-dialog", "lucide-react", "next", "react", "react-dom",
+#     "react-hook-form", "recharts"
+#   examples/{animation,game,next-compat,next-compat-recharts,drizzle}/package.json:
+#     "motion", "@react-spring/web", "three", "@radix-ui/react-collapsible", "recharts",
+#     "better-sqlite3"
+#   tests/e2e/*.e2e.test.ts write the fixture's import map at run time:
+#     "@base-ui/react", "@radix-ui/react-slot", "react-dom"
+
+# App Router route files (page/layout/route/…) are loaded by denext's FILE-BASED routing,
+# not by any import, so fallow's reachability can't see them and reports them as "unused
+# files". Declare the conventions as entry points so a legitimate new route/page (and its
+# imports) is reachable and doesn't fail the gate.
+entry = [
+  "**/app/**/page.tsx",
+  "**/app/**/layout.tsx",
+  "**/app/**/route.ts",
+  "**/app/**/loading.tsx",
+  "**/app/**/error.tsx",
+  "**/app/**/not-found.tsx",
+  "**/app/**/template.tsx",
+  "**/app/**/default.tsx",
+  "**/app/**/global-error.tsx",
+  # Build/codegen scripts run via `deno task`, not imported — declare them so they
+  # aren't reported as unused files (e.g. scripts/gen-*.ts feed the docs site).
+  "scripts/*.ts",
+  # More file conventions denext loads by PATH, not import: the project config, the
+  # request middleware, the instrumentation hook, and the App Router metadata files.
+  "**/denext.config.ts",
+  "**/middleware.ts",
+  "**/instrumentation.ts",
+  "**/app/**/opengraph-image.tsx",
+  "**/app/**/twitter-image.tsx",
+  "**/app/**/icon.tsx",
+  "**/app/**/apple-icon.tsx",
+  "**/app/**/sitemap.ts",
+  "**/app/**/robots.ts",
+  "**/app/**/manifest.ts",
+  # Pages Router (@denext/pages-router plugin): every file under pages/ is a route.
+  "**/pages/**",
+  # SPA mode: the entry (and worker) named by `spa.entry` in denext.config.ts.
+  "**/src/main.tsx",
+  "**/src/worker.ts",
+  # Static assets served verbatim from public/ (fallow analyzes the .css files there), and
+  # the Tailwind source stylesheet named by `tailwind.input` in denext.config.ts.
+  "**/public/**",
+  "**/styles/tailwind.css",
+  # Example runners (`deno task example:*`), the native/desktop hosts and their packaging
+  # scripts, per-example setup scripts, and the import-map alias target for better-sqlite3.
+  "examples/*/serve.ts",
+  "examples/native/desktop.ts",
+  "examples/native/capacitor.config.ts",
+  "examples/native/scripts/*.ts",
+  "examples/prisma/scripts/*.ts",
+  "examples/spa/bench.ts",
+  "examples/drizzle/vendor/**",
+  # The Next→denext dependency probes and drop-in verifier: user-run tools documented in
+  # README-NEXT-MIGRATION.md §1 (`deno run -A examples/next-compat-feasibility/probe-*.ts`).
+  "examples/next-compat-feasibility/*.ts",
+  # The Next→denext dependency probes and drop-in verifier: user-run tools documented in
+  # README-NEXT-MIGRATION.md §1 (`deno run -A examples/next-compat-feasibility/probe-*.ts`).
+  "examples/next-compat-feasibility/*.ts",
+  # Benchmark roots (`deno task bench*`, `deno bench`), see bench/README.md.
+  "bench/run.ts",
+  "bench/*/run.ts",
+  "bench/layer2-ssr/*.ts",
+  "bench/layer2-ssr/*.mjs",
+  "bench/load/denext-server.ts",
+  "bench/packages/*_bench.ts",
+]
+
+# The docs site (apps/web) is a satellite static-export app, not shipped framework code, and
+# it is deliberately outside the test suite (its own deno.json, not a workspace member). So
+# fallow's CRAP-on-zero-coverage penalizes its untested-by-design components/tree-walkers,
+# which isn't a meaningful signal for a docs site. Exclude it from the framework's gate.
+ignorePatterns = [
+  "apps/web/**",
+  # Generated wasm glue (`@generated file from wasmbuild -- do not edit` / emscripten output).
+  # Regenerated from the Rust/C sources; never hand-edited, so its findings are not actionable.
+  "packages/photon/lib/*.js",
+  "packages/avif/lib/*.js",
+  # Fixture trees the migrate tests READ AS TEXT (never imported), so reachability can't see
+  # them; CONTRIBUTING.md documents this as the place to exclude such fixtures.
+  "tests/fixtures/**",
+]
+
+# Loaded with `await import("./dev-proxy.ts")` only when `spa.proxy` is configured (it pulls
+# the npm `ws` relay, which the SPA/desktop servers must not load otherwise) and then called
+# through the module namespace (`proxy.proxyToBackend(...)`), which the static graph cannot
+# attribute to the export. Seeding the file as a runtime root credits its exports.
+dynamicallyLoaded = ["src/build/dev-proxy.ts"]
+
+# DOM interface members implemented by the fake-DOM test doubles (tests/helpers/dom.ts,
+# src/testing/dom.ts). The framework invokes them through `Element`/`Node`/`Document`-typed
+# receivers, which fallow's member tracking cannot attribute to the double; each name below
+# is a standard DOM API the doubles exist to stand in for. Only class members are affected.
+usedClassMembers = [
+  "querySelectorAll", # FakeDocument: reached via the DOM-typed `document` global
+  "nodeType",
+  "firstChild",
+  "insertBefore",
+  "replaceChildren",
+  "removeAttribute",
+  "addEventListener",
+  "removeEventListener",
+  "focus",
+  "getBoundingClientRect",
+  "createElementNS",
+  "createTextNode",
+  "getElementById",
+]
+
+# Duplicate-export exemptions — each verified (2026-09-02 audit) as an intentional
+# same-name export, NOT a duplicate implementation. Scoped to the specific name in the
+# SECONDARY location so one canonical export per name remains and a genuinely new
+# accidental duplicate would still be flagged.
+#
+#   - Component/Context/Key/Ref: `react-types.ts` is denext's React-parity TYPE surface
+#     (the `@types/react` analogue); it re-declares React's public type vocabulary that
+#     also exists as the runtime class (`class-component.ts` `Component`) / internal type
+#     (`jsx/types.ts`) / runtime interface (`runtime/hooks.ts`). Different kinds, same name.
+#   - MatchOptions: route-segment match options (`router/match.ts`) vs testing-library
+#     query match options (`testing/render.ts`) — unrelated concepts, coincidental name.
+#   - Snapshot: fiber commit snapshot (`fiber/fiber.ts`) vs async-context snapshot
+#     (`async-context.ts`) — unrelated, coincidental name.
+#   - redirect: App Router `redirect()` that THROWS (`error-boundary.ts`) vs the
+#     middleware `NextResponse.redirect` helper that RETURNS a Response (`middleware.ts`)
+#     — two intentional, differently-typed Next.js APIs.
+[[ignoreExports]]
+file = "src/compat/react-types.ts"
+exports = ["Component", "Context", "Key", "Ref"]
+
+[[ignoreExports]]
+file = "src/jsx/types.ts"
+exports = ["Component"]
+
+# `Component` (the type) is re-exported through several public barrels for API docs;
+# the canonical value is the runtime class in `class-component.ts`.
+[[ignoreExports]]
+file = "src/runtime/error-boundary.ts"
+exports = ["Component"]
+
+[[ignoreExports]]
+file = "src/runtime/hooks.ts"
+exports = ["Component"]
+
+[[ignoreExports]]
+file = "src/testing/render.ts"
+exports = ["MatchOptions"]
+
+[[ignoreExports]]
+file = "src/runtime/async-context.ts"
+exports = ["Snapshot"]
+
+[[ignoreExports]]
+file = "src/server/middleware.ts"
+exports = ["redirect"]
+
+# `ensureBundleSupport` is exercised by tests/integration/build-smoke.test.ts through a
+# `deno eval` SUBPROCESS (each probe needs a fresh process so the cached verdict resets),
+# i.e. a string of code fallow cannot see. In-process callers are in the same file.
+[[ignoreExports]]
+file = "src/build/bundle.ts"
+exports = ["ensureBundleSupport"]

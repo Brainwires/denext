@@ -5,6 +5,8 @@ import { renderFlightShell } from "../src/jsx/render-to-flight-stream.ts";
 import { prerenderToShellFlight } from "../src/jsx/render-to-ppr-flight.ts";
 import { useServerInsertedHTML } from "../src/runtime/server-inserted-html.ts";
 import type { VNode } from "../src/jsx/types.ts";
+import type { HeadCollector } from "../src/jsx/render-to-string.ts";
+import Head from "../src/compat/next/head.ts";
 
 // Regression: `useServerInsertedHTML` (the CSS-in-JS SSR primitive used by
 // styled-components/emotion registries) must hoist its <style> markup into the document
@@ -18,7 +20,7 @@ function StyleRegistry({ children }: { children: VNode }): VNode {
   return children;
 }
 
-const newHead = () => ({ tags: [] as string[] }) as { tags: string[]; serverInserted?: string[] };
+const newHead = (): HeadCollector => ({ tags: [] });
 
 Deno.test("renderShell (streaming HTML) flushes useServerInsertedHTML into the head", async () => {
   const head = newHead();
@@ -66,4 +68,34 @@ Deno.test("prerenderToShellFlight (PPR) flushes useServerInsertedHTML into the h
     head.serverInserted![0],
     '<style data-denext="sc">.x{color:red}</style>',
   );
+});
+
+Deno.test("next/head: <base>/<script>/<style>/<noscript> reach the document head via the inserted-HTML sink", async () => {
+  const head = newHead();
+  const { shell } = await renderShell(
+    h(
+      "div",
+      null,
+      h(
+        Head,
+        null,
+        h("title", null, "T"),
+        h("base", { href: "/x/" }),
+        h("script", {
+          type: "application/ld+json",
+          dangerouslySetInnerHTML: { __html: '{"@type":"Thing"}' },
+        }),
+        h("noscript", null, "no js"),
+      ),
+      "body",
+    ),
+    head,
+  );
+  assertEquals(head.title, "T");
+  const inserted = head.serverInserted?.join("") ?? "";
+  assertStringIncludes(inserted, '<base href="/x/">');
+  assertStringIncludes(inserted, '<script type="application/ld+json">{"@type":"Thing"}</script>');
+  assertStringIncludes(inserted, "<noscript>no js</noscript>");
+  assert(!shell.includes("<base"), "not inline in the body");
+  assert(!shell.includes("ld+json"), "not inline in the body");
 });

@@ -13,7 +13,7 @@ interface SessionData {
  * The session secret. In a real app this is a strong, rotated secret from the
  * environment; the fallback keeps the demo runnable with no setup.
  */
-export function sessionSecret(): string {
+function sessionSecret(): string {
   return Deno.env.get("SESSION_SECRET") ?? "dev-insecure-secret-change-me";
 }
 

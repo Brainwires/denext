@@ -10,14 +10,13 @@ import type { Messages } from "../runtime/i18n-messages.ts";
 import { PUBLIC_ENV_ID } from "../runtime/public-env.ts";
 import { getImageRuntimeConfig, IMAGE_CONFIG_ID, imageConfigNeedsEmbed } from "../runtime/image.ts";
 import type { PendingHole, ShellRender } from "../jsx/render-to-stream.ts";
+import { takeSettled } from "../jsx/renderer-base.ts";
 import type { FlightShellRender } from "../jsx/render-to-flight-stream.ts";
 import { SWAP_RUNTIME } from "./swap-runtime.ts";
 import type { ResumedHole } from "../jsx/render-to-ppr.ts";
 import { fillFlightHoles, type ResumedFlightHole } from "../jsx/flight-holes.ts";
 import { currentContext } from "./request-context.ts";
 
-/** The element id that wraps server-rendered page content for hydration. */
-export { ROOT_ID } from "./root-id.ts";
 import { ROOT_ID } from "./root-id.ts";
 
 /** Data serialized into the page for the client runtime to hydrate with. */
@@ -182,11 +181,6 @@ export function renderHeadContent(
   return head;
 }
 
-/** Replace a document's `<head>…</head>` region with fresh inner content. */
-export function replaceDocumentHead(doc: string, headContent: string): string {
-  return doc.replace(/<head>[\s\S]*?<\/head>/, `<head>${headContent}</head>`);
-}
-
 /**
  * The trailing `<body>` scripts (public-env island, hydration data + Flight
  * island + client entry, dev script). Exposed so a streamed PPR response can emit
@@ -197,61 +191,63 @@ export function renderBodyScripts(opts: DocumentOptions): string {
   // Public env island: available to any client code, so emitted independently of
   // hydration. Only public-prefixed variables are ever present here.
   if (opts.publicEnv && Object.keys(opts.publicEnv).length > 0) {
-    const envJson = JSON.stringify(opts.publicEnv).replace(/</g, "\\u003c");
-    scripts += `<script id="${PUBLIC_ENV_ID}" type="application/json">${envJson}</script>`;
+    scripts += jsonIsland(PUBLIC_ENV_ID, opts.publicEnv);
   }
-  if (opts.hydration && opts.clientEntry) {
-    // Image runtime config island: only needed when the page hydrates (a client re-render
-    // could re-resolve an `<Image>`) AND the config differs from the default optimizing
-    // baseline (e.g. `images.unoptimized`, a static export, custom width allowlists). A
-    // page with no client JS never re-renders, so it needs none — keeping a purely static
-    // page script-free.
-    if (imageConfigNeedsEmbed()) {
-      const imgJson = JSON.stringify(getImageRuntimeConfig()).replace(/</g, "\\u003c");
-      scripts += `<script id="${IMAGE_CONFIG_ID}" type="application/json">${imgJson}</script>`;
-    }
-    const json = JSON.stringify(opts.hydration).replace(/</g, "\\u003c");
-    scripts += `<script id="__denext_data" type="application/json">${json}</script>`;
-    // Flight island: the reconstructed tree the client entry hydrates from.
-    if (opts.flight !== undefined) {
-      scripts += `<script id="__denext_flight" type="application/json">${
-        serializeFlight(opts.flight)
-      }</script>`;
-    }
-    // Lazy islands: their own Flight trees keyed by tree-path id, hydrated
-    // per-island when each island's client:* strategy fires.
-    if (opts.islands && opts.islands.length > 0) {
-      const map: Record<string, unknown> = {};
-      for (const island of opts.islands) map[island.id] = island.flight;
-      scripts += `<script id="__denext_islands" type="application/json">${
-        JSON.stringify(map).replace(/</g, "\\u003c")
-      }</script>`;
-    }
-    // Signal state: `useId → value`, adopted by the client before hydration.
-    if (opts.signalState && Object.keys(opts.signalState).length > 0) {
-      scripts += `<script id="__denext_state" type="application/json">${
-        JSON.stringify(opts.signalState).replace(/</g, "\\u003c")
-      }</script>`;
-    }
-    scripts += `<script type="module" src="${escapeHtml(opts.clientEntry)}"></script>`;
-  }
+  if (opts.hydration && opts.clientEntry) scripts += hydrationScripts(opts, opts.clientEntry);
   // Dev-only render-mode manifest for the devtools glass-box (CSP-safe JSON island).
   // The two streamed-Flight paths pre-capture it (their context has unwound by the
   // time this runs); every other path builds it live here.
   scripts += opts.renderModeScript ?? renderModeIsland(opts.hydration?.pathname);
-  // Prefer an external same-origin dev script (CSP-clean); fall back to inline.
-  // Emit a CLASSIC script (not a module) so it runs during parse — before the
-  // deferred hydration module — preserving the pre-hydration `__denextDev` marker.
-  if (opts.devScriptSrc) {
-    scripts += `<script src="${escapeHtml(opts.devScriptSrc)}"></script>`;
-  } else if (opts.devScript) {
-    scripts += `<script>${opts.devScript}</script>`;
+  return scripts + devScript(opts);
+}
+
+/** A `<script type="application/json">` data island (script-safe: `<` escaped). */
+function jsonIsland(id: string, value: unknown): string {
+  return `<script id="${id}" type="application/json">${
+    JSON.stringify(value).replace(/</g, "\\u003c")
+  }</script>`;
+}
+
+/**
+ * The hydration islands + the client entry: the image runtime config (only when it differs
+ * from the default optimizing baseline — a page with no client JS never re-renders, so it
+ * needs none), the hydration data, the Flight tree, the lazy islands' own Flight trees
+ * (keyed by tree-path id, hydrated per-island when each `client:*` strategy fires), and the
+ * signal state (`useId → value`, adopted by the client before hydration).
+ */
+function hydrationScripts(opts: DocumentOptions, clientEntry: string): string {
+  let scripts = "";
+  if (imageConfigNeedsEmbed()) scripts += jsonIsland(IMAGE_CONFIG_ID, getImageRuntimeConfig());
+  scripts += jsonIsland("__denext_data", opts.hydration);
+  if (opts.flight !== undefined) {
+    scripts += `<script id="__denext_flight" type="application/json">${
+      serializeFlight(opts.flight)
+    }</script>`;
   }
-  return scripts;
+  if (opts.islands && opts.islands.length > 0) {
+    const map: Record<string, unknown> = {};
+    for (const island of opts.islands) map[island.id] = island.flight;
+    scripts += jsonIsland("__denext_islands", map);
+  }
+  if (opts.signalState && Object.keys(opts.signalState).length > 0) {
+    scripts += jsonIsland("__denext_state", opts.signalState);
+  }
+  return scripts + `<script type="module" src="${escapeHtml(clientEntry)}"></script>`;
+}
+
+/**
+ * The dev script: an external same-origin one (CSP-clean) is preferred, falling back to
+ * inline. A CLASSIC script (not a module) so it runs during parse — before the deferred
+ * hydration module — preserving the pre-hydration `__denextDev` marker.
+ */
+function devScript(opts: DocumentOptions): string {
+  if (opts.devScriptSrc) return `<script src="${escapeHtml(opts.devScriptSrc)}"></script>`;
+  if (opts.devScript) return `<script>${opts.devScript}</script>`;
+  return "";
 }
 
 /** The `data-route` attribute for the hydration root (empty when not hydrating). */
-export function rootRouteAttr(opts: DocumentOptions): string {
+function rootRouteAttr(opts: DocumentOptions): string {
   return opts.hydration ? ` data-route="${escapeHtml(opts.hydration.pathname)}"` : "";
 }
 
@@ -298,23 +294,22 @@ function isDev(): boolean {
  * would be unhashed (and blocked), and any in-hole inline `<script>` is blocked by
  * `script-src`. In dev, warn once-ish if a hole carries an inline `<style>`.
  */
-async function streamHoles(
+async function streamHoles<H extends Awaited<PendingHole>>(
   controller: ReadableStreamDefaultController<Uint8Array>,
   encoder: TextEncoder,
-  active: Set<PendingHole>,
+  active: Set<Promise<H>>,
   signal?: AbortSignal,
+  onHole?: (hole: H) => void,
 ): Promise<void> {
   const timings: Array<{ id: string; ms: number }> = [];
   while (active.size > 0) {
     if (signal?.aborted) break;
-    const settled = await Promise.race(
-      [...active].map((p) => p.then((v) => ({ p, v }))),
-    );
-    active.delete(settled.p);
-    const { id, html, ok, ms } = settled.v;
+    const hole = await takeSettled(active);
+    const { id, html, ok, ms } = hole;
     const timed = isDev() && ms !== undefined;
     if (timed) timings.push({ id, ms: Math.round(ms! * 100) / 100 });
     if (!ok) continue; // leave the shell fallback for this hole
+    onHole?.(hole);
     if (isDev() && /<style\b/i.test(html)) {
       console.warn(
         `denext: streamed hole "${id}" contains an inline <style> — it is not covered ` +
@@ -548,18 +543,7 @@ export function streamPprFlightDocument(
 <html lang="${escapeHtml(lang)}">
 <head>${head}</head>
 <body><div id="${ROOT_ID}"${rootRouteAttr(docOpts)}>${opts.shellBody}</div>${SWAP_RUNTIME}`;
-  // Non-rejecting holes: each resolves to `{ id, html, flight, ok }`. A failed hole
-  // streams nothing (its shell fallback stays) and its Flight hole fills with `null`.
-  const active = new Set(
-    opts.resume.holes.map((hole) =>
-      Promise.all([Promise.resolve(hole.html), Promise.resolve(hole.flight)])
-        .then(([html, flight]) => ({ id: hole.id, html, flight, ok: true }))
-        .catch((err) => {
-          console.error("denext: Flight PPR hole failed to resume:", hole.id, err);
-          return { id: hole.id, html: "", flight: null as FlightNode, ok: false };
-        })
-    ),
-  );
+  const active = settlingHoles(opts.resume.holes);
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       // Close signal collection exactly once (success or failure) so the module-global
@@ -568,27 +552,7 @@ export function streamPprFlightDocument(
       const finish = () => (signalMap ??= opts.resume.finishSignals());
       try {
         controller.enqueue(encoder.encode(prefix));
-        const holeFlights = new Map<string, FlightNode>();
-        while (active.size > 0) {
-          if (opts.signal?.aborted) break;
-          const settled = await Promise.race(
-            [...active].map((p) => p.then((v) => ({ p, v }))),
-          );
-          active.delete(settled.p);
-          const { id, html, flight, ok } = settled.v;
-          if (!ok) continue; // leave the shell fallback for this hole
-          holeFlights.set(id, flight);
-          if (isDev() && /<style\b/i.test(html)) {
-            console.warn(
-              `denext: streamed Flight PPR hole "${id}" contains an inline <style> — it ` +
-                `is not covered by the streaming CSP (which hashes only the buffered shell) ` +
-                `and will be blocked. Move the style into a stylesheet or the shell.`,
-            );
-          }
-          controller.enqueue(
-            encoder.encode(`<template data-dnx-r="${id}">${html}</template>`),
-          );
-        }
+        const holeFlights = await streamResumedHoles(active, controller, opts.signal);
         // All holes drained: fill the cached shell Flight, merge islands + signal state.
         const flight = fillFlightHoles(opts.shellFlight, holeFlights);
         const islands = [...opts.shellIslands, ...opts.resume.islands];
@@ -608,6 +572,47 @@ export function streamPprFlightDocument(
       }
     },
   });
+}
+
+/** One resumed hole once both its HTML and Flight subtree have settled. */
+interface SettledHole {
+  id: string;
+  html: string;
+  flight: FlightNode;
+  ok: boolean;
+}
+
+/**
+ * Non-rejecting holes: each resolves to `{ id, html, flight, ok }`. A failed hole
+ * streams nothing (its shell fallback stays) and its Flight hole fills with `null`.
+ */
+function settlingHoles(holes: ResumedFlightHole[]): Set<Promise<SettledHole>> {
+  return new Set(
+    holes.map((hole) =>
+      Promise.all([Promise.resolve(hole.html), Promise.resolve(hole.flight)])
+        .then(([html, flight]) => ({ id: hole.id, html, flight, ok: true }))
+        .catch((err) => {
+          console.error("denext: Flight PPR hole failed to resume:", hole.id, err);
+          return { id: hole.id, html: "", flight: null as FlightNode, ok: false };
+        })
+    ),
+  );
+}
+
+/**
+ * Stream each resumed hole as it settles (via {@link streamHoles}: completion order,
+ * per-hole error skipping, abort) and collect the resolved Flight subtree per hole id.
+ */
+async function streamResumedHoles(
+  active: Set<Promise<SettledHole>>,
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  signal: AbortSignal | undefined,
+): Promise<Map<string, FlightNode>> {
+  const holeFlights = new Map<string, FlightNode>();
+  await streamHoles(controller, new TextEncoder(), active, signal, (hole) => {
+    holeFlights.set(hole.id, hole.flight);
+  });
+  return holeFlights;
 }
 
 /** Resolve a possibly-relative URL against `metadataBase`. */
@@ -669,25 +674,22 @@ function viewportContent(v?: Viewport): string {
   return parts.join(", ");
 }
 
-function renderHead(metadata: Metadata, viewport?: Viewport): string {
-  const base = metadata.metadataBase;
-  const nameTag = (name: string, content?: string) =>
-    content == null ? "" : `<meta name="${escapeHtml(name)}" content="${escapeHtml(content)}">`;
-  const propTag = (property: string, content?: string) =>
-    content == null
-      ? ""
-      : `<meta property="${escapeHtml(property)}" content="${escapeHtml(content)}">`;
-  const link = (rel: string, href?: string) =>
-    href == null ? "" : `<link rel="${escapeHtml(rel)}" href="${escapeHtml(href)}">`;
-  const list = (
-    v?: string | string[],
-  ) => (v == null ? [] : Array.isArray(v) ? v : [v]);
+const nameTag = (name: string, content?: string): string =>
+  content == null ? "" : `<meta name="${escapeHtml(name)}" content="${escapeHtml(content)}">`;
+const propTag = (property: string, content?: string): string =>
+  content == null
+    ? ""
+    : `<meta property="${escapeHtml(property)}" content="${escapeHtml(content)}">`;
+const linkTag = (rel: string, href?: string): string =>
+  href == null ? "" : `<link rel="${escapeHtml(rel)}" href="${escapeHtml(href)}">`;
+const list = <T>(v?: T | T[]): T[] => (v == null ? [] : Array.isArray(v) ? v : [v]);
 
+/** Charset, viewport, theme, title, description, keywords, robots. */
+function headBasics(metadata: Metadata, viewport?: Viewport): string {
   let head = `<meta charset="utf-8">`;
   head += `<meta name="viewport" content="${escapeHtml(viewportContent(viewport))}">`;
   head += nameTag("theme-color", viewport?.themeColor);
   head += nameTag("color-scheme", viewport?.colorScheme);
-
   // `title` is resolved to a string by mergeMetadata; handle the object form
   // defensively in case a title reaches here unmerged.
   const titleStr = typeof metadata.title === "string"
@@ -695,113 +697,96 @@ function renderHead(metadata: Metadata, viewport?: Viewport): string {
     : metadata.title?.absolute ?? metadata.title?.default;
   if (titleStr !== undefined) head += `<title>${escapeHtml(titleStr)}</title>`;
   head += nameTag("description", metadata.description);
-  if (metadata.keywords?.length) {
-    head += nameTag("keywords", metadata.keywords.join(", "));
-  }
-  if (metadata.robots !== undefined) {
-    head += nameTag("robots", robotsContent(metadata.robots));
-  }
+  if (metadata.keywords?.length) head += nameTag("keywords", metadata.keywords.join(", "));
+  if (metadata.robots !== undefined) head += nameTag("robots", robotsContent(metadata.robots));
   if (typeof metadata.robots === "object" && metadata.robots.googleBot) {
     head += nameTag("googlebot", metadata.robots.googleBot);
   }
+  return head;
+}
 
-  // Authors.
-  const authors = metadata.authors
-    ? (Array.isArray(metadata.authors) ? metadata.authors : [metadata.authors])
-    : [];
-  for (const a of authors) {
-    head += nameTag("author", a.name);
-    head += link("author", a.url);
+/** Authors, site verification, canonical + language alternates, icons. */
+function headLinks(metadata: Metadata): string {
+  const base = metadata.metadataBase;
+  let head = "";
+  for (const a of list(metadata.authors)) {
+    head += nameTag("author", a.name) + linkTag("author", a.url);
   }
-
   // Site verification (e.g. `google` → `google-site-verification`).
   for (const [k, v] of Object.entries(metadata.verification ?? {})) {
     head += nameTag(`${k}-site-verification`, v);
   }
-
-  // Canonical + language alternates.
   const canonical = metadata.alternates?.canonical ?? metadata.canonical;
-  if (canonical) head += link("canonical", resolveMetaUrl(canonical, base));
-  for (
-    const [lang, url] of Object.entries(metadata.alternates?.languages ?? {})
-  ) {
+  if (canonical) head += linkTag("canonical", resolveMetaUrl(canonical, base));
+  for (const [lang, url] of Object.entries(metadata.alternates?.languages ?? {})) {
     head += `<link rel="alternate" hreflang="${escapeHtml(lang)}" href="${
       escapeHtml(resolveMetaUrl(url, base))
     }">`;
   }
-
   // Icons (shorthand + structured).
-  head += link("icon", metadata.icon);
-  for (const href of list(metadata.icons?.icon)) head += link("icon", href);
-  for (const href of list(metadata.icons?.shortcut)) {
-    head += link("shortcut icon", href);
-  }
-  for (const href of list(metadata.icons?.apple)) {
-    head += link("apple-touch-icon", href);
-  }
+  head += linkTag("icon", metadata.icon);
+  for (const href of list(metadata.icons?.icon)) head += linkTag("icon", href);
+  for (const href of list(metadata.icons?.shortcut)) head += linkTag("shortcut icon", href);
+  for (const href of list(metadata.icons?.apple)) head += linkTag("apple-touch-icon", href);
+  return head;
+}
 
-  // Open Graph.
-  if (metadata.openGraph) {
-    const og = metadata.openGraph;
-    head += propTag("og:title", og.title) +
-      propTag("og:description", og.description) +
+/** Open Graph + Twitter Card tags. */
+function headSocial(metadata: Metadata): string {
+  const base = metadata.metadataBase;
+  let head = "";
+  const og = metadata.openGraph;
+  if (og) {
+    head += propTag("og:title", og.title) + propTag("og:description", og.description) +
       propTag("og:type", og.type) + propTag("og:url", og.url) +
       propTag("og:site_name", og.siteName);
-    const images = og.image === undefined ? [] : Array.isArray(og.image) ? og.image : [og.image];
-    for (const img of images) {
+    for (const img of list(og.image)) {
       if (typeof img === "string") {
         head += propTag("og:image", resolveMetaUrl(img, base));
-      } else {
-        head += propTag("og:image", resolveMetaUrl(img.url, base));
-        head += propTag("og:image:width", img.width?.toString());
-        head += propTag("og:image:height", img.height?.toString());
-        head += propTag("og:image:alt", img.alt);
+        continue;
       }
+      head += propTag("og:image", resolveMetaUrl(img.url, base)) +
+        propTag("og:image:width", img.width?.toString()) +
+        propTag("og:image:height", img.height?.toString()) + propTag("og:image:alt", img.alt);
     }
   }
-
-  // Twitter Card.
-  if (metadata.twitter) {
-    const t = metadata.twitter;
+  const t = metadata.twitter;
+  if (t) {
     head += nameTag("twitter:card", t.card) + nameTag("twitter:site", t.site) +
-      nameTag("twitter:creator", t.creator) +
-      nameTag("twitter:title", t.title) +
+      nameTag("twitter:creator", t.creator) + nameTag("twitter:title", t.title) +
       nameTag("twitter:description", t.description);
-    if (t.image) {
-      head += nameTag("twitter:image", resolveMetaUrl(t.image, base));
-    }
+    if (t.image) head += nameTag("twitter:image", resolveMetaUrl(t.image, base));
   }
+  return head;
+}
 
-  if (metadata.meta) {
-    for (const [name, content] of Object.entries(metadata.meta)) {
-      head += nameTag(name, content);
-    }
+/**
+ * Free-form `meta`, JSON-LD (each object its own script, script-safe — see serializeJsonLd),
+ * and the raw `metadata.head` escape hatch last. L6: `metadata.head` is the one <head> sink
+ * injected verbatim (no escaping) — an author-controlled escape hatch for raw tags. Warn in
+ * dev that untrusted input here is an injection vector, mirroring warnDangerousHtml; gated
+ * on `__denextDev` so production SSR pays nothing, and de-duplicated by content so a STATIC
+ * head warns once while a head interpolating changing data — the risky case — keeps warning.
+ */
+function headExtras(metadata: Metadata): string {
+  let head = "";
+  for (const [name, content] of Object.entries(metadata.meta ?? {})) head += nameTag(name, content);
+  for (const item of list(metadata.jsonLd)) {
+    if (item == null) continue;
+    head += `<script type="application/ld+json">${serializeJsonLd(item)}</script>`;
   }
-
-  // JSON-LD structured data. Emitted just before the raw `metadata.head` escape
-  // hatch so the author's raw sink stays last. Each object is a separate script,
-  // serialized with script-safe escaping (see serializeJsonLd).
-  if (metadata.jsonLd !== undefined) {
-    const items = Array.isArray(metadata.jsonLd) ? metadata.jsonLd : [metadata.jsonLd];
-    for (const item of items) {
-      if (item == null) continue;
-      head += `<script type="application/ld+json">${serializeJsonLd(item)}</script>`;
-    }
-  }
-
   if (metadata.head) {
-    // L6: `metadata.head` is the one <head> sink injected verbatim (no escaping) —
-    // an author-controlled escape hatch for raw tags. Warn in dev that untrusted
-    // input here is an injection vector, mirroring warnDangerousHtml. Gated on
-    // `__denextDev`, so production SSR pays nothing. De-duplicated by content: a
-    // STATIC head (the common case — stylesheet/favicon links) warns once, while a
-    // head interpolating changing data — the actually-risky case — keeps warning.
     if ((globalThis as { __denextDev?: boolean }).__denextDev === true) {
       warnRawHeadOnce(metadata.head);
     }
     head += metadata.head;
   }
   return head;
+}
+
+function renderHead(metadata: Metadata, viewport?: Viewport): string {
+  return headBasics(metadata, viewport) + headLinks(metadata) + headSocial(metadata) +
+    headExtras(metadata);
 }
 
 /** Distinct `metadata.head` bodies already warned about this process (dev only). */

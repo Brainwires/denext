@@ -106,45 +106,31 @@ export function matchSegments(
 ): RouteParams | null {
   const parts = splitPath(pathname);
   const params: RouteParams = {};
-
-  let pi = 0; // pattern index
-  let si = 0; // segment (path part) index
-
-  while (pi < pattern.length) {
-    const seg = pattern[pi];
-
-    if (seg.kind === "catchAll") {
-      // Must consume at least one remaining part.
-      const rest = parts.slice(si);
-      if (rest.length === 0) return null;
-      // A catch-all consumes every remaining part, so it always reaches the end of
-      // `parts` — the match is complete here.
-      params[seg.value] = rest.map(decodeSegment).join("/");
-      return params;
+  for (let i = 0; i < pattern.length; i++) {
+    const seg = pattern[i];
+    // A catch-all consumes every remaining part, so the match is complete here.
+    if (seg.kind === "catchAll" || seg.kind === "optionalCatchAll") {
+      return matchCatchAll(seg, parts.slice(i), params);
     }
-
-    if (seg.kind === "optionalCatchAll") {
-      const rest = parts.slice(si);
-      if (rest.length > 0) params[seg.value] = rest.map(decodeSegment).join("/");
-      return params;
-    }
-
     // static / dynamic consume exactly one part
-    if (si >= parts.length) return null;
-    const part = parts[si];
-
-    if (seg.kind === "static") {
-      if (seg.value !== part) return null;
-    } else {
-      // dynamic
-      params[seg.value] = decodeSegment(part);
-    }
-    pi++;
-    si++;
+    if (i >= parts.length || !matchOne(seg, parts[i], params)) return null;
   }
-
   // All pattern segments consumed; path must be fully consumed too.
-  return si === parts.length ? params : null;
+  return pattern.length === parts.length ? params : null;
+}
+
+/** A catch-all must consume at least one part; an optional one may consume none. */
+function matchCatchAll(seg: Segment, rest: string[], params: RouteParams): RouteParams | null {
+  if (rest.length === 0) return seg.kind === "optionalCatchAll" ? params : null;
+  params[seg.value] = rest.map(decodeSegment).join("/");
+  return params;
+}
+
+/** A static segment must equal the part; a dynamic one captures it. */
+function matchOne(seg: Segment, part: string, params: RouteParams): boolean {
+  if (seg.kind === "static") return seg.value === part;
+  params[seg.value] = decodeSegment(part);
+  return true;
 }
 
 function decodeSegment(part: string): string {
@@ -179,4 +165,17 @@ export function specificity(pattern: Segment[]): number {
   }
   // Longer concrete patterns edge out shorter ones at equal kind-weight.
   return score + pattern.length;
+}
+
+/**
+ * Fill a route pattern with params to produce a concrete pathname (a catch-all param may
+ * carry slash-joined segments already).
+ */
+export function fillPattern(pattern: Segment[], params: RouteParams): string {
+  const parts: string[] = [];
+  for (const seg of pattern) {
+    if (seg.kind === "static") parts.push(seg.value);
+    else if (params[seg.value]) parts.push(params[seg.value]);
+  }
+  return "/" + parts.join("/");
 }

@@ -1,6 +1,46 @@
 // Serve with automatic port fallback: if the requested port is taken, try the
 // next few ports before giving up (matching the behavior of most dev servers).
 
+import { applyDefaultSecurityHeaders } from "./app.ts";
+import { setRemoteAddr } from "./remote-addr.ts";
+import { serveStatic } from "./static.ts";
+import type { HstsConfig } from "./config.ts";
+
+/** Cache-control for content-hashed, immutable build assets (client bundles, self-hosted fonts). */
+const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable";
+
+/**
+ * Serve a built, content-hashed asset from `dir` (path `rel`) as immutable, with
+ * denext's default hardening headers applied. Returns a hardened 404 carrying
+ * `notFoundBody` when the file isn't found. Centralizes the "serve a client/font
+ * asset with cache-control + default hardening, else a hardened 404" shape shared
+ * by the prod server (client bundles, self-hosted fonts) and the SPA prod server.
+ *
+ * @param dir Directory root to serve from.
+ * @param rel Request-relative path under `dir` (already prefix-stripped).
+ * @param request The incoming request (for `accept-encoding` negotiation).
+ * @param secure Whether the connection is HTTPS (gates HSTS in the hardening set).
+ * @param hsts Optional HSTS tuning, threaded to {@link applyDefaultSecurityHeaders}.
+ * @param notFoundBody Body for the 404 response; defaults to `"not found"`. Pass a
+ *   JS comment (e.g. `"// not found"`) for a `.js` asset route so a 404 body can't
+ *   be misparsed as script.
+ */
+export async function serveImmutableAsset(
+  dir: string,
+  rel: string,
+  request: Request,
+  secure: boolean,
+  hsts: HstsConfig | false | undefined,
+  notFoundBody = "not found",
+): Promise<Response> {
+  const asset = await serveStatic(dir, rel, request.headers.get("accept-encoding") ?? undefined);
+  if (asset) {
+    asset.headers.set("cache-control", IMMUTABLE_CACHE_CONTROL);
+    return applyDefaultSecurityHeaders(asset, secure, hsts);
+  }
+  return applyDefaultSecurityHeaders(new Response(notFoundBody, { status: 404 }), secure, hsts);
+}
+
 /** Options for {@linkcode serveWithPortFallback}. */
 export interface ServeUtilOptions {
   /** The first port to try. */
@@ -99,58 +139,64 @@ export function serveWithPortFallback(
   options: ServeUtilOptions,
   handler: (request: Request) => Response | Promise<Response>,
 ): Deno.HttpServer {
-  const { port, hostname, signal, onListen, strict } = options;
+  const { port, strict } = options;
   const maxAttempts = strict ? 1 : (options.maxAttempts ?? 10);
-
   for (let i = 0; i < maxAttempts; i++) {
     const tryPort = port + i;
     try {
-      // NB: the shutdown signal is NOT passed to Deno.serve — its `signal` option
-      // hard-closes live connections. Instead we drive `server.shutdown()` on
-      // abort, which stops accepting new connections and DRAINS in-flight requests.
-      const server = Deno.serve(
-        {
-          port: tryPort,
-          hostname: hostname ?? "0.0.0.0",
-          onListen: onListen ??
-            (({ hostname, port }) => console.log(`denext listening on http://${hostname}:${port}`)),
-        },
-        handler,
-      );
-      if (signal) {
-        const beginShutdown = () => {
-          const draining = server.shutdown();
-          installDrainDeadline(
-            draining,
-            options.shutdownDrainMs ?? 0,
-            options.onDrainTimeout ?? defaultDrainTimeout,
-          );
-        };
-        if (signal.aborted) beginShutdown();
-        else signal.addEventListener("abort", beginShutdown, { once: true });
-      }
-      return server;
+      return serveOn(tryPort, options, handler);
     } catch (error) {
-      if (error instanceof Deno.errors.AddrInUse) {
-        if (strict) {
-          throw new Deno.errors.AddrInUse(
-            `denext: port ${tryPort} is already in use. ` +
-              `Free it, or omit --port to auto-select an open port.`,
-          );
-        }
-        if (i < maxAttempts - 1) {
-          console.warn(
-            `denext: port ${tryPort} in use, trying ${tryPort + 1}…`,
-          );
-          continue;
-        }
+      if (!(error instanceof Deno.errors.AddrInUse)) throw error;
+      if (strict) {
+        throw new Deno.errors.AddrInUse(
+          `denext: port ${tryPort} is already in use. ` +
+            `Free it, or omit --port to auto-select an open port.`,
+        );
       }
-      throw error;
+      if (i === maxAttempts - 1) throw error;
+      console.warn(`denext: port ${tryPort} in use, trying ${tryPort + 1}…`);
     }
   }
-
   // Unreachable: the loop either returns a server or throws on the last attempt.
   throw new Deno.errors.AddrInUse(
     `denext: no free port found in range ${port}–${port + maxAttempts - 1}`,
   );
+}
+
+/**
+ * `Deno.serve` on one port with graceful shutdown wired. NB: the shutdown signal is NOT
+ * passed to Deno.serve — its `signal` option hard-closes live connections. Instead
+ * `server.shutdown()` is driven on abort, which stops accepting new connections and
+ * DRAINS in-flight requests (bounded by the drain deadline).
+ */
+function serveOn(
+  port: number,
+  options: ServeUtilOptions,
+  handler: (request: Request) => Response | Promise<Response>,
+): Deno.HttpServer {
+  const server = Deno.serve(
+    {
+      port,
+      hostname: options.hostname ?? "0.0.0.0",
+      onListen: options.onListen ??
+        (({ hostname, port }) => console.log(`denext listening on http://${hostname}:${port}`)),
+    },
+    (request, info) => {
+      setRemoteAddr(request, info.remoteAddr);
+      return handler(request);
+    },
+  );
+  const { signal } = options;
+  if (signal) {
+    const beginShutdown = () => {
+      installDrainDeadline(
+        server.shutdown(),
+        options.shutdownDrainMs ?? 0,
+        options.onDrainTimeout ?? defaultDrainTimeout,
+      );
+    };
+    if (signal.aborted) beginShutdown();
+    else signal.addEventListener("abort", beginShutdown, { once: true });
+  }
+  return server;
 }

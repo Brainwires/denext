@@ -14,30 +14,15 @@
 //   2. Resume — per request, re-run the tree with the real request context (no
 //      postponing) and stream only the postponed holes into the cached shell.
 //
-// This module owns the postpone signal and the ambient prerender scope. It has
-// no dependency on the request context or the cache, so both can import it
-// without a cycle.
+// This module owns the ambient prerender scope (the postpone signal itself lives in
+// postpone.ts, which stays free of node:* imports so the renderers can use it from the
+// client bundle's module graph). It has no dependency on the request context or the
+// cache, so both can import it without a cycle.
 
 import { AsyncLocalStorage } from "node:async_hooks";
 
-const POSTPONE = Symbol.for("denext.postpone");
-
-/**
- * The signal thrown by a dynamic read reached during a prerender pass (outside a
- * `use cache` scope). Caught at the nearest Suspense boundary, which becomes a
- * per-request dynamic hole in the otherwise-static shell.
- */
-export class Postpone {
-  readonly [POSTPONE] = true as const;
-  /** The dynamic API that triggered the postpone (for diagnostics). */
-  constructor(readonly api: string) {}
-}
-
-/** Is `x` a {@link Postpone} signal? */
-export function isPostpone(x: unknown): x is Postpone {
-  return typeof x === "object" && x !== null &&
-    (x as Record<symbol, unknown>)[POSTPONE] === true;
-}
+import { Postpone } from "./postpone.ts";
+export { isPostpone, Postpone } from "./postpone.ts";
 
 /** Ambient prerender-pass state; the presence of a store means we are prerendering. */
 interface PrerenderState {

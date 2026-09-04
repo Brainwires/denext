@@ -11,7 +11,14 @@
 import { assert, assertStringIncludes } from "@std/assert";
 import { copy } from "@std/fs";
 import { join, toFileUrl } from "@std/path";
-import { launchBrowser, startDevOnDir } from "./harness.ts";
+import {
+  collectConsoleErrors,
+  editAndAssertHotSwap,
+  hydrateAndClick,
+  launchBrowser,
+  type RunningServer,
+  startDevOnDir,
+} from "./harness.ts";
 
 const FIXTURE = new URL("./fixtures/hmr-flight", import.meta.url).pathname;
 const FRAMEWORK_ROOT = new URL("../../", import.meta.url).pathname;
@@ -33,6 +40,21 @@ async function patchImports(dir: string): Promise<void> {
   await Deno.writeTextFile(p, JSON.stringify(cfg, null, 2));
 }
 
+const ISLAND_EDIT = {
+  from: "ISLAND_V1",
+  to: "ISLAND_V2",
+  watch: "island",
+  counter: "island",
+  count: "count: 2",
+  reloadMessage: "an island edit must NOT trigger a full page reload",
+};
+
+async function stepFlightEntry(server: RunningServer): Promise<void> {
+  const entry = await (await fetch(server.origin + "/_denext/flight.js")).text();
+  assertStringIncludes(entry, "/_denext/@fs"); // island served on its own URL
+  assertStringIncludes(entry, "/_denext/@dep/"); // denext pre-bundled once
+}
+
 Deno.test({
   name: "e2e: unbundled dev loop — Flight island single-module HMR preserves state",
   sanitizeOps: false,
@@ -48,47 +70,22 @@ Deno.test({
   const islandFile = join(dir, "app/counter.tsx");
 
   try {
-    await t.step("the app-wide Flight entry imports the island unbundled (@fs)", async () => {
-      const entry = await (await fetch(server.origin + "/_denext/flight.js")).text();
-      assertStringIncludes(entry, "/_denext/@fs"); // island served on its own URL
-      assertStringIncludes(entry, "/_denext/@dep/"); // denext pre-bundled once
-    });
+    await t.step(
+      "the app-wide Flight entry imports the island unbundled (@fs)",
+      () => stepFlightEntry(server),
+    );
 
     const page = await browser.newPage(server.origin + "/");
-    const consoleErrors: string[] = [];
-    page.addEventListener("console", (e) => {
-      // deno-lint-ignore no-explicit-any
-      const d = (e as any).detail;
-      if (d?.type === "error") consoleErrors.push(String(d.text ?? ""));
-    });
+    const consoleErrors = collectConsoleErrors(page);
 
-    await t.step("island hydrates and is interactive", async () => {
-      await page.waitForFunction("!!document.querySelector('[data-testid=\"island\"]')");
-      await page.evaluate("window.__noReload = true");
-      const btn = await page.$('[data-testid="island"]');
-      assert(btn, "island button exists");
-      await btn.click();
-      await btn.click();
-      await page.waitForFunction(
-        "document.querySelector('[data-testid=\"island\"]').textContent.includes('count: 2')",
-      );
-    });
-
-    await t.step("editing the island hot-swaps it, preserves state, no reload", async () => {
-      const src = await Deno.readTextFile(islandFile);
-      await Deno.writeTextFile(islandFile, src.replace("ISLAND_V1", "ISLAND_V2"));
-      await page.waitForFunction(
-        "document.querySelector('[data-testid=\"island\"]').textContent.includes('ISLAND_V2')",
-      );
-      // The island's own count state survived (single-module swap, not a remount).
-      const island = await page.evaluate(
-        "document.querySelector('[data-testid=\"island\"]').textContent",
-      );
-      assertStringIncludes(String(island), "count: 2");
-      const noReload = await page.evaluate("window.__noReload === true");
-      assert(noReload, "an island edit must NOT trigger a full page reload");
-    });
-
+    await t.step(
+      "island hydrates and is interactive",
+      () => hydrateAndClick(page, "island", 2, "count: 2", "island button exists"),
+    );
+    await t.step(
+      "editing the island hot-swaps it, preserves state, no reload",
+      () => editAndAssertHotSwap(page, { file: islandFile, ...ISLAND_EDIT }),
+    );
     await t.step("no console errors during hydration + HMR", () => {
       assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(" | ")}`);
     });

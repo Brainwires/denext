@@ -130,7 +130,48 @@ export function usePictureInPicture(
   opts.current = options;
 
   const snap = useSyncExternalStore(subscribe, () => snapshot, () => SERVER_SNAPSHOT);
+  const { ref, onResize } = usePipListeners(videoRef, pipWinRef, setPipWindow, opts);
+  const { enter, exit, toggle } = usePipActions(videoRef, opts);
 
+  useEffect(() => {
+    checkSupport();
+    return () => {
+      // On unmount the callback ref already detaches the video's PiP listeners, but
+      // if the component unmounts WHILE still in PiP, `leavepictureinpicture` never
+      // fires — so the `resize` listener added on the PiP window (in onEnter) would
+      // leak. Remove it here too, and drop any stale global claim this video held.
+      const win = pipWinRef.current;
+      if (win) win.removeEventListener("resize", onResize);
+      pipWinRef.current = null;
+      if (active === videoRef.current) setActive(null);
+    };
+  }, []);
+
+  return {
+    ref,
+    isSupported: snap.isSupported,
+    isActive: snap.active === videoRef.current && videoRef.current !== null,
+    isPiPOpen: snap.active !== null,
+    pipWindow,
+    enter,
+    exit,
+    toggle,
+  };
+}
+
+type Ref<T> = { current: T };
+type OptsRef = Ref<UsePictureInPictureOptions>;
+
+/**
+ * The stable enter/leave/resize listeners and the callback `ref` that (re)attaches
+ * them to whichever `<video>` the component renders.
+ */
+function usePipListeners(
+  videoRef: Ref<HTMLVideoElement | null>,
+  pipWinRef: Ref<PictureInPictureWindow | null>,
+  setPipWindow: (win: PictureInPictureWindow | null) => void,
+  opts: OptsRef,
+): { ref: (el: HTMLVideoElement | null) => void; onResize: () => void } {
   const onResize = useRef((): void => {
     const win = pipWinRef.current;
     if (win) opts.current.onResize?.(win);
@@ -169,6 +210,14 @@ export function usePictureInPicture(
     }
   }, [onEnter, onLeave]);
 
+  return { ref, onResize };
+}
+
+/** The imperative `enter`/`exit`/`toggle` controls (no-ops on the server / unsupported). */
+function usePipActions(
+  videoRef: Ref<HTMLVideoElement | null>,
+  opts: OptsRef,
+): Pick<PictureInPictureControls, "enter" | "exit" | "toggle"> {
   const enter = useCallback(async (): Promise<void> => {
     const video = videoRef.current;
     if (!video || !isUsable()) return; // no-op: SSR / unsupported
@@ -198,28 +247,5 @@ export function usePictureInPicture(
       : enter();
   }, [enter, exit]);
 
-  useEffect(() => {
-    checkSupport();
-    return () => {
-      // On unmount the callback ref already detaches the video's PiP listeners, but
-      // if the component unmounts WHILE still in PiP, `leavepictureinpicture` never
-      // fires — so the `resize` listener added on the PiP window (pip:144) would
-      // leak. Remove it here too, and drop any stale global claim this video held.
-      const win = pipWinRef.current;
-      if (win) win.removeEventListener("resize", onResize);
-      pipWinRef.current = null;
-      if (active === videoRef.current) setActive(null);
-    };
-  }, []);
-
-  return {
-    ref,
-    isSupported: snap.isSupported,
-    isActive: snap.active === videoRef.current && videoRef.current !== null,
-    isPiPOpen: snap.active !== null,
-    pipWindow,
-    enter,
-    exit,
-    toggle,
-  };
+  return { enter, exit, toggle };
 }

@@ -380,18 +380,8 @@ export async function handleLiveUpgrade(request: Request): Promise<Response> {
   const peerId = crypto.randomUUID();
   // Connection-level authorization: run the app's `authorize` hook (if any) under the
   // viewer's own session before consuming the request for the upgrade.
-  if (policy.authorize) {
-    const ctx: LiveConnectionContext = { origin, url: "", cookie, peerId };
-    const req = new Request(origin, { headers: cookie ? { cookie } : {} });
-    let ok = false;
-    try {
-      ok = await Promise.resolve(
-        runWithContext(createRequestContext(req), () => policy.authorize!(ctx)),
-      );
-    } catch {
-      ok = false;
-    }
-    if (!ok) return new Response("forbidden", { status: 403 });
+  if (!(await connectionAuthorized({ origin, url: "", cookie, peerId }))) {
+    return new Response("forbidden", { status: 403 });
   }
   let upgrade: { socket: WebSocket; response: Response };
   try {
@@ -399,13 +389,32 @@ export async function handleLiveUpgrade(request: Request): Promise<Response> {
   } catch {
     return new Response("upgrade failed", { status: 400 });
   }
-  const { socket, response } = upgrade;
+  attachConnection(upgrade.socket, { peerId, origin, cookie });
+  return upgrade.response;
+}
+
+/** Run the app's `authorize` hook under the viewer's own session; a throw is a refusal. */
+async function connectionAuthorized(ctx: LiveConnectionContext): Promise<boolean> {
+  if (!policy.authorize) return true;
+  const req = new Request(ctx.origin, { headers: ctx.cookie ? { cookie: ctx.cookie } : {} });
+  try {
+    return await Promise.resolve(
+      runWithContext(createRequestContext(req), () => policy.authorize!(ctx)),
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Register the upgraded socket as a live connection and wire its message/close handlers. */
+function attachConnection(
+  socket: WebSocket,
+  identity: { peerId: string; origin: string; cookie: string },
+): void {
   const conn: Conn = {
     socket,
-    peerId,
-    origin,
+    ...identity,
     url: "",
-    cookie,
     boundaries: [],
     dataSubs: new Map(),
     presenceRooms: new Map(),
@@ -423,7 +432,6 @@ export async function handleLiveUpgrade(request: Request): Promise<Response> {
     } catch { /* already closing */ }
   };
   connections.add(conn);
-  return response;
 }
 
 /** Remove a connection from the hub and every presence room it was in (rebroadcasting). */
@@ -457,24 +465,8 @@ function handleClientMessage(conn: Conn, raw: string): void {
     return;
   }
   switch (msg.type) {
-    case "subscribe": {
-      // Pin the re-render URL to the connection's own origin — never trust a
-      // client-supplied origin (SSRF / cross-origin render), only its path + query.
-      let resolved: URL;
-      try {
-        resolved = new URL(msg.url, conn.origin);
-      } catch {
-        return;
-      }
-      if (resolved.origin !== conn.origin) return;
-      conn.url = resolved.href;
-      const boundaries = Array.isArray(msg.boundaries)
-        ? msg.boundaries.filter((b) => b && typeof b.id === "string" && Array.isArray(b.tags))
-        : [];
-      // Cap the number of watched boundaries (bounds per-invalidation work).
-      conn.boundaries = boundaries.slice(0, limits.maxBoundaries);
-      return;
-    }
+    case "subscribe":
+      return handleSubscribe(conn, msg);
     case "data-subscribe":
       void handleDataSubscribe(conn, msg);
       return;
@@ -485,19 +477,43 @@ function handleClientMessage(conn: Conn, raw: string): void {
     case "presence-update":
       void handlePresence(conn, msg);
       return;
-    case "presence-leave": {
-      if (typeof msg.room !== "string") return;
-      conn.presenceRooms.delete(msg.room);
-      const members = rooms.get(msg.room);
-      if (members) {
-        members.delete(conn);
-        if (members.size === 0) rooms.delete(msg.room);
-        else broadcastRoom(msg.room);
-      }
-      return;
-    }
+    case "presence-leave":
+      return handlePresenceLeave(conn, msg);
       // "pong" needs no action; the client answering keeps the connection live.
   }
+}
+
+/**
+ * Pin the re-render URL to the connection's own origin — never trust a client-supplied
+ * origin (SSRF / cross-origin render), only its path + query — and cap the number of
+ * watched boundaries (bounds per-invalidation work).
+ */
+function handleSubscribe(conn: Conn, msg: LiveClientMessage & { type: "subscribe" }): void {
+  let resolved: URL;
+  try {
+    resolved = new URL(msg.url, conn.origin);
+  } catch {
+    return;
+  }
+  if (resolved.origin !== conn.origin) return;
+  conn.url = resolved.href;
+  const boundaries = Array.isArray(msg.boundaries)
+    ? msg.boundaries.filter((b) => b && typeof b.id === "string" && Array.isArray(b.tags))
+    : [];
+  conn.boundaries = boundaries.slice(0, limits.maxBoundaries);
+}
+
+function handlePresenceLeave(
+  conn: Conn,
+  msg: LiveClientMessage & { type: "presence-leave" },
+): void {
+  if (typeof msg.room !== "string") return;
+  conn.presenceRooms.delete(msg.room);
+  const members = rooms.get(msg.room);
+  if (!members) return;
+  members.delete(conn);
+  if (members.size === 0) rooms.delete(msg.room);
+  else broadcastRoom(msg.room);
 }
 
 /** Authorize + register a `useLive` data subscription (subscribing runs the action). */
@@ -813,21 +829,17 @@ function drainRecover(conn: Conn): void {
  */
 export function sliceBoundary(node: FlightNode, boundaryId: string): FlightNode[] | null {
   if (node === null || typeof node !== "object") return null;
-  if (Array.isArray(node)) {
-    for (const child of node) {
-      const found = sliceBoundary(child, boundaryId);
-      if (found) return found;
-    }
-    return null;
-  }
+  if (Array.isArray(node)) return firstBoundaryIn(node, boundaryId);
   if (node.$ === "c" && node.i === LIVE_REF_ID && node.p?.[ID_PATH_PROP] === boundaryId) {
     return node.c;
   }
-  if (node.$ === "h" || node.$ === "c") {
-    for (const child of node.c) {
-      const found = sliceBoundary(child, boundaryId);
-      if (found) return found;
-    }
+  return node.$ === "h" || node.$ === "c" ? firstBoundaryIn(node.c, boundaryId) : null;
+}
+
+function firstBoundaryIn(children: FlightNode[], boundaryId: string): FlightNode[] | null {
+  for (const child of children) {
+    const found = sliceBoundary(child, boundaryId);
+    if (found) return found;
   }
   return null;
 }

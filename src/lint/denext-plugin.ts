@@ -154,43 +154,8 @@ function createHookVisitor(
       const hook = hookName(node);
       if (!hook) return;
       const frame = funcStack[funcStack.length - 1];
-
-      if (!frame || !isComponentOrHook(frame.name)) {
-        emit(
-          "hooks-in-component",
-          node,
-          `\`${hook}\` must be called inside a component (Capitalized) ` +
-            `or a custom hook (useX). [denext/hooks-in-component]`,
-        );
-        return;
-      }
-      if (controlDepth > frame.entryControlDepth) {
-        emit(
-          "rules-of-hooks",
-          node,
-          `\`${hook}\` is called conditionally. Hooks must run in the ` +
-            `same order on every render — call it at the top level. ` +
-            `[denext/rules-of-hooks]`,
-        );
-      } else if (frame.sawConditionalReturn) {
-        // The hook is lexically top-level, but an earlier conditional return
-        // can skip it — so it does not run in the same order every render.
-        emit(
-          "rules-of-hooks",
-          node,
-          `\`${hook}\` is called after a conditional return, so it may ` +
-            `be skipped on some renders. Call all hooks before any early ` +
-            `return. [denext/rules-of-hooks]`,
-        );
-      }
-      if (frame.isAsync && frame.name && /^[A-Z]/.test(frame.name)) {
-        emit(
-          "no-hooks-in-async",
-          node,
-          `\`${hook}\` is used in async component \`${frame.name}\`. ` +
-            `Async components render only on the server and never hydrate, ` +
-            `so the hook has no client effect. [denext/no-hooks-in-async]`,
-        );
+      for (const [rule, message] of hookCallFindings(hook, frame, controlDepth)) {
+        emit(rule, node, message);
       }
     },
   };
@@ -216,6 +181,51 @@ function createHookVisitor(
   return visitor;
 }
 
+/**
+ * The findings for one hook call: outside a component/custom hook (short-circuits),
+ * conditional or after a conditional return, and inside an async component.
+ */
+function hookCallFindings(
+  hook: string,
+  frame: FrameInfo | undefined,
+  controlDepth: number,
+): Array<[HookRule, string]> {
+  if (!frame || !isComponentOrHook(frame.name)) {
+    return [[
+      "hooks-in-component",
+      `\`${hook}\` must be called inside a component (Capitalized) ` +
+      `or a custom hook (useX). [denext/hooks-in-component]`,
+    ]];
+  }
+  const out: Array<[HookRule, string]> = [];
+  if (controlDepth > frame.entryControlDepth) {
+    out.push([
+      "rules-of-hooks",
+      `\`${hook}\` is called conditionally. Hooks must run in the ` +
+      `same order on every render — call it at the top level. ` +
+      `[denext/rules-of-hooks]`,
+    ]);
+  } else if (frame.sawConditionalReturn) {
+    // The hook is lexically top-level, but an earlier conditional return
+    // can skip it — so it does not run in the same order every render.
+    out.push([
+      "rules-of-hooks",
+      `\`${hook}\` is called after a conditional return, so it may ` +
+      `be skipped on some renders. Call all hooks before any early ` +
+      `return. [denext/rules-of-hooks]`,
+    ]);
+  }
+  if (frame.isAsync && frame.name && /^[A-Z]/.test(frame.name)) {
+    out.push([
+      "no-hooks-in-async",
+      `\`${hook}\` is used in async component \`${frame.name}\`. ` +
+      `Async components render only on the server and never hydrate, ` +
+      `so the hook has no client effect. [denext/no-hooks-in-async]`,
+    ]);
+  }
+  return out;
+}
+
 /** A hook rule that reports only findings of its own `rule` kind (shared traversal). */
 function hookRule(rule: HookRule): { create(context: any): Record<string, unknown> } {
   return {
@@ -227,6 +237,76 @@ function hookRule(rule: HookRule): { create(context: any): Record<string, unknow
   };
 }
 
+/**
+ * The leading directive prologue: the run of string-literal ExpressionStatements at the
+ * very top of the module, and which boundary directives it declares.
+ */
+function leadingPrologue(body: any[]): { leading: Set<any>; leadingKinds: Set<string> } {
+  const leading = new Set<any>();
+  const leadingKinds = new Set<string>();
+  for (const stmt of body) {
+    if (stmt.type !== "ExpressionStatement" || !isStringLiteral(stmt.expression)) break;
+    leading.add(stmt);
+    if (isBoundaryDirective(stmt.expression.value)) leadingKinds.add(stmt.expression.value);
+  }
+  return { leading, leadingKinds };
+}
+
+/** A module cannot be both a client and a server module. */
+function reportConflictingDirectives(
+  context: any,
+  body: any[],
+  leading: Set<any>,
+  leadingKinds: Set<string>,
+): void {
+  if (!leadingKinds.has("use client") || !leadingKinds.has("use server")) return;
+  const second = body.find((s) =>
+    leading.has(s) && isBoundaryDirective(s.expression.value) &&
+    s.expression.value === "use server"
+  );
+  if (second) {
+    context.report({
+      node: second,
+      message: `A module cannot declare both "use client" and "use server". ` +
+        `[denext/directive-placement]`,
+    });
+  }
+}
+
+/** A boundary directive outside the leading prologue (silently ignored at runtime). */
+function isMisplacedDirective(stmt: any, leading: Set<any>): boolean {
+  return stmt.type === "ExpressionStatement" && isStringLiteral(stmt.expression) &&
+    isBoundaryDirective(stmt.expression.value) && !leading.has(stmt);
+}
+
+/**
+ * Flag a misplaced directive so it is not mistaken for effective. When the same
+ * directive already leads the module and is in effect, this one is dead code — removing
+ * it is behavior-preserving, which is the bar for an auto-fix (`--fix` applies it). A
+ * lone misplaced directive stays report-only: hoisting it (changes the module's
+ * client/server boundary) and removing it (drops the author's intent) BOTH change
+ * behavior, so a human must decide.
+ */
+function reportMisplacedDirective(context: any, stmt: any, leadingKinds: Set<string>): void {
+  const value = stmt.expression.value;
+  if (leadingKinds.has(value)) {
+    context.report({
+      node: stmt,
+      message: `Redundant "${value}" — the module's leading directive ` +
+        `already applies; remove this one. [denext/directive-placement]`,
+      fix(fixer: any) {
+        return fixer.remove(stmt);
+      },
+    });
+  } else {
+    context.report({
+      node: stmt,
+      message: `"${value}" must be the module's leading statement to ` +
+        `take effect. [denext/directive-placement]`,
+    });
+  }
+}
+
 /** The denext lint plugin instance. Referenced by `deno.json`'s `lint.plugins`. */
 const plugin: LintPlugin = {
   name: "denext",
@@ -236,70 +316,11 @@ const plugin: LintPlugin = {
         return {
           Program(node: any) {
             const body: any[] = node.body ?? [];
-
-            // The leading directive prologue: the run of string-literal
-            // ExpressionStatements at the very top of the module.
-            const leading = new Set<any>();
-            const leadingKinds = new Set<string>();
+            const { leading, leadingKinds } = leadingPrologue(body);
+            reportConflictingDirectives(context, body, leading, leadingKinds);
             for (const stmt of body) {
-              if (stmt.type === "ExpressionStatement" && isStringLiteral(stmt.expression)) {
-                leading.add(stmt);
-                if (isBoundaryDirective(stmt.expression.value)) {
-                  leadingKinds.add(stmt.expression.value);
-                }
-              } else {
-                break;
-              }
-            }
-
-            // A module cannot be both a client and a server module.
-            if (leadingKinds.has("use client") && leadingKinds.has("use server")) {
-              const second = body.find((s) =>
-                leading.has(s) && isBoundaryDirective(s.expression.value) &&
-                s.expression.value === "use server"
-              );
-              if (second) {
-                context.report({
-                  node: second,
-                  message: `A module cannot declare both "use client" and "use server". ` +
-                    `[denext/directive-placement]`,
-                });
-              }
-            }
-
-            // A boundary directive not in the leading prologue is silently
-            // ignored at runtime — flag it so it is not mistaken for effective.
-            for (const stmt of body) {
-              if (
-                stmt.type === "ExpressionStatement" &&
-                isStringLiteral(stmt.expression) &&
-                isBoundaryDirective(stmt.expression.value) &&
-                !leading.has(stmt)
-              ) {
-                const value = stmt.expression.value;
-                if (leadingKinds.has(value)) {
-                  // The same directive already leads the module and is in effect,
-                  // so this one is dead code — removing it is behavior-preserving,
-                  // which is the bar for an auto-fix. `--fix` can apply it.
-                  context.report({
-                    node: stmt,
-                    message: `Redundant "${value}" — the module's leading directive ` +
-                      `already applies; remove this one. [denext/directive-placement]`,
-                    fix(fixer: any) {
-                      return fixer.remove(stmt);
-                    },
-                  });
-                } else {
-                  // A lone misplaced directive is silently ignored at runtime.
-                  // Hoisting it (changes the module's client/server boundary) and
-                  // removing it (drops the author's intent) BOTH change behavior,
-                  // so this stays report-only — a human must decide.
-                  context.report({
-                    node: stmt,
-                    message: `"${value}" must be the module's leading statement to ` +
-                      `take effect. [denext/directive-placement]`,
-                  });
-                }
+              if (isMisplacedDirective(stmt, leading)) {
+                reportMisplacedDirective(context, stmt, leadingKinds);
               }
             }
           },

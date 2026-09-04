@@ -1,0 +1,413 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "denext.config",
+  "description": "Project configuration exported from `denext.config.{ts,js}` (as `default` or named). Generated from the `DenextConfig` TypeScript type by scripts/gen-config-schema.ts; unknown top-level and `experimental.*` keys are rejected here because denext warns on them at runtime and ignores them.",
+  "type": "object",
+  "properties": {
+    "mode": {
+      "description": "Rendering mode. Omit (the default) for the App Router (SSR/SSG) pipeline. `\"spa\"` builds SpaConfig.entry as a pure client-side-rendered app — React but not Next: no `app/` directory, no SSR, no Flight. denext bundles the entry, emits an HTML shell around it, serves it with a history-API fallback, and (via `denext export` / `deno desktop`) packages it as a static app. Use it to host an existing Vite-style React SPA on denext's toolchain and runtime.",
+      "enum": [
+        "spa"
+      ]
+    },
+    "spa": {
+      "description": "SPA-mode settings (required when DenextConfig.mode is `\"spa\"`).",
+      "type": "object",
+      "properties": {
+        "entry": {
+          "description": "Client entry module that mounts the app, relative to the project root (e.g. `\"./src/main.tsx\"`). It is imported for its side effects — it is expected to create a root and render into `#${rootId}` on load.",
+          "type": "string"
+        },
+        "rootId": {
+          "description": "Element id the generated shell exposes for the app to mount into. Default `\"root\"`.",
+          "type": "string"
+        },
+        "title": {
+          "description": "`<title>` for the generated shell. Default `\"denext app\"`.",
+          "type": "string"
+        },
+        "head": {
+          "description": "Extra raw HTML injected into the shell `<head>` (meta tags, preconnect links, …).",
+          "type": "string"
+        },
+        "lang": {
+          "description": "`<html lang>` value for the generated shell. Default `\"en\"`.",
+          "type": "string"
+        },
+        "env": {
+          "description": "Compile-time `import.meta.env` values (the SPA analogue of a Vite `define` block). Each `{ KEY: \"value\" }` replaces `import.meta.env.KEY` with the literal `\"value\"` at build time — the way a Vite app reads `import.meta.env.VITE_*`. Only applied when the app builds through the next-compat (esbuild) pipeline (i.e. it uses npm React); a denext-native SPA has no `import.meta.env`."
+        },
+        "csp": {
+          "description": "Content-Security-Policy for the generated shell. A client-only React SPA (Vite/CRA and denext alike) ships no CSP by default — it's the app's/host's call — so this is **opt-in**: - unset / `\"off\"` — no CSP (default). - `\"strict\"` — denext's strict policy (`default-src 'self'`, `script-src 'self'`, `object-src 'none'`, `base-uri 'self'`, `img/font 'self' data:`, and `style-src-attr 'unsafe-inline'` so React `style={{}}` keeps working). - a CspSetting object — that strict policy plus your global opt-ins (e.g. `{ connectSrc: [\"https://api.example.com\"] }` for your API host)."
+        },
+        "proxy": {
+          "description": "Reverse-proxy selected path prefixes to a separate backend while serving the SPA (`denext start` in `mode:\"spa\"`, and the `deno desktop` runtime). Mirrors a Vite dev server's `server.proxy`: the client talks to its own origin and denext relays matched requests — HTTP and WebSocket — to the backend. Omit for a backend-less SPA.",
+          "type": "object",
+          "properties": {
+            "prefixes": {
+              "description": "Path prefixes forwarded to target, matched against the start of the request pathname — a prefix matches the exact path and any sub-path (e.g. `/api` matches `/api` and `/api/users`). Everything else is served from the SPA export.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "target": {
+              "description": "Backend origin matched requests are forwarded to (e.g. `\"http://127.0.0.1:3773\"`). HTTP is relayed via `fetch` (cookies passed through, `Set-Cookie` `Domain`/`Secure` stripped so they bind to the proxy origin over http); a WebSocket upgrade is bridged to the backend with the request `Cookie` forwarded on the handshake.",
+              "type": "string"
+            },
+            "allowNonLoopback": {
+              "description": "Permit a non-loopback target. Default `false` (loopback-only).",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "prefixes",
+            "target"
+          ]
+        },
+        "desktop": {
+          "description": "`deno desktop` packaging settings (used when building the desktop app).",
+          "type": "object",
+          "properties": {
+            "icon": {
+              "description": "Path to the app icon (relative to the project root, e.g. `\"./assets/icon.png\"` — point it anywhere, regardless of name or location). **Overrides icon auto-detection.** A **PNG is used verbatim** (supply a finished 1024² master already shaped for macOS — the app's own icon set is the right source); a JPEG/WebP is composed into the macOS template; an undecodable format (`.ico`/`.icns`) is refused with a message and the build falls back to auto-detection. When unset, denext auto-detects a web icon (`apple-touch-icon`, a named `icon`/`logo`, `favicon.png`) and, because those are small/full-bleed, composes it into Apple's macOS template (centered in the ~824px safe area of a 1024² canvas) so it isn't oversized. Either way the result is written to `desktop-icon.png` at build time.",
+              "type": "string"
+            }
+          }
+        }
+      },
+      "required": [
+        "entry"
+      ]
+    },
+    "i18n": {
+      "description": "Internationalized routing config."
+    },
+    "basePath": {
+      "description": "Serve the app under a sub-path (e.g. `/docs`). Stripped before routing.",
+      "type": "string"
+    },
+    "trailingSlash": {
+      "description": "Enforce a trailing slash on page URLs (308-redirect to normalize). Unset or `false` (Next's default) redirects `/about/` → `/about`.",
+      "type": "boolean"
+    },
+    "assetPrefix": {
+      "description": "Prefix for client bundle/asset URLs (e.g. a CDN origin).",
+      "type": "string"
+    },
+    "redirects": {
+      "description": "Declarative redirects, evaluated once at startup."
+    },
+    "rewrites": {
+      "description": "Declarative rewrites, evaluated once at startup."
+    },
+    "headers": {
+      "description": "Declarative response headers, evaluated once at startup."
+    },
+    "images": {
+      "description": "Image-optimization config. Remote sources are refused by default (local-only, SSRF-safe); allowlist hosts here to enable optimizing remote images.",
+      "type": "object",
+      "properties": {
+        "unoptimized": {
+          "description": "Render every `<Image>` as a plain `<img>` with its raw `src` — no optimization, no generated `srcSet` (matches Next's `images.unoptimized`). `<Image>` optimizes by default; set this to opt the whole app out. Static export forces this on (there is no server to optimize against). Per-image, use the `unoptimized` prop.",
+          "type": "boolean"
+        },
+        "domains": {
+          "description": "Exact remote hosts allowed as sources (host only, e.g. `cdn.example.com`).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "remotePatterns": {
+          "description": "Pattern-based remote allowlist (protocol/host-wildcard/pathname).",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "protocol": {
+                "description": "Required protocol, e.g. `\"https\"`. Any protocol when omitted.",
+                "type": "string"
+              },
+              "hostname": {
+                "description": "Host to match: exact (`cdn.example.com`) or wildcard (`*.example.com`).",
+                "type": "string"
+              },
+              "pathname": {
+                "description": "Pathname prefix the source must start with (e.g. `/images/`). Any when omitted.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "hostname"
+            ]
+          }
+        },
+        "localPatterns": {
+          "description": "Allowed **local** source patterns (pathname glob + optional exact query). When set, a `public/` source matching none is refused (400); when omitted, all local sources are allowed (the default). Mirrors Next.js `images.localPatterns`.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "pathname": {
+                "description": "Pathname glob the local source must match (e.g. `/assets/**`). Any when omitted.",
+                "type": "string"
+              },
+              "search": {
+                "description": "Exact query string required (e.g. `\"v=1\"`), or `\"\"` for none. Any when omitted.",
+                "type": "string"
+              }
+            }
+          }
+        },
+        "deviceSizes": {
+          "description": "Allowed responsive breakpoint widths for full-width images (matches Next's `images.deviceSizes`). The `/_denext/image` endpoint only honors `w=` values drawn from `deviceSizes ∪ imageSizes`; any other width is refused (400). This bounds the endpoint's distinct-work surface — without it, an attacker can request thousands of arbitrary widths, each forcing a fresh WASM decode/resize. Defaults to Next's standard set.",
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "imageSizes": {
+          "description": "Allowed fixed widths for smaller images (icons, thumbnails) — matches Next's `images.imageSizes`. Unioned with ImagesConfig.deviceSizes to form the `/_denext/image` width allowlist. Defaults to Next's standard set.",
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "qualities": {
+          "description": "Allowed `q=` quality values (matches Next.js 16 `images.qualities`). The endpoint refuses any other quality (400), bounding the distinct-encode surface the same way deviceSizes bounds widths. Defaults to `[75]`.",
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "minimumCacheTTL": {
+          "description": "Minimum seconds to cache an optimized image (`Cache-Control: max-age`). Mirrors Next.js `images.minimumCacheTTL`. Defaults to `14400` (4 hours).",
+          "type": "number"
+        },
+        "formats": {
+          "description": "Output formats the endpoint may negotiate from the request `Accept` header, in preference order (matches Next.js `images.formats`). Include `\"image/avif\"` to enable AVIF (falls back to WebP when the client doesn't accept AVIF). Defaults to `[\"image/webp\"]`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "maximumRedirects": {
+          "description": "Max redirect hops to follow for a remote source, each re-validated (matches Next.js `images.maximumRedirects`). Defaults to `3`; `0` disables redirects.",
+          "type": "number"
+        },
+        "dangerouslyAllowLocalIP": {
+          "description": "**Dangerous.** Allow remote sources that resolve to loopback/private/link-local addresses, disabling the SSRF address guard for the image optimizer (Next.js 16 `images.dangerouslyAllowLocalIP`). Only enable in a trusted, isolated network where the optimizer cannot reach internal services. Defaults to `false`.",
+          "type": "boolean"
+        }
+      }
+    },
+    "tailwind": {
+      "description": "Tailwind CSS integration. When set, denext manages the Tailwind v4 standalone binary and compiles `input` → `output` automatically on `dev`/`build`.",
+      "type": "object",
+      "properties": {
+        "input": {
+          "description": "Input stylesheet with the Tailwind directives, relative to the project root.",
+          "type": "string"
+        },
+        "output": {
+          "description": "Compiled stylesheet to emit (imported by your layout), relative to the root.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "input",
+        "output"
+      ]
+    },
+    "mdx": {
+      "description": "MDX compilation options for `.mdx`/`.md` sources in a compat (npm-React) app. The baseline loader compiles plain MDX/CommonMark; set this to thread app-configured unified plugins (e.g. Codehike, GFM, syntax highlighting) into MDX's `compile`. Because `denext.config.ts` is a real module, import the plugins and pass function references directly:",
+      "type": "object",
+      "properties": {
+        "remarkPlugins": {
+          "description": "remark (Markdown AST) plugins — e.g. `remark-gfm`, `remarkCodeHike`.",
+          "type": "array"
+        },
+        "rehypePlugins": {
+          "description": "rehype (HTML AST) plugins — e.g. `rehype-slug`, `rehype-pretty-code`.",
+          "type": "array"
+        },
+        "recmaPlugins": {
+          "description": "recma (JS AST) plugins — e.g. `recmaCodeHike`.",
+          "type": "array"
+        },
+        "remarkRehypeOptions": {
+          "description": "Options forwarded to MDX's `remark-rehype` bridge (`remarkRehypeOptions`)."
+        },
+        "providerImportSource": {
+          "description": "MDX `providerImportSource` (module exporting `useMDXComponents`), if used.",
+          "type": "string"
+        }
+      }
+    },
+    "cache": {
+      "description": "Cache Components / ISR data + page cache store. Omit to let denext resolve the default at startup — the durable `node:sqlite` store when a writable filesystem is available, else the in-memory store. Set CacheConfig.store to force a choice, or pass your own CacheStore.",
+      "type": "object",
+      "properties": {
+        "store": {
+          "description": "Which store backs `use cache` / ISR. `\"sqlite\"` = the durable `node:sqlite` file store (real SQLite, built into Deno, zero-npm); `\"memory\"` = the in-process LRU store (ephemeral, per-process); or a custom CacheStore. Omit for the smart default: `node:sqlite` when a writable FS is available, otherwise in-memory."
+        },
+        "path": {
+          "description": "SQLite store file path (default `.denext/cache.db`).",
+          "type": "string"
+        },
+        "maxDataEntries": {
+          "description": "Max rows in the durable data cache before FIFO eviction (default 1000).",
+          "type": "number"
+        },
+        "maxPageEntries": {
+          "description": "Max rows in the durable page (ISR) cache before FIFO eviction (default 1000).",
+          "type": "number"
+        }
+      }
+    },
+    "hsts": {
+      "description": "`Strict-Transport-Security` (HSTS) header tuning, applied to responses served over HTTPS. Defaults to `max-age=31536000` (1 year, host-only — no `includeSubDomains`/`preload`, a safe default that can't brick sibling subdomains). Set fields to opt into a stronger policy, or `false` to omit the header entirely (e.g. when your edge sets it).",
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "maxAge": {
+              "description": "`max-age` in seconds (how long browsers pin HTTPS). Default `31536000` (1 year).",
+              "type": "number"
+            },
+            "includeSubDomains": {
+              "description": "Add `includeSubDomains` (applies HSTS to every subdomain — enable only when all are HTTPS).",
+              "type": "boolean"
+            },
+            "preload": {
+              "description": "Add `preload` (eligibility for browser HSTS preload lists; requires `includeSubDomains`).",
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "enum": [
+            false
+          ]
+        }
+      ]
+    },
+    "csp": {
+      "description": "App-wide Content-Security-Policy default (three-state), overridable per file: - `\"strict\"` (default) — denext's hash-based strict policy on buffered pages. - `\"off\"` — emit no CSP header at all (set your policy at the edge, or for Next.js-style \"CSP is the app's job\" behavior). A route can still opt back in with its own `csp` export. - a CspSetting object — the strict policy plus these global opt-ins."
+    },
+    "publicEnv": {
+      "description": "Public-env vars to always embed in the page island, in addition to the ones the build detects the client references. Use this to force-include a key the client reads via a computed expression (`publicEnv()[\"NEXT_PUBLIC_\" + x]`), which the build can't see. Referenced keys are shipped automatically; this only adds to that set.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "streaming": {
+      "description": "Incremental (Suspense) streaming, **on by default**; set `false` to opt out. A page with a pending Suspense boundary flushes its shell first and streams each boundary's content as it resolves; a fully synchronous page (no holes) is still delivered buffered, so it stays shared-cacheable. Streamed responses carry the same strict hash-based CSP as buffered ones (the swap runtime is a hashed constant), survive a failing boundary (its fallback stays), and cover Flight routes. ISR/PPR-cacheable routes (revalidate/force-static) and soft navigations take their own path first, so streaming never bypasses the page cache. A shipped, default-on capability — not an experiment.",
+      "type": "boolean"
+    },
+    "live": {
+      "description": "Live Server Components security policy: authorization hooks and resource caps for the `<Live>` / `useLive` / `usePresence` WebSocket hub. See LiveConfig. Presence/data are default-deny in production without a policy here — so this is a **security-policy** field, not an on/off experiment.",
+      "type": "object",
+      "properties": {
+        "allowAnonymous": {
+          "description": "Permit presence-room joins with no policy hook — opens rooms to any same-origin client. It does **not** open arbitrary data: `useLive` data subscriptions still require the per-action `liveReadable(...)` opt-in (or a `canSubscribe` hook), so enabling anonymous presence never exposes unmarked/mutating actions on the socket. Only set it for genuinely public collaboration. Defaults to `false` (deny in dev and production alike).",
+          "type": "boolean"
+        },
+        "authorize": {
+          "description": "Gate the WebSocket connection itself (after the same-origin handshake check)."
+        },
+        "canJoinRoom": {
+          "description": "Gate a presence-room join/update. Return `false` to refuse the room."
+        },
+        "canSubscribe": {
+          "description": "Gate a `useLive` data subscription (which action + args it may run)."
+        },
+        "limits": {
+          "description": "Resource caps for the hub.",
+          "type": "object",
+          "properties": {
+            "maxConnections": {
+              "description": "Max simultaneous connections (default 10000).",
+              "type": "number"
+            },
+            "maxSubscriptionsPerConnection": {
+              "description": "Max `useLive` subscriptions per connection (default 64).",
+              "type": "number"
+            },
+            "maxRoomsPerConnection": {
+              "description": "Max presence rooms per connection (default 32).",
+              "type": "number"
+            },
+            "maxBoundaries": {
+              "description": "Max `<Live>` boundaries watched per connection (default 256).",
+              "type": "number"
+            },
+            "maxMessageBytes": {
+              "description": "Max inbound message size in bytes (default 65536).",
+              "type": "number"
+            },
+            "idleTimeoutSeconds": {
+              "description": "Socket idle timeout in seconds passed to `Deno.upgradeWebSocket` (default 120).",
+              "type": "number"
+            },
+            "maxConcurrentRenders": {
+              "description": "Fleet-wide cap on concurrent live re-renders/recomputes (default 40). A single `revalidateTag` can match every connected socket; this bounds how many full-route re-renders (`<Live>`) and `useLive` fetcher runs execute at once so one invalidation can't spawn one render per connection simultaneously (a self-inflicted DoS amplification). Excess work queues and drains as slots free.",
+              "type": "number"
+            },
+            "renderTimeoutSeconds": {
+              "description": "Per-render deadline in seconds (default 30). A `<Live>` re-render or `useLive` fetcher run holds one of the `maxConcurrentRenders` slots for its whole duration; without a deadline a hung user fetcher pins its slot forever, and enough hung fetchers peg the concurrency gate and stall the whole live fleet. On timeout the run is aborted (a cooperative `AbortSignal` reaches the fetcher's `fetch`/cache reads) and its slot released; the client gets an error/refresh frame. On by default — there is no \"disable\" value (an invalid one falls back to 30s).",
+              "type": "number"
+            }
+          }
+        }
+      }
+    },
+    "cacheComponents": {
+      "description": "Cache Components (Next.js 16): the `\"use cache\"` directive is compiled into cross-request caching on the server (`src/build/use-cache-transform.ts`), plus the PPR render path — dynamic-by-default rendering with cacheable `use cache` islands (a cached shell with per-request dynamic holes spliced in). A stable, **opt-in** feature, deliberately **off by default**: caching stays a choice, because a cache bug's failure class (a poisoned or cross-user shell) is severe and must not be imposed on apps that never asked. When off, every `\"use cache\"` directive is inert (a plain no-op string statement) and rendering is unchanged.",
+      "type": "boolean"
+    },
+    "experimental": {
+      "description": "Experimental, opt-in features (default off).",
+      "type": "object",
+      "properties": {
+        "compiler": {
+          "description": "Enable the build-time auto-memoization compiler (a React-Compiler-style pass) — an opt-in optimization. Conservative by construction: it bails to identity whenever a transform isn't provably safe, so it only ever adds memoization, never changes behavior. Off by default while its coverage is still widening.",
+          "type": "boolean"
+        },
+        "asyncContext": {
+          "description": "Scope async `startTransition` by transition IDENTITY instead of a time window. Enables a build-time transform that makes denext's first-party AsyncContext survive `await` (src/build/async-context-transform.ts), so a post-`await` update is attributed to its transition while an unrelated urgent update in the pending window keeps its priority. Off by default: it instruments every `await` in client code (a small per-await cost) and the default time-window behavior is unchanged. Removes the async-`startTransition` gap in KNOWN-LIMITATIONS when on.",
+          "type": "boolean"
+        },
+        "nodeResolve": {
+          "description": "Opt-OUT of denext's tolerant node_modules resolver for the compat (npm-React) build.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "classComponents": {
+      "description": "Enable React class components (`class X extends React.Component`) in the **next-compat build** (`buildNextCompatPages`, used to run real npm React libraries). There the flag is compiled in as an esbuild `define`, so with it off the entire class runtime (lifecycle, setState batching, error boundaries) is dead-code-eliminated — a next-compat app that doesn't use classes pays zero bytes for them, and a class used with the flag off throws a guided error.",
+      "type": "boolean"
+    },
+    "compatibilityMode": {
+      "description": "Run the app through the **next-compat** SSR/client pipeline, which rewrites every `react`/`react-dom`/`next/*` import (including those inside npm React libraries) to denext at bundle time so the whole app runs on one denext React — the drop-in path for real Next.js App Router projects. `true`/`false` force it; the default `\"auto\"` enables it when `node_modules/react` exists or `package.json` lists `react`/`next`. A pure denext-native app keeps the zero-overhead source-load path.",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "enum": [
+            "auto"
+          ]
+        }
+      ]
+    },
+    "plugins": {
+      "description": "denext plugins (e.g. a Pages Router). Each is set up once before routes are scanned and may contribute routes, claim requests, and emit build assets — see DenextPlugin. Apps with no plugins pay nothing.",
+      "type": "array"
+    }
+  },
+  "additionalProperties": false
+}

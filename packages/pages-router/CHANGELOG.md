@@ -3,6 +3,13 @@
 `@denext/pages-router` uses its own semver, independent of the denext version it
 plugs into.
 
+## 0.9.1 — denext rc.7 compatibility + Next parity fixes
+
+- Requires denext ≥ 2.0.0-rc.7: the dev client entry no longer imports `enableFastRefresh`/`registerFamily` from the `denext/client` barrel (moved to `denext/client-runtime` in rc.7).
+- `getServerSideProps`/`getStaticProps` `redirect.statusCode` (301/302/303/307/308) is honored alongside `permanent`.
+- Same-page hash navigations emit `hashChangeStart`/`hashChangeComplete` (and not `routeChange*`), like Next.
+- Head HTML is joined with denext's `collapseHeadTags` (the `HeadCollector.tags` entries are `{ html, dedup }` since rc.7).
+
 ## 0.9.0 — `next/router` singleton + `withRouter`
 
 - **`Router` singleton** (`next/router`'s default export). Proxies the active

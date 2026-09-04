@@ -108,7 +108,7 @@ function semverTriple(v: string): [number, number, number] {
 }
 
 /** Whether `version` satisfies a caret/`~`/plain `range` (npm caret semantics). */
-function satisfiesRange(version: string, range: string): boolean {
+export function satisfiesRange(version: string, range: string): boolean {
   const [rMaj, rMin, rPat] = semverTriple(range.replace(/^[\^~>=v ]+/, ""));
   const [maj, min, pat] = semverTriple(version);
   if (maj !== rMaj) return false;
@@ -126,10 +126,22 @@ function satisfiesRange(version: string, range: string): boolean {
  * For a name with several locked versions, picks the highest that satisfies the range;
  * a dep absent from the lock keeps its original range.
  */
-function pinNpmToLock(
+export function pinNpmToLock(
   npm: Record<string, string>,
   lock: Record<string, unknown>,
 ): Record<string, string> {
+  const versionsByName = lockedNpmVersions(lock);
+  const out: Record<string, string> = {};
+  for (const [k, spec] of Object.entries(npm)) {
+    const { name, range } = splitNameRange(spec.slice("npm:".length));
+    const pinned = highestSatisfying(versionsByName.get(name) ?? [], range);
+    out[k] = pinned ? `npm:${name}@${pinned}` : spec;
+  }
+  return out;
+}
+
+/** The lock's `npm` section (`name@version` keys) indexed by package name. */
+function lockedNpmVersions(lock: Record<string, unknown>): Map<string, string[]> {
   const lockNpm = (lock.npm ?? {}) as Record<string, unknown>;
   const versionsByName = new Map<string, string[]>();
   for (const key of Object.keys(lockNpm)) {
@@ -138,21 +150,25 @@ function pinNpmToLock(
     const name = key.slice(0, at);
     (versionsByName.get(name) ?? versionsByName.set(name, []).get(name)!).push(key.slice(at + 1));
   }
-  const out: Record<string, string> = {};
-  for (const [k, spec] of Object.entries(npm)) {
-    const body = spec.slice("npm:".length); // name@range
-    const at = body.lastIndexOf("@");
-    const name = at > 0 ? body.slice(0, at) : body;
-    const range = at > 0 ? body.slice(at + 1) : "";
-    const candidates = (versionsByName.get(name) ?? []).filter((v) => satisfiesRange(v, range));
-    candidates.sort((a, b) => {
-      const [aM, aMi, aP] = semverTriple(a), [bM, bMi, bP] = semverTriple(b);
-      return aM - bM || aMi - bMi || aP - bP;
-    });
-    const pinned = candidates.at(-1);
-    out[k] = pinned ? `npm:${name}@${pinned}` : spec;
-  }
-  return out;
+  return versionsByName;
+}
+
+/** `name@range` → its parts (a bare `name` has an empty range). */
+function splitNameRange(body: string): { name: string; range: string } {
+  const at = body.lastIndexOf("@");
+  return at > 0
+    ? { name: body.slice(0, at), range: body.slice(at + 1) }
+    : { name: body, range: "" };
+}
+
+/** The highest of `versions` satisfying `range`, or undefined. */
+function highestSatisfying(versions: string[], range: string): string | undefined {
+  const candidates = versions.filter((v) => satisfiesRange(v, range));
+  candidates.sort((a, b) => {
+    const [aM, aMi, aP] = semverTriple(a), [bM, bMi, bP] = semverTriple(b);
+    return aM - bM || aMi - bMi || aP - bP;
+  });
+  return candidates.at(-1);
 }
 
 /**
@@ -218,32 +234,41 @@ export async function acquireFwdepsInstall(
  * @param outDir The project's `.denext` output dir (holds the merged `--config`).
  */
 export async function ensureFrameworkNodeModules(outDir: string): Promise<boolean> {
-  const cfg = await readFrameworkJson("deno.json");
-  const imports = (cfg.imports ?? {}) as Record<string, string>;
-  const npm: Record<string, string> = {};
-  for (const [k, v] of Object.entries(imports)) {
-    if (v.startsWith("npm:")) npm[k] = v;
-  }
+  const npm = await frameworkNpmImports();
   if (Object.keys(npm).length === 0) return false;
-
   // Pin to the framework's own resolved versions (from its deno.lock) instead of the
   // caret ranges, so this build machinery can't resolve a different, newer-in-range (or
   // maliciously published) version than the framework was tested against. Falls back to
   // the range for any dep the lock doesn't cover.
   const pinned = pinNpmToLock(npm, await readFrameworkJson("deno.lock"));
-
   const fwDir = join(outDir, ".fwdeps");
   const nm = join(fwDir, "node_modules");
-  // A synthetic project carrying ONLY the framework's npm deps. `auto` lets Deno
-  // build the node_modules from the global cache; being isolated in its own dir, its
-  // resolution never walks up into the app's `package.json` (catalog:/workspace: refs
-  // Deno cannot parse).
+  // A synthetic project carrying ONLY the framework's npm deps. `auto` lets Deno build the
+  // node_modules from the global cache; being isolated in its own dir, its resolution
+  // never walks up into the app's `package.json` (catalog:/workspace: refs Deno cannot parse).
   const denoJson = JSON.stringify({ nodeModulesDir: "auto", imports: pinned }, null, 2);
-  const stamp = join(fwDir, ".deps.json");
+  if (!(await installFwdeps(fwDir, nm, denoJson))) return false;
+  return await linkFrameworkNodeModules(outDir, nm);
+}
 
-  // Reuse a prior install when the (exact-pinned) dep set is byte-identical AND the
-  // install actually completed — check for a materialized package, not just that the dir
-  // exists, so a partial/interrupted install is re-run rather than trusted.
+/** The framework's own `npm:` imports (its `deno.json` import map). */
+async function frameworkNpmImports(): Promise<Record<string, string>> {
+  const cfg = await readFrameworkJson("deno.json");
+  const imports = (cfg.imports ?? {}) as Record<string, string>;
+  const npm: Record<string, string> = {};
+  for (const [k, v] of Object.entries(imports)) if (v.startsWith("npm:")) npm[k] = v;
+  return npm;
+}
+
+/**
+ * Run `deno install` in the synthetic `.fwdeps` project unless a prior install with the
+ * byte-identical (exact-pinned) dep set completed — checked against a materialized
+ * package, not just the dir, so a partial/interrupted install is re-run rather than
+ * trusted. Serialized across concurrent builds ({@link acquireFwdepsInstall}); only
+ * stamped after a clean install so a failed run re-installs next time.
+ */
+async function installFwdeps(fwDir: string, nm: string, denoJson: string): Promise<boolean> {
+  const stamp = join(fwDir, ".deps.json");
   const isCached = async (): Promise<boolean> => {
     try {
       return (await Deno.readTextFile(stamp)) === denoJson &&
@@ -252,51 +277,49 @@ export async function ensureFrameworkNodeModules(outDir: string): Promise<boolea
       return false; // first run / stale / partial / removed
     }
   };
-
-  if (!(await isCached())) {
-    await ensureDir(fwDir);
-    // Serialize the install so a concurrent build (dev + build, parallel CI) can't run
-    // `deno install` into `.fwdeps` at the same time and corrupt it.
-    const lockPath = join(fwDir, ".install.lock");
-    if (await acquireFwdepsInstall(lockPath, isCached)) {
-      try {
-        await Deno.writeTextFile(join(fwDir, "deno.json"), denoJson);
-        const { code, stderr } = await new Deno.Command(denoExecutable(), {
-          args: ["install", "--quiet"],
-          cwd: fwDir,
-          stdout: "null",
-          stderr: "piped",
-        }).output();
-        if (code !== 0) {
-          console.error(
-            "denext: could not materialize the framework's build deps (esbuild/sass/…) " +
-              "for a manual-`node_modules` app; the build may fail to resolve them.\n" +
-              new TextDecoder().decode(stderr),
-          );
-          return false;
-        }
-        // Only stamp after a clean install so a failed run re-installs next time.
-        await Deno.writeTextFile(stamp, denoJson);
-      } finally {
-        await Deno.remove(lockPath).catch(() => {});
-      }
-    }
-    // else: a concurrent build completed the install while we waited — cache is ready.
-  }
-
-  // Symlink <outDir>/node_modules -> <outDir>/.fwdeps/node_modules. Remove any existing
-  // entry first (unlinking the symlink itself, not following it — the same guard used
-  // for the merged config below), then point manual-mode resolution at the fw deps.
-  const link = join(outDir, "node_modules");
+  if (await isCached()) return true;
+  await ensureDir(fwDir);
+  const lockPath = join(fwDir, ".install.lock");
+  // A concurrent build may complete the install while we wait — then the cache is ready.
+  if (!(await acquireFwdepsInstall(lockPath, isCached))) return true;
   try {
-    await Deno.remove(link);
-  } catch { /* absent */ }
+    await Deno.writeTextFile(join(fwDir, "deno.json"), denoJson);
+    const { code, stderr } = await new Deno.Command(denoExecutable(), {
+      args: ["install", "--quiet"],
+      cwd: fwDir,
+      stdout: "null",
+      stderr: "piped",
+    }).output();
+    if (code !== 0) {
+      console.error(
+        "denext: could not materialize the framework's build deps (esbuild/sass/…) " +
+          "for a manual-`node_modules` app; the build may fail to resolve them.\n" +
+          new TextDecoder().decode(stderr),
+      );
+      return false;
+    }
+    await Deno.writeTextFile(stamp, denoJson);
+    return true;
+  } finally {
+    await Deno.remove(lockPath).catch(() => {});
+  }
+}
+
+/**
+ * Symlink `<outDir>/node_modules` → `<outDir>/.fwdeps/node_modules`. Removes any existing
+ * entry first (unlinking the symlink itself, not following it), then points manual-mode
+ * resolution at the framework deps. A missing link leaves the framework's build deps
+ * unresolvable under manual mode, which then fails later with a cryptic "npm:esbuild not
+ * found" — symlinks commonly fail on Windows without Developer Mode / elevation, so that
+ * is surfaced clearly here.
+ */
+async function linkFrameworkNodeModules(outDir: string, nm: string): Promise<boolean> {
+  const link = join(outDir, "node_modules");
+  await Deno.remove(link).catch(() => {});
   try {
     await Deno.symlink(nm, link);
+    return true;
   } catch (err) {
-    // A missing link leaves the framework's build deps unresolvable under manual mode,
-    // which then fails later with a cryptic "npm:esbuild not found". Symlinks commonly
-    // fail on Windows without Developer Mode / elevation — surface that clearly here.
     console.error(
       `denext: could not link the framework's build deps into ${link} ` +
         `(${err instanceof Error ? err.message : err}). On Windows, enable Developer ` +
@@ -305,7 +328,6 @@ export async function ensureFrameworkNodeModules(outDir: string): Promise<boolea
     );
     return false;
   }
-  return true;
 }
 
 /**

@@ -1,5 +1,5 @@
-// A Partial-Prerendered page. `revalidate` opts it into caching; with
-// `experimental.cacheComponents` on, denext prerenders a request-independent
+// A Partial-Prerendered page. `revalidate` opts it into caching; with the
+// top-level `cacheComponents` opt-in on, denext prerenders a request-independent
 // STATIC SHELL (cached once — including the `use cache` island below) and turns
 // any dynamic subtree (behind a Suspense boundary) into a PER-REQUEST HOLE that is
 // re-rendered and spliced into the cached shell on every request.

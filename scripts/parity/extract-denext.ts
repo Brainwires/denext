@@ -68,83 +68,94 @@ function membersFromType(tsType: Json, byName: Map<string, Json>): string[] | un
 function membersOfDecl(sym: Json): string[] | undefined {
   const dec = sym.declarations?.[0];
   const def = dec?.def ?? {};
-  if (dec?.kind === "interface") {
-    const names = [
-      ...(def.methods ?? []).map((m: Json) => m.name),
-      ...(def.properties ?? []).map((p: Json) => p.name),
-    ];
-    return names.length ? [...new Set(names)].sort() : undefined;
-  }
-  if (dec?.kind === "namespace") {
-    const els = def.elements ?? def.namespace?.elements ?? [];
-    const names = els.map((e: Json) => e.name).filter(Boolean);
-    return names.length ? [...new Set<string>(names)].sort() : undefined;
-  }
+  if (dec?.kind === "interface") return uniqueSorted(interfaceMemberNames(def));
+  if (dec?.kind === "namespace") return uniqueSorted(namespaceMemberNames(def));
   if (dec?.kind === "variable") return membersFromType(def.tsType, new Map());
   return undefined;
 }
 
-/** Normalize one deno-doc symbol into the shared shape. */
-function normalize(sym: Json, byName: Map<string, Json>): SurfaceSymbol {
+function interfaceMemberNames(def: Json): string[] {
+  return [
+    ...(def.methods ?? []).map((m: Json) => m.name),
+    ...(def.properties ?? []).map((p: Json) => p.name),
+  ];
+}
+
+function namespaceMemberNames(def: Json): string[] {
+  const els = def.elements ?? def.namespace?.elements ?? [];
+  return els.map((e: Json) => e.name).filter(Boolean);
+}
+
+/** Deduplicated + sorted, or undefined when empty (no member list). */
+function uniqueSorted(names: string[]): string[] | undefined {
+  return names.length ? [...new Set(names)].sort() : undefined;
+}
+
+/** The kind-specific half of {@link normalize}. */
+type Shape = Pick<
+  SurfaceSymbol,
+  "isValue" | "isType" | "callSignatures" | "typeParamCount" | "members"
+>;
+
+const typeParams = (def: Json): number => (def.typeParams ?? []).length;
+
+/** Per deno-doc declaration kind (unknown kinds are plain values). */
+const SHAPES: Record<
+  string,
+  (sym: Json, decls: Json[], def: Json, byName: Map<string, Json>) => Shape
+> = {
   // deno doc lists a function's overloads (+ impl) as multiple `declarations` on one
   // symbol; the first sets the kind, but arity must span them all.
+  function: (_sym, decls, def) => ({
+    isValue: true,
+    isType: false,
+    callSignatures: decls.filter((d) => d.kind === "function").map((d) =>
+      callSigFrom(d.def?.params ?? [])
+    ),
+    typeParamCount: typeParams(def),
+  }),
+  variable: (_sym, _decls, def, byName) => {
+    const t = def.tsType;
+    const fn = t?.kind === "fnOrConstructor" ? t.value : undefined;
+    return {
+      isValue: true,
+      isType: false,
+      callSignatures: fn ? [callSigFrom(fn.params ?? [])] : undefined,
+      typeParamCount: fn ? (fn.typeParams ?? []).length : undefined,
+      members: membersFromType(t, byName),
+    };
+  },
+  class: (_sym, _decls, def) => ({ isValue: true, isType: true, typeParamCount: typeParams(def) }),
+  interface: (sym, _decls, def) => ({
+    isValue: false,
+    isType: true,
+    typeParamCount: typeParams(def),
+    members: membersOfDecl(sym),
+  }),
+  typeAlias: (_sym, _decls, def) => ({
+    isValue: false,
+    isType: true,
+    typeParamCount: typeParams(def),
+  }),
+  // A types-only namespace (e.g. Next's MetadataRoute) is a type surface.
+  namespace: (sym) => ({ isValue: false, isType: true, members: membersOfDecl(sym) }),
+  enum: () => ({ isValue: true, isType: true }),
+};
+
+/** Normalize one deno-doc symbol into the shared shape. */
+function normalize(sym: Json, byName: Map<string, Json>): SurfaceSymbol {
   const decls: Json[] = sym.declarations ?? [];
   const dec = decls[0] ?? {};
-  const def = dec.def ?? {};
   const kind: string = dec.kind ?? "value";
+  const shape = SHAPES[kind] ?? (() => ({ isValue: true, isType: false }));
+  return { name: sym.name, kind, ...shape(sym, decls, dec.def ?? {}, byName) };
+}
 
-  let isValue = false;
-  let isType = false;
-  let callSignatures: CallSig[] | undefined;
-  let typeParamCount: number | undefined;
-  let members: string[] | undefined;
-
-  switch (kind) {
-    case "function": {
-      isValue = true;
-      const fnDecls = decls.filter((d) => d.kind === "function");
-      callSignatures = fnDecls.map((d) => callSigFrom(d.def?.params ?? []));
-      typeParamCount = (def.typeParams ?? []).length;
-      break;
-    }
-    case "variable": {
-      isValue = true;
-      const t = def.tsType;
-      if (t?.kind === "fnOrConstructor") {
-        callSignatures = [callSigFrom(t.value?.params ?? [])];
-        typeParamCount = (t.value?.typeParams ?? []).length;
-      }
-      members = membersFromType(t, byName);
-      break;
-    }
-    case "class":
-      isValue = true;
-      isType = true;
-      typeParamCount = (def.typeParams ?? []).length;
-      break;
-    case "interface":
-      isType = true;
-      typeParamCount = (def.typeParams ?? []).length;
-      members = membersOfDecl(sym);
-      break;
-    case "typeAlias":
-      isType = true;
-      typeParamCount = (def.typeParams ?? []).length;
-      break;
-    case "namespace":
-      // A types-only namespace (e.g. Next's MetadataRoute) is a type surface.
-      isType = true;
-      members = membersOfDecl(sym);
-      break;
-    case "enum":
-      isValue = true;
-      isType = true;
-      break;
-    default:
-      isValue = true;
-  }
-
-  return { name: sym.name, kind, isValue, isType, callSignatures, typeParamCount, members };
+/** A public, non-default, non-dunder export. */
+function isPublicSymbol(s: Json): boolean {
+  const dec = s.declarations?.[0];
+  if (!dec || dec.declarationKind === "private") return false;
+  return s.name !== "default" && !s.name.startsWith("__");
 }
 
 /**
@@ -168,11 +179,7 @@ export async function extractDenextSurfaces(root: string): Promise<Surface[]> {
     }
     const out: Record<string, SurfaceSymbol> = {};
     for (const s of syms) {
-      const dec = s.declarations?.[0];
-      if (!dec || dec.declarationKind === "private") continue;
-      if (s.name === "default" || s.name.startsWith("__")) continue;
-      if (out[s.name]) continue;
-      out[s.name] = normalize(s, byName);
+      if (isPublicSymbol(s) && !out[s.name]) out[s.name] = normalize(s, byName);
     }
     cache.set(rel, out);
     return out;

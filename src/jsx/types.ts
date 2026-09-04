@@ -32,8 +32,6 @@ export type VNodeType = string | Component<any> | typeof FRAGMENT;
 
 /** Marker used as a VNode `type` to group children without a wrapping element. */
 export const FRAGMENT: unique symbol = Symbol.for("denext.fragment");
-/** Marker identifying a text node in the virtual DOM. */
-export const TEXT: unique symbol = Symbol.for("denext.text");
 /**
  * Marker used as a VNode `type` for a portal: its children mount into a separate
  * DOM `target` (carried in props) while keeping their position in the component

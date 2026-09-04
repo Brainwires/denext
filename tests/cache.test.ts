@@ -452,6 +452,18 @@ Deno.test("unstable_cache: a follower escapes on its own abort even while the le
   assertEquals(await leaderP, 42);
 });
 
+/** A STALE page entry for `path` (staleAt in the past, no hard expiry). */
+function staleEntry(path: string) {
+  return {
+    body: "<!DOCTYPE html><html><body>STALE</body></html>",
+    status: 200,
+    path,
+    expiresAt: Infinity,
+    staleAt: Date.now() - 1000,
+    tags: [],
+  };
+}
+
 Deno.test("app ISR: a stale entry is served immediately and regenerated in the background", async () => {
   const store = inMemoryCacheStore();
   setCacheStore(store);
@@ -473,14 +485,7 @@ Deno.test("app ISR: a stale entry is served immediately and regenerated in the b
   });
 
   // Seed a STALE cached entry (staleAt in the past, no hard expiry).
-  await store.setPage("/cached", {
-    body: "<!DOCTYPE html><html><body>STALE</body></html>",
-    status: 200,
-    path: "/cached",
-    expiresAt: Infinity,
-    staleAt: Date.now() - 1000,
-    tags: [],
-  });
+  await store.setPage("/cached", staleEntry("/cached"));
 
   // The stale render is served immediately (STALE), and a background regen starts.
   const r1 = await app(new Request("http://localhost/cached"));
@@ -502,6 +507,29 @@ Deno.test("app ISR: a stale entry is served immediately and regenerated in the b
   assertStringIncludes(await r2.text(), "fresh 1");
 });
 
+// Isolated route/path: a non-cooperative hang (no signal threading) can't be
+// reclaimed and leaks this key's leader lock — same limitation as the foreground
+// timeout — so keep it off the shared "/cached" path used by other tests.
+const isoManifest = (): RouteManifest => ({
+  pages: [{
+    kind: "page",
+    layoutChain: [],
+    loading: null,
+    error: null,
+    notFound: null,
+    forbidden: null,
+    unauthorized: null,
+    templateChain: [],
+    pattern: parsePattern("h2"),
+    routePath: "/h2",
+    filePath: "h2.tsx",
+  }],
+  api: [],
+  rootLayout: null,
+  rootNotFound: null,
+  rootGlobalError: null,
+});
+
 Deno.test({
   name: "app ISR: a hung background regen frees its key and keeps serving stale (H2)",
   sanitizeOps: false,
@@ -510,28 +538,6 @@ Deno.test({
   const store = inMemoryCacheStore();
   setCacheStore(store);
   let regenStarts = 0;
-  // Isolated route/path: a non-cooperative hang (no signal threading) can't be
-  // reclaimed and leaks this key's leader lock — same limitation as the foreground
-  // timeout — so keep it off the shared "/cached" path used by other tests.
-  const isoManifest = (): RouteManifest => ({
-    pages: [{
-      kind: "page",
-      layoutChain: [],
-      loading: null,
-      error: null,
-      notFound: null,
-      forbidden: null,
-      unauthorized: null,
-      templateChain: [],
-      pattern: parsePattern("h2"),
-      routePath: "/h2",
-      filePath: "h2.tsx",
-    }],
-    api: [],
-    rootLayout: null,
-    rootNotFound: null,
-    rootGlobalError: null,
-  });
   const modules: Record<string, unknown> = {
     // Every render here is a background regen (we seed the entry directly). It hangs
     // forever — standing in for a slow/hung upstream fetch with no timeout.
@@ -552,15 +558,7 @@ Deno.test({
     requestTimeout: 60,
   });
 
-  const seedStale = () =>
-    store.setPage("/h2", {
-      body: "<!DOCTYPE html><html><body>STALE</body></html>",
-      status: 200,
-      path: "/h2",
-      expiresAt: Infinity,
-      staleAt: Date.now() - 1000,
-      tags: [],
-    });
+  const seedStale = () => store.setPage("/h2", staleEntry("/h2"));
 
   await seedStale();
   // Request 1: served STALE immediately; spawns regen #1 (which hangs).

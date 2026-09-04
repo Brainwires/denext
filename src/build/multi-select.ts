@@ -13,7 +13,7 @@ export interface TermIO {
 }
 
 /** The default {@linkcode TermIO} backed by `Deno.stdin`/`Deno.stdout`. */
-export const denoTerm: TermIO = {
+const denoTerm: TermIO = {
   read: (buf) => Deno.stdin.readSync(buf),
   write: (s) => {
     Deno.stdout.writeSync(new TextEncoder().encode(s));
@@ -49,46 +49,23 @@ export function multiSelect(
 ): Set<string> {
   const selected = new Set(preselected);
   let cursor = 0;
-
-  const draw = (redraw: boolean) => {
-    if (redraw) io.write(`\x1b[${items.length + 1}A`); // back up over the previous frame
-    io.write("\x1b[0J"); // clear to end of screen
-    io.write(title + "\n");
-    items.forEach((it, i) => {
-      const mark = selected.has(it.key) ? "◉" : "◯";
-      const row = `${i === cursor ? "›" : " "} ${mark} ${it.label}`;
-      io.write((i === cursor ? `\x1b[36m${row}\x1b[0m` : row) + "\n");
-    });
-  };
-
   io.setRaw(true);
   try {
     io.write("\x1b[?25l"); // hide cursor
-    draw(false);
+    drawFrame(io, title, items, selected, cursor, false);
     const buf = new Uint8Array(8);
     while (true) {
       const n = io.read(buf);
       if (n === null) break; // EOF → confirm
-      const b = buf.subarray(0, n);
-      if (b[0] === 0x03) { // Ctrl-C
+      const key = decodeKey(buf.subarray(0, n));
+      if (key === "abort") {
         io.write("\x1b[?25h\n");
         io.setRaw(false);
         Deno.exit(130);
       }
-      if (b[0] === 0x0d || b[0] === 0x0a) break; // enter → confirm
-      if (b[0] === 0x20) { // space: toggle the row under the cursor
-        const k = items[cursor].key;
-        if (selected.has(k)) selected.delete(k);
-        else selected.add(k);
-      } else if (b[0] === 0x1b && b[1] === 0x5b) { // arrows: ESC [ A/B
-        if (b[2] === 0x41) cursor = (cursor - 1 + items.length) % items.length;
-        else if (b[2] === 0x42) cursor = (cursor + 1) % items.length;
-      } else if (b[0] === 0x6b) { // k → up
-        cursor = (cursor - 1 + items.length) % items.length;
-      } else if (b[0] === 0x6a) { // j → down
-        cursor = (cursor + 1) % items.length;
-      }
-      draw(true);
+      if (key === "confirm") break;
+      cursor = applyKey(key, cursor, items, selected);
+      drawFrame(io, title, items, selected, cursor, true);
     }
   } finally {
     io.write("\x1b[?25h"); // show cursor
@@ -96,4 +73,58 @@ export function multiSelect(
   }
   io.write("\n");
   return selected;
+}
+
+/** Redraw the list (backing up over the previous frame when `redraw`). */
+function drawFrame(
+  io: TermIO,
+  title: string,
+  items: MultiSelectItem[],
+  selected: Set<string>,
+  cursor: number,
+  redraw: boolean,
+): void {
+  if (redraw) io.write(`\x1b[${items.length + 1}A`); // back up over the previous frame
+  io.write("\x1b[0J"); // clear to end of screen
+  io.write(title + "\n");
+  items.forEach((it, i) => {
+    const mark = selected.has(it.key) ? "◉" : "◯";
+    const row = `${i === cursor ? "›" : " "} ${mark} ${it.label}`;
+    io.write((i === cursor ? `\x1b[36m${row}\x1b[0m` : row) + "\n");
+  });
+}
+
+type Key = "abort" | "confirm" | "toggle" | "up" | "down" | "other";
+
+/** Decode one raw stdin read: Ctrl-C, enter, space, arrows (ESC [ A/B), j/k. */
+function decodeKey(b: Uint8Array): Key {
+  if (b[0] === 0x03) return "abort";
+  if (b[0] === 0x0d || b[0] === 0x0a) return "confirm";
+  if (b[0] === 0x20) return "toggle";
+  if (b[0] === 0x1b && b[1] === 0x5b) {
+    if (b[2] === 0x41) return "up";
+    if (b[2] === 0x42) return "down";
+    return "other";
+  }
+  if (b[0] === 0x6b) return "up";
+  if (b[0] === 0x6a) return "down";
+  return "other";
+}
+
+/** Apply a decoded key: toggle the row under the cursor, or move it (wrapping). */
+function applyKey(
+  key: Key,
+  cursor: number,
+  items: MultiSelectItem[],
+  selected: Set<string>,
+): number {
+  if (key === "toggle") {
+    const k = items[cursor].key;
+    if (selected.has(k)) selected.delete(k);
+    else selected.add(k);
+    return cursor;
+  }
+  if (key === "up") return (cursor - 1 + items.length) % items.length;
+  if (key === "down") return (cursor + 1) % items.length;
+  return cursor;
 }

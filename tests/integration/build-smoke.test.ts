@@ -12,6 +12,121 @@ const BUNDLE_URL = new URL("../../src/build/bundle.ts", import.meta.url).href;
 
 const EXAMPLE = new URL("../../examples/hello", import.meta.url).pathname;
 
+/** File names directly in `dir`. */
+async function fileNames(dir: string): Promise<string[]> {
+  const files: string[] = [];
+  for await (const entry of Deno.readDir(dir)) {
+    if (entry.isFile) files.push(entry.name);
+  }
+  return files;
+}
+
+/**
+ * L2 (DCE tripwire): the dev-only Fast Refresh runtime must be tree-shaken out of EVERY
+ * production client file. The byte budgets are a coarse proxy; this asserts the property
+ * directly. `enableFastRefresh`/`registerFamily` are the entry-point calls;
+ * `setFamilyMatch`/`setSignatureChangeHandler` are the reconciler seams the runtime
+ * installs — none may appear in a prod bundle.
+ */
+async function assertNoRefreshRuntime(clientDir: string, files: string[]): Promise<void> {
+  const refreshMarkers = [
+    "enableFastRefresh",
+    "registerFamily",
+    "setFamilyMatch",
+    "setSignatureChangeHandler",
+    "__denextRefreshing",
+  ];
+  for (const f of files.filter((f) => f.endsWith(".js"))) {
+    const src = await Deno.readTextFile(join(clientDir, f));
+    for (const marker of refreshMarkers) {
+      assert(
+        !src.includes(marker),
+        `prod client file ${f} must not contain dev Fast Refresh symbol "${marker}"`,
+      );
+    }
+  }
+}
+
+/**
+ * L2b (server-leak tripwire): no production client file may import a `node:` builtin.
+ * A server module reachable from the client graph (e.g. `node:async_hooks` via the
+ * request context) is refused by the strict CSP, so hydration silently never runs —
+ * the bundle still parses and no exception surfaces, which is why this needs a test.
+ */
+async function assertNoNodeBuiltins(clientDir: string, files: string[]): Promise<void> {
+  for (const f of files.filter((f) => f.endsWith(".js"))) {
+    const src = await Deno.readTextFile(join(clientDir, f));
+    const hit = /\bfrom\s*["']node:[^"']+["']|\bimport\(\s*["']node:/.exec(src);
+    assert(
+      !hit,
+      `prod client file ${f} imports a Node builtin (${
+        hit?.[0]
+      }) — a server module leaked into the client graph`,
+    );
+  }
+}
+
+/**
+ * Every route entry SHARES the client-runtime chunk rather than inlining it: collect the
+ * chunks each entry statically imports and assert they reference a common one. (Before
+ * the shared-bundle pass, sibling routes each inlined a full ~19 KB copy of the runtime.)
+ */
+async function assertSharedRuntimeChunk(clientDir: string): Promise<void> {
+  const importedChunks = (js: string): string[] =>
+    [...js.matchAll(/from\s*["']\.\/(chunk-[A-Za-z0-9]+\.js)["']/g)].map((m) => m[1]);
+  const routeEntries = ["index.js", "about.js", "blog___slug_.js"];
+  const perEntry = await Promise.all(
+    routeEntries.map(async (f) => importedChunks(await Deno.readTextFile(join(clientDir, f)))),
+  );
+  const shared = perEntry[0].find((c) => perEntry.every((cs) => cs.includes(c)));
+  assert(
+    shared,
+    `all route entries must import one shared runtime chunk; got ${
+      routeEntries.map((f, i) => `${f}:[${perEntry[i].join(",")}]`).join(" ")
+    }`,
+  );
+}
+
+/**
+ * Bundle budget (raw bytes). The shared chunks hold the runtime and stay small; each
+ * route entry is just its own code. If the runtime is ever inlined per route again, a
+ * sibling entry balloons past its budget and this trips.
+ *
+ * History of the shared-runtime guard: bumped for the 1.0 reconciler features and
+ * path-based useId; nudged for the soft-nav retained-root fix (44.5 → 44.7 KB); bumped for
+ * the compact isomorphic soft-nav payload (44.7 → 45.3 KB, +642 raw / +207 gzipped, spent
+ * once to stop shipping the full rendered document on every isomorphic navigation and to
+ * fix the per-route CSS swap); bumped 45.3 → 50 KB for the 1.2 real-DOM-fidelity fixes
+ * (in-namespace SVG/MathML, passive effects flushed per render-loop iteration, per-property
+ * `patchStyle` so floating-ui's CSS custom props survive a re-render; ~+3.3 KB raw /
+ * ~+1.1 KB gzipped); 50 → 52 KB for streaming-on-by-default's synchronous hole-reveal
+ * sweep (~+1.4 KB raw); 52 → 55 KB to match the runtime as it actually stood (53.8 KB raw /
+ * 18.7 KB gzipped — for context React 19's reconciler alone is ~90–100 KB gzipped, and
+ * denext's figure includes the router and the Flight client); back down to ~51.6 KB raw
+ * with the DevTools-panel DCE fix (a bare module-scope style object was retained in every
+ * prod bundle); re-bumped to 56 KB for the unbundled dev loop's per-module HMR seam
+ * (`resolveFamilyCurrent`/`refreshAllRoots`, a null-check branch in prod); re-based
+ * 56 → 58 KB for the reconciler refactor (55.8 → 57.4 KB raw, 19.5 → 20.2 KB gzipped —
+ * esbuild does not inline the extracted helpers, so each keeps its declaration + call
+ * overhead; the old guard had 231 bytes of headroom, so ANY decomposition tripped it).
+ * The over-the-wire cost is the GZIPPED figure, verified by bench Layer 1; this raw guard
+ * is a "did the runtime get inlined into a route entry" tripwire, not an over-the-wire
+ * budget — the 6 KB per-route entry budget is the real one.
+ */
+async function assertBundleBudgets(clientDir: string): Promise<void> {
+  let sharedTotal = 0;
+  for await (const e of Deno.readDir(clientDir)) {
+    if (e.isFile && /^chunk-.*\.js$/.test(e.name)) {
+      sharedTotal += (await Deno.stat(join(clientDir, e.name))).size;
+    }
+  }
+  assert(sharedTotal < 58_000, `shared chunks total ${sharedTotal} bytes (budget 58 KB raw)`);
+  for (const f of ["about.js", "blog___slug_.js"]) {
+    const n = (await Deno.stat(join(clientDir, f))).size;
+    assert(n < 6_000, `${f} is ${n} bytes (budget 6 KB) — is the runtime inlined again?`);
+  }
+}
+
 Deno.test("build smoke: examples/hello emits a client entry, a code-split island chunk, and a shared chunk", async () => {
   const result = await build(EXAMPLE);
   const clientDir = join(result.outDir, "client");
@@ -23,12 +138,8 @@ Deno.test("build smoke: examples/hello emits a client entry, a code-split island
     Deno.errors.NotFound,
   );
 
-  const files: string[] = [];
-  for await (const entry of Deno.readDir(clientDir)) {
-    if (entry.isFile) files.push(entry.name);
-  }
+  const files = await fileNames(clientDir);
   const list = files.join(", ");
-
   // The home route's client entry.
   assert(files.includes("index.js"), `expected index.js in client output; got: ${list}`);
   // `dynamic(() => import("./island.tsx"), { ssr: false })` is split into its own chunk.
@@ -54,112 +165,10 @@ Deno.test("build smoke: examples/hello emits a client entry, a code-split island
   const entry = await Deno.readTextFile(join(clientDir, "index.js"));
   assertStringIncludes(entry, "__denext");
 
-  // L2 (DCE tripwire): the dev-only Fast Refresh runtime must be tree-shaken out
-  // of EVERY production client file. The byte budgets above are a coarse proxy;
-  // this asserts the property directly. `enableFastRefresh`/`registerFamily` are
-  // the entry-point calls; `setFamilyMatch`/`setSignatureChangeHandler` are the
-  // reconciler seams the runtime installs — none may appear in a prod bundle.
-  const refreshMarkers = [
-    "enableFastRefresh",
-    "registerFamily",
-    "setFamilyMatch",
-    "setSignatureChangeHandler",
-    "__denextRefreshing",
-  ];
-  for (const f of files) {
-    if (!f.endsWith(".js")) continue;
-    const src = await Deno.readTextFile(join(clientDir, f));
-    for (const marker of refreshMarkers) {
-      assert(
-        !src.includes(marker),
-        `prod client file ${f} must not contain dev Fast Refresh symbol "${marker}"`,
-      );
-    }
-  }
-
-  // Every route entry SHARES the client-runtime chunk rather than inlining it:
-  // collect the chunks each entry statically imports and assert they reference a
-  // common one. (Before the shared-bundle pass, sibling routes each inlined a
-  // full ~19 KB copy of the runtime.)
-  const importedChunks = (js: string): string[] =>
-    [...js.matchAll(/from\s*["']\.\/(chunk-[A-Za-z0-9]+\.js)["']/g)].map((m) => m[1]);
-  const routeEntries = ["index.js", "about.js", "blog___slug_.js"];
-  const perEntry = await Promise.all(
-    routeEntries.map(async (f) => importedChunks(await Deno.readTextFile(join(clientDir, f)))),
-  );
-  const shared = perEntry[0].find((c) => perEntry.every((cs) => cs.includes(c)));
-  assert(
-    shared,
-    `all route entries must import one shared runtime chunk; got ${
-      routeEntries.map((f, i) => `${f}:[${perEntry[i].join(",")}]`).join(" ")
-    }`,
-  );
-
-  // Bundle budget (raw bytes). The shared chunks hold the runtime and stay small;
-  // each route entry is just its own code. If the runtime is ever inlined per
-  // route again, a sibling entry balloons past its budget and this trips.
-  let sharedTotal = 0;
-  for await (const e of Deno.readDir(clientDir)) {
-    if (e.isFile && /^chunk-.*\.js$/.test(e.name)) {
-      sharedTotal += (await Deno.stat(join(clientDir, e.name))).size;
-    }
-  }
-  // Raw-byte smoke guard on the shared runtime. Bumped for the 1.0 reconciler
-  // features (pre-mutation insertion effects, async transitions, forwardRef/memo type
-  // resolution, Suspense Offscreen) and path-based useId (tree-position ids across
-  // the shell/hole boundary), which grew the shared runtime a further ~0.4%. Nudged
-  // again (44.5 → 44.7 KB) for the soft-nav retained-root fix: the root must live on a
-  // document-global so a dev soft nav's self-contained re-run bundle finds it instead
-  // of re-hydrating against the outgoing page (~40 raw bytes of repetitive global
-  // property access; a handful of bytes gzipped). Bumped once more (44.7 → 45.3 KB) for
-  // the compact isomorphic soft-nav payload: an interactive-but-non-Flight route now
-  // gets a JSON `{title,data,entry,styles}` reply on nav instead of a full HTML document
-  // whose `<body>` the client discards — so the client gained `applyIsoNav` +
-  // `swapRouteStyles` (per-route CSS is now swapped on nav, previously a latent bug).
-  // That is +642 raw / +207 gzipped on the shared chunk, spent once to stop shipping the
-  // full rendered document on every isomorphic navigation (kilobytes each) and to fix the
-  // CSS swap. The gzip floor (the real over-the-wire commitment) is verified by bench
-  // Layer 1; the per-route inlining regression this guards against is caught directly by
-  // the 6 KB per-route entry budget below.
-  // Bumped once more (45.3 → 50 KB; shared runtime is now ~49.3 KB raw / ~16.5 KB gzipped)
-  // for the 1.2 real-DOM-fidelity fixes that let heavy npm React apps (TanStack Router +
-  // Base UI/floating-ui) render correctly on the reconciler: SVG/MathML elements created
-  // in-namespace so icons render; passive effects flushed before each render-loop iteration
-  // so no useEffect is stranded; and per-property inline-style patching (`patchStyle`) so
-  // foreign CSS custom props set imperatively by floating-ui survive a re-render (previously
-  // the whole `style` attribute was rewritten each commit, wiping `--available-height`/
-  // `--anchor-width`/… and driving a floating-ui reposition loop). Together ~+3.3 KB raw /
-  // ~+1.1 KB gzipped on the shared runtime — the over-the-wire cost is the gzip figure. The
-  // per-route 6 KB budget below still guards against the runtime being inlined into entries.
-  // Bumped 50 → 52 KB for streaming-on-by-default: `startClient` now runs a synchronous
-  // hole-reveal sweep (src/client/reveal-holes.ts) before hydrating, so a streamed Suspense
-  // hole not yet swapped by the inline runtime is revealed before hydrateRoot reads the DOM
-  // (ordering safety; a no-op on buffered pages). ~+1.4 KB raw / ~+0.3 KB gzipped.
-  //
-  // Bumped 52 → 55 KB to match the runtime as it actually stands (53.8 KB raw / 18.7 KB
-  // gzipped) — the real-DOM-fidelity, path-based `useId`, and compact-nav-payload work grew
-  // it past the old raw guard without a bump. The over-the-wire cost is the GZIPPED figure,
-  // 18.7 KB — for context React 19 (`react` + `react-dom-client` + `scheduler`) is ~90-100 KB
-  // gzipped for the reconciler alone, and denext's 18.7 KB already includes the router and the
-  // Flight client. So this raw guard is only a "did the runtime get inlined into a route entry"
-  // tripwire (the 6 KB per-route budget below is the real one); it is not an over-the-wire budget.
-  //
-  // Back down to ~51.6 KB raw as of the DevTools-panel DCE fix: the dev-only panel's top-level
-  // `const S = {…}` style object was being retained by esbuild in EVERY production bundle (~2 KB
-  // of dead style strings) even though its `mount()` was tree-shaken — a bare module-scope object
-  // literal survives DCE where the functions using it do not. Moving the styles inside `mount()`
-  // (via `buildStyles()`) lets them shake out with it, so the whole panel is now absent from prod.
-  // Re-bumped to 56 KB (from 55 KB) for the unbundled dev loop's per-module HMR seam: the
-  // reconciler now resolves a component through its family's CURRENT impl at render time
-  // (`resolveFamilyCurrent`/`familyResolveActive` in vnode-utils, plus `refreshAllRoots`),
-  // which ships to prod even though the resolver is null there (the branch is a null-check,
-  // never taken). A deliberate ~small feature addition, not a DCE leak — the guard still
-  // trips on a larger regression.
-  assert(sharedTotal < 56_000, `shared chunks total ${sharedTotal} bytes (budget 56 KB raw)`);
-  for (const f of ["about.js", "blog___slug_.js"]) {
-    const n = (await Deno.stat(join(clientDir, f))).size;
-    assert(n < 6_000, `${f} is ${n} bytes (budget 6 KB) — is the runtime inlined again?`);
-  }
+  await assertNoRefreshRuntime(clientDir, files);
+  await assertNoNodeBuiltins(clientDir, files);
+  await assertSharedRuntimeChunk(clientDir);
+  await assertBundleBudgets(clientDir);
 });
 
 // The probe is memoized per process, so run it in a subprocess with DENO_BIN

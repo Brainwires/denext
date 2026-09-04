@@ -50,7 +50,7 @@ export interface TestEvent {
 type Listener = (event: TestEvent) => void;
 
 /** Base DOM node. */
-export class DomNode {
+class DomNode {
   nodeType = 0;
   parentNode: DomEl | null = null;
   childNodes: DomNode[] = [];

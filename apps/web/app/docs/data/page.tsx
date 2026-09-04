@@ -1,6 +1,10 @@
 import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
 
-export const metadata = { title: "Data & caching" };
+export const metadata = {
+  title: "Data & caching",
+  description:
+    "Fetch on the server in async components. Cache with fetch semantics, unstable_cache, ISR, and Cache Components.",
+};
 
 export default function Data() {
   return (
@@ -46,14 +50,20 @@ export default function Feed() {
 
       <h2>Cache Components & PPR</h2>
       <p>
-        With <code>experimental.cacheComponents</code>, mark expensive work with{" "}
-        <code>"use cache"</code> and control it with <code>cacheLife</code> /{" "}
+        With <code>cacheComponents: true</code> in{" "}
+        <code>denext.config.ts</code>, mark expensive work with <code>"use cache"</code>{" "}
+        and control it with <code>cacheLife</code> /{" "}
         <code>cacheTag</code>. Partial Prerendering serves a cached static shell with per-request
         dynamic holes.
       </p>
-      <Callout kind="warn">
-        Cache Components and PPR are experimental (flag-gated). Everything else on this page is
-        stable.
+      <Callout kind="note">
+        Cache Components and PPR are a stable <strong>opt-in</strong>{" "}
+        (off unless you set the flag — caching is a choice, not a default). The legacy{" "}
+        <code>experimental.cacheComponents</code>{" "}
+        still works and warns in dev. Its documented bounds — request data inside{" "}
+        <code>use cache</code>{" "}
+        throws; a streamed hole can't add to the already-flushed head — are listed in
+        KNOWN-LIMITATIONS.
       </Callout>
     </DocsShell>
   );

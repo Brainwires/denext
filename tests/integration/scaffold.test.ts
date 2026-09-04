@@ -3,7 +3,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
-import { scaffoldFiles, scaffoldProject } from "../../src/build/scaffold.ts";
+import { type ScaffoldFile, scaffoldFiles, scaffoldProject } from "../../src/build/scaffold.ts";
 
 Deno.test("scaffoldFiles: plain project", () => {
   const files = scaffoldFiles({ dir: "/x" });
@@ -58,6 +58,45 @@ Deno.test("scaffoldFiles: src-dir + tailwind writes output under src/app", () =>
   assertStringIncludes(files.find((f) => f.path === ".gitignore")!.content, "src/app/globals.css");
 });
 
+// Every keyword each scaffolded packaging script must mention.
+// macOS: covers sign + universal + notarize.
+const MACOS_PACKAGING_KEYWORDS = [
+  "codesign",
+  "lipo",
+  "notarytool",
+  "DENEXT_CODESIGN_IDENTITY",
+  "--include",
+];
+// Linux: builds via `deno desktop --target`, tars the bundle, and uses
+// underscore-free arch labels (x64) so the .desktop survives.
+const LINUX_PACKAGING_KEYWORDS = [
+  "x86_64-unknown-linux-gnu",
+  "aarch64-unknown-linux-gnu",
+  "tar",
+  "appimagetool",
+  '"x64"',
+  "--target",
+];
+// Windows: builds the .exe via `deno desktop --target`, zips it, and
+// Authenticode-signs when a cert is configured.
+const WINDOWS_PACKAGING_KEYWORDS = [
+  "x86_64-pc-windows-msvc",
+  "aarch64-pc-windows-msvc",
+  "signtool",
+  "DENEXT_WINDOWS_CERT",
+  "WebView2",
+  "--target",
+];
+
+/** Asserts the desktop scaffold emits `script` and that it mentions every keyword. */
+function assertPackagingScript(files: ScaffoldFile[], script: string, keywords: string[]) {
+  const file = files.find((f) => f.path === script);
+  assert(file, `desktop scaffold includes ${script}`);
+  for (const kw of keywords) {
+    assertStringIncludes(file!.content, kw);
+  }
+}
+
 Deno.test("scaffoldFiles: desktop wires the deno-desktop entry, config block, and tasks", () => {
   const files = scaffoldFiles({ dir: "/x", desktop: true });
   const paths = files.map((f) => f.path);
@@ -81,45 +120,13 @@ Deno.test("scaffoldFiles: desktop wires the deno-desktop entry, config block, an
   assert(icons, "desktop scaffold includes icons/README.md");
   assertStringIncludes(icons!.content, "app.icns");
   // The packaging script is scaffolded and covers sign + universal + notarize.
-  const pkg = files.find((f) => f.path === "scripts/package-macos.ts");
-  assert(pkg, "desktop scaffold includes scripts/package-macos.ts");
-  for (const kw of ["codesign", "lipo", "notarytool", "DENEXT_CODESIGN_IDENTITY", "--include"]) {
-    assertStringIncludes(pkg!.content, kw);
-  }
-  // Linux packaging: a package-linux.ts + its task; builds via `deno desktop --target`,
-  // tars the bundle, and uses underscore-free arch labels (x64) so the .desktop survives.
+  assertPackagingScript(files, "scripts/package-macos.ts", MACOS_PACKAGING_KEYWORDS);
+  // Linux packaging: a package-linux.ts + its task.
   assertStringIncludes(dj.tasks["desktop:package:linux"], "scripts/package-linux.ts");
-  const lin = files.find((f) => f.path === "scripts/package-linux.ts");
-  assert(lin, "desktop scaffold includes scripts/package-linux.ts");
-  for (
-    const kw of [
-      "x86_64-unknown-linux-gnu",
-      "aarch64-unknown-linux-gnu",
-      "tar",
-      "appimagetool",
-      '"x64"',
-      "--target",
-    ]
-  ) {
-    assertStringIncludes(lin!.content, kw);
-  }
-  // Windows packaging: a package-windows.ts + its task; builds the .exe via
-  // `deno desktop --target`, zips it, and Authenticode-signs when a cert is configured.
+  assertPackagingScript(files, "scripts/package-linux.ts", LINUX_PACKAGING_KEYWORDS);
+  // Windows packaging: a package-windows.ts + its task.
   assertStringIncludes(dj.tasks["desktop:package:windows"], "scripts/package-windows.ts");
-  const win = files.find((f) => f.path === "scripts/package-windows.ts");
-  assert(win, "desktop scaffold includes scripts/package-windows.ts");
-  for (
-    const kw of [
-      "x86_64-pc-windows-msvc",
-      "aarch64-pc-windows-msvc",
-      "signtool",
-      "DENEXT_WINDOWS_CERT",
-      "WebView2",
-      "--target",
-    ]
-  ) {
-    assertStringIncludes(win!.content, kw);
-  }
+  assertPackagingScript(files, "scripts/package-windows.ts", WINDOWS_PACKAGING_KEYWORDS);
 });
 
 Deno.test("scaffoldFiles: scaffolded macOS package script matches the examples/native copy", async () => {

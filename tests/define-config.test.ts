@@ -12,18 +12,48 @@ Deno.test("defineConfig validates values at runtime (throws field-scoped)", () =
   assertThrows(() => defineConfig({ basePath: "docs" }), Error, "basePath");
 });
 
-Deno.test("defineConfig warns on an unknown key with a suggestion", () => {
+/** Capture console.warn output produced while `fn` runs. */
+function captureWarn(fn: () => void): string[] {
   const original = console.warn;
   const warns: string[] = [];
   console.warn = (...a: unknown[]) => warns.push(a.map(String).join(" "));
   try {
-    // A stale/typo'd key on an object cast to the config type (e.g. copied from a
-    // Next.js config). It's ignored, but no longer silently.
-    defineConfig({ basePath: "/x", reactStrictMode: true } as never);
+    fn();
   } finally {
     console.warn = original;
   }
+  return warns;
+}
+
+Deno.test("defineConfig warns on an unknown key with a suggestion", () => {
+  // A stale/typo'd key on an object cast to the config type (e.g. copied from a
+  // Next.js config). It's ignored, but no longer silently.
+  const warns = captureWarn(() => defineConfig({ basePath: "/x", reactStrictMode: true } as never));
   assert(warns.some((w) => w.includes("`reactStrictMode`")));
+});
+
+Deno.test("defineConfig warns on a typo'd experimental.* key and on graduated aliases", () => {
+  // Typo one level down → suggestion from the experimental sub-key list.
+  const typo = captureWarn(() => defineConfig({ experimental: { complier: true } } as never));
+  assertEquals(typo, [
+    "denext: denext.config has an unknown option `experimental.complier`, which will be ignored — did you mean `compiler`?",
+  ]);
+  // Graduated keys → a "moved" pointer, not a generic unknown-key warning.
+  const moved = captureWarn(() =>
+    defineConfig(
+      { experimental: { streaming: false, live: {}, cacheComponents: true } } as never,
+    )
+  );
+  assertEquals(moved, [
+    "denext: denext.config sets `experimental.streaming`, which is no longer honored — set top-level `streaming` instead.",
+    "denext: denext.config sets `experimental.live`, which is no longer honored — set top-level `live` instead.",
+    "denext: denext.config sets `experimental.cacheComponents`, which is still honored for now but has moved — set top-level `cacheComponents` instead.",
+  ]);
+  // A valid experimental block (and the new top-level home) is silent.
+  assertEquals(
+    captureWarn(() => defineConfig({ cacheComponents: true, experimental: { compiler: true } })),
+    [],
+  );
 });
 
 Deno.test("defineConfig type-checks the config (accepts valid, rejects unknown fields)", async () => {

@@ -5,6 +5,7 @@ import {
   clientIdFor,
   computeBoundaryRoutes,
   crawlLocalModules,
+  exportListNames,
   importFunctionExports,
   isUnderFrameworkSrc,
   routeEntryFiles,
@@ -246,4 +247,10 @@ Deno.test("importFunctionExports returns runtime function exports when the modul
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("exportListNames parses an `export { … }` list body", () => {
+  assertEquals(exportListNames(" a, b as c, default as X, "), ["a", "c", "X"]);
+  // Type-only entries and malformed names are not runtime exports.
+  assertEquals(exportListNames("type T, 1bad, ok"), ["ok"]);
 });

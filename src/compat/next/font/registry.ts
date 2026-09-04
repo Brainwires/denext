@@ -106,18 +106,13 @@ export function collectedFontFaces(): string[] {
   return [...fontFaces];
 }
 
-/** All registered Google stylesheet URLs (for the build's self-host discovery). */
-export function collectedStylesheets(): string[] {
-  return [...stylesheets.keys()];
-}
-
 /** All registered Google stylesheets with their metadata (for subset-aware self-hosting). */
 export function collectedFontEntries(): Array<[string, FontMeta]> {
   return [...stylesheets];
 }
 
 /** A small deterministic hash (djb2) → base36, for stable class names. */
-export function hashKey(key: string): string {
+function hashKey(key: string): string {
   let h = 5381;
   for (let i = 0; i < key.length; i++) h = ((h << 5) + h + key.charCodeAt(i)) >>> 0;
   return h.toString(36);

@@ -6,56 +6,24 @@
 // silently dropped by the loader's field whitelist.
 
 import type { DenextConfig } from "./config.ts";
+import { CONFIG_KEYS, EXPERIMENTAL_KEYS } from "./config-keys.generated.ts";
+import { editDistance } from "../utils/edit-distance.ts";
 
 /**
- * The recognized top-level {@link DenextConfig} keys. Kept in sync with the interface;
- * `warnUnknownConfigKeys` flags anything outside this set (the loader drops unknown
- * keys silently otherwise). A `tests` guard asserts this matches the loader whitelist.
+ * The recognized top-level {@link DenextConfig} keys — the generated
+ * {@link CONFIG_KEYS} list (derived from the interface by `deno task gen:config-schema`,
+ * so it cannot drift from the type). `warnUnknownConfigKeys` flags anything outside this
+ * set, since the loader copies exactly these fields and would drop an unknown key silently.
  */
-export const KNOWN_CONFIG_KEYS: readonly string[] = [
-  "mode",
-  "spa",
-  "i18n",
-  "basePath",
-  "trailingSlash",
-  "assetPrefix",
-  "redirects",
-  "rewrites",
-  "headers",
-  "images",
-  "tailwind",
-  "mdx",
-  "cache",
-  "streaming",
-  "live",
-  "experimental",
-  "plugins",
-  "csp",
-  "hsts",
-  "publicEnv",
-  "compatibilityMode",
-  "classComponents",
-];
+export const KNOWN_CONFIG_KEYS: readonly string[] = CONFIG_KEYS;
 
-/** Levenshtein edit distance (small strings; iterative two-row). */
-function editDistance(a: string, b: string): number {
-  const m = a.length, n = b.length;
-  let prev = Array.from({ length: n + 1 }, (_, i) => i);
-  let curr = new Array<number>(n + 1);
-  for (let i = 1; i <= m; i++) {
-    curr[0] = i;
-    for (let j = 1; j <= n; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
-    }
-    [prev, curr] = [curr, prev];
-  }
-  return prev[n];
-}
+/** The recognized `experimental.*` sub-keys (generated from `ExperimentalConfig`). */
+const KNOWN_EXPERIMENTAL_KEYS: readonly string[] = EXPERIMENTAL_KEYS;
 
 /**
- * The closest known key to `key` within a small edit distance (case-insensitive), or
- * `undefined` when nothing is near enough to suggest. Used for "did you mean" hints.
+ * The closest key in `known` to `key` within a small edit distance (case-insensitive), or
+ * `undefined` when nothing is near enough to suggest. Used for "did you mean" hints; the
+ * candidate list defaults to the top-level {@link KNOWN_CONFIG_KEYS}.
  */
 export function didYouMean(
   key: string,
@@ -77,11 +45,52 @@ export function didYouMean(
     : undefined;
 }
 
+/** The "unknown option" warning line, with a suggestion when a close known key exists. */
+function unknownKeyMessage(name: string, key: string, suggestion: string | undefined): string {
+  return `denext: ${name} has an unknown option \`${key}\`, which will be ignored` +
+    (suggestion ? ` — did you mean \`${suggestion}\`?` : ".");
+}
+
 /**
- * Warn (to stderr, never throw) on any top-level config key not in {@link KNOWN_CONFIG_KEYS}.
+ * `experimental.*` keys that graduated to top-level config, with whether the old alias is
+ * still read. Setting one gets a "moved" message instead of a generic unknown-key warning.
+ */
+const MOVED_EXPERIMENTAL_KEYS: ReadonlyMap<string, { to: string; honored: boolean }> = new Map([
+  ["streaming", { to: "streaming", honored: false }], // alias removed in 2.0
+  ["live", { to: "live", honored: false }], // alias removed in 2.0
+  ["cacheComponents", { to: "cacheComponents", honored: true }], // graduated in 2.0; alias kept
+]);
+
+/** The warning for a graduated `experimental.<key>`, pointing at its top-level home. */
+function movedKeyMessage(name: string, key: string, to: string, honored: boolean): string {
+  const status = honored ? "is still honored for now but has moved" : "is no longer honored";
+  return `denext: ${name} sets \`experimental.${key}\`, which ${status} — set top-level \`${to}\` instead.`;
+}
+
+/** One level down: warn on `experimental.*` keys outside the generated `EXPERIMENTAL_KEYS`. */
+function warnUnknownExperimentalKeys(experimental: unknown, name: string): void {
+  if (typeof experimental !== "object" || experimental === null || Array.isArray(experimental)) {
+    return;
+  }
+  for (const key of Object.keys(experimental)) {
+    if (KNOWN_EXPERIMENTAL_KEYS.includes(key)) continue;
+    const moved = MOVED_EXPERIMENTAL_KEYS.get(key);
+    if (moved) {
+      console.warn(movedKeyMessage(name, key, moved.to, moved.honored));
+      continue;
+    }
+    const suggestion = didYouMean(key, KNOWN_EXPERIMENTAL_KEYS);
+    console.warn(unknownKeyMessage(name, `experimental.${key}`, suggestion));
+  }
+}
+
+/**
+ * Warn (to stderr, never throw) on any top-level config key not in {@link KNOWN_CONFIG_KEYS},
+ * and one level down on any `experimental.*` key not in the generated `EXPERIMENTAL_KEYS`.
  * The loader reconstructs config from a fixed field list, so an unrecognized key (a typo,
  * a stale Next.js option) is otherwise dropped with no signal. Emits a "did you mean"
- * suggestion when a close known key exists.
+ * suggestion when a close known key exists, and a "moved to top-level" pointer for the
+ * graduated `experimental.streaming` / `experimental.live` / `experimental.cacheComponents`.
  *
  * @param config The raw config object as authored (before the loader's whitelist).
  * @param name The config file name, for the message (default `"denext.config"`).
@@ -89,12 +98,9 @@ export function didYouMean(
 export function warnUnknownConfigKeys(config: object, name = "denext.config"): void {
   for (const key of Object.keys(config)) {
     if (KNOWN_CONFIG_KEYS.includes(key)) continue;
-    const suggestion = didYouMean(key);
-    console.warn(
-      `denext: ${name} has an unknown option \`${key}\`, which will be ignored` +
-        (suggestion ? ` — did you mean \`${suggestion}\`?` : "."),
-    );
+    console.warn(unknownKeyMessage(name, key, didYouMean(key)));
   }
+  warnUnknownExperimentalKeys((config as { experimental?: unknown }).experimental, name);
 }
 
 // --- Value validation ------------------------------------------------------------

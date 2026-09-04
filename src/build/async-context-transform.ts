@@ -30,25 +30,28 @@
 // sub-iterator, which needs different bracketing) — a rare shape. Top-level `await`
 // (module init) is likewise left alone.
 
-import { ensureDir } from "@std/fs";
 import { join, toFileUrl } from "@std/path";
 import { frameworkFileUrl } from "./bundle.ts";
 import {
   applyEdits,
   type Ctx,
   type Edit,
-  encoder,
   endOf,
-  MARKER,
-  MARKER_LEN,
+  forEachChild,
   type Node,
+  parseModule,
+  prologueEnd,
   startOf,
-  swcParse,
+  writeTransformedModules,
 } from "./swc-ast.ts";
 
-/** The absolute URL a transformed module imports the AsyncContext helpers from. */
+/**
+ * The absolute URL a transformed module imports the AsyncContext helpers from: the
+ * compiler-runtime entry (`denext/compiler-runtime`), the one stable surface every
+ * build transform's output imports — not the internal async-context module.
+ */
 function runtimeUrl(): string {
-  return frameworkFileUrl("src/runtime/async-context.ts");
+  return frameworkFileUrl("src/runtime/compiler-runtime.ts");
 }
 
 /** The result of transforming one module. */
@@ -113,23 +116,27 @@ function getFn(node: Node): FnParts | null {
  * function — i.e. not nested inside another function. Only such a function needs a
  * scope; an async function with no direct await never suspends through one.
  */
-function hasDirectAwait(body: Node): boolean {
-  let found = false;
+/**
+ * Walk `body`'s OWN scope — every node except those inside a nested function (whose
+ * awaits/yields are its own). `visit` returning true stops descent below that node.
+ */
+function walkOwnScope(body: Node, visit: (n: Node) => boolean | void): void {
   const rec = (n: Node): void => {
-    if (found || !n || typeof n !== "object") return;
-    if (getFn(n)) return; // a nested function boundary — its awaits are its own
-    if (n.type === "AwaitExpression" || (n.type === "ForOfStatement" && n.await === true)) {
-      found = true;
-      return;
-    }
-    for (const key of Object.keys(n)) {
-      if (key === "span") continue;
-      const v = n[key];
-      if (Array.isArray(v)) { for (const c of v) rec(c); }
-      else if (v && typeof v === "object") rec(v);
-    }
+    if (!n || typeof n !== "object" || getFn(n)) return;
+    if (visit(n) === true) return;
+    forEachChild(n, rec);
   };
   rec(body);
+}
+
+function hasDirectAwait(body: Node): boolean {
+  let found = false;
+  walkOwnScope(body, (n) => {
+    if (n.type === "AwaitExpression" || (n.type === "ForOfStatement" && n.await === true)) {
+      found = true;
+    }
+    return found;
+  });
   return found;
 }
 
@@ -141,22 +148,140 @@ function hasDirectAwait(body: Node): boolean {
 function directYields(body: Node): { hasYield: boolean; hasDelegate: boolean } {
   let hasYield = false;
   let hasDelegate = false;
-  const rec = (n: Node): void => {
-    if (!n || typeof n !== "object") return;
-    if (getFn(n)) return; // a nested function boundary — its yields are its own
-    if (n.type === "YieldExpression") {
-      hasYield = true;
-      if (n.delegate === true) hasDelegate = true;
-    }
-    for (const key of Object.keys(n)) {
-      if (key === "span") continue;
-      const v = n[key];
-      if (Array.isArray(v)) { for (const c of v) rec(c); }
-      else if (v && typeof v === "object") rec(v);
-    }
-  };
-  rec(body);
+  walkOwnScope(body, (n) => {
+    if (n.type !== "YieldExpression") return;
+    hasYield = true;
+    if (n.delegate === true) hasDelegate = true;
+  });
   return { hasYield, hasDelegate };
+}
+
+/** The per-module transform state: edits, the helper names used, the scope counter. */
+interface AcState {
+  readonly ctx: Ctx;
+  readonly edits: Edit[];
+  readonly used: Set<string>;
+  counter: number;
+}
+
+function insertAt(st: AcState, at: number, text: string, order: number): void {
+  st.edits.push({ start: at, end: at, order, text });
+}
+
+/**
+ * Bracket a block or expression body with the scope open/try + finally/close:
+ * `=> EXPR` becomes `=> { const $=__asyncScope(); try { return (EXPR) } finally {…} }`;
+ * a block gets the open just after `{` and the close just before `}`.
+ */
+function wrapBody(st: AcState, fnBody: Node, exprBody: boolean, scope: string): void {
+  st.used.add("__asyncScope").add("__asyncScopeEnd");
+  const { ctx } = st;
+  if (exprBody) {
+    insertAt(st, startOf(ctx, fnBody), `{ const ${scope} = __asyncScope(); try { return (`, 0);
+    insertAt(st, endOf(ctx, fnBody), `); } finally { __asyncScopeEnd(${scope}); } }`, 5);
+  } else {
+    insertAt(st, startOf(ctx, fnBody) + 1, ` const ${scope} = __asyncScope(); try {`, 0);
+    insertAt(st, endOf(ctx, fnBody) - 1, `} finally { __asyncScopeEnd(${scope}); } `, 5);
+  }
+}
+
+/** Wrap an `await X` argument (`__asyncAwait`) or a `for await (… of R)` iterable (`__asyncIter`). */
+function wrapWith(
+  st: AcState,
+  helper: "__asyncAwait" | "__asyncIter",
+  arg: Node,
+  scope: string,
+): void {
+  st.used.add(helper);
+  insertAt(st, startOf(st.ctx, arg), `${helper}(${scope}, `, 1);
+  insertAt(st, endOf(st.ctx, arg), `)`, 1);
+}
+
+/**
+ * Wrap one `yield V` (or bare `yield`): `__asyncResume($, yield __asyncYield($, V))` —
+ * hand the caller back its context before suspending, restore the frame's on resume.
+ * Insertion-based (never re-emits V), so a nested await/yield inside V is still
+ * instrumented by the walk.
+ */
+function wrapYield(st: AcState, node: Node, scope: string): void {
+  st.used.add("__asyncYield").add("__asyncResume");
+  const { ctx } = st;
+  insertAt(st, startOf(ctx, node), `__asyncResume(${scope}, `, 0);
+  if (node.argument) {
+    insertAt(st, startOf(ctx, node.argument), `__asyncYield(${scope}, `, 1);
+    insertAt(st, endOf(ctx, node.argument), `)`, 1);
+  } else {
+    // Bare `yield` (no argument): supply `__asyncYield($)` as the yielded value.
+    insertAt(st, endOf(ctx, node), ` __asyncYield(${scope})`, 1);
+  }
+  insertAt(st, endOf(ctx, node), `)`, 5);
+}
+
+/**
+ * Instrument an async function/arrow that actually awaits, OR an async generator that
+ * awaits or yields (its yields need the same suspension bracketing), returning the new
+ * scope var; null when the function is left alone. A generator that uses `yield*`
+ * delegation is left alone — its delegated suspension needs different handling. Sync
+ * generators never cross an async boundary, so they're left alone too.
+ */
+function scopeForFunction(st: AcState, fn: FnParts): string | null {
+  if (!fn.async || !fn.body) return null;
+  let instrument: boolean;
+  if (fn.generator) {
+    const { hasYield, hasDelegate } = directYields(fn.body);
+    instrument = !hasDelegate && (hasDirectAwait(fn.body) || hasYield);
+  } else {
+    instrument = hasDirectAwait(fn.body);
+  }
+  if (!instrument) return null;
+  const scope = `__dnxAc${st.counter++}`;
+  wrapBody(st, fn.body, fn.exprBody, scope);
+  return scope;
+}
+
+/**
+ * Visit a function node. Param defaults are evaluated before the body scope exists (no
+ * scope there); the body carries the (possibly new) scope so nested functions
+ * re-establish theirs; a computed method key is evaluated in the enclosing scope.
+ */
+function visitFunction(st: AcState, node: Node, fn: FnParts, scope: string | null): void {
+  const childScope = scopeForFunction(st, fn);
+  for (const p of fn.params) visit(st, p, null);
+  if (fn.body) visit(st, fn.body, childScope);
+  if (node.key) visit(st, node.key, scope);
+}
+
+/** Handle an `await`, `for await` or `yield` node; false when `node` is none of those. */
+function visitSuspension(st: AcState, node: Node, scope: string | null): boolean {
+  if (node.type === "AwaitExpression") {
+    if (scope) wrapWith(st, "__asyncAwait", node.argument, scope);
+    visit(st, node.argument, scope); // nested `await` inside the argument
+    return true;
+  }
+  if (node.type === "ForOfStatement" && node.await === true) {
+    if (scope) wrapWith(st, "__asyncIter", node.right, scope);
+    visit(st, node.left, scope);
+    visit(st, node.right, scope);
+    visit(st, node.body, scope);
+    return true;
+  }
+  if (node.type === "YieldExpression") {
+    // A `yield*` delegate is never instrumented (its generator was bailed, so scope is
+    // null here anyway); a plain `yield` is bracketed when in an async-gen scope.
+    if (scope && node.delegate !== true) wrapYield(st, node, scope);
+    if (node.argument) visit(st, node.argument, scope); // nested await/yield inside V
+    return true;
+  }
+  return false;
+}
+
+/** Depth-first walk carrying the nearest enclosing instrumented scope var (or null). */
+function visit(st: AcState, node: Node, scope: string | null): void {
+  if (!node || typeof node !== "object") return;
+  const fn = getFn(node);
+  if (fn) return visitFunction(st, node, fn, scope);
+  if (visitSuspension(st, node, scope)) return;
+  forEachChild(node, (c) => visit(st, c, scope));
 }
 
 /**
@@ -174,208 +299,22 @@ export async function transformAsyncContext(
   const identity: AsyncContextResult = { code: source, changed: false };
   // Cheap pre-filter: no `await` anywhere → nothing to do.
   if (!source.includes("await")) return identity;
-
-  const parse = await swcParse();
-  let ast: Node;
-  try {
-    ast = await parse(MARKER + source);
-  } catch {
-    return identity; // unparseable → identity
-  }
-  if (!ast.body || ast.body.length === 0) return identity;
-
-  const base = ast.body[0].span.start;
-  const ctx: Ctx = { bytes: encoder.encode(source), base: base + MARKER_LEN };
-  const body: Node[] = ast.body.slice(1);
-
-  const edits: Edit[] = [];
-  const used = new Set<string>();
-  let counter = 0;
-
-  // Bracket a block or expression body with the scope open/try + finally/close.
-  const wrapBody = (fnBody: Node, exprBody: boolean, scope: string): void => {
-    used.add("__asyncScope").add("__asyncScopeEnd");
-    if (exprBody) {
-      // `=> EXPR` becomes `=> { const $=__asyncScope(); try { return (EXPR) } finally {…} }`
-      edits.push({
-        start: startOf(ctx, fnBody),
-        end: startOf(ctx, fnBody),
-        order: 0,
-        text: `{ const ${scope} = __asyncScope(); try { return (`,
-      });
-      edits.push({
-        start: endOf(ctx, fnBody),
-        end: endOf(ctx, fnBody),
-        order: 5,
-        text: `); } finally { __asyncScopeEnd(${scope}); } }`,
-      });
-    } else {
-      // Insert just after `{` and just before the closing `}`.
-      edits.push({
-        start: startOf(ctx, fnBody) + 1,
-        end: startOf(ctx, fnBody) + 1,
-        order: 0,
-        text: ` const ${scope} = __asyncScope(); try {`,
-      });
-      edits.push({
-        start: endOf(ctx, fnBody) - 1,
-        end: endOf(ctx, fnBody) - 1,
-        order: 5,
-        text: `} finally { __asyncScopeEnd(${scope}); } `,
-      });
-    }
-  };
-
-  // Wrap one `await X` argument, or one `for await (… of R)` iterable.
-  const wrapAwait = (arg: Node, scope: string): void => {
-    used.add("__asyncAwait");
-    edits.push({
-      start: startOf(ctx, arg),
-      end: startOf(ctx, arg),
-      order: 1,
-      text: `__asyncAwait(${scope}, `,
-    });
-    edits.push({ start: endOf(ctx, arg), end: endOf(ctx, arg), order: 1, text: `)` });
-  };
-  const wrapIter = (arg: Node, scope: string): void => {
-    used.add("__asyncIter");
-    edits.push({
-      start: startOf(ctx, arg),
-      end: startOf(ctx, arg),
-      order: 1,
-      text: `__asyncIter(${scope}, `,
-    });
-    edits.push({ start: endOf(ctx, arg), end: endOf(ctx, arg), order: 1, text: `)` });
-  };
-
-  // Wrap one `yield V` (or bare `yield`): `__asyncResume($, yield __asyncYield($, V))`
-  // — hand the caller back its context before suspending, restore the frame's on
-  // resume. Insertion-based (never re-emits V), so a nested await/yield inside V is
-  // still instrumented by the walk.
-  const wrapYield = (node: Node, scope: string): void => {
-    used.add("__asyncYield").add("__asyncResume");
-    edits.push({
-      start: startOf(ctx, node),
-      end: startOf(ctx, node),
-      order: 0,
-      text: `__asyncResume(${scope}, `,
-    });
-    if (node.argument) {
-      edits.push({
-        start: startOf(ctx, node.argument),
-        end: startOf(ctx, node.argument),
-        order: 1,
-        text: `__asyncYield(${scope}, `,
-      });
-      edits.push({
-        start: endOf(ctx, node.argument),
-        end: endOf(ctx, node.argument),
-        order: 1,
-        text: `)`,
-      });
-    } else {
-      // Bare `yield` (no argument): supply `__asyncYield($)` as the yielded value.
-      edits.push({
-        start: endOf(ctx, node),
-        end: endOf(ctx, node),
-        order: 1,
-        text: ` __asyncYield(${scope})`,
-      });
-    }
-    edits.push({ start: endOf(ctx, node), end: endOf(ctx, node), order: 5, text: `)` });
-  };
-
-  // Depth-first walk carrying the nearest enclosing instrumented scope var (or null).
-  const visit = (node: Node, scope: string | null): void => {
-    if (!node || typeof node !== "object") return;
-
-    const fn = getFn(node);
-    if (fn) {
-      let childScope: string | null = null;
-      // Instrument an async function/arrow that actually awaits, OR an async
-      // generator that awaits or yields (its yields need the same suspension
-      // bracketing). A generator that uses `yield*` delegation is left alone — its
-      // delegated suspension needs different handling. Sync generators never cross an
-      // async boundary, so they're left alone too.
-      if (fn.async && fn.body) {
-        if (!fn.generator) {
-          if (hasDirectAwait(fn.body)) {
-            childScope = `__dnxAc${counter++}`;
-            wrapBody(fn.body, fn.exprBody, childScope);
-          }
-        } else {
-          const { hasYield, hasDelegate } = directYields(fn.body);
-          if (!hasDelegate && (hasDirectAwait(fn.body) || hasYield)) {
-            childScope = `__dnxAc${counter++}`;
-            wrapBody(fn.body, fn.exprBody, childScope);
-          }
-        }
-      }
-      // Param defaults are evaluated before the body scope exists → no scope there.
-      for (const p of fn.params) visit(p, null);
-      // The body carries the (possibly new) scope so nested functions re-establish theirs.
-      if (fn.body) visit(fn.body, childScope);
-      // A computed method key is evaluated in the enclosing scope.
-      if (node.key) visit(node.key, scope);
-      return;
-    }
-
-    if (node.type === "AwaitExpression") {
-      if (scope) wrapAwait(node.argument, scope);
-      visit(node.argument, scope); // nested `await` inside the argument
-      return;
-    }
-    if (node.type === "ForOfStatement" && node.await === true) {
-      if (scope) wrapIter(node.right, scope);
-      visit(node.left, scope);
-      visit(node.right, scope);
-      visit(node.body, scope);
-      return;
-    }
-    if (node.type === "YieldExpression") {
-      // A `yield*` delegate is never instrumented (its generator was bailed, so scope
-      // is null here anyway); a plain `yield` is bracketed when in an async-gen scope.
-      if (scope && node.delegate !== true) wrapYield(node, scope);
-      if (node.argument) visit(node.argument, scope); // nested await/yield inside V
-      return;
-    }
-
-    for (const key of Object.keys(node)) {
-      if (key === "span") continue;
-      const v = node[key];
-      if (Array.isArray(v)) { for (const c of v) visit(c, scope); }
-      else if (v && typeof v === "object") visit(v, scope);
-    }
-  };
-
-  for (const item of body) visit(item, null);
-
-  if (edits.length === 0) return identity;
-
+  const parsed = await parseModule(source);
+  if (!parsed) return identity; // unparseable/empty → identity
+  const { ctx, body } = parsed;
+  const st: AcState = { ctx, edits: [], used: new Set(), counter: 0 };
+  for (const item of body) visit(st, item, null);
+  if (st.edits.length === 0) return identity;
   // Inject the helper import after any leading directive prologue.
-  let importAt = 0;
-  for (const item of body) {
-    if (item.type === "ExpressionStatement" && item.expression?.type === "StringLiteral") {
-      importAt = endOf(ctx, item);
-    } else break;
-  }
-  const names = [...used].sort().join(", ");
+  const names = [...st.used].sort().join(", ");
   const spec = opts.runtime ?? runtimeUrl();
-  edits.push({
-    start: importAt,
-    end: importAt,
-    order: -10,
-    text: `\nimport { ${names} } from ${JSON.stringify(spec)};\n`,
-  });
-
-  return { code: applyEdits(ctx.bytes, edits), changed: true };
-}
-
-/** Deterministic short filename for a module URL. */
-function moduleFileName(url: string): string {
-  let h = 5381;
-  for (let i = 0; i < url.length; i++) h = ((h << 5) + h + url.charCodeAt(i)) >>> 0;
-  return `m_${h.toString(36)}.tsx`;
+  insertAt(
+    st,
+    prologueEnd(ctx, body),
+    `\nimport { ${names} } from ${JSON.stringify(spec)};\n`,
+    -10,
+  );
+  return { code: applyEdits(ctx.bytes, st.edits), changed: true };
 }
 
 /**
@@ -396,28 +335,7 @@ export async function compileAsyncContextModules(
   opts: { outDir: string },
 ): Promise<Record<string, string>> {
   const dir = join(opts.outDir, "asyncctx");
-  await ensureDir(dir);
-  const map: Record<string, string> = {};
-  for (const file of files) {
-    let source: string;
-    try {
-      source = await Deno.readTextFile(file);
-    } catch {
-      continue;
-    }
-    let result: AsyncContextResult;
-    try {
-      result = await transformAsyncContext(source);
-    } catch {
-      continue; // any failure → leave the original module untouched
-    }
-    if (!result.changed) continue;
-    const url = toFileUrl(file).href;
-    const out = join(dir, moduleFileName(url));
-    await Deno.writeTextFile(out, result.code);
-    map[url] = toFileUrl(out).href;
-  }
-
+  const map = await writeTransformedModules(files, dir, (source) => transformAsyncContext(source));
   // Flip the reconciler into scoping mode by redirecting the mode module to `true`.
   const modeSrc = "export const asyncContextScopingEnabled = true;\n";
   const modeOut = join(dir, "mode.ts");

@@ -8,7 +8,7 @@
 import type { FlightNode } from "./render-to-flight.ts";
 
 /** A Suspense hole in a Flight tree, filled once its boundary resolves. */
-export interface FlightHole {
+interface FlightHole {
   /** Discriminant: an unfilled Suspense hole. */
   $: "$";
   /** Boundary id (matches the streamed HTML swap id / the shell `data-dnx-b`). */

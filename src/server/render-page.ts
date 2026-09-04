@@ -4,7 +4,7 @@
 
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode } from "../jsx/types.ts";
-import { type HeadCollector, renderToString } from "../jsx/render-to-string.ts";
+import { collapseHeadTags, type HeadCollector, renderToString } from "../jsx/render-to-string.ts";
 import { renderShell, type ShellRender } from "../jsx/render-to-stream.ts";
 import { renderFontStyles } from "../compat/next/font/registry.ts";
 import { type IslandPayload, renderToHtmlFlight } from "../jsx/render-to-html-flight.ts";
@@ -199,29 +199,67 @@ export async function buildPageContext(
       `Page module ${match.route.filePath} has no default export component.`,
     );
   }
-
-  // Effective route segment config: layout chain (outer→inner) then the page.
-  let config = DEFAULT_SEGMENT_CONFIG;
-  for (const layoutPath of match.route.layoutChain) {
-    config = mergeSegmentConfig(config, readSegmentConfig(await load(layoutPath)));
-  }
-  config = mergeSegmentConfig(config, readSegmentConfig(pageModule));
-
-  // Expose the effective config to the dynamic-API guards (cookies()/headers()/
-  // connection()): `dynamic:"error"` makes them throw, `force-static` makes them
-  // return empty without marking the render dynamic. Set before generateMetadata /
-  // the render, both of which may read a dynamic API.
-  const reqCtx = currentContext();
-  if (reqCtx) reqCtx.segmentConfig = config;
-
+  const config = await resolveSegmentConfig(match, pageModule, load);
   // `dynamicParams = false`: a param not enumerated by generateStaticParams 404s.
   // Decided here (module is loaded); the render entries throw notFound() for it.
   const staticParamsNotFound = config.dynamicParams === false &&
     await isStaticParamDisallowed(match, pageModule);
 
   // Innermost -> page, optionally wrapped by loading (Suspense) and error.
-  let content: VNode = h(pageModule.default, props as never);
+  const content = await wrapBoundaries(match, h(pageModule.default, props as never), load, options);
 
+  options.signal?.throwIfAborted();
+  const soft = request.headers.get("x-denext-nav") === "1";
+  const wrapped = await wrapLayouts(match, content, load, url.pathname, soft, props);
+  // Provide the active locale's messages so useTranslations() resolves in SSR
+  // (server components and SSR'd client islands); the client reads the same
+  // catalog from the hydration payload.
+  const tree = options.messages ? provideMessages(options.messages, wrapped.tree) : wrapped.tree;
+  const metadata = mergeMetadata([
+    ...wrapped.layoutMetas,
+    await resolvePageMetadata(pageModule, props),
+  ]);
+  const viewport = mergeViewport([
+    ...wrapped.layoutViewports,
+    await resolvePageViewport(pageModule, props),
+  ]);
+  return { tree, metadata, viewport, config, staticParamsNotFound };
+}
+
+/**
+ * The effective route segment config: layout chain (outer→inner) then the page,
+ * exposed to the dynamic-API guards (cookies()/headers()/connection()) — `dynamic:
+ * "error"` makes them throw, `force-static` makes them return empty without marking
+ * the render dynamic. Set before generateMetadata / the render, both of which may
+ * read a dynamic API.
+ */
+async function resolveSegmentConfig(
+  match: PageMatch,
+  pageModule: PageModule,
+  load: ModuleLoader,
+): Promise<SegmentConfig> {
+  let config = DEFAULT_SEGMENT_CONFIG;
+  for (const layoutPath of match.route.layoutChain) {
+    config = mergeSegmentConfig(config, readSegmentConfig(await load(layoutPath)));
+  }
+  config = mergeSegmentConfig(config, readSegmentConfig(pageModule));
+  const reqCtx = currentContext();
+  if (reqCtx) reqCtx.segmentConfig = config;
+  return config;
+}
+
+/**
+ * Wrap the page element in its `loading` (Suspense) and `error` boundaries, then its
+ * templates. Templates wrap like layouts but conceptually re-mount on navigation
+ * (which, in denext, always happens because soft navigation re-runs the route bundle).
+ */
+async function wrapBoundaries(
+  match: PageMatch,
+  page: VNode,
+  load: ModuleLoader,
+  options: RenderPageOptions,
+): Promise<VNode> {
+  let content = page;
   if (match.route.loading) {
     const loadingMod = (await load(match.route.loading)) as { default: () => VNode };
     content = h(Suspense, {
@@ -237,9 +275,6 @@ export async function buildPageContext(
       onCaught: options.onCaughtError,
     });
   }
-
-  // Templates wrap like layouts but conceptually re-mount on navigation (which,
-  // in denext, always happens because soft navigation re-runs the route bundle).
   for (let i = match.route.templateChain.length - 1; i >= 0; i--) {
     const tpl = (await load(match.route.templateChain[i])) as LayoutModule;
     if (typeof tpl.default !== "function") {
@@ -247,37 +282,24 @@ export async function buildPageContext(
     }
     content = h(tpl.default, { children: content, params: match.params } as never);
   }
+  return content;
+}
 
-  options.signal?.throwIfAborted();
-  const soft = request.headers.get("x-denext-nav") === "1";
-  const wrapped = await wrapLayouts(match, content, load, url.pathname, soft, props);
-  const layoutMetas = wrapped.layoutMetas;
-  // Provide the active locale's messages so useTranslations() resolves in SSR
-  // (server components and SSR'd client islands); the client reads the same
-  // catalog from the hydration payload.
-  const tree = options.messages ? provideMessages(options.messages, wrapped.tree) : wrapped.tree;
-
-  // Resolve page metadata: static `metadata`, `metadata` fn, or `generateMetadata`.
-  let pageMeta: Metadata = {};
+/** Page metadata: static `metadata`, `metadata` fn, or `generateMetadata`. */
+async function resolvePageMetadata(pageModule: PageModule, props: PageProps): Promise<Metadata> {
   if (typeof pageModule.generateMetadata === "function") {
-    pageMeta = await pageModule.generateMetadata(props);
-  } else if (typeof pageModule.metadata === "function") {
-    pageMeta = await pageModule.metadata(props);
-  } else if (pageModule.metadata) {
-    pageMeta = pageModule.metadata;
+    return await pageModule.generateMetadata(props);
   }
-  const metadata = mergeMetadata([...layoutMetas, pageMeta]);
+  if (typeof pageModule.metadata === "function") return await pageModule.metadata(props);
+  return pageModule.metadata ?? {};
+}
 
-  // Resolve viewport: `generateViewport` or static `viewport`, merged over layouts.
-  let pageViewport: Viewport = {};
+/** Page viewport: `generateViewport` or static `viewport`. */
+async function resolvePageViewport(pageModule: PageModule, props: PageProps): Promise<Viewport> {
   if (typeof pageModule.generateViewport === "function") {
-    pageViewport = await pageModule.generateViewport(props);
-  } else if (pageModule.viewport) {
-    pageViewport = pageModule.viewport;
+    return await pageModule.generateViewport(props);
   }
-  const viewport = mergeViewport([...wrapped.layoutViewports, pageViewport]);
-
-  return { tree, metadata, viewport, config, staticParamsNotFound };
+  return pageModule.viewport ?? {};
 }
 
 /** Render a matched page (with layouts + boundaries) to an HTML fragment. */
@@ -312,47 +334,52 @@ export async function renderPage(
     } else {
       html = await renderToString(tree, { head });
     }
-    if (head.title !== undefined) metadata.title = head.title; // in-tree title wins
-    if (head.tags.length > 0) metadata.head = (metadata.head ?? "") + head.tags.join("");
-    // Server-inserted HTML (CSS-in-JS registries via useServerInsertedHTML) → <head>.
-    if (head.serverInserted?.length) {
-      metadata.head = (metadata.head ?? "") + head.serverInserted.join("");
-    }
-    // Hoist imperative SSR resource hints (preload/preinit/preconnect/prefetchDNS).
-    const hints = currentContext()?.resourceHints;
-    if (hints && hints.length > 0) metadata.head = (metadata.head ?? "") + hints.join("");
-    // Emit any @font-face / font stylesheet links registered by next/font
-    // (localFont/google fonts register at module load; this injects their CSS).
-    const fontCss = renderFontStyles();
-    if (fontCss) metadata.head = (metadata.head ?? "") + fontCss;
+    hoistHeadIntoMetadata(head, metadata);
     return { html, metadata, status: 200, config, flight, islands, signalState, viewport };
   } catch (err) {
-    if (isNotFound(err)) {
-      return renderSignalUI(match, load, metadata, config, match.route.notFound, {
-        status: 404,
-        title: "404 — Not Found",
-        heading: "404",
-        message: "This page could not be found.",
-      });
-    }
-    if (isForbidden(err)) {
-      return renderSignalUI(match, load, metadata, config, match.route.forbidden, {
-        status: 403,
-        title: "403 — Forbidden",
-        heading: "403",
-        message: "You don't have access to this resource.",
-      });
-    }
-    if (isUnauthorized(err)) {
-      return renderSignalUI(match, load, metadata, config, match.route.unauthorized, {
-        status: 401,
-        title: "401 — Unauthorized",
-        heading: "401",
-        message: "You must be signed in to view this page.",
-      });
-    }
-    throw err;
+    const signal = signalUiFor(err, match);
+    if (!signal) throw err;
+    return renderSignalUI(match, load, metadata, config, signal.route, signal);
   }
+}
+
+/** The built-in UI for each control signal, keyed by the predicate that detects it. */
+const SIGNAL_UIS: Array<
+  [
+    (err: unknown) => boolean,
+    keyof Pick<PageMatch["route"], "notFound" | "forbidden" | "unauthorized">,
+    SignalUI,
+  ]
+> = [
+  [isNotFound, "notFound", {
+    status: 404,
+    title: "404 — Not Found",
+    heading: "404",
+    message: "This page could not be found.",
+  }],
+  [isForbidden, "forbidden", {
+    status: 403,
+    title: "403 — Forbidden",
+    heading: "403",
+    message: "You don't have access to this resource.",
+  }],
+  [isUnauthorized, "unauthorized", {
+    status: 401,
+    title: "401 — Unauthorized",
+    heading: "401",
+    message: "You must be signed in to view this page.",
+  }],
+];
+
+/**
+ * Classify a thrown control signal (notFound/forbidden/unauthorized): its UI text and
+ * the route's own file for it, or `null` for redirect() and real errors (which bubble).
+ */
+function signalUiFor(err: unknown, match: PageMatch): (SignalUI & { route: string | null }) | null {
+  for (const [is, file, ui] of SIGNAL_UIS) {
+    if (is(err)) return { ...ui, route: match.route[file] };
+  }
+  return null;
 }
 
 /**
@@ -377,6 +404,94 @@ export interface PageShellResult {
 }
 
 /**
+ * Hoist everything a shell render collects into the page metadata's `<head>`:
+ * an in-tree `<title>` (wins over route metadata), `<meta>`/`<link>` tags,
+ * server-inserted HTML (CSS-in-JS registries via `useServerInsertedHTML`),
+ * request resource hints, and font `@font-face` CSS. Shared verbatim by the HTML
+ * ({@link renderPageShell}) and Flight ({@link renderPageFlightShell}) shells.
+ */
+function hoistHeadIntoMetadata(head: HeadCollector, metadata: Metadata): void {
+  if (head.title !== undefined) metadata.title = head.title; // in-tree title wins
+  // Collect every head contribution, then append once: in-tree `<meta>`/`<link>`
+  // tags (next/head dedup: same `key`/charset/viewport → last wins), server-inserted
+  // HTML (CSS-in-JS via `useServerInsertedHTML`), imperative
+  // SSR resource hints (preload/preinit/preconnect/prefetchDNS), and next/font CSS
+  // (localFont/google register at module load; this injects their `@font-face`).
+  const parts = [
+    collapseHeadTags(head.tags),
+    head.serverInserted?.join("") ?? "",
+    currentContext()?.resourceHints?.join("") ?? "",
+    renderFontStyles(),
+  ];
+  const extra = parts.join("");
+  if (extra) metadata.head = (metadata.head ?? "") + extra;
+}
+
+/**
+ * Turn a control signal (`notFound`/`forbidden`/`unauthorized`) thrown during a
+ * pre-flush shell render into a buffered signal-UI page (the status can still
+ * change because nothing has flushed yet). `redirect()` and real errors are
+ * rethrown to the caller. Shared by the HTML and Flight shell renderers; a
+ * control signal thrown inside a Suspense boundary resolves after the flush and
+ * is handled as a failed hole instead.
+ */
+async function bufferedSignalPage(
+  err: unknown,
+  match: PageMatch,
+  load: ModuleLoader,
+  metadata: Metadata,
+  viewport: Viewport,
+  config: SegmentConfig,
+): Promise<{
+  html: string;
+  metadata: Metadata;
+  viewport: Viewport;
+  config: SegmentConfig;
+  status: number;
+}> {
+  const signal = signalUiFor(err, match);
+  if (!signal) throw err; // redirect() and real errors bubble to the caller
+  const ui = await renderSignalUI(match, load, metadata, config, signal.route, signal);
+  return { html: ui.html, metadata: ui.metadata, viewport, config: ui.config, status: ui.status };
+}
+
+/**
+ * The shared shell-render envelope behind {@link renderPageShell} and
+ * {@link renderPageFlightShell} (identical apart from which inner shell they
+ * render): build the page context, render the shell via `renderInner`, hoist
+ * in-tree `<title>`/`<meta>`/`<link>` into the metadata, and turn a control
+ * signal thrown before any flush into a buffered signal-UI page. Returns the
+ * rendered inner shell as `inner` on a 200, or `html` for a buffered signal page;
+ * `redirect()` and real errors bubble to the caller.
+ */
+async function renderShellEnvelope<R>(
+  match: PageMatch,
+  request: Request,
+  load: ModuleLoader,
+  options: RenderPageOptions,
+  prebuilt: PageContext | undefined,
+  renderInner: (tree: VNode, head: HeadCollector, config: SegmentConfig) => Promise<R>,
+): Promise<
+  & { metadata: Metadata; viewport: Viewport; config: SegmentConfig; status: number }
+  & ({ inner: R; html?: undefined } | { inner?: undefined; html: string })
+> {
+  const ctx = prebuilt ?? await buildPageContext(match, request, load, options);
+  const { tree, metadata, viewport, config } = ctx;
+  options.signal?.throwIfAborted();
+  const head: HeadCollector = { tags: [] };
+  try {
+    // dynamicParams:false with an unenumerated param → 404 (turned into the
+    // buffered signal-UI page by the catch below, before any bytes flush).
+    if (ctx.staticParamsNotFound) notFound();
+    const inner = await renderInner(tree, head, config);
+    hoistHeadIntoMetadata(head, metadata);
+    return { inner, metadata, viewport, config, status: 200 };
+  } catch (err) {
+    return await bufferedSignalPage(err, match, load, metadata, viewport, config);
+  }
+}
+
+/**
  * Render a matched page's **shell** for incremental streaming: compose the tree
  * (as {@link renderPage} does) and render its shell eagerly, hoisting in-tree
  * `<title>`/`<meta>`/`<link>` from the shell into the metadata. A control signal
@@ -392,67 +507,21 @@ export async function renderPageShell(
   options: RenderPageOptions = {},
   prebuilt?: PageContext,
 ): Promise<PageShellResult> {
-  const ctx = prebuilt ?? await buildPageContext(match, request, load, options);
-  const { tree, metadata, viewport, config } = ctx;
-  options.signal?.throwIfAborted();
-  const head: HeadCollector = { tags: [] };
-  try {
-    // dynamicParams:false with an unenumerated param → 404 (turned into the
-    // buffered signal-UI page by the catch below, before any bytes flush).
-    if (ctx.staticParamsNotFound) notFound();
-    // Dev-only: collect per-Suspense-boundary server timing for the DevTools
-    // per-boundary timeline (emitted as a JSON island by `streamHoles`).
-    const collectTiming = (globalThis as { __denextDev?: boolean }).__denextDev === true;
-    const shell = await renderShell(tree, head, collectTiming);
-    if (head.title !== undefined) metadata.title = head.title; // in-tree title wins
-    if (head.tags.length > 0) metadata.head = (metadata.head ?? "") + head.tags.join("");
-    // Server-inserted HTML (CSS-in-JS registries via useServerInsertedHTML) → <head>.
-    if (head.serverInserted?.length) {
-      metadata.head = (metadata.head ?? "") + head.serverInserted.join("");
-    }
-    const hints = currentContext()?.resourceHints;
-    if (hints && hints.length > 0) metadata.head = (metadata.head ?? "") + hints.join("");
-    const fontCss = renderFontStyles();
-    if (fontCss) metadata.head = (metadata.head ?? "") + fontCss;
-    return { shell, metadata, viewport, config, status: 200 };
-  } catch (err) {
-    // A control signal thrown in the (non-suspended) shell becomes a buffered page
-    // — we haven't flushed yet, so the status can still change. One inside a
-    // Suspense boundary resolves after the flush and is handled as a failed hole.
-    const signal = isNotFound(err)
-      ? {
-        route: match.route.notFound,
-        status: 404,
-        title: "404 — Not Found",
-        heading: "404",
-        message: "This page could not be found.",
-      }
-      : isForbidden(err)
-      ? {
-        route: match.route.forbidden,
-        status: 403,
-        title: "403 — Forbidden",
-        heading: "403",
-        message: "You don't have access to this resource.",
-      }
-      : isUnauthorized(err)
-      ? {
-        route: match.route.unauthorized,
-        status: 401,
-        title: "401 — Unauthorized",
-        heading: "401",
-        message: "You must be signed in to view this page.",
-      }
-      : null;
-    if (!signal) throw err; // redirect() and real errors bubble to the caller
-    const ui = await renderSignalUI(match, load, metadata, config, signal.route, {
-      status: signal.status,
-      title: signal.title,
-      heading: signal.heading,
-      message: signal.message,
-    });
-    return { html: ui.html, metadata: ui.metadata, viewport, config: ui.config, status: ui.status };
-  }
+  // Dev-only: collect per-Suspense-boundary server timing for the DevTools
+  // per-boundary timeline (emitted as a JSON island by `streamHoles`).
+  const collectTiming = (globalThis as { __denextDev?: boolean }).__denextDev === true;
+  const r = await renderShellEnvelope(
+    match,
+    request,
+    load,
+    options,
+    prebuilt,
+    (tree, head) => renderShell(tree, head, collectTiming),
+  );
+  const { metadata, viewport, config, status } = r;
+  return r.inner !== undefined
+    ? { shell: r.inner, metadata, viewport, config, status }
+    : { html: r.html, metadata, viewport, config, status };
 }
 
 /** Result of {@link renderPageFlightShell}: the Flight shell drainer, or a signal page. */
@@ -486,61 +555,18 @@ export async function renderPageFlightShell(
   options: RenderPageOptions = {},
   prebuilt?: PageContext,
 ): Promise<PageFlightShellResult> {
-  const ctx = prebuilt ?? await buildPageContext(match, request, load, options);
-  const { tree, metadata, viewport, config } = ctx;
-  options.signal?.throwIfAborted();
-  const head: HeadCollector = { tags: [] };
-  try {
-    // dynamicParams:false with an unenumerated param → 404 (buffered by the catch).
-    if (ctx.staticParamsNotFound) notFound();
-    const flightShell = await renderFlightShell(tree, config.resumable, head);
-    if (head.title !== undefined) metadata.title = head.title; // in-tree title wins
-    if (head.tags.length > 0) metadata.head = (metadata.head ?? "") + head.tags.join("");
-    // Server-inserted HTML (CSS-in-JS registries via useServerInsertedHTML) → <head>.
-    if (head.serverInserted?.length) {
-      metadata.head = (metadata.head ?? "") + head.serverInserted.join("");
-    }
-    const hints = currentContext()?.resourceHints;
-    if (hints && hints.length > 0) metadata.head = (metadata.head ?? "") + hints.join("");
-    const fontCss = renderFontStyles();
-    if (fontCss) metadata.head = (metadata.head ?? "") + fontCss;
-    return { flightShell, metadata, viewport, config, status: 200 };
-  } catch (err) {
-    // A control signal thrown in the (non-suspended) shell becomes a buffered page.
-    const signal = isNotFound(err)
-      ? {
-        route: match.route.notFound,
-        status: 404,
-        title: "404 — Not Found",
-        heading: "404",
-        message: "This page could not be found.",
-      }
-      : isForbidden(err)
-      ? {
-        route: match.route.forbidden,
-        status: 403,
-        title: "403 — Forbidden",
-        heading: "403",
-        message: "You don't have access to this resource.",
-      }
-      : isUnauthorized(err)
-      ? {
-        route: match.route.unauthorized,
-        status: 401,
-        title: "401 — Unauthorized",
-        heading: "401",
-        message: "You must be signed in to view this page.",
-      }
-      : null;
-    if (!signal) throw err; // redirect() and real errors bubble to the caller
-    const ui = await renderSignalUI(match, load, metadata, config, signal.route, {
-      status: signal.status,
-      title: signal.title,
-      heading: signal.heading,
-      message: signal.message,
-    });
-    return { html: ui.html, metadata: ui.metadata, viewport, config: ui.config, status: ui.status };
-  }
+  const r = await renderShellEnvelope(
+    match,
+    request,
+    load,
+    options,
+    prebuilt,
+    (tree, head, config) => renderFlightShell(tree, config.resumable, head),
+  );
+  const { metadata, viewport, config, status } = r;
+  return r.inner !== undefined
+    ? { flightShell: r.inner, metadata, viewport, config, status }
+    : { html: r.html, metadata, viewport, config, status };
 }
 
 /**
@@ -590,16 +616,7 @@ export async function prerenderPage(
 ): Promise<PrerenderedPage> {
   const ctx = await buildPageContext(match, request, load, options);
   const { tree, metadata, viewport, config } = ctx;
-  const bail = (): PrerenderedPage => ({
-    dynamic: true,
-    shellBody: "",
-    holeIds: [],
-    metadata,
-    viewport,
-    headExtras: "",
-    status: 200,
-    config,
-  });
+  const bail = (): PrerenderedPage => dynamicPrerender(ctx);
 
   // dynamicParams:false with an unenumerated param: fall back to the normal render,
   // which throws notFound() and serves the 404 UI.
@@ -610,41 +627,13 @@ export async function prerenderPage(
     const head: HeadCollector = { tags: [] };
     const result = await withPrerender(() => prerenderToShell(tree, { head }));
     if (result.dynamic) return bail();
-    // Track the STATIC head extras separately from generateMetadata's per-request
-    // output, so a cache hit can re-merge them onto freshly-resolved metadata.
-    let headExtras = "";
-    const inTreeTitle = head.title;
-    if (inTreeTitle !== undefined) metadata.title = inTreeTitle; // in-tree title wins
-    if (head.tags.length > 0) {
-      const tags = head.tags.join("");
-      metadata.head = (metadata.head ?? "") + tags;
-      headExtras += tags;
-    }
-    if (head.serverInserted?.length) {
-      const si = head.serverInserted.join("");
-      metadata.head = (metadata.head ?? "") + si;
-      headExtras += si;
-    }
-    // Hoist SSR resource hints emitted during the (cached) shell prerender.
-    const hints = currentContext()?.resourceHints;
-    if (hints && hints.length > 0) {
-      const joined = hints.join("");
-      metadata.head = (metadata.head ?? "") + joined;
-      headExtras += joined;
-    }
-    const fontCss = renderFontStyles();
-    if (fontCss) {
-      metadata.head = (metadata.head ?? "") + fontCss;
-      headExtras += fontCss;
-    }
     return {
       dynamic: false,
       shellBody: result.shell,
       holeIds: result.postponedIds,
       metadata,
       viewport,
-      headExtras,
-      inTreeTitle,
+      ...hoistStaticHead(head, metadata, true),
       status: 200,
       config,
     };
@@ -654,6 +643,44 @@ export async function prerenderPage(
     // shell. renderPage will re-encounter and handle it correctly.
     return bail();
   }
+}
+
+/** The `{ dynamic: true }` prerender result: the caller falls back to the normal render. */
+function dynamicPrerender(ctx: PageContext): PrerenderedPage {
+  return {
+    dynamic: true,
+    shellBody: "",
+    holeIds: [],
+    metadata: ctx.metadata,
+    viewport: ctx.viewport,
+    headExtras: "",
+    status: 200,
+    config: ctx.config,
+  };
+}
+
+/**
+ * Hoist what the (cached) shell prerender collected — in-tree `<title>`/tags, server-
+ * inserted HTML (HTML prerender only), SSR resource hints, font CSS — onto `metadata`,
+ * and return the STATIC head extras tracked separately from generateMetadata's
+ * per-request output, so a cache hit can re-merge them onto freshly-resolved metadata.
+ */
+function hoistStaticHead(
+  head: HeadCollector,
+  metadata: Metadata,
+  withServerInserted: boolean,
+): { headExtras: string; inTreeTitle?: string } {
+  const inTreeTitle = head.title;
+  if (inTreeTitle !== undefined) metadata.title = inTreeTitle; // in-tree title wins
+  const parts = [
+    collapseHeadTags(head.tags),
+    withServerInserted ? (head.serverInserted ?? []).join("") : "",
+    (currentContext()?.resourceHints ?? []).join(""),
+    renderFontStyles(),
+  ];
+  const headExtras = parts.join("");
+  if (headExtras) metadata.head = (metadata.head ?? "") + headExtras;
+  return { headExtras, inTreeTitle };
 }
 
 /**
@@ -688,14 +715,7 @@ export async function prerenderPageFlight(
   const ctx = await buildPageContext(match, request, load, options);
   const { tree, metadata, viewport, config } = ctx;
   const bail = (): PrerenderedFlightPage => ({
-    dynamic: true,
-    shellBody: "",
-    holeIds: [],
-    metadata,
-    viewport,
-    headExtras: "",
-    status: 200,
-    config,
+    ...dynamicPrerender(ctx),
     flightShell: null,
     flightIslands: [],
     flightSignalState: {},
@@ -711,35 +731,13 @@ export async function prerenderPageFlight(
       prerenderToShellFlight(tree, { head, resumable: config.resumable })
     );
     if (result.dynamic) return bail();
-    // Track the STATIC head extras separately from generateMetadata's per-request
-    // output, so a cache hit can re-merge them onto freshly-resolved metadata.
-    let headExtras = "";
-    const inTreeTitle = head.title;
-    if (inTreeTitle !== undefined) metadata.title = inTreeTitle; // in-tree title wins
-    if (head.tags.length > 0) {
-      const tags = head.tags.join("");
-      metadata.head = (metadata.head ?? "") + tags;
-      headExtras += tags;
-    }
-    const hints = currentContext()?.resourceHints;
-    if (hints && hints.length > 0) {
-      const joined = hints.join("");
-      metadata.head = (metadata.head ?? "") + joined;
-      headExtras += joined;
-    }
-    const fontCss = renderFontStyles();
-    if (fontCss) {
-      metadata.head = (metadata.head ?? "") + fontCss;
-      headExtras += fontCss;
-    }
     return {
       dynamic: false,
       shellBody: result.shell,
       holeIds: result.postponedIds,
       metadata,
       viewport,
-      headExtras,
-      inTreeTitle,
+      ...hoistStaticHead(head, metadata, false),
       status: 200,
       config,
       flightShell: result.flight,
@@ -1054,53 +1052,72 @@ export async function renderGlobalError(
   return { html, metadata: { title: "Error" }, status: 500, config: DEFAULT_SEGMENT_CONFIG };
 }
 
+/** Metadata fields where the innermost segment's value simply wins. */
+const OVERRIDE_FIELDS = [
+  "description",
+  "keywords",
+  "metadataBase",
+  "robots",
+  "canonical",
+  "icon",
+  "authors",
+] as const satisfies readonly (keyof Metadata)[];
+
+/** Metadata object fields merged shallowly (inner keys over outer). */
+const SHALLOW_MERGE_FIELDS = [
+  "alternates",
+  "openGraph",
+  "twitter",
+  "icons",
+  "verification",
+  "meta",
+] as const satisfies readonly (keyof Metadata)[];
+
+/**
+ * Next.js title semantics across the segment chain (outer→inner): a segment's
+ * `title.template` applies to DESCENDANTS' string/default titles (not itself);
+ * `title.default` is that segment's own title; `title.absolute` ignores any ancestor
+ * template. Returns the resolved string for this segment (or the previous one).
+ */
+function mergeTitle(
+  state: { resolved: string | undefined; template: string | undefined },
+  t: NonNullable<Metadata["title"]>,
+): void {
+  if (typeof t === "string") {
+    state.resolved = state.template ? state.template.replace(/%s/g, t) : t;
+    return;
+  }
+  if (t.absolute !== undefined) state.resolved = t.absolute;
+  else if (t.default !== undefined) state.resolved = t.default;
+  if (t.template !== undefined) state.template = t.template;
+}
+
+/** JSON-LD accumulates rather than overrides: a layout's Organization and a page's Article are both emitted. */
+function mergeJsonLd(prev: Metadata["jsonLd"], next: NonNullable<Metadata["jsonLd"]>): unknown[] {
+  const before = prev === undefined ? [] : Array.isArray(prev) ? prev : [prev];
+  return [...before, ...(Array.isArray(next) ? next : [next])];
+}
+
+type TitleState = { resolved: string | undefined; template: string | undefined };
+
+/** Fold one segment's metadata into `out` (override / shallow-merge / accumulate fields). */
+function mergeSegment(out: Metadata, m: Metadata, title: TitleState): void {
+  const o = out as Record<string, unknown>;
+  if (m.title !== undefined) mergeTitle(title, m.title);
+  for (const k of OVERRIDE_FIELDS) if (m[k] !== undefined) o[k] = m[k];
+  for (const k of SHALLOW_MERGE_FIELDS) {
+    if (m[k]) o[k] = { ...(o[k] as object | undefined), ...(m[k] as object) };
+  }
+  if (m.jsonLd) out.jsonLd = mergeJsonLd(out.jsonLd, m.jsonLd) as Metadata["jsonLd"];
+  if (m.head) out.head = (out.head ?? "") + m.head; // accumulates, like jsonLd
+}
+
 /** Merge metadata objects left-to-right (later entries override earlier). */
 export function mergeMetadata(metas: Metadata[]): Metadata {
   const out: Metadata = {};
-  // Next.js title semantics across the segment chain (outer→inner): a segment's
-  // `title.template` applies to DESCENDANTS' string/default titles (not itself);
-  // `title.default` is that segment's own title; `title.absolute` ignores any
-  // ancestor template. The merged `out.title` is always the resolved string.
-  let titleResolved: string | undefined;
-  let titleTemplate: string | undefined;
-  for (const m of metas) {
-    if (m.title !== undefined) {
-      const t = m.title;
-      if (typeof t === "string") {
-        titleResolved = titleTemplate ? titleTemplate.replace(/%s/g, t) : t;
-      } else {
-        if (t.absolute !== undefined) titleResolved = t.absolute;
-        else if (t.default !== undefined) titleResolved = t.default;
-        if (t.template !== undefined) titleTemplate = t.template;
-      }
-    }
-    if (m.description !== undefined) out.description = m.description;
-    if (m.keywords !== undefined) out.keywords = m.keywords;
-    if (m.metadataBase !== undefined) out.metadataBase = m.metadataBase;
-    if (m.robots !== undefined) out.robots = m.robots;
-    if (m.canonical !== undefined) out.canonical = m.canonical;
-    if (m.alternates) out.alternates = { ...out.alternates, ...m.alternates };
-    if (m.openGraph) out.openGraph = { ...out.openGraph, ...m.openGraph };
-    if (m.twitter) out.twitter = { ...out.twitter, ...m.twitter };
-    if (m.icon !== undefined) out.icon = m.icon;
-    if (m.icons) out.icons = { ...out.icons, ...m.icons };
-    if (m.authors !== undefined) out.authors = m.authors;
-    if (m.verification) out.verification = { ...out.verification, ...m.verification };
-    if (m.jsonLd) {
-      // Accumulate rather than override (mirrors `head`): a layout's
-      // Organization and a page's Article should both be emitted.
-      const prev = out.jsonLd === undefined
-        ? []
-        : Array.isArray(out.jsonLd)
-        ? out.jsonLd
-        : [out.jsonLd];
-      const next = Array.isArray(m.jsonLd) ? m.jsonLd : [m.jsonLd];
-      out.jsonLd = [...prev, ...next];
-    }
-    if (m.meta) out.meta = { ...out.meta, ...m.meta };
-    if (m.head) out.head = (out.head ?? "") + m.head;
-  }
-  if (titleResolved !== undefined) out.title = titleResolved;
+  const title: TitleState = { resolved: undefined, template: undefined };
+  for (const m of metas) mergeSegment(out, m, title);
+  if (title.resolved !== undefined) out.title = title.resolved;
   return out;
 }
 

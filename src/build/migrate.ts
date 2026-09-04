@@ -14,8 +14,11 @@
 // and `spa.proxy` for a `deno desktop` build.
 
 import { dirname, join, relative, resolve, toFileUrl } from "@std/path";
+import { anyExists, exists, firstExisting } from "./migrate-fs.ts";
 import { parse as parseJsonc } from "@std/jsonc";
 import { frameworkRoot } from "./bundle.ts";
+import { appendGitignore } from "./gitignore.ts";
+import { REACT_FAMILY_CLIENT, REACT_FAMILY_CORE } from "./react-specifiers.ts";
 import { DESKTOP_ICON_FILE, detectIconSource } from "./desktop-icon.ts";
 import { isRemix, type RemixMigrateInfo, transformRemixApp } from "./remix-migrate.ts";
 import {
@@ -25,28 +28,30 @@ import {
   type PrismaWiring,
 } from "./prisma-migrate.ts";
 
-/** react/next specifiers → denext JSR subpath (matches denext's deno.json exports). */
-const DENEXT_ALIASES: Record<string, string> = {
-  "react": "react",
-  "react-dom": "react-dom",
-  "react-dom/client": "react-dom/client",
-  "react-dom/server": "react-dom/server",
-  "react/jsx-runtime": "react/jsx-runtime",
-  "react/jsx-dev-runtime": "react/jsx-dev-runtime",
-  "react-is": "react-is",
-  "next": "next",
-  "next-intl": "next-intl",
-  "better-sqlite3": "better-sqlite3",
-};
-/** react-family specifiers → denext JSR subpath, for a client-only Vite SPA (no next/*). */
-const SPA_REACT_ALIASES: Record<string, string> = {
-  "react": "react",
-  "react-dom": "react-dom",
-  "react-dom/client": "react-dom/client",
-  "react/jsx-runtime": "react/jsx-runtime",
-  "react/jsx-dev-runtime": "react/jsx-dev-runtime",
-  "react-is": "react-is",
-};
+/** react/next specifiers aliased to their denext JSR subpath (matches denext's
+ * deno.json exports); the subpath equals the specifier. React-family entries come
+ * from the single canonical specifier list. */
+const DENEXT_ALIAS_SPECS: readonly string[] = [
+  ...REACT_FAMILY_CORE,
+  "next",
+  "next-intl",
+  "better-sqlite3",
+];
+/** react-family specifiers aliased for a client-only Vite SPA (no next/*). */
+const SPA_REACT_ALIAS_SPECS: readonly string[] = REACT_FAMILY_CLIENT;
+
+/** Alias `server-only`/`client-only` to denext's inert no-op modules when the app
+ * depends on them, so the deno-native SSR import resolves to an inert module instead
+ * of the throwing npm package (the build still enforces the boundary). */
+function addServerClientStubs(
+  imports: Record<string, string>,
+  deps: Record<string, string>,
+  jsr: (sub: string) => string,
+): void {
+  for (const poison of ["server-only", "client-only"]) {
+    if (poison in deps) imports[poison] = jsr(poison);
+  }
+}
 /** Packages denext provides — never pass to npm. */
 const DENEXT_OWNED = new Set([
   "react",
@@ -107,7 +112,10 @@ interface DepClassification {
  */
 /** A dep denext drops (inert toolchain/lint/types, or — with `dropRemix` — the Remix toolchain). */
 function isDroppedDep(name: string, dropRemix: boolean): boolean {
-  if (dropRemix && (name.startsWith("@remix-run/") || name.startsWith("@react-router/"))) {
+  if (
+    dropRemix &&
+    (name.startsWith("@remix-run/") || name.startsWith("@react-router/"))
+  ) {
     return true;
   }
   if (SOFT_DROP.has(name)) return true;
@@ -115,7 +123,10 @@ function isDroppedDep(name: string, dropRemix: boolean): boolean {
 }
 
 /** Which bucket a single dependency falls into (Prisma is handled by the wiring, so → passthrough). */
-function depCategory(name: string, dropRemix: boolean): keyof DepClassification {
+function depCategory(
+  name: string,
+  dropRemix: boolean,
+): keyof DepClassification {
   if (DENEXT_OWNED.has(name)) return "aliased";
   if (isPrismaDep(name)) return "passthrough";
   if (HARD_UNSUPPORTED.test(name)) return "flagged";
@@ -128,12 +139,20 @@ function classifyDeps(
   imports: Record<string, string>,
   opts: { dropRemix?: boolean; pin: boolean },
 ): DepClassification {
-  const c: DepClassification = { aliased: [], passthrough: [], dropped: [], flagged: [] };
+  const c: DepClassification = {
+    aliased: [],
+    passthrough: [],
+    dropped: [],
+    flagged: [],
+  };
   for (const [name, version] of Object.entries(deps)) {
     const category = depCategory(name, opts.dropRemix ?? false);
     c[category].push(category === "flagged" ? `${name}@${version}` : name);
     // A pinned passthrough gets a concrete `npm:` entry (skipping non-numeric catalog/workspace).
-    if (category === "passthrough" && !isPrismaDep(name) && opts.pin && /^\D*\d/.test(version)) {
+    if (
+      category === "passthrough" && !isPrismaDep(name) && opts.pin &&
+      /^\D*\d/.test(version)
+    ) {
       imports[name] = `npm:${name}@${version.replace(/^[\^~]/, "")}`;
     }
   }
@@ -165,14 +184,10 @@ async function buildAppRouterImports(
     imports["denext/remix"] = jsr("remix");
     imports["denext/remix/server"] = jsr("remix/server");
   }
-  for (const [spec, sub] of Object.entries(DENEXT_ALIASES)) imports[spec] = jsr(sub);
+  for (const spec of DENEXT_ALIAS_SPECS) imports[spec] = jsr(spec);
   imports["next/"] = R.prefix("next/");
   imports["next-intl/"] = R.prefix("next-intl/");
-  // `server-only`/`client-only`: alias to denext no-ops so the deno-native SSR import resolves
-  // to an inert module, not the throwing npm package (the build still enforces the boundary).
-  for (const poison of ["server-only", "client-only"]) {
-    if (poison in deps) imports[poison] = jsr(poison);
-  }
+  addServerClientStubs(imports, deps, jsr);
   // `/mdx` provides the type-only `mdx/types` module; MDX apps often import it at value syntax.
   if ("@types/mdx" in deps) imports["mdx/types"] = jsr("empty");
   // tsconfig/jsconfig path aliases (follows `extends` + a monorepo-root tsconfig), and — in
@@ -183,7 +198,10 @@ async function buildAppRouterImports(
 }
 
 /** Add each `[key, value]` to `imports` only when the key isn't already mapped. */
-function addMissing(imports: Record<string, string>, entries: Iterable<[string, string]>): void {
+function addMissing(
+  imports: Record<string, string>,
+  entries: Iterable<[string, string]>,
+): void {
   for (const [key, val] of entries) {
     if (!(key in imports)) imports[key] = val;
   }
@@ -399,50 +417,60 @@ interface DenextResolver {
  * (resolved via its `deno.json` exports) and tasks run its local `cli.ts` — for testing an
  * unreleased/dev denext against a real app without publishing.
  */
-async function denextResolver(V: string, localPath?: string): Promise<DenextResolver> {
-  if (!localPath) {
-    const jsr = (sub: string) => `jsr:@denext/denext${V}/${sub}`;
-    return {
-      base: `jsr:@denext/denext${V}`,
-      sub: jsr,
-      prefix: jsr,
-      cli: "jsr:@denext/denext/cli",
-      pagesRouter: (sub) => (sub ? `${PAGES_ROUTER_SPEC}/${sub}` : PAGES_ROUTER_SPEC),
-      pagesRouterEntries: () => ({
-        "@denext/pages-router": PAGES_ROUTER_SPEC,
-        "@denext/pages-router/": PAGES_ROUTER_SPEC + "/",
-      }),
-      effectEntry: () => ({ "@denext/effect": EFFECT_SPEC }),
-      frameworkDeps: () => ({}), // published JSR package carries its own deps
-    };
+/** The resolver for the published JSR package (the package carries its own deps). */
+function jsrResolver(V: string): DenextResolver {
+  const jsr = (sub: string) => `jsr:@denext/denext${V}/${sub}`;
+  return {
+    base: `jsr:@denext/denext${V}`,
+    sub: jsr,
+    prefix: jsr,
+    cli: "jsr:@denext/denext/cli",
+    pagesRouter: (sub) => (sub ? `${PAGES_ROUTER_SPEC}/${sub}` : PAGES_ROUTER_SPEC),
+    pagesRouterEntries: () => ({
+      "@denext/pages-router": PAGES_ROUTER_SPEC,
+      "@denext/pages-router/": PAGES_ROUTER_SPEC + "/",
+    }),
+    effectEntry: () => ({ "@denext/effect": EFFECT_SPEC }),
+    frameworkDeps: () => ({}),
+  };
+}
+
+/** A package's `deno.json` `exports` map (empty when absent). */
+async function packageExports(dir: string): Promise<Record<string, string>> {
+  return ((await readJson(join(dir, "deno.json")))?.exports ?? {}) as Record<string, string>;
+}
+
+/**
+ * denext's own `jsr:`/`npm:` deps from a checkout's `deno.json` — the app config must carry
+ * these so `deno desktop` (and any tool following the local file:// denext modules) can
+ * resolve `@std/path`, `ws`, …
+ */
+function frameworkDepsOf(denoCfg: Record<string, unknown>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries((denoCfg.imports ?? {}) as Record<string, string>)) {
+    if (v.startsWith("jsr:") || v.startsWith("npm:")) out[k] = v;
   }
+  return out;
+}
+
+/** The resolver: the published JSR package, or a local denext checkout (`--denext-local`). */
+async function denextResolver(V: string, localPath?: string): Promise<DenextResolver> {
+  if (!localPath) return jsrResolver(V);
   const abs = resolve(localPath);
   const denoCfg = (await readJson(join(abs, "deno.json"))) ?? {};
   const exp = (denoCfg.exports ?? {}) as Record<string, string>;
-  // denext's own `jsr:`/`npm:` deps — the app config must carry these so `deno desktop`
-  // (and any tool following the local file:// denext modules) can resolve `@std/path`, `ws`, …
-  const frameworkDeps: Record<string, string> = {};
-  for (const [k, v] of Object.entries((denoCfg.imports ?? {}) as Record<string, string>)) {
-    if (v.startsWith("jsr:") || v.startsWith("npm:")) frameworkDeps[k] = v;
-  }
+  const frameworkDeps = frameworkDepsOf(denoCfg);
   const fileFor = (root: string, rel: string) =>
     toFileUrl(join(root, rel.replace(/^\.\//, ""))).href;
   const local = (sub: string): string => {
     const rel = exp[sub === "" ? "." : "./" + sub];
     return rel ? fileFor(abs, rel) : toFileUrl(join(abs, sub)).href;
   };
-  // pages-router is a workspace member at <abs>/packages/pages-router in a checkout.
+  // pages-router and @denext/effect are workspace members at <abs>/packages/* in a checkout.
   const prDir = join(abs, "packages", "pages-router");
-  const prExp = ((await readJson(join(prDir, "deno.json")))?.exports ?? {}) as Record<
-    string,
-    string
-  >;
-  // @denext/effect is the sibling workspace member at <abs>/packages/effect (single `.` export).
+  const prExp = await packageExports(prDir);
   const efDir = join(abs, "packages", "effect");
-  const efExp = ((await readJson(join(efDir, "deno.json")))?.exports ?? {}) as Record<
-    string,
-    string
-  >;
+  const efExp = await packageExports(efDir);
   return {
     base: local(""),
     sub: local,
@@ -460,11 +488,15 @@ async function denextResolver(V: string, localPath?: string): Promise<DenextReso
         "@denext/pages-router": fileFor(prDir, prExp["."] ?? "./mod.ts"),
       };
       for (const [k, rel] of Object.entries(prExp)) {
-        if (k !== ".") out["@denext/pages-router/" + k.slice(2)] = fileFor(prDir, rel);
+        if (k !== ".") {
+          out["@denext/pages-router/" + k.slice(2)] = fileFor(prDir, rel);
+        }
       }
       return out;
     },
-    effectEntry: () => ({ "@denext/effect": fileFor(efDir, efExp["."] ?? "./mod.ts") }),
+    effectEntry: () => ({
+      "@denext/effect": fileFor(efDir, efExp["."] ?? "./mod.ts"),
+    }),
     frameworkDeps: () => frameworkDeps,
   };
 }
@@ -524,14 +556,7 @@ async function writeAppRouterDenoJson(
     },
     imports,
   };
-  const denoJsonPath = join(dir, "deno.json");
-  let denoJsonExists = false;
-  if (await writable(denoJsonPath)) {
-    await Deno.writeTextFile(denoJsonPath, denoJsonText(denoJson));
-    written.unshift(denoJsonPath);
-  } else {
-    denoJsonExists = true;
-  }
+  const denoJsonExists = await writeDenoJsonUnlessAuthored(dir, denoJson, written);
   // Ignore denext's generated build artifacts (`.denext/` build cache, `out/` export).
   await ensureGitignore(dir, [".denext/", "out/"], written);
   // Turn on the Deno LSP so editors resolve the `denext` import map like `deno` does.
@@ -551,6 +576,22 @@ const GEN_MARKER_TEXT = `${GEN_SENTINEL} — safe to edit; re-running may overwr
 const GEN_MARKER = `// ${GEN_MARKER_TEXT}`;
 
 /** Whether a path is absent or a previously migrate-generated file (safe to (over)write). */
+/**
+ * Write the generated `deno.json` unless a hand-authored one exists (never clobbered).
+ * Returns whether an authored file was left in place (the CLI's "already exists" hint).
+ */
+async function writeDenoJsonUnlessAuthored(
+  dir: string,
+  denoJson: Record<string, unknown>,
+  written: string[],
+): Promise<boolean> {
+  const denoJsonPath = join(dir, "deno.json");
+  if (!(await writable(denoJsonPath))) return true;
+  await Deno.writeTextFile(denoJsonPath, denoJsonText(denoJson));
+  written.unshift(denoJsonPath);
+  return false;
+}
+
 async function writable(path: string): Promise<boolean> {
   const cur = await Deno.readTextFile(path).catch(() => null);
   return cur === null || cur.includes(GEN_SENTINEL);
@@ -585,6 +626,7 @@ interface NextConfigTranslation {
 
 /** next.config keys denext maps straight through (same names/shapes as Next). */
 const NEXT_PASSTHROUGH_KEYS = [
+  "cacheComponents", // Next 16's top-level flag is denext's stable opt-in of the same name
   "basePath",
   "trailingSlash",
   "assetPrefix",
@@ -619,7 +661,8 @@ const NEXT_DROP_GUIDANCE: Record<string, string> = {
   webpack: "", // no webpack — Deno + esbuild handle bundling.
   compiler: "", // SWC/Babel compiler options don't apply to Deno's toolchain.
   swcMinify: "", // minification is handled by the denext build, always on for prod.
-  experimental: "", // Next experimental flags don't correspond to denext features.
+  experimental:
+    "Next experimental flags have no denext equivalent — except `ppr`/`useCache`/`dynamicIO`, which map to top-level `cacheComponents: true`.",
   poweredByHeader: "", // denext never emits an X-Powered-By header.
   productionBrowserSourceMaps: "", // source-map emission is governed by the denext build.
 };
@@ -674,28 +717,43 @@ async function readNextConfig(
     "next.config.cjs",
   ]);
   if (!file) return null;
-  // Scan the config SOURCE for MDX-plugin wiring: `createMDX({ options })` buries its
-  // remark/recma lists in a webpack-loader closure the subprocess eval can't reach, so a
-  // source signal is the only reliable detection. Trigger only when plugins are actually
-  // configured (a plain `@next/mdx` with no plugins is covered by the baseline loader).
-  let mdx = false;
-  try {
-    const src = await Deno.readTextFile(join(dir, file));
-    mdx = /\b(remark|rehype|recma)Plugins\b/.test(src) ||
-      (/@next\/mdx|createMDX/.test(src) &&
-        /codehike|remark-|rehype-|recma-/.test(src));
-  } catch { /* unreadable — leave mdx false */ }
   const base: NextConfigTranslation = {
     fields: {},
     rules: {},
     dropped: [],
     file,
     raw: false,
-    mdx,
+    mdx: await hasMdxPluginWiring(join(dir, file)),
   };
-  // Bound the eval: a side-effectful next.config (a watcher, a DB connect, an unresolved
-  // top-level await) would otherwise hang `denext migrate` forever. On timeout we abort the
-  // child and fall back to the regex/hand-port path (raw:true) rather than block.
+  return await evalNextConfig(dir, file, base);
+}
+
+/**
+ * Scan the config SOURCE for MDX-plugin wiring: `createMDX({ options })` buries its
+ * remark/recma lists in a webpack-loader closure the subprocess eval can't reach, so a
+ * source signal is the only reliable detection. Trigger only when plugins are actually
+ * configured (a plain `@next/mdx` with no plugins is covered by the baseline loader).
+ */
+async function hasMdxPluginWiring(configFile: string): Promise<boolean> {
+  try {
+    const src = await Deno.readTextFile(configFile);
+    return /\b(remark|rehype|recma)Plugins\b/.test(src) ||
+      (/@next\/mdx|createMDX/.test(src) && /codehike|remark-|rehype-|recma-/.test(src));
+  } catch {
+    return false; // unreadable — leave mdx false
+  }
+}
+
+/**
+ * Evaluate the config in a bounded subprocess. A side-effectful next.config (a watcher, a
+ * DB connect, an unresolved top-level await) would otherwise hang `denext migrate` forever;
+ * on timeout the child is aborted and the caller falls back to the hand-port path (raw:true).
+ */
+async function evalNextConfig(
+  dir: string,
+  file: string,
+  base: NextConfigTranslation,
+): Promise<NextConfigTranslation> {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), NEXT_EVAL_TIMEOUT_MS);
   try {
@@ -728,6 +786,103 @@ async function readNextConfig(
 }
 
 /**
+ * Detect the source framework (a `--from` override wins) and run the non-Next migration
+ * for it, or return null for a Next.js App Router project. CRA, Vite, and generic React
+ * apps all take the SPA path — `mode:"spa"` + a generated denext.config.ts, differing only
+ * in how the entry/env/proxy are read. Remix must be detected BEFORE Vite (Remix-Vite
+ * carries a vite.config that would otherwise capture it as a SPA); it is the one path
+ * that transforms the route tree.
+ */
+async function migrateNonNextProject(
+  dir: string,
+  deps: Record<string, string>,
+  options: MigrateOptions,
+): Promise<MigrateResult | null> {
+  const from = options.from;
+  if (from === "next") return null;
+  if (from === "remix" || (!from && await isRemix(dir, deps))) {
+    return await migrateRemixProject(dir, deps, options);
+  }
+  for (const source of ["cra", "vite", "generic"] as const) {
+    const detect = source === "cra" ? isCra : source === "vite" ? isViteSpa : isGenericSpa;
+    if (from === source || (!from && await detect(dir, deps))) {
+      return await migrateSpaProject(dir, deps, options, source);
+    }
+  }
+  return null;
+}
+
+/**
+ * Pages Router: the app runs on the @denext/pages-router plugin — map its specifier and
+ * scaffold a denext.config.ts that registers the plugin (and, when the app uses `effect`,
+ * the @denext/effect bridge's effect() plugin; empty layer, the user adds their AppLayer).
+ * The Pages Router router/link/head APIs live in the plugin, not denext core, so
+ * `next/router`, `next/link`, `next/head` point at the plugin for an UNMODIFIED app (no
+ * `--codemod`); these override the App Router `next/*` entries (which don't include
+ * `next/router` at all). Returns whether the config was written / already existed.
+ */
+async function writePagesRouterConfig(
+  configPath: string,
+  R: DenextResolver,
+  imports: Record<string, string>,
+  hasEffect: boolean,
+  written: string[],
+): Promise<{ configWritten: boolean; configExists: boolean }> {
+  Object.assign(imports, R.pagesRouterEntries());
+  imports["next/router"] = R.pagesRouter("router");
+  imports["next/link"] = R.pagesRouter("link");
+  imports["next/head"] = R.pagesRouter("head");
+  if (!(await writable(configPath))) return { configWritten: false, configExists: true };
+  const pluginImports = [`import { pagesRouter } from "@denext/pages-router";`];
+  const pluginCalls = ["pagesRouter()"];
+  if (hasEffect) {
+    pluginImports.push(`import { effect } from "@denext/effect";`);
+    pluginCalls.push("effect()");
+  }
+  await Deno.writeTextFile(
+    configPath,
+    GEN_MARKER + "\n" +
+      pluginImports.join("\n") + "\n\n" +
+      `export default {\n` +
+      (hasEffect
+        ? `  // effect(): pass your app Layer to provide services — effect({ layer: AppLayer }).\n`
+        : "") +
+      `  plugins: [${pluginCalls.join(", ")}],\n};\n`,
+  );
+  written.push(configPath);
+  return { configWritten: true, configExists: false };
+}
+
+/**
+ * App Router: generate a full denext.config.ts (compat mode, Tailwind, next.config
+ * translation, publicEnv). Never clobbers a hand-authored one (no marker). MDX-plugin apps
+ * get the build-time recovery helper import (see nextConfigSource). Returns whether an
+ * authored config was left in place.
+ */
+async function writeAppRouterConfig(
+  dir: string,
+  configPath: string,
+  deps: Record<string, string>,
+  jsr: (sub: string) => string,
+  imports: Record<string, string>,
+  hasEffect: boolean,
+  written: string[],
+): Promise<boolean> {
+  const tailwind = ("tailwindcss" in deps || "@tailwindcss/postcss" in deps) &&
+    await exists(join(dir, "src", "index.css"));
+  const publicEnv = await collectNextPublicEnvKeys(dir);
+  const next = await readNextConfig(dir);
+  if (next?.mdx) imports["denext/build/next-mdx"] = jsr("build/next-mdx");
+  if (!(await writable(configPath))) return true;
+  await Deno.writeTextFile(
+    configPath,
+    nextConfigSource({ tailwind, publicEnv, next, effect: hasEffect }),
+  );
+  written.push(configPath);
+  return false;
+}
+
+/**
  * Convert the Next.js project at `dir` to a denext `deno.json`. Returns a summary;
  * throws only on unreadable package.json.
  */
@@ -735,144 +890,44 @@ export async function migrateProject(
   dir: string,
   options: MigrateOptions = {},
 ): Promise<MigrateResult> {
-  const pkg = await readJson(join(dir, "package.json"));
-  if (!pkg) throw new Error(`no package.json found in ${dir}`);
-  const deps: Record<string, string> = {
-    ...(pkg.dependencies as Record<string, string> ?? {}),
-    ...(pkg.devDependencies as Record<string, string> ?? {}),
-  };
-
-  // Detect the source framework (a `--from` override wins). CRA, Vite, and generic
-  // React apps all take the SPA path — `mode:"spa"` + a generated denext.config.ts,
-  // differing only in how the entry/env/proxy are read. Everything else is treated
-  // as a Next.js App Router project.
-  const from = options.from;
-  // Remix must be detected BEFORE Vite (Remix-Vite carries a vite.config that would
-  // otherwise capture it as a SPA). It is the one path that transforms the route tree.
-  if (
-    from !== "next" && (from === "remix" || (!from && await isRemix(dir, deps)))
-  ) {
-    return await migrateRemixProject(dir, deps, options);
-  }
-  if (
-    from !== "next" && (from === "cra" || (!from && await isCra(dir, deps)))
-  ) {
-    return await migrateSpaProject(dir, deps, options, "cra");
-  }
-  if (
-    from !== "next" &&
-    (from === "vite" || (!from && await isViteSpa(dir, deps)))
-  ) {
-    return await migrateSpaProject(dir, deps, options, "vite");
-  }
-  if (
-    from !== "next" &&
-    (from === "generic" || (!from && await isGenericSpa(dir, deps)))
-  ) {
-    return await migrateSpaProject(dir, deps, options, "generic");
-  }
+  const deps = await readAppDeps(dir);
+  const nonNext = await migrateNonNextProject(dir, deps, options);
+  if (nonNext) return nonNext;
 
   const { pnp } = await detectPackageManager(dir);
   if (pnp) throw pnpUnsupported(dir);
-  // App Router has Deno-native build passes (the boundary/exports reader imports app
-  // modules) — not only the esbuild compat bundle — so Deno itself must resolve app npm
-  // deps. The proven shape is `nodeModulesDir:"auto"` + a pinned `npm:name@version` per
-  // dep (these go in the generated deno.json; package.json/the lockfile are never touched).
-  // Deps with an unpinnable `catalog:`/`workspace:*` version are left to the installed
-  // node_modules + the default-on tolerant resolver instead of a (bogus) pin.
-
-  const V = denextVersion();
-  const R = await denextResolver(V, options.denextLocalPath);
+  const R = await denextResolver(denextVersion(), options.denextLocalPath);
   const jsr = R.sub;
-  const imports = await buildAppRouterImports(dir, R, deps);
-  const { aliased, passthrough, dropped, flagged } = classifyDeps(deps, imports, { pin: true });
-
-  // The app depends on the npm `effect` package → wire the first-party `@denext/effect`
-  // bridge: map its specifier (its `effect()` plugin is added to the generated
-  // denext.config.ts below). `effect` itself stays in `passthrough` (pinned above) for the
-  // app's own `import … from "effect"`; this only adds the denext-side runtime bridge.
-  const hasEffect = "effect" in deps;
-  if (hasEffect) Object.assign(imports, R.effectEntry());
+  const { imports, hasEffect, ...classified } = await resolveAppRouterImports(dir, R, deps);
 
   const pagesRouter = await exists(join(dir, "pages")) ||
     await exists(join(dir, "src/pages"));
-
   const written: string[] = [];
-  let pagesConfigWritten = false;
-  let pagesConfigExists = false;
-  const configPath = join(dir, "denext.config.ts");
-
-  if (pagesRouter) {
-    // A Pages Router app runs on the @denext/pages-router plugin: map its specifier and
-    // scaffold a denext.config.ts that registers the plugin.
-    Object.assign(imports, R.pagesRouterEntries());
-    // The Pages Router router/link/head APIs live in the plugin, not denext core:
-    // point `next/router`, `next/link`, `next/head` at the plugin so an UNMODIFIED
-    // app (no `--codemod`) resolves them. These override the App Router `next/*`
-    // entries set above (which don't include `next/router` at all).
-    imports["next/router"] = R.pagesRouter("router");
-    imports["next/link"] = R.pagesRouter("link");
-    imports["next/head"] = R.pagesRouter("head");
-    if (await writable(configPath)) {
-      // Register pagesRouter(), and — when the app uses `effect` — the @denext/effect
-      // bridge's effect() plugin alongside it (empty layer; the user adds their AppLayer).
-      const pluginImports = [`import { pagesRouter } from "@denext/pages-router";`];
-      const pluginCalls = ["pagesRouter()"];
-      if (hasEffect) {
-        pluginImports.push(`import { effect } from "@denext/effect";`);
-        pluginCalls.push("effect()");
-      }
-      await Deno.writeTextFile(
-        configPath,
-        GEN_MARKER + "\n" +
-          pluginImports.join("\n") + "\n\n" +
-          `export default {\n` +
-          (hasEffect
-            ? `  // effect(): pass your app Layer to provide services — effect({ layer: AppLayer }).\n`
-            : "") +
-          `  plugins: [${pluginCalls.join(", ")}],\n};\n`,
-      );
-      pagesConfigWritten = true;
-      written.push(configPath);
-    } else {
-      pagesConfigExists = true;
-    }
-  } else {
-    // App Router: generate a full denext.config.ts (compat mode, Tailwind, next.config
-    // translation, publicEnv). Never clobber a hand-authored one (no marker).
-    const tailwind = ("tailwindcss" in deps || "@tailwindcss/postcss" in deps) &&
-      await exists(join(dir, "src", "index.css"));
-    const publicEnv = await collectNextPublicEnvKeys(dir);
-    const next = await readNextConfig(dir);
-    // MDX-plugin apps: the generated config recovers the live remark/recma fns from
-    // next.config at build time (see nextConfigSource), so it imports the recovery helper.
-    if (next?.mdx) imports["denext/build/next-mdx"] = jsr("build/next-mdx");
-    if (await writable(configPath)) {
-      await Deno.writeTextFile(
-        configPath,
-        nextConfigSource({ tailwind, publicEnv, next, effect: hasEffect }),
-      );
-      written.push(configPath);
-    } else {
-      pagesConfigExists = true; // reuse the "config already exists" signal for the CLI hint
-    }
-  }
+  const { pagesConfigWritten, pagesConfigExists } = await writeMigratedConfig(
+    dir,
+    pagesRouter,
+    { R, jsr, deps, imports, hasEffect },
+    written,
+  );
 
   // Prisma: fold the Deno-client/adapter import pins into the map (and, below, `links` +
   // `manual` node_modules + the `prisma:setup` task). null for non-Prisma apps.
   const prismaWiring = await applyPrismaImports(dir, deps, imports, R);
 
-  const denoJsonExists = await writeAppRouterDenoJson(dir, R, imports, prismaWiring, written);
+  const denoJsonExists = await writeAppRouterDenoJson(
+    dir,
+    R,
+    imports,
+    prismaWiring,
+    written,
+  );
   // Prisma source transform (schema + `@prisma/client` imports + adapter injection + patch
   // package + setup script) runs after the config is written.
   const prisma = prismaWiring ? await prismaWiring.finalize() : undefined;
   return {
     kind: "next",
     wrote: written,
-    aliased,
-    passthrough,
-    dropped,
-    flagged,
+    ...classified,
     pagesRouter,
     effect: hasEffect,
     pagesConfigWritten,
@@ -882,14 +937,87 @@ export async function migrateProject(
   };
 }
 
+/** The app's dependencies + devDependencies from its package.json (throws if absent). */
+async function readAppDeps(dir: string): Promise<Record<string, string>> {
+  const pkg = await readJson(join(dir, "package.json"));
+  if (!pkg) throw new Error(`no package.json found in ${dir}`);
+  return {
+    ...(pkg.dependencies as Record<string, string> ?? {}),
+    ...(pkg.devDependencies as Record<string, string> ?? {}),
+  };
+}
+
+/**
+ * The generated import map for an App Router app plus the dependency classification.
+ * App Router has Deno-native build passes (the boundary/exports reader imports app
+ * modules) — not only the esbuild compat bundle — so Deno itself must resolve app npm
+ * deps. The proven shape is `nodeModulesDir:"auto"` + a pinned `npm:name@version` per
+ * dep (these go in the generated deno.json; package.json/the lockfile are never touched).
+ * Deps with an unpinnable `catalog:`/`workspace:*` version are left to the installed
+ * node_modules + the default-on tolerant resolver instead of a (bogus) pin.
+ *
+ * An app depending on the npm `effect` package gets the first-party `@denext/effect`
+ * bridge mapped too (its `effect()` plugin is added to the generated denext.config.ts);
+ * `effect` itself stays in `passthrough` (pinned) for the app's own `import … from
+ * "effect"` — this only adds the denext-side runtime bridge.
+ */
+async function resolveAppRouterImports(
+  dir: string,
+  R: DenextResolver,
+  deps: Record<string, string>,
+): Promise<
+  { imports: Record<string, string>; hasEffect: boolean } & ReturnType<typeof classifyDeps>
+> {
+  const imports = await buildAppRouterImports(dir, R, deps);
+  const classified = classifyDeps(deps, imports, { pin: true });
+  const hasEffect = "effect" in deps;
+  if (hasEffect) Object.assign(imports, R.effectEntry());
+  return { imports, hasEffect, ...classified };
+}
+
+/**
+ * Write `denext.config.ts` for the detected router: the Pages Router plugin config, or
+ * the App Router config. Reuses the "config already exists" signal for the CLI hint.
+ */
+async function writeMigratedConfig(
+  dir: string,
+  pagesRouter: boolean,
+  app: {
+    R: DenextResolver;
+    jsr: DenextResolver["sub"];
+    deps: Record<string, string>;
+    imports: Record<string, string>;
+    hasEffect: boolean;
+  },
+  written: string[],
+): Promise<{ pagesConfigWritten: boolean; pagesConfigExists: boolean }> {
+  const configPath = join(dir, "denext.config.ts");
+  if (pagesRouter) {
+    const r = await writePagesRouterConfig(configPath, app.R, app.imports, app.hasEffect, written);
+    return { pagesConfigWritten: r.configWritten, pagesConfigExists: r.configExists };
+  }
+  const pagesConfigExists = await writeAppRouterConfig(
+    dir,
+    configPath,
+    app.deps,
+    app.jsr,
+    app.imports,
+    app.hasEffect,
+    written,
+  );
+  return { pagesConfigWritten: false, pagesConfigExists };
+}
+
 // ── Remix migration (assisted: config + route-tree transform) ─────────────────
 
 /**
  * Migrate the Remix app at `dir`: write the denext config (import map + tasks +
  * gitignore + vscode, reusing the App Router shape — react→denext, `next/*` compat,
  * pinned npm passthrough) AND transform the route tree in place ({@link transformRemixApp}
- * relocates `app/routes/*` to denext conventions and scaffolds the loader/action
- * inversion). Returns a `"remix"` result carrying the assisted-transform report.
+ * relocates `app/routes/*` to denext conventions, splitting each route into its data
+ * module, client component and page wrapper so loaders/actions keep running on the
+ * `denext/remix` runtime). Returns a `"remix"` result carrying the assisted-transform
+ * report (structural edge cases are surfaced as review warnings, not applied silently).
  */
 async function migrateRemixProject(
   dir: string,
@@ -904,30 +1032,27 @@ async function migrateRemixProject(
   const imports = await buildAppRouterImports(dir, R, deps, { remix: true });
   // Classify deps like the Next path, additionally dropping Remix's own `@remix-run/*` /
   // react-router toolchain (its route/data model is ported, not run).
-  const { aliased, passthrough, dropped, flagged } = classifyDeps(deps, imports, {
-    dropRemix: true,
-    pin: true,
-  });
+  const classified = classifyDeps(deps, imports, { dropRemix: true, pin: true });
 
   const written: string[] = [];
   // A compat-mode denext.config.ts (no next.config to translate). Never clobber a
   // hand-authored one.
-  const configPath = join(dir, "denext.config.ts");
-  let pagesConfigExists = false;
-  if (await writable(configPath)) {
-    await Deno.writeTextFile(
-      configPath,
-      nextConfigSource({ tailwind: false, publicEnv: [], next: null, effect: false }),
-    );
-    written.push(configPath);
-  } else {
-    pagesConfigExists = true;
-  }
+  const pagesConfigExists = !(await writeIfWritable(
+    join(dir, "denext.config.ts"),
+    () => nextConfigSource({ tailwind: false, publicEnv: [], next: null, effect: false }),
+    written,
+  ));
 
   // Prisma: fold the Deno-client/adapter pins into the map (+ links/manual/setup task below).
   const prismaWiring = await applyPrismaImports(dir, deps, imports, R);
 
-  const denoJsonExists = await writeAppRouterDenoJson(dir, R, imports, prismaWiring, written);
+  const denoJsonExists = await writeAppRouterDenoJson(
+    dir,
+    R,
+    imports,
+    prismaWiring,
+    written,
+  );
 
   // The novel part: physically restructure the route tree + invert loaders/actions.
   const remix = await transformRemixApp(dir);
@@ -938,10 +1063,7 @@ async function migrateRemixProject(
   return {
     kind: "remix",
     wrote: written,
-    aliased,
-    passthrough,
-    dropped,
-    flagged,
+    ...classified,
     pagesRouter: false,
     effect: false,
     pagesConfigWritten: false,
@@ -1083,10 +1205,10 @@ async function collectCraEnvKeys(dir: string): Promise<string[]> {
 }
 
 /** The app's package manager, inferred from its lockfile (searched here + up to 6 parents). */
-export type PackageManager = "pnpm" | "yarn" | "npm" | "bun";
+type PackageManager = "pnpm" | "yarn" | "npm" | "bun";
 
 /** PM detection result. `pnp` = a Yarn Plug'n'Play install (no `node_modules` tree). */
-export interface PmInfo {
+interface PmInfo {
   pm: PackageManager | null;
   pnp: boolean;
 }
@@ -1259,6 +1381,47 @@ function spaConfigSource(o: {
 }
 
 /**
+ * Per-key guidance for the dropped next.config keys, so a load-bearing key isn't dropped
+ * without a pointer to its denext equivalent. Inert keys (no note) are grouped on one line.
+ */
+function droppedKeyNotes(dropped: string[]): string[] {
+  const notes: string[] = [];
+  const inert: string[] = [];
+  for (const k of dropped) {
+    const note = NEXT_DROP_GUIDANCE[k];
+    if (note) notes.push(`  // ${k}: ${note}`);
+    else inert.push(k);
+  }
+  if (inert.length) notes.push(`  // Dropped (no denext equivalent needed): ${inert.join(", ")}.`);
+  return notes;
+}
+
+/**
+ * The honored next.config translation: literal fields inlined into `bodyLines`, the
+ * `redirects`/`rewrites`/`headers` rule functions called at migrate time and their RESOLVED
+ * arrays inlined (deterministic + self-contained — no import of the app's next.config, which
+ * would drag its plugin chain into denext's runtime; env-dependent rules are frozen here),
+ * and the hand-port notes returned. An unevaluable config yields only a hand-port note.
+ */
+function nextConfigTranslationLines(next: NextConfigTranslation, bodyLines: string[]): string[] {
+  if (next.raw) {
+    return [
+      `  // NOTE: your ${next.file} could not be evaluated automatically. Port any`,
+      `  // basePath/trailingSlash/assetPrefix/images/i18n/redirects/rewrites/headers by hand.`,
+    ];
+  }
+  const notes: string[] = [];
+  for (const [k, v] of Object.entries(next.fields)) bodyLines.push(`  ${k}: ${JSON.stringify(v)},`);
+  const ruleEntries = Object.entries(next.rules);
+  if (ruleEntries.length) {
+    notes.push(`  // redirects/rewrites/headers inlined from ${next.file} at migrate time.`);
+    for (const [fn, arr] of ruleEntries) bodyLines.push(`  ${fn}: () => (${JSON.stringify(arr)}),`);
+  }
+  if (next.dropped.length) notes.push(...droppedKeyNotes(next.dropped));
+  return notes;
+}
+
+/**
  * Source text for an App Router app's generated `denext.config.ts`. Carries
  * `compatibilityMode:true`, an optional `tailwind` block, `publicEnv` for statically-seen
  * computed public-env keys, and the honored next.config translation: literal fields inlined,
@@ -1285,42 +1448,7 @@ function nextConfigSource(o: {
     );
   }
 
-  const notes: string[] = [];
-  if (o.next?.raw) {
-    notes.push(
-      `  // NOTE: your ${o.next.file} could not be evaluated automatically. Port any`,
-      `  // basePath/trailingSlash/assetPrefix/images/i18n/redirects/rewrites/headers by hand.`,
-    );
-  } else if (o.next) {
-    for (const [k, v] of Object.entries(o.next.fields)) {
-      bodyLines.push(`  ${k}: ${JSON.stringify(v)},`);
-    }
-    const ruleEntries = Object.entries(o.next.rules);
-    if (ruleEntries.length) {
-      // Rule functions are called at migrate time and their RESOLVED arrays inlined —
-      // deterministic + self-contained (no import of the app's next.config, which would
-      // drag its plugin chain into denext's runtime). Env-dependent rules are frozen here.
-      notes.push(
-        `  // redirects/rewrites/headers inlined from ${o.next.file} at migrate time.`,
-      );
-      for (const [fn, arr] of ruleEntries) {
-        bodyLines.push(`  ${fn}: () => (${JSON.stringify(arr)}),`);
-      }
-    }
-    if (o.next.dropped.length) {
-      // Per-key guidance so a load-bearing key isn't dropped without a pointer to
-      // its denext equivalent. Inert keys (no note) are grouped on one line.
-      const inert: string[] = [];
-      for (const k of o.next.dropped) {
-        const note = NEXT_DROP_GUIDANCE[k];
-        if (note) notes.push(`  // ${k}: ${note}`);
-        else inert.push(k);
-      }
-      if (inert.length) {
-        notes.push(`  // Dropped (no denext equivalent needed): ${inert.join(", ")}.`);
-      }
-    }
-  }
+  const notes = o.next ? nextConfigTranslationLines(o.next, bodyLines) : [];
 
   // MDX plugins: `@next/mdx`'s createMDX hides its remark/recma plugin fns in a
   // webpack-loader closure — live function references that can't be serialized into this
@@ -1377,7 +1505,11 @@ function spaDesktopSource(): string {
  * an app icon; the icon file itself is composed at build time by `export` — see
  * {@link prepareDesktopIcon} — so `spa.desktop.icon` drives it without re-migration.
  */
-function spaTasks(desktop: boolean, cli: string, hasIcon: boolean): Record<string, string> {
+function spaTasks(
+  desktop: boolean,
+  cli: string,
+  hasIcon: boolean,
+): Record<string, string> {
   const tasks: Record<string, string> = {
     dev: `deno run -A ${cli} dev .`,
     build: `deno run -A ${cli} build .`,
@@ -1432,26 +1564,14 @@ function spaTasks(desktop: boolean, cli: string, hasIcon: boolean): Record<strin
  * @param entries `.gitignore` lines to ensure (e.g. `.denext/`, `out/`).
  * @param written Accumulator the `.gitignore` path is pushed onto when modified.
  */
-async function ensureGitignore(dir: string, entries: string[], written: string[]): Promise<void> {
-  const path = join(dir, ".gitignore");
-  let current = "";
-  try {
-    current = await Deno.readTextFile(path);
-  } catch { /* no .gitignore yet — create one */ }
-  const have = new Set(current.split(/\r?\n/).map((l) => l.trim()));
-  const missing = entries.filter((e) => !have.has(e));
-  if (missing.length === 0) return;
-  const marker = "# denext generated build artifacts";
-  const block = (have.has(marker) ? "" : `${marker}\n`) + missing.join("\n") + "\n";
-  // Separate from existing content with a blank line; finish a dangling last line first.
-  const lead = current.length === 0 ? "" : current.endsWith("\n") ? "\n" : "\n\n";
-  // Remove any existing entry before writing: `Deno.writeTextFile` follows a symlink and
-  // writes its target, so a `.gitignore` committed as a symlink (migrate runs on cloned
-  // third-party repos) could otherwise redirect this append out of tree. Deno.remove
-  // unlinks the symlink itself. Same guard as `writeMergedModuleConfig`.
-  await Deno.remove(path).catch(() => {});
-  await Deno.writeTextFile(path, current + lead + block);
-  written.push(path);
+/** Append `.gitignore` entries (shared, symlink-safe), tracking the path in `written`. */
+async function ensureGitignore(
+  dir: string,
+  entries: string[],
+  written: string[],
+): Promise<void> {
+  const path = await appendGitignore(dir, entries);
+  if (path) written.push(path);
 }
 
 /**
@@ -1508,6 +1628,168 @@ async function writeVscodeJson(
   written.push(path);
 }
 
+/**
+ * The SPA import map: the denext entries + react-family aliases, the server/client-only
+ * stubs, `mdx/types` (MDX apps often import the type-only module at value syntax, so it
+ * aliases to an empty module), `denext/desktop`, the tsconfig/jsconfig path aliases
+ * (e.g. "~/*": ["./src/*"] → "~/": "./src/", following `extends` + a monorepo-root
+ * tsconfig), and — local-path mode only — denext's own deps so `deno desktop` and other
+ * tools can resolve the local `file://` denext modules' imports (a no-op for JSR).
+ */
+async function spaImportMap(
+  dir: string,
+  deps: Record<string, string>,
+  R: DenextResolver,
+  desktop: boolean,
+): Promise<Record<string, string>> {
+  const jsr = R.sub;
+  const imports: Record<string, string> = {
+    "denext": R.base,
+    "denext/jsx-runtime": jsr("jsx-runtime"),
+    "denext/jsx-dev-runtime": jsr("jsx-dev-runtime"),
+    "denext/server": jsr("server"),
+    "denext/client": jsr("client"),
+  };
+  for (const spec of SPA_REACT_ALIAS_SPECS) imports[spec] = jsr(spec);
+  addServerClientStubs(imports, deps, jsr);
+  if ("@types/mdx" in deps) imports["mdx/types"] = jsr("empty");
+  if (desktop) imports["denext/desktop"] = jsr("desktop");
+  for (const [key, val] of await collectTsPathAliases(dir)) {
+    if (!(key in imports)) imports[key] = val;
+  }
+  for (const [key, val] of Object.entries(R.frameworkDeps())) {
+    if (!(key in imports)) imports[key] = val;
+  }
+  return imports;
+}
+
+/** The compile-time public env keys for a SPA source (CRA / Vite / the union for generic). */
+async function spaEnvKeys(dir: string, source: SpaSource): Promise<string[]> {
+  if (source === "cra") return await collectCraEnvKeys(dir);
+  if (source === "vite") return await collectSpaEnvKeys(dir);
+  return [...new Set([...await collectSpaEnvKeys(dir), ...await collectCraEnvKeys(dir)])].sort();
+}
+
+/**
+ * The desktop backend proxy (`--desktop --backend`). Only Vite carries a proxy block in
+ * its config; CRA/generic rely on `--proxy`, else `/api`.
+ */
+async function spaProxy(
+  dir: string,
+  options: MigrateOptions,
+  source: SpaSource,
+): Promise<{ prefixes: string[]; target: string } | undefined> {
+  if (!options.desktop || !options.backend) return undefined;
+  const parsed = source === "vite" ? await parseViteProxyPrefixes(dir) : undefined;
+  return { prefixes: options.proxyPrefixes ?? parsed ?? ["/api"], target: options.backend };
+}
+
+/** Write `path` from `source()` when absent or previously migrate-generated; true if written. */
+async function writeIfWritable(
+  path: string,
+  source: () => string,
+  written: string[],
+): Promise<boolean> {
+  if (!(await writable(path))) return false;
+  await Deno.writeTextFile(path, source());
+  written.push(path);
+  return true;
+}
+
+/**
+ * `desktop.ts` (only with --desktop). Also decides whether the desktop task wires `--icon`
+ * — the icon file itself is composed by `export` from `spa.desktop.icon` (or an
+ * auto-detected web icon), so the icon is config-driven and changeable without re-migrating.
+ */
+async function writeSpaDesktop(
+  dir: string,
+  desktop: boolean,
+  written: string[],
+): Promise<{ desktopWritten: boolean; desktopIcon: string | undefined }> {
+  if (!desktop) return { desktopWritten: false, desktopIcon: undefined };
+  const desktopWritten = await writeIfWritable(join(dir, "desktop.ts"), spaDesktopSource, written);
+  const desktopIcon = (await detectIconSource(dir)) ? DESKTOP_ICON_FILE : undefined;
+  return { desktopWritten, desktopIcon };
+}
+
+/** The generated SPA `deno.json` (see the Next path for the compilerOptions rationale). */
+function spaDenoJson(
+  imports: Record<string, string>,
+  nodeModulesDir: "manual" | "auto",
+  tasks: Record<string, string>,
+): Record<string, unknown> {
+  return {
+    tasks,
+    nodeModulesDir,
+    unstable: ["sloppy-imports"],
+    compilerOptions: {
+      jsx: "react-jsx",
+      jsxImportSource: "react",
+      lib: ["deno.window", "dom", "dom.iterable", "dom.asynciterable"],
+      // npm React ships its own types; skip lib-checking so `deno check` validates YOUR
+      // code, not the libraries' bundled declarations.
+      skipLibCheck: true,
+    },
+    imports,
+  };
+}
+
+/**
+ * Write the SPA `deno.json` (never clobbering a hand-authored one), ignore denext's
+ * generated build artifacts — `.denext/` (build cache), `out/` (the static export),
+ * `src/index.gen.css` (the compiled Tailwind output, rebuilt each `dev`/`build`) when
+ * Tailwind is used, and for a desktop app the composed `desktop-icon.png` (rebuilt from
+ * `spa.desktop.icon` each `export`) — and turn on the Deno LSP so editors resolve the
+ * `denext` import map like `deno` does. Returns whether an authored deno.json exists.
+ */
+async function finishSpaProjectFiles(
+  dir: string,
+  denoJson: Record<string, unknown>,
+  tailwind: boolean,
+  desktop: boolean,
+  written: string[],
+): Promise<boolean> {
+  const denoJsonExists = await writeDenoJsonUnlessAuthored(dir, denoJson, written);
+  await ensureGitignore(
+    dir,
+    [
+      ".denext/",
+      "out/",
+      ...(tailwind ? ["src/index.gen.css"] : []),
+      ...(desktop ? ["desktop-icon.png"] : []),
+    ],
+    written,
+  );
+  await ensureVscodeDeno(dir, written);
+  return denoJsonExists;
+}
+
+/**
+ * What the generated SPA config needs to know about the source app. Entry/env/proxy are
+ * read per source: CRA from public/index.html + process.env.REACT_APP_*; Vite from
+ * index.html + import.meta.env + a literal vite proxy; generic from index.html + the union
+ * of both env conventions.
+ */
+async function spaSourceFacts(
+  dir: string,
+  deps: Record<string, string>,
+  options: MigrateOptions,
+  source: SpaSource,
+): Promise<{
+  entry: string;
+  title: string;
+  envKeys: string[];
+  tailwind: boolean;
+  proxy: { prefixes: string[]; target: string } | undefined;
+}> {
+  const { entry, title } = source === "cra" ? await readCraIndex(dir) : await readIndexHtml(dir);
+  const envKeys = await spaEnvKeys(dir, source);
+  const tailwind = ("@tailwindcss/vite" in deps || "tailwindcss" in deps) &&
+    await exists(join(dir, "src", "index.css"));
+  const proxy = await spaProxy(dir, options, source);
+  return { entry, title, envKeys, tailwind, proxy };
+}
+
 /** Generate denext SPA config files (deno.json + denext.config.ts [+ desktop.ts]). */
 async function migrateSpaProject(
   dir: string,
@@ -1517,7 +1799,6 @@ async function migrateSpaProject(
 ): Promise<MigrateResult> {
   const V = denextVersion();
   const R = await denextResolver(V, options.denextLocalPath);
-  const jsr = R.sub;
   const { pm, pnp } = await detectPackageManager(dir);
   if (pnp) throw pnpUnsupported(dir);
   // Any real PM install → `manual`: denext resolves deps from the app's own installed
@@ -1525,188 +1806,94 @@ async function migrateSpaProject(
   // `package.json` is never rewritten. No lockfile → `auto` (Deno materializes deps).
   const manual = pm !== null;
 
-  const imports: Record<string, string> = {
-    "denext": R.base,
-    "denext/jsx-runtime": jsr("jsx-runtime"),
-    "denext/jsx-dev-runtime": jsr("jsx-dev-runtime"),
-    "denext/server": jsr("server"),
-    "denext/client": jsr("client"),
-  };
-  for (const [spec, sub] of Object.entries(SPA_REACT_ALIASES)) {
-    imports[spec] = jsr(sub);
-  }
-  // `server-only`/`client-only` → denext no-ops (see the Next path + src/compat/*-only.ts).
-  for (const poison of ["server-only", "client-only"]) {
-    if (poison in deps) imports[poison] = jsr(poison);
-  }
-  // `/mdx` provides the type-only `mdx/types` module; MDX apps often import from it
-  // at value syntax (no `type` keyword), so alias it to an empty module (types-only at runtime).
-  if ("@types/mdx" in deps) imports["mdx/types"] = jsr("empty");
-  if (options.desktop) imports["denext/desktop"] = jsr("desktop");
-
-  // tsconfig/jsconfig path aliases (e.g. "~/*": ["./src/*"] → "~/": "./src/"). Follows
-  // `extends` + a monorepo-root tsconfig so workspace-package source aliases resolve.
-  for (const [key, val] of await collectTsPathAliases(dir)) {
-    if (!(key in imports)) imports[key] = val;
-  }
-  // Local-path mode only: denext's own deps (`@std/*`, `ws`, …), so `deno desktop` and
-  // other tools can resolve the local `file://` denext modules' imports. No-op for JSR.
-  for (const [key, val] of Object.entries(R.frameworkDeps())) {
-    if (!(key in imports)) imports[key] = val;
-  }
+  const imports = await spaImportMap(dir, deps, R, !!options.desktop);
 
   // Classify deps for the summary. With nodeModulesDir:"manual" (pnpm) the npm deps
   // resolve from the installed node_modules, so no `npm:` import entries are emitted;
   // with "auto" they are pinned as `npm:name@version` like the Next path.
-  const { aliased, passthrough, dropped, flagged } = classifyDeps(deps, imports, { pin: !manual });
+  const classified = classifyDeps(deps, imports, { pin: !manual });
 
-  // Entry/env/proxy are read per source: CRA from public/index.html + process.env
-  // .REACT_APP_*; Vite from index.html + import.meta.env + a literal vite proxy;
-  // generic from index.html + the union of both env conventions.
-  const { entry, title } = source === "cra" ? await readCraIndex(dir) : await readIndexHtml(dir);
-  const envKeys = source === "cra" ? await collectCraEnvKeys(dir) : source === "generic"
-    ? [
-      ...new Set([
-        ...await collectSpaEnvKeys(dir),
-        ...await collectCraEnvKeys(dir),
-      ]),
-    ].sort()
-    : await collectSpaEnvKeys(dir);
-  const tailwind = ("@tailwindcss/vite" in deps || "tailwindcss" in deps) &&
-    await exists(join(dir, "src", "index.css"));
-
-  let proxy: { prefixes: string[]; target: string } | undefined;
-  if (options.desktop && options.backend) {
-    // Only Vite carries a proxy block in its config; CRA/generic rely on --proxy.
-    const parsed = source === "vite" ? await parseViteProxyPrefixes(dir) : undefined;
-    const prefixes = options.proxyPrefixes ?? parsed ?? ["/api"];
-    proxy = { prefixes, target: options.backend };
-  }
-
-  const written: string[] = [];
-
-  // denext.config.ts (write when absent or previously migrate-generated).
-  const configPath = join(dir, "denext.config.ts");
-  let configWritten = false;
-  if (await writable(configPath)) {
-    await Deno.writeTextFile(
-      configPath,
-      spaConfigSource({ entry, title, envKeys, tailwind, proxy, desktop: !!options.desktop }),
-    );
-    configWritten = true;
-    written.push(configPath);
-  }
-
-  // desktop.ts (only with --desktop; write when absent or previously generated).
-  let desktopWritten = false;
-  let desktopIcon: string | undefined;
-  if (options.desktop) {
-    const desktopPath = join(dir, "desktop.ts");
-    if (await writable(desktopPath)) {
-      await Deno.writeTextFile(desktopPath, spaDesktopSource());
-      desktopWritten = true;
-      written.push(desktopPath);
-    }
-    // Only decide whether the desktop task wires `--icon` — the icon file itself is
-    // composed by `export` from `spa.desktop.icon` (or an auto-detected web icon), so
-    // the icon is config-driven and changeable without re-migrating.
-    if (await detectIconSource(dir)) desktopIcon = DESKTOP_ICON_FILE;
-  }
-
-  const denoJson = {
-    tasks: spaTasks(!!options.desktop, R.cli, !!desktopIcon),
-    nodeModulesDir: manual ? "manual" : "auto",
-    unstable: ["sloppy-imports"],
-    compilerOptions: {
-      jsx: "react-jsx",
-      jsxImportSource: "react",
-      lib: ["deno.window", "dom", "dom.iterable", "dom.asynciterable"],
-      // See the Next path: npm React ships its own types; skip lib-checking so
-      // `deno check` validates YOUR code, not the libraries' bundled declarations.
-      skipLibCheck: true,
-    },
-    imports,
-  };
-  const denoJsonPath = join(dir, "deno.json");
-  // Never clobber a hand-authored deno.json (see the Next path).
-  let denoJsonExists = false;
-  if (await writable(denoJsonPath)) {
-    await Deno.writeTextFile(denoJsonPath, denoJsonText(denoJson));
-    written.unshift(denoJsonPath);
-  } else {
-    denoJsonExists = true;
-  }
-
-  // Ignore denext's generated build artifacts: `.denext/` (build cache), `out/` (the
-  // static export), `src/index.gen.css` (the compiled Tailwind output, rebuilt each
-  // `dev`/`build`) when Tailwind is used, and — for a desktop app — the composed
-  // `desktop-icon.png` (rebuilt from `spa.desktop.icon` each `export`).
-  await ensureGitignore(
+  const { entry, title, envKeys, tailwind, proxy } = await spaSourceFacts(
     dir,
-    [
-      ".denext/",
-      "out/",
-      ...(tailwind ? ["src/index.gen.css"] : []),
-      ...(options.desktop ? ["desktop-icon.png"] : []),
-    ],
+    deps,
+    options,
+    source,
+  );
+
+  const nodeModulesDir = manual ? "manual" : "auto";
+  const facts = { entry, title, envKeys, tailwind, proxy };
+  const files = await writeSpaProjectFiles(
+    dir,
+    facts,
+    imports,
+    nodeModulesDir,
+    R,
+    !!options.desktop,
+  );
+  return spaMigrateResult(source, files.written, classified, files.denoJsonExists, {
+    ...facts,
+    configWritten: files.configWritten,
+    desktopWritten: files.desktopWritten,
+    desktopIcon: files.desktopIcon,
+    nodeModulesDir,
+  });
+}
+
+/** Write the SPA project's denext.config.ts, desktop scaffold, deno.json and tailwind bits. */
+async function writeSpaProjectFiles(
+  dir: string,
+  facts: Omit<Parameters<typeof spaConfigSource>[0], "desktop">,
+  imports: Record<string, string>,
+  nodeModulesDir: "manual" | "auto",
+  R: DenextResolver,
+  desktop: boolean,
+): Promise<{
+  written: string[];
+  configWritten: boolean;
+  desktopWritten: boolean;
+  desktopIcon: string | undefined;
+  denoJsonExists: boolean;
+}> {
+  const written: string[] = [];
+  const configWritten = await writeIfWritable(
+    join(dir, "denext.config.ts"),
+    () => spaConfigSource({ ...facts, desktop }),
     written,
   );
-  // Turn on the Deno LSP so editors resolve the `denext` import map like `deno` does.
-  await ensureVscodeDeno(dir, written);
+  const { desktopWritten, desktopIcon } = await writeSpaDesktop(dir, desktop, written);
+  const denoJson = spaDenoJson(imports, nodeModulesDir, spaTasks(desktop, R.cli, !!desktopIcon));
+  const denoJsonExists = await finishSpaProjectFiles(
+    dir,
+    denoJson,
+    facts.tailwind,
+    desktop,
+    written,
+  );
+  return { written, configWritten, desktopWritten, desktopIcon, denoJsonExists };
+}
 
+/**
+ * The SPA migration report. Vite keeps the historical `"spa"` kind; CRA/generic report
+ * themselves. The @denext/effect bridge is server/request-oriented (route handlers, RSC);
+ * the SPA path serves a static client bundle with no request context, so it is not
+ * auto-wired — an SPA that uses `effect` client-side still gets it via the passthrough pin.
+ */
+function spaMigrateResult(
+  source: SpaSource,
+  written: string[],
+  classified: ReturnType<typeof classifyDeps>,
+  denoJsonExists: boolean,
+  spa: NonNullable<MigrateResult["spa"]>,
+): MigrateResult {
   return {
-    // Vite keeps the historical `"spa"` kind; CRA/generic report themselves.
     kind: source === "vite" ? "spa" : source,
     wrote: written,
-    aliased,
-    passthrough,
-    dropped,
-    flagged,
+    ...classified,
     pagesRouter: false,
-    // The @denext/effect bridge is server/request-oriented (route handlers, RSC); the SPA
-    // path serves a static client bundle with no request context, so it is not auto-wired.
-    // An SPA that uses `effect` client-side still gets it via the passthrough npm pin.
     effect: false,
     pagesConfigWritten: false,
     pagesConfigExists: false,
     denoJsonExists,
-    spa: {
-      entry,
-      title,
-      envKeys,
-      tailwind,
-      proxy,
-      configWritten,
-      desktopWritten,
-      desktopIcon,
-      nodeModulesDir: manual ? "manual" : "auto",
-    },
+    spa,
   };
-}
-
-async function anyExists(dir: string, names: string[]): Promise<boolean> {
-  for (const n of names) {
-    if (await exists(join(dir, n))) return true;
-  }
-  return false;
-}
-
-/** The first of `names` that exists in `dir` (relative filename), or null. */
-async function firstExisting(
-  dir: string,
-  names: string[],
-): Promise<string | null> {
-  for (const n of names) {
-    if (await exists(join(dir, n))) return n;
-  }
-  return null;
-}
-
-async function exists(p: string): Promise<boolean> {
-  try {
-    await Deno.stat(p);
-    return true;
-  } catch {
-    return false;
-  }
 }

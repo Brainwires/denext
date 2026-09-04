@@ -8,10 +8,11 @@
 [![JSR Score](https://jsr.io/badges/@denext/denext/score)](https://jsr.io/@denext/denext)
 [![CI](https://github.com/Brainwires/denext/actions/workflows/ci.yml/badge.svg)](https://github.com/Brainwires/denext/actions/workflows/ci.yml)
 [![Tests](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Brainwires/denext/main/.github/badges/tests.json)](https://github.com/Brainwires/denext/actions/workflows/ci.yml)
+[![fallow health](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Brainwires/denext/main/.github/badges/fallow.json)](./CONTRIBUTING.md#the-health-score)
 [![Source](https://img.shields.io/badge/source-github-181717?logo=github)](https://github.com/Brainwires/denext)
 
 **A Next.js-compatible web framework for [Deno](https://deno.com) with a
-zero-npm runtime** — the familiar App Router API, ~8–9× smaller output, and a
+zero-npm runtime** — the familiar App Router API, ~7× smaller output, and a
 dependency tree you can actually audit. One unified stack, no Vercel lock-in.
 
 - **Docs:** [denext.dev](https://denext.dev/)
@@ -95,7 +96,7 @@ claim holds. That's the wedge, and it buys three concrete things:
   typical React/Next project have nothing to land on, and an SBOM for a denext
   app is essentially empty. (A _positive_ architecture story — fewer moving
   parts — not a knock on anyone else.)
-- **~8–9× smaller output** (measured below), plus a genuinely small single
+- **~7× smaller output** (measured below), plus a genuinely small single
   binary through `deno compile` / `deno desktop`.
 - **One unified stack on native Deno** — no bundler config, no `node_modules`,
   no unstable flags to serve, no Vercel lock-in.
@@ -111,13 +112,13 @@ auditable, tiny, dependency-free output.
 
 denext ships its own small React-equivalent instead of React + ReactDOM + a
 framework runtime, so the JavaScript a browser downloads is **close to an order
-of magnitude smaller** (≈8–9×) than a comparable Next.js app. Measured on the
+of magnitude smaller** (≈7×) than a comparable Next.js app. Measured on the
 example app (`examples/hello`, production build, gzipped):
 
 | What a browser downloads            | denext                             | React + ReactDOM alone | Next.js 16 (First Load JS)  |
 | ----------------------------------- | ---------------------------------- | ---------------------- | --------------------------- |
-| **First page load**                 | **~16 KB**                         | ~60 KB                 | ~137 KB                     |
-| **Client runtime baseline**         | **~15 KB** (shared, cached once)   | ~60 KB                 | ~137 KB (shared)            |
+| **First page load**                 | **~20 KB**                         | ~60 KB                 | ~137 KB                     |
+| **Client runtime baseline**         | **~19 KB** (shared, cached once)   | ~60 KB                 | ~137 KB (shared)            |
 | **Each navigation after the first** | **~0.6–1.1 KB** (route delta only) | —                      | route chunk (shared cached) |
 
 The client runtime is bundled into **one shared chunk** every route references,
@@ -600,7 +601,7 @@ points:
 | --------------------------------- | -------------------------------------------------------- |
 | `@denext/denext`                  | components, hooks, `renderToString`, `Link`, …           |
 | `@denext/denext/server`           | `serve`, `createApp`, middleware helpers, server types   |
-| `@denext/denext/client`           | `hydrateRoot`, `startClient`, navigation                 |
+| `@denext/denext/client`           | `hydrateRoot`, `createRoot`, hooks, navigation           |
 | `@denext/denext/jsx-runtime`      | the JSX runtime (`jsxImportSource` target)               |
 | `@denext/denext/cli`              | the `create`/`dev`/`build`/`start` CLI                   |
 | `@denext/denext/lint-plugin`      | the `deno lint` plugin                                   |
@@ -726,7 +727,7 @@ serve({
 denext's reconciler bails out of re-rendering a component whose props are
 shallow-equal and whose visible context is unchanged — context changes still
 reach deep consumers correctly. Use `memo(Component, areEqual?)` for an explicit
-custom comparator, and `useMemoCache` as a low-level stable-cache primitive.
+custom comparator, and `useMemoCache` (on `denext/compiler-runtime`) as the compiler's stable-cache primitive.
 
 The **experimental auto-memo compiler** (`experimental: { compiler: true }`, or
 `denext create --compiler`) goes further: a build-time pass lifts JSX component
@@ -804,7 +805,7 @@ import {
 import type { ApiContext, LayoutProps, Metadata, PageProps } from "denext/server";
 
 // Client runtime
-import { createRoot, hydrateRoot, startClient } from "denext/client";
+import { createRoot, hydrateRoot } from "denext/client";
 ```
 
 ### Pages, layouts, API
@@ -1066,8 +1067,8 @@ Each doc owns one job, so the same fact lives in exactly one canonical place:
   React surface (own reconciler, async SSR, soft-nav, Pages-Router-as-plugin) —
   design choices, not limitations.
 - [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) — the genuine React/Next
-  surface gaps, the bounded scope of denext's own experimental features, and the
-  honest React DevTools scope.
+  surface gaps, the bounded scope of denext's own capabilities, the post-2.0
+  deferrals, and the honest React DevTools scope.
 - [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md) — the canonical,
   threat-by-threat security posture vs the ecosystem's CVEs.
 - [CONTRIBUTING.md](./CONTRIBUTING.md) — the check/lint gate, conventions, and

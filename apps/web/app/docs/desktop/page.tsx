@@ -3,7 +3,7 @@ import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
 export const metadata = {
   title: "Desktop apps",
   description:
-    "Run, build, and package a denext app as a native desktop app with the denext desktop command: a signed/notarized macOS .app, or a Linux bundle (.tar.gz / AppImage). Windows packaging is not yet wired.",
+    "Run, build, and package a denext app as a native desktop app with the denext desktop command: a signed/notarized macOS .app, a Linux bundle (.tar.gz / AppImage), or a Windows zip (Authenticode-signed when a certificate is configured).",
 };
 
 export default function Desktop() {
@@ -11,7 +11,7 @@ export default function Desktop() {
     <DocsShell
       active="desktop"
       title="Desktop apps"
-      lead="denext exports a self-contained static app, and deno desktop wraps it in a native window and compiles it to a single binary. The denext desktop verb drives it — run to open a dev window, build to export, and package to produce a distributable bundle: a macOS .app (code-signed and, with a Developer ID identity and notarytool credentials, notarized + stapled) or a Linux bundle (.tar.gz, plus an AppImage when appimagetool is present). Windows can run unpackaged with denext desktop run, but packaging it is not yet scaffolded."
+      lead="denext exports a self-contained static app, and deno desktop wraps it in a native window and compiles it to a single binary. The denext desktop verb drives it — run to open a dev window, build to export, and package to produce a distributable bundle: a macOS .app (code-signed and, with a Developer ID identity and notarytool credentials, notarized + stapled) or a Linux bundle (.tar.gz, plus an AppImage when appimagetool is present). Windows packages to a zip via denext desktop package --target-os windows (Authenticode-signed when DENEXT_WINDOWS_CERT is set)."
     >
       <h2>The desktop target</h2>
       <p>
@@ -238,10 +238,13 @@ deno task desktop:package:linux --arch both --appimage`}
         <code>--target-os macos</code>, the default on a Mac) must run on a macOS host — even when
         cross-compiling to the other Mac architecture. Linux bundles cross-build from any OS (<code>
           --target-os linux
-        </code>). <strong>Windows packaging is not yet scaffolded</strong> —{" "}
-        <code>deno desktop</code> can build a Windows binary via its own <code>--target</code>{" "}
-        flag and you can run it unpackaged with{" "}
-        <code>denext desktop run</code>, but there is no packaging script for it yet.
+        </code>). Windows packages from any OS with{" "}
+        <code>denext desktop package --target-os windows</code> (the scaffolded{" "}
+        <code>scripts/package-windows.ts</code> / <code>desktop:package:windows</code>{" "}
+        task): a zip per architecture, Authenticode-signed when <code>DENEXT_WINDOWS_CERT</code> (+
+        {" "}
+        <code>DENEXT_WINDOWS_CERT_PASSWORD</code>, optional{" "}
+        <code>DENEXT_SIGN_TIMESTAMP_URL</code>) is set.
       </Callout>
     </DocsShell>
   );

@@ -55,7 +55,7 @@ export class FakeNode {
   }
 }
 
-export class FakeText extends FakeNode {
+class FakeText extends FakeNode {
   override nodeType = 3;
   nodeValue: string;
   constructor(value: string) {
@@ -73,7 +73,7 @@ export interface FakeEvent {
 }
 
 /** A minimal CSSStyleDeclaration: enough for per-property inline-style patching. */
-export class FakeCSSStyleDeclaration {
+class FakeCSSStyleDeclaration {
   private props = new Map<string, string>();
   // Mirror browser serialization semantics: `getAttribute("style")`/`outerHTML`
   // return the RAW string when style was last set via `setAttribute("style", …)`
@@ -229,10 +229,26 @@ export class FakeDocument {
   readonly documentElement: FakeElement;
   private docListeners = new Map<string, Set<(event: FakeEvent) => void>>();
 
+  /** The document head (a client runtime appends `<link>`s here). */
+  readonly head: FakeElement;
+
   constructor() {
     this.documentElement = this.createElement("html");
+    this.head = this.createElement("head");
     this.body = this.createElement("body");
+    this.documentElement.appendChild(this.head);
     this.documentElement.appendChild(this.body);
+  }
+
+  /** Only what the client runtimes ask for: `link[rel="stylesheet"]` and prefetch anchors. */
+  querySelectorAll(selector: string): FakeElement[] {
+    if (selector === 'link[rel="stylesheet"]') {
+      return this.head.childNodes.filter((c): c is FakeElement =>
+        c instanceof FakeElement && c.tagName === "LINK" &&
+        ((c as { rel?: string }).rel ?? c.getAttribute("rel")) === "stylesheet"
+      );
+    }
+    return [];
   }
 
   createElement(tag: string): FakeElement {

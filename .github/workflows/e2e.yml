@@ -33,7 +33,7 @@ jobs:
       - name: Set up Deno
         uses: denoland/setup-deno@v2
         with:
-          deno-version: "2.9.5" # match ci.yml
+          deno-version: "2.9.6" # match ci.yml
 
       - name: Set up Node
         # Some e2e tests (tests/e2e/next-compat-*) install and bundle real npm React

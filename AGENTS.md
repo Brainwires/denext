@@ -16,12 +16,12 @@ emit correct denext instead of Next.js.
    **`deno.json`**. Dependencies are URL/`jsr:`/`npm:` imports in `deno.json`'s
    `imports` map. Run it with `deno task dev` / `deno task build` /
    `deno task start`. Migrating a Next app? `denext migrate` does it in one pass
-   — writes the `deno.json` and rewrites `next/*`+`react` imports to native
-   `denext` (`--drop-in` to keep the compat alias instead). A **`pages/` (Pages
+   — writes the `deno.json` alias map so `next/*`+`react` resolve to denext with
+   your source unchanged (add `--codemod` to rewrite imports to native `denext`). A **`pages/` (Pages
    Router) app** is migrated too: migrate wires the `@denext/pages-router`
    plugin (`denext.config.ts` + `deno.json`) and rewrites
    `next/router`/`next/head`/`next/link` to the plugin's compat modules.
-3. **File conventions are identical to Next App Router:** `app/page.tsx`,
+3. **File conventions are the same as Next App Router:** `app/page.tsx`,
    `app/layout.tsx`, `app/loading.tsx`, `app/error.tsx`, `app/not-found.tsx`,
    `app/api/x/route.ts`, `app/blog/[slug]/page.tsx`, `middleware.ts`. Server
    Components by default; add `"use client"` at the top of a file for
@@ -39,15 +39,15 @@ emit correct denext instead of Next.js.
 
 ## Next.js → denext import map
 
-| Next.js                                                | denext                                                                                                                               |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `import { useState, useEffect, ... } from "react"`     | `from "denext"`                                                                                                                      |
-| `import { cookies, headers } from "next/headers"`      | `import { cookies, headers } from "denext/server"`                                                                                   |
-| `import { redirect, notFound } from "next/navigation"` | `from "denext/server"` (server); on the client, `redirect` from `denext` (or `useRouter().push`) and `notFound` from `denext/client` |
-| `import Link from "next/link"`                         | `import { Link } from "denext"` (or `denext/client`)                                                                                 |
-| `import Image from "next/image"`                       | `import { Image } from "denext"`                                                                                                     |
-| `unstable_cache`, `revalidatePath`, `revalidateTag`    | `from "denext/server"`                                                                                                               |
-| Route handler `export async function GET(req) {}`      | identical — returns a `Response`                                                                                                     |
+| Next.js                                                | denext                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `import { useState, useEffect, ... } from "react"`     | `from "denext"`                                                                                                                                                                                                                                                                                                                                                       |
+| `import { cookies, headers } from "next/headers"`      | `import { cookies, headers } from "denext/server"`                                                                                                                                                                                                                                                                                                                    |
+| `import { redirect, notFound } from "next/navigation"` | `from "denext"` — `redirect`, `permanentRedirect`, `notFound`, `forbidden`, `unauthorized`, `RedirectType` work in Server and Client Components alike (`denext migrate` rewrites `next/navigation` to `denext`). NOT `denext/server`: its `redirect()` is the **middleware** helper that RETURNS a `Response` (`return redirect("/login", 307)` from `middleware.ts`) |
+| `import Link from "next/link"`                         | `import { Link } from "denext"` (or `denext/client`)                                                                                                                                                                                                                                                                                                                  |
+| `import Image from "next/image"`                       | `import { Image } from "denext"`                                                                                                                                                                                                                                                                                                                                      |
+| `unstable_cache`, `revalidatePath`, `revalidateTag`    | `from "denext/server"`                                                                                                                                                                                                                                                                                                                                                |
+| Route handler `export async function GET(req) {}`      | identical — returns a `Response`                                                                                                                                                                                                                                                                                                                                      |
 
 ## Common tasks
 
@@ -109,6 +109,40 @@ const api = createApiClient<ApiSchema>();
 const user = await api("/api/user/[id]", "GET", { params: { id: "1" } }); // user is typed
 ```
 
+**A typed Server Action (the mutation side, also type-checked):** `defineAction` validates
+`FormData` into a typed input (a parser, or a Zod/Valibot/any Standard Schema) and its `Out`
+flows into `useActionState`.
+
+```ts
+// app/actions.ts
+"use server";
+import { ActionValidationError, defineAction } from "denext/server";
+export const createPost = defineAction({
+  input: (f) => ({ title: String(f.title ?? "").trim() }), // typed input: { title: string }
+  handler: async ({ title }) => {
+    if (!title) throw new ActionValidationError("bad", { title: "Title is required" });
+    return { id: await db.posts.insert({ title }) }; // Out inferred: { id: string }
+  },
+});
+```
+
+```tsx
+// app/new-post.tsx
+"use client";
+import { idleActionState, useActionState } from "denext";
+import { createPost } from "./actions.ts";
+export function NewPost() {
+  const [state, action] = useActionState(createPost, idleActionState<{ id: string }>());
+  return (
+    <form action={action}>
+      <input name="title" />
+      {!state.ok && state.fieldErrors?.title} {/* typed */}
+      {state.ok && `created ${state.data.id}`} {/* typed */}
+    </form>
+  );
+}
+```
+
 **Reading cookies / a session (auth):**
 
 ```ts
@@ -166,7 +200,8 @@ if (!report.ok) throw new Error(formatReport(report)); // or run `denext doctor`
 ```
 
 **Config:** `denext.config.ts` exports `{ ... }` (redirects, rewrites, headers,
-i18n, images, `plugins`, `experimental`, `tailwind`, `csp`, `compatibilityMode`;
+i18n, images, `cacheComponents`, `streaming`, `live`, `plugins`, `experimental`,
+`tailwind`, `csp`, `compatibilityMode`;
 `mode: "spa"` + `spa: { entry, … }` for SPA mode). Not `next.config.js`.
 
 **Writing a plugin:** a `DenextPlugin` (`{ name, setup(ctx) }` from
@@ -181,8 +216,9 @@ it as `plugins: [myPlugin()]`. See
 
 - **Pages Router** is not built in — it's the opt-in `@denext/pages-router`
   plugin (`plugins: [pagesRouter()]` in `denext.config.ts`).
-- **Cache Components / PPR** are behind
-  `experimental: { cacheComponents: true }`.
+- **Cache Components / PPR** are a stable **opt-in**: `cacheComponents: true`
+  (top-level) in `denext.config.ts`. Not `experimental.cacheComponents` — that
+  legacy key still works but dev-warns.
 - **Zero runtime npm**: the framework itself pulls no npm; your app may still
   use `npm:`/`jsr:` libraries.
 - Run checks with `deno task check` (fmt `--check` + lint + tests; type-checking
@@ -209,34 +245,49 @@ denext ships tooling so agents get it right the first time:
   `denext_dev_logs` (the RUNNING dev server's recent events — server errors, server +
   browser console, completed requests, and HMR — so you can see what actually happened at
   runtime), `denext_render` (render a route or component server-side, no browser, and get
-  the HTML/error — SEE what your edit produces), and `denext_route_map` (the full render
-  tree at a path: layouts, boundaries, server/client split). Resources: `denext://guide`,
-  `denext://import-map`.
+  the HTML/error — SEE what your edit produces), `denext_route_map` (the full render
+  tree at a path: layouts, boundaries, server/client split), `denext_search_docs` (BM25
+  over the denext docs), and the codebase tools `denext_index_codebase` /
+  `denext_query_codebase` / `denext_find_definition` / `denext_find_references`.
+  `denext mcp --disable rag,docs` hides tool groups or individual tools to trim an
+  agent's context. Resources: `denext://guide`, `denext://import-map`.
 - **`llms.txt`** — [denext.dev/llms.txt](https://denext.dev/llms.txt) (concise) and
   [llms-full.txt](https://denext.dev/llms-full.txt) (this guide + an API summary).
 
 ---
 
-## Releasing: every tag gets a PR to `main`
+## Releasing: `main` always equals the published release
 
 All work lands on `development`, and releases are cut there with
 `deno task release <version>` (which tags `v<version>` and pushes). Active
 `development` runs ahead of `main` by design.
 
-**Whenever a release tag is made, open a pull request from `development` to
-`main`** so `main` catches up to the tagged release. This is a hard rule — a tag
-without a corresponding `development → main` PR is an incomplete release. Use
-`gh pr create --base main --head development` (this is the same flow as PRs
-#5–#10). The PR may batch several rc tags since the previous merge; that's fine.
-Merging it is a maintainer decision — open the PR regardless.
+**`main` must always be exactly what is published.** So **cutting a version is not
+done until `development` is merged into `main`** — the release flow is: tag
+`v<version>` → verify the JSR publish succeeded → open a `development → main` PR
+(`gh pr create --base main --head development`, same flow as PRs #5–#11) → **merge
+it** (`gh pr merge <n> --merge`). "Cut a version" _implies_ this merge; do it as part
+of the release, not as a separate maintainer step. A tag without `main` merged to it
+is an incomplete release. The PR may batch several rc tags since the previous merge;
+that's fine.
 
 ---
+
+## Before committing: measured coverage first
+
+Run `deno task coverage:fallow` before `git commit` whenever `coverage/coverage-final.json`
+is missing (it is git-ignored, so a fresh clone or a disk sweep removes it) or when your change
+touches a function with cyclomatic complexity ≥ 10. The fallow gate below scores CRAP with that
+measured map; without it fallow estimates coverage from the import graph and can block a commit
+on internals that tests reach only transitively (the fiber reconciler, the request pipeline).
+The task runs the unit suite (~10 min) and needs no other setup. See
+[CONTRIBUTING.md](./CONTRIBUTING.md) → _The Fallow gate_.
 
 <!-- fallow:setup-hooks:start -->
 
 ## Fallow local gate
 
-Before any `git commit` or `git push`, run `fallow audit --format json --quiet --explain --gate-marker agent`. If the verdict is `fail`, fix the reported findings before retrying. Treat JSON runtime errors like `{ "error": true, ... }` as non-blocking.
+Before any `git commit` or `git push`, run `fallow audit --format json --quiet --explain --gate-marker agent` (add `--coverage coverage/coverage-final.json` when that file exists — `deno task coverage:fallow` generates it, and it turns fallow's estimated CRAP coverage into measured coverage; see CONTRIBUTING.md). If the verdict is `fail`, fix the reported findings before retrying. Treat JSON runtime errors like `{ "error": true, ... }` as non-blocking.
 
 Audit defaults to `gate=new-only`: only findings introduced by the current changeset affect the verdict. Inherited findings on touched files are reported under `attribution` and annotated with `introduced: false`, but do not block the commit. Set `[audit] gate = "all"` in `fallow.toml` to gate every finding in changed files.
 

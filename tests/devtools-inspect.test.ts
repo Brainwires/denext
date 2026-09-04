@@ -587,34 +587,53 @@ Deno.test("inspector: badges tag memo components and context providers", () => {
   });
 });
 
+function FlameLeaf(): VNode {
+  const [n] = useState(0);
+  return h("div", { "data-n": String(n) });
+}
+function FlameApp(): VNode {
+  return h("section", null, h(FlameLeaf, null));
+}
+
+/** Under the profiler: mount FlameApp (commit 1), then update only FlameLeaf's state (commit 2). */
+function profileMountThenUpdate(): number {
+  enableRenderReasons();
+  startProfiling();
+  let leafId = -1;
+  let stateIdx = -1;
+  try {
+    const { doc, container } = makeDom();
+    setDocument(asDoc(doc));
+    createRoot(asEl(container)).render(h(FlameApp, null));
+    flushSync(); // commit 1 (mount)
+
+    const leaf = find(getInspectorTree(), "FlameLeaf")!;
+    leafId = leaf.id;
+    stateIdx = leaf.hooks.find((hk) => hk.kind === "state")!.index;
+    setHookState(leafId, stateIdx, 5);
+    flushSync(); // commit 2 (update — only FlameLeaf re-renders)
+  } finally {
+    stopProfiling();
+    disableRenderReasons();
+  }
+  return stateIdx;
+}
+
+/** Every node below the (synthetic) commit root, in pre-order. */
+function flattenFlame(tree: FlameNode): FlameNode[] {
+  const flat: FlameNode[] = [];
+  (function walk(nd: FlameNode) {
+    for (const c of nd.children) {
+      flat.push(c);
+      walk(c);
+    }
+  })(tree);
+  return flat;
+}
+
 Deno.test("inspector: profiler captures per-commit flamegraph samples", () => {
   withDev(true, () => {
-    function FlameLeaf(): VNode {
-      const [n] = useState(0);
-      return h("div", { "data-n": String(n) });
-    }
-    function FlameApp(): VNode {
-      return h("section", null, h(FlameLeaf, null));
-    }
-    enableRenderReasons();
-    startProfiling();
-    let leafId = -1;
-    let stateIdx = -1;
-    try {
-      const { doc, container } = makeDom();
-      setDocument(asDoc(doc));
-      createRoot(asEl(container)).render(h(FlameApp, null));
-      flushSync(); // commit 1 (mount)
-
-      const leaf = find(getInspectorTree(), "FlameLeaf")!;
-      leafId = leaf.id;
-      stateIdx = leaf.hooks.find((hk) => hk.kind === "state")!.index;
-      setHookState(leafId, stateIdx, 5);
-      flushSync(); // commit 2 (update — only FlameLeaf re-renders)
-    } finally {
-      stopProfiling();
-      disableRenderReasons();
-    }
+    const stateIdx = profileMountThenUpdate();
 
     const commits = getCommits();
     assert(commits.length >= 2, `expected >=2 commits, got ${commits.length}`);
@@ -631,13 +650,7 @@ Deno.test("inspector: profiler captures per-commit flamegraph samples", () => {
     const tree = getCommitTree(update.index)!;
     assert(tree, "commit tree present");
     assertEquals(tree.id, -1); // synthetic (commit) root
-    const flat: FlameNode[] = [];
-    (function walk(nd: FlameNode) {
-      for (const c of nd.children) {
-        flat.push(c);
-        walk(c);
-      }
-    })(tree);
+    const flat = flattenFlame(tree);
     const app = flat.find((n) => n.name === "FlameApp")!;
     const leafNode = flat.find((n) => n.name === "FlameLeaf")!;
     assert(app && leafNode, "both components appear in the flame tree");

@@ -34,56 +34,72 @@ export function readVersions(workDir: string): Record<string, string> {
 
 /** Reduce a TS call signature to the structural fields parity checks. */
 function callSig(sig: ts.Signature): CallSig {
-  const params = sig.getParameters();
-  let requiredArity = 0;
-  let restParam = false;
-  let stillRequired = true;
-  for (const p of params) {
-    const decl = p.valueDeclaration as ts.ParameterDeclaration | undefined;
-    const optional = !!decl?.questionToken || !!decl?.initializer;
-    const rest = !!decl?.dotDotDotToken;
-    if (rest) restParam = true;
-    if (stillRequired && !optional && !rest) requiredArity++;
-    else stillRequired = false;
-  }
+  const params = sig.getParameters().map(paramShape);
+  const restParam = params.some((p) => p.rest);
+  // Required arity: the leading run of non-optional, non-rest params.
+  const firstOptional = params.findIndex((p) => p.optional || p.rest);
+  const requiredArity = firstOptional === -1 ? params.length : firstOptional;
   return { arity: params.length, requiredArity, restParam };
+}
+
+function paramShape(p: ts.Symbol): { optional: boolean; rest: boolean } {
+  const decl = p.valueDeclaration as ts.ParameterDeclaration | undefined;
+  if (!decl) return { optional: false, rest: false };
+  return { optional: !!decl.questionToken || !!decl.initializer, rest: !!decl.dotDotDotToken };
+}
+
+const TYPE_FLAGS = [
+  ts.SymbolFlags.Type,
+  ts.SymbolFlags.Interface,
+  ts.SymbolFlags.TypeAlias,
+  ts.SymbolFlags.Namespace,
+];
+
+/** The structural kind, by symbol flags (a callable is a "function" regardless). */
+const KIND_FLAGS: Array<[number, SurfaceSymbol["kind"]]> = [
+  [ts.SymbolFlags.Interface, "interface"],
+  [ts.SymbolFlags.TypeAlias, "typeAlias"],
+  [ts.SymbolFlags.Namespace, "namespace"],
+  [ts.SymbolFlags.Class, "class"],
+];
+
+function kindOf(flags: number, callable: boolean): SurfaceSymbol["kind"] {
+  if (callable) return "function";
+  return KIND_FLAGS.find(([flag]) => flags & flag)?.[1] ?? "value";
+}
+
+/**
+ * Members only for object/namespace-ish exports (no call signatures, has props) — that
+ * captures Children, MetadataRoute, default namespaces, and skips the huge member lists of
+ * component/function types the diff would never use anyway.
+ */
+function membersOf(type: ts.Type, callable: boolean): string[] | undefined {
+  if (callable) return undefined;
+  const props = type.getProperties();
+  return props.length ? props.map((p) => p.getName()).sort() : undefined;
+}
+
+/** The first call signature's type-parameter count; undefined for a non-callable. */
+function typeParamCountOf(cs: readonly ts.Signature[]): number | undefined {
+  if (cs.length === 0) return undefined;
+  return cs[0].getTypeParameters()?.length ?? 0;
 }
 
 /** Normalize one exported member symbol. */
 function normalize(checker: ts.TypeChecker, sym: ts.Symbol): SurfaceSymbol {
   const flags = sym.getFlags();
-  const isValue = !!(flags & ts.SymbolFlags.Value) || !!(flags & ts.SymbolFlags.Alias);
-  const isType = !!(flags & ts.SymbolFlags.Type) ||
-    !!(flags & ts.SymbolFlags.Interface) ||
-    !!(flags & ts.SymbolFlags.TypeAlias) ||
-    !!(flags & ts.SymbolFlags.Namespace);
   const type = checker.getTypeOfSymbol(sym);
   const cs = type.getCallSignatures();
-  const callSignatures = cs.length ? cs.map(callSig) : undefined;
-  const typeParamCount = cs.length ? (cs[0].getTypeParameters()?.length ?? 0) : undefined;
-
-  // Members only for object/namespace-ish exports (no call signatures, has props) —
-  // that captures Children, MetadataRoute, default namespaces, and skips the huge
-  // member lists of component/function types the diff would never use anyway.
-  let members: string[] | undefined;
-  if (!cs.length) {
-    const props = type.getProperties();
-    if (props.length) members = props.map((p) => p.getName()).sort();
-  }
-
-  const kind = cs.length
-    ? "function"
-    : (flags & ts.SymbolFlags.Interface
-      ? "interface"
-      : flags & ts.SymbolFlags.TypeAlias
-      ? "typeAlias"
-      : flags & ts.SymbolFlags.Namespace
-      ? "namespace"
-      : flags & ts.SymbolFlags.Class
-      ? "class"
-      : "value");
-
-  return { name: sym.getName(), kind, isValue, isType, callSignatures, typeParamCount, members };
+  const callable = cs.length > 0;
+  return {
+    name: sym.getName(),
+    kind: kindOf(flags, callable),
+    isValue: !!(flags & (ts.SymbolFlags.Value | ts.SymbolFlags.Alias)),
+    isType: TYPE_FLAGS.some((f) => flags & f),
+    callSignatures: callable ? cs.map(callSig) : undefined,
+    typeParamCount: typeParamCountOf(cs),
+    members: membersOf(type, callable),
+  };
 }
 
 /**
@@ -104,59 +120,70 @@ export function extractRealSurfaces(workDir: string): Surface[] {
     types: [],
   };
   const host = ts.createCompilerHost(compilerOptions);
-
   // Pre-resolve each specifier so an upstream-removed subpath (e.g.
   // react-dom/test-utils on React 19) becomes `resolved:false` instead of a crash.
   const containing = `${workDir}/__parity_entry__.ts`;
-  const resolvedSpecs = CATALOG.map((e) => {
-    const r = ts.resolveModuleName(e.real, containing, compilerOptions, host);
-    return { entry: e, ok: !!r.resolvedModule };
-  });
-
-  const importable = resolvedSpecs.filter((r) => r.ok);
-  const entrySource = importable
-    .map((r, i) => `import * as N${i} from ${JSON.stringify(r.entry.real)};`)
-    .join("\n") +
-    "\nexport const __ns = [" + importable.map((_, i) => `N${i}`).join(", ") + "];\n";
-  Deno.writeTextFileSync(containing, entrySource);
-
+  const resolvedSpecs = CATALOG.map((e) => ({
+    entry: e,
+    ok: !!ts.resolveModuleName(e.real, containing, compilerOptions, host).resolvedModule,
+  }));
+  const importable = resolvedSpecs.filter((r) => r.ok).map((r) => r.entry.real);
+  Deno.writeTextFileSync(containing, entrySource(importable));
   const program = ts.createProgram([containing], compilerOptions, host);
   const checker = program.getTypeChecker();
-  const sf = program.getSourceFile(containing)!;
-
-  // Map each import namespace back to its specifier by reading the import decls.
-  const nsTypes = new Map<string, ts.Type>();
-  let idx = 0;
-  for (const stmt of sf.statements) {
-    if (
-      ts.isImportDeclaration(stmt) && stmt.importClause?.namedBindings &&
-      ts.isNamespaceImport(stmt.importClause.namedBindings)
-    ) {
-      const local = stmt.importClause.namedBindings.name;
-      const nsSym = checker.getSymbolAtLocation(local);
-      if (nsSym) nsTypes.set(importable[idx].entry.real, checker.getTypeOfSymbol(nsSym));
-      idx++;
-    }
-  }
-
-  const surfaces: Surface[] = [];
-  for (const { entry, ok } of resolvedSpecs) {
-    if (!ok) {
-      surfaces.push({ specifier: entry.specifier, resolved: false, symbols: {} });
-      continue;
-    }
-    const type = nsTypes.get(entry.real);
-    const symbols: Record<string, SurfaceSymbol> = {};
-    for (const prop of type?.getProperties() ?? []) {
-      const name = prop.getName();
-      if (name.startsWith("__")) continue;
-      symbols[name] = normalize(checker, prop);
-    }
-    surfaces.push({ specifier: entry.specifier, resolved: true, symbols });
-  }
-
+  const nsTypes = namespaceTypes(program.getSourceFile(containing)!, checker, importable);
+  const surfaces = resolvedSpecs.map(({ entry, ok }) =>
+    ok
+      ? {
+        specifier: entry.specifier,
+        resolved: true,
+        symbols: surfaceSymbols(checker, nsTypes.get(entry.real)),
+      }
+      : { specifier: entry.specifier, resolved: false, symbols: {} }
+  );
   try {
     Deno.removeSync(containing);
   } catch { /* best effort */ }
   return surfaces;
+}
+
+/** `import * as N<i> from "<real>"` per importable specifier, exporting them all. */
+function entrySource(importable: string[]): string {
+  return importable.map((real, i) => `import * as N${i} from ${JSON.stringify(real)};`).join("\n") +
+    "\nexport const __ns = [" + importable.map((_, i) => `N${i}`).join(", ") + "];\n";
+}
+
+/** Map each import namespace back to its specifier by reading the import decls in order. */
+function namespaceTypes(
+  sf: ts.SourceFile,
+  checker: ts.TypeChecker,
+  importable: string[],
+): Map<string, ts.Type> {
+  const nsTypes = new Map<string, ts.Type>();
+  const names = sf.statements.filter(ts.isImportDeclaration).map(namespaceBinding)
+    .filter((n) => n !== null);
+  names.forEach((name, idx) => {
+    const nsSym = checker.getSymbolAtLocation(name);
+    if (nsSym) nsTypes.set(importable[idx], checker.getTypeOfSymbol(nsSym));
+  });
+  return nsTypes;
+}
+
+/** The local name of an `import * as N from …` declaration, or null for a named import. */
+function namespaceBinding(decl: ts.ImportDeclaration): ts.Identifier | null {
+  const bindings = decl.importClause?.namedBindings;
+  return bindings && ts.isNamespaceImport(bindings) ? bindings.name : null;
+}
+
+/** Every public property of a namespace type, normalized. */
+function surfaceSymbols(
+  checker: ts.TypeChecker,
+  type: ts.Type | undefined,
+): Record<string, SurfaceSymbol> {
+  const symbols: Record<string, SurfaceSymbol> = {};
+  for (const prop of type?.getProperties() ?? []) {
+    const name = prop.getName();
+    if (!name.startsWith("__")) symbols[name] = normalize(checker, prop);
+  }
+  return symbols;
 }

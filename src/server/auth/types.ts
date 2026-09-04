@@ -5,6 +5,9 @@
  * @module
  */
 
+import type { RateLimitOptions } from "./rate-limit.ts";
+import type { SessionStore } from "./session-store.ts";
+
 /** A normalized user profile — the non-sensitive identity denext stores in the session. */
 export interface AuthUser {
   /** Stable provider-scoped user id. */
@@ -32,6 +35,12 @@ export interface AuthSession {
   provider: string;
   /** Expiry, epoch seconds. */
   expiresAt: number;
+  /**
+   * The server-side session id — present only when `denextAuth` runs with a
+   * `sessionStore`. Pass it to `revokeSession` to end this one session (e.g. "sign out
+   * this device"); stateless sessions have no id.
+   */
+  sessionId?: string;
 }
 
 /** Raw inputs a provider maps into an {@link AuthUser}. */
@@ -98,8 +107,10 @@ export interface CredentialsProvider {
   type: "credentials";
   /**
    * Validate submitted credentials and return the user, or `null` to reject.
-   * MUST NOT leak whether an account exists, use a constant-time password compare,
-   * and should be rate-limited by the app.
+   * MUST NOT leak whether an account exists (return `null` for an unknown account and
+   * a wrong password alike) and must compare passwords in constant time — store hashes
+   * from `hashPassword` and check with `verifyPassword` (both from `denext/server`).
+   * Failed attempts are rate-limited by the framework (see `AuthConfig.rateLimit`).
    */
   authorize: (
     credentials: Record<string, string>,
@@ -126,13 +137,23 @@ export interface AuthCallbacks {
 export interface AuthConfig {
   /** Configured providers. */
   providers: AuthProvider[];
-  /** HMAC signing secret(s) for the session cookie (rotate with an array). */
+  /**
+   * HMAC signing secret(s) for the session cookie (rotate with an array). At least 32
+   * chars: shorter warns in development and makes `denextAuth()` throw in production.
+   */
   secret: string | string[];
   /**
    * The app's canonical origin (e.g. `https://example.com`). REQUIRED in production
    * so the OAuth `redirect_uri` is byte-stable and immune to Host-header injection.
    */
   canonicalOrigin?: string;
+  /**
+   * The app runs behind a proxy/load balancer that sets `x-forwarded-for`, so the
+   * credentials rate limiter may key on that header's LAST hop (the one the proxy
+   * appended). Off by default — without a proxy the header is attacker-controlled, and
+   * the limiter keys on the socket peer instead. Mirrors the server-level option.
+   */
+  trustForwardedHeaders?: boolean;
   /** Optional sign-in/session callbacks. */
   callbacks?: AuthCallbacks;
   /** Session lifetime in seconds (default 7 days). */
@@ -144,4 +165,20 @@ export interface AuthConfig {
    * SSRF localhost block for token/userinfo/jwks). Never enable in production.
    */
   dangerouslyAllowInsecureProviders?: boolean;
+  /**
+   * Brute-force protection for the Credentials endpoint. ON by default (5 failed
+   * attempts per client IP + identifier per 15 minutes → a generic `429`); tune the
+   * limits, key, or store here, or pass `false` to disable (e.g. you rate-limit at the
+   * edge). The default store is per-process — pass a shared `store` for multi-replica.
+   */
+  rateLimit?: RateLimitOptions | false;
+  /**
+   * Opt in to **server-side, revocable sessions**. When set, the cookie carries only a
+   * random session id and the payload lives in the store, so `revokeSession` /
+   * `revokeAllSessions` end sessions immediately (a stolen cookie, a password change).
+   * When unset (the default) sessions are stateless signed cookies — zero-config and
+   * multi-replica-safe, but only expiry can end them. See `inMemorySessionStore` /
+   * `sqliteSessionStore`, and note a per-process store isn't shared across replicas.
+   */
+  sessionStore?: SessionStore;
 }

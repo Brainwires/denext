@@ -16,7 +16,7 @@
 
 import { readPackageFile } from "./package-file.ts";
 import { IMPORT_RULES } from "./next-denext-map.ts";
-import { runTool, TOOLS } from "./tools.ts";
+import { runTool, type Tool, TOOLS } from "./tools.ts";
 
 /** The MCP protocol revision this server implements. */
 const PROTOCOL_VERSION = "2024-11-05";
@@ -40,7 +40,7 @@ export interface JsonRpcResponse {
 }
 
 /** The MCP resources this server exposes (documentation an agent can ground on). */
-const RESOURCES = [
+export const RESOURCES = [
   {
     uri: "denext://guide",
     name: "denext authoring guide (for AI agents)",
@@ -98,8 +98,8 @@ function rpcError(
 }
 
 /** The tool descriptors for `tools/list` (name/description/schema only). */
-function toolList() {
-  return TOOLS.map((t) => ({
+function toolList(tools: readonly Tool[]) {
+  return tools.map((t) => ({
     name: t.name,
     description: t.description,
     inputSchema: t.inputSchema,
@@ -110,9 +110,15 @@ function toolList() {
  * Handle one parsed JSON-RPC message and produce its response.
  *
  * @param msg The parsed request or notification.
+ * @param tools The active tool set — `tools/list` advertises exactly these and `tools/call`
+ *   resolves against them, so a tool disabled via `--disable` is neither listed nor callable.
+ *   Defaults to every registered tool.
  * @returns The response to write, or `null` for a notification (no reply).
  */
-export async function dispatch(msg: JsonRpcRequest): Promise<JsonRpcResponse | null> {
+export async function dispatch(
+  msg: JsonRpcRequest,
+  tools: readonly Tool[] = TOOLS,
+): Promise<JsonRpcResponse | null> {
   const id = msg.id ?? null;
   // Notifications (no id, or the initialized notice) get no response.
   if (msg.method.startsWith("notifications/")) return null;
@@ -131,10 +137,10 @@ export async function dispatch(msg: JsonRpcRequest): Promise<JsonRpcResponse | n
     case "ping":
       return { jsonrpc: "2.0", id, result: {} };
     case "tools/list":
-      return { jsonrpc: "2.0", id, result: { tools: toolList() } };
+      return { jsonrpc: "2.0", id, result: { tools: toolList(tools) } };
     case "tools/call": {
       const name = msg.params?.name as string;
-      const result = await runTool(name, msg.params?.arguments ?? {});
+      const result = await runTool(name, msg.params?.arguments ?? {}, tools);
       return { jsonrpc: "2.0", id, result };
     }
     case "resources/list":
@@ -155,21 +161,35 @@ export async function dispatch(msg: JsonRpcRequest): Promise<JsonRpcResponse | n
   }
 }
 
+/** Options for the stdio server: injectable byte streams (for tests) + the active tool set. */
+export interface StdioStreams {
+  /** Newline-delimited JSON-RPC input. Defaults to `Deno.stdin.readable`. */
+  input?: ReadableStream<Uint8Array>;
+  /** Sink for each encoded response line. Defaults to writing to `Deno.stdout`. */
+  output?: (bytes: Uint8Array) => unknown | Promise<unknown>;
+  /** The tools to expose (e.g. after `--disable` filtering). Defaults to every tool. */
+  tools?: readonly Tool[];
+}
+
 /**
  * Run the MCP server over stdio: read newline-delimited JSON-RPC from stdin, dispatch each
- * message, and write responses to stdout. Returns when stdin closes.
+ * message, and write responses to stdout. Returns when the input closes. The streams are
+ * injectable so the transport (framing, parse/internal errors, the OOM guard) is testable
+ * without a real stdio pipe; `tools` narrows the exposed tool set.
  */
-export async function runStdioServer(): Promise<void> {
+export async function runStdioServer(streams: StdioStreams = {}): Promise<void> {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
-  const write = (res: JsonRpcResponse) =>
-    Deno.stdout.write(encoder.encode(JSON.stringify(res) + "\n"));
+  const input = streams.input ?? Deno.stdin.readable;
+  const sink = streams.output ?? ((bytes: Uint8Array) => Deno.stdout.write(bytes));
+  const tools = streams.tools ?? TOOLS;
+  const write = (res: JsonRpcResponse) => sink(encoder.encode(JSON.stringify(res) + "\n"));
 
   // A single JSON-RPC message is small; cap the pending buffer so a client that streams a
   // huge payload with no newline can't grow it without bound (OOM guard).
   const MAX_LINE = 8 * 1024 * 1024;
   let buf = "";
-  for await (const chunk of Deno.stdin.readable) {
+  for await (const chunk of input) {
     buf += decoder.decode(chunk, { stream: true });
     let nl = buf.indexOf("\n");
     while (nl >= 0) {
@@ -177,7 +197,7 @@ export async function runStdioServer(): Promise<void> {
       buf = buf.slice(nl + 1);
       nl = buf.indexOf("\n");
       if (!line) continue;
-      await handleLine(line, write);
+      await handleLine(line, write, tools);
     }
     if (buf.length > MAX_LINE) {
       await write(rpcError(null, -32700, "message too large"));
@@ -186,10 +206,11 @@ export async function runStdioServer(): Promise<void> {
   }
 }
 
-/** Parse one stdin line as JSON-RPC, dispatch it, and write any response. */
+/** Parse one stdin line as JSON-RPC, dispatch it against `tools`, and write any response. */
 async function handleLine(
   line: string,
   write: (res: JsonRpcResponse) => unknown,
+  tools: readonly Tool[],
 ): Promise<void> {
   let msg: JsonRpcRequest;
   try {
@@ -199,7 +220,7 @@ async function handleLine(
     return;
   }
   try {
-    const res = await dispatch(msg);
+    const res = await dispatch(msg, tools);
     if (res) await write(res);
   } catch (e) {
     await write(rpcError(msg.id ?? null, -32603, `internal error: ${(e as Error).message}`));

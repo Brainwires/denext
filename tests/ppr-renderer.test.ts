@@ -13,6 +13,7 @@ import {
   spliceShellHoles,
 } from "../src/jsx/render-to-ppr.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
+import { serverAction } from "../src/runtime/server-action.ts";
 import { streamPprDocument } from "../src/server/document.ts";
 import { useId } from "../src/runtime/hooks.ts";
 import { withPrerender } from "../src/runtime/prerender.ts";
@@ -234,4 +235,65 @@ Deno.test("streaming: hole templates flush BEFORE the client entry (hydrate on c
   // Exactly one swap runtime; no per-hole inline script.
   assert(!out.includes("__dnxSwap"), "no per-hole swap script");
   assertEquals(out.split("MutationObserver").length - 1, 1, "one swap runtime");
+});
+
+/**
+ * Run `fn` with the dev flag set and `console.warn` captured; returns the warnings.
+ * Mirrors the capture helper in hydration-warnings.test.ts.
+ */
+async function captureDevWarnings(fn: () => Promise<void>): Promise<string[]> {
+  const devFlag = globalThis as { __denextDev?: boolean };
+  const warnings: string[] = [];
+  const original = console.warn;
+  console.warn = (...args: unknown[]) => warnings.push(args.join(" "));
+  devFlag.__denextDev = true;
+  try {
+    await fn();
+  } finally {
+    console.warn = original;
+    delete devFlag.__denextDev;
+  }
+  return warnings;
+}
+
+const streamHolesTo = (holes: ResumedHole[]) =>
+  new Response(streamPprDocument({
+    bodyHtml: `<div data-dnx-b="dnx0">fallback</div>`,
+    metadata: { title: "T" },
+    hydration: { params: {}, searchParams: "", pathname: "/" },
+    clientEntry: "/_client/index.js",
+    holes,
+  })).text();
+
+Deno.test("streaming (dev): a hole carrying an inline <style> warns — it is outside the streaming CSP", async () => {
+  // Documented bound (KNOWN-LIMITATIONS, Cache Components): the streaming CSP hashes
+  // only the buffered shell prefix, so an inline <style> that first appears inside a
+  // streamed hole is unhashed and blocked by the browser. Dev surfaces that loudly.
+  let out = "";
+  const warnings = await captureDevWarnings(async () => {
+    out = await streamHolesTo([
+      { id: "dnx0", html: Promise.resolve("<style>.x{color:red}</style><span>real</span>") },
+    ]);
+  });
+  assertEquals(warnings.length, 1);
+  assertStringIncludes(warnings[0], `streamed hole "dnx0" contains an inline <style>`);
+  assertStringIncludes(warnings[0], "not covered by the streaming CSP");
+  // The hole still streams (the warning is advisory, the bound is documented).
+  assertStringIncludes(out, `<template data-dnx-r="dnx0"`);
+  assertStringIncludes(out, "<span>real</span>");
+});
+
+Deno.test("streaming (dev): a hole without an inline <style> does not warn", async () => {
+  const warnings = await captureDevWarnings(async () => {
+    await streamHolesTo([{ id: "dnx0", html: Promise.resolve("<span>plain</span>") }]);
+  });
+  assertEquals(warnings, []);
+});
+
+Deno.test("PPR shell: a <form action={serverAction}> gets method=post like every other renderer", async () => {
+  const save = serverAction("fn_ppr_form", (fd: FormData) => fd.get("q"));
+  const result = await prerenderToShell(h("form", { action: save }, h("input", { name: "q" })));
+  assert(!result.dynamic);
+  assertStringIncludes(result.shell, `action="/_denext/action/fn_ppr_form"`);
+  assertStringIncludes(result.shell, `method="post"`);
 });

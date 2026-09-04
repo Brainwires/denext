@@ -14,7 +14,7 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 /** The preview cookie name (httpOnly; not `__Host-` so it works under a basePath). */
-export const PREVIEW_COOKIE = "__denext_preview";
+const PREVIEW_COOKIE = "__denext_preview";
 
 function toBase64Url(bytes: Uint8Array): string {
   let s = "";

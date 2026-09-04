@@ -13,7 +13,7 @@
 // across replicas and `revalidateTag`/`revalidatePath` reach every instance. Time is
 // read via Date.now(); a shared store assumes a shared wall clock.
 
-import { AsyncLocalStorage } from "node:async_hooks";
+import { type CacheLifeProfile, type CacheScope, cacheScopeStorage } from "./cache-scope.ts";
 import { currentContext } from "./request-context.ts";
 import { raceAbort } from "./abort.ts";
 import { withoutPostpone } from "../runtime/prerender.ts";
@@ -21,6 +21,12 @@ import type { CspSetting, SegmentConfig } from "./segment-config.ts";
 import type { FlightNode } from "../jsx/render-to-flight.ts";
 import type { IslandPayload } from "../jsx/render-to-html-flight.ts";
 import type { CacheConfig } from "./config.ts";
+
+// The cache-scope primitives now live in `./cache-scope.ts` (to break the cache ⇄
+// request-context cycle), but were exposed from here — re-export them so the
+// `denext/server` surface and existing import paths stay unchanged.
+export type { CacheLifeProfile, CacheScope };
+export { currentCacheScope } from "./cache-scope.ts";
 
 const now = (): number => Date.now();
 
@@ -150,129 +156,142 @@ function dataBytes(e: DataEntry): number {
 
 /** The default per-process, in-memory {@link CacheStore}. */
 export function inMemoryCacheStore(): CacheStore {
-  const data = new Map<string, DataEntry>();
-  const pages = new Map<string, CachedPage>();
-  let pageByteTotal = 0;
-  let dataByteTotal = 0;
-  let lastSweep = now();
+  return new InMemoryCache();
+}
 
-  // Delete a data entry, keeping the running byte total in sync.
-  function deleteData(key: string): void {
-    const e = data.get(key);
+/** What both in-memory tables need from an entry: hard expiry, SWR point, tags. */
+interface Expirable {
+  expiresAt: number;
+  staleAt?: number;
+  tags: string[];
+}
+
+const expired = (e: Expirable, t: number): boolean => e.expiresAt !== Infinity && e.expiresAt <= t;
+
+/**
+ * One table of the in-memory store: insertion-ordered (LRU via re-insert on read) and
+ * bounded by both an entry count and a byte budget, with the running byte total kept
+ * in sync on every mutation.
+ */
+class LruTable<E extends Expirable> {
+  readonly entries = new Map<string, E>();
+  #bytes = 0;
+  readonly #size: (e: E) => number;
+  readonly #maxCount: number;
+  readonly #maxBytes: number;
+
+  constructor(size: (e: E) => number, maxCount: number, maxBytes: number) {
+    this.#size = size;
+    this.#maxCount = maxCount;
+    this.#maxBytes = maxBytes;
+  }
+
+  // Delete an entry, keeping the running byte total in sync.
+  delete(key: string): void {
+    const e = this.entries.get(key);
     if (e) {
-      dataByteTotal -= dataBytes(e);
-      data.delete(key);
+      this.#bytes -= this.#size(e);
+      this.entries.delete(key);
     }
   }
 
-  // Return a fresh data entry (touching it for LRU) or undefined, evicting stale.
-  function freshData(key: string): DataEntry | undefined {
-    const e = data.get(key);
+  // Return a fresh entry (touching it for LRU) or undefined, evicting stale.
+  fresh(key: string): E | undefined {
+    const e = this.entries.get(key);
     if (!e) return undefined;
-    if (e.expiresAt !== Infinity && e.expiresAt <= now()) {
-      deleteData(key);
+    if (expired(e, now())) {
+      this.delete(key);
       return undefined;
     }
-    data.delete(key); // re-insert to mark most-recently-used
-    data.set(key, e);
+    this.entries.delete(key); // re-insert to mark most-recently-used
+    this.entries.set(key, e);
     return e;
   }
 
-  // Delete a page, keeping the running byte total in sync.
-  function deletePage(key: string): void {
-    const e = pages.get(key);
-    if (e) {
-      pageByteTotal -= pageBytes(e);
-      pages.delete(key);
+  set(key: string, entry: E): void {
+    const prev = this.entries.get(key);
+    if (prev) this.#bytes -= this.#size(prev);
+    this.entries.set(key, entry);
+    this.#bytes += this.#size(entry);
+    // Evict oldest until within both the count and byte budgets. Never evict the
+    // sole remaining entry (a single oversize value is still served).
+    while (
+      (this.entries.size > this.#maxCount || this.#bytes > this.#maxBytes) &&
+      this.entries.size > 1
+    ) {
+      const oldest = this.entries.keys().next().value;
+      if (oldest === undefined) break;
+      this.delete(oldest);
     }
   }
 
-  function freshPage(key: string): CachedPage | undefined {
-    const e = pages.get(key);
-    if (!e) return undefined;
-    if (e.expiresAt !== Infinity && e.expiresAt <= now()) {
-      deletePage(key);
-      return undefined;
-    }
-    pages.delete(key); // re-insert to mark most-recently-used
-    pages.set(key, e);
-    return e;
+  // Drop every entry hard-expired at `t`.
+  sweep(t: number): void {
+    for (const [k, e] of this.entries) if (expired(e, t)) this.delete(k);
   }
+
+  deleteByTag(tag: string): void {
+    for (const [k, e] of this.entries) if (e.tags.includes(tag)) this.delete(k);
+  }
+
+  // Soft-expire: mark matching entries stale (still served) and reset hard expiry,
+  // in place. Byte totals are unchanged since the value is untouched.
+  expireByTag(tag: string, timing: CacheEntryTiming): void {
+    for (const [, e] of this.entries) {
+      if (e.tags.includes(tag)) {
+        e.staleAt = timing.staleAt;
+        e.expiresAt = timing.expiresAt;
+      }
+    }
+  }
+}
+
+/** The {@link CacheStore} behind {@linkcode inMemoryCacheStore}. */
+class InMemoryCache implements CacheStore {
+  readonly #data = new LruTable<DataEntry>(dataBytes, DATA_CACHE_MAX, DATA_CACHE_MAX_BYTES);
+  readonly #pages = new LruTable<CachedPage>(pageBytes, PAGE_CACHE_MAX, PAGE_CACHE_MAX_BYTES);
+  #lastSweep = now();
 
   // Drop hard-expired entries in bulk, but only occasionally (bounds the cost).
-  function maybeSweep(): void {
+  #maybeSweep(): void {
     const t = now();
-    if (t - lastSweep < SWEEP_INTERVAL) return;
-    lastSweep = t;
-    for (const [k, e] of data) {
-      if (e.expiresAt !== Infinity && e.expiresAt <= t) deleteData(k);
-    }
-    for (const [k, e] of pages) {
-      if (e.expiresAt !== Infinity && e.expiresAt <= t) deletePage(k);
-    }
+    if (t - this.#lastSweep < SWEEP_INTERVAL) return;
+    this.#lastSweep = t;
+    this.#data.sweep(t);
+    this.#pages.sweep(t);
   }
 
-  return {
-    getData: (key) => freshData(key),
-    setData: (key, entry) => {
-      const prev = data.get(key);
-      if (prev) dataByteTotal -= dataBytes(prev);
-      data.set(key, entry);
-      dataByteTotal += dataBytes(entry);
-      // Evict oldest until within both the count and byte budgets. Never evict the
-      // sole remaining entry (a single oversize value is still served).
-      while (
-        (data.size > DATA_CACHE_MAX || dataByteTotal > DATA_CACHE_MAX_BYTES) &&
-        data.size > 1
-      ) {
-        const oldest = data.keys().next().value;
-        if (oldest === undefined) break;
-        deleteData(oldest);
-      }
-      maybeSweep();
-    },
-    getPage: (key) => freshPage(key),
-    setPage: (key, page) => {
-      const prev = pages.get(key);
-      if (prev) pageByteTotal -= pageBytes(prev);
-      pages.set(key, page);
-      pageByteTotal += pageBytes(page);
-      // Evict oldest until within both the count and byte budgets. Never evict
-      // the sole remaining entry (a single oversize page is still served).
-      while (
-        (pages.size > PAGE_CACHE_MAX || pageByteTotal > PAGE_CACHE_MAX_BYTES) &&
-        pages.size > 1
-      ) {
-        const oldest = pages.keys().next().value;
-        if (oldest === undefined) break;
-        deletePage(oldest);
-      }
-      maybeSweep();
-    },
-    deleteByTag: (tag) => {
-      for (const [k, e] of data) if (e.tags.includes(tag)) deleteData(k);
-      for (const [k, e] of pages) if (e.tags.includes(tag)) deletePage(k);
-    },
-    deleteByPath: (path) => {
-      for (const [k, e] of pages) if (e.path === path) deletePage(k);
-    },
-    // Soft-expire: mark matching entries stale (still served) and reset hard expiry,
-    // in place. Byte totals are unchanged since the value is untouched.
-    expireByTag: (tag, timing) => {
-      for (const [, e] of data) {
-        if (e.tags.includes(tag)) {
-          e.staleAt = timing.staleAt;
-          e.expiresAt = timing.expiresAt;
-        }
-      }
-      for (const [, e] of pages) {
-        if (e.tags.includes(tag)) {
-          e.staleAt = timing.staleAt;
-          e.expiresAt = timing.expiresAt;
-        }
-      }
-    },
-  };
+  getData(key: string): DataEntry | undefined {
+    return this.#data.fresh(key);
+  }
+
+  setData(key: string, entry: DataEntry): void {
+    this.#data.set(key, entry);
+    this.#maybeSweep();
+  }
+
+  getPage(key: string): CachedPage | undefined {
+    return this.#pages.fresh(key);
+  }
+
+  setPage(key: string, page: CachedPage): void {
+    this.#pages.set(key, page);
+    this.#maybeSweep();
+  }
+
+  deleteByTag(tag: string): void {
+    this.#data.deleteByTag(tag);
+    this.#pages.deleteByTag(tag);
+  }
+
+  deleteByPath(path: string): void {
+    for (const [k, e] of this.#pages.entries) if (e.path === path) this.#pages.delete(k);
+  }
+
+  expireByTag(tag: string, timing: CacheEntryTiming): void {
+    this.#data.expireByTag(tag, timing);
+    this.#pages.expireByTag(tag, timing);
+  }
 }
 
 let currentCacheStore: CacheStore = inMemoryCacheStore();
@@ -430,19 +449,6 @@ function collectTags(tags: string[]): void {
 
 // ---- cacheLife profiles + cache scope (Cache Components) --------------------
 
-/**
- * A cache lifetime profile, in **seconds** (Next.js `cacheLife`). All fields are
- * optional; an omitted field inherits the `default` profile's value.
- */
-export interface CacheLifeProfile {
-  /** Client-side staleness window: served without a background check (SWR hint). */
-  stale?: number;
-  /** Seconds until the entry is refreshed in the background (stale-while-revalidate). */
-  revalidate?: number;
-  /** Hard maximum age (seconds) before the value must be recomputed; `Infinity` = never. */
-  expire?: number;
-}
-
 /** Built-in cacheLife profiles (seconds), matching Next.js's defaults. */
 const BUILTIN_CACHE_LIFE: Record<string, CacheLifeProfile> = {
   default: { stale: 300, revalidate: 900, expire: Infinity },
@@ -486,24 +492,6 @@ export function resolveCacheLife(profile: string | CacheLifeProfile): CacheLifeP
     revalidate: raw.revalidate ?? base.revalidate,
     expire: raw.expire ?? base.expire,
   };
-}
-
-/** Mutable state a `use cache` scope accrues via {@link cacheLife} / {@link cacheTag}. */
-export interface CacheScope {
-  /** The lifetime chosen for this entry (last `cacheLife` wins); undefined ⇒ default. */
-  life?: CacheLifeProfile;
-  /** Tags attached to this entry via `cacheTag`. */
-  tags: string[];
-}
-
-// A `use cache` function body runs inside one of these; AsyncLocalStorage (not a
-// module stack) so concurrent cached renders that interleave across `await` each
-// see their own scope.
-const cacheScopeStorage = new AsyncLocalStorage<CacheScope>();
-
-/** The cache scope of the enclosing `use cache` function, or undefined outside one. */
-export function currentCacheScope(): CacheScope | undefined {
-  return cacheScopeStorage.getStore();
 }
 
 /**
@@ -678,23 +666,13 @@ export function unstable_cache<A extends unknown[], R>(
     const tags = options.tags ?? [];
     // Tag the enclosing render whether or not the data itself is a cache hit.
     collectTags(tags);
-    let hit: DataEntry | undefined;
-    try {
-      hit = await currentCacheStore.getData(key);
-    } catch (err) {
-      logCacheError("getData", err); // treat a store error as a miss
-    }
-    // Read-your-writes: a Server Action's updateTag(tag) earlier this request forces
-    // a miss so the acting user sees their own write, even before the async store
-    // purge is visible.
-    if (hit && tagUpdatedThisRequest(hit.tags)) hit = undefined;
+    const hit = await lookupData(key);
     if (hit) {
       // Stale-while-revalidate: a soft `revalidateTag(tag, profile)` marked this
       // entry stale — serve it now and refresh in the background (deduped per key)
-      // so the next reader gets fresh data.
-      if (hit.staleAt != null && hit.staleAt <= now()) {
-        // Revive inside a cache scope too, so the guard below also holds on the
-        // background refresh path.
+      // so the next reader gets fresh data. Revive inside a cache scope too, so the
+      // request-API guard below also holds on the background refresh path.
+      if (isStaleHit(hit)) {
         reviveStaleData(
           key,
           () => withCacheScope(() => fn(...args)).then((r) => r.value),
@@ -707,41 +685,81 @@ export function unstable_cache<A extends unknown[], R>(
     // Single-flight: coalesce concurrent misses for the same key so the loader
     // runs once under a cold-cache stampede instead of once per request.
     const inFlight = dataInFlight.get(key);
-    if (inFlight) {
-      // Don't let a hung leader pin this follower: race the wait against this
-      // request's own abort (client disconnect / timeout). The leader keeps
-      // running for others; we just stop waiting and unwind (mirrors the
-      // page-cache follower in `app.ts`).
-      const signal = currentContext()?.signal;
-      await raceAbort(inFlight, signal);
-      signal?.throwIfAborted();
-      return await inFlight as R;
-    }
-    const compute = (async () => {
-      // Run the loader inside a cache scope: reading a request-specific API
-      // (`cookies()`/`headers()`/`connection()`) inside it now THROWS instead of
-      // silently caching a per-user value under a session-less key and serving it
-      // to other requests — matching `"use cache"` and Next.js. Any `cacheTag`s the
-      // body accrues fold into the stored entry.
-      const { value, scope } = await withCacheScope(() => fn(...args));
-      try {
-        await currentCacheStore.setData(key, {
-          value,
-          expiresAt: ttlToExpiry(options.revalidate),
-          tags: scope.tags.length ? dedupeTags([...tags, ...scope.tags]) : tags,
-        });
-      } catch (err) {
-        logCacheError("setData", err); // couldn't cache; still return the value
-      }
-      return value;
-    })();
-    dataInFlight.set(key, compute);
-    try {
-      return await compute as R;
-    } finally {
-      dataInFlight.delete(key); // clear on both fulfil and reject
-    }
+    if (inFlight) return await awaitLeader(inFlight) as R;
+    return leadFlight(key, computeData(key, () => fn(...args), options.revalidate, tags));
   };
+}
+
+/**
+ * Look `key` up in the store, treating a store error as a miss. Read-your-writes: a
+ * Server Action's `updateTag(tag)` earlier this request forces a miss so the acting
+ * user sees their own write, even before the async store purge is visible.
+ */
+async function lookupData(key: string): Promise<DataEntry | undefined> {
+  let hit: DataEntry | undefined;
+  try {
+    hit = await currentCacheStore.getData(key);
+  } catch (err) {
+    logCacheError("getData", err);
+  }
+  return hit && tagUpdatedThisRequest(hit.tags) ? undefined : hit;
+}
+
+/** Whether a hit has passed its SWR point (served now, refreshed in the background). */
+const isStaleHit = (hit: DataEntry): boolean => hit.staleAt != null && hit.staleAt <= now();
+
+/**
+ * Wait out the in-flight leader for a key. Don't let a hung leader pin this follower:
+ * race the wait against this request's own abort (client disconnect / timeout). The
+ * leader keeps running for others; we just stop waiting and unwind (mirrors the
+ * page-cache follower in `app.ts`).
+ */
+async function awaitLeader<T>(inFlight: Promise<T>): Promise<T> {
+  const signal = currentContext()?.signal;
+  await raceAbort(inFlight, signal);
+  signal?.throwIfAborted();
+  return await inFlight;
+}
+
+/** Register `compute` as the single-flight leader for `key` until it settles. */
+async function leadFlight<T>(key: string, compute: Promise<T>): Promise<T> {
+  dataInFlight.set(key, compute);
+  try {
+    return await compute;
+  } finally {
+    dataInFlight.delete(key); // clear on both fulfil and reject
+  }
+}
+
+/** Store a freshly computed entry; a store failure is logged, the value still served. */
+async function storeData(key: string, entry: DataEntry): Promise<void> {
+  try {
+    await currentCacheStore.setData(key, entry);
+  } catch (err) {
+    logCacheError("setData", err);
+  }
+}
+
+/**
+ * The {@link unstable_cache} leader: run the loader inside a cache scope — reading a
+ * request-specific API (`cookies()`/`headers()`/`connection()`) inside it THROWS
+ * instead of silently caching a per-user value under a session-less key and serving
+ * it to other requests, matching `"use cache"` and Next.js — then store the result.
+ * Any `cacheTag`s the body accrues fold into the stored entry.
+ */
+async function computeData<R>(
+  key: string,
+  run: () => R | Promise<R>,
+  revalidate: number | false | undefined,
+  tags: string[],
+): Promise<R> {
+  const { value, scope } = await withCacheScope(run);
+  await storeData(key, {
+    value,
+    expiresAt: ttlToExpiry(revalidate),
+    tags: scope.tags.length ? dedupeTags([...tags, ...scope.tags]) : tags,
+  });
+  return value;
 }
 
 /** In-flight loader promises for {@link unstable_cache}, keyed by cache key. */
@@ -762,12 +780,24 @@ function reviveStaleData(
   revalidate: number | false | undefined,
   tags: string[],
 ): void {
+  reviveInBackground(key, async () => {
+    const value = await compute();
+    await currentCacheStore.setData(key, { value, expiresAt: ttlToExpiry(revalidate), tags });
+  });
+}
+
+/**
+ * Run `refresh` once per key in the background (deduped while one is in flight),
+ * logging rather than throwing — the stale value has already been served. Inside a
+ * request the promise is registered on the deferred queue so a serverless isolate
+ * drains it before freezing.
+ */
+function reviveInBackground(key: string, refresh: () => Promise<void>): void {
   if (dataRevalidateInFlight.has(key)) return;
   dataRevalidateInFlight.add(key);
   const p = (async () => {
     try {
-      const value = await compute();
-      await currentCacheStore.setData(key, { value, expiresAt: ttlToExpiry(revalidate), tags });
+      await refresh();
     } catch (err) {
       logCacheError("revalidate", err);
     } finally {
@@ -828,20 +858,10 @@ function reviveStaleUseCache(
   staticTags: string[],
   profile: string | CacheLifeProfile | undefined,
 ): void {
-  if (dataRevalidateInFlight.has(key)) return;
-  dataRevalidateInFlight.add(key);
-  const p = (async () => {
-    try {
-      const { entry } = await runCachedBody(run, staticTags, profile);
-      await currentCacheStore.setData(key, entry);
-    } catch (err) {
-      logCacheError("revalidate", err);
-    } finally {
-      dataRevalidateInFlight.delete(key);
-    }
-  })();
-  const ctx = currentContext();
-  if (ctx) ctx.deferred.push(() => p);
+  reviveInBackground(key, async () => {
+    const { entry } = await runCachedBody(run, staticTags, profile);
+    await currentCacheStore.setData(key, entry);
+  });
 }
 
 /**
@@ -870,20 +890,12 @@ export function __useCache<A extends unknown[], R>(
   return async (...args: A): Promise<R> => {
     const key = safeKey([id, args]);
     collectTags(staticTags);
-    let hit: DataEntry | undefined;
-    try {
-      hit = await currentCacheStore.getData(key);
-    } catch (err) {
-      logCacheError("getData", err); // treat a store error as a miss
-    }
-    // Read-your-writes: a same-request updateTag(tag) forces a miss so the writer
-    // sees fresh data (mirrors unstable_cache).
-    if (hit && tagUpdatedThisRequest(hit.tags)) hit = undefined;
+    const hit = await lookupData(key);
     if (hit) {
       // The body didn't run on a hit, so replay its tag propagation to the page
       // from the stored tags.
       collectTags(hit.tags);
-      if (hit.staleAt != null && hit.staleAt <= now()) {
+      if (isStaleHit(hit)) {
         reviveStaleUseCache(key, () => fn(...args), staticTags, options.profile);
       }
       return hit.value as R;
@@ -891,38 +903,34 @@ export function __useCache<A extends unknown[], R>(
     // Single-flight: coalesce concurrent misses so the body runs once.
     const inFlight = dataInFlight.get(key) as Promise<DataEntry> | undefined;
     if (inFlight) {
-      // Don't let a hung leader pin this follower: race the wait against this
-      // request's own abort (client disconnect / timeout) before we commit to
-      // waiting out the leader's body.
-      const signal = currentContext()?.signal;
-      await raceAbort(inFlight, signal);
-      signal?.throwIfAborted();
       // A follower didn't run the body, so it never saw the body-declared
       // `cacheTag()`s. Replay them onto THIS request's page (mirroring the hit
       // path) so `revalidateTag` invalidates the follower's page too — otherwise
       // the coalesced page under-invalidates and serves stale content forever.
-      const entry = await inFlight;
+      const entry = await awaitLeader(inFlight);
       collectTags(entry.tags);
       return entry.value as R;
     }
-    const compute: Promise<DataEntry> = (async () => {
-      const { entry } = await runCachedBody(() => fn(...args), staticTags, options.profile);
-      try {
-        await currentCacheStore.setData(key, entry);
-      } catch (err) {
-        logCacheError("setData", err); // couldn't cache; still return the value
-      }
-      return entry;
-    })();
-    dataInFlight.set(key, compute);
-    try {
-      // The leader collected the body's tags during `runCachedBody` (in its own
-      // request scope), so it returns the value directly.
-      return (await compute).value as R;
-    } finally {
-      dataInFlight.delete(key); // clear on both fulfil and reject
-    }
+    // The leader collected the body's tags during `runCachedBody` (in its own
+    // request scope), so it returns the value directly.
+    const entry = await leadFlight(
+      key,
+      computeUseCache(key, () => fn(...args), staticTags, options.profile),
+    );
+    return entry.value as R;
   };
+}
+
+/** The `"use cache"` leader: run the body in its cache scope and store the entry. */
+async function computeUseCache<R>(
+  key: string,
+  run: () => R | Promise<R>,
+  staticTags: string[],
+  profile: string | CacheLifeProfile | undefined,
+): Promise<DataEntry> {
+  const { entry } = await runCachedBody(run, staticTags, profile);
+  await storeData(key, entry);
+  return entry;
 }
 
 // Inner memoized fetch: caches the response text keyed on its arguments.
@@ -1066,6 +1074,43 @@ async function cachedResponse(
  * - `"default-cache"` — cache GETs by default unless the call sets `no-store`.
  * - `"default-no-store"` / `"auto"` / unset — the secure default above (opt-in only).
  */
+/**
+ * Whether a GET should go through the data cache, and with what TTL/tags. The route's
+ * `fetchCache` segment default shifts the baseline (per-call `cache`/`next` still win,
+ * except a `force-*` segment overrides them): `force-no-store`/`only-no-store` never
+ * cache; `force-cache`/`only-cache` cache every GET (even a per-call `no-store`);
+ * `default-cache` caches unless the call says `no-store`; otherwise caching is opt-in
+ * (`cache: "force-cache"`, `next.revalidate > 0`, or tags).
+ */
+function fetchCacheDecision(
+  fc: string | undefined,
+  init: FetchCacheInit | undefined,
+): { revalidate: number | false; tags: string[] } | null {
+  if (fc === "force-no-store" || fc === "only-no-store") return null;
+  const forceCache = fc === "force-cache" || fc === "only-cache";
+  const noStore = explicitNoStore(init);
+  if (noStore && !forceCache) return null;
+  const tags = init?.next?.tags ?? [];
+  const wantsCache = forceCache || (fc === "default-cache" && !noStore) || perCallOptIn(init, tags);
+  return wantsCache ? { revalidate: revalidateOf(init), tags } : null;
+}
+
+/** `cache: "no-store"` or `next.revalidate: 0`. */
+function explicitNoStore(init: FetchCacheInit | undefined): boolean {
+  return init?.cache === "no-store" || init?.next?.revalidate === 0;
+}
+
+/** A positive `next.revalidate`, else `false` (cache without a TTL). */
+function revalidateOf(init: FetchCacheInit | undefined): number | false {
+  const rev = init?.next?.revalidate;
+  return typeof rev === "number" && rev > 0 ? rev : false;
+}
+
+/** `cache: "force-cache"`, a positive `next.revalidate`, or tags. */
+function perCallOptIn(init: FetchCacheInit | undefined, tags: string[]): boolean {
+  return init?.cache === "force-cache" || revalidateOf(init) !== false || tags.length > 0;
+}
+
 export function installFetchCache(): void {
   if (originalFetch) return; // already installed
   originalFetch = globalThis.fetch;
@@ -1076,25 +1121,9 @@ export function installFetchCache(): void {
     const method = (init?.method ?? (input instanceof Request ? input.method : "GET"))
       .toUpperCase();
     if (method !== "GET") return of(input, init); // only GET is cacheable
-
-    // Route `fetchCache` segment default shifts the baseline (per-call still wins,
-    // except a force-* segment overrides it).
-    const fc = ctx.segmentConfig?.fetchCache;
-    const forceNoStore = fc === "force-no-store" || fc === "only-no-store";
-    const forceCache = fc === "force-cache" || fc === "only-cache";
-    const defaultCache = fc === "default-cache";
-    if (forceNoStore) return of(input, init); // segment forbids caching outright
-
-    const rev = init?.next?.revalidate;
-    const explicitNoStore = init?.cache === "no-store" || rev === 0;
-    if (explicitNoStore && !forceCache) return of(input, init); // honored unless forced
-
-    const tags = init?.next?.tags ?? [];
-    const perCallOptIn = init?.cache === "force-cache" ||
-      (typeof rev === "number" && rev > 0) || tags.length > 0;
-    const wantsCache = forceCache || (defaultCache && !explicitNoStore) || perCallOptIn;
-    if (!wantsCache) return of(input, init); // uncached by default
-    return cachedResponse(input, init, typeof rev === "number" && rev > 0 ? rev : false, tags);
+    const decision = fetchCacheDecision(ctx.segmentConfig?.fetchCache, init);
+    if (!decision) return of(input, init);
+    return cachedResponse(input, init, decision.revalidate, decision.tags);
   }) as typeof fetch;
   globalThis.fetch = wrapper;
 }

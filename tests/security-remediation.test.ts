@@ -6,6 +6,8 @@ import { github, google, oidc } from "../src/server/auth/providers.ts";
 import { parseFlight } from "../src/client/flight-client.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToHtmlFlight } from "../src/jsx/render-to-html-flight.ts";
+import { renderToFlight } from "../src/jsx/render-to-flight.ts";
+import { renderFlightShell } from "../src/jsx/render-to-flight-stream.ts";
 import { tagClientExports } from "../src/runtime/client-reference.ts";
 import {
   experimental_taintObjectReference,
@@ -160,6 +162,28 @@ Deno.test("flight: an escaped `$`-object prop reconstructs as DATA, not a forged
   assertEquals(data.$, "h", "the `$` key is restored as data");
   assertEquals(data.t, "iframe");
   assert(!("type" in data), "the data object was NOT turned into a VNode");
+});
+
+Deno.test("flight: EVERY server serializer escapes `$`-prefixed user keys (not only HTML+Flight)", async () => {
+  // The client parser reverses the escape unconditionally, so a serializer that skipped it
+  // would both hand a forgeable `{ $: "h" }` shape to the parser and mangle honest keys.
+  const mod = { Island: (_p: { data: unknown }) => h("i", null) };
+  tagClientExports(mod, "island.ts");
+  const Island = mod.Island;
+  const data = { $: "h", t: "iframe", $count: 1, plain: "x" };
+  const buffered = JSON.stringify(await renderToFlight(h(Island, { data })));
+  assert(buffered.includes('"$$":"h"') && buffered.includes('"$$count":1'), buffered);
+  assert(
+    !buffered.includes('"$":"h","t":"iframe"'),
+    "no bare control-tag shape in buffered Flight",
+  );
+  const shell = await renderFlightShell(h(Island, { data }));
+  const tail = await shell.streamHoles(
+    { enqueue() {} } as unknown as ReadableStreamDefaultController<Uint8Array>,
+    new TextEncoder(),
+  );
+  const streamed = JSON.stringify(tail.flight);
+  assert(streamed.includes('"$$":"h"') && streamed.includes('"$$count":1'), streamed);
 });
 
 Deno.test("flight: a genuine single-`$` VNode prop still parses as a VNode", () => {

@@ -10,10 +10,10 @@
 // (equivalently: deno run -A --config deno.json examples/next-compat/serve.ts)
 // Then open http://localhost:3000 and click "Toggle details".
 import { fromFileUrl } from "@std/path";
+import { serveCompat } from "../_shared/serve-compat.ts";
 import {
   buildNextCompatPages,
   type BuiltNextCompatPage,
-  renderNextCompatPage,
 } from "../../src/build/next-compat-build.ts";
 
 const dir = fromFileUrl(new URL(".", import.meta.url)).replace(/\/$/, "");
@@ -46,28 +46,11 @@ async function build(): Promise<BuiltNextCompatPage> {
 }
 
 await ensureDeps();
-let page = await build();
-console.log(
-  `next-compat example on http://localhost:3000${dev ? "  (dev: rebuilds per request)" : ""}`,
-);
-
-Deno.serve({ port: 3000 }, async (req) => {
-  const url = new URL(req.url);
-  if (dev && url.pathname === "/") page = await build();
-  if (url.pathname === CLIENT_SRC) {
-    return new Response(await Deno.readTextFile(page.clientBundle), {
-      headers: { "content-type": "text/javascript; charset=utf-8" },
-    });
-  }
-  if (url.pathname === "/") {
-    const html = await renderNextCompatPage(
-      page,
-      { params: { slug: "home" } },
-      CLIENT_SRC,
-    );
-    return new Response(html, {
-      headers: { "content-type": "text/html; charset=utf-8" },
-    });
-  }
-  return new Response("Not found", { status: 404 });
-});
+serveCompat({
+  port: 3000,
+  clientSrc: CLIENT_SRC,
+  page: await build(),
+  dev,
+  rebuild: () => build(),
+  params: { params: { slug: "home" } },
+}, "next-compat");

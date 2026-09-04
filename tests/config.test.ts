@@ -4,6 +4,7 @@ import {
   type DenextConfig,
   fillDestination,
   matchPattern,
+  resolveCacheComponents,
   resolveLive,
   resolveStreaming,
   safeRedirectLocation,
@@ -14,21 +15,22 @@ import { parsePattern } from "../src/router/segments.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { Link } from "../src/client/navigation.ts";
 
-Deno.test("resolveStreaming/resolveLive: top-level wins, legacy experimental.* still honored", () => {
-  // Promoted top-level fields are the canonical home.
+Deno.test("resolveStreaming/resolveLive: top-level only — the legacy experimental.* alias is ignored", () => {
+  // The top-level fields are the only home (the alias was removed in 2.0).
   assertEquals(resolveStreaming({ streaming: false }), false);
   const live = { allowAnonymous: true };
   assertEquals(resolveLive({ live }), live);
 
-  // A config written before the promotion still works (back-compat) — the legacy
-  // `experimental.streaming`/`experimental.live` is read when the top-level is absent.
+  // A pre-1.4 config still setting `experimental.streaming`/`experimental.live` no
+  // longer resolves through the alias: the value is ignored (the config validator
+  // warns about the moved key in dev) and the caller's default applies.
   const legacy = {
     experimental: { streaming: false, live },
   } as unknown as DenextConfig;
-  assertEquals(resolveStreaming(legacy), false);
-  assertEquals(resolveLive(legacy), live);
+  assertEquals(resolveStreaming(legacy), undefined);
+  assertEquals(resolveLive(legacy), undefined);
 
-  // Top-level takes precedence over a stale legacy value.
+  // A stale legacy value next to the top-level field never leaks through either.
   const both = {
     streaming: true,
     experimental: { streaming: false },
@@ -38,6 +40,30 @@ Deno.test("resolveStreaming/resolveLive: top-level wins, legacy experimental.* s
   // Neither set → undefined (the caller's default-on applies).
   assertEquals(resolveStreaming({}), undefined);
   assertEquals(resolveLive(null), undefined);
+});
+
+Deno.test("resolveCacheComponents: top-level wins, legacy experimental alias still honored", () => {
+  // The graduated top-level field is the canonical home.
+  assertEquals(resolveCacheComponents({ cacheComponents: true }), true);
+  assertEquals(resolveCacheComponents({ cacheComponents: false }), false);
+
+  // Soft migration: a config written against a 2.0 pre-release still works through
+  // the legacy `experimental.cacheComponents` alias.
+  const legacy = { experimental: { cacheComponents: true } } as unknown as DenextConfig;
+  assertEquals(resolveCacheComponents(legacy), true);
+
+  // The top-level field takes precedence when both are set — even an explicit `false`.
+  const both = {
+    cacheComponents: false,
+    experimental: { cacheComponents: true },
+  } as unknown as DenextConfig;
+  assertEquals(resolveCacheComponents(both), false);
+
+  // Neither set → undefined (off).
+  assertEquals(resolveCacheComponents({}), undefined);
+  assertEquals(resolveCacheComponents({ experimental: {} }), undefined);
+  assertEquals(resolveCacheComponents(null), undefined);
+  assertEquals(resolveCacheComponents(undefined), undefined);
 });
 
 Deno.test("compilePattern + matchPattern capture named params", () => {

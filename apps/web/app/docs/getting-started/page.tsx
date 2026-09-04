@@ -1,6 +1,10 @@
 import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
 
-export const metadata = { title: "Getting started" };
+export const metadata = {
+  title: "Getting started",
+  description:
+    "A denext project is a Deno project — no package.json, no node_modules, just a deno.json and an app/ directory.",
+};
 
 export default function GettingStarted() {
   return (
@@ -62,7 +66,7 @@ export default function Home() {
         <code>denext/server</code>. A drop-in migration tool (<code>
           denext migrate
         </code>) aliases <code>next/*</code> and <code>react</code>{" "}
-        so an existing App Router app runs unchanged.
+        so most existing App Router apps run unchanged.
       </p>
     </DocsShell>
   );

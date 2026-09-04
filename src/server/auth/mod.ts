@@ -27,6 +27,7 @@
 
 import type { DenextPlugin } from "../../plugin/mod.ts";
 import { safeRedirectLocation } from "../config.ts";
+import { isProductionEnv, isWeakSecret } from "../session.ts";
 import { handleAuthRequest } from "./routes.ts";
 import { readAuthSession } from "./session.ts";
 import { isOAuthProvider } from "./types.ts";
@@ -42,56 +43,73 @@ function validateConfig(config: AuthConfig): void {
   if (!config.secret || (Array.isArray(config.secret) && config.secret.length === 0)) {
     throw new Error("denextAuth: `secret` is required");
   }
-  if (!config.providers || config.providers.length === 0) {
-    throw new Error("denextAuth: at least one provider is required");
+  if (isWeakSecret(config.secret) && isProductionEnv()) {
+    throw new Error(
+      "denextAuth: `secret` is shorter than 32 chars — refusing to boot in production with " +
+        "a brute-forceable session secret. Set a long, random secret (e.g. `openssl rand " +
+        "-base64 32`).",
+    );
   }
-  const seen = new Set<string>();
-  for (const p of config.providers) {
-    if (seen.has(p.id)) throw new Error(`denextAuth: duplicate provider id "${p.id}"`);
-    seen.add(p.id);
-    // Fail fast on empty OAuth credentials. A missing `Deno.env.get("…")!` coerces to
-    // the string "undefined", which would otherwise be POSTed to the token endpoint
-    // and fail every login at runtime with an opaque `?error=oauth_failed` and no boot
-    // signal. Catch it here, at config time, with an actionable message.
-    if (isOAuthProvider(p)) {
-      for (const field of ["clientId", "clientSecret"] as const) {
-        const val = p[field];
-        if (!val || val === "undefined" || val === "null") {
-          throw new Error(
-            `denextAuth: provider "${p.id}" has an invalid ${field} (${JSON.stringify(val)}) — ` +
-              "check the environment variable it reads from is set.",
-          );
-        }
-      }
-    }
-  }
-  if (!config.canonicalOrigin) {
-    // Required in production: without it the OAuth redirect_uri and the same-origin
-    // checks fall back to the attacker-controllable Host header. Detected via the
-    // standard NODE_ENV/DENEXT_ENV=production signal a deploy sets.
-    const isProd = Deno.env.get("NODE_ENV") === "production" ||
-      Deno.env.get("DENEXT_ENV") === "production";
-    if (isProd) {
-      throw new Error(
-        "denextAuth: `canonicalOrigin` is required in production — without it the OAuth " +
-          "redirect_uri and same-origin checks derive from the attacker-controllable Host " +
-          'header. Set it, e.g. canonicalOrigin: "https://app.example.com".',
-      );
-    }
-    if (!warnedNoOrigin) {
-      warnedNoOrigin = true;
-      console.warn(
-        "denextAuth: no `canonicalOrigin` set — the OAuth redirect_uri is derived from the " +
-          "Host header, which is attacker-controllable. Set it in production.",
-      );
-    }
-  }
+  validateProviders(config.providers);
+  if (!config.canonicalOrigin) requireCanonicalOriginInProd();
   if (config.dangerouslyAllowInsecureProviders) {
     console.warn(
       "denextAuth: `dangerouslyAllowInsecureProviders` is on — localhost/insecure providers " +
         "are permitted. Never enable this in production.",
     );
   }
+}
+
+/** At least one provider, unique ids, and non-empty OAuth credentials. */
+function validateProviders(providers: AuthConfig["providers"]): void {
+  if (!providers || providers.length === 0) {
+    throw new Error("denextAuth: at least one provider is required");
+  }
+  const seen = new Set<string>();
+  for (const p of providers) {
+    if (seen.has(p.id)) throw new Error(`denextAuth: duplicate provider id "${p.id}"`);
+    seen.add(p.id);
+    if (isOAuthProvider(p)) assertOAuthCredentials(p);
+  }
+}
+
+/**
+ * Fail fast on empty OAuth credentials. A missing `Deno.env.get("…")!` coerces to the
+ * string "undefined", which would otherwise be POSTed to the token endpoint and fail every
+ * login at runtime with an opaque `?error=oauth_failed` and no boot signal. Catch it here,
+ * at config time, with an actionable message.
+ */
+function assertOAuthCredentials(p: { id: string; clientId?: string; clientSecret?: string }): void {
+  for (const field of ["clientId", "clientSecret"] as const) {
+    const val = p[field];
+    if (!val || val === "undefined" || val === "null") {
+      throw new Error(
+        `denextAuth: provider "${p.id}" has an invalid ${field} (${JSON.stringify(val)}) — ` +
+          "check the environment variable it reads from is set.",
+      );
+    }
+  }
+}
+
+/**
+ * `canonicalOrigin` is required in production: without it the OAuth redirect_uri and the
+ * same-origin checks fall back to the attacker-controllable Host header. Detected via the
+ * standard NODE_ENV/DENEXT_ENV=production signal a deploy sets; elsewhere warn once.
+ */
+function requireCanonicalOriginInProd(): void {
+  if (isProductionEnv()) {
+    throw new Error(
+      "denextAuth: `canonicalOrigin` is required in production — without it the OAuth " +
+        "redirect_uri and same-origin checks derive from the attacker-controllable Host " +
+        'header. Set it, e.g. canonicalOrigin: "https://app.example.com".',
+    );
+  }
+  if (warnedNoOrigin) return;
+  warnedNoOrigin = true;
+  console.warn(
+    "denextAuth: no `canonicalOrigin` set — the OAuth redirect_uri is derived from the " +
+      "Host header, which is attacker-controllable. Set it in production.",
+  );
 }
 
 /**
@@ -108,8 +126,46 @@ export function denextAuth(config: AuthConfig): DenextPlugin {
     name: "denext-auth",
     setup(ctx) {
       ctx.addRequestHandler((request) => handleAuthRequest(request, config));
+      // A store that holds a resource (the sqlite handle) is released on server drain.
+      const store = config.sessionStore;
+      if (store?.close) ctx.addTeardown(() => store.close!());
     },
   };
+}
+
+/** The configured session store, or throw: revocation needs server-side sessions. */
+function requireSessionStore(fn: string): NonNullable<AuthConfig["sessionStore"]> {
+  const store = activeConfig?.sessionStore;
+  if (!store) {
+    throw new Error(
+      `${fn}: no \`sessionStore\` is configured — sessions are stateless signed cookies, ` +
+        "which can't be revoked before they expire. Pass `sessionStore` (e.g. " +
+        "`sqliteSessionStore()`) to denextAuth to enable revocation.",
+    );
+  }
+  return store;
+}
+
+/**
+ * Revoke one server-side session by id (the `sessionId` on an {@link AuthSession}), so
+ * its cookie stops authenticating immediately — "sign out this device". Requires
+ * `denextAuth({ sessionStore })`; throws when sessions are stateless.
+ *
+ * @param sessionId The session to end.
+ */
+export async function revokeSession(sessionId: string): Promise<void> {
+  await requireSessionStore("revokeSession").delete(sessionId);
+}
+
+/**
+ * Revoke every server-side session of `userId` — "sign out everywhere", the right call
+ * after a password change or a suspected cookie theft. Requires
+ * `denextAuth({ sessionStore })`; throws when sessions are stateless.
+ *
+ * @param userId The user whose sessions end.
+ */
+export async function revokeAllSessions(userId: string): Promise<void> {
+  await requireSessionStore("revokeAllSessions").deleteByUser(userId);
 }
 
 /**
@@ -159,14 +215,4 @@ export async function requireAuth(
   return new Response(null, { status: 302, headers: { location: target } });
 }
 
-export type {
-  AuthCallbacks,
-  AuthConfig,
-  AuthProvider,
-  AuthSession,
-  AuthUser,
-  CredentialsProvider,
-  OAuthProvider,
-} from "./types.ts";
-export { credentials, github, google, oidc } from "./providers.ts";
-export type { CredentialsOptions, OAuthClientOptions, OidcOptions } from "./providers.ts";
+export type { AuthConfig, AuthSession } from "./types.ts";

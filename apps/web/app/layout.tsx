@@ -1,12 +1,37 @@
 import type { LayoutProps } from "denext/server";
+import { VERSION } from "denext";
 
-/** The documented version of denext these docs describe. */
-export const DOCS_VERSION = "1.4.0";
+/**
+ * The denext version these docs describe — derived from the framework's own `VERSION`
+ * (bumped by every release) so it can never drift. Do NOT hardcode a version here.
+ */
+export const DOCS_VERSION = VERSION;
+
+/** The canonical production origin — makes `metadataBase`-relative URLs (og:image,
+ * canonical, sitemap) absolute. Every page inherits this. */
+export const SITE_ORIGIN = "https://denext.dev";
+
+const DESCRIPTION =
+  "denext runs React and the Next.js App Router on Deno with its own small React core — a zero-npm runtime, Server Components, Server Actions, and pages that ship 0 KB of JavaScript. Plus what stock React can't: Qwik-style resumability on React's own API, and Astro-style islands with per-component lazy hydration.";
 
 export const metadata = {
+  metadataBase: new URL(SITE_ORIGIN),
   title: "denext — a React framework for Deno",
-  description:
-    "denext runs React and the Next.js App Router on Deno with its own small React core — a zero-npm runtime, Server Components, Server Actions, and pages that ship 0 KB of JavaScript. Plus what stock React can't: Qwik-style resumability on React's own API, and Astro-style islands with per-component lazy hydration.",
+  description: DESCRIPTION,
+  // Static OG/Twitter bits every page shares (denext absolutizes the image against
+  // metadataBase). The PER-PAGE og:title/description/url + twitter:title/description
+  // are injected from each page's own <title>/<meta description> by scripts/seo.ts,
+  // since denext doesn't fall og:title back to the page title.
+  openGraph: {
+    type: "website",
+    siteName: "denext",
+    locale: "en_US",
+    image: [{ url: "/og.png", width: 1200, height: 630, alt: "denext" }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    image: "/og.png",
+  },
   head: [
     `<link rel="stylesheet" href="/styles.css">`,
     `<link rel="icon" type="image/svg+xml" href="/favicon.svg">`,

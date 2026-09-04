@@ -33,7 +33,8 @@ export interface BenchOptions {
   warmupBatches?: number;
 }
 
-function median(xs: number[]): number {
+/** The median of an unsorted sample. */
+export function median(xs: number[]): number {
   const s = [...xs].sort((a, b) => a - b);
   const m = s.length >> 1;
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
@@ -55,7 +56,6 @@ function percentile(xs: number[], p: number): number {
 // genuinely triggers under its own allocation load.
 // deno-lint-ignore no-explicit-any
 const gc: (() => void) | undefined = (globalThis as any).gc;
-export const gcExposed = typeof gc === "function";
 
 /** Run `fn` `iters` times, awaiting each; return elapsed ms. */
 async function timeBatch(fn: () => unknown, iters: number): Promise<number> {
@@ -64,36 +64,48 @@ async function timeBatch(fn: () => unknown, iters: number): Promise<number> {
   return performance.now() - t0;
 }
 
+/** Grow the batch until one spans at least `batchMs` (scaling toward the target, ≤8× per step). */
+async function calibrateBatch(
+  fn: () => unknown,
+  batchMs: number,
+): Promise<number> {
+  let iters = 1;
+  for (;;) {
+    const ms = await timeBatch(fn, iters);
+    if (ms >= batchMs || iters >= 1 << 30) return iters;
+    iters *= Math.min(8, Math.max(2, Math.ceil(batchMs / Math.max(ms, 0.01))));
+  }
+}
+
+/** Collect once (if `--expose-gc` exposed it) so timed batches run on a settled heap. */
+function collectGarbage(): void {
+  if (gc) gc();
+}
+
+function withDefaults(opts: BenchOptions): Required<BenchOptions> {
+  return {
+    batchMs: opts.batchMs ?? 200,
+    samples: opts.samples ?? 12,
+    warmupBatches: opts.warmupBatches ?? 3,
+  };
+}
+
 export async function microbench(
   name: string,
   fn: () => unknown,
   opts: BenchOptions = {},
 ): Promise<BenchResult> {
-  const batchMs = opts.batchMs ?? 200;
-  const samples = opts.samples ?? 12;
-  const warmupBatches = opts.warmupBatches ?? 3;
+  const { batchMs, samples, warmupBatches } = withDefaults(opts);
 
-  // Calibrate: grow the batch until it spans at least batchMs.
-  let iters = 1;
   // Prime once so the first measurement isn't a cold call.
   await fn();
-  for (;;) {
-    const ms = await timeBatch(fn, iters);
-    if (ms >= batchMs || iters >= 1 << 30) break;
-    // Scale toward the target, capped at 8x growth per step.
-    const factor = Math.min(
-      8,
-      Math.max(2, Math.ceil(batchMs / Math.max(ms, 0.01))),
-    );
-    iters *= factor;
-  }
-
+  const iters = await calibrateBatch(fn, batchMs);
   for (let i = 0; i < warmupBatches; i++) await timeBatch(fn, iters);
 
   // Collect the warmup garbage ONCE (if gc is exposed) so timed batches run on a
   // settled heap, then let the heap stay warm across batches — forcing GC before
   // every batch was found to inflate the median by preventing steady state.
-  gc?.();
+  collectGarbage();
 
   const perOp: number[] = [];
   for (let s = 0; s < samples; s++) {
