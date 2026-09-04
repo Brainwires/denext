@@ -48,7 +48,7 @@ export function bootResumability(
     bootResumability(registry, true, islands, signalState)
   );
   installQrlDispatch();
-  if (eager) adoptSignalState(signalStateIn ?? null); // initial load adopted in the entry
+  adoptInitialState(eager, signalStateIn);
   const islands = islandsIn ? islandsByid(islandsIn) : readIslandsIsland();
   if (!islands) return;
   // Idempotent across re-runs (e.g. a dev HMR refresh re-imports the entry): drop any
@@ -65,6 +65,11 @@ export function bootResumability(
   document.querySelectorAll(`[${ISLAND_MARKER_ATTR}]`).forEach((wrapper) => {
     if (!wrapper.hasAttribute(HYDRATED_ATTR)) scheduleIsland(wrapper, islands, reg, eager);
   });
+}
+
+/** Adopt serialized signal state on a re-boot; the initial load adopted it in the entry. */
+function adoptInitialState(eager: boolean, signalState: Record<string, unknown> | undefined): void {
+  if (eager) adoptSignalState(signalState ?? null);
 }
 
 function islandsByid(islands: IslandPayload[]): Record<string, FlightNode> {

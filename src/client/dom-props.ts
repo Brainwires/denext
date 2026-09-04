@@ -464,17 +464,34 @@ export function patchStyle(
   const style = (el as unknown as { style?: CSSStyleDeclaration }).style;
   // No live CSSStyleDeclaration (e.g. a minimal test shim): fall back to the whole
   // attribute — the per-property preservation only matters against a real DOM anyway.
-  if (!style || typeof style.setProperty !== "function") {
-    if (newStyle) el.setAttribute("style", serializeStyleObject(newStyle));
-    else el.removeAttribute("style");
-    return;
-  }
-  // Remove properties that were set before but are gone now.
-  for (const prop of Object.keys(oldStyle ?? {})) {
+  if (!style || typeof style.setProperty !== "function") return setStyleAttribute(el, newStyle);
+  removeStaleStyle(style, oldStyle ?? {}, newStyle);
+  applyChangedStyle(style, oldStyle, newStyle ?? {});
+}
+
+function setStyleAttribute(el: Element, newStyle: Record<string, unknown> | undefined): void {
+  if (newStyle) el.setAttribute("style", serializeStyleObject(newStyle));
+  else el.removeAttribute("style");
+}
+
+/** Remove properties that were set before but are gone now. */
+function removeStaleStyle(
+  style: CSSStyleDeclaration,
+  oldStyle: Record<string, unknown>,
+  newStyle: Record<string, unknown> | undefined,
+): void {
+  for (const prop of Object.keys(oldStyle)) {
     if (!newStyle || !(prop in newStyle)) style.removeProperty(styleProp(prop));
   }
-  // Set changed/added properties (skip unchanged ones so we don't restart transitions).
-  for (const [prop, value] of Object.entries(newStyle ?? {})) {
+}
+
+/** Set changed/added properties (skip unchanged ones so we don't restart transitions). */
+function applyChangedStyle(
+  style: CSSStyleDeclaration,
+  oldStyle: Record<string, unknown> | undefined,
+  newStyle: Record<string, unknown>,
+): void {
+  for (const [prop, value] of Object.entries(newStyle)) {
     if (oldStyle && oldStyle[prop] === value) continue;
     const name = styleProp(prop);
     if (value == null || value === false || value === "") style.removeProperty(name);

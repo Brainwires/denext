@@ -28,19 +28,8 @@ const SCAFFOLD_FLAGS = [
 ];
 
 async function runCreate(ctx: CommandContext, mode: "create" | "init"): Promise<void> {
-  const positional = ctx.positionals[0];
-  const target = positional ?? (mode === "init" ? "." : undefined);
-  if (!target) {
-    console.error(
-      "denext create: missing target directory.\n" +
-        "  denext create my-app [--tailwind] [--src-dir] [--compiler] [--desktop] [--capacitor] [--compatibility]\n" +
-        "  denext init            (scaffold into the current directory)",
-    );
-    Deno.exit(1);
-  }
+  const target = createTarget(ctx, mode);
   const dir = resolve(target);
-  const yes = ctx.flags.yes === true;
-
   const template = (ctx.flags.template as string | undefined) ?? "default";
   if (!SCAFFOLD_TEMPLATES.includes(template as ScaffoldTemplate)) {
     console.error(
@@ -48,19 +37,8 @@ async function runCreate(ctx: CommandContext, mode: "create" | "init"): Promise<
     );
     Deno.exit(1);
   }
-
-  // A matching flag pre-selects the feature; on a TTY (and without --yes) the
-  // remaining choice is made in a single multi-select.
-  let selected = new Set(FEATURES.filter((f) => ctx.flags[f.flag] === true).map((f) => f.key));
-  if (!yes && Deno.stdin.isTerminal()) {
-    selected = multiSelect(
-      "  Select features  (↑/↓ move · space toggle · enter confirm)",
-      FEATURES,
-      selected,
-    );
-  }
+  const selected = selectFeatures(ctx);
   const on = (k: string): boolean => selected.has(k);
-
   console.log(`\n  Scaffolding a denext app in ${dir}\n`);
   const written = await scaffoldProject({
     dir,
@@ -75,7 +53,42 @@ async function runCreate(ctx: CommandContext, mode: "create" | "init"): Promise<
   });
   for (const p of written) console.log(`   + ${p}`);
   const cd = mode === "init" ? "" : `    cd ${target}\n`;
-  const notes = [
+  const notes = featureNotes(on);
+  console.log(
+    `\n  Done. Next steps:\n${cd}    deno task dev\n` +
+      (notes.length ? "\n" + notes.join("\n") + "\n" : ""),
+  );
+}
+
+/** The target directory: the positional, or `.` for `init`; `create` requires one. */
+function createTarget(ctx: CommandContext, mode: "create" | "init"): string {
+  const target = ctx.positionals[0] ?? (mode === "init" ? "." : undefined);
+  if (target) return target;
+  console.error(
+    "denext create: missing target directory.\n" +
+      "  denext create my-app [--tailwind] [--src-dir] [--compiler] [--desktop] [--capacitor] [--compatibility]\n" +
+      "  denext init            (scaffold into the current directory)",
+  );
+  Deno.exit(1);
+}
+
+/**
+ * A matching flag pre-selects the feature; on a TTY (and without --yes) the remaining
+ * choice is made in a single multi-select.
+ */
+function selectFeatures(ctx: CommandContext): Set<string> {
+  const selected = new Set(FEATURES.filter((f) => ctx.flags[f.flag] === true).map((f) => f.key));
+  if (ctx.flags.yes === true || !Deno.stdin.isTerminal()) return selected;
+  return multiSelect(
+    "  Select features  (↑/↓ move · space toggle · enter confirm)",
+    FEATURES,
+    selected,
+  );
+}
+
+/** Post-scaffold notes for the selected features. */
+function featureNotes(on: (key: string) => boolean): string[] {
+  return [
     on("tailwind") ? "  Tailwind is compiled automatically by denext dev/build." : "",
     on("desktop") ? "  Desktop: `deno task desktop` (needs Deno 2.9+ `deno desktop`)." : "",
     on("capacitor")
@@ -85,10 +98,6 @@ async function runCreate(ctx: CommandContext, mode: "create" | "init"): Promise<
       ? '  React/Next aliases added: `import ... from "react"`/`"next/*"` resolves to denext.'
       : "",
   ].filter(Boolean);
-  console.log(
-    `\n  Done. Next steps:\n${cd}    deno task dev\n` +
-      (notes.length ? "\n" + notes.join("\n") + "\n" : ""),
-  );
 }
 
 export const createCommand: CommandSpec = {

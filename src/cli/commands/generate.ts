@@ -26,6 +26,25 @@ function generateDir(ctx: CommandContext): string {
   return resolve(ctx.global.cwd ?? ctx.positionals[2] ?? ".");
 }
 
+/** The validated `<kind> [name]` positionals, or exit with usage. */
+function generateTarget(ctx: CommandContext): { kind: GenerateKind; name: string } {
+  const kind = ctx.positionals[0] as GenerateKind;
+  const name = ctx.positionals[1] ?? "";
+  if (!KINDS.includes(kind)) {
+    console.error(
+      `denext generate: unknown kind "${ctx.positionals[0] ?? ""}" (expected ${
+        KINDS.join(" | ")
+      }).`,
+    );
+    Deno.exit(1);
+  }
+  if (!name && !NO_NAME.has(kind)) {
+    console.error(`denext generate: missing name.\n  denext generate ${kind} <name>`);
+    Deno.exit(1);
+  }
+  return { kind, name };
+}
+
 export const generateCommand: CommandSpec = {
   name: "generate",
   summary: "Scaffold a route/component/layout/api/action into an app",
@@ -44,21 +63,7 @@ export const generateCommand: CommandSpec = {
     { name: "dir", help: "Project directory (default: .)" },
   ],
   run: async (ctx) => {
-    const kind = ctx.positionals[0] as GenerateKind;
-    const name = ctx.positionals[1] ?? "";
-    if (!KINDS.includes(kind)) {
-      console.error(
-        `denext generate: unknown kind "${ctx.positionals[0] ?? ""}" (expected ${
-          KINDS.join(" | ")
-        }).`,
-      );
-      Deno.exit(1);
-    }
-    if (!name && !NO_NAME.has(kind)) {
-      console.error(`denext generate: missing name.\n  denext generate ${kind} <name>`);
-      Deno.exit(1);
-    }
-
+    const { kind, name } = generateTarget(ctx);
     const dir = generateDir(ctx);
     const { written, skipped } = await generateArtifact(dir, kind, name);
     for (const p of written) console.log(`   + ${p}`);

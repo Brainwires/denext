@@ -19,39 +19,37 @@ export const auditCommand: CommandSpec = {
   run: async (ctx) => {
     const dir = projectDir(ctx);
     const report = await auditProject(dir);
-
     if (ctx.flags.sbom === true || ctx.global.json) {
       console.log(JSON.stringify(toCycloneDx(report), null, 2));
-      if (ctx.flags.strict === true && report.runtimeNpmOffenders.length > 0) Deno.exit(1);
-      return;
-    }
-
-    console.log(`\n  denext audit  ▸  ${dir}\n`);
-
-    const byKind = new Map<string, number>();
-    for (const d of report.deps) byKind.set(d.kind, (byKind.get(d.kind) ?? 0) + 1);
-    console.log(`  Dependencies (${report.deps.length}):`);
-    for (const [kind, n] of [...byKind].sort()) console.log(`    ${kind.padEnd(10)} ${n}`);
-
-    console.log("");
-    if (report.runtimeNpmOffenders.length === 0) {
-      console.log("  ✔ zero-npm runtime — no app source import resolves to an npm package.");
     } else {
-      console.log(`  ✖ ${report.runtimeNpmOffenders.length} runtime npm import(s):`);
-      for (const o of report.runtimeNpmOffenders) console.log(`      ${o}`);
+      printAuditReport(dir, report);
     }
-    if (report.npmDeps.length > 0) {
-      console.log(
-        `\n  Note: ${report.npmDeps.length} npm entr(y/ies) in the import map ` +
-          "(build-time or unused if not imported by runtime source): " +
-          report.npmDeps.map((d) => d.specifier).join(", "),
-      );
-    }
-
-    console.log(
-      `\n  Suggested baseline permissions (starting point):\n    ${report.permissions.join(" ")}\n`,
-    );
-
     if (ctx.flags.strict === true && report.runtimeNpmOffenders.length > 0) Deno.exit(1);
   },
 };
+
+/** The human-readable audit: dependency counts, runtime npm offenders, permissions. */
+function printAuditReport(dir: string, report: Awaited<ReturnType<typeof auditProject>>): void {
+  console.log(`\n  denext audit  ▸  ${dir}\n`);
+  const byKind = new Map<string, number>();
+  for (const d of report.deps) byKind.set(d.kind, (byKind.get(d.kind) ?? 0) + 1);
+  console.log(`  Dependencies (${report.deps.length}):`);
+  for (const [kind, n] of [...byKind].sort()) console.log(`    ${kind.padEnd(10)} ${n}`);
+  console.log("");
+  if (report.runtimeNpmOffenders.length === 0) {
+    console.log("  ✔ zero-npm runtime — no app source import resolves to an npm package.");
+  } else {
+    console.log(`  ✖ ${report.runtimeNpmOffenders.length} runtime npm import(s):`);
+    for (const o of report.runtimeNpmOffenders) console.log(`      ${o}`);
+  }
+  if (report.npmDeps.length > 0) {
+    console.log(
+      `\n  Note: ${report.npmDeps.length} npm entr(y/ies) in the import map ` +
+        "(build-time or unused if not imported by runtime source): " +
+        report.npmDeps.map((d) => d.specifier).join(", "),
+    );
+  }
+  console.log(
+    `\n  Suggested baseline permissions (starting point):\n    ${report.permissions.join(" ")}\n`,
+  );
+}

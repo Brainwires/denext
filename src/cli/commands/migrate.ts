@@ -14,6 +14,25 @@ import { runCodemod } from "../../build/codemod.ts";
  */
 async function applyCodemod(target: string, force: boolean): Promise<void> {
   const report = await runCodemod(target); // dry run — compute the plan first
+  const rewrites = printCodemodPlan(report);
+  if (rewrites === 0) {
+    console.log("  No next/*+react imports to rewrite.\n");
+    return;
+  }
+  const apply = force || confirmCodemod(rewrites);
+  if (apply === null) return; // non-interactive dry run (already explained)
+  if (apply) {
+    await runCodemod(target, { write: true });
+    console.log(`  ✔ Rewrote ${rewrites} import(s).\n`);
+  } else {
+    console.log(
+      "  Skipped — source left as-is (the compat alias still resolves next/*+react).\n",
+    );
+  }
+}
+
+/** Print every planned rewrite + warning per file; returns the rewrite count. */
+function printCodemodPlan(report: Awaited<ReturnType<typeof runCodemod>>): number {
   let rewrites = 0;
   let warnings = 0;
   for (const f of report.files) {
@@ -31,30 +50,143 @@ async function applyCodemod(target: string, force: boolean): Promise<void> {
   console.log(
     `\n  ${rewrites} import rewrite(s), ${warnings} warning(s) across ${report.files.length} file(s) (of ${report.scanned} scanned).`,
   );
-  if (rewrites === 0) {
-    console.log("  No next/*+react imports to rewrite.\n");
-    return;
+  return rewrites;
+}
+
+/**
+ * Ask whether to apply the plan. On a TTY this is an interactive y/N; in a
+ * non-interactive shell it stays a dry run, says so, and returns null.
+ */
+function confirmCodemod(rewrites: number): boolean | null {
+  if (Deno.stdin.isTerminal()) {
+    return confirm(`  Rewrite these ${rewrites} import(s) to native denext?`);
   }
-  let apply = force;
-  if (!apply) {
-    if (Deno.stdin.isTerminal()) {
-      apply = confirm(
-        `  Rewrite these ${rewrites} import(s) to native denext?`,
-      );
-    } else {
-      console.log(
-        "  Dry run — re-run with --write (or `denext migrate --yes`) to apply.\n",
-      );
-      return;
-    }
+  console.log("  Dry run — re-run with --write (or `denext migrate --yes`) to apply.\n");
+  return null;
+}
+
+type MigrateResult = Awaited<ReturnType<typeof migrateProject>>;
+
+/** The dependency summary every migration prints. */
+function reportDeps(r: MigrateResult): void {
+  for (const f of r.wrote) console.log(`  Wrote ${f}`);
+  console.log(`  - aliased to denext (${r.aliased.length}): ${r.aliased.join(", ") || "—"}`);
+  console.log(
+    `  - npm passthrough (${r.passthrough.length}): ${r.passthrough.join(", ") || "—"}`,
+  );
+  console.log(`  - dropped (${r.dropped.length}): ${r.dropped.join(", ") || "—"}`);
+  if (r.flagged.length) console.log(`  ⚠️  unsupported native deps: ${r.flagged.join(", ")}`);
+}
+
+/** What a SPA/CRA/generic migration wrote (mode "spa", optional desktop entry). */
+function reportSpa(r: MigrateResult, desktop: boolean): void {
+  const s = r.spa!;
+  console.log(`  ▸ ${r.kind.toUpperCase()} detected — wrote denext.config.ts (mode: "spa").`);
+  console.log(
+    `    entry ${s.entry} · title ${JSON.stringify(s.title)} · nodeModulesDir ${s.nodeModulesDir}`,
+  );
+  console.log(`    spa.env keys (${s.envKeys.length}): ${s.envKeys.join(", ") || "—"}`);
+  console.log(`    tailwind: ${s.tailwind ? "detected" : "not detected"}`);
+  if (!desktop) return;
+  const proxyNote = s.proxy
+    ? `proxy ${s.proxy.prefixes.join(",")} → ${s.proxy.target}`
+    : "no backend proxy (pass --backend <url> [--proxy /api,/ws])";
+  console.log(
+    `    desktop: ${s.desktopWritten ? "wrote desktop.ts" : "desktop.ts exists"} · ${proxyNote}`,
+  );
+  console.log(
+    s.desktopIcon
+      ? "    icon: auto-detected (--icon wired) — override via `spa.desktop.icon`" +
+        " in denext.config.ts, then rebuild"
+      : "    icon: none (deno desktop default) — set `spa.desktop.icon` in" +
+        " denext.config.ts, then re-run migrate to wire --icon",
+  );
+}
+
+/** What the Remix route-tree transform did. */
+function reportRemix(m: NonNullable<MigrateResult["remix"]>): void {
+  console.log(
+    "  ▸ Remix detected — route tree transformed to run on the denext/remix runtime.",
+  );
+  console.log(
+    `    routes converted: ${m.routesConverted}` +
+      (m.rootConverted ? " · app/root.tsx → app/layout.tsx" : "") +
+      ` · loaders: ${m.loaders}, actions: ${m.actions} (preserved & wired)`,
+  );
+  console.log(
+    "    each route → a server wrapper + a client component + a server data module " +
+      "(loader/action run on denext).",
+  );
+  if (m.entriesDeleted.length) console.log(`    removed: ${m.entriesDeleted.join(", ")}`);
+  if (m.warnings.length) {
+    console.log(`    ⚠️  review notes (${m.warnings.length}):`);
+    for (const w of m.warnings.slice(0, 12)) console.log(`      · ${w}`);
+    if (m.warnings.length > 12) console.log(`      · …and ${m.warnings.length - 12} more`);
   }
-  if (apply) {
-    await runCodemod(target, { write: true });
-    console.log(`  ✔ Rewrote ${rewrites} import(s).\n`);
-  } else {
+  console.log(
+    "    `useLoaderData`/`useActionData`/`<Form>`/navigation map to denext primitives — " +
+      "the app should run; review any notes above.",
+  );
+}
+
+/** The pages/ router plugin wiring. */
+function reportPagesRouter(r: MigrateResult): void {
+  console.log(
+    "  ▸ pages/ router detected — wired the @denext/pages-router plugin (added to deno.json).",
+  );
+  if (r.pagesConfigWritten) {
+    console.log("    wrote denext.config.ts with `plugins: [pagesRouter()]`.");
+  } else if (r.pagesConfigExists) {
     console.log(
-      "  Skipped — source left as-is (the compat alias still resolves next/*+react).\n",
+      "    ⚠️  denext.config.ts already exists — add `pagesRouter()` from " +
+        '"@denext/pages-router" to its `plugins` array.',
     );
+  }
+}
+
+/** The app uses `effect` → migrate mapped @denext/effect; the plugin is written only when no denext.config.ts existed. */
+function reportEffect(r: MigrateResult): void {
+  console.log(
+    "  ▸ effect detected — mapped @denext/effect (bridge for runEffect/effectHandler/DenextRequest).",
+  );
+  console.log(
+    r.pagesConfigExists
+      ? '    ⚠️  denext.config.ts already exists — add `effect()` from "@denext/effect" to its ' +
+        "`plugins` array (pass your app Layer: `effect({ layer: AppLayer })`)."
+      : "    wired the effect() plugin (empty layer) into denext.config.ts — add your app " +
+        "Layer via `effect({ layer: AppLayer })`.",
+  );
+}
+
+/** The Prisma rewiring (ESM/Deno client + better-sqlite3 driver adapter). */
+function reportPrisma(p: NonNullable<MigrateResult["prisma"]>): void {
+  console.log(
+    "  ▸ Prisma detected — wired to the ESM/Deno client + better-sqlite3 driver adapter " +
+      "(no native Rust engine).",
+  );
+  console.log(
+    `    schema generator → prisma-client (deno) · ${p.refsRewritten.length} @prisma/client ` +
+      `import(s) repointed · adapter injected in ${p.clientModules.length} module(s)` +
+      (p.packageJsonEdited ? " · dropped @prisma/client+prisma from package.json" : ""),
+  );
+  if (p.warnings.length) {
+    console.log(`    ⚠️  review notes (${p.warnings.length}):`);
+    for (const w of p.warnings.slice(0, 8)) console.log(`      · ${w}`);
+  }
+  console.log(
+    `    ‼️  run \`deno task ${p.setupTask}\` ONCE (bundles the compat, installs, ` +
+      "`prisma generate` + `db push`) before `deno task build`/`dev`.",
+  );
+}
+
+/** The framework-specific section of the report, if any. */
+function reportFramework(r: MigrateResult, desktop: boolean): void {
+  if ((r.kind === "spa" || r.kind === "cra" || r.kind === "generic") && r.spa) {
+    reportSpa(r, desktop);
+  } else if (r.kind === "remix" && r.remix) {
+    reportRemix(r.remix);
+  } else if (r.pagesRouter) {
+    reportPagesRouter(r);
   }
 }
 
@@ -115,136 +247,10 @@ export const migrateCommand: CommandSpec = {
         : undefined,
       denextLocalPath: ctx.flags["denext-local-path"] as string | undefined,
     });
-    for (const f of r.wrote) console.log(`  Wrote ${f}`);
-    console.log(
-      `  - aliased to denext (${r.aliased.length}): ${r.aliased.join(", ") || "—"}`,
-    );
-    console.log(
-      `  - npm passthrough (${r.passthrough.length}): ${r.passthrough.join(", ") || "—"}`,
-    );
-    console.log(
-      `  - dropped (${r.dropped.length}): ${r.dropped.join(", ") || "—"}`,
-    );
-    if (r.flagged.length) {
-      console.log(`  ⚠️  unsupported native deps: ${r.flagged.join(", ")}`);
-    }
-
-    if (
-      (r.kind === "spa" || r.kind === "cra" || r.kind === "generic") && r.spa
-    ) {
-      const s = r.spa;
-      console.log(
-        `  ▸ ${r.kind.toUpperCase()} detected — wrote denext.config.ts (mode: "spa").`,
-      );
-      console.log(
-        `    entry ${s.entry} · title ${
-          JSON.stringify(s.title)
-        } · nodeModulesDir ${s.nodeModulesDir}`,
-      );
-      console.log(
-        `    spa.env keys (${s.envKeys.length}): ${s.envKeys.join(", ") || "—"}`,
-      );
-      console.log(`    tailwind: ${s.tailwind ? "detected" : "not detected"}`);
-      if (desktop) {
-        const proxyNote = s.proxy
-          ? `proxy ${s.proxy.prefixes.join(",")} → ${s.proxy.target}`
-          : "no backend proxy (pass --backend <url> [--proxy /api,/ws])";
-        console.log(
-          `    desktop: ${
-            s.desktopWritten ? "wrote desktop.ts" : "desktop.ts exists"
-          } · ${proxyNote}`,
-        );
-        console.log(
-          s.desktopIcon
-            ? "    icon: auto-detected (--icon wired) — override via `spa.desktop.icon`" +
-              " in denext.config.ts, then rebuild"
-            : "    icon: none (deno desktop default) — set `spa.desktop.icon` in" +
-              " denext.config.ts, then re-run migrate to wire --icon",
-        );
-      }
-    } else if (r.kind === "remix" && r.remix) {
-      const m = r.remix;
-      console.log(
-        "  ▸ Remix detected — route tree transformed to run on the denext/remix runtime.",
-      );
-      console.log(
-        `    routes converted: ${m.routesConverted}` +
-          (m.rootConverted ? " · app/root.tsx → app/layout.tsx" : "") +
-          ` · loaders: ${m.loaders}, actions: ${m.actions} (preserved & wired)`,
-      );
-      console.log(
-        "    each route → a server wrapper + a client component + a server data module " +
-          "(loader/action run on denext).",
-      );
-      if (m.entriesDeleted.length) {
-        console.log(`    removed: ${m.entriesDeleted.join(", ")}`);
-      }
-      if (m.warnings.length) {
-        console.log(`    ⚠️  review notes (${m.warnings.length}):`);
-        for (const w of m.warnings.slice(0, 12)) console.log(`      · ${w}`);
-        if (m.warnings.length > 12) {
-          console.log(`      · …and ${m.warnings.length - 12} more`);
-        }
-      }
-      console.log(
-        "    `useLoaderData`/`useActionData`/`<Form>`/navigation map to denext primitives — " +
-          "the app should run; review any notes above.",
-      );
-    } else if (r.pagesRouter) {
-      console.log(
-        "  ▸ pages/ router detected — wired the @denext/pages-router plugin (added to deno.json).",
-      );
-      if (r.pagesConfigWritten) {
-        console.log(
-          "    wrote denext.config.ts with `plugins: [pagesRouter()]`.",
-        );
-      } else if (r.pagesConfigExists) {
-        console.log(
-          "    ⚠️  denext.config.ts already exists — add `pagesRouter()` from " +
-            '"@denext/pages-router" to its `plugins` array.',
-        );
-      }
-    }
-
-    if (r.effect) {
-      // The app uses `effect` → migrate mapped @denext/effect. Whether the effect() plugin
-      // was written depends on whether a denext.config.ts already existed.
-      console.log(
-        "  ▸ effect detected — mapped @denext/effect (bridge for runEffect/effectHandler/DenextRequest).",
-      );
-      if (r.pagesConfigExists) {
-        console.log(
-          '    ⚠️  denext.config.ts already exists — add `effect()` from "@denext/effect" to its ' +
-            "`plugins` array (pass your app Layer: `effect({ layer: AppLayer })`).",
-        );
-      } else {
-        console.log(
-          "    wired the effect() plugin (empty layer) into denext.config.ts — add your app " +
-            "Layer via `effect({ layer: AppLayer })`.",
-        );
-      }
-    }
-
-    if (r.prisma) {
-      const p = r.prisma;
-      console.log(
-        "  ▸ Prisma detected — wired to the ESM/Deno client + better-sqlite3 driver adapter " +
-          "(no native Rust engine).",
-      );
-      console.log(
-        `    schema generator → prisma-client (deno) · ${p.refsRewritten.length} @prisma/client ` +
-          `import(s) repointed · adapter injected in ${p.clientModules.length} module(s)` +
-          (p.packageJsonEdited ? " · dropped @prisma/client+prisma from package.json" : ""),
-      );
-      if (p.warnings.length) {
-        console.log(`    ⚠️  review notes (${p.warnings.length}):`);
-        for (const w of p.warnings.slice(0, 8)) console.log(`      · ${w}`);
-      }
-      console.log(
-        `    ‼️  run \`deno task ${p.setupTask}\` ONCE (bundles the compat, installs, ` +
-          "`prisma generate` + `db push`) before `deno task build`/`dev`.",
-      );
-    }
+    reportDeps(r);
+    reportFramework(r, desktop);
+    if (r.effect) reportEffect(r);
+    if (r.prisma) reportPrisma(r.prisma);
 
     if (r.denoJsonExists) {
       console.log(

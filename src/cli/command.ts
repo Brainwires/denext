@@ -198,132 +198,25 @@ export class CommandRegistry {
    * are recognized before and after the verb.
    */
   parse(argv: string[]): ParseOutcome {
-    // A bare `--version`/`-v` (or as the verb) prints the version.
-    const first = argv.find((a) => !a.startsWith("-")) ?? undefined;
-    if (first === undefined) {
-      if (argv.includes("--version") || argv.includes("-v")) return { kind: "version" };
-      return { kind: "help" };
+    const verb = argv.find((a) => !a.startsWith("-"));
+    if (verb === undefined) return bareOutcome(argv);
+    if (verb === "version") return { kind: "version" };
+    // Everything after the verb token is the command's argv.
+    const rest = argv.slice(argv.indexOf(verb) + 1);
+    if (verb === "help") {
+      const topic = rest.find((a) => !a.startsWith("-"));
+      return { kind: "help", command: topic ? this.get(topic) : undefined };
     }
-    if (first === "version") return { kind: "version" };
-    if (first === "help") {
-      const topic = argv.slice(argv.indexOf(first) + 1).find((a) => !a.startsWith("-"));
-      const cmd = topic ? this.get(topic) : undefined;
-      return { kind: "help", command: cmd };
-    }
-
-    const command = this.get(first);
+    const command = this.get(verb);
     if (!command) {
-      const near = suggest(first, this.names());
+      const near = suggest(verb, this.names());
       return {
         kind: "error",
-        message: `unknown command "${first}"`,
+        message: `unknown command "${verb}"`,
         suggestion: near ? `denext ${near}` : undefined,
       };
     }
-
-    // Everything after the verb token is the command's argv.
-    const rest = argv.slice(argv.indexOf(first) + 1);
-    const merged = [...(command.flags ?? []), ...GLOBAL_FLAGS];
-    const byLong = new Map<string, FlagSpec>();
-    for (const f of merged) {
-      byLong.set(f.name, f);
-      for (const alt of f.altNames ?? []) byLong.set(alt, f);
-    }
-    const byAlias = new Map(merged.filter((f) => f.alias).map((f) => [f.alias!, f]));
-
-    const flags: Record<string, string | number | boolean> = {};
-    const positionals: string[] = [];
-    const passthrough: string[] = [];
-    let sawDashDash = false;
-
-    try {
-      for (let i = 0; i < rest.length; i++) {
-        const tok = rest[i];
-        if (sawDashDash) {
-          passthrough.push(tok);
-          continue;
-        }
-        if (tok === "--") {
-          sawDashDash = true;
-          continue;
-        }
-        if (tok === "--help" || tok === "-h") return { kind: "help", command };
-
-        if (tok.startsWith("--")) {
-          const eq = tok.indexOf("=");
-          const name = eq >= 0 ? tok.slice(2, eq) : tok.slice(2);
-          const inline = eq >= 0 ? tok.slice(eq + 1) : undefined;
-          const spec = byLong.get(name);
-          if (!spec) {
-            if (command.passthrough) {
-              passthrough.push(tok);
-              continue;
-            }
-            const nearFlag = suggest(name, [...byLong.keys()]);
-            return {
-              kind: "error",
-              message: `unknown flag "--${name}" for "${command.name}"`,
-              suggestion: nearFlag ? `--${nearFlag}` : undefined,
-            };
-          }
-          if (spec.type === "boolean") {
-            flags[spec.name] = inline === undefined ? true : coerce(spec, inline);
-          } else {
-            const val = inline ?? rest[++i];
-            if (val === undefined) throw new Error(`--${name} needs a value`);
-            flags[spec.name] = coerce(spec, val);
-          }
-        } else if (tok.length > 1 && tok[0] === "-" && !/^-\d/.test(tok)) {
-          const alias = tok.slice(1);
-          const spec = byAlias.get(alias);
-          if (!spec) {
-            if (command.passthrough) {
-              passthrough.push(tok);
-              continue;
-            }
-            return {
-              kind: "error",
-              message: `unknown flag "-${alias}" for "${command.name}"`,
-            };
-          }
-          if (spec.type === "boolean") {
-            flags[spec.name] = true;
-          } else {
-            const val = rest[++i];
-            if (val === undefined) throw new Error(`-${alias} needs a value`);
-            flags[spec.name] = coerce(spec, val);
-          }
-        } else if (command.passthrough) {
-          // A forwarding verb (test/lint/fmt/…): keep positionals in the SAME
-          // ordered `rest` stream as unrecognized flags, so `--filter Auth` stays
-          // adjacent and in order when forwarded (not split + reordered).
-          passthrough.push(tok);
-        } else {
-          positionals.push(tok);
-        }
-      }
-    } catch (err) {
-      return { kind: "error", message: err instanceof Error ? err.message : String(err) };
-    }
-
-    // Apply declared defaults for absent flags.
-    for (const f of merged) {
-      if (f.default !== undefined && !(f.name in flags)) flags[f.name] = f.default;
-    }
-
-    const global: GlobalFlags = {
-      cwd: typeof flags.cwd === "string" ? flags.cwd : undefined,
-      config: typeof flags.config === "string" ? flags.config : undefined,
-      json: flags.json === true,
-      verbose: flags.verbose === true,
-      quiet: flags.quiet === true,
-    };
-
-    return {
-      kind: "run",
-      command,
-      ctx: { positionals, flags, global, rest: passthrough },
-    };
+    return parseCommandArgv(command, rest);
   }
 
   /** Render the top-level help (verb table + global flags). */
@@ -347,21 +240,201 @@ export class CommandRegistry {
   formatCommandHelp(command: CommandSpec): string {
     const parts: string[] = [`denext ${command.name} — ${command.summary}`];
     if (command.usage) parts.push("", command.usage);
-    if (command.positionals?.length) {
-      parts.push("", "Arguments:");
-      for (const p of command.positionals) {
-        parts.push(`  ${p.name.padEnd(16)}${p.help}${p.required ? " (required)" : ""}`);
-      }
-    }
+    if (command.positionals?.length) parts.push("", "Arguments:", ...positionalsHelp(command));
     const flags = [...(command.flags ?? []), ...GLOBAL_FLAGS];
-    if (flags.length) {
-      parts.push("", "Options:");
-      for (const f of flags) {
-        const label = `  --${f.name}${f.alias ? ", -" + f.alias : ""}` +
-          (f.valueName ? " " + f.valueName : "");
-        parts.push(`${label.padEnd(28)}${f.help}`);
-      }
-    }
+    if (flags.length) parts.push("", "Options:", ...flagsHelp(flags));
     return parts.join("\n");
   }
+}
+
+/** One help line per positional argument. */
+function positionalsHelp(command: CommandSpec): string[] {
+  return (command.positionals ?? []).map((p) =>
+    `  ${p.name.padEnd(16)}${p.help}${p.required ? " (required)" : ""}`
+  );
+}
+
+/** One help line per flag: `--name, -a <value>` padded, then its help text. */
+function flagsHelp(flags: readonly FlagSpec[]): string[] {
+  return flags.map((f) => {
+    const label = `  --${f.name}${f.alias ? ", -" + f.alias : ""}` +
+      (f.valueName ? " " + f.valueName : "");
+    return `${label.padEnd(28)}${f.help}`;
+  });
+}
+
+/** No verb at all: a bare `--version`/`-v` prints the version; anything else is help. */
+function bareOutcome(argv: string[]): ParseOutcome {
+  if (argv.includes("--version") || argv.includes("-v")) return { kind: "version" };
+  return { kind: "help" };
+}
+
+/** A command's flag schema merged with the global flags, indexed by long name and alias. */
+interface FlagIndex {
+  merged: FlagSpec[];
+  byLong: Map<string, FlagSpec>;
+  byAlias: Map<string, FlagSpec>;
+}
+
+function indexFlags(command: CommandSpec): FlagIndex {
+  const merged = [...(command.flags ?? []), ...GLOBAL_FLAGS];
+  const byLong = new Map<string, FlagSpec>();
+  for (const f of merged) {
+    byLong.set(f.name, f);
+    for (const alt of f.altNames ?? []) byLong.set(alt, f);
+  }
+  const byAlias = new Map(merged.filter((f) => f.alias).map((f) => [f.alias!, f]));
+  return { merged, byLong, byAlias };
+}
+
+/** The mutable result of a token walk. */
+interface ParsedArgv {
+  flags: Record<string, string | number | boolean>;
+  positionals: string[];
+  passthrough: string[];
+}
+
+/**
+ * Parse a command's argv against its flag schema. `--help`/`-h` short-circuits to help;
+ * an unknown flag is an error (or forwarded for a passthrough command); `--` forwards
+ * everything after it.
+ */
+function parseCommandArgv(command: CommandSpec, rest: string[]): ParseOutcome {
+  const index = indexFlags(command);
+  const out: ParsedArgv = { flags: {}, positionals: [], passthrough: [] };
+  try {
+    for (let i = 0; i < rest.length; i++) {
+      const tok = rest[i];
+      if (tok === "--") {
+        out.passthrough.push(...rest.slice(i + 1));
+        break;
+      }
+      if (tok === "--help" || tok === "-h") return { kind: "help", command };
+      const consumed = parseToken(command, index, out, rest, i);
+      if (typeof consumed !== "number") return consumed; // an error outcome
+      i += consumed;
+    }
+  } catch (err) {
+    return { kind: "error", message: err instanceof Error ? err.message : String(err) };
+  }
+  // Apply declared defaults for absent flags.
+  for (const f of index.merged) {
+    if (f.default !== undefined && !(f.name in out.flags)) out.flags[f.name] = f.default;
+  }
+  return {
+    kind: "run",
+    command,
+    ctx: {
+      positionals: out.positionals,
+      flags: out.flags,
+      global: globalFlagsOf(out.flags),
+      rest: out.passthrough,
+    },
+  };
+}
+
+/** One token: a long flag, a short flag, or a bare value. */
+function parseToken(
+  command: CommandSpec,
+  index: FlagIndex,
+  out: ParsedArgv,
+  rest: string[],
+  i: number,
+): number | ParseOutcome {
+  const tok = rest[i];
+  if (tok.startsWith("--")) return parseLongFlag(command, index, out, rest, i);
+  if (isShortFlag(tok)) return parseShortFlag(command, index, out, rest, i);
+  return parseBare(command, out, tok);
+}
+
+/** `-x` (one dash, not a negative number). */
+function isShortFlag(tok: string): boolean {
+  return tok.length > 1 && tok[0] === "-" && !/^-\d/.test(tok);
+}
+
+/**
+ * `--name[=value]`. Returns how many extra tokens were consumed (a separate value), or
+ * an error outcome for an unknown flag on a non-passthrough command.
+ */
+function parseLongFlag(
+  command: CommandSpec,
+  index: FlagIndex,
+  out: ParsedArgv,
+  rest: string[],
+  i: number,
+): number | ParseOutcome {
+  const tok = rest[i];
+  const eq = tok.indexOf("=");
+  const name = eq >= 0 ? tok.slice(2, eq) : tok.slice(2);
+  const inline = eq >= 0 ? tok.slice(eq + 1) : undefined;
+  const spec = index.byLong.get(name);
+  if (!spec) {
+    if (command.passthrough) {
+      out.passthrough.push(tok);
+      return 0;
+    }
+    const nearFlag = suggest(name, [...index.byLong.keys()]);
+    return {
+      kind: "error",
+      message: `unknown flag "--${name}" for "${command.name}"`,
+      suggestion: nearFlag ? `--${nearFlag}` : undefined,
+    };
+  }
+  if (spec.type === "boolean") {
+    out.flags[spec.name] = inline === undefined ? true : coerce(spec, inline);
+    return 0;
+  }
+  const val = inline ?? rest[i + 1];
+  if (val === undefined) throw new Error(`--${name} needs a value`);
+  out.flags[spec.name] = coerce(spec, val);
+  return inline === undefined ? 1 : 0;
+}
+
+/** `-a [value]`. Same contract as {@link parseLongFlag}. */
+function parseShortFlag(
+  command: CommandSpec,
+  index: FlagIndex,
+  out: ParsedArgv,
+  rest: string[],
+  i: number,
+): number | ParseOutcome {
+  const tok = rest[i];
+  const alias = tok.slice(1);
+  const spec = index.byAlias.get(alias);
+  if (!spec) {
+    if (command.passthrough) {
+      out.passthrough.push(tok);
+      return 0;
+    }
+    return { kind: "error", message: `unknown flag "-${alias}" for "${command.name}"` };
+  }
+  if (spec.type === "boolean") {
+    out.flags[spec.name] = true;
+    return 0;
+  }
+  const val = rest[i + 1];
+  if (val === undefined) throw new Error(`-${alias} needs a value`);
+  out.flags[spec.name] = coerce(spec, val);
+  return 1;
+}
+
+/**
+ * A bare token. A forwarding verb (test/lint/fmt/…) keeps positionals in the SAME
+ * ordered `rest` stream as unrecognized flags, so `--filter Auth` stays adjacent and in
+ * order when forwarded (not split + reordered).
+ */
+function parseBare(command: CommandSpec, out: ParsedArgv, tok: string): number {
+  (command.passthrough ? out.passthrough : out.positionals).push(tok);
+  return 0;
+}
+
+/** The typed global flags read off the parsed flag record. */
+function globalFlagsOf(flags: Record<string, string | number | boolean>): GlobalFlags {
+  return {
+    cwd: typeof flags.cwd === "string" ? flags.cwd : undefined,
+    config: typeof flags.config === "string" ? flags.config : undefined,
+    json: flags.json === true,
+    verbose: flags.verbose === true,
+    quiet: flags.quiet === true,
+  };
 }

@@ -84,16 +84,21 @@ export function installQrlDispatch(): void {
   const doc = w.document;
   if (typeof doc === "undefined") return;
   const registered = (w.__dnxQrlTypes ??= new Set<string>());
+  for (const type of neededEventTypes(doc)) {
+    if (registered.has(type)) continue; // a listener for this type is already live
+    registered.add(type);
+    doc.addEventListener(type, (event) => resumeEvent(event.target, event.type, event), false);
+  }
+}
+
+/** The interaction events plus every event type a stamped handler host declares. */
+function neededEventTypes(doc: Document): Set<string> {
   const needed = new Set<string>(INTERACTION_EVENTS);
   doc.querySelectorAll(`[${DNX_H_ATTR}]`).forEach((el) => {
     const attr = el.getAttribute(DNX_H_ATTR);
     if (attr) { for (const t of Object.keys(parseHandlers(attr))) needed.add(t); }
   });
-  for (const type of needed) {
-    if (registered.has(type)) continue; // a listener for this type is already live
-    registered.add(type);
-    doc.addEventListener(type, (event) => resumeEvent(event.target, event.type, event), false);
-  }
+  return needed;
 }
 
 /** The outcome of {@link resumeEvent}. */

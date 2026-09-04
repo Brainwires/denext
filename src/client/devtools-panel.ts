@@ -269,16 +269,24 @@ export function mountPanel(api: DenextDevtoolsApi, doc: Document): void {
  * dev route/Flight entries, so it never enters a production bundle.
  */
 export function installDevtools(): void {
-  if (installed || !isDev() || typeof document === "undefined") return;
+  if (installed || !devtoolsAvailable()) return;
   const api = installInspector();
   if (!api) return;
   installed = true;
   mount(api, document);
-  if (typeof console !== "undefined") {
-    console.info(
-      "%c[denext] devtools ready",
-      "color:#8aa2ff;font-weight:bold",
-      "— launcher at bottom-left, or Ctrl+Shift+D",
-    );
-  }
+  announceReady();
+}
+
+/** Dev only, and only where there is a document to mount into. */
+function devtoolsAvailable(): boolean {
+  return isDev() && typeof document !== "undefined";
+}
+
+function announceReady(): void {
+  if (typeof console === "undefined") return;
+  console.info(
+    "%c[denext] devtools ready",
+    "color:#8aa2ff;font-weight:bold",
+    "— launcher at bottom-left, or Ctrl+Shift+D",
+  );
 }
