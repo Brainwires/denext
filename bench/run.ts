@@ -105,7 +105,42 @@ async function runJson(
   return JSON.parse(text);
 }
 
+/** `--max-load=N` (default 2.0): the 1-min load average the machine must be under first. */
+function argMaxLoad(): number {
+  const arg = Deno.args.find((a) => a.startsWith("--max-load="));
+  const n = arg ? Number(arg.slice("--max-load=".length)) : 2;
+  return Number.isFinite(n) && n > 0 ? n : 2;
+}
+
+/**
+ * Block until the 1-minute load average is below `maxLoad` (polling every 10 s, up to
+ * 30 min), so a run never starts behind a test suite or a build and depresses BOTH
+ * frameworks' absolute numbers into a noisy, non-reproducible baseline. `--no-wait`
+ * skips the check (the load is still recorded in the report's provenance).
+ */
+async function waitForIdle(maxLoad: number): Promise<void> {
+  if (Deno.args.includes("--no-wait")) return;
+  const deadline = Date.now() + 30 * 60_000;
+  while (!machineIdle(maxLoad, deadline)) await new Promise((r) => setTimeout(r, 10_000));
+}
+
+/** One poll: idle → true; over the deadline → throw; otherwise log and report false. */
+function machineIdle(maxLoad: number, deadline: number): boolean {
+  const load = Deno.loadavg()[0];
+  if (load < maxLoad) return true;
+  if (Date.now() > deadline) {
+    throw new Error(
+      `bench: load average still ${load.toFixed(2)} after 30 min (need < ${maxLoad})`,
+    );
+  }
+  console.error(
+    `bench: load average ${load.toFixed(2)} ≥ ${maxLoad} — waiting for an idle machine…`,
+  );
+  return false;
+}
+
 const layers = argLayers();
+await waitForIdle(argMaxLoad());
 const now = new Date().toISOString();
 const prov: Provenance = captureProvenance(now);
 prov.node = await nodeVersion();
