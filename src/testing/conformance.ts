@@ -41,14 +41,7 @@ import { routeNeedsHydration } from "../build/hydration.ts";
 import { tagServerModules } from "../runtime/server-action.ts";
 import { createMiddlewareRunner } from "../server/mod.ts";
 import { resolve, toFileUrl } from "@std/path";
-// Intentional, benign barrel cycle: `mod.ts` is the public `denext/testing` barrel
-// that both DEFINES the test client and re-exports this module's `probeApp`/
-// `formatReport`. ESM resolves it safely — nothing here is used at module-init time,
-// only inside `probeApp`/`buildHandler` at call time. Splitting the ~350-line client
-// out of the barrel to break it re-attributes that moved code as "new" complexity, a
-// worse trade than this one documented edge.
-// fallow-ignore-next-line circular-dependency -- benign test-only barrel cycle (call-time only)
-import { createTestClient, type TestHandler } from "./mod.ts";
+import { createTestClient, type TestHandler } from "./client.ts";
 
 /** One conformance check applied to a single rendered route. */
 export interface ProbeCheck {
