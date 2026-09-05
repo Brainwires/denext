@@ -327,6 +327,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 ### `denext`
 
 - `type ActionResult<Out> = object | object` — The result an action returns: ok carries the typed handler output, else an error.
+- `type AnchorProps = Omit<Record<string, unknown>, href | children>` — The anchor attributes a Link forwards (everything an <a> takes except href).
 - `interface ApiClient<S>` — A typed callable over an app's ApiSchema.
 - `interface ApiEndpoint` — One endpoint's typed shape: its params, optional request/response bodies.
 - `apiRequest(pattern: string, method: HttpMethod, opts?: ApiRequestOptions, base?: string): Promise<unknown>` — Perform one typed API request (the runtime the typed client dispatches to). Substitutes params, JSON-encodes a body, and parses a JSON response (a 204/empty body → undefined).
@@ -381,7 +382,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type HttpMethod = GET | POST | PUT | PATCH | DELETE | HEAD | OPTIONS` — An HTTP method an API route module can handle.
 - `idleActionState<Out>(): ActionResult<Out>` — The initial ActionResult for useActionState — an idle (not-yet-submitted) state.
 - `Image(props: ImageProps): VNode` — Render an accessible, layout-stable <img>: lazy + async-decoded by default, eager when priority is set. With a loader, a responsive srcSet and a resized default src are generated; with placeholder="blur", the blurDataURL is shown blurred (SVG feGaussianBlur) behind the image and cleared on load — by the onLoad handler when hydrated, and by the client boot for server-only trees; fill positions the image over its container (Next.js parity).
-- `type ImageLoader = (props: ImageLoaderProps) => string`
+- `type ImageLoader = (props: ImageLoaderProps) => string` — Builds a (possibly resized) URL for a given width — e.g. a CDN transform.
 - `interface ImageLoaderProps` — Arguments a ImageLoader receives to build a source URL.
 - `interface ImageProps` — Props for Image. Extra props pass through to the underlying <img>.
 - `initScriptLoader(scriptLoaderItems: ScriptProps[]): void` — next/script's initScriptLoader — imperatively load an array of scripts at startup (each via handleClientScriptLoad). Client-only.
@@ -481,7 +482,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useLinkStatus(): LinkStatus` — useLinkStatus (Next.js) — reactive pending state for the enclosing <Link>, for rendering inline loading indicators. Scoped to the nearest <Link>: pending is true from that link's click until its navigation settles. Outside any <Link> it is always false (matching Next.js).
 - `useLocale(): string` — The active locale (reactive) for apps using i18n routing. Reads the locale the server resolved for this page from the hydration payload and re-reads it on soft navigation. Server components should read params.locale directly.
 - `useMemo<T>(factory: () => T, deps?: DependencyList): T` — Memoize factory's result, recomputing only when deps change.
-- `useOptimistic<S, A>(state: S, updateFn?: (current: S, action: A) => S): tuple` — Show an optimistic value while an async update is in flight. Returns [optimisticState, addOptimistic]; call addOptimistic(action) to apply an optimistic change over the current state. The optimistic value resets to state whenever state itself changes (e.g. once the real update lands).
+- `useOptimistic<S, A>(state: S, updateFn?: (current: S, action: A) => S): tuple` — Show an optimistic value while an async update is in flight. Returns [optimisticState, addOptimistic]; call addOptimistic(action) to apply an optimistic change over the current state. The optimistic value resets to state when state itself changes AND when the transition/action it was applied in settles (React semantics — a failed action reverts too). addOptimistic keeps one identity.
 - `useParams(): Record<string, string | string[]>` — The current route's dynamic params (reactive). Reads the params the server resolved for this page from the hydration payload; updates on soft navigation.
 - `usePathname(): string` — Reactive current pathname; re-renders the component on navigation.
 - `usePictureInPicture(options?: UsePictureInPictureOptions): PictureInPictureControls` — Control Picture-in-Picture for a <video> as a hook. Spread the returned PictureInPictureControls.ref ref onto the video, then call PictureInPictureControls.enter enter / PictureInPictureControls.exit exit / PictureInPictureControls.toggle toggle (from a click — the browser requires a user gesture to enter PiP). PictureInPictureControls.isActive isActive tracks *this* video; PictureInPictureControls.isPiPOpen isPiPOpen is the shared global state. On the server, or without the API, isSupported is false and the actions are no-ops.
@@ -547,6 +548,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface CacheOptions` — Options accepted by unstable_cache.
 - `interface CacheStats` — A snapshot of cache activity (see getCacheStats).
 - `interface CacheStore` — The pluggable backend behind denext's data cache and page (ISR) cache.
+- `cacheStoreHealthy(): Promise<boolean>` — Probe the active CacheStore for reachability with a guarded no-op read (returns false if the store is unreachable). The health endpoint uses this to report cache status without ever throwing.
 - `cacheTag(...tags: string[]): void` — Tag the enclosing use cache entry (Next.js cacheTag) so revalidateTag / updateTag can purge it, and propagate the tags to the enclosing page render so revalidateTag purges the page too. Safe to call outside a cache scope (then it only does the page propagation).
 - `cappedBody(request: Request, maxBytes: number): Request` — request with its body wrapped so that reading past maxBytes errors the stream (the consumer — formData(), json(), a multipart parser — then throws). For streaming consumers that cannot use readCappedBody; a declared content-length over the cap is refused up front.
 - `collapseHeadTags(tags: HeadTag[]): string` — Join a HeadCollector's tags into head HTML, collapsing entries that share a HeadTag.dedup identity to the LAST occurrence at its own position (the earlier duplicate is dropped — next/head's reverse-filter order). Tags without an identity pass through in tree order. Operates on the already-serialized strings; nothing is re-escaped.
@@ -646,7 +648,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface LiveConnectionContext` — Identity/context passed to Live authorization hooks. The hooks run inside the viewer's own request context (the connection's replayed cookies), so getSession() / cookies() work inside them to derive the acting user.
 - `interface LiveLimits` — Resource limits for the Live WebSocket hub. Each has a safe built-in default.
 - `interface LiveSubscriptionRequest` — A useLive data subscription presented to LiveConfig.canSubscribe.
-- `loadEnv(opts?: LoadEnvOptions): Promise<Record<string, string>>`
+- `loadEnv(opts?: LoadEnvOptions): Promise<Record<string, string>>` — Load .env files into Deno.env. Missing files are ignored. Returns the merged file values (before the existing-environment precedence is applied), so callers can inspect what the files declared.
 - `interface LoadEnvOptions` — Options for loadEnv.
 - `localeHref(locale: string, rest: string, i18n: I18nConfig): string` — Build the pathname that serves locale for a locale-free path rest — the inverse of peelLocale. With localePrefix: "as-needed" (default) the default locale is served unprefixed and every other locale is prefixed; with localePrefix: "always" the default locale is prefixed too. Used to generate hreflang alternates and locale-switch links.
 - `localeMiddleware(i18n: I18nConfig): Middleware` — A middleware entry that redirects an unprefixed request to the visitor's detected locale when it differs from the default. Compose it into the middleware chain to get automatic locale routing:
@@ -669,6 +671,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type MiddlewareRunner = parenthesized | null` — A resolved, request-ready middleware runner (null when there is none). matchPath is the pathname matchers are evaluated against when it differs from the request's (an i18n locale prefix stripped, as Next does before running middleware).
 - `type ModuleLoader = (filePath: string) => Promise<unknown>` — How the server loads a module given its file path (injectable for tests).
 - `next(init?: object): NextCommand` — Continue to routing; optionally attach headers to the eventual response.
+- `NEXT: typeOperator` — Internal marker symbol keying a NextCommand.
 - `interface NextCommand` — Command returned by next to continue routing, optionally adding headers.
 - `noStore(): void` — Opt the current render out of the page cache (Next's unstable_noStore() / connection() intent): a route with export const revalidate = N that calls this is rendered per request instead of being stored and served to other visitors.
 - `notFound(): never` — Throw to render the nearest not-found UI with a 404 status.
@@ -745,6 +748,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `revokeAllSessions(userId: string): Promise<void>` — Revoke every server-side session of userId — "sign out everywhere", the right call after a password change or a suspected cookie theft. Requires denextAuth({ sessionStore }); throws when sessions are stateless.
 - `revokeSession(sessionId: string): Promise<void>` — Revoke one server-side session by id (the sessionId on an AuthSession), so its cookie stops authenticating immediately — "sign out this device". Requires denextAuth({ sessionStore }); throws when sessions are stateless.
 - `rewrite(destination: string, init?: object): RewriteCommand` — Internally route as if the request were for destination (no client redirect).
+- `REWRITE: typeOperator` — Internal marker symbol keying a RewriteCommand.
 - `interface RewriteCommand` — Command returned by rewrite to route as if the URL were destination.
 - `interface RewriteRule` — An internal rewrite rule (source served as destination, no client redirect).
 - `interface Robots` — A robots config: the object a robots.ts default export returns.
@@ -832,6 +836,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 - `act<T>(callback: () => T | Promise<T>): Promise<T>` — act(callback) — the React test helper. Runs callback, flushes all pending state updates and effects synchronously, and returns a thenable so both sync and async usage work.
 - `type ActionResult<Out> = object | object` — The result an action returns: ok carries the typed handler output, else an error.
+- `type AnchorProps = Omit<Record<string, unknown>, href | children>` — The anchor attributes a Link forwards (everything an <a> takes except href).
 - `interface ApiClient<S>` — A typed callable over an app's ApiSchema.
 - `interface ApiEndpoint` — One endpoint's typed shape: its params, optional request/response bodies.
 - `apiRequest(pattern: string, method: HttpMethod, opts?: ApiRequestOptions, base?: string): Promise<unknown>` — Perform one typed API request (the runtime the typed client dispatches to). Substitutes params, JSON-encodes a body, and parses a JSON response (a 204/empty body → undefined).
@@ -922,7 +927,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useLayoutEffect(effect: () => EffectCleanup, deps?: DependencyList): void` — Like useEffect, but on the client it runs synchronously after the DOM is mutated and before the browser paints — use it for layout reads/writes that must happen before the user sees the frame. A no-op during server rendering.
 - `useLocale(): string` — The active locale (reactive) for apps using i18n routing. Reads the locale the server resolved for this page from the hydration payload and re-reads it on soft navigation. Server components should read params.locale directly.
 - `useMemo<T>(factory: () => T, deps?: DependencyList): T` — Memoize factory's result, recomputing only when deps change.
-- `useOptimistic<S, A>(state: S, updateFn?: (current: S, action: A) => S): tuple` — Show an optimistic value while an async update is in flight. Returns [optimisticState, addOptimistic]; call addOptimistic(action) to apply an optimistic change over the current state. The optimistic value resets to state whenever state itself changes (e.g. once the real update lands).
+- `useOptimistic<S, A>(state: S, updateFn?: (current: S, action: A) => S): tuple` — Show an optimistic value while an async update is in flight. Returns [optimisticState, addOptimistic]; call addOptimistic(action) to apply an optimistic change over the current state. The optimistic value resets to state when state itself changes AND when the transition/action it was applied in settles (React semantics — a failed action reverts too). addOptimistic keeps one identity.
 - `useParams(): Record<string, string | string[]>` — The current route's dynamic params (reactive). Reads the params the server resolved for this page from the hydration payload; updates on soft navigation.
 - `usePathname(): string` — Reactive current pathname; re-renders the component on navigation.
 - `useReducer<S, A, I>(reducer: (state: S, action: A) => S, initialArg: I, init?: (arg: I) => S): tuple` — Manage component state with a reducer, returning the state and a dispatch. With a lazy init, the initial state is init(initialArg) (React parity).
@@ -989,6 +994,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 ### `denext/testing`
 
+- `act<T>(callback: () => T | Promise<T>): Promise<T>` — act(callback) — the React test helper. Runs callback, flushes all pending state updates and effects synchronously, and returns a thenable so both sync and async usage work.
 - `type Component<P> = (props: P & object) => VNode | Promise<VNode>` — A component is a function that receives props and returns a renderable node.
 - `interface ConformanceReport` — The full report from probeApp.
 - `class CookieJar` — A cookie jar: stores cookies set by responses and replays them on later requests, honoring deletions (Max-Age=0 / a past Expires).

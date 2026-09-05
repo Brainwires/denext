@@ -16,6 +16,18 @@
           "denextOnly": true
         },
         {
+          "name": "AnchorProps",
+          "slug": "AnchorProps",
+          "kind": "typeAlias",
+          "signature": "type AnchorProps = Omit<Record<string, unknown>, href | children>",
+          "doc": "The anchor attributes a Link forwards (everything an <a> takes except href).",
+          "docFull": "The anchor attributes a `Link` forwards (everything an `<a>` takes except `href`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "ApiClient",
           "slug": "ApiClient",
           "kind": "interface",
@@ -757,8 +769,8 @@
           "slug": "ImageLoader",
           "kind": "typeAlias",
           "signature": "type ImageLoader = (props: ImageLoaderProps) => string",
-          "doc": "",
-          "docFull": "",
+          "doc": "Builds a (possibly resized) URL for a given width — e.g. a CDN transform.",
+          "docFull": "Builds a (possibly resized) URL for a given width — e.g. a CDN transform.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -2088,8 +2100,8 @@
           "slug": "useOptimistic",
           "kind": "function",
           "signature": "useOptimistic<S, A>(state: S, updateFn?: (current: S, action: A) => S): tuple",
-          "doc": "Show an optimistic value while an async update is in flight. Returns [optimisticState, addOptimistic]; call addOptimistic(action) to apply an optimistic change over the current state. The optimistic value resets to state whenever state itself changes (e.g. once the real update lands).",
-          "docFull": "Show an optimistic value while an async update is in flight. Returns\n`[optimisticState, addOptimistic]`; call `addOptimistic(action)` to apply an\noptimistic change over the current `state`. The optimistic value resets to\n`state` whenever `state` itself changes (e.g. once the real update lands).",
+          "doc": "Show an optimistic value while an async update is in flight. Returns [optimisticState, addOptimistic]; call addOptimistic(action) to apply an optimistic change over the current state. The optimistic value resets to state when state itself changes AND when the transition/action it was applied in settles (React semantics — a failed action reverts too). addOptimistic keeps one identity.",
+          "docFull": "Show an optimistic value while an async update is in flight. Returns\n`[optimisticState, addOptimistic]`; call `addOptimistic(action)` to apply an\noptimistic change over the current `state`. The optimistic value resets to `state`\nwhen `state` itself changes AND when the transition/action it was applied in settles\n(React semantics — a failed action reverts too). `addOptimistic` keeps one identity.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -2928,6 +2940,18 @@
           "docFull": "The pluggable backend behind denext's data cache and page (ISR) cache.\n\nThe default is the durable `node:sqlite` store (resolved by\n{@linkcode resolveDefaultCacheStore}, with an in-memory fallback). Inject a store\nbacked by a shared cache (Redis, etc.) with {@linkcode setCacheStore} so cached data\nand rendered pages are shared across replicas and invalidation reaches every instance.\n\nMethods may return synchronously or as a Promise; denext always awaits them.\n`get*` must return only **fresh** entries — an implementation is responsible\nfor treating an expired `expiresAt` as a miss (and may evict it).",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "cacheStoreHealthy",
+          "slug": "cacheStoreHealthy",
+          "kind": "function",
+          "signature": "cacheStoreHealthy(): Promise<boolean>",
+          "doc": "Probe the active CacheStore for reachability with a guarded no-op read (returns false if the store is unreachable). The health endpoint uses this to report cache status without ever throwing.",
+          "docFull": "Probe the active {@link CacheStore} for reachability with a guarded no-op read\n(returns `false` if the store is unreachable). The health endpoint uses this to\nreport cache status without ever throwing.",
+          "params": [],
+          "returns": "true if the store responded, false if it errored.",
           "examples": [],
           "denextOnly": true
         },
@@ -4213,10 +4237,15 @@
           "slug": "loadEnv",
           "kind": "function",
           "signature": "loadEnv(opts?: LoadEnvOptions): Promise<Record<string, string>>",
-          "doc": "",
-          "docFull": "",
-          "params": [],
-          "returns": "",
+          "doc": "Load .env files into Deno.env. Missing files are ignored. Returns the merged file values (before the existing-environment precedence is applied), so callers can inspect what the files declared.",
+          "docFull": "Load `.env` files into `Deno.env`. Missing files are ignored. Returns the\nmerged file values (before the existing-environment precedence is applied), so\ncallers can inspect what the files declared.",
+          "params": [
+            {
+              "name": "opts",
+              "doc": "Directory, filenames, and override behavior."
+            }
+          ],
+          "returns": "The merged variables parsed from the files.",
           "examples": [],
           "denextOnly": true
         },
@@ -4492,11 +4521,23 @@
         },
         {
           "name": "next",
-          "slug": "next",
+          "slug": "next-fn",
           "kind": "function",
           "signature": "next(init?: object): NextCommand",
           "doc": "Continue to routing; optionally attach headers to the eventual response.",
           "docFull": "Continue to routing; optionally attach headers to the eventual response.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "NEXT",
+          "slug": "NEXT-var",
+          "kind": "variable",
+          "signature": "NEXT: typeOperator",
+          "doc": "Internal marker symbol keying a NextCommand.",
+          "docFull": "Internal marker symbol keying a {@linkcode NextCommand}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -5541,11 +5582,23 @@
         },
         {
           "name": "rewrite",
-          "slug": "rewrite",
+          "slug": "rewrite-fn",
           "kind": "function",
           "signature": "rewrite(destination: string, init?: object): RewriteCommand",
           "doc": "Internally route as if the request were for destination (no client redirect).",
           "docFull": "Internally route as if the request were for `destination` (no client redirect).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "REWRITE",
+          "slug": "REWRITE-var",
+          "kind": "variable",
+          "signature": "REWRITE: typeOperator",
+          "doc": "Internal marker symbol keying a RewriteCommand.",
+          "docFull": "Internal marker symbol keying a {@linkcode RewriteCommand}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -6651,6 +6704,18 @@
           "signature": "type ActionResult<Out> = object | object",
           "doc": "The result an action returns: ok carries the typed handler output, else an error.",
           "docFull": "The result an action returns: `ok` carries the typed handler output, else an error.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "AnchorProps",
+          "slug": "AnchorProps",
+          "kind": "typeAlias",
+          "signature": "type AnchorProps = Omit<Record<string, unknown>, href | children>",
+          "doc": "The anchor attributes a Link forwards (everything an <a> takes except href).",
+          "docFull": "The anchor attributes a `Link` forwards (everything an `<a>` takes except `href`).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -7869,8 +7934,8 @@
           "slug": "useOptimistic",
           "kind": "function",
           "signature": "useOptimistic<S, A>(state: S, updateFn?: (current: S, action: A) => S): tuple",
-          "doc": "Show an optimistic value while an async update is in flight. Returns [optimisticState, addOptimistic]; call addOptimistic(action) to apply an optimistic change over the current state. The optimistic value resets to state whenever state itself changes (e.g. once the real update lands).",
-          "docFull": "Show an optimistic value while an async update is in flight. Returns\n`[optimisticState, addOptimistic]`; call `addOptimistic(action)` to apply an\noptimistic change over the current `state`. The optimistic value resets to\n`state` whenever `state` itself changes (e.g. once the real update lands).",
+          "doc": "Show an optimistic value while an async update is in flight. Returns [optimisticState, addOptimistic]; call addOptimistic(action) to apply an optimistic change over the current state. The optimistic value resets to state when state itself changes AND when the transition/action it was applied in settles (React semantics — a failed action reverts too). addOptimistic keeps one identity.",
+          "docFull": "Show an optimistic value while an async update is in flight. Returns\n`[optimisticState, addOptimistic]`; call `addOptimistic(action)` to apply an\noptimistic change over the current `state`. The optimistic value resets to `state`\nwhen `state` itself changes AND when the transition/action it was applied in settles\n(React semantics — a failed action reverts too). `addOptimistic` keeps one identity.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -8606,6 +8671,18 @@
     {
       "module": "denext/testing",
       "symbols": [
+        {
+          "name": "act",
+          "slug": "act",
+          "kind": "function",
+          "signature": "act<T>(callback: () => T | Promise<T>): Promise<T>",
+          "doc": "act(callback) — the React test helper. Runs callback, flushes all pending state updates and effects synchronously, and returns a thenable so both sync and async usage work.",
+          "docFull": "`act(callback)` — the React test helper. Runs `callback`, flushes all pending\nstate updates and effects synchronously, and returns a thenable so both sync\nand async usage work.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
         {
           "name": "Component",
           "slug": "Component",

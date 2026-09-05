@@ -10,6 +10,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext/AnchorProps",
+      "kind": "typeAlias",
+      "title": "AnchorProps",
+      "module": "denext",
+      "url": "/docs/api/denext/AnchorProps",
+      "text": "AnchorProps type AnchorProps = Omit<Record<string, unknown>, href | children> The anchor attributes a Link forwards (everything an <a> takes except href).",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/ApiClient",
       "kind": "interface",
       "title": "ApiClient",
@@ -501,7 +510,7 @@
       "title": "ImageLoader",
       "module": "denext",
       "url": "/docs/api/denext/ImageLoader",
-      "text": "ImageLoader type ImageLoader = (props: ImageLoaderProps) => string",
+      "text": "ImageLoader type ImageLoader = (props: ImageLoaderProps) => string Builds a (possibly resized) URL for a given width — e.g. a CDN transform.",
       "denextOnly": true
     },
     {
@@ -1401,7 +1410,7 @@
       "title": "useOptimistic",
       "module": "denext",
       "url": "/docs/api/denext/useOptimistic",
-      "text": "useOptimistic useOptimistic<S, A>(state: S, updateFn?: (current: S, action: A) => S): tuple Show an optimistic value while an async update is in flight. Returns [optimisticState, addOptimistic]; call addOptimistic(action) to apply an optimistic change over the current state. The optimistic value resets to state whenever state itself changes (e.g. once the real update lands).",
+      "text": "useOptimistic useOptimistic<S, A>(state: S, updateFn?: (current: S, action: A) => S): tuple Show an optimistic value while an async update is in flight. Returns [optimisticState, addOptimistic]; call addOptimistic(action) to apply an optimistic change over the current state. The optimistic value resets to state when state itself changes AND when the transition/action it was applied in settles (React semantics — a failed action reverts too). addOptimistic keeps one identity.",
       "denextOnly": false
     },
     {
@@ -1960,6 +1969,15 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/CacheStore",
       "text": "CacheStore interface CacheStore The pluggable backend behind denext's data cache and page (ISR) cache. The default is the durable node:sqlite store (resolved by resolveDefaultCacheStore, with an in-memory fallback). Inject a store backed by a shared cache (Redis, etc.) with setCacheStore so cached data and rendered pages are shared across replicas and invalidation reaches every instance. Methods may return synchronously or as a Promise; denext always awaits them. get* must return only **fresh** entries — an implementation is responsible for treating an expired expiresAt as a miss (and may evict it).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/cacheStoreHealthy",
+      "kind": "function",
+      "title": "cacheStoreHealthy",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/cacheStoreHealthy",
+      "text": "cacheStoreHealthy cacheStoreHealthy(): Promise<boolean> Probe the active CacheStore for reachability with a guarded no-op read (returns false if the store is unreachable). The health endpoint uses this to report cache status without ever throwing. true if the store responded, false if it errored.",
       "denextOnly": true
     },
     {
@@ -2859,7 +2877,7 @@
       "title": "loadEnv",
       "module": "denext/server",
       "url": "/docs/api/denext-server/loadEnv",
-      "text": "loadEnv loadEnv(opts?: LoadEnvOptions): Promise<Record<string, string>>",
+      "text": "loadEnv loadEnv(opts?: LoadEnvOptions): Promise<Record<string, string>> Load .env files into Deno.env. Missing files are ignored. Returns the merged file values (before the existing-environment precedence is applied), so callers can inspect what the files declared. Directory, filenames, and override behavior. The merged variables parsed from the files.",
       "denextOnly": true
     },
     {
@@ -3052,12 +3070,21 @@
       "denextOnly": true
     },
     {
-      "id": "api:denext-server/next",
+      "id": "api:denext-server/next-fn",
       "kind": "function",
       "title": "next",
       "module": "denext/server",
-      "url": "/docs/api/denext-server/next",
+      "url": "/docs/api/denext-server/next-fn",
       "text": "next next(init?: object): NextCommand Continue to routing; optionally attach headers to the eventual response.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/NEXT-var",
+      "kind": "variable",
+      "title": "NEXT",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/NEXT-var",
+      "text": "NEXT NEXT: typeOperator Internal marker symbol keying a NextCommand.",
       "denextOnly": true
     },
     {
@@ -3736,12 +3763,21 @@
       "denextOnly": true
     },
     {
-      "id": "api:denext-server/rewrite",
+      "id": "api:denext-server/rewrite-fn",
       "kind": "function",
       "title": "rewrite",
       "module": "denext/server",
-      "url": "/docs/api/denext-server/rewrite",
+      "url": "/docs/api/denext-server/rewrite-fn",
       "text": "rewrite rewrite(destination: string, init?: object): RewriteCommand Internally route as if the request were for destination (no client redirect).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/REWRITE-var",
+      "kind": "variable",
+      "title": "REWRITE",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/REWRITE-var",
+      "text": "REWRITE REWRITE: typeOperator Internal marker symbol keying a RewriteCommand.",
       "denextOnly": true
     },
     {
@@ -4498,6 +4534,15 @@
       "module": "denext/client",
       "url": "/docs/api/denext-client/ActionResult",
       "text": "ActionResult type ActionResult<Out> = object | object The result an action returns: ok carries the typed handler output, else an error.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/AnchorProps",
+      "kind": "typeAlias",
+      "title": "AnchorProps",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/AnchorProps",
+      "text": "AnchorProps type AnchorProps = Omit<Record<string, unknown>, href | children> The anchor attributes a Link forwards (everything an <a> takes except href).",
       "denextOnly": true
     },
     {
@@ -5316,7 +5361,7 @@
       "title": "useOptimistic",
       "module": "denext/client",
       "url": "/docs/api/denext-client/useOptimistic",
-      "text": "useOptimistic useOptimistic<S, A>(state: S, updateFn?: (current: S, action: A) => S): tuple Show an optimistic value while an async update is in flight. Returns [optimisticState, addOptimistic]; call addOptimistic(action) to apply an optimistic change over the current state. The optimistic value resets to state whenever state itself changes (e.g. once the real update lands).",
+      "text": "useOptimistic useOptimistic<S, A>(state: S, updateFn?: (current: S, action: A) => S): tuple Show an optimistic value while an async update is in flight. Returns [optimisticState, addOptimistic]; call addOptimistic(action) to apply an optimistic change over the current state. The optimistic value resets to state when state itself changes AND when the transition/action it was applied in settles (React semantics — a failed action reverts too). addOptimistic keeps one identity.",
       "denextOnly": false
     },
     {
@@ -5858,6 +5903,15 @@
       "url": "/docs/api/denext-devtools/ValueRef",
       "text": "ValueRef type ValueRef = object | object | object A reference to one drill-in root on a component: a prop, a hook cell, or a context.",
       "denextOnly": true
+    },
+    {
+      "id": "api:denext-testing/act",
+      "kind": "function",
+      "title": "act",
+      "module": "denext/testing",
+      "url": "/docs/api/denext-testing/act",
+      "text": "act act<T>(callback: () => T | Promise<T>): Promise<T> act(callback) — the React test helper. Runs callback, flushes all pending state updates and effects synchronously, and returns a thenable so both sync and async usage work.",
+      "denextOnly": false
     },
     {
       "id": "api:denext-testing/Component",
