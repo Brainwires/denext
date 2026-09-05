@@ -212,7 +212,8 @@ A feature stays here only while it is genuinely **incomplete** — being new is
 not enough. All off by default.
 
 - **`experimental`** — `ExperimentalConfig`.
-- **`experimental.compiler`** — `boolean`. An opt-in build-time auto-memoization
+- **`experimental.reactCompiler`** — `boolean` (Next.js's key; `experimental.compiler`
+  is a deprecated alias). An opt-in build-time auto-memoization
   optimization (a React-Compiler-style pass). Conservative by construction —
   bails to identity whenever a transform isn't provably safe, so it only ever
   adds memoization. Off while its coverage widens.
@@ -224,8 +225,9 @@ not enough. All off by default.
   small per-`await` cost), and in v1 leaves async generators and top-level
   `await` un-instrumented. Off by default, with the time-window behavior
   unchanged. See [Async transitions](/docs/rendering#async-transitions).
-- **`experimental.nodeResolve`** — `boolean` (**default on** for the compat
-  build). denext's tolerant `node_modules` resolver: a strict superset of Deno's
+- **`nodeResolve`** (top-level; `experimental.nodeResolve` is a deprecated alias)
+  — `boolean` (**default on** for the compat build). denext's tolerant
+  `node_modules` resolver: a strict superset of Deno's
   `npm:` loader that resolves bare npm specifiers straight from the app's
   installed `node_modules`, honoring `exports` wildcard globs. This is what lets
   an unmodified pnpm/npm/yarn/bun app build without hand-patching dependency
@@ -234,12 +236,13 @@ not enough. All off by default.
   hatch).
 
 > Graduated keys warn. `experimental.*` sub-keys are validated like top-level
-> ones (an unknown one warns with a did-you-mean). Three pre-2.0 keys moved to
+> ones (an unknown one warns with a did-you-mean). Four pre-2.0 keys moved to
 > the top level and each emits a dev warning naming the new field:
 > `experimental.streaming` → `streaming` and `experimental.live` → `live` (the
 > legacy keys are no longer read — move the value up), and
-> `experimental.cacheComponents` → `cacheComponents` (the legacy key is still
-> honored, so nothing breaks while you migrate).
+> `experimental.cacheComponents` → `cacheComponents` and
+> `experimental.nodeResolve` → `nodeResolve` (the legacy keys are still honored,
+> so nothing breaks while you migrate).
 
 ## Config schema
 

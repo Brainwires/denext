@@ -9,20 +9,12 @@
 > `development` is **2.0.0-rc.7** (the version line `deno task bump` rewrites).
 > 2.0 — the DX release (unified CLI, universal migration, scaffolding/codegen, an
 > instant dev loop, first-party DevTools, end-to-end typed routes and actions) —
-> ships from it. **2.1 is the next engineering cycle**: a typed,
+> shipped from it. **2.1 is the next engineering cycle**: a typed,
 > self-documenting API surface, the last build-time purity items, and the
 > ecosystem router plugins. Everything below targets 2.1 unless marked otherwise.
 > This roadmap is rewritten for the following cycle when 2.1 ships.
 
 ---
-
-## 2.0.0 — cut the release (maintainer action, not engineering)
-
-`deno task release 2.0.0 --confirm` from `development`: tags `v2.0.0`
-(tag-triggered JSR publish), then the `development → main` PR is merged so `main`
-equals the published release (see [CONTRIBUTING.md](./CONTRIBUTING.md)). Gated on
-an explicit maintainer go. No 2.0 engineering is open; **2.1 work that changes the
-public surface starts after the cut.**
 
 ## 2.1 keystone — a typed, self-documenting API surface
 

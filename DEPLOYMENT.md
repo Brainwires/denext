@@ -22,7 +22,7 @@ WORKDIR /app
 
 # Cache dependencies first (better layer caching).
 COPY deno.json deno.lock* ./
-RUN deno install --entrypoint jsr:@denext/denext/cli 2>/dev/null || true
+RUN deno install --entrypoint jsr:@denext/denext@^2/cli 2>/dev/null || true
 
 COPY . .
 RUN deno task build
@@ -31,7 +31,7 @@ ENV PORT=3000
 EXPOSE 3000
 # Least-privilege: grant only what the server needs (widen if you use FS/FFI).
 CMD ["deno", "run", "--allow-net", "--allow-read", "--allow-env", \
-     "jsr:@denext/denext/cli", "start", "."]
+     "jsr:@denext/denext@^2/cli", "start", "."]
 ```
 
 `docker build -t my-app . && docker run -p 3000:3000 -e SESSION_SECRET=… my-app`.
@@ -39,7 +39,7 @@ Put a concurrency ceiling / TLS in front (§1) — a reverse proxy or your platf
 
 ### Deno Deploy
 
-Push the repo and point the entrypoint at `jsr:@denext/denext/cli` with args
+Push the repo and point the entrypoint at `jsr:@denext/denext@^2/cli` with args
 `start .`, or add a build step running `deno task build`. Deno Deploy provides TLS
 and autoscaling; still set a per-instance `maxConcurrency` (§1) and your secrets
 (`SESSION_SECRET`, etc.) as environment variables.
@@ -52,7 +52,7 @@ and autoscaling; still set a per-instance `maxConcurrency` (§1) and your secret
 WorkingDirectory=/srv/my-app
 Environment=PORT=3000
 Environment=SESSION_SECRET=…
-ExecStart=/usr/local/bin/deno run --allow-net --allow-read --allow-env jsr:@denext/denext/cli start .
+ExecStart=/usr/local/bin/deno run --allow-net --allow-read --allow-env jsr:@denext/denext@^2/cli start .
 Restart=always
 [Install]
 WantedBy=multi-user.target
@@ -136,7 +136,7 @@ For fixed, trusted URLs plain `fetch` is fine.
 
 ## 4. Redirect helpers
 
-- `redirect()` (control-flow) and the **middleware `redirect()` helper**
+- `redirect()` (control-flow) and the **middleware `redirectResponse()` helper**
   normalize their target through `safeRedirectLocation`, collapsing
   protocol-relative escapes (`//host`, `/\host`, …) to a same-origin path.
 - `safeRedirectLocation` **passes an explicit absolute URL through verbatim**
@@ -291,9 +291,11 @@ By default **every** query parameter participates in the ISR page-cache key (onl
 their _order_ is normalized, so `?a=1&b=2` and `?b=2&a=1` share one entry). That is
 correct, but a cacheable route hit with high-cardinality junk params — `?utm_*`,
 `?fbclid`, a random cache-buster — will mint a distinct entry per distinct value,
-inflating the cache and (for the in-memory store) churning its LRU. The store is
-byte- and count-bounded, so this degrades hit-rate rather than exhausting memory,
-but it still wastes work.
+inflating the cache and churning its LRU (the default store is the durable
+`node:sqlite` file under `.denext/`, so `denext start` needs
+`--allow-write=.denext`; the in-memory fallback applies when that write is not
+permitted). Both stores are byte- and count-bounded, so this degrades hit-rate
+rather than exhausting memory, but it still wastes work.
 
 Two mitigations, use either or both:
 

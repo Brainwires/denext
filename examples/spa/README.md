@@ -48,7 +48,8 @@ byte-compatible with what [`deno desktop`](../native) wraps in a native window:
 
 ```
 deno task export
-deno desktop desktop.ts     # a `Deno.serve` over out/ (see examples/native)
+denext desktop run          # wraps out/ in a native window (see examples/native
+                            # for a hand-written desktop.ts over `Deno.serve`)
 ```
 
 ## Bundle size vs React

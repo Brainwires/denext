@@ -29,6 +29,20 @@ internal design choice with no observable difference lives in
   once rather than the stale one first. Real event-path rendering defers as React
   does.
 
+- **The root `denext` barrel exports React's function-component surface, not its
+  class one.** `Component`, `PureComponent`, `version`, `act` and `useMemoCache`
+  live on `denext/react` (and `denext/testing` for `act`); on the root barrel
+  `Component` is the function-component _type_. Everything else React exposes
+  (`cache`, `Children`, `cloneElement`, `forwardRef`, `Activity`, the hook and
+  event types, …) is on both.
+- **A `redirect()` thrown during a CLIENT render is a full document load**
+  (`location.assign`), not a soft navigation — the render is abandoned, the browser
+  loads the target. On the server it is the usual 307.
+- **`defineAction` handler errors are redacted in production** (`error: "Internal
+  Server Error"` + a `digest` that correlates with the server log), exactly like a
+  render error handed to `error.tsx`; `ActionValidationError` messages and field
+  errors pass through verbatim because they are authored for the user.
+
 ## Non-goals
 
 - **Legacy provider context** (`childContextTypes` / `getChildContext`) is an

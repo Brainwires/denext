@@ -374,10 +374,11 @@ built-in `node:sqlite`.)
 
 - Build via **`deno bundle`** (no npm toolchain) with **code splitting** (shared
   runtime chunk), the CSS pipeline, and per-route client entries.
-- **Plugin contract** (`DenextPlugin`: route-synthesizer / request-handler /
-  build-step / teardown seams) with public `@denext/denext/bundle` and
-  `@denext/denext/build/css` primitives. See [PLUGINS.md](./PLUGINS.md) for the
-  authoring guide; consumed by `@denext/pages-router` and
+- **Plugin contract** (`DenextPlugin`: the five seams — route-synthesizer,
+  request-handler, build-step, teardown, CLI command) with the public
+  `@denext/denext/plugin-kit` primitives (bundling, CSS, matchers, `PageCache`,
+  body caps, signed-token helpers). See [PLUGINS.md](./PLUGINS.md) for the
+  authoring guide; consumed by `@denext/pages-router`, `@denext/htmx` and
   [`examples/plugin-aliases`](./examples/plugin-aliases).
 - **Lint plugin** (denext-specific rules), `deno fmt`/`deno lint` integration.
 - **Unified CLI** — a real command framework (declarative flags, uniform global
@@ -394,7 +395,16 @@ built-in `node:sqlite`.)
   supersedes `probe`, kept as an alias; `doctor` also validates `denext.config`),
   `audit` (dependency inventory + zero-npm proof + CycloneDX SBOM), `deploy`
   (pluggable adapters, Deno Deploy), `desktop run|build|package`, `migrate`,
-  `codemod`, `version`.
+  `codemod`, `mcp` (the agent server below), `version`.
+- **Tooling for AI agents** — a first-party **MCP server** (`denext mcp`, stdio
+  JSON-RPC) whose tools lint a snippet for Next-isms, map a Next/React import,
+  scaffold, run `doctor`/`codemod`, list an app's routes, read a RUNNING dev
+  server's errors/console/HMR events, render a route or component server-side,
+  show a path's render tree, search the docs (BM25) and index/query the
+  codebase; `--disable` trims tool groups. Plus `llms.txt` / `llms-full.txt`
+  (the authoring guide + an API summary) and the checked-in
+  [AGENTS.md](./AGENTS.md) authoring guide that the MCP `denext://guide`
+  resource and the docs corpus are generated from.
 
 ## Deployment
 

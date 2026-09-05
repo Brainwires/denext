@@ -133,6 +133,12 @@ next-compat interop path — denext's own apps are unaffected):
 - **Middleware `matcher` object entries ignore `has`/`missing`.** `{ source, has, missing }`
   is accepted, but only `source` is evaluated — the middleware runs for every request the
   path matches (never less often than in Next).
+- **`notFound()` / `forbidden()` / `unauthorized()` thrown during a CLIENT render
+  abort the render** instead of swapping in the matching `not-found.tsx` boundary
+  (they work as documented on the server and inside Server Actions).
+- **`dynamic()`'s `loading` props have no timeout or retry.** `timedOut` is always
+  `false` and `retry` is a no-op — denext's `dynamic` has no `timeout`/`delay`
+  options; `isLoading`/`pastDelay`/`error` are real.
 - **A few React internals are shims.** The introspection hooks `captureOwnerStack()` /
   `cacheSignal()` return `null` and `addTransitionType()` is a no-op (rendering is
   unaffected — only dev tooling that reads them gets nothing).

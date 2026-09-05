@@ -51,6 +51,27 @@ export function GET(_req: Request): Response {
   return Response.json({ ok: true });
 }`}
       </Code>
+      <p>
+        Return <code>TypedResponse&lt;T&gt;</code> (and take a{" "}
+        <code>TypedRequest&lt;B&gt;</code>) from <code>denext/server</code> and{" "}
+        <code>denext dev</code>/<code>build</code> generate <code>.denext/api.ts</code>;{" "}
+        <code>createApiClient</code>{" "}
+        then type-checks every call to your own API — a wrong path, method, param or body is a
+        compile error, with no tRPC.
+      </p>
+      <Code lang="ts">
+        {`// app/api/user/[id]/route.ts
+import { json, type TypedResponse } from "denext/server";
+export function GET(): TypedResponse<{ id: string; name: string }> {
+  return json({ id: "1", name: "Ada" }); // json() === Response.json() at runtime
+}
+
+// anywhere (a component, a test)
+import { createApiClient } from "denext";
+import type { ApiSchema } from "./.denext/api.ts";
+const api = createApiClient<ApiSchema>();
+const user = await api("/api/user/[id]", "GET", { params: { id: "1" } }); // typed`}
+      </Code>
 
       <h2>Navigation & middleware</h2>
       <Code lang="tsx">
