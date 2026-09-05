@@ -9,12 +9,14 @@
 import { dirname, join, resolve, toFileUrl } from "@std/path";
 import { ensureDir } from "@std/fs";
 import { parse as parseJsonc } from "@std/jsonc";
-import { denoExecutable, readFrameworkJson } from "./bundle.ts";
+import { denoExecutable, minDepAgeConfig, readFrameworkJson } from "./bundle.ts";
 
 /** A minimal view of a deno config's fields relevant to module resolution. */
 export interface DenoConfigView {
   /** The `nodeModulesDir` setting (e.g. "auto" | "manual" | "none"), if any. */
   nodeModulesDir?: unknown;
+  /** The app's own minimum-dependency-age policy, if any (propagated to the merged config). */
+  minimumDependencyAge?: unknown;
   /** The import map. */
   imports?: Record<string, string>;
   /** Compiler options passed through to the merged config. */
@@ -98,6 +100,7 @@ export function mergeModuleConfig(
   };
   const nmd = appCfg.nodeModulesDir;
   if (nmd && nmd !== "none" && nmd !== false) merged.nodeModulesDir = nmd;
+  Object.assign(merged, minDepAgeConfig(appCfg.minimumDependencyAge));
   return merged;
 }
 

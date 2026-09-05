@@ -64,12 +64,25 @@ export async function readFrameworkJson(
  */
 export async function frameworkImports(): Promise<Record<string, string>> {
   const cfg = await readFrameworkJson("deno.json");
-  const imports = (cfg.imports ?? {}) as Record<string, string>;
-  const base = frameworkFileUrl("deno.json");
+  return absolutizeAgainstUrl(
+    (cfg.imports ?? {}) as Record<string, string>,
+    frameworkFileUrl("deno.json"),
+  );
+}
+
+/**
+ * `imports` with its relative entries (`./mod.ts`, `../src/`) resolved against `baseUrl` (any
+ * scheme — file:// or a remote framework root); a trailing-slash prefix mapping keeps its slash.
+ * jsr:/npm:/absolute values pass through unchanged.
+ */
+function absolutizeAgainstUrl(
+  imports: Record<string, string>,
+  baseUrl: string,
+): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [key, value] of Object.entries(imports)) {
     if (value.startsWith("./") || value.startsWith("../")) {
-      const abs = new URL(value, base).href;
+      const abs = new URL(value, baseUrl).href;
       out[key] = value.endsWith("/") && !abs.endsWith("/") ? abs + "/" : abs;
     } else {
       out[key] = value;
@@ -763,6 +776,49 @@ async function prepareConfig(tmpDir: string, opts: BundleOptions): Promise<strin
  */
 export function minDepAgeArgs(env: string | undefined = safeEnv("DENEXT_MIN_DEP_AGE")): string[] {
   return env ? [`--min-dep-age=${env}`] : [];
+}
+
+/**
+ * The minimum-dependency-age policy a GENERATED config (the merged CSS/module configs, the
+ * runtime-prebuild temp config, a deno-loader config) must carry so every resolver in the
+ * build — the re-exec'd child, `deno info` crawls, esbuild's portable deno-loader — applies
+ * the same rule: `DENEXT_MIN_DEP_AGE` when set (the operator's override), else whatever the
+ * app's own config declares (`appValue`), else nothing (Deno's default). Without this a
+ * `@denext/*` codec published within Deno's default 2-day window was refused by the loader
+ * while the CLI process itself had resolved it fine.
+ */
+export function minDepAgeConfig(
+  appValue: unknown,
+  env: string | undefined = safeEnv("DENEXT_MIN_DEP_AGE"),
+): { minimumDependencyAge?: unknown } {
+  if (env) return { minimumDependencyAge: env };
+  return appValue === undefined ? {} : { minimumDependencyAge: appValue };
+}
+
+/**
+ * The config path to hand a deno-loader: `configPath` itself, or — when the policy needs
+ * injecting ({@link minDepAgeConfig} yields a value the file does not already carry) — a temp
+ * copy of it with `minimumDependencyAge` added and relative import-map entries absolutized
+ * against the original file's location (a remote `https://` framework config included).
+ */
+export async function loaderConfigPath(configPath: string, tmpDir: string): Promise<string> {
+  const policy = minDepAgeConfig(undefined);
+  if (policy.minimumDependencyAge === undefined) return configPath;
+  const url = /^[a-z][a-z0-9+.-]*:\/\//i.test(configPath) ? configPath : toFileUrl(configPath).href;
+  let cfg: Record<string, unknown>;
+  try {
+    const text = url.startsWith("file://")
+      ? await Deno.readTextFile(fromFileUrl(url))
+      : await (await fetch(url)).text();
+    cfg = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return configPath; // unreadable/JSONC: leave the original alone
+  }
+  if (cfg.minimumDependencyAge !== undefined) return configPath;
+  const imports = absolutizeAgainstUrl((cfg.imports ?? {}) as Record<string, string>, url);
+  const out = join(tmpDir, `deno.min-dep-age.${Math.random().toString(36).slice(2, 8)}.json`);
+  await Deno.writeTextFile(out, JSON.stringify({ ...cfg, imports, ...policy }));
+  return out;
 }
 
 function safeEnv(name: string): string | undefined {

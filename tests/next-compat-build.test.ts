@@ -1,7 +1,7 @@
 // The next-compat runtime prebuild: framework entrypoints must resolve from a REMOTE root
 // (JSR) as well as a checkout — the run-from-JSR production case.
 
-import { assertEquals } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
 Deno.test("runtimeEntryPoints accepts a remote (JSR) framework root, not just file:// or a path", async () => {
   const { runtimeEntryPoints } = await import("../src/build/next-compat.ts");
   const jsr = runtimeEntryPoints("https://jsr.io/@denext/denext/2.0.0/");
@@ -46,5 +46,43 @@ Deno.test("resolveNodeFrom resolves a package SELF-reference through its exports
     );
   } finally {
     await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("min-dep-age policy: env override > the app's own config > nothing", async () => {
+  const { minDepAgeConfig, loaderConfigPath } = await import("../src/build/bundle.ts");
+  assertEquals(minDepAgeConfig(undefined, undefined), {});
+  assertEquals(minDepAgeConfig("P2D", undefined), { minimumDependencyAge: "P2D" });
+  assertEquals(minDepAgeConfig("P2D", "0"), { minimumDependencyAge: "0" });
+  // loaderConfigPath: with no policy the original path is returned untouched…
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_mda_" }));
+  try {
+    const cfg = `${dir}/deno.json`;
+    await Deno.writeTextFile(
+      cfg,
+      JSON.stringify({ imports: { "denext": "./mod.ts", "x/": "./src/" } }),
+    );
+    const prev = Deno.env.get("DENEXT_MIN_DEP_AGE");
+    try {
+      Deno.env.delete("DENEXT_MIN_DEP_AGE");
+      assertEquals(await loaderConfigPath(cfg, dir), cfg);
+      // …with the env set, a temp copy carries the policy and absolutized relative imports.
+      Deno.env.set("DENEXT_MIN_DEP_AGE", "0");
+      const wrapped = await loaderConfigPath(cfg, dir);
+      assert(wrapped !== cfg && wrapped.startsWith(dir));
+      const json = JSON.parse(await Deno.readTextFile(wrapped));
+      assertEquals(json.minimumDependencyAge, "0");
+      assertEquals(json.imports["denext"], `file://${dir}/mod.ts`);
+      assertEquals(json.imports["x/"], `file://${dir}/src/`);
+      // A config that already declares a policy is handed over as-is (the user's choice wins).
+      const own = `${dir}/own.json`;
+      await Deno.writeTextFile(own, JSON.stringify({ minimumDependencyAge: "P1D", imports: {} }));
+      assertEquals(await loaderConfigPath(own, dir), own);
+    } finally {
+      if (prev === undefined) Deno.env.delete("DENEXT_MIN_DEP_AGE");
+      else Deno.env.set("DENEXT_MIN_DEP_AGE", prev);
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
   }
 });
