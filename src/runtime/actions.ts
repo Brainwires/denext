@@ -5,7 +5,7 @@
 // that call POSTs to the secure server-action endpoint, and the form also
 // carries the endpoint URL in its SSR markup for progressive enhancement.
 
-import { useCallback, useContext, useState, useSyncExternalStore } from "./hooks.ts";
+import { useCallback, useContext, useRef, useState, useSyncExternalStore } from "./hooks.ts";
 import { FormStatusContext } from "./form-status.ts";
 
 /** Status of the enclosing form's action, as returned by {@link useFormStatus}. */
@@ -54,18 +54,26 @@ export function useActionState<State, Payload = FormData>(
 ): [State, (payload: Payload) => void, boolean] {
   const [state, setState] = useState(initialState);
   const [isPending, setPending] = useState(false);
+  // The latest state and action, read at dispatch time so `dispatch` keeps ONE identity for
+  // the component's lifetime (React's does), yet never closes over stale state.
+  const latest = useRef({ state, action });
+  latest.current = { state, action };
 
   const dispatch = useCallback((payload: Payload): Promise<void> => {
     setPending(() => true);
-    return Promise.resolve(action(state, payload))
+    return Promise.resolve(latest.current.action(latest.current.state, payload))
       .then((next) => setState(() => next))
       .catch((err) => {
-        console.error("denext: action failed:", err);
+        // React rethrows an action's error into the nearest error boundary: surface it from
+        // the next render (a state updater that throws) instead of swallowing it in a log.
+        setState(() => {
+          throw err;
+        });
       })
       .finally(() => {
         setPending(() => false);
       });
-  }, [action, state]) as ((payload: Payload) => Promise<void>) & { denextPermalink?: string };
+  }, []) as ((payload: Payload) => Promise<void>) & { denextPermalink?: string };
 
   // Progressive enhancement: tag the dispatch with the permalink so the SSR serializer
   // renders it as the form's `action` URL — a pre-hydration submit navigates there

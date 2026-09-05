@@ -134,3 +134,6 @@ export async function createTestApp(projectDir: string): Promise<TestHandler> {
     flightServers: boundary.server,
   });
 }
+
+// React's `act()` — flush renders, effects and scheduled work around an interaction.
+export { act } from "../client/mod.ts";

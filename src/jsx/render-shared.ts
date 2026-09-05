@@ -5,6 +5,7 @@
 // logic that is renderer-neutral lives here, so a fix lands once and cannot drift between
 // renderers.
 
+import { invokeWithRenderPhase } from "./render-phase.ts";
 import "../runtime/class-flag.ts";
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable } from "../runtime/suspense.ts";
@@ -196,7 +197,10 @@ export function invokeServerComponent(
     }
     throw classComponentsDisabledError();
   }
-  return invokeComponent(resolveComponentType(type), props) as VNodeChild | Promise<VNodeChild>;
+  const component = resolveComponentType(type);
+  return invokeWithRenderPhase(() => invokeComponent(component, props)) as
+    | VNodeChild
+    | Promise<VNodeChild>;
 }
 
 // ---- Host elements ------------------------------------------------------------------------

@@ -3,6 +3,7 @@
 // cloneElement, forwardRef, isValidElement, class-component guard, react-dom).
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
+import { REACT_COMPAT_VERSION } from "../src/compat/react-version.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import React, {
   cache,
@@ -50,7 +51,7 @@ Deno.test("react: createElement is denext's h and produces a VNode", () => {
 Deno.test("react: hooks are the real denext hooks (same identity)", () => {
   assertEquals(useState, denextUseState);
   assertEquals(lazy, denextLazy); // React.lazy is the real suspending lazy (not dynamic)
-  assertEquals(version, "19.2.0");
+  assertEquals(version, REACT_COMPAT_VERSION);
 });
 
 Deno.test("react: default export exposes the React namespace", () => {
@@ -222,7 +223,7 @@ Deno.test("react-dom: exposes the client + legacy API", () => {
   for (const fn of [createRoot, hydrateRoot, render]) assertEquals(typeof fn, "function");
   assertEquals(typeof ReactDOM.flushSync, "function");
   assertEquals(clientCreateRoot, createRoot);
-  assertEquals(ReactDOM.version, "19.2.0");
+  assertEquals(ReactDOM.version, REACT_COMPAT_VERSION);
   // `react-dom/client` also exposes a namespace default (CJS-interop parity), so
   // `import ReactDOM from "react-dom/client"; ReactDOM.createRoot(…)` works.
   assertEquals(ReactDOMClient.createRoot, clientCreateRoot);

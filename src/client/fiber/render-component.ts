@@ -104,6 +104,13 @@ function runRenderPhase(
   return result;
 }
 
+/** `props` minus `ref` (a new object only when a ref is present). */
+function withoutRef(props: unknown): unknown {
+  if (!props || typeof props !== "object" || !("ref" in props)) return props;
+  const { ref: _ref, ...rest } = props as Record<string, unknown>;
+  return rest;
+}
+
 /** Run a component fiber's render, returning the single rendered vnode. */
 /** How a component fiber's implementation resolved under dev Fast Refresh / per-module HMR. */
 interface RefreshResolution {
@@ -301,10 +308,11 @@ export function renderComponent(inst: Fiber): VNode {
     }
     const { type, forwardsRef } = resolveRenderTarget(swap.rawType);
     const props = prepareRenderProps(inst);
-    // forwardRef threads `ref` via props (denext convention); a plain component
-    // ignores the second argument.
+    // forwardRef receives `(props, ref)` with `ref` REMOVED from props, as in React (a
+    // render fn that spreads `props` onto a host element must not forward the ref twice).
     const ref = forwardsRef ? ((props as { ref?: unknown }).ref ?? null) : undefined;
-    return renderWithStrictMode(inst, type, props, ref, forwardsRef);
+    const renderProps = forwardsRef ? withoutRef(props) : props;
+    return renderWithStrictMode(inst, type, renderProps, ref, forwardsRef);
   } finally {
     finishComponentRender(inst, t0, profT0, swap);
     setDispatcher(prevDispatcher);

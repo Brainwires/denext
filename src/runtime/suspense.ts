@@ -100,6 +100,11 @@ export function use<T>(usable: Promise<T> | Context<T>): T {
   // deno-lint-ignore denext/hooks-in-component
   if (isContextUsable(usable)) return useContext(usable) as T;
   const tracked = usable as unknown as TrackedThenable<T>;
+  // React's own tagging (`status`/`value`/`reason`, set by a Flight client or `React.use`
+  // in a library) is honored too, so a thenable resolved elsewhere does not re-suspend.
+  const reactTagged = usable as unknown as { status?: string; value?: T; reason?: unknown };
+  if (reactTagged.status === "fulfilled") return reactTagged.value as T;
+  if (reactTagged.status === "rejected") throw reactTagged.reason;
   if (tracked._status === "fulfilled") return tracked._value as T;
   if (tracked._status === "rejected") throw tracked._error;
   if (tracked._status === undefined) {

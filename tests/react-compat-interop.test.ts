@@ -4,6 +4,7 @@
 // previously hardcoded to `false`.
 
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
+import { REACT_COMPAT_VERSION } from "../src/compat/react-version.ts";
 import ReactDOMServer, {
   renderToReadableStream,
   renderToStaticMarkup,
@@ -71,7 +72,7 @@ Deno.test("react-dom/server: renderToString/renderToStaticMarkup render the sync
   };
   assertThrows(() => serverRenderToString(h(Async as Any, null)), Error, "renderToReadableStream");
 
-  assertEquals(ReactDOMServer.version, "19.2.0");
+  assertEquals(ReactDOMServer.version, REACT_COMPAT_VERSION);
 });
 
 // The Node-stream APIs are adapters over the Web renderer (for npm-lib interop).
