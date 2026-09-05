@@ -21,6 +21,13 @@ in [DEPLOYMENT.md](./DEPLOYMENT.md).
 Where the compat surface genuinely differs from React/Next (mostly on the
 next-compat interop path — denext's own apps are unaffected):
 
+- **`<Script strategy="worker">` runs on the main thread.** denext accepts the
+  prop for `next/script` parity but has no Partytown-style off-main-thread
+  runtime (that needs a DOM-proxying Web Worker), so a `worker` script degrades
+  to `afterInteractive` (deferred, main thread) — the script still runs
+  correctly, just not off-thread. A one-time dev warning fires. Self-host
+  Partytown if you need true off-main-thread execution.
+
 - **`global-error.tsx` is server-rendered only.** It renders its own document, but
   its `reset` prop is a no-op (there is no client hydration of the global-error
   tree); a reset button should navigate or reload. Next hydrates it as a client
@@ -212,51 +219,6 @@ not a substitute for not passing secrets. **Genuinely not implemented by design:
 Next `taint`. (Next `dynamicIO` isn't a non-goal either — it is the precursor
 of Cache Components, which denext ships as the stable `cacheComponents` opt-in.)
 
-## Security posture — accepted trade-offs
-
-These are deliberate **safe defaults**, each with a one-line opt-in —
-documented, not surprises. Full checklist in [DEPLOYMENT.md](./DEPLOYMENT.md).
-
-- **Strict CSP by default** blocks external `<script>`/stylesheet/`<img>` until
-  opted in per route (`csp: "strict" | "off" | {…}`; a route's `csp` export
-  overrides). Applies to buffered **and** streamed/PPR responses.
-- **HSTS is host-only by default** (no `includeSubDomains`/`preload`) so it
-  can't brick non-HTTPS sibling subdomains. Strengthen via `hsts`, or
-  `hsts: false`.
-- **Session cookie isn't `__Host-`-locked by default** (would log everyone out
-  on upgrade). Opt in with `hostPrefix: true` on `getSession`.
-- **`denextAuth` sessions are stateless by default, so they can't be revoked before
-  they expire.** Opt in to server-side sessions with `sessionStore`
-  (`inMemorySessionStore()` / `sqliteSessionStore()` or your own) to get
-  `revokeSession`/`revokeAllSessions`.
-- **The credentials rate limiter keys on the socket peer, not `x-forwarded-for`, unless
-  `trustForwardedHeaders: true`.** Behind a proxy without that flag every client shares
-  one IP key, so the limit is effectively per account (an attacker can lock an account
-  they know the email of for one window); set the flag when a proxy fronts the app.
-- **Graceful shutdown drains up to a deadline** (default 10s;
-  `DENEXT_SHUTDOWN_DRAIN_MS`), then force-exits so a stuck client can't pin the
-  process (plugin teardown is skipped on a forced exit).
-- **Scaffolded `dev`/`build` tasks use `-A`** (they compile/spawn tooling); the
-  generated `start` task runs least-privilege.
-- **`@denext/og` fetches a missing non-Latin font from `fonts.googleapis.com`**
-  at render time — supply a local `fonts` option, or set `offline: true` on the
-  `ImageResponse` to refuse the fetch (it raises a clear error instead of
-  egressing).
-- **The public-env island ships only _referenced_ prefixed vars.** A key read
-  via a computed expression can't be detected — force-include it via
-  `publicEnv: [...]`. Never give a secret a public prefix.
-- **Pages Router Preview Mode signs its cookie with `DENEXT_PREVIEW_SECRET`.**
-  Set it to a long random value in production (comma-separated to rotate).
-  Without it a random per-process key is used, so preview sessions don't survive
-  a restart or span instances (a one-time warning fires). A forged/unsigned
-  preview cookie is ignored — it never discloses drafts.
-- **`<Script strategy="worker">` runs on the main thread.** denext accepts the
-  prop for `next/script` parity but has no Partytown-style off-main-thread
-  runtime (that needs a DOM-proxying Web Worker), so a `worker` script degrades
-  to `afterInteractive` (deferred, main thread) — the script still runs
-  correctly, just not off-thread. A one-time dev warning fires. Self-host
-  Partytown if you need true off-main-thread execution.
-
 ## Migration: Remix runs on the `denext/remix` runtime
 
 `denext migrate --from remix` (also auto-detected) transforms a Remix app to run on
@@ -335,32 +297,3 @@ A few capabilities aren't built yet (none affects the zero-npm runtime):
   a local fallback to cut CLS) needs a bundled font-metrics database to compute
   exact overrides; a guessed table would mis-size the fallback, so it's deferred
   until real metrics are bundled.
-
-## Post-2.0 (deferred, not gaps)
-
-Work that is **deliberately deferred past 2.0**. None of it is a surface gap —
-each is either a build-time purity item, an ecosystem package, or a documented
-trade-off above — so none blocks the release. One line each, with the reason:
-
-- **`esbuild` off npm.** Build-time only (it never enters a shipped bundle, so
-  the zero-npm _runtime_ claim already holds); native-backed with a large API
-  surface, used by the next-compat build (`src/build/next-compat.ts`) and the
-  unbundled dev loop's per-module transform (`src/build/dev-unbundled/`) — the
-  largest of the three build-time codecs and the one deferred furthest. See
-  [ROADMAP.md](./ROADMAP.md) → "Build-time deps → first-party JSR/WASM".
-- **Node-stream `Writable` backpressure.** `renderToPipeableStream` /
-  `renderToStaticNodeStream` still buffer (see the first surface-gap entry
-  above): true end-to-end backpressure means making the core renderer
-  pull-gated and resolving the `await allReady`-then-read deadlock the current
-  eager drain avoids — an SSR-hot-path change with real regression risk and a
-  narrow payoff. Use `renderToReadableStream`.
-- **WASM codec finalization** (`lightningcss` / `swc` off npm). Both are
-  already WASM builds with a single import site each (`src/build/css.ts`,
-  `src/build/swc-ast.ts`) — a surgical repoint, teed up but **publish-gated**
-  (the same status as the shipped `@denext/*` codec packages).
-- **Ecosystem router plugins** (`@denext/react-router`,
-  `@denext/tanstack-router`). Client/library mode works today via SPA mode
-  (shell + client entry); framework mode (loaders + streaming SSR) goes through
-  the settled `plugin-kit` surface, with no core change needed. Soon, not now.
-- **`next/font` metric-matched fallback face** — needs a bundled font-metrics
-  database (see "Not yet available" above).

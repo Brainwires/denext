@@ -52,3 +52,42 @@ internal design choice with no observable difference lives in
   without a build salt.
 - **`userAgent().device.type`** is `undefined` for a desktop browser (matching
   ua-parser-js); the older denext value was `"desktop"`.
+
+## Security posture — safe defaults
+
+Deliberate **safe defaults** that differ from Next's, each with a one-line
+opt-in — documented, not surprises. Full checklist in [DEPLOYMENT.md](./DEPLOYMENT.md).
+
+- **Strict CSP by default** blocks external `<script>`/stylesheet/`<img>` until
+  opted in per route (`csp: "strict" | "off" | {…}`; a route's `csp` export
+  overrides). Applies to buffered **and** streamed/PPR responses.
+- **HSTS is host-only by default** (no `includeSubDomains`/`preload`) so it
+  can't brick non-HTTPS sibling subdomains. Strengthen via `hsts`, or
+  `hsts: false`.
+- **Session cookie isn't `__Host-`-locked by default** (would log everyone out
+  on upgrade). Opt in with `hostPrefix: true` on `getSession`.
+- **`denextAuth` sessions are stateless by default, so they can't be revoked before
+  they expire.** Opt in to server-side sessions with `sessionStore`
+  (`inMemorySessionStore()` / `sqliteSessionStore()` or your own) to get
+  `revokeSession`/`revokeAllSessions`.
+- **The credentials rate limiter keys on the socket peer, not `x-forwarded-for`, unless
+  `trustForwardedHeaders: true`.** Behind a proxy without that flag every client shares
+  one IP key, so the limit is effectively per account (an attacker can lock an account
+  they know the email of for one window); set the flag when a proxy fronts the app.
+- **Graceful shutdown drains up to a deadline** (default 10s;
+  `DENEXT_SHUTDOWN_DRAIN_MS`), then force-exits so a stuck client can't pin the
+  process (plugin teardown is skipped on a forced exit).
+- **Scaffolded `dev`/`build` tasks use `-A`** (they compile/spawn tooling); the
+  generated `start` task runs least-privilege.
+- **`@denext/og` fetches a missing non-Latin font from `fonts.googleapis.com`**
+  at render time — supply a local `fonts` option, or set `offline: true` on the
+  `ImageResponse` to refuse the fetch (it raises a clear error instead of
+  egressing).
+- **The public-env island ships only _referenced_ prefixed vars.** A key read
+  via a computed expression can't be detected — force-include it via
+  `publicEnv: [...]`. Never give a secret a public prefix.
+- **Pages Router Preview Mode signs its cookie with `DENEXT_PREVIEW_SECRET`.**
+  Set it to a long random value in production (comma-separated to rotate).
+  Without it a random per-process key is used, so preview sessions don't survive
+  a restart or span instances (a one-time warning fires). A forged/unsigned
+  preview cookie is ignored — it never discloses drafts.

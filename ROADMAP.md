@@ -39,9 +39,9 @@ closes that gap with first-party plugins on the settled plugin contract — the
 developer experience people praise in NestJS's `@nestjs/swagger`, reached the
 Deno-idiomatic way.
 
-**Design decision (settled, see [DECISIONS.md](./DECISIONS.md)):** schema-first,
-not decorator-first — one schema per route, colocated with the handler, from which
-validation, static types and the OpenAPI document derive.
+**Approach (decided — CHANGELOG, 2.0.0):** schema-first, not decorator-first —
+one schema per route, colocated with the handler, from which validation, static
+types and the OpenAPI document derive.
 
 ### WS1 — `@denext/openapi` (the anchor deliverable)
 
@@ -109,9 +109,8 @@ shipped bundle and the zero-npm **runtime** claim already holds. Migrate
 - `lightningcss` / `swc` are already WASM builds with a single import site each
   (`src/build/css.ts`, `src/build/swc-ast.ts`) — a surgical repoint to
   `@denext/*` packages, **2.1**. `esbuild` (native-backed, large API surface,
-  isolated to `src/build/next-compat.ts`) is deferred furthest — see
-  [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) → "Post-2.0 (deferred, not
-  gaps)".
+  used by the next-compat build and the unbundled dev loop) is deferred furthest
+  — see "Later" below.
 - **Standing discipline:** track each vendored codec's upstream CVEs, rebuild
   SHA-256-pinned (like the Tailwind binary), and regenerate its
   `THIRD-PARTY-LICENSES.md` before re-publishing — Pillar 2 in maintenance form.
@@ -164,12 +163,6 @@ the esbuild/next-compat path; on native builds optional runtime always ships.
   and whether the UI assets ship vendored (zero-npm, offline) or are fetched at
   build.
 
-## Decisions
-
-Settled policy is not roadmap work: it lives in [DECISIONS.md](./DECISIONS.md)
-(plugin contract, schema-first typed API, the `@denext/*` scope, codec license
-notices, final config field names). Do not re-litigate it here.
-
 ## Guardrails (standing)
 
 - **Zero-npm runtime is sacred** — never reintroduce an npm dependency into a
@@ -192,3 +185,15 @@ notices, final config field names). Do not re-litigate it here.
   documents (other languages, other frontends) — denext apps already get typed
   calls to their own routes from `createApiClient`.
 - `esbuild` off npm (above), once the two WASM repoints have shipped.
+- **Node-stream `Writable` backpressure** for `renderToPipeableStream` /
+  `renderToStaticNodeStream` (they buffer today — the first entry in
+  [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md)): make the core renderer
+  pull-gated and resolve the `await allReady`-then-read deadlock the current
+  eager drain avoids. An SSR-hot-path change with real regression risk and a
+  narrow payoff; `renderToReadableStream` is the primary path.
+- **`next/font` metric-matched fallback face** (`adjustFontFallback`:
+  `size-adjust`/`ascent-override` on a local fallback to cut CLS) — needs a
+  bundled font-metrics database; a guessed table would mis-size the fallback.
+- **Real `Activity` offscreen scheduling** (deferred pre-render, hidden-subtree
+  state preservation) and `ViewTransition` per-element `name`/`enter`/`exit`
+  markers — today both are documented passthroughs.

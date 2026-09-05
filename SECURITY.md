@@ -39,7 +39,7 @@ with you. Credit is given in the advisory and the CHANGELOG unless you ask other
   `denext start`, `denext export`, the scaffold and `denext migrate` output);
 - the dev server **only** for issues reachable from a foreign origin or another local
   user (the dev server is loopback-only by design — see the "Security posture" section of
-  [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md));
+  [KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md));
 - the first-party `@denext/*` packages in `packages/`.
 
 **Out of scope**: vulnerabilities in a user's own application code or third-party

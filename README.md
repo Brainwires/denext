@@ -1069,8 +1069,6 @@ Each doc owns one job, so the same fact lives in exactly one canonical place:
   deferrals, and the honest React DevTools scope.
 - [KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md) — where denext deliberately
   behaves differently from React/Next (documented, not gaps).
-- [DECISIONS.md](./DECISIONS.md) — settled policy (plugin contract, schema-first
-  typed API, `@denext/*` scope, codec licenses, config names).
 - [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md) — the canonical,
   threat-by-threat security posture vs the ecosystem's CVEs.
 - [SECURITY.md](./SECURITY.md) — supported versions and how to report a
