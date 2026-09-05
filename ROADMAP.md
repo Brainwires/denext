@@ -6,7 +6,7 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the mission + its superiority
 > pillars in [MISSION.md](./MISSION.md).
 >
-> `development` is **2.0.2** (the version line `deno task bump` rewrites).
+> `development` is **2.0.3** (the version line `deno task bump` rewrites).
 > 2.0 — the DX release (unified CLI, universal migration, scaffolding/codegen, an
 > instant dev loop, first-party DevTools, end-to-end typed routes and actions) —
 > shipped from it. **2.1 is the next engineering cycle**: a typed,
@@ -31,7 +31,7 @@ closes that gap with first-party plugins on the settled plugin contract — the
 developer experience people praise in NestJS's `@nestjs/swagger`, reached the
 Deno-idiomatic way.
 
-**Approach (decided — CHANGELOG, 2.0.2):** schema-first, not decorator-first —
+**Approach (decided — CHANGELOG, 2.0.3):** schema-first, not decorator-first —
 one schema per route, colocated with the handler, from which validation, static
 types and the OpenAPI document derive.
 

@@ -5,9 +5,9 @@
     ".": "./mod.ts"
   },
   "imports": {
-    "@denext/denext": "jsr:@denext/denext@^2.0.2",
-    "@denext/denext/server": "jsr:@denext/denext@^2.0.2/server",
-    "@denext/denext/plugin-kit": "jsr:@denext/denext@^2.0.2/plugin-kit",
+    "@denext/denext": "jsr:@denext/denext@^2.0.3",
+    "@denext/denext/server": "jsr:@denext/denext@^2.0.3/server",
+    "@denext/denext/plugin-kit": "jsr:@denext/denext@^2.0.3/plugin-kit",
     "effect": "npm:effect@^3.22.0"
   },
   "publish": {

@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.0.3] - 2026-09-05
+
 ### Fixed
 
 - **Compat builds from the JSR-installed denext no longer try to bundle the wasm codecs.** JSR rewrites the published sources' `@denext/photon`/`@denext/avif`/`@denext/og` imports to `jsr:@denext/…@^x.y.z`, and the runtime prebuild's esbuild `external` list matched only the bare spelling — so esbuild descended into the codec and failed on its `.wasm` ("Do not know how to load path: …/denext_photon.wasm") for every compat-mode `denext build`/`export` run from JSR once the codec versions resolved. Both spellings are external now; a new opt-in e2e (`tests/e2e/jsr-runtime-prebuild.e2e.test.ts`) prebuilds the runtime from the latest PUBLISHED denext root so the JSR-rewritten form is exercised before a release. `src/build/next-compat.ts`.
@@ -2692,6 +2694,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.0.3]: https://jsr.io/@denext/denext@2.0.3
 [2.0.2]: https://jsr.io/@denext/denext@2.0.2
 [2.0.1]: https://jsr.io/@denext/denext@2.0.1
 [2.0.0]: https://jsr.io/@denext/denext@2.0.0
