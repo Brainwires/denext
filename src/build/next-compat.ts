@@ -36,6 +36,8 @@ import {
   frameworkFileUrl,
   frameworkImports,
   frameworkRootUrl,
+  loaderConfigPath,
+  minDepAgeConfig,
   readAliasPrefixes,
   readFrameworkJson,
 } from "./bundle.ts";
@@ -185,7 +187,10 @@ export async function prebuildDenextRuntime(options: PrebuildOptions): Promise<s
   // fetched from JSR when denext runs remotely. (The framework's relative self-imports resolve
   // against each entry point's own URL, so only the external deps need to be in this config.)
   const tmpConfig = await Deno.makeTempFile({ suffix: ".deno.json" });
-  await Deno.writeTextFile(tmpConfig, JSON.stringify({ imports: await frameworkImports() }));
+  await Deno.writeTextFile(
+    tmpConfig,
+    JSON.stringify({ imports: await frameworkImports(), ...minDepAgeConfig(undefined) }),
+  );
   try {
     await esbuild.build({
       entryPoints: runtimeEntryPoints(rootUrl),
@@ -716,7 +721,10 @@ export async function bundleNextCompat(options: BundleNextCompatOptions): Promis
   if (options.platform !== "deno") plugins.push(nodeBuiltinStubPlugin());
   if (options.denoLoader ?? true) {
     // The portable loader resolves npm/jsr in-process (no spawned `deno`).
-    plugins.push(...denoPlugins({ configPath: options.configPath, loader: "portable" }));
+    plugins.push(...denoPlugins({
+      configPath: await loaderConfigPath(options.configPath, dirname(options.outfile)),
+      loader: "portable",
+    }));
   }
   await esbuild.build({
     entryPoints: [options.entry],
@@ -1370,7 +1378,7 @@ async function compatPlugins(
   if (!deno) plugins.push(nodeBuiltinStubPlugin());
   if (options.denoLoader ?? true) {
     plugins.push(...denoPlugins({
-      configPath: options.configPath,
+      configPath: await loaderConfigPath(options.configPath, options.outdir),
       loader: options.denoLoaderMode ?? "portable",
     }));
   }

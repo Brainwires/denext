@@ -12,7 +12,7 @@
 
 import { fromFileUrl, join, relative, SEPARATOR, toFileUrl } from "@std/path";
 import { type Directive, readDirective } from "./directives.ts";
-import { denoExecutable, frameworkRoot } from "./bundle.ts";
+import { denoExecutable, frameworkRoot, minDepAgeArgs } from "./bundle.ts";
 
 /** A discovered boundary module: its file URL and (optionally) its export names. */
 export interface BoundaryRef {
@@ -63,6 +63,7 @@ function serverModuleIdFor(appDir: string, fileUrl: string): string {
 interface DenoInfo {
   modules: DenoInfoModule[];
 }
+/** One module of a `deno info --json` graph (the fields denext reads). */
 interface DenoInfoModule {
   specifier: string;
   kind?: string;
@@ -119,17 +120,37 @@ export async function crawlLocalModules(
   opts: CrawlOptions = {},
 ): Promise<string[]> {
   if (entryFiles.length === 0) return [];
+  const { info, barrelUrl } = await denoInfoGraph(entryFiles);
+  const out: string[] = [];
+  for (const m of runtimeReachable(info, barrelUrl)) {
+    if (m.error) continue;
+    if (!m.specifier.startsWith("file://")) continue;
+    if (m.specifier === barrelUrl) continue;
+    const filePath = fromFileUrl(m.specifier);
+    if (opts.exclude?.(filePath)) continue;
+    out.push(filePath);
+  }
+  return out;
+}
+
+/**
+ * Run `deno info --json` over a synthetic barrel importing `entryFiles` and return the
+ * parsed graph plus the barrel's own specifier (to skip). Shared by the boundary/hydration
+ * crawl and the CSS discovery crawl so both apply the same flags (sloppy imports, the
+ * minimum-dependency-age policy) and the same temp-dir hygiene.
+ */
+export async function denoInfoGraph(
+  entryFiles: string[],
+): Promise<{ info: DenoInfo; barrelUrl: string }> {
   const tmpDir = await Deno.makeTempDir({ prefix: "denext_graph_" });
   const barrel = `${tmpDir}/barrel.ts`;
-  const barrelUrl = toFileUrl(barrel).href;
   try {
     const body = entryFiles.map((f) => `import ${JSON.stringify(toFileUrl(f).href)};`).join("\n");
     await Deno.writeTextFile(barrel, body + "\n");
-
     const command = new Deno.Command(denoExecutable(), {
       // sloppy-imports so extensionless Next.js app imports resolve in the graph
       // crawl (permissive fallback; see runDenoBundle in bundle.ts).
-      args: ["info", "--unstable-sloppy-imports", "--json", barrel],
+      args: ["info", "--unstable-sloppy-imports", ...minDepAgeArgs(), "--json", barrel],
       stdout: "piped",
       stderr: "piped",
     });
@@ -137,17 +158,10 @@ export async function crawlLocalModules(
     if (code !== 0) {
       throw new Error(`deno info failed (${code}):\n${new TextDecoder().decode(stderr)}`);
     }
-    const info = JSON.parse(new TextDecoder().decode(stdout)) as DenoInfo;
-    const out: string[] = [];
-    for (const m of runtimeReachable(info, barrelUrl)) {
-      if (m.error) continue;
-      if (!m.specifier.startsWith("file://")) continue;
-      if (m.specifier === barrelUrl) continue;
-      const filePath = fromFileUrl(m.specifier);
-      if (opts.exclude?.(filePath)) continue;
-      out.push(filePath);
-    }
-    return out;
+    return {
+      info: JSON.parse(new TextDecoder().decode(stdout)) as DenoInfo,
+      barrelUrl: toFileUrl(barrel).href,
+    };
   } finally {
     await Deno.remove(tmpDir, { recursive: true });
   }

@@ -12,13 +12,14 @@
 // The extracted, transformed CSS is collected separately and emitted next to the
 // route bundle.
 
+import { denoInfoGraph } from "./module-graph.ts";
 import { basename, dirname, fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import { ensureDir, walk } from "@std/fs";
 import {
   absolutizeImports,
-  denoExecutable,
   frameworkImports,
+  minDepAgeConfig,
   readFrameworkJson,
 } from "./bundle.ts";
 import { compileTailwind } from "./tailwind.ts";
@@ -148,8 +149,6 @@ export async function discoverCssFiles(
   appConfigPath?: string,
 ): Promise<string[]> {
   if (entryFiles.length === 0) return [];
-  const tmpDir = await Deno.makeTempDir({ prefix: "denext_css_graph_" });
-  const barrel = join(tmpDir, "barrel.ts");
   // `deno info` resolves each module's imports via the `deno.json` nearest to it —
   // the app's own config — NOT a `--config` override. When that config has the
   // css→shim redirects mirrored in (anchoring apps; see buildAppCss), every `.css`
@@ -158,22 +157,7 @@ export async function discoverCssFiles(
   // (every build re-mirrors them, so an interrupted crawl self-heals next build).
   const restore = appConfigPath ? await stripCssShims(appConfigPath) : null;
   try {
-    const body = entryFiles.map((f) => `import ${JSON.stringify(toFileUrl(f).href)};`).join("\n");
-    await Deno.writeTextFile(barrel, body + "\n");
-    const command = new Deno.Command(denoExecutable(), {
-      // sloppy-imports so extensionless Next.js app imports resolve in the CSS
-      // graph crawl (permissive fallback; see runDenoBundle in bundle.ts).
-      args: ["info", "--unstable-sloppy-imports", "--json", barrel],
-      stdout: "piped",
-      stderr: "piped",
-    });
-    const { code, stdout, stderr } = await command.output();
-    if (code !== 0) {
-      throw new Error(`deno info failed (${code}):\n${new TextDecoder().decode(stderr)}`);
-    }
-    const info = JSON.parse(new TextDecoder().decode(stdout)) as {
-      modules: Array<{ specifier: string }>;
-    };
+    const { info } = await denoInfoGraph(entryFiles);
     const found = new Set<string>();
     for (const m of info.modules) {
       if (m.specifier.startsWith("file://") && isStyleFile(m.specifier)) {
@@ -182,7 +166,6 @@ export async function discoverCssFiles(
     }
     return [...found].sort();
   } finally {
-    await Deno.remove(tmpDir, { recursive: true });
     if (restore) await restore();
   }
 }
@@ -450,9 +433,13 @@ async function writeCssConfig(
     compilerOptions: fwConfig.compilerOptions,
     imports: { ...await frameworkImports(), ...appImports, ...redirects },
   };
-  const appCfgRaw = await readJson(opts.configPath) as { nodeModulesDir?: unknown };
+  const appCfgRaw = await readJson(opts.configPath) as {
+    nodeModulesDir?: unknown;
+    minimumDependencyAge?: unknown;
+  };
   const nmd = appCfgRaw?.nodeModulesDir;
   if (nmd && nmd !== "none" && nmd !== false) merged.nodeModulesDir = nmd;
+  Object.assign(merged, minDepAgeConfig(appCfgRaw?.minimumDependencyAge));
   const configPath = join(opts.outDir, "css-config.json");
   await Deno.writeTextFile(configPath, JSON.stringify(merged, null, 2));
   return configPath;
