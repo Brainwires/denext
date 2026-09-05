@@ -22,7 +22,16 @@
 
 import { denoPlugins } from "@luca/esbuild-deno-loader";
 import * as esbuild from "esbuild";
-import { dirname, fromFileUrl, isAbsolute, join, relative, resolve, toFileUrl } from "@std/path";
+import {
+  basename,
+  dirname,
+  fromFileUrl,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  toFileUrl,
+} from "@std/path";
 import {
   frameworkFileUrl,
   frameworkImports,
@@ -81,12 +90,17 @@ export const NEXT_ALIASES: Record<string, string> = {
   "next/server": "next-server.js",
 };
 
-/** denext source entrypoints prebuilt into the shared runtime (one graph). */
-function runtimeEntryPoints(baseUrl: string): Record<string, string> {
-  // `baseUrl` may be a `file://` URL (`frameworkRootUrl()`) OR a plain absolute path (a
-  // caller passing `frameworkRoot()`) — normalize to a URL base, since `new URL(rel, base)`
-  // requires an absolute-URL base (a bare path throws "Invalid URL").
-  const base = baseUrl.startsWith("file://") ? baseUrl : toFileUrl(baseUrl).href;
+/**
+ * denext source entrypoints prebuilt into the shared runtime (one graph). `baseUrl` may be
+ * ANY absolute URL — `file://` for a checkout, `https://jsr.io/@denext/denext/<v>/` when the
+ * framework runs from JSR (the common production case), `http://` in tests — or a plain
+ * filesystem path (a caller passing a local `frameworkRoot()`), which is turned into a
+ * `file://` URL. Only a bare path goes through `toFileUrl`; a remote root used to hit it
+ * and throw "Path must be absolute", breaking every `denext export`/`build` of a
+ * compat-mode app installed from JSR.
+ */
+export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
+  const base = /^[a-z][a-z0-9+.-]*:\/\//i.test(baseUrl) ? baseUrl : toFileUrl(baseUrl).href;
   const u = (rel: string) => new URL(rel, base).href;
   return {
     "react": u("src/compat/react.ts"),
@@ -1107,9 +1121,13 @@ export async function resolveInPackageDir(
  * concrete file by walking up `node_modules` from `fromDir` — the standard node
  * algorithm, which handles both hoisted deps (`apps/web/node_modules/<pkg>`) and
  * pnpm's nested layout (a package's own deps under `.pnpm/<parent>/node_modules/`).
- * Honors the package's `exports` map (else `module`/`main`/`index`).
+ * Honors the package's `exports` map (else `module`/`main`/`index`). Also resolves Node's
+ * **package self-reference**: a module inside a package importing its OWN package by name
+ * (`@t3tools/client-runtime/media-source` from `packages/client-runtime/src/…`) resolves
+ * through that package's `exports` — pnpm links a workspace package into its consumers'
+ * `node_modules`, never into its own, so the walk alone can't find it.
  */
-async function resolveNodeFrom(
+export async function resolveNodeFrom(
   fromDir: string,
   spec: string,
   conditions: string[] = BROWSER_CONDITIONS,
@@ -1119,6 +1137,27 @@ async function resolveNodeFrom(
   for (;;) {
     const r = await resolveInPackageDir(join(dir, "node_modules", name), subpath, conditions);
     if (r) return r;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  const self = await selfPackageDir(fromDir, name);
+  return self ? await resolveInPackageDir(self, subpath, conditions) : null;
+}
+
+/**
+ * The nearest ancestor of `fromDir` whose `package.json` is named `name` (Node's self-
+ * reference rule), or null. Stops at a `node_modules` boundary — a dependency's own tree
+ * is not "self" for the importing app.
+ */
+async function selfPackageDir(fromDir: string, name: string): Promise<string | null> {
+  let dir = fromDir;
+  for (;;) {
+    if (basename(dir) === "node_modules") return null;
+    try {
+      const pkg = JSON.parse(await Deno.readTextFile(join(dir, "package.json")));
+      if (pkg?.name === name) return dir;
+    } catch { /* no package.json here */ }
     const parent = dirname(dir);
     if (parent === dir) return null;
     dir = parent;

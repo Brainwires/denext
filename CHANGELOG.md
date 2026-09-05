@@ -8,6 +8,13 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-09-05
+
+### Fixed
+
+- **A pnpm/Vite SPA migrated on the JSR-installed denext builds without hand fixes** (found migrating T3 Code on 2.0.0). Four defects, each with a regression test and a new end-to-end test (`tests/e2e/remote-spa-compat-build.e2e.test.ts`: a pnpm-shaped monorepo SPA exported through a REMOTE framework root): (1) the compat runtime prebuild turned the remote framework root (`https://jsr.io/@denext/denext/<v>/`) into a filesystem path — "Path must be absolute" on every `denext export`/`build` of a compat app from JSR (`runtimeEntryPoints`, `src/build/next-compat.ts`); (2) the generated `dev`/`build`/`export`/`start` tasks of a manual-`node_modules` app now run the CLI with `--node-modules-dir=none` — Deno resolved the JSR-hosted CLI's own `esbuild`/`lightningcss` imports against the app's manual tree ("Could not find a matching package for 'npm:esbuild'"), and the first run made Deno rewrite the monorepo's root `package.json` from `pnpm-workspace.yaml`; the re-exec'd build child keeps the merged manual config, so the app's node_modules (workspace links included) resolve as before (`src/build/migrate.ts`); (3) the node_modules resolver honors Node's package **self-reference** — a workspace package importing itself by name (`@t3tools/client-runtime/media-source` from inside `packages/client-runtime`) resolves through its own `exports`, since pnpm links a package into its consumers' `node_modules`, never its own (`resolveNodeFrom`); (4) the CLI's build re-exec forwards `DENEXT_MIN_DEP_AGE` as `--min-dep-age`, so a freshly published `@denext/*` dependency (the icon compositor's `@denext/photon`) is not refused inside the child while the parent resolved fine, and a failed icon composition now says why.
+- **`denext migrate --desktop` names the bundle after the app.** The generated `desktop` task passes `-o "<title>"` (parentheticals dropped: `"T3 Code (Alpha)"` → `T3 Code`) instead of letting `deno desktop` name it after the entry file (`desktop.app`, CFBundleName "desktop").
+
 ## [2.0.0] - 2026-09-05
 
 ### Breaking
@@ -2675,6 +2682,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.0.1]: https://jsr.io/@denext/denext@2.0.1
 [2.0.0]: https://jsr.io/@denext/denext@2.0.0
 [1.0.2]: https://jsr.io/@denext/denext@1.0.2
 [1.0.1]: https://jsr.io/@denext/denext@1.0.1

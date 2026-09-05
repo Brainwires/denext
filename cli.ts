@@ -19,7 +19,7 @@ import { entrypointArg, isStandaloneBinary } from "./src/cli/self-exec.ts";
 import { resolveProject } from "./src/build/paths.ts";
 import { buildAppCss, injectAppConfigRedirects, restoreAppConfig } from "./src/build/css.ts";
 import { tailwindPaths } from "./src/build/tailwind.ts";
-import { denoExecutable, frameworkRoot } from "./src/build/bundle.ts";
+import { denoExecutable, frameworkRoot, minDepAgeArgs } from "./src/build/bundle.ts";
 import {
   configAnchorsResolution,
   ensureFrameworkNodeModules,
@@ -132,6 +132,11 @@ async function reexecWithConfig(
       // that use extensionless imports at runtime (permissive fallback).
       "--unstable-sloppy-imports",
       ...await childPermissionFlags(),
+      // Deno's minimum-dependency-age policy applies to the child too and the parent can't
+      // read the value it was started with: forward `DENEXT_MIN_DEP_AGE` (see minDepAgeArgs),
+      // or a freshly published `@denext/*` dep (the icon compositor's photon, a codec) is
+      // refused inside the build child while the parent resolved fine.
+      ...minDepAgeArgs(),
       "--config",
       configPath,
       entrypointArg(import.meta.url),

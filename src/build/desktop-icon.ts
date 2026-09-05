@@ -90,7 +90,10 @@ export async function composeMacOsIcon(
       canvas.set(px.subarray(s, s + inner * 4), d);
     }
     return new PhotonImage(canvas, MAC_ICON_CANVAS, MAC_ICON_CANVAS).get_bytes();
-  } catch {
+  } catch (err) {
+    // Say WHY (a refused `@denext/photon` import under the min-dep-age policy, an
+    // undecodable format, …) — a bare "could not process" hid the real cause.
+    console.warn(`  desktop icon: compose failed — ${err instanceof Error ? err.message : err}`);
     return null;
   }
 }
