@@ -4,9 +4,13 @@
 
 /** Parsed User-Agent details. */
 export interface UserAgent {
+  /** Whether the UA matches a known crawler/bot signature. */
   isBot: boolean;
+  /** The raw `user-agent` header value. */
   ua: string;
+  /** Browser name/version (`major` = the first version component). */
   browser: { name?: string; version?: string; major?: string };
+  /** Operating system name/version. */
   os: { name?: string; version?: string };
   /** `type` is `undefined` for a desktop browser, as in Next.js (ua-parser-js). */
   device: {
@@ -14,7 +18,9 @@ export interface UserAgent {
     vendor?: string;
     model?: string;
   };
+  /** Rendering engine (Blink/WebKit/Gecko/Trident) and its version. */
   engine: { name?: string; version?: string };
+  /** CPU architecture when the UA carries it (`amd64`, `arm64`, `ia32`, `arm`). */
   cpu: { architecture?: string };
 }
 

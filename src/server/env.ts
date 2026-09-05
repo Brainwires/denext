@@ -85,14 +85,6 @@ export interface LoadEnvOptions {
 }
 
 /**
- * Load `.env` files into `Deno.env`. Missing files are ignored. Returns the
- * merged file values (before the existing-environment precedence is applied), so
- * callers can inspect what the files declared.
- *
- * @param opts Directory, filenames, and override behavior.
- * @returns The merged variables parsed from the files.
- */
-/**
  * Next.js's `.env` precedence for a mode: `.env` < `.env.<mode>` < `.env.local` <
  * `.env.<mode>.local` (later wins). `.env.local` is skipped for `test`, as in Next.
  * The mode is `DENEXT_ENV`, else `NODE_ENV`, else `development`.
@@ -112,6 +104,14 @@ function envMode(): string {
   }
 }
 
+/**
+ * Load `.env` files into `Deno.env`. Missing files are ignored. Returns the
+ * merged file values (before the existing-environment precedence is applied), so
+ * callers can inspect what the files declared.
+ *
+ * @param opts Directory, filenames, and override behavior.
+ * @returns The merged variables parsed from the files.
+ */
 export async function loadEnv(opts: LoadEnvOptions = {}): Promise<Record<string, string>> {
   const dir = opts.dir ?? Deno.cwd();
   const files = opts.files ?? defaultEnvFiles(opts.mode);

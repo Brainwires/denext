@@ -150,6 +150,7 @@ export {
 } from "./src/client/navigation.ts";
 export { useServerInsertedHTML } from "./src/runtime/server-inserted-html.ts";
 export type {
+  AnchorProps,
   Href,
   HrefInput,
   LinkProps,

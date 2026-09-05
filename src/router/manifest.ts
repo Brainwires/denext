@@ -95,9 +95,13 @@ export interface PageRoute {
 export interface SegmentLevel {
   /** Path segments consumed above this level (for layout-relative segment hooks). */
   depth: number;
+  /** This level's `layout.*` file, if any. */
   layout: string | null;
+  /** This level's `template.*` file, if any. */
   template: string | null;
+  /** This level's `loading.*` file (a Suspense boundary), if any. */
   loading: string | null;
+  /** This level's `error.*` file (an error boundary), if any. */
   error: string | null;
 }
 

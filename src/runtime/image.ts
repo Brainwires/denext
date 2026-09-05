@@ -99,10 +99,10 @@ export interface ImageLoaderProps {
   quality?: number;
 }
 
-/** Builds a (possibly resized) URL for a given width — e.g. a CDN transform. */
 export { blurBackground } from "./image-blur.ts";
 import { BLUR_ATTR, blurBackground, clearBlur } from "./image-blur.ts";
 
+/** Builds a (possibly resized) URL for a given width — e.g. a CDN transform. */
 export type ImageLoader = (props: ImageLoaderProps) => string;
 
 /** Props for {@link Image}. Extra props pass through to the underlying `<img>`. */

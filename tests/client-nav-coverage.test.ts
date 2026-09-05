@@ -127,7 +127,7 @@ Deno.test("usePathname / useSearchParams seed from the location store default", 
 });
 
 Deno.test("useParams / useLocale return empty defaults when no hydration island is present", async () => {
-  let params: Record<string, string> | undefined;
+  let params: Record<string, string | string[]> | undefined;
   let locale: string | undefined;
   const Probe = () => {
     params = useParams();

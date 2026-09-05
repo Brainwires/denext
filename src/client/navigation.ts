@@ -741,9 +741,13 @@ export type Href = RegisteredRoutes extends { routes: infer R extends string } ?
 
 /** Next.js `UrlObject` — the object form `Link`/`useRouter` accept as an href. */
 export interface UrlObject {
+  /** The path (`/blog/[slug]` resolved). */
   pathname?: string;
+  /** Query as a record (nullish values are dropped) or a pre-built string. */
   query?: Record<string, string | number | boolean | null | undefined> | string;
+  /** Fragment, with or without the leading `#`. */
   hash?: string;
+  /** Pre-built query string (wins over `query`), with or without the leading `?`. */
   search?: string;
 }
 

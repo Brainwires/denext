@@ -43,15 +43,15 @@ emit correct denext instead of Next.js.
 
 ## Next.js → denext import map
 
-| Next.js                                                | denext                                                                                                                                                                                                                                                                                                                                                                |
-| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `import { useState, useEffect, ... } from "react"`     | `from "denext"`                                                                                                                                                                                                                                                                                                                                                       |
-| `import { cookies, headers } from "next/headers"`      | `import { cookies, headers } from "denext/server"`                                                                                                                                                                                                                                                                                                                    |
-| `import { redirect, notFound } from "next/navigation"` | `from "denext"` — `redirect`, `permanentRedirect`, `notFound`, `forbidden`, `unauthorized`, `RedirectType` work in Server and Client Components alike (`denext migrate` rewrites `next/navigation` to `denext`). NOT `denext/server`: its `redirect()` is the **middleware** helper that RETURNS a `Response` (`return redirect("/login", 307)` from `middleware.ts`) |
-| `import Link from "next/link"`                         | `import { Link } from "denext"` (or `denext/client`)                                                                                                                                                                                                                                                                                                                  |
-| `import Image from "next/image"`                       | `import { Image } from "denext"`                                                                                                                                                                                                                                                                                                                                      |
-| `unstable_cache`, `revalidatePath`, `revalidateTag`    | `from "denext/server"`                                                                                                                                                                                                                                                                                                                                                |
-| Route handler `export async function GET(req) {}`      | identical — returns a `Response`                                                                                                                                                                                                                                                                                                                                      |
+| Next.js                                                | denext                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `import { useState, useEffect, ... } from "react"`     | `from "denext"`                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `import { cookies, headers } from "next/headers"`      | `import { cookies, headers } from "denext/server"`                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `import { redirect, notFound } from "next/navigation"` | `from "denext"` — `redirect`, `permanentRedirect`, `notFound`, `forbidden`, `unauthorized`, `RedirectType` work in Server and Client Components alike (`denext migrate` rewrites `next/navigation` to `denext`). `denext/server` re-exports the same throwing helpers; its **middleware** helper that RETURNS a `Response` is `redirectResponse` (`return redirectResponse("/login", 307)` from `middleware.ts`; `redirect` there is a deprecated alias of it) |
+| `import Link from "next/link"`                         | `import { Link } from "denext"` (or `denext/client`)                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `import Image from "next/image"`                       | `import { Image } from "denext"`                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `unstable_cache`, `revalidatePath`, `revalidateTag`    | `from "denext/server"`                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Route handler `export async function GET(req) {}`      | identical — returns a `Response`                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 ## Common tasks
 
@@ -209,7 +209,7 @@ i18n, images, `cacheComponents`, `streaming`, `live`, `plugins`, `experimental`,
 `mode: "spa"` + `spa: { entry, … }` for SPA mode). Not `next.config.js`.
 
 **Writing a plugin:** a `DenextPlugin` (`{ name, setup(ctx) }` from
-`denext/server`) hooks five seams — `addRouteSynthesizer` (add/adjust routes),
+`denext/plugin-kit`, the semver-stable toolkit) hooks five seams — `addRouteSynthesizer` (add/adjust routes),
 `addRequestHandler` (claim unmatched requests), `addBuildStep` (emit assets),
 `addTeardown` (dispose on drain), and `addCommand` (contribute a CLI verb). Declare
 it as `plugins: [myPlugin()]`. See
@@ -326,72 +326,84 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 ### `denext`
 
-- `type ActionResult<Out> = union` — The result an action returns: ok carries the typed handler output, else an error.
+- `type ActionResult<Out> = object | object` — The result an action returns: ok carries the typed handler output, else an error.
 - `interface ApiClient<S>` — A typed callable over an app's ApiSchema.
 - `interface ApiEndpoint` — One endpoint's typed shape: its params, optional request/response bodies.
-- `apiRequest(pattern: string, method: HttpMethod, _: unknown, _: unknown): Promise` — Perform one typed API request (the runtime the typed client dispatches to). Substitutes params, JSON-encodes a body, and parses a JSON response (a 204/empty body → undefined).
+- `apiRequest(pattern: string, method: HttpMethod, opts?: ApiRequestOptions, base?: string): Promise<unknown>` — Perform one typed API request (the runtime the typed client dispatches to). Substitutes params, JSON-encodes a body, and parses a JSON response (a 204/empty body → undefined).
 - `interface ApiRequestOptions` — Options accepted by the untyped runtime call (the typed client narrows these).
-- `type ApiSchema = Record` — A whole app's API surface: route pattern → (method → endpoint).
-- `AsyncContext: typeLiteral` — The TC39-shaped namespace object: AsyncContext.Variable / AsyncContext.Snapshot.
-- `buildPath(pattern: string, params?: Record, query?: Record): string` — Substitute path params into a route pattern, appending any query params.
-- `clientOnly(_: unknown): void` — Assert the current module is running in the browser. Call at module top level to guarantee a module that touches browser-only APIs never runs on the server.
+- `type ApiSchema = Record<string, Partial<Record<HttpMethod, ApiEndpoint>>>` — A whole app's API surface: route pattern → (method → endpoint).
+- `AsyncContext: object` — The TC39-shaped namespace object: AsyncContext.Variable / AsyncContext.Snapshot.
+- `buildPath(pattern: string, params?: Record<string, string>, query?: Record<string, string>): string` — Substitute path params into a route pattern, appending any query params.
+- `Children: ChildrenApi` — React.Children utilities over denext children.
+- `interface ChildrenApi` — The React.Children utility surface.
+- `clientOnly(name?: string): void` — Assert the current module is running in the browser. Call at module top level to guarantee a module that touches browser-only APIs never runs on the server.
 - `interface ClientSession` — The reactive session state from useSession.
-- `collapseHeadTags(tags: array): string` — Join a HeadCollector's tags into head HTML, collapsing entries that share a HeadTag.dedup identity to the LAST occurrence at its own position (the earlier duplicate is dropped — next/head's reverse-filter order). Tags without an identity pass through in tree order. Operates on the already-serialized strings; nothing is re-escaped.
-- `type Component<P> = fnOrConstructor` — A component is a function that receives props and returns a renderable node.
+- `cloneElement(element: VNode, config?: Record<string, unknown>, ...children: VNodeChild[]): VNode` — React.cloneElement — shallow-clone element, merging config over its props and replacing children when any are given. key and ref are special-cased the way React does: a key/ref in config overrides, otherwise the original element's is preserved, and neither is left in the merged props as a component-visible prop.
+- `collapseHeadTags(tags: HeadTag[]): string` — Join a HeadCollector's tags into head HTML, collapsing entries that share a HeadTag.dedup identity to the LAST occurrence at its own position (the earlier duplicate is dropped — next/head's reverse-filter order). Tags without an identity pass through in tree order. Operates on the already-serialized strings; nothing is re-escaped.
+- `type Component<P> = (props: P & object) => VNode | Promise<VNode>` — A component is a function that receives props and returns a renderable node.
 - `interface Context<T>` — A context object created by createContext. It is itself usable as a provider element (<MyContext value={v}>…</MyContext>, React 19 style) and also exposes the classic .Provider component. useContext(MyContext) reads the nearest provided value, falling back to the default.
-- `createApiClient<S>(_: unknown): ApiClient` — Create a typed API client bound to an app's generated ApiSchema.
-- `createContext<T>(defaultValue: T): Context` — Create a context with the given default value. The returned Context is usable directly as a provider element (<MyContext value={v}>, React 19 style) and also exposes .Provider; useContext(MyContext) reads the nearest provided value, falling back to defaultValue.
-- `createResource<T>(factory: fnOrConstructor): fnOrConstructor` — A tiny cache for turning an async factory into a stable, suspense-friendly resource. Reading it either returns the value or suspends.
-- `denextImageLoader(_: unknown): string` — The default ImageLoader: points at denext's /_denext/image endpoint, which resizes + re-encodes (webp/avif) the source image. Used automatically unless an image is unoptimized; also available to pass explicitly.
+- `createApiClient<S>(base?: string): ApiClient<S>` — Create a typed API client bound to an app's generated ApiSchema.
+- `createContext<T>(defaultValue: T): Context<T>` — Create a context with the given default value. The returned Context is usable directly as a provider element (<MyContext value={v}>, React 19 style) and also exposes .Provider; useContext(MyContext) reads the nearest provided value, falling back to defaultValue.
+- `createElement`
+- `createRef<T>(): object` — React.createRef — create a mutable ref object { current: null } (used by class components and imperative code).
+- `createResource<T>(factory: () => Promise<T>): () => T` — A tiny cache for turning an async factory into a stable, suspense-friendly resource. Reading it either returns the value or suspends.
+- `denextImageLoader(options: unknown): string` — The default ImageLoader: points at denext's /_denext/image endpoint, which resizes + re-encodes (webp/avif) the source image. Used automatically unless an image is unoptimized; also available to pass explicitly.
 - `type DependencyList = typeOperator` — A useEffect/useMemo dependency array.
-- `interface Dispatcher` — The set of hook implementations backing the public hook functions. A dispatcher is installed for the duration of a render (SSR or client) and each public hook simply delegates to the currently installed dispatcher.
-- `dynamic<P>(loader: DynamicLoader, _: unknown): Component` — Lazily load a component. Returns a component you can render immediately; its target module is imported on first render (as its own bundle chunk) and shown once resolved, with loading displayed meanwhile.
-- `type DynamicLoader<P> = union` — A loader returning a module (whose default is the component) or the component.
+- `dynamic<P>(loader: DynamicLoader<P>, options?: DynamicOptions<P>): Component<P>` — Lazily load a component. Returns a component you can render immediately; its target module is imported on first render (as its own bundle chunk) and shown once resolved, with loading displayed meanwhile.
+- `type DynamicLoader<P> = parenthesized | parenthesized` — A loader returning a module (whose default is the component) or the component.
 - `interface DynamicOptions<P>` — Options for dynamic.
-- `type EffectCleanup = union` — Optional cleanup returned by an effect callback: either nothing, or a function run before the effect re-runs and on unmount.
+- `type EffectCleanup = void | parenthesized` — Optional cleanup returned by an effect callback: either nothing, or a function run before the effect re-runs and on unmount.
 - `ErrorBoundary(props: ErrorBoundaryProps): VNode` — An error boundary. Renders fallback when a child throws during render.
 - `interface ErrorBoundaryController` — Imperative control over the nearest enclosing error boundary, returned by useErrorBoundary.
 - `interface ErrorBoundaryProps` — Props for the ErrorBoundary component.
 - `interface ErrorFallbackProps` — Props passed to the fallback component rendered when a child throws.
 - `type ErrorResult<E> = typeOperator` — A failed operation result.
 - `escapeHtml(value: string): string` — Escape &, <, >, ", and ' so a string is safe as HTML text or attribute content.
-- `FontFace(props: typeLiteral): VNode` — Render a font's @font-face CSS into a <style> tag.
+- `FontFace(props: object): VNode` — Render a font's @font-face CSS into a <style> tag.
 - `interface FontResult` — The result of localFont: a style object plus its @font-face CSS.
 - `interface FontSource` — A single font source file (with optional weight/style for the face).
 - `forbidden(): never` — Throw to render the nearest forbidden.tsx UI with a 403 status.
 - `class ForbiddenError` — Error thrown by forbidden to render the nearest forbidden UI (HTTP 403).
 - `interface FormStatus` — Status of the enclosing form's action, as returned by useFormStatus.
+- `forwardRef<T, P>(render: (props: P, ref: ForwardedRef<T>) => ReactNode): ForwardRefExoticComponent<PropsWithoutRef<P> & RefAttributes<T>>` — React.forwardRef — best-effort. denext threads ref through props, so the render function receives (props, props.ref).
 - `Fragment: typeOperator` — Marker used as a VNode type to group children without a wrapping element.
-- `getImageProps(props: ImageProps): typeLiteral` — next/image's getImageProps — resolve ImageProps to the concrete <img> attributes without rendering, for spreading onto your own element (e.g. a background, a <picture> source, or a custom <img>). Mirrors Next's { props } return shape; srcSet is exposed under both srcSet and srcset for convenience.
-- `getNavigatingHref(): union` — The target href of the in-flight soft navigation, or null when idle.
-- `googleFont(options: GoogleFontOptions): Promise` — Fetch a Google font's CSS2 stylesheet and return a FontResult. Call once at module scope (top-level await), not per request.
+- `getImageProps(props: ImageProps): object` — next/image's getImageProps — resolve ImageProps to the concrete <img> attributes without rendering, for spreading onto your own element (e.g. a background, a <picture> source, or a custom <img>). Mirrors Next's { props } return shape; srcSet is exposed under both srcSet and srcset for convenience.
+- `getNavigatingHref(): string | null` — The target href of the in-flight soft navigation, or null when idle.
+- `googleFont(options: GoogleFontOptions): Promise<FontResult>` — Fetch a Google font's CSS2 stylesheet and return a FontResult. Call once at module scope (top-level await), not per request.
 - `interface GoogleFontOptions` — Options for googleFont.
 - `googleFontUrl(options: GoogleFontOptions): string` — Build the Google Fonts CSS2 stylesheet URL for the given options.
-- `h(type: VNodeType, props: union, _: array): VNode` — Classic-runtime style helper, also handy for programmatic node creation: h("div", { class: "x" }, child1, child2)
+- `h(type: VNodeType, props: VProps | null, ...children: VNodeChildren[]): VNode` — Classic-runtime style helper, also handy for programmatic node creation: h("div", { class: "x" }, child1, child2)
 - `handleClientScriptLoad(props: ScriptProps): void` — next/script's handleClientScriptLoad — imperatively inject a <script> from ScriptProps into the live document (client-only; a no-op during SSR, which has no document). Deduplicates by src. Used to load a script outside the render tree.
 - `interface HeadCollector` — Collects document metadata (<title>/<meta>/<link>) hoisted out of the body during rendering (React 19 behavior). When passed to renderToString, matching elements are gathered here instead of being emitted inline, so the caller can place them in <head>.
 - `interface HeadTag` — One hoisted <meta>/<link> in a HeadCollector.
 - `type Href = conditional` — A navigable path: the app's registered routes when typed-routes is wired, else string.
-- `type HttpMethod = union` — The HTTP methods a route handler may export.
-- `idleActionState<Out>(): ActionResult` — The initial ActionResult for useActionState — an idle (not-yet-submitted) state.
-- `Image(props: ImageProps): VNode` — Render an accessible, layout-stable <img>: lazy + async-decoded by default, eager when priority is set. With a loader, a responsive srcSet and a resized default src are generated; with placeholder="blur", the blurDataURL is shown blurred behind the image until it loads.
-- `type ImageLoader = fnOrConstructor` — Builds a (possibly resized) URL for a given width — e.g. a CDN transform.
+- `type HrefInput = Href | UrlObject` — A string href, or the object form.
+- `type HttpMethod = GET | POST | PUT | PATCH | DELETE | HEAD | OPTIONS` — An HTTP method an API route module can handle.
+- `idleActionState<Out>(): ActionResult<Out>` — The initial ActionResult for useActionState — an idle (not-yet-submitted) state.
+- `Image(props: ImageProps): VNode` — Render an accessible, layout-stable <img>: lazy + async-decoded by default, eager when priority is set. With a loader, a responsive srcSet and a resized default src are generated; with placeholder="blur", the blurDataURL is shown blurred (SVG feGaussianBlur) behind the image and cleared on load — by the onLoad handler when hydrated, and by the client boot for server-only trees; fill positions the image over its container (Next.js parity).
+- `type ImageLoader = (props: ImageLoaderProps) => string`
 - `interface ImageLoaderProps` — Arguments a ImageLoader receives to build a source URL.
 - `interface ImageProps` — Props for Image. Extra props pass through to the underlying <img>.
-- `initScriptLoader(scriptLoaderItems: array): void` — next/script's initScriptLoader — imperatively load an array of scripts at startup (each via handleClientScriptLoad). Client-only.
+- `initScriptLoader(scriptLoaderItems: ScriptProps[]): void` — next/script's initScriptLoader — imperatively load an array of scripts at startup (each via handleClientScriptLoad). Client-only.
+- `isControlSignal(value: unknown): boolean` — True for any denext control-flow signal (notFound/forbidden/unauthorized/ redirect) that error boundaries must re-throw rather than catch.
+- `isForbidden(value: unknown): value is ForbiddenError` — True if value is a ForbiddenError raised by forbidden().
+- `isNotFound(value: unknown): value is NotFoundError` — True if value is a NotFoundError raised by notFound().
 - `isPublicEnvKey(key: string): boolean` — Is key a client-exposable (public-prefixed) environment variable name?
+- `isRedirect(value: unknown): value is RedirectError` — True if value is a RedirectError raised by redirect().
 - `isServer(): boolean` — True when running on the server (no DOM document present).
+- `isUnauthorized(value: unknown): value is UnauthorizedError` — True if value is an UnauthorizedError raised by unauthorized().
+- `isValidElement(value: unknown): value is VNode` — React.isValidElement — true only for a value carrying the React element brand ($$typeof), matching React. A plain { type, props } object without the brand is rejected, so config/data objects that happen to share that shape are not mistaken for elements.
 - `JSX` — JSX namespace so .tsx files typecheck against our runtime.
-- `type Key = union` — A stable identity for a VNode among its siblings, used to keep lists reconciled.
-- `lazy<P>(loader: fnOrConstructor): Component` — React.lazy(() => import("./C")) — a component that **suspends to the nearest ancestor <Suspense fallback>** while its module loads. Unlike dynamic (which wraps its own internal Suspense boundary + loading option), lazy adds no boundary of its own, so the surrounding <Suspense> fallback shows during load — matching React. The target module's default export is the component.
+- `type Key = string | number | null | undefined` — A stable identity for a VNode among its siblings, used to keep lists reconciled.
+- `lazy<P>(loader: () => Promise<object>): Component<P>` — React.lazy(() => import("./C")) — a component that **suspends to the nearest ancestor <Suspense fallback>** while its module loads. Unlike dynamic (which wraps its own internal Suspense boundary + loading option), lazy adds no boundary of its own, so the surrounding <Suspense> fallback shows during load — matching React. The target module's default export is the component.
 - `Link(props: LinkProps): VNode` — A client-side navigating anchor with hover/viewport prefetching.
 - `interface LinkProps` — Props for the Link component — an <a> with client-side soft navigation.
 - `interface LinkStatus` — The status of an in-flight navigation, returned by useLinkStatus.
 - `liveReadable<T>(action: T): T` — Mark a server action as readable over the Live data channel (useLive), and return it unchanged for chaining. Only actions marked here — or admitted by the Live hub's canSubscribe policy — may be run via a data-subscribe. Use it for read-only fetchers you intend to stream; never for mutations.
 - `localFont(options: LocalFontOptions): FontResult` — Build the @font-face CSS and a style object for a self-hosted font.
 - `interface LocalFontOptions` — Options for localFont.
-- `memo<P>(component: Component, areEqual?: fnOrConstructor): Component` — Wrap a component so the reconciler bails out of re-rendering it when its props have not meaningfully changed. Without areEqual, props are compared with shallowEqualProps (the same default the reconciler applies to every component); pass areEqual for custom control (return true to skip the re-render). Context changes always bypass the bailout — a consumer still re-renders when a context it reads changes.
-- `navigate(href: string, _: unknown): Promise` — Perform a soft navigation to href: fetch the target page, swap its markup into the hydration root, update history and <head>, and re-hydrate. Falls back to a full-page navigation on cross-origin URLs or network failure.
+- `memo<P>(component: Component<P>, areEqual?: (prev: P, next: P) => boolean): Component<P>` — Wrap a component so the reconciler bails out of re-rendering it when its props have not meaningfully changed. Without areEqual, props are compared with shallowEqualProps (the same default the reconciler applies to every component); pass areEqual for custom control (return true to skip the re-render). Context changes always bypass the bailout — a consumer still re-renders when a context it reads changes.
+- `navigate(href: string, options?: NavigateOptions): Promise<void>` — Perform a soft navigation to href: fetch the target page, swap its markup into the hydration root, update history and <head>, and re-hydrate. Falls back to a full-page navigation on cross-origin URLs or network failure.
 - `interface NavigateOptions` — Options controlling a soft (client-side) navigation.
 - `notFound(): never` — Throw to render the nearest not-found UI with a 404 status.
 - `class NotFoundError` — Error thrown by notFound to trigger the nearest not-found UI (HTTP 404).
@@ -399,160 +411,169 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface PictureInPictureControls` — The controls returned by usePictureInPicture.
 - `prefetch(href: string): void` — Prefetch the page at href in the background (same-origin only) and cache its HTML, so a subsequent navigate is instant. No-op on the server, for cross-origin URLs, or when already prefetched/in-flight.
 - `Profiler(props: ProfilerProps): VNode` — Measure render timing for children and report it to onRender after each commit. Renders as a Fragment carrying the profiler config for the reconciler, so it adds no DOM of its own and is transparent during SSR.
-- `type ProfilerOnRender = fnOrConstructor` — Callback invoked after each commit of a Profiler's subtree.
-- `type ProfilerPhase = union` — The commit phase reported to a Profiler's onRender.
+- `type ProfilerOnRender = (id: string, phase: ProfilerPhase, actualDuration: number, baseDuration: number, startTime: number, commitTime: number) => void` — Callback invoked after each commit of a Profiler's subtree.
+- `type ProfilerPhase = mount | update` — The commit phase reported to a Profiler's onRender.
 - `interface ProfilerProps` — Props for Profiler.
-- `type PropsComparator = fnOrConstructor` — Compares a component's previous and next props; true means "skip re-render".
+- `type PropsComparator = (prev: Record<string, unknown>, next: Record<string, unknown>) => boolean` — Compares a component's previous and next props; true means "skip re-render".
 - `PUBLIC_ENV_PREFIXES: typeOperator` — Prefixes that mark an environment variable as safe to expose to the browser. NEXT_PUBLIC_ matches Next.js for drop-in compatibility; DENEXT_PUBLIC_ is the denext-native prefix. Any other variable stays server-only.
-- `publicEnv(): Record` — Read the public environment variables (isomorphic). On the client, returns the variables embedded in the page — only ever the public-prefixed ones. On the server, returns the public subset of the live process environment.
-- `redirect(url: string, typeOrStatus?: union): never` — Throw to redirect to url from a component or action.
+- `publicEnv(): Record<string, string>` — Read the public environment variables (isomorphic). On the client, returns the variables embedded in the page — only ever the public-prefixed ones. On the server, returns the public subset of the live process environment.
+- `redirect(url: string, typeOrStatus?: RedirectType | number): never` — Throw to redirect to url from a component or action.
 - `class RedirectError` — Error thrown by redirect/permanentRedirect to issue an HTTP redirect.
 - `enum RedirectType` — next/navigation's RedirectType — how a client-side (soft) navigation applies the redirect: push a new history entry or replace the current one. Server responses ignore it (they always issue an HTTP redirect).
-- `type Ref<T> = union` — A mutable ref object or a callback ref, as accepted by ref/useImperativeHandle.
+- `type Ref<T> = object | parenthesized | null | undefined` — A mutable ref object or a callback ref, as accepted by ref/useImperativeHandle.
 - `interface RegisteredRoutes` — Typed-routes registry (augmentation seam). denext build/dev emit .denext/routes.ts, which augments this interface with routes: Routes; import that file anywhere in your app and Link / Router.push narrow to real paths. Empty by default ⇒ Href is string (no enforcement until you opt in).
 - `interface RenderOptions` — Options for renderToString.
-- `renderToReadableStream(node: VNodeChildren, _: unknown): ReadableStream` — Render a VNode tree to a streaming HTML ReadableStream<Uint8Array>, resolving Suspense boundaries progressively.
-- `renderToString(node: VNodeChildren, _: unknown): Promise` — Render a VNode (or renderable child) to an HTML string. This is the primary SSR entry point.
+- `renderToReadableStream(node: VNodeChildren, options?: StreamOptions): ReadableStream<Uint8Array>` — Render a VNode tree to a streaming HTML ReadableStream<Uint8Array>, resolving Suspense boundaries progressively.
+- `renderToString(node: VNodeChildren, options?: RenderOptions): Promise<string>` — Render a VNode (or renderable child) to an HTML string. This is the primary SSR entry point.
 - `type RequestArgs<E> = conditional` — The trailing call args: the opts object is required only when it has a required key.
-- `type RequestOf<E> = intersection` — The options object for one endpoint: params/body appear only when the route has them.
+- `type RequestOf<E> = parenthesized & parenthesized & object` — The options object for one endpoint: params/body appear only when the route has them.
 - `type RequiredKeys<T> = indexedAccess` — The keys of T that are required (used to decide whether the opts arg is optional).
 - `type ResponseOf<E> = conditional` — The awaited response type for one endpoint.
-- `interface Router` — Imperative navigation API returned by useRouter.
+- `interface Router` — Imperative navigation API returned by useRouter (Next.js AppRouterInstance).
+- `interface RouterNavigateOptions` — Options for Router.push / Router.replace (Next.js NavigateOptions).
 - `Script(props: ScriptProps): VNode` — Render a <script> with the given loading ScriptStrategy.
 - `interface ScriptProps` — Props for Script. Extra props pass through to the <script>.
-- `type ScriptStrategy = union` — When a Script runs relative to page parsing/interactivity.
-- `serverAction<A, R>(id: string, handler: fnOrConstructor): ServerActionRef` — Define a server action. Give it a **stable, explicit id** (unique per app) so the client stub and the server handler agree across the boundary.
+- `type ScriptStrategy = beforeInteractive | afterInteractive | lazyOnload | worker` — When a Script runs relative to page parsing/interactivity.
+- `serverAction<A, R>(id: string, handler: (...args: A) => R | Promise<R>): ServerActionRef<A, R>` — Define a server action. Give it a **stable, explicit id** (unique per app) so the client stub and the server handler agree across the boundary.
 - `interface ServerActionRef<A, R>` — A reference to a server action: callable, and tagged with its stable id.
-- `serverOnly(_: unknown): void` — Assert the current module is running on the server. Call at module top level to guarantee a module (e.g. one reading secrets or a database) never ships to or executes in the browser.
+- `serverOnly(name?: string): void` — Assert the current module is running on the server. Call at module top level to guarantee a module (e.g. one reading secrets or a database) never ships to or executes in the browser.
 - `SessionProvider(props: SessionProviderProps): VNode` — Provide session state to the tree. Seed it with session from the server for no loading flash, or omit it to fetch /auth/session on mount.
 - `interface SessionProviderProps` — Props for SessionProvider.
 - `interface SessionUser` — The signed-in user exposed to the client (non-sensitive fields only).
 - `interface Signal<T>` — A reactive box holding a single serializable value.
-- `signIn(provider: string, _: unknown): Promise` — Start sign-in. For an OAuth/OIDC provider this navigates to the provider; for a Credentials provider (pass credentials) it POSTs and resolves with the result.
+- `signIn(provider: string, options?: SignInOptions): Promise<unknown>` — Start sign-in. For an OAuth/OIDC provider this navigates to the provider; for a Credentials provider (pass credentials) it POSTs and resolves with the result.
 - `interface SignInOptions` — Options for signIn.
-- `signOut(_: unknown): Promise` — Sign out (same-origin POST to /auth/signout), then navigate to callbackUrl.
+- `signOut(options?: SignOutOptions): Promise<void>` — Sign out (same-origin POST to /auth/signout), then navigate to callbackUrl.
 - `interface SignOutOptions` — Options for signOut.
 - `class Snapshot` — A frozen capture of every variable's current value. run re-enters the captured context for the duration of a callback; wrap binds a function to the context that was current when it was wrapped.
-- `startTransition(callback: fnOrConstructor): void` — Run callback as a low-priority "transition": the callback runs synchronously (like React), but any state updates it triggers are scheduled at transition priority — flushed after the reconciler yields to the browser, so urgent updates and paint/input happen first. On the server (no scheduler installed) it just runs the callback. The transition render is time-sliced and interruptible: a higher-priority (sync) update abandons the in-flight transition and restarts it (see the Async transitions guide: /docs/rendering#async-transitions).
-- `type StateUpdater<S> = fnOrConstructor` — State setter returned by useState. Accepts either the next value or an updater function that receives the previous value and returns the next one.
+- `startTransition(callback: () => void): void` — Run callback as a low-priority "transition": the callback runs synchronously (like React), but any state updates it triggers are scheduled at transition priority — flushed after the reconciler yields to the browser, so urgent updates and paint/input happen first. On the server (no scheduler installed) it just runs the callback. The transition render is time-sliced and interruptible: a higher-priority (sync) update abandons the in-flight transition and restarts it (see the Async transitions guide: /docs/rendering#async-transitions).
+- `type StateUpdater<S> = (value: S | parenthesized) => void` — State setter returned by useState. Accepts either the next value or an updater function that receives the previous value and returns the next one.
 - `interface StreamOptions` — Options for renderToReadableStream.
-- `subscribeNavigating(listener: fnOrConstructor): fnOrConstructor` — Subscribe to soft-navigation start/settle transitions (returns an unsubscribe).
+- `StrictMode(props: object): VNode` — React.StrictMode — a development aid that double-invokes renders and mount effects beneath it to surface impurities and missing cleanup. A transparent Fragment in production and during server rendering (no markup, no double-invoke).
+- `subscribeNavigating(listener: () => void): () => void` — Subscribe to soft-navigation start/settle transitions (returns an unsubscribe).
 - `type SuccessResult<T> = typeOperator` — A successful operation result.
 - `Suspense(props: SuspenseProps): VNode` — A Suspense boundary. Renders fallback until its children stop suspending.
 - `SuspenseList(props: SuspenseListProps): VNode` — React.SuspenseList — coordinates the reveal order of sibling <Suspense> boundaries. With revealOrder="forwards" a boundary stays in its fallback until every boundary before it has revealed ("backwards" reverses; "together" holds all until the last resolves). tail="collapsed" shows only the next boundary's fallback, "hidden" shows none.
 - `interface SuspenseListProps` — Props for SuspenseList.
 - `interface SuspenseProps` — Props for the Suspense boundary component.
-- `tryCatch<T, E>(operation: fnOrConstructor): Promise` — Runs an operation and captures its return value, thrown value, or rejection.
-- `type TryCatchResult<T, E> = union` — The result of a synchronous or asynchronous operation.
-- `type TypedAction<Out> = fnOrConstructor` — A typed action, shaped for useActionState(action, initial).
+- `tryCatch<T, E>(operation: () => T | PromiseLike<T>): Promise<TryCatchResult<T, E>>` — Runs an operation and captures its return value, thrown value, or rejection.
+- `type TryCatchResult<T, E> = SuccessResult<T> | ErrorResult<E>` — The result of a synchronous or asynchronous operation.
+- `type TypedAction<Out> = (prevState: ActionResult<Out>, formData: FormData) => Promise<ActionResult<Out>>` — A typed action, shaped for useActionState(action, initial).
 - `unauthorized(): never` — Throw to render the nearest unauthorized.tsx UI with a 401 status.
 - `class UnauthorizedError` — Error thrown by unauthorized to render the nearest unauthorized UI (HTTP 401).
-- `use<T>(usable: union): T` — React 19's use: read a resource during render. Given a **promise**, unwrap its value, suspending (throwing the promise) while it is pending — the same promise instance must be passed across renders (cache it). Given a **context** (from createContext), read its current value like useContext — this overload may be called conditionally. Works on the client and under every SSR renderer, since both delegate to the active hook dispatcher.
-- `useActionState<State, Payload>(action: fnOrConstructor, initialState: State, permalink?: string): tuple` — Manage state driven by a form action (React 19 useActionState).
+- `interface UrlObject` — Next.js UrlObject — the object form Link/useRouter accept as an href.
+- `use<T>(usable: Promise<T> | Context<T>): T` — React 19's use: read a resource during render. Given a **promise**, unwrap its value, suspending (throwing the promise) while it is pending — the same promise instance must be passed across renders (cache it). Given a **context** (from createContext), read its current value like useContext — this overload may be called conditionally. Works on the client and under every SSR renderer, since both delegate to the active hook dispatcher.
+- `useActionState<State, Payload>(action: (state: State, payload: Payload) => State | Promise<State>, initialState: State, permalink?: string): tuple` — Manage state driven by a form action (React 19 useActionState).
 - `useAsyncEffect(effect: Effect, deps: DependencyList): void` — Runs an async effect and re-runs it whenever dependencies change.
 - `useCallback<T>(fn: T, deps?: DependencyList): T` — Return a memoized version of fn that only changes when deps change.
-- `useContext<T>(context: Context): T` — Read the current value of context from the nearest enclosing provider.
-- `useDebugValue<T>(_value: T, _format?: fnOrConstructor): void` — Label a custom hook's value for React DevTools. A no-op at runtime (React itself only invokes it when DevTools is attached), provided for API compatibility.
+- `useContext<T>(context: Context<T>): T` — Read the current value of context from the nearest enclosing provider.
+- `useDebugValue<T>(_value: T, _format?: (value: T) => unknown): void` — Label a custom hook's value for React DevTools. A no-op at runtime (React itself only invokes it when DevTools is attached), provided for API compatibility.
 - `useDeferredValue<T>(value: T, initialValue?: T): T` — Return a deferred copy of value that lags behind during rapid updates, letting urgent renders finish first. On the client this is a true **render-phase** deferral (React-accurate): during an urgent render the hook returns the previous value and schedules a low-priority transition to catch up, so the deferred update is time-sliced and interruptible and the value never trails by an extra commit. The optional initialValue (React 19) is returned on the first render, with a transition scheduled to reach value. On the server (no lane scheduler) it returns initialValue ?? value.
-- `useEffect(effect: fnOrConstructor, deps?: DependencyList): void` — Run a side effect after render, re-running whenever deps change.
-- `useEffectEvent<A, R>(handler: fnOrConstructor): fnOrConstructor` — Return a **stable** callback that always sees the latest props/state — React 19.2's useEffectEvent. Use it for the "event" part of an Effect that should not itself be a dependency (so the Effect doesn't re-run when the handler's closure changes). Do not call the returned function during render.
+- `useEffect(effect: () => EffectCleanup, deps?: DependencyList): void` — Run a side effect after render, re-running whenever deps change.
+- `useEffectEvent<A, R>(handler: (...args: A) => R): (...args: A) => R` — Return a **stable** callback that always sees the latest props/state — React 19.2's useEffectEvent. Use it for the "event" part of an Effect that should not itself be a dependency (so the Effect doesn't re-run when the handler's closure changes). Do not call the returned function during render.
 - `useErrorBoundary(): ErrorBoundaryController` — Access the nearest enclosing error boundary imperatively. Returns a ErrorBoundaryController whose captureError(e) shows that boundary's fallback (handy for async errors a boundary cannot catch during render) and whose reset() retries its children. Inert during server rendering.
-- `useFormState<State, Payload>(action: fnOrConstructor, initialState: State, permalink?: string): tuple` — Deprecated alias of useActionState — React renamed useFormState (react-dom) to useActionState (react). Kept so code that still imports the old name resolves; prefer useActionState.
+- `useFormState<State, Payload>(action: (state: State, payload: Payload) => State | Promise<State>, initialState: State, permalink?: string): tuple` — Alias of useActionState — React renamed useFormState (react-dom) to useActionState (react). Kept so code that still imports the old name resolves.
 - `useFormStatus(): FormStatus` — Read whether the **nearest enclosing** <form action={fn}>'s action is in flight (React 19 useFormStatus). Scoped per form — two concurrent forms report independent status. Returns { pending: false } outside a form and during server rendering.
 - `useId(): string` — Return a unique, stable id string. The value is deterministic across the server render and client hydration (ids are assigned in render order), so it is safe to use for id/htmlFor/aria-* attributes without a mismatch.
-- `useImperativeHandle<T>(ref: Ref, create: fnOrConstructor, deps?: DependencyList): void` — Customize the value exposed on a parent's ref for the current component. create builds the imperative handle; it re-runs when deps change.
-- `useInsertionEffect(effect: fnOrConstructor, deps?: DependencyList): void` — Run effect synchronously at commit in its own pre-mutation phase — before any DOM mutation and before layout effects — intended for CSS-in-JS libraries (emotion, styled-components) and animation libraries (motion) to inject styles before the DOM is read. It must NOT read layout or use refs. A no-op during server rendering.
-- `useLayoutEffect(effect: fnOrConstructor, deps?: DependencyList): void` — Like useEffect, but on the client it runs synchronously after the DOM is mutated and before the browser paints — use it for layout reads/writes that must happen before the user sees the frame. A no-op during server rendering.
+- `useImperativeHandle<T>(ref: Ref<T>, create: () => T, deps?: DependencyList): void` — Customize the value exposed on a parent's ref for the current component. create builds the imperative handle; it re-runs when deps change.
+- `useInsertionEffect(effect: () => EffectCleanup, deps?: DependencyList): void` — Run effect synchronously at commit in its own pre-mutation phase — before any DOM mutation and before layout effects — intended for CSS-in-JS libraries (emotion, styled-components) and animation libraries (motion) to inject styles before the DOM is read. It must NOT read layout or use refs. A no-op during server rendering.
+- `useLayoutEffect(effect: () => EffectCleanup, deps?: DependencyList): void` — Like useEffect, but on the client it runs synchronously after the DOM is mutated and before the browser paints — use it for layout reads/writes that must happen before the user sees the frame. A no-op during server rendering.
 - `useLinkStatus(): LinkStatus` — useLinkStatus (Next.js) — reactive pending state for the enclosing <Link>, for rendering inline loading indicators. Scoped to the nearest <Link>: pending is true from that link's click until its navigation settles. Outside any <Link> it is always false (matching Next.js).
 - `useLocale(): string` — The active locale (reactive) for apps using i18n routing. Reads the locale the server resolved for this page from the hydration payload and re-reads it on soft navigation. Server components should read params.locale directly.
-- `useMemo<T>(factory: fnOrConstructor, deps?: DependencyList): T` — Memoize factory's result, recomputing only when deps change.
-- `useOptimistic<S, A>(state: S, updateFn?: fnOrConstructor): tuple` — Show an optimistic value while an async update is in flight. Returns [optimisticState, addOptimistic]; call addOptimistic(action) to apply an optimistic change over the current state. The optimistic value resets to state whenever state itself changes (e.g. once the real update lands).
-- `useParams(): Record` — The current route's dynamic params (reactive). Reads the params the server resolved for this page from the hydration payload; updates on soft navigation.
+- `useMemo<T>(factory: () => T, deps?: DependencyList): T` — Memoize factory's result, recomputing only when deps change.
+- `useOptimistic<S, A>(state: S, updateFn?: (current: S, action: A) => S): tuple` — Show an optimistic value while an async update is in flight. Returns [optimisticState, addOptimistic]; call addOptimistic(action) to apply an optimistic change over the current state. The optimistic value resets to state whenever state itself changes (e.g. once the real update lands).
+- `useParams(): Record<string, string | string[]>` — The current route's dynamic params (reactive). Reads the params the server resolved for this page from the hydration payload; updates on soft navigation.
 - `usePathname(): string` — Reactive current pathname; re-renders the component on navigation.
-- `usePictureInPicture(_: unknown): PictureInPictureControls` — Control Picture-in-Picture for a <video> as a hook. Spread the returned PictureInPictureControls.ref ref onto the video, then call PictureInPictureControls.enter enter / PictureInPictureControls.exit exit / PictureInPictureControls.toggle toggle (from a click — the browser requires a user gesture to enter PiP). PictureInPictureControls.isActive isActive tracks *this* video; PictureInPictureControls.isPiPOpen isPiPOpen is the shared global state. On the server, or without the API, isSupported is false and the actions are no-ops.
+- `usePictureInPicture(options?: UsePictureInPictureOptions): PictureInPictureControls` — Control Picture-in-Picture for a <video> as a hook. Spread the returned PictureInPictureControls.ref ref onto the video, then call PictureInPictureControls.enter enter / PictureInPictureControls.exit exit / PictureInPictureControls.toggle toggle (from a click — the browser requires a user gesture to enter PiP). PictureInPictureControls.isActive isActive tracks *this* video; PictureInPictureControls.isPiPOpen isPiPOpen is the shared global state. On the server, or without the API, isSupported is false and the actions are no-ops.
 - `interface UsePictureInPictureOptions` — Options for usePictureInPicture.
-- `useReducer<S, A, I>(reducer: fnOrConstructor, initialArg: I, init?: fnOrConstructor): tuple` — Manage component state with a reducer, returning the state and a dispatch. With a lazy init, the initial state is init(initialArg) (React parity).
-- `useRef<T>(initial: T): typeLiteral` — Create a mutable ref object whose .current persists across renders.
-- `useRouter(): Router` — Access the imperative Router for programmatic navigation.
+- `useReducer<S, A, I>(reducer: (state: S, action: A) => S, initialArg: I, init?: (arg: I) => S): tuple` — Manage component state with a reducer, returning the state and a dispatch. With a lazy init, the initial state is init(initialArg) (React parity).
+- `useRef<T>(initial: T): object` — Create a mutable ref object whose .current persists across renders.
+- `useRouter(): Router` — Access the imperative Router for programmatic navigation. Stable identity.
 - `useSearchParams(): URLSearchParams` — Reactive current search params.
-- `useSelectedLayoutSegment(parallelRoutesKey?: string): union` — The first route segment below the calling layout's level (reactive), or null.
-- `useSelectedLayoutSegments(_parallelRoutesKey?: string): array` — The active route path segments **below the calling layout's level** (reactive), matching Next.js. A layout at /a sees ["b","c"] for /a/b/c; the root layout sees all segments. The depth comes from the nearest LayoutSegmentContext provider (injected around each layout by the server renderer and the client route entry); outside any layout it is 0, so all segments are returned. Updates on soft navigation.
-- `useServerInsertedHTML(callback: fnOrConstructor): void` — Register a callback whose returned markup is inserted into the server-rendered <head>. No-op on the client. Matches Next's useServerInsertedHTML from next/navigation.
+- `useSelectedLayoutSegment(parallelRoutesKey?: string): string | null` — The first route segment below the calling layout's level (reactive), or null.
+- `useSelectedLayoutSegments(_parallelRoutesKey?: string): string[]` — The active route path segments **below the calling layout's level** (reactive), matching Next.js. A layout at /a sees ["b","c"] for /a/b/c; the root layout sees all segments. The depth comes from the nearest LayoutSegmentContext provider (injected around each layout by the server renderer and the client route entry); outside any layout it is 0, so all segments are returned. Updates on soft navigation.
+- `useServerInsertedHTML(callback: () => VNodeChildren): void` — Register a callback whose returned markup is inserted into the server-rendered <head>. No-op on the client. Matches Next's useServerInsertedHTML from next/navigation.
 - `useSession(): ClientSession` — Read the current ClientSession. Must be under a SessionProvider.
-- `useSignal<T>(initial: T): Signal` — A component-local reactive value. Read signal.value to use it, assign signal.value = next to update it (re-rendering the owning component). Unlike useState, the same Signal object is stable across renders — pass it to a child without re-subscribing the parent.
+- `useSignal<T>(initial: T): Signal<T>` — A component-local reactive value. Read signal.value to use it, assign signal.value = next to update it (re-rendering the owning component). Unlike useState, the same Signal object is stable across renders — pass it to a child without re-subscribing the parent.
 - `useState<S>(): tuple` — Declare local component state with no initial value (S | undefined).
 - `useStore<T>(initial: T): T` — A component-local reactive object. Assigning a top-level property re-renders the owning component; reading is transparent. Shallow — nested-object mutations do not notify (assign a new nested object instead).
-- `useSyncExternalStore<T>(subscribe: fnOrConstructor, getSnapshot: fnOrConstructor, getServerSnapshot?: fnOrConstructor): T` — Subscribe to an external (non-React) store and re-render when it changes. subscribe registers a change listener and returns an unsubscribe function; getSnapshot reads the current value; getServerSnapshot (optional) provides the value used during server rendering.
+- `useSyncExternalStore<T>(subscribe: (onChange: () => void) => () => void, getSnapshot: () => T, getServerSnapshot?: () => T): T` — Subscribe to an external (non-React) store and re-render when it changes. subscribe registers a change listener and returns an unsubscribe function; getSnapshot reads the current value; getServerSnapshot (optional) provides the value used during server rendering.
 - `useTransition(): tuple` — Return [isPending, startTransition]. isPending stays true from the moment the transition starts until its low-priority updates have been flushed — so a pending indicator can paint (and the browser can handle input) before the transition's work runs. For an async callback it is held until the returned promise settles and the resulting flush lands. Falls back to a synchronous run when no client scheduler is installed.
 - `useTranslations(): TranslateFn` — Access a translation function t(key, vars?) for the active locale (reactive). Looks up key in the locale's catalog and interpolates {var} placeholders; a missing key returns the key itself. The catalog comes from the render-time provider during SSR and from the hydration payload on the client, re-read on soft navigation (so switching locales updates the strings).
-- `useWakeLock(_: unknown): WakeLockControls` — Keep the screen awake via the Screen Wake Lock API, as a hook. Call WakeLockControls.request request to add this instance's claim and WakeLockControls.release release to drop it; the claim is also dropped automatically on unmount. Because the screen is device-global, the lock is refcounted: it stays on while any instance has a claim, and WakeLockControls.count count/WakeLockControls.active active report the shared state to every instance. WakeLockControls.releaseAll releaseAll drops every claim at once.
+- `useWakeLock(options?: UseWakeLockOptions): WakeLockControls` — Keep the screen awake via the Screen Wake Lock API, as a hook. Call WakeLockControls.request request to add this instance's claim and WakeLockControls.release release to drop it; the claim is also dropped automatically on unmount. Because the screen is device-global, the lock is refcounted: it stays on while any instance has a claim, and WakeLockControls.count count/WakeLockControls.active active report the shared state to every instance. WakeLockControls.releaseAll releaseAll drops every claim at once.
 - `interface UseWakeLockOptions` — Options for useWakeLock.
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
 - `VERSION: 2.0.0-rc.7` — The denext framework version.
 - `interface VNode` — A single virtual DOM node.
-- `type VNodeChild = union` — Anything that can appear as a child in JSX.
-- `type VNodeChildren = union` — One child or an array of children, as accepted by JSX.
+- `type VNodeChild = VNode | string | number | boolean | null | undefined` — Anything that can appear as a child in JSX.
+- `type VNodeChildren = VNodeChild | VNodeChild[]` — One child or an array of children, as accepted by JSX.
 - `interface VProps` — Props passed to a virtual node. children is normalized separately.
 - `interface WakeLockControls` — The controls returned by useWakeLock.
 - `interface WebLockOptions` — Options for withWebLock.
-- `withWebLock<T>(name: string, fn: fnOrConstructor, _: unknown): Promise` — Run fn while holding a same-origin lock named name, coordinating across every tab, iframe, and worker of the origin (the Web Locks API). Only one holder runs an exclusive lock at a time; the lock is released automatically when fn settles — or when the holding context is destroyed — so a crashed tab can never deadlock the others.
+- `withWebLock<T>(name: string, fn: () => T | Promise<T>, options?: WebLockOptions): Promise<T | undefined>` — Run fn while holding a same-origin lock named name, coordinating across every tab, iframe, and worker of the origin (the Web Locks API). Only one holder runs an exclusive lock at a time; the lock is released automatically when fn settles — or when the holding context is destroyed — so a crashed tab can never deadlock the others.
 
 ### `denext/server`
 
-- `absoluteUrl(request: Request, path: string, _: unknown): string` — Resolve path against the request's public requestOrigin. An already-absolute URL is returned unchanged; a root-relative path is made absolute against the origin.
+- `absoluteUrl(request: Request, path: string, opts?: OriginOptions): string` — Resolve path against the request's public requestOrigin. An already-absolute URL is returned unchanged; a root-relative path is made absolute against the origin.
 - `interface ActionHandlerOptions` — Options for handleAction.
-- `type ActionResult<Out> = union` — The result an action returns: ok carries the typed handler output, else an error.
+- `type ActionResult<Out> = object | object` — The result an action returns: ok carries the typed handler output, else an error.
 - `class ActionValidationError` — Throw this from an input parser (or a handler) to return per-field form errors.
-- `after(callback: fnOrConstructor): void` — Schedule work to run after the response is produced (Next.js after()). Useful for logging, analytics, or cache warm-up that should not delay the response. Callbacks run once the handler returns; a throw is logged, not propagated. Outside a request, the callback runs immediately.
+- `after(callback: () => unknown): void` — Schedule work to run after the response is produced (Next.js after()). Useful for logging, analytics, or cache warm-up that should not delay the response. Callbacks run once the handler returns; a throw is logged, not propagated. Outside a request, the callback runs immediately.
 - `interface AlternatesMetadata` — Alternate-URL metadata (<link rel="canonical"> and hreflang alternates).
 - `interface ApiContext` — Context passed to an API route handler.
-- `type ApiHandler = fnOrConstructor` — A single-method API route handler.
+- `type ApiHandler = (request: Request, context: ApiContext) => Response | Promise<Response>` — A single-method API route handler.
 - `interface ApiMatch` — An API route matched against a pathname, with its extracted params.
-- `type ApiModule = Partial` — Shape of an API route module: one exported fn per supported method.
+- `type ApiModule = Partial<Record<HttpMethod, ApiHandler>>` — Shape of an API route module: one exported fn per supported method.
 - `interface ApiRoute` — An API endpoint route discovered by scanning the app directory.
 - `interface AppConfig` — Configuration for createApp: how to resolve the route manifest and load modules, plus optional cross-cutting behavior (request logging, per-request timeout, and the rest). ServeOptions extends this for the higher-level serve entry point.
-- `auth(): Promise` — Read the current request's auth session, or null when signed out. Call from a Server Component, a route.ts handler, or middleware.ts — anywhere inside the request context.
+- `interface AppleWebAppMetadata` — appleWebApp metadata (apple-mobile-web-app-*).
+- `type AppLinksMetadata = Record<string, Record<string, string | number> | Array<Record<string, string | number>>>` — al:* app-link tags (Next.js appLinks); each entry is a record of al:<platform>:<key>.
+- `asyncProps<T>(value: T): AsyncProps<T>` — Make value awaitable to itself without changing its enumerable shape. Idempotent.
+- `type AsyncProps<T> = T & PromiseLike<T>` — A value that is both T and awaitable to T (Next 15's Promise<T> page props).
+- `auth(): Promise<AuthSession | null>` — Read the current request's auth session, or null when signed out. Call from a Server Component, a route.ts handler, or middleware.ts — anywhere inside the request context.
 - `interface AuthCallbacks` — Callbacks that let an app veto or enrich a sign-in.
 - `interface AuthConfig` — Configuration for denextAuth.
 - `interface Author` — A named author (<meta name="author">, optional <link rel="author">).
-- `type AuthProvider = union` — Any configured provider.
+- `type AuthProvider = OAuthProvider | CredentialsProvider` — Any configured provider.
 - `interface AuthSession` — The signed (readable, tamper-evident) session payload. Never stores tokens/secrets.
 - `interface AuthUser` — A normalized user profile — the non-sensitive identity denext stores in the session.
-- `cache<A, R>(fn: fnOrConstructor): fnOrConstructor` — Memoize fn for the duration of the current request: repeated calls with the same arguments return the first computed value (React's cache). Outside a request the function runs uncached. Define the wrapper once (e.g. at module scope) so its identity is stable.
+- `cache<A, R>(fn: (...args: A) => R): (...args: A) => R` — Memoize fn for the duration of the current request: repeated calls with the same arguments return the first computed value (React's cache). Outside a request the function runs uncached. Define the wrapper once (e.g. at module scope) so its identity is stable.
 - `interface CacheConfig` — Cache Components / ISR cache-store configuration (DenextConfig.cache).
-- `cachedFetch(input: union, options?: intersection): Promise` — Fetch input and cache the response body across requests (a small fetch-with-caching helper). Returns the cached text on a hit.
+- `cachedFetch(input: string | URL, options?: CacheOptions & RequestInit): Promise<string>` — Fetch input and cache the response body across requests (a small fetch-with-caching helper). Returns the cached text on a hit.
 - `interface CachedPage` — A cached rendered page.
 - `interface CacheEntryTiming` — New timing for a soft (SWR) invalidation: stale immediately, hard-expire later.
-- `cacheLife(profile: union): void` — Set the cache lifetime of the enclosing use cache function (Next.js cacheLife). A no-op when called outside a cached scope. The last call wins.
+- `cacheLife(profile: string | CacheLifeProfile): void` — Set the cache lifetime of the enclosing use cache function (Next.js cacheLife). A no-op when called outside a cached scope. The last call wins.
 - `interface CacheLifeProfile` — A cache lifetime profile, in **seconds** (Next.js cacheLife). All fields are optional; an omitted field inherits the default profile's value.
 - `interface CacheOptions` — Options accepted by unstable_cache.
 - `interface CacheStats` — A snapshot of cache activity (see getCacheStats).
 - `interface CacheStore` — The pluggable backend behind denext's data cache and page (ISR) cache.
-- `cacheTag(_: array): void` — Tag the enclosing use cache entry (Next.js cacheTag) so revalidateTag / updateTag can purge it, and propagate the tags to the enclosing page render so revalidateTag purges the page too. Safe to call outside a cache scope (then it only does the page propagation).
-- `collapseHeadTags(tags: array): string` — Join a HeadCollector's tags into head HTML, collapsing entries that share a HeadTag.dedup identity to the LAST occurrence at its own position (the earlier duplicate is dropped — next/head's reverse-filter order). Tags without an identity pass through in tree order. Operates on the already-serialized strings; nothing is re-escaped.
+- `cacheTag(...tags: string[]): void` — Tag the enclosing use cache entry (Next.js cacheTag) so revalidateTag / updateTag can purge it, and propagate the tags to the enclosing page render so revalidateTag purges the page too. Safe to call outside a cache scope (then it only does the page propagation).
+- `cappedBody(request: Request, maxBytes: number): Request` — request with its body wrapped so that reading past maxBytes errors the stream (the consumer — formData(), json(), a multipart parser — then throws). For streaming consumers that cannot use readCappedBody; a declared content-length over the cap is refused up front.
+- `collapseHeadTags(tags: HeadTag[]): string` — Join a HeadCollector's tags into head HTML, collapsing entries that share a HeadTag.dedup identity to the LAST occurrence at its own position (the earlier duplicate is dropped — next/head's reverse-filter order). Tags without an identity pass through in tree order. Operates on the already-serialized strings; nothing is re-escaped.
+- `compareSpecificity(a: Segment[], b: Segment[]): number` — Order two patterns by specificity the way Next.js does: compare segment by segment from the left, and at the first position that differs the more specific kind wins (static > dynamic > catch-all > optional catch-all). A pattern that has run out of segments (its catch-all consumed the rest) ranks below one that still has a concrete segment there. Returns negative when a should be tried first.
 - `interface CompiledPattern` — A source pattern compiled to a matcher with its capture keys.
-- `type Component<P> = fnOrConstructor` — A component is a function that receives props and returns a renderable node.
-- `composeMiddleware(entries: array, moduleConfig?: MiddlewareConfig): MiddlewareRunner` — Compose an ordered list of entries into a single MiddlewareRunner.
-- `connection(): Promise` — connection() (Next.js) — an explicit dynamic-rendering signal. Awaiting it marks the current render as dynamic (per-request), opting the route out of static generation/caching, without reading any specific request data (unlike cookies()/headers()). Resolves once the runtime is ready to handle the request; outside a request it resolves immediately.
+- `type Component<P> = (props: P & object) => VNode | Promise<VNode>` — A component is a function that receives props and returns a renderable node.
+- `composeMiddleware(entries: MiddlewareEntry[], moduleConfig?: MiddlewareConfig): MiddlewareRunner` — Compose an ordered list of entries into a single MiddlewareRunner.
+- `connection(): Promise<void>` — connection() (Next.js) — an explicit dynamic-rendering signal. Awaiting it marks the current render as dynamic (per-request), opting the route out of static generation/caching, without reading any specific request data (unlike cookies()/headers()). Resolves once the runtime is ready to handle the request; outside a request it resolves immediately.
 - `cookies(): CookieStore` — Access the current request's cookies (reads incoming, writes Set-Cookie).
 - `interface CookieSetOptions` — Options accepted when setting a cookie.
-- `interface CookieStore` — A read/write view of the request/response cookies.
+- `interface CookieStore` — A read/write view of the request/response cookies, shaped like Next.js's cookies(): get(name)?.value, getAll() as an array, has, set, delete, iteration.
 - `createApp(config: AppConfig): RequestHandler` — Build the core request handler from an AppConfig: routing, SSR/streaming, API routes, the image endpoint, static files, caching, and the optional request-logging/timeout wrappers. Most apps use serve instead; use createApp directly to embed denext in a custom server.
 - `createMiddlewareRunner(mod: MiddlewareModule): MiddlewareRunner` — Build a runner from a loaded middleware module. The module may export a single handler or an ordered array of handlers/entries (composed into one chain). Returns null if the module exports no handler.
 - `credentials(options: CredentialsOptions): CredentialsProvider` — An email/password (or any custom) credentials provider.
 - `interface CredentialsOptions` — Options for the credentials provider.
 - `interface CredentialsProvider` — A Credentials (e.g. email/password) provider.
-- `type CspSetting = union` — How a scope's Content-Security-Policy is decided (three-state): - "strict" — denext's default hash-based strict policy. - "off" — emit **no** CSP header for this scope (e.g. Next.js-compat, or to set the policy entirely at the edge/proxy). - a RouteCsp object — the strict policy plus the listed external opt-ins.
-- `currentContext(): union` — The current request context, or undefined if none is active.
+- `type CspSetting = strict | off | RouteCsp` — How a scope's Content-Security-Policy is decided (three-state): - "strict" — denext's default hash-based strict policy. - "off" — emit **no** CSP header for this scope (e.g. Next.js-compat, or to set the policy entirely at the edge/proxy). - a RouteCsp object — the strict policy plus the listed external opt-ins.
+- `currentContext(): RequestContext | undefined` — The current request context, or undefined if none is active.
 - `interface DataEntry` — A cached data entry (the value returned by an unstable_cache loader).
-- `defaultLoader(filePath: unknown): Promise` — Default module loader: dynamic import by absolute file path.
-- `defineAction<Out, In>(config: typeLiteral): TypedAction` — Define a typed Server Action. Put it in a "use server" module and pass it to useActionState; denext dispatches the form submission to the server, where this runs.
+- `defaultLoader(filePath: unknown): Promise<unknown>` — Default module loader: dynamic import by absolute file path.
+- `defineAction<Out, In>(config: object): TypedAction<Out>` — Define a typed Server Action. Put it in a "use server" module and pass it to useActionState; denext dispatches the form submission to the server, where this runs.
 - `defineConfig(config: DenextConfig): DenextConfig` — Validating helper that gives a denext.config.ts full editor autocomplete and inline type-checking — the idiomatic way to author config (like Vite's defineConfig):
 - `denextAuth(config: AuthConfig): DenextPlugin` — Create the denext auth plugin. Add it to plugins in denext.config.ts; it auto-mounts the /auth/* endpoints and makes auth available.
 - `interface DenextConfig` — Project configuration exported from denext.config.{ts,js} (as default or named).
 - `interface DenextPlugin` — A denext plugin. Declared in denext.config.ts as plugins: [myPlugin()]; its setup runs once per process, before the first route scan.
 - `detectLocale(request: Request, i18n: I18nConfig): string` — Pick the best supported locale for a request from the NEXT_LOCALE cookie (highest priority) then the Accept-Language header, falling back to the default locale. Matches on both exact tags and the primary subtag (fr-CA matches a supported fr).
-- `type Directive = union` — Which boundary a module declares, or null when it declares none.
+- `type Directive = client | server | null` — Which boundary a module declares, or null when it declares none.
 - `interface DocumentOptions` — Inputs to renderDocument for assembling the full HTML page.
 - `draftMode(): DraftMode` — Read and control draft (preview) mode for the current request. Backed by an httpOnly cookie holding a **server-minted random token** — a forged cookie value cannot enable draft mode. Still gate enable() behind your own authorization in a route handler (defense in depth); only that authorized call mints a valid token.
 - `interface DraftMode` — Draft (preview) mode state and controls, returned by draftMode.
@@ -563,60 +584,69 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface FlightDate` — A serialized Date value.
 - `interface FlightEventHandler` — A serialized lazily-loaded event handler (Qrl) reference.
 - `interface FlightHost` — A serialized host (intrinsic) element.
-- `type FlightNode = union` — A node in a Flight tree.
-- `type FlightPrimitive = union` — A JSON primitive leaf in a Flight tree.
-- `type FlightProps = Record` — A serialized props object (VNode-valued props are themselves Flight nodes).
+- `type FlightNode = FlightPrimitive | FlightNode[] | FlightHost | FlightClient | FlightActionRef` — A node in a Flight tree.
+- `type FlightPrimitive = string | number | boolean | null` — A JSON primitive leaf in a Flight tree.
+- `type FlightProps = Record<string, FlightValue>` — A serialized props object (VNode-valued props are themselves Flight nodes).
 - `interface FlightStreamOptions` — Options for renderToFlightStream.
-- `type FlightValue = union` — A serialized prop value.
-- `type FormFields = Record` — The form fields of a submission as a plain object (the default input shape).
+- `type FlightValue = FlightPrimitive | FlightValue[] | object | FlightNode | FlightActionRef | FlightDate | FlightEventHandler` — A serialized prop value.
+- `forbidden(): never` — Throw to render the nearest forbidden.tsx UI with a 403 status.
+- `interface FormatDetectionMetadata` — format-detection (telephone=no etc.).
+- `type FormFields = Record<string, FormDataEntryValue>` — The form fields of a submission as a plain object (the default input shape).
 - `getCacheStats(): CacheStats` — A snapshot of cache activity: page (ISR) cache hit/miss/set counts and the recent revalidateTag/revalidatePath invalidations (with timing). The observable layer a cache glass-box / devtools reads — and usable for production monitoring.
 - `getCacheStore(): CacheStore` — The CacheStore currently backing the data + page cache.
-- `getSession<T>(options: SessionOptions): Promise` — Read (and manage) the current request's session. The returned object exposes the verified data, plus set()/clear().
+- `getSession<T>(options: SessionOptions): Promise<Session<T>>` — Read (and manage) the current request's session. The returned object exposes the verified data, plus set()/clear().
 - `github(options: OAuthClientOptions): OAuthProvider` — GitHub (OAuth 2.0). Reads the profile from the /user API.
 - `google(options: OAuthClientOptions): OAuthProvider` — Google (OIDC). Verifies the id_token; no userinfo round-trip needed.
-- `hashPassword(password: string, _: unknown): Promise` — Hash a password for storage: a fresh random salt + scrypt, encoded as scrypt$N=…,r=…,p=…$salt$hash. Store the returned string; verify later with verifyPassword.
+- `hashPassword(password: string, options?: HashPasswordOptions): Promise<string>` — Hash a password for storage: a fresh random salt + scrypt, encoded as scrypt$N=…,r=…,p=…$salt$hash. Store the returned string; verify later with verifyPassword.
 - `interface HashPasswordOptions` — Tunable scrypt cost for hashPassword.
 - `interface HeadCollector` — Collects document metadata (<title>/<meta>/<link>) hoisted out of the body during rendering (React 19 behavior). When passed to renderToString, matching elements are gathered here instead of being emitted inline, so the caller can place them in <head>.
 - `interface HeaderRule` — A response-header rule applied to paths matching source.
-- `headers(): Headers` — Read the current request's headers (read-only).
+- `headers(): Headers` — Read the current request's headers. Read-only, as in Next.js: set/append/delete throw (the request's headers are shared by middleware, auth and the rest of the pipeline).
 - `interface HeadTag` — One hoisted <meta>/<link> in a HeadCollector.
 - `interface HstsConfig` — Strict-Transport-Security (HSTS) header options.
 - `interface HtmlFlight` — Result of a unified render: SSR HTML plus the serializable Flight tree.
 - `interface HtmlFlightOptions` — Options for renderToHtmlFlight.
-- `type HttpMethod = union` — An HTTP method an API route module can handle.
+- `type HttpMethod = GET | POST | PUT | PATCH | DELETE | HEAD | OPTIONS` — An HTTP method an API route module can handle.
 - `interface HydrationData` — Data serialized into the page for the client runtime to hydrate with.
-- `type HydrationStrategy = union` — When a client:* island hydrates. load is eager-but-per-island. media hydrates when a CSS media query matches (its query is carried alongside the strategy). only skips SSR entirely — the island renders on the client only.
+- `type HydrationStrategy = load | idle | visible | interaction | media | only` — When a client:* island hydrates. load is eager-but-per-island. media hydrates when a CSS media query matches (its query is carried alongside the strategy). only skips SSR entirely — the island renders on the client only.
 - `interface I18nConfig` — Internationalization configuration.
 - `interface I18nDomain` — A single i18n.domains entry: a host pinned to a default locale.
-- `interface IconsMetadata` — Structured icon metadata (icon / shortcut / apple-touch links).
+- `interface IconDescriptor` — One icon: a URL, or a descriptor with sizes/type/media/rel (Next.js IconDescriptor).
+- `type IconInput = string | IconDescriptor | Array<string | IconDescriptor>` — A URL or an IconDescriptor, or a list of either.
+- `interface IconsMetadata` — Structured icon metadata (icon / shortcut / apple-touch / other links).
 - `interface ImageOptimizeOptions` — Options for optimizeImage.
-- `ImageResponse(element: union, _: unknown): Response` — Render JSX (or a satori element object) to a PNG Response.
+- `ImageResponse(element: VNode | object, options?: ImageResponseOptions): Response` — Render JSX (or a satori element object) to a PNG Response.
 - `interface ImageResponseOptions` — Options for ImageResponse (dimensions + @denext/og passthrough).
 - `interface ImagesConfig` — Image-optimization config (the /_denext/image endpoint).
 - `inMemoryCacheStore(): CacheStore` — The default per-process, in-memory CacheStore.
-- `inMemoryRateLimitStore(_: unknown): RateLimitStore` — The default per-process RateLimitStore: a bounded Map of fixed windows. Expired windows are dropped on read; past maxKeys expired windows go first, then the least-recently-incremented quiet keys — never a key mid-lockout — so a flood of distinct identifiers can't grow memory without bound.
+- `inMemoryRateLimitStore(options?: InMemoryRateLimitStoreOptions): RateLimitStore` — The default per-process RateLimitStore: a bounded Map of fixed windows. Expired windows are dropped on read; past maxKeys expired windows go first, then the least-recently-incremented quiet keys — never a key mid-lockout — so a flood of distinct identifiers can't grow memory without bound.
 - `interface InMemoryRateLimitStoreOptions` — Options for inMemoryRateLimitStore.
-- `inMemorySessionStore(_: unknown): SessionStore` — The per-process, in-memory SessionStore. Bounded: past maxEntries expired sessions are dropped first, then the least recently used live ones; expired ones are also swept on a throttled schedule. Sessions don't survive a restart and aren't shared across replicas — use sqliteSessionStore (or your own) for that.
+- `inMemorySessionStore(options?: InMemorySessionStoreOptions): SessionStore` — The per-process, in-memory SessionStore. Bounded: past maxEntries expired sessions are dropped first, then the least recently used live ones; expired ones are also swept on a throttled schedule. Sessions don't survive a restart and aren't shared across replicas — use sqliteSessionStore (or your own) for that.
 - `interface InMemorySessionStoreOptions` — Options for inMemorySessionStore.
-- `type InputSpec<In> = union` — How an action validates FormData into its typed input: a function or a Standard Schema.
+- `type InputSpec<In> = parenthesized | StandardSchemaV1<In>` — How an action validates FormData into its typed input: a function or a Standard Schema.
 - `interface Instrumentation` — The shape of a project's instrumentation module.
 - `interface InstrumentationRequest` — The request info passed to OnRequestError — Next's shape (a plain object, NOT a Request), so instrumentation reading request.path/.method (Sentry, OpenTelemetry) works unchanged.
 - `interface Intercept` — An intercepting-route marker parsed from a folder name like (.)photo, (..)photo, (..)(..)photo, or (...)photo.
 - `interpolate(template: string, vars?: TranslationVars): string` — Substitute {name} placeholders in template with vars.name. Unmatched placeholders are left intact (so a missing var is visible, not silently blank).
 - `interface InvalidationEvent` — One cache invalidation (a revalidateTag/revalidatePath), with timing.
+- `isControlSignal(value: unknown): boolean` — True for any denext control-flow signal (notFound/forbidden/unauthorized/ redirect) that error boundaries must re-throw rather than catch.
+- `isForbidden(value: unknown): value is ForbiddenError` — True if value is a ForbiddenError raised by forbidden().
 - `interface IslandPayload` — A deferred-hydration island: its tree-path id, strategy, and own Flight tree.
+- `isNotFound(value: unknown): value is NotFoundError` — True if value is a NotFoundError raised by notFound().
 - `isPublicEnvKey(key: string): boolean` — Is key a client-exposable (public-prefixed) environment variable name?
+- `isRedirect(value: unknown): value is RedirectError` — True if value is a RedirectError raised by redirect().
 - `isServerAction(value: unknown): value is ServerActionRef` — True if value is a ServerActionRef.
-- `json<T>(data: T, init?: ResponseInit): TypedResponse` — Like Response.json, but the returned response remembers T. Use it in route handlers so callers of the route get a typed body back through the generated apiClient.
-- `type JsonLd = typeLiteral` — A JSON-LD structured-data object (schema.org), serialized to a <script type="application/ld+json"> in the document head. A lightweight structural type: @context/@type are hinted, any other schema.org field is allowed. Provide one object or an array of them via Metadata.jsonLd.
-- `type Key = union` — A stable identity for a VNode among its siblings, used to keep lists reconciled.
+- `isUnauthorized(value: unknown): value is UnauthorizedError` — True if value is an UnauthorizedError raised by unauthorized().
+- `json<T>(data: T, init?: ResponseInit): TypedResponse<T>` — Like Response.json, but the returned response remembers T. Use it in route handlers so callers of the route get a typed body back through the generated apiClient.
+- `type JsonLd = object` — A JSON-LD structured-data object (schema.org), serialized to a <script type="application/ld+json"> in the document head. A lightweight structural type: @context/@type are hinted, any other schema.org field is allowed. Provide one object or an array of them via Metadata.jsonLd.
+- `type Key = string | number | null | undefined` — A stable identity for a VNode among its siblings, used to keep lists reconciled.
 - `interface LayoutModule` — Shape of a layout module.
 - `interface LayoutProps` — Props passed to a layout component.
 - `interface LiveConfig` — Live Server Components security policy (the top-level live config). Presence rooms and useLive data subscriptions are **default-deny**, identically in dev and production: without a policy hook (or LiveConfig.allowAnonymous) the hub refuses joins/subscriptions — so a persistent socket can't read other users' presence or run registered actions — and surfaces a loud, actionable error the first time it runs (there is no dev/prod divergence that could let it work locally and silently break in production). Resource caps in LiveLimits always apply.
 - `interface LiveConnectionContext` — Identity/context passed to Live authorization hooks. The hooks run inside the viewer's own request context (the connection's replayed cookies), so getSession() / cookies() work inside them to derive the acting user.
 - `interface LiveLimits` — Resource limits for the Live WebSocket hub. Each has a safe built-in default.
 - `interface LiveSubscriptionRequest` — A useLive data subscription presented to LiveConfig.canSubscribe.
-- `loadEnv(_: unknown): Promise` — Load .env files into Deno.env. Missing files are ignored. Returns the merged file values (before the existing-environment precedence is applied), so callers can inspect what the files declared.
+- `loadEnv(opts?: LoadEnvOptions): Promise<Record<string, string>>`
 - `interface LoadEnvOptions` — Options for loadEnv.
 - `localeHref(locale: string, rest: string, i18n: I18nConfig): string` — Build the pathname that serves locale for a locale-free path rest — the inverse of peelLocale. With localePrefix: "as-needed" (default) the default locale is served unprefixed and every other locale is prefixed; with localePrefix: "always" the default locale is prefixed too. Used to generate hreflang alternates and locale-switch links.
 - `localeMiddleware(i18n: I18nConfig): Middleware` — A middleware entry that redirects an unprefixed request to the visitor's detected locale when it differs from the default. Compose it into the middleware chain to get automatic locale routing:
@@ -624,32 +654,34 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `makeTranslate(messages: Messages): TranslateFn` — Build a TranslateFn over messages (missing keys return the key).
 - `interface MatcherEntry` — Next's object form of a matcher entry. source is the path pattern; has/missing (header/cookie/query conditions) are accepted for compatibility but NOT evaluated — the middleware runs for every request source matches, which is the safe direction (it never runs less often than Next would).
 - `interface MatchOptions` — Options controlling how matchPage treats intercepting routes.
-- `matchSegments(pattern: array, pathname: string): union` — Attempt to match a request pathname against a parsed pattern. Returns extracted params on success, or null if the pattern doesn't match.
+- `matchSegments(pattern: Segment[], pathname: string): RouteParams | null` — Attempt to match a request pathname against a parsed pattern. Returns extracted params on success, or null if the pattern doesn't match.
 - `interface MdxConfig` — MDX compilation options (see DenextConfig.mdx). Each plugin list is a unified PluggableList: an array whose entries are either a plugin function or a [plugin, options] tuple. Typed loosely (unknown[]) so the public config surface doesn't depend on unified/@mdx-js types; the values are forwarded verbatim to MDX's compile.
-- `type Messages = Record` — A flat message catalog for one locale: message key → template string.
+- `type Messages = Record<string, string>` — A flat message catalog for one locale: message key → template string.
 - `interface Metadata` — Page metadata a page or layout module may export as metadata/generateMetadata.
-- `type Middleware = fnOrConstructor` — A root middleware handler run before routing.
+- `type Middleware = (request: Request, context: MiddlewareContext) => MiddlewareResult | Promise<MiddlewareResult>` — A root middleware handler run before routing.
 - `interface MiddlewareConfig` — Optional configuration exported by a middleware module.
 - `interface MiddlewareContext` — Extra context passed to a middleware handler alongside the request.
 - `interface MiddlewareEntry` — A single ordered middleware entry: a handler plus optional per-entry matcher.
-- `type MiddlewareExport = union` — What a middleware.ts/proxy.ts module may export: a single handler, or an ordered array of handlers/entries that run in sequence (a composed chain).
+- `type MiddlewareExport = Middleware | Array<Middleware | MiddlewareEntry>` — What a middleware.ts/proxy.ts module may export: a single handler, or an ordered array of handlers/entries that run in sequence (a composed chain).
 - `interface MiddlewareModule` — Shape of a middleware.ts/proxy.ts module.
-- `type MiddlewareOutcome = union` — The normalized result of running the middleware runner for a request.
-- `type MiddlewareResult = union` — Anything a middleware handler may return: a response, a command, or nothing.
-- `type MiddlewareRunner = union` — A resolved, request-ready middleware runner (null when there is none).
-- `type ModuleLoader = fnOrConstructor` — How the server loads a module given its file path (injectable for tests).
-- `next(init?: typeLiteral): NextCommand` — Continue to routing; optionally attach headers to the eventual response.
-- `NEXT: typeOperator` — Internal marker symbol keying a NextCommand.
+- `type MiddlewareOutcome = object | object | object` — The normalized result of running the middleware runner for a request.
+- `type MiddlewareResult = Response | NextCommand | RewriteCommand | void | undefined` — Anything a middleware handler may return: a response, a command, or nothing.
+- `type MiddlewareRunner = parenthesized | null` — A resolved, request-ready middleware runner (null when there is none). matchPath is the pathname matchers are evaluated against when it differs from the request's (an i18n locale prefix stripped, as Next does before running middleware).
+- `type ModuleLoader = (filePath: string) => Promise<unknown>` — How the server loads a module given its file path (injectable for tests).
+- `next(init?: object): NextCommand` — Continue to routing; optionally attach headers to the eventual response.
 - `interface NextCommand` — Command returned by next to continue routing, optionally adding headers.
+- `noStore(): void` — Opt the current render out of the page cache (Next's unstable_noStore() / connection() intent): a route with export const revalidate = N that calls this is rendered per request instead of being stored and served to other visitors.
+- `notFound(): never` — Throw to render the nearest not-found UI with a 404 status.
 - `interface OAuthClientOptions` — The client credentials every OAuth preset needs.
 - `interface OAuthProvider` — An OAuth 2.0 / OIDC provider (Authorization Code + PKCE).
 - `oidc(options: OidcOptions): OAuthProvider` — A generic OIDC provider (Authorization Code + PKCE, id_token verified via JWKS).
 - `interface OidcOptions` — Options for a generic oidc provider.
-- `type OnRequestError = fnOrConstructor` — The onRequestError export: report a server-side request error.
+- `type OnRequestError = (error: unknown, request: InstrumentationRequest, context: RequestErrorContext) => void | Promise<void>` — The onRequestError export: report a server-side request error.
 - `interface OpenGraphImage` — A single Open Graph image (og:image plus optional dimensions/alt).
-- `type OpenGraphImageResult = union` — What an opengraph-image module's default export may return:
-- `interface OpenGraphMetadata` — Open Graph metadata (og:* tags).
-- `optimizeImage(request: Request, opts: ImageOptimizeOptions, _: unknown): Promise` — Handle a /_denext/image optimization request: validate the url/w/q params against the configured allowlists (SSRF-safe fetch, local/remote patterns), decode the source, and re-encode to a negotiated raster format (webp/avif) at the requested width — returning the optimized Response (or an error response).
+- `type OpenGraphImageResult = VNode | Uint8Array | Response` — What an opengraph-image module's default export may return:
+- `interface OpenGraphMedia` — A single Open Graph video/audio (og:video / og:audio).
+- `interface OpenGraphMetadata` — Open Graph metadata (og:* tags), Next.js-shaped (images, not image).
+- `optimizeImage(request: Request, opts: ImageOptimizeOptions, gate?: () => Promise<() => void>): Promise<Response>` — Handle a /_denext/image optimization request: validate the url/w/q params against the configured allowlists (SSRF-safe fetch, local/remote patterns), decode the source, and re-encode to a negotiated raster format (webp/avif) at the requested width — returning the optimized Response (or an error response).
 - `interface OriginOptions` — Options controlling how requestOrigin resolves the public origin.
 - `class PageCache` — The rendered-page store for Incremental Static Regeneration. A thin façade over the active CacheStore: the prod server consults it before rendering and populates it afterward for cacheable routes. Injecting a shared store via setCacheStore makes ISR work across replicas transparently — this class needs no per-instance state.
 - `interface PageContext` — The composed page tree plus its resolved metadata/config, before rendering.
@@ -657,91 +689,102 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface PageModule` — Shape of a page module (default export required).
 - `interface PageProps` — Props passed to a page component (and to metadata/generateMetadata/ generateViewport).
 - `interface PageRoute` — A rendered page route discovered by scanning the app directory.
-- `parseAcceptLanguage(header: union): array` — Parse an Accept-Language header into an ordered list of locale codes.
-- `parsePattern(pattern: string): array` — Parse a route pattern like "blog/[slug]" into an ordered segment list.
+- `parseAcceptLanguage(header: string | null): string[]` — Parse an Accept-Language header into an ordered list of locale codes.
+- `parsePattern(pattern: string): Segment[]` — Parse a route pattern like "blog/[slug]" into an ordered segment list.
 - `interface PeeledLocale` — The result of peeling a locale prefix off a pathname.
-- `peelLocale(pathname: string, i18n: union, host?: string): PeeledLocale` — Peel a leading locale segment off pathname. If the first path segment is a configured locale it is stripped and returned; otherwise the default locale is used and the pathname is returned unchanged.
+- `peelLocale(pathname: string, i18n: I18nConfig | undefined, host?: string): PeeledLocale` — Peel a leading locale segment off pathname. If the first path segment is a configured locale it is stripped and returned; otherwise the default locale is used and the pathname is returned unchanged.
+- `permanentRedirect(url: string, type?: RedirectType): never` — Throw to issue a permanent (308) redirect to url.
 - `interface PluginBuildContext` — Context passed to a PluginBuildStep.
-- `type PluginBuildStep = fnOrConstructor` — A build-time step that emits the plugin's client bundles/assets into outDir.
+- `type PluginBuildStep = (context: PluginBuildContext) => void | Promise<void>` — A build-time step that emits the plugin's client bundles/assets into outDir.
 - `interface PluginContext` — The seams a plugin's DenextPlugin.setup may extend.
-- `type PluginMode = union` — Where denext is running when a plugin's DenextPlugin.setup fires.
-- `type PluginRequestHandler = fnOrConstructor` — Claim and handle a request the core router did not match. Return a Response to serve it, or null/undefined to pass (letting denext fall through to static assets and the 404). Runs AFTER App-Router page/API matching, so core routes always win.
-- `type PluginTeardown = fnOrConstructor` — A disposer that releases resources a plugin opened in DenextPlugin.setup (watchers, connections, timers). Registered with PluginContext.addTeardown and run — most-recently-registered first — when the server drains.
+- `type PluginMode = dev | build | prod | export` — Where denext is running when a plugin's DenextPlugin.setup fires.
+- `type PluginRequestHandler = (request: Request) => Response | null | undefined | Promise<Response | null | undefined>` — Claim and handle a request the core router did not match. Return a Response to serve it, or null/undefined to pass (letting denext fall through to static assets and the 404). Runs AFTER App-Router page/API matching, so core routes always win.
+- `type PluginTeardown = () => void | Promise<void>` — A disposer that releases resources a plugin opened in DenextPlugin.setup (watchers, connections, timers). Registered with PluginContext.addTeardown and run — most-recently-registered first — when the server drains.
 - `interface ProfileInput` — Raw inputs a provider maps into an AuthUser.
 - `provideMessages(messages: Messages, child: VNodeChild): VNode` — Wrap child in a MessagesContext provider so descendants resolve useTranslations() against messages during server rendering.
 - `PUBLIC_ENV_PREFIXES: typeOperator` — Prefixes that mark an environment variable as safe to expose to the browser. NEXT_PUBLIC_ matches Next.js for drop-in compatibility; DENEXT_PUBLIC_ is the denext-native prefix. Any other variable stays server-only.
-- `publicEnv(): Record` — Read the public environment variables (isomorphic). On the client, returns the variables embedded in the page — only ever the public-prefixed ones. On the server, returns the public subset of the live process environment.
+- `publicEnv(): Record<string, string>` — Read the public environment variables (isomorphic). On the client, returns the variables embedded in the page — only ever the public-prefixed ones. On the server, returns the public subset of the live process environment.
 - `interface RateLimitOptions` — Rate-limit settings on AuthConfig.rateLimit.
 - `interface RateLimitStore` — Where the per-key failure counts live. All methods may be sync or async.
 - `interface RateLimitWindow` — One key's open failure window.
-- `redirect(location: string, _: unknown): Response` — Return a client redirect response.
+- `readCappedBody(request: Request, maxBytes: number, idleMs?: number): Promise<Uint8Array | TOO_LARGE | STALLED>` — Read a request body into memory, refusing anything over maxBytes (hard-caps even a chunked body with no Content-Length) and aborting a body that stalls for longer than idleMs. Returns the bytes, TOO_LARGE, or STALLED.
+- `readonlyHeaders(source: Headers): Headers` — A live, read-only view of source whose mutators throw (Next.js ReadonlyHeaders).
+- `redirect(location: string, status?: number): Response`
+- `redirectResponse(location: string, status?: number): Response` — Return a client redirect response.
 - `interface RedirectRule` — A URL-path redirect rule (source → destination).
+- `enum RedirectType` — next/navigation's RedirectType — how a client-side (soft) navigation applies the redirect: push a new history entry or replace the current one. Server responses ignore it (they always issue an HTTP redirect).
 - `refresh(): void` — Request a refresh of the **uncached** data on the current route from inside a Server Action (Next.js 16 refresh). It doesn't touch the cache — it flags the request so the action response tells the client router to re-fetch, keeping cached shells/static content fast while dynamic data (notification counts, live metrics) updates. A no-op outside a request context.
-- `registerCacheLifeProfiles(profiles: Record): void` — Register named cacheLife profiles (typically from denext.config). A custom profile whose name collides with a built-in overrides it. Idempotent-ish: a later call with the same name wins.
-- `type RegisterFn = fnOrConstructor` — The register export: run once at server startup.
+- `registerCacheLifeProfiles(profiles: Record<string, CacheLifeProfile>): void` — Register named cacheLife profiles (typically from denext.config). A custom profile whose name collides with a built-in overrides it. Idempotent-ish: a later call with the same name wins.
+- `type RegisterFn = () => void | Promise<void>` — The register export: run once at server startup.
 - `interface RemotePattern` — An allowed remote image source for the optimizer (Next.js-style). A source URL matches when its protocol equals protocol (if given), its host matches hostname (a literal, or a leading-*. wildcard suffix), and its path starts with pathname (if given).
 - `renderDocument(opts: DocumentOptions): string` — Render a complete HTML document string: <!DOCTYPE> + <html> with the head content (metadata/viewport/styles), the hydration root wrapping bodyHtml, and the body scripts. The non-streaming counterpart to streamPprDocument.
 - `interface RenderedPage` — The result of rendering a page: its HTML fragment, resolved metadata, and status.
-- `renderPage(match: PageMatch, request: Request, load: ModuleLoader, _: unknown, prebuilt?: PageContext): Promise` — Render a matched page (with layouts + boundaries) to an HTML fragment.
+- `renderPage(match: PageMatch, request: Request, load: ModuleLoader, options?: RenderPageOptions, prebuilt?: PageContext): Promise<RenderedPage>` — Render a matched page (with layouts + boundaries) to an HTML fragment.
 - `interface RenderPageOptions` — Options controlling how a page is rendered.
-- `renderToFlight(node: VNodeChildren): Promise` — Render a VNode (or renderable child) to a FlightNode tree. Client components are emitted as references and never invoked here.
-- `renderToFlightStream(node: VNodeChildren, _: unknown): ReadableStream` — Render a VNode tree to a self-contained streaming HTML ReadableStream carrying the complete Flight payload (plus islands + signal state) as trailing islands. Suspense boundaries stream progressively; the payload is emitted once all resolve. A convenience wrapper over renderFlightShell (used by tests/tools); the request pipeline composes renderFlightShell into a full document instead.
-- `renderToHtmlFlight(node: VNodeChildren, _: unknown): Promise` — Render a VNode tree to HTML and Flight in a single pass.
+- `renderToFlight(node: VNodeChildren): Promise<FlightNode>` — Render a VNode (or renderable child) to a FlightNode tree. Client components are emitted as references and never invoked here.
+- `renderToFlightStream(node: VNodeChildren, options?: FlightStreamOptions): ReadableStream<Uint8Array>` — Render a VNode tree to a self-contained streaming HTML ReadableStream carrying the complete Flight payload (plus islands + signal state) as trailing islands. Suspense boundaries stream progressively; the payload is emitted once all resolve. A convenience wrapper over renderFlightShell (used by tests/tools); the request pipeline composes renderFlightShell into a full document instead.
+- `renderToHtmlFlight(node: VNodeChildren, options?: HtmlFlightOptions): Promise<HtmlFlight>` — Render a VNode tree to HTML and Flight in a single pass.
 - `interface RequestContext` — Ambient state for the request currently being handled.
+- `interface RequestCookie` — A single cookie as cookies().get() / .getAll() return it (Next.js's shape).
 - `interface RequestErrorContext` — Context passed to OnRequestError describing where the error occurred — mirrors Next.js's onRequestError context so instrumentation (Sentry, etc.) written for Next works unchanged.
-- `type RequestHandler = fnOrConstructor` — An HTTP request handler that resolves a Request to a Response.
+- `type RequestHandler = (request: Request) => Promise<Response>` — An HTTP request handler that resolves a Request to a Response.
 - `interface RequestLogInfo` — Per-request telemetry passed to AppConfig.onRequest.
-- `requestOrigin(request: Request, _: unknown): string` — The public origin (scheme://host) for request. Resolution order: canonicalOrigin (if set) → forwarded headers (only when trustForwardedHeaders is set) → the Host header → the request URL. Only the first value of a comma-separated forwarded header is used.
-- `requireAuth(request: Request, _: unknown): Promise` — Middleware guard: allow the request through when signed in, otherwise return a redirect to the sign-in page carrying a callbackUrl back to the target. Use in middleware.ts (matcher-gated): ``ts export async function middleware(request: Request) { return await requireAuth(request); // returns a Response to redirect, or null to continue } export const config = { matcher: ["/dashboard/:path*"] }; ``
+- `requestOrigin(request: Request, opts?: OriginOptions): string` — The public origin (scheme://host) for request. Resolution order: canonicalOrigin (if set) → forwarded headers (only when trustForwardedHeaders is set) → the Host header → the request URL. Only the first value of a comma-separated forwarded header is used.
+- `requireAuth(request: Request, options?: RequireAuthOptions): Promise<Response | null>` — Middleware guard: allow the request through when signed in, otherwise return a redirect to the sign-in page carrying a callbackUrl back to the target. Use in middleware.ts (matcher-gated): ``ts export async function middleware(request: Request) { return await requireAuth(request); // returns a Response to redirect, or null to continue } export const config = { matcher: ["/dashboard/:path*"] }; ``
 - `interface RequireAuthOptions` — Options for requireAuth.
 - `resetCacheStats(): void` — Reset the cache-activity counters (tests / a fresh monitoring window).
-- `resolveCacheLife(profile: union): CacheLifeProfile` — Resolve a cacheLife argument — a built-in/custom profile name or an inline profile object — to a concrete CacheLifeProfile. An unknown name falls back to the default profile. Missing fields inherit from default.
+- `resolveCacheLife(profile: string | CacheLifeProfile): CacheLifeProfile` — Resolve a cacheLife argument — a built-in/custom profile name or an inline profile object — to a concrete CacheLifeProfile. An unknown name falls back to the default profile. Missing fields inherit from default.
+- `type ResolvedMetadata = Metadata` — The merged metadata of the segments ABOVE the current one (what parent resolves to).
 - `interface ResolvedRules` — The config's rule functions resolved to concrete arrays (evaluated once).
-- `resolveMessages(i18n: union, locale: string): Messages` — Resolve the message catalog for locale from an I18nConfig, falling back to the default locale's catalog, then an empty catalog.
-- `type Revalidate = union` — Revalidation period in seconds, or false to cache indefinitely.
-- `revalidatePath(path: string, _type?: union): Promise` — Invalidate the cached render(s) of path. As with revalidateTag, await the returned promise when using an async store.
-- `revalidateTag(tag: string, profile?: union): Promise` — Invalidate every cached data entry and page carrying tag.
-- `revokeAllSessions(userId: string): Promise` — Revoke every server-side session of userId — "sign out everywhere", the right call after a password change or a suspected cookie theft. Requires denextAuth({ sessionStore }); throws when sessions are stateless.
-- `revokeSession(sessionId: string): Promise` — Revoke one server-side session by id (the sessionId on an AuthSession), so its cookie stops authenticating immediately — "sign out this device". Requires denextAuth({ sessionStore }); throws when sessions are stateless.
-- `rewrite(destination: string, init?: typeLiteral): RewriteCommand` — Internally route as if the request were for destination (no client redirect).
-- `REWRITE: typeOperator` — Internal marker symbol keying a RewriteCommand.
+- `resolveMessages(i18n: I18nConfig | undefined, locale: string): Messages` — Resolve the message catalog for locale from an I18nConfig, falling back to the default locale's catalog, then an empty catalog.
+- `type ResolvingMetadata = Promise<ResolvedMetadata>` — Next.js ResolvingMetadata: the parent segments' merged metadata, awaitable.
+- `type ResolvingViewport = Promise<Viewport>` — Next.js ResolvingViewport: the parent segments' merged viewport, awaitable.
+- `type Revalidate = number | false` — Revalidation period in seconds, or false to cache indefinitely.
+- `revalidatePath(path: string, _type?: layout | page): Promise<void>` — Invalidate the cached render(s) of path. As with revalidateTag, await the returned promise when using an async store.
+- `revalidateTag(tag: string, profile?: string | CacheLifeProfile): Promise<void>` — Invalidate every cached data entry and page carrying tag.
+- `revokeAllSessions(userId: string): Promise<void>` — Revoke every server-side session of userId — "sign out everywhere", the right call after a password change or a suspected cookie theft. Requires denextAuth({ sessionStore }); throws when sessions are stateless.
+- `revokeSession(sessionId: string): Promise<void>` — Revoke one server-side session by id (the sessionId on an AuthSession), so its cookie stops authenticating immediately — "sign out this device". Requires denextAuth({ sessionStore }); throws when sessions are stateless.
+- `rewrite(destination: string, init?: object): RewriteCommand` — Internally route as if the request were for destination (no client redirect).
 - `interface RewriteCommand` — Command returned by rewrite to route as if the URL were destination.
 - `interface RewriteRule` — An internal rewrite rule (source served as destination, no client redirect).
 - `interface Robots` — A robots config: the object a robots.ts default export returns.
 - `interface RobotsMetadata` — Structured robots directive (serialized to <meta name="robots">).
 - `interface RobotsRule` — A single robots rule group.
 - `interface RouteCsp` — Per-route Content-Security-Policy opt-ins: external sources a route allows.
-- `type RouteDynamic = union` — How a segment is rendered: - "auto" — the default; static unless the code opts into dynamic behavior. - "force-dynamic" — always render per request (never statically exported/cached). - "force-static" — always render statically; dynamic APIs (cookies()/headers()/ connection()) return empty values and do not mark the render dynamic. - "error" — like auto, but using a dynamic API throws (a render error).
+- `type RouteDynamic = auto | force-dynamic | force-static | error` — How a segment is rendered: - "auto" — the default; static unless the code opts into dynamic behavior. - "force-dynamic" — always render per request (never statically exported/cached). - "force-static" — always render statically; dynamic APIs (cookies()/headers()/ connection()) return empty values and do not mark the render dynamic. - "error" — like auto, but using a dynamic API throws (a render error).
 - `interface RouteManifest` — The complete set of routes and root-level boundaries for an app.
-- `type RouteParams = Record` — Extracted dynamic route parameters, keyed by segment name.
-- `type RouteSynthesizer = fnOrConstructor` — A hook run over the scanned manifest before it is returned. May add, remove, or adjust routes — the extension point behind synthesized/derived routes. May be async (e.g. a plugin scanning its own route tree off disk).
-- `safeFetch: fnOrConstructor` — SSRF-safe fetch for **untrusted / user-supplied URLs** (link previews, "import from URL", avatar-by-URL, webhooks). Use it instead of fetch() whenever the destination is influenced by an end user.
+- `type RouteParams = Record<string, string | string[]>` — Extracted dynamic route parameters, keyed by segment name. A [slug] segment yields a string; a [...rest] / [[...rest]] catch-all yields the remaining parts as a string[] (Next.js's shape — params.rest.join("/") for the path form).
+- `type RouteSynthesizer = (manifest: RouteManifest) => void | Promise<void>` — A hook run over the scanned manifest before it is returned. May add, remove, or adjust routes — the extension point behind synthesized/derived routes. May be async (e.g. a plugin scanning its own route tree off disk).
+- `safeFetch: (url: string | URL, opts?: SafeFetchOptions) => Promise<Response>` — SSRF-safe fetch for **untrusted / user-supplied URLs** (link previews, "import from URL", avatar-by-URL, webhooks). Use it instead of fetch() whenever the destination is influenced by an end user.
 - `class SafeFetchError` — Thrown by safeFetch/pinned fetch when a request is refused or fails.
-- `type SafeFetchErrorCode = union` — Error codes surfaced by safeFetch.
+- `type SafeFetchErrorCode = unsupported-protocol | host-not-allowed | blocked-address | dns | network | bad-response | too-many-redirects` — Error codes surfaced by safeFetch.
 - `interface SafeFetchOptions` — Options for safeFetch.
 - `safeRedirectLocation(location: string): string` — Make a redirect Location safe against open redirects. An explicit http(s):// absolute URL is preserved (a deliberately-configured external redirect); anything else is forced to a single-slash, same-origin path so a protocol-relative (//host) or backslash (/\host) prefix — which browsers resolve cross-origin — cannot escape the current origin.
-- `scanRoutes(appDir: string): Promise` — Scan appDir recursively and produce a sorted route manifest.
+- `scanRoutes(appDir: string): Promise<RouteManifest>` — Scan appDir recursively and produce a sorted route manifest.
+- `type SearchParams = object` — Next.js's searchParams record: repeated keys become arrays, absent keys undefined.
+- `searchParamsRecord(usp: URLSearchParams, raw?: URLSearchParams): SearchParams & object` — Next.js's searchParams record for a query string, with the underlying URLSearchParams reachable as the non-enumerable raw property (raw may be a read-tracking wrapper of usp; the record itself is built from the plain usp).
 - `interface Segment` — A single parsed route pattern segment.
 - `interface SegmentConfig` — The resolved route segment configuration for a module.
 - `interface SegmentConfigExports` — Optional route-segment-config exports a module may declare.
-- `type SegmentKind = union` — The category of a route segment, determining how it matches path parts.
+- `type SegmentKind = static | dynamic | catchAll | optionalCatchAll` — The category of a route segment, determining how it matches path parts.
+- `interface SegmentLevel` — The convention files one route directory level contributes (own files, not inherited).
 - `serializeFlight(flight: FlightNode): string` — Serialize a Flight payload to a JSON string safe to embed in a <script>.
 - `serializeRobots(robots: Robots): string` — Serialize a robots config to robots.txt text.
 - `serializeSitemap(entries: Sitemap): string` — Serialize sitemap entries to an XML urlset document.
-- `serializeSitemapIndex(items: array): string` — Serialize a sitemap index (<sitemapindex>) pointing at child sitemaps.
+- `serializeSitemapIndex(items: SitemapIndexEntry[]): string` — Serialize a sitemap index (<sitemapindex>) pointing at child sitemaps.
 - `serve(options: ServeOptions): Deno.HttpServer` — Create an app and serve it over HTTP via Deno.serve.
-- `serveMetadataFile(manifest: RouteManifest, pathname: string, load: ModuleLoader, origin?: string): Promise` — Serve a metadata file if pathname matches one of the conventions and the corresponding file exists in the manifest; otherwise return null.
+- `serveMetadataFile(manifest: RouteManifest, pathname: string, load: ModuleLoader, origin?: string): Promise<Response | null>` — Serve a metadata file if pathname matches one of the conventions and the corresponding file exists in the manifest; otherwise return null.
 - `interface ServeOptions` — Options for serve: app configuration plus HTTP listen settings.
-- `serverAction<A, R>(id: string, handler: fnOrConstructor): ServerActionRef` — Define a server action. Give it a **stable, explicit id** (unique per app) so the client stub and the server handler agree across the boundary.
+- `serverAction<A, R>(id: string, handler: (...args: A) => R | Promise<R>): ServerActionRef<A, R>` — Define a server action. Give it a **stable, explicit id** (unique per app) so the client stub and the server handler agree across the boundary.
 - `interface ServerActionRef<A, R>` — A reference to a server action: callable, and tagged with its stable id.
-- `serveStatic(publicDir: string, pathname: string, acceptEncoding?: string): Promise` — Try to serve pathname from publicDir. Returns a Response, or null if no matching file exists (so the caller can fall through to routing).
+- `serveStatic(publicDir: string, pathname: string, acceptEncoding?: string, request?: Request): Promise<Response | null>` — Try to serve pathname from publicDir. Returns a Response, or null if no matching file exists (so the caller can fall through to routing).
 - `interface ServeUtilOptions` — Options for serveWithPortFallback.
-- `serveWithPortFallback(options: ServeUtilOptions, handler: fnOrConstructor): Deno.HttpServer` — Like Deno.serve, but if the port is in use it retries on port + 1, port + 2, … up to maxAttempts times. Returns the bound server.
+- `serveWithPortFallback(options: ServeUtilOptions, handler: (request: Request) => Response | Promise<Response>): Deno.HttpServer` — Like Deno.serve, but if the port is in use it retries on port + 1, port + 2, … up to maxAttempts times. Returns the bound server.
 - `interface Session<T>` — A request's session. data is the verified payload (or null when absent/invalid).
 - `interface SessionOptions` — Options for getSession.
 - `interface SessionStore` — Where store-backed sessions live. Every method may be sync or async; get must return only an **unexpired** session (treat expiresAt in the past as a miss).
 - `setCacheStore(store: CacheStore): void` — Replace the CacheStore backing the data cache and page (ISR) cache. Use this to share cached data and rendered pages across instances — back it with a custom or shared store (Redis, etc.) so a render or data entry produced on one replica is served by another, and revalidateTag/revalidatePath invalidate every instance. Called explicitly, this overrides the smart default (resolveDefaultCacheStore).
-- `type Sitemap = array` — A sitemap: the array a sitemap.ts default export returns.
+- `type Sitemap = SitemapEntry[]` — A sitemap: the array a sitemap.ts default export returns.
 - `interface SitemapEntry` — One entry in a sitemap (Next.js MetadataRoute.Sitemap element).
 - `interface SitemapIndexEntry` — One entry in a sitemap index (a reference to a child sitemap).
 - `interface SitemapModule` — The shape of a sitemap.ts module, optionally sharded via generateSitemaps.
@@ -749,145 +792,153 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SpaConfig` — SPA-mode settings (mode: "spa"). denext bundles SpaConfig.entry as a single client-side-rendered app, wraps it in a generated HTML shell, and serves that shell for every navigation (history-API fallback) — no app/ directory, no SSR/Flight. The entry module mounts the app itself (a side-effect import, like a Vite main.tsx calling createRoot(...).render(...)), so denext stays out of the mount: bring your own router (TanStack, etc.) and data layer.
 - `interface SpaDesktopConfig` — deno desktop packaging settings under SpaConfig.desktop.
 - `interface SpaProxyConfig` — Reverse-proxy configuration for SPA serving — the SPA analogue of a Vite dev server's server.proxy. The client talks to its own origin and denext relays matched requests (HTTP + WebSocket) to a separate backend.
-- `specificity(pattern: array): number` — Specificity score for ordering routes: more specific (static) patterns should be tried before less specific (dynamic/catch-all) ones. Higher wins.
-- `sqliteCacheStore(_: unknown): CacheStore` — A CacheStore backed by Deno's built-in node:sqlite. Durable across restarts, zero-npm, no unstable flag — denext's default durable store for single-node deployments (for multi-replica, point every instance at one shared store via setCacheStore). Size-bounded: FIFO eviction past SqliteCacheStoreOptions.maxDataEntries/maxPageEntries, plus a throttled sweep of hard-expired rows.
+- `specificity(pattern: Segment[]): number` — Specificity score for ordering routes: more specific (static) patterns should be tried before less specific (dynamic/catch-all) ones. Higher wins. Position-blind (a sum) — prefer compareSpecificity for ordering.
+- `sqliteCacheStore(options?: SqliteCacheStoreOptions): CacheStore` — A CacheStore backed by Deno's built-in node:sqlite. Durable across restarts, zero-npm, no unstable flag — denext's default durable store for single-node deployments (for multi-replica, point every instance at one shared store via setCacheStore). Size-bounded: FIFO eviction past SqliteCacheStoreOptions.maxDataEntries/maxPageEntries, plus a throttled sweep of hard-expired rows.
 - `interface SqliteCacheStoreOptions` — Options for sqliteCacheStore.
 - `interface SqliteDb` — The minimal SQLite handle this store drives (node:sqlite, or a test stub).
-- `sqliteSessionStore(_: unknown): SessionStore` — A durable SessionStore on Deno's built-in node:sqlite.
+- `sqliteSessionStore(options?: SqliteSessionStoreOptions): SessionStore` — A durable SessionStore on Deno's built-in node:sqlite.
 - `interface SqliteSessionStoreOptions` — Options for sqliteSessionStore.
-- `type SqlValue = union` — A value bindable as a SQLite statement parameter.
+- `type SqlValue = null | number | bigint | string | Uint8Array` — A value bindable as a SQLite statement parameter.
+- `STALLED: Symbol` — Sentinel returned by readCappedBody when the body stalls (idle).
 - `interface StandardIssue` — One Standard Schema issue: a message and an optional path to the offending field.
-- `type StandardResult<Output> = union` — A Standard Schema validation result: a parsed value, or a list of issues.
+- `type StandardResult<Output> = object | object` — A Standard Schema validation result: a parsed value, or a list of issues.
 - `interface StandardSchemaV1<Output>` — The Standard Schema v1 surface (https://standardschema.dev) — validator-agnostic.
+- `type StaticParamsGenerator = (context: object) => RouteParams[] | Promise<RouteParams[]>` — generateStaticParams — the param sets to pre-render. Called with the parent segments' params (from a layout's own generator, or {} at the root), Next.js style; a [...rest] value may be a string[].
 - `interface TailwindConfig` — Tailwind CSS integration. When set, denext compiles input (which contains the raw @import "tailwindcss"; directives) into output using the Tailwind v4 standalone binary — which denext downloads and manages itself — before its own CSS pipeline runs. The output file is what your layout imports.
-- `type TranslateFn = fnOrConstructor` — A translation function: look up key and interpolate any {var} placeholders.
-- `type TranslationVars = Record` — Values interpolated into a message template's {name} placeholders.
-- `interface TwitterMetadata` — Twitter Card metadata (twitter:* tags).
-- `type TypedAction<Out> = fnOrConstructor` — A typed action, shaped for useActionState(action, initial).
+- `interface ThemeColorDescriptor` — <meta name="theme-color"> with an optional media query.
+- `TOO_LARGE: Symbol` — Sentinel returned by readCappedBody when the body exceeds the cap.
+- `type TranslateFn = (key: string, vars?: TranslationVars) => string` — A translation function: look up key and interpolate any {var} placeholders.
+- `type TranslationVars = Record<string, string | number>` — Values interpolated into a message template's {name} placeholders.
+- `interface TwitterMetadata` — Twitter Card metadata (twitter:* tags), Next.js-shaped (images, not image).
+- `type TypedAction<Out> = (prevState: ActionResult<Out>, formData: FormData) => Promise<ActionResult<Out>>` — A typed action, shaped for useActionState(action, initial).
 - `interface TypedRequest<TBody>` — A Request whose .json() is typed to the body the handler expects. Structurally a plain Request; TBody is recovered by the generator to type the client's request body.
 - `interface TypedResponse<T>` — A Response that remembers the type of the JSON body it carries. Structurally a plain Response at runtime; the __body phantom exists only in the type system so the typed-API-client generator can recover T.
-- `unstable_cache<A, R>(fn: fnOrConstructor, _: unknown, _: unknown): fnOrConstructor` — Wrap an async data-loading function in a cross-request cache with an optional TTL and tags (Next.js unstable_cache). Results are keyed by keyParts plus the call arguments. Tags propagate to the enclosing page render, so revalidateTag purges both the data and any page that read it.
-- `updateTag(tag: string): Promise` — **Read-your-writes** tag invalidation for use inside a Server Action (Next.js 16 updateTag). Unlike revalidateTag, it expires the tag **immediately and synchronously for the rest of this request**: a later cache read in the same action whose entry carries tag recomputes, so the acting user sees their own write right away. It also hard-purges the store (for other requests/replicas) and records the tag so the client router can refresh the affected content.
-- `userAgent(request: typeLiteral): UserAgent` — Parse the request's user-agent header into structured details.
+- `unauthorized(): never` — Throw to render the nearest unauthorized.tsx UI with a 401 status.
+- `unstable_cache<A, R>(fn: (...args: A) => Promise<R> | R, keyParts?: string[], options?: CacheOptions): (...args: A) => Promise<R>` — Wrap an async data-loading function in a cross-request cache with an optional TTL and tags (Next.js unstable_cache). Results are keyed by keyParts plus the call arguments. Tags propagate to the enclosing page render, so revalidateTag purges both the data and any page that read it.
+- `updateTag(tag: string): Promise<void>` — **Read-your-writes** tag invalidation for use inside a Server Action (Next.js 16 updateTag). Unlike revalidateTag, it expires the tag **immediately and synchronously for the rest of this request**: a later cache read in the same action whose entry carries tag recomputes, so the acting user sees their own write right away. It also hard-purges the store (for other requests/replicas) and records the tag so the client router can refresh the affected content.
+- `userAgent(request: object): UserAgent` — Parse the request's user-agent header into structured details.
 - `interface UserAgent` — Parsed User-Agent details.
 - `userAgentFromString(ua?: string): UserAgent` — Parse a raw user-agent string into structured details (Next's userAgentFromString).
-- `verifyPassword(password: string, stored: string): Promise` — Verify a password against a hash produced by hashPassword. The comparison is constant-time (timingSafeEqual), and a malformed/unsupported stored value — an empty column, a legacy format, a corrupted row — returns false rather than throwing, so an authorize callback can't leak a stack trace or a 500. That rejection still runs a full scrypt derivation, so an unknown account takes as long to reject as a wrong password for a known one (no user-enumeration timing oracle).
+- `verifyPassword(password: string, stored: string): Promise<boolean>` — Verify a password against a hash produced by hashPassword. The comparison is constant-time (timingSafeEqual), and a malformed/unsupported stored value — an empty column, a legacy format, a corrupted row — returns false rather than throwing, so an authorize callback can't leak a stack trace or a 500. That rejection still runs a full scrypt derivation, so an unknown account takes as long to reject as a wrong password for a known one (no user-enumeration timing oracle).
 - `interface Viewport` — Viewport + theme metadata (Next.js viewport/generateViewport).
 - `interface VNode` — A single virtual DOM node.
-- `type VNodeChild = union` — Anything that can appear as a child in JSX.
-- `type VNodeChildren = union` — One child or an array of children, as accepted by JSX.
-- `type VNodeType = union` — The type field of a VNode: an intrinsic tag name, a component fn, or a fragment marker.
+- `type VNodeChild = VNode | string | number | boolean | null | undefined` — Anything that can appear as a child in JSX.
+- `type VNodeChildren = VNodeChild | VNodeChild[]` — One child or an array of children, as accepted by JSX.
+- `type VNodeType = string | Component<any> | FRAGMENT` — The type field of a VNode: an intrinsic tag name, a component fn, or a fragment marker.
 - `interface VProps` — Props passed to a virtual node. children is normalized separately.
 - `withHeaders(response: Response, extra?: Headers): Response` — Merge extra headers into a response (returning a new Response if needed).
 
 ### `denext/client`
 
-- `act<T>(callback: fnOrConstructor): Promise` — act(callback) — the React test helper. Runs callback, flushes all pending state updates and effects synchronously, and returns a thenable so both sync and async usage work.
-- `type ActionResult<Out> = union` — The result an action returns: ok carries the typed handler output, else an error.
+- `act<T>(callback: () => T | Promise<T>): Promise<T>` — act(callback) — the React test helper. Runs callback, flushes all pending state updates and effects synchronously, and returns a thenable so both sync and async usage work.
+- `type ActionResult<Out> = object | object` — The result an action returns: ok carries the typed handler output, else an error.
 - `interface ApiClient<S>` — A typed callable over an app's ApiSchema.
 - `interface ApiEndpoint` — One endpoint's typed shape: its params, optional request/response bodies.
-- `apiRequest(pattern: string, method: HttpMethod, _: unknown, _: unknown): Promise` — Perform one typed API request (the runtime the typed client dispatches to). Substitutes params, JSON-encodes a body, and parses a JSON response (a 204/empty body → undefined).
+- `apiRequest(pattern: string, method: HttpMethod, opts?: ApiRequestOptions, base?: string): Promise<unknown>` — Perform one typed API request (the runtime the typed client dispatches to). Substitutes params, JSON-encodes a body, and parses a JSON response (a 204/empty body → undefined).
 - `interface ApiRequestOptions` — Options accepted by the untyped runtime call (the typed client narrows these).
-- `type ApiSchema = Record` — A whole app's API surface: route pattern → (method → endpoint).
-- `AsyncContext: typeLiteral` — The TC39-shaped namespace object: AsyncContext.Variable / AsyncContext.Snapshot.
-- `buildPath(pattern: string, params?: Record, query?: Record): string` — Substitute path params into a route pattern, appending any query params.
+- `type ApiSchema = Record<string, Partial<Record<HttpMethod, ApiEndpoint>>>` — A whole app's API surface: route pattern → (method → endpoint).
+- `AsyncContext: object` — The TC39-shaped namespace object: AsyncContext.Variable / AsyncContext.Snapshot.
+- `buildPath(pattern: string, params?: Record<string, string>, query?: Record<string, string>): string` — Substitute path params into a route pattern, appending any query params.
 - `capturedScope<T>(): T` — Read the captured lexical scope inside an extracted qrl handler segment. The build transform emits const [a, b] = capturedScope() at the top of a segment whose handler closed over component-local a/b; the values are the capture array passed to qrl (restored from the resume payload on the client). Must be called synchronously at handler entry.
-- `type Component<P> = fnOrConstructor` — A component is a function that receives props and returns a renderable node.
+- `type Component<P> = (props: P & object) => VNode | Promise<VNode>` — A component is a function that receives props and returns a renderable node.
 - `interface Context<T>` — A context object created by createContext. It is itself usable as a provider element (<MyContext value={v}>…</MyContext>, React 19 style) and also exposes the classic .Provider component. useContext(MyContext) reads the nearest provided value, falling back to the default.
-- `createApiClient<S>(_: unknown): ApiClient` — Create a typed API client bound to an app's generated ApiSchema.
-- `createContext<T>(defaultValue: T): Context` — Create a context with the given default value. The returned Context is usable directly as a provider element (<MyContext value={v}>, React 19 style) and also exposes .Provider; useContext(MyContext) reads the nearest provided value, falling back to defaultValue.
-- `createPortal(children: VNodeChild, container: Element, key?: union): VNode` — Render children into a different DOM container while keeping their place in the component and context tree. Backs react-dom's createPortal.
-- `createResource<T>(factory: fnOrConstructor): fnOrConstructor` — A tiny cache for turning an async factory into a stable, suspense-friendly resource. Reading it either returns the value or suspends.
+- `createApiClient<S>(base?: string): ApiClient<S>` — Create a typed API client bound to an app's generated ApiSchema.
+- `createContext<T>(defaultValue: T): Context<T>` — Create a context with the given default value. The returned Context is usable directly as a provider element (<MyContext value={v}>, React 19 style) and also exposes .Provider; useContext(MyContext) reads the nearest provided value, falling back to defaultValue.
+- `createPortal(children: VNodeChild, container: Element, key?: string | null): VNode` — Render children into a different DOM container while keeping their place in the component and context tree. Backs react-dom's createPortal.
+- `createResource<T>(factory: () => Promise<T>): () => T` — A tiny cache for turning an async factory into a stable, suspense-friendly resource. Reading it either returns the value or suspends.
 - `createRoot(container: Element, options?: RootOptions): Root` — Mount vnode into container, creating fresh DOM.
-- `dynamic<P>(loader: DynamicLoader, _: unknown): Component` — Lazily load a component. Returns a component you can render immediately; its target module is imported on first render (as its own bundle chunk) and shown once resolved, with loading displayed meanwhile.
-- `type DynamicLoader<P> = union` — A loader returning a module (whose default is the component) or the component.
+- `dynamic<P>(loader: DynamicLoader<P>, options?: DynamicOptions<P>): Component<P>` — Lazily load a component. Returns a component you can render immediately; its target module is imported on first render (as its own bundle chunk) and shown once resolved, with loading displayed meanwhile.
+- `type DynamicLoader<P> = parenthesized | parenthesized` — A loader returning a module (whose default is the component) or the component.
 - `interface DynamicOptions<P>` — Options for dynamic.
-- `type EffectCleanup = union` — Optional cleanup returned by an effect callback: either nothing, or a function run before the effect re-runs and on unmount.
+- `type EffectCleanup = void | parenthesized` — Optional cleanup returned by an effect callback: either nothing, or a function run before the effect re-runs and on unmount.
 - `ErrorBoundary(props: ErrorBoundaryProps): VNode` — An error boundary. Renders fallback when a child throws during render.
 - `interface ErrorBoundaryController` — Imperative control over the nearest enclosing error boundary, returned by useErrorBoundary.
 - `interface ErrorBoundaryProps` — Props for the ErrorBoundary component.
 - `interface ErrorFallbackProps` — Props passed to the fallback component rendered when a child throws.
-- `type FlightNode = union` — A node in a Flight tree.
-- `flushSync<T>(fn?: fnOrConstructor): union` — Run fn (if given) and then synchronously flush all pending state updates — including any pending transition work — before returning. Matches React's flushSync(fn).
+- `type FlightNode = FlightPrimitive | FlightNode[] | FlightHost | FlightClient | FlightActionRef` — A node in a Flight tree.
+- `flushSync<T>(fn?: () => T): T | undefined` — Run fn (if given) and then synchronously flush all pending state updates — including any pending transition work — before returning. Matches React's flushSync(fn).
 - `forbidden(): never` — Throw to render the nearest forbidden.tsx UI with a 403 status.
 - `interface FormStatus` — Status of the enclosing form's action, as returned by useFormStatus.
 - `Fragment: typeOperator` — Marker used as a VNode type to group children without a wrapping element.
-- `h(type: VNodeType, props: union, _: array): VNode` — Classic-runtime style helper, also handy for programmatic node creation: h("div", { class: "x" }, child1, child2)
-- `type HttpMethod = union` — The HTTP methods a route handler may export.
+- `h(type: VNodeType, props: VProps | null, ...children: VNodeChildren[]): VNode` — Classic-runtime style helper, also handy for programmatic node creation: h("div", { class: "x" }, child1, child2)
+- `type HrefInput = Href | UrlObject` — A string href, or the object form.
+- `type HttpMethod = GET | POST | PUT | PATCH | DELETE | HEAD | OPTIONS` — An HTTP method an API route module can handle.
 - `hydrateRoot(container: Element, vnode: VNode, options?: RootOptions): Root` — Hydrate vnode against server-rendered markup already in container.
-- `idleActionState<Out>(): ActionResult` — The initial ActionResult for useActionState — an idle (not-yet-submitted) state.
+- `idleActionState<Out>(): ActionResult<Out>` — The initial ActionResult for useActionState — an idle (not-yet-submitted) state.
 - `interpolate(template: string, vars?: TranslationVars): string` — Substitute {name} placeholders in template with vars.name. Unmatched placeholders are left intact (so a missing var is visible, not silently blank).
 - `isPublicEnvKey(key: string): boolean` — Is key a client-exposable (public-prefixed) environment variable name?
-- `type Key = union` — A stable identity for a VNode among its siblings, used to keep lists reconciled.
+- `type Key = string | number | null | undefined` — A stable identity for a VNode among its siblings, used to keep lists reconciled.
 - `Link(props: LinkProps): VNode` — A client-side navigating anchor with hover/viewport prefetching.
 - `interface LinkProps` — Props for the Link component — an <a> with client-side soft navigation.
 - `makeTranslate(messages: Messages): TranslateFn` — Build a TranslateFn over messages (missing keys return the key).
-- `memo<P>(component: Component, areEqual?: fnOrConstructor): Component` — Wrap a component so the reconciler bails out of re-rendering it when its props have not meaningfully changed. Without areEqual, props are compared with shallowEqualProps (the same default the reconciler applies to every component); pass areEqual for custom control (return true to skip the re-render). Context changes always bypass the bailout — a consumer still re-renders when a context it reads changes.
-- `type Messages = Record` — A flat message catalog for one locale: message key → template string.
-- `navigate(href: string, _: unknown): Promise` — Perform a soft navigation to href: fetch the target page, swap its markup into the hydration root, update history and <head>, and re-hydrate. Falls back to a full-page navigation on cross-origin URLs or network failure.
+- `memo<P>(component: Component<P>, areEqual?: (prev: P, next: P) => boolean): Component<P>` — Wrap a component so the reconciler bails out of re-rendering it when its props have not meaningfully changed. Without areEqual, props are compared with shallowEqualProps (the same default the reconciler applies to every component); pass areEqual for custom control (return true to skip the re-render). Context changes always bypass the bailout — a consumer still re-renders when a context it reads changes.
+- `type Messages = Record<string, string>` — A flat message catalog for one locale: message key → template string.
+- `navigate(href: string, options?: NavigateOptions): Promise<void>` — Perform a soft navigation to href: fetch the target page, swap its markup into the hydration root, update history and <head>, and re-hydrate. Falls back to a full-page navigation on cross-origin URLs or network failure.
 - `interface NavigateOptions` — Options controlling a soft (client-side) navigation.
 - `notFound(): never` — Throw to render the nearest not-found UI with a 404 status.
 - `prefetch(href: string): void` — Prefetch the page at href in the background (same-origin only) and cache its HTML, so a subsequent navigate is instant. No-op on the server, for cross-origin URLs, or when already prefetched/in-flight.
 - `Profiler(props: ProfilerProps): VNode` — Measure render timing for children and report it to onRender after each commit. Renders as a Fragment carrying the profiler config for the reconciler, so it adds no DOM of its own and is transparent during SSR.
-- `type ProfilerOnRender = fnOrConstructor` — Callback invoked after each commit of a Profiler's subtree.
-- `type ProfilerPhase = union` — The commit phase reported to a Profiler's onRender.
+- `type ProfilerOnRender = (id: string, phase: ProfilerPhase, actualDuration: number, baseDuration: number, startTime: number, commitTime: number) => void` — Callback invoked after each commit of a Profiler's subtree.
+- `type ProfilerPhase = mount | update` — The commit phase reported to a Profiler's onRender.
 - `interface ProfilerProps` — Props for Profiler.
-- `type PropsComparator = fnOrConstructor` — Compares a component's previous and next props; true means "skip re-render".
+- `type PropsComparator = (prev: Record<string, unknown>, next: Record<string, unknown>) => boolean` — Compares a component's previous and next props; true means "skip re-render".
 - `provideMessages(messages: Messages, child: VNodeChild): VNode` — Wrap child in a MessagesContext provider so descendants resolve useTranslations() against messages during server rendering.
 - `PUBLIC_ENV_PREFIXES: typeOperator` — Prefixes that mark an environment variable as safe to expose to the browser. NEXT_PUBLIC_ matches Next.js for drop-in compatibility; DENEXT_PUBLIC_ is the denext-native prefix. Any other variable stays server-only.
-- `publicEnv(): Record` — Read the public environment variables (isomorphic). On the client, returns the variables embedded in the page — only ever the public-prefixed ones. On the server, returns the public subset of the live process environment.
-- `qrl<E>(loader: fnOrConstructor, id: string, capture?: typeOperator): Qrl` — Define a lazily-loaded event handler. Give it a **stable, explicit id** so the server-serialized reference and the client loader agree.
+- `publicEnv(): Record<string, string>` — Read the public environment variables (isomorphic). On the client, returns the variables embedded in the page — only ever the public-prefixed ones. On the server, returns the public subset of the live process environment.
+- `qrl<E>(loader: () => Promise<(event: E) => unknown>, id: string, capture?: typeOperator): Qrl<E>` — Define a lazily-loaded event handler. Give it a **stable, explicit id** so the server-serialized reference and the client loader agree.
 - `interface Qrl<E>` — A reference to a lazily-loaded handler: callable, tagged with its stable id.
 - `type RequestArgs<E> = conditional` — The trailing call args: the opts object is required only when it has a required key.
-- `type RequestOf<E> = intersection` — The options object for one endpoint: params/body appear only when the route has them.
+- `type RequestOf<E> = parenthesized & parenthesized & object` — The options object for one endpoint: params/body appear only when the route has them.
 - `type RequiredKeys<T> = indexedAccess` — The keys of T that are required (used to decide whether the opts arg is optional).
 - `type ResponseOf<E> = conditional` — The awaited response type for one endpoint.
 - `interface Root` — A mounted (or hydrated) render root that can be re-rendered or torn down.
 - `interface RootOptions` — Options accepted by createRoot/hydrateRoot for React parity. identifierPrefix is wired into the root's useId scope; the three error callbacks observe error handling without changing denext's default behavior (a boundary still catches, an uncaught error still surfaces, a hydration mismatch still keeps the client render).
-- `interface Router` — Imperative navigation API returned by useRouter.
-- `startTransition(callback: fnOrConstructor): void` — Run callback as a low-priority "transition": the callback runs synchronously (like React), but any state updates it triggers are scheduled at transition priority — flushed after the reconciler yields to the browser, so urgent updates and paint/input happen first. On the server (no scheduler installed) it just runs the callback. The transition render is time-sliced and interruptible: a higher-priority (sync) update abandons the in-flight transition and restarts it (see the Async transitions guide: /docs/rendering#async-transitions).
-- `type StateUpdater<S> = fnOrConstructor` — State setter returned by useState. Accepts either the next value or an updater function that receives the previous value and returns the next one.
+- `interface Router` — Imperative navigation API returned by useRouter (Next.js AppRouterInstance).
+- `interface RouterNavigateOptions` — Options for Router.push / Router.replace (Next.js NavigateOptions).
+- `startTransition(callback: () => void): void` — Run callback as a low-priority "transition": the callback runs synchronously (like React), but any state updates it triggers are scheduled at transition priority — flushed after the reconciler yields to the browser, so urgent updates and paint/input happen first. On the server (no scheduler installed) it just runs the callback. The transition render is time-sliced and interruptible: a higher-priority (sync) update abandons the in-flight transition and restarts it (see the Async transitions guide: /docs/rendering#async-transitions).
+- `type StateUpdater<S> = (value: S | parenthesized) => void` — State setter returned by useState. Accepts either the next value or an updater function that receives the previous value and returns the next one.
 - `Suspense(props: SuspenseProps): VNode` — A Suspense boundary. Renders fallback until its children stop suspending.
 - `SuspenseList(props: SuspenseListProps): VNode` — React.SuspenseList — coordinates the reveal order of sibling <Suspense> boundaries. With revealOrder="forwards" a boundary stays in its fallback until every boundary before it has revealed ("backwards" reverses; "together" holds all until the last resolves). tail="collapsed" shows only the next boundary's fallback, "hidden" shows none.
 - `interface SuspenseListProps` — Props for SuspenseList.
 - `interface SuspenseProps` — Props for the Suspense boundary component.
-- `type TranslateFn = fnOrConstructor` — A translation function: look up key and interpolate any {var} placeholders.
-- `type TranslationVars = Record` — Values interpolated into a message template's {name} placeholders.
-- `type TypedAction<Out> = fnOrConstructor` — A typed action, shaped for useActionState(action, initial).
+- `type TranslateFn = (key: string, vars?: TranslationVars) => string` — A translation function: look up key and interpolate any {var} placeholders.
+- `type TranslationVars = Record<string, string | number>` — Values interpolated into a message template's {name} placeholders.
+- `type TypedAction<Out> = (prevState: ActionResult<Out>, formData: FormData) => Promise<ActionResult<Out>>` — A typed action, shaped for useActionState(action, initial).
 - `unauthorized(): never` — Throw to render the nearest unauthorized.tsx UI with a 401 status.
-- `use<T>(usable: union): T` — React 19's use: read a resource during render. Given a **promise**, unwrap its value, suspending (throwing the promise) while it is pending — the same promise instance must be passed across renders (cache it). Given a **context** (from createContext), read its current value like useContext — this overload may be called conditionally. Works on the client and under every SSR renderer, since both delegate to the active hook dispatcher.
-- `useActionState<State, Payload>(action: fnOrConstructor, initialState: State, permalink?: string): tuple` — Manage state driven by a form action (React 19 useActionState).
+- `interface UrlObject` — Next.js UrlObject — the object form Link/useRouter accept as an href.
+- `use<T>(usable: Promise<T> | Context<T>): T` — React 19's use: read a resource during render. Given a **promise**, unwrap its value, suspending (throwing the promise) while it is pending — the same promise instance must be passed across renders (cache it). Given a **context** (from createContext), read its current value like useContext — this overload may be called conditionally. Works on the client and under every SSR renderer, since both delegate to the active hook dispatcher.
+- `useActionState<State, Payload>(action: (state: State, payload: Payload) => State | Promise<State>, initialState: State, permalink?: string): tuple` — Manage state driven by a form action (React 19 useActionState).
 - `useCallback<T>(fn: T, deps?: DependencyList): T` — Return a memoized version of fn that only changes when deps change.
-- `useContext<T>(context: Context): T` — Read the current value of context from the nearest enclosing provider.
-- `useDebugValue<T>(_value: T, _format?: fnOrConstructor): void` — Label a custom hook's value for React DevTools. A no-op at runtime (React itself only invokes it when DevTools is attached), provided for API compatibility.
+- `useContext<T>(context: Context<T>): T` — Read the current value of context from the nearest enclosing provider.
+- `useDebugValue<T>(_value: T, _format?: (value: T) => unknown): void` — Label a custom hook's value for React DevTools. A no-op at runtime (React itself only invokes it when DevTools is attached), provided for API compatibility.
 - `useDeferredValue<T>(value: T, initialValue?: T): T` — Return a deferred copy of value that lags behind during rapid updates, letting urgent renders finish first. On the client this is a true **render-phase** deferral (React-accurate): during an urgent render the hook returns the previous value and schedules a low-priority transition to catch up, so the deferred update is time-sliced and interruptible and the value never trails by an extra commit. The optional initialValue (React 19) is returned on the first render, with a transition scheduled to reach value. On the server (no lane scheduler) it returns initialValue ?? value.
-- `useEffect(effect: fnOrConstructor, deps?: DependencyList): void` — Run a side effect after render, re-running whenever deps change.
-- `useEffectEvent<A, R>(handler: fnOrConstructor): fnOrConstructor` — Return a **stable** callback that always sees the latest props/state — React 19.2's useEffectEvent. Use it for the "event" part of an Effect that should not itself be a dependency (so the Effect doesn't re-run when the handler's closure changes). Do not call the returned function during render.
+- `useEffect(effect: () => EffectCleanup, deps?: DependencyList): void` — Run a side effect after render, re-running whenever deps change.
+- `useEffectEvent<A, R>(handler: (...args: A) => R): (...args: A) => R` — Return a **stable** callback that always sees the latest props/state — React 19.2's useEffectEvent. Use it for the "event" part of an Effect that should not itself be a dependency (so the Effect doesn't re-run when the handler's closure changes). Do not call the returned function during render.
 - `useErrorBoundary(): ErrorBoundaryController` — Access the nearest enclosing error boundary imperatively. Returns a ErrorBoundaryController whose captureError(e) shows that boundary's fallback (handy for async errors a boundary cannot catch during render) and whose reset() retries its children. Inert during server rendering.
 - `useFormStatus(): FormStatus` — Read whether the **nearest enclosing** <form action={fn}>'s action is in flight (React 19 useFormStatus). Scoped per form — two concurrent forms report independent status. Returns { pending: false } outside a form and during server rendering.
 - `useId(): string` — Return a unique, stable id string. The value is deterministic across the server render and client hydration (ids are assigned in render order), so it is safe to use for id/htmlFor/aria-* attributes without a mismatch.
-- `useImperativeHandle<T>(ref: Ref, create: fnOrConstructor, deps?: DependencyList): void` — Customize the value exposed on a parent's ref for the current component. create builds the imperative handle; it re-runs when deps change.
-- `useInsertionEffect(effect: fnOrConstructor, deps?: DependencyList): void` — Run effect synchronously at commit in its own pre-mutation phase — before any DOM mutation and before layout effects — intended for CSS-in-JS libraries (emotion, styled-components) and animation libraries (motion) to inject styles before the DOM is read. It must NOT read layout or use refs. A no-op during server rendering.
-- `useLayoutEffect(effect: fnOrConstructor, deps?: DependencyList): void` — Like useEffect, but on the client it runs synchronously after the DOM is mutated and before the browser paints — use it for layout reads/writes that must happen before the user sees the frame. A no-op during server rendering.
+- `useImperativeHandle<T>(ref: Ref<T>, create: () => T, deps?: DependencyList): void` — Customize the value exposed on a parent's ref for the current component. create builds the imperative handle; it re-runs when deps change.
+- `useInsertionEffect(effect: () => EffectCleanup, deps?: DependencyList): void` — Run effect synchronously at commit in its own pre-mutation phase — before any DOM mutation and before layout effects — intended for CSS-in-JS libraries (emotion, styled-components) and animation libraries (motion) to inject styles before the DOM is read. It must NOT read layout or use refs. A no-op during server rendering.
+- `useLayoutEffect(effect: () => EffectCleanup, deps?: DependencyList): void` — Like useEffect, but on the client it runs synchronously after the DOM is mutated and before the browser paints — use it for layout reads/writes that must happen before the user sees the frame. A no-op during server rendering.
 - `useLocale(): string` — The active locale (reactive) for apps using i18n routing. Reads the locale the server resolved for this page from the hydration payload and re-reads it on soft navigation. Server components should read params.locale directly.
-- `useMemo<T>(factory: fnOrConstructor, deps?: DependencyList): T` — Memoize factory's result, recomputing only when deps change.
-- `useOptimistic<S, A>(state: S, updateFn?: fnOrConstructor): tuple` — Show an optimistic value while an async update is in flight. Returns [optimisticState, addOptimistic]; call addOptimistic(action) to apply an optimistic change over the current state. The optimistic value resets to state whenever state itself changes (e.g. once the real update lands).
-- `useParams(): Record` — The current route's dynamic params (reactive). Reads the params the server resolved for this page from the hydration payload; updates on soft navigation.
+- `useMemo<T>(factory: () => T, deps?: DependencyList): T` — Memoize factory's result, recomputing only when deps change.
+- `useOptimistic<S, A>(state: S, updateFn?: (current: S, action: A) => S): tuple` — Show an optimistic value while an async update is in flight. Returns [optimisticState, addOptimistic]; call addOptimistic(action) to apply an optimistic change over the current state. The optimistic value resets to state whenever state itself changes (e.g. once the real update lands).
+- `useParams(): Record<string, string | string[]>` — The current route's dynamic params (reactive). Reads the params the server resolved for this page from the hydration payload; updates on soft navigation.
 - `usePathname(): string` — Reactive current pathname; re-renders the component on navigation.
-- `useReducer<S, A, I>(reducer: fnOrConstructor, initialArg: I, init?: fnOrConstructor): tuple` — Manage component state with a reducer, returning the state and a dispatch. With a lazy init, the initial state is init(initialArg) (React parity).
-- `useRef<T>(initial: T): typeLiteral` — Create a mutable ref object whose .current persists across renders.
-- `useRouter(): Router` — Access the imperative Router for programmatic navigation.
+- `useReducer<S, A, I>(reducer: (state: S, action: A) => S, initialArg: I, init?: (arg: I) => S): tuple` — Manage component state with a reducer, returning the state and a dispatch. With a lazy init, the initial state is init(initialArg) (React parity).
+- `useRef<T>(initial: T): object` — Create a mutable ref object whose .current persists across renders.
+- `useRouter(): Router` — Access the imperative Router for programmatic navigation. Stable identity.
 - `useSearchParams(): URLSearchParams` — Reactive current search params.
-- `useSelectedLayoutSegment(parallelRoutesKey?: string): union` — The first route segment below the calling layout's level (reactive), or null.
-- `useSelectedLayoutSegments(_parallelRoutesKey?: string): array` — The active route path segments **below the calling layout's level** (reactive), matching Next.js. A layout at /a sees ["b","c"] for /a/b/c; the root layout sees all segments. The depth comes from the nearest LayoutSegmentContext provider (injected around each layout by the server renderer and the client route entry); outside any layout it is 0, so all segments are returned. Updates on soft navigation.
+- `useSelectedLayoutSegment(parallelRoutesKey?: string): string | null` — The first route segment below the calling layout's level (reactive), or null.
+- `useSelectedLayoutSegments(_parallelRoutesKey?: string): string[]` — The active route path segments **below the calling layout's level** (reactive), matching Next.js. A layout at /a sees ["b","c"] for /a/b/c; the root layout sees all segments. The depth comes from the nearest LayoutSegmentContext provider (injected around each layout by the server renderer and the client route entry); outside any layout it is 0, so all segments are returned. Updates on soft navigation.
 - `useState<S>(): tuple` — Declare local component state with no initial value (S | undefined).
-- `useSyncExternalStore<T>(subscribe: fnOrConstructor, getSnapshot: fnOrConstructor, getServerSnapshot?: fnOrConstructor): T` — Subscribe to an external (non-React) store and re-render when it changes. subscribe registers a change listener and returns an unsubscribe function; getSnapshot reads the current value; getServerSnapshot (optional) provides the value used during server rendering.
+- `useSyncExternalStore<T>(subscribe: (onChange: () => void) => () => void, getSnapshot: () => T, getServerSnapshot?: () => T): T` — Subscribe to an external (non-React) store and re-render when it changes. subscribe registers a change listener and returns an unsubscribe function; getSnapshot reads the current value; getServerSnapshot (optional) provides the value used during server rendering.
 - `useTransition(): tuple` — Return [isPending, startTransition]. isPending stays true from the moment the transition starts until its low-priority updates have been flushed — so a pending indicator can paint (and the browser can handle input) before the transition's work runs. For an async callback it is held until the returned promise settles and the resulting flush lands. Falls back to a synchronous run when no client scheduler is installed.
 - `useTranslations(): TranslateFn` — Access a translation function t(key, vars?) for the active locale (reactive). Looks up key in the locale's catalog and interpolates {var} placeholders; a missing key returns the key itself. The catalog comes from the render-time provider during SSR and from the hydration payload on the client, re-read on soft navigation (so switching locales updates the strings).
 - `interface VNode` — A single virtual DOM node.
-- `type VNodeChild = union` — Anything that can appear as a child in JSX.
-- `type VNodeChildren = union` — One child or an array of children, as accepted by JSX.
-- `type VNodeType = union` — The type field of a VNode: an intrinsic tag name, a component fn, or a fragment marker.
+- `type VNodeChild = VNode | string | number | boolean | null | undefined` — Anything that can appear as a child in JSX.
+- `type VNodeChildren = VNodeChild | VNodeChild[]` — One child or an array of children, as accepted by JSX.
+- `type VNodeType = string | Component<any> | FRAGMENT` — The type field of a VNode: an intrinsic tag name, a component fn, or a fragment marker.
 - `interface VProps` — Props passed to a virtual node. children is normalized separately.
 
 ### `denext/devtools`
@@ -900,26 +951,26 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `dispatchReducer(fiberId: number, hookIndex: number, action: unknown): boolean` — Dispatch an action to a useReducer cell live, driving the component's own dispatch (so the reducer runs and a re-render schedules exactly as the app would). Distinct from setHookState: a reducer's updater expects an *action*, not the next value. Returns whether the cell was found and is a reducer.
 - `enableRenderReasons(): void` — Begin tracking why each component renders — install the commit hook and clear any prior data. The panel enables this when its "why did this render" view is on; the first commit after enabling seeds the baseline (so reasons appear from the next render onward). No-op in production.
 - `interface FlameNode` — One node in a commit's flamegraph — a component and the time under it.
-- `getBoundaryTimings(): array` — The per-Suspense-boundary timeline — a LIVE merge of two sources: the swap runtime's real-time reveal marks (window.__denextBoundaries, populated as each hole lands, in dev) and the end-of-stream #__denext_boundary_timing island (authoritative server resolve times, present once the stream finishes). So the panel shows a boundary the instant it reveals (client reveal + the template's data-dnx-ms server time), then settles to the island's rounded server time. Empty in production / on a non-streamed page / before any boundary reveals.
-- `getCommits(): array` — The recorded commits (oldest first) — one summary per commit. Empty in production.
-- `getCommitTree(index: number): union` — The flamegraph for a recorded commit — a synthetic (commit) root whose children are the tree's top-level components, each carrying selfMs/totalMs/didRender/changed. index is a CommitSummary index. null for an unknown index / in production.
-- `getFiberIdForDom(el: union): union` — The nearest component fiber id owning el — for the element picker and hover- highlight. Walks el up to the nearest host node the last getInspectorTree walk mapped, then up the fiber tree to its owning component (falling back to the host fiber's own id when no component ancestor exists). null when nothing maps — call getInspectorTree first so the DOM map is current.
-- `getHostNode(fiberId: number): union` — The DOM element for a fiber id — its own host node when it is a host fiber, else the first host node in its subtree (a component's rendered root). Backs the panel's tree-row → element highlight. null for an unknown id or a fiber with no host DOM.
-- `getInspectorTree(): array` — The current component tree — every mounted root's children, each node carrying its props, hooks/state, and contexts. Serialized on demand (never per commit). Empty in production or before the first mount.
-- `getOwnerStack(fiberId: number): Array` — The component ancestor chain for a node — the names of the component fibers above it (nearest first), each with its source when known. An approximation of React's "owner stack": the render-parent path rather than the JSX-owner, which coincide for the common case. fiberId comes from the most recent getInspectorTree. Empty in production or for an unknown/stale id.
-- `getPageRenderMode(): union` — The server's render-mode verdict for this page — static vs dynamic vs streamed, and the page-cache outcome — read from the dev-only #__denext_render_modes JSON island the document renderer emits. null in production, outside a dev render, or if absent.
-- `getProfile(): array` — The collected profile, heaviest total render time first. Empty in production.
-- `getRenderModes(): array` — The render-mode view. v1 reports the **client boundaries** — the islands, with their hydration strategy and timing (the server-rendered remainder is static/streamed HTML carrying no client boundary). A future revision adds server-emitted per-boundary static/dynamic/streamed + cache detail. Empty in production.
-- `getRenderReason(fiberId: number): union` — The recorded RenderReason for a component — what changed to cause its most recent render, and its render count — or null when tracking is off, the id is unknown, or it hasn't rendered since enableRenderReasons.
-- `getValueAt(fiberId: number, ref: ValueRef, path: Array): union` — Read one level of a component's live value at path under ref — a prop, a hook cell's value, or a read context — re-reading it fresh off the fiber and serializing it a single level deep (with child entries). Powers the panel's on-demand, click-to- expand nested-value view: expand a level by calling again with a longer path. Returns null for an unknown fiber or a path that no longer resolves.
+- `getBoundaryTimings(): BoundaryTiming[]` — The per-Suspense-boundary timeline — a LIVE merge of two sources: the swap runtime's real-time reveal marks (window.__denextBoundaries, populated as each hole lands, in dev) and the end-of-stream #__denext_boundary_timing island (authoritative server resolve times, present once the stream finishes). So the panel shows a boundary the instant it reveals (client reveal + the template's data-dnx-ms server time), then settles to the island's rounded server time. Empty in production / on a non-streamed page / before any boundary reveals.
+- `getCommits(): CommitSummary[]` — The recorded commits (oldest first) — one summary per commit. Empty in production.
+- `getCommitTree(index: number): FlameNode | null` — The flamegraph for a recorded commit — a synthetic (commit) root whose children are the tree's top-level components, each carrying selfMs/totalMs/didRender/changed. index is a CommitSummary index. null for an unknown index / in production.
+- `getFiberIdForDom(el: Node | null): number | null` — The nearest component fiber id owning el — for the element picker and hover- highlight. Walks el up to the nearest host node the last getInspectorTree walk mapped, then up the fiber tree to its owning component (falling back to the host fiber's own id when no component ancestor exists). null when nothing maps — call getInspectorTree first so the DOM map is current.
+- `getHostNode(fiberId: number): Element | null` — The DOM element for a fiber id — its own host node when it is a host fiber, else the first host node in its subtree (a component's rendered root). Backs the panel's tree-row → element highlight. null for an unknown id or a fiber with no host DOM.
+- `getInspectorTree(): InspectNode[]` — The current component tree — every mounted root's children, each node carrying its props, hooks/state, and contexts. Serialized on demand (never per commit). Empty in production or before the first mount.
+- `getOwnerStack(fiberId: number): Array<object>` — The component ancestor chain for a node — the names of the component fibers above it (nearest first), each with its source when known. An approximation of React's "owner stack": the render-parent path rather than the JSX-owner, which coincide for the common case. fiberId comes from the most recent getInspectorTree. Empty in production or for an unknown/stale id.
+- `getPageRenderMode(): PageRenderMode | null` — The server's render-mode verdict for this page — static vs dynamic vs streamed, and the page-cache outcome — read from the dev-only #__denext_render_modes JSON island the document renderer emits. null in production, outside a dev render, or if absent.
+- `getProfile(): ProfileEntry[]` — The collected profile, heaviest total render time first. Empty in production.
+- `getRenderModes(): RenderModeEntry[]` — The render-mode view. v1 reports the **client boundaries** — the islands, with their hydration strategy and timing (the server-rendered remainder is static/streamed HTML carrying no client boundary). A future revision adds server-emitted per-boundary static/dynamic/streamed + cache detail. Empty in production.
+- `getRenderReason(fiberId: number): RenderReason | null` — The recorded RenderReason for a component — what changed to cause its most recent render, and its render count — or null when tracking is off, the id is unknown, or it hasn't rendered since enableRenderReasons.
+- `getValueAt(fiberId: number, ref: ValueRef, path: Array<string | number>): SerializedValue | null` — Read one level of a component's live value at path under ref — a prop, a hook cell's value, or a read context — re-reading it fresh off the fiber and serializing it a single level deep (with child entries). Powers the panel's on-demand, click-to- expand nested-value view: expand a level by calling again with a longer path. Returns null for an unknown fiber or a path that no longer resolves.
 - `interface InspectContext` — One context this component read during its last render.
 - `interface InspectHook` — One hook cell as shown in the inspector.
 - `interface InspectNode` — A component/host node in the inspector tree.
 - `interface InspectProp` — One prop entry — for per-prop display and live override.
 - `installDevtools(): void` — Install denext's first-party DevTools (inspector API + in-page panel). Idempotent, and a no-op in production / without a DOM / unless __denextDev. Imported ONLY by the dev route/Flight entries, so it never enters a production bundle.
-- `installInspector(): union` — Install the inspector API on window.__denextDevtools (idempotent). Returns the API, or null in production / before __denextDev. Called by installDevtools in the dev entries; also usable directly from the denext/devtools module.
+- `installInspector(): DenextDevtoolsApi | null` — Install the inspector API on window.__denextDevtools (idempotent). Returns the API, or null in production / before __denextDev. Called by installDevtools in the dev entries; also usable directly from the denext/devtools module.
 - `isProfiling(): boolean` — Whether the profiler is currently recording.
-- `logValueAt(fiberId: number, ref: ValueRef, path: Array): boolean` — console.log the *live* value at ref+path (so the developer gets the real object in the console, not the panel's serialized preview). Returns whether it resolved.
+- `logValueAt(fiberId: number, ref: ValueRef, path: Array<string | number>): boolean` — console.log the *live* value at ref+path (so the developer gets the real object in the console, not the panel's serialized preview). Returns whether it resolved.
 - `interface PageRenderMode` — The server-emitted page render mode (from the dev #__denext_render_modes island).
 - `interface ProfileEntry` — One component's aggregated render profile.
 - `interface RenderModeEntry` — A component boundary's render mode, for the panel's glass-box view.
@@ -931,31 +982,31 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `setRefValue(fiberId: number, hookIndex: number, value: unknown): boolean` — Set a useRef cell's .current live. A ref write does not itself schedule a render (matching React), so the change is visible on the next commit the app makes; the panel updates its own view optimistically. Returns whether the cell was found and is a ref.
 - `startProfiling(): void` — Start recording per-component render timings (via the reconciler's dev-only profiler seam) — both the name-aggregated getProfile and the per-commit flamegraph (getCommits/getCommitTree). Clears any prior recording. No-op in production or if already on.
 - `stopProfiling(): void` — Stop recording render timings (keeps the collected data for getProfile).
-- `storeAsGlobal(fiberId: number, ref: ValueRef, path: Array): union` — Stash the live value at ref+path on globalThis.$d (React DevTools' $r-style temporary), so it can be poked at from the console. Returns the global name, or null.
-- `subscribe(fn: fnOrConstructor): fnOrConstructor` — Subscribe to commits — fn fires (cheaply) after every commit so a panel can lazily re-pull getInspectorTree. Returns an unsubscribe. No-op (returns a no-op) in production. The reconciler observer is installed only while ≥1 subscriber is active (or render-reason tracking is on).
-- `subscribeBoundaries(fn: fnOrConstructor): fnOrConstructor` — Subscribe to Suspense-boundary reveals — fn fires each time the swap runtime reveals a streamed hole (a denext:reveal document event), so the panel's timeline can update as holes land rather than only on the next commit. Returns an unsubscribe; no-op in production or without a DOM.
-- `type ValueRef = union` — A reference to one drill-in root on a component: a prop, a hook cell, or a context.
+- `storeAsGlobal(fiberId: number, ref: ValueRef, path: Array<string | number>): string | null` — Stash the live value at ref+path on globalThis.$d (React DevTools' $r-style temporary), so it can be poked at from the console. Returns the global name, or null.
+- `subscribe(fn: () => void): () => void` — Subscribe to commits — fn fires (cheaply) after every commit so a panel can lazily re-pull getInspectorTree. Returns an unsubscribe. No-op (returns a no-op) in production. The reconciler observer is installed only while ≥1 subscriber is active (or render-reason tracking is on).
+- `subscribeBoundaries(fn: () => void): () => void` — Subscribe to Suspense-boundary reveals — fn fires each time the swap runtime reveals a streamed hole (a denext:reveal document event), so the panel's timeline can update as holes land rather than only on the next commit. Returns an unsubscribe; no-op in production or without a DOM.
+- `type ValueRef = object | object | object` — A reference to one drill-in root on a component: a prop, a hook cell, or a context.
 
 ### `denext/testing`
 
-- `type Component<P> = fnOrConstructor` — A component is a function that receives props and returns a renderable node.
+- `type Component<P> = (props: P & object) => VNode | Promise<VNode>` — A component is a function that receives props and returns a renderable node.
 - `interface ConformanceReport` — The full report from probeApp.
 - `class CookieJar` — A cookie jar: stores cookies set by responses and replays them on later requests, honoring deletions (Max-Age=0 / a past Expires).
-- `createTestApp(projectDir: string): Promise` — Build an in-process request handler for a real project directory — **no build step, no socket**. It renders Server Components, runs Server Actions and middleware.ts, and reads cookies/sessions, exactly as production does, but it ships no client bundle — so it drives the **JavaScript-disabled** path your app must support. The handler keeps one PageCache, so revalidate-based ISR is exercised across successive requests. Pair it with createTestClient.
-- `createTestClient(handler: TestHandler, _: unknown): TestClient` — Create a cookie-aware, no-JS test client over a request handler.
+- `createTestApp(projectDir: string): Promise<TestHandler>` — Build an in-process request handler for a real project directory — **no build step, no socket**. It renders Server Components, runs Server Actions and middleware.ts, and reads cookies/sessions, exactly as production does, but it ships no client bundle — so it drives the **JavaScript-disabled** path your app must support. The handler keeps one PageCache, so revalidate-based ISR is exercised across successive requests. Pair it with createTestClient.
+- `createTestClient(handler: TestHandler, options?: TestClientOptions): TestClient` — Create a cookie-aware, no-JS test client over a request handler.
 - `fireEvent: FireEvent` — Dispatch DOM events at rendered elements (bubbling), each wrapped in act.
 - `interface FireEvent` — A dispatched-event helper: callable, plus named shortcuts. All are async.
 - `formatReport(report: ConformanceReport): string` — Render a ConformanceReport as a human-readable table with a summary line. Suitable for CLI output or a test failure message.
-- `type FormBody = Record` — A request body helper: a plain object is sent as x-www-form-urlencoded.
+- `type FormBody = Record<string, string | number | boolean>` — A request body helper: a plain object is sent as x-www-form-urlencoded.
 - `interface FormQuery` — Locate a specific form when a page renders more than one.
-- `type Key = union` — A stable identity for a VNode among its siblings, used to keep lists reconciled.
+- `type Key = string | number | null | undefined` — A stable identity for a VNode among its siblings, used to keep lists reconciled.
 - `interface MatchOptions` — Options controlling text matching.
-- `probeApp(projectDir: string, _: unknown): Promise` — Probe every route of the denext app at projectDir: render each in process and assert it produces a valid HTML document with no server crash.
+- `probeApp(projectDir: string, options?: ProbeOptions): Promise<ConformanceReport>` — Probe every route of the denext app at projectDir: render each in process and assert it produces a valid HTML document with no server crash.
 - `interface ProbeCheck` — One conformance check applied to a single rendered route.
 - `interface ProbeOptions` — Options for probeApp.
 - `interface Queries` — The query methods bound to a rendered container.
 - `interface RedirectHop` — One hop in a followed redirect chain.
-- `render(ui: VNode): Promise` — Mount ui into a fresh in-memory DOM and return queries + interaction helpers. Effects run (wrapped in act), so await the call before asserting.
+- `render(ui: VNode): Promise<RenderResult>` — Mount ui into a fresh in-memory DOM and return queries + interaction helpers. Effects run (wrapped in act), so await the call before asserting.
 - `interface RenderResult` — The handle returned by render.
 - `interface RoleOptions` — Options for Queries.getByRole.
 - `interface RouteProbe` — The result of probing one concrete route path.
@@ -963,43 +1014,43 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface TestClientOptions` — Options for createTestClient.
 - `interface TestElement` — The read-only shape of a rendered element that query helpers return.
 - `interface TestForm` — A <form> parsed out of rendered HTML, ready to TestClient.submit.
-- `type TestHandler = fnOrConstructor` — A handler under test: anything that maps a Request to a Response.
+- `type TestHandler = (request: Request) => Response | Promise<Response>` — A handler under test: anything that maps a Request to a Response.
 - `interface TestRequestInit` — Options for a single TestClient request.
 - `interface TestResponse` — A response whose body has already been read into TestResponse.text — so assertions are synchronous and the body is never left dangling.
-- `type TextMatch = union` — A text matcher: an exact/normalized string, or a regular expression.
+- `type TextMatch = string | RegExp` — A text matcher: an exact/normalized string, or a regular expression.
 - `userEvent: UserEvent` — Higher-level user interactions (a pragmatic subset of @testing-library/user-event). Each method dispatches the sequence of DOM events a real interaction produces — more faithful than a single fireEvent — and flushes via act. Call directly (await userEvent.click(el)) or via userEvent.setup() (which returns this object).
 - `interface UserEvent` — Higher-level user interactions (a subset of @testing-library/user-event).
 - `interface VNode` — A single virtual DOM node.
-- `type VNodeChild = union` — Anything that can appear as a child in JSX.
-- `type VNodeChildren = union` — One child or an array of children, as accepted by JSX.
-- `type VNodeType = union` — The type field of a VNode: an intrinsic tag name, a component fn, or a fragment marker.
+- `type VNodeChild = VNode | string | number | boolean | null | undefined` — Anything that can appear as a child in JSX.
+- `type VNodeChildren = VNodeChild | VNodeChild[]` — One child or an array of children, as accepted by JSX.
+- `type VNodeType = string | Component<any> | FRAGMENT` — The type field of a VNode: an intrinsic tag name, a component fn, or a fragment marker.
 - `interface VProps` — Props passed to a virtual node. children is normalized separately.
-- `waitFor<T>(callback: fnOrConstructor, _: unknown): Promise` — Retry callback until it returns without throwing, flushing pending denext work (effects/state) between attempts, or reject with the last error after timeout. The Testing-Library waitFor — use it for state that settles after an async effect.
+- `waitFor<T>(callback: () => T | Promise<T>, options?: WaitOptions): Promise<T>` — Retry callback until it returns without throwing, flushing pending denext work (effects/state) between attempts, or reject with the last error after timeout. The Testing-Library waitFor — use it for state that settles after an async effect.
 - `interface WaitOptions` — Options for waitFor / the findBy* queries.
 
 ### `denext/live`
 
-- `configureLive(opts: typeLiteral): void` — Install the Flight parser and route-refresh used by the live transport, and wire <Live> boundary registration. Called once by the generated Flight client entry.
+- `configureLive(opts: object): void` — Install the Flight parser and route-refresh used by the live transport, and wire <Live> boundary registration. Called once by the generated Flight client entry.
 - `Live(props: LiveProps): VNode` — A real-time server-component boundary. See the module docs.
 - `interface LiveActionRef<A, R>` — A reference to a server function usable as a live query (a serverAction).
 - `interface LiveProps` — Props for Live.
 - `liveReadable<T>(action: T): T` — Mark a server action as readable over the Live data channel (useLive), and return it unchanged for chaining. Only actions marked here — or admitted by the Live hub's canSubscribe policy — may be run via a data-subscribe. Use it for read-only fetchers you intend to stream; never for mutations.
 - `interface Presence<S>` — The presence of the current room, from usePresence.
-- `useLive<A, R>(action: LiveActionRef, args: A, options: UseLiveOptions): union` — Subscribe to a server function's result, re-rendering whenever one of options.tags is invalidated. The function runs on the server under the viewer's own session (it must authorize its own access, like any server action). Pass a **read** action.
-- `useLiveOptimistic<T, A>(liveValue: T, reducer: fnOrConstructor): tuple` — Pair an optimistic overlay with a live value: apply a local update immediately, and let it reconcile automatically when the authoritative value arrives over the socket (the overlay resets whenever liveValue's identity changes).
+- `useLive<A, R>(action: LiveActionRef<A, R>, args: A, options: UseLiveOptions<R>): R | undefined` — Subscribe to a server function's result, re-rendering whenever one of options.tags is invalidated. The function runs on the server under the viewer's own session (it must authorize its own access, like any server action). Pass a **read** action.
+- `useLiveOptimistic<T, A>(liveValue: T, reducer: (current: T, action: A) => T): tuple` — Pair an optimistic overlay with a live value: apply a local update immediately, and let it reconcile automatically when the authoritative value arrives over the socket (the overlay resets whenever liveValue's identity changes).
 - `interface UseLiveOptions<R>` — Options for useLive.
-- `usePresence<S>(room: string, _: unknown): Presence` — Join a presence room and observe its members (who's-online, cursors, typing…). Orthogonal to cache tags — updates push on join/update/leave.
+- `usePresence<S>(room: string, options?: UsePresenceOptions<S>): Presence<S>` — Join a presence room and observe its members (who's-online, cursors, typing…). Orthogonal to cache tags — updates push on join/update/leave.
 - `interface UsePresenceOptions<S>` — Options for usePresence.
 
 ### `denext/lazy`
 
-- `bootResumability(registry: Map, _: unknown, islandsIn?: array, signalStateIn?: Record): void` — Boot the deferred half of resumability: install delegated qrl dispatch (so serialized data-dnx-h handlers run without hydration), then register every island wrapper for deferred per-island hydration. The generated Flight entry dynamically imports and calls this only when a page carries lazy islands or resumable handlers, so non-resumable apps bundle none of it.
+- `bootResumability(registry: Map<string, unknown>, eager?: boolean, islandsIn?: IslandPayload[], signalStateIn?: Record<string, unknown>): void` — Boot the deferred half of resumability: install delegated qrl dispatch (so serialized data-dnx-h handlers run without hydration), then register every island wrapper for deferred per-island hydration. The generated Flight entry dynamically imports and calls this only when a page carries lazy islands or resumable handlers, so non-resumable apps bundle none of it.
 
 ### `denext/desktop`
 
-- `createDesktopHandler(options: RunDesktopOptions, outDir: string, proxy: union): fnOrConstructor` — The desktop request handler: the onRequest escape hatch, the backend proxy, the export's static assets (no-store), the index.html shell for navigations, else 404. Exported for tests; runDesktop wires it to Deno.serve.
+- `createDesktopHandler(options: RunDesktopOptions, outDir: string, proxy: ProxyModule | undefined): (request: Request, url: URL) => Promise<Response>` — The desktop request handler: the onRequest escape hatch, the backend proxy, the export's static assets (no-store), the index.html shell for navigations, else 404. Exported for tests; runDesktop wires it to Deno.serve.
 - `resolveOutDir(options: RunDesktopOptions): string` — The static-export dir to serve: outDir (relative to importMetaUrl when given), else out/.
-- `runDesktop(_: unknown): Promise` — Serve a denext SPA export in a deno desktop window. Adopts the initial Deno.BrowserWindow and quits the process on window close; under a plain deno run (no desktop runtime) it just starts the server.
+- `runDesktop(options?: RunDesktopOptions): Promise<void>` — Serve a denext SPA export in a deno desktop window. Adopts the initial Deno.BrowserWindow and quits the process on window close; under a plain deno run (no desktop runtime) it just starts the server.
 - `interface RunDesktopOptions`
 
 ### `denext/cli/command`
@@ -1008,9 +1059,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `class CommandRegistry` — A registry of commands with parsing, dispatch, and help rendering.
 - `interface CommandSpec` — A first-class denext CLI verb.
 - `interface FlagSpec` — A declarative flag on a CommandSpec (or a global flag).
-- `type FlagType = union` — The value kind a flag carries. A boolean flag is a bare presence switch.
+- `type FlagType = boolean | string | number` — The value kind a flag carries. A boolean flag is a bare presence switch.
 - `GLOBAL_FLAGS: typeOperator` — The global flags every command accepts, as data (drives parsing + help).
 - `interface GlobalFlags` — Global flags recognized on every command, parsed out before command flags.
-- `type ParseOutcome = union` — The outcome of parsing an argv against the registry.
+- `type ParseOutcome = object | object | object | object` — The outcome of parsing an argv against the registry.
 - `interface PositionalSpec` — A declarative positional argument on a CommandSpec.
-- `suggest(input: string, candidates: typeOperator): union` — The closest name in candidates to input within a small edit-distance threshold (scaled to the input length), or undefined when nothing is close — powering "did you mean" hints for both unknown verbs and unknown flags.
+- `suggest(input: string, candidates: typeOperator): string | undefined` — The closest name in candidates to input within a small edit-distance threshold (scaled to the input length), or undefined when nothing is close — powering "did you mean" hints for both unknown verbs and unknown flags.

@@ -1,6 +1,7 @@
 {
   "denext": [
     "ActionResult:typeAlias",
+    "AnchorProps:typeAlias",
     "ApiClient:interface",
     "ApiEndpoint:interface",
     "ApiRequestOptions:interface",
@@ -367,6 +368,7 @@
     "MiddlewareResult:typeAlias",
     "MiddlewareRunner:typeAlias",
     "ModuleLoader:typeAlias",
+    "NEXT:variable",
     "NextCommand:interface",
     "OAuthClientOptions:interface",
     "OAuthProvider:interface",
@@ -392,6 +394,7 @@
     "PluginRequestHandler:typeAlias",
     "PluginTeardown:typeAlias",
     "ProfileInput:interface",
+    "REWRITE:variable",
     "RateLimitOptions:interface",
     "RateLimitStore:interface",
     "RateLimitWindow:interface",
@@ -579,6 +582,7 @@
   ],
   "denext/client": [
     "ActionResult:typeAlias",
+    "AnchorProps:typeAlias",
     "ApiClient:interface",
     "ApiEndpoint:interface",
     "ApiRequestOptions:interface",

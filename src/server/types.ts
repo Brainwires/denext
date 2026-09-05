@@ -21,9 +21,13 @@ export interface OpenGraphImage {
 
 /** A single Open Graph video/audio (`og:video` / `og:audio`). */
 export interface OpenGraphMedia {
+  /** Media URL. */
   url: string;
+  /** `og:video:width` / `og:audio:width`. */
   width?: number;
+  /** `og:video:height`. */
   height?: number;
+  /** MIME type (`og:video:type`). */
   type?: string;
 }
 
@@ -63,10 +67,13 @@ export interface OpenGraphMetadata {
   section?: string;
   /** `article:tag`. */
   tags?: string | string[];
-  /** `og:email`, `og:phone_number`, `og:fax_number`, `og:country_name` etc. */
+  /** `og:email`. */
   emails?: string | string[];
+  /** `og:phone_number`. */
   phoneNumbers?: string | string[];
+  /** `og:fax_number`. */
   faxNumbers?: string | string[];
+  /** `og:country_name`. */
   countryName?: string;
   /** `og:ttl`. */
   ttl?: number;
@@ -120,6 +127,7 @@ export type JsonLd = {
 
 /** One icon: a URL, or a descriptor with `sizes`/`type`/`media`/`rel` (Next.js `IconDescriptor`). */
 export interface IconDescriptor {
+  /** Icon URL. */
   url: string;
   /** `sizes` attribute (e.g. "32x32", "any"). */
   sizes?: string;
@@ -150,24 +158,35 @@ export interface IconsMetadata {
 
 /** `<meta name="theme-color">` with an optional media query. */
 export interface ThemeColorDescriptor {
+  /** The color value. */
   color: string;
+  /** A media query the color applies under (e.g. `(prefers-color-scheme: dark)`). */
   media?: string;
 }
 
 /** `appleWebApp` metadata (`apple-mobile-web-app-*`). */
 export interface AppleWebAppMetadata {
+  /** `apple-mobile-web-app-capable` (default yes). */
   capable?: boolean;
+  /** `apple-mobile-web-app-title`. */
   title?: string;
+  /** `apple-mobile-web-app-status-bar-style`. */
   statusBarStyle?: "default" | "black" | "black-translucent";
+  /** `<link rel="apple-touch-startup-image">` entries. */
   startupImage?: string | Array<string | { url: string; media?: string }>;
 }
 
 /** `format-detection` (`telephone=no` etc.). */
 export interface FormatDetectionMetadata {
+  /** Auto-link phone numbers (`false` emits `telephone=no`). */
   telephone?: boolean;
+  /** Auto-link dates. */
   date?: boolean;
+  /** Auto-link addresses. */
   address?: boolean;
+  /** Auto-link email addresses. */
   email?: boolean;
+  /** Auto-link URLs. */
   url?: boolean;
 }
 

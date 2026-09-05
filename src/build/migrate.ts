@@ -71,7 +71,7 @@ const DENEXT_OWNED = new Set([
  * package's current version (asserted by tests/migrate-universal.test.ts) — the plugin tracks
  * denext's barrel surface, so an older 0.x line boots against a barrel it no longer matches.
  */
-export const PAGES_ROUTER_SPEC = "jsr:@denext/pages-router@^0.9.1";
+export const PAGES_ROUTER_SPEC = "jsr:@denext/pages-router@^0.10.0";
 /**
  * The `@denext/effect` bridge specifier, mapped (and its `effect()` plugin wired into the
  * generated `denext.config.ts`) whenever the app depends on the npm `effect` package. The

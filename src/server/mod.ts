@@ -106,9 +106,11 @@ export type {
 export {
   composeMiddleware,
   createMiddlewareRunner,
+  NEXT,
   next,
   redirect,
   redirectResponse,
+  REWRITE,
   rewrite,
   withHeaders,
 } from "./middleware.ts";

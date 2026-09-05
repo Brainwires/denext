@@ -264,7 +264,10 @@ Deno.test("middleware: always mode redirects an unprefixed path", () => {
     defaultLocale: "en",
     localePrefix: "always",
   }) as Middleware;
-  const res = mw(new Request("https://x.test/about"), { url: new URL("https://x.test/about") }) as
+  const res = mw(new Request("https://x.test/about"), {
+    url: new URL("https://x.test/about"),
+    waitUntil: () => {},
+  }) as
     | Response
     | undefined;
   assert(res instanceof Response);
@@ -280,6 +283,7 @@ Deno.test("middleware: already-prefixed path continues with a cookie", () => {
   }) as Middleware;
   const res = mw(new Request("https://x.test/fr/x"), {
     url: new URL("https://x.test/fr/x"),
+    waitUntil: () => {},
   }) as Response;
   assertEquals(res.headers.get("x-middleware-next"), "1");
   assert(res.headers.getSetCookie().some((c) => c.startsWith("NEXT_LOCALE=fr")));
@@ -293,6 +297,7 @@ Deno.test("middleware: as-needed rewrites the default locale internally", () => 
   }) as Middleware;
   const res = mw(new Request("https://x.test/about"), {
     url: new URL("https://x.test/about"),
+    waitUntil: () => {},
   }) as Response;
   assert((res.headers.get("x-middleware-rewrite") ?? "").endsWith("/en/about"));
 });

@@ -129,6 +129,7 @@ export {
   useTranslations,
 } from "./navigation.ts";
 export type {
+  AnchorProps,
   HrefInput,
   LinkProps,
   Router,

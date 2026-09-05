@@ -103,7 +103,7 @@ const SINGLETON_HEADERS = new Set([
 ]);
 
 /** The injected (rule + middleware) headers applied to `res`, if there are any. */
-export function withInjectedHeaders(state: RequestState, res: Response): Response {
+function withInjectedHeaders(state: RequestState, res: Response): Response {
   return state.injectedHeaders ? withHeaders(res, state.injectedHeaders) : res;
 }
 
