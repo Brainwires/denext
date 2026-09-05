@@ -167,6 +167,22 @@ function classDefine(classComponents?: boolean): Record<string, string> {
 }
 
 /**
+ * The wasm codecs behind next/og + next/image are dynamically imported at call time; keep
+ * them EXTERNAL so esbuild never tries to bundle their `.wasm` (no browser loader for it).
+ * Both spellings are needed: a checkout imports them BARE (`@denext/photon`, mapped by the
+ * workspace), while JSR rewrites the published sources to `jsr:@denext/photon@^x.y.z` —
+ * the bare pattern alone let esbuild descend into the codec from a JSR-installed denext.
+ */
+const CODEC_EXTERNALS = [
+  "@denext/photon",
+  "@denext/avif",
+  "@denext/og",
+  "jsr:@denext/photon*",
+  "jsr:@denext/avif*",
+  "jsr:@denext/og*",
+];
+
+/**
  * Prebuild denext's compat + SSR entrypoints into one shared, self-contained
  * runtime (esbuild `splitting` dedupes the denext core into a single chunk, so
  * every entry shares one hook dispatcher / reconciler). Produces plain ESM JS
@@ -204,7 +220,7 @@ export async function prebuildDenextRuntime(options: PrebuildOptions): Promise<s
       // (no browser loader for it) here. At SSR runtime they resolve via the merged
       // css-config (which includes denext's framework imports); on the client they
       // are never reached.
-      external: ["@denext/photon", "@denext/avif", "@denext/og"],
+      external: CODEC_EXTERNALS,
       define: classDefine(options.classComponents),
       plugins: [...denoPlugins({ configPath: tmpConfig })],
     });
@@ -1423,7 +1439,7 @@ export async function bundleNextCompatModules(
     absWorkingDir: options.absWorkingDir,
     // Wasm codecs (next/og, next/image) are lazily imported and resolve at SSR
     // runtime — keep them external so esbuild never tries to bundle their .wasm.
-    external: ["@denext/photon", "@denext/avif", "@denext/og"],
+    external: CODEC_EXTERNALS,
     define: { ...classDefine(options.classComponents), ...options.define },
     ...(deno ? { banner: { js: DENO_REQUIRE_BANNER } } : {}),
     // Vite-style asset emission: bare `.wasm`/`.woff2`/… + `new URL(…)` → files
