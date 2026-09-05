@@ -64,12 +64,25 @@ export async function readFrameworkJson(
  */
 export async function frameworkImports(): Promise<Record<string, string>> {
   const cfg = await readFrameworkJson("deno.json");
-  const imports = (cfg.imports ?? {}) as Record<string, string>;
-  const base = frameworkFileUrl("deno.json");
+  return absolutizeAgainstUrl(
+    (cfg.imports ?? {}) as Record<string, string>,
+    frameworkFileUrl("deno.json"),
+  );
+}
+
+/**
+ * `imports` with its relative entries (`./mod.ts`, `../src/`) resolved against `baseUrl` (any
+ * scheme — file:// or a remote framework root); a trailing-slash prefix mapping keeps its slash.
+ * jsr:/npm:/absolute values pass through unchanged.
+ */
+function absolutizeAgainstUrl(
+  imports: Record<string, string>,
+  baseUrl: string,
+): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [key, value] of Object.entries(imports)) {
     if (value.startsWith("./") || value.startsWith("../")) {
-      const abs = new URL(value, base).href;
+      const abs = new URL(value, baseUrl).href;
       out[key] = value.endsWith("/") && !abs.endsWith("/") ? abs + "/" : abs;
     } else {
       out[key] = value;
@@ -802,13 +815,7 @@ export async function loaderConfigPath(configPath: string, tmpDir: string): Prom
     return configPath; // unreadable/JSONC: leave the original alone
   }
   if (cfg.minimumDependencyAge !== undefined) return configPath;
-  const imports = (cfg.imports ?? {}) as Record<string, string>;
-  for (const [k, v] of Object.entries(imports)) {
-    if (v.startsWith("./") || v.startsWith("../")) {
-      const abs = new URL(v, url).href;
-      imports[k] = v.endsWith("/") && !abs.endsWith("/") ? abs + "/" : abs;
-    }
-  }
+  const imports = absolutizeAgainstUrl((cfg.imports ?? {}) as Record<string, string>, url);
   const out = join(tmpDir, `deno.min-dep-age.${Math.random().toString(36).slice(2, 8)}.json`);
   await Deno.writeTextFile(out, JSON.stringify({ ...cfg, imports, ...policy }));
   return out;
