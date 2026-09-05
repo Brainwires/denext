@@ -5,7 +5,7 @@
 
 import { h, renderToString } from "@denext/denext";
 import { collapseHeadTags, type HeadCollector } from "@denext/denext";
-import type { Component } from "@denext/denext/server";
+import type { Component } from "@denext/denext/plugin-kit";
 import { renderWithDocument } from "./document.ts";
 import { createServerRouter, RouterProvider } from "../router.ts";
 

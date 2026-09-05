@@ -87,7 +87,12 @@ export type { ApiMatch, MatchOptions, PageMatch } from "../router/match.ts";
 export type { Intercept, RouteParams, Segment, SegmentKind } from "../router/segments.ts";
 // Segment parser + matcher primitives — the reusable core of the router, exposed
 // so a routing plugin (e.g. a Pages Router) can parse patterns and match paths.
-export { matchSegments, parsePattern, specificity } from "../router/segments.ts";
+export {
+  compareSpecificity,
+  matchSegments,
+  parsePattern,
+  specificity,
+} from "../router/segments.ts";
 export type {
   Component,
   Key,
@@ -203,6 +208,7 @@ export {
   readonlyHeaders,
 } from "./request-context.ts";
 export type { RequestCookie } from "./request-context.ts";
+export { cappedBody, readCappedBody, STALLED, TOO_LARGE } from "./body.ts";
 // User-Agent parsing (userAgent(request) / userAgentFromString(ua)).
 export { type UserAgent, userAgent, userAgentFromString } from "./user-agent.ts";
 export type {

@@ -5,9 +5,9 @@
  *
  * By default it registers a Google Fonts stylesheet link (synchronous, no npm).
  * For true self-hosting (no runtime Google request, matching Next's privacy
- * story), a build step can call {@link selfHostGoogleFont} — it downloads the
+ * story), the build step in src/build/self-host-fonts.ts downloads the
  * `@font-face` CSS + font files and rewrites the `src` URLs to local paths
- * ({@link rewriteGoogleFontFaceCss} is the pure, testable core of that rewrite).
+ * (`rewriteGoogleFontFaceCss` is the pure, testable core of that rewrite).
  *
  * @module
  */
@@ -82,148 +82,6 @@ export function googleFont(family: string, options: GoogleFontOptions = {}): Fon
   const weights = ([] as string[]).concat(options.weight ?? []);
   if (weights.length === 1) style.fontWeight = weights[0];
   return { className, style, variable };
-}
-
-/**
- * Download the resolved `@font-face` CSS for a Google font (for build-time
- * self-hosting). Sends a modern browser `User-Agent` so Google returns woff2.
- * The caller rewrites the `src: url(...)` to local files.
- *
- * @param family The family name.
- * @param options The font options.
- * @returns The `@font-face` CSS text from Google.
- */
-export async function fetchGoogleFontFaceCss(
-  family: string,
-  options: GoogleFontOptions = {},
-): Promise<string> {
-  return await fetchFontFaceCssFromUrl(googleFontUrl(family, options));
-}
-
-/** A woff2-capable browser UA so Google serves woff2 rather than legacy formats. */
-const WOFF2_UA =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
-
-/**
- * Download the resolved `@font-face` CSS for an already-built Google `css2` URL
- * (what the font registry records). Sends a woff2-capable UA. Used by the build's
- * self-host step, which only knows the URL, not the original family/options.
- *
- * @param url The `fonts.googleapis.com/css2` URL.
- * @returns The `@font-face` CSS text from Google.
- */
-export async function fetchFontFaceCssFromUrl(url: string): Promise<string> {
-  const res = await fetch(url, { headers: { "user-agent": WOFF2_UA } });
-  if (!res.ok) throw new Error(`next/font/google: fetch failed (${res.status}) for ${url}`);
-  return await res.text();
-}
-
-/** One font file referenced by a Google `@font-face` block. */
-export interface GoogleFontAsset {
-  /** The remote (gstatic) URL to download. */
-  url: string;
-  /** The local filename to save it as (stable hash of the URL + extension). */
-  filename: string;
-}
-
-/** Result of rewriting Google's `@font-face` CSS to self-hosted local URLs. */
-export interface RewrittenFontCss {
-  /** The CSS with every `src: url(...)` pointing at a local path. */
-  css: string;
-  /** The font files to download and serve. */
-  assets: GoogleFontAsset[];
-}
-
-/** Small deterministic hash (djb2 → base36) for stable asset filenames. */
-function hashUrl(url: string): string {
-  let h = 5381;
-  for (let i = 0; i < url.length; i++) h = ((h << 5) + h + url.charCodeAt(i)) >>> 0;
-  return h.toString(36);
-}
-
-/**
- * Keep only the `@font-face` blocks whose preceding CSS comment names a requested subset
- * (Google annotates each block with a `subset` comment, e.g. `latin`). Drops the other
- * subsets' faces so their files aren't self-hosted — the payload win of `subsets`. If the
- * CSS isn't in the annotated per-subset shape (nothing matched), it is returned unchanged.
- */
-function filterSubsets(css: string, subsets: string[]): string {
-  const wanted = new Set(subsets.map((s) => s.toLowerCase()));
-  const kept: string[] = [];
-  const re = /\/\*\s*([a-z0-9-]+)\s*\*\/\s*(@font-face\s*\{[^}]*\})/gi;
-  let matched = false;
-  for (let m = re.exec(css); m !== null; m = re.exec(css)) {
-    matched = true;
-    if (wanted.has(m[1].toLowerCase())) kept.push(`/* ${m[1]} */\n${m[2]}`);
-  }
-  return matched && kept.length > 0 ? kept.join("\n") : css;
-}
-
-/**
- * Rewrite Google's `@font-face` CSS so each remote `src: url(https://…gstatic…)`
- * points at a local file under `publicPrefix` — the core of self-hosting (privacy
- * + no runtime Google request, matching Next). Pure and network-free: returns the
- * rewritten CSS plus the list of assets to download. When `subsets` is given, only those
- * subsets' faces are kept (so unused subsets aren't downloaded).
- *
- * @param css The `@font-face` CSS from {@link fetchGoogleFontFaceCss}.
- * @param publicPrefix URL path the fonts are served under (e.g. `/_denext/fonts`).
- * @param subsets Character subsets to keep (e.g. `["latin"]`); omit to keep all.
- * @returns The rewritten CSS and the assets to fetch.
- */
-export function rewriteGoogleFontFaceCss(
-  css: string,
-  publicPrefix: string,
-  subsets?: string[],
-): RewrittenFontCss {
-  const prefix = publicPrefix.replace(/\/$/, "");
-  const source = subsets && subsets.length > 0 ? filterSubsets(css, subsets) : css;
-  const assets: GoogleFontAsset[] = [];
-  const seen = new Map<string, string>();
-  const rewritten = source.replace(/url\((https:\/\/[^)]+)\)/g, (_m, url: string) => {
-    let filename = seen.get(url);
-    if (!filename) {
-      const ext = /\.([a-z0-9]+)(?:[?#]|$)/i.exec(url)?.[1] ?? "woff2";
-      filename = `${hashUrl(url)}.${ext}`;
-      seen.set(url, filename);
-      assets.push({ url, filename });
-    }
-    return `url(${prefix}/${filename})`;
-  });
-  return { css: rewritten, assets };
-}
-
-/**
- * Self-host a Google font at build time: download the resolved `@font-face` CSS,
- * fetch each font file into `outDir`, and return CSS whose `src` URLs point at the
- * local files (served under `publicPrefix`). No runtime request to Google.
- *
- * @param family The family name.
- * @param options The font options.
- * @param outDir Directory to write the font files into.
- * @param publicPrefix URL path the fonts are served under.
- * @returns The self-hosted CSS (embed via a `<style>`), and the written files.
- */
-export async function selfHostGoogleFont(
-  family: string,
-  options: GoogleFontOptions,
-  outDir: string,
-  publicPrefix: string,
-): Promise<{ css: string; files: string[] }> {
-  const raw = await fetchGoogleFontFaceCss(family, options);
-  const { css, assets } = rewriteGoogleFontFaceCss(raw, publicPrefix);
-  await Deno.mkdir(outDir, { recursive: true });
-  const files: string[] = [];
-  for (const asset of assets) {
-    const res = await fetch(asset.url);
-    if (!res.ok) {
-      throw new Error(`next/font/google: font fetch failed (${res.status}): ${asset.url}`);
-    }
-    const path = `${outDir.replace(/\/$/, "")}/${asset.filename}`;
-    await Deno.writeFile(path, new Uint8Array(await res.arrayBuffer()));
-    files.push(path);
-  }
-  return { css, files };
 }
 
 /** A named Google-font loader (what each family export is). */

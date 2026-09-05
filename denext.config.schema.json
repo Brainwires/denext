@@ -38,7 +38,52 @@
           "description": "Compile-time `import.meta.env` values (the SPA analogue of a Vite `define` block). Each `{ KEY: \"value\" }` replaces `import.meta.env.KEY` with the literal `\"value\"` at build time — the way a Vite app reads `import.meta.env.VITE_*`. Only applied when the app builds through the next-compat (esbuild) pipeline (i.e. it uses npm React); a denext-native SPA has no `import.meta.env`."
         },
         "csp": {
-          "description": "Content-Security-Policy for the generated shell. A client-only React SPA (Vite/CRA and denext alike) ships no CSP by default — it's the app's/host's call — so this is **opt-in**: - unset / `\"off\"` — no CSP (default). - `\"strict\"` — denext's strict policy (`default-src 'self'`, `script-src 'self'`, `object-src 'none'`, `base-uri 'self'`, `img/font 'self' data:`, and `style-src-attr 'unsafe-inline'` so React `style={{}}` keeps working). - a CspSetting object — that strict policy plus your global opt-ins (e.g. `{ connectSrc: [\"https://api.example.com\"] }` for your API host)."
+          "description": "Content-Security-Policy for the generated shell. A client-only React SPA (Vite/CRA and denext alike) ships no CSP by default — it's the app's/host's call — so this is **opt-in**: - unset / `\"off\"` — no CSP (default). - `\"strict\"` — denext's strict policy (`default-src 'self'`, `script-src 'self'`, `object-src 'none'`, `base-uri 'self'`, `img/font 'self' data:`, and `style-src-attr 'unsafe-inline'` so React `style={{}}` keeps working). - a CspSetting object — that strict policy plus your global opt-ins (e.g. `{ connectSrc: [\"https://api.example.com\"] }` for your API host).",
+          "anyOf": [
+            {
+              "enum": [
+                "strict"
+              ]
+            },
+            {
+              "enum": [
+                "off"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "scriptSrc": {
+                  "description": "Extra `script-src` sources (external script hosts).",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "styleSrc": {
+                  "description": "Extra `style-src` sources (external stylesheet hosts).",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "imgSrc": {
+                  "description": "Extra `img-src` sources (`<Image>` is already same-origin via the optimizer).",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "connectSrc": {
+                  "description": "Extra `connect-src` sources (fetch/XHR/EventSource/WebSocket targets).",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ]
         },
         "proxy": {
           "description": "Reverse-proxy selected path prefixes to a separate backend while serving the SPA (`denext start` in `mode:\"spa\"`, and the `deno desktop` runtime). Mirrors a Vite dev server's `server.proxy`: the client talks to its own origin and denext relays matched requests — HTTP and WebSocket — to the backend. Omit for a backend-less SPA.",
@@ -81,7 +126,71 @@
       ]
     },
     "i18n": {
-      "description": "Internationalized routing config."
+      "description": "Internationalized routing config.",
+      "type": "object",
+      "properties": {
+        "locales": {
+          "description": "All supported locale codes, e.g. `[\"en\", \"fr\", \"de\"]`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "defaultLocale": {
+          "description": "The locale served without a URL prefix, e.g. `\"en\"`.",
+          "type": "string"
+        },
+        "localePrefix": {
+          "description": "How the default locale is represented in URLs: - `\"as-needed\"` (default) — the default locale is served **unprefixed** (`/about`), every other locale is prefixed (`/fr/about`). - `\"always\"` — **every** locale is prefixed, including the default (`/en/about`); an unprefixed path redirects to the detected (or default) locale's prefix.",
+          "enum": [
+            "as-needed",
+            "always"
+          ]
+        },
+        "messages": {
+          "description": "Optional message catalogs keyed by locale, powering `useTranslations()`. The active locale's catalog is provided to the render and embedded in the hydration payload. Server components may also load catalogs directly."
+        },
+        "hreflang": {
+          "description": "Automatically emit `<link rel=\"alternate\" hreflang>` alternates (one per locale, plus `x-default`) and a per-locale canonical for every page. On by default when i18n is configured; set `false` to opt out. A page that sets its own `alternates.languages` always takes precedence over the generated set.",
+          "type": "boolean"
+        },
+        "domains": {
+          "description": "Serve a locale per **domain** without a URL prefix (Next's `i18n.domains`): `example.fr/about` renders French with no `/fr`. Each entry pins a host to a `defaultLocale` (served unprefixed on that host); a host's other `locales` (if listed) are still prefixed there. Locales not tied to any domain keep the normal prefix behavior on the primary host. Host resolution uses the request's trusted host (honoring `trustForwardedHeaders`), never a raw `Host` header on the render path.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "domain": {
+                "description": "The host this entry matches, e.g. `\"example.fr\"` (compared case-insensitively, port-stripped).",
+                "type": "string"
+              },
+              "defaultLocale": {
+                "description": "The locale served unprefixed on this host.",
+                "type": "string"
+              },
+              "locales": {
+                "description": "Locales served on this host (prefixed, except `defaultLocale`); omit to allow all.",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "http": {
+                "description": "Use `http://` (not `https://`) when generating this domain's absolute URLs (local dev).",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "domain",
+              "defaultLocale"
+            ]
+          }
+        }
+      },
+      "required": [
+        "locales",
+        "defaultLocale"
+      ]
     },
     "basePath": {
       "description": "Serve the app under a sub-path (e.g. `/docs`). Stripped before routing.",
@@ -134,7 +243,15 @@
                 "type": "string"
               },
               "pathname": {
-                "description": "Pathname prefix the source must start with (e.g. `/images/`). Any when omitted.",
+                "description": "Pathname the source must match: a Next.js glob (`/images/**`, `*` = one segment, `**` = any depth). A bare prefix (`/images/`) matches that path and anything below it. Any when omitted.",
+                "type": "string"
+              },
+              "port": {
+                "description": "Required port (e.g. `\"3000\"`); the protocol default when omitted.",
+                "type": "string"
+              },
+              "search": {
+                "description": "Required query string (e.g. `\"?v=1\"`); any when omitted.",
                 "type": "string"
               }
             },
@@ -186,11 +303,7 @@
           "type": "number"
         },
         "formats": {
-          "description": "Output formats the endpoint may negotiate from the request `Accept` header, in preference order (matches Next.js `images.formats`). Include `\"image/avif\"` to enable AVIF (falls back to WebP when the client doesn't accept AVIF). Defaults to `[\"image/webp\"]`.",
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
+          "description": "Output formats the endpoint may negotiate from the request `Accept` header, in preference order (matches Next.js `images.formats`). Include `\"image/avif\"` to enable AVIF (falls back to WebP when the client doesn't accept AVIF). Defaults to `[\"image/webp\"]`."
         },
         "maximumRedirects": {
           "description": "Max redirect hops to follow for a remote source, each re-validated (matches Next.js `images.maximumRedirects`). Defaults to `3`; `0` disables redirects.",
@@ -250,7 +363,53 @@
       "type": "object",
       "properties": {
         "store": {
-          "description": "Which store backs `use cache` / ISR. `\"sqlite\"` = the durable `node:sqlite` file store (real SQLite, built into Deno, zero-npm); `\"memory\"` = the in-process LRU store (ephemeral, per-process); or a custom CacheStore. Omit for the smart default: `node:sqlite` when a writable FS is available, otherwise in-memory."
+          "description": "Which store backs `use cache` / ISR. `\"sqlite\"` = the durable `node:sqlite` file store (real SQLite, built into Deno, zero-npm); `\"memory\"` = the in-process LRU store (ephemeral, per-process); or a custom CacheStore. Omit for the smart default: `node:sqlite` when a writable FS is available, otherwise in-memory.",
+          "anyOf": [
+            {
+              "enum": [
+                "sqlite"
+              ]
+            },
+            {
+              "enum": [
+                "memory"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "getData": {
+                  "description": "Return a fresh data entry for `key`, or undefined if missing/stale."
+                },
+                "setData": {
+                  "description": "Store a data entry under `key`."
+                },
+                "getPage": {
+                  "description": "Return a fresh cached page for `key`, or undefined if missing/stale."
+                },
+                "setPage": {
+                  "description": "Store a cached page under `key`."
+                },
+                "deleteByTag": {
+                  "description": "Purge every data entry and page carrying `tag`."
+                },
+                "deleteByPath": {
+                  "description": "Purge every cached page rendered for `path` (an exact pathname)."
+                },
+                "expireByTag": {
+                  "description": "Optional: **soft-expire** every entry carrying `tag` — rewrite its `staleAt`/`expiresAt` (stale-while-revalidate) instead of deleting it, so a `revalidateTag(tag, profile)` serves stale while refreshing. A store that omits this falls back to a hard deleteByTag (correct, just not SWR)."
+                }
+              },
+              "required": [
+                "getData",
+                "setData",
+                "getPage",
+                "setPage",
+                "deleteByTag",
+                "deleteByPath"
+              ]
+            }
+          ]
         },
         "path": {
           "description": "SQLite store file path (default `.denext/cache.db`).",
@@ -294,7 +453,52 @@
       ]
     },
     "csp": {
-      "description": "App-wide Content-Security-Policy default (three-state), overridable per file: - `\"strict\"` (default) — denext's hash-based strict policy on buffered pages. - `\"off\"` — emit no CSP header at all (set your policy at the edge, or for Next.js-style \"CSP is the app's job\" behavior). A route can still opt back in with its own `csp` export. - a CspSetting object — the strict policy plus these global opt-ins."
+      "description": "App-wide Content-Security-Policy default (three-state), overridable per file: - `\"strict\"` (default) — denext's hash-based strict policy on buffered pages. - `\"off\"` — emit no CSP header at all (set your policy at the edge, or for Next.js-style \"CSP is the app's job\" behavior). A route can still opt back in with its own `csp` export. - a CspSetting object — the strict policy plus these global opt-ins.",
+      "anyOf": [
+        {
+          "enum": [
+            "strict"
+          ]
+        },
+        {
+          "enum": [
+            "off"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "scriptSrc": {
+              "description": "Extra `script-src` sources (external script hosts).",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "styleSrc": {
+              "description": "Extra `style-src` sources (external stylesheet hosts).",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "imgSrc": {
+              "description": "Extra `img-src` sources (`<Image>` is already same-origin via the optimizer).",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "connectSrc": {
+              "description": "Extra `connect-src` sources (fetch/XHR/EventSource/WebSocket targets).",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
     },
     "publicEnv": {
       "description": "Public-env vars to always embed in the page island, in addition to the ones the build detects the client references. Use this to force-include a key the client reads via a computed expression (`publicEnv()[\"NEXT_PUBLIC_\" + x]`), which the build can't see. Referenced keys are shipped automatically; this only adds to that set.",
@@ -364,6 +568,10 @@
         }
       }
     },
+    "nodeResolve": {
+      "description": "denext's tolerant node_modules resolver for the compat (npm-React) build — default ON.",
+      "type": "boolean"
+    },
     "cacheComponents": {
       "description": "Cache Components (Next.js 16): the `\"use cache\"` directive is compiled into cross-request caching on the server (`src/build/use-cache-transform.ts`), plus the PPR render path — dynamic-by-default rendering with cacheable `use cache` islands (a cached shell with per-request dynamic holes spliced in). A stable, **opt-in** feature, deliberately **off by default**: caching stays a choice, because a cache bug's failure class (a poisoned or cross-user shell) is severe and must not be imposed on apps that never asked. When off, every `\"use cache\"` directive is inert (a plain no-op string statement) and rendering is unchanged.",
       "type": "boolean"
@@ -372,8 +580,11 @@
       "description": "Experimental, opt-in features (default off).",
       "type": "object",
       "properties": {
+        "reactCompiler": {
+          "description": "Enable the build-time auto-memoization compiler (a React-Compiler-style pass) — an opt-in optimization. Conservative by construction: it bails to identity whenever a transform isn't provably safe, so it only ever adds memoization, never changes behavior. Off by default while its coverage is still widening. Named as in Next.js (`experimental.reactCompiler`), so a migrated `next.config` needs no rewrite.",
+          "type": "boolean"
+        },
         "compiler": {
-          "description": "Enable the build-time auto-memoization compiler (a React-Compiler-style pass) — an opt-in optimization. Conservative by construction: it bails to identity whenever a transform isn't provably safe, so it only ever adds memoization, never changes behavior. Off by default while its coverage is still widening.",
           "type": "boolean"
         },
         "asyncContext": {
@@ -381,7 +592,6 @@
           "type": "boolean"
         },
         "nodeResolve": {
-          "description": "Opt-OUT of denext's tolerant node_modules resolver for the compat (npm-React) build.",
           "type": "boolean"
         }
       },
@@ -406,7 +616,23 @@
     },
     "plugins": {
       "description": "denext plugins (e.g. a Pages Router). Each is set up once before routes are scanned and may contribute routes, claim requests, and emit build assets — see DenextPlugin. Apps with no plugins pay nothing.",
-      "type": "array"
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "description": "Unique plugin name (used to de-duplicate registration across a process).",
+            "type": "string"
+          },
+          "setup": {
+            "description": "Wire the plugin into denext's seams. Runs once, before routes are scanned."
+          }
+        },
+        "required": [
+          "name",
+          "setup"
+        ]
+      }
     }
   },
   "additionalProperties": false

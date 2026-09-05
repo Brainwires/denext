@@ -108,15 +108,31 @@ export function mayCacheRender(pr: PageRequest): boolean {
  * would leak the render forever and — because the `.finally` that clears the key never
  * runs — permanently freeze staleness for this key (H2).
  */
+/** Headers a background regeneration may carry (content negotiation + proxy facts only). */
+const REGEN_FORWARDED = ["accept", "accept-language", "accept-encoding", "host", "user-agent"];
+
+function regenHeaders(incoming: Headers): Headers {
+  const out = new Headers();
+  for (const name of REGEN_FORWARDED) {
+    const v = incoming.get(name);
+    if (v) out.set(name, v);
+  }
+  for (const [k, v] of incoming) if (k.startsWith("x-forwarded-")) out.set(k, v);
+  return out;
+}
+
 function scheduleBackgroundRegen(pr: PageRequest): void {
   const { app, request } = pr.state;
   const { cacheKey } = pr;
   if (pageRegenInFlight.has(cacheKey)) return;
   pageRegenInFlight.add(cacheKey);
   const regenController = new AbortController();
+  // A background regeneration is NOT the triggering visitor: forward only the negotiation
+  // headers, never their Cookie/Authorization (a page side effect would run as them) or
+  // their request id (their logs would collide with the regen's).
   const regenReq = new Request(request.url, {
     method: "GET",
-    headers: new Headers(request.headers),
+    headers: regenHeaders(request.headers),
     signal: regenController.signal,
   });
   regenReq.headers.set(REGEN_HEADER, REGEN_TOKEN);

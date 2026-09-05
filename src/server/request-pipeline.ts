@@ -12,7 +12,7 @@ import { type RequestContext, runDeferred } from "./request-context.ts";
 import { renderDocument } from "./document.ts";
 import { resolveCsp } from "./csp.ts";
 import { serveStatic } from "./static.ts";
-import { redirectResponse, withHeaders } from "./middleware.ts";
+import { type MiddlewareOutcome, redirectResponse, withHeaders } from "./middleware.ts";
 import { safeFetch } from "./safe-fetch.ts";
 import { type PeeledLocale, peelLocale } from "./i18n.ts";
 import { fillDestination, matchPattern, safeRedirectLocation } from "./config.ts";
@@ -102,14 +102,18 @@ function stripBasePath(state: RequestState): void {
  * the injected headers); the first matching rewrite internally routes as its
  * destination (no client redirect).
  */
-function applyPathRules(state: RequestState): void {
+/** basePath strip + config `headers` rules — before middleware (Next's order). */
+function applyHeaderRules(state: RequestState): void {
   stripBasePath(state);
-  const rules = state.app.rules();
-  for (const { pattern, rule } of rules.headers) {
+  for (const { pattern, rule } of state.app.rules().headers) {
     if (!matchPattern(pattern, state.pathname)) continue;
     for (const { key, value } of rule.headers) addInjectedHeader(state, key, value);
   }
-  for (const { pattern, rule } of rules.rewrites) {
+}
+
+/** Config `rewrites` — after middleware, so matchers saw the URL the client asked for. */
+function applyRewriteRules(state: RequestState): void {
+  for (const { pattern, rule } of state.app.rules().rewrites) {
     const params = matchPattern(pattern, state.pathname);
     if (params) {
       retarget(state, new URL(fillDestination(rule.destination, params), state.url.origin));
@@ -137,8 +141,10 @@ async function runMiddleware(state: RequestState): Promise<Response | null> {
   // the middleware and the injected header rules must reach the client.
   if (outcome.type === "response") return finalize(state, outcome.response);
   // The runner already applied request-header overrides / the rewrite URL to
-  // `outcome.request` (consuming the original body once) — route THAT request.
+  // `outcome.request` (consuming the original body once) — route THAT request. A custom
+  // runner that returns no `request` gets the same treatment applied here.
   if (outcome.request) state.request = outcome.request;
+  else applyOutcomeToRequest(state, outcome);
   if (outcome.type === "rewrite") {
     if (outcome.external) return proxyExternalRewrite(state, outcome.url, outcome.headers);
     state.url = new URL(state.request.url);
@@ -153,6 +159,14 @@ async function runMiddleware(state: RequestState): Promise<Response | null> {
     }
   }
   return null;
+}
+
+/** Rebuild the routed request from a runner outcome that did not supply one. */
+function applyOutcomeToRequest(state: RequestState, outcome: MiddlewareOutcome): void {
+  if (outcome.type === "rewrite") state.request = new Request(outcome.url, state.request);
+  if (outcome.type !== "response" && outcome.requestHeaders) {
+    state.request = new Request(state.request, { headers: outcome.requestHeaders });
+  }
 }
 
 /** Request headers never forwarded to an external rewrite target. */
@@ -363,7 +377,12 @@ async function serveFallback(
     if (claimed) return finalize(state, claimed);
   }
   if (config.publicDir && isReadMethod(request)) {
-    const asset = await serveStatic(config.publicDir, pathname);
+    const asset = await serveStatic(
+      config.publicDir,
+      pathname,
+      request.headers.get("accept-encoding") ?? undefined,
+      request,
+    );
     if (asset) return finalize(state, asset);
   }
   if (isReadMethod(request)) return serveNotFoundPage(state, manifest);
@@ -376,9 +395,10 @@ async function dispatch(state: RequestState): Promise<Response> {
   if (redirected) return redirected;
   // Next's order: headers → redirects → MIDDLEWARE → rewrites → filesystem. Middleware
   // matchers must see the URL the client asked for, not a config rewrite's destination.
+  applyHeaderRules(state);
   const fromMiddleware = await runMiddleware(state);
   if (fromMiddleware) return fromMiddleware;
-  applyPathRules(state);
+  applyRewriteRules(state);
   if (isActionRequest(state.request, state.pathname)) return dispatchAction(state);
   const manifest = await state.app.config.getManifest();
   const metaFile = await serveMetadata(state, manifest);

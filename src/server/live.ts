@@ -383,6 +383,11 @@ export async function handleLiveUpgrade(request: Request): Promise<Response> {
   if (!(await connectionAuthorized({ origin, url: "", cookie, peerId }))) {
     return new Response("forbidden", { status: 403 });
   }
+  // Re-check the cap after the (async) authorization: concurrent handshakes all passed the
+  // first check while none had attached yet.
+  if (connections.size >= limits.maxConnections) {
+    return new Response("too many connections", { status: 503 });
+  }
   let upgrade: { socket: WebSocket; response: Response };
   try {
     upgrade = Deno.upgradeWebSocket(request, { idleTimeout: limits.idleTimeoutSeconds });
@@ -451,10 +456,17 @@ function dropConnection(conn: Conn): void {
   conn.presenceRooms.clear();
 }
 
+/** UTF-8 byte length of a string. */
+function utf8Bytes(text: string): number {
+  return new TextEncoder().encode(text).byteLength;
+}
+
 /** Parse and apply a client message. Oversized or malformed input is ignored. */
 function handleClientMessage(conn: Conn, raw: string): void {
   // Inbound size cap (DoS guard) — refuse before parsing / storing.
-  if (raw.length > limits.maxMessageBytes) {
+  // `length` is UTF-16 units — a cheap pre-check; the byte count (what the wire carried) is
+  // what the cap is about, so measure it when the string could still fit.
+  if (raw.length > limits.maxMessageBytes || utf8Bytes(raw) > limits.maxMessageBytes) {
     sendError(conn, "limit", "message too large");
     return;
   }

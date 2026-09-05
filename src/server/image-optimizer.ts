@@ -184,17 +184,33 @@ const optimizeGate = createGate(MAX_CONCURRENT_OPTIMIZATIONS);
  */
 export function isAllowedRemote(url: URL, opts: ImageOptimizeOptions): boolean {
   if ((opts.allowedHosts ?? []).includes(url.host)) return true;
+  return (opts.remotePatterns ?? []).some((p) => matchesRemotePattern(url, p));
+}
+
+/** One `remotePatterns` entry against a URL: protocol, host (exact or `*.`), port, path, search. */
+function matchesRemotePattern(url: URL, p: RemotePattern): boolean {
   const proto = url.protocol.replace(/:$/, "");
-  for (const p of opts.remotePatterns ?? []) {
-    if (p.protocol && p.protocol !== proto) continue;
-    const host = p.hostname.startsWith("*.")
-      ? url.hostname.endsWith(p.hostname.slice(1)) // "*.example.com" → sub.example.com (not apex)
-      : url.hostname === p.hostname;
-    if (!host) continue;
-    if (p.pathname && !url.pathname.startsWith(p.pathname)) continue;
-    return true;
+  if (p.protocol && p.protocol !== proto) return false;
+  const host = p.hostname.startsWith("*.")
+    ? url.hostname.endsWith(p.hostname.slice(1))
+    : url.hostname === p.hostname;
+  if (!host) return false;
+  if (p.port !== undefined && (url.port || defaultPort(proto)) !== p.port) return false;
+  if (p.pathname && !pathGlobMatches(p.pathname, url.pathname)) return false;
+  return p.search === undefined || url.search === p.search;
+}
+
+function defaultPort(proto: string): string {
+  return proto === "https" ? "443" : proto === "http" ? "80" : "";
+}
+
+/** A glob (`*`/`**`) or bare prefix pathname pattern against a path. */
+function pathGlobMatches(pattern: string, pathname: string): boolean {
+  if (!pattern.includes("*")) {
+    return pathname === pattern ||
+      pathname.startsWith(pattern.endsWith("/") ? pattern : pattern + "/");
   }
-  return false;
+  return globToRegExp(pattern).test(pathname);
 }
 
 /**

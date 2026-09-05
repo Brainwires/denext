@@ -5,6 +5,8 @@
 // as one module graph keeps shared module identity (e.g. context symbols)
 // intact, which separate dynamic imports would break.
 
+import { actionIdFor } from "../runtime/server-action.ts";
+import { denoVersionOk, MIN_DENO_VERSION } from "./deno-version.ts";
 import { basename, dirname, fromFileUrl, join, resolve, toFileUrl } from "@std/path";
 import { walk } from "@std/fs";
 import type { PageRoute } from "../router/manifest.ts";
@@ -122,9 +124,6 @@ export function denoExecutable(): string {
   return "deno";
 }
 
-/** Minimum Deno major version providing the `deno bundle` subcommand denext uses. */
-const MIN_DENO_MAJOR = 2;
-
 let bundleSupport: Promise<void> | undefined;
 
 /**
@@ -161,20 +160,20 @@ async function probeBundleSupport(): Promise<void> {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(
       `denext: could not run \`${deno} --version\` to bundle client code (${msg}). ` +
-        `Install Deno ${MIN_DENO_MAJOR}.x, or set DENO_BIN to a compatible deno binary.`,
+        `Install Deno ${MIN_DENO_VERSION}+, or set DENO_BIN to a compatible deno binary.`,
     );
   }
   const match = versionText.match(/deno\s+(\d+)\.(\d+)\.(\d+)/i);
   if (!match) {
     throw new Error(
       `denext: unexpected \`deno --version\` output while checking bundle support:\n${versionText}\n` +
-        `denext needs Deno ${MIN_DENO_MAJOR}.x (the \`deno bundle\` subcommand). Set DENO_BIN if needed.`,
+        `denext needs Deno ${MIN_DENO_VERSION}+ (the \`deno bundle\` subcommand). Set DENO_BIN if needed.`,
     );
   }
-  if (Number(match[1]) < MIN_DENO_MAJOR) {
+  if (!denoVersionOk(`${match[1]}.${match[2]}.${match[3]}`)) {
     throw new Error(
-      `denext: bundling requires Deno ${MIN_DENO_MAJOR}.x (the \`deno bundle\` subcommand); ` +
-        `found ${match[0]}. Upgrade Deno, or set DENO_BIN to a Deno ${MIN_DENO_MAJOR}.x binary.`,
+      `denext: bundling requires Deno ${MIN_DENO_VERSION}+ (the \`deno bundle\` subcommand); ` +
+        `found ${match[0]}. Upgrade Deno, or set DENO_BIN to a newer deno binary.`,
     );
   }
 }
@@ -590,8 +589,8 @@ export interface BundleOptions {
 export function generateServerStub(moduleId: string, exports: string[]): string {
   const lines = exports.map((name) =>
     name === "default"
-      ? `export default clientActionStub(${JSON.stringify(moduleId + "#default")});`
-      : `export const ${name} = clientActionStub(${JSON.stringify(moduleId + "#" + name)});`
+      ? `export default clientActionStub(${JSON.stringify(actionIdFor(moduleId, "default"))});`
+      : `export const ${name} = clientActionStub(${JSON.stringify(actionIdFor(moduleId, name))});`
   );
   return `import { clientActionStub } from "denext/client-runtime";\n${lines.join("\n")}\n`;
 }

@@ -62,4 +62,5 @@ export namespace MetadataRoute {
 }
 
 /** `next.config` shape — permissive; denext reads its own `denext.config`. */
-export type NextConfig = Record<string, unknown>;
+export type NextConfig = DenextConfig & Record<string, unknown>;
+import type { DenextConfig } from "../../server/config.ts";

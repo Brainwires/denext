@@ -71,7 +71,7 @@ Deno.test("cookies() reads request cookies and writes Set-Cookie", async () => {
   const app = appOf(() => {
     const c = cookies();
     c.set("visited", "1", { httpOnly: true });
-    return h("p", null, c.get("session") ?? "anon");
+    return h("p", null, c.get("session")?.value ?? "anon");
   });
   const res = await app(
     new Request("http://localhost/", { headers: { cookie: "session=abc" } }),

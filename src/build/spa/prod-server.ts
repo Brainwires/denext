@@ -64,7 +64,7 @@ export async function startSpaProdServer(
       return serveImmutableAsset(clientDir, rel, request, secure, hstsCfg);
     }
     const accEnc = request.headers.get("accept-encoding") ?? undefined;
-    const pub = await serveStatic(paths.publicDir, url.pathname, accEnc);
+    const pub = await serveStatic(paths.publicDir, url.pathname, accEnc, request);
     if (pub) return applyDefaultSecurityHeaders(pub, secure, hstsCfg);
     const res = wantsShell(request, url.pathname)
       ? shellResponse(request, shell)

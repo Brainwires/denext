@@ -1,4 +1,5 @@
 // Public environment variables — the client/server isolation boundary for env.
+import { envAll } from "./env-safe.ts";
 //
 // SECURITY: server code sees the full process environment (`Deno.env`), but the
 // browser must only ever receive variables explicitly marked public via a
@@ -103,6 +104,6 @@ export function publicEnv(): Record<string, string> {
   // Client: the embedded island is the only source (never holds secrets).
   if (typeof document !== "undefined") return readClientPublicEnv();
   // Server: filter the live process environment.
-  if (typeof Deno !== "undefined" && Deno.env) return filterPublicEnv(Deno.env.toObject());
+  if (typeof Deno !== "undefined" && Deno.env) return filterPublicEnv(envAll());
   return {};
 }

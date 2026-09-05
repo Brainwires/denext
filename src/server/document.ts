@@ -302,6 +302,36 @@ function isDev(): boolean {
  * would be unhashed (and blocked), and any in-hole inline `<script>` is blocked by
  * `script-src`. In dev, warn once-ish if a hole carries an inline `<style>`.
  */
+/** Dev: record a hole's server resolve time (rounded to 0.01 ms); undefined in prod. */
+function devTiming(
+  hole: { id: string; ms?: number },
+  timings: Array<{ id: string; ms: number }>,
+): number | undefined {
+  if (!isDev() || hole.ms === undefined) return undefined;
+  const ms = Math.round(hole.ms * 100) / 100;
+  timings.push({ id: hole.id, ms });
+  return ms;
+}
+
+/** Dev: an inline `<style>` inside a streamed hole is not covered by the streaming CSP. */
+function warnInlineStyle(id: string, html: string): void {
+  if (!isDev() || !/<style\b/i.test(html)) return;
+  console.warn(
+    `denext: streamed hole "${id}" contains an inline <style> — it is not covered ` +
+      `by the streaming CSP (which hashes only the buffered shell) and will be ` +
+      `blocked. Move the style into a stylesheet or the shell.`,
+  );
+}
+
+/** Resolves (to `undefined`) when `signal` aborts; never resolves without a signal. */
+function abortedPromise(signal?: AbortSignal): Promise<undefined> {
+  return new Promise((resolve) => {
+    if (!signal) return;
+    if (signal.aborted) resolve(undefined);
+    else signal.addEventListener("abort", () => resolve(undefined), { once: true });
+  });
+}
+
 async function streamHoles<H extends Awaited<PendingHole>>(
   controller: ReadableStreamDefaultController<Uint8Array>,
   encoder: TextEncoder,
@@ -312,24 +342,20 @@ async function streamHoles<H extends Awaited<PendingHole>>(
   const timings: Array<{ id: string; ms: number }> = [];
   while (active.size > 0) {
     if (signal?.aborted) break;
-    const hole = await takeSettled(active);
-    const { id, html, ok, ms } = hole;
-    const timed = isDev() && ms !== undefined;
-    if (timed) timings.push({ id, ms: Math.round(ms! * 100) / 100 });
-    if (!ok) continue; // leave the shell fallback for this hole
+    // A hole that never settles (an upstream that never answers) must not pin the stream:
+    // the request deadline aborts `signal`, which wins this race and ends the stream with
+    // the shell fallbacks in place.
+    const hole = await Promise.race([takeSettled(active), abortedPromise(signal)]);
+    if (hole === undefined) break;
+    const ms = devTiming(hole, timings);
+    if (!hole.ok) continue; // leave the shell fallback for this hole
     onHole?.(hole);
-    if (isDev() && /<style\b/i.test(html)) {
-      console.warn(
-        `denext: streamed hole "${id}" contains an inline <style> — it is not covered ` +
-          `by the streaming CSP (which hashes only the buffered shell) and will be ` +
-          `blocked. Move the style into a stylesheet or the shell.`,
-      );
-    }
+    warnInlineStyle(hole.id, hole.html);
     // In dev, stamp the server resolve time so the swap runtime can build a real-time
     // reveal timeline (attributes don't affect the swap-runtime script's CSP hash).
-    const msAttr = timed ? ` data-dnx-ms="${Math.round(ms! * 100) / 100}"` : "";
+    const msAttr = ms === undefined ? "" : ` data-dnx-ms="${ms}"`;
     controller.enqueue(
-      encoder.encode(`<template data-dnx-r="${id}"${msAttr}>${html}</template>`),
+      encoder.encode(`<template data-dnx-r="${hole.id}"${msAttr}>${hole.html}</template>`),
     );
   }
   // Dev-only per-boundary timeline: a CSP-safe JSON data block (not executed).

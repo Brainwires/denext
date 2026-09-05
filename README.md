@@ -469,7 +469,7 @@ not the entire spec.
 
 ## Requirements
 
-- **Deno 2.x** (developed against 2.9). `build`/`dev` bundle client code by
+- **Deno ≥ 2.9** (`denext doctor` checks it). `build`/`dev` bundle client code by
   shelling out to Deno's own `deno bundle` — an experimental, still-evolving
   subcommand — so a Deno 2.x `deno` binary must be reachable. denext checks the
   version up front and fails with a clear message on an older or missing binary;
@@ -659,7 +659,7 @@ export default {
   },
 
   // Experimental auto-memo compiler (default off).
-  experimental: { compiler: true },
+  experimental: { reactCompiler: true },
 } satisfies DenextConfig;
 ```
 
@@ -729,7 +729,7 @@ shallow-equal and whose visible context is unchanged — context changes still
 reach deep consumers correctly. Use `memo(Component, areEqual?)` for an explicit
 custom comparator, and `useMemoCache` (on `denext/compiler-runtime`) as the compiler's stable-cache primitive.
 
-The **experimental auto-memo compiler** (`experimental: { compiler: true }`, or
+The **experimental auto-memo compiler** (`experimental: { reactCompiler: true }` — Next.js's key; the pre-2.0 `compiler` is a deprecated alias — or
 `denext create --compiler`) goes further: a build-time pass lifts JSX component
 elements into `useMemoCache`-guarded memo calls so unchanged subtrees keep a
 stable reference and skip re-rendering — the same idea as the React Compiler. It

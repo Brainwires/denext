@@ -1,6 +1,7 @@
 // Production build, stage 1: app CSS + the client-module transforms (auto-memo compiler,
 // qrl handler extraction, AsyncContext instrumentation), merged into the bundler import map.
 
+import { reactCompilerEnabled } from "../../server/config.ts";
 import { compileAsyncContextModules } from "../async-context-transform.ts";
 import { collectComponentSources, compileModules } from "../compiler.ts";
 import { type AppCss, buildAppCss } from "../css.ts";
@@ -67,7 +68,7 @@ export async function clientTransforms(ctx: BuildContext): Promise<Record<string
   const outDir = paths.outDir;
   const sources = componentSourcesOnce(projectDir);
   let compilerMap: RewriteMap;
-  if (paths.config?.experimental?.compiler) {
+  if (reactCompilerEnabled(paths.config)) {
     log("auto-memo compiler: transforming components (experimental)");
     compilerMap = await compileModules(await sources(), { outDir });
   }

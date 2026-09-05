@@ -105,7 +105,9 @@ export function paramsListed(
 
 /** Build the merged `query` (route params + URL search params). */
 export function buildQuery(params: RouteParams, url: URL): Record<string, string> {
-  const query: Record<string, string> = { ...params };
+  // Pages Router `query` values are strings (a catch-all is the joined path form).
+  const query: Record<string, string> = {};
+  for (const [k, v] of Object.entries(params)) query[k] = Array.isArray(v) ? v.join("/") : v;
   for (const [k, v] of url.searchParams) query[k] = v;
   return query;
 }

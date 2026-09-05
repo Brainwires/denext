@@ -44,6 +44,20 @@ export { after, connection } from "../../server/mod.ts";
 export { NextRequest } from "./request.ts";
 export { NextURL } from "./request.ts";
 export type { GeoInfo } from "./request.ts";
+/** The `middleware.ts` `config` export shape (`{ matcher }`). */
+export type { MiddlewareConfig } from "../../server/middleware.ts";
+
+/** Next's `NextMiddleware` — a `middleware.ts` handler signature. */
+export type NextMiddleware = (
+  request: NextRequest,
+  event: NextFetchEvent,
+) =>
+  | Response
+  | NextResponse
+  | undefined
+  | null
+  | void
+  | Promise<Response | NextResponse | undefined | null | void>;
 
 /**
  * `URLPattern` — Next re-exports the platform `URLPattern` from `next/server`. Deno

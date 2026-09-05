@@ -112,7 +112,7 @@ Deno.test("userAgent parses browser / os / device / bot", () => {
   });
   assertEquals(chrome.browser.name, "Chrome");
   assertEquals(chrome.os.name, "Windows");
-  assertEquals(chrome.device.type, "desktop");
+  assertEquals(chrome.device.type, undefined); // desktop: undefined, as in Next.js
   assertEquals(chrome.engine.name, "Blink");
   assert(!chrome.isBot);
 

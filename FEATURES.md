@@ -812,7 +812,7 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
 
 ### 3.4 Auto-memo compiler (Deno-native)
 
-- **Build-time auto-memoization** (`experimental: { compiler: true }`)
+- **Build-time auto-memoization** (`experimental: { reactCompiler: true }`)
   comparable in spirit to the React Compiler, running in-process via
   `@swc/wasm-web` with no transpile hook of its own; feeds the client bundle
   through the existing import-map seam; provably SSR-safe. —

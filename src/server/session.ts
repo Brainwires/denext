@@ -6,6 +6,7 @@
 // `cookies()`, so it works in Server Components, Route Handlers, actions, and
 // middleware. For larger/opaque sessions, store an id here and look the record up.
 
+import { envGet } from "../runtime/env-safe.ts";
 import { cookies } from "./request-context.ts";
 
 /** Options for {@linkcode getSession}. */
@@ -191,8 +192,7 @@ function sessionCookieAttrs(
  * auth layers so every "fail fast in production" check agrees on the signal.
  */
 export function isProductionEnv(): boolean {
-  return Deno.env.get("NODE_ENV") === "production" ||
-    Deno.env.get("DENEXT_ENV") === "production";
+  return envGet("NODE_ENV") === "production" || envGet("DENEXT_ENV") === "production";
 }
 
 /**

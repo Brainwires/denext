@@ -179,6 +179,9 @@ export function invokeComponent(resolved: ResolvedComponentType, props: unknown)
  */
 export function componentDisplayName(type: unknown): string {
   const b = brandOf(type);
+  // A `displayName` set on the wrapper object itself wins (React DevTools semantics).
+  const own = (type as { displayName?: string } | null)?.displayName;
+  if (own && (b === REACT_MEMO_TYPE || b === REACT_FORWARD_REF_TYPE)) return own;
   if (b === REACT_MEMO_TYPE) {
     return `Memo(${componentDisplayName((type as { type?: unknown }).type)})`;
   }

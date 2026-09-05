@@ -34,6 +34,13 @@ const ROOT = new URL("../", import.meta.url).pathname;
 import { denoDocJson } from "./deno-doc.ts";
 
 export const CONFIG_SOURCE = `${ROOT}src/server/config.ts`;
+/** Sibling modules whose exported interfaces `DenextConfig` fields reference. */
+const CONFIG_TYPE_SOURCES = [
+  new URL("../src/server/i18n.ts", import.meta.url).pathname,
+  new URL("../src/server/segment-config.ts", import.meta.url).pathname,
+  new URL("../src/server/cache.ts", import.meta.url).pathname,
+  new URL("../src/plugin/mod.ts", import.meta.url).pathname,
+];
 /** Output: the import-free runtime key list. */
 export const KEYS_OUT = `${ROOT}src/server/config-keys.generated.ts`;
 /** Output: the JSON Schema. */
@@ -156,7 +163,10 @@ function typeRefSchema(t: DocType, ctx: SchemaContext): Schema {
     typeName: string;
     resolution?: { kind: string };
   };
-  return resolution?.kind === "local" ? namedSchema(typeName, ctx) : {};
+  // Local refs expand; an imported ref expands too when its declaration was docced into the
+  // table (see CONFIG_TYPE_SOURCES); anything else (builtins, foreign packages) stays open.
+  if (resolution?.kind === "local" || ctx.table.has(typeName)) return namedSchema(typeName, ctx);
+  return {};
 }
 
 const SCHEMA_BY_KIND: Record<string, (t: DocType, ctx: SchemaContext) => Schema> = {
@@ -281,7 +291,14 @@ export async function formatWith(text: string, ext: "ts" | "json"): Promise<stri
 
 /** Both artifacts, as the exact text the committed files should contain. */
 export async function generate(): Promise<{ keysModule: string; schema: string }> {
+  // `DenextConfig` references interfaces declared in sibling modules (`I18nConfig`,
+  // `CspSetting`, …); doc those too so the schema expands them instead of leaving `{}`.
   const table = symbolTable(await denoDocJson(CONFIG_SOURCE));
+  for (const extra of CONFIG_TYPE_SOURCES) {
+    for (const [name, decl] of symbolTable(await denoDocJson(extra))) {
+      if (!table.has(name)) table.set(name, decl);
+    }
+  }
   const keys = renderKeysModule(
     propertyNames(table, "DenextConfig"),
     propertyNames(table, "ExperimentalConfig"),

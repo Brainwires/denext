@@ -10,20 +10,24 @@
  *
  * denext's core (`src/router`, `src/build`, `src/server`) must stay free to evolve.
  * The stability promise is therefore **narrow and explicit**: a router-class plugin
- * imports the seams it extends and the primitives it reuses from **exactly two
+ * imports the seams it extends and the primitives it reuses from **two server-side
  * places** —
  *
  * 1. `@denext/denext` — the normal app API (`h`, `Fragment`, `renderToString`,
  *    hooks, `Suspense`, …). Stable because every denext app depends on it.
  * 2. `@denext/denext/plugin-kit` (this module) — the plugin **contract seams** plus
- *    the **pipeline primitives** below. Stable by signature: the *names and shapes*
- *    here are covered by semver; **where they live inside `src/` is not** and may
- *    move between minors. This facade absorbs that churn.
+ *    the **pipeline primitives** below (route matching, the page cache, bundling, CSS,
+ *    the next-compat build, `revalidatePath`, the config/type contracts). Stable by
+ *    signature: the *names and shapes* here are covered by semver; **where they live
+ *    inside `src/` is not** and may move between minors. This facade absorbs that churn.
  *
- * Anything imported from any other path (`@denext/denext/server` beyond these names,
- * deep `src/…` modules) is **not** part of the router-plugin contract and can change
- * without a major bump. Keeping the promised set this small is what lets the core be
- * refactored freely.
+ * — plus, for the code it ships to the BROWSER, the two client entries every app uses:
+ * `@denext/denext/client` (`hydrateRoot`, `h`) and `@denext/denext/client-runtime`
+ * (`registerFamily`/`enableFastRefresh` in a generated hydration entry). Anything
+ * imported from any other path (`@denext/denext/server` beyond the names re-exported
+ * here, deep `src/…` modules) is **not** part of the router-plugin contract and can
+ * change without a major bump. Keeping the promised set this small is what lets the
+ * core be refactored freely.
  *
  * @module
  */
@@ -47,8 +51,42 @@ export type { CommandContext, CommandSpec } from "../cli/command.ts";
 // ── Route matching ─────────────────────────────────────────────────────────
 // Parse denext route patterns and match request paths against them — the reusable
 // core of the file router, so a plugin's own route tree matches identically.
-export { matchSegments, parsePattern, peelLocale, specificity } from "../server/mod.ts";
-export type { RouteParams, Segment } from "../server/mod.ts";
+export {
+  compareSpecificity,
+  matchSegments,
+  parsePattern,
+  peelLocale,
+  specificity,
+} from "../server/mod.ts";
+export type { I18nConfig, RouteParams, Segment } from "../server/mod.ts";
+
+// ── Server primitives a router plugin reuses ───────────────────────────────
+// Cache invalidation for plugin-rendered routes; the component/VNode/config type contracts
+// a plugin's own render pipeline is written against.
+export { revalidatePath, revalidateTag } from "../server/mod.ts";
+// Bounded request-body reading (size cap + idle timeout), the same guard Server Actions use.
+export { cappedBody, readCappedBody, STALLED, TOO_LARGE } from "../server/mod.ts";
+export type {
+  Component,
+  DenextConfig,
+  TailwindConfig,
+  VNode,
+  VNodeChild,
+  VNodeChildren,
+  VNodeType,
+  VProps,
+} from "../server/mod.ts";
+
+// ── next-compat (npm React drop-in) build ──────────────────────────────────
+// Compile an app's `react`/`next/*`-importing modules onto denext's React.
+export {
+  buildNextCompatModules,
+  createNextCompatServerLoader,
+} from "../build/next-compat-public.ts";
+export type {
+  BuildNextCompatModulesOptions,
+  NextCompatServerLoaderOptions,
+} from "../build/next-compat-public.ts";
 
 // ── Incremental static regeneration ────────────────────────────────────────
 // The page cache backing `getStaticProps`-style revalidation.

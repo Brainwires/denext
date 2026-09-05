@@ -52,6 +52,7 @@ export {
 /**
  * `io` — Next 16's experimental marker for I/O inside a cached scope. denext's cache model
  * does not require it; provided as a no-op for source/signature compatibility.
+ * @deprecated A no-op in denext; remove the call. Kept through 2.x; removed in 3.0.
  */
 export function io(): void {
   // no-op — accepted for compatibility.

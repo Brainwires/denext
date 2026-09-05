@@ -9,7 +9,10 @@
 // best-effort and never fails the build.
 
 import { join } from "@std/path";
-import { fetchFontFaceCssFromUrl, rewriteGoogleFontFaceCss } from "../compat/next/font/google.ts";
+import {
+  fetchFontFaceCssFromUrl,
+  rewriteGoogleFontFaceCss,
+} from "../compat/next/font/google-fetch.ts";
 
 /** URL path the self-hosted font files are served under. */
 export const FONTS_PUBLIC_PREFIX = "/_denext/fonts";

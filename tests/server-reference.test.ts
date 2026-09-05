@@ -1,6 +1,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
 import {
+  actionIdFor,
   getServerAction,
   isServerAction,
   registerServerReference,
@@ -24,15 +25,21 @@ Deno.test("tagServerExports auto-registers use-server exports in place", async (
   tagServerExports(mod as Record<string, unknown>, "acts");
   // The original exported function is tagged (so it serializes as an action ref).
   assert(isServerAction(save));
-  assertEquals((save as unknown as { denextActionId: string }).denextActionId, "acts#save");
+  assertEquals(
+    (save as unknown as { denextActionId: string }).denextActionId,
+    actionIdFor("acts", "save"),
+  );
   // And registered for RPC dispatch.
-  assertEquals(await getServerAction("acts#save")?.("x"), "saved:x");
+  assertEquals(await getServerAction(actionIdFor("acts", "save"))?.("x"), "saved:x");
 });
 
 Deno.test("generateServerStub emits client dispatch stubs per export", () => {
   const stub = generateServerStub("acts", ["save", "default"]);
-  assertStringIncludes(stub, `clientActionStub("acts#save")`);
-  assertStringIncludes(stub, `export default clientActionStub("acts#default")`);
+  assertStringIncludes(stub, `clientActionStub(${JSON.stringify(actionIdFor("acts", "save"))})`);
+  assertStringIncludes(
+    stub,
+    `export default clientActionStub(${JSON.stringify(actionIdFor("acts", "default"))})`,
+  );
   assertStringIncludes(stub, `from "denext/client-runtime"`);
 });
 
@@ -79,7 +86,7 @@ Deno.test("bundleFlightEntry strips server-action code, keeps a dispatch stub", 
 
     assertStringIncludes(bundle, "GO_MARKER"); // client code present
     assert(!bundle.includes("ACTION_SECRET_TOKEN_77"), "server-action code leaked into bundle");
-    assertStringIncludes(bundle, "a_actions#save"); // dispatch stub wired to the id
+    assertStringIncludes(bundle, actionIdFor("a_actions", "save")); // dispatch stub wired to the opaque id
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

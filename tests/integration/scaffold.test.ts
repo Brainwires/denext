@@ -41,7 +41,7 @@ Deno.test("scaffoldFiles: src-dir + compiler", () => {
   assert(paths.includes("src/app/layout.tsx"));
   assertStringIncludes(
     files.find((f) => f.path === "denext.config.ts")!.content,
-    "experimental: { compiler: true }",
+    "experimental: { reactCompiler: true }",
   );
 });
 

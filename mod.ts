@@ -207,12 +207,23 @@ export {
   useTransition,
 } from "./src/runtime/hooks.ts";
 export { memo } from "./src/runtime/memo.ts";
+// React's element/ref/Children core, on the root barrel so new code never needs `denext/react`.
+export {
+  Children,
+  cloneElement,
+  createRef,
+  forwardRef,
+  isValidElement,
+} from "./src/runtime/react-core.ts";
+export type { ChildrenApi } from "./src/runtime/react-core.ts";
+export { StrictMode } from "./src/runtime/strict-mode.ts";
+/** `React.createElement` — denext's hyperscript (`h`) under React's name. */
+export { h as createElement } from "./src/jsx/jsx-runtime.ts";
 export { Profiler } from "./src/runtime/profiler.ts";
 export type { ProfilerOnRender, ProfilerPhase, ProfilerProps } from "./src/runtime/profiler.ts";
 export type { PropsComparator } from "./src/runtime/memo.ts";
 export type {
   Context,
-  Dispatcher,
   EffectCleanup,
   ErrorBoundaryController,
   Ref,

@@ -157,9 +157,9 @@ Deno.test("cookies() reads incoming and queues secure-by-default Set-Cookie over
   const ctx = ctxFor("https://example.com/", { cookie: "sid=1; theme=dark" });
   runWithContext(ctx, () => {
     const store = cookies();
-    assertEquals(store.get("sid"), "1");
+    assertEquals(store.get("sid"), { name: "sid", value: "1" });
     assert(store.has("theme"));
-    assertEquals(store.getAll().theme, "dark");
+    assertEquals(store.getAll().find((c) => c.name === "theme")?.value, "dark");
     store.set("token", "abc");
   });
   const setCookie = ctx.outgoingHeaders.getSetCookie().join("\n");

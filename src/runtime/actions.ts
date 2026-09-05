@@ -76,8 +76,8 @@ export function useActionState<State, Payload = FormData>(
 }
 
 /**
- * Deprecated alias of {@link useActionState} — React renamed `useFormState`
- * (react-dom) to `useActionState` (react). Kept so code that still imports the old
- * name resolves; prefer `useActionState`.
+ * Alias of {@link useActionState} — React renamed `useFormState` (react-dom) to
+ * `useActionState` (react). Kept so code that still imports the old name resolves.
+ * @deprecated Use `useActionState`. Kept through 2.x; removed in 3.0.
  */
 export const useFormState: typeof useActionState = useActionState;

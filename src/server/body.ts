@@ -66,3 +66,40 @@ export function bufferedRequest(request: Request, body: Uint8Array): Request {
     body: body.byteLength > 0 ? (body as BodyInit) : undefined,
   });
 }
+
+/**
+ * `request` with its body wrapped so that reading past `maxBytes` errors the stream (the
+ * consumer — `formData()`, `json()`, a multipart parser — then throws). For streaming
+ * consumers that cannot use {@linkcode readCappedBody}; a declared `content-length` over the
+ * cap is refused up front.
+ */
+export function cappedBody(request: Request, maxBytes: number): Request {
+  if (!request.body) return request;
+  const declared = Number(request.headers.get("content-length") ?? "0");
+  if (declared > maxBytes) throw new BodyTooLarge(maxBytes);
+  let total = 0;
+  const limited = request.body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        total += chunk.byteLength;
+        if (total > maxBytes) controller.error(new BodyTooLarge(maxBytes));
+        else controller.enqueue(chunk);
+      },
+    }),
+  );
+  return new Request(request.url, {
+    method: request.method,
+    headers: request.headers,
+    body: limited,
+    // @ts-ignore duplex is required by the spec for streaming bodies (Deno accepts it)
+    duplex: "half",
+  });
+}
+
+/** Thrown (as a stream error) by {@linkcode cappedBody} when a body exceeds its cap. */
+class BodyTooLarge extends Error {
+  constructor(readonly maxBytes: number) {
+    super(`request body exceeds ${maxBytes} bytes`);
+    this.name = "BodyTooLarge";
+  }
+}

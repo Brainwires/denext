@@ -33,7 +33,12 @@ export async function serveImmutableAsset(
   hsts: HstsConfig | false | undefined,
   notFoundBody = "not found",
 ): Promise<Response> {
-  const asset = await serveStatic(dir, rel, request.headers.get("accept-encoding") ?? undefined);
+  const asset = await serveStatic(
+    dir,
+    rel,
+    request.headers.get("accept-encoding") ?? undefined,
+    request,
+  );
   if (asset) {
     asset.headers.set("cache-control", IMMUTABLE_CACHE_CONTROL);
     return applyDefaultSecurityHeaders(asset, secure, hsts);

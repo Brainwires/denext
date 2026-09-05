@@ -20,6 +20,7 @@ import {
 import { getManifest, getUnbundled } from "./manifest.ts";
 import { broadcastError, reloadStream } from "./reload.ts";
 import { DEV_RELOAD_SCRIPT } from "./reload-script.ts";
+import { devErrorPage } from "./error-page.ts";
 import {
   DEV_LOG_PATH,
   DEV_RELOAD_JS_PATH,
@@ -144,6 +145,25 @@ async function unbundledResponse(
   return await getUnbundled(st).handle(request, url, m);
 }
 
+/**
+ * A 500 for a navigation (HTML GET) becomes the dev error page for the most recent recorded
+ * error — the same title/message/codeframe the terminal printed — so the first-hour mistake
+ * (a syntax error in a page) shows in the browser instead of "Internal Server Error".
+ */
+async function devErrorPageFor(st: DevState, request: Request, res: Response): Promise<Response> {
+  const wantsHtml = request.method === "GET" &&
+    (request.headers.get("accept") ?? "").includes("text/html");
+  if (res.status < 500 || !wantsHtml) return res;
+  const latest = st.devEvents.snapshot({ kind: "error", limit: 1 })[0];
+  const page = devErrorPage(latest, DEV_RELOAD_JS_PATH);
+  if (!page) return res;
+  await res.body?.cancel();
+  return new Response(page, {
+    status: res.status,
+    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+  });
+}
+
 /** The app request, timed and recorded as a `request` event in the black box. */
 async function appResponse(
   st: DevState,
@@ -152,7 +172,7 @@ async function appResponse(
   url: URL,
 ): Promise<Response> {
   const started = performance.now();
-  const res = await appHandler(request);
+  const res = await devErrorPageFor(st, request, await appHandler(request));
   st.devEvents.record({
     kind: "request",
     ts: Date.now(),

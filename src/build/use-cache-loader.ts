@@ -18,6 +18,7 @@
 // Copies are written under a caller-provided cache dir (generation-scoped in dev,
 // so edits are picked up on reload) and memoized per loader instance.
 
+import { djb2 } from "../runtime/djb2.ts";
 import { extname, fromFileUrl, join, toFileUrl } from "@std/path";
 import type { ModuleLoader } from "../server/types.ts";
 import { swcParse } from "./swc-ast.ts";
@@ -36,11 +37,7 @@ export interface UseCacheLoaderOptions {
 }
 
 /** Deterministic short hash (djb2 → base36) for a module URL. */
-function hash(url: string): string {
-  let h = 5381;
-  for (let i = 0; i < url.length; i++) h = ((h << 5) + h + url.charCodeAt(i)) >>> 0;
-  return h.toString(36);
-}
+const hash = djb2;
 
 /** Normalize a file path or `file:` URL to a `file:` URL string. */
 function toUrl(filePath: string): string {

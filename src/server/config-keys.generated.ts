@@ -30,6 +30,7 @@ export const CONFIG_KEYS = [
   "publicEnv",
   "streaming",
   "live",
+  "nodeResolve",
   "cacheComponents",
   "experimental",
   "classComponents",
@@ -42,6 +43,7 @@ export const CONFIG_KEYS = [
  * in declaration order. The validator warns on any other `experimental.*` key.
  */
 export const EXPERIMENTAL_KEYS = [
+  "reactCompiler",
   "compiler",
   "asyncContext",
   "nodeResolve",

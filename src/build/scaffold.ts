@@ -337,7 +337,7 @@ function denextConfig(opts: ScaffoldOptions): string {
   }
   if (opts.compiler) {
     lines.push(
-      `  experimental: { compiler: true }, // auto-memoization (experimental)`,
+      `  experimental: { reactCompiler: true }, // auto-memoization (experimental)`,
     );
   }
   return `import type { DenextConfig } from "denext/server";

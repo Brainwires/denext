@@ -22,6 +22,7 @@
  * @module
  */
 
+import { REACT_COMPAT_VERSION } from "./react-version.ts";
 import { renderToReadableStream as denextRenderToReadableStream } from "../jsx/render-to-stream.ts";
 import { renderToStringSync } from "../jsx/render-to-string.ts";
 import type { VNodeChildren } from "../jsx/types.ts";
@@ -45,7 +46,7 @@ void loadNodeStream();
 
 /** The React version denext reports for compatibility (aligned with `react`'s
  * reported 19.2 surface). */
-export const version = "19.2.0";
+export const version: string = REACT_COMPAT_VERSION;
 
 /** A React-`renderToReadableStream`-shaped stream: a Web stream + `allReady`. */
 export interface ReactDOMServerReadableStream extends ReadableStream<Uint8Array> {

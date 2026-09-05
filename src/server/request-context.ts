@@ -536,12 +536,31 @@ export interface DraftTokenStore {
 }
 
 /** The default per-process, in-memory {@link DraftTokenStore}. */
+/** Draft tokens live this long (a preview session), then expire even if never disabled. */
+const DRAFT_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
+/** Bound on live draft tokens — a hammered `enable()` endpoint cannot grow the heap. */
+const DRAFT_TOKEN_MAX = 10_000;
+
 function inMemoryDraftTokenStore(): DraftTokenStore {
-  const tokens = new Set<string>();
+  const tokens = new Map<string, number>(); // token → expiresAt (insertion order = age)
+  const sweep = () => {
+    const now = Date.now();
+    for (const [t, exp] of tokens) if (exp <= now) tokens.delete(t);
+    while (tokens.size > DRAFT_TOKEN_MAX) tokens.delete(tokens.keys().next().value as string);
+  };
   return {
-    has: (t) => tokens.has(t),
+    has: (t) => {
+      const exp = tokens.get(t);
+      if (exp === undefined) return false;
+      if (exp <= Date.now()) {
+        tokens.delete(t);
+        return false;
+      }
+      return true;
+    },
     add: (t) => {
-      tokens.add(t);
+      tokens.set(t, Date.now() + DRAFT_TOKEN_TTL_MS);
+      sweep();
     },
     delete: (t) => {
       tokens.delete(t);

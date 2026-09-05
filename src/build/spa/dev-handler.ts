@@ -118,7 +118,7 @@ export function createSpaDevHandler(st: SpaDevState): (request: Request) => Prom
     if (unbundled) return unbundled;
     if (url.pathname.startsWith(CLIENT_PREFIX)) return serveClientAsset(st, url.pathname);
     const accEnc = request.headers.get("accept-encoding") ?? undefined;
-    const pub = await serveStatic(st.paths.publicDir, url.pathname, accEnc);
+    const pub = await serveStatic(st.paths.publicDir, url.pathname, accEnc, request);
     if (pub) return pub;
     if (wantsShell(request, url.pathname)) return serveShell(st, request);
     return new Response("not found", { status: 404 });

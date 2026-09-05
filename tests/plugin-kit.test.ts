@@ -40,7 +40,10 @@ Deno.test("plugin-kit does not leak an over-broad value surface", () => {
   assertEquals(values, [
     "PageCache",
     "buildAppCss",
+    "buildNextCompatModules",
     "bundleRoutes",
+    "compareSpecificity",
+    "createNextCompatServerLoader",
     "enableFastRefresh",
     "extractRouteCss",
     "hydrateRoot",
@@ -48,6 +51,8 @@ Deno.test("plugin-kit does not leak an over-broad value surface", () => {
     "parsePattern",
     "peelLocale",
     "registerFamily",
+    "revalidatePath",
+    "revalidateTag",
     "specificity",
   ]);
 });

@@ -13,6 +13,7 @@
  * @module
  */
 
+import { REACT_COMPAT_VERSION } from "./react-version.ts";
 import { createPortal, createRoot, flushSync, hydrateRoot, type Root } from "../client/mod.ts";
 import type { VNode } from "../jsx/types.ts";
 import {
@@ -49,7 +50,7 @@ export type { FormStatus } from "../runtime/actions.ts";
 
 /** The React version denext reports for compatibility (aligned with `react`'s
  * reported version — the 19.2 surface it tracks). */
-export const version = "19.2.0";
+export const version: string = REACT_COMPAT_VERSION;
 
 /**
  * `ReactDOM.unstable_batchedUpdates` — denext already batches state updates
