@@ -1397,19 +1397,19 @@
     "members": {
       "packages/effect": {
         "dependencies": [
-          "jsr:@denext/denext@2",
+          "jsr:@denext/denext@^2.0.1",
           "npm:effect@^3.22.0"
         ]
       },
       "packages/htmx": {
         "dependencies": [
-          "jsr:@denext/denext@2",
+          "jsr:@denext/denext@^2.0.1",
           "jsr:@std/path@1"
         ]
       },
       "packages/pages-router": {
         "dependencies": [
-          "jsr:@denext/denext@2",
+          "jsr:@denext/denext@^2.0.1",
           "jsr:@std/path@1"
         ]
       }
