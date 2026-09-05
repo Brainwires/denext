@@ -882,8 +882,10 @@ function readLocale(): string {
  * The current route's dynamic params (reactive). Reads the params the server
  * resolved for this page from the hydration payload; updates on soft navigation.
  */
-export function useParams(): Record<string, string> {
-  const [params, setParams] = useState<Record<string, string>>(() => readData().params ?? {});
+export function useParams(): Record<string, string | string[]> {
+  const [params, setParams] = useState<Record<string, string | string[]>>(
+    () => readData().params ?? {},
+  );
   useEffect(() => subscribeLocation(() => setParams(readData().params ?? {})), []);
   return params;
 }

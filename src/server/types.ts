@@ -2,6 +2,7 @@
 
 import type { VNode } from "../jsx/types.ts";
 import type { RouteParams } from "../router/segments.ts";
+import type { AsyncProps, SearchParams } from "../runtime/async-props.ts";
 import type { SegmentConfigExports } from "./segment-config.ts";
 
 /** A single Open Graph image (`og:image` plus optional dimensions/alt). */
@@ -174,19 +175,36 @@ export interface Metadata {
  * `searchParams` are part of the cache key, so they are safe to read.
  */
 export interface PageProps {
-  /** Dynamic route parameters extracted from the pathname. */
-  params: RouteParams;
-  /** Parsed URL query string. */
-  searchParams: URLSearchParams;
+  /**
+   * Dynamic route parameters extracted from the pathname (`[slug]` → string,
+   * `[...rest]` → string[]). Readable synchronously AND awaitable (Next.js 15's
+   * `Promise` shape): `params.slug` and `(await params).slug` are both fine.
+   */
+  params: AsyncProps<RouteParams>;
+  /**
+   * The URL query as Next.js's record (`?a=1&a=2&b=x` → `{ a: ["1", "2"], b: "x" }`),
+   * readable synchronously and awaitable. The underlying `URLSearchParams` is the
+   * non-enumerable `searchParams.raw`.
+   */
+  searchParams: AsyncProps<SearchParams> & { readonly raw: URLSearchParams };
 }
 
 /** Props passed to a layout component. */
 export interface LayoutProps {
   /** The nested page or layout content this layout wraps. */
   children: VNode | VNode[];
-  /** Dynamic route parameters extracted from the pathname. */
-  params: RouteParams;
+  /** Dynamic route parameters extracted from the pathname (sync + awaitable). */
+  params: AsyncProps<RouteParams>;
 }
+
+/**
+ * `generateStaticParams` — the param sets to pre-render. Called with the parent segments'
+ * params (from a layout's own generator, or `{}` at the root), Next.js style; a
+ * `[...rest]` value may be a `string[]`.
+ */
+export type StaticParamsGenerator = (
+  context: { params: RouteParams },
+) => RouteParams[] | Promise<RouteParams[]>;
 
 /** Shape of a page module (default export required). */
 export interface PageModule extends SegmentConfigExports {
@@ -202,11 +220,9 @@ export interface PageModule extends SegmentConfigExports {
   generateViewport?: (props: PageProps) => Viewport | Promise<Viewport>;
   /**
    * For dynamic routes, the set of param objects to pre-render at build time
-   * (Next.js `generateStaticParams`).
+   * (Next.js `generateStaticParams`), receiving the parent segments' params.
    */
-  generateStaticParams?: () =>
-    | Array<Record<string, string>>
-    | Promise<Array<Record<string, string>>>;
+  generateStaticParams?: StaticParamsGenerator;
 }
 
 /** Shape of a layout module. */
@@ -223,6 +239,8 @@ export interface LayoutModule extends SegmentConfigExports {
   /** Optional viewport generator (Next.js `generateViewport`), preferred over
    * static `viewport` when both are present. */
   generateViewport?: (props: PageProps) => Viewport | Promise<Viewport>;
+  /** A layout may enumerate ITS dynamic segments' params for the routes below it. */
+  generateStaticParams?: StaticParamsGenerator;
 }
 
 /** An HTTP method an API route module can handle. */
@@ -237,8 +255,8 @@ export type HttpMethod =
 
 /** Context passed to an API route handler. */
 export interface ApiContext {
-  /** Dynamic route parameters extracted from the pathname. */
-  params: RouteParams;
+  /** Dynamic route parameters extracted from the pathname (sync + awaitable). */
+  params: AsyncProps<RouteParams>;
 }
 
 /** A single-method API route handler. */

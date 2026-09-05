@@ -82,8 +82,7 @@ Deno.test("passes dynamic params and search params to the page", async () => {
   };
   const modules = {
     "user.tsx": {
-      default: (props: PageProps) =>
-        h("p", null, `${props.params.id}:${props.searchParams.get("tab")}`),
+      default: (props: PageProps) => h("p", null, `${props.params.id}:${props.searchParams.tab}`),
     },
   };
   const app = makeApp(modules, manifest);

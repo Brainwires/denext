@@ -744,7 +744,7 @@ default.
 | `app/page.tsx`                | Page at `/`                                                          |
 | `app/about/page.tsx`          | Page at `/about`                                                     |
 | `app/blog/[slug]/page.tsx`    | Dynamic page; `params.slug`                                          |
-| `app/docs/[...path]/page.tsx` | Catch-all; `params.path` is `"a/b/c"`                                |
+| `app/docs/[...path]/page.tsx` | Catch-all; `params.path` is `["a", "b", "c"]` (Next.js shape)        |
 | `app/layout.tsx`              | Wraps this segment and everything beneath it                         |
 | `app/template.tsx`            | Like a layout, but conceptually re-mounted                           |
 | `app/loading.tsx`             | Suspense fallback for the segment                                    |

@@ -8,6 +8,20 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Breaking
+
+- **Catch-all params are `string[]`.** `app/docs/[...path]` now yields `params.path = ["a", "b", "c"]` (Next.js's shape) instead of the joined `"a/b/c"`; `RouteParams` is `Record<string, string | string[]>` and the generated `.denext/routes.ts` types follow. Join with `params.path.join("/")` where you need the path form. `src/router/segments.ts`.
+- **`params` / `searchParams` are Next.js 15-shaped.** Both are still plain records you can read synchronously, and both are now ALSO awaitable (`const { slug } = await params`), so Next 15 pages port unchanged. `searchParams` is the query as a record (`?a=1&a=2&b=x` → `{ a: ["1", "2"], b: "x" }`) instead of a `URLSearchParams`; the `URLSearchParams` is the non-enumerable `searchParams.raw`. Route-handler `context.params` is awaitable too. New `asyncProps`/`searchParamsRecord` + `AsyncProps`/`SearchParams` types on `denext/server`. `src/runtime/async-props.ts`, `src/server/types.ts`.
+- **`_folder` directories are private.** A folder whose name starts with `_` (and everything under it) is never routable, matching Next.js — colocated `_components/` no longer becomes `/_components`. `src/router/manifest.ts`.
+- **Route ordering is position-aware.** Specificity is compared segment by segment from the left (static > dynamic > catch-all > optional catch-all), so `/a/[b]` now wins the request `/a/b` over `/[a]/b`; the old positional sum let string order decide. `compareSpecificity` in `src/router/segments.ts`.
+- **Per-segment error/loading boundaries.** Each route directory level nests `layout → template → error → loading → children` like Next.js, so a throw in a nested `layout.tsx` is caught by the nearest ancestor segment's `error.tsx` (it previously escaped every boundary to the 500 path) and an outer `error.tsx` is the fallback for an inner one. The manifest records per-level files as `PageRoute.levels`. `src/server/render-page.ts`.
+- **`global-error.tsx` owns the document.** It replaces the root layout and renders its own `<html>`/`<body>`, which denext no longer wraps in its shell (the old output nested two `<html>` elements). `RenderedPage.ownsDocument`.
+
+### Added
+
+- **`generateStaticParams` receives `{ params }` and works on layouts.** A layout above a dynamic page may enumerate its own segment; the page's generator is then called once per parent set with the parent's params and its results merged, Next.js style (`src/server/static-params.ts`, used by the export, `probeApp`, and the `dynamicParams: false` check).
+- **Route handlers honor segment config.** `export const dynamic = "error" | "force-static"` on a `route.ts` now applies to `cookies()`/`headers()` inside the handler. `src/server/api.ts`.
+
 ### Security
 
 - **Dev server: `/_denext/@fs<abs>` no longer reads arbitrary files.** The unbundled dev loop served any absolute path (transformed, with the source echoed in an inline source map) with no project containment and outside the Host/Origin gate the other dev endpoints use. It now serves only files under the project (real paths on both sides, so an in-project symlink pointing outside is refused) or modules the dev graph itself imported, and every `/_denext/@*` URL sits behind the same DNS-rebinding gate as `/_denext/reload`. `src/build/dev-unbundled/handler.ts`, `src/build/dev-server/handler.ts`.

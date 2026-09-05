@@ -7,7 +7,7 @@ const ERRORS: Record<string, string> = {
 };
 
 export default function RegisterPage({ searchParams }: PageProps) {
-  const error = ERRORS[searchParams.get("error") ?? ""];
+  const error = ERRORS[String(searchParams.error ?? "")];
   return (
     <section class="auth">
       <h1>Create an account</h1>

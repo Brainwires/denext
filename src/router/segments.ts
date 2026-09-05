@@ -3,7 +3,7 @@
 // Conventions (Next.js App Router style):
 //   static           "about"
 //   dynamic          "[slug]"        -> params.slug = "value"
-//   catch-all        "[...rest]"     -> params.rest = "a/b/c"
+//   catch-all        "[...rest]"     -> params.rest = ["a", "b", "c"]   (Next.js shape)
 //   optional         "[[...rest]]"   -> params.rest may be absent
 
 /** The category of a route segment, determining how it matches path parts. */
@@ -17,8 +17,17 @@ export interface Segment {
   value: string;
 }
 
-/** Extracted dynamic route parameters, keyed by segment name. */
-export type RouteParams = Record<string, string>;
+/**
+ * Extracted dynamic route parameters, keyed by segment name. A `[slug]` segment yields a
+ * string; a `[...rest]` / `[[...rest]]` catch-all yields the remaining parts as a
+ * `string[]` (Next.js's shape — `params.rest.join("/")` for the path form).
+ */
+export type RouteParams = Record<string, string | string[]>;
+
+/** A param value as the URL-path form (`string[]` catch-all parts joined with `/`). */
+export function paramPath(value: string | string[] | undefined): string {
+  return Array.isArray(value) ? value.join("/") : (value ?? "");
+}
 
 /** Parse a single path segment (a directory name) into a Segment descriptor. */
 export function parseSegment(raw: string): Segment {
@@ -122,7 +131,7 @@ export function matchSegments(
 /** A catch-all must consume at least one part; an optional one may consume none. */
 function matchCatchAll(seg: Segment, rest: string[], params: RouteParams): RouteParams | null {
   if (rest.length === 0) return seg.kind === "optionalCatchAll" ? params : null;
-  params[seg.value] = rest.map(decodeSegment).join("/");
+  params[seg.value] = rest.map(decodeSegment);
   return params;
 }
 
@@ -141,9 +150,35 @@ function decodeSegment(part: string): string {
   }
 }
 
+/** Per-position rank for route ordering (higher = more specific). */
+const KIND_RANK: Record<SegmentKind, number> = {
+  static: 3,
+  dynamic: 2,
+  catchAll: 1,
+  optionalCatchAll: 0,
+};
+
+/**
+ * Order two patterns by specificity the way Next.js does: compare segment by segment from
+ * the left, and at the first position that differs the more specific kind wins
+ * (static > dynamic > catch-all > optional catch-all). A pattern that has run out of
+ * segments (its catch-all consumed the rest) ranks below one that still has a concrete
+ * segment there. Returns negative when `a` should be tried first.
+ */
+export function compareSpecificity(a: Segment[], b: Segment[]): number {
+  const n = Math.max(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    const ra = a[i] ? KIND_RANK[a[i].kind] : -1;
+    const rb = b[i] ? KIND_RANK[b[i].kind] : -1;
+    if (ra !== rb) return rb - ra;
+  }
+  return 0;
+}
+
 /**
  * Specificity score for ordering routes: more specific (static) patterns
  * should be tried before less specific (dynamic/catch-all) ones. Higher wins.
+ * Position-blind (a sum) — prefer {@linkcode compareSpecificity} for ordering.
  */
 export function specificity(pattern: Segment[]): number {
   let score = 0;
@@ -175,7 +210,7 @@ export function fillPattern(pattern: Segment[], params: RouteParams): string {
   const parts: string[] = [];
   for (const seg of pattern) {
     if (seg.kind === "static") parts.push(seg.value);
-    else if (params[seg.value]) parts.push(params[seg.value]);
+    else if (params[seg.value]) parts.push(paramPath(params[seg.value]));
   }
   return "/" + parts.join("/");
 }

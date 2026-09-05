@@ -2,7 +2,7 @@ import { auth, type PageProps } from "denext/server";
 
 export default async function Home({ searchParams }: PageProps) {
   const session = await auth();
-  const everywhere = searchParams.get("everywhere") === "1";
+  const everywhere = searchParams.everywhere === "1";
   return (
     <section class="stack">
       <h1>First-party auth, production-ready</h1>

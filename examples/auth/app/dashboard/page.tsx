@@ -10,7 +10,7 @@ const ERRORS: Record<string, string> = {
 export default async function Dashboard({ searchParams }: PageProps) {
   const session = await auth();
   if (!session) return null;
-  const error = ERRORS[searchParams.get("error") ?? ""];
+  const error = ERRORS[String(searchParams.error ?? "")];
   return (
     <section class="stack">
       <h1>Dashboard</h1>

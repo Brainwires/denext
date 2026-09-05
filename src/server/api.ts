@@ -2,6 +2,9 @@
 
 import type { ApiMatch } from "../router/match.ts";
 import type { ApiModule, HttpMethod, ModuleLoader } from "./types.ts";
+import { readSegmentConfig } from "./segment-config.ts";
+import { currentContext } from "./request-context.ts";
+import { asyncProps } from "../runtime/async-props.ts";
 
 const METHODS: HttpMethod[] = [
   "GET",
@@ -21,15 +24,20 @@ export async function handleApi(
 ): Promise<Response> {
   const mod = (await load(match.route.filePath)) as ApiModule;
   const method = request.method.toUpperCase() as HttpMethod;
+  // Route segment config applies to handlers too: `dynamic = "error"` makes cookies()/
+  // headers() throw, `force-static` makes them empty, and `revalidate` is honored by the
+  // caller's cache flow — so record it on the request context like a page render does.
+  const ctx = currentContext();
+  if (ctx) ctx.segmentConfig = readSegmentConfig(mod);
 
   const handler = mod[method];
   if (handler) {
-    return await handler(request, { params: match.params });
+    return await handler(request, { params: asyncProps({ ...match.params }) });
   }
 
   // Auto-implement HEAD from GET when possible.
   if (method === "HEAD" && mod.GET) {
-    const res = await mod.GET(request, { params: match.params });
+    const res = await mod.GET(request, { params: asyncProps({ ...match.params }) });
     // A HEAD response carries no body; cancel the GET's stream instead of dropping
     // it on the floor, which would leak the stream (and pin whatever backs it).
     await res.body?.cancel();

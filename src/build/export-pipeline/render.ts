@@ -5,6 +5,7 @@ import { copy, ensureDir } from "@std/fs";
 import { dirname, join } from "@std/path";
 import type { PageRoute } from "../../router/manifest.ts";
 import { fillPattern, type RouteParams } from "../../router/segments.ts";
+import { enumerateStaticParams } from "../../server/static-params.ts";
 import { isNotFound } from "../../runtime/error-boundary.ts";
 import { publicEnv } from "../../runtime/public-env.ts";
 import { augmentMetadataConventions } from "../../server/augment-metadata.ts";
@@ -64,13 +65,10 @@ function renderStatic(
 }
 
 /** Resolve the param sets to render for a route, or null to skip it. */
-async function paramSetsFor(ctx: ExportContext, route: PageRoute): Promise<RouteParams[] | null> {
-  const isDynamic = route.pattern.some((s) => s.kind !== "static");
-  if (!isDynamic) return [{}];
-  const mod = (await ctx.load(route.filePath)) as PageModule;
-  if (typeof mod.generateStaticParams !== "function") return null;
-  const sets = await mod.generateStaticParams();
-  return sets.map((s) => ({ ...s }));
+function paramSetsFor(ctx: ExportContext, route: PageRoute): Promise<RouteParams[] | null> {
+  if (!route.pattern.some((s) => s.kind !== "static")) return Promise.resolve([{}]);
+  // Layout generators (outer→inner) feed the page's, Next.js style.
+  return enumerateStaticParams(route, ctx.load);
 }
 
 /** Map a pathname to its output HTML file (clean-URL directories). */

@@ -349,8 +349,7 @@ Deno.test("cacheKeyParams edge-3: a dropped searchParams read is refused from th
     const modules: Record<string, unknown> = {
       "cached.tsx": {
         // Reads ?theme — which the narrowed key drops — straight into the output.
-        default: (p: PageProps) =>
-          h("h1", null, `theme:${(p.searchParams as URLSearchParams).get("theme")}`),
+        default: (p: PageProps) => h("h1", null, `theme:${p.searchParams.theme}`),
         revalidate: 60,
       },
     };
@@ -394,8 +393,7 @@ Deno.test("cacheKeyParams edge-3: reading only allowlisted params does NOT warn"
     const modules: Record<string, unknown> = {
       "cached.tsx": {
         // Reads only ?page, which IS in the key — safe, no bleed.
-        default: (p: PageProps) =>
-          h("h1", null, `page:${(p.searchParams as URLSearchParams).get("page")}`),
+        default: (p: PageProps) => h("h1", null, `page:${p.searchParams.page}`),
         revalidate: 60,
       },
     };

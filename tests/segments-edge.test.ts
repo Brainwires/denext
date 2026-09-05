@@ -31,7 +31,7 @@ Deno.test("a dynamic segment URL-decodes its value", () => {
 });
 
 Deno.test("catch-all requires at least one segment", () => {
-  assertEquals(match("files/[...path]", "/files/a/b/c"), { path: "a/b/c" });
+  assertEquals(match("files/[...path]", "/files/a/b/c"), { path: ["a", "b", "c"] });
   assertEquals(match("files/[...path]", "/files"), null, "zero trailing segments must not match");
 });
 
@@ -41,7 +41,7 @@ Deno.test("optional catch-all matches with zero or many segments", () => {
   assert(zero !== null, "optional catch-all matches the bare path");
   assertEquals(zero!.slug, undefined);
   // Many segments → the param captures the remainder.
-  assertEquals(match("shop/[[...slug]]", "/shop/a/b"), { slug: "a/b" });
+  assertEquals(match("shop/[[...slug]]", "/shop/a/b"), { slug: ["a", "b"] });
 });
 
 Deno.test("a static pattern matches only its exact path", () => {

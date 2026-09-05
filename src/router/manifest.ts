@@ -10,12 +10,12 @@
 
 import { join } from "@std/path";
 import {
+  compareSpecificity,
   type Intercept,
   parseIntercept,
   parseSegment,
   parseSlot,
   type Segment,
-  specificity,
 } from "./segments.ts";
 import { type Directive, readDirective } from "../build/directives.ts";
 
@@ -62,6 +62,15 @@ export interface PageRoute {
   /** Template module paths (like layouts, but conceptually re-mounted), outer→inner. */
   templateChain: string[];
   /**
+   * Per-directory-level files from the root down to the page's directory, in order —
+   * only levels that define at least one of layout/template/loading/error. Lets the
+   * renderer nest boundaries per segment the way Next.js does (`layout → template →
+   * error → loading → children`), so a throw in a nested layout is caught by the
+   * nearest ANCESTOR segment's `error.tsx`. `loading`/`error` stay the nearest
+   * (inherited) files for consumers that only need one.
+   */
+  levels?: SegmentLevel[];
+  /**
    * Parallel-route slots (`@name` folders) collected at this page's own level,
    * mapping slot name to its routable subtree. Kept for introspection; rendering
    * uses {@link layoutSlots} (slots are scoped to the layout at their level).
@@ -80,6 +89,16 @@ export interface PageRoute {
    * falls through to the real route at the same path.
    */
   intercept?: Intercept;
+}
+
+/** The convention files one route directory level contributes (own files, not inherited). */
+export interface SegmentLevel {
+  /** Path segments consumed above this level (for layout-relative segment hooks). */
+  depth: number;
+  layout: string | null;
+  template: string | null;
+  loading: string | null;
+  error: string | null;
 }
 
 /** A parallel-route slot's own routable subtree (its pages + a default fallback). */
@@ -275,7 +294,7 @@ function bySpecificity(
   a: { pattern: Segment[]; routePath: string },
   b: { pattern: Segment[]; routePath: string },
 ): number {
-  const d = specificity(b.pattern) - specificity(a.pattern);
+  const d = compareSpecificity(a.pattern, b.pattern);
   if (d !== 0) return d;
   return a.routePath < b.routePath ? -1 : a.routePath > b.routePath ? 1 : 0;
 }
@@ -294,6 +313,7 @@ interface WalkFrame {
   layoutDepths: number[];
   layoutSlotsChain: Array<Record<string, SlotRoutes> | undefined>;
   templateChain: string[];
+  levels: SegmentLevel[];
   boundaries: Boundaries;
   metaImages: MetaImages;
   intercept: Intercept | undefined;
@@ -312,6 +332,7 @@ function rootFrame(segments: Segment[]): WalkFrame {
     layoutDepths: [],
     layoutSlotsChain: [],
     templateChain: [],
+    levels: [],
     boundaries: { ...EMPTY_BOUNDARIES },
     metaImages: {},
     intercept: undefined,
@@ -365,8 +386,9 @@ async function walk(ctx: ScanCtx, dir: string, frame: WalkFrame, out: WalkOut): 
   const here = levelFrame(ctx, dir, entries, frame, slots);
   collectRoutes(dir, entries, here, slots, out);
   for (const entry of entries) {
-    // Parallel slots are scanned above, not walked as standalone routes.
-    if (!entry.isDirectory || parseSlot(entry.name)) continue;
+    // Parallel slots are scanned above, not walked as standalone routes; a `_private`
+    // folder (Next.js convention) is colocated code that is never routable.
+    if (!entry.isDirectory || parseSlot(entry.name) || isPrivateFolder(entry.name)) continue;
     await walk(ctx, join(dir, entry.name), childFrame(here, entry.name), out);
   }
 }
@@ -427,12 +449,21 @@ function levelFrame(
   for (const [key, name] of BOUNDARY_CONVENTIONS) {
     boundaries[key] = fileHere(conv(name)) ?? frame.boundaries[key];
   }
+  const level: SegmentLevel = {
+    depth: frame.segments.length,
+    layout: layoutFile,
+    template: templateFile,
+    loading: fileHere(conv("loading")),
+    error: fileHere(conv("error")),
+  };
+  const hasLevel = level.layout || level.template || level.loading || level.error;
   return {
     ...frame,
     layoutChain: layoutFile ? [...frame.layoutChain, layoutFile] : frame.layoutChain,
     layoutDepths: layoutFile ? [...frame.layoutDepths, frame.segments.length] : frame.layoutDepths,
     layoutSlotsChain: layoutFile ? [...frame.layoutSlotsChain, slots] : frame.layoutSlotsChain,
     templateChain: templateFile ? [...frame.templateChain, templateFile] : frame.templateChain,
+    levels: hasLevel ? [...frame.levels, level] : frame.levels,
     boundaries,
     metaImages: nestedMetaImages(ctx, fileHere, frame),
   };
@@ -503,6 +534,7 @@ function pageRoute(
     layoutDepths: f.layoutDepths,
     layoutSlots: f.layoutSlotsChain.some((s) => s) ? f.layoutSlotsChain : undefined,
     templateChain: f.templateChain,
+    levels: f.levels,
     loading: f.boundaries.loading,
     error: f.boundaries.error,
     notFound: f.boundaries.notFound,
@@ -519,6 +551,11 @@ function pageRoute(
  * The frame for a child directory: an intercepting route walks in with the intercepted
  * target path; a route group keeps the same URL segments; anything else adds a segment.
  */
+/** `_name` folders opt their subtree out of routing (Next.js "private folders"). */
+export function isPrivateFolder(name: string): boolean {
+  return name.startsWith("_");
+}
+
 function childFrame(here: WalkFrame, name: string): WalkFrame {
   const ic = parseIntercept(name);
   if (ic) return { ...here, segments: interceptTarget(here.segments, ic), intercept: ic };

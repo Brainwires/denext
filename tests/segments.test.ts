@@ -38,8 +38,8 @@ Deno.test("dynamic segment url-decodes the value", () => {
 
 Deno.test("catch-all captures the remainder", () => {
   const p = parsePattern("docs/[...path]");
-  assertEquals(matchSegments(p, "/docs/a/b/c"), { path: "a/b/c" });
-  assertEquals(matchSegments(p, "/docs/a"), { path: "a" });
+  assertEquals(matchSegments(p, "/docs/a/b/c"), { path: ["a", "b", "c"] });
+  assertEquals(matchSegments(p, "/docs/a"), { path: ["a"] });
   // catch-all requires at least one segment
   assertEquals(matchSegments(p, "/docs"), null);
 });
@@ -47,7 +47,7 @@ Deno.test("catch-all captures the remainder", () => {
 Deno.test("optional catch-all matches with and without segments", () => {
   const p = parsePattern("shop/[[...filters]]");
   assertEquals(matchSegments(p, "/shop"), {});
-  assertEquals(matchSegments(p, "/shop/red/small"), { filters: "red/small" });
+  assertEquals(matchSegments(p, "/shop/red/small"), { filters: ["red", "small"] });
 });
 
 Deno.test("specificity orders static above dynamic above catch-all", () => {

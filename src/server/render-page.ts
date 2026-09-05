@@ -27,8 +27,11 @@ import {
   toClientError,
 } from "../runtime/error-boundary.ts";
 import { matchSlot, type PageMatch } from "../router/match.ts";
-import type { RouteManifest, SlotRoutes } from "../router/manifest.ts";
+import type { RouteManifest, SegmentLevel, SlotRoutes } from "../router/manifest.ts";
 import { provideLayoutSegments } from "../runtime/layout-segments.ts";
+import { paramPath, type RouteParams } from "../router/segments.ts";
+import { asyncProps, type SearchParams, searchParamsRecord } from "../runtime/async-props.ts";
+import { enumerateStaticParams } from "./static-params.ts";
 import { type Messages, provideMessages } from "../runtime/i18n-messages.ts";
 import type {
   LayoutModule,
@@ -64,6 +67,11 @@ export interface RenderedPage {
   status: number;
   /** Effective route segment config (page merged over its layout chain). */
   config: SegmentConfig;
+  /**
+   * `html` is a COMPLETE document (`global-error.tsx` renders its own `<html>`/`<body>`,
+   * replacing the root layout) — the response must not wrap it in denext's shell.
+   */
+  ownsDocument?: boolean;
   /**
    * The Flight payload for the rendered tree, present only when the route uses
    * the client/server boundary (a `"use client"` module is involved) and flight
@@ -134,7 +142,7 @@ export interface PageContext {
  * below (and repeated requests) don't re-run the generator. A route with no
  * `generateStaticParams` memoizes `null`.
  */
-const staticParamsCache = new Map<string, Array<Record<string, string>> | null>();
+const staticParamsCache = new Map<string, RouteParams[] | null>();
 
 /**
  * Whether `export const dynamicParams = false` should 404 this request: a dynamic
@@ -149,7 +157,7 @@ const staticParamsCache = new Map<string, Array<Record<string, string>> | null>(
  */
 async function isStaticParamDisallowed(
   match: PageMatch,
-  pageModule: PageModule,
+  load: ModuleLoader,
 ): Promise<boolean> {
   const params = match.params;
   const keys = Object.keys(params);
@@ -158,15 +166,44 @@ async function isStaticParamDisallowed(
   const filePath = match.route.filePath;
   let known = staticParamsCache.get(filePath);
   if (known === undefined) {
-    known = typeof pageModule.generateStaticParams === "function"
-      ? await pageModule.generateStaticParams()
-      : null;
+    known = await enumerateStaticParams(match.route, load);
     staticParamsCache.set(filePath, known);
   }
   // No generateStaticParams → no params are known → every dynamic param 404s.
   if (known === null) return true;
   // Allowed only if this request's params match an enumerated set (each key equal).
-  return !known.some((set) => keys.every((k) => String(set[k]) === params[k]));
+  return !known.some((set) => keys.every((k) => paramPath(set[k]) === paramPath(params[k])));
+}
+
+/**
+ * The page's props in Next.js 15's shape: `params` and `searchParams` are records that are
+ * ALSO awaitable (`await params` works), `searchParams` is the query as a record with the
+ * `URLSearchParams` on `.raw`. Reads are tracked only when `cacheKeyParams` narrows the
+ * ISR key (the page cache's cross-request-bleed dev-warn).
+ */
+function pageProps(params: RouteParams, search: URLSearchParams): PageProps {
+  const tracked = trackSearchParamReads(search);
+  // Built from the PLAIN params (iterating the tracker would count every name as read).
+  const record = trackRecordReads(searchParamsRecord(search, tracked), tracked);
+  return { params: asyncProps({ ...params }), searchParams: asyncProps(record) };
+}
+
+/**
+ * Route a record's property reads through the tracked `URLSearchParams` so the ISR
+ * narrowed-key dev-warn sees them (a `Proxy` is only installed when tracking is on —
+ * `trackSearchParamReads` returns its input untouched otherwise).
+ */
+function trackRecordReads(
+  record: SearchParams & { readonly raw: URLSearchParams },
+  tracked: URLSearchParams,
+): SearchParams & { readonly raw: URLSearchParams } {
+  if (!currentContext()?.trackParamReads) return record;
+  return new Proxy(record, {
+    get(target, prop, receiver) {
+      if (typeof prop === "string" && prop !== "raw" && prop !== "then") tracked.has(prop);
+      return Reflect.get(target, prop, receiver);
+    },
+  });
 }
 
 /**
@@ -184,13 +221,7 @@ export async function buildPageContext(
   const url = new URL(request.url);
   // `request` is intentionally NOT placed on props — per-request data flows
   // through cookies()/headers() (which mark the render dynamic). See PageProps.
-  const props: PageProps = {
-    params: match.params,
-    // Wrapped only when `cacheKeyParams` narrows the ISR key, to record which param
-    // names the render reads (for the page cache's cross-request-bleed dev-warn);
-    // otherwise returned as-is, leaving the normal render path untouched.
-    searchParams: trackSearchParamReads(url.searchParams),
-  };
+  const props = pageProps(match.params, url.searchParams);
 
   options.signal?.throwIfAborted();
   const pageModule = (await load(match.route.filePath)) as PageModule;
@@ -203,14 +234,21 @@ export async function buildPageContext(
   // `dynamicParams = false`: a param not enumerated by generateStaticParams 404s.
   // Decided here (module is loaded); the render entries throw notFound() for it.
   const staticParamsNotFound = config.dynamicParams === false &&
-    await isStaticParamDisallowed(match, pageModule);
+    await isStaticParamDisallowed(match, load);
 
-  // Innermost -> page, optionally wrapped by loading (Suspense) and error.
-  const content = await wrapBoundaries(match, h(pageModule.default, props as never), load, options);
-
+  const page = h(pageModule.default, props as never);
   options.signal?.throwIfAborted();
   const soft = request.headers.get("x-denext-nav") === "1";
-  const wrapped = await wrapLayouts(match, content, load, url.pathname, soft, props);
+  const wrapped = match.route.levels
+    ? await wrapLevels(match, page, load, options, url.pathname, soft, props)
+    : await wrapLayouts(
+      match,
+      await wrapBoundaries(match, page, load, options),
+      load,
+      url.pathname,
+      soft,
+      props,
+    );
   // Provide the active locale's messages so useTranslations() resolves in SSR
   // (server components and SSR'd client islands); the client reads the same
   // catalog from the hydration payload.
@@ -280,7 +318,10 @@ async function wrapBoundaries(
     if (typeof tpl.default !== "function") {
       throw new Error(`Template module ${match.route.templateChain[i]} has no default.`);
     }
-    content = h(tpl.default, { children: content, params: match.params } as never);
+    content = h(
+      tpl.default,
+      { children: content, params: asyncProps({ ...match.params }) } as never,
+    );
   }
   return content;
 }
@@ -885,7 +926,7 @@ async function renderSignalUI(
     ]);
   }
   // Signal UI (404/403/…): render slot defaults (no URL to match against).
-  const signalProps: PageProps = { params: match.params, searchParams: new URLSearchParams() };
+  const signalProps: PageProps = pageProps(match.params, new URLSearchParams());
   const { tree } = await wrapLayouts(match, content, load, "", false, signalProps);
   const html = await renderToString(tree);
   return {
@@ -933,7 +974,7 @@ async function wrapLayouts(
       : {};
     tree = h(layoutModule.default, {
       children: tree,
-      params: match.params,
+      params: props.params,
       ...slotProps,
     } as never);
     // Provide this layout's segment depth so descendant `useSelectedLayoutSegment(s)`
@@ -944,6 +985,107 @@ async function wrapLayouts(
     );
   }
   return { tree, layoutMetas, layoutViewports };
+}
+
+/**
+ * Next.js's per-segment nesting: for each route directory level (innermost first)
+ * `layout( template( error( loading( children ) ) ) )`, so a segment's `error.tsx` catches
+ * throws from everything BELOW it (nested layouts included) and an outer `error.tsx` is the
+ * fallback for an inner one. Layout metadata/viewport and slot props are collected exactly
+ * as {@linkcode wrapLayouts} does.
+ */
+async function wrapLevels(
+  match: PageMatch,
+  page: VNode,
+  load: ModuleLoader,
+  options: RenderPageOptions,
+  pathname: string,
+  soft: boolean,
+  props: PageProps,
+): Promise<{ tree: VNode; layoutMetas: Metadata[]; layoutViewports: Viewport[] }> {
+  const levels = match.route.levels ?? [];
+  const layoutMetas: Metadata[] = [];
+  const layoutViewports: Viewport[] = [];
+  let layoutIdx = match.route.layoutChain.length - 1;
+  let tree = page;
+  for (let i = levels.length - 1; i >= 0; i--) {
+    const level = levels[i];
+    tree = await wrapLevelBoundaries(level, tree, load, options);
+    if (level.template) tree = await wrapTemplate(level.template, tree, match.params, load);
+    if (level.layout) {
+      const wrapped = await wrapOneLayout(match, layoutIdx--, tree, load, pathname, soft, props);
+      tree = wrapped.tree;
+      if (wrapped.meta) layoutMetas.unshift(wrapped.meta);
+      if (wrapped.viewport) layoutViewports.unshift(wrapped.viewport);
+    }
+  }
+  return { tree, layoutMetas, layoutViewports };
+}
+
+/** `error( loading( content ) )` for one level's own boundary files. */
+async function wrapLevelBoundaries(
+  level: SegmentLevel,
+  content: VNode,
+  load: ModuleLoader,
+  options: RenderPageOptions,
+): Promise<VNode> {
+  let tree = content;
+  if (level.loading) {
+    const loadingMod = (await load(level.loading)) as { default: () => VNode };
+    tree = h(Suspense, { fallback: h(loadingMod.default, {}), children: tree });
+  }
+  if (level.error) {
+    const errorMod = (await load(level.error)) as { default: never };
+    tree = h(ErrorBoundary, {
+      fallback: errorMod.default,
+      children: tree,
+      onCaught: options.onCaughtError,
+    });
+  }
+  return tree;
+}
+
+async function wrapTemplate(
+  file: string,
+  content: VNode,
+  params: RouteParams,
+  load: ModuleLoader,
+): Promise<VNode> {
+  const tpl = (await load(file)) as LayoutModule;
+  if (typeof tpl.default !== "function") throw new Error(`Template module ${file} has no default.`);
+  return h(tpl.default, { children: content, params: asyncProps({ ...params }) } as never);
+}
+
+/** One layout (by index into `layoutChain`) wrapped around `content`, with its slots. */
+async function wrapOneLayout(
+  match: PageMatch,
+  i: number,
+  content: VNode,
+  load: ModuleLoader,
+  pathname: string,
+  soft: boolean,
+  props: PageProps,
+): Promise<{ tree: VNode; meta?: Metadata; viewport?: Viewport }> {
+  const file = match.route.layoutChain[i];
+  const layoutModule = (await load(file)) as LayoutModule;
+  if (typeof layoutModule.default !== "function") {
+    throw new Error(`Layout module ${file} has no default.`);
+  }
+  const meta = typeof layoutModule.generateMetadata === "function"
+    ? await layoutModule.generateMetadata(props)
+    : layoutModule.metadata;
+  const viewport = typeof layoutModule.generateViewport === "function"
+    ? await layoutModule.generateViewport(props)
+    : layoutModule.viewport;
+  const slotMap = match.route.layoutSlots?.[i];
+  const slotProps = slotMap ? await renderSlotMap(slotMap, match.params, load, pathname, soft) : {};
+  let tree = h(layoutModule.default, {
+    children: content,
+    params: props.params,
+    ...slotProps,
+  } as never);
+  tree = provideLayoutSegments({ pathname, depth: match.route.layoutDepths?.[i] ?? 0 }, tree);
+  return { tree, meta: meta ?? undefined, viewport: viewport ?? undefined };
 }
 
 /**
@@ -1048,8 +1190,18 @@ export async function renderGlobalError(
   // internal detail (DB DSNs, stack) to every client; the full error goes to the
   // log, correlatable by digest. In dev the real error is passed for debugging.
   const err = toClientError(error);
-  const html = await renderToString(h(mod.default, { error: err, reset: () => {} }));
-  return { html, metadata: { title: "Error" }, status: 500, config: DEFAULT_SEGMENT_CONFIG };
+  // Next.js: global-error REPLACES the root layout and renders its own <html>/<body>. It is
+  // server-rendered here (no hydration), so `reset` is a no-op on the server — the rendered
+  // markup gets a full-page reload via a minimal inline handler on `[data-reset]` buttons.
+  const body = await renderToString(h(mod.default, { error: err, reset: () => {} }));
+  const html = /<html[\s>]/i.test(body) ? `<!DOCTYPE html>${body}` : body;
+  return {
+    html,
+    metadata: { title: "Error" },
+    status: 500,
+    config: DEFAULT_SEGMENT_CONFIG,
+    ownsDocument: /<html[\s>]/i.test(body),
+  };
 }
 
 /** Metadata fields where the innermost segment's value simply wins. */

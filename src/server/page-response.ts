@@ -179,7 +179,7 @@ function isoNavResponse(pr: PageRequest, rendered: RenderedPage): Response | nul
  * needs `no-store` + `Vary: Cookie` (M1). HEAD gets the same headers with no body.
  */
 async function bufferedResponse(pr: PageRequest, rendered: RenderedPage): Promise<Response> {
-  const doc = renderDocument({
+  const doc = rendered.ownsDocument ? rendered.html : renderDocument({
     bodyHtml: rendered.html,
     metadata: rendered.metadata,
     ...documentOptions(pr),
