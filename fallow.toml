@@ -226,5 +226,5 @@ exports = ["ensureBundleSupport"]
 # `LinkProps`, `useParams`, `useSearchParams`) — Remix-shaped twins of denext's own
 # navigation exports (`src/client/navigation.ts`), intentionally distinct implementations.
 [[ignoreExports]]
-file = "src/compat/remix/mod.ts"
+file = "src/compat/remix/client.ts"
 exports = ["Link", "LinkProps", "useParams", "useSearchParams"]
