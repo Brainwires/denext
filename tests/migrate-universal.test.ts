@@ -104,6 +104,33 @@ Deno.test("next.config drop-keys carry per-key guidance, not a lumped drop", asy
   }
 });
 
+Deno.test("next.config is honored even when a plugin wrapper crashes AFTER exporting it", async () => {
+  // fumadocs-mdx's `createMDX(...)` (and other config wrappers) spawn background work that
+  // can throw asynchronously once the config object is already handed over. The evaluation
+  // must keep the translated config instead of reporting "could not be evaluated".
+  const dir = await tmp("mig_asynccrash");
+  try {
+    await Deno.writeTextFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { react: "19.0.0" } }),
+    );
+    await Deno.writeTextFile(join(dir, "package-lock.json"), "{}\n");
+    await Deno.mkdir(join(dir, "app"), { recursive: true });
+    await Deno.writeTextFile(
+      join(dir, "next.config.mjs"),
+      `setTimeout(() => { throw new Error("watcher died"); }, 0);\n` +
+        `export default { basePath: "/docs", trailingSlash: true };\n`,
+    );
+    await migrateProject(dir);
+    const cfg = await Deno.readTextFile(join(dir, "denext.config.ts"));
+    assertStringIncludes(cfg, `basePath: "/docs"`);
+    assertStringIncludes(cfg, "trailingSlash: true");
+    assert(!cfg.includes("could not be evaluated"), "the translation was kept");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("migrate is idempotent — a second run produces byte-identical generated files", async () => {
   const dir = await tmp("mig_idem");
   try {

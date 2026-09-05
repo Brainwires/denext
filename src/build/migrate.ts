@@ -707,7 +707,11 @@ if (cfg && typeof cfg === "object") {
   }
   for (const k of Object.keys(cfg)) if (DROP.includes(k)) out.dropped.push(k);
 }
-console.log(JSON.stringify(out));
+console.log("__DENEXT_NEXT_CONFIG__" + JSON.stringify(out));
+// Exit NOW: a config wrapper (fumadocs-mdx's createMDX, a plugin spawning a watcher) may keep
+// the event loop alive or crash asynchronously after the config object was already handed
+// over — that must not turn a successful evaluation into a failed one.
+Deno.exit(0);
 `;
 
 /**
@@ -789,11 +793,13 @@ async function evalNextConfig(
     const w = child.stdin.getWriter();
     await w.write(new TextEncoder().encode(NEXT_EVAL_PROGRAM));
     await w.close();
-    const { code, stdout } = await child.output();
-    if (code !== 0) return { ...base, raw: true };
-    const line = new TextDecoder().decode(stdout).trim().split("\n").pop() ??
-      "";
-    const parsed = JSON.parse(line) as Pick<
+    const { stdout } = await child.output();
+    // The result line is marker-prefixed and read regardless of the exit code: the config
+    // may have been printed before a plugin's background work crashed the process.
+    const line = new TextDecoder().decode(stdout).split("\n")
+      .find((l) => l.startsWith("__DENEXT_NEXT_CONFIG__"));
+    if (!line) return { ...base, raw: true };
+    const parsed = JSON.parse(line.slice("__DENEXT_NEXT_CONFIG__".length)) as Pick<
       NextConfigTranslation,
       "fields" | "rules" | "dropped"
     >;
