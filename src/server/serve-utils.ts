@@ -16,10 +16,15 @@ const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable";
  */
 const REVALIDATE_CACHE_CONTROL = "public, max-age=0, must-revalidate";
 
-/** A basename that carries a content hash (`chunk-<hash>.js`, `<name>-<hash>.woff2`, …). */
+/**
+ * A basename that carries a content hash: a split chunk (`chunk-<hash>.js`), a `<name>-<hash>.ext`
+ * asset, or a self-hosted font — named by a hash of its source URL alone (`<base36>.woff2`).
+ */
 function isContentHashed(rel: string): boolean {
   const base = rel.slice(rel.lastIndexOf("/") + 1);
-  return /^chunk-[a-z0-9_-]+\.js$/i.test(base) || /[-.][0-9a-f]{8,}\.[a-z0-9]+$/i.test(base);
+  return /^chunk-[a-z0-9_-]+\.js$/i.test(base) ||
+    /[-.][0-9a-f]{8,}\.[a-z0-9]+$/i.test(base) ||
+    /^[a-z0-9]{5,}\.(woff2?|ttf|otf|eot)$/i.test(base);
 }
 
 /**

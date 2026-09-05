@@ -254,3 +254,31 @@ Deno.test("exportListNames parses an `export { … }` list body", () => {
   // Type-only entries and malformed names are not runtime exports.
   assertEquals(exportListNames("type T, 1bad, ok"), ["ok"]);
 });
+
+Deno.test("crawlLocalModules follows RUNTIME import edges only — a type-only import ships no code", async () => {
+  const app = await Deno.makeTempDir();
+  try {
+    await Deno.writeTextFile(
+      join(app, "page.tsx"),
+      `import type { Props } from "./types.ts";\nimport { label } from "./util.ts";\n` +
+        `export default function Page(_p: Props) { return label; }`,
+    );
+    // A types module whose only import is a hooks-defining runtime module (as
+    // `src/compat/react-types.ts` does for `Context<T>`): type-only, so unreachable at runtime.
+    await Deno.writeTextFile(
+      join(app, "types.ts"),
+      `import type { State } from "./hooks.ts";\nexport interface Props { s?: State }`,
+    );
+    await Deno.writeTextFile(
+      join(app, "hooks.ts"),
+      `export type State = number;\nexport function useThing() { return 1; }`,
+    );
+    await Deno.writeTextFile(join(app, "util.ts"), `export const label = "x";`);
+    const locals = await crawlLocalModules([join(app, "page.tsx")]);
+    const names = locals.filter((p) => p.startsWith(app)).map((p) => p.slice(app.length + 1))
+      .sort();
+    assertEquals(names, ["page.tsx", "util.ts"], "types.ts and hooks.ts are type-only");
+  } finally {
+    await Deno.remove(app, { recursive: true });
+  }
+});
