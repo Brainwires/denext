@@ -19,6 +19,7 @@ import type { VNode, VNodeChild } from "../../jsx/types.ts";
 import {
   type IntlConfig,
   IntlContext,
+  type IntlFormats,
   makeTranslator,
   type NestedMessages,
   type Translator,
@@ -105,15 +106,25 @@ export function createTranslator(
  * @returns The {@link Formatter}.
  */
 export function createFormatter(
-  config: { locale: string; timeZone?: string; now?: Date },
+  config: { locale: string; timeZone?: string; now?: Date; formats?: IntlFormats },
 ): Formatter {
-  const { locale, timeZone, now } = config;
+  const { locale, timeZone, now, formats } = config;
+  // A string names an entry of the provider's `formats`; an unknown name is an error (as in
+  // next-intl) rather than a silent default.
+  const named = <O>(kind: keyof IntlFormats, o: O | string | undefined): O | undefined => {
+    if (typeof o !== "string") return o;
+    const hit = (formats?.[kind] as Record<string, O> | undefined)?.[o];
+    if (!hit) throw new Error(`next-intl: no \`formats.${kind}.${o}\` format is configured`);
+    return hit;
+  };
   return {
     dateTime(date, options) {
-      return new Intl.DateTimeFormat(locale, { timeZone, ...options }).format(date);
+      const o = named<Intl.DateTimeFormatOptions>("dateTime", options);
+      return new Intl.DateTimeFormat(locale, { timeZone, ...o }).format(date);
     },
     number(value, options) {
-      return new Intl.NumberFormat(locale, options).format(value);
+      return new Intl.NumberFormat(locale, named<Intl.NumberFormatOptions>("number", options))
+        .format(value);
     },
     relativeTime(date, nowArg) {
       const from = new Date(nowArg ?? now ?? new Date()).getTime();
@@ -121,7 +132,8 @@ export function createFormatter(
       return formatRelative(locale, to - from);
     },
     list(items, options) {
-      return new Intl.ListFormat(locale, options).format(items);
+      return new Intl.ListFormat(locale, named<Intl.ListFormatOptions>("list", options))
+        .format(items);
     },
   };
 }
@@ -148,6 +160,8 @@ export interface NextIntlClientProviderProps {
   timeZone?: string;
   /** "Now" reference for relative-time formatting. */
   now?: Date;
+  /** Named formats (`formats.dateTime.short`, …) for `useFormatter`. */
+  formats?: IntlFormats;
   /** The subtree that consumes translations. */
   children?: VNodeChild;
 }
@@ -164,6 +178,7 @@ export function NextIntlClientProvider(props: NextIntlClientProviderProps): VNod
     messages: props.messages ?? {},
     timeZone: props.timeZone,
     now: props.now,
+    formats: props.formats,
   };
   return h(IntlContext, { value, children: props.children });
 }
@@ -213,14 +228,14 @@ export function useNow(_options?: { updateInterval?: number }): Date {
 
 /** The formatter surface returned by {@link useFormatter}. */
 export interface Formatter {
-  /** Format a date/time. */
-  dateTime(date: Date | number, options?: Intl.DateTimeFormatOptions): string;
-  /** Format a number. */
-  number(value: number, options?: Intl.NumberFormatOptions): string;
+  /** Format a date/time (options, or the name of a `formats.dateTime` entry). */
+  dateTime(date: Date | number, options?: Intl.DateTimeFormatOptions | string): string;
+  /** Format a number (options, or the name of a `formats.number` entry). */
+  number(value: number, options?: Intl.NumberFormatOptions | string): string;
   /** Format a relative time between `date` and `now` (or the provider "now"). */
   relativeTime(date: Date | number, now?: Date | number): string;
-  /** Format a list of strings. */
-  list(items: Iterable<string>, options?: Intl.ListFormatOptions): string;
+  /** Format a list of strings (options, or the name of a `formats.list` entry). */
+  list(items: Iterable<string>, options?: Intl.ListFormatOptions | string): string;
 }
 
 /**
@@ -230,8 +245,8 @@ export interface Formatter {
  * @returns The {@link Formatter}.
  */
 export function useFormatter(): Formatter {
-  const { locale, timeZone, now } = useIntl();
-  return createFormatter({ locale, timeZone, now });
+  const { locale, timeZone, now, formats } = useIntl();
+  return createFormatter({ locale, timeZone, now, formats });
 }
 
 /** Pick a sensible unit for a millisecond delta and format it relatively. */

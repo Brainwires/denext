@@ -48,6 +48,11 @@ export function setRequestAdapter(adapter: (request: Request) => Request): void 
   requestAdapter = adapter;
 }
 
+/** Apply the installed request adapter (identity unless `next/server` registered one). */
+export function adaptRequest(request: Request): Request {
+  return requestAdapter(request);
+}
+
 /** Extra context passed to a middleware handler alongside the request. */
 export interface MiddlewareContext {
   /** The request URL, pre-parsed for convenience. */
@@ -359,8 +364,20 @@ export function matches(config: MiddlewareConfig | undefined, pathname: string):
   const entries = Array.isArray(matcher) ? matcher : [matcher];
   return entries.some((e) => {
     const source = typeof e === "string" ? e : e?.source;
-    return typeof source === "string" && matcherToRegExp(source).test(pathname);
+    return typeof source === "string" && compiledMatcher(source).test(pathname);
   });
+}
+
+/** `matcherToRegExp` memoized per source (a matcher is compiled once, not per request). */
+const matcherCache = new Map<string, RegExp>();
+function compiledMatcher(source: string): RegExp {
+  let re = matcherCache.get(source);
+  if (!re) {
+    re = matcherToRegExp(source);
+    if (matcherCache.size >= 256) matcherCache.clear(); // matchers are config, not input
+    matcherCache.set(source, re);
+  }
+  return re;
 }
 
 /** Normalize a module export into an ordered list of entries. */

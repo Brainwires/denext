@@ -55,10 +55,38 @@ const HK_DEFERRED = 9;
 const HK_LAYOUT = 10;
 const HK_INSERTION = 11;
 
+/**
+ * Set for the StrictMode second render pass: hook cells are re-read, no NEW effect entries
+ * are queued (the first pass's entries — which carry the StrictMode setup→cleanup→setup —
+ * are the ones committed). Cleared when a render-phase update discards a pass.
+ */
+let suppressEffectQueue = false;
+export function setSuppressEffectQueue(on: boolean): void {
+  suppressEffectQueue = on;
+}
+
+/** Set while a Fast Refresh swap re-renders an edited component (its hook count may change). */
+let refreshSwapRender = false;
+export function setRefreshSwapRender(on: boolean): void {
+  refreshSwapRender = on;
+}
+
 function getHook(kind: number): HookCell {
   const inst = currentFiber!;
   const hooks = inst.hooks!;
-  if (hookIndex >= hooks.length) hooks.push({});
+  if (hookIndex >= hooks.length) {
+    // An already-mounted component (it has a current fiber) rendering MORE hooks than last
+    // time is a Rules-of-Hooks violation (a hook inside a condition/loop): React throws here,
+    // and so does denext — silently growing the cell list would pair states with the wrong
+    // hooks. A Fast Refresh swap of an edited component is the one legitimate growth.
+    if (hooks.length > 0 && inst.alternate !== null && !refreshSwapRender) {
+      throw new Error(
+        "Rendered more hooks than during the previous render. Hooks must be called in the " +
+          "same order on every render (not inside conditions, loops or after an early return).",
+      );
+    }
+    hooks.push({});
+  }
   const cell = hooks[hookIndex++];
   // Tag the cell's hook kind (one int write) so a refresh swap can compare the full
   // hook sequence, not just its length. Prod never refresh-swaps, so it's only ever
@@ -80,9 +108,13 @@ function scheduleEffect(
   deps?: DependencyList,
   offscreenAware = true,
 ): void {
-  if (!depsChanged(cell.deps, deps)) return;
+  if (suppressEffectQueue || !depsChanged(cell.deps, deps)) return;
   const strictMount = cell.mounted !== true && inst.strict === true && devHydrationActive();
   cell.mounted = true;
+  // This render's deps, recorded on the cell when the effect COMMITS (React's semantics):
+  // a render that is discarded (interrupted, or re-run by a render-phase update) must not
+  // leave the cell believing its deps already match the values that never took effect.
+  const nextDeps = deps ? [...deps] : undefined;
   // A thunk that runs this render's setup and stores its cleanup — the unit both
   // the initial mount and an Offscreen reconnect re-run.
   const mount = () => {
@@ -93,6 +125,7 @@ function scheduleEffect(
   // runs before the sibling that acquires it in setup. The setup pass captures the
   // Offscreen reconnect thunk and performs the StrictMode double-invoke.
   const entry: CommitEffect = (() => {
+    cell.deps = nextDeps;
     mount();
     // Remember how to rebuild this effect after an Offscreen hide tore it down.
     // Insertion effects are excluded — they aren't part of the offscreen cycle.
@@ -108,7 +141,6 @@ function scheduleEffect(
     if (typeof cell.cleanup === "function") cell.cleanup();
   };
   queue.push(entry);
-  cell.deps = deps ? [...deps] : undefined;
 }
 
 /**

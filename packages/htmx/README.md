@@ -5,7 +5,7 @@ shipped as a denext plugin. Add it, drop `<Htmx/>` in your layout, and every
 `hx-*` attribute just works — server-rendered verbatim, **0 KB of denext client
 JS** on pages that use only htmx.
 
-The htmx runtime is **vendored** (currently **v2.0.10**) and served from your
+The htmx runtime is **vendored** (currently **v2.0.11**) and served from your
 own origin — zero npm, zero CDN, and it works unchanged under a strict
 `script-src 'self'` Content-Security-Policy. This package's version tracks the
 htmx version it wraps.

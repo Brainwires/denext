@@ -130,7 +130,11 @@ export async function loadEnv(opts: LoadEnvOptions = {}): Promise<Record<string,
   }
 
   for (const [key, value] of Object.entries(merged)) {
-    if (opts.override || Deno.env.get(key) === undefined) Deno.env.set(key, value);
+    // Under a partial `--allow-env=A,B` the read/write of an unlisted key throws; a `.env`
+    // key the process wasn't granted is skipped, never a crash at boot.
+    try {
+      if (opts.override || Deno.env.get(key) === undefined) Deno.env.set(key, value);
+    } catch { /* not permitted for this key */ }
   }
   return merged;
 }

@@ -28,9 +28,31 @@ export interface DynamicOptions<P = Record<string, unknown>> {
    * the client — for browser-only components (e.g. those touching `window`).
    */
   ssr?: boolean;
-  /** Fallback component shown while the target module loads. */
-  loading?: Component<P>;
+  /** Fallback component shown while the target module loads (receives {@link DynamicLoadingProps}). */
+  loading?: Component<DynamicLoadingProps>;
 }
+
+/** The props `next/dynamic` passes to a `loading` component. */
+export interface DynamicLoadingProps {
+  /** A load error, when the import rejected. */
+  error?: Error | null;
+  /** True while the module is loading. */
+  isLoading?: boolean;
+  /** True once the loading delay has elapsed (denext: always true while loading). */
+  pastDelay?: boolean;
+  /** True when loading timed out (denext: never). */
+  timedOut?: boolean;
+  /** Retry the import after an error. */
+  retry?: () => void;
+}
+
+const LOADING_PROPS: DynamicLoadingProps = {
+  error: null,
+  isLoading: true,
+  pastDelay: true,
+  timedOut: false,
+  retry: () => {},
+};
 
 /**
  * Lazily load a component. Returns a component you can render immediately; its
@@ -69,7 +91,7 @@ export function dynamic<P = Record<string, unknown>>(
   function LazyInner(props: P): VNode {
     // ssr:false — skip loading on the server; the client mounts it after paint.
     if (!ssr && isServer()) {
-      return Loading ? h(Loading, props as VProps) : h(FRAGMENT, {});
+      return Loading ? h(Loading, LOADING_PROPS as VProps) : h(FRAGMENT, {});
     }
     const Resolved = use(load());
     return h(Resolved as Component<unknown>, props as VProps);
@@ -77,7 +99,7 @@ export function dynamic<P = Record<string, unknown>>(
 
   function DynamicComponent(props: P): VNode {
     return h(Suspense, {
-      fallback: Loading ? h(Loading, props as VProps) : undefined,
+      fallback: Loading ? h(Loading, LOADING_PROPS as VProps) : undefined,
       children: h(LazyInner as Component<unknown>, props as VProps),
     });
   }

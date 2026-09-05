@@ -8,27 +8,42 @@
 // module never enters the shared chunk unless the app actually uses signals), and
 // each `useSignal`/`useStore` adopts its value instead of recomputing the initializer.
 
+import { renderScope } from "./render-scope.ts";
+
 /** The global the entry parks the adopted state on (set with no import). */
 const GLOBAL_KEY = "__denextSignalState";
 
-/** Server-side collector, active only during a render that captures signal state. */
-let collector: Record<string, unknown> | null = null;
+// The server-side collector lives on the per-request render scope (see `render-scope.ts`):
+// concurrent renders must not record into each other's maps.
 
-/** Begin capturing signal values (server render). Pair with {@link endSignalCollection}. */
-export function beginSignalCollection(): void {
-  collector = {};
+/**
+ * Begin capturing signal values (server render). Pair with {@link endSignalCollection}, or
+ * call the returned finisher — it is bound to the scope that began the collection, so a
+ * caller that finishes LATER (after the request's async context is gone, e.g. a PPR resume
+ * whose holes settle into the stream) still reads the right map.
+ */
+export function beginSignalCollection(): () => Record<string, unknown> {
+  const scope = renderScope();
+  scope.signals = {};
+  return () => {
+    const out = scope.signals ?? {};
+    scope.signals = null;
+    return out;
+  };
 }
 
 /** Finish capturing and return the collected `{ id → value }` map (server render). */
 export function endSignalCollection(): Record<string, unknown> {
-  const out = collector ?? {};
-  collector = null;
+  const scope = renderScope();
+  const out = scope.signals ?? {};
+  scope.signals = null;
   return out;
 }
 
 /** Record a signal's current value under its id (no-op when not collecting). */
 export function recordSignal(id: string, value: unknown): void {
-  if (collector !== null) collector[id] = value;
+  const { signals } = renderScope();
+  if (signals !== null) signals[id] = value;
 }
 
 /**

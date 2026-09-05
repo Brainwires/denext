@@ -334,13 +334,14 @@ export type ResolvingViewport = Promise<Viewport>;
  * key with no per-user component and served to other users. `params` and
  * `searchParams` are part of the cache key, so they are safe to read.
  */
-export interface PageProps {
+export interface PageProps<P extends RouteParams = RouteParams> {
   /**
    * Dynamic route parameters extracted from the pathname (`[slug]` → string,
    * `[...rest]` → string[]). Readable synchronously AND awaitable (Next.js 15's
-   * `Promise` shape): `params.slug` and `(await params).slug` are both fine.
+   * `Promise` shape): `params.slug` and `(await params).slug` are both fine. Narrow the
+   * shape per route: `PageProps<{ slug: string }>`.
    */
-  params: AsyncProps<RouteParams>;
+  params: AsyncProps<P>;
   /**
    * The URL query as Next.js's record (`?a=1&a=2&b=x` → `{ a: ["1", "2"], b: "x" }`),
    * readable synchronously and awaitable. The underlying `URLSearchParams` is the
@@ -349,13 +350,16 @@ export interface PageProps {
   searchParams: AsyncProps<SearchParams> & { readonly raw: URLSearchParams };
 }
 
-/** Props passed to a layout component. */
-export interface LayoutProps {
+/**
+ * Props passed to a layout component. `Slots` names the layout's parallel-route slots
+ * (`@sidebar` → `LayoutProps<RouteParams, "sidebar">` adds a `sidebar` prop).
+ */
+export type LayoutProps<P extends RouteParams = RouteParams, Slots extends string = never> = {
   /** The nested page or layout content this layout wraps. */
   children: VNode | VNode[];
   /** Dynamic route parameters extracted from the pathname (sync + awaitable). */
-  params: AsyncProps<RouteParams>;
-}
+  params: AsyncProps<P>;
+} & { [S in Slots]: VNode | VNode[] };
 
 /**
  * `generateStaticParams` — the param sets to pre-render. Called with the parent segments'

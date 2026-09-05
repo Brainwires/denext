@@ -10,35 +10,16 @@
 // `DENEXT_PREVIEW_SECRET`; without it a random per-process key is used (preview works
 // within one process but not across restarts/instances) and a one-time warning fires.
 
+import { fromBase64Url, hmacSign, hmacVerify, toBase64Url } from "@denext/denext/plugin-kit";
+
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 /** The preview cookie name (httpOnly; not `__Host-` so it works under a basePath). */
 const PREVIEW_COOKIE = "__denext_preview";
 
-function toBase64Url(bytes: Uint8Array): string {
-  let s = "";
-  for (const b of bytes) s += String.fromCharCode(b);
-  return btoa(s).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
-}
-
-function fromBase64Url(b64: string): Uint8Array {
-  const pad = b64.length % 4 === 0 ? "" : "=".repeat(4 - (b64.length % 4));
-  const bin = atob(b64.replaceAll("-", "+").replaceAll("_", "/") + pad);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
-}
-
-function keyFor(secret: string): Promise<CryptoKey> {
-  return crypto.subtle.importKey(
-    "raw",
-    encoder.encode(secret) as BufferSource,
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign", "verify"],
-  );
-}
+/** The MAC domain of preview tokens — distinct from denext's session cookie and Remix sessions. */
+const PREVIEW_MAC_DOMAIN = "denext.pages-router.preview.v1";
 
 /** Sign preview `data` into a `payload.sig` token (HMAC-SHA256, base64url). */
 export async function signPreview(
@@ -46,12 +27,7 @@ export async function signPreview(
   secret: string,
 ): Promise<string> {
   const payload = toBase64Url(encoder.encode(JSON.stringify({ d: data })));
-  const sig = await crypto.subtle.sign(
-    "HMAC",
-    await keyFor(secret),
-    encoder.encode(payload) as BufferSource,
-  );
-  return `${payload}.${toBase64Url(new Uint8Array(sig))}`;
+  return `${payload}.${await hmacSign(payload, secret, PREVIEW_MAC_DOMAIN)}`;
 }
 
 /**
@@ -68,23 +44,7 @@ export async function readPreview(
   const dot = token.lastIndexOf(".");
   if (dot <= 0) return null;
   const payload = token.slice(0, dot);
-  let sigBytes: BufferSource;
-  try {
-    sigBytes = fromBase64Url(token.slice(dot + 1)) as BufferSource;
-  } catch {
-    return null;
-  }
-  const data = encoder.encode(payload) as BufferSource;
-  let ok = false;
-  for (const secret of secrets) {
-    if (
-      await crypto.subtle.verify("HMAC", await keyFor(secret), sigBytes, data)
-    ) {
-      ok = true;
-      break;
-    }
-  }
-  if (!ok) return null;
+  if (!(await hmacVerify(payload, token.slice(dot + 1), secrets, PREVIEW_MAC_DOMAIN))) return null;
   try {
     const parsed = JSON.parse(decoder.decode(fromBase64Url(payload))) as {
       d?: unknown;

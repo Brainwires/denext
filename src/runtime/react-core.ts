@@ -100,7 +100,7 @@ function overlayConfig(
   let key = element.key;
   let ref = (element.props as { ref?: unknown }).ref;
   if (config == null) return { key, ref };
-  if (config.key !== undefined) key = config.key as Key;
+  if (config.key !== undefined) key = config.key === null ? null : String(config.key); // React coerces keys to strings
   if (config.ref !== undefined) ref = config.ref;
   for (const k in config) {
     if (k !== "key" && k !== "ref") props[k] = config[k];
@@ -226,6 +226,7 @@ export const Children: ChildrenApi = {
   },
   /** Iterate over children, like `React.Children.forEach` (no cloning). */
   forEach(children: VNodeChildren, fn: (child: VNodeChild, index: number) => void): void {
+    if (children == null) return;
     mapChildren(children, (c, i) => void fn(c, i));
   },
   /** Count the children, like `React.Children.count`. */
@@ -236,6 +237,7 @@ export const Children: ChildrenApi = {
   },
   /** Children as a flat array, like `React.Children.toArray` (elements re-keyed). */
   toArray(children: VNodeChildren): VNodeChild[] {
+    if (children == null) return [];
     return mapChildren(children, (c) => c) as VNodeChild[];
   },
   /** The single ELEMENT child (as authored), or throw — like `React.Children.only`. */

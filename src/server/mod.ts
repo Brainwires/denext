@@ -214,12 +214,16 @@ export { cappedBody, readCappedBody, STALLED, TOO_LARGE } from "./body.ts";
 // User-Agent parsing (userAgent(request) / userAgentFromString(ua)).
 export { type UserAgent, userAgent, userAgentFromString } from "./user-agent.ts";
 export type {
+  AwaitableCookieStore,
+  AwaitableDraftMode,
+  AwaitableHeaders,
   CookieSetOptions,
   CookieStore,
   DraftMode,
   DraftTokenStore,
   RequestContext,
 } from "./request-context.ts";
+export type { RenderScope } from "../runtime/render-scope.ts";
 
 // Signed-cookie sessions (auth primitive).
 export { getSession } from "./session.ts";

@@ -5,6 +5,7 @@
 // use, so behavior matches. `runTool` wraps a handler into the MCP `{ content, isError }`
 // result shape.
 
+import { isAbsolute, relative, resolve } from "@std/path";
 import { generateArtifact, type GenerateKind } from "../build/generate.ts";
 import { collectDoctorChecks } from "../cli/commands/doctor.ts";
 import { runCodemod } from "../build/codemod.ts";
@@ -60,6 +61,33 @@ function formatDiagnostics(diags: Diagnostic[]): string {
 }
 
 const str = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);
+
+/**
+ * The directory every tool's `dir` is confined to once the stdio server arms it (the project
+ * `denext mcp` was launched in). `null` = unconfined (library callers, tests).
+ */
+let toolRoot: string | null = null;
+
+/**
+ * Confine tool `dir` arguments to `root` (pass `null` to lift). The MCP server is configured
+ * per project; without this a prompt-injected client could pass `../../other-app` (or an
+ * absolute path) and read, scaffold into or render any project the user can reach.
+ */
+export function setToolRoot(root: string | null): void {
+  toolRoot = root === null ? null : resolve(root);
+}
+
+/** A tool's `dir` argument resolved against — and, when armed, confined to — {@link toolRoot}. */
+function projectDir(raw: unknown): string {
+  const base = toolRoot ?? Deno.cwd();
+  const abs = resolve(base, str(raw, "."));
+  if (toolRoot === null) return abs;
+  const rel = relative(toolRoot, abs);
+  if (rel === ".." || rel.startsWith("../") || rel.startsWith("..\\") || isAbsolute(rel)) {
+    throw new Error(`dir must be inside the project denext mcp was started in (${toolRoot})`);
+  }
+  return abs;
+}
 
 /** Format the doctor checks for a directory into a text report + error flag. */
 async function doctorReport(dir: string): Promise<{ text: string; isError?: boolean }> {
@@ -188,7 +216,7 @@ export const TOOLS: readonly Tool[] = [
     },
     run: async (args) => {
       const { written, skipped } = await generateArtifact(
-        str(args.dir, "."),
+        projectDir(args.dir),
         str(args.kind) as GenerateKind,
         str(args.name),
       );
@@ -207,7 +235,7 @@ export const TOOLS: readonly Tool[] = [
       type: "object",
       properties: { dir: { type: "string", description: "Project directory (default: .)" } },
     },
-    run: (args) => doctorReport(str(args.dir, ".")),
+    run: (args) => doctorReport(projectDir(args.dir)),
   },
   {
     name: "denext_codemod",
@@ -218,7 +246,7 @@ export const TOOLS: readonly Tool[] = [
       type: "object",
       properties: { dir: { type: "string", description: "Project directory (default: .)" } },
     },
-    run: (args) => codemodReport(str(args.dir, ".")),
+    run: (args) => codemodReport(projectDir(args.dir)),
   },
   {
     name: "denext_list_routes",
@@ -229,7 +257,7 @@ export const TOOLS: readonly Tool[] = [
       type: "object",
       properties: { dir: { type: "string", description: "Project directory (default: .)" } },
     },
-    run: async (args) => ({ text: await listRoutes(str(args.dir, ".")) }),
+    run: async (args) => ({ text: await listRoutes(projectDir(args.dir)) }),
   },
   {
     name: "denext_dev_logs",
@@ -250,7 +278,7 @@ export const TOOLS: readonly Tool[] = [
     },
     run: async (args) => ({
       text: await devLogs(
-        str(args.dir, "."),
+        projectDir(args.dir),
         str(args.kind) || undefined,
         typeof args.limit === "number" ? args.limit : undefined,
       ),
@@ -275,7 +303,7 @@ export const TOOLS: readonly Tool[] = [
       },
     },
     run: async (args) => {
-      const dir = str(args.dir, ".");
+      const dir = projectDir(args.dir);
       if (str(args.component)) {
         const props = (args.props && typeof args.props === "object")
           ? args.props as Record<string, unknown>
@@ -303,7 +331,7 @@ export const TOOLS: readonly Tool[] = [
       },
       required: ["path"],
     },
-    run: async (args) => ({ text: await routeMap(str(args.dir, "."), str(args.path)) }),
+    run: async (args) => ({ text: await routeMap(projectDir(args.dir), str(args.path)) }),
   },
   {
     name: "denext_search_docs",
@@ -343,7 +371,7 @@ export const TOOLS: readonly Tool[] = [
         dir: { type: "string", description: "Project directory (default: current directory)." },
       },
     },
-    run: async (args) => ({ text: indexStats(await ensureCodeIndex(str(args.dir, "."))) }),
+    run: async (args) => ({ text: indexStats(await ensureCodeIndex(projectDir(args.dir))) }),
   },
   {
     name: "denext_query_codebase",
@@ -367,7 +395,7 @@ export const TOOLS: readonly Tool[] = [
       const query = str(args.query);
       if (!query) return { text: "Pass a `query` string to search.", isError: true };
       const limit = typeof args.limit === "number" ? args.limit : undefined;
-      const hits = await queryCodebase(str(args.dir, "."), query, limit);
+      const hits = await queryCodebase(projectDir(args.dir), query, limit);
       return { text: formatCodeHits(hits, query) };
     },
   },
@@ -387,7 +415,7 @@ export const TOOLS: readonly Tool[] = [
     run: async (args) => {
       const symbol = str(args.symbol);
       if (!symbol) return { text: "Pass a `symbol` name to locate.", isError: true };
-      return { text: formatDefs(await findDefinition(str(args.dir, "."), symbol), symbol) };
+      return { text: formatDefs(await findDefinition(projectDir(args.dir), symbol), symbol) };
     },
   },
   {
@@ -408,7 +436,9 @@ export const TOOLS: readonly Tool[] = [
       const symbol = str(args.symbol);
       if (!symbol) return { text: "Pass a `symbol` name to search for.", isError: true };
       const limit = typeof args.limit === "number" ? args.limit : undefined;
-      return { text: formatRefs(await findReferences(str(args.dir, "."), symbol, limit), symbol) };
+      return {
+        text: formatRefs(await findReferences(projectDir(args.dir), symbol, limit), symbol),
+      };
     },
   },
 ];

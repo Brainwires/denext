@@ -176,8 +176,18 @@ export function useCallback<T extends (...args: never[]) => unknown>(
   return dispatcher().useMemo(() => fn, deps);
 }
 
-/** Create a mutable ref object whose `.current` persists across renders. */
-export function useRef<T>(initial: T): { current: T } {
+/**
+ * Create a mutable ref object whose `.current` persists across renders. React's three
+ * signatures: `useRef<T>(value)` → `{ current: T }`, `useRef<T>(null)` → `{ current: T | null }`
+ * (the DOM-ref idiom), `useRef<T>()` → `{ current: T | undefined }`.
+ */
+export function useRef<T>(initial: T): { current: T };
+/** `useRef<T>(null)` — the DOM-ref idiom: `current` is `T | null`. */
+export function useRef<T>(initial: T | null): { current: T | null };
+/** `useRef<T>()` — an initially-undefined cell. */
+export function useRef<T = undefined>(): { current: T | undefined };
+/** Implementation signature. */
+export function useRef<T>(initial?: T): { current: T | undefined } {
   return dispatcher().useRef(initial);
 }
 
@@ -370,7 +380,7 @@ export function useOptimistic<S, A = S>(
     force((n) => n + 1);
     // React discards the optimistic value when the transition/action that applied it
     // settles — success OR failure — whether or not `state` changed. Outside a transition
-    // (React warns) it reverts on the next tick.
+    // (React warns) it persists until the base `state` changes.
     const revert = () => {
       if (Object.is(store.current.value, store.current.base)) return;
       store.current.value = store.current.base;

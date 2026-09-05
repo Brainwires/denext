@@ -5,6 +5,7 @@
 // intrinsic elements, and correct HTML escaping. Hooks resolve through a
 // read-only SSR dispatcher (state is initial-only; effects don't run).
 
+import { renderScope } from "../runtime/render-scope.ts";
 import { invokeWithRenderPhase, ssrStateSlot } from "./render-phase.ts";
 import { FRAGMENT, PORTAL, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
 import {
@@ -343,16 +344,9 @@ export interface HeadCollector {
   serverInserted?: string[];
 }
 
-/**
- * The active `useServerInsertedHTML` sink for the in-flight {@link renderToString}
- * pass, or null outside SSR (so the hook is a no-op on the client). Set/cleared by
- * `renderToString`; a module singleton keyed on globalThis so an inlined next-compat
- * runtime copy and the host share ONE sink (mirrors the hook dispatcher pattern).
- */
-const INSERT_SINK_KEY = Symbol.for("denext.serverInsertSink");
-interface SinkHolder {
-  [INSERT_SINK_KEY]?: ((cb: () => VNodeChildren) => void) | null;
-}
+// The active `useServerInsertedHTML` sink lives on the per-request render scope (see
+// `render-scope.ts`): set/cleared by the SSR entries, read by the hook, and — because
+// concurrent renders interleave at every await — never a process-wide module global.
 
 /**
  * Begin collecting {@link useServerInsertedHTML} callbacks for a render pass: install the
@@ -365,10 +359,10 @@ export function beginServerInsertCollection(): {
   end: () => void;
 } {
   const inserted: Array<() => VNodeChildren> = [];
-  const holder = globalThis as SinkHolder;
-  const prev = holder[INSERT_SINK_KEY];
-  holder[INSERT_SINK_KEY] = (cb) => inserted.push(cb);
-  return { inserted, end: () => void (holder[INSERT_SINK_KEY] = prev) };
+  const scope = renderScope();
+  const prev = scope.insertSink;
+  scope.insertSink = (cb) => inserted.push(cb);
+  return { inserted, end: () => void (scope.insertSink = prev) };
 }
 
 /**
@@ -643,7 +637,7 @@ function renderChildInto(child: VNodeChild, ctx: RenderCtx): void | Promise<void
     ctx.out.push(escapeHtml(child));
     return;
   }
-  if (typeof child === "number") {
+  if (typeof child === "number" || typeof child === "bigint") {
     ctx.out.push(escapeHtml(String(child)));
     return;
   }

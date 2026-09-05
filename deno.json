@@ -32,6 +32,7 @@
     "./react-dom/server": "./src/compat/react-dom-server.ts",
     "./react-dom/server.browser": "./src/compat/react-dom-server.ts",
     "./react-dom/server.edge": "./src/compat/react-dom-server.ts",
+    "./react-dom/static": "./src/compat/react-dom-server.ts",
     "./react-dom/test-utils": "./src/compat/test-utils.ts",
     "./react/jsx-runtime": "./src/jsx/jsx-runtime.ts",
     "./react/jsx-dev-runtime": "./src/jsx/jsx-runtime.ts",

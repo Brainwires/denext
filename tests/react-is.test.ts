@@ -68,7 +68,9 @@ Deno.test("react-is: typeOf returns the classifying symbol", () => {
   assertEquals(ReactIs.typeOf(h(Fragment, null)), ReactIs.Fragment);
   const M = memo((_p: Record<string, unknown>) => h("span", null));
   assertEquals(ReactIs.typeOf(h(M as Any, null)), ReactIs.Memo);
-  assertEquals(ReactIs.typeOf(h("div", null)), undefined);
+  // Any other element is a plain element (React returns `Element`, not undefined).
+  assertEquals(ReactIs.typeOf(h("div", null)), ReactIs.Element);
+  assertEquals(ReactIs.typeOf("not an element"), undefined);
 });
 
 Deno.test("react-is: typeOf classifies provider/consumer/profiler/strictmode", () => {

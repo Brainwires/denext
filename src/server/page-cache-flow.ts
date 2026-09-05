@@ -121,10 +121,39 @@ function regenHeaders(incoming: Headers): Headers {
   return out;
 }
 
+/**
+ * Regeneration backoff: after a regen FAILS (threw, or rendered a 5xx), the next stale hit
+ * for that key does not immediately re-trigger it — a broken upstream under a hot stale page
+ * would otherwise mean one failing regen per request. Doubles from 5 s to 5 min; cleared on
+ * success. Bounded so a flood of distinct failing keys can't grow it without limit.
+ */
+const regenBackoff = new Map<string, { until: number; fails: number }>();
+const REGEN_BACKOFF_BASE_MS = 5_000;
+const REGEN_BACKOFF_MAX_MS = 5 * 60_000;
+const REGEN_BACKOFF_MAX_KEYS = 1_000;
+
+function noteRegenFailure(cacheKey: string): void {
+  const fails = (regenBackoff.get(cacheKey)?.fails ?? 0) + 1;
+  const delay = Math.min(REGEN_BACKOFF_MAX_MS, REGEN_BACKOFF_BASE_MS * 2 ** (fails - 1));
+  regenBackoff.delete(cacheKey);
+  regenBackoff.set(cacheKey, { until: Date.now() + delay, fails });
+  while (regenBackoff.size > REGEN_BACKOFF_MAX_KEYS) {
+    regenBackoff.delete(regenBackoff.keys().next().value!);
+  }
+}
+
+/** True while `cacheKey` is inside its post-failure backoff window. */
+function regenBackedOff(cacheKey: string): boolean {
+  const b = regenBackoff.get(cacheKey);
+  if (!b) return false;
+  if (b.until > Date.now()) return true;
+  return false;
+}
+
 function scheduleBackgroundRegen(pr: PageRequest): void {
   const { app, request } = pr.state;
   const { cacheKey } = pr;
-  if (pageRegenInFlight.has(cacheKey)) return;
+  if (pageRegenInFlight.has(cacheKey) || regenBackedOff(cacheKey)) return;
   pageRegenInFlight.add(cacheKey);
   const regenController = new AbortController();
   // A background regeneration is NOT the triggering visitor: forward only the negotiation
@@ -146,7 +175,12 @@ function scheduleBackgroundRegen(pr: PageRequest): void {
   if (timer !== undefined) Deno.unrefTimer(timer);
   Promise.resolve()
     .then(() => app.handle(regenReq))
-    .catch(() => {})
+    .then((res) => {
+      if (res.status >= 500) noteRegenFailure(cacheKey);
+      else regenBackoff.delete(cacheKey);
+      return res.body?.cancel();
+    })
+    .catch(() => noteRegenFailure(cacheKey))
     .finally(() => {
       if (timer !== undefined) clearTimeout(timer);
       pageRegenInFlight.delete(cacheKey);
@@ -195,7 +229,9 @@ async function awaitLeaderOrClaim(pr: PageRequest): Promise<Response | null> {
     state.ctx.signal?.throwIfAborted();
     const retry = await state.app.config.pageCache!.get(cacheKey);
     if (!retry) return null;
-    return htmlResponse(state, retry.body, retry.status, retry.csp, { "x-denext-cache": "HIT" });
+    // The same path as a first-read hit: a cached PPR shell is RESUMED (holes rendered for
+    // this request, CSP applied), never served as a raw body with unfilled holes.
+    return serveCacheHit(pr, retry);
   }
   if (!pr.isRegen) {
     let release!: () => void;

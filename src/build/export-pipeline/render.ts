@@ -102,6 +102,11 @@ async function writePage(
     if (isNotFound(err)) return skip(ctx, pathname, "renders notFound()");
     throw err;
   }
+  // A `generateStaticParams` value is app data: a segment of `..` (or an empty one) must not
+  // resolve to a file outside `out/`.
+  if (pathname.split("/").some((seg) => seg === "..")) {
+    return skip(ctx, pathname, "path segment escapes the output dir");
+  }
   const file = pageFilePath(ctx.outDir, pathname);
   await ensureDir(dirname(file));
   await Deno.writeTextFile(file, html);

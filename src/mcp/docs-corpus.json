@@ -10,6 +10,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext/Activity",
+      "kind": "function",
+      "title": "Activity",
+      "module": "denext",
+      "url": "/docs/api/denext/Activity",
+      "text": "Activity Activity(props: object): VNode React.Activity (experimental; formerly unstable_Offscreen) — wraps a subtree whose rendering can be deprioritized or hidden (mode=\"hidden\"). denext has no offscreen scheduler, so it renders as a transparent passthrough of its children (the mode prop is accepted and ignored). Lets apps that adopt the API build and render.",
+      "denextOnly": false
+    },
+    {
       "id": "api:denext/AnchorProps",
       "kind": "typeAlias",
       "title": "AnchorProps",
@@ -82,6 +91,24 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext/cache",
+      "kind": "function",
+      "title": "cache",
+      "module": "denext",
+      "url": "/docs/api/denext/cache",
+      "text": "cache cache<A, R>(fn: (...args: A) => R): (...args: A) => R React.cache — memoize a function by its arguments. React's server cache() scopes results to a single request via async context; denext already provides that request-scoped variant in src/server/cache.ts (which pulls node:async_hooks). This is the **client-safe** surface exposed on the react package: a plain persistent memo keyed by argument identity, using a nested Map/WeakMap tree (object args keyed by reference, primitives by value) so libraries importing cache from react resolve and dedupe correctly without dragging server-only APIs into the client bundle. **Lifetime:** during SSR the memo is **request-scoped** (keyed on the current request context, so one request's result is never served to another — matching React and avoiding a cross-request data leak), and the per-request root is garbage-collected with the request. Off-request (a client bundle, or server code outside a request) it falls back to a persistent per-function memo; there, distinct **primitive** args are bounded per node (CACHE_MAX_PER_NODE, evicting the oldest) so they can't grow without limit (object args use a WeakMap and are freed with the arg). Request-scoped roots stay uncapped (freed with the request, matching React). A throwing fn is not cached (it re-runs next call). The function to memoize. A memoized function returning the cached result for equal arguments.",
+      "denextOnly": false
+    },
+    {
+      "id": "api:denext/ChangeEvent",
+      "kind": "interface",
+      "title": "ChangeEvent",
+      "module": "denext",
+      "url": "/docs/api/denext/ChangeEvent",
+      "text": "ChangeEvent interface ChangeEvent<T> A change event (inputs).",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/Children",
       "kind": "variable",
       "title": "Children",
@@ -145,6 +172,42 @@
       "denextOnly": false
     },
     {
+      "id": "api:denext/ComponentProps",
+      "kind": "typeAlias",
+      "title": "ComponentProps",
+      "module": "denext",
+      "url": "/docs/api/denext/ComponentProps",
+      "text": "ComponentProps type ComponentProps<T> = conditional Props of a component or intrinsic element type (React's ComponentProps).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/ComponentPropsWithoutRef",
+      "kind": "typeAlias",
+      "title": "ComponentPropsWithoutRef",
+      "module": "denext",
+      "url": "/docs/api/denext/ComponentPropsWithoutRef",
+      "text": "ComponentPropsWithoutRef type ComponentPropsWithoutRef<T> = PropsWithoutRef<ComponentProps<T>> ComponentProps without ref.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/ComponentPropsWithRef",
+      "kind": "typeAlias",
+      "title": "ComponentPropsWithRef",
+      "module": "denext",
+      "url": "/docs/api/denext/ComponentPropsWithRef",
+      "text": "ComponentPropsWithRef type ComponentPropsWithRef<T> = ComponentProps<T> ComponentProps with ref.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/ComponentType",
+      "kind": "typeAlias",
+      "title": "ComponentType",
+      "module": "denext",
+      "url": "/docs/api/denext/ComponentType",
+      "text": "ComponentType type ComponentType<P> = FunctionComponent<P> | ComponentClass<P> Either a function or class component.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/Context",
       "kind": "interface",
       "title": "Context",
@@ -199,6 +262,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext/CSSProperties",
+      "kind": "interface",
+      "title": "CSSProperties",
+      "module": "denext",
+      "url": "/docs/api/denext/CSSProperties",
+      "text": "CSSProperties interface CSSProperties Inline style object (permissive).",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/denextImageLoader",
       "kind": "function",
       "title": "denextImageLoader",
@@ -214,6 +286,15 @@
       "module": "denext",
       "url": "/docs/api/denext/DependencyList",
       "text": "DependencyList type DependencyList = typeOperator A useEffect/useMemo dependency array.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/Dispatch",
+      "kind": "typeAlias",
+      "title": "Dispatch",
+      "module": "denext",
+      "url": "/docs/api/denext/Dispatch",
+      "text": "Dispatch type Dispatch<A> = (value: A) => void useState/useReducer dispatcher.",
       "denextOnly": true
     },
     {
@@ -235,6 +316,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext/DynamicLoadingProps",
+      "kind": "interface",
+      "title": "DynamicLoadingProps",
+      "module": "denext",
+      "url": "/docs/api/denext/DynamicLoadingProps",
+      "text": "DynamicLoadingProps interface DynamicLoadingProps The props next/dynamic passes to a loading component.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/DynamicOptions",
       "kind": "interface",
       "title": "DynamicOptions",
@@ -244,12 +334,30 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext/EffectCallback",
+      "kind": "typeAlias",
+      "title": "EffectCallback",
+      "module": "denext",
+      "url": "/docs/api/denext/EffectCallback",
+      "text": "EffectCallback type EffectCallback = () => void | parenthesized A useEffect cleanup-returning callback.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/EffectCleanup",
       "kind": "typeAlias",
       "title": "EffectCleanup",
       "module": "denext",
       "url": "/docs/api/denext/EffectCleanup",
       "text": "EffectCleanup type EffectCleanup = void | parenthesized Optional cleanup returned by an effect callback: either nothing, or a function run before the effect re-runs and on unmount.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/ElementRef",
+      "kind": "typeAlias",
+      "title": "ElementRef",
+      "module": "denext",
+      "url": "/docs/api/denext/ElementRef",
+      "text": "ElementRef type ElementRef<T> = conditional The ref/instance type of a component or intrinsic element.",
       "denextOnly": true
     },
     {
@@ -307,6 +415,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext/FC",
+      "kind": "typeAlias",
+      "title": "FC",
+      "module": "denext",
+      "url": "/docs/api/denext/FC",
+      "text": "FC type FC<P> = FunctionComponent<P> Alias for FunctionComponent.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/FontFace",
       "kind": "function",
       "title": "FontFace",
@@ -352,12 +469,30 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext/FormEvent",
+      "kind": "interface",
+      "title": "FormEvent",
+      "module": "denext",
+      "url": "/docs/api/denext/FormEvent",
+      "text": "FormEvent interface FormEvent<T> A form event.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/FormStatus",
       "kind": "interface",
       "title": "FormStatus",
       "module": "denext",
       "url": "/docs/api/denext/FormStatus",
       "text": "FormStatus interface FormStatus Status of the enclosing form's action, as returned by useFormStatus.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/ForwardedRef",
+      "kind": "typeAlias",
+      "title": "ForwardedRef",
+      "module": "denext",
+      "url": "/docs/api/denext/ForwardedRef",
+      "text": "ForwardedRef type ForwardedRef<T> = parenthesized | MutableRefObject<T | null> | null The ref a forwardRef render fn receives.",
       "denextOnly": true
     },
     {
@@ -370,6 +505,15 @@
       "denextOnly": false
     },
     {
+      "id": "api:denext/ForwardRefExoticComponent",
+      "kind": "interface",
+      "title": "ForwardRefExoticComponent",
+      "module": "denext",
+      "url": "/docs/api/denext/ForwardRefExoticComponent",
+      "text": "ForwardRefExoticComponent interface ForwardRefExoticComponent<P> The result of forwardRef — callable, ref-forwarding, with a settable name.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/Fragment",
       "kind": "variable",
       "title": "Fragment",
@@ -377,6 +521,15 @@
       "url": "/docs/api/denext/Fragment",
       "text": "Fragment Fragment: typeOperator Marker used as a VNode type to group children without a wrapping element.",
       "denextOnly": false
+    },
+    {
+      "id": "api:denext/FunctionComponent",
+      "kind": "interface",
+      "title": "FunctionComponent",
+      "module": "denext",
+      "url": "/docs/api/denext/FunctionComponent",
+      "text": "FunctionComponent interface FunctionComponent<P> A function component.",
+      "denextOnly": true
     },
     {
       "id": "api:denext/getImageProps",
@@ -475,6 +628,15 @@
       "module": "denext",
       "url": "/docs/api/denext/HrefInput",
       "text": "HrefInput type HrefInput = Href | UrlObject A string href, or the object form.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/HTMLAttributes",
+      "kind": "interface",
+      "title": "HTMLAttributes",
+      "module": "denext",
+      "url": "/docs/api/denext/HTMLAttributes",
+      "text": "HTMLAttributes interface HTMLAttributes<T> Attributes common to every HTML element (permissive: unknown attrs allowed).",
       "denextOnly": true
     },
     {
@@ -631,6 +793,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext/KeyboardEvent",
+      "kind": "interface",
+      "title": "KeyboardEvent",
+      "module": "denext",
+      "url": "/docs/api/denext/KeyboardEvent",
+      "text": "KeyboardEvent interface KeyboardEvent<T> A keyboard event.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/lazy",
       "kind": "function",
       "title": "lazy",
@@ -701,6 +872,33 @@
       "url": "/docs/api/denext/memo",
       "text": "memo memo<P>(component: Component<P>, areEqual?: (prev: P, next: P) => boolean): Component<P> Wrap a component so the reconciler bails out of re-rendering it when its props have not meaningfully changed. Without areEqual, props are compared with shallowEqualProps (the same default the reconciler applies to every component); pass areEqual for custom control (return true to skip the re-render). Context changes always bypass the bailout — a consumer still re-renders when a context it reads changes. The component to memoize. Optional custom comparator (true ⇒ skip re-render).",
       "denextOnly": false
+    },
+    {
+      "id": "api:denext/MemoExoticComponent",
+      "kind": "interface",
+      "title": "MemoExoticComponent",
+      "module": "denext",
+      "url": "/docs/api/denext/MemoExoticComponent",
+      "text": "MemoExoticComponent interface MemoExoticComponent<T> The result of memo.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/MouseEvent",
+      "kind": "interface",
+      "title": "MouseEvent",
+      "module": "denext",
+      "url": "/docs/api/denext/MouseEvent",
+      "text": "MouseEvent interface MouseEvent<T, E> A mouse event.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/MutableRefObject",
+      "kind": "interface",
+      "title": "MutableRefObject",
+      "module": "denext",
+      "url": "/docs/api/denext/MutableRefObject",
+      "text": "MutableRefObject interface MutableRefObject<T> A mutable ref cell.",
+      "denextOnly": true
     },
     {
       "id": "api:denext/navigate",
@@ -811,6 +1009,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext/PropsWithChildren",
+      "kind": "typeAlias",
+      "title": "PropsWithChildren",
+      "module": "denext",
+      "url": "/docs/api/denext/PropsWithChildren",
+      "text": "PropsWithChildren type PropsWithChildren<P> = P & object Add children to props.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/PUBLIC_ENV_PREFIXES",
       "kind": "variable",
       "title": "PUBLIC_ENV_PREFIXES",
@@ -827,6 +1034,33 @@
       "url": "/docs/api/denext/publicEnv",
       "text": "publicEnv publicEnv(): Record<string, string> Read the public environment variables (isomorphic). On the client, returns the variables embedded in the page — only ever the public-prefixed ones. On the server, returns the public subset of the live process environment. Server-only variables are never in the result on either side; read those with Deno.env.get(...) in server code. Passing a non-public value to a client component as a prop is still the developer's responsibility (as in Next.js) — this only isolates the env channel itself. A record of public env variables (empty when none are set).",
       "denextOnly": true
+    },
+    {
+      "id": "api:denext/ReactElement",
+      "kind": "typeAlias",
+      "title": "ReactElement",
+      "module": "denext",
+      "url": "/docs/api/denext/ReactElement",
+      "text": "ReactElement type ReactElement<P, _T> = VNode & object A denext element (React's ReactElement). The 2nd param (element type) is accepted for @types/react shape compatibility; denext keys elements on VNode.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/ReactNode",
+      "kind": "typeAlias",
+      "title": "ReactNode",
+      "module": "denext",
+      "url": "/docs/api/denext/ReactNode",
+      "text": "ReactNode type ReactNode = VNode | string | number | bigint | boolean | null | undefined | Iterable<ReactNode> | Promise<ReactNode> Anything renderable as a child (React's ReactNode). Accepts denext VNode.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/ReadonlyURLSearchParams",
+      "kind": "class",
+      "title": "ReadonlyURLSearchParams",
+      "module": "denext",
+      "url": "/docs/api/denext/ReadonlyURLSearchParams",
+      "text": "ReadonlyURLSearchParams class ReadonlyURLSearchParams Next's ReadonlyURLSearchParams — the read-only view of the URL query that useSearchParams() returns. It is a real URLSearchParams for reads/iteration, but its mutating methods throw (you cannot change the URL by mutating this object; navigate instead).",
+      "denextOnly": false
     },
     {
       "id": "api:denext/redirect",
@@ -856,12 +1090,39 @@
       "denextOnly": false
     },
     {
+      "id": "api:denext/Reducer",
+      "kind": "typeAlias",
+      "title": "Reducer",
+      "module": "denext",
+      "url": "/docs/api/denext/Reducer",
+      "text": "Reducer type Reducer<S, A> = (prevState: S, action: A) => S A useReducer reducer.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/Ref",
       "kind": "typeAlias",
       "title": "Ref",
       "module": "denext",
       "url": "/docs/api/denext/Ref",
       "text": "Ref type Ref<T> = object | parenthesized | null | undefined A mutable ref object or a callback ref, as accepted by ref/useImperativeHandle.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/RefCallback",
+      "kind": "typeAlias",
+      "title": "RefCallback",
+      "module": "denext",
+      "url": "/docs/api/denext/RefCallback",
+      "text": "RefCallback type RefCallback<T> = (instance: T | null) => void | parenthesized A callback ref.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/RefObject",
+      "kind": "interface",
+      "title": "RefObject",
+      "module": "denext",
+      "url": "/docs/api/denext/RefObject",
+      "text": "RefObject interface RefObject<T> A ref cell (React 19's RefObject: current is writable).",
       "denextOnly": true
     },
     {
@@ -1036,6 +1297,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext/SetStateAction",
+      "kind": "typeAlias",
+      "title": "SetStateAction",
+      "module": "denext",
+      "url": "/docs/api/denext/SetStateAction",
+      "text": "SetStateAction type SetStateAction<S> = S | parenthesized The updater passed to a state setter (a value or a function of the previous).",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/Signal",
       "kind": "interface",
       "title": "Signal",
@@ -1180,6 +1450,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext/SyntheticEvent",
+      "kind": "interface",
+      "title": "SyntheticEvent",
+      "module": "denext",
+      "url": "/docs/api/denext/SyntheticEvent",
+      "text": "SyntheticEvent interface SyntheticEvent<T, E> Base synthetic event.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/tryCatch",
       "kind": "function",
       "title": "tryCatch",
@@ -1223,6 +1502,15 @@
       "url": "/docs/api/denext/UnauthorizedError",
       "text": "UnauthorizedError class UnauthorizedError Error thrown by unauthorized to render the nearest unauthorized UI (HTTP 401).",
       "denextOnly": true
+    },
+    {
+      "id": "api:denext/unstable_rethrow",
+      "kind": "function",
+      "title": "unstable_rethrow",
+      "module": "denext",
+      "url": "/docs/api/denext/unstable_rethrow",
+      "text": "unstable_rethrow unstable_rethrow(error: unknown): void Next's unstable_rethrow — re-throw denext's control-flow signals (redirect(), notFound(), forbidden(), unauthorized(), a PPR postpone) from inside a try/catch, so a catch-all handler doesn't swallow them. Also rethrows an Error whose cause chain wraps such a signal (a library that re-wraps what it caught). A no-op for any other value.",
+      "denextOnly": false
     },
     {
       "id": "api:denext/UrlObject",
@@ -1464,7 +1752,7 @@
       "title": "useRef",
       "module": "denext",
       "url": "/docs/api/denext/useRef",
-      "text": "useRef useRef<T>(initial: T): object Create a mutable ref object whose .current persists across renders.",
+      "text": "useRef useRef<T>(initial: T): object Create a mutable ref object whose .current persists across renders. React's three signatures: useRef<T>(value) → { current: T }, useRef<T>(null) → { current: T | null } (the DOM-ref idiom), useRef<T>() → { current: T | undefined }.",
       "denextOnly": false
     },
     {
@@ -1482,7 +1770,7 @@
       "title": "useSearchParams",
       "module": "denext",
       "url": "/docs/api/denext/useSearchParams",
-      "text": "useSearchParams useSearchParams(): URLSearchParams Reactive current search params.",
+      "text": "useSearchParams useSearchParams(): ReadonlyURLSearchParams Reactive current search params — a ReadonlyURLSearchParams, memoized per query string so useEffect(…, [searchParams]) re-runs only when the query changes.",
       "denextOnly": false
     },
     {
@@ -1612,6 +1900,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext/ViewTransition",
+      "kind": "function",
+      "title": "ViewTransition",
+      "module": "denext",
+      "url": "/docs/api/denext/ViewTransition",
+      "text": "ViewTransition ViewTransition(props: object): VNode React.ViewTransition (experimental) — the client-driven view-transition wrapper. denext renders it as a transparent passthrough of its children (SSR + hydration safe). **Route-level** view transitions DO apply: a Flight soft-navigation commits inside document.startViewTransition where the browser supports it, so the route swap cross-fades (see withViewTransition in src/client/navigation.ts). The component's per-element props (name, enter, exit, update) are not yet honored — that needs this wrapper to emit real view-transition-name DOM markers — and the isomorphic/HTML nav paths (async reconcile) don't animate yet either.",
+      "denextOnly": false
+    },
+    {
       "id": "api:denext/VNode",
       "kind": "interface",
       "title": "VNode",
@@ -1626,7 +1923,7 @@
       "title": "VNodeChild",
       "module": "denext",
       "url": "/docs/api/denext/VNodeChild",
-      "text": "VNodeChild type VNodeChild = VNode | string | number | boolean | null | undefined Anything that can appear as a child in JSX.",
+      "text": "VNodeChild type VNodeChild = VNode | string | number | bigint | boolean | null | undefined Anything that can appear as a child in JSX.",
       "denextOnly": true
     },
     {
@@ -1882,6 +2179,33 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/AwaitableCookieStore",
+      "kind": "typeAlias",
+      "title": "AwaitableCookieStore",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/AwaitableCookieStore",
+      "text": "AwaitableCookieStore type AwaitableCookieStore = CookieStore & PromiseLike<CookieStore> cookies()'s return: usable synchronously AND awaitable (await cookies(), Next 15).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/AwaitableDraftMode",
+      "kind": "typeAlias",
+      "title": "AwaitableDraftMode",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/AwaitableDraftMode",
+      "text": "AwaitableDraftMode type AwaitableDraftMode = DraftMode & PromiseLike<DraftMode> draftMode()'s return: usable synchronously AND awaitable (await draftMode(), Next 15).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/AwaitableHeaders",
+      "kind": "typeAlias",
+      "title": "AwaitableHeaders",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/AwaitableHeaders",
+      "text": "AwaitableHeaders type AwaitableHeaders = Headers & PromiseLike<Headers> headers()'s return: usable synchronously AND awaitable (await headers(), Next 15).",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/cache",
       "kind": "function",
       "title": "cache",
@@ -2058,7 +2382,7 @@
       "title": "cookies",
       "module": "denext/server",
       "url": "/docs/api/denext-server/cookies",
-      "text": "cookies cookies(): CookieStore Access the current request's cookies (reads incoming, writes Set-Cookie).",
+      "text": "cookies cookies(): AwaitableCookieStore Access the current request's cookies (reads incoming, writes Set-Cookie).",
       "denextOnly": false
     },
     {
@@ -2238,7 +2562,7 @@
       "title": "draftMode",
       "module": "denext/server",
       "url": "/docs/api/denext-server/draftMode-fn",
-      "text": "draftMode draftMode(): DraftMode Read and control draft (preview) mode for the current request. Backed by an httpOnly cookie holding a **server-minted random token** — a forged cookie value cannot enable draft mode. Still gate enable() behind your own authorization in a route handler (defense in depth); only that authorized call mints a valid token.",
+      "text": "draftMode draftMode(): AwaitableDraftMode Read and control draft (preview) mode for the current request. Backed by an httpOnly cookie holding a **server-minted random token** — a forged cookie value cannot enable draft mode. Still gate enable() behind your own authorization in a route handler (defense in depth); only that authorized call mints a valid token.",
       "denextOnly": false
     },
     {
@@ -2472,7 +2796,7 @@
       "title": "headers",
       "module": "denext/server",
       "url": "/docs/api/denext-server/headers",
-      "text": "headers headers(): Headers Read the current request's headers. Read-only, as in Next.js: set/append/delete throw (the request's headers are shared by middleware, auth and the rest of the pipeline).",
+      "text": "headers headers(): AwaitableHeaders Read the current request's headers. Read-only, as in Next.js: set/append/delete throw (the request's headers are shared by middleware, auth and the rest of the pipeline).",
       "denextOnly": false
     },
     {
@@ -2828,11 +3152,11 @@
     },
     {
       "id": "api:denext-server/LayoutProps",
-      "kind": "interface",
+      "kind": "typeAlias",
       "title": "LayoutProps",
       "module": "denext/server",
       "url": "/docs/api/denext-server/LayoutProps",
-      "text": "LayoutProps interface LayoutProps Props passed to a layout component.",
+      "text": "LayoutProps type LayoutProps<P, Slots> = object & mapped Props passed to a layout component. Slots names the layout's parallel-route slots (@sidebar → LayoutProps<RouteParams, \"sidebar\"> adds a sidebar prop).",
       "denextOnly": true
     },
     {
@@ -3255,7 +3579,7 @@
       "title": "PageProps",
       "module": "denext/server",
       "url": "/docs/api/denext-server/PageProps",
-      "text": "PageProps interface PageProps Props passed to a page component (and to metadata/generateMetadata/ generateViewport). The raw Request is intentionally **not** exposed here. Per-request data must be read through headers / cookies from denext/server, which mark the render dynamic so it is never shared from the page cache — a page that reads a cookie off a raw request would otherwise be cached under a key with no per-user component and served to other users. params and searchParams are part of the cache key, so they are safe to read.",
+      "text": "PageProps interface PageProps<P> Props passed to a page component (and to metadata/generateMetadata/ generateViewport). The raw Request is intentionally **not** exposed here. Per-request data must be read through headers / cookies from denext/server, which mark the render dynamic so it is never shared from the page cache — a page that reads a cookie off a raw request would otherwise be cached under a key with no per-user component and served to other users. params and searchParams are part of the cache key, so they are safe to read.",
       "denextOnly": true
     },
     {
@@ -3553,6 +3877,15 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/RenderPageOptions",
       "text": "RenderPageOptions interface RenderPageOptions Options controlling how a page is rendered.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/RenderScope",
+      "kind": "interface",
+      "title": "RenderScope",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/RenderScope",
+      "text": "RenderScope interface RenderScope The per-render collectors.",
       "denextOnly": true
     },
     {
@@ -4479,7 +4812,7 @@
       "title": "VNodeChild",
       "module": "denext/server",
       "url": "/docs/api/denext-server/VNodeChild",
-      "text": "VNodeChild type VNodeChild = VNode | string | number | boolean | null | undefined Anything that can appear as a child in JSX.",
+      "text": "VNodeChild type VNodeChild = VNode | string | number | bigint | boolean | null | undefined Anything that can appear as a child in JSX.",
       "denextOnly": true
     },
     {
@@ -5397,7 +5730,7 @@
       "title": "useRef",
       "module": "denext/client",
       "url": "/docs/api/denext-client/useRef",
-      "text": "useRef useRef<T>(initial: T): object Create a mutable ref object whose .current persists across renders.",
+      "text": "useRef useRef<T>(initial: T): object Create a mutable ref object whose .current persists across renders. React's three signatures: useRef<T>(value) → { current: T }, useRef<T>(null) → { current: T | null } (the DOM-ref idiom), useRef<T>() → { current: T | undefined }.",
       "denextOnly": false
     },
     {
@@ -5415,7 +5748,7 @@
       "title": "useSearchParams",
       "module": "denext/client",
       "url": "/docs/api/denext-client/useSearchParams",
-      "text": "useSearchParams useSearchParams(): URLSearchParams Reactive current search params.",
+      "text": "useSearchParams useSearchParams(): ReadonlyURLSearchParams Reactive current search params — a ReadonlyURLSearchParams, memoized per query string so useEffect(…, [searchParams]) re-runs only when the query changes.",
       "denextOnly": false
     },
     {
@@ -5487,7 +5820,7 @@
       "title": "VNodeChild",
       "module": "denext/client",
       "url": "/docs/api/denext-client/VNodeChild",
-      "text": "VNodeChild type VNodeChild = VNode | string | number | boolean | null | undefined Anything that can appear as a child in JSX.",
+      "text": "VNodeChild type VNodeChild = VNode | string | number | bigint | boolean | null | undefined Anything that can appear as a child in JSX.",
       "denextOnly": true
     },
     {
@@ -6207,7 +6540,7 @@
       "title": "VNodeChild",
       "module": "denext/testing",
       "url": "/docs/api/denext-testing/VNodeChild",
-      "text": "VNodeChild type VNodeChild = VNode | string | number | boolean | null | undefined Anything that can appear as a child in JSX.",
+      "text": "VNodeChild type VNodeChild = VNode | string | number | bigint | boolean | null | undefined Anything that can appear as a child in JSX.",
       "denextOnly": true
     },
     {
@@ -6532,42 +6865,6 @@
       "module": "guide",
       "url": "https://github.com/Brainwires/denext/blob/main/AGENTS.md#tooling-for-ai-agents-mcp-llms-txt",
       "text": "## Tooling for AI agents (MCP + llms.txt) denext ships tooling so agents get it right the first time: - **MCP server** — deno run -A jsr:@denext/denext/cli mcp (or denext mcp). It speaks MCP over stdio; configure it as an MCP server in your client. Tools: denext_check_snippet (lint a code string for Next-isms before you write it), denext_import_map (map a Next/React import to denext), denext_generate (scaffold), denext_doctor, denext_codemod, denext_list_routes (an app's pages + API routes), denext_dev_logs (the RUNNING dev server's recent events — server errors, server + browser console, completed requests, and HMR — so you can see what actually happened at runtime), denext_render (render a route or component server-side, no browser, and get the HTML/error — SEE what your edit produces), denext_route_map (the full render tree at a path: layouts, boundaries, server/client split), denext_search_docs (BM25 over the denext docs), and the codebase tools denext_index_codebase / denext_query_codebase / denext_find_definition / denext_find_references. denext mcp --disable rag,docs hides tool groups or individual tools to trim an agent's context. Resources: denext://guide, denext://import-map. - **llms.txt** — [denext.dev/llms.txt](https://denext.dev/llms.txt) (concise) and [llms-full.txt](https://denext.dev/llms-full.txt) (this guide + an API summary). ---",
-      "denextOnly": false
-    },
-    {
-      "id": "guide:releasing-main-always-equals-the-published-release",
-      "kind": "guide",
-      "title": "Releasing: `main` always equals the published release",
-      "module": "guide",
-      "url": "https://github.com/Brainwires/denext/blob/main/AGENTS.md#releasing-main-always-equals-the-published-release",
-      "text": "## Releasing: main always equals the published release All work lands on development, and releases are cut there with deno task release <version> (which tags v<version> and pushes). Active development runs ahead of main by design. **main must always be exactly what is published.** So **cutting a version is not done until development is merged into main** — the release flow is: tag v<version> → verify the JSR publish succeeded → open a development → main PR (gh pr create --base main --head development, same flow as PRs #5–#11) → **merge it** (gh pr merge <n> --merge). \"Cut a version\" _implies_ this merge; do it as part of the release, not as a separate maintainer step. A tag without main merged to it is an incomplete release. The PR may batch several rc tags since the previous merge; that's fine. ---",
-      "denextOnly": false
-    },
-    {
-      "id": "guide:before-committing-measured-coverage-first",
-      "kind": "guide",
-      "title": "Before committing: measured coverage first",
-      "module": "guide",
-      "url": "https://github.com/Brainwires/denext/blob/main/AGENTS.md#before-committing-measured-coverage-first",
-      "text": "## Before committing: measured coverage first Run deno task coverage:fallow before git commit whenever coverage/coverage-final.json is missing (it is git-ignored, so a fresh clone or a disk sweep removes it) or when your change touches a function with cyclomatic complexity ≥ 10. The fallow gate below scores CRAP with that measured map; without it fallow estimates coverage from the import graph and can block a commit on internals that tests reach only transitively (the fiber reconciler, the request pipeline). The task runs the unit suite (~10 min) and needs no other setup. See [CONTRIBUTING.md](./CONTRIBUTING.md) → _The Fallow gate_. <!-- fallow:setup-hooks:start -->",
-      "denextOnly": false
-    },
-    {
-      "id": "guide:fallow-local-gate",
-      "kind": "guide",
-      "title": "Fallow local gate",
-      "module": "guide",
-      "url": "https://github.com/Brainwires/denext/blob/main/AGENTS.md#fallow-local-gate",
-      "text": "## Fallow local gate Before any git commit or git push, run fallow audit --format json --quiet --explain --gate-marker agent (add --coverage coverage/coverage-final.json when that file exists — deno task coverage:fallow generates it, and it turns fallow's estimated CRAP coverage into measured coverage; see CONTRIBUTING.md). If the verdict is fail, fix the reported findings before retrying. Treat JSON runtime errors like { \"error\": true, ... } as non-blocking. Audit defaults to gate=new-only: only findings introduced by the current changeset affect the verdict. Inherited findings on touched files are reported under attribution and annotated with introduced: false, but do not block the commit. Set [audit] gate = \"all\" in fallow.toml to gate every finding in changed files. For non-skill agents, treat the task map below as the local onboarding source: run the listed fallow command before destructive edits, before commits, and before pull request handoff.",
-      "denextOnly": false
-    },
-    {
-      "id": "guide:fallow-task-map",
-      "kind": "guide",
-      "title": "Fallow task map",
-      "module": "guide",
-      "url": "https://github.com/Brainwires/denext/blob/main/AGENTS.md#fallow-task-map",
-      "text": "## Fallow task map | When the agent is about to... | Run | | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------ | | delete an \"unused\" export or file | fallow dead-code --trace <file>:<export> | | prove a TypeScript symbol's exact consumers before refactoring | fallow dead-code --type-aware --symbol-impact <file>:<export-or-class.method> | | delete an \"unused\" dependency | fallow dead-code --trace-dependency <name> | | commit or open a PR | fallow audit --base <ref> | | prioritize refactoring | fallow health --hotspots --targets | | ask who owns code | fallow health --ownership | | check untested-but-reachable code | fallow health --coverage-gaps | | consolidate duplication | fallow dupes --trace dup:<fingerprint> | | find feature flags | fallow flags | | check which architecture rules apply to a file before changing it | fallow guard <files> | | surface security candidates | fallow security | | understand a finding | fallow explain <issue-type> | | scope a monorepo | --workspace <glob> / --changed-workspaces <ref> (global flags, prefix any command) | <!-- fallow:setup-hooks:end -->",
       "denextOnly": false
     }
   ]

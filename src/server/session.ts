@@ -87,21 +87,33 @@ function keyFor(secret: string): Promise<CryptoKey> {
   );
 }
 
-/** HMAC-SHA256 sign `payload` with `secret`, returned URL-safe base64. */
-export async function hmacSign(payload: string, secret: string): Promise<string> {
+/**
+ * HMAC-SHA256 sign `payload` with `secret`, returned URL-safe base64. `domain` separates the
+ * token spaces that share one secret (the denext session cookie, a Remix cookie session):
+ * a token minted for one can never verify as the other.
+ */
+export async function hmacSign(
+  payload: string,
+  secret: string,
+  domain = SESSION_MAC_DOMAIN,
+): Promise<string> {
   const sig = await crypto.subtle.sign(
     "HMAC",
     await keyFor(secret),
-    encoder.encode(payload) as BufferSource,
+    encoder.encode(`${domain}\0${payload}`) as BufferSource,
   );
   return toBase64Url(new Uint8Array(sig));
 }
+
+/** The MAC domain of denext's own session cookie (see {@link hmacSign}). */
+const SESSION_MAC_DOMAIN = "denext.session.v1";
 
 /** Verify `payload` against `sig` for any of `secrets` (constant-time via subtle.verify). */
 export async function hmacVerify(
   payload: string,
   sig: string,
   secrets: string[],
+  domain = SESSION_MAC_DOMAIN,
 ): Promise<boolean> {
   let sigBytes: BufferSource;
   try {
@@ -109,7 +121,7 @@ export async function hmacVerify(
   } catch {
     return false;
   }
-  const data = encoder.encode(payload) as BufferSource;
+  const data = encoder.encode(`${domain}\0${payload}`) as BufferSource;
   for (const secret of secrets) {
     if (await crypto.subtle.verify("HMAC", await keyFor(secret), sigBytes, data)) return true;
   }

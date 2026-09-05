@@ -8,18 +8,14 @@
  *
  * The sink is read straight off `globalThis` (a `Symbol.for` singleton set by the
  * renderer) rather than importing the renderer, so this module stays lightweight and
- * client-safe (it never pulls the SSR string renderer into a browser bundle). Mirrors
- * the `renderToString` sink; keep the Symbol in sync with it.
+ * client-safe (it never pulls the SSR string renderer into a browser bundle). The sink lives
+ * on the per-request render scope (`render-scope.ts`), installed by `renderToString`.
  * @module
  */
 import type { VNodeChildren } from "../jsx/types.ts";
 import { createContext } from "./context.ts";
 import type { Context } from "./hooks.ts";
-
-const INSERT_SINK_KEY = Symbol.for("denext.serverInsertSink");
-interface SinkHolder {
-  [INSERT_SINK_KEY]?: ((cb: () => VNodeChildren) => void) | null;
-}
+import { renderScope } from "./render-scope.ts";
 
 /**
  * `next/navigation`'s `ServerInsertedHTMLContext` — the React context carrying the
@@ -37,5 +33,5 @@ export const ServerInsertedHTMLContext: Context<((callback: () => VNodeChildren)
  * `next/navigation`.
  */
 export function useServerInsertedHTML(callback: () => VNodeChildren): void {
-  (globalThis as SinkHolder)[INSERT_SINK_KEY]?.(callback);
+  renderScope().insertSink?.(callback);
 }

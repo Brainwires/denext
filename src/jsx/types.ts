@@ -77,6 +77,7 @@ export type VNodeChild =
   | VNode
   | string
   | number
+  | bigint
   | boolean
   | null
   | undefined;

@@ -61,12 +61,21 @@ Deno.test("readSegmentConfig reads valid fields and ignores invalid ones", () =>
   assertEquals(bad.revalidate, false);
 });
 
-Deno.test("mergeSegmentConfig: child overrides, shortest revalidate wins", () => {
+Deno.test("mergeSegmentConfig: explicit child fields override, unset ones inherit, shortest revalidate wins", () => {
   const parent = readSegmentConfig({ revalidate: 100, dynamic: "force-static" });
   const child = readSegmentConfig({ revalidate: 30 });
   const merged = mergeSegmentConfig(parent, child);
   assertEquals(merged.revalidate, 30); // shortest wins
-  assertEquals(merged.dynamic, "auto"); // child's default overrides parent
+  assertEquals(merged.dynamic, "force-static"); // the child said nothing → inherits the layout
+  // An EXPLICIT child value does override.
+  assertEquals(
+    mergeSegmentConfig(parent, readSegmentConfig({ dynamic: "auto" })).dynamic,
+    "auto",
+  );
+  // Inheritance is transitive: layout → nested layout (silent) → page (silent).
+  const grandchild = mergeSegmentConfig(merged, readSegmentConfig({}));
+  assertEquals(grandchild.dynamic, "force-static");
+  assertEquals(grandchild.revalidate, 30);
 
   // false means "infinite" — the numeric side wins.
   assertEquals(

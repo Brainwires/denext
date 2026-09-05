@@ -389,3 +389,24 @@ Deno.test("IMPORT_RULES cover the core Next/React specifiers", () => {
     assert(froms.includes(s), `missing import rule for ${s}`);
   }
 });
+
+Deno.test("runTool: with a tool root armed, `dir` outside the project is refused", async () => {
+  const { setToolRoot } = await import("../src/mcp/tools.ts");
+  const root = await Deno.makeTempDir({ prefix: "denext-mcp-root-" });
+  const outside = await Deno.makeTempDir({ prefix: "denext-mcp-outside-" });
+  setToolRoot(root);
+  try {
+    const escaped = await runTool("denext_list_routes", { dir: outside });
+    assert(escaped.isError, "an absolute path outside the root is refused");
+    assertStringIncludes(escaped.content[0].text, "must be inside the project");
+    const dotdot = await runTool("denext_list_routes", { dir: "../" });
+    assert(dotdot.isError, "a relative escape is refused");
+    // Inside the root (the default ".") still resolves — the error is about the app, not the dir.
+    const inside = await runTool("denext_list_routes", { dir: "." });
+    assert(!String(inside.content[0].text).includes("must be inside"), "'.' is the root");
+  } finally {
+    setToolRoot(null);
+    await Deno.remove(root, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
+  }
+});

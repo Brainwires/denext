@@ -98,7 +98,7 @@ export interface RenderToReadableStreamOptions {
  * @param options React-compatible options (`signal`/`onError` honored).
  * @returns A promise for the React-shaped server stream.
  */
-export function renderToReadableStream(
+export async function renderToReadableStream(
   node: VNodeChildren,
   options: RenderToReadableStreamOptions = {},
 ): Promise<ReactDOMServerReadableStream> {
@@ -107,6 +107,17 @@ export function renderToReadableStream(
     idPrefix: options.identifierPrefix,
   });
   const reader = source.getReader();
+  // React's contract: the promise resolves once the SHELL has rendered and REJECTS when the
+  // shell itself throws (so `await renderToReadableStream()` in a try/catch can send a 500
+  // instead of a stream that errors after the headers went out). The first chunk is the
+  // shell; it is handed to the drainer below.
+  let shell: ReadableStreamReadResult<Uint8Array>;
+  try {
+    shell = await reader.read();
+  } catch (error) {
+    options.onError?.(error);
+    throw error;
+  }
   const ready = deferred();
   // Never let a rejection go unhandled: a consumer that streams without awaiting
   // `allReady` (the idiomatic path) would otherwise crash the process on a render
@@ -131,9 +142,10 @@ export function renderToReadableStream(
 
   // Drain the source eagerly (buffered in `out`'s queue) so allReady is decoupled
   // from consumer reads (the `await allReady` crawler/static path).
+  if (!shell.done && shell.value) controller.enqueue(shell.value);
   drainSource(reader, controller, options, state, ready);
   out.allReady = ready.promise;
-  return Promise.resolve(out);
+  return out;
 }
 
 interface Deferred {
@@ -456,3 +468,43 @@ export default {
   resume,
   resumeToPipeableStream,
 };
+
+/** The result of {@link prerender}: the complete HTML as a stream, plus React's postponed state (always null). */
+export interface PrerenderResult {
+  /** The fully rendered document (every Suspense boundary resolved). */
+  prelude: ReadableStream<Uint8Array>;
+  /** React's PPR postponed state — denext resolves everything, so always `null`. */
+  postponed: null;
+}
+
+/**
+ * `react-dom/static`'s `prerender` — render the whole tree to completion (every boundary
+ * resolved) and hand back the HTML as a stream. denext waits for `allReady` before resolving,
+ * so a static-generation pipeline can pipe `prelude` straight to a file.
+ *
+ * @param node The element tree.
+ * @param options React-compatible options (`signal`/`onError` honored).
+ */
+export async function prerender(
+  node: VNodeChildren,
+  options: RenderToReadableStreamOptions = {},
+): Promise<PrerenderResult> {
+  const stream = await renderToReadableStream(node, options);
+  await stream.allReady;
+  return { prelude: stream, postponed: null };
+}
+
+/**
+ * `react-dom/static`'s `prerenderToNodeStream` — {@link prerender} with a Node `Readable`
+ * prelude (server-only; loads `node:stream`).
+ */
+export async function prerenderToNodeStream(
+  node: VNodeChildren,
+  options: RenderToReadableStreamOptions = {},
+): Promise<{ prelude: Readable; postponed: null }> {
+  const [{ prelude }, { Readable }] = await Promise.all([
+    prerender(node, options),
+    loadNodeStream(),
+  ]);
+  return { prelude: Readable.fromWeb(prelude as never) as Readable, postponed: null };
+}

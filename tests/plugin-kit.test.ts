@@ -49,6 +49,9 @@ Deno.test("plugin-kit does not leak an over-broad value surface", () => {
     "createNextCompatServerLoader",
     "enableFastRefresh",
     "extractRouteCss",
+    "fromBase64Url",
+    "hmacSign",
+    "hmacVerify",
     "hydrateRoot",
     "matchSegments",
     "parsePattern",
@@ -58,5 +61,6 @@ Deno.test("plugin-kit does not leak an over-broad value surface", () => {
     "revalidatePath",
     "revalidateTag",
     "specificity",
+    "toBase64Url",
   ]);
 });

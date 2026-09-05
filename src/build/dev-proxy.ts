@@ -53,6 +53,15 @@ export function proxyToBackend(
   return proxyHttp(req, url, backend);
 }
 
+/**
+ * Is the client's connection to the PROXY secure? Only then may `Secure` cookies from the
+ * backend survive; over plain http the browser would drop them, so the flag is stripped —
+ * but stripping it on an https front would downgrade the cookie.
+ */
+function frontIsSecure(req: Request, url: URL): boolean {
+  return url.protocol === "https:" || req.headers.get("x-forwarded-proto") === "https";
+}
+
 async function proxyHttp(req: Request, url: URL, backend: URL): Promise<Response> {
   const target = new URL(url.pathname + url.search, backend);
   const headers = new Headers(req.headers);
@@ -65,15 +74,15 @@ async function proxyHttp(req: Request, url: URL, backend: URL): Promise<Response
   };
   if (req.body) init.duplex = "half";
   const res = await fetch(target, init);
-  // Rebuild headers, rewriting Set-Cookie so cookies bind to the proxy origin over
-  // http (drop Domain and Secure — the backend sets them for its own loopback host).
+  // Rebuild headers, rewriting Set-Cookie so cookies bind to the proxy origin (drop
+  // Domain — the backend sets it for its own host — and, over a plain-http front only,
+  // Secure, which the browser would otherwise refuse to store).
+  const secure = frontIsSecure(req, url);
   const outHeaders = new Headers(res.headers);
   outHeaders.delete("set-cookie");
   for (const c of res.headers.getSetCookie?.() ?? []) {
-    outHeaders.append(
-      "set-cookie",
-      c.replace(/;\s*Domain=[^;]+/i, "").replace(/;\s*Secure\b/i, ""),
-    );
+    const noDomain = c.replace(/;\s*Domain=[^;]+/i, "");
+    outHeaders.append("set-cookie", secure ? noDomain : noDomain.replace(/;\s*Secure\b/i, ""));
   }
   return new Response(res.body, { status: res.status, headers: outHeaders });
 }
@@ -180,6 +189,9 @@ function wireClient(b: WsBridge): void {
 
 function proxyWebSocket(req: Request, url: URL, backend: URL): Response {
   const { protocols, cookie } = upgradeHeaders(req);
+  // Read everything needed from the request BEFORE upgrading: once upgraded, its headers are
+  // gone ("Request closed").
+  const origin = req.headers.get("origin");
   const { socket: client, response } = Deno.upgradeWebSocket(
     req,
     protocols?.length ? { protocol: protocols[0] } : undefined,
@@ -192,7 +204,10 @@ function proxyWebSocket(req: Request, url: URL, backend: URL): Response {
       `[ws] ${url.pathname}${url.search} proto=${protocols?.join(",") ?? "-"} cookie=${!!cookie}`,
     );
   }
-  const headers: Record<string, string> = { host: backend.host, origin: backend.origin };
+  // Forward the browser's own Origin (never forge the backend's): the backend's WebSocket
+  // origin check must see who actually connected, or a cross-site page could ride the proxy.
+  const headers: Record<string, string> = { host: backend.host };
+  if (origin) headers.origin = origin;
   if (cookie) headers.cookie = cookie;
   const upstream = new NodeWebSocket(backendWs.toString(), protocols, { headers });
   // Binary frames (msgpackr etc.) must arrive as ArrayBuffers so they can be relayed

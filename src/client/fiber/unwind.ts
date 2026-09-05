@@ -11,7 +11,7 @@ import { reportCaught, reportUncaught } from "./root-callbacks.ts";
 import { retrySuspendedTransition, retrySuspense } from "./boundaries.ts";
 
 import { isThenable } from "../../runtime/suspense.ts";
-import { isControlSignal } from "../../runtime/error-boundary.ts";
+import { isControlSignal, isRedirect } from "../../runtime/error-boundary.ts";
 import { handleClassError } from "../../compat/class-component.ts";
 import { type Fiber, NoLane, TransitionLane } from "./fiber.ts";
 import { concurrentWipRoot, renderLanes } from "./scheduler.ts";
@@ -131,6 +131,12 @@ function handleRenderError(sourceFiber: Fiber, thrown: unknown): Fiber {
  */
 export function handleThrow(sourceFiber: Fiber, thrown: unknown): Fiber | null {
   if (isThenable(thrown)) return handleSuspend(sourceFiber, thrown);
+  // `redirect()` during a client render: Next navigates. Leave the current DOM as it is (the
+  // page is about to unload) and stop this render.
+  if (isRedirect(thrown) && typeof location !== "undefined") {
+    location.assign(thrown.url);
+    return null;
+  }
   if (isControlSignal(thrown)) throw thrown;
   return handleRenderError(sourceFiber, thrown);
 }

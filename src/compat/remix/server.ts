@@ -83,8 +83,15 @@ export function replace(url: string, init?: number | ResponseInit): Response {
   return new Response(null, { ...responseInit, status, headers });
 }
 
-/** Remix `redirectDocument()` — a hard redirect (same as {@link redirect} here). */
-export const redirectDocument = redirect;
+/**
+ * Remix `redirectDocument()` — a redirect the client follows with a full document load
+ * (`X-Remix-Reload-Document`), not a soft navigation.
+ */
+export function redirectDocument(url: string, init?: number | ResponseInit): Response {
+  const res = redirect(url, init);
+  res.headers.set("x-remix-reload-document", "true");
+  return res;
+}
 
 /**
  * Remix `DataWithResponseInit` — the wrapper {@link data} returns: a value plus an optional
@@ -240,6 +247,17 @@ export type ActionFunctionArgs = LoaderFunctionArgs;
 
 /** A Remix `loader` export. */
 export type LoaderFunction = (args: LoaderFunctionArgs) => unknown | Promise<unknown>;
+
+/**
+ * Remix's `SerializeFrom<typeof loader>` — the data a loader/action hands the client:
+ * the awaited return value, unwrapped from `data()` / `json()` (a `Response` return is
+ * opaque → `unknown`). Use it to type `useLoaderData<SerializeFrom<typeof loader>>()`.
+ */
+export type SerializeFrom<T> = T extends (...args: never[]) => infer R ? Unwrapped<Awaited<R>>
+  : Unwrapped<T>;
+type Unwrapped<V> = V extends DataWithResponseInit<infer D> ? D
+  : V extends Response ? unknown
+  : V;
 /** A Remix `action` export. */
 export type ActionFunction = (args: ActionFunctionArgs) => unknown | Promise<unknown>;
 
@@ -283,7 +301,13 @@ export function bindAction(
     // Rebuild a request carrying the submitted FormData for the action to read.
     const base = currentContext()?.request;
     const url = base?.url ?? "http://localhost/";
-    const request = new Request(url, { method: "POST", body: formData });
+    // Carry the viewer's request headers (Cookie, Authorization, Accept-Language) — an
+    // action reads the session from `request.headers` exactly like a Remix POST — minus
+    // the body framing, which the FormData body sets itself.
+    const headers = new Headers(base?.headers);
+    headers.delete("content-type");
+    headers.delete("content-length");
+    const request = new Request(url, { method: "POST", body: formData, headers });
     try {
       return await unwrap(await action({ request, params, context: {} }));
     } catch (thrown) {
@@ -631,10 +655,15 @@ function readCookie(header: string, name: string): string | null {
   return null;
 }
 
+/** The MAC domain of Remix cookie sessions — distinct from denext's own session cookie. */
+const REMIX_MAC_DOMAIN = "denext.remix-session.v1";
+
 /** JSON→base64url the value, appending an HMAC signature when secrets are configured. */
 async function encodeCookieValue(value: unknown, secrets: string[]): Promise<string> {
   const encoded = toBase64Url(encoder.encode(JSON.stringify(value)));
-  return secrets.length ? `${encoded}.${await hmacSign(encoded, secrets[0])}` : encoded;
+  return secrets.length
+    ? `${encoded}.${await hmacSign(encoded, secrets[0], REMIX_MAC_DOMAIN)}`
+    : encoded;
 }
 
 /** Verify (if signed) and decode a cookie value back to its JSON payload, or `null`. */
@@ -644,7 +673,7 @@ async function decodeCookieValue(raw: string, secrets: string[]): Promise<unknow
     const dot = raw.lastIndexOf(".");
     if (dot < 0) return null;
     payload = raw.slice(0, dot);
-    if (!(await hmacVerify(payload, raw.slice(dot + 1), secrets))) return null;
+    if (!(await hmacVerify(payload, raw.slice(dot + 1), secrets, REMIX_MAC_DOMAIN))) return null;
   }
   try {
     return JSON.parse(decoder.decode(fromBase64Url(payload)));

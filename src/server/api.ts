@@ -1,5 +1,6 @@
 // Dispatch a request to an API route module's method handler.
 
+import { adaptRequest } from "./middleware.ts";
 import type { ApiMatch } from "../router/match.ts";
 import type { ApiModule, HttpMethod, ModuleLoader } from "./types.ts";
 import { readSegmentConfig } from "./segment-config.ts";
@@ -30,14 +31,17 @@ export async function handleApi(
   const ctx = currentContext();
   if (ctx) ctx.segmentConfig = readSegmentConfig(mod);
 
+  // Like middleware, a route handler receives the adapted request — a `NextRequest`
+  // (`nextUrl`, `cookies`) once `next/server` is loaded, the plain Request otherwise.
+  const req = adaptRequest(request);
   const handler = mod[method];
   if (handler) {
-    return await handler(request, { params: asyncProps({ ...match.params }) });
+    return await handler(req, { params: asyncProps({ ...match.params }) });
   }
 
   // Auto-implement HEAD from GET when possible.
   if (method === "HEAD" && mod.GET) {
-    const res = await mod.GET(request, { params: asyncProps({ ...match.params }) });
+    const res = await mod.GET(req, { params: asyncProps({ ...match.params }) });
     // A HEAD response carries no body; cancel the GET's stream instead of dropping
     // it on the floor, which would leak the stream (and pin whatever backs it).
     await res.body?.cancel();

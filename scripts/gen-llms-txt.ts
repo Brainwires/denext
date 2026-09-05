@@ -10,6 +10,7 @@
 //
 // Output → apps/web/public/, which the static export copies to the site root.
 
+import { publicGuide } from "../src/mcp/guide.ts";
 import { TOOLS } from "../src/mcp/tools.ts";
 
 const ROOT = new URL("../", import.meta.url).pathname;
@@ -82,7 +83,7 @@ function apiSummary(groups: RefGroup[]): string {
 
 /** The full text (`llms-full.txt`): the authoring guide + the API summary. */
 export async function llmsFull(): Promise<string> {
-  const guide = await Deno.readTextFile(`${ROOT}AGENTS.md`);
+  const guide = publicGuide(await Deno.readTextFile(`${ROOT}AGENTS.md`));
   let api = "";
   try {
     const ref = JSON.parse(

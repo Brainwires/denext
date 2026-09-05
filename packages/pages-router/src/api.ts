@@ -289,7 +289,14 @@ class ResponseBuilder implements ApiResponse {
   }
 
   setHeader(name: string, value: string | number | string[]): ApiResponse {
-    this.#headers.set(name, Array.isArray(value) ? value.join(", ") : String(value));
+    if (Array.isArray(value)) {
+      // Node semantics: an array is one header per element — mandatory for `Set-Cookie`,
+      // which a browser will NOT split on commas (a joined value is one broken cookie).
+      this.#headers.delete(name);
+      for (const v of value) this.#headers.append(name, String(v));
+      return this;
+    }
+    this.#headers.set(name, String(value));
     return this;
   }
 
@@ -432,7 +439,14 @@ export async function runApiRoute(
       }
       // Threw after setting a >= 400 status (or mid-stream): finalize/close what it produced.
     }
-    finish(); // close a stream / finalize a buffered response the handler didn't end
+    try {
+      finish(); // close a stream / finalize a buffered response the handler didn't end
+    } catch (error) {
+      // finish() itself failing (a body that can't be serialized) must still resolve the
+      // request — otherwise `done` never settles and the request hangs forever.
+      console.error("@denext/pages-router: API route finalize failed:", error);
+      earlyError ??= new Response("Internal Server Error", { status: 500 });
+    }
   })();
 
   // Return whichever comes first: the response becoming available (early for streaming, at

@@ -5,6 +5,7 @@
 // Thrown *thenables* are NOT caught here — those are suspensions handled by the
 // nearest <Suspense>.
 
+import { isPostpone } from "./postpone.ts";
 import type { Component, VNode, VNodeChildren } from "../jsx/types.ts";
 
 /** Re-exported so the public error-boundary API surface stays documentable. */
@@ -225,6 +226,21 @@ export function isRedirect(value: unknown): value is RedirectError {
 export function isControlSignal(value: unknown): boolean {
   return isNotFound(value) || isForbidden(value) || isUnauthorized(value) ||
     isRedirect(value);
+}
+
+/**
+ * Next's `unstable_rethrow` — re-throw denext's control-flow signals (`redirect()`,
+ * `notFound()`, `forbidden()`, `unauthorized()`, a PPR postpone) from inside a
+ * `try`/`catch`, so a catch-all handler doesn't swallow them. Also rethrows an Error whose
+ * `cause` chain wraps such a signal (a library that re-wraps what it caught). A no-op for
+ * any other value.
+ */
+export function unstable_rethrow(error: unknown): void {
+  let e: unknown = error;
+  for (let depth = 0; e !== undefined && depth < 8; depth++) {
+    if (isControlSignal(e) || isPostpone(e)) throw error;
+    e = e instanceof Error ? e.cause : undefined;
+  }
 }
 
 /** Normalize a caught error into an Error instance for a fallback component. */

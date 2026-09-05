@@ -31,8 +31,10 @@ export interface ExportContext {
   readonly paths: ProjectPaths;
   readonly manifest: RouteManifest;
   readonly i18n: I18nConfig | undefined;
-  /** The host-anywhere output dir (`out/`). */
+  /** The dir the export is WRITTEN to while in progress (`out.staging/`; see `finishExport`). */
   readonly outDir: string;
+  /** The host-anywhere output dir (`out/`) the staging dir is swapped into when complete. */
+  readonly finalOutDir: string;
   /** `<outDir>/_denext/client` — bundles + stylesheets. */
   readonly clientOut: string;
   /** The module loader the render uses (wrapped for Cache Components / next-compat). */

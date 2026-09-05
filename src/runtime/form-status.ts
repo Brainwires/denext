@@ -13,8 +13,21 @@ import type { Context } from "./hooks.ts";
 export interface FormStatusSignal {
   /** Number of in-flight submissions for this form (0 = idle). */
   pending: number;
+  /** The in-flight submission's `FormData` (React's `useFormStatus().data`), or null. */
+  data: FormData | null;
+  /** The in-flight submission's method (`"get"` / `"post"`), or null when idle. */
+  method: string | null;
+  /** The in-flight submission's action (the function or URL), or null when idle. */
+  action: unknown;
   /** Subscribers notified when {@link FormStatusSignal.pending} changes. */
   listeners: Set<() => void>;
+}
+
+/** The submission details React exposes on `useFormStatus()` while it is pending. */
+export interface FormSubmission {
+  data?: FormData | null;
+  method?: string | null;
+  action?: unknown;
 }
 
 /**
@@ -28,17 +41,25 @@ export const FormStatusContext: Context<FormStatusSignal | null> = createContext
 
 /** Create an idle form-status signal. */
 export function createFormStatusSignal(): FormStatusSignal {
-  return { pending: 0, listeners: new Set() };
+  return { pending: 0, data: null, method: null, action: null, listeners: new Set() };
 }
 
-/** Mark a submission started on `signal` and notify subscribers. */
-export function beginFormAction(signal: FormStatusSignal): void {
+/** Mark a submission started on `signal` (recording what was submitted) and notify subscribers. */
+export function beginFormAction(signal: FormStatusSignal, submission: FormSubmission = {}): void {
   signal.pending++;
+  signal.data = submission.data ?? null;
+  signal.method = submission.method ?? "post";
+  signal.action = submission.action ?? null;
   for (const l of signal.listeners) l();
 }
 
 /** Mark a submission finished on `signal` and notify subscribers. */
 export function endFormAction(signal: FormStatusSignal): void {
   signal.pending = Math.max(0, signal.pending - 1);
+  if (signal.pending === 0) {
+    signal.data = null;
+    signal.method = null;
+    signal.action = null;
+  }
   for (const l of signal.listeners) l();
 }

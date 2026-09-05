@@ -83,6 +83,9 @@ interface Conn {
   /** A re-render is in flight; further invalidations set `dirty` to re-run once. */
   busy: boolean;
   dirty: Set<string> | null;
+  /** Inbound rate limit: the start of the current 1 s window and the frames seen in it. */
+  msgWindowStart: number;
+  msgCount: number;
   /**
    * Back-pressure recovery. When a stateful frame is shed because the send buffer is
    * full ({@link MAX_BUFFERED}), these record what to replay once the socket drains:
@@ -425,9 +428,23 @@ function attachConnection(
     presenceRooms: new Map(),
     busy: false,
     dirty: null,
+    msgWindowStart: 0,
+    msgCount: 0,
   };
   socket.onmessage = (ev) => {
-    if (typeof ev.data === "string") handleClientMessage(conn, ev.data);
+    if (typeof ev.data !== "string") return;
+    if (!admitMessage(conn)) {
+      sendError(conn, "limit", "too many messages");
+      return;
+    }
+    // A throw here (a hook dereferencing a revoked session, a malformed frame the parser
+    // did not anticipate) must never escape the event handler: the prod server installs no
+    // global error handler, so it would take the whole process — every connection — down.
+    try {
+      handleClientMessage(conn, ev.data);
+    } catch (err) {
+      console.error("denext live: message handler failed", err);
+    }
   };
   socket.onclose = () => dropConnection(conn);
   socket.onerror = () => {
@@ -461,6 +478,23 @@ function utf8Bytes(text: string): number {
   return new TextEncoder().encode(text).byteLength;
 }
 
+/** Inbound frames a single connection may send per second before it is throttled. */
+const MAX_MESSAGES_PER_SECOND = 100;
+
+/**
+ * Admit one inbound frame under the per-connection rate limit (a fixed 1 s window). A
+ * client flooding subscribe/presence frames is throttled instead of driving unbounded
+ * authorization work / re-renders.
+ */
+function admitMessage(conn: Conn): boolean {
+  const now = Date.now();
+  if (now - conn.msgWindowStart >= 1000) {
+    conn.msgWindowStart = now;
+    conn.msgCount = 0;
+  }
+  return ++conn.msgCount <= MAX_MESSAGES_PER_SECOND;
+}
+
 /** Parse and apply a client message. Oversized or malformed input is ignored. */
 function handleClientMessage(conn: Conn, raw: string): void {
   // Inbound size cap (DoS guard) — refuse before parsing / storing.
@@ -476,6 +510,9 @@ function handleClientMessage(conn: Conn, raw: string): void {
   } catch {
     return;
   }
+  // `null` / a primitive / an array parse fine but are not frames — `msg.type` on `null`
+  // would throw inside the socket handler.
+  if (!msg || typeof msg !== "object" || typeof msg.type !== "string") return;
   switch (msg.type) {
     case "subscribe":
       return handleSubscribe(conn, msg);
@@ -536,7 +573,7 @@ async function handleDataSubscribe(
   if (typeof msg.subId !== "string" || typeof msg.actionId !== "string") return;
   const subId = msg.subId;
   // Per-connection subscription cap (a new id when already at the cap is refused).
-  if (!conn.dataSubs.has(subId) && conn.dataSubs.size >= limits.maxSubscriptionsPerConnection) {
+  if (atDataSubCap(conn, subId)) {
     sendError(conn, "limit", "too many subscriptions", { subId });
     return;
   }
@@ -556,6 +593,12 @@ async function handleDataSubscribe(
     return;
   }
   if (!connections.has(conn)) return; // disconnected while authorizing
+  // Re-check the cap: N frames can be in flight through `authorizeData` at once, and each
+  // passed the check above before any of them was recorded.
+  if (atDataSubCap(conn, subId)) {
+    sendError(conn, "limit", "too many subscriptions", { subId });
+    return;
+  }
   conn.dataSubs.set(subId, sub);
   void recomputeData(conn, subId, sub); // push the initial value
 }
@@ -568,7 +611,7 @@ async function handlePresence(
   if (typeof msg.room !== "string") return;
   const room = msg.room;
   // Per-connection room cap (joining a NEW room when already at the cap is refused).
-  if (!conn.presenceRooms.has(room) && conn.presenceRooms.size >= limits.maxRoomsPerConnection) {
+  if (atRoomCap(conn, room)) {
     sendError(conn, "limit", "too many rooms", { room });
     return;
   }
@@ -583,6 +626,10 @@ async function handlePresence(
     return;
   }
   if (!connections.has(conn)) return; // disconnected while authorizing
+  if (atRoomCap(conn, room)) { // re-check: concurrent joins all passed the pre-await check
+    sendError(conn, "limit", "too many rooms", { room });
+    return;
+  }
   // `state` is peer-supplied and only ever rebroadcast (never executed); the
   // authorization above is what gates who may publish into this room.
   conn.presenceRooms.set(room, msg.state);
@@ -592,14 +639,40 @@ async function handlePresence(
   broadcastRoom(room);
 }
 
-/** Broadcast a room's current membership to every peer in it. */
+/** A NEW data-subscription id would push `conn` past its cap. */
+function atDataSubCap(conn: Conn, subId: string): boolean {
+  return !conn.dataSubs.has(subId) &&
+    conn.dataSubs.size >= limits.maxSubscriptionsPerConnection;
+}
+
+/** Joining a NEW room would push `conn` past its cap. */
+function atRoomCap(conn: Conn, room: string): boolean {
+  return !conn.presenceRooms.has(room) &&
+    conn.presenceRooms.size >= limits.maxRoomsPerConnection;
+}
+
+/**
+ * Broadcast a room's current membership to every peer in it. The peer list is serialized
+ * ONCE and spliced into each member's frame (only `selfId` differs), so a room of N peers
+ * costs O(N) bytes of encoding per change rather than O(N²).
+ */
 function broadcastRoom(room: string): void {
   const members = rooms.get(room);
   if (!members) return;
   const peers: LivePeer[] = [];
   for (const c of members) peers.push({ id: c.peerId, state: c.presenceRooms.get(room) });
+  const peersJson = JSON.stringify(peers);
+  const roomJson = JSON.stringify(room);
   // Each recipient learns its own peer id so the client can split self vs. others.
-  for (const c of members) send(c, { type: "presence-state", room, peers, selfId: c.peerId });
+  for (const c of members) {
+    sendFrame(
+      c,
+      `{"type":"presence-state","room":${roomJson},"peers":${peersJson},"selfId":${
+        JSON.stringify(c.peerId)
+      }}`,
+      { type: "presence-state", room, peers, selfId: c.peerId },
+    );
+  }
 }
 
 /** Cache hook: coalesce invalidated tags, then flush a re-render pass. */
@@ -768,6 +841,12 @@ async function rerender(conn: Conn, signal?: AbortSignal): Promise<FlightNode | 
 
 /** Send a server message if the socket is open and not back-pressured. */
 function send(conn: Conn, msg: LiveServerMessage): void {
+  if (conn.socket.readyState !== WebSocket.OPEN) return;
+  sendFrame(conn, JSON.stringify(msg), msg);
+}
+
+/** Send a pre-encoded frame (`msg` is what `text` encodes — kept for shed recovery). */
+function sendFrame(conn: Conn, text: string, msg: LiveServerMessage): void {
   const s = conn.socket;
   if (s.readyState !== WebSocket.OPEN) return;
   if (s.bufferedAmount > MAX_BUFFERED) {
@@ -777,7 +856,7 @@ function send(conn: Conn, msg: LiveServerMessage): void {
     return;
   }
   try {
-    s.send(JSON.stringify(msg));
+    s.send(text);
   } catch { /* closing between the check and the send */ }
 }
 
@@ -877,6 +956,8 @@ export const __backpressureTestSeam = {
       presenceRooms: new Map(),
       busy: false,
       dirty: null,
+      msgWindowStart: 0,
+      msgCount: 0,
     };
   },
   send,

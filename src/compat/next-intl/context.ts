@@ -26,6 +26,18 @@ export interface IntlConfig {
   timeZone?: string;
   /** "Now" reference for relative-time formatting. */
   now?: Date;
+  /** Named formats (`formats.dateTime.short`, …) usable as `useFormatter().dateTime(d, "short")`. */
+  formats?: IntlFormats;
+}
+
+/** next-intl's `Formats` — named `Intl.*` option sets. */
+export interface IntlFormats {
+  /** Named `Intl.DateTimeFormat` option sets (`dateTime(date, "short")`). */
+  dateTime?: Record<string, Intl.DateTimeFormatOptions>;
+  /** Named `Intl.NumberFormat` option sets (`number(n, "currency")`). */
+  number?: Record<string, Intl.NumberFormatOptions>;
+  /** Named `Intl.ListFormat` option sets (`list(items, "enumeration")`). */
+  list?: Record<string, Intl.ListFormatOptions>;
 }
 
 /** Internal context carrying the active {@link IntlConfig}. */

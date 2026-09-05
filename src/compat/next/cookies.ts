@@ -151,10 +151,34 @@ export class ResponseCookies {
     return this;
   }
 
-  /** Stage a `Set-Cookie` that expires the cookie `name`. */
-  delete(name: string, options: { path?: string; domain?: string } = {}): this {
+  /**
+   * Stage a `Set-Cookie` that expires the cookie — by `name`, by `{ name, path?, domain? }`,
+   * or several names at once.
+   */
+  delete(
+    name: string | string[] | { name: string; path?: string; domain?: string },
+    options: { path?: string; domain?: string } = {},
+  ): this {
+    if (Array.isArray(name)) {
+      for (const n of name) deleteCookie(this.#headers, n, options);
+      return this;
+    }
+    if (typeof name === "object") {
+      deleteCookie(this.#headers, name.name, { path: name.path, domain: name.domain });
+      return this;
+    }
     deleteCookie(this.#headers, name, options);
     return this;
+  }
+
+  /** Whether a cookie named `name` has been staged on this response. */
+  has(name: string): boolean {
+    return this.get(name) !== undefined;
+  }
+
+  /** The staged cookies as `name=value` pairs joined by `; ` (Next's `toString`). */
+  toString(): string {
+    return this.getAll().map((c) => `${c.name}=${c.value}`).join("; ");
   }
 
   /** The staged cookie named `name` (with attributes), or `undefined`. */

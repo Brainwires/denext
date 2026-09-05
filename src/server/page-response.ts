@@ -81,7 +81,10 @@ async function preparePageRequest(
     pageLoad,
     isRegen: isRegenRequest(state.request),
     cacheable: !!config.pageCache && !soft && state.request.method === "GET",
-    cacheKey: pageCacheKey(state.pathname, state.url.searchParams, config.cacheKeyParams),
+    // With i18n the same pathname renders per locale (domain- or Accept-Language-detected
+    // locales share a URL), so the locale is part of the key.
+    cacheKey: pageCacheKey(state.pathname, state.url.searchParams, config.cacheKeyParams) +
+      (localeInfo ? `#${locale}` : ""),
     boundaryErrors: [],
   };
 }

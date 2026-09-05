@@ -763,8 +763,19 @@ async function evalNextConfig(
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), NEXT_EVAL_TIMEOUT_MS);
   try {
+    // Least privilege: the config is the app's own code but it is run on the migrating
+    // machine — it may read its project + env (what a real `next build` sees), not write,
+    // spawn, or reach the network.
     const cmd = new Deno.Command(Deno.execPath(), {
-      args: ["run", "-A", "-", toFileUrl(join(dir, file)).href],
+      args: [
+        "run",
+        "--no-prompt",
+        `--allow-read=${dir}`,
+        "--allow-env",
+        "--allow-sys",
+        "-",
+        toFileUrl(join(dir, file)).href,
+      ],
       cwd: dir,
       stdin: "piped",
       stdout: "piped",

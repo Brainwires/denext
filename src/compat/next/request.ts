@@ -6,6 +6,7 @@
  * @module
  */
 
+import { currentContext } from "../../server/request-context.ts";
 import { remoteAddrOf } from "../../server/remote-addr.ts";
 import { RequestCookies } from "./cookies.ts";
 
@@ -63,6 +64,12 @@ export class NextRequest extends Request {
   constructor(input: RequestInfo | URL, init?: RequestInit) {
     super(input, init);
     this.nextUrl = new NextURL(this.url);
+    // Inside the pipeline the resolved basePath / locale are known: expose them like Next.
+    const routing = currentContext()?.routing;
+    if (routing) {
+      this.nextUrl.basePath = routing.basePath;
+      this.nextUrl.locale = routing.locale ?? "";
+    }
     this.cookies = new RequestCookies(this.headers);
   }
 

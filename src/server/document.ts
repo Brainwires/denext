@@ -1,6 +1,7 @@
 // Assemble a full HTML document around rendered page content, including <head>
 // metadata and the hydration bootstrap script.
 
+import { abortedPromise } from "../runtime/abort-promise.ts";
 import { escapeHtml } from "../jsx/render-to-string.ts";
 import type {
   IconDescriptor,
@@ -323,15 +324,6 @@ function warnInlineStyle(id: string, html: string): void {
   );
 }
 
-/** Resolves (to `undefined`) when `signal` aborts; never resolves without a signal. */
-function abortedPromise(signal?: AbortSignal): Promise<undefined> {
-  return new Promise((resolve) => {
-    if (!signal) return;
-    if (signal.aborted) resolve(undefined);
-    else signal.addEventListener("abort", () => resolve(undefined), { once: true });
-  });
-}
-
 async function streamHoles<H extends Awaited<PendingHole>>(
   controller: ReadableStreamDefaultController<Uint8Array>,
   encoder: TextEncoder,
@@ -340,12 +332,13 @@ async function streamHoles<H extends Awaited<PendingHole>>(
   onHole?: (hole: H) => void,
 ): Promise<void> {
   const timings: Array<{ id: string; ms: number }> = [];
+  const aborted = abortedPromise(signal); // ONE listener for the stream, not one per hole
   while (active.size > 0) {
     if (signal?.aborted) break;
     // A hole that never settles (an upstream that never answers) must not pin the stream:
     // the request deadline aborts `signal`, which wins this race and ends the stream with
     // the shell fallbacks in place.
-    const hole = await Promise.race([takeSettled(active), abortedPromise(signal)]);
+    const hole = await Promise.race([takeSettled(active), aborted]);
     if (hole === undefined) break;
     const ms = devTiming(hole, timings);
     if (!hole.ok) continue; // leave the shell fallback for this hole

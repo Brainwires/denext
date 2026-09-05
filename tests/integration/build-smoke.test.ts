@@ -112,7 +112,11 @@ async function assertSharedRuntimeChunk(clientDir: string): Promise<void> {
  * re-based 58 → 59 KB for the 2.0 Next-parity navigation surface (Link: user handler/ref
  * composition, `target`/`download` respect, `legacyBehavior`, `UrlObject` hrefs, the three
  * `prefetch` modes; useRouter: one stable object with `prefetch` + scroll options; the
- * client boot clearing server-rendered image blur placeholders — ~+0.4 KB raw).
+ * client boot clearing server-rendered image blur placeholders — ~+0.4 KB raw);
+ * re-based 59 → 60 KB for the 2.0.0 React-parity pass (`useSearchParams` returns a memoized
+ * `ReadonlyURLSearchParams` class, SSR-seeded `usePathname`/`useSearchParams`, the
+ * rules-of-hooks growth guard, effect deps recorded at commit, `useFormStatus` submission
+ * details, the superseded-navigation check — ~+0.7 KB raw).
  * The over-the-wire cost is the GZIPPED figure, verified by bench Layer 1; this raw guard
  * is a "did the runtime get inlined into a route entry" tripwire, not an over-the-wire
  * budget — the 6 KB per-route entry budget is the real one.
@@ -124,7 +128,7 @@ async function assertBundleBudgets(clientDir: string): Promise<void> {
       sharedTotal += (await Deno.stat(join(clientDir, e.name))).size;
     }
   }
-  assert(sharedTotal < 59_000, `shared chunks total ${sharedTotal} bytes (budget 59 KB raw)`);
+  assert(sharedTotal < 60_000, `shared chunks total ${sharedTotal} bytes (budget 60 KB raw)`);
   for (const f of ["about.js", "blog___slug_.js"]) {
     const n = (await Deno.stat(join(clientDir, f))).size;
     assert(n < 6_000, `${f} is ${n} bytes (budget 6 KB) — is the runtime inlined again?`);

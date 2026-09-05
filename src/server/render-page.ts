@@ -1267,11 +1267,15 @@ function mergeTitle(
   t: NonNullable<Metadata["title"]>,
 ): void {
   if (typeof t === "string") {
-    state.resolved = state.template ? state.template.replace(/%s/g, t) : t;
+    state.resolved = state.template ? state.template.replace(/%s/g, () => t) : t;
     return;
   }
   if (t.absolute !== undefined) state.resolved = t.absolute;
-  else if (t.default !== undefined) state.resolved = t.default;
+  else if (t.default !== undefined) {
+    // Next applies the ANCESTOR template to a child's `default` too (only `absolute` opts out).
+    const d = t.default;
+    state.resolved = state.template ? state.template.replace(/%s/g, () => d) : d;
+  }
   if (t.template !== undefined) state.template = t.template;
 }
 

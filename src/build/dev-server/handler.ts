@@ -55,16 +55,18 @@ function bundleErrorResponse(st: DevState, title: string, err: unknown): Respons
 
 /**
  * The origin-gated dev endpoints: the live-reload SSE stream, open-in-editor, and the dev
- * black box (browser log sink + state read). Null when `url` is none of them; 403 when a
- * cross-origin page tries (defense-in-depth — cf. CVE-2025-48068).
+ * black box (browser log sink + state read). Null when `url` is none of them (a 403 for ANY
+ * `/_denext/*` URL from a cross-origin page / foreign Host first — defense-in-depth, cf.
+ * CVE-2025-48068 — and the caller's other dev handlers run only once the gate passed).
  */
 function gatedDevEndpoint(
   st: DevState,
   request: Request,
   url: URL,
 ): Promise<Response> | Response | null {
-  const gated = [RELOAD_PATH, OPEN_IN_EDITOR_PATH, DEV_LOG_PATH, DEV_STATE_PATH];
-  if (!gated.includes(url.pathname)) return null;
+  // EVERY `/_denext/*` endpoint is gated — the state-changing ones AND the read-only bundle
+  // / chunk / stylesheet endpoints (dev bundles carry inline source maps = project source).
+  if (!url.pathname.startsWith("/_denext/")) return null;
   if (!devOriginAllowed(request, url, st.allowedDevOrigins)) {
     return new Response("forbidden", { status: 403 });
   }
@@ -75,8 +77,10 @@ function gatedDevEndpoint(
       return openInEditorResponse(st, url.searchParams);
     case DEV_LOG_PATH:
       return devLogResponse(st, request);
-    default:
+    case DEV_STATE_PATH:
       return devStateResponse(st, url);
+    default:
+      return null; // gate passed; another dev handler (or the app) serves it
   }
 }
 

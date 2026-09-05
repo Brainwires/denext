@@ -40,6 +40,23 @@ export function asyncProps<T extends object>(value: T): AsyncProps<T> {
   return value as AsyncProps<T>;
 }
 
+/**
+ * Make an API object awaitable (Next.js 15's `await cookies()` / `await headers()` /
+ * `await draftMode()`) while keeping it synchronously usable. `await` resolves to a view
+ * whose prototype is the object (methods, getters and iteration all work) with `then`
+ * shadowed, so adoption terminates.
+ */
+export function awaitable<T extends object>(value: T): T & PromiseLike<T> {
+  if (typeof (value as { then?: unknown }).then === "function") return value as T & PromiseLike<T>;
+  const view = Object.create(value, { then: { value: undefined } }) as T;
+  const then = <R1 = T, R2 = never>(
+    onFulfilled?: ((v: T) => R1 | PromiseLike<R1>) | null,
+    onRejected?: ((reason: unknown) => R2 | PromiseLike<R2>) | null,
+  ): Promise<R1 | R2> => Promise.resolve(view).then(onFulfilled, onRejected);
+  Object.defineProperty(value, "then", { value: then, enumerable: false, configurable: true });
+  return value as T & PromiseLike<T>;
+}
+
 /** A non-thenable copy of an {@linkcode asyncProps} value (what `await` resolves to). */
 function snapshot<T extends object>(value: T): T {
   const descriptors = Object.getOwnPropertyDescriptors(value);

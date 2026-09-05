@@ -14,9 +14,10 @@
 // The protocol dispatch is a pure `dispatch(message)` → response so it is unit-testable
 // without a real stdio pipe; `runStdioServer` is the thin I/O loop over it.
 
+import { publicGuide } from "./guide.ts";
 import { readPackageFile } from "./package-file.ts";
 import { IMPORT_RULES } from "./next-denext-map.ts";
-import { runTool, type Tool, TOOLS } from "./tools.ts";
+import { runTool, setToolRoot, type Tool, TOOLS } from "./tools.ts";
 
 /** The MCP protocol revision this server implements. */
 const PROTOCOL_VERSION = "2024-11-05";
@@ -69,7 +70,7 @@ function importMapMarkdown(): string {
 /** Read one resource's body by URI (throws for an unknown URI). */
 async function readResource(uri: string): Promise<{ mimeType: string; text: string }> {
   if (uri === "denext://guide") {
-    return { mimeType: "text/markdown", text: await readPackageFile("AGENTS.md") };
+    return { mimeType: "text/markdown", text: publicGuide(await readPackageFile("AGENTS.md")) };
   }
   if (uri === "denext://import-map") {
     return { mimeType: "text/markdown", text: importMapMarkdown() };
@@ -178,6 +179,8 @@ export interface StdioStreams {
  * without a real stdio pipe; `tools` narrows the exposed tool set.
  */
 export async function runStdioServer(streams: StdioStreams = {}): Promise<void> {
+  // Over the wire, every tool's `dir` is confined to the launch directory (see setToolRoot).
+  setToolRoot(Deno.cwd());
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
   const input = streams.input ?? Deno.stdin.readable;

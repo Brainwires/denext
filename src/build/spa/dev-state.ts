@@ -26,6 +26,8 @@ export interface SpaDevServerOptions {
    * per-server so concurrent (e.g. parallel-test) servers don't fight over a global env var.
    */
   unbundled?: boolean;
+  /** Extra dev origins (hosts) allowed to reach the `/_denext/*` dev endpoints. */
+  allowedDevOrigins?: string[];
 }
 
 /** The unbundled SPA's separately-extracted stylesheet URL. */

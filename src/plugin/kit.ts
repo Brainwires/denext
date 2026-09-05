@@ -66,6 +66,9 @@ export type { I18nConfig, RouteParams, Segment } from "../server/mod.ts";
 export { revalidatePath, revalidateTag } from "../server/mod.ts";
 // Bounded request-body reading (size cap + idle timeout), the same guard Server Actions use.
 export { cappedBody, readCappedBody, STALLED, TOO_LARGE } from "../server/mod.ts";
+// Signed-token primitives (HMAC-SHA256 + base64url) for a plugin's own cookies — pass a
+// plugin-specific `domain` so its tokens can never verify as denext's session cookie.
+export { fromBase64Url, hmacSign, hmacVerify, toBase64Url } from "../server/session.ts";
 export type {
   Component,
   DenextConfig,

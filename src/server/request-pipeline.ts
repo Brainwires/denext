@@ -4,6 +4,7 @@
 // error handling. `createApp` wraps this with the per-request context, timeout,
 // hardening headers and logging.
 
+import { copyRemoteAddr } from "./remote-addr.ts";
 import type { RouteManifest } from "../router/manifest.ts";
 import { matchApi, matchPage } from "../router/match.ts";
 import { handleApi } from "./api.ts";
@@ -143,8 +144,13 @@ async function runMiddleware(state: RequestState): Promise<Response | null> {
   // The runner already applied request-header overrides / the rewrite URL to
   // `outcome.request` (consuming the original body once) — route THAT request. A custom
   // runner that returns no `request` gets the same treatment applied here.
-  if (outcome.request) state.request = outcome.request;
-  else applyOutcomeToRequest(state, outcome);
+  if (outcome.request) {
+    copyRemoteAddr(state.request, outcome.request);
+    state.request = outcome.request;
+    // `headers()` / `NextRequest` adapters read `ctx.request`: keep it on the request as
+    // middleware left it (header overrides included).
+    state.ctx.request = state.request;
+  } else applyOutcomeToRequest(state, outcome);
   if (outcome.type === "rewrite") {
     if (outcome.external) return proxyExternalRewrite(state, outcome.url, outcome.headers);
     state.url = new URL(state.request.url);
@@ -165,7 +171,10 @@ async function runMiddleware(state: RequestState): Promise<Response | null> {
 function applyOutcomeToRequest(state: RequestState, outcome: MiddlewareOutcome): void {
   if (outcome.type === "rewrite") state.request = new Request(outcome.url, state.request);
   if (outcome.type !== "response" && outcome.requestHeaders) {
-    state.request = new Request(state.request, { headers: outcome.requestHeaders });
+    const rebuilt = new Request(state.request, { headers: outcome.requestHeaders });
+    copyRemoteAddr(state.request, rebuilt);
+    state.request = rebuilt;
+    state.ctx.request = rebuilt;
   }
 }
 
@@ -404,6 +413,7 @@ async function dispatch(state: RequestState): Promise<Response> {
   const metaFile = await serveMetadata(state, manifest);
   if (metaFile) return metaFile;
   const localeInfo = resolveLocale(state);
+  if (localeInfo) state.ctx.routing = { basePath: state.app.basePath, locale: localeInfo.locale };
   const routingPath = localeInfo ? localeInfo.rest : state.pathname;
   const softNavPost = await stashSoftNavBody(state);
   if (softNavPost instanceof Response) return softNavPost;
@@ -461,6 +471,7 @@ export async function runPipeline(
     pathname: url.pathname,
     dispatchRouteType: "render",
   };
+  ctx.routing = { basePath: app.basePath };
   try {
     return await dispatch(state);
   } catch (error) {

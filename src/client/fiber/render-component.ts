@@ -11,6 +11,8 @@ import {
   hookIndex,
   renderPhaseUpdateScheduled,
   resetHookCursor,
+  setRefreshSwapRender,
+  setSuppressEffectQueue,
 } from "./hooks-dispatcher.ts";
 
 import type { VNode } from "../../jsx/types.ts";
@@ -51,6 +53,7 @@ function asyncClientComponentError(): Error {
  * effects reach the commit.
  */
 function restoreForReRender(inst: Fiber, depsBaseline: Array<DependencyList | undefined>): void {
+  setSuppressEffectQueue(false); // the discarded pass's queues are cleared below; re-queue
   const hooks = inst.hooks!;
   for (let i = 0; i < hooks.length; i++) {
     const c = hooks[i];
@@ -242,14 +245,15 @@ function renderWithStrictMode(
   const result = runRenderPhase(inst, depsBaseline, type, props, ref, forwardsRef);
   if (inst.strict === true && devHydrationActive()) {
     const localAfterFirst = inst.idScope!.local;
-    const second = runRenderPhase(
-      inst,
-      inst.hooks!.map((c) => c.deps),
-      type,
-      props,
-      ref,
-      forwardsRef,
-    );
+    // Effect deps are recorded at COMMIT, so the second pass would see them "changed" again
+    // and queue duplicates: suppress queueing for it (the first pass's entries commit).
+    setSuppressEffectQueue(true);
+    let second: VNode | null;
+    try {
+      second = runRenderPhase(inst, depsBaseline, type, props, ref, forwardsRef);
+    } finally {
+      setSuppressEffectQueue(false);
+    }
     inst.idScope!.local = localAfterFirst;
     return second ?? textVNode("");
   }
@@ -284,6 +288,7 @@ export function renderComponent(inst: Fiber): VNode {
   const prevInst = currentFiber;
   const prevIdx = hookIndex;
   const swap = resolveRefreshSwap(inst);
+  setRefreshSwapRender(swap.refreshSwap);
   enterComponentRender(inst, 0);
   inst.insertionEffects = [];
   inst.pendingEffects = [];

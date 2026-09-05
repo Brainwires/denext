@@ -21,7 +21,14 @@ import {
   makeProviderFetch,
 } from "./flow.ts";
 import { verifyIdToken } from "./jwt.ts";
-import { createRateLimiter, defaultRateLimitKey, type RateLimiter } from "./rate-limit.ts";
+import {
+  createRateLimiter,
+  defaultRateLimitKey,
+  IP_BUCKET_FACTOR,
+  ipBucketKey,
+  type RateLimiter,
+} from "./rate-limit.ts";
+import { bufferedRequest, readCappedBody, STALLED, TOO_LARGE } from "../body.ts";
 import { clearAuthSession, issueAuthSession, readAuthSession } from "./session.ts";
 import {
   type AuthConfig,
@@ -400,7 +407,12 @@ async function handleCredentials(
     ((req: Request, c: Record<string, string>) =>
       defaultRateLimitKey(req, c, { trustForwardedHeaders: config.trustForwardedHeaders }));
   const key = limiter ? keyGenerator(request, creds) : "";
-  const retryAfter = limiter ? await limiter.lockedOut(key) : null;
+  // Two buckets: the app's key (IP + identifier by default) and an IP-wide one, so varying
+  // the identifier / identifier field per attempt can't dodge the limiter.
+  const ipKey = ipBucketKey(request, { trustForwardedHeaders: config.trustForwardedHeaders });
+  const retryAfter = limiter
+    ? (await limiter.lockedOut(key)) ?? (await limiter.lockedOut(ipKey, IP_BUCKET_FACTOR))
+    : null;
   if (retryAfter !== null) {
     return json({ error: "too many attempts" }, 429, { "retry-after": String(retryAfter) });
   }
@@ -408,6 +420,7 @@ async function handleCredentials(
   const user = await authorizeCredentials(provider, creds);
   if (!user) {
     await limiter?.fail(key);
+    await limiter?.fail(ipKey);
     // Generic failure — never reveal whether the account exists.
     return json({ error: "invalid credentials" }, 401);
   }
@@ -432,21 +445,35 @@ function providerIdOf(segment: string | undefined): string | null {
   }
 }
 
-/** Parse credentials from a JSON or form-encoded POST body. */
+/** The most a credentials POST body may carry (a login form is a few hundred bytes). */
+const MAX_CREDENTIALS_BYTES = 64 * 1024;
+
+/**
+ * Parse credentials from a JSON or form-encoded POST body. The body is read through the
+ * shared cap (an oversized/stalled body is refused, never buffered whole), and only STRING
+ * values survive — a JSON body's nested objects/arrays never reach `authorize`, which
+ * expects `Record<string, string>` and may hand a value straight to a query.
+ */
 async function readCredentials(request: Request): Promise<Record<string, string>> {
   const type = request.headers.get("content-type") ?? "";
   try {
-    if (type.includes("application/json")) {
-      const body = await request.json();
-      return typeof body === "object" && body ? body as Record<string, string> : {};
-    }
-    const form = await request.formData();
-    const out: Record<string, string> = {};
-    for (const [k, v] of form.entries()) if (typeof v === "string") out[k] = v;
-    return out;
+    const bytes = await readCappedBody(request, MAX_CREDENTIALS_BYTES);
+    if (bytes === TOO_LARGE || bytes === STALLED) return {};
+    const capped = bufferedRequest(request, bytes);
+    return type.includes("application/json")
+      ? stringFields(await capped.json())
+      : stringFields(Object.fromEntries(await capped.formData()));
   } catch {
     return {};
   }
+}
+
+/** The string-valued entries of a parsed body (anything else — nested JSON, files — is dropped). */
+function stringFields(body: unknown): Record<string, string> {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return {};
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(body)) if (typeof v === "string") out[k] = v;
+  return out;
 }
 
 /** Run the app's signIn callback: `false` denies, an object enriches, else pass through. */

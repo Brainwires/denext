@@ -380,7 +380,7 @@ export function useSearchParams(defaultInit?: ConstructorParameters<typeof URLSe
   if (defaultsRef.current === null) {
     defaultsRef.current = new URLSearchParams(defaultInit ?? "");
   }
-  let effective = params;
+  let effective: URLSearchParams = params;
   const defaults = defaultsRef.current;
   const merged = new URLSearchParams(params.toString());
   let seededAny = false;

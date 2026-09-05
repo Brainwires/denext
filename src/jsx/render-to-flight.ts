@@ -143,6 +143,7 @@ function flightChild(child: VNodeChild, ctx: FlightCtx): FlightNode | Promise<Fl
   if (child == null || child === false || child === true) return null;
   if (typeof child === "string") return child;
   if (typeof child === "number") return child;
+  if (typeof child === "bigint") return String(child); // JSON has no bigint; text either way
   if (Array.isArray(child)) return flightChildren(child, ctx);
   return flightVNode(child as VNode, ctx);
 }

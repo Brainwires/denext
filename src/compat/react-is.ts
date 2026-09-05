@@ -58,7 +58,7 @@ export const StrictMode: symbol = REACT_STRICT_MODE_TYPE;
 /** Type marker for `Profiler` (denext models it as a marked Fragment). */
 export const Profiler: symbol = Symbol.for("react.profiler");
 /** Type marker for a context provider (returned by {@link typeOf} for denext providers). */
-export const ContextProvider: symbol = Symbol.for("react.provider");
+export const ContextProvider: symbol = Symbol.for("react.context"); // React 19: the Context IS the Provider
 /** Type marker for a context consumer (returned by {@link typeOf} for `.Consumer`). */
 export const ContextConsumer: symbol = Symbol.for("react.consumer");
 
@@ -129,6 +129,8 @@ export function typeOf(value: unknown): symbol | undefined {
   // functions carrying context metadata, not distinct element objects.
   if (isContextProvider(value)) return ContextProvider;
   if (isContextConsumer(value)) return ContextConsumer;
+  // Any other element (`<div/>`, `<MyComponent/>`) is a plain element, as in React.
+  if (isElement(value)) return Element;
   return undefined;
 }
 

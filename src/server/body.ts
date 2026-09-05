@@ -1,5 +1,6 @@
 // Bounded request-body reading, shared by every server entry point that buffers a body
 // (Server Actions, the soft-navigation POST echo, plugin API routes).
+import { copyRemoteAddr } from "./remote-addr.ts";
 
 /** Sentinel returned by {@linkcode readCappedBody} when the body exceeds the cap. */
 export const TOO_LARGE = Symbol("too_large");
@@ -60,11 +61,24 @@ export async function readCappedBody(
 
 /** Rebuild a request from already-buffered body bytes (headers/method preserved). */
 export function bufferedRequest(request: Request, body: Uint8Array): Request {
-  return new Request(request.url, {
-    method: request.method,
-    headers: request.headers,
-    body: body.byteLength > 0 ? (body as BodyInit) : undefined,
-  });
+  return carryRemoteAddr(
+    request,
+    new Request(request.url, {
+      method: request.method,
+      headers: request.headers,
+      body: body.byteLength > 0 ? (body as BodyInit) : undefined,
+    }),
+  );
+}
+
+/**
+ * A rebuilt `Request` loses the socket peer address the server loop recorded on the
+ * original (a WeakMap keyed by the Request object) — and with it the auth rate limiter's
+ * and `NextRequest.ip`'s notion of the client. Carry it over.
+ */
+function carryRemoteAddr(from: Request, to: Request): Request {
+  copyRemoteAddr(from, to);
+  return to;
 }
 
 /**
@@ -87,13 +101,16 @@ export function cappedBody(request: Request, maxBytes: number): Request {
       },
     }),
   );
-  return new Request(request.url, {
-    method: request.method,
-    headers: request.headers,
-    body: limited,
-    // @ts-ignore duplex is required by the spec for streaming bodies (Deno accepts it)
-    duplex: "half",
-  });
+  return carryRemoteAddr(
+    request,
+    new Request(request.url, {
+      method: request.method,
+      headers: request.headers,
+      body: limited,
+      // @ts-ignore duplex is required by the spec for streaming bodies (Deno accepts it)
+      duplex: "half",
+    }),
+  );
 }
 
 /** Thrown (as a stream error) by {@linkcode cappedBody} when a body exceeds its cap. */

@@ -388,8 +388,10 @@ function runSettled(): void {
 }
 
 setTransitionSettledHook((cb) => {
+  // Inside a transition/action the optimistic value reverts when it settles. Outside one
+  // React warns and the value simply persists until the base state changes — it is NOT
+  // reverted on the next tick (that would make `addOptimistic` outside a transition a no-op).
   if (transitionDepth > 0 || asyncTransitionDepth > 0) settledCallbacks.push(cb);
-  else queueMicrotask(cb);
 });
 
 function scheduleTransitionComplete(onComplete: () => void): void {

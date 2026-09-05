@@ -10,7 +10,14 @@ import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChild, VNodeChildren } from "../jsx/types.ts";
 import { hydrateRoot, type Root } from "./reconciler.ts";
 import { revealStreamedHoles } from "./reveal-holes.ts";
-import { type Context, useContext, useEffect, useRef, useState } from "../runtime/hooks.ts";
+import {
+  type Context,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "../runtime/hooks.ts";
 import { createContext } from "../runtime/context.ts";
 // ROOT_ID comes from its own leaf module — importing it from document.ts would drag
 // document.ts's server-only deps (which import node:async_hooks) into the client bundle
@@ -88,7 +95,28 @@ export function subscribeLocation(listener: () => void): () => void {
 }
 
 export function getLocationState(): LocationState {
+  if (typeof location === "undefined") return serverLocation() ?? current;
   return current;
+}
+
+type ContextBridge = {
+  __denextCurrentRequestContext?: () => { request?: Request } | undefined;
+};
+
+/**
+ * On the server, `usePathname()` / `useSearchParams()` in a Client Component reflect the
+ * request being rendered (Next does the same), read through the request-context bridge the
+ * server installs — never a static import of the server runtime from this client module.
+ */
+function serverLocation(): LocationState | null {
+  const req = (globalThis as ContextBridge).__denextCurrentRequestContext?.()?.request;
+  if (!req) return null;
+  try {
+    const u = new URL(req.url);
+    return { pathname: stripBase(u.pathname), search: u.search };
+  } catch {
+    return null;
+  }
 }
 
 // ---- Prefetching -----------------------------------------------------------
@@ -157,6 +185,11 @@ async function fetchRoute(href: string): Promise<RouteResponse> {
     body: extra.body,
   });
   if (!res.ok && res.status !== 404) throw new Error(`status ${res.status}`);
+  // A redirect that landed on another origin (an auth provider, a marketing site) is not a
+  // page of this app: never splice its body into the document — let the browser load it.
+  if (res.url && new URL(res.url).origin !== location.origin) {
+    throw new Error("cross-origin redirect");
+  }
   return {
     body: await res.text(),
     flight: res.headers?.get("x-denext-flight") === "1",
@@ -296,8 +329,8 @@ export async function navigate(
   const token = ++navToken;
   setNavigatingHref(href);
   try {
-    await navigateSameOrigin(url, href, options);
-    committedHref = url.href; // track the committed entry (for undoing a blocked back/forward)
+    await navigateSameOrigin(url, href, options, token);
+    if (token === navToken) committedHref = url.href; // the committed entry (for undoing a blocked back/forward)
   } finally {
     if (token === navToken) setNavigatingHref(null); // only the latest nav clears it
   }
@@ -383,8 +416,16 @@ function runParsedEntry(parsed: Document, url: URL): void {
   if (moduleScript) injectRouteEntry(moduleScript.getAttribute("src")!, url);
 }
 
-async function navigateSameOrigin(url: URL, href: string, options: NavigateOptions): Promise<void> {
+async function navigateSameOrigin(
+  url: URL,
+  href: string,
+  options: NavigateOptions,
+  token: number,
+): Promise<void> {
   const loaded = await loadRoute(url);
+  // Superseded while loading (the user clicked again): applying this response now would
+  // clobber the newer navigation's document. The newer one owns the page.
+  if (token !== navToken) return;
   if (!loaded) {
     location.href = href; // network/parse failure: hard navigate so the user isn't stuck
     return;
@@ -652,7 +693,7 @@ function installNavigation(): void {
       return;
     }
     committedHref = target;
-    navigate(target, { history: false });
+    navigate(target, { history: false, scroll: false }); // the browser restores scroll itself
   });
 }
 
@@ -918,7 +959,10 @@ const ROUTER: Router = {
   prefetch: (href) => prefetch(formatHref(href)),
   back: () => history.back(),
   forward: () => history.forward(),
-  refresh: () => void navigate(location.href, { history: false }),
+  refresh: () => {
+    prefetchCache.clear(); // stale prefetched documents must not satisfy the refreshed route
+    void navigate(location.href, { history: false });
+  },
 };
 
 /** Access the imperative {@link Router} for programmatic navigation. Stable identity. */
@@ -954,14 +998,47 @@ export function usePathname(): string {
   return pathname;
 }
 
-/** Reactive current search params. */
-export function useSearchParams(): URLSearchParams {
+/**
+ * Next's `ReadonlyURLSearchParams` — the read-only view of the URL query
+ * that `useSearchParams()` returns. It is a real `URLSearchParams` for reads/iteration,
+ * but its mutating methods throw (you cannot change the URL by mutating this object;
+ * navigate instead).
+ */
+export class ReadonlyURLSearchParams extends URLSearchParams {
+  private static readonly ERROR = (method: string) =>
+    new Error(
+      `ReadonlyURLSearchParams.${method} is not supported: the search params from ` +
+        `useSearchParams() are read-only. Use useRouter().push/replace to change the URL.`,
+    );
+  /** Not supported — this view is read-only. @throws always. */
+  override append(_name: string, _value: string): never {
+    throw ReadonlyURLSearchParams.ERROR("append");
+  }
+  /** Not supported — this view is read-only. @throws always. */
+  override delete(_name: string, _value?: string): never {
+    throw ReadonlyURLSearchParams.ERROR("delete");
+  }
+  /** Not supported — this view is read-only. @throws always. */
+  override set(_name: string, _value: string): never {
+    throw ReadonlyURLSearchParams.ERROR("set");
+  }
+  /** Not supported — this view is read-only. @throws always. */
+  override sort(): never {
+    throw ReadonlyURLSearchParams.ERROR("sort");
+  }
+}
+
+/**
+ * Reactive current search params — a {@link ReadonlyURLSearchParams}, memoized per
+ * query string so `useEffect(…, [searchParams])` re-runs only when the query changes.
+ */
+export function useSearchParams(): ReadonlyURLSearchParams {
   const [search, setSearch] = useState(getLocationState().search);
   useEffect(
     () => subscribeLocation(() => setSearch(getLocationState().search)),
     [],
   );
-  return new URLSearchParams(search);
+  return useMemo(() => new ReadonlyURLSearchParams(search), [search]);
 }
 
 /** Read the server-embedded hydration data (params, messages, etc.). */

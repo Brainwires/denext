@@ -5,7 +5,6 @@
  * @module
  */
 import { cacheLife, cacheTag, noStore } from "../../server/mod.ts";
-import { isControlSignal } from "../../runtime/error-boundary.ts";
 
 export {
   cacheLife,
@@ -37,9 +36,7 @@ export function unstable_noStore(): void {
  * `forbidden()`, `unauthorized()`) from inside a `try`/`catch`, so a catch-all handler
  * doesn't swallow them. A no-op for any other value.
  */
-export function unstable_rethrow(error: unknown): void {
-  if (isControlSignal(error)) throw error;
-}
+export { unstable_rethrow } from "../../runtime/error-boundary.ts";
 
 /** `unstable_after` — the pre-stable spelling of `after()`. */
 export { after as unstable_after } from "../../server/mod.ts";

@@ -16,6 +16,18 @@
           "denextOnly": true
         },
         {
+          "name": "Activity",
+          "slug": "Activity",
+          "kind": "function",
+          "signature": "Activity(props: object): VNode",
+          "doc": "React.Activity (experimental; formerly unstable_Offscreen) — wraps a subtree whose rendering can be deprioritized or hidden (mode=\"hidden\"). denext has no offscreen scheduler, so it renders as a transparent passthrough of its children (the mode prop is accepted and ignored). Lets apps that adopt the API build and render.",
+          "docFull": "`React.Activity` (experimental; formerly `unstable_Offscreen`) — wraps a subtree whose\nrendering can be deprioritized or hidden (`mode=\"hidden\"`). denext has no offscreen\nscheduler, so it renders as a transparent passthrough of its children (the `mode` prop is\naccepted and ignored). Lets apps that adopt the API build and render.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
           "name": "AnchorProps",
           "slug": "AnchorProps",
           "kind": "typeAlias",
@@ -142,6 +154,35 @@
           "denextOnly": true
         },
         {
+          "name": "cache",
+          "slug": "cache",
+          "kind": "function",
+          "signature": "cache<A, R>(fn: (...args: A) => R): (...args: A) => R",
+          "doc": "React.cache — memoize a function by its arguments.",
+          "docFull": "`React.cache` — memoize a function by its arguments.\n\nReact's server `cache()` scopes results to a single request via async context;\ndenext already provides that request-scoped variant in `src/server/cache.ts`\n(which pulls `node:async_hooks`). This is the **client-safe** surface exposed on\nthe `react` package: a plain persistent memo keyed by argument identity, using a\nnested Map/WeakMap tree (object args keyed by reference, primitives by value) so\nlibraries importing `cache` from `react` resolve and dedupe correctly without\ndragging server-only APIs into the client bundle.\n\n**Lifetime:** during SSR the memo is **request-scoped** (keyed on the current\nrequest context, so one request's result is never served to another — matching\nReact and avoiding a cross-request data leak), and the per-request root is\ngarbage-collected with the request. Off-request (a client bundle, or server code\noutside a request) it falls back to a persistent per-function memo; there, distinct\n**primitive** args are bounded per node ({@link CACHE_MAX_PER_NODE}, evicting the\noldest) so they can't grow without limit (object args use a WeakMap and are freed\nwith the arg). Request-scoped roots stay uncapped (freed with the request, matching\nReact). A throwing `fn` is not cached (it re-runs next call).",
+          "params": [
+            {
+              "name": "fn",
+              "doc": "The function to memoize."
+            }
+          ],
+          "returns": "A memoized function returning the cached result for equal arguments.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "ChangeEvent",
+          "slug": "ChangeEvent",
+          "kind": "interface",
+          "signature": "interface ChangeEvent<T>",
+          "doc": "A change event (inputs).",
+          "docFull": "A change event (inputs).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "Children",
           "slug": "Children",
           "kind": "variable",
@@ -244,6 +285,54 @@
           "denextOnly": false
         },
         {
+          "name": "ComponentProps",
+          "slug": "ComponentProps",
+          "kind": "typeAlias",
+          "signature": "type ComponentProps<T> = conditional",
+          "doc": "Props of a component or intrinsic element type (React's ComponentProps).",
+          "docFull": "Props of a component or intrinsic element type (React's `ComponentProps`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ComponentPropsWithoutRef",
+          "slug": "ComponentPropsWithoutRef",
+          "kind": "typeAlias",
+          "signature": "type ComponentPropsWithoutRef<T> = PropsWithoutRef<ComponentProps<T>>",
+          "doc": "ComponentProps without ref.",
+          "docFull": "{@link ComponentProps} without `ref`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ComponentPropsWithRef",
+          "slug": "ComponentPropsWithRef",
+          "kind": "typeAlias",
+          "signature": "type ComponentPropsWithRef<T> = ComponentProps<T>",
+          "doc": "ComponentProps with ref.",
+          "docFull": "{@link ComponentProps} with `ref`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ComponentType",
+          "slug": "ComponentType",
+          "kind": "typeAlias",
+          "signature": "type ComponentType<P> = FunctionComponent<P> | ComponentClass<P>",
+          "doc": "Either a function or class component.",
+          "docFull": "Either a function or class component.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "Context",
           "slug": "Context",
           "kind": "interface",
@@ -321,6 +410,18 @@
           "denextOnly": true
         },
         {
+          "name": "CSSProperties",
+          "slug": "CSSProperties",
+          "kind": "interface",
+          "signature": "interface CSSProperties",
+          "doc": "Inline style object (permissive).",
+          "docFull": "Inline style object (permissive).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "denextImageLoader",
           "slug": "denextImageLoader",
           "kind": "function",
@@ -339,6 +440,18 @@
           "signature": "type DependencyList = typeOperator",
           "doc": "A useEffect/useMemo dependency array.",
           "docFull": "A `useEffect`/`useMemo` dependency array.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Dispatch",
+          "slug": "Dispatch",
+          "kind": "typeAlias",
+          "signature": "type Dispatch<A> = (value: A) => void",
+          "doc": "useState/useReducer dispatcher.",
+          "docFull": "`useState`/`useReducer` dispatcher.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -380,6 +493,18 @@
           "denextOnly": true
         },
         {
+          "name": "DynamicLoadingProps",
+          "slug": "DynamicLoadingProps",
+          "kind": "interface",
+          "signature": "interface DynamicLoadingProps",
+          "doc": "The props next/dynamic passes to a loading component.",
+          "docFull": "The props `next/dynamic` passes to a `loading` component.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DynamicOptions",
           "slug": "DynamicOptions",
           "kind": "interface",
@@ -392,12 +517,36 @@
           "denextOnly": true
         },
         {
+          "name": "EffectCallback",
+          "slug": "EffectCallback",
+          "kind": "typeAlias",
+          "signature": "type EffectCallback = () => void | parenthesized",
+          "doc": "A useEffect cleanup-returning callback.",
+          "docFull": "A `useEffect` cleanup-returning callback.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "EffectCleanup",
           "slug": "EffectCleanup",
           "kind": "typeAlias",
           "signature": "type EffectCleanup = void | parenthesized",
           "doc": "Optional cleanup returned by an effect callback: either nothing, or a function run before the effect re-runs and on unmount.",
           "docFull": "Optional cleanup returned by an effect callback: either nothing, or a function\nrun before the effect re-runs and on unmount.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ElementRef",
+          "slug": "ElementRef",
+          "kind": "typeAlias",
+          "signature": "type ElementRef<T> = conditional",
+          "doc": "The ref/instance type of a component or intrinsic element.",
+          "docFull": "The ref/instance type of a component or intrinsic element.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -476,6 +625,18 @@
           "denextOnly": true
         },
         {
+          "name": "FC",
+          "slug": "FC",
+          "kind": "typeAlias",
+          "signature": "type FC<P> = FunctionComponent<P>",
+          "doc": "Alias for FunctionComponent.",
+          "docFull": "Alias for {@link FunctionComponent}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "FontFace",
           "slug": "FontFace",
           "kind": "function",
@@ -536,12 +697,36 @@
           "denextOnly": true
         },
         {
+          "name": "FormEvent",
+          "slug": "FormEvent",
+          "kind": "interface",
+          "signature": "interface FormEvent<T>",
+          "doc": "A form event.",
+          "docFull": "A form event.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "FormStatus",
           "slug": "FormStatus",
           "kind": "interface",
           "signature": "interface FormStatus",
           "doc": "Status of the enclosing form's action, as returned by useFormStatus.",
           "docFull": "Status of the enclosing form's action, as returned by {@link useFormStatus}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ForwardedRef",
+          "slug": "ForwardedRef",
+          "kind": "typeAlias",
+          "signature": "type ForwardedRef<T> = parenthesized | MutableRefObject<T | null> | null",
+          "doc": "The ref a forwardRef render fn receives.",
+          "docFull": "The ref a `forwardRef` render fn receives.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -565,6 +750,18 @@
           "denextOnly": false
         },
         {
+          "name": "ForwardRefExoticComponent",
+          "slug": "ForwardRefExoticComponent",
+          "kind": "interface",
+          "signature": "interface ForwardRefExoticComponent<P>",
+          "doc": "The result of forwardRef — callable, ref-forwarding, with a settable name.",
+          "docFull": "The result of `forwardRef` — callable, ref-forwarding, with a settable name.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "Fragment",
           "slug": "Fragment",
           "kind": "variable",
@@ -575,6 +772,18 @@
           "returns": "",
           "examples": [],
           "denextOnly": false
+        },
+        {
+          "name": "FunctionComponent",
+          "slug": "FunctionComponent",
+          "kind": "interface",
+          "signature": "interface FunctionComponent<P>",
+          "doc": "A function component.",
+          "docFull": "A function component.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "getImageProps",
@@ -723,6 +932,18 @@
           "signature": "type HrefInput = Href | UrlObject",
           "doc": "A string href, or the object form.",
           "docFull": "A string href, or the object form.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "HTMLAttributes",
+          "slug": "HTMLAttributes",
+          "kind": "interface",
+          "signature": "interface HTMLAttributes<T>",
+          "doc": "Attributes common to every HTML element (permissive: unknown attrs allowed).",
+          "docFull": "Attributes common to every HTML element (permissive: unknown attrs allowed).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -943,6 +1164,18 @@
           "denextOnly": true
         },
         {
+          "name": "KeyboardEvent",
+          "slug": "KeyboardEvent",
+          "kind": "interface",
+          "signature": "interface KeyboardEvent<T>",
+          "doc": "A keyboard event.",
+          "docFull": "A keyboard event.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "lazy",
           "slug": "lazy",
           "kind": "function",
@@ -1056,6 +1289,42 @@
           "returns": "",
           "examples": [],
           "denextOnly": false
+        },
+        {
+          "name": "MemoExoticComponent",
+          "slug": "MemoExoticComponent",
+          "kind": "interface",
+          "signature": "interface MemoExoticComponent<T>",
+          "doc": "The result of memo.",
+          "docFull": "The result of `memo`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "MouseEvent",
+          "slug": "MouseEvent",
+          "kind": "interface",
+          "signature": "interface MouseEvent<T, E>",
+          "doc": "A mouse event.",
+          "docFull": "A mouse event.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "MutableRefObject",
+          "slug": "MutableRefObject",
+          "kind": "interface",
+          "signature": "interface MutableRefObject<T>",
+          "doc": "A mutable ref cell.",
+          "docFull": "A mutable ref cell.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "navigate",
@@ -1216,6 +1485,18 @@
           "denextOnly": true
         },
         {
+          "name": "PropsWithChildren",
+          "slug": "PropsWithChildren",
+          "kind": "typeAlias",
+          "signature": "type PropsWithChildren<P> = P & object",
+          "doc": "Add children to props.",
+          "docFull": "Add `children` to props.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "PUBLIC_ENV_PREFIXES",
           "slug": "PUBLIC_ENV_PREFIXES",
           "kind": "variable",
@@ -1238,6 +1519,42 @@
           "returns": "A record of public env variables (empty when none are set).",
           "examples": [],
           "denextOnly": true
+        },
+        {
+          "name": "ReactElement",
+          "slug": "ReactElement",
+          "kind": "typeAlias",
+          "signature": "type ReactElement<P, _T> = VNode & object",
+          "doc": "A denext element (React's ReactElement). The 2nd param (element type) is accepted for @types/react shape compatibility; denext keys elements on VNode.",
+          "docFull": "A denext element (React's `ReactElement`). The 2nd param (element `type`) is\naccepted for `@types/react` shape compatibility; denext keys elements on `VNode`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ReactNode",
+          "slug": "ReactNode",
+          "kind": "typeAlias",
+          "signature": "type ReactNode = VNode | string | number | bigint | boolean | null | undefined | Iterable<ReactNode> | Promise<ReactNode>",
+          "doc": "Anything renderable as a child (React's ReactNode). Accepts denext VNode.",
+          "docFull": "Anything renderable as a child (React's `ReactNode`). Accepts denext `VNode`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ReadonlyURLSearchParams",
+          "slug": "ReadonlyURLSearchParams",
+          "kind": "class",
+          "signature": "class ReadonlyURLSearchParams",
+          "doc": "Next's ReadonlyURLSearchParams — the read-only view of the URL query that useSearchParams() returns. It is a real URLSearchParams for reads/iteration, but its mutating methods throw (you cannot change the URL by mutating this object; navigate instead).",
+          "docFull": "Next's `ReadonlyURLSearchParams` — the read-only view of the URL query\nthat `useSearchParams()` returns. It is a real `URLSearchParams` for reads/iteration,\nbut its mutating methods throw (you cannot change the URL by mutating this object;\nnavigate instead).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
         },
         {
           "name": "redirect",
@@ -1285,12 +1602,48 @@
           "denextOnly": false
         },
         {
+          "name": "Reducer",
+          "slug": "Reducer",
+          "kind": "typeAlias",
+          "signature": "type Reducer<S, A> = (prevState: S, action: A) => S",
+          "doc": "A useReducer reducer.",
+          "docFull": "A `useReducer` reducer.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "Ref",
           "slug": "Ref",
           "kind": "typeAlias",
           "signature": "type Ref<T> = object | parenthesized | null | undefined",
           "doc": "A mutable ref object or a callback ref, as accepted by ref/useImperativeHandle.",
           "docFull": "A mutable ref object or a callback ref, as accepted by `ref`/`useImperativeHandle`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RefCallback",
+          "slug": "RefCallback",
+          "kind": "typeAlias",
+          "signature": "type RefCallback<T> = (instance: T | null) => void | parenthesized",
+          "doc": "A callback ref.",
+          "docFull": "A callback ref.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RefObject",
+          "slug": "RefObject",
+          "kind": "interface",
+          "signature": "interface RefObject<T>",
+          "doc": "A ref cell (React 19's RefObject: current is writable).",
+          "docFull": "A ref cell (React 19's `RefObject`: `current` is writable).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -1544,6 +1897,18 @@
           "denextOnly": true
         },
         {
+          "name": "SetStateAction",
+          "slug": "SetStateAction",
+          "kind": "typeAlias",
+          "signature": "type SetStateAction<S> = S | parenthesized",
+          "doc": "The updater passed to a state setter (a value or a function of the previous).",
+          "docFull": "The updater passed to a state setter (a value or a function of the previous).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "Signal",
           "slug": "Signal",
           "kind": "interface",
@@ -1755,6 +2120,18 @@
           "denextOnly": true
         },
         {
+          "name": "SyntheticEvent",
+          "slug": "SyntheticEvent",
+          "kind": "interface",
+          "signature": "interface SyntheticEvent<T, E>",
+          "doc": "Base synthetic event.",
+          "docFull": "Base synthetic event.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "tryCatch",
           "slug": "tryCatch",
           "kind": "function",
@@ -1813,6 +2190,18 @@
           "returns": "",
           "examples": [],
           "denextOnly": true
+        },
+        {
+          "name": "unstable_rethrow",
+          "slug": "unstable_rethrow",
+          "kind": "function",
+          "signature": "unstable_rethrow(error: unknown): void",
+          "doc": "Next's unstable_rethrow — re-throw denext's control-flow signals (redirect(), notFound(), forbidden(), unauthorized(), a PPR postpone) from inside a try/catch, so a catch-all handler doesn't swallow them. Also rethrows an Error whose cause chain wraps such a signal (a library that re-wraps what it caught). A no-op for any other value.",
+          "docFull": "Next's `unstable_rethrow` — re-throw denext's control-flow signals (`redirect()`,\n`notFound()`, `forbidden()`, `unauthorized()`, a PPR postpone) from inside a\n`try`/`catch`, so a catch-all handler doesn't swallow them. Also rethrows an Error whose\n`cause` chain wraps such a signal (a library that re-wraps what it caught). A no-op for\nany other value.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
         },
         {
           "name": "UrlObject",
@@ -2179,8 +2568,8 @@
           "slug": "useRef",
           "kind": "function",
           "signature": "useRef<T>(initial: T): object",
-          "doc": "Create a mutable ref object whose .current persists across renders.",
-          "docFull": "Create a mutable ref object whose `.current` persists across renders.",
+          "doc": "Create a mutable ref object whose .current persists across renders. React's three signatures: useRef<T>(value) → { current: T }, useRef<T>(null) → { current: T | null } (the DOM-ref idiom), useRef<T>() → { current: T | undefined }.",
+          "docFull": "Create a mutable ref object whose `.current` persists across renders. React's three\nsignatures: `useRef<T>(value)` → `{ current: T }`, `useRef<T>(null)` → `{ current: T | null }`\n(the DOM-ref idiom), `useRef<T>()` → `{ current: T | undefined }`.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -2202,9 +2591,9 @@
           "name": "useSearchParams",
           "slug": "useSearchParams",
           "kind": "function",
-          "signature": "useSearchParams(): URLSearchParams",
-          "doc": "Reactive current search params.",
-          "docFull": "Reactive current search params.",
+          "signature": "useSearchParams(): ReadonlyURLSearchParams",
+          "doc": "Reactive current search params — a ReadonlyURLSearchParams, memoized per query string so useEffect(…, [searchParams]) re-runs only when the query changes.",
+          "docFull": "Reactive current search params — a {@link ReadonlyURLSearchParams}, memoized per\nquery string so `useEffect(…, [searchParams])` re-runs only when the query changes.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -2396,6 +2785,18 @@
           "denextOnly": true
         },
         {
+          "name": "ViewTransition",
+          "slug": "ViewTransition",
+          "kind": "function",
+          "signature": "ViewTransition(props: object): VNode",
+          "doc": "React.ViewTransition (experimental) — the client-driven view-transition wrapper. denext renders it as a transparent passthrough of its children (SSR + hydration safe). **Route-level** view transitions DO apply: a Flight soft-navigation commits inside document.startViewTransition where the browser supports it, so the route swap cross-fades (see withViewTransition in src/client/navigation.ts). The component's per-element props (name, enter, exit, update) are not yet honored — that needs this wrapper to emit real view-transition-name DOM markers — and the isomorphic/HTML nav paths (async reconcile) don't animate yet either.",
+          "docFull": "`React.ViewTransition` (experimental) — the client-driven view-transition wrapper.\ndenext renders it as a transparent passthrough of its children (SSR + hydration safe).\n**Route-level** view transitions DO apply: a Flight soft-navigation commits inside\n`document.startViewTransition` where the browser supports it, so the route swap\ncross-fades (see `withViewTransition` in `src/client/navigation.ts`). The component's\nper-element props (`name`, `enter`, `exit`, `update`) are not yet honored — that needs\nthis wrapper to emit real `view-transition-name` DOM markers — and the isomorphic/HTML\nnav paths (async reconcile) don't animate yet either.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
           "name": "VNode",
           "slug": "VNode",
           "kind": "interface",
@@ -2411,7 +2812,7 @@
           "name": "VNodeChild",
           "slug": "VNodeChild",
           "kind": "typeAlias",
-          "signature": "type VNodeChild = VNode | string | number | boolean | null | undefined",
+          "signature": "type VNodeChild = VNode | string | number | bigint | boolean | null | undefined",
           "doc": "Anything that can appear as a child in JSX.",
           "docFull": "Anything that can appear as a child in JSX.",
           "params": [],
@@ -2805,6 +3206,42 @@
           "denextOnly": true
         },
         {
+          "name": "AwaitableCookieStore",
+          "slug": "AwaitableCookieStore",
+          "kind": "typeAlias",
+          "signature": "type AwaitableCookieStore = CookieStore & PromiseLike<CookieStore>",
+          "doc": "cookies()'s return: usable synchronously AND awaitable (await cookies(), Next 15).",
+          "docFull": "`cookies()`'s return: usable synchronously AND awaitable (`await cookies()`, Next 15).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "AwaitableDraftMode",
+          "slug": "AwaitableDraftMode",
+          "kind": "typeAlias",
+          "signature": "type AwaitableDraftMode = DraftMode & PromiseLike<DraftMode>",
+          "doc": "draftMode()'s return: usable synchronously AND awaitable (await draftMode(), Next 15).",
+          "docFull": "`draftMode()`'s return: usable synchronously AND awaitable (`await draftMode()`, Next 15).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "AwaitableHeaders",
+          "slug": "AwaitableHeaders",
+          "kind": "typeAlias",
+          "signature": "type AwaitableHeaders = Headers & PromiseLike<Headers>",
+          "doc": "headers()'s return: usable synchronously AND awaitable (await headers(), Next 15).",
+          "docFull": "`headers()`'s return: usable synchronously AND awaitable (`await headers()`, Next 15).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "cache",
           "slug": "cache",
           "kind": "function",
@@ -3069,7 +3506,7 @@
           "name": "cookies",
           "slug": "cookies",
           "kind": "function",
-          "signature": "cookies(): CookieStore",
+          "signature": "cookies(): AwaitableCookieStore",
           "doc": "Access the current request's cookies (reads incoming, writes Set-Cookie).",
           "docFull": "Access the current request's cookies (reads incoming, writes Set-Cookie).",
           "params": [],
@@ -3329,7 +3766,7 @@
           "name": "draftMode",
           "slug": "draftMode-fn",
           "kind": "function",
-          "signature": "draftMode(): DraftMode",
+          "signature": "draftMode(): AwaitableDraftMode",
           "doc": "Read and control draft (preview) mode for the current request. Backed by an httpOnly cookie holding a **server-minted random token** — a forged cookie value cannot enable draft mode. Still gate enable() behind your own authorization in a route handler (defense in depth); only that authorized call mints a valid token.",
           "docFull": "Read and control draft (preview) mode for the current request. Backed by an\nhttpOnly cookie holding a **server-minted random token** — a forged cookie\nvalue cannot enable draft mode. Still gate `enable()` behind your own\nauthorization in a route handler (defense in depth); only that authorized call\nmints a valid token.",
           "params": [],
@@ -3659,7 +4096,7 @@
           "name": "headers",
           "slug": "headers",
           "kind": "function",
-          "signature": "headers(): Headers",
+          "signature": "headers(): AwaitableHeaders",
           "doc": "Read the current request's headers. Read-only, as in Next.js: set/append/delete throw (the request's headers are shared by middleware, auth and the rest of the pipeline).",
           "docFull": "Read the current request's headers. Read-only, as in Next.js: `set`/`append`/`delete`\nthrow (the request's headers are shared by middleware, auth and the rest of the pipeline).",
           "params": [],
@@ -4175,10 +4612,10 @@
         {
           "name": "LayoutProps",
           "slug": "LayoutProps",
-          "kind": "interface",
-          "signature": "interface LayoutProps",
-          "doc": "Props passed to a layout component.",
-          "docFull": "Props passed to a layout component.",
+          "kind": "typeAlias",
+          "signature": "type LayoutProps<P, Slots> = object & mapped",
+          "doc": "Props passed to a layout component. Slots names the layout's parallel-route slots (@sidebar → LayoutProps<RouteParams, \"sidebar\"> adds a sidebar prop).",
+          "docFull": "Props passed to a layout component. `Slots` names the layout's parallel-route slots\n(`@sidebar` → `LayoutProps<RouteParams, \"sidebar\">` adds a `sidebar` prop).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -4776,7 +5213,7 @@
           "name": "PageProps",
           "slug": "PageProps",
           "kind": "interface",
-          "signature": "interface PageProps",
+          "signature": "interface PageProps<P>",
           "doc": "Props passed to a page component (and to metadata/generateMetadata/ generateViewport).",
           "docFull": "Props passed to a page component (and to `metadata`/`generateMetadata`/\n`generateViewport`).\n\nThe raw `Request` is intentionally **not** exposed here. Per-request data must\nbe read through {@linkcode headers} / {@linkcode cookies} from `denext/server`,\nwhich mark the render dynamic so it is never shared from the page cache — a\npage that reads a cookie off a raw request would otherwise be cached under a\nkey with no per-user component and served to other users. `params` and\n`searchParams` are part of the cache key, so they are safe to read.",
           "params": [],
@@ -5216,6 +5653,18 @@
           "signature": "interface RenderPageOptions",
           "doc": "Options controlling how a page is rendered.",
           "docFull": "Options controlling how a page is rendered.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RenderScope",
+          "slug": "RenderScope",
+          "kind": "interface",
+          "signature": "interface RenderScope",
+          "doc": "The per-render collectors.",
+          "docFull": "The per-render collectors.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -6624,7 +7073,7 @@
           "name": "VNodeChild",
           "slug": "VNodeChild",
           "kind": "typeAlias",
-          "signature": "type VNodeChild = VNode | string | number | boolean | null | undefined",
+          "signature": "type VNodeChild = VNode | string | number | bigint | boolean | null | undefined",
           "doc": "Anything that can appear as a child in JSX.",
           "docFull": "Anything that can appear as a child in JSX.",
           "params": [],
@@ -7982,8 +8431,8 @@
           "slug": "useRef",
           "kind": "function",
           "signature": "useRef<T>(initial: T): object",
-          "doc": "Create a mutable ref object whose .current persists across renders.",
-          "docFull": "Create a mutable ref object whose `.current` persists across renders.",
+          "doc": "Create a mutable ref object whose .current persists across renders. React's three signatures: useRef<T>(value) → { current: T }, useRef<T>(null) → { current: T | null } (the DOM-ref idiom), useRef<T>() → { current: T | undefined }.",
+          "docFull": "Create a mutable ref object whose `.current` persists across renders. React's three\nsignatures: `useRef<T>(value)` → `{ current: T }`, `useRef<T>(null)` → `{ current: T | null }`\n(the DOM-ref idiom), `useRef<T>()` → `{ current: T | undefined }`.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -8005,9 +8454,9 @@
           "name": "useSearchParams",
           "slug": "useSearchParams",
           "kind": "function",
-          "signature": "useSearchParams(): URLSearchParams",
-          "doc": "Reactive current search params.",
-          "docFull": "Reactive current search params.",
+          "signature": "useSearchParams(): ReadonlyURLSearchParams",
+          "doc": "Reactive current search params — a ReadonlyURLSearchParams, memoized per query string so useEffect(…, [searchParams]) re-runs only when the query changes.",
+          "docFull": "Reactive current search params — a {@link ReadonlyURLSearchParams}, memoized per\nquery string so `useEffect(…, [searchParams])` re-runs only when the query changes.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -8101,7 +8550,7 @@
           "name": "VNodeChild",
           "slug": "VNodeChild",
           "kind": "typeAlias",
-          "signature": "type VNodeChild = VNode | string | number | boolean | null | undefined",
+          "signature": "type VNodeChild = VNode | string | number | bigint | boolean | null | undefined",
           "doc": "Anything that can appear as a child in JSX.",
           "docFull": "Anything that can appear as a child in JSX.",
           "params": [],
@@ -9104,7 +9553,7 @@
           "name": "VNodeChild",
           "slug": "VNodeChild",
           "kind": "typeAlias",
-          "signature": "type VNodeChild = VNode | string | number | boolean | null | undefined",
+          "signature": "type VNodeChild = VNode | string | number | bigint | boolean | null | undefined",
           "doc": "Anything that can appear as a child in JSX.",
           "docFull": "Anything that can appear as a child in JSX.",
           "params": [],
