@@ -106,3 +106,25 @@ Deno.test("prepareDesktopIcon: no icon source → undefined (deno desktop defaul
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("composeMacOsIcon: a square web icon becomes Apple's 824px rounded tile", async () => {
+  const { PhotonImage } = await import("@denext/photon");
+  // An opaque 180² square (the shape of every apple-touch-icon).
+  const solid = new PhotonImage(new Uint8Array(180 * 180 * 4).fill(255), 180, 180).get_bytes();
+  const out = await composeMacOsIcon(solid, 824 / 1024);
+  assert(out, "composed");
+  const img = PhotonImage.new_from_byteslice(out);
+  const w = img.get_width(), px = img.get_raw_pixels();
+  const alpha = (x: number, y: number) => px[(y * w + x) * 4 + 3];
+  assertEquals(w, 1024);
+  // Tile spans x = 100..923 (824 px) — the margin is transparent, the edge midpoints opaque.
+  assertEquals(alpha(99, 512), 0, "left margin transparent");
+  assertEquals(alpha(100, 512), 255, "tile left edge opaque");
+  assertEquals(alpha(923, 512), 255, "tile right edge opaque");
+  assertEquals(alpha(924, 512), 0, "right margin transparent");
+  // Corners are rounded: the tile's corner pixel is transparent, well inside the arc it is opaque.
+  assertEquals(alpha(100, 100), 0, "sharp corner removed");
+  assertEquals(alpha(923, 923), 0, "sharp corner removed (opposite)");
+  assertEquals(alpha(512, 512), 255, "center opaque");
+  assertEquals(alpha(160, 160), 255, "inside the corner arc stays opaque");
+});

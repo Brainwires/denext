@@ -8,6 +8,12 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.0.4] - 2026-09-05
+
+### Fixed
+
+- **Composed desktop icons match the macOS grid.** An auto-detected web icon (a full-bleed square `apple-touch-icon`) is now composed into Apple's 824-of-1024 px tile WITH the rounded-tile mask (continuous-curvature corners at ~22 % of the tile); it used to be an 819 px sharp-cornered square, which the Dock renders visibly smaller and boxier than the neighbouring apps. `spa.desktop.icon` PNGs are still used verbatim. `src/build/desktop-icon.ts`.
+
 ## [2.0.3] - 2026-09-05
 
 ### Fixed
@@ -2694,6 +2700,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.0.4]: https://jsr.io/@denext/denext@2.0.4
 [2.0.3]: https://jsr.io/@denext/denext@2.0.3
 [2.0.2]: https://jsr.io/@denext/denext@2.0.2
 [2.0.1]: https://jsr.io/@denext/denext@2.0.1
