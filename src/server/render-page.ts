@@ -255,11 +255,11 @@ export async function buildPageContext(
   const tree = options.messages ? provideMessages(options.messages, wrapped.tree) : wrapped.tree;
   const metadata = mergeMetadata([
     ...wrapped.layoutMetas,
-    await resolvePageMetadata(pageModule, props),
+    await resolvePageMetadata(pageModule, props, wrapped.layoutMetas),
   ]);
   const viewport = mergeViewport([
     ...wrapped.layoutViewports,
-    await resolvePageViewport(pageModule, props),
+    await resolvePageViewport(pageModule, props, wrapped.layoutViewports),
   ]);
   return { tree, metadata, viewport, config, staticParamsNotFound };
 }
@@ -326,19 +326,30 @@ async function wrapBoundaries(
   return content;
 }
 
-/** Page metadata: static `metadata`, `metadata` fn, or `generateMetadata`. */
-async function resolvePageMetadata(pageModule: PageModule, props: PageProps): Promise<Metadata> {
+/** Page metadata: static `metadata`, `metadata` fn, or `generateMetadata(props, parent)`. */
+async function resolvePageMetadata(
+  pageModule: PageModule,
+  props: PageProps,
+  layoutMetas: Metadata[] = [],
+): Promise<Metadata> {
   if (typeof pageModule.generateMetadata === "function") {
-    return await pageModule.generateMetadata(props);
+    return await pageModule.generateMetadata(props, Promise.resolve(mergeMetadata(layoutMetas)));
   }
   if (typeof pageModule.metadata === "function") return await pageModule.metadata(props);
   return pageModule.metadata ?? {};
 }
 
-/** Page viewport: `generateViewport` or static `viewport`. */
-async function resolvePageViewport(pageModule: PageModule, props: PageProps): Promise<Viewport> {
+/** Page viewport: `generateViewport(props, parent)` or static `viewport`. */
+async function resolvePageViewport(
+  pageModule: PageModule,
+  props: PageProps,
+  layoutViewports: Viewport[] = [],
+): Promise<Viewport> {
   if (typeof pageModule.generateViewport === "function") {
-    return await pageModule.generateViewport(props);
+    return await pageModule.generateViewport(
+      props,
+      Promise.resolve(mergeViewport(layoutViewports)),
+    );
   }
   return pageModule.viewport ?? {};
 }
@@ -947,8 +958,7 @@ async function wrapLayouts(
   props: PageProps,
 ): Promise<{ tree: VNode; layoutMetas: Metadata[]; layoutViewports: Viewport[] }> {
   let tree = content;
-  const layoutMetas: Metadata[] = [];
-  const layoutViewports: Viewport[] = [];
+  const { layoutMetas, layoutViewports } = await resolveLayoutMetadata(match, load, props);
   const layoutSlots = match.route.layoutSlots;
   const innermost = match.route.layoutChain.length - 1;
   for (let i = innermost; i >= 0; i--) {
@@ -956,16 +966,7 @@ async function wrapLayouts(
     if (typeof layoutModule.default !== "function") {
       throw new Error(`Layout module ${match.route.layoutChain[i]} has no default.`);
     }
-    // Each layout may contribute metadata/viewport via a generator (preferred) or
-    // a static export; `unshift` keeps outer→inner order for the later merge.
-    const lMeta = typeof layoutModule.generateMetadata === "function"
-      ? await layoutModule.generateMetadata(props)
-      : layoutModule.metadata;
-    if (lMeta) layoutMetas.unshift(lMeta);
-    const lViewport = typeof layoutModule.generateViewport === "function"
-      ? await layoutModule.generateViewport(props)
-      : layoutModule.viewport;
-    if (lViewport) layoutViewports.unshift(lViewport);
+
     // Parallel-route slots declared at this layout's level render into it as
     // named props, matched against the current URL (so a slot spans children).
     const slotMap = layoutSlots?.[i];
@@ -1004,8 +1005,7 @@ async function wrapLevels(
   props: PageProps,
 ): Promise<{ tree: VNode; layoutMetas: Metadata[]; layoutViewports: Viewport[] }> {
   const levels = match.route.levels ?? [];
-  const layoutMetas: Metadata[] = [];
-  const layoutViewports: Viewport[] = [];
+  const { layoutMetas, layoutViewports } = await resolveLayoutMetadata(match, load, props);
   let layoutIdx = match.route.layoutChain.length - 1;
   let tree = page;
   for (let i = levels.length - 1; i >= 0; i--) {
@@ -1013,13 +1013,35 @@ async function wrapLevels(
     tree = await wrapLevelBoundaries(level, tree, load, options);
     if (level.template) tree = await wrapTemplate(level.template, tree, match.params, load);
     if (level.layout) {
-      const wrapped = await wrapOneLayout(match, layoutIdx--, tree, load, pathname, soft, props);
-      tree = wrapped.tree;
-      if (wrapped.meta) layoutMetas.unshift(wrapped.meta);
-      if (wrapped.viewport) layoutViewports.unshift(wrapped.viewport);
+      tree = await wrapOneLayout(match, layoutIdx--, tree, load, pathname, soft, props);
     }
   }
   return { tree, layoutMetas, layoutViewports };
+}
+
+/**
+ * Layout metadata/viewport outer→inner, each generator receiving `parent` — the merge of
+ * the layouts ABOVE it (Next.js `generateMetadata(props, parent)`).
+ */
+async function resolveLayoutMetadata(
+  match: PageMatch,
+  load: ModuleLoader,
+  props: PageProps,
+): Promise<{ layoutMetas: Metadata[]; layoutViewports: Viewport[] }> {
+  const layoutMetas: Metadata[] = [];
+  const layoutViewports: Viewport[] = [];
+  for (const file of match.route.layoutChain) {
+    const mod = (await load(file)) as LayoutModule;
+    const meta = typeof mod.generateMetadata === "function"
+      ? await mod.generateMetadata(props, Promise.resolve(mergeMetadata(layoutMetas)))
+      : mod.metadata;
+    if (meta) layoutMetas.push(meta);
+    const viewport = typeof mod.generateViewport === "function"
+      ? await mod.generateViewport(props, Promise.resolve(mergeViewport(layoutViewports)))
+      : mod.viewport;
+    if (viewport) layoutViewports.push(viewport);
+  }
+  return { layoutMetas, layoutViewports };
 }
 
 /** `error( loading( content ) )` for one level's own boundary files. */
@@ -1065,27 +1087,20 @@ async function wrapOneLayout(
   pathname: string,
   soft: boolean,
   props: PageProps,
-): Promise<{ tree: VNode; meta?: Metadata; viewport?: Viewport }> {
+): Promise<VNode> {
   const file = match.route.layoutChain[i];
   const layoutModule = (await load(file)) as LayoutModule;
   if (typeof layoutModule.default !== "function") {
     throw new Error(`Layout module ${file} has no default.`);
   }
-  const meta = typeof layoutModule.generateMetadata === "function"
-    ? await layoutModule.generateMetadata(props)
-    : layoutModule.metadata;
-  const viewport = typeof layoutModule.generateViewport === "function"
-    ? await layoutModule.generateViewport(props)
-    : layoutModule.viewport;
   const slotMap = match.route.layoutSlots?.[i];
   const slotProps = slotMap ? await renderSlotMap(slotMap, match.params, load, pathname, soft) : {};
-  let tree = h(layoutModule.default, {
+  const tree = h(layoutModule.default, {
     children: content,
     params: props.params,
     ...slotProps,
   } as never);
-  tree = provideLayoutSegments({ pathname, depth: match.route.layoutDepths?.[i] ?? 0 }, tree);
-  return { tree, meta: meta ?? undefined, viewport: viewport ?? undefined };
+  return provideLayoutSegments({ pathname, depth: match.route.layoutDepths?.[i] ?? 0 }, tree);
 }
 
 /**
@@ -1213,6 +1228,19 @@ const OVERRIDE_FIELDS = [
   "canonical",
   "icon",
   "authors",
+  "applicationName",
+  "generator",
+  "referrer",
+  "creator",
+  "publisher",
+  "category",
+  "classification",
+  "manifest",
+  "archives",
+  "assets",
+  "bookmarks",
+  "appleWebApp",
+  "formatDetection",
 ] as const satisfies readonly (keyof Metadata)[];
 
 /** Metadata object fields merged shallowly (inner keys over outer). */
@@ -1223,6 +1251,9 @@ const SHALLOW_MERGE_FIELDS = [
   "icons",
   "verification",
   "meta",
+  "other",
+  "itemProp",
+  "appLinks",
 ] as const satisfies readonly (keyof Metadata)[];
 
 /**

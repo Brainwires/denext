@@ -15,9 +15,19 @@ export interface OpenGraphImage {
   height?: number;
   /** `og:image:alt`. */
   alt?: string;
+  /** `og:image:type`. */
+  type?: string;
 }
 
-/** Open Graph metadata (`og:*` tags). */
+/** A single Open Graph video/audio (`og:video` / `og:audio`). */
+export interface OpenGraphMedia {
+  url: string;
+  width?: number;
+  height?: number;
+  type?: string;
+}
+
+/** Open Graph metadata (`og:*` tags), Next.js-shaped (`images`, not `image`). */
 export interface OpenGraphMetadata {
   /** `og:title`. */
   title?: string;
@@ -28,25 +38,58 @@ export interface OpenGraphMetadata {
   /** `og:url`. */
   url?: string;
   /** `og:image` — a URL, a descriptor, or a list of either. */
-  image?: string | OpenGraphImage | Array<string | OpenGraphImage>;
+  images?: string | OpenGraphImage | Array<string | OpenGraphImage>;
+  /** `og:video` entries. */
+  videos?: string | OpenGraphMedia | Array<string | OpenGraphMedia>;
+  /** `og:audio` entries. */
+  audio?: string | OpenGraphMedia | Array<string | OpenGraphMedia>;
   /** `og:site_name`. */
   siteName?: string;
+  /** `og:locale` (e.g. "en_US"). */
+  locale?: string;
+  /** `og:locale:alternate`. */
+  alternateLocale?: string | string[];
+  /** `og:determiner`. */
+  determiner?: "a" | "an" | "the" | "auto" | "";
+  /** `article:published_time`. */
+  publishedTime?: string;
+  /** `article:modified_time`. */
+  modifiedTime?: string;
+  /** `article:expiration_time`. */
+  expirationTime?: string;
+  /** `article:author` URL(s) or name(s). */
+  authors?: string | string[];
+  /** `article:section`. */
+  section?: string;
+  /** `article:tag`. */
+  tags?: string | string[];
+  /** `og:email`, `og:phone_number`, `og:fax_number`, `og:country_name` etc. */
+  emails?: string | string[];
+  phoneNumbers?: string | string[];
+  faxNumbers?: string | string[];
+  countryName?: string;
+  /** `og:ttl`. */
+  ttl?: number;
 }
 
-/** Twitter Card metadata (`twitter:*` tags). */
+/** Twitter Card metadata (`twitter:*` tags), Next.js-shaped (`images`, not `image`). */
 export interface TwitterMetadata {
   /** `twitter:card` (e.g. "summary_large_image"). */
   card?: "summary" | "summary_large_image" | "app" | "player";
   /** `twitter:site` (the site's @handle). */
   site?: string;
+  /** `twitter:site:id`. */
+  siteId?: string;
   /** `twitter:creator` (the author's @handle). */
   creator?: string;
+  /** `twitter:creator:id`. */
+  creatorId?: string;
   /** `twitter:title`. */
   title?: string;
   /** `twitter:description`. */
   description?: string;
-  /** `twitter:image`. */
-  image?: string;
+  /** `twitter:image` — a URL, a descriptor, or a list of either. */
+  images?: string | OpenGraphImage | Array<string | OpenGraphImage>;
 }
 
 /** Alternate-URL metadata (`<link rel="canonical">` and `hreflang` alternates). */
@@ -55,6 +98,10 @@ export interface AlternatesMetadata {
   canonical?: string;
   /** Language alternates as `hreflang` → URL. */
   languages?: Record<string, string>;
+  /** Media alternates as media query → URL (`<link rel="alternate" media=…>`). */
+  media?: Record<string, string>;
+  /** Type alternates as MIME type → URL (`<link rel="alternate" type=…>`, e.g. an RSS feed). */
+  types?: Record<string, string>;
 }
 
 /**
@@ -71,15 +118,64 @@ export type JsonLd = {
   [key: string]: unknown;
 };
 
-/** Structured icon metadata (icon / shortcut / apple-touch links). */
-export interface IconsMetadata {
-  /** `<link rel="icon">` href(s). */
-  icon?: string | string[];
-  /** `<link rel="shortcut icon">` href(s). */
-  shortcut?: string | string[];
-  /** `<link rel="apple-touch-icon">` href(s). */
-  apple?: string | string[];
+/** One icon: a URL, or a descriptor with `sizes`/`type`/`media`/`rel` (Next.js `IconDescriptor`). */
+export interface IconDescriptor {
+  url: string;
+  /** `sizes` attribute (e.g. "32x32", "any"). */
+  sizes?: string;
+  /** MIME type (e.g. "image/png"). */
+  type?: string;
+  /** `media` query (e.g. "(prefers-color-scheme: dark)"). */
+  media?: string;
+  /** Override the `rel` (e.g. "mask-icon"). */
+  rel?: string;
+  /** `color` (for `mask-icon`). */
+  color?: string;
 }
+
+/** A URL or an {@linkcode IconDescriptor}, or a list of either. */
+export type IconInput = string | IconDescriptor | Array<string | IconDescriptor>;
+
+/** Structured icon metadata (icon / shortcut / apple-touch / other links). */
+export interface IconsMetadata {
+  /** `<link rel="icon">` href(s)/descriptor(s). */
+  icon?: IconInput;
+  /** `<link rel="shortcut icon">` href(s)/descriptor(s). */
+  shortcut?: IconInput;
+  /** `<link rel="apple-touch-icon">` href(s)/descriptor(s). */
+  apple?: IconInput;
+  /** Extra icon links with their own `rel` (e.g. `mask-icon`). */
+  other?: IconDescriptor | IconDescriptor[];
+}
+
+/** `<meta name="theme-color">` with an optional media query. */
+export interface ThemeColorDescriptor {
+  color: string;
+  media?: string;
+}
+
+/** `appleWebApp` metadata (`apple-mobile-web-app-*`). */
+export interface AppleWebAppMetadata {
+  capable?: boolean;
+  title?: string;
+  statusBarStyle?: "default" | "black" | "black-translucent";
+  startupImage?: string | Array<string | { url: string; media?: string }>;
+}
+
+/** `format-detection` (`telephone=no` etc.). */
+export interface FormatDetectionMetadata {
+  telephone?: boolean;
+  date?: boolean;
+  address?: boolean;
+  email?: boolean;
+  url?: boolean;
+}
+
+/** `al:*` app-link tags (Next.js `appLinks`); each entry is a record of `al:<platform>:<key>`. */
+export type AppLinksMetadata = Record<
+  string,
+  Record<string, string | number> | Array<Record<string, string | number>>
+>;
 
 /** Structured robots directive (serialized to `<meta name="robots">`). */
 export interface RobotsMetadata {
@@ -111,8 +207,14 @@ export interface Viewport {
   maximumScale?: number;
   /** `user-scalable` (`no` when false). */
   userScalable?: boolean;
-  /** `<meta name="theme-color">`. */
-  themeColor?: string;
+  /** `minimum-scale`. */
+  minimumScale?: number;
+  /** `viewport-fit` (e.g. "cover"). */
+  viewportFit?: "auto" | "contain" | "cover";
+  /** `interactive-widget`. */
+  interactiveWidget?: "resizes-visual" | "resizes-content" | "overlays-content";
+  /** `<meta name="theme-color">` — one color, or per-media-query descriptors. */
+  themeColor?: string | ThemeColorDescriptor | ThemeColorDescriptor[];
   /** `<meta name="color-scheme">` (e.g. "light dark"). */
   colorScheme?: string;
 }
@@ -128,15 +230,47 @@ export interface Metadata {
   title?: string | { default?: string; template?: string; absolute?: string };
   /** Page description rendered as `<meta name="description">`. */
   description?: string;
-  /** Keywords rendered as `<meta name="keywords">`. */
-  keywords?: string[];
+  /** Keywords rendered as `<meta name="keywords">` (a string or a list). */
+  keywords?: string | string[];
   /** Base URL used to resolve relative `openGraph`/`twitter` image URLs. */
-  metadataBase?: string;
+  metadataBase?: string | URL;
+  /** `<meta name="application-name">`. */
+  applicationName?: string;
+  /** `<meta name="generator">`. */
+  generator?: string;
+  /** `<meta name="referrer">`. */
+  referrer?: string;
+  /** `<meta name="creator">`. */
+  creator?: string;
+  /** `<meta name="publisher">`. */
+  publisher?: string;
+  /** `<meta name="category">`. */
+  category?: string;
+  /** `<meta name="classification">`. */
+  classification?: string;
+  /** `<link rel="manifest">` href. */
+  manifest?: string;
+  /** `<link rel="archives">` href(s). */
+  archives?: string | string[];
+  /** `<link rel="assets">` href(s). */
+  assets?: string | string[];
+  /** `<link rel="bookmarks">` href(s). */
+  bookmarks?: string | string[];
+  /** `<meta itemprop=…>` tags. */
+  itemProp?: Record<string, string>;
+  /** `<meta name="apple-mobile-web-app-*">` and startup images. */
+  appleWebApp?: boolean | AppleWebAppMetadata;
+  /** `<meta name="format-detection">`. */
+  formatDetection?: FormatDetectionMetadata;
+  /** `al:*` app-link tags. */
+  appLinks?: AppLinksMetadata;
+  /** Arbitrary `<meta name=… content=…>` pairs (Next.js `other`); a list value emits one tag per item. */
+  other?: Record<string, string | number | Array<string | number>>;
   /** Robots directive: a raw string or a structured {@link RobotsMetadata}. */
   robots?: string | RobotsMetadata;
   /** Canonical URL rendered as `<link rel="canonical">`. */
   canonical?: string;
-  /** Canonical + language alternates (Next.js `alternates`). */
+  /** Canonical + language/media/type alternates (Next.js `alternates`). */
   alternates?: AlternatesMetadata;
   /** Open Graph metadata rendered as `og:*` tags. */
   openGraph?: OpenGraphMetadata;
@@ -162,6 +296,13 @@ export interface Metadata {
   /** Extra raw tags injected into <head> (already-trusted HTML). */
   head?: string;
 }
+
+/** The merged metadata of the segments ABOVE the current one (what `parent` resolves to). */
+export type ResolvedMetadata = Metadata;
+/** Next.js `ResolvingMetadata`: the parent segments' merged metadata, awaitable. */
+export type ResolvingMetadata = Promise<ResolvedMetadata>;
+/** Next.js `ResolvingViewport`: the parent segments' merged viewport, awaitable. */
+export type ResolvingViewport = Promise<Viewport>;
 
 /**
  * Props passed to a page component (and to `metadata`/`generateMetadata`/
@@ -212,12 +353,12 @@ export interface PageModule extends SegmentConfigExports {
   default: (props: PageProps) => VNode | Promise<VNode>;
   /** Optional static metadata, or a function deriving it from the page props. */
   metadata?: Metadata | ((props: PageProps) => Metadata | Promise<Metadata>);
-  /** Optional async metadata generator (Next.js `generateMetadata`). */
-  generateMetadata?: (props: PageProps) => Metadata | Promise<Metadata>;
+  /** Optional async metadata generator (Next.js `generateMetadata(props, parent)`). */
+  generateMetadata?: (props: PageProps, parent: ResolvingMetadata) => Metadata | Promise<Metadata>;
   /** Optional static viewport/theme metadata. */
   viewport?: Viewport;
-  /** Optional viewport generator (Next.js `generateViewport`). */
-  generateViewport?: (props: PageProps) => Viewport | Promise<Viewport>;
+  /** Optional viewport generator (Next.js `generateViewport(props, parent)`). */
+  generateViewport?: (props: PageProps, parent: ResolvingViewport) => Viewport | Promise<Viewport>;
   /**
    * For dynamic routes, the set of param objects to pre-render at build time
    * (Next.js `generateStaticParams`), receiving the parent segments' params.
@@ -231,14 +372,14 @@ export interface LayoutModule extends SegmentConfigExports {
   default: (props: LayoutProps) => VNode | Promise<VNode>;
   /** Optional static metadata contributed by this layout. */
   metadata?: Metadata;
-  /** Optional async metadata generator (Next.js `generateMetadata`), preferred
+  /** Optional async metadata generator (Next.js `generateMetadata(props, parent)`), preferred
    * over static `metadata` when both are present. */
-  generateMetadata?: (props: PageProps) => Metadata | Promise<Metadata>;
+  generateMetadata?: (props: PageProps, parent: ResolvingMetadata) => Metadata | Promise<Metadata>;
   /** Optional static viewport/theme metadata contributed by this layout. */
   viewport?: Viewport;
-  /** Optional viewport generator (Next.js `generateViewport`), preferred over
+  /** Optional viewport generator (Next.js `generateViewport(props, parent)`), preferred over
    * static `viewport` when both are present. */
-  generateViewport?: (props: PageProps) => Viewport | Promise<Viewport>;
+  generateViewport?: (props: PageProps, parent: ResolvingViewport) => Viewport | Promise<Viewport>;
   /** A layout may enumerate ITS dynamic segments' params for the routes below it. */
   generateStaticParams?: StaticParamsGenerator;
 }

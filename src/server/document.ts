@@ -2,7 +2,15 @@
 // metadata and the hydration bootstrap script.
 
 import { escapeHtml } from "../jsx/render-to-string.ts";
-import type { Metadata, RobotsMetadata, Viewport } from "./types.ts";
+import type {
+  IconDescriptor,
+  Metadata,
+  OpenGraphImage,
+  OpenGraphMedia,
+  OpenGraphMetadata,
+  RobotsMetadata,
+  Viewport,
+} from "./types.ts";
 import type { RouteParams } from "../router/segments.ts";
 import type { FlightNode } from "../jsx/render-to-flight.ts";
 import { type IslandPayload, serializeFlight } from "../jsx/render-to-html-flight.ts";
@@ -616,7 +624,7 @@ async function streamResumedHoles(
 }
 
 /** Resolve a possibly-relative URL against `metadataBase`. */
-function resolveMetaUrl(url: string, base?: string): string {
+function resolveMetaUrl(url: string, base?: string | URL): string {
   if (!base) return url;
   try {
     return new URL(url, base).href;
@@ -670,9 +678,37 @@ function viewportContent(v?: Viewport): string {
   if (v.maximumScale !== undefined) {
     parts.push(`maximum-scale=${v.maximumScale}`);
   }
+  if (v.minimumScale !== undefined) parts.push(`minimum-scale=${v.minimumScale}`);
   if (v.userScalable === false) parts.push("user-scalable=no");
+  if (v.viewportFit) parts.push(`viewport-fit=${v.viewportFit}`);
+  if (v.interactiveWidget) parts.push(`interactive-widget=${v.interactiveWidget}`);
   return parts.join(", ");
 }
+
+/** `<meta name="theme-color">` — one color, or one tag per media-query descriptor. */
+function themeColorTags(tc: Viewport["themeColor"]): string {
+  let head = "";
+  for (const item of list(tc)) {
+    if (typeof item === "string") head += nameTag("theme-color", item);
+    else if (item.media) {
+      head += `<meta name="theme-color" media="${escapeHtml(item.media)}" content="${
+        escapeHtml(item.color)
+      }">`;
+    } else head += nameTag("theme-color", item.color);
+  }
+  return head;
+}
+
+/** Simple `<meta name>` fields copied straight from the metadata object. */
+const NAME_FIELDS: Array<[keyof Metadata, string]> = [
+  ["applicationName", "application-name"],
+  ["generator", "generator"],
+  ["referrer", "referrer"],
+  ["creator", "creator"],
+  ["publisher", "publisher"],
+  ["category", "category"],
+  ["classification", "classification"],
+];
 
 const nameTag = (name: string, content?: string): string =>
   content == null ? "" : `<meta name="${escapeHtml(name)}" content="${escapeHtml(content)}">`;
@@ -688,7 +724,7 @@ const list = <T>(v?: T | T[]): T[] => (v == null ? [] : Array.isArray(v) ? v : [
 function headBasics(metadata: Metadata, viewport?: Viewport): string {
   let head = `<meta charset="utf-8">`;
   head += `<meta name="viewport" content="${escapeHtml(viewportContent(viewport))}">`;
-  head += nameTag("theme-color", viewport?.themeColor);
+  head += themeColorTags(viewport?.themeColor);
   head += nameTag("color-scheme", viewport?.colorScheme);
   // `title` is resolved to a string by mergeMetadata; handle the object form
   // defensively in case a title reaches here unmerged.
@@ -697,7 +733,9 @@ function headBasics(metadata: Metadata, viewport?: Viewport): string {
     : metadata.title?.absolute ?? metadata.title?.default;
   if (titleStr !== undefined) head += `<title>${escapeHtml(titleStr)}</title>`;
   head += nameTag("description", metadata.description);
-  if (metadata.keywords?.length) head += nameTag("keywords", metadata.keywords.join(", "));
+  const keywords = list(metadata.keywords);
+  if (keywords.length) head += nameTag("keywords", keywords.join(", "));
+  for (const k of NAME_FIELDS) head += nameTag(k[1], metadata[k[0]] as string | undefined);
   if (metadata.robots !== undefined) head += nameTag("robots", robotsContent(metadata.robots));
   if (typeof metadata.robots === "object" && metadata.robots.googleBot) {
     head += nameTag("googlebot", metadata.robots.googleBot);
@@ -723,12 +761,41 @@ function headLinks(metadata: Metadata): string {
       escapeHtml(resolveMetaUrl(url, base))
     }">`;
   }
-  // Icons (shorthand + structured).
-  head += linkTag("icon", metadata.icon);
-  for (const href of list(metadata.icons?.icon)) head += linkTag("icon", href);
-  for (const href of list(metadata.icons?.shortcut)) head += linkTag("shortcut icon", href);
-  for (const href of list(metadata.icons?.apple)) head += linkTag("apple-touch-icon", href);
+  for (const [media, url] of Object.entries(metadata.alternates?.media ?? {})) {
+    head += `<link rel="alternate" media="${escapeHtml(media)}" href="${
+      escapeHtml(resolveMetaUrl(url, base))
+    }">`;
+  }
+  for (const [type, url] of Object.entries(metadata.alternates?.types ?? {})) {
+    head += `<link rel="alternate" type="${escapeHtml(type)}" href="${
+      escapeHtml(resolveMetaUrl(url, base))
+    }">`;
+  }
+  head += linkTag("manifest", metadata.manifest);
+  for (const rel of ["archives", "assets", "bookmarks"] as const) {
+    for (const href of list(metadata[rel])) head += linkTag(rel, href);
+  }
+  return head + headIcons(metadata);
+}
+
+/** Icons (shorthand + structured descriptors with sizes/type/media/rel). */
+function headIcons(metadata: Metadata): string {
+  let head = linkTag("icon", metadata.icon);
+  for (const i of list(metadata.icons?.icon)) head += iconTag("icon", i);
+  for (const i of list(metadata.icons?.shortcut)) head += iconTag("shortcut icon", i);
+  for (const i of list(metadata.icons?.apple)) head += iconTag("apple-touch-icon", i);
+  for (const i of list(metadata.icons?.other)) head += iconTag(i.rel ?? "icon", i);
   return head;
+}
+
+function iconTag(rel: string, icon: string | IconDescriptor): string {
+  if (typeof icon === "string") return linkTag(rel, icon);
+  let tag = `<link rel="${escapeHtml(icon.rel ?? rel)}" href="${escapeHtml(icon.url)}"`;
+  if (icon.sizes) tag += ` sizes="${escapeHtml(icon.sizes)}"`;
+  if (icon.type) tag += ` type="${escapeHtml(icon.type)}"`;
+  if (icon.media) tag += ` media="${escapeHtml(icon.media)}"`;
+  if (icon.color) tag += ` color="${escapeHtml(icon.color)}"`;
+  return tag + ">";
 }
 
 /** Open Graph + Twitter Card tags. */
@@ -739,23 +806,65 @@ function headSocial(metadata: Metadata): string {
   if (og) {
     head += propTag("og:title", og.title) + propTag("og:description", og.description) +
       propTag("og:type", og.type) + propTag("og:url", og.url) +
-      propTag("og:site_name", og.siteName);
-    for (const img of list(og.image)) {
-      if (typeof img === "string") {
-        head += propTag("og:image", resolveMetaUrl(img, base));
-        continue;
-      }
-      head += propTag("og:image", resolveMetaUrl(img.url, base)) +
-        propTag("og:image:width", img.width?.toString()) +
-        propTag("og:image:height", img.height?.toString()) + propTag("og:image:alt", img.alt);
-    }
+      propTag("og:site_name", og.siteName) + propTag("og:locale", og.locale) +
+      propTag("og:determiner", og.determiner) + propTag("og:country_name", og.countryName) +
+      propTag("og:ttl", og.ttl?.toString());
+    for (const l of list(og.alternateLocale)) head += propTag("og:locale:alternate", l);
+    for (const img of list(og.images)) head += mediaTags("og:image", img, base);
+    for (const v of list(og.videos)) head += mediaTags("og:video", v, base);
+    for (const a of list(og.audio)) head += mediaTags("og:audio", a, base);
+    head += ogArticleTags(og) + ogContactTags(og);
   }
-  const t = metadata.twitter;
-  if (t) {
-    head += nameTag("twitter:card", t.card) + nameTag("twitter:site", t.site) +
-      nameTag("twitter:creator", t.creator) + nameTag("twitter:title", t.title) +
-      nameTag("twitter:description", t.description);
-    if (t.image) head += nameTag("twitter:image", resolveMetaUrl(t.image, base));
+  return head + headTwitter(metadata.twitter, base);
+}
+
+/** `article:*` tags (Next emits them for `type: "article"` fields). */
+function ogArticleTags(og: OpenGraphMetadata): string {
+  let head = propTag("article:published_time", og.publishedTime) +
+    propTag("article:modified_time", og.modifiedTime) +
+    propTag("article:expiration_time", og.expirationTime) +
+    propTag("article:section", og.section);
+  for (const a of list(og.authors)) head += propTag("article:author", a);
+  for (const t of list(og.tags)) head += propTag("article:tag", t);
+  return head;
+}
+
+function ogContactTags(og: OpenGraphMetadata): string {
+  let head = "";
+  for (const e of list(og.emails)) head += propTag("og:email", e);
+  for (const n of list(og.phoneNumbers)) head += propTag("og:phone_number", n);
+  for (const n of list(og.faxNumbers)) head += propTag("og:fax_number", n);
+  return head;
+}
+
+/** `og:image`/`og:video`/`og:audio` (+ `:width`/`:height`/`:alt`/`:type`) for one entry. */
+function mediaTags(
+  prop: string,
+  media: string | OpenGraphImage | OpenGraphMedia,
+  base: Metadata["metadataBase"],
+): string {
+  if (typeof media === "string") return propTag(prop, resolveMetaUrl(media, base));
+  return propTag(prop, resolveMetaUrl(media.url, base)) +
+    propTag(`${prop}:width`, media.width?.toString()) +
+    propTag(`${prop}:height`, media.height?.toString()) +
+    propTag(`${prop}:alt`, (media as OpenGraphImage).alt) +
+    propTag(`${prop}:type`, media.type);
+}
+
+function headTwitter(t: Metadata["twitter"], base: Metadata["metadataBase"]): string {
+  if (!t) return "";
+  let head = nameTag("twitter:card", t.card) + nameTag("twitter:site", t.site) +
+    nameTag("twitter:site:id", t.siteId) + nameTag("twitter:creator", t.creator) +
+    nameTag("twitter:creator:id", t.creatorId) + nameTag("twitter:title", t.title) +
+    nameTag("twitter:description", t.description);
+  for (const img of list(t.images)) {
+    if (typeof img === "string") head += nameTag("twitter:image", resolveMetaUrl(img, base));
+    else {
+      head += nameTag("twitter:image", resolveMetaUrl(img.url, base)) +
+        nameTag("twitter:image:alt", img.alt) +
+        nameTag("twitter:image:width", img.width?.toString()) +
+        nameTag("twitter:image:height", img.height?.toString());
+    }
   }
   return head;
 }
@@ -771,6 +880,14 @@ function headSocial(metadata: Metadata): string {
 function headExtras(metadata: Metadata): string {
   let head = "";
   for (const [name, content] of Object.entries(metadata.meta ?? {})) head += nameTag(name, content);
+  for (const [name, content] of Object.entries(metadata.other ?? {})) {
+    for (const v of list(content)) head += nameTag(name, String(v));
+  }
+  for (const [prop, content] of Object.entries(metadata.itemProp ?? {})) {
+    head += `<meta itemprop="${escapeHtml(prop)}" content="${escapeHtml(content)}">`;
+  }
+  head += appleWebAppTags(metadata.appleWebApp) + formatDetectionTag(metadata.formatDetection) +
+    appLinkTags(metadata.appLinks);
   for (const item of list(metadata.jsonLd)) {
     if (item == null) continue;
     head += `<script type="application/ld+json">${serializeJsonLd(item)}</script>`;
@@ -780,6 +897,46 @@ function headExtras(metadata: Metadata): string {
       warnRawHeadOnce(metadata.head);
     }
     head += metadata.head;
+  }
+  return head;
+}
+
+/** `apple-mobile-web-app-*` tags + startup images. */
+function appleWebAppTags(a: Metadata["appleWebApp"]): string {
+  if (!a) return "";
+  const cfg = a === true ? {} : a;
+  let head = nameTag("mobile-web-app-capable", "yes");
+  head += nameTag("apple-mobile-web-app-capable", cfg.capable === false ? "no" : "yes");
+  head += nameTag("apple-mobile-web-app-title", cfg.title);
+  head += nameTag("apple-mobile-web-app-status-bar-style", cfg.statusBarStyle);
+  for (const img of list(cfg.startupImage)) {
+    const { url, media } = typeof img === "string" ? { url: img, media: undefined } : img;
+    head += `<link rel="apple-touch-startup-image" href="${escapeHtml(url)}"${
+      media ? ` media="${escapeHtml(media)}"` : ""
+    }>`;
+  }
+  return head;
+}
+
+/** `<meta name="format-detection" content="telephone=no, …">` for the disabled kinds. */
+function formatDetectionTag(fd: Metadata["formatDetection"]): string {
+  if (!fd) return "";
+  const off = Object.entries(fd).filter(([, v]) => v === false).map(([k]) => `${k}=no`);
+  return off.length ? nameTag("format-detection", off.join(", ")) : "";
+}
+
+/** `al:<platform>:<key>` app-link tags. */
+function appLinkTags(links: Metadata["appLinks"]): string {
+  let head = "";
+  for (const [platform, entries] of Object.entries(links ?? {})) {
+    for (const entry of list(entries)) {
+      for (const [k, v] of Object.entries(entry)) {
+        head += propTag(
+          `al:${platform}:${k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`)}`,
+          String(v),
+        );
+      }
+    }
   }
   return head;
 }

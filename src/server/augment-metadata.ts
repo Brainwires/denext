@@ -13,6 +13,7 @@ import {
   ICON_PATH,
   OPENGRAPH_IMAGE_PATH,
   TWITTER_IMAGE_PATH,
+  WEB_MANIFEST_PATH,
 } from "./metadata-files.ts";
 
 /** Inputs for {@link augmentMetadataConventions}. */
@@ -79,10 +80,29 @@ function augmentOpenGraphImage(metadata: Metadata, opts: AugmentMetadataOptions)
   const { manifest, route, absolutize, onHostDerived } = opts;
   const ogPath = route.openGraphImage ??
     (manifest.openGraphImage ? OPENGRAPH_IMAGE_PATH : undefined);
-  if (!ogPath || metadata.openGraph?.image) return;
+  if (!ogPath || metadata.openGraph?.images) return;
   const abs = absolutize(ogPath);
-  metadata.openGraph = { ...metadata.openGraph, image: abs ?? ogPath };
+  const file = route.openGraphImage ? manifest.imageRoutes?.get(ogPath) : manifest.openGraphImage;
+  const alt = file ? sidecarAlt(file) : undefined;
+  const url = abs ?? ogPath;
+  metadata.openGraph = { ...metadata.openGraph, images: alt ? { url, alt } : url };
   if (abs) onHostDerived?.();
+}
+
+/** Alt text cached per convention file (`opengraph-image.alt.txt` beside the image). */
+const altCache = new Map<string, string | undefined>();
+
+/** Next.js's `<name>.alt.txt` sidecar for a metadata image file, if present. */
+function sidecarAlt(imageFile: string): string | undefined {
+  if (altCache.has(imageFile)) return altCache.get(imageFile);
+  let alt: string | undefined;
+  try {
+    alt = Deno.readTextFileSync(imageFile.replace(/\.[^./]+$/, ".alt.txt")).trim() || undefined;
+  } catch {
+    alt = undefined;
+  }
+  altCache.set(imageFile, alt);
+  return alt;
 }
 
 function augmentIcons(metadata: Metadata, manifest: AugmentMetadataOptions["manifest"]): void {
@@ -92,6 +112,8 @@ function augmentIcons(metadata: Metadata, manifest: AugmentMetadataOptions["mani
   if (manifest.appleIcon && !metadata.icons?.apple) {
     metadata.icons = { ...metadata.icons, apple: APPLE_ICON_PATH };
   }
+  // A `manifest.ts`/`manifest.webmanifest` convention is linked automatically (PWA install).
+  if (manifest.webManifest && !metadata.manifest) metadata.manifest = WEB_MANIFEST_PATH;
 }
 
 /**
@@ -101,7 +123,9 @@ function augmentIcons(metadata: Metadata, manifest: AugmentMetadataOptions["mani
 function augmentTwitterImage(metadata: Metadata, opts: AugmentMetadataOptions): void {
   const { manifest, route } = opts;
   const twPath = route.twitterImage ?? (manifest.twitterImage ? TWITTER_IMAGE_PATH : undefined);
-  if (twPath && !metadata.twitter?.image) metadata.twitter = { ...metadata.twitter, image: twPath };
+  if (twPath && !metadata.twitter?.images) {
+    metadata.twitter = { ...metadata.twitter, images: twPath };
+  }
 }
 
 /**

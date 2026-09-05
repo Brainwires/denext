@@ -28,7 +28,7 @@ function head(
 
 Deno.test("twitter card tags are emitted", () => {
   const h = head({
-    twitter: { card: "summary_large_image", site: "@denext", title: "Hi", image: "/t.png" },
+    twitter: { card: "summary_large_image", site: "@denext", title: "Hi", images: "/t.png" },
   });
   assertStringIncludes(h, `<meta name="twitter:card" content="summary_large_image">`);
   assertStringIncludes(h, `<meta name="twitter:site" content="@denext">`);
@@ -94,8 +94,8 @@ Deno.test("robots object serializes to a directive string + googlebot", () => {
 Deno.test("metadataBase resolves relative og/twitter images to absolute", () => {
   const h = head({
     metadataBase: "https://example.com",
-    openGraph: { image: "/og.png" },
-    twitter: { image: "/tw.png" },
+    openGraph: { images: "/og.png" },
+    twitter: { images: "/tw.png" },
   });
   assertStringIncludes(h, `content="https://example.com/og.png"`);
   assertStringIncludes(h, `content="https://example.com/tw.png"`);
@@ -103,7 +103,7 @@ Deno.test("metadataBase resolves relative og/twitter images to absolute", () => 
 
 Deno.test("og:image descriptor emits width/height/alt", () => {
   const h = head({
-    openGraph: { image: { url: "/o.png", width: 1200, height: 630, alt: "cover" } },
+    openGraph: { images: { url: "/o.png", width: 1200, height: 630, alt: "cover" } },
   });
   assertStringIncludes(h, `<meta property="og:image" content="/o.png">`);
   assertStringIncludes(h, `<meta property="og:image:width" content="1200">`);

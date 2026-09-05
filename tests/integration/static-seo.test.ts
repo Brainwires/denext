@@ -16,7 +16,7 @@ Deno.test("document renders expanded metadata (keywords/robots/canonical/og/icon
     robots: "noindex",
     canonical: "https://x.dev/p",
     icon: "/favicon.svg",
-    openGraph: { title: "OG", image: "https://x.dev/og.png", type: "website" },
+    openGraph: { title: "OG", images: "https://x.dev/og.png", type: "website" },
   };
   const doc = renderDocument({ bodyHtml: "<p>hi</p>", metadata: meta });
   assertStringIncludes(doc, '<meta name="keywords" content="deno, ssr">');
@@ -63,7 +63,7 @@ Deno.test("generateMetadata is used to produce page metadata", async () => {
       Promise.resolve({
         default: (_p: PageProps) => h("h1", null, "P"),
         generateMetadata: (p: PageProps) => ({
-          title: `gen:${p.searchParams.get("q") ?? ""}`,
+          title: `gen:${p.searchParams.q ?? ""}`,
         }),
       }),
   });

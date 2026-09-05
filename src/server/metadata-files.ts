@@ -8,6 +8,7 @@
 //   app/favicon.ico  -> GET /favicon.ico            (image/x-icon)
 
 import type { RouteManifest } from "../router/manifest.ts";
+import { matchSegments, parsePattern, type RouteParams } from "../router/segments.ts";
 import type { ModuleLoader } from "./types.ts";
 import type { VNode } from "../jsx/types.ts";
 import { escapeHtml, renderToString } from "../jsx/render-to-string.ts";
@@ -77,7 +78,7 @@ export function serializeSitemap(entries: Sitemap): string {
   const urls = entries.map((e) => {
     let s = `<url><loc>${escapeHtml(e.url)}</loc>`;
     if (e.lastModified !== undefined) s += `<lastmod>${lastmod(e.lastModified)}</lastmod>`;
-    if (e.changeFrequency) s += `<changefreq>${e.changeFrequency}</changefreq>`;
+    if (e.changeFrequency) s += `<changefreq>${escapeHtml(String(e.changeFrequency))}</changefreq>`;
     if (typeof e.priority === "number") s += `<priority>${e.priority}</priority>`;
     for (const [lang, href] of Object.entries(e.alternates?.languages ?? {})) {
       hasAlternates = true;
@@ -199,28 +200,79 @@ export const ICON_PATH = "/icon";
 export const APPLE_ICON_PATH = "/apple-icon";
 /** The well-known URL the `twitter-image` convention is served at. */
 export const TWITTER_IMAGE_PATH = "/twitter-image";
+/** The well-known URL the `manifest.*` convention is served at. */
+export const WEB_MANIFEST_PATH = "/manifest.webmanifest";
+
+/** One entry of Next.js's `generateImageMetadata()` — an image variant served at `<route>/<id>`. */
+interface ImageMetadataEntry {
+  id: string | number;
+  alt?: string;
+  size?: { width: number; height: number };
+  contentType?: string;
+}
+
+/** A metadata-image module: `default({ params, id })`, optional `generateImageMetadata({ params })`. */
+interface ImageConventionModule {
+  default: (
+    props: { params: RouteParams; id?: string | number },
+  ) => OpenGraphImageResult | Promise<OpenGraphImageResult>;
+  generateImageMetadata?: (
+    props: { params: RouteParams },
+  ) => ImageMetadataEntry[] | Promise<ImageMetadataEntry[]>;
+  contentType?: string;
+}
 
 /** Serve a metadata image convention: a static file (bytes) or a dynamic module. */
-async function serveImageConvention(
+function serveImageConvention(
   filePath: string,
   load: ModuleLoader,
+  params: RouteParams = {},
+  id?: string,
 ): Promise<Response | null> {
-  // Dynamic module: load it and dispatch on its default export's result.
-  if (/\.(tsx|ts|jsx|js)$/i.test(filePath)) {
-    const mod = (await load(filePath)) as {
-      default: () => OpenGraphImageResult | Promise<OpenGraphImageResult>;
-    };
-    return openGraphImageResponse(await mod.default());
-  }
-  // Static image file: serve the bytes with a content-type from its extension.
+  if (isCodeModule(filePath)) return serveImageModule(filePath, load, params, id);
+  // A static image has no variants.
+  return id === undefined ? serveFileBytes(filePath) : Promise.resolve(null);
+}
+
+/** A dynamic image module: `generateImageMetadata` variants (by `id`) then `default()`. */
+async function serveImageModule(
+  filePath: string,
+  load: ModuleLoader,
+  params: RouteParams,
+  id: string | undefined,
+): Promise<Response | null> {
+  const mod = (await load(filePath)) as ImageConventionModule;
+  let variant: ImageMetadataEntry | undefined;
+  if (typeof mod.generateImageMetadata === "function") {
+    const entries = await mod.generateImageMetadata({ params });
+    variant = id === undefined ? entries[0] : entries.find((e) => String(e.id) === id);
+    if (!variant) return null; // an id the module did not enumerate
+  } else if (id !== undefined) return null;
+  const res = await openGraphImageResponse(await mod.default({ params, id: variant?.id }));
+  return withContentType(res, variant?.contentType ?? mod.contentType);
+}
+
+/** `res` with `type` as its content-type when one is declared and differs. */
+function withContentType(res: Response, type: string | undefined): Response {
+  if (!type || (res.headers.get("content-type") ?? "").startsWith(type)) return res;
+  const headers = new Headers(res.headers);
+  headers.set("content-type", type);
+  return new Response(res.body, { status: res.status, headers });
+}
+
+/** Serve a convention file's bytes with a content-type from its extension (null if gone). */
+async function serveFileBytes(filePath: string, fallbackType?: string): Promise<Response | null> {
   try {
     const bytes = await Deno.readFile(filePath);
-    const type = contentType(extname(filePath)) ?? "application/octet-stream";
+    const type = fallbackType ?? contentType(extname(filePath)) ?? "application/octet-stream";
     return new Response(bytes, { headers: { "content-type": type } });
   } catch {
     return null;
   }
 }
+
+/** A code module (`.ts`/`.js`) vs a static convention file (`robots.txt`, `sitemap.xml`, …). */
+const isCodeModule = (file: string): boolean => /\.(tsx|ts|jsx|js)$/i.test(file);
 
 /** Matches a sharded sitemap URL `/sitemap/{id}.xml`, capturing the id. */
 const SITEMAP_SHARD_RE = /^\/sitemap\/([^/]+)\.xml$/;
@@ -246,7 +298,7 @@ const ROUTES: Record<string, { path: string; contentType: string }> = {
  * @param load The module loader (for the code-based conventions).
  * @returns A Response, or null when this request is not a metadata file.
  */
-export async function serveMetadataFile(
+export function serveMetadataFile(
   manifest: RouteManifest,
   pathname: string,
   load: ModuleLoader,
@@ -255,25 +307,34 @@ export async function serveMetadataFile(
   if (pathname === ROUTES.favicon.path && manifest.favicon) return serveFavicon(manifest.favicon);
   const shard = pathname.match(SITEMAP_SHARD_RE);
   if (manifest.sitemap && (pathname === ROUTES.sitemap.path || shard)) {
-    return serveSitemap(manifest.sitemap, pathname, shard?.[1], load, origin);
+    if (isCodeModule(manifest.sitemap)) {
+      return serveSitemap(manifest.sitemap, pathname, shard?.[1], load, origin);
+    }
+    return shard
+      ? Promise.resolve(null)
+      : serveFileBytes(manifest.sitemap, ROUTES.sitemap.contentType);
   }
-  if (pathname === ROUTES.robots.path && manifest.robots) {
-    const mod = (await load(manifest.robots)) as { default: () => Robots | Promise<Robots> };
-    return textResponse(serializeRobots(await mod.default()), ROUTES.robots.contentType);
-  }
-  if (pathname === ROUTES.openGraphImage.path && manifest.openGraphImage) {
-    const mod = (await load(manifest.openGraphImage)) as {
-      default: () => OpenGraphImageResult | Promise<OpenGraphImageResult>;
-    };
-    return openGraphImageResponse(await mod.default());
-  }
+  if (pathname === ROUTES.robots.path && manifest.robots) return serveRobots(manifest.robots, load);
   const image = imageConventionFor(manifest, pathname);
-  if (image) return serveImageConvention(image, load);
+  if (image) return serveImageConvention(image.file, load, image.params, image.id);
   if (pathname === ROUTES.webManifest.path && manifest.webManifest) {
-    const mod = (await load(manifest.webManifest)) as { default: () => unknown | Promise<unknown> };
-    return textResponse(JSON.stringify(await mod.default()), ROUTES.webManifest.contentType);
+    return serveWebManifest(manifest.webManifest, load);
   }
-  return null;
+  return Promise.resolve(null);
+}
+
+/** `robots.ts` (serialized) or a static `robots.txt`. */
+async function serveRobots(file: string, load: ModuleLoader): Promise<Response | null> {
+  if (!isCodeModule(file)) return serveFileBytes(file, ROUTES.robots.contentType);
+  const mod = (await load(file)) as { default: () => Robots | Promise<Robots> };
+  return textResponse(serializeRobots(await mod.default()), ROUTES.robots.contentType);
+}
+
+/** `manifest.ts` (JSON-serialized) or a static `manifest.json`/`.webmanifest`. */
+async function serveWebManifest(file: string, load: ModuleLoader): Promise<Response | null> {
+  if (!isCodeModule(file)) return serveFileBytes(file, ROUTES.webManifest.contentType);
+  const mod = (await load(file)) as { default: () => unknown | Promise<unknown> };
+  return textResponse(JSON.stringify(await mod.default()), ROUTES.webManifest.contentType);
 }
 
 function textResponse(body: string, contentType: string): Response {
@@ -319,10 +380,48 @@ async function serveSitemap(
   return xml(serializeSitemap(await mod.default({ id: match.id })));
 }
 
-/** The image convention module served at `pathname` (root icons + nested per-route images). */
-function imageConventionFor(manifest: RouteManifest, pathname: string): string | undefined {
-  if (pathname === ICON_PATH && manifest.icon) return manifest.icon;
-  if (pathname === APPLE_ICON_PATH && manifest.appleIcon) return manifest.appleIcon;
-  if (pathname === TWITTER_IMAGE_PATH && manifest.twitterImage) return manifest.twitterImage;
-  return manifest.imageRoutes?.get(pathname);
+/** A resolved metadata-image request: the convention file, route params, optional variant id. */
+interface ImageHit {
+  file: string;
+  params: RouteParams;
+  id?: string;
+}
+
+/**
+ * The image convention served at `pathname`: the root conventions, a nested per-route image
+ * (its route may contain dynamic segments, matched here), each optionally followed by a
+ * `/<id>` variant from `generateImageMetadata`.
+ */
+function imageConventionFor(manifest: RouteManifest, pathname: string): ImageHit | undefined {
+  const roots: Array<[string, string | null | undefined]> = [
+    [OPENGRAPH_IMAGE_PATH, manifest.openGraphImage],
+    [ICON_PATH, manifest.icon],
+    [APPLE_ICON_PATH, manifest.appleIcon],
+    [TWITTER_IMAGE_PATH, manifest.twitterImage],
+  ];
+  for (const [path, file] of roots) {
+    if (!file) continue;
+    if (pathname === path) return { file, params: {} };
+    if (pathname.startsWith(path + "/")) {
+      return { file, params: {}, id: pathname.slice(path.length + 1) };
+    }
+  }
+  return nestedImageFor(manifest, pathname);
+}
+
+/** A nested `imageRoutes` entry matching `pathname` (patterns may hold `[param]` segments). */
+function nestedImageFor(manifest: RouteManifest, pathname: string): ImageHit | undefined {
+  const exact = manifest.imageRoutes?.get(pathname);
+  if (exact) return { file: exact, params: {} };
+  for (const [route, file] of manifest.imageRoutes ?? []) {
+    const pattern = parsePattern(route);
+    const direct = matchSegments(pattern, pathname);
+    if (direct) return { file, params: direct };
+    // `<route>/<id>`: the id is the last segment.
+    const cut = pathname.lastIndexOf("/");
+    if (cut <= 0) continue;
+    const withId = matchSegments(pattern, pathname.slice(0, cut));
+    if (withId) return { file, params: withId, id: pathname.slice(cut + 1) };
+  }
+  return undefined;
 }

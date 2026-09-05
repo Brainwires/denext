@@ -213,10 +213,12 @@ const conventions = new Map<string, RegExp>([
   ["global-error", new RegExp(`^global-error\\.${COMPONENT_EXT}$`)],
   ["default", new RegExp(`^default\\.${COMPONENT_EXT}$`)],
   // Metadata files (code modules serving a well-known URL).
-  ["sitemap", new RegExp(`^sitemap\\.${HANDLER_EXT}$`)],
-  ["robots", new RegExp(`^robots\\.${HANDLER_EXT}$`)],
-  ["web-manifest", new RegExp(`^manifest\\.${HANDLER_EXT}$`)],
-  ["opengraph-image", new RegExp(`^opengraph-image\\.${COMPONENT_EXT}$`)],
+  // Code modules OR the static file Next.js also accepts (`sitemap.xml`, `robots.txt`,
+  // `manifest.json`/`.webmanifest`).
+  ["sitemap", new RegExp(`^sitemap\\.(${HANDLER_EXT.slice(1, -1)}|xml)$`)],
+  ["robots", new RegExp(`^robots\\.(${HANDLER_EXT.slice(1, -1)}|txt)$`)],
+  ["web-manifest", new RegExp(`^manifest\\.(${HANDLER_EXT.slice(1, -1)}|json|webmanifest)$`)],
+  ["opengraph-image", new RegExp(`^opengraph-image\\.${IMAGE_ASSET_EXT}$`)],
   ["icon", new RegExp(`^icon\\.${IMAGE_ASSET_EXT}$`)],
   ["apple-icon", new RegExp(`^apple-icon\\.${IMAGE_ASSET_EXT}$`)],
   ["twitter-image", new RegExp(`^twitter-image\\.${IMAGE_ASSET_EXT}$`)],
@@ -483,7 +485,10 @@ function nestedMetaImages(
 ): MetaImages {
   const segPath = patternToPath(frame.segments);
   const next: MetaImages = { ...frame.metaImages };
-  if (segPath === "/" || segPath.includes("[")) return next;
+  // Root images are the RouteManifest's own fields; nested ones (static OR dynamic
+  // segments — `[slug]/opengraph-image.tsx` is matched with params at request time) are
+  // registered by route path.
+  if (segPath === "/") return next;
   const ogFile = fileHere(conv("opengraph-image"));
   if (ogFile) {
     next.openGraphImage = segPath + OPENGRAPH_IMAGE_SUFFIX;
