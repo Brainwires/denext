@@ -8,6 +8,11 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **Builds crawl the module graph ONCE.** `deno info` over a large app graph takes tens of seconds (20 s on shadcn/ui's 2,700-component site), and a build used to spawn it per route for the hydration check, again per route for the Flight-boundary classification, and again for the boundary manifest and the Live scan — 8–10 minutes of re-crawling the same graph before bundling even started. The graph layer now keeps the largest crawl of the process and answers any request whose entries are a subset of it with a BFS over the cached graph (`denoInfoGraph`/`crawlLocalModules`, `resetModuleGraphCache` on dev-server changes); `computeBoundaryRoutes` primes it with one crawl over every route's entries. The CSS discovery crawl keeps its own run (it resolves with the css→shim redirects stripped). `src/build/module-graph.ts`.
+- **`next.config` translation survives a plugin wrapper that crashes after exporting** (fumadocs-mdx's `createMDX` spawns a watcher; the sandboxed evaluation had already printed the config when the child died) and the generated CLI tasks always pass `--node-modules-dir=none` (Deno ignores `nodeModulesDir` in a member `deno.json` under an npm/pnpm workspace root). `src/build/migrate.ts`.
+
 ## [2.0.4] - 2026-09-05
 
 ### Fixed

@@ -157,7 +157,7 @@ export async function discoverCssFiles(
   // (every build re-mirrors them, so an interrupted crawl self-heals next build).
   const restore = appConfigPath ? await stripCssShims(appConfigPath) : null;
   try {
-    const { info } = await denoInfoGraph(entryFiles);
+    const { info } = await denoInfoGraph(entryFiles, { cache: false });
     const found = new Set<string>();
     for (const m of info.modules) {
       if (m.specifier.startsWith("file://") && isStyleFile(m.specifier)) {

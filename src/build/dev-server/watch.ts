@@ -2,6 +2,7 @@
 // it — a CSS hot-swap, a per-module HMR update, a whole-route Fast Refresh, or a full
 // reload — and kick off the async type-check.
 
+import { resetModuleGraphCache } from "../module-graph.ts";
 import { basename, join } from "@std/path";
 import { typeCheck } from "./dev-endpoints.ts";
 import { getUnbundled } from "./manifest.ts";
@@ -56,6 +57,7 @@ function applyUnbundledChange(st: DevState, changedPaths: string[]): void {
 function applyChanges(st: DevState, changedPaths: string[]): void {
   st.generation++;
   st.manifest = null;
+  resetModuleGraphCache(); // the import graph may have changed shape
   st.bundleCache.clear();
   st.chunkCache.clear();
   typeCheck(st, changedPaths);

@@ -68,8 +68,12 @@ interface DenoInfoModule {
   specifier: string;
   kind?: string;
   error?: string;
-  /** Each import edge: `code` is a runtime import, `type` a type-only one. */
-  dependencies?: Array<{ code?: { specifier?: string }; type?: { specifier?: string } }>;
+  /** Each import edge: `specifier` as written; `code` a runtime import, `type` a type-only one. */
+  dependencies?: Array<{
+    specifier?: string;
+    code?: { specifier?: string };
+    type?: { specifier?: string };
+  }>;
 }
 
 /**
@@ -79,11 +83,11 @@ interface DenoInfoModule {
  * are client boundaries?) must not see them: a types-only module that happens to import a
  * hooks module for its `Context<T>` type would otherwise flag every page as interactive.
  */
-function runtimeReachable(info: DenoInfo, root: string): DenoInfoModule[] {
+function runtimeReachable(info: DenoInfo, roots: string[]): DenoInfoModule[] {
   const byId = new Map(info.modules.map((m) => [m.specifier, m]));
   const seen = new Set<string>();
   const out: DenoInfoModule[] = [];
-  const queue = [root];
+  const queue = [...roots];
   while (queue.length > 0) {
     const id = queue.shift()!;
     if (seen.has(id)) continue;
@@ -120,12 +124,11 @@ export async function crawlLocalModules(
   opts: CrawlOptions = {},
 ): Promise<string[]> {
   if (entryFiles.length === 0) return [];
-  const { info, barrelUrl } = await denoInfoGraph(entryFiles);
+  const { info, roots } = await denoInfoGraph(entryFiles);
   const out: string[] = [];
-  for (const m of runtimeReachable(info, barrelUrl)) {
+  for (const m of runtimeReachable(info, roots)) {
     if (m.error) continue;
     if (!m.specifier.startsWith("file://")) continue;
-    if (m.specifier === barrelUrl) continue;
     const filePath = fromFileUrl(m.specifier);
     if (opts.exclude?.(filePath)) continue;
     out.push(filePath);
@@ -133,15 +136,80 @@ export async function crawlLocalModules(
   return out;
 }
 
+/** A `deno info` graph plus the resolved specifiers of the entries it was requested for. */
+export interface ModuleGraph {
+  info: DenoInfo;
+  /** The requested entries as `deno info` names them (resolved, realpath'd file URLs). */
+  roots: string[];
+}
+
+/**
+ * The process-wide graph cache. One build asks the same questions of the same graph many
+ * times over — which routes reach a `"use client"` module, which need hydration, which
+ * modules live outside the project — and each used to spawn its own `deno info` (≈20 s on a
+ * 2,700-component site, once PER ROUTE). The largest crawl so far is kept; any request whose
+ * entries are a subset of it is answered by a BFS over the cached graph, no spawn.
+ */
+let graphCache: { entries: Set<string>; info: DenoInfo; resolved: Map<string, string> } | null =
+  null;
+const graphInFlight = new Map<string, Promise<ModuleGraph>>();
+let graphSpawns = 0;
+
+/** Drop the cached graph (the dev watcher calls this when a source file changes). */
+export function resetModuleGraphCache(): void {
+  graphCache = null;
+  graphInFlight.clear();
+}
+
+/** How many `deno info` processes the graph layer has spawned (test/diagnostics seam). */
+export function moduleGraphSpawnCount(): number {
+  return graphSpawns;
+}
+
 /**
  * Run `deno info --json` over a synthetic barrel importing `entryFiles` and return the
- * parsed graph plus the barrel's own specifier (to skip). Shared by the boundary/hydration
+ * parsed graph plus the entries' resolved specifiers. Shared by the boundary/hydration
  * crawl and the CSS discovery crawl so both apply the same flags (sloppy imports, the
- * minimum-dependency-age policy) and the same temp-dir hygiene.
+ * minimum-dependency-age policy) and the same temp-dir hygiene. Cached (see
+ * {@link resetModuleGraphCache}) unless `cache: false` — the CSS crawl runs with the app
+ * config's css→shim redirects stripped, a DIFFERENT resolution, so it neither reads nor
+ * feeds the shared cache.
  */
-export async function denoInfoGraph(
+export function denoInfoGraph(
   entryFiles: string[],
-): Promise<{ info: DenoInfo; barrelUrl: string }> {
+  opts: { cache?: boolean } = {},
+): Promise<ModuleGraph> {
+  const useCache = opts.cache ?? true;
+  const wanted = entryFiles.map((f) => toFileUrl(f).href);
+  if (useCache && graphCache && wanted.every((w) => graphCache!.entries.has(w))) {
+    const c = graphCache;
+    return Promise.resolve({ info: c.info, roots: wanted.map((w) => c.resolved.get(w) ?? w) });
+  }
+  const key = [...new Set(wanted)].sort().join("\n");
+  if (useCache) {
+    const pending = graphInFlight.get(key);
+    if (pending) return pending;
+  }
+  const run = spawnDenoInfo(entryFiles).then((graph) => {
+    if (useCache) {
+      const entries = new Set(wanted);
+      // Keep the largest graph: a later, smaller request must not evict the superset.
+      if (!graphCache || [...graphCache.entries].every((e) => entries.has(e))) {
+        graphCache = { entries, info: graph.info, resolved: graph.resolvedEntries };
+      }
+      graphInFlight.delete(key);
+    }
+    return { info: graph.info, roots: graph.roots };
+  });
+  if (useCache) graphInFlight.set(key, run);
+  return run;
+}
+
+/** One `deno info` spawn over a barrel of `entryFiles`; no caching. */
+async function spawnDenoInfo(
+  entryFiles: string[],
+): Promise<ModuleGraph & { resolvedEntries: Map<string, string> }> {
+  graphSpawns++;
   const tmpDir = await Deno.makeTempDir({ prefix: "denext_graph_" });
   const barrel = `${tmpDir}/barrel.ts`;
   try {
@@ -158,10 +226,23 @@ export async function denoInfoGraph(
     if (code !== 0) {
       throw new Error(`deno info failed (${code}):\n${new TextDecoder().decode(stderr)}`);
     }
-    return {
-      info: JSON.parse(new TextDecoder().decode(stdout)) as DenoInfo,
-      barrelUrl: toFileUrl(barrel).href,
-    };
+    const info = JSON.parse(new TextDecoder().decode(stdout)) as DenoInfo;
+    // The barrel's dependency list maps each entry as WRITTEN (`file://…` of the given path)
+    // to the specifier `deno info` reports for it (resolved/realpath'd), so BFS roots match
+    // the module records exactly.
+    const barrelUrl = toFileUrl(barrel).href;
+    const barrelModule = info.modules.find((m) => m.specifier === barrelUrl);
+    const resolvedEntries = new Map<string, string>();
+    for (const dep of barrelModule?.dependencies ?? []) {
+      const written = dep.specifier;
+      const resolved = dep.code?.specifier;
+      if (written && resolved) resolvedEntries.set(written, resolved);
+    }
+    const roots = entryFiles.map((f) => {
+      const w = toFileUrl(f).href;
+      return resolvedEntries.get(w) ?? w;
+    });
+    return { info, roots, resolvedEntries };
   } finally {
     await Deno.remove(tmpDir, { recursive: true });
   }
@@ -390,6 +471,10 @@ export async function computeBoundaryRoutes(
   routes: Array<RouteEntrySource & { routePath: string }>,
 ): Promise<Set<string>> {
   const out = new Set<string>();
+  // ONE crawl over every route's entries primes the graph cache; each route's classification
+  // below is then a BFS over it instead of its own `deno info` process.
+  const union = [...new Set(routes.flatMap(routeEntryFiles))];
+  if (union.length > 0) await denoInfoGraph(union).catch(() => {});
   await Promise.all(
     routes.map(async (r) => {
       const bm = await buildBoundaryManifest(appDir, routeEntryFiles(r));

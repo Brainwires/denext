@@ -282,3 +282,41 @@ Deno.test("crawlLocalModules follows RUNTIME import edges only — a type-only i
     await Deno.remove(app, { recursive: true });
   }
 });
+
+Deno.test("module graph cache: a crawl over a subset of an earlier crawl's entries spawns no deno info", async () => {
+  const { denoInfoGraph, moduleGraphSpawnCount, resetModuleGraphCache } = await import(
+    "../src/build/module-graph.ts"
+  );
+  const app = await Deno.realPath(await Deno.makeTempDir());
+  try {
+    await Deno.writeTextFile(join(app, "a.ts"), `import "./shared.ts"; export const a = 1;`);
+    await Deno.writeTextFile(join(app, "b.ts"), `import "./only-b.ts"; export const b = 1;`);
+    await Deno.writeTextFile(join(app, "shared.ts"), `export const s = 1;`);
+    await Deno.writeTextFile(join(app, "only-b.ts"), `export const o = 1;`);
+    resetModuleGraphCache();
+    const before = moduleGraphSpawnCount();
+    const union = await crawlLocalModules([join(app, "a.ts"), join(app, "b.ts")]);
+    assertEquals(moduleGraphSpawnCount(), before + 1, "the union crawl spawns once");
+    assertEquals(union.map((p) => p.slice(app.length + 1)).sort(), [
+      "a.ts",
+      "b.ts",
+      "only-b.ts",
+      "shared.ts",
+    ]);
+    // A subset request is served from the cached graph — and scoped to ITS roots only.
+    const onlyA = await crawlLocalModules([join(app, "a.ts")]);
+    assertEquals(moduleGraphSpawnCount(), before + 1, "no second spawn");
+    assertEquals(onlyA.map((p) => p.slice(app.length + 1)).sort(), ["a.ts", "shared.ts"]);
+    // The raw graph API agrees and reports resolved roots.
+    const g = await denoInfoGraph([join(app, "b.ts")]);
+    assertEquals(g.roots, [`file://${app}/b.ts`]);
+    assertEquals(moduleGraphSpawnCount(), before + 1);
+    // After a reset the next request crawls again (the dev watcher's path).
+    resetModuleGraphCache();
+    await crawlLocalModules([join(app, "a.ts")]);
+    assertEquals(moduleGraphSpawnCount(), before + 2);
+  } finally {
+    resetModuleGraphCache();
+    await Deno.remove(app, { recursive: true });
+  }
+});
