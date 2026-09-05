@@ -6,7 +6,7 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the mission + its superiority
 > pillars in [MISSION.md](./MISSION.md).
 >
-> `development` is **2.0.0-rc.7** (the version line `deno task bump` rewrites).
+> `development` is **2.0.0** (the version line `deno task bump` rewrites).
 > 2.0 — the DX release (unified CLI, universal migration, scaffolding/codegen, an
 > instant dev loop, first-party DevTools, end-to-end typed routes and actions) —
 > shipped from it. **2.1 is the next engineering cycle**: a typed,
