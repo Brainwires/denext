@@ -4,6 +4,7 @@
 //   deno test -A --unstable-kv tests/e2e/next-compat-page.test.ts
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { REACT_COMPAT_VERSION } from "../../src/compat/react-version.ts";
 import {
   buildNextCompatPages,
   MOUNT_ID,
@@ -120,7 +121,7 @@ export default function Page() {
     const html = await renderNextCompatPage(built[0], {}, "/_client/index.js");
     assertStringIncludes(html, "Server APIs");
     assertStringIncludes(html, "stream:yes"); // the aliased fn resolved to denext's impl
-    assertStringIncludes(html, "v19.2.0"); // denext's reported version
+    assertStringIncludes(html, `v${REACT_COMPAT_VERSION}`); // denext's reported version
 
     const client = await Deno.readTextFile(built[0].clientBundle);
     assert(

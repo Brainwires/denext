@@ -14,7 +14,6 @@ import { isComponentType } from "../runtime/react-brands.ts";
 import { type Dispatcher, setDispatcher } from "../runtime/hooks.ts";
 import { SUSPENSE } from "../runtime/suspense.ts";
 import { ERROR_BOUNDARY } from "../runtime/error-boundary.ts";
-import { taintMessageFor } from "../runtime/taint.ts";
 import { beginSignalCollection, endSignalCollection } from "../runtime/signal-state.ts";
 import { type ClientRefInfo, clientRefOf } from "../runtime/client-reference.ts";
 import { parseStrategy } from "../runtime/lazy-directive.ts";
@@ -335,11 +334,8 @@ function serializeProps(props: Record<string, unknown>, ctx: Ctx): Promise<Fligh
 
 function serializeValue(value: unknown, ctx: Ctx): Promise<Serialized> {
   // Taint check (React `taint*`): refuse to serialize a value marked as secret before it
-  // can cross to the client. Two empty-map lookups when nothing is tainted. Runs first so
-  // even a tainted scalar / a tainted resolved deferred value (re-checked on the recursive
-  // call) is caught.
-  const tainted = taintMessageFor(value);
-  if (tainted !== undefined) throw new Error(tainted);
+  // Taint enforcement lives in the shared leaf cascade (`serializeScalar`), so every
+  // serializer — not just this one — refuses a tainted value.
   return serializeFlightValue(value, {
     value: (v) => serializeValue(v, ctx),
     vnode: (n) => flightOfVNode(n, ctx) as Promise<FlightValue>,

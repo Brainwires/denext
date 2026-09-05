@@ -20,3 +20,9 @@ export function setRemoteAddr(request: Request, addr: Deno.Addr | undefined): vo
 export function remoteAddrOf(request: Request): string | undefined {
   return addrs.get(request);
 }
+
+/** Copy the remembered peer of `from` onto `to` (a Request rebuilt from it). */
+export function copyRemoteAddr(from: Request, to: Request): void {
+  const addr = addrs.get(from);
+  if (addr !== undefined) addrs.set(to, addr);
+}

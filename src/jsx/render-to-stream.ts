@@ -9,6 +9,7 @@
 // dispatcher is only read during a component's *synchronous* execution, so we
 // bind the active provider scopes immediately before each component call.
 
+import { abortedPromise } from "../runtime/abort-promise.ts";
 import type { VNode, VNodeChild, VNodeChildren } from "./types.ts";
 import {
   beginServerInsertCollection,
@@ -164,43 +165,44 @@ export function renderToReadableStream(
   renderer.collectTiming = options.collectBoundaryTiming === true;
   const timings: Array<{ id: string; ms: number }> = [];
 
+  const write = (controller: ReadableStreamDefaultController<Uint8Array>, text: string) =>
+    controller.enqueue(encoder.encode(text));
+
+  /** Flush each settled hole as a `<template>`; ends early when `signal` aborts. */
+  const flushHoles = async (controller: ReadableStreamDefaultController<Uint8Array>) => {
+    // A boundary that never settles must not pin the stream past an abort (a client
+    // disconnect / request deadline): every wait races the abort signal.
+    const aborted = abortedPromise(options.signal);
+    while (renderer.active.size > 0 && !options.signal?.aborted) {
+      const settled = await Promise.race([takeSettled(renderer.active), aborted]);
+      if (settled === undefined) return;
+      const { id, html, ok, ms } = settled;
+      const roundedMs = Math.round((ms ?? 0) * 100) / 100;
+      if (renderer.collectTiming) timings.push({ id, ms: roundedMs });
+      if (!ok) continue; // failed hole: leave its shell fallback
+      // In dev, stamp the server resolve time on the template so the swap runtime can
+      // surface a real-time reveal timeline (client reveal + server resolve) as holes
+      // land — attributes don't affect the swap-runtime script's fixed CSP hash.
+      const msAttr = renderer.collectTiming ? ` data-dnx-ms="${roundedMs}"` : "";
+      write(controller, `<template data-dnx-r="${id}"${msAttr}>${html}</template>`);
+    }
+  };
+
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
         const shell = await renderer.resolve(node, []);
-        const head = (options.shellPrefix ?? "") + SWAP_RUNTIME + shell;
-        controller.enqueue(encoder.encode(head));
-
-        while (renderer.active.size > 0) {
-          if (options.signal?.aborted) break;
-          const { id, html, ok, ms } = await takeSettled(renderer.active);
-          const roundedMs = Math.round((ms ?? 0) * 100) / 100;
-          if (renderer.collectTiming) timings.push({ id, ms: roundedMs });
-          if (!ok) continue; // failed hole: leave its shell fallback
-          // In dev, stamp the server resolve time on the template so the swap runtime can
-          // surface a real-time reveal timeline (client reveal + server resolve) as holes
-          // land — attributes don't affect the swap-runtime script's fixed CSP hash.
-          const msAttr = renderer.collectTiming ? ` data-dnx-ms="${roundedMs}"` : "";
-          controller.enqueue(
-            encoder.encode(
-              `<template data-dnx-r="${id}"${msAttr}>${html}</template>`,
-            ),
-          );
-        }
-
+        write(controller, (options.shellPrefix ?? "") + SWAP_RUNTIME + shell);
+        await flushHoles(controller);
         // Dev-only per-boundary timeline: a CSP-safe JSON data block (not executed).
         if (renderer.collectTiming && timings.length > 0) {
           const json = JSON.stringify(timings).replace(/</g, "\\u003c");
-          controller.enqueue(
-            encoder.encode(
-              `<script type="application/json" id="__denext_boundary_timing">${json}</script>`,
-            ),
+          write(
+            controller,
+            `<script type="application/json" id="__denext_boundary_timing">${json}</script>`,
           );
         }
-
-        if (options.shellSuffix) {
-          controller.enqueue(encoder.encode(options.shellSuffix));
-        }
+        if (options.shellSuffix) write(controller, options.shellSuffix);
         controller.close();
       } catch (err) {
         controller.error(err);

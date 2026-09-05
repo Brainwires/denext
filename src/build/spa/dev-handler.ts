@@ -1,6 +1,7 @@
 // SPA mode dev server: the request handler — live-reload SSE, the dev-reload module, the
 // unbundled module graph, the generation's client assets, `public/`, and the shell.
 
+import { devOriginAllowed } from "../dev-server/dev-endpoints.ts";
 import { serveStatic } from "../../server/static.ts";
 import { sseStream } from "../sse.ts";
 import { SPA_DEV_RELOAD } from "./dev-reload-script.ts";
@@ -108,8 +109,15 @@ async function serveUnbundled(
 
 /** The SPA dev request handler. */
 export function createSpaDevHandler(st: SpaDevState): (request: Request) => Promise<Response> {
+  const allowed = st.options.allowedDevOrigins ?? [];
   return async (request) => {
     const url = new URL(request.url);
+    // Same Host/Origin gate as the app dev server (DNS-rebinding defense): the reload stream,
+    // the unbundled module graph (transformed project source) and the client assets must not
+    // be reachable from a foreign origin.
+    if (url.pathname.startsWith("/_denext/") && !devOriginAllowed(request, url, allowed)) {
+      return new Response("forbidden", { status: 403 });
+    }
     if (url.pathname === RELOAD_PATH) return sseStream(st.reloadClients);
     if (url.pathname === DEV_RELOAD_JS_PATH) {
       return new Response(SPA_DEV_RELOAD, { headers: jsHeaders });
@@ -118,7 +126,7 @@ export function createSpaDevHandler(st: SpaDevState): (request: Request) => Prom
     if (unbundled) return unbundled;
     if (url.pathname.startsWith(CLIENT_PREFIX)) return serveClientAsset(st, url.pathname);
     const accEnc = request.headers.get("accept-encoding") ?? undefined;
-    const pub = await serveStatic(st.paths.publicDir, url.pathname, accEnc);
+    const pub = await serveStatic(st.paths.publicDir, url.pathname, accEnc, request);
     if (pub) return pub;
     if (wantsShell(request, url.pathname)) return serveShell(st, request);
     return new Response("not found", { status: 404 });

@@ -3,7 +3,7 @@
 // interactive home page), optionally with Tailwind, a `src/` layout, and the
 // experimental compiler enabled.
 
-import { join } from "@std/path";
+import { basename, join } from "@std/path";
 import { VERSION } from "../../mod.ts";
 import { reactCompatImportMap } from "./react-specifiers.ts";
 
@@ -49,6 +49,45 @@ export interface ScaffoldOptions {
   allowExisting?: boolean;
 }
 
+/** The scaffolded project's README: what the tasks do, where routes live, where to read more. */
+function readme(opts: ScaffoldOptions, appBase: string): string {
+  const name = basename(opts.dir) || "my-app";
+  return `# ${name}
+
+A [denext](https://denext.dev) app — Next.js's App Router, running on Deno.
+
+## Tasks
+
+| Command            | What it does                                                        |
+| ------------------ | ------------------------------------------------------------------- |
+| \`deno task dev\`   | Dev server with per-module HMR at http://localhost:3000             |
+| \`deno task build\` | Production build into \`.denext/\`                                    |
+| \`deno task start\` | Serve the production build (least-privilege permissions)            |
+${
+    opts.desktop || opts.capacitor
+      ? "| `deno task export` | Static export into `out/` (the native shells ship this) |\n"
+      : ""
+  }
+The first \`dev\`/\`build\` downloads the framework from JSR (a few seconds); later runs
+are cached.
+
+## Where things live
+
+- \`${appBase}/page.tsx\`, \`${appBase}/layout.tsx\` — routes are files, exactly like the
+  Next.js App Router (\`app/blog/[slug]/page.tsx\`, \`app/api/x/route.ts\`, \`loading.tsx\`,
+  \`error.tsx\`, \`middleware.ts\`).
+- \`denext.config.ts\` — redirects, rewrites, headers, images, i18n, CSP, \`cacheComponents\`.
+- Imports come from \`denext\` (hooks, \`Link\`, \`Image\`, \`redirect\`), \`denext/server\`
+  (\`cookies\`, \`headers\`, \`getSession\`, caching) and \`denext/client\`.
+
+## Learn more
+
+- Guide + API: https://denext.dev/docs
+- Ask an agent: \`denext mcp\` exposes the docs and route tools over MCP.
+- \`denext doctor\` checks the toolchain; \`denext generate page|component|route|test\` scaffolds.
+`;
+}
+
 /** A generated file: repo-relative path + contents. */
 export interface ScaffoldFile {
   path: string;
@@ -56,6 +95,8 @@ export interface ScaffoldFile {
 }
 
 const dep = `jsr:@denext/denext@^${VERSION}`;
+/** The version-pinned CLI specifier used by generated `deno task`s. */
+const cli = `${dep}/cli`;
 
 /** The `deno task` entries for a scaffolded project (dev/build/start + native targets). */
 function scaffoldTasks(opts: ScaffoldOptions): Record<string, string> {
@@ -63,13 +104,15 @@ function scaffoldTasks(opts: ScaffoldOptions): Record<string, string> {
     // `dev`/`build` compile, write `.denext`, and spawn tooling (Tailwind, esbuild),
     // so they use broad permissions. `start` only serves, so it runs least-privilege:
     // net + read + env (add `--allow-write=.denext` if you enable the SQLite cache).
-    dev: "deno run -A jsr:@denext/denext/cli dev .",
-    build: "deno run -A jsr:@denext/denext/cli build .",
-    start: "deno run --allow-net --allow-read --allow-env jsr:@denext/denext/cli start .",
+    // The CLI is pinned to the same range as the `denext` import so the two never skew
+    // (an unversioned `jsr:@denext/denext/cli` would resolve to JSR `latest`).
+    dev: `deno run -A ${cli} dev .`,
+    build: `deno run -A ${cli} build .`,
+    start: `deno run --allow-net --allow-read --allow-env ${cli} start .`,
   };
   // Both native targets ship the static export (SSG) from `out/`.
   if (opts.desktop || opts.capacitor) {
-    tasks.export = "deno run -A jsr:@denext/denext/cli export .";
+    tasks.export = `deno run -A ${cli} export .`;
   }
   if (opts.desktop) {
     // `deno desktop` wraps the Deno.serve() in desktop.ts in a native window.
@@ -102,6 +145,9 @@ function scaffoldImports(opts: ScaffoldOptions): Record<string, string> {
     "denext/jsx-dev-runtime": `${dep}/jsx-dev-runtime`,
     "denext/server": `${dep}/server`,
     "denext/client": `${dep}/client`,
+    "denext/testing": `${dep}/testing`,
+    // `denext generate test` writes tests against @std/assert.
+    "@std/assert": "jsr:@std/assert@^1",
     // Native-target deps as bare, versioned specifiers (the lint plugin forbids
     // inline `jsr:`/`npm:` in source).
     ...(opts.desktop ? { "denext/desktop": `${dep}/desktop` } : {}),
@@ -111,6 +157,10 @@ function scaffoldImports(opts: ScaffoldOptions): Record<string, string> {
     ...(opts.compatibilityMode
       ? {
         ...reactCompatImportMap(dep),
+        // Bare `next` (types such as `Metadata`) and the server-only/client-only guards.
+        "next": `${dep}/next`,
+        "server-only": `${dep}/server-only`,
+        "client-only": `${dep}/client-only`,
         "next/": `${dep}/next/`,
         "next-intl": `${dep}/next-intl`,
         "next-intl/": `${dep}/next-intl/`,
@@ -333,7 +383,7 @@ function denextConfig(opts: ScaffoldOptions): string {
   }
   if (opts.compiler) {
     lines.push(
-      `  experimental: { compiler: true }, // auto-memoization (experimental)`,
+      `  experimental: { reactCompiler: true }, // auto-memoization (experimental)`,
     );
   }
   return `import type { DenextConfig } from "denext/server";
@@ -354,9 +404,9 @@ ${lines.join("\n")}
 export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
   const appBase = opts.srcDir ? "src/app" : "app";
   // Generated / build outputs to keep out of version control.
-  const ignore = [".denext/"];
+  // `.denext/` (build output), `out/` (`denext export`), env files with secrets.
+  const ignore = [".denext/", "out/", ".env*.local", "*.local"];
   if (opts.tailwind) ignore.push(`${appBase}/globals.css`);
-  if (opts.desktop || opts.capacitor) ignore.push("out/"); // static export
   if (opts.desktop) ignore.push("dist/"); // packaged desktop binaries
   if (opts.capacitor) ignore.push("node_modules/", "ios/", "android/"); // Capacitor
   const gitignore = ignore.join("\n") + "\n";
@@ -364,6 +414,7 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
   const files: ScaffoldFile[] = [
     { path: "deno.json", content: denoJson(opts) },
     { path: ".gitignore", content: gitignore },
+    { path: "README.md", content: readme(opts, appBase) },
     { path: `${appBase}/layout.tsx`, content: layout(opts) },
     {
       path: `${appBase}/page.tsx`,
@@ -413,7 +464,9 @@ export async function scaffoldProject(
 ): Promise<string[]> {
   const files = scaffoldFiles(opts);
   if (opts.allowExisting) {
-    // `init` into an existing dir: never clobber a file that already exists.
+    // `init` into an existing dir: never clobber a file that already exists. A README is
+    // the one file a repo commonly already has — keep theirs and skip ours.
+    await dropExistingReadme(files, opts.dir);
     for (const f of files) {
       if (await exists(join(opts.dir, f.path))) {
         throw new Error(
@@ -439,6 +492,12 @@ export async function scaffoldProject(
     await Deno.writeTextFile(abs, f.content);
   }
   return files.map((f) => f.path);
+}
+
+/** Remove the generated README from `files` when the target dir already has one. */
+async function dropExistingReadme(files: ScaffoldFile[], dir: string): Promise<void> {
+  const i = files.findIndex((f) => f.path === "README.md");
+  if (i !== -1 && await exists(join(dir, "README.md"))) files.splice(i, 1);
 }
 
 async function exists(path: string): Promise<boolean> {

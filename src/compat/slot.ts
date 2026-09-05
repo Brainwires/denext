@@ -149,3 +149,28 @@ function mergeOnto(child: VNode, slotProps: Props, slotRef: unknown): VNode {
   }
   return cloneElement(child, merged);
 }
+
+/**
+ * Radix 1.2's `createSlot(ownerName)` — a `Slot` component tagged with the owning
+ * primitive's name (for devtools); behaviorally the shared {@link Slot}.
+ *
+ * @param ownerName The primitive that owns this slot (e.g. `"Button"`).
+ * @returns A `Slot` component.
+ */
+export function createSlot(ownerName: string): typeof Slot {
+  const Owned = (props: SlotProps): VNode => Slot(props);
+  Owned.displayName = `${ownerName}.Slot`;
+  return Owned;
+}
+
+/**
+ * Radix 1.2's `createSlottable(ownerName)` — a `Slottable` marker paired with the slot
+ * `createSlot(ownerName)` returns. Behaviorally the shared {@link Slottable}.
+ *
+ * @param ownerName The primitive that owns this slottable.
+ * @returns A `Slottable` component.
+ */
+export function createSlottable(ownerName: string): typeof Slottable {
+  void ownerName;
+  return Slottable;
+}

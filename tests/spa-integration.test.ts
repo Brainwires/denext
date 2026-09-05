@@ -208,9 +208,13 @@ async function stepProdShell(origin: string): Promise<void> {
 }
 
 async function stepProdImmutableAssets(origin: string): Promise<void> {
+  // `index.js` keeps its name across builds and the shell references it without a version
+  // query, so it must be REVALIDATED (ETag/304) — an `immutable` year would pin a stale
+  // bundle after a redeploy. Only content-hashed chunks/fonts are immutable.
   const res = await fetch(origin + "/_denext/client/index.js");
   assertEquals(res.status, 200);
-  assertStringIncludes(res.headers.get("cache-control") ?? "", "immutable");
+  assertStringIncludes(res.headers.get("cache-control") ?? "", "must-revalidate");
+  assert(res.headers.get("etag"), "revalidation needs an ETag");
   await res.body?.cancel();
 }
 
@@ -236,7 +240,7 @@ Deno.test({
 
   try {
     await t.step("GET / serves the built shell (no-cache)", () => stepProdShell(origin));
-    await t.step("client assets are immutable-cached", () => stepProdImmutableAssets(origin));
+    await t.step("client assets are cache-controlled", () => stepProdImmutableAssets(origin));
     await t.step(
       "a deep URL returns the shell (history fallback)",
       () => expectShellAt(origin, "/deep/link"),

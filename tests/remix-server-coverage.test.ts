@@ -56,9 +56,11 @@ Deno.test("redirect() / redirectDocument(): default 302 + Location; number-init 
   assertEquals(r.status, 302);
   assertEquals(r.headers.get("Location"), "/a");
   assertEquals(redirect("/b", 301).status, 301);
-  // redirectDocument is redirect (a hard redirect).
-  assertEquals(redirectDocument, redirect);
-  assertEquals(redirectDocument("/c").headers.get("Location"), "/c");
+  // redirectDocument is a redirect the client follows with a full document load.
+  const doc = redirectDocument("/c");
+  assertEquals(doc.headers.get("Location"), "/c");
+  assertEquals(doc.headers.get("x-remix-reload-document"), "true");
+  assertEquals(redirect("/c").headers.get("x-remix-reload-document"), null);
 });
 
 Deno.test("defer() passes the (promise-bearing) object straight through", () => {

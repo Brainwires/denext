@@ -54,7 +54,7 @@ export const resumable = true;
 
 // A perfectly ordinary client component — no special API.
 "use client";
-import { useState } from "@denext/denext";
+import { useState } from "denext";
 
 export function Counter() {
   const [n, setN] = useState(0);
@@ -127,7 +127,7 @@ export function Counter() {
       </p>
       <Code lang="tsx">
         {`"use client";
-import { useSignal, useStore } from "@denext/denext";
+import { useSignal, useStore } from "denext";
 
 export function Cart() {
   const count = useSignal(0);           // count.value to read/write
@@ -191,7 +191,7 @@ function Counter() {
         primitive the transform emits:
       </p>
       <Code lang="tsx">
-        {`import { qrl } from "@denext/denext/client";
+        {`import { qrl } from "denext/client";
 
 // Its code lives in a separate chunk, loaded on first activation.
 const onExport = qrl(() => import("./export.ts").then((m) => m.run), "toolbar#export");

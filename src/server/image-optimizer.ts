@@ -12,6 +12,7 @@
 // Both are denext's own first-party JSR codecs (zero npm dependencies).
 import type { PhotonImage as PhotonImageT } from "@denext/photon";
 import { serveStatic } from "./static.ts";
+import { createGate, GateOverloadError } from "./gate.ts";
 import type { ImagesConfig, LocalPattern, RemotePattern } from "./config.ts";
 import { isForbiddenAddress, makePinnedFetch, pinnedFetch } from "./safe-fetch.ts";
 
@@ -46,6 +47,10 @@ function cacheGet(key: string): Uint8Array | undefined {
 
 function cacheSet(key: string, bytes: Uint8Array): void {
   if (bytes.byteLength > CACHE_MAX_BYTES) return; // never cache a single huge item
+  // Overwriting an existing entry (two concurrent misses for one key) must release its bytes
+  // first, or the counter drifts upward and evicts live entries early.
+  const prev = outputCache.get(key);
+  if (prev) outputCacheBytes -= prev.byteLength;
   outputCache.set(key, bytes);
   outputCacheBytes += bytes.byteLength;
   while (outputCacheBytes > CACHE_MAX_BYTES) {
@@ -120,58 +125,11 @@ export interface ImageOptimizeOptions {
   dangerouslyAllowLocalIP?: boolean;
 }
 
-/** Rejection from a {@linkcode createGate} `acquire()` when the waiter queue is full. */
-export class GateOverloadError extends Error {
-  /** Create a gate-overload error. */
-  constructor() {
-    super("optimization queue full");
-    this.name = "GateOverloadError";
-  }
-}
+// The bounded FIFO semaphore lives in `gate.ts` (shared with password hashing); re-exported
+// here because the image endpoint is where it is documented + tested.
+export { createGate, GateOverloadError };
 
-/**
- * A tiny FIFO semaphore: `acquire()` resolves when a slot is free, and the
- * returned function releases it (handing the slot to the next waiter). Bounds
- * concurrent image optimizations so the endpoint can't be turned into a
- * CPU-amplification lever.
- *
- * The waiter queue is itself bounded (`maxWaiters`): once that many requests are
- * already queued, `acquire()` rejects with a {@linkcode GateOverloadError} so the
- * caller can shed load (503 + Retry-After) instead of accumulating an unbounded
- * backlog of pending requests (and, before the gate, their source buffers).
- *
- * @param max Maximum concurrent holders.
- * @param maxWaiters Maximum queued waiters before `acquire()` sheds (defaults to `max * 8`).
- */
-export function createGate(
-  max: number,
-  maxWaiters: number = max * 8,
-): () => Promise<() => void> {
-  let active = 0;
-  const waiters: Array<() => void> = [];
-  const release = (): void => {
-    active--;
-    const next = waiters.shift();
-    if (next) {
-      active++;
-      next();
-    }
-  };
-  return function acquire(): Promise<() => void> {
-    if (active < max) {
-      active++;
-      return Promise.resolve(release);
-    }
-    if (waiters.length >= maxWaiters) {
-      return Promise.reject(new GateOverloadError());
-    }
-    return new Promise<() => void>((resolve) => {
-      waiters.push(() => resolve(release));
-    });
-  };
-}
-
-const optimizeGate = createGate(MAX_CONCURRENT_OPTIMIZATIONS);
+const optimizeGate = createGate(MAX_CONCURRENT_OPTIMIZATIONS, undefined, "optimization queue full");
 
 /**
  * Does `url` satisfy the exact-host allowlist (`allowedHosts`/`images.domains`)
@@ -184,17 +142,33 @@ const optimizeGate = createGate(MAX_CONCURRENT_OPTIMIZATIONS);
  */
 export function isAllowedRemote(url: URL, opts: ImageOptimizeOptions): boolean {
   if ((opts.allowedHosts ?? []).includes(url.host)) return true;
+  return (opts.remotePatterns ?? []).some((p) => matchesRemotePattern(url, p));
+}
+
+/** One `remotePatterns` entry against a URL: protocol, host (exact or `*.`), port, path, search. */
+function matchesRemotePattern(url: URL, p: RemotePattern): boolean {
   const proto = url.protocol.replace(/:$/, "");
-  for (const p of opts.remotePatterns ?? []) {
-    if (p.protocol && p.protocol !== proto) continue;
-    const host = p.hostname.startsWith("*.")
-      ? url.hostname.endsWith(p.hostname.slice(1)) // "*.example.com" → sub.example.com (not apex)
-      : url.hostname === p.hostname;
-    if (!host) continue;
-    if (p.pathname && !url.pathname.startsWith(p.pathname)) continue;
-    return true;
+  if (p.protocol && p.protocol !== proto) return false;
+  const host = p.hostname.startsWith("*.")
+    ? url.hostname.endsWith(p.hostname.slice(1))
+    : url.hostname === p.hostname;
+  if (!host) return false;
+  if (p.port !== undefined && (url.port || defaultPort(proto)) !== p.port) return false;
+  if (p.pathname && !pathGlobMatches(p.pathname, url.pathname)) return false;
+  return p.search === undefined || url.search === p.search;
+}
+
+function defaultPort(proto: string): string {
+  return proto === "https" ? "443" : proto === "http" ? "80" : "";
+}
+
+/** A glob (`*`/`**`) or bare prefix pathname pattern against a path. */
+function pathGlobMatches(pattern: string, pathname: string): boolean {
+  if (!pattern.includes("*")) {
+    return pathname === pattern ||
+      pathname.startsWith(pattern.endsWith("/") ? pattern : pattern + "/");
   }
-  return false;
+  return globToRegExp(pattern).test(pathname);
 }
 
 /**

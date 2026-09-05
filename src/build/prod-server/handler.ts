@@ -44,6 +44,11 @@ async function serveFrameworkEndpoint(
   secure: boolean,
 ): Promise<Response | null> {
   const hstsCfg = paths.config?.hsts;
+  // Framework endpoints are read-only: a POST to the image optimizer is a CPU lever that
+  // bypasses every edge cache, and a POST to /health means nothing.
+  if (isFrameworkEndpoint(url.pathname) && request.method !== "GET" && request.method !== "HEAD") {
+    return new Response("Method Not Allowed", { status: 405, headers: { allow: "GET, HEAD" } });
+  }
   if (url.pathname === "/_denext/health") return await healthResponse(paths, secure);
   // Self-hosted Google fonts (build-emitted under client/_fonts), immutable.
   if (url.pathname.startsWith(FONTS_PUBLIC_PREFIX + "/")) {
@@ -66,6 +71,10 @@ async function serveFrameworkEndpoint(
     return serveImmutableAsset(clientDir, "/" + rel, request, secure, hstsCfg, "// not found");
   }
   return null;
+}
+
+function isFrameworkEndpoint(pathname: string): boolean {
+  return pathname === "/_denext/health" || pathname === IMAGE_ENDPOINT;
 }
 
 /**

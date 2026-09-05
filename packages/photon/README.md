@@ -51,4 +51,8 @@ git-ignored.
 ## License
 
 Apache-2.0, inherited from photon-rs (see `LICENSE`). photon-rs © Silvia O'Dwyer
-and contributors.
+and contributors. The wasm statically links photon-rs's Rust dependency graph
+(all permissive: MIT/Apache-2.0 dual, BSD-3-Clause, Unicode-3.0); every crate,
+its copyright notice and the license texts are in `THIRD-PARTY-LICENSES.md`,
+regenerated after each rebuild with `deno task licenses:photon` (run from the
+repo root).

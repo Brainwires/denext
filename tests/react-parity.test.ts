@@ -13,7 +13,8 @@
 // then add/adjust waivers as needed. `deno task parity:drift` previews upstream changes
 // without writing.
 
-import { assert } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
+import { REACT_COMPAT_VERSION } from "../src/compat/react-version.ts";
 import { assertCatalogMatchesExports, CATALOG } from "../scripts/parity/spec.ts";
 import { extractDenextSurfaces } from "../scripts/parity/extract-denext.ts";
 import { diffSurfaces, findingKey, formatReport } from "../scripts/parity/diff.ts";
@@ -49,6 +50,12 @@ Deno.test("parity: baseline is present and non-trivial", async () => {
   assert(
     b.versions.react?.startsWith("19"),
     `unexpected React version in baseline: ${b.versions.react}`,
+  );
+  // The version the compat modules REPORT is the version whose surface they mirror.
+  assertEquals(
+    REACT_COMPAT_VERSION,
+    b.versions.react,
+    "src/compat/react-version.ts must track the parity baseline (deno task parity:refresh)",
   );
 });
 

@@ -82,9 +82,10 @@ export interface AppConfig {
    * Abort a request that runs longer than this many milliseconds, responding
    * 503. The per-request {@link RequestContext} abort signal fires so cooperative
    * work (e.g. `fetch(url, { signal })`) can cancel. Bounds a buffered render or a
-   * server action that hangs (e.g. a request-driven unbounded loop); it does not
-   * cut off an already-returned streaming body. **Recommended** for production
-   * (a slow request body is always bounded separately). Default: no limit.
+   * server action that hangs (e.g. a request-driven unbounded loop). The deadline stays
+   * armed across a streamed body (a hole that never settles ends the stream with its
+   * fallback in place). **Default: 30 000 ms**; `0` disables it (a slow request body is
+   * always bounded separately).
    */
   requestTimeout?: number;
   /**

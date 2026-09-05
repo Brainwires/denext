@@ -109,10 +109,12 @@ class PPRRenderer extends PprVNodeRenderer<string> {
     scopes: ProviderScope[],
     boundaryScope: IdScope,
   ): string {
-    this.holes.push({
-      id,
-      html: this.renderBuffered(children, scopes, scopePrefix(boundaryScope)),
-    });
+    // The hole's promise is consumed later by the streamer; a rejection between creation and
+    // that consumer must not surface as an unhandled rejection (which crashes the process
+    // under Deno's default handler). The consumer still observes it through its own handler.
+    const html = this.renderBuffered(children, scopes, scopePrefix(boundaryScope));
+    html.catch(() => {});
+    this.holes.push({ id, html });
     return `<div data-dnx-b="${id}"></div>`;
   }
 

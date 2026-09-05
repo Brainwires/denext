@@ -5,7 +5,8 @@
  *
  * It is the same underlying codec as the npm `@cf-wasm/photon`, rebuilt for Deno
  * with `jsr:@deno/wasmbuild`, so it carries **zero npm dependencies**. The wasm is
- * instantiated at import time via Deno's native `.wasm` ESM support.
+ * instantiated at import time via Deno's native `.wasm` ESM support. See
+ * `THIRD-PARTY-LICENSES.md` for the crates statically linked into it.
  *
  * @example Resize a PNG and encode it to WebP
  * ```ts

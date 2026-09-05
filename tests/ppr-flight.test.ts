@@ -58,7 +58,7 @@ function Static() {
 
 // A dynamic server component: reads a cookie (postpones during prerender).
 async function Dyn({ k }: { k: string }) {
-  const u = cookies().get("u") ?? "?";
+  const u = cookies().get("u")?.value ?? "?";
   return await Promise.resolve(h("span", null, `${k}:${u}`));
 }
 

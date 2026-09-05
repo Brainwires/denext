@@ -55,7 +55,19 @@ export type * from "./types.ts";
 
 // Re-export the router and JSX types referenced by the public API so that they
 // are documented as part of this entrypoint (type-only, no runtime effect).
-export type { ApiRoute, PageRoute, RouteManifest, SlotRoutes } from "../router/manifest.ts";
+export type {
+  ApiRoute,
+  PageRoute,
+  RouteManifest,
+  SegmentLevel,
+  SlotRoutes,
+} from "../router/manifest.ts";
+export {
+  type AsyncProps,
+  asyncProps,
+  type SearchParams,
+  searchParamsRecord,
+} from "../runtime/async-props.ts";
 // Plugin contract (Workstream C): the semver-stable surface a plugin (e.g. a Pages
 // Router) extends. `RouteSynthesizer` + the route/convention registrars are the
 // route seam; the plugin types + registrars below are the request/build seams.
@@ -75,7 +87,12 @@ export type { ApiMatch, MatchOptions, PageMatch } from "../router/match.ts";
 export type { Intercept, RouteParams, Segment, SegmentKind } from "../router/segments.ts";
 // Segment parser + matcher primitives — the reusable core of the router, exposed
 // so a routing plugin (e.g. a Pages Router) can parse patterns and match paths.
-export { matchSegments, parsePattern, specificity } from "../router/segments.ts";
+export {
+  compareSpecificity,
+  matchSegments,
+  parsePattern,
+  specificity,
+} from "../router/segments.ts";
 export type {
   Component,
   Key,
@@ -92,10 +109,25 @@ export {
   NEXT,
   next,
   redirect,
+  redirectResponse,
   REWRITE,
   rewrite,
   withHeaders,
 } from "./middleware.ts";
+// The throwing navigation signals also resolve from `denext/server` (the obvious import
+// in a Server Component / Server Action), identical to the `denext` exports.
+export {
+  forbidden,
+  isControlSignal,
+  isForbidden,
+  isNotFound,
+  isRedirect,
+  isUnauthorized,
+  notFound,
+  permanentRedirect,
+  RedirectType,
+  unauthorized,
+} from "../runtime/error-boundary.ts";
 export type {
   MatcherEntry,
   Middleware,
@@ -168,16 +200,30 @@ export type {
 } from "./segment-config.ts";
 
 // Per-request async context — cookies()/headers()/draftMode()/after() for server code.
-export { after, connection, cookies, draftMode, headers } from "./request-context.ts";
+export {
+  after,
+  connection,
+  cookies,
+  draftMode,
+  headers,
+  noStore,
+  readonlyHeaders,
+} from "./request-context.ts";
+export type { RequestCookie } from "./request-context.ts";
+export { cappedBody, readCappedBody, STALLED, TOO_LARGE } from "./body.ts";
 // User-Agent parsing (userAgent(request) / userAgentFromString(ua)).
 export { type UserAgent, userAgent, userAgentFromString } from "./user-agent.ts";
 export type {
+  AwaitableCookieStore,
+  AwaitableDraftMode,
+  AwaitableHeaders,
   CookieSetOptions,
   CookieStore,
   DraftMode,
   DraftTokenStore,
   RequestContext,
 } from "./request-context.ts";
+export type { RenderScope } from "../runtime/render-scope.ts";
 
 // Signed-cookie sessions (auth primitive).
 export { getSession } from "./session.ts";
@@ -209,6 +255,7 @@ export {
   cache,
   cachedFetch,
   cacheLife,
+  cacheStoreHealthy,
   cacheTag,
   getCacheStats,
   getCacheStore,

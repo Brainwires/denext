@@ -44,8 +44,16 @@ export interface RemotePattern {
   protocol?: string;
   /** Host to match: exact (`cdn.example.com`) or wildcard (`*.example.com`). */
   hostname: string;
-  /** Pathname prefix the source must start with (e.g. `/images/`). Any when omitted. */
+  /**
+   * Pathname the source must match: a Next.js glob (`/images/**`, `*` = one segment,
+   * `**` = any depth). A bare prefix (`/images/`) matches that path and anything below it.
+   * Any when omitted.
+   */
   pathname?: string;
+  /** Required port (e.g. `"3000"`); the protocol default when omitted. */
+  port?: string;
+  /** Required query string (e.g. `"?v=1"`); any when omitted. */
+  search?: string;
 }
 
 /**
@@ -105,7 +113,11 @@ export interface ImagesConfig {
    * is no server to optimize against). Per-image, use the `unoptimized` prop.
    */
   unoptimized?: boolean;
-  /** Exact remote hosts allowed as sources (host only, e.g. `cdn.example.com`). */
+  /**
+   * Exact remote hosts allowed as sources (host only, e.g. `cdn.example.com`).
+   * @deprecated Removed in Next.js 16; use `remotePatterns`. Still honored through denext 2.x,
+   * removed in 3.0.
+   */
   domains?: string[];
   /** Pattern-based remote allowlist (protocol/host-wildcard/pathname). */
   remotePatterns?: RemotePattern[];
@@ -147,7 +159,7 @@ export interface ImagesConfig {
    * enable AVIF (falls back to WebP when the client doesn't accept AVIF). Defaults
    * to `["image/webp"]`.
    */
-  formats?: string[];
+  formats?: Array<"image/webp" | "image/avif">;
   /**
    * Max redirect hops to follow for a remote source, each re-validated (matches
    * Next.js `images.maximumRedirects`). Defaults to `3`; `0` disables redirects.
@@ -403,6 +415,19 @@ export interface DenextConfig {
    */
   live?: LiveConfig;
   /**
+   * denext's tolerant node_modules resolver for the compat (npm-React) build — default ON.
+   *
+   * Every bare npm specifier is resolved straight from the app's installed `node_modules`
+   * using denext's own resolver, a strict superset of Deno's `npm:` loader: it honors
+   * `exports` wildcard globs, falls back to a plain subpath, and returns nothing on a miss
+   * (so the deno-loader still gets its shot). This is what makes an unmodified
+   * pnpm/npm/yarn/bun app build with no catalog-concretizing and no hand-patching of
+   * dependency `exports` — the "seamless migration" contract. Set `false` only to force
+   * app deps back through Deno's strict `npm:` loader (escape hatch). The pre-2.0 home,
+   * `experimental.nodeResolve`, is still honored.
+   */
+  nodeResolve?: boolean;
+  /**
    * Cache Components (Next.js 16): the `"use cache"` directive is compiled into
    * cross-request caching on the server (`src/build/use-cache-transform.ts`), plus the
    * PPR render path — dynamic-by-default rendering with cacheable `use cache` islands (a
@@ -573,7 +598,13 @@ export interface ExperimentalConfig {
    * Enable the build-time auto-memoization compiler (a React-Compiler-style pass) — an
    * opt-in optimization. Conservative by construction: it bails to identity whenever a
    * transform isn't provably safe, so it only ever adds memoization, never changes
-   * behavior. Off by default while its coverage is still widening.
+   * behavior. Off by default while its coverage is still widening. Named as in Next.js
+   * (`experimental.reactCompiler`), so a migrated `next.config` needs no rewrite.
+   */
+  reactCompiler?: boolean;
+  /**
+   * @deprecated Renamed `experimental.reactCompiler` (Next.js's key) in 2.0. Honored as an
+   * alias through 2.x; removed in 3.0.
    */
   compiler?: boolean;
   /**
@@ -587,16 +618,8 @@ export interface ExperimentalConfig {
    */
   asyncContext?: boolean;
   /**
-   * Opt-OUT of denext's tolerant node_modules resolver for the compat (npm-React) build.
-   *
-   * By DEFAULT (this unset, or `true`) every bare npm specifier is resolved straight from
-   * the app's installed `node_modules` using denext's own resolver — a strict superset of
-   * Deno's `npm:` loader: it honors `exports` wildcard globs, falls back to a plain
-   * subpath, and returns nothing on a miss (so the deno-loader still gets its shot). This
-   * is what makes an unmodified pnpm/npm/yarn/bun app build with no catalog-concretizing
-   * and no hand-patching of dependency `exports` — the "seamless migration" contract, and
-   * why `denext migrate` never rewrites `package.json`. Set to `false`
-   * only to force app deps back through Deno's strict `npm:` loader (escape hatch).
+   * @deprecated Moved to the top-level `nodeResolve` in 2.0 — it is load-bearing for every
+   * compat migration, not an incomplete feature. Honored as an alias through 2.x.
    */
   nodeResolve?: boolean;
 }
@@ -607,7 +630,12 @@ export interface ExperimentalConfig {
  * compat bundler (SSR/client/flight + SPA) so App Router and SPA behave identically.
  */
 export function nodeResolveEnabled(config: DenextConfig | null | undefined): boolean {
-  return config?.experimental?.nodeResolve !== false;
+  return (config?.nodeResolve ?? config?.experimental?.nodeResolve) !== false;
+}
+
+/** The effective auto-memo compiler flag: `experimental.reactCompiler`, or the legacy `compiler`. */
+export function reactCompilerEnabled(config: DenextConfig | null | undefined): boolean {
+  return (config?.experimental?.reactCompiler ?? config?.experimental?.compiler) === true;
 }
 
 /**
@@ -729,10 +757,19 @@ export function fillDestination(destination: string, params: Record<string, stri
  * @param location The candidate `Location` value (may embed user path data).
  */
 export function safeRedirectLocation(location: string): string {
-  if (/^https?:\/\//i.test(location)) return location;
+  // Strip ASCII control characters and whitespace FIRST: the WHATWG URL parser drops
+  // tab/newline anywhere in the input, so `/\t/evil.com` would otherwise slip past the
+  // leading-slash collapse below and resolve as protocol-relative `//evil.com`. A bare
+  // `\r`/`\n` would also make `new Response(…, { headers: { location } })` throw.
+  const clean = location.replace(CONTROL_CHARS, "");
+  if (/^https?:\/\//i.test(clean)) return clean;
   // Collapse a leading run of `/` or `\` to a single `/` (neutralizes `//`, `/\`).
-  return "/" + location.replace(/^[/\\]+/, "");
+  return "/" + clean.replace(/^[/\\]+/, "");
 }
+
+/** C0 controls, space, and DEL — never legitimate in a `Location` value. */
+// deno-lint-ignore no-control-regex
+const CONTROL_CHARS = /[\u0000-\u0020\u007f]/g;
 
 /** The config's rule functions resolved to concrete arrays (evaluated once). */
 export interface ResolvedRules {

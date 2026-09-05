@@ -339,13 +339,13 @@ export function handleClassError(
   const Ctor = inst.vnode.type as Any;
   let handled = false;
   if (typeof Ctor.getDerivedStateFromError === "function") {
+    // Declaring getDerivedStateFromError makes the class a boundary — a `null` return
+    // (no state change) still handles the error, as in React.
     const derived = Ctor.getDerivedStateFromError(error);
-    if (derived != null) {
-      const i = internals(c);
-      i.pendingState.push(derived);
-      scheduleUpdate(i.inst as Any);
-      handled = true;
-    }
+    const i = internals(c);
+    if (derived != null) i.pendingState.push(derived);
+    scheduleUpdate(i.inst as Any);
+    handled = true;
   }
   if (typeof c.componentDidCatch === "function") {
     c.componentDidCatch(error, info);

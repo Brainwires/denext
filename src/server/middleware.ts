@@ -4,6 +4,7 @@
 // (optionally injecting response headers).
 
 import { safeRedirectLocation } from "./config.ts";
+import { after } from "./request-context.ts";
 
 /** Internal marker symbol keying a {@linkcode NextCommand}. */
 export const NEXT: unique symbol = Symbol.for("denext.middleware.next");
@@ -47,10 +48,20 @@ export function setRequestAdapter(adapter: (request: Request) => Request): void 
   requestAdapter = adapter;
 }
 
+/** Apply the installed request adapter (identity unless `next/server` registered one). */
+export function adaptRequest(request: Request): Request {
+  return requestAdapter(request);
+}
+
 /** Extra context passed to a middleware handler alongside the request. */
 export interface MiddlewareContext {
   /** The request URL, pre-parsed for convenience. */
   url: URL;
+  /**
+   * Keep the request alive until `promise` settles without delaying the response
+   * (Next.js `NextFetchEvent.waitUntil`). Runs through the same deferred queue as `after()`.
+   */
+  waitUntil(promise: Promise<unknown>): void;
 }
 
 /** Command returned by {@linkcode next} to continue routing, optionally adding headers. */
@@ -163,21 +174,47 @@ export function rewrite(
  * @param location The redirect target.
  * @param status The redirect status code (default 307).
  */
-export function redirect(location: string, status = 307): Response {
+export function redirectResponse(location: string, status = 307): Response {
   return new Response(null, { status, headers: { location: safeRedirectLocation(location) } });
 }
+
+/**
+ * @deprecated Renamed {@linkcode redirectResponse} in 2.0 — `redirect` on `denext/server`
+ * collided with the throwing `redirect()` from `denext` (Server/Client Components). This
+ * alias stays through 2.x and is removed in 3.0.
+ */
+export const redirect: typeof redirectResponse = redirectResponse;
 
 // ---- Runner ----------------------------------------------------------------
 
 /** The normalized result of running the middleware runner for a request. */
 export type MiddlewareOutcome =
   | { type: "response"; response: Response }
-  | { type: "rewrite"; url: string; headers?: Headers; requestHeaders?: Headers }
-  | { type: "next"; headers?: Headers; requestHeaders?: Headers };
+  | {
+    type: "rewrite";
+    url: string;
+    headers?: Headers;
+    requestHeaders?: Headers;
+    /** The request to route (URL + request-header overrides already applied). */
+    request?: Request;
+    /** The rewrite points at another origin (Next proxies it; denext does too, via safeFetch). */
+    external?: boolean;
+  }
+  | {
+    type: "next";
+    headers?: Headers;
+    requestHeaders?: Headers;
+    /** The request to route (request-header overrides already applied). */
+    request?: Request;
+  };
 
-/** A resolved, request-ready middleware runner (null when there is none). */
+/**
+ * A resolved, request-ready middleware runner (null when there is none). `matchPath` is the
+ * pathname matchers are evaluated against when it differs from the request's (an i18n
+ * locale prefix stripped, as Next does before running middleware).
+ */
 export type MiddlewareRunner =
-  | ((request: Request) => Promise<MiddlewareOutcome>)
+  | ((request: Request, matchPath?: string) => Promise<MiddlewareOutcome>)
   | null;
 
 /**
@@ -327,8 +364,20 @@ export function matches(config: MiddlewareConfig | undefined, pathname: string):
   const entries = Array.isArray(matcher) ? matcher : [matcher];
   return entries.some((e) => {
     const source = typeof e === "string" ? e : e?.source;
-    return typeof source === "string" && matcherToRegExp(source).test(pathname);
+    return typeof source === "string" && compiledMatcher(source).test(pathname);
   });
+}
+
+/** `matcherToRegExp` memoized per source (a matcher is compiled once, not per request). */
+const matcherCache = new Map<string, RegExp>();
+function compiledMatcher(source: string): RegExp {
+  let re = matcherCache.get(source);
+  if (!re) {
+    re = matcherToRegExp(source);
+    if (matcherCache.size >= 256) matcherCache.clear(); // matchers are config, not input
+    matcherCache.set(source, re);
+  }
+  return re;
 }
 
 /** Normalize a module export into an ordered list of entries. */
@@ -344,9 +393,13 @@ async function runEntry(
   entry: MiddlewareEntry,
   request: Request,
   url: URL,
+  matchPath: string,
 ): Promise<MiddlewareOutcome> {
-  if (!matches(entry.config, url.pathname)) return { type: "next" };
-  const result = await entry.handler(requestAdapter(request), { url });
+  if (!matches(entry.config, matchPath)) return { type: "next" };
+  const result = await entry.handler(requestAdapter(request), {
+    url,
+    waitUntil: (promise) => after(() => promise),
+  });
 
   if (result instanceof Response) {
     // A `NextResponse.next()`/`.rewrite()` is a real Response carrying an intent
@@ -412,12 +465,14 @@ export function composeMiddleware(
 ): MiddlewareRunner {
   if (entries.length === 0) return null;
 
-  return async function run(request: Request): Promise<MiddlewareOutcome> {
+  return async function run(request: Request, matchPath?: string): Promise<MiddlewareOutcome> {
     let currentRequest = request;
     let url = new URL(request.url);
+    const origin = url.origin;
+    let path = matchPath ?? url.pathname;
 
     // A module-level matcher gates the entire chain.
-    if (!matches(moduleConfig, url.pathname)) return { type: "next" };
+    if (!matches(moduleConfig, path)) return { type: "next", request };
 
     const accumulated = new Headers();
     let hasHeaders = false;
@@ -425,7 +480,7 @@ export function composeMiddleware(
     let requestHeaders: Headers | undefined;
 
     for (const entry of entries) {
-      const step = await runEntry(entry, currentRequest, url);
+      const step = await runEntry(entry, currentRequest, url, path);
       if (step.type === "response") return step; // short-circuit
       if (step.headers) {
         mergeResponseHeaders(accumulated, step.headers);
@@ -433,7 +488,8 @@ export function composeMiddleware(
       }
       if (step.requestHeaders) {
         // Apply this entry's request-header overrides so later entries (and the
-        // final routed request) see them.
+        // final routed request) see them. The body is consumed exactly once here —
+        // callers must route `outcome.request`, never re-wrap the original.
         requestHeaders = step.requestHeaders;
         currentRequest = new Request(currentRequest, { headers: requestHeaders });
       }
@@ -441,12 +497,24 @@ export function composeMiddleware(
         rewritten = true;
         currentRequest = new Request(step.url, currentRequest);
         url = new URL(step.url);
+        path = url.pathname;
       }
     }
 
     const headers = hasHeaders ? accumulated : undefined;
-    if (rewritten) return { type: "rewrite", url: url.href, headers, requestHeaders };
-    return { type: "next", headers, requestHeaders };
+    const outcomeRequest = currentRequest;
+    if (rewritten) {
+      const external = url.origin !== origin;
+      return {
+        type: "rewrite",
+        url: url.href,
+        headers,
+        requestHeaders,
+        request: outcomeRequest,
+        external,
+      };
+    }
+    return { type: "next", headers, requestHeaders, request: outcomeRequest };
   };
 }
 

@@ -47,15 +47,46 @@ Deno.test("defineAction: a parser ActionValidationError becomes a typed field er
   assertEquals(res.fieldErrors?.title, "Title is required");
 });
 
-Deno.test("defineAction: a handler throw is caught and returned as a failure", async () => {
+Deno.test("defineAction: a handler throw is a REDACTED failure in prod, the real message in dev", async () => {
   const action = defineAction({
     handler: () => {
-      throw new Error("db down");
+      throw new Error("db down: postgres://user:pw@host/db");
     },
   });
-  const res = await action(idleActionState<never>(), fd({}));
-  assert(!res.ok);
-  assertEquals(res.error, "db down");
+  const origError = console.error;
+  console.error = () => {};
+  const g = globalThis as { __denextDev?: boolean };
+  try {
+    // Production (default): a generic message + a digest that correlates with the server log.
+    const res = await action(idleActionState<never>(), fd({}));
+    assert(!res.ok);
+    assertEquals(res.error, "Internal Server Error");
+    assert(typeof res.digest === "string" && res.digest.length > 0, "carries a digest");
+    // Development: the real message reaches the form.
+    g.__denextDev = true;
+    const dev = await action(idleActionState<never>(), fd({}));
+    assert(!dev.ok);
+    assertEquals(dev.error, "db down: postgres://user:pw@host/db");
+  } finally {
+    delete g.__denextDev;
+    console.error = origError;
+  }
+});
+
+Deno.test("defineAction: redirect()/notFound() inside the handler are control flow, not failures", async () => {
+  const { redirect, isRedirect } = await import("../src/runtime/error-boundary.ts");
+  const action = defineAction({
+    handler: () => {
+      redirect("/done");
+    },
+  });
+  let thrown: unknown;
+  try {
+    await action(idleActionState<never>(), fd({}));
+  } catch (e) {
+    thrown = e;
+  }
+  assert(isRedirect(thrown), "the redirect signal propagates to the action pipeline");
 });
 
 Deno.test("defineAction: with no input, the handler receives the raw form fields", async () => {

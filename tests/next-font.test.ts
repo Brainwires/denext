@@ -3,12 +3,8 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import localFont from "../src/compat/next/font/local.ts";
-import {
-  googleFontUrl,
-  Inter,
-  Open_Sans,
-  rewriteGoogleFontFaceCss,
-} from "../src/compat/next/font/google.ts";
+import { googleFontUrl, Inter, Open_Sans } from "../src/compat/next/font/google.ts";
+import { rewriteGoogleFontFaceCss } from "../src/compat/next/font/google-fetch.ts";
 import {
   collectedFontFaces,
   renderFontStyles,

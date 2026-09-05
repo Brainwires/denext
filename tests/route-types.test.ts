@@ -36,7 +36,7 @@ Deno.test("route-types: a dynamic segment → template literal + params entry", 
 Deno.test("route-types: a catch-all spans the tail", () => {
   const out = generateRouteTypes(manifest([page("/docs/[...rest]")]));
   assertStringIncludes(out, "`/docs/${string}`");
-  assertStringIncludes(out, '"/docs/[...rest]": { "rest": string };');
+  assertStringIncludes(out, '"/docs/[...rest]": { "rest": string[] };');
 });
 
 Deno.test("route-types: an optional catch-all yields with- and without-tail variants", () => {

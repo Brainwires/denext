@@ -5,7 +5,7 @@ import { matchSegments, peelLocale } from "@denext/denext/server";
 import type { PageEntry, PagesScan } from "../scan.ts";
 import { type ApiModule, runApiRoute } from "../api.ts";
 import { PAGES_PREFIX } from "../client-bundle.ts";
-import { previewCookieFrom } from "../preview.ts";
+import { previewCookieFrom, previewSecrets, readPreview } from "../preview.ts";
 import { pageRequest, renderData, renderError, renderMatched, renderPrefetch } from "./render.ts";
 import { servePrerendered } from "./prerendered.ts";
 import { DATA_HEADER, forMethod, type HandlerState, PREFETCH_HEADER } from "./shared.ts";
@@ -122,11 +122,14 @@ async function servePage(
   const wantsData = request.headers.get(DATA_HEADER) === "1";
   // A non-default locale renders live so getStaticProps runs with the locale
   // (per-locale SSG output isn't prewritten), keeping localized content correct.
-  // Preview Mode also bypasses the static cache so drafts render live (a forged
-  // cookie only forces a live render — resolveData verifies the signature).
+  // Preview Mode also bypasses the static cache so drafts render live. The cookie is
+  // VERIFIED here, not just detected: a forged/junk cookie must not let anyone force every
+  // request into a live render (a cache-bypass DoS lever).
   const nonDefaultLocale = !!st.opts.i18n && req.locale !== st.opts.i18n.defaultLocale;
-  const hasPreviewCookie = previewCookieFrom(request.headers.get("cookie")) !== undefined;
-  if (!nonDefaultLocale && !hasPreviewCookie) {
+  const rawPreview = previewCookieFrom(request.headers.get("cookie"));
+  const inPreview = rawPreview !== undefined &&
+    (await readPreview(rawPreview, previewSecrets())) !== null;
+  if (!nonDefaultLocale && !inPreview) {
     // ISR regen is reached only for the default locale (non-default renders live).
     const regen = () =>
       renderMatched(st, scan, entry, {

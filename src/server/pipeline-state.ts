@@ -78,11 +78,32 @@ export function retarget(state: RequestState, url: URL): void {
 
 /** Queue a header for the response (config header rules, middleware headers). */
 export function addInjectedHeader(state: RequestState, key: string, value: string): void {
-  (state.injectedHeaders ??= new Headers()).append(key, value);
+  const headers = state.injectedHeaders ??= new Headers();
+  // A single-valued header (X-Frame-Options, CSP, HSTS, …) from a later source (middleware)
+  // REPLACES an earlier one (config header rules) — `DENY, SAMEORIGIN` is not a valid value.
+  if (SINGLETON_HEADERS.has(key.toLowerCase())) headers.set(key, value);
+  else headers.append(key, value);
 }
 
+/** Response headers that hold exactly one value (the last writer wins, as in Next.js). */
+const SINGLETON_HEADERS = new Set([
+  "x-frame-options",
+  "content-security-policy",
+  "content-security-policy-report-only",
+  "strict-transport-security",
+  "referrer-policy",
+  "x-content-type-options",
+  "permissions-policy",
+  "cross-origin-opener-policy",
+  "cross-origin-embedder-policy",
+  "cross-origin-resource-policy",
+  "content-type",
+  "cache-control",
+  "location",
+]);
+
 /** The injected (rule + middleware) headers applied to `res`, if there are any. */
-export function withInjectedHeaders(state: RequestState, res: Response): Response {
+function withInjectedHeaders(state: RequestState, res: Response): Response {
   return state.injectedHeaders ? withHeaders(res, state.injectedHeaders) : res;
 }
 

@@ -31,7 +31,7 @@ tagClientExports(islandMod as Record<string, unknown>, "c_isl");
 // A dynamic server component: reads a cookie (postpones during prerender), then
 // renders a client island discovered only inside the hole.
 async function Slow(): Promise<VNode> {
-  const u = cookies().get("u") ?? "anon";
+  const u = cookies().get("u")?.value ?? "anon";
   return await Promise.resolve(
     h("section", { id: "who" }, `hi ${u}`, h(HoleWidget, { "client:load": true, who: u } as never)),
   );

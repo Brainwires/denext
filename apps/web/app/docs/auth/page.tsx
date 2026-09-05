@@ -78,7 +78,7 @@ export const config = { matcher: ["/dashboard/:path*"] };`}
       <p>On the client, the familiar NextAuth-style surface:</p>
       <Code lang="tsx">
         {`"use client";
-import { SessionProvider, useSession, signIn, signOut } from "@denext/denext";
+import { SessionProvider, useSession, signIn, signOut } from "denext";
 
 function UserMenu() {
   const { user, status } = useSession();

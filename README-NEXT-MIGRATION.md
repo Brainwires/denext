@@ -119,7 +119,9 @@ the React family and the Next compat surface at denext:
 }
 ```
 
-The `denext create --compatibility` scaffolder writes most of this for you.
+`denext migrate` (run in the Next project) writes ALL of this for you — the map
+above is what it generates, shown so you can audit or hand-tune it; a fresh
+compat project gets the same map from `denext create --compatibility`.
 
 > **npm specifier caveat.** Deno's managed npm resolution binds an npm package's
 > _internal_ `import "react"` to real npm React, not to an import-map alias.
@@ -128,13 +130,15 @@ The `denext create --compatibility` scaffolder writes most of this for you.
 > app code respects the import map directly.
 
 > **You don't hand-patch dependencies.** denext's compat build ships a tolerant
-> node_modules resolver (`experimental.nodeResolve`, default-on — a strict
+> node_modules resolver (`nodeResolve`, default-on — a strict
 > superset of Deno's `npm:` loader that honors `exports` wildcard globs and
 > falls back to a plain subpath), so an unmodified pnpm/npm/yarn/bun app builds
 > straight from its installed `node_modules` with no catalog-concretizing and no
-> patching of a dependency's `exports`. `denext migrate` writes config only and
-> **never rewrites `package.json`**. Set `experimental.nodeResolve: false` to
-> force app deps back through Deno's strict `npm:` loader (escape hatch).
+> patching of a dependency's `exports`. `denext migrate` writes config and
+> leaves your source alone; the one `package.json` edit it makes is stripping
+> Prisma's npm client when it wires the Deno-native adapter (see
+> [DATABASE.md](./DATABASE.md)). Set `nodeResolve: false` to force app deps back
+> through Deno's strict `npm:` loader (escape hatch).
 
 ---
 
@@ -304,8 +308,9 @@ Loading proves module init; still smoke-test any SDK that opens raw sockets
 ## 9. Suggested migration order
 
 1. **Probe dependencies** (§1) — know your blockers before touching code.
-2. **Set up `deno.json`** import map (§3) — `denext create --compatibility`
-   bootstraps it.
+2. **Run `denext migrate`** in the project — it writes the `deno.json` import map
+   (§3) and `denext.config.ts`, and translates `next.config.*` (add `--codemod`
+   to rewrite imports to native `denext`).
 3. **Port a bounded slice first** — a few public/marketing pages through the
    next-compat build; confirm dev + a production build serve and hydrate.
 4. **Migrate route handlers + middleware** (§4), smoke-testing server SDKs (§6).

@@ -35,8 +35,8 @@ real Radix Collapsible behavior, hydrated by denext.
 - `renderNextCompatPage()` produces the SSR HTML document + the hydration
   script.
 
-The client bundle contains **no npm React** — only denext's ~8 KB runtime plus
-the Radix component code.
+The client bundle contains **no npm React** — only denext's small shared runtime
+(see `bench/REPORT.md` for the current size) plus the Radix component code.
 
 > This example imports denext's build layer by relative path because it lives in
 > the denext repo. In a real project you'd use the published package.

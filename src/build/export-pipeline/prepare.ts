@@ -95,11 +95,17 @@ export async function prepareExport(
 ): Promise<ExportContext> {
   await setupPlugins(paths, "export");
   const manifest = await scanRoutes(paths.appDir);
-  const outDir = join(projectDir, options.outDir ?? "out");
+  // Render into a STAGING dir next to the target; `finishExport` swaps it into place. The
+  // previous export stays intact (and servable) until the new one is complete — a failed
+  // export never leaves an empty `out/`.
+  const finalOutDir = join(projectDir, options.outDir ?? "out");
+  const outDir = `${finalOutDir}.staging`;
+  await Deno.remove(outDir, { recursive: true }).catch(() => {});
   const clientOut = join(outDir, "_denext", "client");
   await ensureDir(clientOut);
   return {
     projectDir,
+    finalOutDir,
     paths,
     manifest,
     // Fall back to the project's denext.config i18n when not passed explicitly.
@@ -116,4 +122,17 @@ export async function prepareExport(
     pages: 0,
     skipped: [],
   };
+}
+
+/**
+ * Swap the finished staging dir into place: the previous export (if any) is renamed aside,
+ * the staging dir takes its name, and the old one is removed. A fresh export never leaves a
+ * route deleted since the last run lingering as stale HTML.
+ */
+export async function finishExport(ctx: ExportContext): Promise<void> {
+  const previous = `${ctx.finalOutDir}.prev`;
+  await Deno.remove(previous, { recursive: true }).catch(() => {});
+  const had = await Deno.rename(ctx.finalOutDir, previous).then(() => true, () => false);
+  await Deno.rename(ctx.outDir, ctx.finalOutDir);
+  if (had) await Deno.remove(previous, { recursive: true }).catch(() => {});
 }

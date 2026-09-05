@@ -221,3 +221,10 @@ exports = ["redirect"]
 [[ignoreExports]]
 file = "src/build/bundle.ts"
 exports = ["ensureBundleSupport"]
+
+# The `denext/remix` barrel re-exports the Remix runtime's same-named APIs (`Link`,
+# `LinkProps`, `useParams`, `useSearchParams`) — Remix-shaped twins of denext's own
+# navigation exports (`src/client/navigation.ts`), intentionally distinct implementations.
+[[ignoreExports]]
+file = "src/compat/remix/client.ts"
+exports = ["Link", "LinkProps", "useParams", "useSearchParams"]

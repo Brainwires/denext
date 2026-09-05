@@ -81,7 +81,10 @@ async function preparePageRequest(
     pageLoad,
     isRegen: isRegenRequest(state.request),
     cacheable: !!config.pageCache && !soft && state.request.method === "GET",
-    cacheKey: pageCacheKey(state.pathname, state.url.searchParams, config.cacheKeyParams),
+    // With i18n the same pathname renders per locale (domain- or Accept-Language-detected
+    // locales share a URL), so the locale is part of the key.
+    cacheKey: pageCacheKey(state.pathname, state.url.searchParams, config.cacheKeyParams) +
+      (localeInfo ? `#${locale}` : ""),
     boundaryErrors: [],
   };
 }
@@ -179,7 +182,7 @@ function isoNavResponse(pr: PageRequest, rendered: RenderedPage): Response | nul
  * needs `no-store` + `Vary: Cookie` (M1). HEAD gets the same headers with no body.
  */
 async function bufferedResponse(pr: PageRequest, rendered: RenderedPage): Promise<Response> {
-  const doc = renderDocument({
+  const doc = rendered.ownsDocument ? rendered.html : renderDocument({
     bodyHtml: rendered.html,
     metadata: rendered.metadata,
     ...documentOptions(pr),

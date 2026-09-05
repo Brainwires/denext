@@ -13,7 +13,7 @@ import { cookies, createRequestContext, runWithContext } from "../src/server/req
 
 /** A dynamic page component: reads a cookie (postpones during prerender). */
 async function UserPage() {
-  const u = cookies().get("u") ?? "?";
+  const u = cookies().get("u")?.value ?? "?";
   return await Promise.resolve(h("span", null, `user:${u}`));
 }
 

@@ -7,8 +7,8 @@
 //   type BlogParams = ParamsOf<"/blog/[slug]">;               // { slug: string }
 //
 // Dynamic segments become `${string}` template literals; catch-all spans the tail; an
-// optional catch-all yields both the with- and without-tail variants. All params are
-// strings (denext joins catch-all segments into one string, matching its RouteParams).
+// optional catch-all yields both the with- and without-tail variants. A `[x]` param is a
+// string and a `[...x]` catch-all a string[] (Next.js's shape, matching RouteParams).
 
 import type { RouteManifest } from "../router/manifest.ts";
 import type { Segment } from "../router/segments.ts";
@@ -43,7 +43,7 @@ function pathTypes(pattern: Segment[]): string[] {
 function paramsType(pattern: Segment[]): string {
   const entries = pattern
     .filter((s) => s.kind !== "static")
-    .map((s) => `${JSON.stringify(s.value)}: string`);
+    .map((s) => `${JSON.stringify(s.value)}: ${s.kind === "dynamic" ? "string" : "string[]"}`);
   return entries.length ? `{ ${entries.join("; ")} }` : "Record<never, never>";
 }
 
@@ -93,7 +93,7 @@ export type Routes = ${routeUnion};
 /** Every API route in this app. */
 export type ApiRoutes = ${apiUnion};
 
-/** The params object for each page route pattern (all values are strings). */
+/** The params object for each page route pattern ([x] is a string, [...x] a string[]). */
 export interface RouteParams {
 ${paramLines.join("\n") || "  // (no routes)"}
 }

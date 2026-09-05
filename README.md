@@ -147,14 +147,14 @@ plain anchor. Content and marketing pages are pure HTML.
 > silently regress.
 
 The gap holds on a **real, library-heavy app** (the same npm libraries compiled
-on both sides, gzipped): a recharts dashboard is **120 KB vs 230 KB**, a
-react-hook-form route **24 KB vs 140 KB**, a Radix dialog **26 KB vs 142 KB**.
-And denext isn't trading size for speed — it hydrates **~1.1× faster** (p50),
-and its SSR throughput runs on par to several times faster.
+on both sides, gzipped): a recharts dashboard, a react-hook-form route and a
+Radix dialog each ship roughly **half or less** of their Next.js equivalent, and
+denext isn't trading size for speed — hydration and SSR throughput run on par or
+faster. The current measured numbers live in [`bench/REPORT.md`](./bench/REPORT.md)
+(regenerated with every bench run, so this paragraph never goes stale).
 
-**Full comparison:** an
-[interactive benchmark chart](https://claude.ai/code/artifact/5488b1a2-83a5-45b5-9a8e-c073671c0df6)
-plots denext against Next.js / React across bytes over the wire, SSR throughput,
+**Full comparison:** [`bench/REPORT.md`](./bench/REPORT.md) plots denext against
+Next.js / React across bytes over the wire, SSR throughput,
 time-to-interactive, and the real library-heavy app. Every number is
 reproducible via `bench/run.ts`; the raw results and methodology live in
 [`bench/REPORT.md`](./bench/REPORT.md). (Single-machine benchmark — trust the
@@ -260,16 +260,15 @@ ledger in [FEATURES.md](./FEATURES.md).
 - **Caching & ISR** — `cache()`, `unstable_cache`,
   `revalidatePath`/`revalidateTag`, route segment config
   (`export const dynamic`/`revalidate`), and a per-route production page cache
-  (opt-in; default pages stay dynamic). The in-memory default is process-local;
-  swap it for a durable backend:
+  (opt-in; default pages stay dynamic). The **default store is durable**: Deno's
+  built-in `node:sqlite` at `.denext/cache.db` (real native SQLite — zero npm, no
+  unstable flag, survives restarts); the in-memory store is the fallback where the
+  filesystem is read-only (Deno Deploy). Point it elsewhere or swap it explicitly:
 
   ```ts
   import { setCacheStore, sqliteCacheStore } from "denext/server";
 
-  // Durable across restarts, single-node, and NO unstable flag. The recommended
-  // store for self-hosted deployments. Backed by Deno's built-in `node:sqlite`
-  // (real, native SQLite — zero npm, no setup).
-  setCacheStore(sqliteCacheStore({ path: ".denext/cache.db" }));
+  setCacheStore(sqliteCacheStore({ path: "/var/lib/app/cache.db" }));
   ```
 
   `sqliteCacheStore` uses Deno's built-in `node:sqlite` (real native SQLite,
@@ -469,7 +468,7 @@ not the entire spec.
 
 ## Requirements
 
-- **Deno 2.x** (developed against 2.9). `build`/`dev` bundle client code by
+- **Deno ≥ 2.9** (`denext doctor` checks it). `build`/`dev` bundle client code by
   shelling out to Deno's own `deno bundle` — an experimental, still-evolving
   subcommand — so a Deno 2.x `deno` binary must be reachable. denext checks the
   version up front and fails with a clear message on an older or missing binary;
@@ -583,9 +582,9 @@ does):
 ```json
 {
   "tasks": {
-    "dev": "deno run -A jsr:@denext/denext/cli dev .",
-    "build": "deno run -A jsr:@denext/denext/cli build .",
-    "start": "deno run -A jsr:@denext/denext/cli start ."
+    "dev": "deno run -A jsr:@denext/denext@^2/cli dev .",
+    "build": "deno run -A jsr:@denext/denext@^2/cli build .",
+    "start": "deno run -A jsr:@denext/denext@^2/cli start ."
   }
 }
 ```
@@ -650,7 +649,6 @@ export default {
   // Remote image optimization is off by default (local-only, SSRF-safe). Allowlist
   // hosts to enable it for the /_denext/image endpoint.
   images: {
-    domains: ["cdn.example.com"],
     remotePatterns: [{
       protocol: "https",
       hostname: "*.example.com",
@@ -659,7 +657,7 @@ export default {
   },
 
   // Experimental auto-memo compiler (default off).
-  experimental: { compiler: true },
+  experimental: { reactCompiler: true },
 } satisfies DenextConfig;
 ```
 
@@ -729,7 +727,7 @@ shallow-equal and whose visible context is unchanged — context changes still
 reach deep consumers correctly. Use `memo(Component, areEqual?)` for an explicit
 custom comparator, and `useMemoCache` (on `denext/compiler-runtime`) as the compiler's stable-cache primitive.
 
-The **experimental auto-memo compiler** (`experimental: { compiler: true }`, or
+The **experimental auto-memo compiler** (`experimental: { reactCompiler: true }` — Next.js's key; the pre-2.0 `compiler` is a deprecated alias — or
 `denext create --compiler`) goes further: a build-time pass lifts JSX component
 elements into `useMemoCache`-guarded memo calls so unchanged subtrees keep a
 stable reference and skip re-rendering — the same idea as the React Compiler. It
@@ -744,7 +742,7 @@ default.
 | `app/page.tsx`                | Page at `/`                                                          |
 | `app/about/page.tsx`          | Page at `/about`                                                     |
 | `app/blog/[slug]/page.tsx`    | Dynamic page; `params.slug`                                          |
-| `app/docs/[...path]/page.tsx` | Catch-all; `params.path` is `"a/b/c"`                                |
+| `app/docs/[...path]/page.tsx` | Catch-all; `params.path` is `["a", "b", "c"]` (Next.js shape)        |
 | `app/layout.tsx`              | Wraps this segment and everything beneath it                         |
 | `app/template.tsx`            | Like a layout, but conceptually re-mounted                           |
 | `app/loading.tsx`             | Suspense fallback for the segment                                    |
@@ -797,9 +795,9 @@ import {
 import {
   createApp,
   next,
-  redirect,
+  redirectResponse, // middleware helpers (Response-returning; `redirect` is the deprecated alias)
   renderPage,
-  rewrite, // middleware helpers
+  rewrite,
   serve,
 } from "denext/server";
 import type { ApiContext, LayoutProps, Metadata, PageProps } from "denext/server";
@@ -837,11 +835,11 @@ export function GET(req: Request, ctx: ApiContext) {
 
 ```ts
 // middleware.ts  (proxy.ts also works)
-import { next, redirect } from "denext/server";
+import { next, redirectResponse } from "denext/server";
 
 export default function middleware(req, ctx) {
   if (!ctx.url.pathname.startsWith("/app")) return next();
-  return req.headers.get("cookie") ? next() : redirect("/login");
+  return req.headers.get("cookie") ? next() : redirectResponse("/login");
 }
 
 export const config = { matcher: "/app/:path*" };
@@ -882,7 +880,7 @@ src/
 ├─ server/     request handler, page pipeline, API dispatch, static, middleware
 ├─ client/     virtual-DOM reconciler, hydration, soft navigation
 └─ build/      deno-bundle integration, dev server, prod server, CLI wiring
-cli.ts         dev | build | start | export | create | migrate | version
+cli.ts         dev | build | start | export | create | generate | migrate | codemod | doctor | mcp | …
 mod.ts         public "denext" entry point
 ```
 
@@ -993,13 +991,11 @@ What's still **your responsibility** at the app/edge layer:
   `trustForwardedHeaders`). A client can spoof `Host`, so for a fixed public
   origin set `canonicalOrigin` — it overrides the header and is the robust
   choice for canonical/`og:image` URLs.
-- **Gating paths with a middleware `matcher` under i18n? Include the locale.** A
-  matcher like `/admin` does not match a locale-prefixed request (`/fr/admin`),
-  so a path-restricted middleware can be bypassed by adding a locale prefix.
-  Either omit the path matcher (middleware then runs on every request — denext's
-  default) and peel the locale inside your handler, or write a locale-aware
-  matcher. denext does run middleware on locale-prefixed paths; the gap is only
-  in the matcher you author.
+- **Middleware matchers see the locale-stripped path.** Under `i18n`, a
+  `matcher: "/admin/:path*"` fires for `/fr/admin/x` as well as `/admin/x` (the
+  matcher is tested against the path with the locale prefix removed, as in
+  Next.js), so a locale prefix can never route around a path-restricted
+  middleware. `ctx.locale` / `req.nextUrl.locale` carry the peeled locale.
 - **Don't build a redirect/rewrite destination _host_ from request input.** A
   config rule like `{ destination: "https://:host/..." }` substitutes a URL
   param into the host — an open redirect. (A `rewrite` to an external host is
@@ -1062,19 +1058,23 @@ Each doc owns one job, so the same fact lives in exactly one canonical place:
   responsibilities denext leaves to your edge (concurrency, SSRF-pinning, CSP,
   proxy origin).
 - [DATABASE.md](./DATABASE.md) — databases & ORMs on denext.
-  [PLUGINS.md](./PLUGINS.md) — the plugin contract.
+- [PLUGINS.md](./PLUGINS.md) — the plugin contract.
 - [ARCHITECTURE.md](./ARCHITECTURE.md) — how denext differs _underneath_ the
   React surface (own reconciler, async SSR, soft-nav, Pages-Router-as-plugin) —
   design choices, not limitations.
 - [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) — the genuine React/Next
-  surface gaps, the bounded scope of denext's own capabilities, the post-2.0
-  deferrals, and the honest React DevTools scope.
+  surface gaps and the bounded scope of denext's own capabilities (what is
+  missing or wrong today; deliberate differences are in KNOWN-DIFFERENCES).
+- [KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md) — where denext deliberately
+  behaves differently from React/Next (documented, not gaps).
 - [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md) — the canonical,
   threat-by-threat security posture vs the ecosystem's CVEs.
+- [SECURITY.md](./SECURITY.md) — supported versions and how to report a
+  vulnerability privately.
 - [CONTRIBUTING.md](./CONTRIBUTING.md) — the check/lint gate, conventions, and
   the JSR release flow.
-- [ROADMAP.md](./ROADMAP.md) — the pending zero-npm / ecosystem engineering
-  backlog.
+- [ROADMAP.md](./ROADMAP.md) — what still needs doing (the 2.1 cycle: the typed,
+  self-documenting API surface, build-time WASM codecs, router plugins).
 - [CHANGELOG.md](./CHANGELOG.md) — release history.
 
 ## License

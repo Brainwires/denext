@@ -16,7 +16,7 @@
 import { dirname, join, relative, resolve, toFileUrl } from "@std/path";
 import { anyExists, exists, firstExisting } from "./migrate-fs.ts";
 import { parse as parseJsonc } from "@std/jsonc";
-import { frameworkRoot } from "./bundle.ts";
+import { readFrameworkJson } from "./bundle.ts";
 import { appendGitignore } from "./gitignore.ts";
 import { REACT_FAMILY_CLIENT, REACT_FAMILY_CORE } from "./react-specifiers.ts";
 import { DESKTOP_ICON_FILE, detectIconSource } from "./desktop-icon.ts";
@@ -66,7 +66,12 @@ const DENEXT_OWNED = new Set([
   "client-only",
 ]);
 /** The `@denext/pages-router` plugin specifier written for a `pages/` app. */
-const PAGES_ROUTER_SPEC = "jsr:@denext/pages-router@^0.8.0";
+/**
+ * The `@denext/pages-router` range a migrated `pages/` app gets. Must satisfy the workspace
+ * package's current version (asserted by tests/migrate-universal.test.ts) — the plugin tracks
+ * denext's barrel surface, so an older 0.x line boots against a barrel it no longer matches.
+ */
+export const PAGES_ROUTER_SPEC = "jsr:@denext/pages-router@^0.10.0";
 /**
  * The `@denext/effect` bridge specifier, mapped (and its `effect()` plugin wired into the
  * generated `denext.config.ts`) whenever the app depends on the npm `effect` package. The
@@ -372,17 +377,17 @@ async function collectTsPathAliases(
   return out;
 }
 
-function denextVersion(): string {
-  try {
-    const cfg = JSON.parse(
-      Deno.readTextFileSync(join(frameworkRoot(), "deno.json")),
-    ) as {
-      version?: string;
-    };
-    return cfg.version ? `@^${cfg.version}` : "";
-  } catch {
-    return "";
-  }
+/**
+ * The `@^<version>` suffix that pins a migrated app to this framework's release line. Reads
+ * the framework's own `deno.json` scheme-agnostically (a local checkout OR the JSR package —
+ * `join(frameworkRoot(), …)` corrupts a `https://` root). Throws rather than silently
+ * emitting an unpinned `jsr:@denext/denext`.
+ */
+async function denextVersion(): Promise<string> {
+  const cfg = await readFrameworkJson("deno.json");
+  const version = typeof cfg.version === "string" ? cfg.version : "";
+  if (!version) throw new Error("denext migrate: could not read the framework version");
+  return `@^${version}`;
 }
 
 /** How the generated config points at denext: published JSR (default) or a local checkout. */
@@ -424,7 +429,8 @@ function jsrResolver(V: string): DenextResolver {
     base: `jsr:@denext/denext${V}`,
     sub: jsr,
     prefix: jsr,
-    cli: "jsr:@denext/denext/cli",
+    // Pinned to the same range as the import map so the CLI never skews from the runtime.
+    cli: `jsr:@denext/denext${V}/cli`,
     pagesRouter: (sub) => (sub ? `${PAGES_ROUTER_SPEC}/${sub}` : PAGES_ROUTER_SPEC),
     pagesRouterEntries: () => ({
       "@denext/pages-router": PAGES_ROUTER_SPEC,
@@ -757,8 +763,19 @@ async function evalNextConfig(
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), NEXT_EVAL_TIMEOUT_MS);
   try {
+    // Least privilege: the config is the app's own code but it is run on the migrating
+    // machine — it may read its project + env (what a real `next build` sees), not write,
+    // spawn, or reach the network.
     const cmd = new Deno.Command(Deno.execPath(), {
-      args: ["run", "-A", "-", toFileUrl(join(dir, file)).href],
+      args: [
+        "run",
+        "--no-prompt",
+        `--allow-read=${dir}`,
+        "--allow-env",
+        "--allow-sys",
+        "-",
+        toFileUrl(join(dir, file)).href,
+      ],
       cwd: dir,
       stdin: "piped",
       stdout: "piped",
@@ -896,7 +913,7 @@ export async function migrateProject(
 
   const { pnp } = await detectPackageManager(dir);
   if (pnp) throw pnpUnsupported(dir);
-  const R = await denextResolver(denextVersion(), options.denextLocalPath);
+  const R = await denextResolver(await denextVersion(), options.denextLocalPath);
   const jsr = R.sub;
   const { imports, hasEffect, ...classified } = await resolveAppRouterImports(dir, R, deps);
 
@@ -1027,7 +1044,7 @@ async function migrateRemixProject(
   const { pnp } = await detectPackageManager(dir);
   if (pnp) throw pnpUnsupported(dir);
 
-  const V = denextVersion();
+  const V = await denextVersion();
   const R = await denextResolver(V, options.denextLocalPath);
   const imports = await buildAppRouterImports(dir, R, deps, { remix: true });
   // Classify deps like the Next path, additionally dropping Remix's own `@remix-run/*` /
@@ -1797,7 +1814,7 @@ async function migrateSpaProject(
   options: MigrateOptions,
   source: SpaSource,
 ): Promise<MigrateResult> {
-  const V = denextVersion();
+  const V = await denextVersion();
   const R = await denextResolver(V, options.denextLocalPath);
   const { pm, pnp } = await detectPackageManager(dir);
   if (pnp) throw pnpUnsupported(dir);

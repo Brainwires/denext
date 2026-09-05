@@ -17,7 +17,7 @@ import {
   setupCompat,
 } from "./export-pipeline/assets.ts";
 import type { StaticExportOptions, StaticExportResult } from "./export-pipeline/context.ts";
-import { exportWithoutAppRouter, prepareExport } from "./export-pipeline/prepare.ts";
+import { exportWithoutAppRouter, finishExport, prepareExport } from "./export-pipeline/prepare.ts";
 import { copyPublic, renderAllPages } from "./export-pipeline/render.ts";
 import { stopNextCompat } from "./next-compat.ts";
 import { resolveProject } from "./paths.ts";
@@ -52,5 +52,7 @@ export async function staticExport(
   await copyPublic(paths.publicDir, ctx.outDir);
   // Tear down the shared esbuild service the compat SSR build started (one-shot export).
   if (ctx.compat) await stopNextCompat();
-  return { outDir: ctx.outDir, pages: ctx.pages, skipped: ctx.skipped };
+  // 4. Everything rendered: swap the staging dir into `out/`.
+  await finishExport(ctx);
+  return { outDir: ctx.finalOutDir, pages: ctx.pages, skipped: ctx.skipped };
 }

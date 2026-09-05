@@ -91,12 +91,14 @@ export function applyOutgoing(res: Response, outgoing: Headers, statusOverride?:
   const headers = new Headers(res.headers);
   for (const [k, v] of extra) headers.set(k, v);
   for (const c of setCookies) headers.append("set-cookie", c);
-  return new Response(res.body, {
-    status: statusOverride ?? res.status,
-    statusText: res.statusText,
-    headers,
-  });
+  const status = statusOverride ?? res.status;
+  // A null-body status (204/205/304) may not carry a body — `new Response` would throw.
+  const body = NULL_BODY_STATUS.has(status) ? null : res.body;
+  if (body === null && res.body) res.body.cancel().catch(() => {});
+  return new Response(body, { status, statusText: res.statusText, headers });
 }
+
+const NULL_BODY_STATUS = new Set([101, 204, 205, 304]);
 
 export function notFound(pathname: string): Response {
   return new Response(

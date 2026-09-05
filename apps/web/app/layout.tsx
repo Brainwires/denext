@@ -26,11 +26,11 @@ export const metadata = {
     type: "website",
     siteName: "denext",
     locale: "en_US",
-    image: [{ url: "/og.png", width: 1200, height: 630, alt: "denext" }],
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "denext" }],
   },
   twitter: {
     card: "summary_large_image",
-    image: "/og.png",
+    images: "/og.png",
   },
   head: [
     `<link rel="stylesheet" href="/styles.css">`,

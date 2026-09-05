@@ -87,10 +87,11 @@ Deno.test("userAgent: an empty UA is a non-bot desktop with empty fields", () =>
   assertEquals(ua.isBot, false);
   assertEquals(ua.ua, "");
   assertEquals(ua.browser, {});
-  assertEquals(ua.device.type, "desktop");
+  assertEquals(ua.device.type, undefined, "desktop has no device.type (Next.js parity)");
+  assertEquals(ua.cpu, {});
 });
 
-Deno.test("userAgent: Chrome on Windows → Chrome/Blink/Windows/desktop", () => {
+Deno.test("userAgent: Chrome on Windows → Chrome/Blink/Windows (desktop → no device.type)", () => {
   const ua = userAgent(reqWith("http://x/", {
     "user-agent":
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -98,7 +99,7 @@ Deno.test("userAgent: Chrome on Windows → Chrome/Blink/Windows/desktop", () =>
   assertEquals(ua.browser.name, "Chrome");
   assertEquals(ua.engine.name, "Blink");
   assertEquals(ua.os.name, "Windows");
-  assertEquals(ua.device.type, "desktop");
+  assertEquals(ua.device.type, undefined);
 });
 
 Deno.test("userAgent: Edge is not misdetected as Chrome", () => {

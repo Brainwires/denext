@@ -551,7 +551,7 @@ export function routeToId(routePath: string): string {
 }
 
 /** The render function a server bundle exports. */
-export type PageRenderFn = (props?: unknown) => Promise<string>;
+type PageRenderFn = (props?: unknown) => Promise<string>;
 
 /**
  * SSR a built next-compat page to a full HTML document: server-render the body,

@@ -95,8 +95,8 @@ Deno.test("renderPage runs layout generateMetadata and merges outer→inner (pag
   const modules: Record<string, unknown> = {
     "layout.tsx": {
       default: (p: { children: unknown }) => h("div", null, p.children as never),
-      generateMetadata: (props: { searchParams: URLSearchParams }) => ({
-        title: `Layout ${props.searchParams.get("q") ?? "?"}`,
+      generateMetadata: (props: { searchParams: Record<string, unknown> }) => ({
+        title: `Layout ${props.searchParams.q ?? "?"}`,
         description: "from layout",
       }),
     },

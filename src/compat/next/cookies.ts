@@ -9,13 +9,8 @@
 
 import { type Cookie, deleteCookie, getCookies, getSetCookies, setCookie } from "@std/http/cookie";
 
-/** A single cookie as Next returns it from `.get()` / `.getAll()`. */
-export interface RequestCookie {
-  /** The cookie name. */
-  name: string;
-  /** The cookie value. */
-  value: string;
-}
+export type { RequestCookie } from "../../server/request-context.ts";
+import type { RequestCookie } from "../../server/request-context.ts";
 
 /** Options accepted by `ResponseCookies.set` / `.delete` (a subset of `Cookie`). */
 export interface CookieOptions {
@@ -42,14 +37,38 @@ export interface CookieOptions {
  */
 export class RequestCookies {
   #map: Map<string, string>;
+  #headers: Headers;
 
   /**
-   * Parse the cookie jar from a request's headers.
+   * Parse the cookie jar from a request's headers. `set`/`delete`/`clear` write the
+   * `Cookie` header back (Next.js semantics), so a downstream reader of the request sees them.
    *
    * @param headers The request headers to read cookies from.
    */
   constructor(headers: Headers) {
+    this.#headers = headers;
     this.#map = new Map(Object.entries(getCookies(headers)) as [string, string][]);
+  }
+
+  /** Re-serialize the jar onto the `Cookie` header (mutable request headers only). */
+  #sync(): void {
+    try {
+      const value = this.toString();
+      if (value) this.#headers.set("cookie", value);
+      else this.#headers.delete("cookie");
+    } catch { /* immutable headers — the jar stays in-memory only */ }
+  }
+
+  /** The jar as a `Cookie` header value. */
+  toString(): string {
+    return [...this.#map].map(([n, v]) => `${n}=${v}`).join("; ");
+  }
+
+  /** Remove every cookie. */
+  clear(): this {
+    this.#map.clear();
+    this.#sync();
+    return this;
   }
 
   /** The cookie named `name`, or `undefined`. */
@@ -69,15 +88,24 @@ export class RequestCookies {
     return this.#map.has(name);
   }
 
-  /** Set a cookie on the request jar (in-memory). */
-  set(name: string, value: string): this {
-    this.#map.set(name, value);
+  /** Set a cookie on the request jar (`set(name, value)` or `set({ name, value })`). */
+  set(name: string | RequestCookie, value?: string): this {
+    if (typeof name === "object") this.#map.set(name.name, name.value);
+    else this.#map.set(name, value ?? "");
+    this.#sync();
     return this;
   }
 
-  /** Delete a cookie from the request jar; returns whether it existed. */
-  delete(name: string): boolean {
-    return this.#map.delete(name);
+  /** Delete a cookie (or several) from the request jar; returns whether it existed. */
+  delete(name: string | string[]): boolean | boolean[] {
+    if (Array.isArray(name)) {
+      const out = name.map((n) => this.#map.delete(n));
+      this.#sync();
+      return out;
+    }
+    const had = this.#map.delete(name);
+    this.#sync();
+    return had;
   }
 
   /** The number of cookies. */
@@ -123,10 +151,34 @@ export class ResponseCookies {
     return this;
   }
 
-  /** Stage a `Set-Cookie` that expires the cookie `name`. */
-  delete(name: string, options: { path?: string; domain?: string } = {}): this {
+  /**
+   * Stage a `Set-Cookie` that expires the cookie — by `name`, by `{ name, path?, domain? }`,
+   * or several names at once.
+   */
+  delete(
+    name: string | string[] | { name: string; path?: string; domain?: string },
+    options: { path?: string; domain?: string } = {},
+  ): this {
+    if (Array.isArray(name)) {
+      for (const n of name) deleteCookie(this.#headers, n, options);
+      return this;
+    }
+    if (typeof name === "object") {
+      deleteCookie(this.#headers, name.name, { path: name.path, domain: name.domain });
+      return this;
+    }
     deleteCookie(this.#headers, name, options);
     return this;
+  }
+
+  /** Whether a cookie named `name` has been staged on this response. */
+  has(name: string): boolean {
+    return this.get(name) !== undefined;
+  }
+
+  /** The staged cookies as `name=value` pairs joined by `; ` (Next's `toString`). */
+  toString(): string {
+    return this.getAll().map((c) => `${c.name}=${c.value}`).join("; ");
   }
 
   /** The staged cookie named `name` (with attributes), or `undefined`. */

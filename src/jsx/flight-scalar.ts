@@ -9,6 +9,8 @@
 // lands in ONE place and can't drift between the serializers.
 
 import { isServerAction } from "../runtime/server-action.ts";
+import { taintMessageFor } from "../runtime/taint.ts";
+import { isAsyncProps } from "../runtime/async-props.ts";
 import { isQrl } from "../runtime/qrl.ts";
 import { isThenable } from "../runtime/suspense.ts";
 import type { FlightValue } from "./render-to-flight.ts";
@@ -35,6 +37,11 @@ const COMPOUND_RESULT: ScalarResult = { kind: "compound" };
  * VNode, or plain object the caller serializes itself.
  */
 export function serializeScalar(value: unknown): ScalarResult {
+  // `taintObjectReference` / `taintUniqueValue`: a tainted value must never cross to the
+  // client, whichever serializer (streaming Flight, HTML-flight, PPR) is encoding it. Two
+  // empty-map lookups when nothing is tainted.
+  const tainted = taintMessageFor(value);
+  if (tainted !== undefined) throw new Error(tainted);
   if (value === undefined) return SKIP_RESULT;
   if (value === null) return { kind: "value", value: null };
   const t = typeof value;
@@ -47,6 +54,9 @@ export function serializeScalar(value: unknown): ScalarResult {
   if (value instanceof Date) return { kind: "value", value: { $: "D", v: value.toISOString() } };
   // A thenable (a Remix `defer()` field / promise data): the caller resolves it and
   // re-serializes the result, so deferred data crosses the boundary as its value.
+  // `params`/`searchParams` are awaitable-to-themselves (Next 15 shape); they are DATA, not
+  // deferred values — resolving them as a thenable would recurse forever.
+  if (isAsyncProps(value)) return COMPOUND_RESULT;
   if (isThenable(value)) return { kind: "thenable", promise: value };
   return COMPOUND_RESULT;
 }

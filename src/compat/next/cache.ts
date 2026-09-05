@@ -4,7 +4,7 @@
  * server runtime.
  * @module
  */
-import { cacheLife, cacheTag } from "../../server/mod.ts";
+import { cacheLife, cacheTag, noStore } from "../../server/mod.ts";
 
 export {
   cacheLife,
@@ -20,17 +20,36 @@ export {
 export { cacheLife as unstable_cacheLife, cacheTag as unstable_cacheTag };
 
 /**
- * `unstable_noStore` — opt the current render out of caching (Next's pre-`"use cache"`
- * API). denext's cache is opt-in per `cache()`/`cacheTag` scope, so an un-annotated render
- * is already uncached; this is a no-op provided for source compatibility.
+ * `unstable_noStore` — opt the current render out of the page cache. A route with
+ * `export const revalidate = N` that reads per-user data and calls this is rendered per
+ * request instead of being stored and served to every visitor.
+ *
+ * @deprecated Next.js 15 deprecates it in favor of `connection()` (from `denext/server`),
+ * which denext also implements. Kept through 2.x; removed in 3.0.
  */
 export function unstable_noStore(): void {
-  // no-op — denext does not cache a render unless it opts in.
+  noStore();
 }
+
+/**
+ * `unstable_rethrow` — re-throw denext's control-flow signals (`redirect()`, `notFound()`,
+ * `forbidden()`, `unauthorized()`) from inside a `try`/`catch`, so a catch-all handler
+ * doesn't swallow them. A no-op for any other value.
+ */
+export { unstable_rethrow } from "../../runtime/error-boundary.ts";
+
+/** `unstable_after` — the pre-stable spelling of `after()`. */
+export { after as unstable_after } from "../../server/mod.ts";
+/** `unstable_expirePath` / `unstable_expireTag` — Next 15's spellings of revalidatePath/Tag. */
+export {
+  revalidatePath as unstable_expirePath,
+  revalidateTag as unstable_expireTag,
+} from "../../server/mod.ts";
 
 /**
  * `io` — Next 16's experimental marker for I/O inside a cached scope. denext's cache model
  * does not require it; provided as a no-op for source/signature compatibility.
+ * @deprecated A no-op in denext; remove the call. Kept through 2.x; removed in 3.0.
  */
 export function io(): void {
   // no-op — accepted for compatibility.

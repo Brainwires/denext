@@ -4,6 +4,7 @@
 // `src/build/*` / `src/testing/*`; these specs only orchestrate.
 
 import type { CommandContext, CommandSpec } from "../command.ts";
+import { envGet } from "../../runtime/env-safe.ts";
 import { ensureAppDir, installShutdown, projectDir, runBuildStep } from "../shared.ts";
 import { type ProjectPaths, resolveProject } from "../../build/paths.ts";
 import { startDevServer } from "../../build/dev-server.ts";
@@ -29,9 +30,14 @@ const SERVE_FLAGS = [
   },
 ] as const;
 
-/** Read the `--port` flag (absent → undefined, so the server auto-selects). */
+/**
+ * The port to listen on: `--port`, else the `$PORT` environment variable (what every PaaS —
+ * Heroku, Cloud Run, Fly, Railway — injects), else undefined so the server auto-selects.
+ */
 function portOf(ctx: CommandContext): number | undefined {
-  return typeof ctx.flags.port === "number" ? ctx.flags.port : undefined;
+  if (typeof ctx.flags.port === "number") return ctx.flags.port;
+  const env = Number(envGet("PORT"));
+  return Number.isInteger(env) && env > 0 && env < 65536 ? env : undefined;
 }
 
 /**

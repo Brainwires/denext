@@ -31,9 +31,10 @@ Deno.test("NextRequest exposes nextUrl and parses cookies", () => {
   assert(!req.cookies.has("missing"));
 });
 
-Deno.test("NextRequest.ip prefers x-forwarded-for's first hop, falls back to x-real-ip", () => {
+Deno.test("NextRequest.ip uses x-forwarded-for's LAST hop (proxy-appended), falls back to x-real-ip", () => {
+  // The first hop is whatever the client sent; only the last one was appended by our proxy.
   const fwd = new NextRequest("https://x/", {
-    headers: { "x-forwarded-for": "203.0.113.1, 10.0.0.1" },
+    headers: { "x-forwarded-for": "6.6.6.6, 203.0.113.1" },
   });
   assertEquals(fwd.ip, "203.0.113.1");
 

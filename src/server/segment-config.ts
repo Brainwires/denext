@@ -133,35 +133,53 @@ const DYNAMIC_VALUES = new Set<RouteDynamic>([
 export function readSegmentConfig(mod: unknown): SegmentConfig {
   const m = (mod ?? {}) as SegmentConfigExports;
   const cfg: SegmentConfig = { ...DEFAULT_SEGMENT_CONFIG };
+  const explicit = new Set<keyof SegmentConfig>();
+  const set = <K extends keyof SegmentConfig>(key: K, value: SegmentConfig[K]): void => {
+    cfg[key] = value;
+    explicit.add(key);
+  };
 
-  if (typeof m.dynamic === "string" && DYNAMIC_VALUES.has(m.dynamic)) {
-    cfg.dynamic = m.dynamic;
-  }
-  if (typeof m.dynamicParams === "boolean") cfg.dynamicParams = m.dynamicParams;
+  if (typeof m.dynamic === "string" && DYNAMIC_VALUES.has(m.dynamic)) set("dynamic", m.dynamic);
+  if (typeof m.dynamicParams === "boolean") set("dynamicParams", m.dynamicParams);
   if (m.revalidate === false || (typeof m.revalidate === "number" && m.revalidate >= 0)) {
-    cfg.revalidate = m.revalidate;
+    set("revalidate", m.revalidate);
   }
-  if (typeof m.runtime === "string") cfg.runtime = m.runtime;
+  if (typeof m.runtime === "string") set("runtime", m.runtime);
   if (typeof m.preferredRegion === "string" || Array.isArray(m.preferredRegion)) {
-    cfg.preferredRegion = m.preferredRegion;
+    set("preferredRegion", m.preferredRegion);
   }
-  if (typeof m.maxDuration === "number") cfg.maxDuration = m.maxDuration;
-  if (typeof m.fetchCache === "string") cfg.fetchCache = m.fetchCache;
-  if (typeof m.resumable === "boolean") cfg.resumable = m.resumable;
+  if (typeof m.maxDuration === "number") set("maxDuration", m.maxDuration);
+  if (typeof m.fetchCache === "string") set("fetchCache", m.fetchCache);
+  if (typeof m.resumable === "boolean") set("resumable", m.resumable);
   const csp = normalizeCspSetting(m.csp);
-  if (csp !== undefined) cfg.csp = csp;
+  if (csp !== undefined) set("csp", csp);
 
   // `force-static` caches indefinitely regardless of `revalidate` — handled directly
   // by pageCacheTiming (force-static → cache forever), so no revalidate fix-up here.
+  markExplicit(cfg, explicit);
   return cfg;
 }
 
+/** Non-enumerable record of which fields a module SET (vs. inherited defaults). */
+const EXPLICIT = Symbol("denext.segmentConfig.explicit");
+
+function markExplicit(cfg: SegmentConfig, keys: Set<keyof SegmentConfig>): void {
+  Object.defineProperty(cfg, EXPLICIT, { value: keys, enumerable: false });
+}
+
+/** The fields `cfg` set explicitly, or `undefined` for a hand-built config (all fields count). */
+function explicitKeys(cfg: SegmentConfig): Set<keyof SegmentConfig> | undefined {
+  return (cfg as unknown as Record<symbol, Set<keyof SegmentConfig> | undefined>)[EXPLICIT];
+}
+
 /**
- * Merge a parent segment config with a child's, mirroring Next.js precedence:
- * the child overrides the parent, and the *shortest* revalidate wins.
+ * Merge a parent segment config with a child's, mirroring Next.js precedence: a field the
+ * child module SET overrides the parent; a field it did not set is INHERITED (a layout's
+ * `dynamic = "force-static"` reaches a page that says nothing about `dynamic` — the child's
+ * defaults never clobber it); the *shortest* revalidate wins.
  *
  * @param parent The inherited config (outer segment).
- * @param child The child module's config (inner segment).
+ * @param child The child module's config (inner segment, from {@link readSegmentConfig}).
  * @returns The effective config for the child segment.
  */
 export function mergeSegmentConfig(
@@ -172,10 +190,21 @@ export function mergeSegmentConfig(
   // CSP: a child's on/off toggle overrides; opt-in objects UNION down the chain (a
   // layout's allowed hosts and the page's both apply).
   const csp = mergeCsp(parent.csp, child.csp);
-  const merged = { ...parent, ...child, revalidate };
+  const merged = { ...parent, ...explicitFields(child), revalidate };
   if (csp !== undefined) merged.csp = csp;
   else delete merged.csp;
+  const inherited = explicitKeys(parent);
+  if (inherited) markExplicit(merged, new Set([...inherited, ...(explicitKeys(child) ?? [])]));
   return merged;
+}
+
+/** The fields of `cfg` that were set explicitly (every field for a hand-built config). */
+function explicitFields(cfg: SegmentConfig): Partial<SegmentConfig> {
+  const keys = explicitKeys(cfg);
+  if (!keys) return cfg;
+  const out: Partial<SegmentConfig> = {};
+  for (const k of keys) (out as Record<string, unknown>)[k] = cfg[k];
+  return out;
 }
 
 /** Keep only the string[] source lists from a (possibly invalid) `csp` export. */

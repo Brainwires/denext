@@ -175,9 +175,12 @@ exactly that package.
 | `@denext/avif`         | `avif-v*`         | `packages/avif/deno.json`         |
 | `@denext/og`           | `og-v*`           | `packages/og/deno.json`           |
 | `@denext/htmx`         | `htmx-v*`         | `packages/htmx/deno.json`         |
+| `@denext/effect`       | `effect-v*`       | `packages/effect/deno.json`       |
 
-A release is: **bump → verify → commit → tag → push tag.** Pushing the tag
-triggers the publish.
+A release is: **`deno task release <version>`** on `development`, then the
+`development → main` merge. The script does the bump, the changelog roll, the
+generated-doc refresh, the gate, the tag and the push; you do the merge and the
+docs deploy.
 
 **Prerequisites (one-time, per package).** The JSR package exists and is
 **linked to this GitHub repo** in its JSR settings — that link is what lets
@@ -187,40 +190,48 @@ will publish. `publish.yml` is on `main` with `permissions: id-token: write`.
 
 ### Steps (root — `@denext/denext`)
 
-1. **Start from a clean `main`:** `git checkout main && git pull`; `git status`
-   must be clean.
-2. **Bump the version in both places (they must match):** `deno.json` →
-   `"version": "X.Y.Z"` and `mod.ts` → `export const VERSION = "X.Y.Z";`.
-   SemVer: patch = fixes, minor = new features, major = breaking.
-3. **Update `CHANGELOG.md`:** rename the `[Unreleased]` heading to
-   `## [X.Y.Z] - YYYY-MM-DD` and add a link reference at the bottom
-   (`[X.Y.Z]: https://jsr.io/@denext/denext@X.Y.Z`).
-4. **Verify locally** (exactly what CI enforces): `deno task release-check` —
-   runs `deno task check` (fmt --check + lint + test), `deno task doc-lint`, and
-   `deno publish --dry-run`. All three must pass (the dry-run needs a clean tree
-   — commit step 5 first if it complains).
-5. **Commit:**
-   `git commit -am "release: X.Y.Z — <summary>" && git push origin main`.
-6. **Tag and push the tag — this triggers the publish:**
-   `git tag -a vX.Y.Z -m "denext X.Y.Z — <summary>" && git push origin vX.Y.Z`.
-7. **Watch CI and verify it went live:**
+1. **Start from a clean, pushed `development`** (`git status` clean; all work
+   lands on `development` — never branch off it).
+2. **Cut:** `deno task release X.Y.Z` (add `--confirm` to skip the prompt,
+   `--dry` to preview). The script: bumps every version spot (`deno task bump`
+   — root `deno.json` + `mod.ts`, `ROADMAP.md`'s status line, every
+   `packages/*/deno.json` peer pin, `examples/*/deno.json` JSR pins), rolls
+   `CHANGELOG.md` `[Unreleased]` → `[X.Y.Z]` (a **stable** version also folds
+   every `[X.Y.Z-rc.N]` section into that one entry, grouped, `### Breaking`
+   first, and appends the link reference), regenerates the API reference, the
+   MCP docs corpus + `llms*.txt` and the badges, refreshes `deno.lock`, runs
+   `deno task check`, `deno task doc-lint` and `deno publish --dry-run`, shows
+   the diff, then commits, tags `vX.Y.Z` and pushes — the tag triggers the
+   publish.
+3. **Before running it for a stable major/minor**, hand-edit the prose the bump
+   does not: `ROADMAP.md`'s "waiting on the cut" paragraph and its
+   `## X.Y.Z — cut the release` section (delete it), and any `README.md` stage
+   language.
+4. **Watch the publish and verify it went live:**
    `gh run watch "$(gh run list --workflow=publish.yml --limit 1 --json databaseId -q '.[0].databaseId')" --exit-status`,
-   then confirm it resolves:
-   `deno eval --min-dep-age=0 "console.log((await import('jsr:@denext/denext@X.Y.Z')).VERSION)"`.
+   then `deno eval --min-dep-age=0 "console.log((await import('jsr:@denext/denext@X.Y.Z')).VERSION)"`.
+5. **Merge `development` into `main`** — `main` must always equal the published
+   release: `gh pr create --base main --head development` then
+   `gh pr merge <n> --merge`. A tag without this merge is an incomplete release.
+6. **Deploy the docs site** (`deno task docs:build` + the rsync in
+   [the docs-site notes](./apps/web/README.md)); it is not part of the script.
+
+If the script aborts (a failed gate), fix, **commit the fix**, and rerun — after
+`git checkout -- .` of the half-prepared bump/changelog, or the rerun double-rolls
+the changelog.
 
 ### Releasing a workspace package
 
-For a codec (`@denext/photon`/`avif`/`og`), `@denext/htmx`, or
+For a codec (`@denext/photon`/`avif`/`og`), `@denext/htmx`, `@denext/effect` or
 `@denext/pages-router` — publish only that package, on its own tag:
 
-1. From a clean `main`, bump the version in **that package's** `deno.json`
+1. On `development`, bump the version in **that package's** `deno.json`
    (members have no `mod.ts` VERSION constant — only the root does). Update its
    own `CHANGELOG.md` if it has one.
 2. Verify: `deno task check` and
    `deno publish --dry-run --config packages/<pkg>/deno.json`.
-3. Commit, then tag with the package's prefix (triggers the publish):
-   `git commit -am "release(<pkg>): X.Y.Z — <summary>" && git push origin main`,
-   then `git tag -a <pkg>-vX.Y.Z -m "@denext/<pkg> X.Y.Z"` (e.g.
+3. Commit and push, then tag with the package's prefix (triggers the publish):
+   `git tag -a <pkg>-vX.Y.Z -m "@denext/<pkg> X.Y.Z" <commit>` (e.g.
    `photon-v1.1.0`) and `git push origin <pkg>-vX.Y.Z`.
 
 ### Gotchas
@@ -230,15 +241,18 @@ For a codec (`@denext/photon`/`avif`/`og`), `@denext/htmx`, or
 - **Versions are immutable.** A published version can't be replaced — a mistake
   means bumping to the next patch.
 - **Minimum-dependency-age.** For roughly the first 24 hours, importing the new
-  version needs `--min-dep-age=0`. It's a supply-chain delay, not an error.
+  version needs `--min-dep-age=0`; a `denext build` of a freshly scaffolded app
+  hits the same policy inside `deno bundle` — `DENEXT_MIN_DEP_AGE=0` forwards it.
+  A supply-chain delay, not an error.
 - **Provenance requires the tag path.** Publishing manually from a laptop skips
   provenance — always release via the tag push so CI does it.
 - `unanalyzable-dynamic-import` lines in publish output are **warnings**
   (denext's intentional runtime `import()` of user route modules), not blockers.
 
-**Quick checklist:** clean+pulled main · version bumped in `deno.json`+`mod.ts`
-· CHANGELOG heading+link · `deno task release-check` passes · commit+push main ·
-tag +push · publish workflow green · `jsr:@denext/denext@X.Y.Z` resolves.
+**Quick checklist:** clean+pushed development · ROADMAP/README prose edited ·
+`deno task release X.Y.Z --confirm` green · publish workflow green ·
+`jsr:@denext/denext@X.Y.Z` resolves · development → main PR merged · docs
+deployed.
 
 ## Conventions
 

@@ -6,7 +6,7 @@
 import { activeRoots, rootHandleOf } from "./state.ts";
 import type { RootHandle } from "./state.ts";
 import { devHydrationActive } from "./fiber-utils.ts";
-import { setTransitionScheduler } from "../../runtime/hooks.ts";
+import { setTransitionScheduler, setTransitionSettledHook } from "../../runtime/hooks.ts";
 import { Variable } from "../../runtime/async-context.ts";
 import { asyncContextScopingEnabled } from "../../runtime/async-context-mode.ts";
 import { inEventDispatch } from "../event-priority.ts";
@@ -377,6 +377,23 @@ function transitionPending(): boolean {
  * Defer `onComplete` (e.g. useTransition's `setPending(false)`) until the current
  * transition flush lands; if nothing is pending, clear it on a microtask.
  */
+/** Callbacks waiting for the transition currently in flight to settle (useOptimistic). */
+let settledCallbacks: Array<() => void> = [];
+
+/** Run the queued settled-callbacks (after the transition's own completion callback). */
+function runSettled(): void {
+  const cbs = settledCallbacks;
+  settledCallbacks = [];
+  for (const cb of cbs) cb();
+}
+
+setTransitionSettledHook((cb) => {
+  // Inside a transition/action the optimistic value reverts when it settles. Outside one
+  // React warns and the value simply persists until the base state changes — it is NOT
+  // reverted on the next tick (that would make `addOptimistic` outside a transition a no-op).
+  if (transitionDepth > 0 || asyncTransitionDepth > 0) settledCallbacks.push(cb);
+});
+
 function scheduleTransitionComplete(onComplete: () => void): void {
   if (transitionPending()) {
     transitionDoneCallbacks.push(onComplete);
@@ -420,7 +437,10 @@ setTransitionScheduler((cb, onComplete) => {
     const settle = () => {
       asyncTransitionDepth--;
       clearAsyncTransitionWatchdog(watchdog);
-      scheduleTransitionComplete(onComplete);
+      scheduleTransitionComplete(() => {
+        onComplete();
+        runSettled();
+      });
     };
     (result as Promise<unknown>).then(settle, (err) => {
       settle();
@@ -430,7 +450,11 @@ setTransitionScheduler((cb, onComplete) => {
     });
     return;
   }
+  const complete = () => {
+    onComplete();
+    runSettled();
+  };
   if (transitionScheduled || concurrentHandle !== null) {
-    transitionDoneCallbacks.push(onComplete);
-  } else queueMicrotask(onComplete);
+    transitionDoneCallbacks.push(complete);
+  } else queueMicrotask(complete);
 });

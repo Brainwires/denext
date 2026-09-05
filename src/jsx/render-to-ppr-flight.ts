@@ -163,6 +163,7 @@ class PPRFlightRenderer extends PprVNodeRenderer<Dual> implements IslandRenderer
     boundaryScope: IdScope,
   ): Dual {
     const built = this.renderBuffered(children, scopes, scopePrefix(boundaryScope));
+    built.catch(() => {}); // consumed later by the streamer — never an unhandled rejection
     this.holes.push({
       id,
       html: built.then((b) => b.dual.html),
@@ -320,9 +321,9 @@ export interface ResumeFlightResult {
  * The islands and signal state are complete only once every hole's `flight` promise
  * has resolved (each hole's islands are appended, and its signals recorded, as its
  * subtree settles), so the assembler must drain all holes before reading `islands`
- * or calling `finishSignals()`. The module-global signal collector means concurrent
- * Flight resumes can interleave — the same documented limitation as the streamed
- * Flight path, widened by the resume window.
+ * or calling `finishSignals()`. The signal collector is per request (`render-scope.ts`),
+ * so concurrent resumes for different requests never interleave; `finishSignals` is bound
+ * to this request's scope even when called after the async context has ended.
  *
  * @param node The (same) tree to resume.
  * @param holeIds The dynamic-hole ids from the prerender pass.
@@ -340,13 +341,13 @@ export async function resumeShellHolesFlight(
     options.resumable ?? false,
   );
   const prev = setDispatcher(renderer.dispatcher);
-  beginSignalCollection();
+  const finishSignals = beginSignalCollection();
   try {
     // The static re-walk schedules each hole's buffered sub-render (unawaited); those
     // resolve independently and record their signals into the still-open collector.
     await renderer.resolveChildren(node, []);
   } catch (err) {
-    endSignalCollection();
+    finishSignals();
     throw err;
   } finally {
     setDispatcher(prev);
@@ -354,6 +355,6 @@ export async function resumeShellHolesFlight(
   return {
     holes: renderer.holes,
     islands: renderer.islands,
-    finishSignals: () => endSignalCollection(),
+    finishSignals,
   };
 }

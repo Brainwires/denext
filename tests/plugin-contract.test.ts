@@ -224,12 +224,12 @@ Deno.test("a plugin can contribute routes via an async route synthesizer", async
       name: "synth-plugin",
       setup(ctx) {
         ctx.addRouteSynthesizer((manifest) => {
-          const marker = manifest.pages.find((p) => p.routePath === "/__plugin_marker");
+          const marker = manifest.pages.find((p) => p.routePath === "/plugin-marker");
           if (!marker) return;
           manifest.pages.push({
             ...marker,
-            routePath: "/__plugin_marker/injected",
-            pattern: parsePattern("__plugin_marker/injected"),
+            routePath: "/plugin-marker/injected",
+            pattern: parsePattern("plugin-marker/injected"),
           });
         });
       },
@@ -242,14 +242,14 @@ Deno.test("a plugin can contribute routes via an async route synthesizer", async
       load: () => Promise.resolve({}),
     });
 
-    await Deno.mkdir(join(dir, "app", "__plugin_marker"), { recursive: true });
+    await Deno.mkdir(join(dir, "app", "plugin-marker"), { recursive: true });
     await Deno.writeTextFile(
-      join(dir, "app", "__plugin_marker", "page.tsx"),
+      join(dir, "app", "plugin-marker", "page.tsx"),
       "export default function () {}\n",
     );
     const manifest = await scanRoutes(join(dir, "app"));
     assert(
-      manifest.pages.some((p) => p.routePath === "/__plugin_marker/injected"),
+      manifest.pages.some((p) => p.routePath === "/plugin-marker/injected"),
       "expected the plugin's synthesizer to inject a derived route",
     );
   } finally {

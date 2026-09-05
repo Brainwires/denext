@@ -68,9 +68,11 @@ Deno.test("checkSnippet: interactive code without a client boundary gets an info
 
 Deno.test("lookupImport: resolves core and prefixed specifiers, and passes through denext", () => {
   assertEquals(lookupImport("react").rule?.to, "denext");
-  assertEquals(lookupImport("next/navigation").rule?.to, "denext/server");
+  assertEquals(lookupImport("next/navigation").rule?.to, "denext");
+  assertEquals(lookupImport("next/server").rule?.to, "denext/next/server");
+  assertEquals(lookupImport("next/font/google").rule?.to, "denext/next/font/google");
   // A deeper next/* path still matches its prefix rule.
-  assertEquals(lookupImport("next/font/google").rule?.to, "denext");
+  assertEquals(lookupImport("next/font/google/inter").rule?.to, "denext/next/font/google");
   // Already-denext and unknown specifiers have no rule.
   assertEquals(lookupImport("denext/server").rule, null);
   assertEquals(lookupImport("zod").rule, null);
@@ -385,5 +387,26 @@ Deno.test("IMPORT_RULES cover the core Next/React specifiers", () => {
   const froms = IMPORT_RULES.map((r) => r.from);
   for (const s of ["react", "react-dom", "next/navigation", "next/headers", "next/link"]) {
     assert(froms.includes(s), `missing import rule for ${s}`);
+  }
+});
+
+Deno.test("runTool: with a tool root armed, `dir` outside the project is refused", async () => {
+  const { setToolRoot } = await import("../src/mcp/tools.ts");
+  const root = await Deno.makeTempDir({ prefix: "denext-mcp-root-" });
+  const outside = await Deno.makeTempDir({ prefix: "denext-mcp-outside-" });
+  setToolRoot(root);
+  try {
+    const escaped = await runTool("denext_list_routes", { dir: outside });
+    assert(escaped.isError, "an absolute path outside the root is refused");
+    assertStringIncludes(escaped.content[0].text, "must be inside the project");
+    const dotdot = await runTool("denext_list_routes", { dir: "../" });
+    assert(dotdot.isError, "a relative escape is refused");
+    // Inside the root (the default ".") still resolves — the error is about the app, not the dir.
+    const inside = await runTool("denext_list_routes", { dir: "." });
+    assert(!String(inside.content[0].text).includes("must be inside"), "'.' is the root");
+  } finally {
+    setToolRoot(null);
+    await Deno.remove(root, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
   }
 });

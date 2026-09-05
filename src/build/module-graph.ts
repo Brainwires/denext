@@ -61,7 +61,41 @@ function serverModuleIdFor(appDir: string, fileUrl: string): string {
 
 /** Minimal shape of the `deno info --json` output we consume. */
 interface DenoInfo {
-  modules: Array<{ specifier: string; kind?: string; error?: string }>;
+  modules: DenoInfoModule[];
+}
+interface DenoInfoModule {
+  specifier: string;
+  kind?: string;
+  error?: string;
+  /** Each import edge: `code` is a runtime import, `type` a type-only one. */
+  dependencies?: Array<{ code?: { specifier?: string }; type?: { specifier?: string } }>;
+}
+
+/**
+ * The modules reachable from `root` through RUNTIME import edges only. `deno info` lists
+ * every module in the graph, including ones reached solely through `import type` — which
+ * ship no code, so a static-analysis pass (does this route need hydration? which modules
+ * are client boundaries?) must not see them: a types-only module that happens to import a
+ * hooks module for its `Context<T>` type would otherwise flag every page as interactive.
+ */
+function runtimeReachable(info: DenoInfo, root: string): DenoInfoModule[] {
+  const byId = new Map(info.modules.map((m) => [m.specifier, m]));
+  const seen = new Set<string>();
+  const out: DenoInfoModule[] = [];
+  const queue = [root];
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const m = byId.get(id);
+    if (!m) continue;
+    out.push(m);
+    for (const dep of m.dependencies ?? []) {
+      const next = dep.code?.specifier;
+      if (next) queue.push(next);
+    }
+  }
+  return out;
 }
 
 /** Options for {@linkcode crawlLocalModules}. */
@@ -105,7 +139,7 @@ export async function crawlLocalModules(
     }
     const info = JSON.parse(new TextDecoder().decode(stdout)) as DenoInfo;
     const out: string[] = [];
-    for (const m of info.modules) {
+    for (const m of runtimeReachable(info, barrelUrl)) {
       if (m.error) continue;
       if (!m.specifier.startsWith("file://")) continue;
       if (m.specifier === barrelUrl) continue;

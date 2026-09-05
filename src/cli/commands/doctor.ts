@@ -4,20 +4,12 @@
 // line each and exiting non-zero when a critical check fails (the CI gate `probe`
 // used to be, now with environment context around it).
 
+import { denoVersionOk, MIN_DENO_VERSION } from "../../build/deno-version.ts";
 import { VERSION } from "../../../mod.ts";
 import type { CommandSpec } from "../command.ts";
 import { projectDir } from "../shared.ts";
 import { resolveProject } from "../../build/paths.ts";
 import { probeApp } from "../../testing/conformance.ts";
-
-/** Minimum Deno major denext supports (the `deno bundle` subcommand). */
-const MIN_DENO_MAJOR = 2;
-
-/** The Deno major version, or 0 if unparseable. */
-function denoMajor(): number {
-  const m = /^(\d+)\./.exec(Deno.version.deno);
-  return m ? Number(m[1]) : 0;
-}
 
 export const infoCommand: CommandSpec = {
   name: "info",
@@ -61,12 +53,11 @@ export interface Check {
 
 /** The Deno-version check. */
 function denoVersionCheck(): Check {
-  const major = denoMajor();
-  const ok = major >= MIN_DENO_MAJOR;
+  const ok = denoVersionOk(Deno.version.deno);
   return {
     name: "Deno version",
     ok,
-    detail: ok ? Deno.version.deno : `${Deno.version.deno} (need ${MIN_DENO_MAJOR}.x)`,
+    detail: ok ? Deno.version.deno : `${Deno.version.deno} (need ≥ ${MIN_DENO_VERSION})`,
     critical: true,
   };
 }

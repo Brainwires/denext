@@ -2,8 +2,14 @@
 // `(req, res)` handler contract and collect the `res` calls into a `Response`.
 // (Global middleware runs earlier in denext's pipeline, before this handler.)
 
-import type { RouteParams } from "@denext/denext/server";
-import { revalidatePath } from "@denext/denext/server";
+import {
+  cappedBody,
+  readCappedBody,
+  revalidatePath,
+  type RouteParams,
+  STALLED,
+  TOO_LARGE,
+} from "@denext/denext/plugin-kit";
 import { clearPreviewCookie, previewSecrets, setPreviewCookie, signPreview } from "./preview.ts";
 
 /** The `req` object passed to a Pages API handler (Next `NextApiRequest` subset). */
@@ -107,9 +113,11 @@ async function readBytes(
   request: Request,
   sizeLimit: number,
 ): Promise<Uint8Array> {
-  const buf = await request.arrayBuffer();
-  if (buf.byteLength > sizeLimit) throw new BodyTooLargeError();
-  return new Uint8Array(buf);
+  // Streamed under the cap (Next's raw-body semantics): a body over `sizeLimit` is refused
+  // as it arrives, never buffered whole; a stalled body is refused too.
+  const out = await readCappedBody(request, sizeLimit);
+  if (out === TOO_LARGE || out === STALLED) throw new BodyTooLargeError();
+  return out;
 }
 
 /**
@@ -170,12 +178,15 @@ async function parseBody(
   request: Request,
   bodyParser: NonNullable<ApiRouteConfig["api"]>["bodyParser"],
 ): Promise<unknown> {
-  if (bodyParser === false) return new Uint8Array(await request.arrayBuffer());
+  // `bodyParser: false` hands the raw bytes over, still bounded by the default cap.
+  if (bodyParser === false) return await readBytes(request, parseSizeLimit(undefined));
   const sizeLimit = parseSizeLimit(bodyParser === undefined ? undefined : bodyParser.sizeLimit);
   try {
     return await parseTypedBody(request, request.headers.get("content-type") ?? "", sizeLimit);
   } catch (err) {
     if (err instanceof BodyTooLargeError) throw err;
+    // The capped multipart body errors with denext's BodyTooLarge once past the limit.
+    if (err instanceof Error && err.name === "BodyTooLarge") throw new BodyTooLargeError();
     return undefined;
   }
 }
@@ -190,9 +201,11 @@ async function parseTypedBody(request: Request, ct: string, sizeLimit: number): 
     return Object.fromEntries(new URLSearchParams(text));
   }
   // denext convenience: multipart is parsed into fields + `File`s (Next requires an
-  // external parser). The size limit is not enforced here — the platform streams parts —
-  // so gate large uploads at the edge if needed.
-  if (ct.includes("multipart/form-data")) return await parseMultipart(request);
+  // external parser). The platform streams the parts; the size limit is enforced on the
+  // wrapped body, which errors (→ 413) once more than `sizeLimit` bytes have arrived.
+  if (ct.includes("multipart/form-data")) {
+    return await parseMultipart(cappedBody(request, sizeLimit));
+  }
   return new TextDecoder().decode(await readBytes(request, sizeLimit));
 }
 
@@ -276,7 +289,14 @@ class ResponseBuilder implements ApiResponse {
   }
 
   setHeader(name: string, value: string | number | string[]): ApiResponse {
-    this.#headers.set(name, Array.isArray(value) ? value.join(", ") : String(value));
+    if (Array.isArray(value)) {
+      // Node semantics: an array is one header per element — mandatory for `Set-Cookie`,
+      // which a browser will NOT split on commas (a joined value is one broken cookie).
+      this.#headers.delete(name);
+      for (const v of value) this.#headers.append(name, String(v));
+      return this;
+    }
+    this.#headers.set(name, String(value));
     return this;
   }
 
@@ -419,7 +439,14 @@ export async function runApiRoute(
       }
       // Threw after setting a >= 400 status (or mid-stream): finalize/close what it produced.
     }
-    finish(); // close a stream / finalize a buffered response the handler didn't end
+    try {
+      finish(); // close a stream / finalize a buffered response the handler didn't end
+    } catch (error) {
+      // finish() itself failing (a body that can't be serialized) must still resolve the
+      // request — otherwise `done` never settles and the request hangs forever.
+      console.error("@denext/pages-router: API route finalize failed:", error);
+      earlyError ??= new Response("Internal Server Error", { status: 500 });
+    }
   })();
 
   // Return whichever comes first: the response becoming available (early for streaming, at

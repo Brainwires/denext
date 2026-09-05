@@ -15,6 +15,7 @@
  * @module
  */
 
+import type { Context as RuntimeContext } from "../runtime/hooks.ts";
 import type { VNode } from "../jsx/types.ts";
 
 /** A stable list identity. */
@@ -38,7 +39,8 @@ export type ReactNode =
   | boolean
   | null
   | undefined
-  | Iterable<ReactNode>;
+  | Iterable<ReactNode>
+  | Promise<ReactNode>;
 /** React's `ReactPortal`. */
 export type ReactPortal = VNode;
 /** React's `ReactFragment`. */
@@ -51,10 +53,10 @@ export interface MutableRefObject<T> {
   /** The current ref value. */
   current: T;
 }
-/** A read-ish ref cell (React's `RefObject`). */
+/** A ref cell (React 19's `RefObject`: `current` is writable). */
 export interface RefObject<T> {
   /** The current ref value, or `null` before attach. */
-  readonly current: T | null;
+  current: T | null;
 }
 /** A callback ref. */
 export type RefCallback<T> = (instance: T | null) => void | (() => void);
@@ -216,15 +218,12 @@ export interface ConsumerProps<T> {
   /** Render prop called with the current context value. */
   children: (value: T) => ReactNode;
 }
-/** A React context object (from `createContext`). */
-export interface Context<T> {
-  /** The provider component. */
-  Provider: Provider<T>;
-  /** The (legacy render-prop) consumer component. */
-  Consumer: Consumer<T>;
-  /** Optional name shown in devtools. */
-  displayName?: string;
-}
+/**
+ * A React context object (from `createContext`) — the SAME type denext's runtime
+ * `createContext` returns, so a context created through the `react` alias and one created
+ * through `denext` are interchangeable everywhere (`useContext`, `<Ctx.Provider>`).
+ */
+export type Context<T> = RuntimeContext<T>;
 /** The value type carried by a {@linkcode Context}. */
 export type ContextType<C> = C extends Context<infer T> ? T : never;
 

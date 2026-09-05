@@ -16,6 +16,7 @@
 
 import { randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 import { base64UrlDecode, base64UrlEncode } from "./oauth.ts";
+import { createGate } from "../gate.ts";
 
 /** Tunable scrypt cost for {@linkcode hashPassword}. */
 export interface HashPasswordOptions {
@@ -48,8 +49,38 @@ const MAX_PARAMS: ScryptParams = { N: 1 << 20, r: 32, p: 16 };
 /** Hard ceiling on the scrypt working set (128·N·r bytes) a stored hash may demand. */
 const MAX_MEMORY_BYTES = 256 * 1024 * 1024;
 
-/** Run scrypt (callback API) as a promise. */
-function deriveKey(password: string, salt: Uint8Array, params: ScryptParams): Promise<Uint8Array> {
+/**
+ * Concurrent scrypt derivations are bounded to the core count (each one pins a thread for
+ * ~50 ms and ~16 MiB): a burst of login POSTs queues behind the gate instead of exhausting the
+ * libuv threadpool + memory, and past `maxWaiters` the attempt is rejected (the credentials
+ * route answers 401, never a stalled process).
+ */
+const scryptGate = createGate(
+  Math.max(2, navigator.hardwareConcurrency || 4),
+  256,
+  "password hashing queue full",
+);
+
+/** Run scrypt (callback API) as a promise, one slot of {@link scryptGate} at a time. */
+async function deriveKey(
+  password: string,
+  salt: Uint8Array,
+  params: ScryptParams,
+): Promise<Uint8Array> {
+  const release = await scryptGate();
+  try {
+    return await deriveKeyNow(password, salt, params);
+  } finally {
+    release();
+  }
+}
+
+/** The unbounded scrypt call — always reached through {@link deriveKey}. */
+function deriveKeyNow(
+  password: string,
+  salt: Uint8Array,
+  params: ScryptParams,
+): Promise<Uint8Array> {
   // node:crypto caps memory at 32 MiB by default; scrypt needs 128·N·r bytes. Size the
   // cap to the requested parameters (with headroom) so a higher cost simply works.
   const maxmem = 128 * params.N * params.r * 2;

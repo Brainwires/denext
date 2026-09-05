@@ -5,14 +5,29 @@
 // that call POSTs to the secure server-action endpoint, and the form also
 // carries the endpoint URL in its SSR markup for progressive enhancement.
 
-import { useCallback, useContext, useState, useSyncExternalStore } from "./hooks.ts";
+import {
+  startTransition,
+  useCallback,
+  useContext,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "./hooks.ts";
 import { FormStatusContext } from "./form-status.ts";
 
 /** Status of the enclosing form's action, as returned by {@link useFormStatus}. */
 export interface FormStatus {
   /** True while the nearest enclosing `<form>`'s action is running. */
   pending: boolean;
+  /** The pending submission's `FormData`, or null when idle. */
+  data: FormData | null;
+  /** The pending submission's method (`"get"` / `"post"`), or null when idle. */
+  method: string | null;
+  /** The pending submission's action (function or URL), or null when idle. */
+  action: unknown;
 }
+
+const IDLE_STATUS: FormStatus = { pending: false, data: null, method: null, action: null };
 
 /**
  * Read whether the **nearest enclosing** `<form action={fn}>`'s action is in
@@ -27,12 +42,27 @@ export function useFormStatus(): FormStatus {
     signal.listeners.add(onChange);
     return () => signal.listeners.delete(onChange);
   }, [signal]);
-  const pending = useSyncExternalStore(
+  // One snapshot object per submission, so the store's Object.is re-check sees a stable value.
+  const snapshot = useRef<{ data: FormData | null; status: FormStatus } | null>(null);
+  return useSyncExternalStore(
     subscribe,
-    () => (signal ? signal.pending > 0 : false),
-    () => false,
+    () => {
+      if (!signal || signal.pending === 0) return IDLE_STATUS;
+      if (!snapshot.current || snapshot.current.data !== signal.data) {
+        snapshot.current = {
+          data: signal.data,
+          status: {
+            pending: true,
+            data: signal.data,
+            method: signal.method,
+            action: signal.action,
+          },
+        };
+      }
+      return snapshot.current.status;
+    },
+    () => IDLE_STATUS,
   );
-  return { pending };
 }
 
 /**
@@ -54,18 +84,35 @@ export function useActionState<State, Payload = FormData>(
 ): [State, (payload: Payload) => void, boolean] {
   const [state, setState] = useState(initialState);
   const [isPending, setPending] = useState(false);
+  // The latest state and action, read at dispatch time so `dispatch` keeps ONE identity for
+  // the component's lifetime (React's does), yet never closes over stale state.
+  const latest = useRef({ state, action });
+  latest.current = { state, action };
 
   const dispatch = useCallback((payload: Payload): Promise<void> => {
     setPending(() => true);
-    return Promise.resolve(action(state, payload))
-      .then((next) => setState(() => next))
-      .catch((err) => {
-        console.error("denext: action failed:", err);
-      })
-      .finally(() => {
-        setPending(() => false);
-      });
-  }, [action, state]) as ((payload: Payload) => Promise<void>) & { denextPermalink?: string };
+    let settle!: () => void;
+    const done = new Promise<void>((r) => (settle = r));
+    // The action runs inside a transition (React does the same): its state updates are
+    // transition-lane, and a `useOptimistic` value applied alongside reverts when the
+    // action settles rather than on the next tick.
+    startTransition(() => {
+      Promise.resolve(latest.current.action(latest.current.state, payload))
+        .then((next) => setState(() => next))
+        .catch((err) => {
+          // React rethrows an action's error into the nearest error boundary: surface it from
+          // the next render (a state updater that throws) instead of swallowing it in a log.
+          setState(() => {
+            throw err;
+          });
+        })
+        .finally(() => {
+          setPending(() => false);
+          settle();
+        });
+    });
+    return done;
+  }, []) as ((payload: Payload) => Promise<void>) & { denextPermalink?: string };
 
   // Progressive enhancement: tag the dispatch with the permalink so the SSR serializer
   // renders it as the form's `action` URL — a pre-hydration submit navigates there
@@ -76,8 +123,8 @@ export function useActionState<State, Payload = FormData>(
 }
 
 /**
- * Deprecated alias of {@link useActionState} — React renamed `useFormState`
- * (react-dom) to `useActionState` (react). Kept so code that still imports the old
- * name resolves; prefer `useActionState`.
+ * Alias of {@link useActionState} — React renamed `useFormState` (react-dom) to
+ * `useActionState` (react). Kept so code that still imports the old name resolves.
+ * @deprecated Use `useActionState`. Kept through 2.x; removed in 3.0.
  */
 export const useFormState: typeof useActionState = useActionState;

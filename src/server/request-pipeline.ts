@@ -4,6 +4,7 @@
 // error handling. `createApp` wraps this with the per-request context, timeout,
 // hardening headers and logging.
 
+import { copyRemoteAddr } from "./remote-addr.ts";
 import type { RouteManifest } from "../router/manifest.ts";
 import { matchApi, matchPage } from "../router/match.ts";
 import { handleApi } from "./api.ts";
@@ -12,10 +13,12 @@ import { type RequestContext, runDeferred } from "./request-context.ts";
 import { renderDocument } from "./document.ts";
 import { resolveCsp } from "./csp.ts";
 import { serveStatic } from "./static.ts";
-import { redirect } from "./middleware.ts";
+import { type MiddlewareOutcome, redirectResponse, withHeaders } from "./middleware.ts";
+import { safeFetch } from "./safe-fetch.ts";
 import { type PeeledLocale, peelLocale } from "./i18n.ts";
 import { fillDestination, matchPattern, safeRedirectLocation } from "./config.ts";
 import { handleAction, isActionRequest } from "./action-handler.ts";
+import { bufferedRequest, readCappedBody, STALLED, TOO_LARGE } from "./body.ts";
 import { serveMetadataFile } from "./metadata-files.ts";
 import { requestOrigin } from "./absolute-url.ts";
 import { publicEnv, restrictPublicEnv } from "../runtime/public-env.ts";
@@ -27,7 +30,6 @@ import {
   finalize,
   type RequestState,
   retarget,
-  withInjectedHeaders,
 } from "./pipeline-state.ts";
 import { htmlHeaders, notFound } from "./response-headers.ts";
 import { servePage } from "./page-response.ts";
@@ -50,7 +52,9 @@ function canonicalizePath(state: RequestState): Response | null {
   const { config } = state.app;
   if (pathname.includes("//")) {
     const canonical = pathname.replace(/\/{2,}/g, "/");
-    if (canonical !== pathname) return redirect(safeRedirectLocation(canonical) + url.search, 308);
+    if (canonical !== pathname) {
+      return redirectResponse(safeRedirectLocation(canonical) + url.search, 308);
+    }
   }
   const isFrameworkPath = pathname.startsWith("/_denext");
   const isFile = /\.[^/]+$/.test(pathname);
@@ -58,10 +62,10 @@ function canonicalizePath(state: RequestState): Response | null {
   const hasSlash = pathname.endsWith("/");
   const wantSlash = config.trailingSlash === true; // unset = Next's default: no slash
   if (wantSlash && !hasSlash) {
-    return redirect(safeRedirectLocation(pathname + "/") + url.search, 308);
+    return redirectResponse(safeRedirectLocation(pathname + "/") + url.search, 308);
   }
   if (!wantSlash && hasSlash) {
-    return redirect(safeRedirectLocation(pathname.replace(/\/+$/, "")) + url.search, 308);
+    return redirectResponse(safeRedirectLocation(pathname.replace(/\/+$/, "")) + url.search, 308);
   }
   return null;
 }
@@ -71,7 +75,7 @@ function applyRedirectRules(state: RequestState): Response | null {
   for (const { pattern, rule } of state.app.rules().redirects) {
     const params = matchPattern(pattern, state.pathname);
     if (params) {
-      return redirect(
+      return redirectResponse(
         safeRedirectLocation(fillDestination(rule.destination, params)),
         rule.permanent ? 308 : 307,
       );
@@ -99,14 +103,18 @@ function stripBasePath(state: RequestState): void {
  * the injected headers); the first matching rewrite internally routes as its
  * destination (no client redirect).
  */
-function applyPathRules(state: RequestState): void {
+/** basePath strip + config `headers` rules — before middleware (Next's order). */
+function applyHeaderRules(state: RequestState): void {
   stripBasePath(state);
-  const rules = state.app.rules();
-  for (const { pattern, rule } of rules.headers) {
+  for (const { pattern, rule } of state.app.rules().headers) {
     if (!matchPattern(pattern, state.pathname)) continue;
     for (const { key, value } of rule.headers) addInjectedHeader(state, key, value);
   }
-  for (const { pattern, rule } of rules.rewrites) {
+}
+
+/** Config `rewrites` — after middleware, so matchers saw the URL the client asked for. */
+function applyRewriteRules(state: RequestState): void {
+  for (const { pattern, rule } of state.app.rules().rewrites) {
     const params = matchPattern(pattern, state.pathname);
     if (params) {
       retarget(state, new URL(fillDestination(rule.destination, params), state.url.origin));
@@ -127,21 +135,86 @@ async function runMiddleware(state: RequestState): Promise<Response | null> {
   const runner = config.getMiddleware ? await config.getMiddleware() : null;
   if (!runner) return null;
   state.dispatchRouteType = "proxy";
-  const outcome = await runner(state.request);
+  // Matchers see the locale-stripped path (Next strips the i18n prefix before middleware).
+  const outcome = await runner(state.request, resolveLocale(state)?.rest);
   state.dispatchRouteType = "render";
-  if (outcome.type === "response") return withInjectedHeaders(state, outcome.response);
+  // A short-circuit Response still leaves through finalize(): cookies().set() queued in
+  // the middleware and the injected header rules must reach the client.
+  if (outcome.type === "response") return finalize(state, outcome.response);
+  // The runner already applied request-header overrides / the rewrite URL to
+  // `outcome.request` (consuming the original body once) — route THAT request. A custom
+  // runner that returns no `request` gets the same treatment applied here.
+  if (outcome.request) {
+    copyRemoteAddr(state.request, outcome.request);
+    state.request = outcome.request;
+    // `headers()` / `NextRequest` adapters read `ctx.request`: keep it on the request as
+    // middleware left it (header overrides included).
+    state.ctx.request = state.request;
+  } else applyOutcomeToRequest(state, outcome);
   if (outcome.type === "rewrite") {
-    state.request = new Request(outcome.url, state.request);
+    if (outcome.external) return proxyExternalRewrite(state, outcome.url, outcome.headers);
     state.url = new URL(state.request.url);
     state.pathname = state.url.pathname;
   }
-  if (outcome.requestHeaders) {
-    state.request = new Request(state.request, { headers: outcome.requestHeaders });
-  }
   if (outcome.headers) {
-    for (const [k, v] of outcome.headers) addInjectedHeader(state, k, v);
+    for (const [k, v] of outcome.headers) {
+      // A middleware Set-Cookie is queued on the request context (so `cookies().get()`
+      // later in this request sees it) and reaches the client through finalize().
+      if (k === "set-cookie") state.ctx.outgoingHeaders.append(k, v);
+      else addInjectedHeader(state, k, v);
+    }
   }
   return null;
+}
+
+/** Rebuild the routed request from a runner outcome that did not supply one. */
+function applyOutcomeToRequest(state: RequestState, outcome: MiddlewareOutcome): void {
+  if (outcome.type === "rewrite") state.request = new Request(outcome.url, state.request);
+  if (outcome.type !== "response" && outcome.requestHeaders) {
+    const rebuilt = new Request(state.request, { headers: outcome.requestHeaders });
+    copyRemoteAddr(state.request, rebuilt);
+    state.request = rebuilt;
+    state.ctx.request = rebuilt;
+  }
+}
+
+/** Request headers never forwarded to an external rewrite target. */
+const HOP_HEADERS = new Set([
+  "host",
+  "connection",
+  "content-length",
+  "transfer-encoding",
+  "keep-alive",
+]);
+
+/**
+ * `NextResponse.rewrite("https://other.host/…")`: Next proxies the request to the other
+ * origin. denext does the same through the SSRF-guarded `safeFetch` (private/internal
+ * addresses are refused, redirects re-validated), forwarding method, body and headers
+ * minus the hop-by-hop set. Middleware response headers are merged onto the proxied reply.
+ */
+async function proxyExternalRewrite(
+  state: RequestState,
+  target: string,
+  extra?: Headers,
+): Promise<Response> {
+  const { request } = state;
+  const headers = new Headers();
+  for (const [k, v] of request.headers) if (!HOP_HEADERS.has(k)) headers.set(k, v);
+  const body = request.method === "GET" || request.method === "HEAD"
+    ? undefined
+    : new Uint8Array(await request.arrayBuffer());
+  let upstream: Response;
+  try {
+    upstream = await safeFetch(target, { method: request.method, headers, body });
+  } catch (err) {
+    // Refused (private/internal target, DNS failure, timeout) → a gateway error, never a
+    // silent local render of the same path.
+    console.error("denext: external rewrite refused", target, err);
+    return finalize(state, new Response("Bad Gateway", { status: 502 }));
+  }
+  const res = new Response(upstream.body, { status: upstream.status, headers: upstream.headers });
+  return finalize(state, extra ? withHeaders(res, extra) : res);
 }
 
 /**
@@ -200,11 +273,32 @@ function resolveLocale(state: RequestState): PeeledLocale | null {
  * and flows into the page render; its body is stashed for the feature that sent it (the
  * Remix `shouldRevalidate` prior-data echo). Read once, here.
  */
-async function stashSoftNavBody(state: RequestState): Promise<boolean> {
+async function stashSoftNavBody(state: RequestState): Promise<boolean | Response> {
   const { request, ctx } = state;
   const softNavPost = request.method === "POST" && request.headers.get("x-denext-nav") === "1";
-  if (softNavPost) ctx.softNavBody = await request.clone().json().catch(() => undefined);
-  return softNavPost;
+  if (!softNavPost) return false;
+  // Bounded read (size cap + idle timeout) — this runs before routing, for ANY path, so an
+  // unbounded `request.clone().json()` here was an unauthenticated memory-exhaustion lever.
+  const declared = Number(request.headers.get("content-length") ?? "0");
+  if (declared > MAX_SOFT_NAV_BODY) return textResponse("Payload Too Large", 413);
+  const body = await readCappedBody(request, MAX_SOFT_NAV_BODY);
+  if (body === TOO_LARGE) return textResponse("Payload Too Large", 413);
+  if (body === STALLED) return textResponse("Request Timeout", 408);
+  try {
+    ctx.softNavBody = body.byteLength ? JSON.parse(new TextDecoder().decode(body)) : undefined;
+  } catch {
+    ctx.softNavBody = undefined;
+  }
+  // The body was consumed; downstream sees an equivalent request with the bytes replayed.
+  state.request = bufferedRequest(request, body);
+  return true;
+}
+
+/** Max bytes of a soft-navigation POST echo body (the prior-data payload is small). */
+const MAX_SOFT_NAV_BODY = 1024 * 1024;
+
+function textResponse(text: string, status: number): Response {
+  return new Response(text, { status, headers: { "content-type": "text/plain; charset=utf-8" } });
 }
 
 /**
@@ -292,7 +386,12 @@ async function serveFallback(
     if (claimed) return finalize(state, claimed);
   }
   if (config.publicDir && isReadMethod(request)) {
-    const asset = await serveStatic(config.publicDir, pathname);
+    const asset = await serveStatic(
+      config.publicDir,
+      pathname,
+      request.headers.get("accept-encoding") ?? undefined,
+      request,
+    );
     if (asset) return finalize(state, asset);
   }
   if (isReadMethod(request)) return serveNotFoundPage(state, manifest);
@@ -303,16 +402,21 @@ async function serveFallback(
 async function dispatch(state: RequestState): Promise<Response> {
   const redirected = canonicalizePath(state) ?? applyRedirectRules(state);
   if (redirected) return redirected;
-  applyPathRules(state);
+  // Next's order: headers → redirects → MIDDLEWARE → rewrites → filesystem. Middleware
+  // matchers must see the URL the client asked for, not a config rewrite's destination.
+  applyHeaderRules(state);
   const fromMiddleware = await runMiddleware(state);
   if (fromMiddleware) return fromMiddleware;
+  applyRewriteRules(state);
   if (isActionRequest(state.request, state.pathname)) return dispatchAction(state);
   const manifest = await state.app.config.getManifest();
   const metaFile = await serveMetadata(state, manifest);
   if (metaFile) return metaFile;
   const localeInfo = resolveLocale(state);
+  if (localeInfo) state.ctx.routing = { basePath: state.app.basePath, locale: localeInfo.locale };
   const routingPath = localeInfo ? localeInfo.rest : state.pathname;
   const softNavPost = await stashSoftNavBody(state);
+  if (softNavPost instanceof Response) return softNavPost;
   const fromApi = await dispatchApi(state, manifest, routingPath, softNavPost);
   if (fromApi) return fromApi;
   const fromPage = await dispatchPage(state, manifest, routingPath, localeInfo, softNavPost);
@@ -367,6 +471,7 @@ export async function runPipeline(
     pathname: url.pathname,
     dispatchRouteType: "render",
   };
+  ctx.routing = { basePath: app.basePath };
   try {
     return await dispatch(state);
   } catch (error) {

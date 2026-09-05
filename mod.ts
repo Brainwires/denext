@@ -102,7 +102,7 @@ export { createResource, Suspense, SuspenseList, use } from "./src/runtime/suspe
 export type { SuspenseListProps, SuspenseProps } from "./src/runtime/suspense.ts";
 
 export { dynamic, lazy } from "./src/runtime/dynamic.ts";
-export type { DynamicLoader, DynamicOptions } from "./src/runtime/dynamic.ts";
+export type { DynamicLoader, DynamicLoadingProps, DynamicOptions } from "./src/runtime/dynamic.ts";
 
 // denext's first-party AsyncContext — the TC39 primitive (Variable + Snapshot) no
 // browser has shipped. Synchronous scoping works everywhere; propagation across
@@ -115,6 +115,11 @@ export {
   ErrorBoundary,
   forbidden,
   ForbiddenError,
+  isControlSignal,
+  isForbidden,
+  isNotFound,
+  isRedirect,
+  isUnauthorized,
   notFound,
   NotFoundError,
   permanentRedirect,
@@ -132,6 +137,7 @@ export {
   Link,
   navigate,
   prefetch,
+  ReadonlyURLSearchParams,
   subscribeNavigating,
   useLinkStatus,
   useLocale,
@@ -145,12 +151,16 @@ export {
 } from "./src/client/navigation.ts";
 export { useServerInsertedHTML } from "./src/runtime/server-inserted-html.ts";
 export type {
+  AnchorProps,
   Href,
+  HrefInput,
   LinkProps,
   LinkStatus,
   NavigateOptions,
   RegisteredRoutes,
   Router,
+  RouterNavigateOptions,
+  UrlObject,
 } from "./src/client/navigation.ts";
 
 // Asset components (next/image, next/script, next/font-style ergonomics).
@@ -199,12 +209,27 @@ export {
   useTransition,
 } from "./src/runtime/hooks.ts";
 export { memo } from "./src/runtime/memo.ts";
+// React's element/ref/Children core, on the root barrel so new code never needs `denext/react`.
+export {
+  Children,
+  cloneElement,
+  createRef,
+  forwardRef,
+  isValidElement,
+} from "./src/runtime/react-core.ts";
+export type { ChildrenApi } from "./src/runtime/react-core.ts";
+export { StrictMode } from "./src/runtime/strict-mode.ts";
+// `React.cache` / `Activity` / `ViewTransition` and Next's `unstable_rethrow`, on the root so
+// an app written against `denext` never needs the `react` / `next/*` aliases for them.
+export { Activity, cache, ViewTransition } from "./src/runtime/react-extras.ts";
+export { unstable_rethrow } from "./src/runtime/error-boundary.ts";
+/** `React.createElement` — denext's hyperscript (`h`) under React's name. */
+export { h as createElement } from "./src/jsx/jsx-runtime.ts";
 export { Profiler } from "./src/runtime/profiler.ts";
 export type { ProfilerOnRender, ProfilerPhase, ProfilerProps } from "./src/runtime/profiler.ts";
 export type { PropsComparator } from "./src/runtime/memo.ts";
 export type {
   Context,
-  Dispatcher,
   EffectCleanup,
   ErrorBoundaryController,
   Ref,
@@ -214,7 +239,36 @@ export type {
 // React parity: the deps-array type that pairs with `useEffect`/`useMemo`/`useCallback`.
 // Surfaced under the `react` alias via `src/compat/react.ts`, but was missing from the bare
 // `denext` entrypoint whose hooks it annotates (e.g. `src/utils/use-async-effect.ts`).
-export type { DependencyList } from "./src/compat/react-types.ts";
+export type {
+  ChangeEvent,
+  ComponentProps,
+  ComponentPropsWithoutRef,
+  ComponentPropsWithRef,
+  ComponentType,
+  CSSProperties,
+  DependencyList,
+  Dispatch,
+  EffectCallback,
+  ElementRef,
+  FC,
+  FormEvent,
+  ForwardedRef,
+  ForwardRefExoticComponent,
+  FunctionComponent,
+  HTMLAttributes,
+  KeyboardEvent,
+  MemoExoticComponent,
+  MouseEvent,
+  MutableRefObject,
+  PropsWithChildren,
+  ReactElement,
+  ReactNode,
+  Reducer,
+  RefCallback,
+  RefObject,
+  SetStateAction,
+  SyntheticEvent,
+} from "./src/compat/react-types.ts";
 
 export { createContext } from "./src/runtime/context.ts";
 
@@ -276,4 +330,4 @@ export type {
 export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "./src/runtime/public-env.ts";
 
 /** The denext framework version. */
-export const VERSION = "2.0.0-rc.7";
+export const VERSION = "2.0.0";

@@ -18,7 +18,8 @@
 // a test, or any other `fetch` context.
 
 /** The HTTP methods a route handler may export. */
-export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
+export type { HttpMethod } from "../server/types.ts";
+import type { HttpMethod } from "../server/types.ts";
 
 /** One endpoint's typed shape: its params, optional request/response bodies. */
 export interface ApiEndpoint {

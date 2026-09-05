@@ -1,6 +1,6 @@
 {
   "name": "@denext/denext",
-  "version": "2.0.0-rc.7",
+  "version": "2.0.0",
   "license": "MIT",
   "workspace": [
     "./packages/photon",
@@ -32,6 +32,7 @@
     "./react-dom/server": "./src/compat/react-dom-server.ts",
     "./react-dom/server.browser": "./src/compat/react-dom-server.ts",
     "./react-dom/server.edge": "./src/compat/react-dom-server.ts",
+    "./react-dom/static": "./src/compat/react-dom-server.ts",
     "./react-dom/test-utils": "./src/compat/test-utils.ts",
     "./react/jsx-runtime": "./src/jsx/jsx-runtime.ts",
     "./react/jsx-dev-runtime": "./src/jsx/jsx-runtime.ts",
@@ -61,9 +62,9 @@
     "./next/cache": "./src/compat/next/cache.ts",
     "./next/og": "./src/compat/next/og.ts",
     "./next/server": "./src/compat/next/server.ts",
-    "./remix": "./src/compat/remix/client.ts",
+    "./remix": "./src/compat/remix/mod.ts",
     "./remix/server": "./src/compat/remix/server.ts",
-    "./build/next-compat": "./src/build/next-compat-build.ts",
+    "./build/next-compat": "./src/build/next-compat-public.ts",
     "./build/next-mdx": "./src/build/next-mdx-recover.ts",
     "./bundle": "./src/build/plugin-bundle.ts",
     "./build/css": "./src/build/plugin-css.ts",
@@ -81,6 +82,8 @@
     "example:tailwind": "cd examples/tailwind && deno task dev",
     "example:game": "deno run -A --config deno.json examples/game/serve.ts",
     "gen:config-schema": "deno run -A scripts/gen-config-schema.ts",
+    "surface:refresh": "deno run -A scripts/public-surface.ts",
+    "licenses:photon": "deno run -A scripts/gen-third-party-licenses.ts && deno fmt packages/photon/THIRD-PARTY-LICENSES.md",
     "docs:api": "deno task gen:config-schema && deno run -A scripts/gen-api-reference.ts",
     "docs:corpus": "deno run -A scripts/gen-docs-corpus.ts",
     "docs:mcp": "deno run -A scripts/gen-mcp-reference.ts",
@@ -107,7 +110,7 @@
     "check:fix": "deno fmt && deno lint --fix && deno lint",
     "hooks:install": "git config core.hooksPath .githooks",
     "check": "deno fmt --check && deno lint && deno test -A --unstable-kv --parallel --ignore=tests/e2e/",
-    "doc-lint": "deno doc --lint mod.ts cli.ts src/cli/command.ts src/plugin/kit.ts src/jsx/jsx-runtime.ts src/server/mod.ts src/client/mod.ts src/devtools.ts src/live.ts src/lazy.ts src/runtime/compiler-runtime.ts src/client/client-runtime.ts src/lint/denext-plugin.ts src/compat/react.ts src/compat/react-dom.ts src/compat/react-dom-client.ts src/compat/react-dom-server.ts src/compat/test-utils.ts src/compat/react-dom-preload.ts src/compat/react-is.ts src/compat/class-component.ts src/compat/class-detect.ts src/compat/slot.ts src/compat/refs.ts src/compat/better-sqlite3.ts src/runtime/profiler.ts src/build/next-compat-build.ts src/build/plugin-bundle.ts src/build/plugin-css.ts src/plugin/mod.ts src/testing/mod.ts src/compat/next/link.ts src/compat/next/form.ts src/compat/next/image.ts src/compat/next/script.ts src/compat/next/dynamic.ts src/compat/next/navigation.ts src/compat/next/headers.ts src/compat/next/cache.ts src/compat/next/og.ts src/compat/next/server.ts src/compat/next/cookies.ts src/compat/next/request.ts src/compat/next/font/local.ts src/compat/next/font/google.ts src/compat/next/font/registry.ts src/compat/next-intl/index.ts src/compat/next-intl/server.ts src/compat/next-intl/navigation.ts src/compat/next-intl/middleware.ts src/compat/next-intl/routing.ts src/compat/next-intl/context.ts src/compat/next-intl/icu.ts src/compat/next-intl/rich.ts",
+    "doc-lint": "deno doc --lint mod.ts cli.ts src/cli/command.ts src/plugin/kit.ts src/jsx/jsx-runtime.ts src/server/mod.ts src/client/mod.ts src/devtools.ts src/live.ts src/lazy.ts src/runtime/compiler-runtime.ts src/client/client-runtime.ts src/lint/denext-plugin.ts src/compat/react.ts src/compat/react-dom.ts src/compat/react-dom-client.ts src/compat/react-dom-server.ts src/compat/test-utils.ts src/compat/react-dom-preload.ts src/compat/react-is.ts src/compat/class-component.ts src/compat/class-detect.ts src/compat/slot.ts src/compat/refs.ts src/compat/better-sqlite3.ts src/runtime/profiler.ts src/build/next-compat-build.ts src/build/plugin-bundle.ts src/build/plugin-css.ts src/plugin/mod.ts src/testing/mod.ts src/compat/next/link.ts src/compat/next/form.ts src/compat/next/image.ts src/compat/next/script.ts src/compat/next/dynamic.ts src/compat/next/navigation.ts src/compat/next/headers.ts src/compat/next/cache.ts src/compat/next/og.ts src/compat/next/server.ts src/compat/next/cookies.ts src/compat/next/request.ts src/compat/next/font/local.ts src/compat/next/font/google.ts src/compat/next/font/registry.ts src/compat/next-intl/index.ts src/compat/next-intl/server.ts src/compat/next-intl/navigation.ts src/compat/next-intl/middleware.ts src/compat/next-intl/routing.ts src/compat/next-intl/context.ts src/compat/next-intl/icu.ts src/compat/next-intl/rich.ts && deno run -A scripts/check-doc-refs.ts FEATURES.md KNOWN-DIFFERENCES.md",
     "release-check": "deno task check && deno task doc-lint && deno publish --dry-run",
     "bump": "deno run --allow-read --allow-write scripts/bump-version.ts",
     "release": "deno run -A scripts/release.ts"
@@ -210,7 +213,21 @@
       "denext.exe",
       "CHANGELOG.md",
       "CVE-DEFENSE-GUIDE.md",
-      "ROADMAP.md"
+      "ROADMAP.md",
+      ".github/",
+      ".vscode/",
+      ".agents/",
+      ".codex/",
+      ".githooks/",
+      ".claude/",
+      ".mcp.json",
+      "fallow.toml",
+      "deno.lock",
+      "CLAUDE.md",
+      "CONTRIBUTING.md",
+      "scripts/",
+      "coverage/",
+      ".fallow/"
     ]
   }
 }

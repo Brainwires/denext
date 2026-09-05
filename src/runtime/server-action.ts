@@ -1,4 +1,5 @@
 // Server Actions — call a server function from the client over an RPC endpoint.
+import { djb2 } from "./djb2.ts";
 //
 // denext has no bundler transform of `"use server"`, so actions are registered
 // at runtime by id: `serverAction("id", handler)`. On the server the returned
@@ -68,11 +69,32 @@ export function registerServerReference<A extends unknown[], R>(
   return Object.assign(ref, { denextActionId: id }) as ServerActionRef<A, R>;
 }
 
+/** Readable `module#export` names behind the opaque ids (dev diagnostics only). */
+const actionNames = new Map<string, string>();
+
+/**
+ * The opaque, build-stable id of an exported server function: a hash of
+ * `moduleId#exportName`, so the wire id does not spell out the module path and export
+ * name (an enumeration aid) while staying identical across processes and replicas.
+ */
+export function actionIdFor(moduleId: string, exportName: string): string {
+  const key = `${moduleId}#${exportName}`;
+  const id = `a${djb2(key)}${djb2([...key].reverse().join(""))}`;
+  actionNames.set(id, key);
+  return id;
+}
+
+/** The `module#export` an opaque action id was minted for (dev diagnostics), if known. */
+export function describeActionId(id: string): string | undefined {
+  return actionNames.get(id);
+}
+
 /**
  * Auto-register every function exported by a `"use server"` module as a server
  * reference, tagging each exported function in place (so it serializes as an
  * action reference when passed as a prop, e.g. `<form action={save}>`). Ids are
- * `moduleId#exportName`. Idempotent per function.
+ * opaque hashes of `moduleId#exportName` (see {@linkcode actionIdFor}). Idempotent per
+ * function.
  *
  * @param mod The imported `"use server"` module namespace.
  * @param moduleId The module's stable id.
@@ -80,7 +102,7 @@ export function registerServerReference<A extends unknown[], R>(
 export function tagServerExports(mod: Record<string, unknown>, moduleId: string): void {
   for (const [name, value] of Object.entries(mod)) {
     if (typeof value !== "function" || isServerAction(value)) continue;
-    const id = `${moduleId}#${name}`;
+    const id = actionIdFor(moduleId, name);
     registry.set(id, value as (...args: unknown[]) => unknown);
     Object.defineProperty(value, "denextActionId", {
       value: id,

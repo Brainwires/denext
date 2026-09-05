@@ -67,6 +67,8 @@ function unquoteEnvValue(value: string): string {
 
 /** Options for {@linkcode loadEnv}. */
 export interface LoadEnvOptions {
+  /** The environment tier (`development` | `production` | `test`); defaults to the process mode. */
+  mode?: string;
   /** Directory holding the `.env` files (default: `Deno.cwd()`). */
   dir?: string;
   /**
@@ -83,6 +85,26 @@ export interface LoadEnvOptions {
 }
 
 /**
+ * Next.js's `.env` precedence for a mode: `.env` < `.env.<mode>` < `.env.local` <
+ * `.env.<mode>.local` (later wins). `.env.local` is skipped for `test`, as in Next.
+ * The mode is `DENEXT_ENV`, else `NODE_ENV`, else `development`.
+ */
+export function defaultEnvFiles(mode: string = envMode()): string[] {
+  const files = [".env", `.env.${mode}`];
+  if (mode !== "test") files.push(".env.local");
+  files.push(`.env.${mode}.local`);
+  return files;
+}
+
+function envMode(): string {
+  try {
+    return Deno.env.get("DENEXT_ENV") ?? Deno.env.get("NODE_ENV") ?? "development";
+  } catch {
+    return "development";
+  }
+}
+
+/**
  * Load `.env` files into `Deno.env`. Missing files are ignored. Returns the
  * merged file values (before the existing-environment precedence is applied), so
  * callers can inspect what the files declared.
@@ -92,7 +114,7 @@ export interface LoadEnvOptions {
  */
 export async function loadEnv(opts: LoadEnvOptions = {}): Promise<Record<string, string>> {
   const dir = opts.dir ?? Deno.cwd();
-  const files = opts.files ?? [".env", ".env.local"];
+  const files = opts.files ?? defaultEnvFiles(opts.mode);
 
   // Merge file values first so a later file (e.g. .env.local) wins over an
   // earlier one, independent of what is already in the process environment.
@@ -108,7 +130,11 @@ export async function loadEnv(opts: LoadEnvOptions = {}): Promise<Record<string,
   }
 
   for (const [key, value] of Object.entries(merged)) {
-    if (opts.override || Deno.env.get(key) === undefined) Deno.env.set(key, value);
+    // Under a partial `--allow-env=A,B` the read/write of an unlisted key throws; a `.env`
+    // key the process wasn't granted is skipped, never a crash at boot.
+    try {
+      if (opts.override || Deno.env.get(key) === undefined) Deno.env.set(key, value);
+    } catch { /* not permitted for this key */ }
   }
   return merged;
 }

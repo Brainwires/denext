@@ -5,11 +5,19 @@
 // This module is browser-only in practice; all DOM/history/fetch access is
 // inside functions so it can be imported safely on the server.
 
+import { BLUR_ATTR, clearBlur } from "../runtime/image-blur.ts";
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChild, VNodeChildren } from "../jsx/types.ts";
 import { hydrateRoot, type Root } from "./reconciler.ts";
 import { revealStreamedHoles } from "./reveal-holes.ts";
-import { type Context, useContext, useEffect, useRef, useState } from "../runtime/hooks.ts";
+import {
+  type Context,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "../runtime/hooks.ts";
 import { createContext } from "../runtime/context.ts";
 // ROOT_ID comes from its own leaf module — importing it from document.ts would drag
 // document.ts's server-only deps (which import node:async_hooks) into the client bundle
@@ -87,7 +95,28 @@ export function subscribeLocation(listener: () => void): () => void {
 }
 
 export function getLocationState(): LocationState {
+  if (typeof location === "undefined") return serverLocation() ?? current;
   return current;
+}
+
+type ContextBridge = {
+  __denextCurrentRequestContext?: () => { request?: Request } | undefined;
+};
+
+/**
+ * On the server, `usePathname()` / `useSearchParams()` in a Client Component reflect the
+ * request being rendered (Next does the same), read through the request-context bridge the
+ * server installs — never a static import of the server runtime from this client module.
+ */
+function serverLocation(): LocationState | null {
+  const req = (globalThis as ContextBridge).__denextCurrentRequestContext?.()?.request;
+  if (!req) return null;
+  try {
+    const u = new URL(req.url);
+    return { pathname: stripBase(u.pathname), search: u.search };
+  } catch {
+    return null;
+  }
 }
 
 // ---- Prefetching -----------------------------------------------------------
@@ -156,6 +185,11 @@ async function fetchRoute(href: string): Promise<RouteResponse> {
     body: extra.body,
   });
   if (!res.ok && res.status !== 404) throw new Error(`status ${res.status}`);
+  // A redirect that landed on another origin (an auth provider, a marketing site) is not a
+  // page of this app: never splice its body into the document — let the browser load it.
+  if (res.url && new URL(res.url).origin !== location.origin) {
+    throw new Error("cross-origin redirect");
+  }
   return {
     body: await res.text(),
     flight: res.headers?.get("x-denext-flight") === "1",
@@ -295,8 +329,8 @@ export async function navigate(
   const token = ++navToken;
   setNavigatingHref(href);
   try {
-    await navigateSameOrigin(url, href, options);
-    committedHref = url.href; // track the committed entry (for undoing a blocked back/forward)
+    await navigateSameOrigin(url, href, options, token);
+    if (token === navToken) committedHref = url.href; // the committed entry (for undoing a blocked back/forward)
   } finally {
     if (token === navToken) setNavigatingHref(null); // only the latest nav clears it
   }
@@ -382,8 +416,16 @@ function runParsedEntry(parsed: Document, url: URL): void {
   if (moduleScript) injectRouteEntry(moduleScript.getAttribute("src")!, url);
 }
 
-async function navigateSameOrigin(url: URL, href: string, options: NavigateOptions): Promise<void> {
+async function navigateSameOrigin(
+  url: URL,
+  href: string,
+  options: NavigateOptions,
+  token: number,
+): Promise<void> {
   const loaded = await loadRoute(url);
+  // Superseded while loading (the user clicked again): applying this response now would
+  // clobber the newer navigation's document. The newer one owns the page.
+  if (token !== navToken) return;
   if (!loaded) {
     location.href = href; // network/parse failure: hard navigate so the user isn't stuck
     return;
@@ -607,6 +649,22 @@ function shouldIntercept(event: MouseEvent, anchor: HTMLAnchorElement): boolean 
   return isPlainClick(event) && isSoftNavAnchor(anchor);
 }
 
+/**
+ * `next/image` blur placeholders in SERVER-ONLY trees have no hydrated `onLoad`: clear them
+ * here — images already complete at boot, then every later `load` (captured, since `load`
+ * does not bubble). Hydrated images clear themselves through their own handler as well.
+ */
+function installBlurClearing(): void {
+  const sel = `img[${BLUR_ATTR}]`;
+  for (const img of document.querySelectorAll<HTMLImageElement>(sel)) {
+    if (img.complete) clearBlur(img);
+  }
+  document.addEventListener("load", (event) => {
+    const img = event.target as HTMLImageElement | null;
+    if (img?.tagName === "IMG" && img.hasAttribute(BLUR_ATTR)) clearBlur(img);
+  }, true);
+}
+
 /** Install global click + popstate handlers (idempotent per page load). */
 function installNavigation(): void {
   const w = globalThis as unknown as { __denextNav?: boolean };
@@ -620,6 +678,7 @@ function installNavigation(): void {
     event.preventDefault();
     navigate((anchor as HTMLAnchorElement).href);
   });
+  installBlurClearing();
 
   committedHref = location.href;
   globalThis.addEventListener("popstate", () => {
@@ -634,7 +693,7 @@ function installNavigation(): void {
       return;
     }
     committedHref = target;
-    navigate(target, { history: false });
+    navigate(target, { history: false, scroll: false }); // the browser restores scroll itself
   });
 }
 
@@ -721,85 +780,169 @@ export interface RegisteredRoutes {}
 export type Href = RegisteredRoutes extends { routes: infer R extends string } ? R
   : string;
 
+/** Next.js `UrlObject` — the object form `Link`/`useRouter` accept as an href. */
+export interface UrlObject {
+  /** The path (`/blog/[slug]` resolved). */
+  pathname?: string;
+  /** Query as a record (nullish values are dropped) or a pre-built string. */
+  query?: Record<string, string | number | boolean | null | undefined> | string;
+  /** Fragment, with or without the leading `#`. */
+  hash?: string;
+  /** Pre-built query string (wins over `query`), with or without the leading `?`. */
+  search?: string;
+}
+
+/** A string href, or the object form. */
+export type HrefInput = Href | UrlObject;
+
+/** Format a {@linkcode UrlObject} (or pass a string through). */
+export function formatHref(href: HrefInput): string {
+  if (typeof href === "string") return href;
+  let out = href.pathname ?? "";
+  if (href.search) out += href.search.startsWith("?") ? href.search : `?${href.search}`;
+  else if (href.query) {
+    const q = typeof href.query === "string" ? href.query : new URLSearchParams(
+      Object.entries(href.query).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]),
+    ).toString();
+    if (q) out += `?${q}`;
+  }
+  if (href.hash) out += href.hash.startsWith("#") ? href.hash : `#${href.hash}`;
+  return out;
+}
+
+/** The anchor attributes a `Link` forwards (everything an `<a>` takes except `href`). */
+export type AnchorProps = Omit<Record<string, unknown>, "href" | "children">;
+
 /** Props for the {@link Link} component — an `<a>` with client-side soft navigation. */
-export interface LinkProps {
-  /** Destination URL for the link (typed to the app's {@link Href} when wired). */
-  href: Href;
+export interface LinkProps extends AnchorProps {
+  /** Destination URL (typed to the app's {@link Href} when wired), or a `UrlObject`. */
+  href: HrefInput;
   /** Replace the current history entry instead of pushing a new one. */
   replace?: boolean;
   /** Scroll to the top after navigating (defaults to true). */
   scroll?: boolean;
   /**
-   * Prefetch the target in the background: on hover, and when the link scrolls
-   * into view. Set `false` to disable. Defaults to enabled.
+   * Prefetch the target in the background. `null` (the default, as in Next.js) prefetches
+   * when the link scrolls into view; `true` also prefetches on hover; `false` disables.
    */
-  prefetch?: boolean;
+  prefetch?: boolean | null;
+  /** Accepted for Next.js compatibility (shallow routing is not a denext concept). */
+  shallow?: boolean;
+  /** Accepted for Next.js compatibility (locale routing is handled by `i18n` config). */
+  locale?: string | false;
+  /**
+   * Next.js `legacyBehavior`: the single child `<a>` IS the anchor — `href` and the
+   * navigation handlers are cloned onto it instead of wrapping it in another `<a>`.
+   */
+  legacyBehavior?: boolean;
+  /** Accepted for Next.js compatibility (the href is always forwarded). */
+  passHref?: boolean;
   /** Anchor contents. */
   children?: VNodeChildren;
-  /** Any additional attributes forwarded to the underlying `<a>` element. */
-  [key: string]: unknown;
 }
+
+/** The Link-only props that must never reach the DOM. */
+const LINK_ONLY_PROPS = ["shallow", "locale", "legacyBehavior", "passHref"] as const;
 
 /** A client-side navigating anchor with hover/viewport prefetching. */
 export function Link(props: LinkProps): VNode {
-  const { href, replace, scroll, prefetch: pf, children, ...rest } = props;
+  const { href: rawHref, replace, scroll, prefetch: pf, children, legacyBehavior, ...rest } = props;
+  for (const k of LINK_ONLY_PROPS) delete (rest as Record<string, unknown>)[k];
+  const href = formatHref(rawHref);
+  const { onClick: userClick, onMouseEnter: userEnter, ref: userRef, ...anchorRest } = rest as {
+    onClick?: (e: MouseEvent) => void;
+    onMouseEnter?: (e: MouseEvent) => void;
+    ref?: unknown;
+  } & Record<string, unknown>;
   const ref = useRef<Element | null>(null);
   // This link's own pending state: true from the click until its navigation
   // settles. Scoped to this Link (provided via LinkStatusContext) so a
   // descendant useLinkStatus() reflects only this link, not any global nav.
   const [pending, setPending] = useState(false);
+  useViewportPrefetch(ref, href, pf);
 
-  // Viewport prefetch: prefetch once the link becomes visible.
+  const handlers = {
+    // The user's ref and handlers run first; a `preventDefault()` in theirs cancels the
+    // soft navigation (Next.js semantics), and `target`/`download` links are left alone.
+    ref: mergeRefs(ref, userRef),
+    onMouseEnter: (event: MouseEvent) => {
+      userEnter?.(event);
+      if (pf === true) prefetch(href);
+    },
+    onClick: (event: MouseEvent) => {
+      userClick?.(event);
+      const anchor = event.currentTarget as HTMLAnchorElement | null;
+      if (!isPlainClick(event) || (anchor && !isSoftNavAnchor(anchor))) return;
+      event.preventDefault();
+      setPending(true);
+      navigate(href, { replace, scroll }).finally(() => setPending(false));
+    },
+  };
+  const status = (inner: VNodeChildren) =>
+    h(LinkStatusContext.Provider, { value: { pending } }, inner);
+  if (legacyBehavior) return status(legacyAnchor(children, href, handlers));
+  return h("a", { ...anchorRest, href: withBase(href), ...handlers }, status(children));
+}
+
+/** One callback ref that feeds every given ref (object or callback); local to avoid a cycle. */
+function mergeRefs(...refs: unknown[]): (node: Element | null) => void {
+  return (node) => {
+    for (const r of refs) {
+      if (typeof r === "function") r(node);
+      else if (r && typeof r === "object") (r as { current: Element | null }).current = node;
+    }
+  };
+}
+
+/** Viewport prefetch: prefetch once the link becomes visible (unless `prefetch === false`). */
+function useViewportPrefetch(
+  ref: { current: Element | null },
+  href: string,
+  pf: boolean | null | undefined,
+): void {
   useEffect(() => {
     if (pf === false) return;
     const el = ref.current;
     if (!el || typeof IntersectionObserver === "undefined") return;
     const io = new IntersectionObserver((entries) => {
-      for (const e of entries) {
-        if (e.isIntersecting) {
-          prefetch(href);
-          io.disconnect();
-          break;
-        }
+      if (entries.some((e) => e.isIntersecting)) {
+        prefetch(href);
+        io.disconnect();
       }
     });
     io.observe(el);
     return () => io.disconnect();
   }, [href, pf]);
-
-  return h(
-    "a",
-    {
-      ...rest,
-      // Render the basePath-prefixed href so the link works without JS too;
-      // navigate()/prefetch() re-derive it from the original href.
-      href: withBase(href),
-      ref,
-      onMouseEnter: () => {
-        if (pf !== false) prefetch(href);
-      },
-      onClick: (event: MouseEvent) => {
-        if (
-          event.button === 0 && !event.metaKey && !event.ctrlKey &&
-          !event.shiftKey && !event.altKey
-        ) {
-          event.preventDefault();
-          setPending(true);
-          navigate(href, { replace, scroll }).finally(() => setPending(false));
-        }
-      },
-    },
-    // Scope this link's pending status to its subtree so useLinkStatus() reads it.
-    h(LinkStatusContext.Provider, { value: { pending } }, children),
-  );
 }
 
-/** Imperative navigation API returned by {@link useRouter}. */
+/** `legacyBehavior`: clone the child `<a>` with the href + handlers instead of nesting anchors. */
+function legacyAnchor(
+  children: VNodeChildren,
+  href: string,
+  handlers: Record<string, unknown>,
+): VNodeChildren {
+  const child = Array.isArray(children) ? children[0] : children;
+  if (child && typeof child === "object" && "type" in child && child.type === "a") {
+    const c = child as VNode & { props: Record<string, unknown> };
+    return { ...c, props: { ...c.props, href: withBase(href), ...handlers } } as VNode;
+  }
+  return h("a", { href: withBase(href), ...handlers }, children);
+}
+
+/** Options for {@link Router.push} / {@link Router.replace} (Next.js `NavigateOptions`). */
+export interface RouterNavigateOptions {
+  /** Scroll to the top after navigating (defaults to true). */
+  scroll?: boolean;
+}
+
+/** Imperative navigation API returned by {@link useRouter} (Next.js `AppRouterInstance`). */
 export interface Router {
   /** Navigate to `href`, pushing a new history entry. */
-  push(href: Href): void;
+  push(href: HrefInput, options?: RouterNavigateOptions): void;
   /** Navigate to `href`, replacing the current history entry. */
-  replace(href: Href): void;
+  replace(href: HrefInput, options?: RouterNavigateOptions): void;
+  /** Prefetch `href` so a later push/replace is instant. */
+  prefetch(href: HrefInput, options?: { kind?: "auto" | "full" | "temporary" }): void;
   /** Go back one entry in the history stack. */
   back(): void;
   /** Go forward one entry in the history stack. */
@@ -808,15 +951,23 @@ export interface Router {
   refresh(): void;
 }
 
-/** Access the imperative {@link Router} for programmatic navigation. */
+/** One stable router object (so `useEffect(…, [router])` does not re-run every render). */
+const ROUTER: Router = {
+  push: (href, options) => void navigate(formatHref(href), { scroll: options?.scroll }),
+  replace: (href, options) =>
+    void navigate(formatHref(href), { replace: true, scroll: options?.scroll }),
+  prefetch: (href) => prefetch(formatHref(href)),
+  back: () => history.back(),
+  forward: () => history.forward(),
+  refresh: () => {
+    prefetchCache.clear(); // stale prefetched documents must not satisfy the refreshed route
+    void navigate(location.href, { history: false });
+  },
+};
+
+/** Access the imperative {@link Router} for programmatic navigation. Stable identity. */
 export function useRouter(): Router {
-  return {
-    push: (href) => void navigate(href),
-    replace: (href) => void navigate(href, { replace: true }),
-    back: () => history.back(),
-    forward: () => history.forward(),
-    refresh: () => void navigate(location.href, { history: false }),
-  };
+  return ROUTER;
 }
 
 /** The status of an in-flight navigation, returned by {@link useLinkStatus}. */
@@ -847,14 +998,47 @@ export function usePathname(): string {
   return pathname;
 }
 
-/** Reactive current search params. */
-export function useSearchParams(): URLSearchParams {
+/**
+ * Next's `ReadonlyURLSearchParams` — the read-only view of the URL query
+ * that `useSearchParams()` returns. It is a real `URLSearchParams` for reads/iteration,
+ * but its mutating methods throw (you cannot change the URL by mutating this object;
+ * navigate instead).
+ */
+export class ReadonlyURLSearchParams extends URLSearchParams {
+  private static readonly ERROR = (method: string) =>
+    new Error(
+      `ReadonlyURLSearchParams.${method} is not supported: the search params from ` +
+        `useSearchParams() are read-only. Use useRouter().push/replace to change the URL.`,
+    );
+  /** Not supported — this view is read-only. @throws always. */
+  override append(_name: string, _value: string): never {
+    throw ReadonlyURLSearchParams.ERROR("append");
+  }
+  /** Not supported — this view is read-only. @throws always. */
+  override delete(_name: string, _value?: string): never {
+    throw ReadonlyURLSearchParams.ERROR("delete");
+  }
+  /** Not supported — this view is read-only. @throws always. */
+  override set(_name: string, _value: string): never {
+    throw ReadonlyURLSearchParams.ERROR("set");
+  }
+  /** Not supported — this view is read-only. @throws always. */
+  override sort(): never {
+    throw ReadonlyURLSearchParams.ERROR("sort");
+  }
+}
+
+/**
+ * Reactive current search params — a {@link ReadonlyURLSearchParams}, memoized per
+ * query string so `useEffect(…, [searchParams])` re-runs only when the query changes.
+ */
+export function useSearchParams(): ReadonlyURLSearchParams {
   const [search, setSearch] = useState(getLocationState().search);
   useEffect(
     () => subscribeLocation(() => setSearch(getLocationState().search)),
     [],
   );
-  return new URLSearchParams(search);
+  return useMemo(() => new ReadonlyURLSearchParams(search), [search]);
 }
 
 /** Read the server-embedded hydration data (params, messages, etc.). */
@@ -882,8 +1066,10 @@ function readLocale(): string {
  * The current route's dynamic params (reactive). Reads the params the server
  * resolved for this page from the hydration payload; updates on soft navigation.
  */
-export function useParams(): Record<string, string> {
-  const [params, setParams] = useState<Record<string, string>>(() => readData().params ?? {});
+export function useParams(): Record<string, string | string[]> {
+  const [params, setParams] = useState<Record<string, string | string[]>>(
+    () => readData().params ?? {},
+  );
   useEffect(() => subscribeLocation(() => setParams(readData().params ?? {})), []);
   return params;
 }

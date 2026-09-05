@@ -3,6 +3,7 @@ import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
 import {
   actionEndpoint,
+  actionIdFor,
   clientActionStub,
   decodeActionArgs,
   encodeActionArgs,
@@ -306,19 +307,23 @@ Deno.test("a <form action={serverAction}> renders the endpoint + method=post", a
 
 // ---- "use server" module auto-registration --------------------------------
 
-Deno.test("tagServerExports registers each exported function as moduleId#exportName", () => {
+Deno.test("tagServerExports registers each exported function under its opaque module#export id", () => {
   const mod = {
     createNote: (t: string) => `created:${t}`,
     deleteNote: (id: number) => `deleted:${id}`,
     NOT_A_FN: 42, // non-functions are ignored
   };
   tagServerExports(mod, "app/actions.ts");
-  const create = getServerAction("app/actions.ts#createNote");
-  const del = getServerAction("app/actions.ts#deleteNote");
+  const create = getServerAction(actionIdFor("app/actions.ts", "createNote"));
+  const del = getServerAction(actionIdFor("app/actions.ts", "deleteNote"));
   assert(create, "createNote is registered under its module-qualified id");
   assert(del, "deleteNote is registered");
   assertEquals(create!("hi"), "created:hi");
-  assertEquals(getServerAction("app/actions.ts#NOT_A_FN"), undefined, "non-fns are skipped");
+  assertEquals(
+    getServerAction(actionIdFor("app/actions.ts", "NOT_A_FN")),
+    undefined,
+    "non-fns are skipped",
+  );
 });
 
 Deno.test("tagServerExports tags each function in place (callable + isServerAction)", () => {
@@ -326,7 +331,10 @@ Deno.test("tagServerExports tags each function in place (callable + isServerActi
   const mod = { save };
   tagServerExports(mod, "mod/b.ts");
   assertEquals(isServerAction(save), true, "the exported function is tagged in place");
-  assertEquals((save as { denextActionId?: string }).denextActionId, "mod/b.ts#save");
+  assertEquals(
+    (save as { denextActionId?: string }).denextActionId,
+    actionIdFor("mod/b.ts", "save"),
+  );
   assertEquals(save(2), 3, "tagging does not break the function");
   // The tag is non-enumerable so it doesn't leak into serialization/iteration.
   assert(!Object.keys(save).includes("denextActionId"), "the id tag is non-enumerable");
@@ -348,12 +356,15 @@ Deno.test("tagServerModules imports + registers a module's exports once per proc
   const urlA = "data:text/javascript,export function alpha(){return 'A'}";
   const urlB = "data:text/javascript,export function beta(){return 'B'}";
   await tagServerModules([["mod/dedup", { url: urlA }]]);
-  assert(getServerAction("mod/dedup#alpha"), "the first module's export is registered");
+  assert(
+    getServerAction(actionIdFor("mod/dedup", "alpha")),
+    "the first module's export is registered",
+  );
   // A second call for the SAME module id is skipped (imported at most once) — so a
   // different url's exports are not registered under the already-tagged id.
   await tagServerModules([["mod/dedup", { url: urlB }]]);
   assertEquals(
-    getServerAction("mod/dedup#beta"),
+    getServerAction(actionIdFor("mod/dedup", "beta")),
     undefined,
     "the module id is tagged once; the second call is a no-op",
   );

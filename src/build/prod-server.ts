@@ -5,6 +5,8 @@
 // (loader, middleware, instrumentation, cache store, `createApp`, the Live hub) and
 // `handler` (the framework endpoints in front of the app). This module runs them in order.
 
+import { uninstallLiveHub } from "../server/live.ts";
+import { envGet } from "../runtime/env-safe.ts";
 import { join } from "@std/path";
 import { applyPlugins, runPluginTeardown } from "../plugin/mod.ts";
 import { scanRoutes } from "../router/manifest.ts";
@@ -45,7 +47,7 @@ const DEFAULT_SHUTDOWN_DRAIN_MS = 10_000;
 /** Resolve the shutdown drain deadline from an explicit option, then env, then default. */
 function resolveShutdownDrainMs(explicit: number | undefined): number {
   if (explicit !== undefined) return explicit;
-  const env = Deno.env.get("DENEXT_SHUTDOWN_DRAIN_MS");
+  const env = envGet("DENEXT_SHUTDOWN_DRAIN_MS");
   if (env !== undefined) {
     const n = Number(env);
     if (Number.isFinite(n) && n >= 0) return n;
@@ -133,6 +135,9 @@ export async function startProdServer(options: ProdServerOptions): Promise<Deno.
       },
       handler,
     );
+    // Live WebSockets never close on their own, so a drain would always run to its deadline
+    // (and force-exit) with a single viewer connected: close them the moment shutdown begins.
+    options.signal?.addEventListener("abort", uninstallLiveHub, { once: true });
     // Run plugin teardowns once the server has drained (signal aborted → closed).
     server.finished.then(() => runPluginTeardown());
     return server;

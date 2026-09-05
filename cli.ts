@@ -14,7 +14,8 @@
  * @module
  */
 
-import { fromFileUrl, join, resolve } from "@std/path";
+import { join, resolve } from "@std/path";
+import { entrypointArg, isStandaloneBinary } from "./src/cli/self-exec.ts";
 import { resolveProject } from "./src/build/paths.ts";
 import { buildAppCss, injectAppConfigRedirects, restoreAppConfig } from "./src/build/css.ts";
 import { tailwindPaths } from "./src/build/tailwind.ts";
@@ -76,13 +77,14 @@ async function maybeReexecForCss(dir: string, minify: boolean): Promise<boolean>
   });
   if (!css) return false; // no CSS in the project — run normally
 
-  if (!import.meta.url.startsWith("file://")) {
-    // A compiled binary cannot re-exec itself to apply the CSS import map, so
-    // `.css` imports would fail at runtime. Warn loudly rather than fail silently.
+  if (isStandaloneBinary()) {
+    // Only a `deno compile`d binary cannot re-exec itself under a different `--config`
+    // (there is no `deno` to spawn and no module URL to re-run). Running from JSR or a
+    // remote URL is fine: Deno runs remote entrypoints, so we re-exec `import.meta.url`.
     console.error(
-      "denext: WARNING — this project imports CSS, but a compiled binary cannot " +
-        'apply the CSS import map. `import "./x.css"` will fail at runtime; run via ' +
-        "`deno run -A jsr:@denext/denext/cli` for CSS support.",
+      "denext: WARNING — this project imports CSS, but a compiled (standalone) denext " +
+        'binary cannot apply the CSS import map. `import "./x.css"` will fail at runtime; ' +
+        "run the CLI with `deno run -A jsr:@denext/denext/cli` instead of the binary.",
     );
     return false;
   }
@@ -132,7 +134,7 @@ async function reexecWithConfig(
       ...await childPermissionFlags(),
       "--config",
       configPath,
-      fromFileUrl(import.meta.url),
+      entrypointArg(import.meta.url),
       ...Deno.args,
     ],
     env: { [activeEnv]: "1" },

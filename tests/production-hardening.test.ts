@@ -1,4 +1,6 @@
 import { assert, assertEquals } from "@std/assert";
+import { asyncProps, searchParamsRecord } from "../src/runtime/async-props.ts";
+import type { RouteParams } from "../src/router/segments.ts";
 import {
   type CacheStore,
   cacheStoreHealthy,
@@ -57,8 +59,8 @@ function isrManifest(): RouteManifest {
 // PageProps, the excess-property error disappears and this @ts-expect-error fails.
 Deno.test("PageProps does not expose the raw request (cache-safety)", () => {
   const props: PageProps = {
-    params: {},
-    searchParams: new URLSearchParams(),
+    params: asyncProps<RouteParams>({}),
+    searchParams: asyncProps(searchParamsRecord(new URLSearchParams())),
     // @ts-expect-error `request` must not be a PageProps field.
     request: new Request("http://x/"),
   };

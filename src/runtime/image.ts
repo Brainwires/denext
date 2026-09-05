@@ -99,6 +99,9 @@ export interface ImageLoaderProps {
   quality?: number;
 }
 
+export { blurBackground } from "./image-blur.ts";
+import { BLUR_ATTR, blurBackground, clearBlur } from "./image-blur.ts";
+
 /** Builds a (possibly resized) URL for a given width — e.g. a CDN transform. */
 export type ImageLoader = (props: ImageLoaderProps) => string;
 
@@ -128,10 +131,23 @@ export interface ImageProps {
   priority?: boolean;
   /** Loading strategy; defaults to `lazy` (or `eager` when `priority`). */
   loading?: "lazy" | "eager";
-  /** Show a blurred placeholder (needs `blurDataURL`) until the image loads. */
-  placeholder?: "blur" | "empty";
+  /**
+   * Show a placeholder until the image loads: `"blur"` (needs `blurDataURL`), `"empty"`, or a
+   * `data:` URL used directly as the placeholder image (Next.js parity).
+   */
+  placeholder?: "blur" | "empty" | `data:${string}`;
   /** A tiny (data-URI) image shown blurred behind the image when `placeholder="blur"`. */
   blurDataURL?: string;
+  /**
+   * Next.js `fill`: the image fills its positioned parent (`position:absolute; inset:0;
+   * width/height:100%`) instead of taking `width`/`height`. Pair with `sizes` and
+   * `style={{ objectFit: "cover" }}` as needed.
+   */
+  fill?: boolean;
+  /** Called when the image has loaded (composed with the blur-placeholder clearing). */
+  onLoad?: (event: Event) => void;
+  /** Inline styles (the `fill` and placeholder styles are merged UNDER these). */
+  style?: Record<string, unknown>;
   /** Any other attributes forwarded to the `<img>`. */
   [key: string]: unknown;
 }
@@ -176,70 +192,130 @@ function candidateWidthsFor(
  */
 function resolveImageProps(props: ImageProps): Record<string, unknown> {
   ensureClientConfig();
-  const {
-    priority,
-    loading,
-    srcSet,
-    loader,
-    widths,
-    quality,
-    placeholder,
-    blurDataURL,
-    src,
-    width,
-    style,
-    unoptimized,
-    ...rest
-  } = props;
-
-  // Optimize by default (Next parity): with no explicit loader, and unless this image or
-  // the app is `unoptimized`, route through denext's own optimizer endpoint. A custom
-  // loader always wins; `unoptimized` forces a plain `<img>` with the raw `src`.
-  const skip = unoptimized ?? runtimeConfig.unoptimized;
-  const effectiveLoader = loader ?? (skip ? undefined : denextImageLoader);
-
-  // Build a responsive `srcSet` (and a resized default `src`) when a loader is in effect
-  // and the caller didn't supply an explicit `srcSet`.
-  let finalSrc = src;
-  let finalSrcSet = srcSet;
-  if (effectiveLoader && srcSet === undefined) {
-    const candidateWidths = widths ?? candidateWidthsFor(effectiveLoader, width, !!props.sizes);
-    finalSrcSet = candidateWidths
-      .map((w) => `${effectiveLoader({ src, width: w, quality })} ${w}w`)
-      .join(", ");
-    // The plain `src` points at the largest candidate (highest-DPI fallback).
-    finalSrc = effectiveLoader({ src, width: Math.max(...candidateWidths), quality });
-  }
-
-  // Blur placeholder: paint the low-res data URI behind the image until it loads.
-  const blurStyle = placeholder === "blur" && blurDataURL
-    ? {
-      backgroundImage: `url("${blurDataURL}")`,
-      backgroundSize: "cover",
-      backgroundPosition: "center",
-    }
-    : undefined;
-  const mergedStyle = blurStyle
-    ? { ...(style as Record<string, unknown> | undefined), ...blurStyle }
+  const { priority, loading, placeholder, blurDataURL, width, height, style, fill, onLoad } = props;
+  const rest = passthroughProps(props);
+  // `fill` images are sized by their container: no intrinsic width/height attributes, a
+  // full-viewport `sizes` default (the srcset is `w`-descriptor based), Next's positioning.
+  const sizes = props.sizes ?? (fill ? "100vw" : undefined);
+  const { src, srcset } = resolveSources(props, !!sizes);
+  const placeholderStyle = placeholderStyleFor(placeholder, blurDataURL);
+  // The user's `style` wins over both the fill positioning and the placeholder.
+  const mergedStyle = fill || placeholderStyle
+    ? { ...(fill ? FILL_STYLE : {}), ...placeholderStyle, ...style }
     : style;
-
   return {
     ...rest,
-    src: finalSrc,
-    width,
-    srcset: finalSrcSet,
+    src,
+    width: fill ? undefined : width,
+    height: fill ? undefined : height,
+    sizes,
+    srcset,
     style: mergedStyle,
     loading: loading ?? (priority ? "eager" : "lazy"),
     decoding: "async",
     fetchpriority: priority ? "high" : undefined,
+    ...loadHandlers(!!placeholderStyle, onLoad),
+  };
+}
+
+/** Everything in `props` that is not an Image-specific prop (forwarded to the `<img>`). */
+function passthroughProps(props: ImageProps): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...props };
+  for (const k of IMAGE_ONLY_PROPS) delete out[k];
+  return out;
+}
+
+const IMAGE_ONLY_PROPS = [
+  "priority",
+  "loading",
+  "srcSet",
+  "loader",
+  "widths",
+  "quality",
+  "placeholder",
+  "blurDataURL",
+  "src",
+  "width",
+  "height",
+  "style",
+  "unoptimized",
+  "fill",
+  "onLoad",
+  "sizes",
+];
+
+/**
+ * The final `src` + `srcset`: optimize by default (Next parity) — with no explicit loader, and
+ * unless this image or the app is `unoptimized`, route through denext's own optimizer
+ * endpoint. A custom loader always wins; `unoptimized` forces a plain `<img>` with the raw
+ * `src`. A responsive `srcset` (and a resized default `src`) is built when a loader is in
+ * effect and the caller didn't supply an explicit `srcSet`.
+ */
+function resolveSources(props: ImageProps, hasSizes: boolean): { src: string; srcset?: string } {
+  const { src, srcSet, loader, widths, quality, width, unoptimized } = props;
+  const skip = unoptimized ?? runtimeConfig.unoptimized;
+  const effectiveLoader = loader ?? (skip ? undefined : denextImageLoader);
+  if (!effectiveLoader || srcSet !== undefined) return { src, srcset: srcSet };
+  const candidateWidths = widths ?? candidateWidthsFor(effectiveLoader, width, hasSizes);
+  const srcset = candidateWidths
+    .map((w) => `${effectiveLoader({ src, width: w, quality })} ${w}w`)
+    .join(", ");
+  // The plain `src` points at the largest candidate (highest-DPI fallback).
+  return { src: effectiveLoader({ src, width: Math.max(...candidateWidths), quality }), srcset };
+}
+
+/** The blur marker + composed `onLoad` (clears the placeholder, then the user's handler). */
+function loadHandlers(
+  hasPlaceholder: boolean,
+  onLoad: ImageProps["onLoad"],
+): Record<string, unknown> {
+  if (!hasPlaceholder) return onLoad ? { onLoad } : {};
+  return {
+    [BLUR_ATTR]: "",
+    onLoad: (event: Event) => {
+      clearBlur(event.currentTarget as HTMLImageElement);
+      onLoad?.(event);
+    },
+  };
+}
+
+/** Next.js `fill` positioning (the parent must be `position: relative|absolute|fixed`). */
+const FILL_STYLE = {
+  position: "absolute",
+  height: "100%",
+  width: "100%",
+  left: 0,
+  top: 0,
+  right: 0,
+  bottom: 0,
+} as const;
+
+/** The blur / data-URL placeholder painted behind the image until it loads. */
+function placeholderStyleFor(
+  placeholder: ImageProps["placeholder"],
+  blurDataURL: string | undefined,
+): Record<string, string> | undefined {
+  const image = placeholder === "blur"
+    ? (blurDataURL ? blurBackground(blurDataURL) : undefined)
+    : placeholder?.startsWith("data:")
+    ? `url("${placeholder}")`
+    : undefined;
+  if (!image) return undefined;
+  return {
+    backgroundImage: image,
+    backgroundSize: "cover",
+    backgroundPosition: "50% 50%",
+    backgroundRepeat: "no-repeat",
   };
 }
 
 /**
  * Render an accessible, layout-stable `<img>`: lazy + async-decoded by default,
  * eager when `priority` is set. With a `loader`, a responsive `srcSet` and a
- * resized default `src` are generated; with `placeholder="blur"`, the
- * `blurDataURL` is shown blurred behind the image until it loads.
+ * resized default `src` are generated; with `placeholder="blur"`, the `blurDataURL` is
+ * shown blurred (SVG `feGaussianBlur`) behind the image and cleared on load — by the
+ * `onLoad` handler when hydrated, and by the client boot for server-only trees; `fill`
+ * positions the image over its container (Next.js parity).
  */
 export function Image(props: ImageProps): VNode {
   const attrs = resolveImageProps(props);

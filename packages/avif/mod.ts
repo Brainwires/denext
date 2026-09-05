@@ -7,7 +7,8 @@
  * repackaged from Google's Squoosh, Apache-2.0). denext forks the **prebuilt
  * single-threaded encoder** (`lib/avif_enc.{js,wasm}`) and drives it through the
  * emscripten module's `instantiateWasm` hook, so the codec carries **zero npm
- * dependencies** and runs under Deno with no `--unstable-*` flag.
+ * dependencies** and runs under Deno with no `--unstable-*` flag. See
+ * `THIRD-PARTY-LICENSES.md` for the libavif / libaom / emscripten licenses it embeds.
  *
  * Only the encode path is vendored — the optimizer never decodes AVIF (Photon does
  * source decode). The wasm is compiled from `fetch(new URL(..., import.meta.url))`,

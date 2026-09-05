@@ -13,7 +13,16 @@
  * @module
  */
 
-export type { JsonLd, Metadata, Viewport } from "../../server/types.ts";
+export type {
+  IconDescriptor,
+  JsonLd,
+  Metadata,
+  OpenGraphImage,
+  ResolvedMetadata,
+  ResolvingMetadata,
+  ResolvingViewport,
+  Viewport,
+} from "../../server/types.ts";
 
 /**
  * File-convention route metadata (`app/sitemap.ts`, `robots.ts`, `manifest.ts`).
@@ -53,4 +62,5 @@ export namespace MetadataRoute {
 }
 
 /** `next.config` shape — permissive; denext reads its own `denext.config`. */
-export type NextConfig = Record<string, unknown>;
+export type NextConfig = DenextConfig & Record<string, unknown>;
+import type { DenextConfig } from "../../server/config.ts";

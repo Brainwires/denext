@@ -60,8 +60,11 @@ export interface RateLimitOptions {
 
 /** A configured limiter (what the credentials route drives). */
 export interface RateLimiter {
-  /** `retryAfterSec` when `key` is currently locked out, else `null`. */
-  lockedOut(key: string): Promise<number | null>;
+  /**
+   * `retryAfterSec` when `key` is currently locked out, else `null`. `maxFactor` scales the
+   * configured `max` for this key (the IP-wide bucket uses a looser threshold).
+   */
+  lockedOut(key: string, maxFactor?: number): Promise<number | null>;
   /** Record a failed attempt for `key`. */
   fail(key: string): Promise<void>;
   /** Clear `key` after a successful attempt. */
@@ -165,6 +168,19 @@ function clientIp(request: Request, options: RateLimitKeyOptions): string {
 }
 
 /**
+ * How many times the per-identifier `max` a single client IP may fail across ALL identifiers
+ * before it is locked out. The per-identifier key alone lets an attacker who varies the
+ * identifier (or the identifier FIELD — `email` vs `username`) open a fresh bucket per
+ * attempt; this second, IP-wide bucket bounds that.
+ */
+export const IP_BUCKET_FACTOR = 10;
+
+/** The IP-wide lockout bucket for `request` (see {@link IP_BUCKET_FACTOR}). */
+export function ipBucketKey(request: Request, options: RateLimitKeyOptions = {}): string {
+  return `ip|${clientIp(request, options)}`;
+}
+
+/**
  * The default key: client IP + the submitted identifier (lower-cased). Pass
  * `trustForwardedHeaders` (mirrors `AuthConfig.trustForwardedHeaders`) when a proxy fronts
  * the app; otherwise the socket peer is the client.
@@ -191,9 +207,9 @@ export function createRateLimiter(options: RateLimitOptions = {}): RateLimiter {
   const windowMs = options.windowMs ?? DEFAULT_WINDOW_MS;
   const store = options.store ?? inMemoryRateLimitStore();
   return {
-    async lockedOut(key) {
+    async lockedOut(key, maxFactor = 1) {
       const w = await store.get(key);
-      if (!w || w.count < max) return null;
+      if (!w || w.count < max * maxFactor) return null;
       return Math.max(1, Math.ceil((w.resetAt - Date.now()) / 1000));
     },
     async fail(key) {

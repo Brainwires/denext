@@ -27,9 +27,10 @@
  */
 
 import { createApp, defaultLoader, PageCache, scanRoutes } from "../server/mod.ts";
-import type { ModuleLoader, PageModule } from "../server/types.ts";
+import type { ModuleLoader } from "../server/types.ts";
 import type { PageRoute, RouteManifest } from "../router/manifest.ts";
 import { fillPattern, type RouteParams } from "../router/segments.ts";
+import { enumerateStaticParams } from "../server/static-params.ts";
 import { resolveProject } from "../build/paths.ts";
 import {
   buildBoundaryManifest,
@@ -165,13 +166,7 @@ async function pathsForRoute(
   const isDynamic = route.pattern.some((s) => s.kind !== "static");
   if (!isDynamic) return { paths: [fillPattern(route.pattern, {})], skipped: false };
 
-  let paramSets = supplied;
-  if (!paramSets) {
-    const mod = (await load(route.filePath)) as PageModule;
-    if (typeof mod.generateStaticParams === "function") {
-      paramSets = (await mod.generateStaticParams()).map((s) => ({ ...s }));
-    }
-  }
+  const paramSets = supplied ?? await enumerateStaticParams(route, load) ?? undefined;
   if (!paramSets || paramSets.length === 0) return { paths: [], skipped: true };
   return { paths: paramSets.map((p) => fillPattern(route.pattern, p)), skipped: false };
 }

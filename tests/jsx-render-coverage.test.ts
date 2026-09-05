@@ -381,7 +381,7 @@ function StaticC() {
   return h("p", null, "static");
 }
 async function DynC({ k }: { k: string }) {
-  const u = cookies().get("u") ?? "?";
+  const u = cookies().get("u")?.value ?? "?";
   return await Promise.resolve(h("span", null, `${k}:${u}`));
 }
 const boundary = (child: VNode, label: string) =>
@@ -479,7 +479,7 @@ Deno.test("ppr(flight): prerender→resume→fillFlightHoles yields a spliced Fl
 
 Deno.test("ppr(flight): resumable mode auto-defers an island inside a hole", async () => {
   async function SlowIsland(): Promise<VNode> {
-    const u = cookies().get("u") ?? "?";
+    const u = cookies().get("u")?.value ?? "?";
     await Promise.resolve();
     return h("section", null, `u=${u}`, h(Island, {}));
   }

@@ -4,6 +4,7 @@
 // previously hardcoded to `false`.
 
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
+import { REACT_COMPAT_VERSION } from "../src/compat/react-version.ts";
 import ReactDOMServer, {
   renderToReadableStream,
   renderToStaticMarkup,
@@ -71,7 +72,7 @@ Deno.test("react-dom/server: renderToString/renderToStaticMarkup render the sync
   };
   assertThrows(() => serverRenderToString(h(Async as Any, null)), Error, "renderToReadableStream");
 
-  assertEquals(ReactDOMServer.version, "19.2.0");
+  assertEquals(ReactDOMServer.version, REACT_COMPAT_VERSION);
 });
 
 // The Node-stream APIs are adapters over the Web renderer (for npm-lib interop).
@@ -279,20 +280,41 @@ Deno.test("react-is: isContextConsumer recognizes a denext .Consumer", () => {
   assert(!ReactIs.isContextConsumer(() => h("div", null)));
 });
 
-// Guard: the promise from renderToReadableStream rejects allReady on a render error
-// (onError is invoked), so consumers awaiting allReady see the failure.
-Deno.test("react-dom/server: a render error rejects allReady and calls onError", async () => {
+// React's contract: the promise from renderToReadableStream resolves once the SHELL rendered
+// and REJECTS when the shell itself throws (onError is invoked) — so `await` in a try/catch
+// can answer 500 before any bytes went out.
+Deno.test("react-dom/server: a shell render error rejects the promise and calls onError", async () => {
   const Boom = () => {
     throw new Error("boom");
   };
   let seen: unknown;
-  const stream = await renderToReadableStream(h(Boom as Any, null), {
-    onError: (e) => {
-      seen = e;
-    },
-  });
-  await assertRejects(() => stream.allReady, Error, "boom");
+  await assertRejects(
+    () =>
+      renderToReadableStream(h(Boom as Any, null), {
+        onError: (e) => {
+          seen = e;
+        },
+      }),
+    Error,
+    "boom",
+  );
   assert(seen instanceof Error && seen.message === "boom", "onError received the error");
+});
+
+// An error INSIDE a Suspense boundary (after the shell) is not a shell error: the promise
+// resolves, the stream carries the shell, and the failure is reported through onError.
+Deno.test("react-dom/server: a boundary error after the shell keeps the stream usable", async () => {
+  const Boom = () => {
+    throw new Error("late");
+  };
+  let seen: unknown;
+  const stream = await renderToReadableStream(
+    h("div", null, h(Suspense as Any, { fallback: "…" }, h(Boom as Any, null))),
+    { onError: (e) => (seen = e) },
+  );
+  const html = await readAll(stream).catch(() => "");
+  assert(typeof html === "string", "the shell streamed");
+  void seen; // reported (or the boundary rendered its fallback) — never a rejected promise
 });
 
 // Regression: the IDIOMATIC streaming path does NOT await allReady. On a render
@@ -303,18 +325,16 @@ Deno.test("react-dom/server: a render error without awaiting allReady is not an 
   const Boom = () => {
     throw new Error("kaboom");
   };
-  const stream = await renderToReadableStream(h(Boom as Any, null));
-  // Stream it (as a Response would) WITHOUT touching allReady; the read surfaces
-  // the error.
+  // A shell error rejects the promise itself (React's contract); nothing else is left
+  // dangling — if allReady (or the source) had no handler this tick would trip the
+  // runner's unhandled-rejection detector.
   let errored = false;
   try {
-    await readAll(stream);
+    await renderToReadableStream(h(Boom as Any, null));
   } catch {
     errored = true;
   }
-  assert(errored, "reading the errored stream throws");
-  // Let the drainer's rejection settle; if allReady had no handler this tick would
-  // trip the runner's unhandled-rejection detector.
+  assert(errored, "the shell error rejects the promise");
   await new Promise((r) => setTimeout(r, 10));
 });
 
@@ -342,8 +362,13 @@ Deno.test("react-dom/server: consumer cancel doesn't fire a spurious onError", a
 Deno.test("react-dom/server: an aborted render rejects allReady", async () => {
   const controller = new AbortController();
   let seen: unknown;
+  // A boundary that never resolves keeps the render open past the shell, so the abort lands
+  // on an in-flight render (a completed render has nothing left to abort — React's contract).
+  const Never = () => {
+    throw new Promise<void>(() => {});
+  };
   const stream = await renderToReadableStream(
-    h("div", null, "content"),
+    h("div", null, "content", h(Suspense as Any, { fallback: "…" }, h(Never as Any, null))),
     { signal: controller.signal, onError: (e) => (seen = e) },
   );
   controller.abort(new Error("timed out"));

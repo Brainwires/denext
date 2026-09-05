@@ -246,8 +246,10 @@ function withRequestTimeout(
   controller: AbortController,
 ): Promise<Response> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
   const timeout = new Promise<Response>((resolve) => {
     timer = setTimeout(() => {
+      timedOut = true;
       controller.abort();
       resolve(
         new Response("Service Unavailable (request timeout)", {
@@ -257,7 +259,38 @@ function withRequestTimeout(
       );
     }, ms);
   });
-  return Promise.race([pipeline, timeout]).finally(() => clearTimeout(timer));
+  return Promise.race([pipeline, timeout]).then(
+    (res) => timedOut || !res.body ? clear(res) : deadlineBody(res),
+    (err) => {
+      clearTimeout(timer);
+      throw err;
+    },
+  );
+
+  function clear(res: Response): Response {
+    clearTimeout(timer);
+    return res;
+  }
+
+  /**
+   * A streamed response resolves the race as soon as its SHELL is produced, but its
+   * Suspense holes may still be rendering. Keep the deadline armed until the body is fully
+   * consumed (or cancelled): on expiry `controller.abort()` stops the hole renders and the
+   * stream completes with the shell fallbacks left in place instead of hanging forever.
+   */
+  function deadlineBody(res: Response): Response {
+    const body = res.body!.pipeThrough(
+      new TransformStream<Uint8Array, Uint8Array>({
+        flush: () => clearTimeout(timer),
+        cancel: () => clearTimeout(timer),
+      }),
+    );
+    return new Response(body, {
+      status: res.status,
+      statusText: res.statusText,
+      headers: res.headers,
+    });
+  }
 }
 
 /** The `DENEXT_LOG` value ("", "1", "json", …), or "" when unset/unreadable. */

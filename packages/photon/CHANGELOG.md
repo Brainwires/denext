@@ -4,6 +4,14 @@
 [README](./README.md#versioning)). Each entry records the photon-rs version
 wrapped.
 
+## 0.3.5 — wraps photon-rs 0.3.3
+
+- No code change. Ships `THIRD-PARTY-LICENSES.md` — the inventory of every Rust
+  crate statically linked into `lib/denext_photon.wasm` (photon-rs and its
+  transitive crates: manifest license, elected license, copyright notices, and
+  the full text of each non-MIT/Apache license), generated from `cargo metadata`
+  by `deno task licenses:photon`.
+
 ## 0.3.4 — wraps photon-rs 0.3.3
 
 - No code change. Re-published from CI via the `photon-v*` tag to record **build

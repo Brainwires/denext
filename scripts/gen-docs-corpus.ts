@@ -7,6 +7,8 @@
 //   deno task docs:corpus    # regenerate (run after docs:api)
 //   deno task docs:build     # regenerate + export the site
 
+import { publicGuide } from "../src/mcp/guide.ts";
+
 const ROOT = new URL("../", import.meta.url).pathname;
 const REF = `${ROOT}apps/web/app/docs/api/reference.json`;
 const GUIDE = `${ROOT}AGENTS.md`;
@@ -95,11 +97,11 @@ function guideChunks(md: string): Chunk[] {
 }
 
 const ref = JSON.parse(await Deno.readTextFile(REF)) as { groups: RefGroup[] };
-const guide = await Deno.readTextFile(GUIDE);
+const guide = publicGuide(await Deno.readTextFile(GUIDE));
 const chunks = [...apiChunks(ref.groups), ...guideChunks(guide)];
 
 await Deno.writeTextFile(
   OUT,
-  JSON.stringify({ generatedAt: new Date().toISOString(), chunks }, null, 2) + "\n",
+  JSON.stringify({ chunks }, null, 2) + "\n",
 );
 console.log(`docs corpus: ${chunks.length} chunks → ${OUT}`);

@@ -83,7 +83,7 @@ export function editorCommand(
 }
 
 /** Whether `p` is `dir` itself or a path under it (both already normalized/absolute). */
-function withinDir(p: string, dir: string): boolean {
+export function withinDir(p: string, dir: string): boolean {
   return p === dir || p.startsWith(dir + "/");
 }
 

@@ -2,6 +2,7 @@
 // and the build-transform redirect maps (auto-memo compiler, qrl handler extraction),
 // merged into the client bundle's import map.
 
+import { reactCompilerEnabled } from "../../server/config.ts";
 import { type AppCss, buildAppCss } from "../css.ts";
 import { tailwindPaths } from "../tailwind.ts";
 import { collectComponentSources, compileModules } from "../compiler.ts";
@@ -44,7 +45,7 @@ export async function getCss(st: DevState): Promise<AppCss | null> {
 export async function getTransformMaps(st: DevState): Promise<Record<string, string>> {
   if (st.compilerGen !== st.generation) {
     const sources = await collectComponentSources(st.paths.projectDir);
-    st.compilerMap = st.paths.config?.experimental?.compiler
+    st.compilerMap = reactCompilerEnabled(st.paths.config)
       ? await compileModules(sources, { outDir: st.paths.outDir })
       : {};
     st.qrlMap = await compileQrlModules(sources, { outDir: st.paths.outDir });

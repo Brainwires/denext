@@ -2,8 +2,10 @@
 // `cookies()` / `headers()` without prop-drilling the Request. Backed by Deno's
 // built-in AsyncLocalStorage (survives `await` in async components).
 
+import { awaitable } from "../runtime/async-props.ts";
+import type { RenderScope } from "../runtime/render-scope.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { deleteCookie, getCookies, setCookie } from "@std/http/cookie";
+import { deleteCookie, getCookies, getSetCookies, setCookie } from "@std/http/cookie";
 import { postponeDynamic, shouldPostpone } from "../runtime/prerender.ts";
 import type { SegmentConfig } from "./segment-config.ts";
 import { currentCacheScope } from "./cache-scope.ts";
@@ -51,13 +53,74 @@ function isForceStatic(ctx: RequestContext | undefined): boolean {
 
 /** A no-op {@link CookieStore}: reads are empty, writes are ignored (force-static). */
 function emptyCookieStore(): CookieStore {
-  return {
-    get: () => undefined,
-    getAll: () => ({}),
-    has: () => false,
-    set: () => {},
-    delete: () => {},
+  return cookieStoreOver({}, () => {}, () => {});
+}
+
+/**
+ * A {@linkcode CookieStore} over a name→value map (Next.js's `cookies()` shape: `get()`
+ * returns `{ name, value }`, `getAll()` an array, and the store iterates).
+ */
+function cookieStoreOver(
+  incoming: Record<string, string>,
+  set: (name: string, value: string, options?: CookieSetOptions) => void,
+  del: (name: string, options?: { path?: string; domain?: string }) => void,
+): CookieStore {
+  const all = () => Object.entries(incoming).map(([name, value]) => ({ name, value }));
+  const store: CookieStore = {
+    get: (name) => (name in incoming ? { name, value: incoming[name] } : undefined),
+    getAll: (name) => (name === undefined ? all() : all().filter((c) => c.name === name)),
+    has: (name) => name in incoming,
+    get size() {
+      return Object.keys(incoming).length;
+    },
+    // Next accepts `set(name, value, options)` AND `set({ name, value, ...options })`.
+    set(
+      name: string | ({ name: string; value: string } & CookieSetOptions),
+      value?: string,
+      options?: CookieSetOptions,
+    ) {
+      if (typeof name === "string") set(name, value ?? "", options);
+      else {
+        const { name: n, value: v, ...rest } = name;
+        set(n, v, rest);
+      }
+      return store;
+    },
+    delete(
+      name: string | { name: string; path?: string; domain?: string },
+      options?: { path?: string; domain?: string },
+    ) {
+      if (typeof name === "string") del(name, options);
+      else {
+        const { name: n, ...rest } = name;
+        del(n, rest);
+      }
+      return store;
+    },
+    toString: () => all().map((c) => `${c.name}=${c.value}`).join("; "),
+    [Symbol.iterator]: () =>
+      all().map((c) => [c.name, c] as [string, RequestCookie])[Symbol.iterator](),
   };
+  return store;
+}
+
+/**
+ * Cookies queued on the response so far (`cookies().set()` / `.delete()`, middleware
+ * `Set-Cookie`), overlaid on the request's — so a cookie set earlier in the same request
+ * is what `cookies().get()` sees, as in Next.js.
+ */
+function effectiveCookies(ctx: RequestContext): Record<string, string> {
+  const incoming: Record<string, string> = {};
+  for (const [name, value] of Object.entries(getCookies(ctx.request.headers))) {
+    if (typeof value === "string") incoming[name] = value;
+  }
+  for (const c of getSetCookies(ctx.outgoingHeaders)) {
+    const expired = (c.maxAge !== undefined && c.maxAge <= 0) ||
+      (c.expires !== undefined && new Date(c.expires).getTime() <= Date.now());
+    if (expired) delete incoming[c.name];
+    else incoming[c.name] = c.value;
+  }
+  return incoming;
 }
 
 /** Ambient state for the request currently being handled. */
@@ -79,6 +142,12 @@ export interface RequestContext {
   signal?: AbortSignal;
   /** Headers accumulated to attach to the response (e.g. Set-Cookie, loader-set headers). */
   outgoingHeaders: Headers;
+  /** Per-request render collectors (signal state, `useServerInsertedHTML`) — see `render-scope.ts`. */
+  renderScope?: RenderScope;
+  /** Routing facts the pipeline resolved (`NextRequest.nextUrl.basePath` / `.locale` read them). */
+  routing?: { basePath: string; locale?: string };
+  /** Memoized read-only view handed out by {@linkcode headers}. */
+  readonlyHeaders?: Headers;
   /**
    * An explicit response status a loader/action requested for this request (e.g. Remix
    * `data(value, { status })`). Applied by the request handler's `finalize` over the
@@ -378,18 +447,55 @@ function requireContext(who: string): RequestContext {
   return ctx;
 }
 
-/** Read the current request's headers (read-only). */
-export function headers(): Headers {
+/**
+ * Read the current request's headers. Read-only, as in Next.js: `set`/`append`/`delete`
+ * throw (the request's headers are shared by middleware, auth and the rest of the pipeline).
+ */
+export function headers(): AwaitableHeaders {
   const ctx = requireContext("headers");
   assertNotInCacheScope("headers");
   assertNotDynamicError(ctx, "headers");
   // force-static: return empty headers and keep the render static/cacheable.
-  if (isForceStatic(ctx)) return new Headers();
+  if (isForceStatic(ctx)) return awaitable(readonlyHeaders(new Headers()));
   // PPR: reading request headers during a prerender (outside `use cache`) can't
   // be resolved — postpone so the enclosing Suspense becomes a dynamic hole.
   if (shouldPostpone()) postponeDynamic("headers");
   ctx.usedDynamicApi = true; // reading request headers makes the render dynamic
-  return ctx.request.headers;
+  return awaitable(ctx.readonlyHeaders ??= readonlyHeaders(ctx.request.headers));
+}
+
+/** `headers()`'s return: usable synchronously AND awaitable (`await headers()`, Next 15). */
+export type AwaitableHeaders = Headers & PromiseLike<Headers>;
+/** `cookies()`'s return: usable synchronously AND awaitable (`await cookies()`, Next 15). */
+export type AwaitableCookieStore = CookieStore & PromiseLike<CookieStore>;
+/** `draftMode()`'s return: usable synchronously AND awaitable (`await draftMode()`, Next 15). */
+export type AwaitableDraftMode = DraftMode & PromiseLike<DraftMode>;
+
+const HEADER_MUTATORS = new Set(["set", "append", "delete"]);
+
+/** A live, read-only view of `source` whose mutators throw (Next.js `ReadonlyHeaders`). */
+export function readonlyHeaders(source: Headers): Headers {
+  return new Proxy(source, {
+    get(target, prop, receiver) {
+      if (typeof prop === "string" && HEADER_MUTATORS.has(prop)) {
+        return () => {
+          throw new TypeError(`headers() is read-only: cannot call ${prop}()`);
+        };
+      }
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+/**
+ * Opt the current render out of the page cache (Next's `unstable_noStore()` /
+ * `connection()` intent): a route with `export const revalidate = N` that calls this is
+ * rendered per request instead of being stored and served to other visitors.
+ */
+export function noStore(): void {
+  const ctx = storage.getStore();
+  if (ctx) ctx.usedDynamicApi = true;
 }
 
 /** Options accepted when setting a cookie. */
@@ -410,18 +516,39 @@ export interface CookieSetOptions {
   sameSite?: "Strict" | "Lax" | "None";
 }
 
-/** A read/write view of the request/response cookies. */
+/** A single cookie as `cookies().get()` / `.getAll()` return it (Next.js's shape). */
+export interface RequestCookie {
+  /** The cookie name. */
+  name: string;
+  /** The cookie value. */
+  value: string;
+}
+
+/**
+ * A read/write view of the request/response cookies, shaped like Next.js's `cookies()`:
+ * `get(name)?.value`, `getAll()` as an array, `has`, `set`, `delete`, iteration.
+ */
 export interface CookieStore {
-  /** Read a request cookie by name. */
-  get(name: string): string | undefined;
-  /** All request cookies as a name→value record. */
-  getAll(): Record<string, string>;
+  /** The named request cookie (`{ name, value }`), or `undefined`. */
+  get(name: string): RequestCookie | undefined;
+  /** All request cookies (or the 0–1 named `name`). */
+  getAll(name?: string): RequestCookie[];
   /** True if the named request cookie is present. */
   has(name: string): boolean;
-  /** Queue a Set-Cookie on the response. */
-  set(name: string, value: string, options?: CookieSetOptions): void;
-  /** Queue a cookie deletion on the response. */
-  delete(name: string, options?: { path?: string; domain?: string }): void;
+  /** Number of request cookies. */
+  readonly size: number;
+  /** Queue a Set-Cookie on the response (`set(name, value, options)` or `set({ name, value, …})`). */
+  set(name: string, value: string, options?: CookieSetOptions): CookieStore;
+  /** Object form: `set({ name, value, path, maxAge, … })`. Returns the store (chainable). */
+  set(cookie: { name: string; value: string } & CookieSetOptions): CookieStore;
+  /** Queue a cookie deletion on the response (by name, or `{ name, path?, domain? }`). */
+  delete(name: string, options?: { path?: string; domain?: string }): CookieStore;
+  /** Object form: `delete({ name, path, domain })`. Returns the store (chainable). */
+  delete(cookie: { name: string; path?: string; domain?: string }): CookieStore;
+  /** The request cookies as a `Cookie` header value. */
+  toString(): string;
+  /** Iterate `[name, cookie]` pairs. */
+  [Symbol.iterator](): Iterator<[string, RequestCookie]>;
 }
 
 /** The cookie name backing {@link draftMode}. */
@@ -449,12 +576,31 @@ export interface DraftTokenStore {
 }
 
 /** The default per-process, in-memory {@link DraftTokenStore}. */
+/** Draft tokens live this long (a preview session), then expire even if never disabled. */
+const DRAFT_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
+/** Bound on live draft tokens — a hammered `enable()` endpoint cannot grow the heap. */
+const DRAFT_TOKEN_MAX = 10_000;
+
 function inMemoryDraftTokenStore(): DraftTokenStore {
-  const tokens = new Set<string>();
+  const tokens = new Map<string, number>(); // token → expiresAt (insertion order = age)
+  const sweep = () => {
+    const now = Date.now();
+    for (const [t, exp] of tokens) if (exp <= now) tokens.delete(t);
+    while (tokens.size > DRAFT_TOKEN_MAX) tokens.delete(tokens.keys().next().value as string);
+  };
   return {
-    has: (t) => tokens.has(t),
+    has: (t) => {
+      const exp = tokens.get(t);
+      if (exp === undefined) return false;
+      if (exp <= Date.now()) {
+        tokens.delete(t);
+        return false;
+      }
+      return true;
+    },
     add: (t) => {
-      tokens.add(t);
+      tokens.set(t, Date.now() + DRAFT_TOKEN_TTL_MS);
+      sweep();
     },
     delete: (t) => {
       tokens.delete(t);
@@ -499,10 +645,10 @@ export interface DraftMode {
  * authorization in a route handler (defense in depth); only that authorized call
  * mints a valid token.
  */
-export function draftMode(): DraftMode {
+export function draftMode(): AwaitableDraftMode {
   const store = cookies();
-  const token = store.get(DRAFT_COOKIE);
-  return {
+  const token = store.get(DRAFT_COOKIE)?.value;
+  return awaitable({
     isEnabled: token !== undefined && draftTokenStore.has(token),
     enable: () => {
       const t = newDraftToken();
@@ -513,30 +659,29 @@ export function draftMode(): DraftMode {
       if (token) draftTokenStore.delete(token);
       store.delete(DRAFT_COOKIE, { path: "/" });
     },
-  };
+  });
 }
 
 /** Access the current request's cookies (reads incoming, writes Set-Cookie). */
-export function cookies(): CookieStore {
+export function cookies(): AwaitableCookieStore {
   const ctx = requireContext("cookies");
   assertNotInCacheScope("cookies");
   assertNotDynamicError(ctx, "cookies");
   // force-static: an empty, write-ignoring store; the render stays static/cacheable.
-  if (isForceStatic(ctx)) return emptyCookieStore();
+  if (isForceStatic(ctx)) return awaitable(emptyCookieStore());
   // PPR: reading cookies during a prerender (outside `use cache`) postpones so
   // the enclosing Suspense boundary becomes a per-request dynamic hole.
   if (shouldPostpone()) postponeDynamic("cookies");
   ctx.usedDynamicApi = true; // reading/writing cookies makes the render dynamic
-  const incoming = getCookies(ctx.request.headers);
+  const incoming = effectiveCookies(ctx);
   // Secure-by-default: over HTTPS (directly or behind a TLS-terminating proxy that
   // sets x-forwarded-proto), new cookies are marked `Secure` unless overridden.
   const requestIsHttps = new URL(ctx.request.url).protocol === "https:" ||
     ctx.request.headers.get("x-forwarded-proto")?.split(",")[0].trim() === "https";
-  return {
-    get: (name) => incoming[name],
-    getAll: () => Object.assign({}, incoming) as Record<string, string>,
-    has: (name) => name in incoming,
-    set: (name, value, options = {}) => {
+  return awaitable(cookieStoreOver(
+    incoming,
+    (name, value, options = {}) => {
+      incoming[name] = value; // visible to later `cookies().get()` in this request
       setCookie(ctx.outgoingHeaders, {
         name,
         value,
@@ -552,11 +697,12 @@ export function cookies(): CookieStore {
         sameSite: options.sameSite ?? "Lax",
       });
     },
-    delete: (name, options = {}) => {
+    (name, options = {}) => {
+      delete incoming[name];
       deleteCookie(ctx.outgoingHeaders, name, {
         path: options.path ?? "/",
         domain: options.domain,
       });
     },
-  };
+  ));
 }

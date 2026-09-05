@@ -8,7 +8,7 @@
 import { join } from "@std/path";
 import { staticPageDir } from "./static-dir.ts";
 import { matchSegments, type Segment } from "@denext/denext/plugin-kit";
-import type { I18nConfig } from "@denext/denext/server";
+import type { I18nConfig } from "@denext/denext/plugin-kit";
 import { type NextData, type PageComponent, renderPage } from "./render.ts";
 import type { PageEntry, PagesScan } from "./scan.ts";
 

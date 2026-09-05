@@ -39,15 +39,28 @@ Deno.test("plugin-kit does not leak an over-broad value surface", () => {
   const values = Object.keys(kit).sort();
   assertEquals(values, [
     "PageCache",
+    "STALLED",
+    "TOO_LARGE",
     "buildAppCss",
+    "buildNextCompatModules",
     "bundleRoutes",
+    "cappedBody",
+    "compareSpecificity",
+    "createNextCompatServerLoader",
     "enableFastRefresh",
     "extractRouteCss",
+    "fromBase64Url",
+    "hmacSign",
+    "hmacVerify",
     "hydrateRoot",
     "matchSegments",
     "parsePattern",
     "peelLocale",
+    "readCappedBody",
     "registerFamily",
+    "revalidatePath",
+    "revalidateTag",
     "specificity",
+    "toBase64Url",
   ]);
 });

@@ -3,6 +3,12 @@
 `@denext/pages-router` uses its own semver, independent of the denext version it
 plugs into.
 
+## 0.10.0 — denext 2.0.0 compatibility
+
+- Requires denext ≥ 2.0.0: pipeline primitives are imported from `@denext/denext/plugin-kit` (`revalidatePath`, `buildNextCompatModules`, `createNextCompatServerLoader`, the `RouteParams`/`I18nConfig`/`Component` contracts) instead of `denext/server` and `denext/build/next-compat`.
+- API routes enforce `bodyParser.sizeLimit` while the body streams (the cap was previously checked after buffering the whole body); multipart bodies are capped too, and `bodyParser: false` is bounded by the default limit. An oversized body is a 413.
+- `query` values for a `[...catch-all]` route stay the joined path string (denext's `RouteParams` now carry catch-alls as `string[]`).
+
 ## 0.9.1 — denext rc.7 compatibility + Next parity fixes
 
 - Requires denext ≥ 2.0.0-rc.7: the dev client entry no longer imports `enableFastRefresh`/`registerFamily` from the `denext/client` barrel (moved to `denext/client-runtime` in rc.7).

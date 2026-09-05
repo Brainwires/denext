@@ -129,7 +129,10 @@ export abstract class VNodeRenderer<T> {
     const { type } = node;
     // Some npm libraries construct elements with a null `props`; React treats it as {}.
     const props = node.props ?? {};
-    if ((type as unknown) === PORTAL) return Promise.resolve(this.empty());
+    if ((type as unknown) === PORTAL) {
+      // React's server renderers throw here too: a portal targets a live DOM node.
+      throw new Error("Portals are not currently supported by the server renderer.");
+    }
     if ((type as unknown) === SUSPENSE) return this.renderSuspense(props, scopes, head);
     if (type === FRAGMENT) {
       return this.renderChildren(props.children, scopesWithProvider(scopes, props), head);

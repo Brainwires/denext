@@ -4,18 +4,24 @@
 
 /** Parsed User-Agent details. */
 export interface UserAgent {
-  /** True when the UA looks like a crawler/bot. */
+  /** Whether the UA matches a known crawler/bot signature. */
   isBot: boolean;
   /** The raw `user-agent` header value. */
   ua: string;
-  /** Detected browser. */
-  browser: { name?: string; version?: string };
-  /** Detected operating system. */
+  /** Browser name/version (`major` = the first version component). */
+  browser: { name?: string; version?: string; major?: string };
+  /** Operating system name/version. */
   os: { name?: string; version?: string };
-  /** Device class inferred from the UA. */
-  device: { type?: "mobile" | "tablet" | "console" | "desktop"; vendor?: string };
-  /** Detected layout engine. */
-  engine: { name?: string };
+  /** `type` is `undefined` for a desktop browser, as in Next.js (ua-parser-js). */
+  device: {
+    type?: "mobile" | "tablet" | "console" | "smarttv" | "wearable" | "embedded";
+    vendor?: string;
+    model?: string;
+  };
+  /** Rendering engine (Blink/WebKit/Gecko/Trident) and its version. */
+  engine: { name?: string; version?: string };
+  /** CPU architecture when the UA carries it (`amd64`, `arm64`, `ia32`, `arm`). */
+  cpu: { architecture?: string };
 }
 
 const BOT_RE =
@@ -63,14 +69,33 @@ function deviceOf(ua: string): UserAgent["device"] {
   }
   if (/mobi|iphone|ipod|android.*mobile|windows phone/i.test(ua)) return { type: "mobile" };
   if (/playstation|xbox|nintendo/i.test(ua)) return { type: "console" };
-  return { type: "desktop" };
+  if (/smart-?tv|appletv|googletv|hbbtv|roku/i.test(ua)) return { type: "smarttv" };
+  return {}; // desktop: `type` is undefined (Next.js / ua-parser-js parity)
 }
 
-function engineOf(ua: string): { name?: string } {
-  if (/firefox/i.test(ua)) return { name: "Gecko" };
-  if (/edg\//i.test(ua) || /chrome\//i.test(ua) || /opr\//i.test(ua)) return { name: "Blink" };
-  if (/applewebkit/i.test(ua)) return { name: "WebKit" };
-  if (/trident/i.test(ua)) return { name: "Trident" };
+/** Add ua-parser-js's `major` (the first version component). */
+function withMajor(b: { name?: string; version?: string }): UserAgent["browser"] {
+  return b.version ? { ...b, major: b.version.split(".")[0] } : b;
+}
+
+/** `cpu.architecture` from the common UA tokens. */
+function cpuOf(ua: string): UserAgent["cpu"] {
+  if (/aarch64|arm64|armv8/i.test(ua)) return { architecture: "arm64" };
+  if (/\barm\b|armv7/i.test(ua)) return { architecture: "arm" };
+  if (/x86_64|x64|win64|wow64|amd64/i.test(ua)) return { architecture: "amd64" };
+  if (/i[3-6]86|x86|win32/i.test(ua)) return { architecture: "ia32" };
+  return {};
+}
+
+function engineOf(ua: string): UserAgent["engine"] {
+  if (/firefox/i.test(ua)) return { name: "Gecko", version: match(ua, /rv:([\d.]+)/i) };
+  if (/edg\//i.test(ua) || /chrome\//i.test(ua) || /opr\//i.test(ua)) {
+    return { name: "Blink", version: match(ua, /(?:chrome|crios)\/([\d.]+)/i) };
+  }
+  if (/applewebkit/i.test(ua)) {
+    return { name: "WebKit", version: match(ua, /applewebkit\/([\d.]+)/i) };
+  }
+  if (/trident/i.test(ua)) return { name: "Trident", version: match(ua, /trident\/([\d.]+)/i) };
   return {};
 }
 
@@ -85,10 +110,11 @@ export function userAgentFromString(ua?: string): UserAgent {
   return {
     isBot: BOT_RE.test(s),
     ua: s,
-    browser: browserOf(s),
+    browser: withMajor(browserOf(s)),
     os: osOf(s),
     device: deviceOf(s),
     engine: engineOf(s),
+    cpu: cpuOf(s),
   };
 }
 

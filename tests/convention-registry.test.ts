@@ -38,23 +38,23 @@ Deno.test("registerConvention can retarget a built-in convention matcher", async
 // A synthesizer that is inert unless the fixture opts in via a marker route, so
 // registering it globally does not affect other tests in the shared process.
 registerRouteSynthesizer((manifest) => {
-  const marker = manifest.pages.find((p) => p.routePath === "/__synth_marker");
+  const marker = manifest.pages.find((p) => p.routePath === "/synth-marker");
   if (!marker) return;
   manifest.pages.push({
     ...marker,
-    routePath: "/__synth_marker/derived",
-    pattern: parsePattern("__synth_marker/derived"),
+    routePath: "/synth-marker/derived",
+    pattern: parsePattern("synth-marker/derived"),
   });
 });
 
 Deno.test("registerRouteSynthesizer can add derived routes post-scan", async () => {
-  const dir = await buildAppTree(["__synth_marker/page.tsx"]);
+  const dir = await buildAppTree(["synth-marker/page.tsx"]);
   try {
     const manifest = await scanRoutes(dir);
-    const derived = manifest.pages.find((p) => p.routePath === "/__synth_marker/derived");
+    const derived = manifest.pages.find((p) => p.routePath === "/synth-marker/derived");
     assertExists(derived);
     // Both the original and the derived route are present.
-    assertExists(manifest.pages.find((p) => p.routePath === "/__synth_marker"));
+    assertExists(manifest.pages.find((p) => p.routePath === "/synth-marker"));
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

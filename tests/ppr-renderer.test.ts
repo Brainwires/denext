@@ -30,7 +30,7 @@ function Static() {
 
 /** A dynamic component: reads a cookie (postpones during prerender). */
 async function Dyn({ k }: { k: string }) {
-  const u = cookies().get("u") ?? "?";
+  const u = cookies().get("u")?.value ?? "?";
   return await Promise.resolve(h("span", null, `${k}:${u}`));
 }
 
@@ -41,7 +41,7 @@ async function Dyn({ k }: { k: string }) {
  */
 async function Cached() {
   const { value } = await withCacheScope(() => {
-    const u = cookies().get("u") ?? "?";
+    const u = cookies().get("u")?.value ?? "?";
     return h("em", null, `cached:${u}`);
   });
   return value as VNode;

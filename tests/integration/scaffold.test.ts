@@ -10,6 +10,7 @@ Deno.test("scaffoldFiles: plain project", () => {
   const paths = files.map((f) => f.path).sort();
   assertEquals(paths, [
     ".gitignore",
+    "README.md",
     "app/layout.tsx",
     "app/page.tsx",
     "deno.json",
@@ -41,7 +42,7 @@ Deno.test("scaffoldFiles: src-dir + compiler", () => {
   assert(paths.includes("src/app/layout.tsx"));
   assertStringIncludes(
     files.find((f) => f.path === "denext.config.ts")!.content,
-    "experimental: { compiler: true }",
+    "experimental: { reactCompiler: true }",
   );
 });
 

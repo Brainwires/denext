@@ -3,7 +3,8 @@
 The smallest end-to-end denext app, and the one the docs and benchmarks lean on.
 It exercises the whole round-trip — SSR, hydration, a code-split island, static
 and dynamic routes, an API handler, and middleware — in a handful of files. It's
-also the **bundle-size baseline** for `bench/` (the "~16 KB first load" number).
+also the **bundle-size baseline** for `bench/` (the "first load" number in
+`bench/REPORT.md`).
 
 ## What it shows
 

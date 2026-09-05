@@ -312,6 +312,39 @@ function validateCacheAndEnv(config: DenextConfig, fail: Fail): void {
   }
 }
 
+/** `tailwind.input`/`output` are required non-empty path strings. */
+function validateTailwind(tailwind: unknown, fail: Fail): void {
+  if (tailwind === undefined) return;
+  if (typeof tailwind !== "object" || tailwind === null) {
+    return fail("tailwind", "must be an object");
+  }
+  const tw = tailwind as Record<string, unknown>;
+  for (const k of ["input", "output"]) {
+    if (typeof tw[k] !== "string" || !tw[k]) {
+      fail(`tailwind.${k}`, "must be a non-empty path string");
+    }
+  }
+}
+
+/** `i18n.locales` is a non-empty string list and `defaultLocale` is one of them. */
+function validateI18n(i18n: unknown, fail: Fail): void {
+  if (i18n === undefined) return;
+  const { locales, defaultLocale } = (i18n ?? {}) as { locales?: unknown; defaultLocale?: unknown };
+  const list = Array.isArray(locales) ? locales : [];
+  if (list.length === 0 || list.some((l) => typeof l !== "string")) {
+    return fail("i18n.locales", "must be a non-empty array of locale strings");
+  }
+  if (typeof defaultLocale !== "string" || !list.includes(defaultLocale)) {
+    fail("i18n.defaultLocale", "must be one of i18n.locales");
+  }
+}
+
+/** Nested fields whose absence would crash at request time rather than at boot. */
+function validateNestedRequired(config: DenextConfig, fail: Fail): void {
+  validateTailwind(config.tailwind, fail);
+  validateI18n(config.i18n, fail);
+}
+
 /** Validate a loaded `denext.config`, throwing a field-scoped error on a bad value. */
 export function validateDenextConfig(config: DenextConfig, name = "denext.config"): void {
   const fail: Fail = (field, msg) => {
@@ -324,4 +357,5 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
   validateImageNumerics(config.images, fail);
   validateSecurity(config, fail);
   validateCacheAndEnv(config, fail);
+  validateNestedRequired(config, fail);
 }

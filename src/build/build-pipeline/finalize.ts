@@ -83,8 +83,14 @@ function buildManifestFor(
 async function swapAndWriteManifest(ctx: BuildContext, manifest: unknown): Promise<void> {
   const gzCount = await precompressDir(ctx.clientDir);
   if (gzCount > 0) log(`precompressed ${gzCount} client asset(s) -> .gz`);
-  await Deno.remove(ctx.finalClientDir, { recursive: true }).catch(() => {});
+  // Rename the previous build ASIDE first, then the staging dir into place, then drop the
+  // old one — so a `denext start` reading `client/` mid-build sees either the old or the new
+  // tree, never a missing one.
+  const previous = `${ctx.finalClientDir}.prev`;
+  await Deno.remove(previous, { recursive: true }).catch(() => {});
+  const hadPrevious = await Deno.rename(ctx.finalClientDir, previous).then(() => true, () => false);
   await Deno.rename(ctx.clientDir, ctx.finalClientDir);
+  if (hadPrevious) await Deno.remove(previous, { recursive: true }).catch(() => {});
   const manifestPath = join(ctx.paths.outDir, "manifest.json");
   const manifestTmp = `${manifestPath}.tmp`;
   await Deno.writeTextFile(manifestTmp, JSON.stringify(manifest, null, 2));

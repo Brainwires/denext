@@ -59,12 +59,87 @@ interface Group {
   symbols: Symbol[];
 }
 
-// deno doc represents a type as `{ repr, kind, ... }`; `repr` is empty for some
-// composite types, so fall back to the kind.
+// deno doc represents a type as `{ repr, kind, ... }`. `repr` is the source text for most
+// nodes but is EMPTY for a generic reference (`Promise<T>` → repr "Promise", typeParams
+// separate) and for composites, so those are reassembled from their parts.
 // deno-lint-ignore no-explicit-any
-function typeStr(t: any): string {
-  const { repr, kind } = t ?? {};
-  return repr || kind || "unknown";
+type Doc = any;
+
+// deno doc v2 keeps every node's payload under `value` (union members, the array element,
+// the typeRef's `typeName`/`typeParams`, the function shape).
+const TYPE_BY_KIND: Record<string, (t: Doc) => string> = {
+  typeRef: (t) => typeRefStr(t),
+  union: (t) => joinMembers(t.value, " | ", t),
+  intersection: (t) => joinMembers(t.value, " & ", t),
+  array: (t) => (t.value ? `${typeStr(t.value)}[]` : fallbackTypeStr(t)),
+  fnOrConstructor: (t) => (t.value?.params ? fnTypeStr(t.value) : fallbackTypeStr(t)),
+  typeLiteral: (t) => t.repr || "object",
+};
+
+/** Members joined by `sep`, or the node's own repr when deno doc gave no member list. */
+function joinMembers(members: Doc[] | undefined, sep: string, t: Doc): string {
+  return Array.isArray(members) ? members.map(typeStr).join(sep) : fallbackTypeStr(t);
+}
+
+function typeStr(t: Doc): string {
+  if (!t) return "unknown";
+  const render = TYPE_BY_KIND[t.kind];
+  return render ? render(t) : fallbackTypeStr(t);
+}
+
+/** `repr` when deno doc gives one, else the node kind. */
+function fallbackTypeStr(t: Doc): string {
+  return t.repr || t.kind || "unknown";
+}
+
+function typeRefStr(t: Doc): string {
+  const ref = t.value ?? t.typeRef ?? {};
+  return `${refName(ref, t)}${typeArgsStr(ref.typeParams)}`;
+}
+
+function refName(ref: Doc, t: Doc): string {
+  return ref.typeName ?? t.repr ?? "unknown";
+}
+
+/** `<A, B>` for a generic reference's type arguments, or "". */
+function typeArgsStr(typeParams: Doc[] | undefined): string {
+  return typeParams?.length ? `<${typeParams.map(typeStr).join(", ")}>` : "";
+}
+
+function fnTypeStr(f: Doc): string {
+  const params = (f.params ?? []).map(paramStr).join(", ");
+  return `(${params}) => ${typeStr(f.tsType)}`;
+}
+
+/** The identifier of a destructured parameter, by pattern kind. */
+const PATTERN_NAMES: Record<string, string> = { object: "options", array: "items" };
+
+/**
+ * One parameter as `name?: Type`. deno doc encodes a defaulted parameter as
+ * `{ kind: "assign", left, right }`, a rest parameter as `{ kind: "rest", arg }`, and a
+ * destructured one as `{ kind: "object" | "array" }` — none of which carry `name` directly.
+ */
+function paramStr(p: Doc): string {
+  if (!p) return "_: unknown";
+  if (p.kind === "assign") return optionalize(paramStr(inner(p.left, p)));
+  if (p.kind === "rest") return `...${paramStr(inner(p.arg, p))}`;
+  return plainParamStr(p);
+}
+
+/** `name?: Type` for an identifier or destructuring-pattern parameter. */
+function plainParamStr(p: Doc): string {
+  const name = p.name ?? PATTERN_NAMES[p.kind] ?? "_";
+  return `${name}${p.optional ? "?" : ""}: ${typeStr(p.tsType)}`;
+}
+
+/** A wrapped parameter node with the wrapper's type annotation when its own is missing. */
+function inner(node: Doc, wrapper: Doc): Doc {
+  return { ...node, tsType: node?.tsType ?? wrapper.tsType };
+}
+
+/** `name: T` → `name?: T` (a defaulted parameter is optional to callers). */
+function optionalize(sig: string): string {
+  return sig.includes("?:") ? sig : sig.replace(/: /, "?: ");
 }
 
 // deno-lint-ignore no-explicit-any
@@ -73,9 +148,7 @@ type Decl = any;
 /** `name<T>(a: A, b?: B): R` and friends, per declaration kind. */
 const SIGNATURES: Record<string, (name: string, def: Decl, tp: string) => string> = {
   function: (name, def, tp) => {
-    const params = (def.params ?? []).map((p: Decl) =>
-      `${p.name ?? "_"}${p.optional ? "?" : ""}: ${typeStr(p.tsType)}`
-    ).join(", ");
+    const params = (def.params ?? []).map(paramStr).join(", ");
     return `${name}${tp}(${params}): ${typeStr(def.returnType)}`;
   },
   variable: (name, def) => `${name}: ${typeStr(def.tsType)}`,

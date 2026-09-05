@@ -186,7 +186,7 @@ Deno.test("a page's own og:image is not overridden", async () => {
   const modules: Record<string, unknown> = {
     "page.tsx": {
       default: () => h("h1", null, "hi"),
-      metadata: { openGraph: { image: "https://cdn.x/custom.png" } },
+      metadata: { openGraph: { images: "https://cdn.x/custom.png" } },
     },
   };
   const app = createApp({

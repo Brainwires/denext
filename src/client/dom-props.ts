@@ -153,7 +153,14 @@ function setFormAction(
     // Drive the form-scoped pending signal (useFormStatus) for the duration of
     // the action, and route thrown/rejected errors to the nearest boundary.
     const sig = state.formStatus;
-    if (sig) beginFormAction(sig);
+    if (sig) {
+      const el = form as { method?: string } | null;
+      beginFormAction(sig, {
+        data: payload as FormData | undefined,
+        method: (el?.method || "post").toLowerCase(),
+        action,
+      });
+    }
     let settled = false;
     const done = () => {
       if (settled) return;

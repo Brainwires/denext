@@ -1042,10 +1042,14 @@ async function cachedResponse(
       headers: [...res.headers],
       body: await res.text(),
     };
-    try {
-      await store.setData(key, { value, expiresAt: ttlToExpiry(revalidate), tags });
-    } catch (err) {
-      logCacheError("setData", err);
+    // Only a successful response is cached (Next's fetch cache does the same): a transient
+    // 5xx/429 must not be served as "the data" for the whole revalidate window.
+    if (res.ok) {
+      try {
+        await store.setData(key, { value, expiresAt: ttlToExpiry(revalidate), tags });
+      } catch (err) {
+        logCacheError("setData", err);
+      }
     }
     return value;
   })();

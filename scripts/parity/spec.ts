@@ -209,7 +209,7 @@ export const CATALOG: SpecEntry[] = [
   {
     specifier: "@remix-run/react",
     real: "@remix-run/react",
-    denext: "src/compat/remix/client.ts",
+    denext: "src/compat/remix/mod.ts",
     group: "remix",
   },
   {

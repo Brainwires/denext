@@ -11,6 +11,8 @@ import {
   hookIndex,
   renderPhaseUpdateScheduled,
   resetHookCursor,
+  setRefreshSwapRender,
+  setSuppressEffectQueue,
 } from "./hooks-dispatcher.ts";
 
 import type { VNode } from "../../jsx/types.ts";
@@ -51,6 +53,7 @@ function asyncClientComponentError(): Error {
  * effects reach the commit.
  */
 function restoreForReRender(inst: Fiber, depsBaseline: Array<DependencyList | undefined>): void {
+  setSuppressEffectQueue(false); // the discarded pass's queues are cleared below; re-queue
   const hooks = inst.hooks!;
   for (let i = 0; i < hooks.length; i++) {
     const c = hooks[i];
@@ -102,6 +105,13 @@ function runRenderPhase(
     if (result instanceof Promise) throw asyncClientComponentError();
   }
   return result;
+}
+
+/** `props` minus `ref` (a new object only when a ref is present). */
+function withoutRef(props: unknown): unknown {
+  if (!props || typeof props !== "object" || !("ref" in props)) return props;
+  const { ref: _ref, ...rest } = props as Record<string, unknown>;
+  return rest;
 }
 
 /** Run a component fiber's render, returning the single rendered vnode. */
@@ -235,14 +245,15 @@ function renderWithStrictMode(
   const result = runRenderPhase(inst, depsBaseline, type, props, ref, forwardsRef);
   if (inst.strict === true && devHydrationActive()) {
     const localAfterFirst = inst.idScope!.local;
-    const second = runRenderPhase(
-      inst,
-      inst.hooks!.map((c) => c.deps),
-      type,
-      props,
-      ref,
-      forwardsRef,
-    );
+    // Effect deps are recorded at COMMIT, so the second pass would see them "changed" again
+    // and queue duplicates: suppress queueing for it (the first pass's entries commit).
+    setSuppressEffectQueue(true);
+    let second: VNode | null;
+    try {
+      second = runRenderPhase(inst, depsBaseline, type, props, ref, forwardsRef);
+    } finally {
+      setSuppressEffectQueue(false);
+    }
     inst.idScope!.local = localAfterFirst;
     return second ?? textVNode("");
   }
@@ -277,6 +288,7 @@ export function renderComponent(inst: Fiber): VNode {
   const prevInst = currentFiber;
   const prevIdx = hookIndex;
   const swap = resolveRefreshSwap(inst);
+  setRefreshSwapRender(swap.refreshSwap);
   enterComponentRender(inst, 0);
   inst.insertionEffects = [];
   inst.pendingEffects = [];
@@ -301,10 +313,11 @@ export function renderComponent(inst: Fiber): VNode {
     }
     const { type, forwardsRef } = resolveRenderTarget(swap.rawType);
     const props = prepareRenderProps(inst);
-    // forwardRef threads `ref` via props (denext convention); a plain component
-    // ignores the second argument.
+    // forwardRef receives `(props, ref)` with `ref` REMOVED from props, as in React (a
+    // render fn that spreads `props` onto a host element must not forward the ref twice).
     const ref = forwardsRef ? ((props as { ref?: unknown }).ref ?? null) : undefined;
-    return renderWithStrictMode(inst, type, props, ref, forwardsRef);
+    const renderProps = forwardsRef ? withoutRef(props) : props;
+    return renderWithStrictMode(inst, type, renderProps, ref, forwardsRef);
   } finally {
     finishComponentRender(inst, t0, profT0, swap);
     setDispatcher(prevDispatcher);

@@ -38,8 +38,8 @@ With the plugin registered, a `pages/` tree is routed alongside `app/`.
 - **App Router coexistence** (`app/app-page/page.tsx`) — an App Router route
   living in the same app as the `pages/` tree.
 
-The plugin's known gaps (`router.events`, shallow routing, `<Link>` prefetch,
-i18n locale routing) are tracked in
+`router.events`, shallow routing, `<Link>` prefetch and i18n locale routing all
+work; whatever remains open for the plugin is tracked in
 [KNOWN-LIMITATIONS.md](../../KNOWN-LIMITATIONS.md).
 
 ## Run

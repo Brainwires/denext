@@ -9,6 +9,18 @@
 
 import type { AuthUser, CredentialsProvider, OAuthProvider, ProfileInput } from "./types.ts";
 
+/**
+ * Normalize an `email_verified` claim. The OIDC spec makes it a boolean, but IdPs have
+ * shipped it as the STRING `"false"` / `"true"`; a strict `=== false` check would treat the
+ * string `"false"` as verified. Unknown shapes → `undefined` (no claim made).
+ */
+function emailVerifiedClaim(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return undefined;
+}
+
 /** The client credentials every OAuth preset needs. */
 export interface OAuthClientOptions {
   /** OAuth client id. */
@@ -37,8 +49,10 @@ export function google(options: OAuthClientOptions): OAuthProvider {
       // Drop the email when the IdP explicitly marks it unverified — otherwise an
       // attacker could register a Google-side account carrying a victim's address and
       // an app that links by email would take over the victim's account.
-      email: claims?.email_verified === false ? undefined : (claims?.email as string | undefined),
-      emailVerified: claims?.email_verified as boolean | undefined,
+      email: emailVerifiedClaim(claims?.email_verified) === false
+        ? undefined
+        : (claims?.email as string | undefined),
+      emailVerified: emailVerifiedClaim(claims?.email_verified),
       image: claims?.picture as string | undefined,
     }),
   };
@@ -117,7 +131,7 @@ export function oidc(options: OidcOptions): OAuthProvider {
       const src = { ...userinfo, ...claims };
       // Drop the email when the IdP explicitly marks it unverified (see `google`): a
       // generic OIDC provider may let a user set an arbitrary, unverified address.
-      const verified = src.email_verified as boolean | undefined;
+      const verified = emailVerifiedClaim(src.email_verified);
       return {
         id: String(src.sub ?? ""),
         name: src.name as string | undefined,

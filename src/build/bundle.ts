@@ -5,6 +5,8 @@
 // as one module graph keeps shared module identity (e.g. context symbols)
 // intact, which separate dynamic imports would break.
 
+import { actionIdFor } from "../runtime/server-action.ts";
+import { denoVersionOk, MIN_DENO_VERSION } from "./deno-version.ts";
 import { basename, dirname, fromFileUrl, join, resolve, toFileUrl } from "@std/path";
 import { walk } from "@std/fs";
 import type { PageRoute } from "../router/manifest.ts";
@@ -122,9 +124,6 @@ export function denoExecutable(): string {
   return "deno";
 }
 
-/** Minimum Deno major version providing the `deno bundle` subcommand denext uses. */
-const MIN_DENO_MAJOR = 2;
-
 let bundleSupport: Promise<void> | undefined;
 
 /**
@@ -161,20 +160,20 @@ async function probeBundleSupport(): Promise<void> {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(
       `denext: could not run \`${deno} --version\` to bundle client code (${msg}). ` +
-        `Install Deno ${MIN_DENO_MAJOR}.x, or set DENO_BIN to a compatible deno binary.`,
+        `Install Deno ${MIN_DENO_VERSION}+, or set DENO_BIN to a compatible deno binary.`,
     );
   }
   const match = versionText.match(/deno\s+(\d+)\.(\d+)\.(\d+)/i);
   if (!match) {
     throw new Error(
       `denext: unexpected \`deno --version\` output while checking bundle support:\n${versionText}\n` +
-        `denext needs Deno ${MIN_DENO_MAJOR}.x (the \`deno bundle\` subcommand). Set DENO_BIN if needed.`,
+        `denext needs Deno ${MIN_DENO_VERSION}+ (the \`deno bundle\` subcommand). Set DENO_BIN if needed.`,
     );
   }
-  if (Number(match[1]) < MIN_DENO_MAJOR) {
+  if (!denoVersionOk(`${match[1]}.${match[2]}.${match[3]}`)) {
     throw new Error(
-      `denext: bundling requires Deno ${MIN_DENO_MAJOR}.x (the \`deno bundle\` subcommand); ` +
-        `found ${match[0]}. Upgrade Deno, or set DENO_BIN to a Deno ${MIN_DENO_MAJOR}.x binary.`,
+      `denext: bundling requires Deno ${MIN_DENO_VERSION}+ (the \`deno bundle\` subcommand); ` +
+        `found ${match[0]}. Upgrade Deno, or set DENO_BIN to a newer deno binary.`,
     );
   }
 }
@@ -590,8 +589,8 @@ export interface BundleOptions {
 export function generateServerStub(moduleId: string, exports: string[]): string {
   const lines = exports.map((name) =>
     name === "default"
-      ? `export default clientActionStub(${JSON.stringify(moduleId + "#default")});`
-      : `export const ${name} = clientActionStub(${JSON.stringify(moduleId + "#" + name)});`
+      ? `export default clientActionStub(${JSON.stringify(actionIdFor(moduleId, "default"))});`
+      : `export const ${name} = clientActionStub(${JSON.stringify(actionIdFor(moduleId, name))});`
   );
   return `import { clientActionStub } from "denext/client-runtime";\n${lines.join("\n")}\n`;
 }
@@ -756,6 +755,40 @@ async function prepareConfig(tmpDir: string, opts: BundleOptions): Promise<strin
  * requires `--outdir` (it cannot stream to stdout); with multiple entries, any
  * module imported by more than one is hoisted into a shared chunk.
  */
+/**
+ * Deno's minimum-dependency-age policy (default 24 h) applies to the `deno bundle` child too,
+ * and Deno gives the parent no way to read the value it was started with. `DENEXT_MIN_DEP_AGE`
+ * (e.g. `0`, `1h`) is forwarded as the child's `--min-dep-age`; the app's own `deno.json`
+ * `minimumDependencyAge` is honored by the child through `--config` as usual.
+ */
+export function minDepAgeArgs(env: string | undefined = safeEnv("DENEXT_MIN_DEP_AGE")): string[] {
+  return env ? [`--min-dep-age=${env}`] : [];
+}
+
+function safeEnv(name: string): string | undefined {
+  try {
+    return Deno.env.get(name);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Explain a `deno bundle` failure. Deno's "Do not know how to load path: deno:jsr:@denext/…"
+ * means the resolver found no version satisfying the range — on a brand-new release that is
+ * the minimum-dependency-age policy (nothing older than 24 h matches), not a broken app.
+ */
+export function bundleFailureMessage(code: number, stderr: string): string {
+  const hint = /Do not know how to load path: deno:jsr:@denext\//.test(stderr)
+    ? `\nHint: no published version of denext satisfied the import map's range. If the version ` +
+      `you want was published in the last 24 h, Deno's minimum-dependency-age policy hides it — ` +
+      `re-run with DENEXT_MIN_DEP_AGE=0 (or set "minimumDependencyAge" in your deno.json).`
+    : "";
+  return `deno bundle failed (${code}):\n${stderr}${hint}\n` +
+    `(\`deno bundle\` is an evolving subcommand; if this looks like a CLI/flag ` +
+    `error rather than a code error, check your Deno version or set DENO_BIN.)`;
+}
+
 async function runDenoBundle(
   entryPaths: string[],
   configPath: string,
@@ -776,6 +809,7 @@ async function runDenoBundle(
     outDir,
     "--config",
     configPath,
+    ...minDepAgeArgs(),
   ];
   if (minify) args.push("--minify");
   // Dev builds (unminified) get inline source maps so browser stack traces and
@@ -790,11 +824,7 @@ async function runDenoBundle(
     stderr: "piped",
   }).output();
   if (code !== 0) {
-    throw new Error(
-      `deno bundle failed (${code}):\n${new TextDecoder().decode(stderr)}\n` +
-        `(\`deno bundle\` is an evolving subcommand; if this looks like a CLI/flag ` +
-        `error rather than a code error, check your Deno version or set DENO_BIN.)`,
-    );
+    throw new Error(bundleFailureMessage(code, new TextDecoder().decode(stderr)));
   }
   const files = new Map<string, string>();
   for await (const dirEntry of Deno.readDir(outDir)) {

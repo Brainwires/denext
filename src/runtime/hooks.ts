@@ -176,8 +176,18 @@ export function useCallback<T extends (...args: never[]) => unknown>(
   return dispatcher().useMemo(() => fn, deps);
 }
 
-/** Create a mutable ref object whose `.current` persists across renders. */
-export function useRef<T>(initial: T): { current: T } {
+/**
+ * Create a mutable ref object whose `.current` persists across renders. React's three
+ * signatures: `useRef<T>(value)` → `{ current: T }`, `useRef<T>(null)` → `{ current: T | null }`
+ * (the DOM-ref idiom), `useRef<T>()` → `{ current: T | undefined }`.
+ */
+export function useRef<T>(initial: T): { current: T };
+/** `useRef<T>(null)` — the DOM-ref idiom: `current` is `T | null`. */
+export function useRef<T>(initial: T | null): { current: T | null };
+/** `useRef<T>()` — an initially-undefined cell. */
+export function useRef<T = undefined>(): { current: T | undefined };
+/** Implementation signature. */
+export function useRef<T>(initial?: T): { current: T | undefined } {
   return dispatcher().useRef(initial);
 }
 
@@ -347,8 +357,9 @@ export function useTransition(): [boolean, (callback: () => void) => void] {
 /**
  * Show an optimistic value while an async update is in flight. Returns
  * `[optimisticState, addOptimistic]`; call `addOptimistic(action)` to apply an
- * optimistic change over the current `state`. The optimistic value resets to
- * `state` whenever `state` itself changes (e.g. once the real update lands).
+ * optimistic change over the current `state`. The optimistic value resets to `state`
+ * when `state` itself changes AND when the transition/action it was applied in settles
+ * (React semantics — a failed action reverts too). `addOptimistic` keeps one identity.
  */
 export function useOptimistic<S, A = S>(
   state: S,
@@ -360,13 +371,24 @@ export function useOptimistic<S, A = S>(
     store.current = { base: state, value: state };
   }
   const [, force] = useState(0);
+  const updater = useRef(updateFn);
+  updater.current = updateFn;
   const addOptimistic = useCallback((action: A) => {
     // React's single-arg form has no reducer: the action IS the next optimistic value.
-    store.current.value = updateFn
-      ? updateFn(store.current.value, action)
-      : (action as unknown as S);
+    const fn = updater.current;
+    store.current.value = fn ? fn(store.current.value, action) : (action as unknown as S);
     force((n) => n + 1);
-  }, [updateFn]);
+    // React discards the optimistic value when the transition/action that applied it
+    // settles — success OR failure — whether or not `state` changed. Outside a transition
+    // (React warns) it persists until the base `state` changes.
+    const revert = () => {
+      if (Object.is(store.current.value, store.current.base)) return;
+      store.current.value = store.current.base;
+      force((n) => n + 1);
+    };
+    if (transitionSettledHook) transitionSettledHook(revert);
+    else queueMicrotask(revert);
+  }, []);
   return [store.current.value, addOptimistic];
 }
 
@@ -387,7 +409,7 @@ export function useImperativeHandle<T>(
       if (typeof ref === "function") ref(null);
       else if (ref) ref.current = null;
     };
-  }, deps);
+  }, deps ? [...deps, ref] : deps); // React: the ref is part of the effect's inputs
 }
 
 /**
@@ -432,6 +454,14 @@ const INERT_BOUNDARY: ErrorBoundaryController = {
 let transitionScheduler:
   | ((cb: () => void, onComplete: () => void) => void)
   | null = null;
+
+/** Internal: runs `cb` once the transition currently in flight has settled (microtask if none). */
+let transitionSettledHook: ((cb: () => void) => void) | null = null;
+
+/** Internal: install the client scheduler's "current transition settled" registration. */
+export function setTransitionSettledHook(fn: ((cb: () => void) => void) | null): void {
+  transitionSettledHook = fn;
+}
 
 /** Internal: install the client's low-priority transition scheduler. */
 export function setTransitionScheduler(

@@ -104,7 +104,7 @@ export function createDesktopHandler(
       return await proxy.proxyToBackend(request, url, proxyCfg);
     }
     const accEnc = request.headers.get("accept-encoding") ?? undefined;
-    const asset = await serveStatic(outDir, url.pathname, accEnc);
+    const asset = await serveStatic(outDir, url.pathname, accEnc, request);
     if (asset) return noStore(asset);
     if (wantsShell(request, url.pathname)) {
       const html = await Deno.readTextFile(indexHtmlPath).catch(() => null);

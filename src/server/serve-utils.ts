@@ -6,8 +6,26 @@ import { setRemoteAddr } from "./remote-addr.ts";
 import { serveStatic } from "./static.ts";
 import type { HstsConfig } from "./config.ts";
 
-/** Cache-control for content-hashed, immutable build assets (client bundles, self-hosted fonts). */
+/** Cache-control for content-hashed, immutable build assets (split chunks, self-hosted fonts). */
 const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable";
+/**
+ * Cache-control for build assets whose NAME does not change between builds (`<routeId>.js`,
+ * `<routeId>.css`, `flight.js`): cacheable but revalidated on every use (ETag/304 from
+ * `serveStatic`), so a redeploy is picked up instead of a browser holding the old entry for
+ * a year.
+ */
+const REVALIDATE_CACHE_CONTROL = "public, max-age=0, must-revalidate";
+
+/**
+ * A basename that carries a content hash: a split chunk (`chunk-<hash>.js`), a `<name>-<hash>.ext`
+ * asset, or a self-hosted font — named by a hash of its source URL alone (`<base36>.woff2`).
+ */
+function isContentHashed(rel: string): boolean {
+  const base = rel.slice(rel.lastIndexOf("/") + 1);
+  return /^chunk-[a-z0-9_-]+\.js$/i.test(base) ||
+    /[-.][0-9a-f]{8,}\.[a-z0-9]+$/i.test(base) ||
+    /^[a-z0-9]{5,}\.(woff2?|ttf|otf|eot)$/i.test(base);
+}
 
 /**
  * Serve a built, content-hashed asset from `dir` (path `rel`) as immutable, with
@@ -33,9 +51,17 @@ export async function serveImmutableAsset(
   hsts: HstsConfig | false | undefined,
   notFoundBody = "not found",
 ): Promise<Response> {
-  const asset = await serveStatic(dir, rel, request.headers.get("accept-encoding") ?? undefined);
+  const asset = await serveStatic(
+    dir,
+    rel,
+    request.headers.get("accept-encoding") ?? undefined,
+    request,
+  );
   if (asset) {
-    asset.headers.set("cache-control", IMMUTABLE_CACHE_CONTROL);
+    asset.headers.set(
+      "cache-control",
+      isContentHashed(rel) ? IMMUTABLE_CACHE_CONTROL : REVALIDATE_CACHE_CONTROL,
+    );
     return applyDefaultSecurityHeaders(asset, secure, hsts);
   }
   return applyDefaultSecurityHeaders(new Response(notFoundBody, { status: 404 }), secure, hsts);

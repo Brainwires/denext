@@ -1,6 +1,7 @@
 // Coverage for compat surface: next/form (<Form>), next/head (<Head>/defaultHead),
 // compose-refs (composeRefs/useComposedRefs), class-detect, and the react-dom shim.
 
+import { REACT_COMPAT_VERSION } from "../src/compat/react-version.ts";
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "denext/jsx-runtime";
 import { render } from "denext/testing";
@@ -152,8 +153,8 @@ Deno.test("unstable_batchedUpdates runs fn(arg) and returns its result", () => {
 });
 
 Deno.test("react-dom reports a React 19 version and a populated default namespace", () => {
-  assertEquals(version, "19.2.0");
-  assertEquals(ReactDOM.version, "19.2.0");
+  assertEquals(version, REACT_COMPAT_VERSION);
+  assertEquals(ReactDOM.version, REACT_COMPAT_VERSION);
   for (
     const key of ["createRoot", "hydrateRoot", "flushSync", "render", "hydrate", "createPortal"]
   ) {

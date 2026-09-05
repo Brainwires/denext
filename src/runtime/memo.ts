@@ -44,7 +44,7 @@ export function shallowEqualProps(
  * @param component The component to memoize.
  * @param areEqual Optional custom comparator (`true` ⇒ skip re-render).
  */
-export function memo<P extends Record<string, unknown>>(
+export function memo<P extends object>(
   component: Component<P>,
   areEqual?: (prev: P, next: P) => boolean,
 ): Component<P> {

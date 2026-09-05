@@ -5,6 +5,8 @@
 // intrinsic elements, and correct HTML escaping. Hooks resolve through a
 // read-only SSR dispatcher (state is initial-only; effects don't run).
 
+import { renderScope } from "../runtime/render-scope.ts";
+import { invokeWithRenderPhase, ssrStateSlot } from "./render-phase.ts";
 import { FRAGMENT, PORTAL, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
 import {
   type Context,
@@ -240,12 +242,16 @@ export function createSSRDispatcher(
   };
   return {
     useState<S>(initial: S | (() => S)) {
-      const value = typeof initial === "function" ? (initial as () => S)() : initial;
-      // Server state is immutable within a render; updater is a no-op.
-      return [value, () => {}];
+      // Render-phase setState converges in place (React parity); see ssrStateSlot.
+      return ssrStateSlot<S>(() =>
+        typeof initial === "function" ? (initial as () => S)() : initial
+      );
     },
-    useReducer<S, A, I>(_reducer: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
-      return [init ? init(initialArg) : (initialArg as unknown as S), () => {}];
+    useReducer<S, A, I>(reducer: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
+      const [state, set] = ssrStateSlot<S>(() =>
+        init ? init(initialArg) : (initialArg as unknown as S)
+      );
+      return [state, (action: A) => set((prev: S) => reducer(prev, action))];
     },
     useEffect: countEffect,
     useMemo<T>(factory: () => T) {
@@ -262,11 +268,19 @@ export function createSSRDispatcher(
     },
     useSyncExternalStore<T>(
       _subscribe: (onChange: () => void) => () => void,
-      getSnapshot: () => T,
+      _getSnapshot: () => T,
       getServerSnapshot?: () => T,
     ): T {
       if (effects) effects.count++; // subscribes on mount → needs hydration
-      return (getServerSnapshot ?? getSnapshot)();
+      if (!getServerSnapshot) {
+        // React: the server cannot subscribe, so a store without a server snapshot
+        // has no deterministic value to render — fail loudly instead of hydrating a flip.
+        throw new Error(
+          "useSyncExternalStore: Missing getServerSnapshot, which is required for " +
+            "server-rendered content. Will revert to client rendering.",
+        );
+      }
+      return getServerSnapshot();
     },
     useLayoutEffect: countEffect,
     useInsertionEffect: countEffect,
@@ -330,16 +344,9 @@ export interface HeadCollector {
   serverInserted?: string[];
 }
 
-/**
- * The active `useServerInsertedHTML` sink for the in-flight {@link renderToString}
- * pass, or null outside SSR (so the hook is a no-op on the client). Set/cleared by
- * `renderToString`; a module singleton keyed on globalThis so an inlined next-compat
- * runtime copy and the host share ONE sink (mirrors the hook dispatcher pattern).
- */
-const INSERT_SINK_KEY = Symbol.for("denext.serverInsertSink");
-interface SinkHolder {
-  [INSERT_SINK_KEY]?: ((cb: () => VNodeChildren) => void) | null;
-}
+// The active `useServerInsertedHTML` sink lives on the per-request render scope (see
+// `render-scope.ts`): set/cleared by the SSR entries, read by the hook, and — because
+// concurrent renders interleave at every await — never a process-wide module global.
 
 /**
  * Begin collecting {@link useServerInsertedHTML} callbacks for a render pass: install the
@@ -352,10 +359,10 @@ export function beginServerInsertCollection(): {
   end: () => void;
 } {
   const inserted: Array<() => VNodeChildren> = [];
-  const holder = globalThis as SinkHolder;
-  const prev = holder[INSERT_SINK_KEY];
-  holder[INSERT_SINK_KEY] = (cb) => inserted.push(cb);
-  return { inserted, end: () => void (holder[INSERT_SINK_KEY] = prev) };
+  const scope = renderScope();
+  const prev = scope.insertSink;
+  scope.insertSink = (cb) => inserted.push(cb);
+  return { inserted, end: () => void (scope.insertSink = prev) };
 }
 
 /**
@@ -630,7 +637,7 @@ function renderChildInto(child: VNodeChild, ctx: RenderCtx): void | Promise<void
     ctx.out.push(escapeHtml(child));
     return;
   }
-  if (typeof child === "number") {
+  if (typeof child === "number" || typeof child === "bigint") {
     ctx.out.push(escapeHtml(String(child)));
     return;
   }
@@ -643,9 +650,10 @@ function renderVNodeInto(node: VNode, ctx: RenderCtx): void | Promise<void> {
   // React treats an element's props as `{}` in that case, so normalize here.
   const props = node.props ?? {};
   if (type === FRAGMENT) return renderFragmentInto(props, ctx);
-  // Portal: its children target a client DOM node that doesn't exist during SSR,
-  // so — like React's server renderer — a portal emits nothing.
-  if ((type as unknown) === PORTAL) return;
+  // Portal: its children target a live client DOM node — React's server renderers throw.
+  if ((type as unknown) === PORTAL) {
+    throw new Error("Portals are not currently supported by the server renderer.");
+  }
   if ((type as unknown) === SUSPENSE) return appendResult(renderSuspenseToStr(props, ctx), ctx);
   if ((type as unknown) === ERROR_BOUNDARY) {
     return appendResult(renderErrorBoundaryToStr(props, ctx), ctx);
@@ -849,7 +857,10 @@ function invokeSync(type: unknown, props: Props, ctx: RenderCtx): VNodeChild | P
     }
     throw classComponentsDisabledError();
   }
-  return invokeComponent(resolveComponentType(type), props) as VNodeChild | Promise<VNodeChild>;
+  const component = resolveComponentType(type);
+  return invokeWithRenderPhase(() => invokeComponent(component, props)) as
+    | VNodeChild
+    | Promise<VNodeChild>;
 }
 
 /** Intrinsic element. */

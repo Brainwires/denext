@@ -30,6 +30,8 @@
 // `input` may be a plain function over the form fields, or any **Standard Schema**
 // (Zod/Valibot/ArkType — `input: z.object({...})`) — zero denext dependency either way.
 
+import { isControlSignal, toClientError } from "./error-boundary.ts";
+
 /** The Standard Schema v1 surface (https://standardschema.dev) — validator-agnostic. */
 export interface StandardSchemaV1<Output = unknown> {
   /** The Standard Schema properties: version, vendor, and the `validate` function. */
@@ -63,6 +65,11 @@ export type ActionResult<Out> =
     readonly error: string;
     /** Per-field validation messages, keyed by form field name. */
     readonly fieldErrors?: Readonly<Record<string, string>>;
+    /**
+     * Set when the handler threw a non-validation error: in production the `error` text is
+     * generic and this opaque digest correlates it with the server log line.
+     */
+    readonly digest?: string;
   };
 
 /** The form fields of a submission as a plain object (the default `input` shape). */
@@ -136,12 +143,19 @@ async function parseInput<In>(spec: InputSpec<In> | undefined, formData: FormDat
   return result.value;
 }
 
-/** Turn a thrown error into a failed {@link ActionResult}. */
+/**
+ * Turn a thrown error into a failed {@link ActionResult}. A validation error carries its
+ * message + field errors verbatim (they are authored for the user). Any other handler error
+ * is REDACTED the way a render error is ({@link toClientError}): the client gets a generic
+ * message + digest, the real error is logged server-side — `error.message` of a DB driver
+ * or a stack must not reach the browser.
+ */
 function toFailure<Out>(err: unknown): ActionResult<Out> {
   if (err instanceof ActionValidationError) {
     return { ok: false, error: err.message, fieldErrors: err.fieldErrors };
   }
-  return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  const client = toClientError(err);
+  return { ok: false, error: client.message, digest: client.digest };
 }
 
 /**
@@ -171,6 +185,10 @@ export function defineAction<Out, In = FormFields>(
     try {
       return { ok: true, data: await config.handler(input) };
     } catch (err) {
+      // `redirect()` / `notFound()` / `forbidden()` / `unauthorized()` inside the handler
+      // are control flow, not failures: the action pipeline turns them into the redirect /
+      // boundary response.
+      if (isControlSignal(err)) throw err;
       return toFailure<Out>(err);
     }
   };

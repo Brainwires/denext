@@ -104,14 +104,32 @@ type MissingConfigKeys = Exclude<keyof DenextConfig, (typeof CONFIG_KEYS)[number
 const _everyFieldListed: MissingConfigKeys extends never ? true : MissingConfigKeys = true;
 const _everyKeyIsField: readonly (keyof DenextConfig)[] = CONFIG_KEYS;
 
-type ConfigModule = DenextConfig & { default?: DenextConfig };
+type ConfigModule = DenextConfig & { default?: DenextConfig | ConfigFactory };
+
+/**
+ * Next.js's function form: `export default (phase, { defaultConfig }) => ({ … })`. Called
+ * with the denext phase (`"development"` | `"production"`) and an empty default config.
+ */
+type ConfigFactory = (
+  phase: string,
+  context: { defaultConfig: DenextConfig },
+) => DenextConfig | Promise<DenextConfig>;
+
+/** Resolve a default export that may be a config object OR a factory returning one. */
+async function resolveDefaultExport(mod: ConfigModule): Promise<DenextConfig | undefined> {
+  const base = mod.default;
+  if (typeof base !== "function") return base;
+  const phase = (globalThis as { __denextDev?: boolean }).__denextDev
+    ? "development"
+    : "production";
+  return await base(phase, { defaultConfig: {} });
+}
 
 /**
  * Merge a config module's named exports over its default-export object (named exports
  * take precedence). `??` (not `||`) so an explicit `false` (e.g. `streaming`) survives.
  */
-function mergeConfigModule(mod: ConfigModule): DenextConfig {
-  const base = mod.default ?? {};
+function mergeConfigModule(mod: ConfigModule, base: DenextConfig = {}): DenextConfig {
   const config: Record<string, unknown> = {};
   for (const key of CONFIG_KEYS) config[key] = mod[key] ?? base[key];
   return config as DenextConfig;
@@ -128,9 +146,12 @@ function mergeConfigModule(mod: ConfigModule): DenextConfig {
 async function importConfigFile(path: string, name: string): Promise<DenextConfig> {
   try {
     const mod = await import(toFileUrl(path).href) as ConfigModule;
-    const config = mergeConfigModule(mod);
-    const base = mod.default;
-    if (base && typeof base === "object") warnUnknownConfigKeys(base, name);
+    const base = await resolveDefaultExport(mod);
+    if (base !== undefined && (typeof base !== "object" || base === null)) {
+      throw new Error("the default export must be a config object (or a function returning one)");
+    }
+    const config = mergeConfigModule(mod, base ?? {});
+    if (base) warnUnknownConfigKeys(base, name);
     validateDenextConfig(config, name);
     return config;
   } catch (err) {
@@ -141,9 +162,17 @@ async function importConfigFile(path: string, name: string): Promise<DenextConfi
   }
 }
 
-/** Load `denext.config.{ts,js}` (named exports or a default object), if present. */
+/** The config file names probed, in order (Next.js also accepts `.mjs`/`.mts`). */
+const CONFIG_FILES = [
+  "denext.config.ts",
+  "denext.config.mts",
+  "denext.config.js",
+  "denext.config.mjs",
+];
+
+/** Load `denext.config.{ts,mts,js,mjs}` (named exports, a default object, or a factory). */
 async function loadDenextConfig(projectDir: string): Promise<DenextConfig | null> {
-  for (const name of ["denext.config.ts", "denext.config.js"]) {
+  for (const name of CONFIG_FILES) {
     const p = join(projectDir, name);
     if (await exists(p)) return await importConfigFile(p, name);
   }

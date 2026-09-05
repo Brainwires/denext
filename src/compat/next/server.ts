@@ -44,6 +44,20 @@ export { after, connection } from "../../server/mod.ts";
 export { NextRequest } from "./request.ts";
 export { NextURL } from "./request.ts";
 export type { GeoInfo } from "./request.ts";
+/** The `middleware.ts` `config` export shape (`{ matcher }`). */
+export type { MiddlewareConfig } from "../../server/middleware.ts";
+
+/** Next's `NextMiddleware` — a `middleware.ts` handler signature. */
+export type NextMiddleware = (
+  request: NextRequest,
+  event: NextFetchEvent,
+) =>
+  | Response
+  | NextResponse
+  | undefined
+  | null
+  | void
+  | Promise<Response | NextResponse | undefined | null | void>;
 
 /**
  * `URLPattern` — Next re-exports the platform `URLPattern` from `next/server`. Deno
@@ -80,7 +94,7 @@ export class NextFetchEvent {
 // the original request's body — the runner still routes the original downstream
 // to the page/route/Server-Action handler, which must be able to read it.
 // Idempotent: identity for anything already a NextRequest.
-setRequestAdapter((r) => (r instanceof NextRequest ? r : new NextRequest(r.clone())));
+setRequestAdapter((r) => r instanceof NextRequest ? r : new NextRequest(r.body ? r.clone() : r));
 
 /**
  * `NextResponse` — a `Response` with a cookie writer. Use its statics from a
@@ -107,10 +121,18 @@ export class NextResponse extends Response {
     return new NextResponse(null, { headers });
   }
 
-  /** Internally route as if the request were for `url` (no client redirect). */
-  static rewrite(url: string | URL, init?: { headers?: HeadersInit }): NextResponse {
+  /**
+   * Internally route as if the request were for `url` (no client redirect), optionally
+   * overriding the request headers the rewritten route sees (`rewrite(url, { request: {
+   * headers } })` — the same shape as `next()`).
+   */
+  static rewrite(
+    url: string | URL,
+    init?: { headers?: HeadersInit; request?: { headers: Headers } },
+  ): NextResponse {
     const headers = new Headers(init?.headers);
     headers.set(MIDDLEWARE_REWRITE_HEADER, String(url));
+    if (init?.request?.headers) encodeRequestHeaders(headers, init.request.headers);
     return new NextResponse(null, { headers });
   }
 

@@ -89,7 +89,7 @@ them.
 
 ```sh
 # in the Remix project root
-deno run --node-modules-dir=none -A jsr:@denext/denext/cli migrate --from remix
+deno run --node-modules-dir=none -A jsr:@denext/denext@^2/cli migrate --from remix
 deno task dev
 ```
 
@@ -429,15 +429,15 @@ The CLI prints up to twelve notes and a count of the rest.
 
 ## 9. How this differs from the Next path
 
-| Aspect             | Next.js path                                                                         | Remix path                                                                                           |
-| ------------------ | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| What migrate does  | **Config only.** Writes `deno.json` + `denext.config.ts`; never touches your source. | **Config + a route-tree transform.** Rewrites `app/` in place; routes are relocated and split.       |
-| File conventions   | Already denext's own (App Router).                                                   | `app/routes/*` + `root.tsx` are converted to `app/**/page.tsx` + `layout.tsx`.                       |
-| Data model         | Server Components and Server Actions, as written.                                    | Loaders and actions, preserved and run by the `denext/remix` runtime.                                |
-| Framework imports  | `next/*` aliased in the import map; optional `--codemod` rewrites them to `denext`.  | `@remix-run/*` and `react-router` rewritten in the source to `denext/remix` / `denext/remix/server`. |
-| Old toolchain deps | Inert toolchain, lint, and `@types/*` deps are dropped from the pins.                | The same, plus `@remix-run/*` / `@react-router/*`.                                                   |
-| Report             | Files written, deps classified.                                                      | Plus routes converted, loaders and actions wired, entries removed, and review notes (§7).            |
-| Re-running         | Idempotent (generated files carry a sentinel).                                       | Config is idempotent; the route transform runs once, on a tree that still has `app/routes/`.         |
+| Aspect             | Next.js path                                                                                                          | Remix path                                                                                           |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| What migrate does  | **Config only by default.** Writes `deno.json` + `denext.config.ts`; source is untouched unless you pass `--codemod`. | **Config + a route-tree transform.** Rewrites `app/` in place; routes are relocated and split.       |
+| File conventions   | Already denext's own (App Router).                                                                                    | `app/routes/*` + `root.tsx` are converted to `app/**/page.tsx` + `layout.tsx`.                       |
+| Data model         | Server Components and Server Actions, as written.                                                                     | Loaders and actions, preserved and run by the `denext/remix` runtime.                                |
+| Framework imports  | `next/*` aliased in the import map; optional `--codemod` rewrites them to `denext`.                                   | `@remix-run/*` and `react-router` rewritten in the source to `denext/remix` / `denext/remix/server`. |
+| Old toolchain deps | Inert toolchain, lint, and `@types/*` deps are dropped from the pins.                                                 | The same, plus `@remix-run/*` / `@react-router/*`.                                                   |
+| Report             | Files written, deps classified.                                                                                       | Plus routes converted, loaders and actions wired, entries removed, and review notes (§7).            |
+| Re-running         | Idempotent (generated files carry a sentinel).                                                                        | Config is idempotent; the route transform runs once, on a tree that still has `app/routes/`.         |
 
 Both paths share the `deno.json` shape, the npm passthrough, the compat build
 for real npm React libraries, and the Prisma wiring.

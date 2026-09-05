@@ -20,6 +20,7 @@ import {
 import { getManifest, getUnbundled } from "./manifest.ts";
 import { broadcastError, reloadStream } from "./reload.ts";
 import { DEV_RELOAD_SCRIPT } from "./reload-script.ts";
+import { devErrorPage } from "./error-page.ts";
 import {
   DEV_LOG_PATH,
   DEV_RELOAD_JS_PATH,
@@ -54,16 +55,18 @@ function bundleErrorResponse(st: DevState, title: string, err: unknown): Respons
 
 /**
  * The origin-gated dev endpoints: the live-reload SSE stream, open-in-editor, and the dev
- * black box (browser log sink + state read). Null when `url` is none of them; 403 when a
- * cross-origin page tries (defense-in-depth — cf. CVE-2025-48068).
+ * black box (browser log sink + state read). Null when `url` is none of them (a 403 for ANY
+ * `/_denext/*` URL from a cross-origin page / foreign Host first — defense-in-depth, cf.
+ * CVE-2025-48068 — and the caller's other dev handlers run only once the gate passed).
  */
 function gatedDevEndpoint(
   st: DevState,
   request: Request,
   url: URL,
 ): Promise<Response> | Response | null {
-  const gated = [RELOAD_PATH, OPEN_IN_EDITOR_PATH, DEV_LOG_PATH, DEV_STATE_PATH];
-  if (!gated.includes(url.pathname)) return null;
+  // EVERY `/_denext/*` endpoint is gated — the state-changing ones AND the read-only bundle
+  // / chunk / stylesheet endpoints (dev bundles carry inline source maps = project source).
+  if (!url.pathname.startsWith("/_denext/")) return null;
   if (!devOriginAllowed(request, url, st.allowedDevOrigins)) {
     return new Response("forbidden", { status: 403 });
   }
@@ -74,8 +77,10 @@ function gatedDevEndpoint(
       return openInEditorResponse(st, url.searchParams);
     case DEV_LOG_PATH:
       return devLogResponse(st, request);
-    default:
+    case DEV_STATE_PATH:
       return devStateResponse(st, url);
+    default:
+      return null; // gate passed; another dev handler (or the app) serves it
   }
 }
 
@@ -135,8 +140,32 @@ async function unbundledResponse(
   url: URL,
 ): Promise<Response | null> {
   if (!st.unbundledActive || !url.pathname.startsWith("/_denext/@")) return null;
+  // Same Host/Origin gate as the other dev endpoints (DNS-rebinding defense): these URLs
+  // serve transformed project source and must not be readable from a foreign origin.
+  if (!devOriginAllowed(request, url, st.allowedDevOrigins)) {
+    return new Response("forbidden", { status: 403 });
+  }
   const m = await getManifest(st);
   return await getUnbundled(st).handle(request, url, m);
+}
+
+/**
+ * A 500 for a navigation (HTML GET) becomes the dev error page for the most recent recorded
+ * error — the same title/message/codeframe the terminal printed — so the first-hour mistake
+ * (a syntax error in a page) shows in the browser instead of "Internal Server Error".
+ */
+async function devErrorPageFor(st: DevState, request: Request, res: Response): Promise<Response> {
+  const wantsHtml = request.method === "GET" &&
+    (request.headers.get("accept") ?? "").includes("text/html");
+  if (res.status < 500 || !wantsHtml) return res;
+  const latest = st.devEvents.snapshot({ kind: "error", limit: 1 })[0];
+  const page = devErrorPage(latest, DEV_RELOAD_JS_PATH);
+  if (!page) return res;
+  await res.body?.cancel();
+  return new Response(page, {
+    status: res.status,
+    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+  });
 }
 
 /** The app request, timed and recorded as a `request` event in the black box. */
@@ -147,7 +176,7 @@ async function appResponse(
   url: URL,
 ): Promise<Response> {
   const started = performance.now();
-  const res = await appHandler(request);
+  const res = await devErrorPageFor(st, request, await appHandler(request));
   st.devEvents.record({
     kind: "request",
     ts: Date.now(),
