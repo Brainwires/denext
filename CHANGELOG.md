@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.0.2] - 2026-09-05
+
 ### Fixed
 
 - **A `@denext/*` codec released within Deno's minimum-dependency-age window no longer breaks compat builds.** The esbuild deno-loader (and the `deno info` graph crawls) applied Deno's default 2-day policy on their own, so right after a `@denext/photon`/`@denext/avif` release every compat-mode `denext build`/`export` failed with "newer than the specified minimum dependency date" even when the CLI was run with `--min-dep-age=0`. The policy is now propagated everywhere denext resolves dependencies: `DENEXT_MIN_DEP_AGE` (or the app's own `minimumDependencyAge`) is written into the merged CSS/module configs, the runtime-prebuild config and a per-loader config copy, and passed to every `deno info` crawl — one crawl helper (`denoInfoGraph`) now serves both the CSS discovery and the boundary/hydration graph. `src/build/bundle.ts`, `src/build/next-compat.ts`, `src/build/module-graph.ts`.
@@ -2686,6 +2688,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.0.2]: https://jsr.io/@denext/denext@2.0.2
 [2.0.1]: https://jsr.io/@denext/denext@2.0.1
 [2.0.0]: https://jsr.io/@denext/denext@2.0.0
 [1.0.2]: https://jsr.io/@denext/denext@1.0.2
