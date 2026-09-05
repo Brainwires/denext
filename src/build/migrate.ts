@@ -1548,16 +1548,21 @@ function spaTasks(
   nodeModulesDir: "manual" | "auto" = "auto",
   appName = "app",
 ): Record<string, string> {
-  // A manual-`node_modules` (pnpm/yarn) app: the CLI itself must NOT run under the app's
-  // manual mode. Deno resolves a REMOTE module's npm imports (the JSR-installed CLI's own
-  // `esbuild`, `lightningcss-wasm`, …) against the nearest config — the app's — and a manual
-  // dir carries only the app's deps, so the CLI failed at load ("Could not find a matching
-  // package for 'npm:esbuild'"). `--node-modules-dir=none` resolves the CLI's deps from
-  // Deno's global cache; the build child the CLI re-execs runs under the merged config
-  // (manual + the framework-deps dir), so the app's own `node_modules` — workspace links
-  // included — still resolve exactly as before. It also keeps Deno from "migrating" a
-  // pnpm-workspace.yaml into the monorepo's root package.json on first run.
-  const run = nodeModulesDir === "manual" ? "deno run -A --node-modules-dir=none" : "deno run -A";
+  // The CLI PROCESS always runs with `--node-modules-dir=none`, whatever the app's mode:
+  // Deno resolves a REMOTE module's npm imports (the JSR-installed CLI's own `esbuild`,
+  // `lightningcss-wasm`, …) against the nearest config — the app's — and an app
+  // `node_modules` carries only the app's deps, so the CLI failed at load ("Could not find a
+  // matching package for 'npm:esbuild'"). `none` resolves the CLI's deps from Deno's global
+  // cache; the build child the CLI re-execs runs under the merged config (`--config`, which
+  // Deno honors verbatim: the app's mode + the framework-deps dir), so the app's own
+  // `node_modules` — workspace links included — resolve exactly as before. The flag is also
+  // what makes an app inside an npm/pnpm WORKSPACE work: Deno treats the monorepo's root
+  // `package.json` (`workspaces`) as the workspace root and IGNORES `nodeModulesDir` in a
+  // member `deno.json` ("can only be specified in the workspace root"), so the config value
+  // alone would not have applied to the CLI process. It further keeps Deno from "migrating" a
+  // pnpm-workspace.yaml into the root package.json on first run.
+  void nodeModulesDir;
+  const run = "deno run -A --node-modules-dir=none";
   const tasks: Record<string, string> = {
     dev: `${run} ${cli} dev .`,
     build: `${run} ${cli} build .`,
