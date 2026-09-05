@@ -78,7 +78,7 @@ Deno.test("unstable_cache: reading cookies() in the body throws (no cross-reques
   // everyone (matches `"use cache"` and Next.js). Regression for the scope-guard gap.
   const load = unstable_cache(async () => {
     await Promise.resolve();
-    return cookies().get("session") ?? "anon";
+    return cookies().get("session")?.value ?? "anon";
   }, ["uc-scope-guard"]);
   await assertRejects(
     () =>
@@ -587,7 +587,7 @@ Deno.test("app ISR: an opted-in page that reads cookies() is NOT cached (per-use
       // Opts into caching, but reads a per-user cookie -> must stay dynamic.
       default: (_p: PageProps) => {
         renders++;
-        const who = cookies().get("session") ?? "anon";
+        const who = cookies().get("session")?.value ?? "anon";
         return h("h1", null, `hello ${who}`);
       },
       revalidate: 60,

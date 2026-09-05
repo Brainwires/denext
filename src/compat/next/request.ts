@@ -6,6 +6,7 @@
  * @module
  */
 
+import { remoteAddrOf } from "../../server/remote-addr.ts";
 import { RequestCookies } from "./cookies.ts";
 
 /**
@@ -65,11 +66,18 @@ export class NextRequest extends Request {
     this.cookies = new RequestCookies(this.headers);
   }
 
-  /** Best-effort client IP from `x-forwarded-for` / `x-real-ip`. */
+  /**
+   * The client IP. The socket peer denext recorded for this request wins (it cannot be
+   * spoofed); behind a proxy that is the proxy, so the LAST `x-forwarded-for` hop (the one
+   * your own proxy appended) is used next, then `x-real-ip`. Never the first XFF hop —
+   * that is whatever the client chose to send.
+   */
   get ip(): string | undefined {
+    const peer = remoteAddrOf(this);
+    if (peer && !isLoopbackOrPrivate(peer)) return peer;
     const fwd = this.headers.get("x-forwarded-for");
-    if (fwd) return fwd.split(",")[0].trim();
-    return this.headers.get("x-real-ip") ?? undefined;
+    if (fwd) return fwd.split(",").map((h) => h.trim()).filter(Boolean).at(-1);
+    return this.headers.get("x-real-ip") ?? peer ?? undefined;
   }
 
   /** Best-effort geo info from common CDN headers (Vercel / Cloudflare). */
@@ -84,4 +92,9 @@ export class NextRequest extends Request {
     };
     return geo;
   }
+}
+
+/** Loopback / RFC1918 / link-local peers are a reverse proxy, not the client. */
+function isLoopbackOrPrivate(ip: string): boolean {
+  return /^(127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|::1$|fc|fd|fe80:)/i.test(ip);
 }

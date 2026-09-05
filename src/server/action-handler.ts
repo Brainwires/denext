@@ -14,7 +14,13 @@
 
 import { bufferedRequest, readCappedBody, STALLED, TOO_LARGE } from "./body.ts";
 import { ACTION_PREFIX, decodeActionArgs, getServerAction } from "../runtime/server-action.ts";
-import { isRedirect, RedirectType } from "../runtime/error-boundary.ts";
+import {
+  isForbidden,
+  isNotFound,
+  isRedirect,
+  isUnauthorized,
+  RedirectType,
+} from "../runtime/error-boundary.ts";
 import { safeRedirectLocation } from "./config.ts";
 import { currentContext } from "./request-context.ts";
 
@@ -117,6 +123,10 @@ export async function handleAction(
     return redirectResponse(safeRedirectLocation(sameOriginBackPath(request)), 303);
   } catch (err) {
     if (isRedirect(err)) return redirectFromAction(err, isXhr);
+    // notFound()/forbidden()/unauthorized() inside an action are control flow, not failures:
+    // the client renders the matching boundary (Next.js parity), never a redacted 500.
+    const signal = controlSignalResponse(err, isXhr);
+    if (signal) return signal;
     // Report to instrumentation (the action path returns a normal Response, so it
     // never reaches the app's top-level onRequestError otherwise) — then log and
     // return a redacted 500 that never leaks internals to the caller.
@@ -124,6 +134,15 @@ export async function handleAction(
     console.error("denext: server action error", err);
     return jsonResponse({ error: "server action failed" }, 500);
   }
+}
+
+/** The status + marker for a thrown `notFound()`/`forbidden()`/`unauthorized()`, or null. */
+function controlSignalResponse(err: unknown, isXhr: boolean): Response | null {
+  const status = isNotFound(err) ? 404 : isForbidden(err) ? 403 : isUnauthorized(err) ? 401 : 0;
+  if (!status) return null;
+  const kind = status === 404 ? "notFound" : status === 403 ? "forbidden" : "unauthorized";
+  if (isXhr) return jsonResponse({ error: kind, signal: kind }, status);
+  return new Response(kind, { status, headers: { "content-type": "text/plain; charset=utf-8" } });
 }
 
 /**

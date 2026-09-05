@@ -101,13 +101,26 @@ export type {
 export {
   composeMiddleware,
   createMiddlewareRunner,
-  NEXT,
   next,
   redirect,
-  REWRITE,
+  redirectResponse,
   rewrite,
   withHeaders,
 } from "./middleware.ts";
+// The throwing navigation signals also resolve from `denext/server` (the obvious import
+// in a Server Component / Server Action), identical to the `denext` exports.
+export {
+  forbidden,
+  isControlSignal,
+  isForbidden,
+  isNotFound,
+  isRedirect,
+  isUnauthorized,
+  notFound,
+  permanentRedirect,
+  RedirectType,
+  unauthorized,
+} from "../runtime/error-boundary.ts";
 export type {
   MatcherEntry,
   Middleware,
@@ -180,7 +193,16 @@ export type {
 } from "./segment-config.ts";
 
 // Per-request async context — cookies()/headers()/draftMode()/after() for server code.
-export { after, connection, cookies, draftMode, headers } from "./request-context.ts";
+export {
+  after,
+  connection,
+  cookies,
+  draftMode,
+  headers,
+  noStore,
+  readonlyHeaders,
+} from "./request-context.ts";
+export type { RequestCookie } from "./request-context.ts";
 // User-Agent parsing (userAgent(request) / userAgentFromString(ua)).
 export { type UserAgent, userAgent, userAgentFromString } from "./user-agent.ts";
 export type {

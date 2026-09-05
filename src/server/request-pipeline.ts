@@ -12,7 +12,8 @@ import { type RequestContext, runDeferred } from "./request-context.ts";
 import { renderDocument } from "./document.ts";
 import { resolveCsp } from "./csp.ts";
 import { serveStatic } from "./static.ts";
-import { redirect } from "./middleware.ts";
+import { redirectResponse, withHeaders } from "./middleware.ts";
+import { safeFetch } from "./safe-fetch.ts";
 import { type PeeledLocale, peelLocale } from "./i18n.ts";
 import { fillDestination, matchPattern, safeRedirectLocation } from "./config.ts";
 import { handleAction, isActionRequest } from "./action-handler.ts";
@@ -28,7 +29,6 @@ import {
   finalize,
   type RequestState,
   retarget,
-  withInjectedHeaders,
 } from "./pipeline-state.ts";
 import { htmlHeaders, notFound } from "./response-headers.ts";
 import { servePage } from "./page-response.ts";
@@ -51,7 +51,9 @@ function canonicalizePath(state: RequestState): Response | null {
   const { config } = state.app;
   if (pathname.includes("//")) {
     const canonical = pathname.replace(/\/{2,}/g, "/");
-    if (canonical !== pathname) return redirect(safeRedirectLocation(canonical) + url.search, 308);
+    if (canonical !== pathname) {
+      return redirectResponse(safeRedirectLocation(canonical) + url.search, 308);
+    }
   }
   const isFrameworkPath = pathname.startsWith("/_denext");
   const isFile = /\.[^/]+$/.test(pathname);
@@ -59,10 +61,10 @@ function canonicalizePath(state: RequestState): Response | null {
   const hasSlash = pathname.endsWith("/");
   const wantSlash = config.trailingSlash === true; // unset = Next's default: no slash
   if (wantSlash && !hasSlash) {
-    return redirect(safeRedirectLocation(pathname + "/") + url.search, 308);
+    return redirectResponse(safeRedirectLocation(pathname + "/") + url.search, 308);
   }
   if (!wantSlash && hasSlash) {
-    return redirect(safeRedirectLocation(pathname.replace(/\/+$/, "")) + url.search, 308);
+    return redirectResponse(safeRedirectLocation(pathname.replace(/\/+$/, "")) + url.search, 308);
   }
   return null;
 }
@@ -72,7 +74,7 @@ function applyRedirectRules(state: RequestState): Response | null {
   for (const { pattern, rule } of state.app.rules().redirects) {
     const params = matchPattern(pattern, state.pathname);
     if (params) {
-      return redirect(
+      return redirectResponse(
         safeRedirectLocation(fillDestination(rule.destination, params)),
         rule.permanent ? 308 : 307,
       );
@@ -128,21 +130,68 @@ async function runMiddleware(state: RequestState): Promise<Response | null> {
   const runner = config.getMiddleware ? await config.getMiddleware() : null;
   if (!runner) return null;
   state.dispatchRouteType = "proxy";
-  const outcome = await runner(state.request);
+  // Matchers see the locale-stripped path (Next strips the i18n prefix before middleware).
+  const outcome = await runner(state.request, resolveLocale(state)?.rest);
   state.dispatchRouteType = "render";
-  if (outcome.type === "response") return withInjectedHeaders(state, outcome.response);
+  // A short-circuit Response still leaves through finalize(): cookies().set() queued in
+  // the middleware and the injected header rules must reach the client.
+  if (outcome.type === "response") return finalize(state, outcome.response);
+  // The runner already applied request-header overrides / the rewrite URL to
+  // `outcome.request` (consuming the original body once) — route THAT request.
+  if (outcome.request) state.request = outcome.request;
   if (outcome.type === "rewrite") {
-    state.request = new Request(outcome.url, state.request);
+    if (outcome.external) return proxyExternalRewrite(state, outcome.url, outcome.headers);
     state.url = new URL(state.request.url);
     state.pathname = state.url.pathname;
   }
-  if (outcome.requestHeaders) {
-    state.request = new Request(state.request, { headers: outcome.requestHeaders });
-  }
   if (outcome.headers) {
-    for (const [k, v] of outcome.headers) addInjectedHeader(state, k, v);
+    for (const [k, v] of outcome.headers) {
+      // A middleware Set-Cookie is queued on the request context (so `cookies().get()`
+      // later in this request sees it) and reaches the client through finalize().
+      if (k === "set-cookie") state.ctx.outgoingHeaders.append(k, v);
+      else addInjectedHeader(state, k, v);
+    }
   }
   return null;
+}
+
+/** Request headers never forwarded to an external rewrite target. */
+const HOP_HEADERS = new Set([
+  "host",
+  "connection",
+  "content-length",
+  "transfer-encoding",
+  "keep-alive",
+]);
+
+/**
+ * `NextResponse.rewrite("https://other.host/…")`: Next proxies the request to the other
+ * origin. denext does the same through the SSRF-guarded `safeFetch` (private/internal
+ * addresses are refused, redirects re-validated), forwarding method, body and headers
+ * minus the hop-by-hop set. Middleware response headers are merged onto the proxied reply.
+ */
+async function proxyExternalRewrite(
+  state: RequestState,
+  target: string,
+  extra?: Headers,
+): Promise<Response> {
+  const { request } = state;
+  const headers = new Headers();
+  for (const [k, v] of request.headers) if (!HOP_HEADERS.has(k)) headers.set(k, v);
+  const body = request.method === "GET" || request.method === "HEAD"
+    ? undefined
+    : new Uint8Array(await request.arrayBuffer());
+  let upstream: Response;
+  try {
+    upstream = await safeFetch(target, { method: request.method, headers, body });
+  } catch (err) {
+    // Refused (private/internal target, DNS failure, timeout) → a gateway error, never a
+    // silent local render of the same path.
+    console.error("denext: external rewrite refused", target, err);
+    return finalize(state, new Response("Bad Gateway", { status: 502 }));
+  }
+  const res = new Response(upstream.body, { status: upstream.status, headers: upstream.headers });
+  return finalize(state, extra ? withHeaders(res, extra) : res);
 }
 
 /**
@@ -325,9 +374,11 @@ async function serveFallback(
 async function dispatch(state: RequestState): Promise<Response> {
   const redirected = canonicalizePath(state) ?? applyRedirectRules(state);
   if (redirected) return redirected;
-  applyPathRules(state);
+  // Next's order: headers → redirects → MIDDLEWARE → rewrites → filesystem. Middleware
+  // matchers must see the URL the client asked for, not a config rewrite's destination.
   const fromMiddleware = await runMiddleware(state);
   if (fromMiddleware) return fromMiddleware;
+  applyPathRules(state);
   if (isActionRequest(state.request, state.pathname)) return dispatchAction(state);
   const manifest = await state.app.config.getManifest();
   const metaFile = await serveMetadata(state, manifest);

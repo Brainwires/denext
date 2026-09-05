@@ -3,7 +3,7 @@
 // slip past. Runs before routing; `getSession` works because the request context
 // is already active.
 
-import { type MiddlewareContext, next, redirect } from "denext/server";
+import { type MiddlewareContext, next, redirectResponse } from "denext/server";
 import { session } from "./lib/auth.ts";
 
 export default async function middleware(
@@ -15,7 +15,7 @@ export default async function middleware(
   if (gated) {
     const s = await session();
     if (!s.data) {
-      return redirect(`/login?next=${encodeURIComponent(path)}`, 307);
+      return redirectResponse(`/login?next=${encodeURIComponent(path)}`, 307);
     }
   }
   return next();

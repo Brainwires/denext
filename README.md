@@ -797,9 +797,9 @@ import {
 import {
   createApp,
   next,
-  redirect,
+  redirectResponse, // middleware helpers (Response-returning; `redirect` is the deprecated alias)
   renderPage,
-  rewrite, // middleware helpers
+  rewrite,
   serve,
 } from "denext/server";
 import type { ApiContext, LayoutProps, Metadata, PageProps } from "denext/server";

@@ -85,7 +85,7 @@ Deno.test("ISR does NOT share a live per-user render across requests (safety)", 
       default: async (_p: PageProps) => {
         renders++;
         await delay(20);
-        const who = cookies().get("u") ?? "anon"; // makes the render dynamic
+        const who = cookies().get("u")?.value ?? "anon"; // makes the render dynamic
         return h("h1", null, `hello ${who}`);
       },
       revalidate: 60,

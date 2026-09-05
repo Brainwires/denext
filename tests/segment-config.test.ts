@@ -169,7 +169,7 @@ Deno.test("force-static empties dynamic APIs and keeps the render cacheable", as
     "page.tsx": {
       // Reads cookies + headers; under force-static both are empty (no throw).
       default: (_p: PageProps) =>
-        h("h1", null, `${cookies().get("u") ?? "anon"}/${headers().get("x") ?? "none"}`),
+        h("h1", null, `${cookies().get("u")?.value ?? "anon"}/${headers().get("x") ?? "none"}`),
       dynamic: "force-static",
     },
   };

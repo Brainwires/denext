@@ -135,7 +135,7 @@ export async function getSession<T>(options: SessionOptions): Promise<Session<T>
   const secrets = sessionSecrets(options);
   const maxAge = options.maxAge ?? 60 * 60 * 24 * 7;
   const sameSite = options.sameSite ?? "Lax";
-  let current: T | null = await readSessionCookie<T>(store.get(name), secrets);
+  let current: T | null = await readSessionCookie<T>(store.get(name)?.value, secrets);
   return {
     get data() {
       return current;

@@ -10,7 +10,7 @@ Deno.test("NextRequest: nextUrl, cookies, ip, geo", () => {
   const req = new NextRequest("https://ex.test/dash?tab=1", {
     headers: {
       cookie: "session=abc; theme=dark",
-      "x-forwarded-for": "203.0.113.7, 10.0.0.1",
+      "x-forwarded-for": "6.6.6.6, 203.0.113.7",
       "x-vercel-ip-country": "US",
     },
   });

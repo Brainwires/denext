@@ -527,9 +527,10 @@ is [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
   `canonicalOrigin`). — `src/server/absolute-url.ts:4-56`.
 - **Open-redirect neutralization** — `safeRedirectLocation` collapses
   protocol-relative `//host` and backslash `/\host` to a single-slash path for
-  all config-driven redirects. — `config.ts:200-204`. _Caveat:_ the manual
-  middleware `redirect()` helper emits `location` verbatim by design (caller
-  responsibility) — `src/server/middleware.ts:131-145`.
+  all config-driven redirects, the middleware `redirectResponse()` helper, auth
+  callback URLs and Server Action redirects — `safeRedirectLocation` in
+  `src/server/config.ts` (control characters are stripped first, so a tab can't
+  smuggle a protocol-relative `//host` past the collapse).
 
 ### 1.6 Middleware / routing SSRF & bypass defenses **[default]**
 

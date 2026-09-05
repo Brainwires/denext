@@ -9,13 +9,8 @@
 
 import { type Cookie, deleteCookie, getCookies, getSetCookies, setCookie } from "@std/http/cookie";
 
-/** A single cookie as Next returns it from `.get()` / `.getAll()`. */
-export interface RequestCookie {
-  /** The cookie name. */
-  name: string;
-  /** The cookie value. */
-  value: string;
-}
+export type { RequestCookie } from "../../server/request-context.ts";
+import type { RequestCookie } from "../../server/request-context.ts";
 
 /** Options accepted by `ResponseCookies.set` / `.delete` (a subset of `Cookie`). */
 export interface CookieOptions {

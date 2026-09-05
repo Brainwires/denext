@@ -22,13 +22,13 @@ const modules: Record<string, unknown> = {
   "loading.tsx": { default: () => h("p", null, "loading…") },
   "page.tsx": {
     default: async () => {
-      const u = cookies().get("u") ?? "anon";
+      const u = cookies().get("u")?.value ?? "anon";
       return await Promise.resolve(h("span", { id: "who" }, `hi ${u}`));
     },
     // Per-request metadata: generateMetadata reads a cookie, so the <title> must be
     // rebuilt for each request even though the shell body is cached once.
     generateMetadata: () => {
-      const u = cookies().get("u") ?? "anon";
+      const u = cookies().get("u")?.value ?? "anon";
       return { title: `hi ${u}` };
     },
     // Opt the page into caching; PPR then caches the shell and holes the cookie read.
