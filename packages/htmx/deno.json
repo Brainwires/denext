@@ -7,7 +7,7 @@
     "./command": "./command.ts"
   },
   "imports": {
-    "@denext/denext": "jsr:@denext/denext@^2.0.3",
+    "@denext/denext": "jsr:@denext/denext@^2.0.4",
     "@std/path": "jsr:@std/path@^1.0.0"
   },
   "publish": {

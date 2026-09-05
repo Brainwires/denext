@@ -10,8 +10,8 @@
     "./client-runtime": "./src/client-runtime.ts"
   },
   "imports": {
-    "@denext/denext": "jsr:@denext/denext@^2.0.3",
-    "@denext/denext/plugin-kit": "jsr:@denext/denext@^2.0.3/plugin-kit",
+    "@denext/denext": "jsr:@denext/denext@^2.0.4",
+    "@denext/denext/plugin-kit": "jsr:@denext/denext@^2.0.4/plugin-kit",
     "@std/path": "jsr:@std/path@^1.0.0"
   },
   "publish": {
