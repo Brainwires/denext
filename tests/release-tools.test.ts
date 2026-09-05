@@ -3,7 +3,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { bumpVersion, printBumpResult } from "../scripts/bump-version.ts";
-import { prepareRelease, rollChangelog } from "../scripts/release.ts";
+import { foldPrereleases, prepareRelease, rollChangelog } from "../scripts/release.ts";
 
 /** Capture console output while `fn` runs. */
 async function captured(fn: () => Promise<void> | void): Promise<string> {
@@ -45,4 +45,12 @@ Deno.test("prepareRelease (dry) reports the bump, the golden refresh and the cha
   assertStringIncludes(out, "1. Bump");
   assertStringIncludes(out, "1b. ");
   assertStringIncludes(out, "2. CHANGELOG: rolled [Unreleased] → [99.0.0-test.1]");
+});
+
+Deno.test("foldPrereleases keeps a blank line between the preamble and [Unreleased] (fmt-clean)", () => {
+  const text =
+    "# Changelog\n\nIntro.\n\n## [Unreleased]\n\n### Added\n\n- a\n\n## [1.0.0] - 2026-01-01\n\n- old\n";
+  const out = foldPrereleases(text, "1.1.0", "2026-02-02");
+  assertStringIncludes(out, "Intro.\n\n## [Unreleased]\n");
+  assertStringIncludes(out, "## [1.1.0] - 2026-02-02");
 });

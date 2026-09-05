@@ -202,7 +202,8 @@ export function foldPrereleases(text: string, version: string, date: string): st
   const kept = sections.filter(([h]) => h !== marker && !rcHeaders.has(h));
   const release = renderRelease(version, date, groups);
   const [preamble, ...rest] = kept;
-  return [preamble[1].trimEnd(), `${marker}\n`, release, ...rest.map(([h, b]) => `${h}\n${b}`)]
+  // A blank line between the preamble and the first header keeps the file `deno fmt`-clean.
+  return [preamble[1].trimEnd(), "", `${marker}\n`, release, ...rest.map(([h, b]) => `${h}\n${b}`)]
     .join("\n");
 }
 
