@@ -729,10 +729,19 @@ export function fillDestination(destination: string, params: Record<string, stri
  * @param location The candidate `Location` value (may embed user path data).
  */
 export function safeRedirectLocation(location: string): string {
-  if (/^https?:\/\//i.test(location)) return location;
+  // Strip ASCII control characters and whitespace FIRST: the WHATWG URL parser drops
+  // tab/newline anywhere in the input, so `/\t/evil.com` would otherwise slip past the
+  // leading-slash collapse below and resolve as protocol-relative `//evil.com`. A bare
+  // `\r`/`\n` would also make `new Response(…, { headers: { location } })` throw.
+  const clean = location.replace(CONTROL_CHARS, "");
+  if (/^https?:\/\//i.test(clean)) return clean;
   // Collapse a leading run of `/` or `\` to a single `/` (neutralizes `//`, `/\`).
-  return "/" + location.replace(/^[/\\]+/, "");
+  return "/" + clean.replace(/^[/\\]+/, "");
 }
+
+/** C0 controls, space, and DEL — never legitimate in a `Location` value. */
+// deno-lint-ignore no-control-regex
+const CONTROL_CHARS = /[\u0000-\u0020\u007f]/g;
 
 /** The config's rule functions resolved to concrete arrays (evaluated once). */
 export interface ResolvedRules {

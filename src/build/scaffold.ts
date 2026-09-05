@@ -56,6 +56,8 @@ export interface ScaffoldFile {
 }
 
 const dep = `jsr:@denext/denext@^${VERSION}`;
+/** The version-pinned CLI specifier used by generated `deno task`s. */
+const cli = `${dep}/cli`;
 
 /** The `deno task` entries for a scaffolded project (dev/build/start + native targets). */
 function scaffoldTasks(opts: ScaffoldOptions): Record<string, string> {
@@ -63,13 +65,15 @@ function scaffoldTasks(opts: ScaffoldOptions): Record<string, string> {
     // `dev`/`build` compile, write `.denext`, and spawn tooling (Tailwind, esbuild),
     // so they use broad permissions. `start` only serves, so it runs least-privilege:
     // net + read + env (add `--allow-write=.denext` if you enable the SQLite cache).
-    dev: "deno run -A jsr:@denext/denext/cli dev .",
-    build: "deno run -A jsr:@denext/denext/cli build .",
-    start: "deno run --allow-net --allow-read --allow-env jsr:@denext/denext/cli start .",
+    // The CLI is pinned to the same range as the `denext` import so the two never skew
+    // (an unversioned `jsr:@denext/denext/cli` would resolve to JSR `latest`).
+    dev: `deno run -A ${cli} dev .`,
+    build: `deno run -A ${cli} build .`,
+    start: `deno run --allow-net --allow-read --allow-env ${cli} start .`,
   };
   // Both native targets ship the static export (SSG) from `out/`.
   if (opts.desktop || opts.capacitor) {
-    tasks.export = "deno run -A jsr:@denext/denext/cli export .";
+    tasks.export = `deno run -A ${cli} export .`;
   }
   if (opts.desktop) {
     // `deno desktop` wraps the Deno.serve() in desktop.ts in a native window.

@@ -1,6 +1,7 @@
 // Unbundled dev: HTTP handling — one function per URL class under `/_denext/`.
 
 import { join } from "@std/path";
+import { withinDir } from "../dev-server/dev-endpoints.ts";
 import type { RouteManifest } from "../../router/manifest.ts";
 import { ensureClientDeps, ensureNpmBundle } from "./deps.ts";
 import { serveEntry, serveSpaEntry } from "./entries.ts";
@@ -72,9 +73,32 @@ async function serveNpm(st: UnbundledState, path: string): Promise<Response> {
   return serveBundled(st.npmDir, path.slice(NPM_PREFIX.length), "npm dep");
 }
 
+/**
+ * Whether `/_denext/@fs<abs>` may serve `abs`: a file under the project (real paths on both
+ * sides, so an in-project symlink pointing outside is refused) or a module the dev graph
+ * itself imported (a workspace package or the local framework checkout). Anything else is
+ * an arbitrary-file read and is refused.
+ */
+export function fsPathAllowed(st: UnbundledState, abs: string): boolean {
+  if (st.importers.has(abs) || st.known.has(abs)) return true;
+  try {
+    const real = Deno.realPathSync(abs);
+    const root = Deno.realPathSync(st.opts.projectDir);
+    return withinDir(real, root) && Deno.statSync(real).isFile;
+  } catch {
+    return false;
+  }
+}
+
 /** `/_denext/@fs<abs>`: one first-party module, transformed on demand. */
 function serveFs(st: UnbundledState, path: string): Promise<Response> {
-  const abs = norm(decodeURIComponent(path.slice(FS_PREFIX.length)));
+  let abs: string;
+  try {
+    abs = norm(decodeURIComponent(path.slice(FS_PREFIX.length)));
+  } catch {
+    return Promise.resolve(js("// bad @fs path", 400));
+  }
+  if (!fsPathAllowed(st, abs)) return Promise.resolve(js("// forbidden: outside the project", 403));
   return serveJs(abs, async () => (await transform(st, abs)).code);
 }
 

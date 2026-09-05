@@ -68,9 +68,11 @@ Deno.test("checkSnippet: interactive code without a client boundary gets an info
 
 Deno.test("lookupImport: resolves core and prefixed specifiers, and passes through denext", () => {
   assertEquals(lookupImport("react").rule?.to, "denext");
-  assertEquals(lookupImport("next/navigation").rule?.to, "denext/server");
+  assertEquals(lookupImport("next/navigation").rule?.to, "denext");
+  assertEquals(lookupImport("next/server").rule?.to, "denext/next/server");
+  assertEquals(lookupImport("next/font/google").rule?.to, "denext/next/font/google");
   // A deeper next/* path still matches its prefix rule.
-  assertEquals(lookupImport("next/font/google").rule?.to, "denext");
+  assertEquals(lookupImport("next/font/google/inter").rule?.to, "denext/next/font/google");
   // Already-denext and unknown specifiers have no rule.
   assertEquals(lookupImport("denext/server").rule, null);
   assertEquals(lookupImport("zod").rule, null);

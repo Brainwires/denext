@@ -135,6 +135,11 @@ async function unbundledResponse(
   url: URL,
 ): Promise<Response | null> {
   if (!st.unbundledActive || !url.pathname.startsWith("/_denext/@")) return null;
+  // Same Host/Origin gate as the other dev endpoints (DNS-rebinding defense): these URLs
+  // serve transformed project source and must not be readable from a foreign origin.
+  if (!devOriginAllowed(request, url, st.allowedDevOrigins)) {
+    return new Response("forbidden", { status: 403 });
+  }
   const m = await getManifest(st);
   return await getUnbundled(st).handle(request, url, m);
 }

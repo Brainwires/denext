@@ -55,4 +55,5 @@ DX to make it memorable.
 [ROADMAP.md](./ROADMAP.md) — the pending engineering gap to this mission (the 2.1 cycle) ·
 [FEATURES.md](./FEATURES.md) — what's already shipped ·
 [ARCHITECTURE.md](./ARCHITECTURE.md) — the deliberate under-the-surface choices ·
-[KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) — the honest surface gaps.
+[KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) — the honest surface gaps ·
+[SECURITY.md](./SECURITY.md) — how to report a vulnerability.

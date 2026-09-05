@@ -12,6 +12,7 @@
 // - Redirects are forced to 303 (POST -> GET) and, for no-JS posts, restricted
 //   to a same-origin path derived from Referer.
 
+import { bufferedRequest, readCappedBody, STALLED, TOO_LARGE } from "./body.ts";
 import { ACTION_PREFIX, decodeActionArgs, getServerAction } from "../runtime/server-action.ts";
 import { isRedirect, RedirectType } from "../runtime/error-boundary.ts";
 import { safeRedirectLocation } from "./config.ts";
@@ -51,7 +52,7 @@ export interface ActionHandlerOptions {
   maxBodyBytes?: number;
   /**
    * Max idle time (ms) between body chunks before the read is aborted with 408
-   * (default {@linkcode DEFAULT_BODY_IDLE_TIMEOUT}). Guards against a trickled or
+   * (default 30 s). Guards against a trickled or
    * never-closed body pinning the handler.
    */
   bodyIdleTimeoutMs?: number;
@@ -244,72 +245,6 @@ function isKnownHttps(request: Request, options: ActionHandlerOptions): boolean 
   } catch {
     return false;
   }
-}
-
-/** Sentinel returned by {@linkcode readCappedBody} when the body exceeds the cap. */
-const TOO_LARGE = Symbol("too_large");
-/** Sentinel returned by {@linkcode readCappedBody} when the body stalls (idle). */
-const STALLED = Symbol("stalled");
-
-/**
- * Max time (ms) a single body chunk may take to arrive before the read is aborted.
- * Defends against a trickled / never-closed body pinning a handler under the size
- * cap ("denial of wallet", CVE-2024-56332). A legitimate client streams
- * continuously; this bounds only pathological inactivity.
- */
-const DEFAULT_BODY_IDLE_TIMEOUT = 30_000;
-
-/**
- * Read a request body into memory, refusing anything over `maxBytes` (hard-caps
- * even a chunked body with no Content-Length) and aborting a body that stalls for
- * longer than `idleMs`. Returns the bytes, {@linkcode TOO_LARGE}, or
- * {@linkcode STALLED}.
- */
-async function readCappedBody(
-  request: Request,
-  maxBytes: number,
-  idleMs: number = DEFAULT_BODY_IDLE_TIMEOUT,
-): Promise<Uint8Array | typeof TOO_LARGE | typeof STALLED> {
-  if (!request.body) return new Uint8Array(0);
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  while (true) {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const idle = new Promise<typeof STALLED>((resolve) => {
-      timer = setTimeout(() => resolve(STALLED), idleMs);
-    });
-    const step = await Promise.race([reader.read(), idle]);
-    clearTimeout(timer);
-    if (step === STALLED) {
-      await reader.cancel().catch(() => {});
-      return STALLED;
-    }
-    const { done, value } = step;
-    if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      await reader.cancel();
-      return TOO_LARGE;
-    }
-    chunks.push(value);
-  }
-  const out = new Uint8Array(total);
-  let at = 0;
-  for (const c of chunks) {
-    out.set(c, at);
-    at += c.byteLength;
-  }
-  return out;
-}
-
-/** Rebuild a request from already-buffered body bytes (headers/method preserved). */
-function bufferedRequest(request: Request, body: Uint8Array): Request {
-  return new Request(request.url, {
-    method: request.method,
-    headers: request.headers,
-    body: body.byteLength > 0 ? (body as BodyInit) : undefined,
-  });
 }
 
 /** A safe same-origin path to redirect back to after a no-JS action post. */

@@ -123,6 +123,14 @@ Deno.test("safeRedirectLocation neutralizes protocol-relative / backslash paths"
   assertEquals(safeRedirectLocation("http://ok.example/x"), "http://ok.example/x");
   // A `javascript:`-style scheme is treated as a path, not passed through.
   assertEquals(safeRedirectLocation("javascript:alert(1)"), "/javascript:alert(1)");
+  // Control characters are stripped BEFORE the collapse: the URL parser drops tab/newline,
+  // so `/\t/evil.com` would otherwise reach the browser as protocol-relative `//evil.com`.
+  assertEquals(safeRedirectLocation("/\t/evil.com"), "/evil.com");
+  assertEquals(safeRedirectLocation("/\t\\evil.com"), "/evil.com");
+  assertEquals(safeRedirectLocation("/\r\n/x"), "/x");
+  assertEquals(safeRedirectLocation(" //evil.com"), "/evil.com");
+  // A stripped value is also a legal header value (no CR/LF → `new Response` won't throw).
+  new Response(null, { status: 307, headers: { location: safeRedirectLocation("/\r/x") } });
 });
 
 Deno.test("trailingSlash redirect cannot become a protocol-relative open redirect", async () => {

@@ -44,10 +44,21 @@ export const IMPORT_RULES: readonly ImportRule[] = [
   },
   {
     from: "next/navigation",
-    to: "denext/server",
-    names: ["redirect", "permanentRedirect", "notFound", "forbidden", "unauthorized"],
+    to: "denext",
+    names: [
+      "redirect",
+      "permanentRedirect",
+      "notFound",
+      "forbidden",
+      "unauthorized",
+      "RedirectType",
+      "useRouter",
+      "usePathname",
+      "useSearchParams",
+      "useParams",
+    ],
     note:
-      "Server helpers come from denext/server. On the client, `redirect` is from denext (or useRouter().push) and `notFound` from denext/client.",
+      "All of next/navigation lives on `denext` and works in Server and Client Components alike. NOT denext/server: its `redirectResponse()` (alias `redirect`) is the middleware helper that RETURNS a Response.",
   },
   {
     from: "next/link",
@@ -68,9 +79,10 @@ export const IMPORT_RULES: readonly ImportRule[] = [
   },
   {
     from: "next/font/google",
-    to: "denext",
-    names: ["Inter", "default"],
-    note: "Use `googleFont` from denext (or the `next/font/google` compat alias in a drop-in).",
+    to: "denext/next/font/google",
+    names: ["Inter", "Roboto", "default"],
+    note:
+      "The per-family exports (`Inter`, `Roboto`, …) live on denext/next/font/google; `googleFont` from denext/server is the generic form.",
   },
   {
     from: "next/cache",
@@ -79,8 +91,10 @@ export const IMPORT_RULES: readonly ImportRule[] = [
   },
   {
     from: "next/server",
-    to: "denext/server",
-    names: ["NextRequest", "NextResponse", "userAgent"],
+    to: "denext/next/server",
+    names: ["NextRequest", "NextResponse", "NextFetchEvent", "userAgent"],
+    note:
+      "`userAgent` is also on denext/server; NextRequest/NextResponse only on denext/next/server.",
   },
   {
     from: "next",

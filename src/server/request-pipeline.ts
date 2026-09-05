@@ -16,6 +16,7 @@ import { redirect } from "./middleware.ts";
 import { type PeeledLocale, peelLocale } from "./i18n.ts";
 import { fillDestination, matchPattern, safeRedirectLocation } from "./config.ts";
 import { handleAction, isActionRequest } from "./action-handler.ts";
+import { bufferedRequest, readCappedBody, STALLED, TOO_LARGE } from "./body.ts";
 import { serveMetadataFile } from "./metadata-files.ts";
 import { requestOrigin } from "./absolute-url.ts";
 import { publicEnv, restrictPublicEnv } from "../runtime/public-env.ts";
@@ -200,11 +201,32 @@ function resolveLocale(state: RequestState): PeeledLocale | null {
  * and flows into the page render; its body is stashed for the feature that sent it (the
  * Remix `shouldRevalidate` prior-data echo). Read once, here.
  */
-async function stashSoftNavBody(state: RequestState): Promise<boolean> {
+async function stashSoftNavBody(state: RequestState): Promise<boolean | Response> {
   const { request, ctx } = state;
   const softNavPost = request.method === "POST" && request.headers.get("x-denext-nav") === "1";
-  if (softNavPost) ctx.softNavBody = await request.clone().json().catch(() => undefined);
-  return softNavPost;
+  if (!softNavPost) return false;
+  // Bounded read (size cap + idle timeout) — this runs before routing, for ANY path, so an
+  // unbounded `request.clone().json()` here was an unauthenticated memory-exhaustion lever.
+  const declared = Number(request.headers.get("content-length") ?? "0");
+  if (declared > MAX_SOFT_NAV_BODY) return textResponse("Payload Too Large", 413);
+  const body = await readCappedBody(request, MAX_SOFT_NAV_BODY);
+  if (body === TOO_LARGE) return textResponse("Payload Too Large", 413);
+  if (body === STALLED) return textResponse("Request Timeout", 408);
+  try {
+    ctx.softNavBody = body.byteLength ? JSON.parse(new TextDecoder().decode(body)) : undefined;
+  } catch {
+    ctx.softNavBody = undefined;
+  }
+  // The body was consumed; downstream sees an equivalent request with the bytes replayed.
+  state.request = bufferedRequest(request, body);
+  return true;
+}
+
+/** Max bytes of a soft-navigation POST echo body (the prior-data payload is small). */
+const MAX_SOFT_NAV_BODY = 1024 * 1024;
+
+function textResponse(text: string, status: number): Response {
+  return new Response(text, { status, headers: { "content-type": "text/plain; charset=utf-8" } });
 }
 
 /**
@@ -313,6 +335,7 @@ async function dispatch(state: RequestState): Promise<Response> {
   const localeInfo = resolveLocale(state);
   const routingPath = localeInfo ? localeInfo.rest : state.pathname;
   const softNavPost = await stashSoftNavBody(state);
+  if (softNavPost instanceof Response) return softNavPost;
   const fromApi = await dispatchApi(state, manifest, routingPath, softNavPost);
   if (fromApi) return fromApi;
   const fromPage = await dispatchPage(state, manifest, routingPath, localeInfo, softNavPost);

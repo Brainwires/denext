@@ -583,9 +583,9 @@ does):
 ```json
 {
   "tasks": {
-    "dev": "deno run -A jsr:@denext/denext/cli dev .",
-    "build": "deno run -A jsr:@denext/denext/cli build .",
-    "start": "deno run -A jsr:@denext/denext/cli start ."
+    "dev": "deno run -A jsr:@denext/denext@^2/cli dev .",
+    "build": "deno run -A jsr:@denext/denext@^2/cli build .",
+    "start": "deno run -A jsr:@denext/denext@^2/cli start ."
   }
 }
 ```
@@ -1071,6 +1071,8 @@ Each doc owns one job, so the same fact lives in exactly one canonical place:
   deferrals, and the honest React DevTools scope.
 - [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md) — the canonical,
   threat-by-threat security posture vs the ecosystem's CVEs.
+- [SECURITY.md](./SECURITY.md) — supported versions and how to report a
+  vulnerability privately.
 - [CONTRIBUTING.md](./CONTRIBUTING.md) — the check/lint gate, conventions, and
   the JSR release flow.
 - [ROADMAP.md](./ROADMAP.md) — the pending zero-npm / ecosystem engineering

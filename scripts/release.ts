@@ -86,9 +86,140 @@ export async function rollChangelog(version: string, dry: boolean): Promise<numb
     die(`CHANGELOG.md already has a '## [${version}]' section — already released?`);
   }
   const date = new Date().toISOString().slice(0, 10);
-  const updated = text.replace(marker, `${marker}\n\n## [${version}] - ${date}`);
-  if (!dry) await Deno.writeTextFile(path, updated);
+  const updated = isStable(version)
+    ? foldPrereleases(text, version, date)
+    : text.replace(marker, `${marker}\n\n## [${version}] - ${date}`);
+  if (!dry) await Deno.writeTextFile(path, withLinkRef(updated, version));
   return unreleasedEntries(text, marker);
+}
+
+/** A release header line: `## [<version>] - <date>`. */
+const HEADER_RE = /^## \[([^\]]+)\](.*)$/m;
+
+/** `x.y.z` with no prerelease suffix. */
+export function isStable(version: string): boolean {
+  return /^\d+\.\d+\.\d+$/.test(version);
+}
+
+/** The rc/beta headers of `version` that sit above the previous stable release. */
+export function prereleaseHeaders(text: string, version: string): string[] {
+  const out: string[] = [];
+  for (const line of text.split("\n")) {
+    const m = line.match(HEADER_RE);
+    if (m && m[1].startsWith(`${version}-`)) out.push(line);
+  }
+  return out;
+}
+
+/** Split the changelog into `[header line, body]` sections (the preamble is section 0). */
+export function splitSections(text: string): Array<[string, string]> {
+  const sections: Array<[string, string]> = [];
+  let header = "";
+  let body: string[] = [];
+  for (const line of text.split("\n")) {
+    if (HEADER_RE.test(line)) {
+      sections.push([header, body.join("\n")]);
+      header = line;
+      body = [];
+    } else body.push(line);
+  }
+  sections.push([header, body.join("\n")]);
+  return sections;
+}
+
+/** Group a section body's bullets by their `### Heading` (top-level `- ` bullets + continuations). */
+export function groupByHeading(body: string): Map<string, string[]> {
+  const groups = new Map<string, string[]>();
+  let heading = "### Changed";
+  for (const chunk of bullets(body)) {
+    if (chunk.startsWith("### ")) heading = chunk.trim();
+    else groups.set(heading, [...(groups.get(heading) ?? []), chunk]);
+  }
+  return groups;
+}
+
+/** A body as `### ` headings and `- ` bullets (each bullet with its indented continuation lines). */
+function bullets(body: string): string[] {
+  const out: string[] = [];
+  for (const line of body.split("\n")) {
+    if (line.startsWith("### ") || line.startsWith("- ")) out.push(line);
+    else if (out.length && line.trim()) out[out.length - 1] += "\n" + line;
+  }
+  return out;
+}
+
+/** Bullets that flag a breaking change (`**Breaking` prefix or the word in bold). */
+export function isBreakingBullet(bullet: string): boolean {
+  return /^- \*\*Breaking\b/i.test(bullet) || /\*\*Breaking[.:]?\*\*/i.test(bullet);
+}
+
+/** Merge many `heading → bullets` maps, deduping identical bullets, `### Breaking` first. */
+export function mergeGroups(maps: Map<string, string[]>[]): Map<string, string[]> {
+  const merged = new Map<string, string[]>();
+  const seen = new Set<string>();
+  for (const m of maps) for (const [h, list] of m) addBullets(merged, seen, h, list);
+  return orderGroups(merged);
+}
+
+function addBullets(merged: Map<string, string[]>, seen: Set<string>, h: string, list: string[]) {
+  for (const b of list) {
+    if (seen.has(b)) continue;
+    seen.add(b);
+    const heading = isBreakingBullet(b) ? "### Breaking" : h;
+    merged.set(heading, [...(merged.get(heading) ?? []), b]);
+  }
+}
+
+const GROUP_ORDER = [
+  "### Breaking",
+  "### Added",
+  "### Changed",
+  "### Deprecated",
+  "### Removed",
+  "### Fixed",
+  "### Security",
+];
+
+function orderGroups(m: Map<string, string[]>): Map<string, string[]> {
+  const rank = (h: string) => {
+    const i = GROUP_ORDER.indexOf(h);
+    return i === -1 ? GROUP_ORDER.length : i;
+  };
+  return new Map([...m].sort(([a], [b]) => rank(a) - rank(b)));
+}
+
+/**
+ * A stable release folds the `[Unreleased]` notes AND every `[<version>-rc.N]` section into
+ * one `## [<version>]` section (grouped, deduped, `### Breaking` first), so the tag's notes
+ * carry the whole line rather than the last rc's housekeeping.
+ */
+export function foldPrereleases(text: string, version: string, date: string): string {
+  const marker = "## [Unreleased]";
+  const rcHeaders = new Set(prereleaseHeaders(text, version));
+  const sections = splitSections(text);
+  const folded = sections.filter(([h]) => h === marker || rcHeaders.has(h));
+  const groups = mergeGroups(folded.map(([, body]) => groupByHeading(body)));
+  const kept = sections.filter(([h]) => h !== marker && !rcHeaders.has(h));
+  const release = renderRelease(version, date, groups);
+  const [preamble, ...rest] = kept;
+  return [preamble[1].trimEnd(), `${marker}\n`, release, ...rest.map(([h, b]) => `${h}\n${b}`)]
+    .join("\n");
+}
+
+function renderRelease(version: string, date: string, groups: Map<string, string[]>): string {
+  const parts = [`## [${version}] - ${date}`, ""];
+  for (const [h, list] of groups) parts.push(h, "", ...list, "");
+  return parts.join("\n");
+}
+
+/** Append the `[<version>]: https://jsr.io/…` link-reference definition if absent. */
+export function withLinkRef(text: string, version: string): string {
+  const ref = `[${version}]: https://jsr.io/@denext/denext@${version}`;
+  if (text.includes(ref)) return text;
+  const idx = text.search(/^\[[0-9][^\]]*\]: https:/m);
+  return idx === -1
+    ? `${text.trimEnd()}\n\n${ref}\n`
+    : text.slice(0, idx) + ref + "\n" + text.slice(idx);
 }
 
 /** The `- ` entries under [Unreleased] (up to the next release header). */
@@ -186,6 +317,14 @@ async function runGate(): Promise<void> {
   if (await run("deno", "task", "docs:api") !== 0) {
     die("docs:api failed — release aborted (changes left in tree).");
   }
+  // The MCP docs corpus + llms*.txt ship IN the JSR package (src/mcp/docs-corpus.json) and
+  // embed the version, so they must be regenerated on the release commit, not after the tag.
+  console.log(
+    "\n3a. Regenerating docs corpus + llms.txt (deno task docs:corpus/docs:mcp/docs:llms)…",
+  );
+  for (const task of ["docs:corpus", "docs:mcp", "docs:llms"]) {
+    if (await run("deno", "task", task) !== 0) die(`${task} failed — release aborted.`);
+  }
   console.log("\n3b. Regenerating the test-count badge (deno task badge:tests)…");
   if (await run("deno", "task", "badge:tests") !== 0) {
     die("badge:tests failed — release aborted (changes left in tree).");
@@ -199,6 +338,12 @@ async function runGate(): Promise<void> {
   console.log("\n5. Running the gate (deno task check)…");
   if (await run("deno", "task", "check") !== 0) {
     die("gate failed — release aborted BEFORE tagging. Prepared changes are in your working tree.");
+  }
+  // What the publish job will do after the tag — fail HERE instead (rc.6's slow-type incident).
+  console.log("\n6. Doc lint + publish dry-run…");
+  if (await run("deno", "task", "doc-lint") !== 0) die("doc-lint failed — release aborted.");
+  if (await run("deno", "publish", "--dry-run", "--allow-dirty") !== 0) {
+    die("publish dry-run failed — release aborted BEFORE tagging.");
   }
 }
 
