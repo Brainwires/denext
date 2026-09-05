@@ -73,6 +73,14 @@ async function assertPnpmDesktopDenoJson(dir: string): Promise<void> {
   // manual mode → npm deps resolve from node_modules, no npm: passthrough entries.
   assert(!("lucide-react" in cfg.imports), "no npm passthrough under manual");
   assert(cfg.tasks.dev && cfg.tasks.desktop, "dev + desktop tasks");
+  // Manual mode: the CLI itself runs OUTSIDE the app's manual node_modules (its own esbuild
+  // etc. come from Deno's cache; the re-exec'd build child uses the merged manual config).
+  for (const t of ["dev", "build", "export", "start"]) {
+    assert(
+      String(cfg.tasks[t]).startsWith("deno run -A --node-modules-dir=none "),
+      `${t} task runs the CLI with --node-modules-dir=none: ${cfg.tasks[t]}`,
+    );
+  }
   assertDesktopTask(cfg.tasks.desktop);
 }
 
@@ -93,7 +101,15 @@ function assertDesktopTask(task: string): void {
     task.includes("--icon desktop-icon.png"),
     "desktop task wires the composed icon (built by `export`)",
   );
+  assert(/ -o "[^"]+" desktop\.ts$/.test(task), `desktop task names the bundle (-o): ${task}`);
 }
+
+Deno.test("desktopAppName: the SPA title minus parentheticals/odd characters, else 'app'", async () => {
+  const { desktopAppName } = await import("../src/build/migrate.ts");
+  assertEquals(desktopAppName("T3 Code (Alpha)"), "T3 Code");
+  assertEquals(desktopAppName("My App!"), "My App");
+  assertEquals(desktopAppName("(wip)"), "app");
+});
 
 /** The denext.config.ts for the Vite app: spa mode, compat, tailwind, env, proxy, icon hint. */
 async function assertSpaConfig(dir: string): Promise<void> {

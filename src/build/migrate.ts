@@ -543,7 +543,10 @@ async function writeAppRouterDenoJson(
   written: string[],
 ): Promise<boolean> {
   const denoJson = {
-    tasks: { ...spaTasks(false, R.cli, false), ...prismaWiring?.tasks },
+    tasks: {
+      ...spaTasks(false, R.cli, false, prismaWiring?.nodeModulesDir ?? "auto"),
+      ...prismaWiring?.tasks,
+    },
     // Prisma needs a real node_modules (the generated client + adapter + `links` shim);
     // otherwise the App-Router native passes resolve npm deps via `auto`.
     nodeModulesDir: prismaWiring?.nodeModulesDir ?? "auto",
@@ -1522,20 +1525,42 @@ function spaDesktopSource(): string {
  * an app icon; the icon file itself is composed at build time by `export` — see
  * {@link prepareDesktopIcon} — so `spa.desktop.icon` drives it without re-migration.
  */
+/**
+ * The desktop bundle name from the SPA title: parentheticals and characters a bundle/Dock
+ * name shouldn't carry are dropped (`"T3 Code (Alpha)"` → `"T3 Code"`); falls back to `app`.
+ */
+export function desktopAppName(title: string): string {
+  const name = title.replace(/\([^)]*\)/g, "").replace(/[^A-Za-z0-9 ._-]/g, "").replace(/\s+/g, " ")
+    .trim();
+  return name || "app";
+}
+
 function spaTasks(
   desktop: boolean,
   cli: string,
   hasIcon: boolean,
+  nodeModulesDir: "manual" | "auto" = "auto",
+  appName = "app",
 ): Record<string, string> {
+  // A manual-`node_modules` (pnpm/yarn) app: the CLI itself must NOT run under the app's
+  // manual mode. Deno resolves a REMOTE module's npm imports (the JSR-installed CLI's own
+  // `esbuild`, `lightningcss-wasm`, …) against the nearest config — the app's — and a manual
+  // dir carries only the app's deps, so the CLI failed at load ("Could not find a matching
+  // package for 'npm:esbuild'"). `--node-modules-dir=none` resolves the CLI's deps from
+  // Deno's global cache; the build child the CLI re-execs runs under the merged config
+  // (manual + the framework-deps dir), so the app's own `node_modules` — workspace links
+  // included — still resolve exactly as before. It also keeps Deno from "migrating" a
+  // pnpm-workspace.yaml into the monorepo's root package.json on first run.
+  const run = nodeModulesDir === "manual" ? "deno run -A --node-modules-dir=none" : "deno run -A";
   const tasks: Record<string, string> = {
-    dev: `deno run -A ${cli} dev .`,
-    build: `deno run -A ${cli} build .`,
-    export: `deno run -A ${cli} export .`,
+    dev: `${run} ${cli} dev .`,
+    build: `${run} ${cli} build .`,
+    export: `${run} ${cli} export .`,
     // `-A`: a migrated app's `start` re-execs a child `deno` to apply the CSS shim import map
     // (`maybeReexecForCss`) and, for a manual-`node_modules` app, the merged module config
     // (`maybeReexecForModules`) — so it needs run + write + read + env + net (effectively the
     // full set every denext example's `start` uses). A tighter scope crashes on the re-exec.
-    start: `deno run -A ${cli} start .`,
+    start: `${run} ${cli} start .`,
   };
   if (desktop) {
     // `--node-modules-dir=none` resolves the desktop runtime's npm deps (denext's
@@ -1564,9 +1589,12 @@ function spaTasks(
     // the embedded `out/`) and `--allow-env` (`PORT` + the app's env) stay broad: a local
     // desktop app legitimately needs them, and narrowing them risks breaking the runtime.
     const iconFlag = hasIcon ? ` --icon ${DESKTOP_ICON_FILE}` : "";
+    // `-o <AppName>`: without it `deno desktop` names the bundle after the entry file
+    // (`desktop.app`, CFBundleName "desktop"). The title becomes the bundle/Dock name.
     tasks.desktop = `deno task export && deno desktop ` +
       `--allow-net=127.0.0.1,localhost --allow-read --allow-env ` +
-      `--node-modules-dir=none --exclude-unused-npm --include out${iconFlag} desktop.ts`;
+      `--node-modules-dir=none --exclude-unused-npm --include out${iconFlag} ` +
+      `-o ${JSON.stringify(appName)} desktop.ts`;
   }
   return tasks;
 }
@@ -1878,7 +1906,11 @@ async function writeSpaProjectFiles(
     written,
   );
   const { desktopWritten, desktopIcon } = await writeSpaDesktop(dir, desktop, written);
-  const denoJson = spaDenoJson(imports, nodeModulesDir, spaTasks(desktop, R.cli, !!desktopIcon));
+  const denoJson = spaDenoJson(
+    imports,
+    nodeModulesDir,
+    spaTasks(desktop, R.cli, !!desktopIcon, nodeModulesDir, desktopAppName(facts.title)),
+  );
   const denoJsonExists = await finishSpaProjectFiles(
     dir,
     denoJson,
