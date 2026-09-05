@@ -100,6 +100,6 @@ const chunks = [...apiChunks(ref.groups), ...guideChunks(guide)];
 
 await Deno.writeTextFile(
   OUT,
-  JSON.stringify({ generatedAt: new Date().toISOString(), chunks }, null, 2) + "\n",
+  JSON.stringify({ chunks }, null, 2) + "\n",
 );
 console.log(`docs corpus: ${chunks.length} chunks → ${OUT}`);

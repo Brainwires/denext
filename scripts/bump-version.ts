@@ -66,6 +66,17 @@ async function targetFiles(): Promise<string[]> {
   ) {
     files.push(entry.path);
   }
+  // Every examples/*/deno.json — the few that pin `jsr:@denext/denext@^<version>` (most
+  // import the local checkout by relative path and are untouched by the replace).
+  for await (
+    const entry of walk(join(ROOT, "examples"), {
+      includeDirs: false,
+      match: [/examples\/[^/]+\/deno\.json$/],
+      maxDepth: 2,
+    })
+  ) {
+    files.push(entry.path);
+  }
   return files;
 }
 

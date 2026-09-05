@@ -128,13 +128,15 @@ The `denext create --compatibility` scaffolder writes most of this for you.
 > app code respects the import map directly.
 
 > **You don't hand-patch dependencies.** denext's compat build ships a tolerant
-> node_modules resolver (`experimental.nodeResolve`, default-on — a strict
+> node_modules resolver (`nodeResolve`, default-on — a strict
 > superset of Deno's `npm:` loader that honors `exports` wildcard globs and
 > falls back to a plain subpath), so an unmodified pnpm/npm/yarn/bun app builds
 > straight from its installed `node_modules` with no catalog-concretizing and no
-> patching of a dependency's `exports`. `denext migrate` writes config only and
-> **never rewrites `package.json`**. Set `experimental.nodeResolve: false` to
-> force app deps back through Deno's strict `npm:` loader (escape hatch).
+> patching of a dependency's `exports`. `denext migrate` writes config and
+> leaves your source alone; the one `package.json` edit it makes is stripping
+> Prisma's npm client when it wires the Deno-native adapter (see
+> [DATABASE.md](./DATABASE.md)). Set `nodeResolve: false` to force app deps back
+> through Deno's strict `npm:` loader (escape hatch).
 
 ---
 

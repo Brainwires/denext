@@ -152,9 +152,8 @@ react-hook-form route **24 KB vs 140 KB**, a Radix dialog **26 KB vs 142 KB**.
 And denext isn't trading size for speed — it hydrates **~1.1× faster** (p50),
 and its SSR throughput runs on par to several times faster.
 
-**Full comparison:** an
-[interactive benchmark chart](https://claude.ai/code/artifact/5488b1a2-83a5-45b5-9a8e-c073671c0df6)
-plots denext against Next.js / React across bytes over the wire, SSR throughput,
+**Full comparison:** [`bench/REPORT.md`](./bench/REPORT.md) plots denext against
+Next.js / React across bytes over the wire, SSR throughput,
 time-to-interactive, and the real library-heavy app. Every number is
 reproducible via `bench/run.ts`; the raw results and methodology live in
 [`bench/REPORT.md`](./bench/REPORT.md). (Single-machine benchmark — trust the
@@ -260,16 +259,15 @@ ledger in [FEATURES.md](./FEATURES.md).
 - **Caching & ISR** — `cache()`, `unstable_cache`,
   `revalidatePath`/`revalidateTag`, route segment config
   (`export const dynamic`/`revalidate`), and a per-route production page cache
-  (opt-in; default pages stay dynamic). The in-memory default is process-local;
-  swap it for a durable backend:
+  (opt-in; default pages stay dynamic). The **default store is durable**: Deno's
+  built-in `node:sqlite` at `.denext/cache.db` (real native SQLite — zero npm, no
+  unstable flag, survives restarts); the in-memory store is the fallback where the
+  filesystem is read-only (Deno Deploy). Point it elsewhere or swap it explicitly:
 
   ```ts
   import { setCacheStore, sqliteCacheStore } from "denext/server";
 
-  // Durable across restarts, single-node, and NO unstable flag. The recommended
-  // store for self-hosted deployments. Backed by Deno's built-in `node:sqlite`
-  // (real, native SQLite — zero npm, no setup).
-  setCacheStore(sqliteCacheStore({ path: ".denext/cache.db" }));
+  setCacheStore(sqliteCacheStore({ path: "/var/lib/app/cache.db" }));
   ```
 
   `sqliteCacheStore` uses Deno's built-in `node:sqlite` (real native SQLite,

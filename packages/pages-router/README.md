@@ -86,7 +86,7 @@ pre-bundles every route's client entry and prerenders static pages (served from
 
 ## Requirements
 
-Requires `@denext/denext@^2.0.0-rc.1` — the release that ships the semver-stable
+Requires `@denext/denext@^2` — the line that ships the semver-stable
 plugin contract (`@denext/denext/plugin-kit`) this plugin builds on. The
 dependency is pinned in this package's `deno.json`; install it (or the whole
 `@denext/denext` release) alongside.

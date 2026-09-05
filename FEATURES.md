@@ -294,9 +294,11 @@ locale routing) are tracked in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
 
 ## Next.js drop-in (next-compat)
 
-- **`denext migrate`** handles four source families — **Next** App Router,
+- **`denext migrate`** handles five source families — **Next** App Router,
+  **Remix** (`--from remix`: loaders/actions/`Form`/fetchers/`defer` run on the
+  `denext/remix` runtime; see [README-REMIX-MIGRATION.md](./README-REMIX-MIGRATION.md)),
   **Vite** React SPA, **CRA**, and **generic React** (auto-detected;
-  `--from next|vite|cra|generic` forces it). By default it writes **config
+  `--from next|remix|vite|cra|generic` forces it). By default it writes **config
   only** (`package.json` → `deno.json` with react/react-dom/`next/*` aliased;
   SPA sources also get a `denext.config.ts` with `mode:"spa"` + env/proxy).
   Source imports are left resolving through the alias map unless you opt into
@@ -307,7 +309,7 @@ locale routing) are tracked in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
   `denext codemod` runs just the import rewrite standalone.
 - Build-time **react → denext rewrite** (incl. inside npm packages) so the whole
   app runs on **one** React; the RSC/Flight island boundary is preserved.
-- **Tolerant `node_modules` resolver** (`experimental.nodeResolve`, default on
+- **Tolerant `node_modules` resolver** (`nodeResolve`, default on
   for compat builds) resolves a package's `exports`/`main`/`browser` field and
   stubs the safe-to-empty node built-ins — so an unmodified app builds **without
   rewriting its `package.json`** into a `deno.json`.
@@ -323,8 +325,25 @@ canonical migration doc).
 ## Ecosystem packages (first-party JSR)
 
 `@denext/photon`, `@denext/avif`, `@denext/og`, `@denext/pages-router`,
-`@denext/htmx` — published independently, zero-npm. (The cache uses Deno's
+`@denext/htmx`, `@denext/effect` — published independently, zero-npm. (The cache uses Deno's
 built-in `node:sqlite`.)
+
+## End-to-end typed API surface
+
+- **Typed route handlers.** Return `TypedResponse<T>` (and accept a
+  `TypedRequest<B>`) from `denext/server` — `json()` is `Response.json()` at
+  runtime — and `denext dev`/`build` generate `.denext/api.ts` from the route
+  manifest; `createApiClient<ApiSchema>()` (from `denext`) type-checks every
+  call to your own API: a wrong path, method, param or body is a compile error.
+  `apiRequest` is the untyped escape hatch.
+- **Typed Server Actions.** `defineAction({ input, handler })` (from
+  `denext/server`) validates `FormData` into a typed input — a parser function or
+  any Standard Schema (Zod, Valibot, …) — and its output type flows into
+  `useActionState`; `ActionValidationError` carries field errors and
+  `idleActionState<T>()` is the typed initial state.
+- **Generated route types** (`.denext/routes.ts`) type `<Link href>` and
+  `useRouter().push` to the app's real routes; `[x]` params are strings and
+  `[...x]` catch-alls `string[]`.
 
 ## Testing
 
@@ -518,7 +537,7 @@ is [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
   a `<` unicode escape, defeating `</script>` breakout from params/searchParams.
   — `src/server/document.ts:77,
   81`,
-  `src/jsx/render-to-html-flight.ts:390-391`.
+  `src/jsx/render-to-html-flight.ts`.
 
 ### 1.5 Origin / scheme / forwarded-header handling **[default]**
 
@@ -663,7 +682,7 @@ default").
   transitive local import graph; any interactivity signal, unreadable module, or
   failed crawl → hydrate (conservative). —
   `src/build/hydration.ts:25, 60, 79, 87`, wired
-  `src/build/build.ts:88, 92, 148`.
+  `src/build/build.ts, 92, 148`.
 - **Tiny self-contained React-equivalent** **[default]** — denext's own JSX
   runtime, hooks, context, and reconciler; no npm React. **~20 KB first load**
   vs ~60 KB React+ReactDOM / ~137 KB Next.js 16; **~19 KB** shared runtime
@@ -673,7 +692,7 @@ default").
   code-split pass hoists the runtime into a common chunk downloaded once; a
   later navigation transfers only the route delta (**~0.6–0.9 KB**). Route
   entries dropped from ~19 KB to ~1 KB each. —
-  `src/build/bundle.ts:490, 396, 402-410`, `src/build/build.ts:101`; regression
+  `src/build/bundle.ts:490, 396, 402-410`, `src/build/build.ts`; regression
   `tests/integration/build-smoke.test.ts:77, 80`.
 - **Single-React bundling for npm libraries** **[opt-in — next-compat build]** —
   every react-family import (incl. inside npm packages) rewritten to denext's
@@ -687,7 +706,7 @@ default").
   props and unchanged visible context is not re-rendered; a clean subtree with
   no work in the render lanes is skipped entirely. Every function component gets
   memo-style bailout, not just `memo()`-wrapped ones. —
-  `src/client/fiber/reconciler.ts:481-494, 463, 699-705, 810-820`;
+  `src/client/fiber/, 463, 699-705, 810-820`;
   `src/runtime/memo.ts:24, 50, 72`; `src/client/fiber/fiber.ts:53-57, 85`.
 - **Time-sliced, interruptible transitions** **[default for transition APIs]** —
   `useTransition`/`useDeferredValue`/`startTransition` render on a concurrent

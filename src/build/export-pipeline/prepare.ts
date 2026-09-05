@@ -96,6 +96,8 @@ export async function prepareExport(
   await setupPlugins(paths, "export");
   const manifest = await scanRoutes(paths.appDir);
   const outDir = join(projectDir, options.outDir ?? "out");
+  // A fresh export: a route deleted since the last run must not linger as stale HTML.
+  await Deno.remove(outDir, { recursive: true }).catch(() => {});
   const clientOut = join(outDir, "_denext", "client");
   await ensureDir(clientOut);
   return {

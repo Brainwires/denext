@@ -43,7 +43,7 @@ const SCAFFOLD_FLAGS = [
     name: "template",
     type: "string" as const,
     valueName: "<name>",
-    help: "Starter template",
+    help: `Starter template (${SCAFFOLD_TEMPLATES.join(" | ")}; default: default)`,
   },
   {
     name: "yes",
@@ -85,6 +85,7 @@ async function runCreate(
   const notes = featureNotes(on);
   console.log(
     `\n  Done. Next steps:\n${cd}    deno task dev\n` +
+      `\n  (The first run downloads the framework from JSR — a few seconds; later runs are cached.)\n` +
       (notes.length ? "\n" + notes.join("\n") + "\n" : ""),
   );
 }

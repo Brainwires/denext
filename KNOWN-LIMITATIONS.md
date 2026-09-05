@@ -1,8 +1,9 @@
 # denext — Honest edges
 
 denext's promise is the **React/Next.js surface**: public APIs exist and behave
-correctly for correct usage. This file lists only the places that promise
-doesn't fully hold — a genuine **surface gap** (an API missing, throwing, or
+correctly for correct usage. Where denext deliberately behaves differently from
+React (below), the difference is named rather than hidden. This file lists only
+the places that promise doesn't fully hold — a genuine **surface gap** (an API missing, throwing, or
 behaving observably wrong) — plus the **bounded scope** of denext's own
 capabilities (islands, resumability, Live, SPA mode, Cache Components). It is
 deliberately terse; a fixed entry is deleted, not annotated.
@@ -18,6 +19,30 @@ its async SSR renderer, the two-mechanism soft-nav, request-scoped
 
 Where the compat surface genuinely differs from React/Next (mostly on the
 next-compat interop path — denext's own apps are unaffected):
+
+- **Every function component is implicitly `memo()`-wrapped.** denext's reconciler
+  skips re-rendering a component whose props (shallow), context and own state are
+  unchanged — the default React only applies under `memo`. Pure components are
+  unaffected; a component that reads module-level mutable data, `Date.now()`, or a
+  mutated object without a prop/state change will render stale until something it
+  depends on changes. Put such inputs in state, a ref read inside an effect, or a
+  context. Test suites ported from React that count renders will see fewer renders.
+  Deliberate (it is a large part of why denext's runtime is small and fast), not a
+  bug — so it is listed here rather than fixed.
+- **Errors thrown in DOM event handlers are routed to the nearest error boundary.**
+  React lets them reach `window.onerror` and keeps the UI up; denext catches them
+  (`onCaughtError` sees them) and shows the boundary's fallback, so one bad click
+  swaps out that boundary's subtree. Deliberate — a boundary that never sees the
+  most common runtime error in an app is a weak boundary — but it is a behavioral
+  difference; wrap the handler body in `try/catch` when you want React's behavior.
+- **`useDeferredValue` under `act()` / `flushSync`** — the test renderer's
+  synchronous flush collapses the deferred pass, so a test sees the final value at
+  once rather than the stale one first. Real event-path rendering defers as React
+  does.
+- **`global-error.tsx` is server-rendered only.** It renders its own document, but
+  its `reset` prop is a no-op (there is no client hydration of the global-error
+  tree); a reset button should navigate or reload. Next hydrates it as a client
+  component.
 
 - **The Node-stream `react-dom/server` APIs buffer (no `Writable`
   backpressure).** `renderToString` / `renderToStaticMarkup` render the
@@ -341,8 +366,9 @@ trade-off above — so none blocks the release. One line each, with the reason:
 
 - **`esbuild` off npm.** Build-time only (it never enters a shipped bundle, so
   the zero-npm _runtime_ claim already holds); native-backed with a large API
-  surface, isolated to `src/build/next-compat.ts` — the largest of the three
-  build-time codecs and the one deferred furthest. See
+  surface, used by the next-compat build (`src/build/next-compat.ts`) and the
+  unbundled dev loop's per-module transform (`src/build/dev-unbundled/`) — the
+  largest of the three build-time codecs and the one deferred furthest. See
   [ROADMAP.md](./ROADMAP.md) → "Build-time deps → first-party JSR/WASM".
 - **Node-stream `Writable` backpressure.** `renderToPipeableStream` /
   `renderToStaticNodeStream` still buffer (see the first surface-gap entry

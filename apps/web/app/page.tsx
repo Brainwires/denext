@@ -81,7 +81,7 @@ const FEATURES: { title: string; body: string }[] = [
   {
     title: "Live Server Components",
     body:
-      "Server components that push updates over a WebSocket (useLive / usePresence), plus first-party auth (denextAuth) — the 1.1 flagships.",
+      "Server components that push updates over a WebSocket (useLive / usePresence), plus first-party auth (denextAuth).",
   },
   {
     title: "Runs on Deno",

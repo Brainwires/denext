@@ -6,10 +6,10 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the mission + its superiority
 > pillars in [MISSION.md](./MISSION.md).
 >
-> denext has shipped through **1.4.0**; `development` is **2.0.0-rc.7** — the DX
-> release (unified CLI, universal migration, scaffolding/codegen, an instant dev
-> loop, first-party DevTools, end-to-end typed routes and actions) is done and
-> waiting on the cut. **2.1 is the next engineering cycle**: a typed,
+> `development` is **2.0.0-rc.7** (the version line `deno task bump` rewrites).
+> 2.0 — the DX release (unified CLI, universal migration, scaffolding/codegen, an
+> instant dev loop, first-party DevTools, end-to-end typed routes and actions) —
+> ships from it. **2.1 is the next engineering cycle**: a typed,
 > self-documenting API surface, the last build-time purity items, and the
 > ecosystem router plugins. Everything below targets 2.1 unless marked otherwise.
 > This roadmap is rewritten for the following cycle when 2.1 ships.

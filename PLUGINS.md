@@ -35,10 +35,11 @@ pay nothing — every seam is a no-op when unused.
 
 ## The contract
 
-Import the types from `@denext/denext/server`:
+Import the types from `@denext/denext/plugin-kit` (the semver-stable toolkit; they
+are also re-exported from `@denext/denext/server`):
 
 ```ts
-import type { DenextPlugin, PluginContext } from "@denext/denext/server";
+import type { DenextPlugin, PluginContext } from "@denext/denext/plugin-kit";
 
 export function myPlugin(): DenextPlugin {
   return {
@@ -49,7 +50,7 @@ export function myPlugin(): DenextPlugin {
       // ctx.config         — the resolved DenextConfig
       // ctx.mode           — "dev" | "build" | "prod" | "export"
       // ctx.load           — load a module by absolute file path
-      // ...plus the four seams below.
+      // ...plus the five seams below.
     },
   };
 }
@@ -64,7 +65,7 @@ so a route you synthesize is bundled and hydrated like any App Router route. The
 may be async (e.g. scan your own tree off disk):
 
 ```ts
-import { parsePattern } from "@denext/denext/server";
+import { parsePattern } from "@denext/denext/plugin-kit";
 
 ctx.addRouteSynthesizer(async (manifest) => {
   manifest.pages.push({

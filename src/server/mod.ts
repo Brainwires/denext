@@ -249,6 +249,7 @@ export {
   cache,
   cachedFetch,
   cacheLife,
+  cacheStoreHealthy,
   cacheTag,
   getCacheStats,
   getCacheStore,

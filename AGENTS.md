@@ -205,7 +205,7 @@ i18n, images, `cacheComponents`, `streaming`, `live`, `plugins`, `experimental`,
 `mode: "spa"` + `spa: { entry, … }` for SPA mode). Not `next.config.js`.
 
 **Writing a plugin:** a `DenextPlugin` (`{ name, setup(ctx) }` from
-`denext/server`) hooks five seams — `addRouteSynthesizer` (add/adjust routes),
+`denext/plugin-kit`, the semver-stable toolkit) hooks five seams — `addRouteSynthesizer` (add/adjust routes),
 `addRequestHandler` (claim unmatched requests), `addBuildStep` (emit assets),
 `addTeardown` (dispose on drain), and `addCommand` (contribute a CLI verb). Declare
 it as `plugins: [myPlugin()]`. See
