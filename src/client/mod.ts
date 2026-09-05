@@ -128,4 +128,10 @@ export {
   useSelectedLayoutSegments,
   useTranslations,
 } from "./navigation.ts";
-export type { LinkProps, Router } from "./navigation.ts";
+export type {
+  HrefInput,
+  LinkProps,
+  Router,
+  RouterNavigateOptions,
+  UrlObject,
+} from "./navigation.ts";

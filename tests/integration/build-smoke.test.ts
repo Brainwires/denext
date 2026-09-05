@@ -108,7 +108,11 @@ async function assertSharedRuntimeChunk(clientDir: string): Promise<void> {
  * (`resolveFamilyCurrent`/`refreshAllRoots`, a null-check branch in prod); re-based
  * 56 → 58 KB for the reconciler refactor (55.8 → 57.4 KB raw, 19.5 → 20.2 KB gzipped —
  * esbuild does not inline the extracted helpers, so each keeps its declaration + call
- * overhead; the old guard had 231 bytes of headroom, so ANY decomposition tripped it).
+ * overhead; the old guard had 231 bytes of headroom, so ANY decomposition tripped it);
+ * re-based 58 → 59 KB for the 2.0 Next-parity navigation surface (Link: user handler/ref
+ * composition, `target`/`download` respect, `legacyBehavior`, `UrlObject` hrefs, the three
+ * `prefetch` modes; useRouter: one stable object with `prefetch` + scroll options; the
+ * client boot clearing server-rendered image blur placeholders — ~+0.4 KB raw).
  * The over-the-wire cost is the GZIPPED figure, verified by bench Layer 1; this raw guard
  * is a "did the runtime get inlined into a route entry" tripwire, not an over-the-wire
  * budget — the 6 KB per-route entry budget is the real one.
@@ -120,7 +124,7 @@ async function assertBundleBudgets(clientDir: string): Promise<void> {
       sharedTotal += (await Deno.stat(join(clientDir, e.name))).size;
     }
   }
-  assert(sharedTotal < 58_000, `shared chunks total ${sharedTotal} bytes (budget 58 KB raw)`);
+  assert(sharedTotal < 59_000, `shared chunks total ${sharedTotal} bytes (budget 59 KB raw)`);
   for (const f of ["about.js", "blog___slug_.js"]) {
     const n = (await Deno.stat(join(clientDir, f))).size;
     assert(n < 6_000, `${f} is ${n} bytes (budget 6 KB) — is the runtime inlined again?`);

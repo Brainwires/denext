@@ -151,11 +151,14 @@ export {
 export { useServerInsertedHTML } from "./src/runtime/server-inserted-html.ts";
 export type {
   Href,
+  HrefInput,
   LinkProps,
   LinkStatus,
   NavigateOptions,
   RegisteredRoutes,
   Router,
+  RouterNavigateOptions,
+  UrlObject,
 } from "./src/client/navigation.ts";
 
 // Asset components (next/image, next/script, next/font-style ergonomics).
