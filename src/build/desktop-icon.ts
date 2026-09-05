@@ -23,7 +23,14 @@ export const DESKTOP_ICON_FILE = "desktop-icon.png";
 // of the canvas (a transparent safe-area margin, so the Dock renders it at native size);
 // other platforms fill the whole tile.
 const MAC_ICON_CANVAS = 1024;
-const MAC_ICON_SAFE = 0.8; // inner ≈ 819px, margin ≈ 102px — within Apple's ~824/~100.
+/** Apple's macOS icon grid: the tile is 824 of 1024 px (100 px margins). */
+const MAC_ICON_SAFE = 824 / 1024;
+/**
+ * The macOS tile's corner radius as a fraction of the tile — Apple's continuous-curvature
+ * shape is ~22.37 % of the side (185 px on the 824 px tile); circular corners at that radius
+ * are visually indistinguishable in the Dock.
+ */
+const MAC_ICON_CORNER = 0.2237;
 
 /**
  * The safe-area ratio for the build's target platform. macOS wants the ~80% margined
@@ -82,6 +89,10 @@ export async function composeMacOsIcon(
     const inner = Math.round(MAC_ICON_CANVAS * safeRatio);
     const small = resize(img, inner, inner, SamplingFilter.Lanczos3);
     const px = small.get_raw_pixels(); // RGBA, inner*inner*4
+    // A web icon (apple-touch-icon, favicon) is a full-bleed square; the Dock does NOT mask
+    // it, so without this it renders as a sharp-cornered box that reads smaller than its
+    // rounded neighbours. Only applied on the margined (macOS) composition.
+    if (safeRatio < 1) roundTileCorners(px, inner, Math.round(inner * MAC_ICON_CORNER));
     const canvas = new Uint8Array(MAC_ICON_CANVAS * MAC_ICON_CANVAS * 4); // transparent
     const off = Math.floor((MAC_ICON_CANVAS - inner) / 2);
     for (let y = 0; y < inner; y++) {
@@ -95,6 +106,25 @@ export async function composeMacOsIcon(
     // undecodable format, …) — a bare "could not process" hid the real cause.
     console.warn(`  desktop icon: compose failed — ${err instanceof Error ? err.message : err}`);
     return null;
+  }
+}
+
+/**
+ * Clear the alpha of every pixel outside a rounded rectangle of radius `r` covering the whole
+ * `size`×`size` RGBA tile (circular corners), so a square source takes the macOS tile shape.
+ */
+function roundTileCorners(px: Uint8Array, size: number, r: number): void {
+  const last = size - 1;
+  for (let y = 0; y < r; y++) {
+    for (let x = 0; x < r; x++) {
+      // Distance from this corner pixel's center to the corner arc's center.
+      const dx = r - 0.5 - x;
+      const dy = r - 0.5 - y;
+      if (dx * dx + dy * dy <= r * r) continue; // inside the arc → keep
+      for (const [cx, cy] of [[x, y], [last - x, y], [x, last - y], [last - x, last - y]]) {
+        px[(cy * size + cx) * 4 + 3] = 0;
+      }
+    }
   }
 }
 

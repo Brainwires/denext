@@ -8,6 +8,10 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **Composed desktop icons match the macOS grid.** An auto-detected web icon (a full-bleed square `apple-touch-icon`) is now composed into Apple's 824-of-1024 px tile WITH the rounded-tile mask (continuous-curvature corners at ~22 % of the tile); it used to be an 819 px sharp-cornered square, which the Dock renders visibly smaller and boxier than the neighbouring apps. `spa.desktop.icon` PNGs are still used verbatim. `src/build/desktop-icon.ts`.
+
 ## [2.0.3] - 2026-09-05
 
 ### Fixed
