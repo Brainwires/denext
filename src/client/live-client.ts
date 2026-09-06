@@ -24,6 +24,7 @@
 import type { FlightNode } from "../jsx/render-to-flight.ts";
 import type { VNodeChild } from "../jsx/types.ts";
 import { setLiveRegistrar } from "../runtime/live-registry.ts";
+import { decodeWire, prepareWire, WIRE_ENC } from "../runtime/wire-codec.ts";
 import {
   LIVE_ENDPOINT,
   type LiveClientMessage,
@@ -39,8 +40,11 @@ interface Boundary {
 
 interface DataSub {
   actionId: string;
+  /** Already wire-encoded (sent verbatim on every reconnect). */
   args: unknown[];
   tags: string[];
+  /** `1` when `args` carries codec tags. */
+  enc?: 1;
   onData: (value: unknown, error?: string) => void;
 }
 
@@ -127,9 +131,13 @@ export function subscribeLiveData(
   onData: (value: unknown, error?: string) => void,
 ): () => void {
   const subId = `d${++subCounter}`;
-  dataSubs.set(subId, { actionId, args, tags, onData });
+  // Encode once (the frame is re-sent verbatim on every reconnect).
+  const p = prepareWire(args);
+  const sub: DataSub = { actionId, args: p.value as unknown[], tags, onData };
+  if (p.tagged) sub.enc = WIRE_ENC;
+  dataSubs.set(subId, sub);
   ensureSocket();
-  sendFrame({ type: "data-subscribe", subId, actionId, args, tags });
+  sendFrame(subscribeFrame(subId, sub));
   return () => {
     dataSubs.delete(subId);
     sendFrame({ type: "data-unsubscribe", subId });
@@ -232,7 +240,7 @@ function handleServerMessage(raw: string): void {
       refresh?.();
       break;
     case "data":
-      dataSubs.get(msg.subId)?.onData(msg.value, msg.error);
+      deliverData(msg);
       break;
     case "presence-state":
       presenceRooms.get(msg.room)?.onState(msg.peers, msg.selfId);
@@ -251,6 +259,31 @@ function handleServerMessage(raw: string): void {
       if (msg.subId) dataSubs.get(msg.subId)?.onData(undefined, msg.reason ?? msg.code);
       break;
     }
+  }
+}
+
+/** The `data-subscribe` frame for one subscription (its args are already wire-encoded). */
+function subscribeFrame(subId: string, s: DataSub): LiveClientMessage {
+  const frame: LiveClientMessage = {
+    type: "data-subscribe",
+    subId,
+    actionId: s.actionId,
+    args: s.args,
+    tags: s.tags,
+  };
+  if (s.enc) frame.enc = s.enc;
+  return frame;
+}
+
+/** Hand a pushed value to its subscription, decoding a codec-flagged (`enc`) value first. */
+function deliverData(msg: { subId: string; value: unknown; enc?: 1; error?: string }): void {
+  const sub = dataSubs.get(msg.subId);
+  if (!sub) return;
+  if (msg.enc !== WIRE_ENC) return sub.onData(msg.value, msg.error);
+  try {
+    sub.onData(decodeWire(msg.value), msg.error);
+  } catch {
+    sub.onData(undefined, "malformed value");
   }
 }
 
@@ -277,9 +310,7 @@ function sendSubscribe(): void {
 /** (Re)send every live subscription — called on connect and reconnect. */
 function sendAllSubscriptions(): void {
   if (boundaries.size > 0) sendSubscribe();
-  for (const [subId, s] of dataSubs) {
-    sendFrame({ type: "data-subscribe", subId, actionId: s.actionId, args: s.args, tags: s.tags });
-  }
+  for (const [subId, s] of dataSubs) sendFrame(subscribeFrame(subId, s));
   for (const [room, r] of presenceRooms) {
     sendFrame({ type: "presence-join", room, state: r.state });
   }

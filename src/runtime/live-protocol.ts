@@ -57,10 +57,12 @@ export interface LiveDataSubscribe {
   subId: string;
   /** The registered server-function id to run (a `serverAction`'s `denextActionId`). */
   actionId: string;
-  /** Arguments passed to the server function. */
+  /** Arguments passed to the server function (wire-codec encoded when `enc` is set). */
   args: unknown[];
   /** Cache tags whose invalidation triggers a recompute + push. */
   tags: string[];
+  /** `1` when `args` carries wire-codec tags (Date/Map/Set/BigInt/…) and must be decoded. */
+  enc?: 1;
 }
 
 /** Client → server: drop a {@link LiveDataSubscribe}. */
@@ -75,8 +77,10 @@ export interface LiveData {
   type: "data";
   /** The subscription this value is for. */
   subId: string;
-  /** The server function's return value (JSON), or `undefined` on error. */
+  /** The server function's return value (JSON; wire-codec encoded when `enc` is set), or `undefined` on error. */
   value: unknown;
+  /** `1` when `value` carries wire-codec tags and must be decoded. */
+  enc?: 1;
   /** Present when the recompute failed. */
   error?: string;
 }

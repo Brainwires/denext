@@ -24,6 +24,7 @@
  */
 
 import type { FlightNode } from "../jsx/render-to-flight.ts";
+import { decodeWire, prepareWire, WIRE_ENC } from "../runtime/wire-codec.ts";
 import type { FlightNavPayload } from "./document.ts";
 import type { LiveConfig, LiveConnectionContext, LiveLimits } from "./config.ts";
 import { ID_PATH_PROP } from "../jsx/tree-id.ts";
@@ -568,7 +569,7 @@ function handlePresenceLeave(
 /** Authorize + register a `useLive` data subscription (subscribing runs the action). */
 async function handleDataSubscribe(
   conn: Conn,
-  msg: { subId?: unknown; actionId?: unknown; args?: unknown; tags?: unknown },
+  msg: { subId?: unknown; actionId?: unknown; args?: unknown; tags?: unknown; enc?: unknown },
 ): Promise<void> {
   if (typeof msg.subId !== "string" || typeof msg.actionId !== "string") return;
   const subId = msg.subId;
@@ -577,9 +578,14 @@ async function handleDataSubscribe(
     sendError(conn, "limit", "too many subscriptions", { subId });
     return;
   }
+  const args = decodeSubscribeArgs(msg);
+  if (args === null) {
+    sendError(conn, "bad-message", "malformed subscription args", { subId });
+    return;
+  }
   const sub: DataSub = {
     actionId: msg.actionId,
-    args: Array.isArray(msg.args) ? msg.args : [],
+    args,
     tags: Array.isArray(msg.tags) ? msg.tags : [],
   };
   let decision: AuthDecision = "deny";
@@ -706,6 +712,26 @@ function pushDataUpdates(conn: Conn, invalidated: Set<string>): void {
   }
 }
 
+/** The subscription's `args` — wire-codec decoded when flagged `enc`; `null` when malformed. */
+function decodeSubscribeArgs(msg: { args?: unknown; enc?: unknown }): unknown[] | null {
+  const raw = Array.isArray(msg.args) ? msg.args : [];
+  if (msg.enc !== WIRE_ENC) return raw;
+  try {
+    const decoded = decodeWire(raw);
+    return Array.isArray(decoded) ? decoded : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A `data` frame whose value rides the wire codec (`enc` only when a tag was needed). */
+function dataFrame(subId: string, value: unknown): LiveServerMessage {
+  const p = prepareWire(value);
+  return p.tagged
+    ? { type: "data", subId, value: p.value, enc: WIRE_ENC }
+    : { type: "data", subId, value: p.value };
+}
+
 /** Run a subscription's server function under the viewer's session and push the result. */
 async function recomputeData(conn: Conn, subId: string, sub: DataSub): Promise<void> {
   if (sub.busy) {
@@ -729,7 +755,7 @@ async function recomputeData(conn: Conn, subId: string, sub: DataSub): Promise<v
         const value = await withRenderSlot(() =>
           withDeadline(renderDeadlineMs(), (s) => runFetcher(conn, sub.actionId, sub.args, s))
         );
-        send(conn, { type: "data", subId, value });
+        send(conn, dataFrame(subId, value));
       } catch {
         // A thrown deadline (or a real fetcher error) lands here; the slot was already
         // released by `withDeadline`, so the fleet keeps moving.

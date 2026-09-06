@@ -26,6 +26,17 @@
 // `x-denext-wire: 1` header / `enc: 1` envelope field is set only when `tagged` was true, so
 // plain JSON bodies never pay for a decode walk.
 
+/** The `enc` envelope value marking a codec-encoded JSON field (actions, Live frames, batches). */
+export const WIRE_ENC = 1 as const;
+
+/** The result of {@link prepareWire}: the JSON-ready value and whether any node needed a tag. */
+export interface PreparedWire {
+  /** A value `JSON.stringify` can take as-is (tags applied, `$` keys escaped). */
+  value: unknown;
+  /** True when a codec tag or an escaped key was needed — the envelope must carry `enc: 1`. */
+  tagged: boolean;
+}
+
 /** The result of {@link encodeWire}: the JSON text and whether any value needed a codec tag. */
 export interface EncodedWire {
   /** The JSON body text (`""` for a top-level `undefined` — "no body"). */
@@ -86,9 +97,21 @@ interface EncodeCtx {
  */
 export function encodeWire(value: unknown): EncodedWire {
   if (value === undefined) return { body: "", tagged: false };
+  const { value: prepared, tagged } = prepareWire(value);
+  return { body: JSON.stringify(prepared), tagged };
+}
+
+/**
+ * The pre-stringify half of {@link encodeWire}, for a value that is embedded in a larger JSON
+ * envelope (`{ args, enc: 1 }`, a Live frame's `value`): tags applied, keys escaped, nothing
+ * stringified yet. Copy-on-write like `encodeWire`.
+ *
+ * @param value The value to prepare.
+ * @returns The JSON-ready value and whether the envelope needs `enc: 1`.
+ */
+export function prepareWire(value: unknown): PreparedWire {
   const ctx: EncodeCtx = { tagged: false };
-  const prepared = prepare(value, 0, ctx);
-  return { body: JSON.stringify(prepared), tagged: ctx.tagged };
+  return { value: prepare(value, 0, ctx), tagged: ctx.tagged };
 }
 
 /** Rewrite one value into its wire shape (copy-on-write: unchanged subtrees keep their identity). */

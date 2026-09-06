@@ -13,6 +13,7 @@
 //   to a same-origin path derived from Referer.
 
 import { bufferedRequest, readCappedBody, STALLED, TOO_LARGE } from "./body.ts";
+import { prepareWire, WIRE_ENC } from "../runtime/wire-codec.ts";
 import { ACTION_PREFIX, decodeActionArgs, getServerAction } from "../runtime/server-action.ts";
 import {
   isForbidden,
@@ -114,7 +115,7 @@ export async function handleAction(
   // 5. Run the handler.
   try {
     const result = await handler(...args);
-    if (isXhr) return jsonResponse({ result: result ?? null, ...refreshDirectives() });
+    if (isXhr) return xhrResult(result);
     // No-JS form post: redirect back to the (same-origin) referring page (a full
     // reload, which itself satisfies any updateTag/refresh the action requested).
     // sameOriginBackPath already host-checks the Referer; normalize as defense in
@@ -294,6 +295,16 @@ function refreshDirectives(): { refresh?: true; updatedTags?: string[] } {
   if (ctx?.refreshRequested) out.refresh = true;
   if (ctx?.updatedTags && ctx.updatedTags.size > 0) out.updatedTags = [...ctx.updatedTags];
   return out;
+}
+
+/**
+ * The XHR success envelope: the result rides the wire codec (Date/Map/Set/BigInt survive) with
+ * `enc: 1` only when a tag was needed, plus the refresh directives the action requested.
+ */
+function xhrResult(result: unknown): Response {
+  const p = prepareWire(result ?? null);
+  const envelope = p.tagged ? { result: p.value, enc: WIRE_ENC } : { result: p.value };
+  return jsonResponse({ ...envelope, ...refreshDirectives() });
 }
 
 function jsonResponse(body: unknown, status = 200): Response {

@@ -1,5 +1,6 @@
 // Server Actions — call a server function from the client over an RPC endpoint.
 import { djb2 } from "./djb2.ts";
+import { decodeWire, prepareWire, WIRE_ENC } from "./wire-codec.ts";
 //
 // denext has no bundler transform of `"use server"`, so actions are registered
 // at runtime by id: `serverAction("id", handler)`. On the server the returned
@@ -232,6 +233,7 @@ async function dispatchFromClient(id: string, args: unknown[]): Promise<unknown>
   });
   const data = (await res.json().catch(() => ({}))) as {
     result?: unknown;
+    enc?: number;
     redirect?: string;
     replace?: boolean;
     error?: string;
@@ -255,7 +257,8 @@ async function dispatchFromClient(id: string, args: unknown[]): Promise<unknown>
   if ((data.refresh || (data.updatedTags && data.updatedTags.length > 0)) && onActionRefresh) {
     onActionRefresh();
   }
-  return data.result;
+  // A result the server flagged `enc` carries wire-codec tags (Date/Map/Set/BigInt/…).
+  return data.enc === WIRE_ENC ? decodeWire(data.result) : data.result;
 }
 
 /**
@@ -279,14 +282,28 @@ export function encodeActionArgs(
   }
   if (fdIndex === -1) {
     return {
-      body: JSON.stringify({ args }),
+      body: JSON.stringify(wireEnvelope("args", args)),
       headers: { "content-type": "application/json" },
     };
   }
   const fd = args[fdIndex] as FormData;
   const others = args.map((a, i) => (i === fdIndex ? null : a));
-  fd.append(META_FIELD, JSON.stringify({ fdIndex, others }));
+  fd.append(META_FIELD, JSON.stringify({ fdIndex, ...wireEnvelope("others", others) }));
   return { body: fd, headers: {} };
+}
+
+/**
+ * `{ [field]: value }` through the wire codec, plus `enc: 1` only when a tag was needed — so
+ * a plain-JSON argument list is byte-identical to before and the decoder skips the walk.
+ */
+function wireEnvelope(field: string, value: unknown): Record<string, unknown> {
+  const p = prepareWire(value);
+  return p.tagged ? { [field]: p.value, enc: WIRE_ENC } : { [field]: p.value };
+}
+
+/** Un-envelope a codec-flagged field (`enc: 1`); a plain field is returned as-is. */
+function decodeEnvelope(env: { enc?: unknown }, value: unknown): unknown {
+  return env.enc === WIRE_ENC ? decodeWire(value) : value;
 }
 
 /**
@@ -299,16 +316,19 @@ export function encodeActionArgs(
 export async function decodeActionArgs(request: Request): Promise<unknown[]> {
   const ct = request.headers.get("content-type") ?? "";
   if (ct.includes("application/json")) {
-    const body = (await request.json().catch(() => ({}))) as { args?: unknown };
-    return Array.isArray(body.args) ? body.args : [];
+    const body = (await request.json().catch(() => ({}))) as { args?: unknown; enc?: unknown };
+    // A malformed codec payload throws (WireCodecError) → the action handler's 400.
+    const args = decodeEnvelope(body, body.args);
+    return Array.isArray(args) ? args : [];
   }
   const fd = await request.formData();
   const metaRaw = fd.get(META_FIELD);
   if (typeof metaRaw === "string") {
     fd.delete(META_FIELD);
-    let meta: { fdIndex: number; others: unknown[] };
+    let meta: { fdIndex: number; others: unknown[]; enc?: unknown };
     try {
       meta = JSON.parse(metaRaw);
+      meta.others = decodeEnvelope(meta, meta.others) as unknown[];
     } catch {
       return [fd];
     }

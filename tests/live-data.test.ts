@@ -14,6 +14,7 @@ import {
   serverAction,
 } from "../src/runtime/server-action.ts";
 import { revalidateTag } from "../src/server/cache.ts";
+import { prepareWire } from "../src/runtime/wire-codec.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { makeDom } from "./helpers/dom.ts";
@@ -683,6 +684,62 @@ Deno.test("useLive hub: re-authorizes on recompute — a revoked canSubscribe st
     });
     assertEquals(frames[0].error, undefined, "initial push is authorized");
     assertEquals(frames[1].error, "unauthorized", "recompute after revocation is refused");
+    ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
+Deno.test("useLive hub: codec-flagged args are decoded and a Date value is pushed with enc:1", async () => {
+  liveReadable(serverAction(
+    "livedata#when",
+    (d: unknown) => ({ gotDate: d instanceof Date, at: new Date(0) }),
+  ));
+  const { server, port } = startHub();
+  try {
+    const args = prepareWire([new Date(5)]);
+    const { ws, frames } = await collect(port, "data", 1, (ws) => {
+      ws.send(JSON.stringify({
+        type: "data-subscribe",
+        subId: "s1",
+        actionId: "livedata#when",
+        args: args.value,
+        enc: 1,
+        tags: [],
+      }));
+    });
+    assertEquals(frames[0], {
+      type: "data",
+      subId: "s1",
+      value: { gotDate: true, at: { $: "D", v: "1970-01-01T00:00:00.000Z" } },
+      enc: 1,
+    });
+    ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
+Deno.test("useLive hub: malformed codec-flagged args are refused as bad-message (nothing runs)", async () => {
+  let runs = 0;
+  liveReadable(serverAction("livedata#never", () => ++runs));
+  const { server, port } = startHub();
+  try {
+    const { ws, frames } = await collect(port, "error", 1, (ws) => {
+      ws.send(JSON.stringify({
+        type: "data-subscribe",
+        subId: "s1",
+        actionId: "livedata#never",
+        args: [{ $: "Z" }],
+        enc: 1,
+        tags: [],
+      }));
+    });
+    assertEquals(frames[0].code, "bad-message");
+    assertEquals(frames[0].subId, "s1");
+    assertEquals(runs, 0);
     ws.close();
   } finally {
     uninstallLiveHub();

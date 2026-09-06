@@ -15,6 +15,7 @@ import {
   tagServerModules,
 } from "../src/runtime/server-action.ts";
 import { handleAction } from "../src/server/action-handler.ts";
+import { decodeWire } from "../src/runtime/wire-codec.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { redirect } from "../src/runtime/error-boundary.ts";
 import { clientOnly, isServer, serverOnly } from "../src/runtime/environment.ts";
@@ -449,4 +450,69 @@ Deno.test("client dispatch: a plain result does not refresh", async () => {
   } finally {
     setActionRefreshHandler(() => {});
   }
+});
+
+Deno.test("action args ride the wire codec: Date/Map survive, plain JSON stays unflagged", async () => {
+  const when = new Date("2026-09-06T00:00:00.000Z");
+  const { body, headers } = encodeActionArgs([{ when, m: new Map([["k", 1n]]) }]);
+  const parsed = JSON.parse(body as string);
+  assertEquals(parsed.enc, 1, "a tagged payload is flagged");
+  const args = await decodeActionArgs(
+    new Request("http://localhost/x", { method: "POST", headers, body }),
+  );
+  const a = args[0] as { when: Date; m: Map<string, bigint> };
+  assert(a.when instanceof Date && a.when.getTime() === when.getTime());
+  assert(a.m instanceof Map && a.m.get("k") === 1n);
+  // Plain JSON args: byte-identical to before (no `enc`), so the decoder skips the walk.
+  assertEquals(JSON.parse(encodeActionArgs([{ hello: "world" }]).body as string), {
+    args: [{ hello: "world" }],
+  });
+});
+
+Deno.test("action FormData meta carries codec-encoded sibling args", async () => {
+  const fd = new FormData();
+  fd.set("name", "Ada");
+  const { body, headers } = encodeActionArgs([{ since: new Date(0) }, fd]);
+  const args = await decodeActionArgs(
+    new Request("http://localhost/x", { method: "POST", headers, body }),
+  );
+  assert((args[0] as { since: Date }).since instanceof Date);
+  assert(args[1] instanceof FormData);
+});
+
+Deno.test("action results ride the wire codec: the endpoint flags `enc` only when needed", async () => {
+  serverAction("fn_when", () => ({ at: new Date(0), tags: new Set(["a"]) }));
+  serverAction("fn_plain", () => ({ n: 1 }));
+  const tagged = await (await dispatch(actionRequest("fn_when", {
+    headers: { origin: "http://localhost", "x-denext-action": "1" },
+    json: { args: [] },
+  }))).json();
+  assertEquals(tagged.enc, 1);
+  const value = decodeWire(tagged.result) as { at: Date; tags: Set<string> };
+  assert(value.at instanceof Date && value.tags instanceof Set);
+  const plain = await (await dispatch(actionRequest("fn_plain", {
+    headers: { origin: "http://localhost", "x-denext-action": "1" },
+    json: { args: [] },
+  }))).json();
+  assertEquals(plain.enc, undefined);
+  assertEquals(plain.result, { n: 1 });
+});
+
+Deno.test("a malformed codec-flagged action payload is a 400, not a 500", async () => {
+  serverAction("fn_never", () => "unreachable");
+  const res = await dispatch(actionRequest("fn_never", {
+    headers: { origin: "http://localhost", "x-denext-action": "1" },
+    json: { args: [{ $: "Z" }], enc: 1 },
+  }));
+  assertEquals(res.status, 400);
+});
+
+Deno.test("client dispatch: a codec-flagged result is decoded before it reaches the caller", async () => {
+  await withFetch(
+    { result: { at: { $: "D", v: "1970-01-01T00:00:00.000Z" } }, enc: 1 },
+    async () => {
+      const value = await clientActionStub<[], { at: Date }>("live#when")();
+      assert(value.at instanceof Date && value.at.getTime() === 0);
+    },
+  );
 });
