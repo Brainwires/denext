@@ -52,6 +52,13 @@ and this project adheres to
 
 ### Added
 
+- **`examples/typed-api`** — the whole typed surface in one small app: `defineApi` routes over
+  a hand-rolled Standard Schema, `createApiClient()` / `useApiLive` typed against the generated
+  `.denext/api.ts`, batching, `defineSubscription` / `useSubscription`, `createChannel` /
+  `useChannel`, and a `defineAction` no-JS form. Built, served and probed end to end by
+  `tests/integration/example-typed-api.test.ts` (typed 400/409/404 envelopes, the batch endpoint,
+  an `invalid-input` subscription refusal, a channel push after a create); a two-tab real-browser
+  run in `tests/e2e/typed-api.e2e.test.ts` (opt-in).
 - **`createChannel` / `useChannel` — server push over the Live socket.** `<Live>`, `useLive`
   and `useSubscription` are pull-recompute on tag invalidation; a channel is the push half:
   `const orderEvents = createChannel<{ status }>({ schema, authorize })` exported from a
