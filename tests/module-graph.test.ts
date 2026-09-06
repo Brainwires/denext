@@ -84,18 +84,30 @@ Deno.test("crawl + classify discovers a use client leaf imported by a server pag
   }
 });
 
-Deno.test("exportsOf populates ref export names when provided", async () => {
+Deno.test("exportsOf runs for server-action modules only; client islands are read statically", async () => {
   const app = await Deno.makeTempDir();
   try {
     await Deno.writeTextFile(
       join(app, "page.tsx"),
-      `"use client"\nexport function A() {}\nexport function B() {}`,
+      `"use client"\nimport { save } from "./actions.ts";\nexport function A() {}\nexport { save as B }`,
     );
+    await Deno.writeTextFile(
+      join(app, "actions.ts"),
+      `"use server"\nexport async function save() {}\nexport const LIMIT = 1;`,
+    );
+    const asked: string[] = [];
     const bm = await buildBoundaryManifest(app, [join(app, "page.tsx")], {
-      exportsOf: () => ["A", "B"],
+      exportsOf: (file) => {
+        asked.push(file);
+        return ["save"];
+      },
     });
-    const ref = [...bm.client.values()][0];
-    assertEquals(ref.exports, ["A", "B"]);
+    // The island's names come from the static lexer — it was never imported/executed.
+    const island = [...bm.client.values()][0];
+    assertEquals(island.exports.sort(), ["A", "B"]);
+    assertEquals(asked, [join(app, "actions.ts")], "exportsOf saw only the server module");
+    const action = [...bm.server.values()][0];
+    assertEquals(action.exports, ["save"]);
   } finally {
     await Deno.remove(app, { recursive: true });
   }
@@ -281,4 +293,71 @@ Deno.test("crawlLocalModules follows RUNTIME import edges only — a type-only i
   } finally {
     await Deno.remove(app, { recursive: true });
   }
+});
+
+Deno.test("module graph cache: a crawl over a subset of an earlier crawl's entries spawns no deno info", async () => {
+  const { denoInfoGraph, moduleGraphSpawnCount, resetModuleGraphCache } = await import(
+    "../src/build/module-graph.ts"
+  );
+  const app = await Deno.realPath(await Deno.makeTempDir());
+  try {
+    await Deno.writeTextFile(join(app, "a.ts"), `import "./shared.ts"; export const a = 1;`);
+    await Deno.writeTextFile(join(app, "b.ts"), `import "./only-b.ts"; export const b = 1;`);
+    await Deno.writeTextFile(join(app, "shared.ts"), `export const s = 1;`);
+    await Deno.writeTextFile(join(app, "only-b.ts"), `export const o = 1;`);
+    resetModuleGraphCache();
+    const before = moduleGraphSpawnCount();
+    const union = await crawlLocalModules([join(app, "a.ts"), join(app, "b.ts")]);
+    assertEquals(moduleGraphSpawnCount(), before + 1, "the union crawl spawns once");
+    assertEquals(union.map((p) => p.slice(app.length + 1)).sort(), [
+      "a.ts",
+      "b.ts",
+      "only-b.ts",
+      "shared.ts",
+    ]);
+    // A subset request is served from the cached graph — and scoped to ITS roots only.
+    const onlyA = await crawlLocalModules([join(app, "a.ts")]);
+    assertEquals(moduleGraphSpawnCount(), before + 1, "no second spawn");
+    assertEquals(onlyA.map((p) => p.slice(app.length + 1)).sort(), ["a.ts", "shared.ts"]);
+    // The raw graph API agrees and reports resolved roots.
+    const g = await denoInfoGraph([join(app, "b.ts")]);
+    assertEquals(g.roots, [`file://${app}/b.ts`]);
+    assertEquals(moduleGraphSpawnCount(), before + 1);
+    // A NAMED cache is independent: the CSS crawl (a different resolution) never reads the
+    // default graph, and its own crawl doesn't feed it either.
+    await denoInfoGraph([join(app, "a.ts")], { cache: "css" });
+    assertEquals(moduleGraphSpawnCount(), before + 2, "named cache: its own crawl");
+    await denoInfoGraph([join(app, "a.ts")], { cache: "css" });
+    assertEquals(moduleGraphSpawnCount(), before + 2, "…then cached under that name");
+    // After a reset the next request crawls again (the dev watcher's path).
+    resetModuleGraphCache();
+    await crawlLocalModules([join(app, "a.ts")]);
+    assertEquals(moduleGraphSpawnCount(), before + 3);
+  } finally {
+    resetModuleGraphCache();
+    await Deno.remove(app, { recursive: true });
+  }
+});
+
+// The build manifest carries the boundary (project-relative paths) so the prod server skips the
+// startup crawl; node_modules islands outside the project dir round-trip through `../`.
+Deno.test("boundary manifest serializes to project-relative paths and back", async () => {
+  const { deserializeBoundary, serializeBoundary } = await import("../src/build/module-graph.ts");
+  const project = "/repo/apps/web";
+  const b = {
+    client: new Map([
+      ["c_a", { url: "file:///repo/apps/web/components/a.tsx", exports: ["A"] }],
+      ["c_nm", { url: "file:///repo/node_modules/vaul/dist/index.mjs", exports: ["Drawer"] }],
+    ]),
+    server: new Map([["s_x", { url: "file:///repo/apps/web/app/actions.ts", exports: ["save"] }]]),
+  };
+  const s = serializeBoundary(b, project);
+  assertEquals(s.client.c_a.path, "components/a.tsx");
+  assertEquals(s.client.c_nm.path, "../../node_modules/vaul/dist/index.mjs");
+  const back = deserializeBoundary(JSON.parse(JSON.stringify(s)), project);
+  assertEquals(back.client.get("c_nm")?.url, "file:///repo/node_modules/vaul/dist/index.mjs");
+  assertEquals(back.server.get("s_x"), {
+    url: "file:///repo/apps/web/app/actions.ts",
+    exports: ["save"],
+  });
 });

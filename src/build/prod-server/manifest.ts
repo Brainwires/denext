@@ -2,12 +2,24 @@
 // complete-build check.
 
 import { join } from "@std/path";
+import { defaultLoader } from "../../server/mod.ts";
+import { timed } from "../../runtime/timing.ts";
+import {
+  boundaryRefLoader,
+  compatModuleMapFromManifest,
+  createNextCompatServerLoader,
+} from "../next-compat-loader.ts";
 import { setSelfHostedFonts } from "../../compat/next/font/registry.ts";
 import type { RouteManifest } from "../../router/manifest.ts";
+import { tagClientModules } from "../../runtime/client-reference.ts";
 import { tagServerModules } from "../../runtime/server-action.ts";
 import { FLIGHT_BUNDLE_FILE } from "../build-pipeline/context.ts";
-import { type BoundaryManifest, computeBoundaryRoutes } from "../module-graph.ts";
-import { redirectBoundaryToCompat } from "../next-compat-loader.ts";
+import {
+  type BoundaryManifest,
+  computeBoundaryRoutes,
+  deserializeBoundary,
+  type SerializedBoundary,
+} from "../module-graph.ts";
 import { type ProjectPaths, routeId } from "../paths.ts";
 import { appBoundaryManifest } from "../pipeline-shared.ts";
 
@@ -27,6 +39,8 @@ export interface BuildInfo {
   compatModuleMap: Map<string, string>;
   /** Public-env vars to embed: build-detected ∪ config allowlist. Undefined ⇒ ship all. */
   publicEnvKeys: string[] | undefined;
+  /** The build's Flight boundary (routes + module manifest), when the manifest recorded it. */
+  boundary?: { routes: Set<string>; manifest: BoundaryManifest };
 }
 
 /** Read the build manifest; a missing/invalid one means "nothing static, no compat". */
@@ -46,13 +60,18 @@ export async function readBuildInfo(paths: ProjectPaths): Promise<BuildInfo> {
     // Install build-self-hosted Google fonts so renderFontStyles emits local CSS.
     if (bm.fonts && typeof bm.fonts === "object") setSelfHostedFonts(bm.fonts);
     info.nextCompat = bm.nextCompat === true;
+    if (bm.boundary && typeof bm.boundary === "object" && Array.isArray(bm.boundaryRoutes)) {
+      info.boundary = {
+        routes: new Set<string>(bm.boundaryRoutes),
+        manifest: deserializeBoundary(bm.boundary as SerializedBoundary, paths.projectDir),
+      };
+    }
     if (bm.compatServerModules && typeof bm.compatServerModules === "object") {
-      for (const [relSrc, relBundle] of Object.entries(bm.compatServerModules)) {
-        info.compatModuleMap.set(
-          join(paths.projectDir, relSrc),
-          join(paths.outDir, relBundle as string),
-        );
-      }
+      info.compatModuleMap = compatModuleMapFromManifest(
+        paths.projectDir,
+        paths.outDir,
+        bm.compatServerModules as Record<string, string>,
+      );
     }
   } catch { /* no/invalid build manifest → treat none as static */ }
   return info;
@@ -84,10 +103,30 @@ export async function resolveFlightBoundary(
   manifest: RouteManifest,
   info: BuildInfo,
 ): Promise<FlightBoundary> {
-  const flightRoutes = await computeBoundaryRoutes(paths.appDir, manifest.pages);
-  const boundary = await appBoundaryManifest(paths.appDir, manifest.pages);
-  await tagServerModules(boundary.server);
-  if (info.nextCompat) redirectBoundaryToCompat(boundary, info.compatModuleMap);
+  // The build already crawled the import graph; reuse its answer when the manifest has it
+  // (a large app's crawl is 30 s of startup), else compute it (no/old build manifest).
+  const flightRoutes = info.boundary?.routes ?? await timed(
+    "computeBoundaryRoutes",
+    () => computeBoundaryRoutes(paths.appDir, manifest.pages),
+  );
+  const boundary = info.boundary?.manifest ?? await timed(
+    "appBoundaryManifest",
+    () => appBoundaryManifest(paths.appDir, manifest.pages),
+  );
+  // Tag through the app's loader: in compat mode that resolves each ref to its module inside
+  // the single keyed server bundle — the same instances the page bundles reference — so the
+  // whole app's islands cost one module load, not one import per island.
+  const load = boundaryRefLoader(
+    info.nextCompat && info.compatModuleMap.size > 0
+      ? createNextCompatServerLoader(defaultLoader, { moduleMap: info.compatModuleMap })
+      : defaultLoader,
+  );
+  await timed("tagServerModules", () => tagServerModules(boundary.server, load));
+  // Import + tag the islands now, before the server listens, so the FIRST request doesn't
+  // pay for it.
+  if (flightRoutes.size > 0) {
+    await timed("tagClientModules", () => tagClientModules(boundary.client, load));
+  }
   return { flightRoutes, boundary };
 }
 

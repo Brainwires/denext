@@ -5,6 +5,7 @@
 // hardening headers and logging.
 
 import { copyRemoteAddr } from "./remote-addr.ts";
+import { isThenable } from "../runtime/suspense.ts";
 import type { RouteManifest } from "../router/manifest.ts";
 import { matchApi, matchPage } from "../router/match.ts";
 import { handleApi } from "./api.ts";
@@ -446,7 +447,19 @@ async function handlePipelineError(state: RequestState, error: unknown): Promise
       console.error("denext: onError handler threw", ctx.requestId, pathname, onErrorFailure);
     }
   }
-  console.error("denext: unhandled error while handling", ctx.requestId, pathname, error);
+  if (isThenable(error)) {
+    // A component suspended with no Suspense boundary above it (React: an error too). The
+    // raw Promise says nothing useful; name the situation and, with DENEXT_DEBUG_SUSPENSE,
+    // where `use()` first saw it.
+    const origin = (error as { _origin?: string })._origin;
+    console.error(
+      `denext: unhandled suspension while handling ${ctx.requestId} ${pathname} — a component ` +
+        `suspended (use()/lazy) with no <Suspense> boundary above it` +
+        (origin ? `\n${origin}` : " (set DENEXT_DEBUG_SUSPENSE=1 to trace the origin)"),
+    );
+  } else {
+    console.error("denext: unhandled error while handling", ctx.requestId, pathname, error);
+  }
   return new Response("Internal Server Error", {
     status: 500,
     headers: { "content-type": "text/plain; charset=utf-8", "x-request-id": ctx.requestId },

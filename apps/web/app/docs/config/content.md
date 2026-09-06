@@ -172,7 +172,10 @@ See [Data & caching](/docs/data).
   set this to thread your own `remarkPlugins`, `rehypePlugins`, `recmaPlugins`,
   `remarkRehypeOptions`, or `providerImportSource` (forwarded verbatim to MDX's
   `compile`). Because `denext.config.ts` is a real module, `import` the plugins
-  directly.
+  directly. A **fumadocs-mdx** app needs none of this: when the app has a
+  `source.config.*` and `fumadocs-mdx` installed, its `x.mdx?collection=…` and
+  `meta.json?collection=…` imports compile through fumadocs' own loader (hosted in
+  a child process), so `.source/` must be generated first (fumadocs' `postinstall`).
 
 ## Plugins
 

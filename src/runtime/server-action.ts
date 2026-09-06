@@ -137,11 +137,12 @@ const taggedServers = new Set<string>();
  */
 export async function tagServerModules(
   servers: Iterable<[string, { url: string }]>,
+  load?: (url: string) => Promise<unknown>,
 ): Promise<void> {
   await Promise.all(
     [...servers].map(async ([moduleId, ref]) => {
       if (taggedServers.has(moduleId)) return;
-      const mod = await import(ref.url);
+      const mod = load ? await load(ref.url) : await import(ref.url);
       tagServerExports(mod as Record<string, unknown>, moduleId);
       taggedServers.add(moduleId);
     }),

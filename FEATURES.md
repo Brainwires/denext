@@ -36,7 +36,9 @@ security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
   responses; works on `"use client"` (Flight) routes too. Opt out with
   `streaming: false`.
 - **RSC/Flight** boundary (server components stay server-side; only islands
-  hydrate).
+  hydrate). Islands are **code-split**: the Flight entry loads just the islands a
+  page references (and the ones a soft navigation, a deferred `client:*` island or
+  a Live patch brings in), never the whole app's.
 - **Metadata**: static `metadata`, `generateMetadata`, `generateViewport`,
   `generateStaticParams`; file-based `opengraph-image`/`twitter-image`/`icon`/
   `apple-icon` (**nested per-route**, inherited down the tree), `sitemap` (with
@@ -47,7 +49,10 @@ security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
 - **MDX** (`.mdx` pages and components) — compiled at build time via the
   recovered `@next/mdx` plugin; the `mdx` config threads
   `remark`/`rehype`/`recma` plugins, and CSS is discovered across workspace
-  packages so an imported MDX component's styles are collected.
+  packages so an imported MDX component's styles are collected. A
+  **fumadocs-mdx** site (`source.config.ts` + the generated `.source/`) compiles
+  its `x.mdx?collection=…` / `meta.json?collection=…` imports through fumadocs'
+  own loader, hosted in a byonm child — `src/build/fumadocs-mdx.ts`.
 - `redirect()` / `permanentRedirect()` (308) / `notFound()` / `forbidden()` /
   `unauthorized()`.
 - **`<Form>`** (`next/form`) — client-navigating form that soft-navigates to its

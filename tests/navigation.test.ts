@@ -187,3 +187,39 @@ Deno.test("location store notifies subscribers and can unsubscribe", () => {
   // After unsubscribe the listener set no longer holds our callback.
   assertEquals(calls, 0);
 });
+
+Deno.test("prefetch runs at most 4 fetches at a time (a sidebar of links doesn't storm the server)", async () => {
+  const g = globalThis as { location?: unknown; fetch?: typeof fetch };
+  const origLocation = g.location;
+  const origFetch = g.fetch;
+  g.location = { href: "http://x/", origin: "http://x" };
+  let inflight = 0;
+  let peak = 0;
+  const resolvers: Array<() => void> = [];
+  g.fetch = (() => {
+    inflight++;
+    peak = Math.max(peak, inflight);
+    return new Promise<Response>((resolve) => {
+      resolvers.push(() => {
+        inflight--;
+        resolve({ ok: true, text: () => Promise.resolve("<html>q</html>") } as Response);
+      });
+    });
+  }) as typeof fetch;
+  try {
+    for (let i = 0; i < 12; i++) prefetch(`/q${i}`);
+    await flush();
+    assertEquals(peak, 4, "four in flight, the rest queued");
+    // Releasing one lets the next queued prefetch start.
+    resolvers.shift()!();
+    await flush();
+    assertEquals(resolvers.length, 4, "a queued prefetch started as one finished");
+    while (resolvers.length) resolvers.shift()!();
+    await flush();
+    assertEquals(peak, 4);
+  } finally {
+    if (origLocation === undefined) delete g.location;
+    else g.location = origLocation;
+    g.fetch = origFetch;
+  }
+});

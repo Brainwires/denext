@@ -10,6 +10,7 @@ import {
   concurrentHandle,
   concurrentWipRoot,
   ensureScheduled,
+  lastUpdateSourceName,
   resetConcurrentState,
   runTransitionDone,
   scheduleContinuation,
@@ -196,7 +197,8 @@ export function renderRoot(handle: RootHandle, lanes: number): void {
       handle.pendingLanes &= ~lanes;
       throw new Error(
         "denext: Maximum update depth exceeded. A component repeatedly schedules " +
-          "an update during render (e.g. calling setState unconditionally while rendering).",
+          "an update during render (e.g. calling setState unconditionally while rendering). " +
+          `Last update scheduled by <${lastUpdateSourceName()}>.`,
       );
     }
     handle.pendingLanes &= ~lanes; // clear the lanes we're about to process

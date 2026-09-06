@@ -21,6 +21,7 @@
  */
 
 import { denoPlugins } from "@luca/esbuild-deno-loader";
+import { PUBLIC_ENV_ID } from "../runtime/public-env.ts";
 import * as esbuild from "esbuild";
 import {
   basename,
@@ -41,6 +42,9 @@ import {
   readAliasPrefixes,
   readFrameworkJson,
 } from "./bundle.ts";
+import { resolveOnBehalf } from "./esbuild-resolve.ts";
+import { detectFumadocsMdx, fumadocsMdxPlugin } from "./fumadocs-mdx.ts";
+import { googleFontsPlugin } from "./google-fonts-plugin.ts";
 
 /** The esbuild namespace all prebuilt denext-runtime modules are funneled into. */
 const DENEXT_NS = "denext-runtime";
@@ -91,6 +95,17 @@ export const NEXT_ALIASES: Record<string, string> = {
   "next/cache": "next-cache.js",
   "next/server": "next-server.js",
 };
+
+/**
+ * The `next/*` alias key for an import specifier as libraries actually write it. Packages
+ * built for Node ESM import `next/navigation.js`, `next/link.js`, `next/image.js` (fumadocs,
+ * nuqs) — the `.js` is Node's explicit-extension convention, not a different module — so the
+ * extension is dropped before the {@link NEXT_ALIASES} lookup. Deep `next/dist/*` paths are
+ * left alone (they resolve to the real package; most are pure helpers). Exported for testing.
+ */
+export function normalizeNextSpecifier(spec: string): string {
+  return spec.replace(/^(next(?:\/[^/]+)*)\.(?:m|c)?js$/, "$1");
+}
 
 /**
  * denext source entrypoints prebuilt into the shared runtime (one graph). `baseUrl` may be
@@ -386,7 +401,7 @@ async function denextExternalPlugin(): Promise<esbuild.Plugin> {
     name: "denext-external",
     setup(build) {
       build.onResolve({ filter }, (args) => {
-        const url = specToUrl.get(args.path);
+        const url = specToUrl.get(normalizeNextSpecifier(args.path));
         return url ? { path: url, external: true } : null;
       });
       // denext's own subpaths (`denext`, `denext/server`, `denext/remix`,
@@ -507,7 +522,7 @@ function denextRuntimePlugin(runtimeDir: string): esbuild.Plugin {
       // next/* → denext compat modules (font/link/navigation/… — see NEXT_ALIASES),
       // so app code resolves them to denext instead of the real `next` npm package.
       build.onResolve({ filter: /^next$|^next\// }, (args) => {
-        const file = NEXT_ALIASES[args.path];
+        const file = NEXT_ALIASES[normalizeNextSpecifier(args.path)];
         return file ? runtimeFile(file) : null;
       });
       build.onResolve(
@@ -657,19 +672,21 @@ export function nodeBuiltinStubPlugin(): esbuild.Plugin {
 
 /**
  * esbuild plugin enforcing the npm `server-only` / `client-only` poison packages
- * at **build time** (Next.js parity). `server-only` imported into a CLIENT
- * (browser) bundle — or `client-only` into a SERVER bundle — fails the build with
- * a clear error, so a server module carrying secrets/DB/fs access can't silently
- * ship to the browser and blow up only at runtime. On the allowed side the module
- * resolves to an empty stub (it's just a marker, exports nothing).
+ * at **build time** (Next.js parity). `server-only` imported into the CLIENT
+ * (browser) bundle fails the build with a clear error, so a server module carrying
+ * secrets/DB/fs access can't silently ship to the browser and blow up only at
+ * runtime. `client-only` is inert on BOTH sides: the SSR bundle server-renders the
+ * `"use client"` tree too (Next's `client-only` only throws under the `react-server`
+ * condition, a layer this bundle isn't), and UI libraries such as react-aria import
+ * it from modules that legitimately SSR. On the allowed side the module resolves to
+ * an empty stub (it's just a marker, exports nothing).
  *
  * @param isServer True for the SSR (deno) bundle, false for the browser bundle.
  */
 /**
  * Decide whether importing `spec` (`server-only`/`client-only`) is legal in this
- * bundle: returns a build-error message when it's on the WRONG side (server-only
- * in a client bundle, or client-only in a server bundle), else `null` (allowed).
- * Exported for testing.
+ * bundle: returns a build-error message for `server-only` in a client bundle, else
+ * `null` (allowed — `client-only` never fails a bundle, see above). Exported for testing.
  *
  * @param spec The imported specifier.
  * @param isServer True for the SSR (deno) bundle, false for the browser bundle.
@@ -685,11 +702,6 @@ export function checkEnvPoison(
     return `"server-only" was imported into a CLIENT bundle${from}. A server-only ` +
       `module (secrets, DB, fs) must never ship to the browser — move it behind a ` +
       `Server Component or a "use server" boundary.`;
-  }
-  if (spec === "client-only" && isServer) {
-    return `"client-only" was imported into a SERVER bundle${from}. A client-only ` +
-      `module (browser APIs, effects) must not run on the server — import it only ` +
-      `from a "use client" module.`;
   }
   return null;
 }
@@ -756,9 +768,85 @@ export async function bundleNextCompat(options: BundleNextCompatOptions): Promis
     alias: options.extraAlias,
     absWorkingDir: options.absWorkingDir,
     define: classDefine(options.classComponents),
-    ...(options.platform === "deno" ? { banner: { js: DENO_REQUIRE_BANNER } } : {}),
+    ...(options.platform === "deno"
+      ? {
+        banner: { js: DENO_REQUIRE_BANNER },
+        inject: [await nodeGlobalsShimPath(dirname(options.outfile))],
+      }
+      : {
+        inject: [
+          await browserProcessShimPath(
+            dirname(options.outfile),
+            options.minify ? "production" : "development",
+          ),
+        ],
+      }),
     plugins,
   });
+}
+
+/**
+ * Write (once per `dir`) the module esbuild `inject`s into the SSR bundle so CJS packages'
+ * `__filename` / `__dirname` references resolve: esbuild leaves those unbound in ESM output
+ * (Node's CJS wrapper would supply them — Next's node-target server bundles keep the real
+ * values), and a bundled Node library reading them at module init — esbuild's own JS API,
+ * pulled in by a docs tool — threw `ReferenceError: __filename is not defined` on first
+ * render. Each chunk gets its own file URL, which is what a relative-asset lookup wants.
+ */
+export async function nodeGlobalsShimPath(dir: string): Promise<string> {
+  const path = join(dir, ".node-globals.js");
+  await Deno.mkdir(dir, { recursive: true });
+  await Deno.writeTextFile(
+    path,
+    `import { fileURLToPath } from "node:url";\nimport { dirname } from "node:path";\n` +
+      `const url = import.meta.url;\n` +
+      `export const __filename = url.startsWith("file:") ? fileURLToPath(url) : url;\n` +
+      `export const __dirname = dirname(__filename);\n`,
+  );
+  return path;
+}
+
+/**
+ * Write (once per `dir`) the module esbuild `inject`s into BROWSER bundles so a bare `process`
+ * reference works: npm libraries read `process.env.NODE_ENV` / `process.env.DEBUG` at module
+ * init, and a migrated app's client code reads `process.env.NEXT_PUBLIC_*` (Next inlines those
+ * at build). The shim's `env` is `NODE_ENV` plus the page's public-env JSON island (what the
+ * server ships for the `NEXT_PUBLIC_*` keys the client bundles reference), read lazily on
+ * first access — no `ReferenceError: process is not defined` when a chunk evaluates.
+ */
+export async function browserProcessShimPath(dir: string, nodeEnv: string): Promise<string> {
+  const path = join(dir, ".browser-process.js");
+  await Deno.mkdir(dir, { recursive: true });
+  await Deno.writeTextFile(
+    path,
+    `let cached;\n` +
+      `function env() {\n` +
+      `  if (cached) return cached;\n` +
+      `  cached = { NODE_ENV: ${JSON.stringify(nodeEnv)} };\n` +
+      `  try {\n` +
+      `    const el = typeof document !== "undefined" && document.getElementById(${
+        JSON.stringify(PUBLIC_ENV_ID)
+      });\n` +
+      `    if (el) Object.assign(cached, JSON.parse(el.textContent || "{}"));\n` +
+      `  } catch { /* no island */ }\n` +
+      `  return cached;\n` +
+      `}\n` +
+      `export const process = {\n` +
+      `  env: new Proxy({}, {\n` +
+      `    get: (_, k) => env()[k],\n` +
+      `    has: (_, k) => k in env(),\n` +
+      `    ownKeys: () => Reflect.ownKeys(env()),\n` +
+      `    getOwnPropertyDescriptor: (_, k) => ({ value: env()[k], enumerable: true, configurable: true }),\n` +
+      `  }),\n` +
+      `  browser: true,\n` +
+      `  platform: "browser",\n` +
+      `  version: "",\n` +
+      `  versions: {},\n` +
+      `  cwd: () => "/",\n` +
+      `  nextTick: (fn, ...args) => queueMicrotask(() => fn(...args)),\n` +
+      `};\n`,
+  );
+  return path;
 }
 
 /** Options for {@link bundleNextCompatModules}. */
@@ -1308,12 +1396,7 @@ function viteAssetPlugin(
         const flag = args.path.slice(qIdx + 1).split("&")[0];
         // Resolve the real module through the full chain (skip our own plugin — the
         // query is stripped, so it can't re-match — avoiding recursion).
-        const resolved = await build.resolve(base, {
-          kind: args.kind,
-          importer: args.importer,
-          resolveDir: args.resolveDir || (args.importer ? dirname(args.importer) : ""),
-          namespace: args.namespace,
-        });
+        const resolved = await resolveOnBehalf(build, args, base);
         if (resolved.errors.length > 0) return { errors: resolved.errors };
         return { path: resolved.path, namespace: VITE_ASSET_NS[flag] ?? "vite-url" };
       });
@@ -1360,6 +1443,25 @@ function nodeModulesPlugins(options: BundleNextCompatModulesOptions): esbuild.Pl
 }
 
 /**
+ * esbuild plugin: a `file://` specifier pointing INTO `node_modules` → its filesystem path.
+ * The Flight entry imports every client island by file URL; an island that is an npm
+ * package's own `"use client"` module (next-themes, nuqs, vaul — a client boundary when a
+ * server component imports it, exactly as in Next) lives under node_modules, where the
+ * deno-loader declines file URLs ("Could not resolve"). App-tree file URLs keep their
+ * existing path, so this is scoped to node_modules. Exported for testing.
+ */
+export function nodeModulesFileUrlPlugin(): esbuild.Plugin {
+  return {
+    name: "denext-node-modules-file-url",
+    setup(build) {
+      build.onResolve({ filter: /^file:\/\/.*\/node_modules\// }, (args) => ({
+        path: fromFileUrl(args.path),
+      }));
+    },
+  };
+}
+
+/**
  * The compat plugin chain, in precedence order: caller plugins first (e.g. the Flight
  * bundle's `"use server"` → client-stub redirect); `server-only`/`client-only` poison;
  * the denext runtime (SSR: external shared instance; client: inlined prebuilt runtime);
@@ -1377,17 +1479,26 @@ async function compatPlugins(
   workerBuild: (entryPath: string, outName: string) => Promise<void>,
 ): Promise<esbuild.Plugin[]> {
   const deno = options.platform === "deno";
+  const fumadocs = await detectFumadocsMdx(
+    options.absWorkingDir ?? dirname(
+      options.configPath.startsWith("file:") ? fromFileUrl(options.configPath) : options.configPath,
+    ),
+    (dir, spec) => resolveNodeFrom(dir, spec, SSR_CONDITIONS),
+  );
   const plugins: esbuild.Plugin[] = [
     ...(options.extraPlugins ?? []),
     envPoisonPlugin(deno),
+    googleFontsPlugin(),
     options.denextExternal
       ? await denextExternalPlugin()
       : denextRuntimePlugin(options.runtimeDir!),
     ...(options.assets ? [viteAssetPlugin(options.assets, workerBuild)] : []),
     ...(options.cssImportMap ? [cssShimPlugin(options.cssImportMap)] : []),
+    ...(fumadocs ? [fumadocsMdxPlugin(fumadocs)] : []),
     mdxPlugin(options.mdxOptions),
     ...(deno ? [prismaGeneratedClientExternalPlugin(options.configPath)] : []),
     appResolverPlugin(options.configPath),
+    nodeModulesFileUrlPlugin(),
     ...(deno ? [nodeBuiltinResolvePlugin()] : []),
     ...nodeModulesPlugins(options),
   ];
@@ -1441,7 +1552,19 @@ export async function bundleNextCompatModules(
     // runtime — keep them external so esbuild never tries to bundle their .wasm.
     external: CODEC_EXTERNALS,
     define: { ...classDefine(options.classComponents), ...options.define },
-    ...(deno ? { banner: { js: DENO_REQUIRE_BANNER } } : {}),
+    ...(deno
+      ? {
+        banner: { js: DENO_REQUIRE_BANNER },
+        inject: [await nodeGlobalsShimPath(options.outdir)],
+      }
+      : {
+        inject: [
+          await browserProcessShimPath(
+            options.outdir,
+            options.minify ? "production" : "development",
+          ),
+        ],
+      }),
     // Vite-style asset emission: bare `.wasm`/`.woff2`/… + `new URL(…)` → files
     // under `outdir`, URLs prefixed with `publicPath` (where they are served).
     ...(assets

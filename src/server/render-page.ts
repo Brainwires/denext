@@ -3,6 +3,7 @@
 // 404 UI), render to HTML, and resolve metadata.
 
 import { h } from "../jsx/jsx-runtime.ts";
+import { timed } from "../runtime/timing.ts";
 import type { VNode } from "../jsx/types.ts";
 import { collapseHeadTags, type HeadCollector, renderToString } from "../jsx/render-to-string.ts";
 import { renderShell, type ShellRender } from "../jsx/render-to-stream.ts";
@@ -224,7 +225,10 @@ export async function buildPageContext(
   const props = pageProps(match.params, url.searchParams);
 
   options.signal?.throwIfAborted();
-  const pageModule = (await load(match.route.filePath)) as PageModule;
+  const pageModule = (await timed(
+    `load ${match.route.filePath}`,
+    () => load(match.route.filePath),
+  )) as PageModule;
   if (typeof pageModule.default !== "function") {
     throw new Error(
       `Page module ${match.route.filePath} has no default export component.`,
@@ -362,7 +366,8 @@ export async function renderPage(
   options: RenderPageOptions = {},
   prebuilt?: PageContext,
 ): Promise<RenderedPage> {
-  const ctx = prebuilt ?? await buildPageContext(match, request, load, options);
+  const ctx = prebuilt ??
+    await timed("buildPageContext", () => buildPageContext(match, request, load, options));
   const { tree, metadata, viewport, config } = ctx;
 
   options.signal?.throwIfAborted();
@@ -378,13 +383,16 @@ export async function renderPage(
     let signalState: Record<string, unknown> | undefined;
     if (options.flight) {
       // Single-pass: emit HTML and Flight together so useId stays aligned.
-      const r = await renderToHtmlFlight(tree, { head, resumable: config.resumable });
+      const r = await timed(
+        "renderToHtmlFlight",
+        () => renderToHtmlFlight(tree, { head, resumable: config.resumable }),
+      );
       html = r.html;
       flight = r.flight;
       if (r.islands.length > 0) islands = r.islands;
       if (Object.keys(r.signalState).length > 0) signalState = r.signalState;
     } else {
-      html = await renderToString(tree, { head });
+      html = await timed("renderToString", () => renderToString(tree, { head }));
     }
     hoistHeadIntoMetadata(head, metadata);
     return { html, metadata, status: 200, config, flight, islands, signalState, viewport };

@@ -104,6 +104,33 @@ Deno.test("next.config drop-keys carry per-key guidance, not a lumped drop", asy
   }
 });
 
+Deno.test("next.config is honored even when a plugin wrapper crashes AFTER exporting it", async () => {
+  // fumadocs-mdx's `createMDX(...)` (and other config wrappers) spawn background work that
+  // can throw asynchronously once the config object is already handed over. The evaluation
+  // must keep the translated config instead of reporting "could not be evaluated".
+  const dir = await tmp("mig_asynccrash");
+  try {
+    await Deno.writeTextFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { react: "19.0.0" } }),
+    );
+    await Deno.writeTextFile(join(dir, "package-lock.json"), "{}\n");
+    await Deno.mkdir(join(dir, "app"), { recursive: true });
+    await Deno.writeTextFile(
+      join(dir, "next.config.mjs"),
+      `setTimeout(() => { throw new Error("watcher died"); }, 0);\n` +
+        `export default { basePath: "/docs", trailingSlash: true };\n`,
+    );
+    await migrateProject(dir);
+    const cfg = await Deno.readTextFile(join(dir, "denext.config.ts"));
+    assertStringIncludes(cfg, `basePath: "/docs"`);
+    assertStringIncludes(cfg, "trailingSlash: true");
+    assert(!cfg.includes("could not be evaluated"), "the translation was kept");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("migrate is idempotent — a second run produces byte-identical generated files", async () => {
   const dir = await tmp("mig_idem");
   try {
@@ -522,6 +549,41 @@ Deno.test("migrate --denext-local-path points the config at a local checkout (fi
       tasks["build"],
     );
     assert(!tasks["build"]?.includes("jsr:@denext/denext/cli"), "build task uses the local cli");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+// A Next app keeps its Tailwind entry in `app/globals.css` (shadcn/ui, create-next-app), not the
+// Vite-style `src/index.css` migrate used to require — so the site built but shipped unstyled.
+Deno.test("App Router: the Tailwind block points at the stylesheet that imports tailwindcss", async () => {
+  const { findTailwindInput } = await import("../src/build/migrate.ts");
+  const dir = await tmp("mig_next_tailwind");
+  try {
+    await Deno.writeTextFile(
+      join(dir, "package.json"),
+      JSON.stringify({
+        name: "app",
+        dependencies: { react: "19.0.0", "react-dom": "19.0.0" },
+        devDependencies: { "@tailwindcss/postcss": "^4", tailwindcss: "^4" },
+      }),
+    );
+    await Deno.mkdir(join(dir, "app"), { recursive: true });
+    await Deno.writeTextFile(
+      join(dir, "app", "globals.css"),
+      `@import "tailwindcss";\n@import "tw-animate-css";\n`,
+    );
+    assertEquals(await findTailwindInput(dir), "./app/globals.css");
+    const r = await migrateProject(dir);
+    assertEquals(r.kind, "next");
+    const cfg = await Deno.readTextFile(join(dir, "denext.config.ts"));
+    assert(
+      cfg.includes('tailwind: { input: "./app/globals.css", output: "./app/globals.gen.css" }'),
+      cfg,
+    );
+    // A stylesheet that does not import Tailwind configures nothing.
+    await Deno.writeTextFile(join(dir, "app", "globals.css"), `body { margin: 0 }\n`);
+    assertEquals(await findTailwindInput(dir), null);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

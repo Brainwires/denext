@@ -8,7 +8,7 @@
 // swap, typed modules, size summary). This module runs them in order.
 
 import { buildCompat } from "./build-pipeline/compat.ts";
-import { type BuildResult, log } from "./build-pipeline/context.ts";
+import { type BuildResult, log, timed } from "./build-pipeline/context.ts";
 import { finalizeBuild } from "./build-pipeline/finalize.ts";
 import { buildWithoutAppRouter, pluginBuildSteps, prepareBuild } from "./build-pipeline/prepare.ts";
 import {
@@ -25,23 +25,26 @@ export type { BuildResult } from "./build-pipeline/context.ts";
 
 /** Build the project at `projectDir` into its `.denext/` output dir. */
 export async function build(projectDir: string): Promise<BuildResult> {
-  const paths = await resolveProject(projectDir);
+  const paths = await timed("resolveProject", () => resolveProject(projectDir));
   const early = await buildWithoutAppRouter(paths);
   if (early) return early;
 
-  const ctx = await prepareBuild(projectDir, paths);
-  const css = await buildCss(ctx);
+  const ctx = await timed("prepareBuild", () => prepareBuild(projectDir, paths));
+  const css = await timed("buildCss", () => buildCss(ctx));
   // The CSS shims plus the client-transform redirects form the bundler import map.
-  ctx.cssImportMap = { ...css?.importMap, ...await clientTransforms(ctx) };
+  ctx.cssImportMap = {
+    ...css?.importMap,
+    ...await timed("clientTransforms", () => clientTransforms(ctx)),
+  };
   const built = { ...ctx, css };
 
-  await emitRouteCss(built);
-  await partitionRoutes(built);
-  await bundleNativeRoutes(built);
-  await computeBoundary(built);
-  await bundleNativeFlight(built);
-  await buildCompat(built);
-  await finalizeBuild(built, () => pluginBuildSteps(paths));
+  await timed("emitRouteCss", () => emitRouteCss(built));
+  await timed("partitionRoutes", () => partitionRoutes(built));
+  await timed("bundleNativeRoutes", () => bundleNativeRoutes(built));
+  await timed("computeBoundary", () => computeBoundary(built));
+  await timed("bundleNativeFlight", () => bundleNativeFlight(built));
+  await timed("buildCompat", () => buildCompat(built));
+  await timed("finalizeBuild", () => finalizeBuild(built, () => pluginBuildSteps(paths)));
 
   log(`\nBuilt ${built.routes.length} route bundle(s) into ${paths.outDir}`);
   return { routes: built.routes, outDir: paths.outDir };

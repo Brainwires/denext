@@ -707,7 +707,11 @@ if (cfg && typeof cfg === "object") {
   }
   for (const k of Object.keys(cfg)) if (DROP.includes(k)) out.dropped.push(k);
 }
-console.log(JSON.stringify(out));
+console.log("__DENEXT_NEXT_CONFIG__" + JSON.stringify(out));
+// Exit NOW: a config wrapper (fumadocs-mdx's createMDX, a plugin spawning a watcher) may keep
+// the event loop alive or crash asynchronously after the config object was already handed
+// over — that must not turn a successful evaluation into a failed one.
+Deno.exit(0);
 `;
 
 /**
@@ -789,11 +793,13 @@ async function evalNextConfig(
     const w = child.stdin.getWriter();
     await w.write(new TextEncoder().encode(NEXT_EVAL_PROGRAM));
     await w.close();
-    const { code, stdout } = await child.output();
-    if (code !== 0) return { ...base, raw: true };
-    const line = new TextDecoder().decode(stdout).trim().split("\n").pop() ??
-      "";
-    const parsed = JSON.parse(line) as Pick<
+    const { stdout } = await child.output();
+    // The result line is marker-prefixed and read regardless of the exit code: the config
+    // may have been printed before a plugin's background work crashed the process.
+    const line = new TextDecoder().decode(stdout).split("\n")
+      .find((l) => l.startsWith("__DENEXT_NEXT_CONFIG__"));
+    if (!line) return { ...base, raw: true };
+    const parsed = JSON.parse(line.slice("__DENEXT_NEXT_CONFIG__".length)) as Pick<
       NextConfigTranslation,
       "fields" | "rules" | "dropped"
     >;
@@ -873,6 +879,37 @@ async function writePagesRouterConfig(
   return { configWritten: true, configExists: false };
 }
 
+/** Where a Next app keeps the stylesheet that pulls Tailwind in, in the order Next projects use. */
+const TAILWIND_INPUT_CANDIDATES = [
+  "app/globals.css",
+  "src/app/globals.css",
+  "styles/globals.css",
+  "src/styles/globals.css",
+  "app/global.css",
+  "src/index.css",
+];
+
+/**
+ * The App Router app's Tailwind input stylesheet: the first candidate that exists and imports
+ * Tailwind (`@import "tailwindcss"` — v4 — or a v3 `@tailwind` directive), as a `./`-relative
+ * path for the `tailwind` config block. `null` when the app has no such file (a Tailwind dep
+ * alone — e.g. only `prettier-plugin-tailwindcss` — configures nothing). Exported for testing.
+ */
+export async function findTailwindInput(dir: string): Promise<string | null> {
+  for (const rel of TAILWIND_INPUT_CANDIDATES) {
+    let css: string;
+    try {
+      css = await Deno.readTextFile(join(dir, rel));
+    } catch {
+      continue;
+    }
+    if (/@import\s+["']tailwindcss|@tailwind\s+(base|utilities|components)/.test(css)) {
+      return "./" + rel;
+    }
+  }
+  return null;
+}
+
 /**
  * App Router: generate a full denext.config.ts (compat mode, Tailwind, next.config
  * translation, publicEnv). Never clobbers a hand-authored one (no marker). MDX-plugin apps
@@ -888,8 +925,9 @@ async function writeAppRouterConfig(
   hasEffect: boolean,
   written: string[],
 ): Promise<boolean> {
-  const tailwind = ("tailwindcss" in deps || "@tailwindcss/postcss" in deps) &&
-    await exists(join(dir, "src", "index.css"));
+  const tailwind = ("tailwindcss" in deps || "@tailwindcss/postcss" in deps)
+    ? await findTailwindInput(dir)
+    : null;
   const publicEnv = await collectNextPublicEnvKeys(dir);
   const next = await readNextConfig(dir);
   if (next?.mdx) imports["denext/build/next-mdx"] = jsr("build/next-mdx");
@@ -1059,7 +1097,7 @@ async function migrateRemixProject(
   // hand-authored one.
   const pagesConfigExists = !(await writeIfWritable(
     join(dir, "denext.config.ts"),
-    () => nextConfigSource({ tailwind: false, publicEnv: [], next: null, effect: false }),
+    () => nextConfigSource({ tailwind: null, publicEnv: [], next: null, effect: false }),
     written,
   ));
 
@@ -1449,7 +1487,8 @@ function nextConfigTranslationLines(next: NextConfigTranslation, bodyLines: stri
  * (preserving dynamic logic), unsupported keys listed in a hand-port comment.
  */
 function nextConfigSource(o: {
-  tailwind: boolean;
+  /** The Tailwind input stylesheet (project-relative, `./`-prefixed), or null when none. */
+  tailwind: string | null;
   publicEnv: string[];
   next: NextConfigTranslation | null;
   /** Wire the `@denext/effect` bridge's `effect()` plugin (app depends on `effect`). */
@@ -1458,8 +1497,9 @@ function nextConfigSource(o: {
   const bodyLines: string[] = [`  compatibilityMode: true,`];
 
   if (o.tailwind) {
+    const output = o.tailwind.replace(/\.css$/, ".gen.css");
     bodyLines.push(
-      `  tailwind: { input: "./src/index.css", output: "./src/index.gen.css" },`,
+      `  tailwind: { input: ${JSON.stringify(o.tailwind)}, output: ${JSON.stringify(output)} },`,
     );
   }
   if (o.publicEnv.length) {
@@ -1542,16 +1582,21 @@ function spaTasks(
   nodeModulesDir: "manual" | "auto" = "auto",
   appName = "app",
 ): Record<string, string> {
-  // A manual-`node_modules` (pnpm/yarn) app: the CLI itself must NOT run under the app's
-  // manual mode. Deno resolves a REMOTE module's npm imports (the JSR-installed CLI's own
-  // `esbuild`, `lightningcss-wasm`, …) against the nearest config — the app's — and a manual
-  // dir carries only the app's deps, so the CLI failed at load ("Could not find a matching
-  // package for 'npm:esbuild'"). `--node-modules-dir=none` resolves the CLI's deps from
-  // Deno's global cache; the build child the CLI re-execs runs under the merged config
-  // (manual + the framework-deps dir), so the app's own `node_modules` — workspace links
-  // included — still resolve exactly as before. It also keeps Deno from "migrating" a
-  // pnpm-workspace.yaml into the monorepo's root package.json on first run.
-  const run = nodeModulesDir === "manual" ? "deno run -A --node-modules-dir=none" : "deno run -A";
+  // The CLI PROCESS always runs with `--node-modules-dir=none`, whatever the app's mode:
+  // Deno resolves a REMOTE module's npm imports (the JSR-installed CLI's own `esbuild`,
+  // `lightningcss-wasm`, …) against the nearest config — the app's — and an app
+  // `node_modules` carries only the app's deps, so the CLI failed at load ("Could not find a
+  // matching package for 'npm:esbuild'"). `none` resolves the CLI's deps from Deno's global
+  // cache; the build child the CLI re-execs runs under the merged config (`--config`, which
+  // Deno honors verbatim: the app's mode + the framework-deps dir), so the app's own
+  // `node_modules` — workspace links included — resolve exactly as before. The flag is also
+  // what makes an app inside an npm/pnpm WORKSPACE work: Deno treats the monorepo's root
+  // `package.json` (`workspaces`) as the workspace root and IGNORES `nodeModulesDir` in a
+  // member `deno.json` ("can only be specified in the workspace root"), so the config value
+  // alone would not have applied to the CLI process. It further keeps Deno from "migrating" a
+  // pnpm-workspace.yaml into the root package.json on first run.
+  void nodeModulesDir;
+  const run = "deno run -A --node-modules-dir=none";
   const tasks: Record<string, string> = {
     dev: `${run} ${cli} dev .`,
     build: `${run} ${cli} build .`,

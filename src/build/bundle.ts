@@ -452,7 +452,7 @@ function flightRefreshBlock(
  */
 function flightLiveBlock(usesLive: boolean) {
   const clientImport =
-    `import { startClient, parseFlight, setFlightParser } from "denext/client-runtime";${
+    `import { flightClientIds, startClient, parseFlight, setFlightParser } from "denext/client-runtime";${
       usesLive ? `\nimport { navigate } from "denext/client";` : ""
     }`;
   if (!usesLive) return { clientImport, liveImport: "", liveRegister: "", liveConfigure: "" };
@@ -466,7 +466,7 @@ function flightLiveBlock(usesLive: boolean) {
 // and refresh the current route for coarse updates. No socket opens until a <Live>
 // boundary mounts.
 configureLive({
-  parse: (flight) => parseFlight(flight, registry),
+  parse: (flight) => registry.ensure(flight).then(() => parseFlight(flight, registry)),
   refresh: () => navigate(location.href, { history: false }),
 });
 `,
@@ -475,7 +475,7 @@ configureLive({
 
 /** The Flight entry's `main()`: read the island, adopt signal state, hydrate, boot resumability. */
 function flightMain(catchBody: string): string {
-  return `function main() {
+  return `async function main() {
   const el = document.getElementById("__denext");
   const flightEl = document.getElementById("__denext_flight");
   if (!el || !flightEl) return;
@@ -505,6 +505,7 @@ function flightMain(catchBody: string): string {
       globalThis.__denextSignalState = clean || undefined;
     } catch { /* ignore malformed state */ }
   }
+  await registry.ensure(flight); // this page's islands (code-split chunks)
   const tree = parseFlight(flight, registry);
   try {
     startClient(el, tree);
@@ -531,11 +532,13 @@ export function generateFlightEntry(
   usesLive = true,
 ): string {
   const entries = [...boundary.client.entries()];
-  const imports = entries
-    .map(([, ref], i) => `import * as M${i} from ${JSON.stringify(ref.url)};`)
-    .join("\n");
-  const registrations = entries
-    .map(([clientId], i) => `  reg(M${i}, ${JSON.stringify(clientId)});`)
+  // Islands are code-split: one dynamic `import()` per island module, run on demand for the
+  // islands a payload actually references (see `registry.ensure`). A page ships the entry +
+  // its own islands' chunks — not the whole app's (shadcn/ui: 2,700 islands, 10 MB up front).
+  const loaders = entries
+    .map(([clientId, ref]) =>
+      `  [${JSON.stringify(clientId)}, () => import(${JSON.stringify(ref.url)})],`
+    )
     .join("\n");
   const { refreshImport, regFamily, enableRefresh } = flightRefreshBlock(dev, perModule);
   const { clientImport, liveImport, liveRegister, liveConfigure } = flightLiveBlock(usesLive);
@@ -543,18 +546,42 @@ export function generateFlightEntry(
 ${clientImport}
 ${liveImport}${refreshImport}
 const registry = new Map();
+// Functions AND React's non-callable memo()/forwardRef() element objects — the server tags
+// both as client references (radix exports the latter), so both must resolve here.
 function reg(mod, clientId) {
   for (const k of Object.keys(mod)) {
-    if (typeof mod[k] === "function") {
-      registry.set(clientId + "#" + k, mod[k]);
-${regFamily}    }
+    const v = mod[k];
+    if (typeof v === "function") {
+      registry.set(clientId + "#" + k, v);
+${regFamily}    } else if (v && typeof v === "object" && v.$$typeof) {
+      registry.set(clientId + "#" + k, v);
+    }
   }
 }
-${imports}
-${enableRefresh}${registrations}${liveRegister}
+const loaders = new Map([
+${loaders}
+]);
+const loaded = new Map();
+// Load + register every island a Flight payload references (each module once).
+registry.ensure = (flight) => {
+  const jobs = [];
+  for (const id of flightClientIds(flight)) {
+    const load = loaders.get(id);
+    if (!load) continue;
+    let job = loaded.get(id);
+    if (!job) {
+      job = load().then((mod) => reg(mod, id));
+      loaded.set(id, job);
+    }
+    jobs.push(job);
+  }
+  return Promise.all(jobs).then(() => undefined);
+};
+${enableRefresh}${liveRegister}
 // Register the soft-nav Flight parser so a client navigation to another Flight
-// route reconstructs its tree through this app-wide registry (no bundle re-run).
-setFlightParser((flight) => parseFlight(flight, registry));
+// route reconstructs its tree through this app-wide registry (no bundle re-run) —
+// loading that route's island chunks first.
+setFlightParser((flight) => registry.ensure(flight).then(() => parseFlight(flight, registry)));
 
 ${liveConfigure}
 ${flightMain(hydrationCatch(dev, "denext: flight hydration failed:"))}
@@ -980,17 +1007,6 @@ export async function bundleRoutes(
   } finally {
     await Deno.remove(tmpDir, { recursive: true });
   }
-}
-
-/**
- * Bundle an entry source string and return only the entry file's JavaScript.
- * Convenience for callers that do not emit split chunks (e.g. tests).
- */
-export async function bundleSource(
-  entrySource: string,
-  opts: BundleOptions,
-): Promise<string> {
-  return entryCode(await bundleSourceFiles(entrySource, opts));
 }
 
 /** Bundle a page route's browser entry (entry + any dynamic-import chunks). */

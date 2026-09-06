@@ -202,13 +202,15 @@ async function fetchRoute(href: string): Promise<RouteResponse> {
 // app-wide client registry. Left null for isomorphic (non-Flight) apps, whose
 // server never sends a Flight payload — so this stays entirely out of their
 // bundle (the Flight entry is the only importer of `parseFlight`).
-let flightParse: ((flight: unknown) => VNodeChild) | null = null;
+let flightParse: ((flight: unknown) => VNodeChild | Promise<VNodeChild>) | null = null;
 
 /**
  * Register the Flight-payload parser used by soft navigation. Called once by the
  * generated Flight entry with a closure over the route's client registry.
  */
-export function setFlightParser(parse: (flight: unknown) => VNodeChild): void {
+export function setFlightParser(
+  parse: (flight: unknown) => VNodeChild | Promise<VNodeChild>,
+): void {
   flightParse = parse;
 }
 
@@ -225,9 +227,31 @@ export function prefetch(href: string): void {
   // and re-fetched below.
   if (prefetchGet(url.href) !== undefined) return;
   prefetchStore(url.href, "", false, false); // dedupe in-flight
-  fetchRoute(url.href)
-    .then(({ body, flight, iso }) => prefetchStore(url.href, body, flight, iso))
-    .catch(() => prefetchCache.delete(url.href));
+  prefetchQueue.push(url.href);
+  pumpPrefetches();
+}
+
+/**
+ * At most this many prefetches in flight: a docs sidebar scrolls dozens of links into view
+ * at once, and each prefetch is a full server render — unbounded, they starve the
+ * navigation the user actually makes (and the server).
+ */
+const MAX_PREFETCH_INFLIGHT = 4;
+const prefetchQueue: string[] = [];
+let prefetchInflight = 0;
+
+function pumpPrefetches(): void {
+  while (prefetchInflight < MAX_PREFETCH_INFLIGHT && prefetchQueue.length > 0) {
+    const href = prefetchQueue.shift()!;
+    prefetchInflight++;
+    fetchRoute(href)
+      .then(({ body, flight, iso }) => prefetchStore(href, body, flight, iso))
+      .catch(() => prefetchCache.delete(href))
+      .finally(() => {
+        prefetchInflight--;
+        pumpPrefetches();
+      });
+  }
 }
 
 // ---- Soft navigation -------------------------------------------------------
@@ -348,9 +372,13 @@ export async function navigate(
  * `view-transition-name` — is a follow-on. Exported for testing.
  */
 export function withViewTransition(commit: () => void): void {
-  const doc = document as Document & { startViewTransition?: (cb: () => void) => unknown };
-  if (typeof doc.startViewTransition === "function") doc.startViewTransition(commit);
-  else commit();
+  const doc = document as Document & {
+    startViewTransition?: (cb: () => void) => { finished?: Promise<void> } | undefined;
+  };
+  if (typeof doc.startViewTransition === "function") {
+    // A skipped/aborted transition (another one started, tab hidden) is not an error.
+    doc.startViewTransition(commit)?.finished?.catch(() => {});
+  } else commit();
 }
 
 /** The prefetched render for `url`, else a fresh fetch; null when the fetch failed. */
@@ -437,7 +465,11 @@ async function navigateSameOrigin(
   // DOMParser-ing JSON.
   if (flight) {
     if (flightParse && retainedRoot) {
-      withViewTransition(() => applyFlightNav(body, url, href, options));
+      // Parse first (the parser may load this route's island chunks — async), then commit
+      // the DOM synchronously inside the view transition: an async transition callback is
+      // aborted by the browser when it outlives the transition ("invalid state").
+      const prepared = await prepareFlightNav(body, href);
+      if (prepared) withViewTransition(() => commitFlightNav(prepared, url, href, options));
     } else location.href = href;
     return;
   }
@@ -522,27 +554,40 @@ function swapRouteStyles(hrefs: string[] | undefined): void {
   }
 }
 
+/** A parsed soft-navigation Flight payload, ready to commit. */
+interface PreparedFlightNav {
+  payload: FlightNavPayload;
+  tree: VNode;
+}
+
 /**
- * Apply a Flight soft-navigation payload: parse the JSON envelope, update
- * history, title, and the `#__denext_data` island, then reconcile the new tree
- * through the retained root in place (preserving unaffected-subtree state). Both
- * `flightParse` and `retainedRoot` are guaranteed non-null by the caller.
+ * Parse a Flight soft-navigation payload and reconstruct its tree — awaiting the parser,
+ * which may first load the route's island chunks (code-split islands). Any failure
+ * (malformed payload, reconstruction error) hard-navigates and returns null, so the user is
+ * never stuck on the old route; nothing is committed until {@link commitFlightNav}.
  */
-function applyFlightNav(body: string, url: URL, href: string, options: NavigateOptions): void {
-  // Parse + reconstruct + render under one guard: a malformed-but-valid-JSON
-  // payload can throw in parseFlight/reconcile, and history/title must not be
-  // mutated on a render we can't complete. Any failure hard-navigates so the user
-  // is never stuck on the old route (mirrors the JSON.parse/fetch failure paths).
-  let payload: FlightNavPayload;
-  let tree: VNode;
+async function prepareFlightNav(body: string, href: string): Promise<PreparedFlightNav | null> {
   try {
-    payload = JSON.parse(body) as FlightNavPayload;
-    tree = flightParse!(payload.flight) as VNode;
+    const payload = JSON.parse(body) as FlightNavPayload;
+    const tree = await flightParse!(payload.flight) as VNode;
+    return { payload, tree };
   } catch {
     location.href = href; // malformed payload / reconstruction failure: hard navigate
-    return;
+    return null;
   }
+}
 
+/**
+ * Commit a prepared Flight navigation: update history, title, and the `#__denext_data`
+ * island, then reconcile the new tree through the retained root in place (preserving
+ * unaffected-subtree state). Synchronous, so it can run inside a view transition.
+ */
+function commitFlightNav(
+  { payload, tree }: PreparedFlightNav,
+  url: URL,
+  href: string,
+  options: NavigateOptions,
+): void {
   // Update history first so route hooks read the correct URL after render.
   updateHistory(url, options);
 
@@ -716,7 +761,7 @@ let committedHref = "";
  * every soft nav, so `startClient` would fall into the `hydrateRoot` branch —
  * adopting the outgoing page's DOM as the incoming tree and flooding the console
  * with hydration mismatches. The global bridges those separate module instances.
- * The other readers here (`navigateSameOrigin`, `applyFlightNav`) always run in the
+ * The other readers here (`navigateSameOrigin`, `commitFlightNav`) always run in the
  * persistent initial module, so they keep using this cheap local mirror.
  */
 let retainedRoot: Root | null = null;

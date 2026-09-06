@@ -475,16 +475,41 @@ export async function renderClientIsland(
     return islandWrapper(prefix, "only", undefined, "");
   }
   const effectsBefore = r.effects.count;
-  const out = invokeComponent(resolveComponentType(type), rest) as VNodeChild | Promise<VNodeChild>;
-  const rendered = out instanceof Promise ? await out : out;
+  const rendered = await invokeSettled(
+    () => invokeComponent(resolveComponentType(type), rest) as VNodeChild | Promise<VNodeChild>,
+  );
   const ranEffect = r.effects.count > effectsBefore;
   r.insideIsland = true; // this island's subtree + children are "inside" it
   const htmlDual = await r.renderChild(rendered, scopes, head);
   const strategy = pickIslandStrategy(parsed.strategy, r.resumable, ranEffect, htmlDual.html);
+  // A nested island that is not carved contributes no Flight of its own: the enclosing
+  // island's hydration re-renders it from client code, and its children were authored by
+  // that client code too — walking them for Flight would invoke a client component
+  // (radix's forwardRef `Dialog.Content`, a module-private helper) as a server component,
+  // outside its provider. The parent discards this Flight anyway.
+  if (!strategy && wasInside) return { html: htmlDual.html, flight: null };
   const flight = await islandFlightInside(r, ref.id, rest, prefix, scopes, wasInside);
   if (!strategy) return { html: htmlDual.html, flight };
   carveIsland(r, node, { id: prefix, strategy, param: parsed.param, flight }, wasInside);
   return islandWrapper(prefix, strategy, parsed.param, htmlDual.html);
+}
+
+/**
+ * Invoke a component, awaiting and retrying while IT suspends (`use()` at its top level, or a
+ * `React.lazy` component exported as an island): the island itself is the boundary here — there
+ * may be no `<Suspense>` above it in the server tree, and a raw thenable would otherwise escape
+ * the whole render.
+ */
+async function invokeSettled(invoke: () => VNodeChild | Promise<VNodeChild>): Promise<VNodeChild> {
+  for (;;) {
+    try {
+      const out = invoke();
+      return out instanceof Promise ? await out : out;
+    } catch (err) {
+      if (!isThenable(err)) throw err;
+      await err;
+    }
+  }
 }
 
 /** The island's client reference (props + Flight children), serialized inside the island. */

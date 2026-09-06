@@ -8,6 +8,142 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.0.5] - 2026-09-06
+
+### Added
+
+- **fumadocs-mdx sites build in compat mode.** A fumadocs app's generated `.source/server.ts`
+  imports every doc as `x.mdx?collection=docs` (and `meta.json?collection=docs`), expecting the
+  `fumadocs-mdx` bundler loader to compile it with the app's `source.config.ts`. denext now
+  detects `source.config.*` + `fumadocs-mdx` in the app and compiles those imports through
+  fumadocs' own Node loader, hosted in a byonm child process (the loader's deps only resolve
+  under Deno's manual-`node_modules` mode, which the CLI process deliberately doesn't run in) —
+  so frontmatter, TOC, structured data and the configured remark/rehype pipeline come out exactly
+  as under `next build`. Requires the app's `.source/` to be generated (fumadocs' `postinstall`).
+- **`DENEXT_TIMING=1 denext build`** prints each pipeline stage's wall time to stderr.
+- **Every Google Fonts family is importable from `next/font/google` in a compat build.** Next
+  exports one loader per catalogued family; denext's hand-written module carried a curated
+  subset, so a migrated app importing `Noto_Sans_Hebrew` or `Instrument_Serif` failed with "No
+  matching export". The compat bundler now serves a virtual `next/font/google` that layers a
+  loader for each of the 1,942 catalogued families (generated: `deno task gen:google-fonts`)
+  over the runtime module; unused ones tree-shake away.
+
+### Changed
+
+- **`client-only` no longer fails the SSR bundle.** The compat server bundle server-renders the
+  `"use client"` tree too (it is not a `react-server` layer, the only place Next's `client-only`
+  throws), and UI libraries such as react-aria-components import `client-only` from modules that
+  legitimately SSR — shadcn/ui's site failed to build on it. `server-only` in the client bundle is
+  still a build error.
+
+### Fixed
+
+- **The app-wide boundary manifest no longer EXECUTES every client island.** To list an
+  island's exports the build imported the module — which, for a `"use client"` component,
+  loads its UI library's whole dependency tree under Deno's loader, per island: 11 minutes on
+  shadcn/ui's 2,700-island site, for names nothing consumed (islands are registered from the
+  module namespace at runtime). Client refs now get their export names from the static lexer;
+  only `"use server"` modules, whose names the client stubs need, are still imported.
+- **`"use client"` modules inside node_modules bundle as Flight islands.** A package's own
+  client boundary (next-themes, nuqs, vaul — a boundary when a server component imports it,
+  as in Next) is imported by the Flight entry by `file://` URL, which the deno-loader declines
+  under node_modules ("Could not resolve"); the compat chain now maps those URLs to paths.
+- **Font collection in a compat build executes the server bundles, not the raw sources.**
+  To self-host `next/font/google` fonts the build imports each page/layout module; a compat
+  build imported the Next sources under Deno's loader — the app's whole npm tree, 14 minutes
+  on shadcn/ui's site — instead of the react→denext server bundles it had just written.
+- **The first Flight request tags a large app's islands in seconds, not minutes.** Registering
+  client references imported every island with its own dynamic `import()`; Deno re-walks the
+  already-loaded graph per call, so shadcn/ui's 2,680 islands took 9 minutes (the request timed
+  out). Above a handful of islands they are now imported through one synthetic barrel module —
+  a single graph build.
+- **A suspension with no `<Suspense>` above it no longer fails the page.** An island that itself
+  suspends (a `React.lazy` component exported from a `"use client"` module, `use()` at an
+  island's top level) and, failing that, the root render now act as the boundary — awaiting the
+  thenable and retrying — the way Next's app router's implicit root boundary does. The
+  unhandled-error log names the situation instead of printing `Promise { <pending> }`, and
+  `DENEXT_DEBUG_SUSPENSE=1` records where `use()` first saw the thenable.
+- **No-op state updates bail out of re-rendering (React parity).** A component scheduled only by
+  state setters whose values ended up unchanged is no longer re-rendered. radix's
+  `DismissableLayer` recreates its callback ref every render, and each commit's detach/attach
+  calls `setNode(null)` then `setNode(node)` — React's bailout ends that; denext re-rendered,
+  produced another ref, and looped until "Maximum update depth exceeded" (shadcn/ui's ⌘K
+  dialog and theme toggle). Updates from a Suspense retry, an external store, a boundary reset
+  or Fast Refresh still always render.
+- **The client "Maximum update depth exceeded" error names the component** that scheduled the
+  last update, so an effect/state ping-pong in a large app is traceable instead of a minified
+  chunk offset.
+- **`process` exists in compat browser bundles.** npm libraries read `process.env.NODE_ENV` /
+  `process.env.DEBUG` at module init and a migrated app reads `process.env.NEXT_PUBLIC_*`
+  (Next inlines those at build); the first client chunk of shadcn/ui's site threw
+  `ReferenceError: process is not defined` before hydration. Browser bundles now inject a
+  `process` shim whose `env` is `NODE_ENV` plus the page's public-env island.
+- **`denext migrate` finds the App Router Tailwind entry.** The `tailwind` block was written
+  only for a Vite-style `src/index.css`; a Next app's `app/globals.css` (`@import "tailwindcss"`)
+  went undetected and the migrated site built unstyled. Migrate now points the block at the
+  stylesheet that actually imports Tailwind.
+- **Suspense inside an island's server-authored children resolves.** The Flight-only walk over a
+  top-level island's children treated `<Suspense>` / error boundaries / context providers as
+  plain host elements, so a server component there rendering a `React.lazy` demo under Suspense
+  (shadcn's `<ComponentPreview>` inside a `<Tabs>` island) surfaced the raw pending Promise as
+  an unhandled error. The walk now resolves suspensions and boundaries like every other
+  renderer.
+- **`next/navigation.js`-style imports alias to denext too.** Node-ESM libraries (fumadocs,
+  nuqs) import `next/navigation.js`, `next/link.js`, `next/image.js` with Node's explicit
+  extension; the alias lookup missed them and the REAL Next router landed in the SSR bundle
+  ("invariant expected app router to be mounted"). The extension is normalized away first.
+- **Link prefetching is capped at four in flight.** A docs sidebar scrolling dozens of links
+  into view fired one full server render per link at once, starving the navigation the user
+  actually made; further prefetches now queue.
+- **Islands are code-split and loaded per page.** The Flight entry statically imported every
+  `"use client"` island, so any page shipped the whole app's islands (shadcn/ui's site: a 10 MB
+  `flight.js`). The entry now holds one dynamic `import()` per island and loads only the islands
+  a payload references — on first hydration, on soft navigation, for deferred `client:*`
+  islands and for Live patches — so a page ships the entry plus its own islands' chunks
+  (shadcn/ui's `flight.js`: 10.5 MB → 147 KB). The soft-nav Flight parser and Live's `parse`
+  may now return a Promise; soft navigation loads the chunks BEFORE starting the view
+  transition (an async transition callback is aborted by the browser).
+- **One server bundle per compat app.** The react→denext server build emitted one entry per
+  route module and island — 2,715 entries and ~14,000 code-split chunk files for shadcn/ui's
+  site, which Deno loads at roughly 80 ms a module: a nine-minute `denext start`. The build now
+  emits ONE keyed bundle (`server/app.js`, each module a namespace export; dynamic `import()`s
+  still split into their own chunks) and the compat loader resolves `<bundle>#<key>`; islands and
+  actions are tagged through that loader, so startup loads one module. Stale bundles from
+  earlier builds are removed (they had accumulated to 448 MB). `redirectBoundaryToCompat` is
+  gone — the loader is the redirect.
+- **The prod server reuses the build's Flight boundary.** `manifest.json` now records the
+  client/server boundary the build crawled (project-relative paths), so `denext start` skips
+  the two import-graph crawls it used to repeat at startup (30 s on shadcn/ui's site); an older
+  manifest without it still triggers the crawl.
+- **The prod server warms every route module before listening.** A large app's first request
+  spent its whole timeout budget evaluating the page's module graph (shadcn/ui's docs page:
+  32 s → a 503 on first hit); page + layout modules are now imported at startup.
+- **A nested island's client-authored children are no longer walked for Flight.** A tagged
+  client component rendered INSIDE another island's output had its children serialized for a
+  Flight node the parent discards — and that walk invoked any untagged client component among
+  them (radix's forwardRef `Dialog.Content`, a module-private helper) as a server component,
+  outside its provider: shadcn/ui's site failed every page with `` `DialogContent` must be used
+  within `Dialog` ``. Uncarved nested islands now contribute no Flight of their own.
+- **`memo()` / `forwardRef()` islands hydrate.** The generated Flight entry registered only
+  function exports on the client, so a server-tagged memo/forwardRef reference (see below) had
+  no registry entry to hydrate against; both shapes are registered now.
+- **`memo()` / `forwardRef()` exports of a `"use client"` module are client references.**
+  Tagging only covered function exports; React's non-callable memo/forwardRef element objects
+  (radix's `Dialog.Content`, now an island of its own) went untagged and the Flight renderer
+  invoked them as server components — outside their provider (`` `DialogContent` must be used
+  within `Dialog` ``). The prod server also tags islands at startup now, so the first request
+  doesn't pay for loading the island graph.
+- **CJS `__filename` / `__dirname` work in the compat SSR bundle.** esbuild leaves them unbound
+  in ESM output; a bundled Node library reading them at module init (esbuild's own JS API,
+  pulled in by a docs tool) threw `ReferenceError: __filename is not defined` on first render.
+  The SSR bundle now injects a per-chunk shim (Next's node-target server bundles keep the real
+  values).
+- **Per-route CSS extraction crawls the graph once, not once per route.** The route CSS stage
+  primes a (separately cached — its resolution strips the css→shim redirects) whole-app crawl
+  and answers each route from it, scoped to what that route reaches; 73 s → one crawl.
+- **Builds crawl the module graph ONCE.** `deno info` over a large app graph takes tens of seconds (20 s on shadcn/ui's 2,700-component site), and a build used to spawn it per route for the hydration check, again per route for the Flight-boundary classification, and again for the boundary manifest and the Live scan — 8–10 minutes of re-crawling the same graph before bundling even started. The graph layer now keeps the largest crawl of the process and answers any request whose entries are a subset of it with a BFS over the cached graph (`denoInfoGraph`/`crawlLocalModules`, `resetModuleGraphCache` on dev-server changes); `computeBoundaryRoutes` primes it with one crawl over every route's entries. The CSS discovery crawl keeps its own run (it resolves with the css→shim redirects stripped). `src/build/module-graph.ts`.
+- **`next.config` translation survives a plugin wrapper that crashes after exporting** (fumadocs-mdx's `createMDX` spawns a watcher; the sandboxed evaluation had already printed the config when the child died) and the generated CLI tasks always pass `--node-modules-dir=none` (Deno ignores `nodeModulesDir` in a member `deno.json` under an npm/pnpm workspace root). `src/build/migrate.ts`.
+
 ## [2.0.4] - 2026-09-05
 
 ### Fixed
@@ -2700,6 +2836,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.0.5]: https://jsr.io/@denext/denext@2.0.5
 [2.0.4]: https://jsr.io/@denext/denext@2.0.4
 [2.0.3]: https://jsr.io/@denext/denext@2.0.3
 [2.0.2]: https://jsr.io/@denext/denext@2.0.2

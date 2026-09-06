@@ -60,6 +60,15 @@ export type CommitEffect = (() => void) & { cleanup?: () => void };
 /** A hook cell (identical shape to the recursive reconciler's). */
 export interface HookCell {
   value?: unknown;
+  /**
+   * Stateful cells: the value the component's last render READ. A pending update whose
+   * cells all still equal this is a no-op re-render (React bails out of it) — e.g. a callback
+   * ref recreated every render whose detach/attach calls `setNode(null)` then `setNode(node)`.
+   */
+  rendered?: unknown;
+  /** Stateful cells: `rendered` as of the last COMMITTED render (an abandoned render — a
+   * suspended transition — never promotes its value here, so its retry still renders). */
+  committed?: unknown;
   deps?: DependencyList;
   cleanup?: (() => void) | void;
   inited?: boolean;
@@ -155,6 +164,15 @@ export interface Fiber {
   // commit after mutation, before paint. `passiveEffects` is the PASSIVE queue
   // (useEffect, useSyncExternalStore subscribe) — scheduled after commit (after paint).
   hooks?: HookCell[];
+  /**
+   * Set when something other than a state setter scheduled this fiber (a Suspense retry, an
+   * external-store change, a boundary reset, Fast Refresh): the next render must run even
+   * though no hook value changed. Cleared when the fiber begins work.
+   */
+  forceRender?: boolean;
+  /** Set when a state setter scheduled this fiber — the only updates the no-op bailout
+   * may judge; a lane retained for other reasons (a suspended child's retry) always renders. */
+  stateUpdate?: boolean;
   insertionEffects?: CommitEffect[];
   pendingEffects?: CommitEffect[];
   passiveEffects?: CommitEffect[];

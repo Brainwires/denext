@@ -11,6 +11,7 @@ import {
   isCssModule,
   isSass,
   isStyleFile,
+  primeCssGraph,
   restoreAppConfig,
   transformCss,
 } from "../src/build/css.ts";
@@ -106,6 +107,31 @@ Deno.test("discoverCssFiles finds css across the import graph", async () => {
     const found = await discoverCssFiles([join(dir, "page.tsx")]);
     assertEquals(found, [join(dir, "a.module.css"), join(dir, "globals.css")].sort());
   } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("discoverCssFiles served from a primed whole-app crawl stays scoped to its roots", async () => {
+  const { moduleGraphSpawnCount, resetModuleGraphCache } = await import(
+    "../src/build/module-graph.ts"
+  );
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_css_prime_" }));
+  try {
+    await Deno.writeTextFile(join(dir, "deno.json"), `{ "imports": {} }\n`);
+    await Deno.writeTextFile(join(dir, "a.css"), ".a{}\n");
+    await Deno.writeTextFile(join(dir, "b.css"), ".b{}\n");
+    await Deno.writeTextFile(join(dir, "a.tsx"), `import "./a.css";\nexport default () => null;\n`);
+    await Deno.writeTextFile(join(dir, "b.tsx"), `import "./b.css";\nexport default () => null;\n`);
+    resetModuleGraphCache();
+    const before = moduleGraphSpawnCount();
+    await primeCssGraph([join(dir, "a.tsx"), join(dir, "b.tsx")]);
+    assertEquals(moduleGraphSpawnCount(), before + 1, "one crawl for the union");
+    // Per-route queries: no new spawn, and each sees ONLY its own stylesheet.
+    assertEquals(await discoverCssFiles([join(dir, "a.tsx")]), [join(dir, "a.css")]);
+    assertEquals(await discoverCssFiles([join(dir, "b.tsx")]), [join(dir, "b.css")]);
+    assertEquals(moduleGraphSpawnCount(), before + 1, "served from the primed graph");
+  } finally {
+    resetModuleGraphCache();
     await Deno.remove(dir, { recursive: true });
   }
 });

@@ -12,10 +12,11 @@ import {
   importFunctionExports,
   routeEntryFiles,
 } from "../module-graph.ts";
-import { redirectBoundaryToCompat } from "../next-compat-loader.ts";
+import { boundaryRefLoader } from "../next-compat-loader.ts";
 import { createUnbundledDev, type UnbundledDev } from "../dev-unbundled.ts";
 import { getCss, getTransformMaps } from "./assets.ts";
 import { ensureCompatBuilt, isCompat } from "./compat.ts";
+import { baseLoaderFor } from "./loaders.ts";
 import type { DevState } from "./state.ts";
 
 /** The unbundled dev loop, created on first use (after compat detection settled). */
@@ -101,16 +102,14 @@ async function refreshBoundary(st: DevState, m: RouteManifest): Promise<void> {
   const boundary = await scanBoundary(st, m);
   for (const [id, ref] of boundary.client) st.flightClients.set(id, ref);
   for (const [id, ref] of boundary.server) st.flightServers.set(id, ref);
-  await tagServerModules(boundary.server);
   st.flightBundle = null;
   st.compatBoundary = boundary;
   if (await isCompat(st)) {
-    // Build the react→denext compat bundles (routes + islands + actions) and the compat
-    // flight client bundle NOW, then redirect the boundary refs to the shared-chunk
-    // instances — so the render that follows tags the SAME islands the page bundle
-    // references. Done here (before any render's tagging) so identity holds.
+    // Build the react→denext compat bundle (routes + islands + actions) and the compat
+    // flight client bundle NOW, so the tagging below and the render that follows resolve the
+    // SAME island instances the page bundle references (through the compat loader).
     await ensureCompatBuilt(st, m);
-    redirectBoundaryToCompat(boundary, st.compatModuleMap);
   }
+  await tagServerModules(boundary.server, boundaryRefLoader(st.compatLoad ?? baseLoaderFor(st)));
   st.boundaryGen = st.generation;
 }

@@ -218,6 +218,7 @@ function stateCell(kind: number, init: () => unknown): HookCell {
     cell.inited = true;
   }
   cell.owner = currentFiber!;
+  cell.rendered = cell.value; // what this render reads (see HookCell.rendered)
   return cell;
 }
 
@@ -234,7 +235,7 @@ function commitCellUpdate(cell: HookCell, next: unknown): void {
   cell.value = next;
   const f = cell.owner!;
   if (duringRender && f === currentFiber) renderPhaseUpdateScheduled = true;
-  else scheduleUpdate(f);
+  else scheduleUpdate(f, true);
 }
 
 export const clientDispatcher: Dispatcher = {

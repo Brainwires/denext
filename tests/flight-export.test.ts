@@ -48,14 +48,21 @@ Deno.test("staticExport renders a client-boundary page via Flight", async () => 
     // The server secret's VALUE is never in the HTML (only its length was used).
     assert(!html.includes("EXPORT_SERVER_SECRET_42"));
 
-    // The Flight bundle exists and contains client code but not server code.
-    const flightJs = await Deno.readTextFile(
-      join(result.outDir, "_denext", "client", "flight.js"),
-    );
-    assertStringIncludes(flightJs, "CLIENT_ISLAND");
+    // The Flight bundle exists; the island's code is in a code-split chunk (loaded on
+    // demand), and no client file carries server code.
+    const clientDir = join(result.outDir, "_denext", "client");
+    const flightJs = await Deno.readTextFile(join(clientDir, "flight.js"));
+    assert(flightJs.length > 0, "flight.js emitted");
+    let clientJs = "";
+    for await (const e of Deno.readDir(clientDir)) {
+      if (e.isFile && e.name.endsWith(".js")) {
+        clientJs += await Deno.readTextFile(join(clientDir, e.name));
+      }
+    }
+    assertStringIncludes(clientJs, "CLIENT_ISLAND");
     assert(
-      !flightJs.includes("EXPORT_SERVER_SECRET_42"),
-      "server secret leaked into flight bundle",
+      !clientJs.includes("EXPORT_SERVER_SECRET_42"),
+      "server secret leaked into a client bundle",
     );
 
     // The boundary route did NOT get a whole-tree bundle (which would leak the

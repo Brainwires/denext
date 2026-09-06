@@ -127,8 +127,8 @@ Deno.test("checkEnvPoison: only the wrong-side import is an error", () => {
   // server-only wrong on the client; fine on the server.
   assert(checkEnvPoison("server-only", false, "a.ts")?.includes("CLIENT bundle"));
   assertEquals(checkEnvPoison("server-only", true), null);
-  // client-only wrong on the server; fine on the client.
-  assert(checkEnvPoison("client-only", true)?.includes("SERVER bundle"));
+  // client-only is inert on both sides: the SSR bundle renders the "use client" tree too.
+  assertEquals(checkEnvPoison("client-only", true), null);
   assertEquals(checkEnvPoison("client-only", false), null);
   // A normal specifier is never poisoned.
   assertEquals(checkEnvPoison("react", true), null);

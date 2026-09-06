@@ -2,6 +2,7 @@
 // rules, cache store, the `createApp` handler and the Live hub.
 
 import { join } from "@std/path";
+import { timed } from "../../runtime/timing.ts";
 import { getPluginRequestHandler } from "../../plugin/mod.ts";
 import type { RouteManifest } from "../../router/manifest.ts";
 import { createApp } from "../../server/app.ts";
@@ -69,6 +70,21 @@ function sameOrigin(req: Request): boolean {
 }
 
 /**
+ * Import every route's page + layout modules before the server listens, so a large app's
+ * first request doesn't spend its whole timeout budget loading a module graph (shadcn/ui's docs
+ * page: 32 s of module evaluation → a 503 on first hit). A module that fails to import is left
+ * to the request path, which reports the error properly.
+ */
+async function warmRouteModules(manifest: RouteManifest, load: ModuleLoader): Promise<void> {
+  const files = new Set<string>();
+  for (const p of manifest.pages) {
+    files.add(p.filePath);
+    for (const layout of p.layoutChain) files.add(layout);
+  }
+  await Promise.all([...files].map((f) => load(f).catch(() => undefined)));
+}
+
+/**
  * Build the request handler: middleware, instrumentation (`NEXT_RUNTIME`, `register()`
  * once at boot, `onRequestError`), the denext.config redirect/rewrite/header rules, the
  * durable default cache store (node:sqlite in THIS project's .denext — separate apps never
@@ -85,6 +101,7 @@ export async function createProdApp(
   assets: AssetResolvers,
 ): Promise<(request: Request) => Promise<Response>> {
   const load = await prodLoader(paths, info);
+  await timed("warmRouteModules", () => warmRouteModules(manifest, load));
   const middlewareRunner = await loadMiddleware(paths, load);
   setNextRuntimeEnv();
   const instrumentation = await loadInstrumentation(paths.instrumentationPath);

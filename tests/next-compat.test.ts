@@ -178,8 +178,147 @@ Deno.test("checkEnvPoison: server-only in a client bundle is a build error", asy
   assertEquals(checkEnvPoison("server-only", true), null);
 });
 
-Deno.test("checkEnvPoison: client-only in a server bundle is a build error", async () => {
+// The SSR bundle server-renders the "use client" tree as well (it is not a `react-server`
+// layer), and libraries such as react-aria-components import `client-only` from modules
+// that legitimately SSR — so `client-only` never fails a bundle on either side.
+Deno.test("checkEnvPoison: client-only is inert in both bundles", async () => {
   const { checkEnvPoison } = await import("../src/build/next-compat.ts");
-  assert(checkEnvPoison("client-only", true)?.includes("SERVER bundle"));
-  assertEquals(checkEnvPoison("client-only", false), null); // fine in the browser bundle
+  assertEquals(checkEnvPoison("client-only", true), null);
+  assertEquals(checkEnvPoison("client-only", false), null);
+});
+
+// The Flight entry imports islands by file URL; an npm package's own "use client" module
+// (next-themes, nuqs, vaul) lives under node_modules, where the deno-loader declines file
+// URLs — the compat chain maps those to plain paths so the island bundles.
+Deno.test({
+  name: "nodeModulesFileUrlPlugin: a file:// island inside node_modules bundles",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const { nodeModulesFileUrlPlugin } = await import("../src/build/next-compat.ts");
+  const esbuild = await import("esbuild");
+  const { join, toFileUrl } = await import("@std/path");
+  const root = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_nm_island_" }));
+  try {
+    const pkg = join(root, "node_modules", "themer", "dist");
+    await Deno.mkdir(pkg, { recursive: true });
+    await Deno.writeTextFile(
+      join(pkg, "index.mjs"),
+      `"use client";\nexport const THEME = "nm-island-ok";`,
+    );
+    const out = await esbuild.build({
+      stdin: {
+        contents: `import * as M from ${
+          JSON.stringify(toFileUrl(join(pkg, "index.mjs")).href)
+        };\nexport const t = M.THEME;`,
+        loader: "js",
+        resolveDir: root,
+      },
+      bundle: true,
+      write: false,
+      format: "esm",
+      plugins: [nodeModulesFileUrlPlugin()],
+      logLevel: "silent",
+    });
+    assert(out.outputFiles[0].text.includes("nm-island-ok"));
+  } finally {
+    await esbuild.stop();
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+// CJS packages read `__filename`/`__dirname` at module init; esbuild leaves them unbound in
+// ESM output, so the SSR bundle injects a per-chunk shim (esbuild's own JS API, pulled in by
+// a docs tool, threw "ReferenceError: __filename is not defined" on shadcn/ui's first render).
+Deno.test({
+  name: "nodeGlobalsShimPath: an injected shim binds __filename/__dirname in an ESM bundle",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const { nodeGlobalsShimPath } = await import("../src/build/next-compat.ts");
+  const esbuild = await import("esbuild");
+  const { join, toFileUrl } = await import("@std/path");
+  const dir = await Deno.makeTempDir({ prefix: "denext_node_globals_" });
+  try {
+    const out = await esbuild.build({
+      stdin: {
+        contents: `export const here = __filename.endsWith(".js") ? __dirname : "";`,
+        loader: "js",
+      },
+      bundle: true,
+      write: false,
+      format: "esm",
+      platform: "node",
+      external: ["node:*"],
+      inject: [await nodeGlobalsShimPath(dir)],
+      logLevel: "silent",
+    });
+    const text = out.outputFiles[0].text;
+    assert(text.includes("fileURLToPath(") && text.includes("import.meta.url"), "shim bundled in");
+    // It runs: the module evaluates without a ReferenceError.
+    const outFile = join(dir, "out.js");
+    await Deno.writeTextFile(outFile, text);
+    const mod = await import(toFileUrl(outFile).href);
+    assertEquals(typeof mod.here, "string");
+  } finally {
+    await esbuild.stop();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+// Node-ESM libraries (fumadocs, nuqs) import `next/navigation.js` — the alias lookup must see
+// `next/navigation`, or the real Next router lands in the bundle ("invariant expected app router
+// to be mounted" on shadcn/ui's first render).
+Deno.test("normalizeNextSpecifier drops Node's explicit .js extension, leaves deep paths alone", async () => {
+  const { normalizeNextSpecifier, NEXT_ALIASES } = await import("../src/build/next-compat.ts");
+  assertEquals(normalizeNextSpecifier("next/navigation.js"), "next/navigation");
+  assertEquals(normalizeNextSpecifier("next/font/google.js"), "next/font/google");
+  assertEquals(normalizeNextSpecifier("next/link.mjs"), "next/link");
+  assertEquals(normalizeNextSpecifier("next/navigation"), "next/navigation");
+  assertEquals(normalizeNextSpecifier("next"), "next");
+  assertEquals(
+    normalizeNextSpecifier("next/dist/shared/lib/get-img-props.js"),
+    "next/dist/shared/lib/get-img-props",
+  );
+  assert(NEXT_ALIASES[normalizeNextSpecifier("next/navigation.js")]);
+  assert(NEXT_ALIASES[normalizeNextSpecifier("next/server.js")]);
+});
+
+// Browser bundles: npm libraries read `process.env.DEBUG`/`NODE_ENV` at module init and a migrated
+// app reads `process.env.NEXT_PUBLIC_*` — shadcn/ui's first chunk threw "process is not defined".
+Deno.test({
+  name: "browserProcessShimPath: an injected process shim serves env reads in a browser bundle",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const { browserProcessShimPath } = await import("../src/build/next-compat.ts");
+  const esbuild = await import("esbuild");
+  const { join, toFileUrl } = await import("@std/path");
+  const dir = await Deno.makeTempDir({ prefix: "denext_browser_process_" });
+  try {
+    const out = await esbuild.build({
+      stdin: {
+        contents: `export const mode = process.env.NODE_ENV; export const dbg = process.env.DEBUG;
+export const pub = process.env.NEXT_PUBLIC_APP_URL; export const isBrowser = process.browser;`,
+        loader: "js",
+      },
+      bundle: true,
+      write: false,
+      format: "esm",
+      platform: "browser",
+      minify: true, // esbuild's own NODE_ENV define ("development" unminified) must agree
+      inject: [await browserProcessShimPath(dir, "production")],
+      logLevel: "silent",
+    });
+    const outFile = join(dir, "out.js");
+    await Deno.writeTextFile(outFile, out.outputFiles[0].text);
+    const mod = await import(toFileUrl(outFile).href); // no `document` here → island absent
+    assertEquals(mod.mode, "production");
+    assertEquals(mod.dbg, undefined);
+    assertEquals(mod.pub, undefined);
+    assertEquals(mod.isBrowser, true);
+  } finally {
+    await esbuild.stop();
+    await Deno.remove(dir, { recursive: true });
+  }
 });

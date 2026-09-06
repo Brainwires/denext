@@ -58,10 +58,36 @@ function canSkipComponentRender(
     );
 }
 
+/**
+ * React's state bailout: a fiber scheduled ONLY by state setters whose every stateful hook
+ * still holds the value its last render read has nothing new to render — the update was a
+ * no-op (`setNode(null)` then `setNode(node)` from a callback ref recreated every render:
+ * radix's DismissableLayer). Rendering it anyway would produce a fresh callback ref, whose
+ * detach/attach repeats the two setStates — an infinite loop React never enters because its
+ * bailout discards that render's children. A `forceRender` (Suspense retry, store change,
+ * boundary reset) always renders.
+ */
+function ownUpdateIsNoop(wip: Fiber, current: Fiber | null): boolean {
+  const forced = wip.forceRender || current?.forceRender;
+  const fromState = wip.stateUpdate || current?.stateUpdate;
+  wip.forceRender = wip.stateUpdate = false;
+  if (current) current.forceRender = current.stateUpdate = false;
+  // Only an update that state setters scheduled can be a no-op; a lane pending for any other
+  // reason (a suspended child's retry, a retained hidden-subtree lane) is real work.
+  if (forced || !fromState || !current) return false;
+  for (const cell of wip.hooks ?? []) {
+    if (!("rendered" in cell)) continue; // not a stateful cell
+    // Never committed (only an abandoned render saw it) or changed since the last commit.
+    if (!("committed" in cell) || !Object.is(cell.value, cell.committed)) return false;
+  }
+  return true;
+}
+
 function beginComponent(wip: Fiber, hasOwnUpdate: boolean): Fiber | null {
   const current = wip.alternate;
   const isClass = __DENEXT_CLASS_COMPONENTS__ && isClassComponent(wip.vnode.type);
-  if (canSkipComponentRender(wip, current, hasOwnUpdate, isClass)) {
+  const ownUpdate = hasOwnUpdate && (isClass || !ownUpdateIsNoop(wip, current));
+  if (canSkipComponentRender(wip, current, ownUpdate, isClass)) {
     if ((wip.childLanes & renderLanes) === NoLane) return null; // bail whole subtree
     cloneChildFibers(wip);
     return wip.child;
@@ -335,7 +361,13 @@ export function beginWork(wip: Fiber): Fiber | null {
   // descend — keep the committed subtree mounted-as-is (a suspended child inside must
   // not re-throw) and DO NOT consume its lanes, so revealing it later re-renders with
   // the resolved data. Its DOM is hidden by the commit visibility pass.
-  if (wip.hidden === true) return null;
+  if (wip.hidden === true) {
+    // The deferred render is real work even if no hook value changes meanwhile — exempt it
+    // from the no-op state bailout when the reveal renders it.
+    wip.forceRender = true;
+    if (wip.alternate) wip.alternate.forceRender = true;
+    return null;
+  }
   const hasOwnUpdate = (wip.lanes & renderLanes) !== 0;
   wip.lanes &= ~renderLanes; // consume only the lanes this render is processing
 
