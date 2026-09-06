@@ -22,7 +22,7 @@
 /** The HTTP methods a route handler may export. */
 export type { HttpMethod } from "../server/types.ts";
 import type { HttpMethod } from "../server/types.ts";
-import { decodeWire, encodeWire, WIRE_HEADER } from "./wire-codec.ts";
+import { decodeWire, encodeWire, stableKey, WIRE_HEADER } from "./wire-codec.ts";
 
 /** One endpoint's typed shape: its params, optional request/response bodies, query, error codes. */
 export interface ApiEndpoint {
@@ -71,6 +71,8 @@ export type RequestOf<E extends ApiEndpoint> =
     signal?: AbortSignal;
     /** Per-request timeout in ms (default 30000). Bounds a hanging endpoint. */
     timeoutMs?: number;
+    /** Opt this call out of in-flight dedupe (GET/HEAD calls with equal inputs share one fetch). */
+    dedupe?: boolean;
   };
 
 /** Free-form query strings (an endpoint without a `query` schema). */
@@ -119,6 +121,23 @@ export interface ApiRequestOptions {
   signal?: AbortSignal;
   /** Per-request timeout in ms (default 30000). */
   timeoutMs?: number;
+  /** Opt this call out of in-flight dedupe. */
+  dedupe?: boolean;
+}
+
+/** Options for {@link createApiClient}. */
+export interface ApiClientOptions {
+  /** Origin/base prefix for every request (default: relative to the current origin). */
+  base?: string;
+  /**
+   * Share one in-flight fetch between concurrent GET/HEAD calls with equal path, params,
+   * query, body, and headers (default true). Mutations are never deduped. In the browser the
+   * in-flight table is per client instance; during SSR it is per request (never shared across
+   * requests), and off outside a request.
+   */
+  dedupe?: boolean;
+  /** The `fetch` to use (default: the global; a seam for tests and custom transports). */
+  fetch?: typeof fetch;
 }
 
 /** The default per-request timeout (ms) — bounds a server-side call so SSR can't hang forever. */
@@ -304,6 +323,7 @@ async function readResult(res: Response): Promise<unknown> {
  * @param method The HTTP method.
  * @param opts Params, body, query, headers, and abort signal.
  * @param base Optional origin/base prefix (default: relative to the current origin).
+ * @param fetchImpl The `fetch` to use (default: the global).
  * @returns The parsed response body.
  */
 export async function apiRequest(
@@ -311,6 +331,7 @@ export async function apiRequest(
   method: HttpMethod,
   opts: ApiRequestOptions = {},
   base = "",
+  fetchImpl?: typeof fetch,
 ): Promise<unknown> {
   const url = base + buildPath(pattern, opts.params, opts.query);
   const headers = new Headers(opts.headers);
@@ -321,7 +342,7 @@ export async function apiRequest(
     if (!headers.has("content-type")) headers.set("content-type", "application/json");
     if (encoded.tagged) headers.set(WIRE_HEADER, "1");
   }
-  const res = await fetch(url, {
+  const res = await (fetchImpl ?? fetch)(url, {
     method,
     headers,
     body,
@@ -331,13 +352,74 @@ export async function apiRequest(
   return await readResult(res);
 }
 
+// ── In-flight dedupe ─────────────────────────────────────────────────────────
+
+/** The key under which a request context's `memo` holds this client family's in-flight table. */
+const INFLIGHT_MEMO_KEY = Symbol.for("denext.apiClient.inflight");
+
+/** The server installs this bridge; its absence means "a browser bundle". */
+interface ContextBridge {
+  __denextCurrentRequestContext?: () => { memo?: Map<unknown, Map<string, unknown>> } | undefined;
+}
+
 /**
- * Create a typed API client bound to an app's generated {@link ApiSchema}.
+ * Where in-flight GET/HEAD promises live: the client's own table in the browser; during SSR
+ * the current request's memo (so two users' requests can never share a promise); nowhere
+ * (dedupe off) on the server outside a request.
+ */
+function inflightTable(local: Map<string, Promise<unknown>>): Map<string, Promise<unknown>> | null {
+  const bridge = (globalThis as ContextBridge).__denextCurrentRequestContext;
+  if (!bridge) return local;
+  const memo = bridge()?.memo;
+  if (!memo) return null;
+  let table = memo.get(INFLIGHT_MEMO_KEY) as Map<string, Promise<unknown>> | undefined;
+  if (!table) memo.set(INFLIGHT_MEMO_KEY, table = new Map());
+  return table;
+}
+
+/** The dedupe key: everything that changes the response, headers included (an `Authorization`). */
+function inflightKey(pattern: string, method: HttpMethod, opts: ApiRequestOptions): string {
+  const headers = opts.headers ? [...new Headers(opts.headers).entries()].sort() : undefined;
+  return stableKey([method, pattern, opts.params, opts.query, opts.body, headers]);
+}
+
+/** Run one call through the in-flight table (GET/HEAD only; a settled entry is removed). */
+function deduped(
+  local: Map<string, Promise<unknown>>,
+  pattern: string,
+  method: HttpMethod,
+  opts: ApiRequestOptions,
+  run: () => Promise<unknown>,
+): Promise<unknown> {
+  const table = inflightTable(local);
+  if (!table) return run();
+  const key = inflightKey(pattern, method, opts);
+  const existing = table.get(key);
+  if (existing) return existing;
+  const promise = run().finally(() => table.delete(key));
+  table.set(key, promise);
+  return promise;
+}
+
+/**
+ * Create a typed API client bound to an app's generated {@link ApiSchema} (the registered
+ * schema when `.denext/api.ts` is imported). Concurrent GET/HEAD calls with equal inputs share
+ * one fetch (see {@link ApiClientOptions.dedupe}).
  *
- * @param base Optional origin/base prefix for every request (default: relative).
+ * @param baseOrOptions A base prefix (default: relative), or {@link ApiClientOptions}.
  * @returns A callable `(path, method, opts?) => Promise<response>`, checked against `S`.
  */
-export function createApiClient<S extends ApiSchema = RegisteredSchema>(base = ""): ApiClient<S> {
-  return ((path: string, method: HttpMethod, opts?: ApiRequestOptions) =>
-    apiRequest(path, method, opts, base)) as ApiClient<S>;
+export function createApiClient<S extends ApiSchema = RegisteredSchema>(
+  baseOrOptions: string | ApiClientOptions = "",
+): ApiClient<S> {
+  const options = typeof baseOrOptions === "string" ? { base: baseOrOptions } : baseOrOptions;
+  const base = options.base ?? "";
+  const dedupe = options.dedupe ?? true;
+  const local = new Map<string, Promise<unknown>>();
+  return ((path: string, method: HttpMethod, opts: ApiRequestOptions = {}) => {
+    const run = () => apiRequest(path, method, opts, base, options.fetch);
+    const readOnly = method === "GET" || method === "HEAD";
+    if (!dedupe || opts.dedupe === false || !readOnly) return run();
+    return deduped(local, path, method, opts, run);
+  }) as ApiClient<S>;
 }

@@ -50,6 +50,17 @@ and this project adheres to
   `src/client/{flight-client,live-client}.ts`, `src/runtime/{server-action,live-protocol}.ts`,
   `src/server/{action-handler,live}.ts`.
 
+### Added
+
+- **In-flight request dedupe on the typed API client.** Concurrent GET/HEAD calls with equal
+  path, params, query, body, and headers share one fetch; the entry is dropped when it
+  settles, mutations are never deduped, and `dedupe: false` opts out per call or per client.
+  In the browser the in-flight table is per client instance; during SSR it lives in the
+  request's own memo (two users' renders can never share a promise) and is off outside a
+  request. `createApiClient` now also takes `{ base?, dedupe?, fetch? }` (the `fetch` seam is
+  for tests and custom transports); the string form still works. `ApiClientOptions` exported.
+  `src/runtime/api-client.ts`.
+
 ### Changed
 
 - **The typed API client throws `ApiClientError` and speaks the wire codec.** A non-2xx

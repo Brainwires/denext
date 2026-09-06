@@ -111,6 +111,7 @@ export {
 } from "../runtime/api-client.ts";
 export type {
   ApiClient,
+  ApiClientOptions,
   ApiEndpoint,
   ApiErrorEnvelope,
   ApiRequestOptions,

@@ -28,6 +28,7 @@ import {
   isApiClientError,
 } from "../src/runtime/api-client.ts";
 import { json } from "../src/server/typed-response.ts";
+import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { ApiError, apiErrorResponse } from "../src/server/api-error.ts";
 
 const REPO_CONFIG = new URL("../deno.json", import.meta.url).pathname;
@@ -483,4 +484,84 @@ Deno.test("apiRequest: a non-envelope failure (text 500, HTML page, huge body) i
   } finally {
     await srv.close();
   }
+});
+
+// ── Runtime: in-flight dedupe ──────────────────────────────────────────────────
+
+/** A counting fetch that resolves each call on the next macrotask (so calls overlap). */
+function countingFetch(): { fetch: typeof fetch; calls: string[] } {
+  const calls: string[] = [];
+  const impl = ((input: URL | RequestInfo, init?: RequestInit) => {
+    calls.push(`${init?.method ?? "GET"} ${String(input)}`);
+    return new Promise<Response>((r) => setTimeout(() => r(Response.json({ n: calls.length })), 5));
+  }) as typeof fetch;
+  return { fetch: impl, calls };
+}
+
+/** A small concrete schema so the typed client accepts params/body in the dedupe tests. */
+type DedupeSchema = {
+  "/api/user/[id]": { GET: { params: { id: string }; response: { n: number } } };
+  "/api/x": { GET: { response: unknown }; POST: { body: unknown; response: unknown } };
+  "/api/me": { GET: { response: unknown } };
+};
+
+/** Pretend to be a browser bundle: hide the server's context bridge for the duration. */
+async function asBrowser(fn: () => Promise<void>): Promise<void> {
+  const g = globalThis as { __denextCurrentRequestContext?: unknown };
+  const bridge = g.__denextCurrentRequestContext;
+  delete g.__denextCurrentRequestContext;
+  try {
+    await fn();
+  } finally {
+    g.__denextCurrentRequestContext = bridge;
+  }
+}
+
+Deno.test("createApiClient: concurrent equal GETs share one fetch in the browser; mutations never do", async () => {
+  await asBrowser(async () => {
+    const { fetch, calls } = countingFetch();
+    const api = createApiClient<DedupeSchema>({ fetch });
+    const [a, b] = await Promise.all([
+      api("/api/user/[id]", "GET", { params: { id: "1" }, query: { q: "x" } }),
+      api("/api/user/[id]", "GET", { params: { id: "1" }, query: { q: "x" } }),
+    ]);
+    assertEquals(calls.length, 1, "equal in-flight GETs coalesce");
+    assertEquals(a, b);
+    // Different inputs (query order does not matter, values do) are different keys.
+    await Promise.all([
+      api("/api/user/[id]", "GET", { params: { id: "1" }, query: { q: "y" } }),
+      api("/api/user/[id]", "GET", { params: { id: "1" }, headers: { authorization: "t" } }),
+    ]);
+    assertEquals(calls.length, 3, "a different query or header is a different request");
+    // Once settled, the entry is gone: a later equal call fetches again.
+    await api("/api/user/[id]", "GET", { params: { id: "1" }, query: { q: "x" } });
+    assertEquals(calls.length, 4);
+    // Mutations are never deduped; `dedupe: false` opts a read out.
+    await Promise.all([api("/api/x", "POST", { body: {} }), api("/api/x", "POST", { body: {} })]);
+    assertEquals(calls.length, 6);
+    await Promise.all([
+      api("/api/x", "GET", { dedupe: false }),
+      api("/api/x", "GET", { dedupe: false }),
+    ]);
+    assertEquals(calls.length, 8);
+    const off = createApiClient<DedupeSchema>({ fetch, dedupe: false });
+    await Promise.all([off("/api/x", "GET"), off("/api/x", "GET")]);
+    assertEquals(calls.length, 10);
+  });
+});
+
+Deno.test("createApiClient: on the server, dedupe is per request context and off outside one", async () => {
+  const { fetch, calls } = countingFetch();
+  const api = createApiClient<DedupeSchema>({ fetch });
+  const ctxA = createRequestContext(new Request("http://localhost/a"));
+  const ctxB = createRequestContext(new Request("http://localhost/b"));
+  // Two users' requests, interleaved, each calling the same endpoint twice.
+  await Promise.all([
+    runWithContext(ctxA, () => Promise.all([api("/api/me", "GET"), api("/api/me", "GET")])),
+    runWithContext(ctxB, () => Promise.all([api("/api/me", "GET"), api("/api/me", "GET")])),
+  ]);
+  assertEquals(calls.length, 2, "one fetch per request context — never shared across users");
+  // Outside any request context a shared module-level client must not coalesce.
+  await Promise.all([api("/api/me", "GET"), api("/api/me", "GET")]);
+  assertEquals(calls.length, 4);
 });
