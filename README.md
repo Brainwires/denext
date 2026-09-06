@@ -634,6 +634,27 @@ the package on first run.
 > subject to Deno's minimum-dependency-age policy — pass `--min-dep-age=0` (or
 > wait ~24h) to import one immediately.
 
+## Patching packages — and denext itself
+
+`denext patch` is patch-package for denext: edit a dependency where it is installed, record the
+edit as a reviewable `patches/<name>+<version>.patch`, and every `dev`/`build`/`start`/`export`
+re-applies it before loading the app (idempotently, so a reinstall heals at the next start).
+
+```sh
+denext patch edit left-pad index.js   # prints node_modules/left-pad/index.js — edit it
+denext patch create left-pad          # → patches/left-pad+1.3.0.patch
+denext patch list                     # indexed;  denext patch delete <name|index> reverts
+```
+
+It works on the framework too, straight from JSR: `denext patch edit denext src/server/document.ts`
+copies the pristine source to `patches/.work/denext/…`; edit it; `denext patch create denext` writes
+`patches/denext+<version>.patch`, materializes the patched file into `patches/denext/` (relative
+imports absolutized) and maps the file's full JSR URL to it in `deno.json`'s import map — Deno applies
+import maps to the framework's own relative imports, so one published file is overridden without
+vendoring the package. Compat builds apply the same diff in memory when they prebuild the runtime.
+npm patches need a `node_modules` directory (`nodeModulesDir: "auto"` or `"manual"`). Docs:
+[denext.dev/docs/patches](https://denext.dev/docs/patches).
+
 ## Project configuration (`denext.config.ts`)
 
 Optional config, loaded once at startup (as a default export or named exports):

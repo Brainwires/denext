@@ -10,6 +10,20 @@ and this project adheres to
 
 ### Added
 
+- **`denext patch` — patch-package for denext, denext itself included.** `denext patch create
+  <pkg>` diffs `node_modules/<pkg>` against a pristine copy (Deno's npm cache, fetched on demand)
+  into `patches/<pkg>+<version>.patch` (patch-package's format; a scoped package is
+  `@scope+name+<v>.patch`), and every `dev`/`build`/`start`/`export` re-applies the patches at
+  boot — idempotently (an already-patched file is recognized by its reverse applying), warning on
+  a version mismatch and failing loudly on a hunk that no longer fits. `list` (indexed, `--json`),
+  `delete <name|index>` (reverts), `apply`, `edit`. `denext patch edit denext <src/…>` +
+  `create denext` patch the framework as installed from JSR: the patched file is materialized
+  into `patches/denext/` with its relative imports absolutized and the file's full URL is
+  mapped to it in `deno.json`'s import map (Deno applies import maps to a JSR package's own
+  relative imports, so a single published file is overridden); the compat runtime prebuild and
+  the dev `@dep` bundle apply the same diff in memory through an esbuild plugin. The unified-diff
+  engine (`src/build/patch-diff.ts`: Myers line diff, context-verified apply with a bounded
+  offset search, reverse) is in-house — no npm `diff`.
 - **`instrumentation-client.ts`.** A root `instrumentation-client.{ts,tsx,js}` (Next's
   convention) is bundled into every browser entry — native and compat, per-route and Flight, dev
   and build — and runs before the app's client code starts (monitoring/analytics init).

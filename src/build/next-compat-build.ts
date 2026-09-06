@@ -164,6 +164,7 @@ export async function buildNextCompatModules(
     outDir: runtimeDir,
     configPath: options.configPath,
     classComponents: options.classComponents,
+    projectDir: options.projectDir,
   });
 
   // ONE entry re-exporting every module as a namespace (`export * as m<i>`): the whole
@@ -296,16 +297,7 @@ export async function buildNextCompatClientEntries(
   options: BuildNextCompatClientOptions,
 ): Promise<void> {
   if (options.entries.length === 0) return;
-  // The browser bundle can't leave denext external (no runtime import map), so
-  // inline a prebuilt denext runtime shared across all client entries (splitting).
-  const runtimeDir = join(options.outDir, "client-runtime");
-  await prebuildDenextRuntime({
-    outDir: runtimeDir,
-    configPath: options.configPath,
-    classComponents: options.classComponents,
-  });
-  const entriesDir = join(options.clientDir, ".entries");
-  await Deno.mkdir(entriesDir, { recursive: true });
+  const { runtimeDir, entriesDir } = await prepareClientBuild(options);
   const entryPoints: Record<string, string> = {};
   for (const { id, source } of options.entries) {
     const entryPath = join(entriesDir, `${id}.tsx`);
@@ -390,17 +382,34 @@ export interface BuildNextCompatFlightOptions {
  *
  * @param options Build configuration.
  */
-export async function buildNextCompatFlightEntry(
-  options: BuildNextCompatFlightOptions,
-): Promise<void> {
+/**
+ * The browser bundle can't leave denext external (no runtime import map), so a prebuilt
+ * denext runtime (`<outDir>/client-runtime`, shared across entries via splitting) is inlined;
+ * the generated entries are staged under `<clientDir>/.entries`.
+ */
+async function prepareClientBuild(options: {
+  outDir: string;
+  clientDir: string;
+  configPath: string;
+  classComponents?: boolean;
+  projectDir?: string;
+}): Promise<{ runtimeDir: string; entriesDir: string }> {
   const runtimeDir = join(options.outDir, "client-runtime");
   await prebuildDenextRuntime({
     outDir: runtimeDir,
     configPath: options.configPath,
     classComponents: options.classComponents,
+    projectDir: options.projectDir,
   });
   const entriesDir = join(options.clientDir, ".entries");
   await Deno.mkdir(entriesDir, { recursive: true });
+  return { runtimeDir, entriesDir };
+}
+
+export async function buildNextCompatFlightEntry(
+  options: BuildNextCompatFlightOptions,
+): Promise<void> {
+  const { runtimeDir, entriesDir } = await prepareClientBuild(options);
   const flightFile = options.flightFile ?? "flight.js";
   const flightId = flightFile.replace(/\.js$/, "");
   const entryPath = join(entriesDir, `${flightId}.tsx`);
@@ -513,6 +522,7 @@ export function buildNextCompatPages(
       frameworkRoot: frameworkRootUrl(),
       configPath: frameworkFileUrl("deno.json"),
       classComponents: options.classComponents,
+      projectDir: options.projectDir,
     });
     const tmp = join(outRoot, ".entries");
     await Deno.mkdir(tmp, { recursive: true });

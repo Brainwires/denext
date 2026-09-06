@@ -21,6 +21,7 @@
  */
 
 import { denoPlugins } from "@luca/esbuild-deno-loader";
+import { loadDenextPatchSet, patchPlugin } from "./patches.ts";
 import { transformUseCache } from "./use-cache-transform.ts";
 import { PUBLIC_ENV_ID } from "../runtime/public-env.ts";
 import * as esbuild from "esbuild";
@@ -176,6 +177,11 @@ export interface PrebuildOptions {
   configPath?: string;
   /** Compile in the class-component runtime (default false → DCE'd out). */
   classComponents?: boolean;
+  /**
+   * The app's project dir: when it carries a denext patch (`patches/denext+<v>.patch`), the
+   * patched framework sources are what get prebuilt (see {@link patchPlugin}).
+   */
+  projectDir?: string;
 }
 
 /** The esbuild `define` that gates the class-component runtime (see class-flag.ts). */
@@ -239,12 +245,24 @@ export async function prebuildDenextRuntime(options: PrebuildOptions): Promise<s
       // are never reached.
       external: CODEC_EXTERNALS,
       define: classDefine(options.classComponents),
-      plugins: [...denoPlugins({ configPath: tmpConfig })],
+      plugins: [
+        ...(await frameworkPatchPlugins(options.projectDir, rootUrl)),
+        ...denoPlugins({ configPath: tmpConfig }),
+      ],
     });
   } finally {
     await Deno.remove(tmpConfig).catch(() => {});
   }
   return outDir;
+}
+
+/** The project's denext patch as an esbuild plugin (none when the project has no patch). */
+export async function frameworkPatchPlugins(
+  projectDir: string | undefined,
+  frameworkRoot: string,
+): Promise<esbuild.Plugin[]> {
+  const set = projectDir ? await loadDenextPatchSet(projectDir) : null;
+  return set ? [patchPlugin(set, frameworkRoot)] : [];
 }
 
 /** Options for {@link bundleNextCompat}. */
