@@ -41,6 +41,8 @@ export interface StandardSchemaV1<Output = unknown> {
     readonly validate: (
       value: unknown,
     ) => StandardResult<Output> | Promise<StandardResult<Output>>;
+    /** The spec's optional inference slot: what the schema accepts and what it produces. */
+    readonly types?: { readonly input: unknown; readonly output: Output };
   };
 }
 
