@@ -2,11 +2,11 @@
 // (`./export-pipeline/`) — the two pipelines run the same preparation, next-compat module
 // discovery and font collection over a project.
 
-import { fromFileUrl } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import { resolveCacheComponents } from "../server/config.ts";
 import { collectedFontEntries, resetFonts } from "../compat/next/font/registry.ts";
 import { applyPlugins } from "../plugin/mod.ts";
-import type { PageRoute } from "../router/manifest.ts";
+import type { ApiRoute, PageRoute } from "../router/manifest.ts";
 import { nodeResolveEnabled } from "../server/config.ts";
 import { defaultLoader } from "../server/mod.ts";
 import type { ModuleLoader } from "../server/types.ts";
@@ -18,6 +18,9 @@ import {
   routeEntryFiles,
 } from "./module-graph.ts";
 import type { ProjectPaths } from "./paths.ts";
+import { compileCssAsset } from "./css-url.ts";
+import { CLIENT_PREFIX } from "./prod-server/assets.ts";
+import type { AssetOptions } from "./next-compat.ts";
 
 /** Whether `path` is an existing directory. */
 export async function dirExists(path: string): Promise<boolean> {
@@ -57,10 +60,20 @@ export function appBoundaryManifest(appDir: string, pages: PageRoute[]): Promise
  * server-action module, deduped — bundled as separate entries in ONE code-split pass so a
  * page's reference to an island resolves to the SAME module instance the SSR loader tags.
  */
-export function compatModuleList(pages: PageRoute[], boundary: BoundaryManifest | null): string[] {
+export function compatModuleList(
+  pages: PageRoute[],
+  boundary: BoundaryManifest | null,
+  api: ApiRoute[] = [],
+): string[] {
   const refs = boundary ? [...boundary.client.values(), ...boundary.server.values()] : [];
+  // Route handlers (`route.ts`) go through the same bundle: a migrated Remix action route
+  // imports the same `.server.ts` graph (assets, npm deps) as its page.
   return [
-    ...new Set([...pages.flatMap(routeServerModules), ...refs.map((r) => fromFileUrl(r.url))]),
+    ...new Set([
+      ...pages.flatMap(routeServerModules),
+      ...api.map((r) => r.filePath),
+      ...refs.map((r) => fromFileUrl(r.url)),
+    ]),
   ];
 }
 
@@ -69,6 +82,7 @@ export function compatBuildOptions(
   projectDir: string,
   paths: ProjectPaths,
   cssImportMap?: Record<string, string>,
+  clientDir: string = join(paths.outDir, "client"),
 ) {
   return {
     projectDir,
@@ -80,6 +94,23 @@ export function compatBuildOptions(
     mdxOptions: paths.config?.mdx,
     useCache: resolveCacheComponents(paths.config),
     cssImportMap,
+    // Assets emit into the dir the CLIENT bundles are written to — the build pipeline's
+    // staging dir, swapped into `client/` at finalize (emitting into `client/` directly
+    // would be wiped by that swap).
+    assets: compatAssets(projectDir, clientDir),
+  };
+}
+
+/**
+ * Vite-style asset emission for a compat build: imported images/fonts and `?url`
+ * stylesheets land in the client dir under content-hashed names, served immutable under
+ * `/_denext/client/assets/`. Shared by the server and client bundles so their URLs agree.
+ */
+export function compatAssets(projectDir: string, clientDir: string): AssetOptions {
+  return {
+    publicPath: CLIENT_PREFIX,
+    emitDir: clientDir,
+    compileCss: (path) => compileCssAsset(projectDir, path),
   };
 }
 

@@ -12,6 +12,45 @@ and this project adheres to
 
 ### Fixed
 
+- **Remix migration: real-world apps (the Epic Stack round).** `denext migrate --from remix`
+  now handles what production Remix apps actually do: remix-flat-routes `+` folders with
+  `_layout`/`index` files and `__ignored` colocation; honored layout break-outs (`$username_+`,
+  `password_.create` — the parent stays a page, no more `[username_]` params); colocated
+  modules relocated to `app/_routes/` with every relative and `#app/` import re-based; cross-route
+  imports of constants/components/types re-pointed at the generated client/data module by
+  imported name; `export { action } from "./x.server.ts"` re-exports classified as server exports;
+  resource routes that also export components (`theme-switch.tsx`) get a client module; exported
+  types always ship in the client module; AST-based import pruning (a `"/logout"` string no longer
+  keeps `auth.server.ts` in a client module) with `declare` stubs for `typeof helper` type
+  references; data modules emitted as `.tsx` (email templates in actions); modules with no
+  loader/action/component treated as colocated; the dropped `@remix-run/*`/`react-router` packages
+  aliased for the npm libraries that import them; `denext/remix` re-exports the isomorphic
+  `json`/`redirect`/`replace`/`redirectDocument`/`data` like `@remix-run/react`; a thrown
+  `Response` (the splat 404) or loader error now sets the document status (404/500) instead of 200,
+  and a thrown Response reaches the route's ErrorBoundary unredacted (`isRouteErrorResponse` sees
+  its status/data — the app's "not found" UI, not "Internal Server Error"); `meta()` receives Remix's
+  `matches` (every level's loader data, layouts included) and `location`, and a route's loader runs
+  once per request (the meta bridge and the render share the result). A root `Layout` export
+  (Remix ≥ 2.8) now wraps the app and the ErrorBoundary as Remix renders it, and the root's own
+  `<html>`/`<head>`/`<body>` become `denext/remix`'s `DocumentHtml`/`DocumentHead`/`DocumentBody`:
+  their attributes land on the real document (server) and are applied live on the client (a theme
+  class toggled on `<html>` works), their children render through. `links()` exports become
+  `<link>` tags in the head (stylesheets, icons, preloads). `app/entry.server.tsx`'s startup
+  statements (`init()`, `global.ENV = getEnv()`) move to a denext `instrumentation.ts`
+  (`register()`) instead of vanishing with the file. `<Link to="new">`, `<NavLink>`, `useNavigate`,
+  `useHref`/`useResolvedPath` resolve route-relative (against the route's own pathname, `..` climbs
+  a route), and `denext start` sets `NODE_ENV=production` (dev: `development`) when unset — npm
+  code and an app's env validation read it.
+- **Compat builds: Vite-style asset imports and Tailwind v3.** `import logo from "./logo.svg"`,
+  `x.png`, fonts and `styles.css?url` are emitted under `/_denext/client/assets/` with content-hashed
+  names by BOTH the server and client bundles (identical URLs, no hydration mismatch); a `?url`
+  stylesheet is compiled — a Tailwind v3 input through the project's own `tailwindcss` package
+  (`tailwind.config.*` + plugins), v4 through the standalone binary. Route handlers (`route.ts`)
+  are bundled through the compat build like pages (they share the same `.server.ts` graph).
+- **Prisma migration: 6.19.3 + SQL migrations.** The generated client is pinned to Prisma 6.19.3
+  (6.7.0's query compiler broke `$queryRawUnsafe` and relation `connect`), and the setup script runs
+  `prisma migrate deploy` when the app has `prisma/migrations/` (seed rows such as roles live there)
+  instead of a schema-only `db push`.
 - **`error.tsx` catches client-side render errors.** A segment's `"use client"` `error.tsx`
   used to exist only on the server: error boundaries were transparent in the Flight payload, so
   an island that threw during a client re-render (the playground's "Trigger Error" button)

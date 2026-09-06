@@ -21,6 +21,7 @@ import { getManifest, getUnbundled } from "./manifest.ts";
 import { broadcastError, reloadStream } from "./reload.ts";
 import { DEV_RELOAD_SCRIPT } from "./reload-script.ts";
 import { devErrorPage } from "./error-page.ts";
+import { serveImmutableAsset } from "../../server/serve-utils.ts";
 import {
   DEV_LOG_PATH,
   DEV_RELOAD_JS_PATH,
@@ -116,6 +117,22 @@ async function routeCssResponse(st: DevState, url: URL): Promise<Response> {
   return new Response(text, {
     headers: { "content-type": "text/css; charset=utf-8", "cache-control": "no-store" },
   });
+}
+
+/**
+ * An asset the compat build emitted (`import logo from "./logo.svg"`, `x.css?url`): served
+ * from the current generation's client dir under `/_denext/client/assets/`.
+ */
+function compatAssetResponse(st: DevState, request: Request, url: URL): Promise<Response> | null {
+  const prefix = "/_denext/client/assets/";
+  if (!st.compatClientDir || !url.pathname.startsWith(prefix)) return null;
+  return serveImmutableAsset(
+    st.compatClientDir,
+    "/assets/" + url.pathname.slice(prefix.length),
+    request,
+    false,
+    undefined,
+  );
 }
 
 /**
@@ -216,6 +233,8 @@ export function createDevHandler(st: DevState, appHandler: RequestHandler): Requ
     if (url.pathname === ROUTE_CSS_PATH) return routeCssResponse(st, url);
     const chunk = chunkResponse(st, url);
     if (chunk) return chunk;
+    const asset = await compatAssetResponse(st, request, url);
+    if (asset) return asset;
     if (url.pathname === ROUTE_BUNDLE_PATH) return routeBundleResponse(st, url);
     return appResponse(st, appHandler, request, url);
   };

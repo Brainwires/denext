@@ -122,6 +122,12 @@ export interface BuildNextCompatModulesOptions {
   useCache?: boolean;
   /** CSS shim map, forwarded to {@link BundleNextCompatModulesOptions.cssImportMap}. */
   cssImportMap?: Record<string, string>;
+  /**
+   * Vite-style asset handling for the SERVER bundle (`import logo from "./logo.svg"`,
+   * `tailwind.css?url`), see {@link AssetOptions.emitDir}: assets emit to the client dir
+   * with the same URLs the client bundle mints.
+   */
+  assets?: AssetOptions;
 }
 
 /**
@@ -190,6 +196,7 @@ export async function buildNextCompatModules(
     mdxOptions: options.mdxOptions,
     useCache: options.useCache,
     cssImportMap: options.cssImportMap,
+    assets: options.assets,
   });
 
   const bundle = join(outRoot, `${SERVER_BUNDLE_NAME}.js`);
@@ -341,6 +348,8 @@ export interface BuildNextCompatFlightOptions {
   boundary: BoundaryManifest;
   /** Output basename for the flight entry (default `flight.js`). */
   flightFile?: string;
+  /** Vite-style asset handling (see {@link AssetOptions.emitDir}); islands import images too. */
+  assets?: AssetOptions;
   /** Minify the output bundle (production). */
   minify?: boolean;
   /** Compile the class-component runtime into the bundle. */
@@ -409,6 +418,7 @@ export async function buildNextCompatFlightEntry(
     resolveAllNodeModules: options.resolveAllNodeModules,
     mdxOptions: options.mdxOptions,
     cssImportMap: options.cssImportMap,
+    assets: options.assets,
     // Strip `"use server"` modules (reached transitively via islands) → stubs.
     extraPlugins: [serverStubPlugin(options.boundary.server, generateServerStub)],
   });

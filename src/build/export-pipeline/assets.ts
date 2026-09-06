@@ -84,8 +84,8 @@ export async function setupCompat(ctx: ExportContext): Promise<void> {
   if (!ctx.compat) return;
   const boundary = ctx.flightRoutes.size > 0 ? await boundaryManifest(ctx) : null;
   const moduleMap = await buildNextCompatModules({
-    ...compatBuildOptions(ctx.projectDir, ctx.paths, ctx.css?.importMap),
-    modules: compatModuleList(ctx.manifest.pages, boundary),
+    ...compatBuildOptions(ctx.projectDir, ctx.paths, ctx.css?.importMap, ctx.clientOut),
+    modules: compatModuleList(ctx.manifest.pages, boundary, ctx.manifest.api),
   });
   // Route the render loader through the compat bundles, and point boundary refs at their
   // compat bundles so Flight island/action identity holds across the rewrite.

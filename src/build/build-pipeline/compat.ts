@@ -16,7 +16,7 @@ import { type BuildContext, FLIGHT_BUNDLE_FILE, log } from "./context.ts";
 
 /** The options every compat bundling call shares. */
 function compatOptions(ctx: BuildContext) {
-  return compatBuildOptions(ctx.projectDir, ctx.paths, ctx.css?.importMap);
+  return compatBuildOptions(ctx.projectDir, ctx.paths, ctx.css?.importMap, ctx.clientDir);
 }
 
 /**
@@ -29,7 +29,7 @@ function compatOptions(ctx: BuildContext) {
  */
 async function compatServerBundles(ctx: BuildContext): Promise<void> {
   const { projectDir, paths } = ctx;
-  const modules = compatModuleList(ctx.manifest.pages, ctx.boundary);
+  const modules = compatModuleList(ctx.manifest.pages, ctx.boundary, ctx.manifest.api);
   log(`next-compat: bundling ${modules.length} server module(s) -> server/`);
   const moduleMap = await buildNextCompatModules({ ...compatOptions(ctx), modules });
   for (const [absSrc, absBundle] of moduleMap) {

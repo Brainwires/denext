@@ -229,6 +229,41 @@ export default function Page(props: { params: Record<string, string> }) {
           <code>ErrorBoundary</code> (with <code>useRouteError</code> and{" "}
           <code>isRouteErrorResponse</code>) maps to an <code>error.tsx</code>.
         </li>
+        <li>
+          <strong>remix-flat-routes and colocation</strong>: <code>users+/</code> folders,{" "}
+          <code>_layout.tsx</code>/<code>index.tsx</code>, layout break-outs (<code>
+            $username_+
+          </code>) and <code>__ignored</code>{" "}
+          files convert; colocated modules (<code>login.server.ts</code>, components, images) move
+          to <code>app/_routes/</code>{" "}
+          with every import re-based, and an import of another route module for a constant,
+          component or type is pointed at the module that now holds it.
+        </li>
+        <li>
+          <strong>The root</strong>: a <code>Layout</code>{" "}
+          export wraps the app and the ErrorBoundary, its{" "}
+          <code>&lt;html&gt;</code>/<code>&lt;head&gt;</code>/<code>
+            &lt;body&gt;
+          </code>{" "}
+          attributes reach the real document (and update live — a theme class on{" "}
+          <code>&lt;html&gt;</code> works), <code>links()</code> becomes head tags,{" "}
+          <code>meta()</code> receives <code>matches</code>, and the startup statements of{" "}
+          <code>entry.server.tsx</code> (<code>init()</code>,{" "}
+          <code>global.ENV</code>) become a denext <code>instrumentation.ts</code>.
+        </li>
+        <li>
+          <strong>Route-relative links</strong>: <code>&lt;Link to="new"&gt;</code>,{" "}
+          <code>useNavigate</code> and <code>useResolvedPath</code>{" "}
+          resolve against the route's own pathname, and <code>..</code> climbs a route.
+        </li>
+        <li>
+          <strong>Assets and Tailwind</strong>: <code>import logo from "./logo.svg"</code> and{" "}
+          <code>styles.css?url</code> are served under{" "}
+          <code>/_denext/client/assets/</code>; a Tailwind v3 stylesheet is compiled through the
+          project's own{" "}
+          <code>tailwindcss</code>. Prisma apps get the Rust-free client and their SQL migrations
+          applied by <code>deno task prisma:setup</code>.
+        </li>
       </ul>
 
       <h2>What to review after</h2>

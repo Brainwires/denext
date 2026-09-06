@@ -215,6 +215,12 @@ exports = ["Snapshot"]
 file = "src/server/middleware.ts"
 exports = ["redirect"]
 
+# The Remix runtime's `redirect()` (a Response constructor, `@remix-run/node` shape) vs
+# denext's throwing `redirect()` — two intentional, differently-shaped APIs.
+[[ignoreExports]]
+file = "src/compat/remix/responses.ts"
+exports = ["redirect"]
+
 # `ensureBundleSupport` is exercised by tests/integration/build-smoke.test.ts through a
 # `deno eval` SUBPROCESS (each probe needs a fresh process so the cached verdict resets),
 # i.e. a string of code fallow cannot see. In-process callers are in the same file.

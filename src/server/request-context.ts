@@ -169,6 +169,11 @@ export interface RequestContext {
   slotState?: Record<string, string>;
   /** The slot state this render produced (shipped to the client in the nav/hydration data). */
   renderedSlotState?: Record<string, string>;
+  /**
+   * Attributes a root component put on ITS `<html>`/`<body>` (a migrated Remix root's
+   * `<html className={theme}>`), merged onto the real document tags by the assembler.
+   */
+  documentAttrs?: { html?: Record<string, unknown>; body?: Record<string, unknown> };
   /** Per-request memoization store backing {@link cache}, keyed by function. */
   memo: Map<unknown, Map<string, unknown>>;
   /**

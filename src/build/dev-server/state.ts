@@ -129,6 +129,8 @@ export interface DevState {
   compatModuleMap: Map<string, string>;
   /** The boundary islands to bundle as compat entries this generation (set by refreshBoundary). */
   compatBoundary: BoundaryManifest | null;
+  /** The current generation's compat client output dir (emitted `assets/` are served from it). */
+  compatClientDir: string | null;
 
   /** CSS assets, rebuilt per generation (client import map + per-route extracted stylesheet). */
   cssAssets: AppCss | null;
@@ -202,6 +204,7 @@ export function createDevState(options: DevServerOptions): DevState {
     compatBuilding: null,
     compatModuleMap: new Map(),
     compatBoundary: null,
+    compatClientDir: null,
     cssAssets: null,
     cssGen: -1,
     cssHadEntries: false,

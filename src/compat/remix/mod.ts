@@ -48,6 +48,16 @@ export {
   useSearchParams,
   useSubmit,
 } from "./client.ts";
+export { DocumentBody, DocumentHead, DocumentHtml } from "./document.ts";
+export type { DocumentAttrs } from "./document.ts";
+export {
+  data,
+  DataWithResponseInit,
+  json,
+  redirect,
+  redirectDocument,
+  replace,
+} from "./responses.ts";
 export type {
   AwaitProps,
   Blocker,

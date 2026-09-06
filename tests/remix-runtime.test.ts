@@ -564,3 +564,179 @@ Deno.test("remixMeta maps Remix descriptors to denext Metadata", async () => {
   assertEquals(md.description, "All shows");
   assert(md.meta?.["og:type"] === "website");
 });
+
+Deno.test("denext/remix (the @remix-run/react surface) re-exports the isomorphic data helpers", async () => {
+  const client = await import("../src/compat/remix/mod.ts");
+  const server = await import("../src/compat/remix/server.ts");
+  // `@remix-run/react` re-exports these; an action module may import `redirect` from it.
+  assertEquals(client.redirect, server.redirect);
+  assertEquals(client.json, server.json);
+  assertEquals(client.data, server.data);
+  assertEquals(client.replace, server.replace);
+  assertEquals(client.redirectDocument, server.redirectDocument);
+  const res = client.redirect("/login", 303);
+  assertEquals(res.status, 303);
+  assertEquals(res.headers.get("Location"), "/login");
+  assertEquals(client.data({ ok: true }, 201).init?.status, 201);
+});
+
+Deno.test("remixMeta: meta() receives Remix `matches` (ancestor loader data) + location; loaders run once per request", async () => {
+  const { runLoaderOnce } = await import("../src/compat/remix/server.ts");
+  let layoutRuns = 0;
+  const layoutLoader = () => {
+    layoutRuns++;
+    return { owner: "kody" };
+  };
+  const layoutMeta = remixMeta(undefined, layoutLoader, "routes/users+/$username_+/notes", {
+    crumb: 1,
+  })!;
+  const pageMeta = remixMeta(
+    ({ matches, location }) => {
+      const notes = matches.find((m) => m.id === "routes/users+/$username_+/notes");
+      return [{ title: `${(notes?.data as { owner: string }).owner} @ ${location.pathname}` }];
+    },
+    () => ({ page: true }),
+    "routes/users+/$username_+/notes.index",
+  )!;
+  const request = new Request("http://localhost/users/kody/notes?x=1");
+  const md = await runWithContext(createRequestContext(request), async () => {
+    // Layout metadata resolves before the page's (outer → inner), as buildPageContext does.
+    assertEquals(
+      await layoutMeta({ params: { username: "kody" }, searchParams: new URLSearchParams() }),
+      {},
+    );
+    const page = await pageMeta({
+      params: { username: "kody" },
+      searchParams: new URLSearchParams(),
+    });
+    // The render re-asks for the layout's data: the memoized result, not a second query.
+    await runLoaderOnce("routes/users+/$username_+/notes", layoutLoader, { username: "kody" });
+    return page;
+  });
+  assertEquals(md.title, "kody @ /users/kody/notes");
+  assertEquals(layoutRuns, 1, "a loader runs once per request");
+});
+
+Deno.test("a thrown Remix Response reaches the boundary unredacted in production (isExposedError)", async () => {
+  const { toClientError, isExposedError } = await import("../src/runtime/error-boundary.ts");
+  const { runLoader } = await import("../src/compat/remix/server.ts");
+  const g = globalThis as { __denextDev?: boolean };
+  const prev = g.__denextDev;
+  g.__denextDev = false;
+  try {
+    let thrown: unknown;
+    try {
+      await runLoader(() => {
+        throw new Response("Not found", { status: 404 });
+      }, {});
+    } catch (e) {
+      thrown = e;
+    }
+    assert(isExposedError(thrown), "a RemixRouteErrorResponse is flagged for exposure");
+    assertEquals(toClientError(thrown), thrown, "passed through, not replaced by a digest error");
+    assertEquals((thrown as unknown as { status: number }).status, 404);
+    assertEquals(toClientError(new Error("db dsn leaked")).message, "Internal Server Error");
+  } finally {
+    if (prev === undefined) delete g.__denextDev;
+    else g.__denextDev = prev;
+  }
+});
+
+Deno.test("remixMeta: a Remix links() export becomes <link> tags in the head (stylesheet ?url, icons)", async () => {
+  const gen = remixMeta(
+    () => [{ title: "Home" }],
+    undefined,
+    "root",
+    undefined,
+    () => [
+      { rel: "stylesheet", href: "/_denext/client/assets/tailwind-abc.css" },
+      { rel: "icon", type: "image/svg+xml", href: "/favicon.svg", crossOrigin: "anonymous" },
+      { rel: "preload", href: "/sprite.svg", as: "image" },
+    ],
+  )!;
+  const md = await gen({ params: {}, searchParams: new URLSearchParams() });
+  assertEquals(md.title, "Home");
+  assertStringIncludes(
+    md.head ?? "",
+    '<link rel="stylesheet" href="/_denext/client/assets/tailwind-abc.css">',
+  );
+  assertStringIncludes(md.head ?? "", 'crossorigin="anonymous"');
+  assertStringIncludes(md.head ?? "", '<link rel="preload" href="/sprite.svg" as="image">');
+  // links() alone (no meta) still yields the head.
+  const only = remixMeta(
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    () => [{ rel: "icon", href: "/i.png" }],
+  )!;
+  assertEquals(
+    (await only({ params: {}, searchParams: new URLSearchParams() })).head,
+    '<link rel="icon" href="/i.png">',
+  );
+});
+
+Deno.test("route-path: a Remix route id + params → the pathname it matched; `to` resolves route-relative", async () => {
+  const { remixRoutePathname, resolveRoutePath } = await import(
+    "../src/compat/remix/route-path.ts"
+  );
+  assertEquals(remixRoutePathname("root", {}), "/");
+  assertEquals(remixRoutePathname("routes/_index", {}), "/");
+  assertEquals(remixRoutePathname("routes/users+/index", {}), "/users");
+  assertEquals(
+    remixRoutePathname("routes/users+/$username_+/notes", { username: "kody" }),
+    "/users/kody/notes",
+  );
+  assertEquals(
+    remixRoutePathname("routes/users+/$username_+/notes.$noteId_.edit", {
+      username: "kody",
+      noteId: "n1",
+    }),
+    "/users/kody/notes/n1/edit",
+  );
+  assertEquals(remixRoutePathname("routes/_auth+/login", {}), "/login");
+  assertEquals(
+    remixRoutePathname("routes/settings+/profile.two-factor.index", {}),
+    "/settings/profile/two-factor",
+  );
+  assertEquals(remixRoutePathname("routes/_seo+/sitemap[.]xml", {}), "/sitemap.xml");
+  assertEquals(remixRoutePathname("routes/files.$", { "*": "a/b" }), "/files/a/b");
+  assertEquals(remixRoutePathname("routes/concerts.$city/route", { city: "sf" }), "/concerts/sf");
+  // `<Link to="new">` in the notes layout → /users/kody/notes/new (not the URL's parent).
+  assertEquals(resolveRoutePath("new", "/users/kody/notes"), "/users/kody/notes/new");
+  assertEquals(resolveRoutePath("../edit", "/users/kody/notes/n1"), "/users/kody/notes/edit");
+  assertEquals(resolveRoutePath("/abs", "/users/kody/notes"), "/abs");
+  assertEquals(resolveRoutePath("?q=1", "/users"), "/users?q=1");
+  assertEquals(resolveRoutePath("https://x.test/a", "/users"), "https://x.test/a");
+  assertEquals(resolveRoutePath("new?x=1#h", "/n"), "/n/new?x=1#h");
+});
+
+Deno.test("document shell: DocumentHtml/DocumentBody record attributes for the server document", async () => {
+  const { DocumentHtml, DocumentBody, DocumentHead } = await import("../src/compat/remix/mod.ts");
+  await import("../src/compat/remix/server.ts"); // installs the request-context sink
+  const { renderDocument } = await import("../src/server/document.ts");
+  const request = new Request("http://localhost/");
+  const ctx = createRequestContext(request);
+  const html = await runWithContext(ctx, () =>
+    renderToString(
+      h(
+        DocumentHtml,
+        { lang: "fr", className: "dark h-full" } as never,
+        h(DocumentHead, null, h("meta", { name: "robots", content: "noindex" })),
+        h(DocumentBody, { className: "bg-background" } as never, h("main", null, "app")),
+      ),
+    ));
+  assertEquals(html, '<meta name="robots" content="noindex"><main>app</main>');
+  assertEquals(ctx.documentAttrs, {
+    html: { lang: "fr", className: "dark h-full" },
+    body: { className: "bg-background" },
+  });
+  const doc = renderDocument({
+    bodyHtml: html,
+    metadata: {},
+    htmlAttrs: ctx.documentAttrs?.html,
+    bodyAttrs: ctx.documentAttrs?.body,
+  });
+  assertStringIncludes(doc, '<html lang="fr" class="dark h-full">');
+  assertStringIncludes(doc, '<body class="bg-background">');
+});

@@ -162,7 +162,7 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     "next-server": u("src/compat/next/server.ts"),
     // The Remix compat runtime (`denext/remix`) — prebuilt into the same graph so a
     // migrated Remix app's client components share the one denext instance.
-    "remix": u("src/compat/remix/client.ts"),
+    "remix": u("src/compat/remix/mod.ts"),
   };
 }
 
@@ -970,6 +970,64 @@ export interface AssetOptions {
   assetNames?: string;
   /** Extra extension→loader entries merged over the built-in asset loaders. */
   loaders?: Record<string, AssetLoader>;
+  /**
+   * Emit imported assets (`import logo from "./logo.svg"`, `x.png?url`) as files under
+   * `<emitDir>/assets/` named by CONTENT hash, and resolve the import to a module exporting
+   * the `publicPath` URL. Unlike esbuild's `file` loader this is independent of the build's
+   * own outdir, so the SERVER bundle (SSR) and the CLIENT bundle mint the SAME URL for the
+   * same file — a `<img src>` rendered on the server hydrates without a mismatch.
+   */
+  emitDir?: string;
+  /**
+   * Compile a stylesheet imported with `?url` (Vite: the URL of the PROCESSED css — the
+   * Epic Stack's `tailwind.css?url`). Receives the absolute path; returns the CSS bytes to
+   * emit. Only used with `emitDir`.
+   */
+  compileCss?: (path: string) => Promise<Uint8Array>;
+}
+
+/** The absolute path of a `?url`-imported stylesheet to compile (null: not one, or unresolvable here). */
+function cssUrlPath(
+  assets: AssetOptions,
+  base: string,
+  args: esbuild.OnResolveArgs,
+): string | null {
+  if (!assets.emitDir || !assets.compileCss || !/\.css$/i.test(base)) return null;
+  if (isAbsolute(base)) return base;
+  return base.startsWith(".") ? join(args.resolveDir || dirname(args.importer), base) : null;
+}
+
+/** Asset extensions {@link AssetOptions.emitDir} emits as URL-exporting modules. */
+const EMIT_ASSET_RE =
+  /\.(?:svg|png|jpe?g|gif|webp|avif|ico|bmp|woff2?|ttf|otf|eot|mp4|webm|mp3|ogg|wav|pdf)$/;
+
+/** FNV-1a over bytes (asset content hash for emitted file names). */
+function hashBytes(bytes: Uint8Array): string {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < bytes.length; i++) {
+    h ^= bytes[i];
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h.toString(36);
+}
+
+/**
+ * Write `bytes` as `<emitDir>/assets/<name>-<hash><ext>` (once) and return its public URL.
+ * `ext` overrides the source extension (a compiled `?url` stylesheet stays `.css`).
+ */
+async function emitAsset(
+  assets: AssetOptions,
+  srcPath: string,
+  bytes: Uint8Array,
+  ext = extname(srcPath),
+): Promise<string> {
+  const base = basename(srcPath, extname(srcPath)).replace(/[^\w.-]+/g, "_");
+  const file = `${base}-${hashBytes(bytes)}${ext}`;
+  const dir = join(assets.emitDir!, "assets");
+  await Deno.mkdir(dir, { recursive: true });
+  const target = join(dir, file);
+  if (!(await Deno.stat(target).catch(() => null))) await Deno.writeFile(target, bytes);
+  return `${assets.publicPath}assets/${file}`;
 }
 
 // @mdx-js/mdx is loaded lazily so an app without any `.mdx`/`.md` never pays for it.
@@ -1401,12 +1459,51 @@ function viteAssetPlugin(
         const qIdx = args.path.indexOf("?");
         const base = args.path.slice(0, qIdx);
         const flag = args.path.slice(qIdx + 1).split("&")[0];
+        // A stylesheet's `?url` wants the PROCESSED css file, not the css-shim module the
+        // chain would resolve the sheet to: locate the file directly (relative/absolute).
+        const sheet = flag === "url" ? cssUrlPath(assets, base, args) : null;
+        if (sheet) return { path: sheet, namespace: "vite-css-url" };
         // Resolve the real module through the full chain (skip our own plugin — the
         // query is stripped, so it can't re-match — avoiding recursion).
         const resolved = await resolveOnBehalf(build, args, base);
         if (resolved.errors.length > 0) return { errors: resolved.errors };
+        if (flag === "url" && assets.emitDir) {
+          const css = resolved.path.endsWith(".css") && assets.compileCss;
+          return { path: resolved.path, namespace: css ? "vite-css-url" : "vite-emit" };
+        }
         return { path: resolved.path, namespace: VITE_ASSET_NS[flag] ?? "vite-url" };
       });
+      if (assets.emitDir) {
+        // Bare asset imports: a file under `emitDir/assets/`, imported as its URL.
+        build.onResolve({ filter: EMIT_ASSET_RE }, async (args) => {
+          if (args.namespace !== "file" && args.namespace !== "") return null;
+          // Re-entry guard: the on-behalf resolve below runs this hook again for the same
+          // path; the marker lets that inner pass fall through to the real resolvers.
+          if ((args.pluginData as { denextAsset?: boolean } | undefined)?.denextAsset) return null;
+          const resolved = await build.resolve(args.path, {
+            kind: args.kind,
+            importer: args.importer,
+            resolveDir: args.resolveDir || (args.importer ? dirname(args.importer) : ""),
+            pluginData: { denextAsset: true },
+          });
+          if (resolved.errors.length > 0 || !resolved.path) return null;
+          return { path: resolved.path, namespace: "vite-emit" };
+        });
+        build.onLoad({ filter: /.*/, namespace: "vite-emit" }, async (args) => ({
+          contents: `export default ${
+            JSON.stringify(await emitAsset(assets, args.path, await Deno.readFile(args.path)))
+          };`,
+          loader: "js",
+        }));
+        build.onLoad({ filter: /.*/, namespace: "vite-css-url" }, async (args) => ({
+          contents: `export default ${
+            JSON.stringify(
+              await emitAsset(assets, args.path, await assets.compileCss!(args.path), ".css"),
+            )
+          };`,
+          loader: "js",
+        }));
+      }
       build.onLoad({ filter: /.*/, namespace: "vite-url" }, async (args) => ({
         contents: await Deno.readFile(args.path),
         loader: "file",
@@ -1638,8 +1735,11 @@ export async function bundleNextCompatModules(
         ],
       }),
     // Vite-style asset emission: bare `.wasm`/`.woff2`/… + `new URL(…)` → files
-    // under `outdir`, URLs prefixed with `publicPath` (where they are served).
-    ...(assets
+    // under `outdir`, URLs prefixed with `publicPath` (where they are served). With
+    // `emitDir` the plugin mints those URLs itself; esbuild's `publicPath` must then stay
+    // unset — it would also rewrite this bundle's code-split chunk imports to absolute
+    // URLs, which the SERVER bundle (loaded from disk) cannot import.
+    ...(assets && !assets.emitDir
       ? {
         loader: { ...DEFAULT_ASSET_LOADERS, ...assets.loaders },
         assetNames: assets.assetNames ?? "assets/[name]-[hash]",

@@ -145,6 +145,8 @@ Deno.test("prisma migrate: emits the links patch package + setup script", async 
   const setup = await read(dir, "scripts/denext-prisma-setup.ts");
   assertStringIncludes(setup, "prisma generate");
   assertStringIncludes(setup, "db"); // db push
+  assertStringIncludes(setup, "migrate", "SQL migrations are applied when the app has them");
+  assertStringIncludes(setup, "6.19.3", "the Prisma line with a working query compiler");
   assertStringIncludes(setup, "--no-config"); // resolves the CLI from the global cache
   // package.json prisma deps removed.
   const pkg = JSON.parse(await read(dir, "package.json")) as {

@@ -188,6 +188,14 @@ async function buildAppRouterImports(
     // The Remix compat runtime the generated route wrappers/components import.
     imports["denext/remix"] = jsr("remix");
     imports["denext/remix/server"] = jsr("remix/server");
+    // The dropped Remix packages stay resolvable for the npm libraries that import them
+    // (`@sentry/remix`, `remix-utils`, `remix-auth`, `@nasa-gcn/remix-seo` all do).
+    for (const spec of ["@remix-run/react", "react-router", "react-router-dom"]) {
+      imports[spec] = imports["denext/remix"];
+    }
+    for (const spec of ["@remix-run/node", "@remix-run/server-runtime", "@remix-run/cloudflare"]) {
+      imports[spec] = imports["denext/remix/server"];
+    }
   }
   for (const spec of DENEXT_ALIAS_SPECS) imports[spec] = jsr(spec);
   // Every `next/*` / `next-intl/*` subpath denext ships gets an EXACT entry: Deno cannot

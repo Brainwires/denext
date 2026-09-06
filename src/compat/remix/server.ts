@@ -17,12 +17,17 @@ import { h } from "../../../mod.ts";
 import { fromBase64Url, hmacSign, hmacVerify, toBase64Url } from "../../server/session.ts";
 import { currentContext } from "../../server/request-context.ts";
 import {
+  EXPOSE_ERROR,
+  isControlSignal,
   redirect as denextRedirect,
   RedirectError,
   RedirectType,
 } from "../../runtime/error-boundary.ts";
 import { serverAction } from "../../runtime/server-action.ts";
 import { registerServerMatch } from "./matches-server.ts";
+import { serverRenderMatches } from "./matches-bridge.ts";
+import { setDocumentAttrsSink } from "./document.ts";
+import type { RemixMatch } from "./client.ts";
 import {
   FORM_ACTION_HEADER,
   FORM_METHOD_HEADER,
@@ -45,76 +50,16 @@ import type { VNode, VNodeChildren } from "../../jsx/types.ts";
  */
 export const cssBundleHref: string | undefined = undefined;
 
-// ── Remix data helpers (json / redirect / defer) ──────────────────────────────
-
-/** Remix `json()` — a JSON `Response` (unwrapped back to its value by {@link runLoader}). */
-export function json<T>(data: T, init?: number | ResponseInit): Response {
-  const responseInit: ResponseInit = typeof init === "number" ? { status: init } : { ...init };
-  const headers = new Headers(responseInit.headers);
-  if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json; charset=utf-8");
-  return new Response(JSON.stringify(data), { ...responseInit, headers });
-}
-
-/** Remix `redirect()` — a redirect `Response` (turned into a denext redirect by the runner). */
-export function redirect(url: string, init?: number | ResponseInit): Response {
-  const responseInit: ResponseInit = typeof init === "number" ? { status: init } : { ...init };
-  const status = responseInit.status ?? 302;
-  const headers = new Headers(responseInit.headers);
-  headers.set("Location", url);
-  return new Response(null, { ...responseInit, status, headers });
-}
-
-/** Response header carrying a redirect's soft-nav history mode (Remix `replace()`). */
-const REDIRECT_MODE_HEADER = "x-denext-redirect-mode";
-
-/**
- * Remix `replace()` — like {@link redirect}, but a client soft navigation REPLACES the
- * current history entry instead of pushing one (e.g. after a login you don't want in the
- * back stack). Marks the redirect `Response` so the runner threads
- * {@link RedirectType.replace} to the client (which then uses `location.replace`). On a
- * full document load it's a normal HTTP redirect, exactly like `redirect()`.
- */
-export function replace(url: string, init?: number | ResponseInit): Response {
-  const responseInit: ResponseInit = typeof init === "number" ? { status: init } : { ...init };
-  const status = responseInit.status ?? 302;
-  const headers = new Headers(responseInit.headers);
-  headers.set("Location", url);
-  headers.set(REDIRECT_MODE_HEADER, "replace");
-  return new Response(null, { ...responseInit, status, headers });
-}
-
-/**
- * Remix `redirectDocument()` — a redirect the client follows with a full document load
- * (`X-Remix-Reload-Document`), not a soft navigation.
- */
-export function redirectDocument(url: string, init?: number | ResponseInit): Response {
-  const res = redirect(url, init);
-  res.headers.set("x-remix-reload-document", "true");
-  return res;
-}
-
-/**
- * Remix `DataWithResponseInit` — the wrapper {@link data} returns: a value plus an optional
- * `ResponseInit`. Unlike {@link json} it does NOT serialize the value to a body — the runner
- * passes `data` through as the loader/action value (so `useLoaderData`/`useActionData` see it
- * as-is) and applies `init`'s status/headers to the response.
- */
-export class DataWithResponseInit<D> {
-  readonly type = "DataWithResponseInit" as const;
-  constructor(readonly data: D, readonly init: ResponseInit | null) {}
-}
-
-/**
- * Remix `data()` — return a value with a custom status/headers without forcing JSON
- * serialization (the single-fetch-friendly alternative to {@link json}). The value reaches
- * `useLoaderData`/`useActionData` unchanged; the runner applies `init.status`/`init.headers`.
- */
-export function data<D>(value: D, init?: number | ResponseInit): DataWithResponseInit<D> {
-  return new DataWithResponseInit(
-    value,
-    typeof init === "number" ? { status: init } : (init ?? null),
-  );
-}
+// ── Remix data helpers (json / redirect / data) — see responses.ts (isomorphic) ────
+export {
+  data,
+  DataWithResponseInit,
+  json,
+  redirect,
+  redirectDocument,
+  replace,
+} from "./responses.ts";
+import { DataWithResponseInit, REDIRECT_MODE_HEADER } from "./responses.ts";
 
 /** Apply a `data()`/response `init` (status + headers) onto the current request's response. */
 function applyResponseInit(init: ResponseInit | null): void {
@@ -211,6 +156,8 @@ async function responseBody(response: Response): Promise<unknown> {
  */
 class RemixRouteErrorResponse extends Error {
   readonly __remixErrorResponse = true as const;
+  /** Rendered by the boundary as-is (status + data), never redacted or logged as a failure. */
+  readonly [EXPOSE_ERROR] = true;
   constructor(readonly status: number, readonly statusText: string, readonly data: unknown) {
     super(`Route error ${status}`);
     this.name = "RemixRouteErrorResponse";
@@ -231,7 +178,20 @@ async function unwrapThrown(thrown: unknown): Promise<never> {
   if (status >= 300 && status < 400) {
     redirectFromResponse(thrown.headers.get("Location") ?? "/", status, thrown); // throws
   }
+  // Remix answers with the thrown Response's status (the splat route's `throw new
+  // Response("Not found", { status: 404 })`) even though the ErrorBoundary renders inline.
+  setErrorStatus(status);
   throw new RemixRouteErrorResponse(status, thrown.statusText, await responseBody(thrown));
+}
+
+/**
+ * The status the document should carry when a route's ErrorBoundary renders: a thrown
+ * Response's own, `500` for a real error (Remix semantics). Applied by denext's request
+ * finalizer over the render's 200. Only the OUTERMOST failure wins per request.
+ */
+function setErrorStatus(status: number): void {
+  const ctx = currentContext();
+  if (ctx && ctx.responseStatus === undefined) ctx.responseStatus = status;
 }
 
 // ── The request/params/context passed to a loader/action ──────────────────────
@@ -269,6 +229,37 @@ function loaderArgs(params: Record<string, string>): LoaderFunctionArgs {
   return { request, params, context: {} };
 }
 
+/** Per-request memo key for loader results ({@link runLoaderOnce}). */
+const LOADER_MEMO = Symbol.for("denext.remix.loaderMemo");
+
+/**
+ * Run a route's loader at most ONCE per request: the `meta` bridge needs its data before
+ * the tree renders and the route wrapper needs it again when it renders — Remix runs a
+ * loader once per request, so the second caller reuses the first result (a DB query is
+ * not repeated). Outside a request (export/prerender) it simply runs.
+ */
+export async function runLoaderOnce(
+  id: string,
+  loader: LoaderFunction | undefined,
+  params: Record<string, string>,
+): Promise<unknown> {
+  const memo = currentContext()?.memo;
+  if (!memo || !loader) return runLoader(loader, params);
+  let byId = memo.get(LOADER_MEMO);
+  if (!byId) memo.set(LOADER_MEMO, byId = new Map());
+  if (byId.has(id)) return byId.get(id);
+  const pending = runLoader(loader, params);
+  byId.set(id, pending);
+  try {
+    const data = await pending;
+    byId.set(id, data);
+    return data;
+  } catch (err) {
+    byId.delete(id); // a throw (redirect/404) is re-raised by whoever asks next
+    throw err;
+  }
+}
+
 /** Run a Remix `loader` and return its unwrapped data (or `undefined` when absent). */
 export async function runLoader(
   loader: LoaderFunction | undefined,
@@ -281,6 +272,7 @@ export async function runLoader(
     // A loader that THREW (`throw redirect()` / `throw json()`): honor it as Remix would.
     // A returned redirect's signal (a RedirectError, not a Response) falls through unchanged.
     if (isResponse(thrown)) return await unwrapThrown(thrown);
+    if (!isControlSignal(thrown)) setErrorStatus(500); // a real error → the boundary at 500
     throw thrown;
   }
 }
@@ -412,7 +404,9 @@ async function resolveRouteRender(
   options: RemixRouteOptions,
 ): Promise<{ loaderData: unknown; formAction: ((fd: FormData) => Promise<unknown>) | undefined }> {
   const kept = keptLoaderData(options);
-  const loaderData = kept.kept ? kept.data : await runLoader(options.loader, options.params);
+  const loaderData = kept.kept
+    ? kept.data
+    : await runLoaderOnce(options.id, options.loader, options.params);
   const formAction = bindAction(options.action, options.id, options.params);
   recordServerMatch(options.id, options.params, loaderData, options.handle);
   return { loaderData, formAction };
@@ -572,9 +566,7 @@ export interface RemixMetaDescriptor {
   [key: string]: unknown;
 }
 /** A Remix `meta` export. */
-export type MetaFunction = (
-  args: { data: unknown; params: Record<string, string>; location: { pathname: string } },
-) => RemixMetaDescriptor[];
+export type MetaFunction = (args: MetaArgs) => RemixMetaDescriptor[];
 /** A Remix `links` export. */
 export type LinksFunction = () => Array<Record<string, unknown>>;
 /** A Remix `headers` export. */
@@ -582,39 +574,105 @@ export type HeadersFunction = (
   args: { loaderHeaders: Headers; parentHeaders: Headers },
 ) => HeadersInit;
 
+/** Remix `MetaArgs`: what a `meta` export receives. */
+export interface MetaArgs {
+  data: unknown;
+  params: Record<string, string>;
+  location: { pathname: string; search: string; hash: string };
+  /** Every matched route outer→inner (ancestors' loader data included), like Remix. */
+  matches: RemixMatch[];
+  error?: unknown;
+}
+
 /**
  * Adapt a Remix `meta` export to a denext `generateMetadata`. Maps `{ title }` to
  * `metadata.title`, `{ name: "description" }` to `metadata.description`, and other
  * name/property descriptors into `openGraph`/`other` best-effort. Runs the route loader
- * to supply `data` (Remix meta receives loader data).
+ * (once per request — the render reuses the result) to supply `data`, and registers the
+ * route's match so a NESTED route's `meta` sees it in `matches` (`matches.find(m => m.id ===
+ * "routes/users+/$username_+/notes")` reads an ancestor's loader data). With `id`, a route
+ * without a `meta` export still registers — Remix's `matches` carries every level.
  */
 export function remixMeta(
   meta: MetaFunction | undefined,
   loader: LoaderFunction | undefined,
+  id?: string,
+  handle?: unknown,
+  links?: LinksFunction,
 ):
   | ((
     props: { params: Record<string, string>; searchParams: URLSearchParams },
   ) => Promise<Metadata>)
   | undefined {
-  if (!meta) return undefined;
+  if (!meta && !id && !links) return undefined;
   return async (props) => {
-    const data = await runLoader(loader, props.params);
-    const descriptors = meta({ data, params: props.params, location: { pathname: "" } }) ?? [];
-    const metadata: Metadata = {};
-    const extra: Record<string, string> = {};
-    for (const d of descriptors) {
-      const content = typeof d.content === "string" ? d.content : undefined;
-      if (typeof d.title === "string") metadata.title = d.title;
-      else if (content === undefined) continue;
-      else if (d.name === "description") metadata.description = content;
-      else if (d.name === "keywords") {
-        metadata.keywords = content.split(",").map((k: string) => k.trim()).filter(Boolean);
-      } else if (typeof d.name === "string") extra[d.name] = content;
-      else if (typeof d.property === "string") extra[d.property] = content;
+    // Remix `links()` (stylesheets, icons, preloads) → raw `<link>` tags in the head.
+    const head = links ? linkTags(links()) : "";
+    let data: unknown;
+    try {
+      data = id
+        ? await runLoaderOnce(id, loader, props.params)
+        : await runLoader(loader, props.params);
+    } catch (err) {
+      // Metadata resolves BEFORE the tree renders — outside every ErrorBoundary. A redirect
+      // is a control signal the pipeline honors from here; anything else (a thrown 404
+      // Response, a real error) is left for the render, which re-runs the loader inside the
+      // route's boundary and answers with the right status.
+      if (isControlSignal(err)) throw err;
+      return {};
     }
-    if (Object.keys(extra).length) metadata.meta = extra;
+    if (id) recordServerMatch(id, props.params, data, handle);
+    if (!meta) return head ? { head } : {};
+    const descriptors = meta({
+      data,
+      params: props.params,
+      location: requestLocation(),
+      matches: serverRenderMatches() ?? [],
+    }) ?? [];
+    const metadata = metadataFromDescriptors(descriptors);
+    if (head) metadata.head = head;
     return metadata;
   };
+}
+
+/** Remix link descriptors as `<link …>` tags (attribute values HTML-escaped). */
+function linkTags(descriptors: Array<Record<string, unknown>>): string {
+  const esc = (v: string) => v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  return descriptors.map((d) => {
+    const attrs = Object.entries(d)
+      .filter(([, v]) => v !== undefined && v !== null && v !== false)
+      .map(([k, v]) => {
+        const name = k === "crossOrigin" ? "crossorigin" : k === "imageSrcSet" ? "imagesrcset" : k;
+        return v === true ? name : `${name}="${esc(String(v))}"`;
+      });
+    return `<link ${attrs.join(" ")}>`;
+  }).join("");
+}
+
+/** Remix `MetaArgs.location` for the current request (empty outside one: export/prerender). */
+function requestLocation(): MetaArgs["location"] {
+  const req = currentContext()?.request;
+  if (!req) return { pathname: "", search: "", hash: "" };
+  const url = new URL(req.url);
+  return { pathname: url.pathname, search: url.search, hash: "" };
+}
+
+/** Map Remix meta descriptors onto denext `Metadata` (title/description/keywords + `meta`). */
+function metadataFromDescriptors(descriptors: RemixMetaDescriptor[]): Metadata {
+  const metadata: Metadata = {};
+  const extra: Record<string, string> = {};
+  for (const d of descriptors) {
+    const content = typeof d.content === "string" ? d.content : undefined;
+    if (typeof d.title === "string") metadata.title = d.title;
+    else if (content === undefined) continue;
+    else if (d.name === "description") metadata.description = content;
+    else if (d.name === "keywords") {
+      metadata.keywords = content.split(",").map((k: string) => k.trim()).filter(Boolean);
+    } else if (typeof d.name === "string") extra[d.name] = content;
+    else if (typeof d.property === "string") extra[d.property] = content;
+  }
+  if (Object.keys(extra).length) metadata.meta = extra;
+  return metadata;
 }
 
 // ── Cookies (`createCookie`) ──────────────────────────────────────────────────
@@ -983,3 +1041,10 @@ export function unstable_createMemoryUploadHandler(): UploadHandler {
     return new File([blob], part.filename, { type: part.contentType });
   };
 }
+
+// The root's `<html>`/`<body>` attributes (see `document.ts`) land on this request's context;
+// the document assembler merges them onto denext's own tags.
+setDocumentAttrsSink((part, attrs) => {
+  const ctx = currentContext();
+  if (ctx) (ctx.documentAttrs ??= {})[part] = attrs;
+});
