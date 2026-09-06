@@ -746,12 +746,28 @@ export async function serializeFlightValue(
   return await serializeCompound(value, s);
 }
 
-/** The compound half of {@link serializeFlightValue}: arrays, VNodes, plain objects. */
+/** The compound half of {@link serializeFlightValue}: arrays, Maps, Sets, VNodes, plain objects. */
 export async function serializeCompound(value: unknown, s: ValueSerializer): Promise<Serialized> {
   if (Array.isArray(value)) return await serializeArray(value, s);
+  if (value instanceof Map) return await serializeMap(value, s);
+  if (value instanceof Set) return { $: "S", v: await serializeArray([...value], s) };
   if (isVNode(value)) return await s.vnode(value);
   if (typeof value === "object" && value !== null) return await serializeObject(value, s);
   return SKIP;
+}
+
+/** A Map prop: entries whose key or value is dropped are removed (a JSON-less `Map` was `{}`). */
+async function serializeMap(
+  value: Map<unknown, unknown>,
+  s: ValueSerializer,
+): Promise<FlightValue> {
+  const entries: [FlightValue, FlightValue][] = [];
+  for (const [k, v] of value) {
+    const sk = await s.value(k);
+    const sv = await s.value(v);
+    if (sk !== SKIP && sv !== SKIP) entries.push([sk, sv]);
+  }
+  return { $: "M", v: entries };
 }
 
 /** An array prop: dropped entries are removed. */

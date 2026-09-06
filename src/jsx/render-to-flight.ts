@@ -50,6 +50,46 @@ export interface FlightDate {
   v: string;
 }
 
+/** A serialized `bigint` (JSON has no integer type wide enough; the digits travel as text). */
+export interface FlightBigInt {
+  /** Discriminant: bigint. */
+  $: "n";
+  /** The decimal digits, `-` prefixed when negative. */
+  v: string;
+}
+
+/** A serialized non-finite number or negative zero (JSON would emit `null` / `0`). */
+export interface FlightNonFinite {
+  /** Discriminant: non-finite / -0. */
+  $: "N";
+  /** One of `"NaN"`, `"Infinity"`, `"-Infinity"`, `"-0"`. */
+  v: string;
+}
+
+/** A serialized `URL` (its `href`). */
+export interface FlightUrl {
+  /** Discriminant: URL. */
+  $: "U";
+  /** The absolute URL string. */
+  v: string;
+}
+
+/** A serialized `Map`: entries as `[key, value]` pairs, each side a Flight value. */
+export interface FlightMap {
+  /** Discriminant: Map. */
+  $: "M";
+  /** The entries in insertion order. */
+  v: [FlightValue, FlightValue][];
+}
+
+/** A serialized `Set`: its values in insertion order. */
+export interface FlightSet {
+  /** Discriminant: Set. */
+  $: "S";
+  /** The members. */
+  v: FlightValue[];
+}
+
 /** A serialized lazily-loaded event handler ({@link Qrl}) reference. */
 export interface FlightEventHandler {
   /** Discriminant: event-handler (qrl) reference. */
@@ -114,6 +154,11 @@ export type FlightValue =
   | FlightNode
   | FlightActionRef
   | FlightDate
+  | FlightBigInt
+  | FlightNonFinite
+  | FlightUrl
+  | FlightMap
+  | FlightSet
   | FlightEventHandler;
 
 /** A serialized props object (VNode-valued props are themselves Flight nodes). */
