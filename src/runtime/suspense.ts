@@ -74,6 +74,8 @@ export function SuspenseList(props: SuspenseListProps): VNode {
 /** Tracked promise state attached to a thenable read via `use()`. */
 interface TrackedThenable<T> {
   _status?: "pending" | "fulfilled" | "rejected";
+  /** Where `use()` first saw this thenable (only with `DENEXT_DEBUG_SUSPENSE`). */
+  _origin?: string;
   _value?: T;
   _error?: unknown;
   then: Promise<T>["then"];
@@ -93,6 +95,18 @@ function isContextUsable(value: unknown): value is Context<unknown> {
  * called conditionally. Works on the client and under every SSR renderer, since
  * both delegate to the active hook dispatcher.
  */
+let debugSuspenseFlag: boolean | null = null;
+function debugSuspense(): boolean {
+  if (debugSuspenseFlag === null) {
+    try {
+      debugSuspenseFlag = !!Deno.env.get("DENEXT_DEBUG_SUSPENSE");
+    } catch {
+      debugSuspenseFlag = false;
+    }
+  }
+  return debugSuspenseFlag;
+}
+
 export function use<T>(usable: Promise<T> | Context<T>): T {
   // `use` is React's primitive for reading a context during render; it may be called
   // conditionally by design, and its lowercase name isn't a `useX` hook — so the
@@ -109,6 +123,9 @@ export function use<T>(usable: Promise<T> | Context<T>): T {
   if (tracked._status === "rejected") throw tracked._error;
   if (tracked._status === undefined) {
     tracked._status = "pending";
+    // `DENEXT_DEBUG_SUSPENSE=1`: remember where the suspension started, so a thenable that
+    // escapes every boundary can be traced (the raw Promise carries no stack of its own).
+    if (debugSuspense()) tracked._origin = new Error("use() suspended here").stack;
     tracked.then(
       (value) => {
         tracked._status = "fulfilled";

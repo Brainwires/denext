@@ -84,18 +84,30 @@ Deno.test("crawl + classify discovers a use client leaf imported by a server pag
   }
 });
 
-Deno.test("exportsOf populates ref export names when provided", async () => {
+Deno.test("exportsOf runs for server-action modules only; client islands are read statically", async () => {
   const app = await Deno.makeTempDir();
   try {
     await Deno.writeTextFile(
       join(app, "page.tsx"),
-      `"use client"\nexport function A() {}\nexport function B() {}`,
+      `"use client"\nimport { save } from "./actions.ts";\nexport function A() {}\nexport { save as B }`,
     );
+    await Deno.writeTextFile(
+      join(app, "actions.ts"),
+      `"use server"\nexport async function save() {}\nexport const LIMIT = 1;`,
+    );
+    const asked: string[] = [];
     const bm = await buildBoundaryManifest(app, [join(app, "page.tsx")], {
-      exportsOf: () => ["A", "B"],
+      exportsOf: (file) => {
+        asked.push(file);
+        return ["save"];
+      },
     });
-    const ref = [...bm.client.values()][0];
-    assertEquals(ref.exports, ["A", "B"]);
+    // The island's names come from the static lexer — it was never imported/executed.
+    const island = [...bm.client.values()][0];
+    assertEquals(island.exports.sort(), ["A", "B"]);
+    assertEquals(asked, [join(app, "actions.ts")], "exportsOf saw only the server module");
+    const action = [...bm.server.values()][0];
+    assertEquals(action.exports, ["save"]);
   } finally {
     await Deno.remove(app, { recursive: true });
   }
@@ -311,10 +323,16 @@ Deno.test("module graph cache: a crawl over a subset of an earlier crawl's entri
     const g = await denoInfoGraph([join(app, "b.ts")]);
     assertEquals(g.roots, [`file://${app}/b.ts`]);
     assertEquals(moduleGraphSpawnCount(), before + 1);
+    // A NAMED cache is independent: the CSS crawl (a different resolution) never reads the
+    // default graph, and its own crawl doesn't feed it either.
+    await denoInfoGraph([join(app, "a.ts")], { cache: "css" });
+    assertEquals(moduleGraphSpawnCount(), before + 2, "named cache: its own crawl");
+    await denoInfoGraph([join(app, "a.ts")], { cache: "css" });
+    assertEquals(moduleGraphSpawnCount(), before + 2, "…then cached under that name");
     // After a reset the next request crawls again (the dev watcher's path).
     resetModuleGraphCache();
     await crawlLocalModules([join(app, "a.ts")]);
-    assertEquals(moduleGraphSpawnCount(), before + 2);
+    assertEquals(moduleGraphSpawnCount(), before + 3);
   } finally {
     resetModuleGraphCache();
     await Deno.remove(app, { recursive: true });

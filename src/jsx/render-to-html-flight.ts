@@ -12,7 +12,7 @@
 import { FRAGMENT, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
 import { isComponentType } from "../runtime/react-brands.ts";
 import { type Dispatcher, setDispatcher } from "../runtime/hooks.ts";
-import { SUSPENSE } from "../runtime/suspense.ts";
+import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 import { ERROR_BOUNDARY } from "../runtime/error-boundary.ts";
 import { beginSignalCollection, endSignalCollection } from "../runtime/signal-state.ts";
 import { type ClientRefInfo, clientRefOf } from "../runtime/client-reference.ts";
@@ -140,7 +140,7 @@ export async function renderToHtmlFlight(
   // markup lands in <head> for client-boundary/Flight routes too, not just plain SSR.
   const sink = beginServerInsertCollection();
   try {
-    const dual = await renderChildDual(node as VNodeChild, ctx);
+    const dual = await renderRootSettled(node as VNodeChild, ctx);
     flushServerInsertedHTML(sink.inserted, ctx.head);
     return {
       html: dual.html,
@@ -152,6 +152,26 @@ export async function renderToHtmlFlight(
     endSignalCollection(); // ensure the module collector is reset even on throw
     setDispatcher(prev);
     sink.end();
+  }
+}
+
+/**
+ * Render the root, treating it as the outermost Suspense boundary: a suspension that reaches
+ * here (a `use()`/lazy component with no `<Suspense>` above it) is awaited and the render
+ * retried from scratch — Next's app router always has a root boundary, so a migrated app
+ * relies on one. Each retry starts from a clean id scope and island list.
+ */
+async function renderRootSettled(node: VNodeChild, ctx: Ctx): Promise<Dual> {
+  const rootScope = ctx.ids.scope;
+  for (;;) {
+    try {
+      return await renderChildDual(node, ctx);
+    } catch (err) {
+      if (!isThenable(err)) throw err;
+      await err;
+      ctx.ids.scope = rootScope;
+      ctx.islands.length = 0;
+    }
   }
 }
 
@@ -288,7 +308,21 @@ function flightOfChild(child: VNodeChild, ctx: Ctx): FlightNode | Promise<Flight
 async function flightOfVNode(node: VNode, ctx: Ctx): Promise<FlightNode> {
   const { type } = node;
   const props = node.props ?? {};
-  if (type === FRAGMENT) return flightOfChildren(props.children, ctx);
+  if (type === FRAGMENT) return flightOfFragment(props, ctx);
+  // Suspense / error boundaries authored by a server component inside an island's children
+  // (shadcn's `<ComponentPreview>` — a `React.lazy` demo under Suspense — passed into a
+  // `<Tabs>` island): resolve the suspension here like every other renderer, or the raw
+  // pending Promise escapes as an unhandled error.
+  if ((type as unknown) === SUSPENSE) {
+    return resolveInBoundaryScope(ctx.ids, () => flightOfChildren(props.children, ctx));
+  }
+  if ((type as unknown) === ERROR_BOUNDARY) {
+    return renderErrorBoundaryWith(props, ctx.ids, {
+      render: (children) => flightOfChildren(children, ctx),
+      renderFallback: (child) => flightOfChild(child, ctx),
+      activate: () => setDispatcher(ctx.dispatcher),
+    });
+  }
   if (!isComponentType(type)) {
     const p = await serializeProps(props, ctx);
     return flightHost(type as string, p, await flightOfChildren(props.children, ctx));
@@ -302,6 +336,18 @@ async function flightOfVNode(node: VNode, ctx: Ctx): Promise<FlightNode> {
     return await flightOfChild(await invokeServerComponent(type, props, ctx.scopes), ctx);
   } finally {
     ctx.ids.scope = parent;
+  }
+}
+
+/** A fragment, or a context provider whose scope wraps its children (Flight-only walk). */
+async function flightOfFragment(props: Record<string, unknown>, ctx: Ctx): Promise<FlightNode> {
+  const scope = providerScopeOf(props);
+  if (!scope) return flightOfChildren(props.children as VNodeChildren, ctx);
+  ctx.scopes.push(scope);
+  try {
+    return await flightOfChildren(props.children as VNodeChildren, ctx);
+  } finally {
+    ctx.scopes.pop();
   }
 }
 

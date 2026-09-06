@@ -6,12 +6,17 @@ import { join } from "@std/path";
 import { resetFonts } from "../../compat/next/font/registry.ts";
 import { extractPublicEnvRefs } from "../../runtime/public-env.ts";
 import { defaultLoader } from "../../server/mod.ts";
+import type { ModuleLoader } from "../../server/types.ts";
 import { type BundleChunk, bundleSummaryLines } from "../bundle-report.ts";
 import { emitTypedModules } from "../emit-typed-modules.ts";
+import {
+  compatModuleMapFromManifest,
+  createNextCompatServerLoader,
+} from "../next-compat-loader.ts";
 import { collectPageFontEntries } from "../pipeline-shared.ts";
 import { precompressDir } from "../precompress.ts";
 import { FONTS_PUBLIC_PREFIX, selfHostFonts } from "../self-host-fonts.ts";
-import { type BuildContext, log } from "./context.ts";
+import { type BuildContext, log, timed } from "./context.ts";
 
 /**
  * Public-env tree-shaking: scan the built client bundles for the
@@ -36,12 +41,28 @@ async function collectPublicEnvKeys(clientDir: string): Promise<string[]> {
  * build). Emitted into the staged client dir so the atomic swap brings the files in.
  */
 async function selfHostPageFonts(ctx: BuildContext): Promise<Record<string, string>> {
-  const fontEntries = await collectPageFontEntries(ctx.manifest.pages, defaultLoader);
+  const fontEntries = await collectPageFontEntries(ctx.manifest.pages, fontModuleLoader(ctx));
   const fontManifest = fontEntries.length > 0
     ? await selfHostFonts(fontEntries, join(ctx.clientDir, "_fonts"), FONTS_PUBLIC_PREFIX)
     : {};
   resetFonts();
   return fontManifest;
+}
+
+/**
+ * The loader that executes page/layout modules for font collection. A compat build loads
+ * the react→denext SERVER BUNDLES it just wrote (the same modules the prod server will
+ * run), not the raw Next sources: importing those under Deno's own loader pulls the app's
+ * whole npm dependency tree through it — 14 minutes on shadcn/ui's site.
+ */
+function fontModuleLoader(ctx: BuildContext): ModuleLoader {
+  if (!ctx.compat) return defaultLoader;
+  const moduleMap = compatModuleMapFromManifest(
+    ctx.projectDir,
+    ctx.paths.outDir,
+    ctx.compatServerModules,
+  );
+  return createNextCompatServerLoader(defaultLoader, { moduleMap });
 }
 
 /** The `manifest.json` document the prod server reads. */
@@ -133,13 +154,17 @@ export async function finalizeBuild(
   ctx: BuildContext,
   pluginBuildSteps: () => Promise<void>,
 ): Promise<void> {
-  const publicEnvKeys = await collectPublicEnvKeys(ctx.clientDir);
-  const fonts = await selfHostPageFonts(ctx);
-  await swapAndWriteManifest(ctx, buildManifestFor(ctx, publicEnvKeys, fonts));
-  await emitTypedModules(ctx.manifest, {
-    outDir: ctx.paths.outDir,
-    configPath: ctx.paths.configPath,
-  });
-  await pluginBuildSteps();
-  await summarizeBundles(ctx);
+  const publicEnvKeys = await timed("publicEnvKeys", () => collectPublicEnvKeys(ctx.clientDir));
+  const fonts = await timed("selfHostPageFonts", () => selfHostPageFonts(ctx));
+  await timed(
+    "swapAndWriteManifest",
+    () => swapAndWriteManifest(ctx, buildManifestFor(ctx, publicEnvKeys, fonts)),
+  );
+  await timed("emitTypedModules", () =>
+    emitTypedModules(ctx.manifest, {
+      outDir: ctx.paths.outDir,
+      configPath: ctx.paths.configPath,
+    }));
+  await timed("pluginBuildSteps", pluginBuildSteps);
+  await timed("summarizeBundles", () => summarizeBundles(ctx));
 }

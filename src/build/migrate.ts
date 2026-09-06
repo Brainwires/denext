@@ -879,6 +879,37 @@ async function writePagesRouterConfig(
   return { configWritten: true, configExists: false };
 }
 
+/** Where a Next app keeps the stylesheet that pulls Tailwind in, in the order Next projects use. */
+const TAILWIND_INPUT_CANDIDATES = [
+  "app/globals.css",
+  "src/app/globals.css",
+  "styles/globals.css",
+  "src/styles/globals.css",
+  "app/global.css",
+  "src/index.css",
+];
+
+/**
+ * The App Router app's Tailwind input stylesheet: the first candidate that exists and imports
+ * Tailwind (`@import "tailwindcss"` — v4 — or a v3 `@tailwind` directive), as a `./`-relative
+ * path for the `tailwind` config block. `null` when the app has no such file (a Tailwind dep
+ * alone — e.g. only `prettier-plugin-tailwindcss` — configures nothing). Exported for testing.
+ */
+export async function findTailwindInput(dir: string): Promise<string | null> {
+  for (const rel of TAILWIND_INPUT_CANDIDATES) {
+    let css: string;
+    try {
+      css = await Deno.readTextFile(join(dir, rel));
+    } catch {
+      continue;
+    }
+    if (/@import\s+["']tailwindcss|@tailwind\s+(base|utilities|components)/.test(css)) {
+      return "./" + rel;
+    }
+  }
+  return null;
+}
+
 /**
  * App Router: generate a full denext.config.ts (compat mode, Tailwind, next.config
  * translation, publicEnv). Never clobbers a hand-authored one (no marker). MDX-plugin apps
@@ -894,8 +925,9 @@ async function writeAppRouterConfig(
   hasEffect: boolean,
   written: string[],
 ): Promise<boolean> {
-  const tailwind = ("tailwindcss" in deps || "@tailwindcss/postcss" in deps) &&
-    await exists(join(dir, "src", "index.css"));
+  const tailwind = ("tailwindcss" in deps || "@tailwindcss/postcss" in deps)
+    ? await findTailwindInput(dir)
+    : null;
   const publicEnv = await collectNextPublicEnvKeys(dir);
   const next = await readNextConfig(dir);
   if (next?.mdx) imports["denext/build/next-mdx"] = jsr("build/next-mdx");
@@ -1065,7 +1097,7 @@ async function migrateRemixProject(
   // hand-authored one.
   const pagesConfigExists = !(await writeIfWritable(
     join(dir, "denext.config.ts"),
-    () => nextConfigSource({ tailwind: false, publicEnv: [], next: null, effect: false }),
+    () => nextConfigSource({ tailwind: null, publicEnv: [], next: null, effect: false }),
     written,
   ));
 
@@ -1455,7 +1487,8 @@ function nextConfigTranslationLines(next: NextConfigTranslation, bodyLines: stri
  * (preserving dynamic logic), unsupported keys listed in a hand-port comment.
  */
 function nextConfigSource(o: {
-  tailwind: boolean;
+  /** The Tailwind input stylesheet (project-relative, `./`-prefixed), or null when none. */
+  tailwind: string | null;
   publicEnv: string[];
   next: NextConfigTranslation | null;
   /** Wire the `@denext/effect` bridge's `effect()` plugin (app depends on `effect`). */
@@ -1464,8 +1497,9 @@ function nextConfigSource(o: {
   const bodyLines: string[] = [`  compatibilityMode: true,`];
 
   if (o.tailwind) {
+    const output = o.tailwind.replace(/\.css$/, ".gen.css");
     bodyLines.push(
-      `  tailwind: { input: "./src/index.css", output: "./src/index.gen.css" },`,
+      `  tailwind: { input: ${JSON.stringify(o.tailwind)}, output: ${JSON.stringify(output)} },`,
     );
   }
   if (o.publicEnv.length) {

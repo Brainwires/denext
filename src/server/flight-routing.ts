@@ -2,6 +2,7 @@
 // and the module loader that tags client references as they load.
 
 import type { PageRoute, RouteManifest } from "../router/manifest.ts";
+import { timed } from "../runtime/timing.ts";
 import type { ModuleLoader } from "./types.ts";
 import type { Directive } from "../build/directives.ts";
 import { tagClientExports, tagClientModules } from "../runtime/client-reference.ts";
@@ -97,7 +98,7 @@ export async function resolveFlightLoader(
       pageLoad: taggingLoader(config.load, config.appDir!, manifest.directives!),
     };
   }
-  await tagClientModules(config.flightClients);
+  await timed("tagClientModules", () => tagClientModules(config.flightClients!));
   if (config.flightServers) await tagServerModules(config.flightServers);
   return { useFlight, pageLoad: config.load };
 }

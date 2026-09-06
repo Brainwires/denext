@@ -66,6 +66,11 @@ internal design choice with no observable difference lives in
   without a build salt.
 - **`userAgent().device.type`** is `undefined` for a desktop browser (matching
   ua-parser-js); the older denext value was `"desktop"`.
+- **`client-only` is inert at build time.** Next fails a build that imports `client-only`
+  from the `react-server` layer. denext's compat SSR bundle server-renders the `"use client"`
+  tree as well, so it has no such layer and treats `client-only` as an empty marker on both
+  sides; `server-only` in the client bundle is still a build error, and the runtime
+  `clientOnly()` guard still throws on the server.
 
 ## Security posture — safe defaults
 

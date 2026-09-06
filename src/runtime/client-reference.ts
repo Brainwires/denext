@@ -10,6 +10,8 @@
 // The build's boundary manifest assigns each client module a `clientId`; each
 // exported component is tagged `clientId#exportName`.
 
+import { isComponentType } from "./react-brands.ts";
+
 /** Symbol under which a client-reference id is stored on a tagged component. */
 export const CLIENT_REF: unique symbol = Symbol.for("denext.clientRef");
 
@@ -49,7 +51,11 @@ export function tagClientExports(mod: Record<string, unknown>, clientId: string)
   // overrides it). Read it once; `parseStrategy` validates the value.
   const moduleHydrate = (mod as { hydrate?: unknown }).hydrate;
   for (const [name, value] of Object.entries(mod)) {
-    if (typeof value === "function" && !(value as { [CLIENT_REF]?: unknown })[CLIENT_REF]) {
+    // Functions AND React's non-callable `memo()` / `forwardRef()` element objects — a
+    // component library's `"use client"` module (radix's Dialog.Content) exports the latter,
+    // and an untagged one is invoked as a server component: outside its provider, at the
+    // wrong time ("`DialogContent` must be used within `Dialog`").
+    if (isComponentType(value) && !(value as { [CLIENT_REF]?: unknown })[CLIENT_REF]) {
       const info: ClientRefInfo = {
         clientId,
         name,
@@ -71,7 +77,7 @@ export function tagClientExports(mod: Record<string, unknown>, clientId: string)
  * @param value A candidate VNode `type` (component function).
  */
 export function clientRefOf(value: unknown): ClientRefInfo | null {
-  if (typeof value !== "function") return null;
+  if (typeof value !== "function" && (typeof value !== "object" || value === null)) return null;
   const info = (value as { [CLIENT_REF]?: ClientRefInfo })[CLIENT_REF];
   return info ?? null;
 }
@@ -91,12 +97,38 @@ const taggedClients = new Set<string>();
 export async function tagClientModules(
   clients: Iterable<[string, { url: string }]>,
 ): Promise<void> {
+  const pending = [...clients].filter(([clientId]) => !taggedClients.has(clientId));
+  if (pending.length === 0) return;
+  const barrel = pending.length > BARREL_MIN
+    ? await importViaBarrel(pending.map(([, ref]) => ref.url))
+    : null;
   await Promise.all(
-    [...clients].map(async ([clientId, ref]) => {
-      if (taggedClients.has(clientId)) return;
-      const mod = await import(ref.url);
+    pending.map(async ([clientId, ref], i) => {
+      const mod = barrel ? barrel[i] : await import(ref.url);
       tagClientExports(mod as Record<string, unknown>, clientId);
       taggedClients.add(clientId);
     }),
   );
+}
+
+/** Above this many islands, {@link tagClientModules} imports through one barrel module. */
+const BARREL_MIN = 8;
+
+/**
+ * Import every `url` through ONE synthetic `data:` module that statically imports them
+ * all — a single module-graph build. Deno re-walks the already-loaded graph for each
+ * separate dynamic `import()`, so tagging a large app's islands one by one is quadratic:
+ * shadcn/ui's 2,680 islands took 9 minutes on the first request, seconds as a barrel.
+ * Returns the namespaces in `urls` order, or `null` when the barrel fails to load (the
+ * caller then imports individually, so a broken island surfaces through its own import).
+ */
+async function importViaBarrel(urls: string[]): Promise<unknown[] | null> {
+  const src = urls.map((u, i) => `import * as m${i} from ${JSON.stringify(u)};`).join("\n") +
+    `\nexport default [${urls.map((_, i) => `m${i}`).join(",")}];`;
+  try {
+    const mod = await import("data:text/javascript," + encodeURIComponent(src));
+    return mod.default as unknown[];
+  } catch {
+    return null;
+  }
 }

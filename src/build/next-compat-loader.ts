@@ -13,7 +13,7 @@
 // raw `import`) so dev cache-busting and the use-cache loader still apply, and it
 // falls back to the original path on any failure so it can never break loading.
 
-import { fromFileUrl, toFileUrl } from "@std/path";
+import { fromFileUrl, join, toFileUrl } from "@std/path";
 import type { ModuleLoader } from "../server/types.ts";
 import type { BoundaryManifest } from "./module-graph.ts";
 
@@ -31,6 +31,23 @@ export interface NextCompatServerLoaderOptions {
  * @param opts The source→bundle map produced by the build.
  * @returns A loader that redirects mapped modules and passes through the rest.
  */
+/**
+ * Rebuild the absolute source → compat server bundle map from the build manifest's
+ * relative form (`compatServerModules`: project-relative source → outDir-relative bundle).
+ * Shared by the prod server at startup and the build's own finalize stage.
+ */
+export function compatModuleMapFromManifest(
+  projectDir: string,
+  outDir: string,
+  rel: Record<string, string>,
+): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const [relSrc, relBundle] of Object.entries(rel)) {
+    map.set(join(projectDir, relSrc), join(outDir, relBundle));
+  }
+  return map;
+}
+
 export function createNextCompatServerLoader(
   base: ModuleLoader,
   opts: NextCompatServerLoaderOptions,

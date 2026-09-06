@@ -82,6 +82,7 @@
     "example:tailwind": "cd examples/tailwind && deno task dev",
     "example:game": "deno run -A --config deno.json examples/game/serve.ts",
     "gen:config-schema": "deno run -A scripts/gen-config-schema.ts",
+    "gen:google-fonts": "deno run -A scripts/gen-google-fonts.ts",
     "surface:refresh": "deno run -A scripts/public-surface.ts",
     "licenses:photon": "deno run -A scripts/gen-third-party-licenses.ts && deno fmt packages/photon/THIRD-PARTY-LICENSES.md",
     "docs:api": "deno task gen:config-schema && deno run -A scripts/gen-api-reference.ts",

@@ -11,7 +11,7 @@ import {
   routeSourceFiles,
   writeBundleOutput,
 } from "../bundle.ts";
-import { extractRouteCss } from "../css.ts";
+import { extractRouteCss, primeCssGraph } from "../css.ts";
 import { routeNeedsHydration } from "../hydration.ts";
 import { routeId } from "../paths.ts";
 import { appBoundaryManifest } from "../pipeline-shared.ts";
@@ -21,7 +21,9 @@ import { type BuildContext, FLIGHT_BUNDLE_FILE, log } from "./context.ts";
 export async function emitRouteCss(ctx: BuildContext): Promise<void> {
   const { css, clientDir } = ctx;
   if (!css) return;
-  for (const route of ctx.manifest.pages) {
+  const pages = ctx.manifest.pages;
+  await primeCssGraph([...new Set(pages.flatMap(routeSourceFiles))], css.appConfigPath);
+  for (const route of pages) {
     const text = await extractRouteCss(routeSourceFiles(route), css);
     if (text.trim().length > 0) {
       await Deno.writeTextFile(join(clientDir, `${routeId(route.routePath)}.css`), text);

@@ -2,8 +2,11 @@
 // complete-build check.
 
 import { join } from "@std/path";
+import { timed } from "../../runtime/timing.ts";
+import { compatModuleMapFromManifest } from "../next-compat-loader.ts";
 import { setSelfHostedFonts } from "../../compat/next/font/registry.ts";
 import type { RouteManifest } from "../../router/manifest.ts";
+import { tagClientModules } from "../../runtime/client-reference.ts";
 import { tagServerModules } from "../../runtime/server-action.ts";
 import { FLIGHT_BUNDLE_FILE } from "../build-pipeline/context.ts";
 import { type BoundaryManifest, computeBoundaryRoutes } from "../module-graph.ts";
@@ -47,12 +50,11 @@ export async function readBuildInfo(paths: ProjectPaths): Promise<BuildInfo> {
     if (bm.fonts && typeof bm.fonts === "object") setSelfHostedFonts(bm.fonts);
     info.nextCompat = bm.nextCompat === true;
     if (bm.compatServerModules && typeof bm.compatServerModules === "object") {
-      for (const [relSrc, relBundle] of Object.entries(bm.compatServerModules)) {
-        info.compatModuleMap.set(
-          join(paths.projectDir, relSrc),
-          join(paths.outDir, relBundle as string),
-        );
-      }
+      info.compatModuleMap = compatModuleMapFromManifest(
+        paths.projectDir,
+        paths.outDir,
+        bm.compatServerModules as Record<string, string>,
+      );
     }
   } catch { /* no/invalid build manifest → treat none as static */ }
   return info;
@@ -84,10 +86,21 @@ export async function resolveFlightBoundary(
   manifest: RouteManifest,
   info: BuildInfo,
 ): Promise<FlightBoundary> {
-  const flightRoutes = await computeBoundaryRoutes(paths.appDir, manifest.pages);
-  const boundary = await appBoundaryManifest(paths.appDir, manifest.pages);
-  await tagServerModules(boundary.server);
+  const flightRoutes = await timed(
+    "computeBoundaryRoutes",
+    () => computeBoundaryRoutes(paths.appDir, manifest.pages),
+  );
+  const boundary = await timed(
+    "appBoundaryManifest",
+    () => appBoundaryManifest(paths.appDir, manifest.pages),
+  );
+  await timed("tagServerModules", () => tagServerModules(boundary.server));
   if (info.nextCompat) redirectBoundaryToCompat(boundary, info.compatModuleMap);
+  // Import + tag the islands now, before the server listens, so the FIRST request doesn't
+  // pay for it (a large app's island graph takes tens of seconds to load).
+  if (flightRoutes.size > 0) {
+    await timed("tagClientModules", () => tagClientModules(boundary.client));
+  }
   return { flightRoutes, boundary };
 }
 

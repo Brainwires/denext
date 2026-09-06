@@ -47,7 +47,10 @@ security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
 - **MDX** (`.mdx` pages and components) — compiled at build time via the
   recovered `@next/mdx` plugin; the `mdx` config threads
   `remark`/`rehype`/`recma` plugins, and CSS is discovered across workspace
-  packages so an imported MDX component's styles are collected.
+  packages so an imported MDX component's styles are collected. A
+  **fumadocs-mdx** site (`source.config.ts` + the generated `.source/`) compiles
+  its `x.mdx?collection=…` / `meta.json?collection=…` imports through fumadocs'
+  own loader, hosted in a byonm child — `src/build/fumadocs-mdx.ts`.
 - `redirect()` / `permanentRedirect()` (308) / `notFound()` / `forbidden()` /
   `unauthorized()`.
 - **`<Form>`** (`next/form`) — client-navigating form that soft-navigates to its

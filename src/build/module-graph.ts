@@ -144,20 +144,27 @@ export interface ModuleGraph {
 }
 
 /**
- * The process-wide graph cache. One build asks the same questions of the same graph many
+ * The process-wide graph caches. One build asks the same questions of the same graph many
  * times over — which routes reach a `"use client"` module, which need hydration, which
- * modules live outside the project — and each used to spawn its own `deno info` (≈20 s on a
- * 2,700-component site, once PER ROUTE). The largest crawl so far is kept; any request whose
- * entries are a subset of it is answered by a BFS over the cached graph, no spawn.
+ * modules live outside the project, which stylesheets a route reaches — and each used to
+ * spawn its own `deno info` (≈20 s on a 2,700-component site, once PER ROUTE). Per cache
+ * NAME the largest crawl so far is kept; any request whose entries are a subset of it is
+ * answered by a BFS over the cached graph, no spawn. Caches are named because the CSS
+ * crawl runs with the app config's css→shim redirects stripped — a DIFFERENT resolution —
+ * so it must neither read nor feed the default graph.
  */
-let graphCache: { entries: Set<string>; info: DenoInfo; resolved: Map<string, string> } | null =
-  null;
+interface GraphCache {
+  entries: Set<string>;
+  info: DenoInfo;
+  resolved: Map<string, string>;
+}
+const graphCaches = new Map<string, GraphCache>();
 const graphInFlight = new Map<string, Promise<ModuleGraph>>();
 let graphSpawns = 0;
 
-/** Drop the cached graph (the dev watcher calls this when a source file changes). */
+/** Drop every cached graph (the dev watcher calls this when a source file changes). */
 export function resetModuleGraphCache(): void {
-  graphCache = null;
+  graphCaches.clear();
   graphInFlight.clear();
 }
 
@@ -166,42 +173,55 @@ export function moduleGraphSpawnCount(): number {
   return graphSpawns;
 }
 
+/** The cache a request reads/feeds: `false` → none, `true`/unset → "default", else by name. */
+function cacheNameOf(cache: boolean | string | undefined): string | null {
+  if (cache === false) return null;
+  return cache === true || cache === undefined ? "default" : cache;
+}
+
+/** The modules `deno info` reports as reachable from `roots`, in graph order. */
+export function reachableModules(info: DenoInfo, roots: string[]): DenoInfoModule[] {
+  return runtimeReachable(info, roots);
+}
+
 /**
  * Run `deno info --json` over a synthetic barrel importing `entryFiles` and return the
  * parsed graph plus the entries' resolved specifiers. Shared by the boundary/hydration
  * crawl and the CSS discovery crawl so both apply the same flags (sloppy imports, the
- * minimum-dependency-age policy) and the same temp-dir hygiene. Cached (see
- * {@link resetModuleGraphCache}) unless `cache: false` — the CSS crawl runs with the app
- * config's css→shim redirects stripped, a DIFFERENT resolution, so it neither reads nor
- * feeds the shared cache.
+ * minimum-dependency-age policy) and the same temp-dir hygiene. Cached per `cache` name
+ * (see {@link resetModuleGraphCache}); `cache: false` bypasses caching entirely.
  */
 export function denoInfoGraph(
   entryFiles: string[],
-  opts: { cache?: boolean } = {},
+  opts: { cache?: boolean | string } = {},
 ): Promise<ModuleGraph> {
-  const useCache = opts.cache ?? true;
+  const name = cacheNameOf(opts.cache);
   const wanted = entryFiles.map((f) => toFileUrl(f).href);
-  if (useCache && graphCache && wanted.every((w) => graphCache!.entries.has(w))) {
-    const c = graphCache;
-    return Promise.resolve({ info: c.info, roots: wanted.map((w) => c.resolved.get(w) ?? w) });
+  const cached = name ? graphCaches.get(name) : undefined;
+  if (cached && wanted.every((w) => cached.entries.has(w))) {
+    return Promise.resolve({
+      info: cached.info,
+      roots: wanted.map((w) => cached.resolved.get(w) ?? w),
+    });
   }
-  const key = [...new Set(wanted)].sort().join("\n");
-  if (useCache) {
+  const key = `${name}\n${[...new Set(wanted)].sort().join("\n")}`;
+  if (name) {
     const pending = graphInFlight.get(key);
     if (pending) return pending;
   }
   const run = spawnDenoInfo(entryFiles).then((graph) => {
-    if (useCache) {
+    if (name) {
       const entries = new Set(wanted);
       // Keep the largest graph: a later, smaller request must not evict the superset.
-      if (!graphCache || [...graphCache.entries].every((e) => entries.has(e))) {
-        graphCache = { entries, info: graph.info, resolved: graph.resolvedEntries };
+      const prev = graphCaches.get(name);
+      if (!prev || [...prev.entries].every((e) => entries.has(e))) {
+        graphCaches.set(name, { entries, info: graph.info, resolved: graph.resolvedEntries });
       }
       graphInFlight.delete(key);
     }
     return { info: graph.info, roots: graph.roots };
   });
-  if (useCache) graphInFlight.set(key, run);
+  if (name) graphInFlight.set(key, run);
   return run;
 }
 
@@ -392,10 +412,20 @@ export async function buildBoundaryManifest(
       const directive: Directive = await readDirective(filePath);
       if (!directive) return;
       const url = toFileUrl(filePath).href;
-      const exports = opts.exportsOf ? await opts.exportsOf(filePath) : [];
       if (directive === "client") {
-        manifest.client.set(clientIdFor(appDir, url), { url, exports });
+        // Client islands are registered from the module namespace at runtime (the Flight
+        // entry imports them), so their export list is informational — read it statically.
+        // Executing every island here (the default `exportsOf` imports the module) meant
+        // loading a UI library's whole dependency tree per island: minutes on a 2,700-island
+        // site, for names nothing consumes.
+        manifest.client.set(clientIdFor(appDir, url), {
+          url,
+          exports: await staticExportNames(filePath),
+        });
       } else {
+        // Server-action modules DO need their names: the client bundle's stubs are one
+        // `createServerReference` per export.
+        const exports = opts.exportsOf ? await opts.exportsOf(filePath) : [];
         manifest.server.set(serverModuleIdFor(appDir, url), { url, exports });
       }
     }),

@@ -12,7 +12,7 @@
 // The extracted, transformed CSS is collected separately and emitted next to the
 // route bundle.
 
-import { denoInfoGraph } from "./module-graph.ts";
+import { denoInfoGraph, reachableModules } from "./module-graph.ts";
 import { basename, dirname, fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import { ensureDir, walk } from "@std/fs";
@@ -135,6 +135,19 @@ export async function transformCss(
   return { css: new TextDecoder().decode(result.code), exports };
 }
 
+/** The named module-graph cache the shim-stripped CSS crawl reads and feeds. */
+const CSS_GRAPH_CACHE = "css";
+
+/**
+ * Crawl every route's sources ONCE so the per-route {@link extractRouteCss} calls that
+ * follow are answered from the cached graph instead of spawning a `deno info` each
+ * (≈4 s × routes on a large app). Failures are ignored — the per-route calls then crawl.
+ */
+export async function primeCssGraph(entryFiles: string[], appConfigPath?: string): Promise<void> {
+  if (entryFiles.length === 0) return;
+  await discoverCssFiles(entryFiles, appConfigPath).catch(() => {});
+}
+
 /**
  * Discover every `.css` file reachable from the given entry modules by crawling
  * the import graph with `deno info`. Deno flags `.css` imports as errors
@@ -157,9 +170,12 @@ export async function discoverCssFiles(
   // (every build re-mirrors them, so an interrupted crawl self-heals next build).
   const restore = appConfigPath ? await stripCssShims(appConfigPath) : null;
   try {
-    const { info } = await denoInfoGraph(entryFiles, { cache: false });
+    // Its own graph cache (a shim-stripped resolution differs from the boundary crawl's),
+    // scoped to what THESE entries reach so a per-route query served from a whole-app crawl
+    // (see {@link primeCssGraph}) doesn't attribute every route's stylesheets to each route.
+    const { info, roots } = await denoInfoGraph(entryFiles, { cache: CSS_GRAPH_CACHE });
     const found = new Set<string>();
-    for (const m of info.modules) {
+    for (const m of reachableModules(info, roots)) {
       if (m.specifier.startsWith("file://") && isStyleFile(m.specifier)) {
         found.add(fromFileUrl(m.specifier));
       }

@@ -186,6 +186,13 @@ the esbuild/next-compat path; on native builds optional runtime always ships.
 - **`next/font` metric-matched fallback face** (`adjustFontFallback`:
   `size-adjust`/`ascent-override` on a local fallback to cut CLS) — needs a
   bundled font-metrics database; a guessed table would mis-size the fallback.
+- **Per-route Flight island splitting.** The Flight entry is app-wide (every
+  `"use client"` island is a static import of one `flight.js`, so a soft
+  navigation into any route finds its islands already registered). On a very
+  large compat app that is the whole component library at once — shadcn/ui's
+  site bundles 2,700 islands into a 10 MB (2.4 MB gz) entry. Register islands
+  lazily (a client-id → `import()` map, prefetched per route) so a route ships
+  only its own islands, while keeping soft navigation working.
 - **Real `Activity` offscreen scheduling** (deferred pre-render, hidden-subtree
   state preservation) and `ViewTransition` per-element `name`/`enter`/`exit`
   markers — today both are documented passthroughs.

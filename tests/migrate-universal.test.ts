@@ -553,3 +553,38 @@ Deno.test("migrate --denext-local-path points the config at a local checkout (fi
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+// A Next app keeps its Tailwind entry in `app/globals.css` (shadcn/ui, create-next-app), not the
+// Vite-style `src/index.css` migrate used to require — so the site built but shipped unstyled.
+Deno.test("App Router: the Tailwind block points at the stylesheet that imports tailwindcss", async () => {
+  const { findTailwindInput } = await import("../src/build/migrate.ts");
+  const dir = await tmp("mig_next_tailwind");
+  try {
+    await Deno.writeTextFile(
+      join(dir, "package.json"),
+      JSON.stringify({
+        name: "app",
+        dependencies: { react: "19.0.0", "react-dom": "19.0.0" },
+        devDependencies: { "@tailwindcss/postcss": "^4", tailwindcss: "^4" },
+      }),
+    );
+    await Deno.mkdir(join(dir, "app"), { recursive: true });
+    await Deno.writeTextFile(
+      join(dir, "app", "globals.css"),
+      `@import "tailwindcss";\n@import "tw-animate-css";\n`,
+    );
+    assertEquals(await findTailwindInput(dir), "./app/globals.css");
+    const r = await migrateProject(dir);
+    assertEquals(r.kind, "next");
+    const cfg = await Deno.readTextFile(join(dir, "denext.config.ts"));
+    assert(
+      cfg.includes('tailwind: { input: "./app/globals.css", output: "./app/globals.gen.css" }'),
+      cfg,
+    );
+    // A stylesheet that does not import Tailwind configures nothing.
+    await Deno.writeTextFile(join(dir, "app", "globals.css"), `body { margin: 0 }\n`);
+    assertEquals(await findTailwindInput(dir), null);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

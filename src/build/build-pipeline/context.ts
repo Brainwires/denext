@@ -49,6 +49,8 @@ export interface BuildContext {
 }
 
 /** Print one build progress line. */
+export { timed } from "../../runtime/timing.ts";
+
 export function log(msg: string): void {
   console.log(`  ${msg}`);
 }

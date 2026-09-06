@@ -4,6 +4,7 @@
 // injected once through `setFlushHandlers` so the module graph stays acyclic.
 
 import { activeRoots, rootHandleOf } from "./state.ts";
+import { componentDisplayName } from "../../runtime/react-brands.ts";
 import type { RootHandle } from "./state.ts";
 import { devHydrationActive } from "./fiber-utils.ts";
 import { setTransitionScheduler, setTransitionSettledHook } from "../../runtime/hooks.ts";
@@ -101,8 +102,21 @@ export function scheduleUpdate(fiber: Fiber): void {
 }
 
 /** Like {@link scheduleUpdate} but with an explicit lane (e.g. a self-scheduled deferral). */
+/** The fiber whose update was scheduled most recently — named when the render loop gives up. */
+let lastScheduled: Fiber | null = null;
+
+/**
+ * Display name of the component that scheduled the most recent update. The work loop's
+ * "Maximum update depth exceeded" error names it, so an effect/state ping-pong in a large
+ * app (2,700 islands) can be traced to a component instead of a minified chunk offset.
+ */
+export function lastUpdateSourceName(): string {
+  return lastScheduled ? componentDisplayName(lastScheduled.vnode.type) : "unknown";
+}
+
 export function scheduleUpdateLane(fiber: Fiber, lane: number): void {
   if (fiber == null) return; // an SSR class setState has no reconciler fiber
+  lastScheduled = fiber;
   fiber.lanes |= lane;
   if (fiber.alternate) fiber.alternate.lanes |= lane;
   let node = fiber.return;

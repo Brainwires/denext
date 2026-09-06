@@ -7,7 +7,7 @@ import { tagClientModules } from "../../runtime/client-reference.ts";
 import { tagServerModules } from "../../runtime/server-action.ts";
 import { FLIGHT_BUNDLE_FILE } from "../build-pipeline/context.ts";
 import { bundleFlightEntry, bundleRoute, routeSourceFiles, writeBundleOutput } from "../bundle.ts";
-import { buildAppCss, extractRouteCss } from "../css.ts";
+import { buildAppCss, extractRouteCss, primeCssGraph } from "../css.ts";
 import { routeNeedsHydration } from "../hydration.ts";
 import { type BoundaryManifest, computeBoundaryRoutes, routeEntryFiles } from "../module-graph.ts";
 import { buildNextCompatModules } from "../next-compat-build.ts";
@@ -52,6 +52,10 @@ export async function emitExportCss(ctx: ExportContext): Promise<void> {
     entryFiles: [...new Set(manifest.pages.flatMap(routeEntryFiles))],
   });
   if (!ctx.css) return;
+  await primeCssGraph(
+    [...new Set(manifest.pages.flatMap(routeSourceFiles))],
+    ctx.css.appConfigPath,
+  );
   for (const route of manifest.pages) {
     const text = await extractRouteCss(routeSourceFiles(route), ctx.css);
     if (text.trim().length > 0) {
