@@ -170,18 +170,56 @@ export { handleClientScriptLoad, initScriptLoader, Script } from "./src/runtime/
 export type { ScriptProps, ScriptStrategy } from "./src/runtime/script.ts";
 // Typed API client — pair with the generated `./.denext/api.ts` ApiSchema for end-to-end
 // type-checked calls to your own route handlers (see src/runtime/api-client.ts).
-export { apiRequest, buildPath, createApiClient } from "./src/runtime/api-client.ts";
+export {
+  ApiClientError,
+  apiRequest,
+  buildPath,
+  createApiClient,
+  isApiClientError,
+} from "./src/runtime/api-client.ts";
+// `useApi`: the typed client as a hook (Suspense-capable; tag invalidation via a Live transport).
+export { setApiInvalidationSource, useApi } from "./src/client/use-api.ts";
+export type {
+  ApiEndpointOf,
+  ApiInvalidationSource,
+  UseApiOptions,
+  UseApiResult,
+} from "./src/client/use-api.ts";
 export type {
   ApiClient,
+  ApiClientOptions,
   ApiEndpoint,
+  ApiErrorEnvelope,
   ApiRequestOptions,
   ApiSchema,
+  ErrorsOf,
+  FreeQuery,
   HttpMethod,
+  RegisteredApi,
+  RegisteredSchema,
   RequestArgs,
   RequestOf,
   RequiredKeys,
   ResponseOf,
+  TypedQuery,
 } from "./src/runtime/api-client.ts";
+// Type-level inference behind the generated `.denext/api.ts` (`ModuleEndpoints<typeof Route, P>`).
+export type {
+  ApiPhantom,
+  HandlerBody,
+  HandlerErrors,
+  HandlerLike,
+  HandlerParams,
+  HandlerQuery,
+  HandlerResponse,
+  InferEndpoint,
+  Informative,
+  IsAny,
+  ModuleEndpoints,
+  PlainBody,
+  PlainResponse,
+  ValueResult,
+} from "./src/runtime/api-infer.ts";
 export { FontFace, localFont } from "./src/runtime/font.ts";
 export type { FontResult, FontSource, LocalFontOptions } from "./src/runtime/font.ts";
 export { googleFont, googleFontUrl } from "./src/runtime/font-google.ts";
@@ -330,4 +368,4 @@ export type {
 export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "./src/runtime/public-env.ts";
 
 /** The denext framework version. */
-export const VERSION = "2.0.7";
+export const VERSION = "2.1.0-rc.1";

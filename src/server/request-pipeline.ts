@@ -19,6 +19,9 @@ import { safeFetch } from "./safe-fetch.ts";
 import { type PeeledLocale, peelLocale } from "./i18n.ts";
 import { fillDestination, matchPattern, safeRedirectLocation } from "./config.ts";
 import { handleAction, isActionRequest } from "./action-handler.ts";
+import { handleApiBatch, isApiBatchRequest } from "./api-batch-handler.ts";
+import { BATCH_ITEM_HEADER } from "../runtime/api-batch-protocol.ts";
+import { runSubRequest } from "./sub-request.ts";
 import { bufferedRequest, readCappedBody, STALLED, TOO_LARGE } from "./body.ts";
 import { serveMetadataFile } from "./metadata-files.ts";
 import { requestOrigin } from "./absolute-url.ts";
@@ -319,7 +322,12 @@ async function dispatchApi(
   const api = matchApi(manifest, routingPath);
   if (!api || softNavPost) return null;
   state.dispatchRouteType = "route"; // so a THROWING API handler is labeled "route"
-  const apiRes = await handleApi(api, state.request, state.app.config.load);
+  const { config } = state.app;
+  const apiRes = await handleApi(api, state.request, config.load, {
+    maxBodyBytes: config.apiMaxBodyBytes,
+    onError: (err) =>
+      reportRequestError(config, err, state.request, state.pathname, { routeType: "route" }),
+  });
   const fallThroughToPage = apiRes.status === 405 && isReadMethod(state.request) &&
     matchPage(manifest, routingPath, { soft: false }) !== null;
   if (!fallThroughToPage) return finalize(state, apiRes);
@@ -399,6 +407,26 @@ async function serveFallback(
   return finalize(state, notFound(pathname));
 }
 
+/** The reserved `/_denext/*` RPC endpoints dispatched before routing: actions and the batch. */
+function dispatchReserved(state: RequestState): Promise<Response> | null {
+  if (isActionRequest(state.request, state.pathname)) return dispatchAction(state);
+  if (isApiBatchRequest(state.request, state.pathname)) {
+    return handleApiBatch(state, (req, ctx) => runSubRequest(runPipeline, state.app, req, ctx));
+  }
+  return null;
+}
+
+/** A sub-request that matched no API route: a bare JSON 404 (never a page or an asset). */
+function subRequestNotFound(pathname: string): Response {
+  return new Response(
+    JSON.stringify({ error: { code: "not_found", status: 404, message: pathname } }),
+    {
+      status: 404,
+      headers: { "content-type": "application/json; charset=utf-8" },
+    },
+  );
+}
+
 /** The routing stages, in order; each either produces the response or hands on. */
 async function dispatch(state: RequestState): Promise<Response> {
   const redirected = canonicalizePath(state) ?? applyRedirectRules(state);
@@ -409,9 +437,14 @@ async function dispatch(state: RequestState): Promise<Response> {
   const fromMiddleware = await runMiddleware(state);
   if (fromMiddleware) return fromMiddleware;
   applyRewriteRules(state);
-  if (isActionRequest(state.request, state.pathname)) return dispatchAction(state);
+  // A sub-request (a batch item, an SSR self-call) is API-only: no actions, no batch, no
+  // metadata files, no page render, no static asset — it can reach nothing a client could not,
+  // and nothing heavier than the route it names.
+  const subRequest = state.request.headers.get(BATCH_ITEM_HEADER) === "1";
+  const reserved = subRequest ? null : await dispatchReserved(state);
+  if (reserved) return reserved;
   const manifest = await state.app.config.getManifest();
-  const metaFile = await serveMetadata(state, manifest);
+  const metaFile = subRequest ? null : await serveMetadata(state, manifest);
   if (metaFile) return metaFile;
   const localeInfo = resolveLocale(state);
   if (localeInfo) state.ctx.routing = { basePath: state.app.basePath, locale: localeInfo.locale };
@@ -420,6 +453,7 @@ async function dispatch(state: RequestState): Promise<Response> {
   if (softNavPost instanceof Response) return softNavPost;
   const fromApi = await dispatchApi(state, manifest, routingPath, softNavPost);
   if (fromApi) return fromApi;
+  if (subRequest) return finalize(state, subRequestNotFound(state.pathname));
   const fromPage = await dispatchPage(state, manifest, routingPath, localeInfo, softNavPost);
   if (fromPage) return fromPage;
   return serveFallback(state, manifest, routingPath);

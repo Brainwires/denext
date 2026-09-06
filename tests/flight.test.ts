@@ -6,6 +6,7 @@ import { renderToString } from "../src/jsx/render-to-string.ts";
 import { tagClientExports } from "../src/runtime/client-reference.ts";
 import { parseFlight } from "../src/client/flight-client.ts";
 import { serverAction } from "../src/runtime/server-action.ts";
+import { createChannel } from "../src/runtime/channel.ts";
 import type { Component } from "../src/jsx/types.ts";
 
 // A "client" component, tagged as if discovered by the boundary manifest.
@@ -158,4 +159,68 @@ Deno.test("parseFlight turns a boundary node into an ErrorBoundary (transparent 
   const bare = parseFlight(node as any, new Map()) as any;
   assertEquals(Array.isArray(bare), true);
   assertEquals(bare[0].type, "span");
+});
+
+Deno.test("flight round-trips Map/Set/BigInt/URL/non-finite props through the wire codec tags", async () => {
+  const when = new Date(0);
+  const props = {
+    "data-map": new Map<unknown, unknown>([["k", 1], [2, when]]),
+    "data-set": new Set([1, "a", h(Counter, { start: 9 })]),
+    "data-big": 12345678901234567890n,
+    "data-url": new URL("https://denext.dev/x?y=1"),
+    "data-nan": NaN,
+    "data-nzero": -0,
+    "data-inf": -Infinity,
+  };
+  const flight = await renderToFlight(h("div", props as never));
+  const p = (flight as any).p;
+  assertEquals(p["data-map"], { $: "M", v: [["k", 1], [2, { $: "D", v: when.toISOString() }]] });
+  assertEquals(p["data-set"].$, "S");
+  assertEquals(p["data-set"].v.slice(0, 2), [1, "a"]);
+  assertEquals(p["data-set"].v[2].$, "c"); // a VNode inside a Set is still a client ref
+  assertEquals(p["data-big"], { $: "n", v: "12345678901234567890" });
+  assertEquals(p["data-url"], { $: "U", v: "https://denext.dev/x?y=1" });
+  assertEquals(p["data-nan"], { $: "N", v: "NaN" });
+  assertEquals(p["data-nzero"], { $: "N", v: "-0" });
+  assertEquals(p["data-inf"], { $: "N", v: "-Infinity" });
+
+  const registry = new Map<string, Component>([["c_counter#Counter", Counter as Component]]);
+  const tree = parseFlight(flight, registry) as any;
+  const map = tree.props["data-map"] as Map<unknown, unknown>;
+  assert(map instanceof Map && map.get("k") === 1 && (map.get(2) as Date).getTime() === 0);
+  const set = tree.props["data-set"] as Set<unknown>;
+  assert(set instanceof Set && set.size === 3);
+  const inner = [...set][2] as any;
+  assertEquals(inner.type, Counter); // the VNode rehydrated through the registry
+  assertEquals(tree.props["data-big"], 12345678901234567890n);
+  assert(tree.props["data-url"] instanceof URL);
+  assert(Number.isNaN(tree.props["data-nan"]));
+  assert(Object.is(tree.props["data-nzero"], -0));
+  assertEquals(tree.props["data-inf"], -Infinity);
+});
+
+Deno.test("flight: a `$`-keyed user object inside a Map value round-trips as data, never a tag", async () => {
+  const flight = await renderToFlight(
+    h("div", { "data-m": new Map([["k", { $: "M", v: [] }]]) } as never),
+  );
+  const tree = parseFlight(flight, new Map()) as any;
+  const m = tree.props["data-m"] as Map<string, unknown>;
+  assertEquals(m.get("k"), { $: "M", v: [] });
+});
+
+Deno.test('flight: a channel prop crosses as {$:"ch"} and rehydrates to a subscribable ref', async () => {
+  const ch = createChannel<number>({ id: "flight#ch", authorize: () => true });
+  const flight = await renderToFlight(h(Counter, { start: 1, events: ch } as never));
+  assertEquals((flight as any).p.events, { $: "ch", i: "flight#ch" });
+  const tree = parseFlight(flight, new Map([["c_counter#Counter", Counter as Component]])) as any;
+  assertEquals(tree.props.events, { denextChannelId: "flight#ch" });
+  // A channel with no id (not exported from a "use server" module) is a guided error.
+  const anon = createChannel<number>({ authorize: () => true });
+  let msg = "";
+  try {
+    await renderToFlight(h(Counter, { start: 1, events: anon } as never));
+  } catch (e) {
+    msg = (e as Error).message;
+  }
+  assertStringIncludes(msg, "use server");
 });

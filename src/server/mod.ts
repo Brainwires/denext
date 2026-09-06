@@ -25,14 +25,20 @@ export type { PageContext, RenderedPage, RenderPageOptions, SignalSink } from ".
 // Flight (RSC) types, referenced by RenderedPage/DocumentOptions.
 export type {
   FlightActionRef,
+  FlightBigInt,
   FlightBoundary,
+  FlightChannelRef,
   FlightClient,
   FlightDate,
   FlightEventHandler,
   FlightHost,
+  FlightMap,
   FlightNode,
+  FlightNonFinite,
   FlightPrimitive,
   FlightProps,
+  FlightSet,
+  FlightUrl,
   FlightValue,
 } from "../jsx/render-to-flight.ts";
 export { renderToFlight } from "../jsx/render-to-flight.ts";
@@ -52,6 +58,60 @@ export type { ServeUtilOptions } from "./serve-utils.ts";
 // can recover request/response body shapes (see src/build/api-types.ts).
 export { json } from "./typed-response.ts";
 export type { TypedRequest, TypedResponse } from "./typed-response.ts";
+// Typed API errors: throw an `ApiError` from a route handler for a structured JSON failure
+// (status + code + data); the dispatch seam also maps redirect()/notFound()/… and the body cap.
+export { ApiError, apiErrorResponse, ApiValidationError, isApiError } from "./api-error.ts";
+export type {
+  ApiErrorBody,
+  ApiErrorInit,
+  ApiValidationSource,
+  BuiltinApiErrorCode,
+} from "./api-error.ts";
+export type { ApiDispatchOptions } from "./api.ts";
+// Schema-validated route handlers (`defineApi`, the route twin of `defineAction`) and the
+// first-party middleware for `createApi().use(...)`.
+export { apiDefinitionOf, createApi, defineApi } from "./define-api.ts";
+export type {
+  ApiBuilder,
+  ApiDefinition,
+  ApiErrorCodes,
+  ApiHandlerInput,
+  ApiHandlerResult,
+  ApiMiddleware,
+  ApiMiddlewareInput,
+  ApiRouteHandler,
+  ApiRouteMeta,
+  ErrorSpec,
+  QueryRecord,
+  SchemaInput,
+  SchemaOutput,
+} from "./define-api.ts";
+export { rateLimit, requireSession } from "./api-middleware.ts";
+// Typed live queries: a validated, gated `useLive` source (`defineSubscription`).
+export { defineSubscription } from "../runtime/define-subscription.ts";
+export type {
+  SubscriptionConfig,
+  SubscriptionContext,
+  SubscriptionRef,
+} from "../runtime/define-subscription.ts";
+export type { SubscriptionDef, SubscriptionRunContext } from "../runtime/server-action.ts";
+// Server-push channels: `createChannel` + `publish(key, payload)` → `useChannel` on the client.
+export {
+  broadcastChannelTransport,
+  createChannel,
+  inMemoryChannelTransport,
+  isChannel,
+  setChannelTransport,
+} from "../runtime/channel.ts";
+export type {
+  Channel,
+  ChannelConfig,
+  ChannelContext,
+  ChannelEvent,
+  ChannelRef,
+  ChannelTransport,
+} from "../runtime/channel.ts";
+export type { ApiRateLimitOptions, RequireSessionOptions } from "./api-middleware.ts";
 export type * from "./types.ts";
 
 // Re-export the router and JSX types referenced by the public API so that they
@@ -146,6 +206,7 @@ export type {
 
 // Project configuration (denext.config): redirects / rewrites / headers / etc.
 export {
+  type ApiBatchConfig,
   type CacheConfig,
   type CompiledPattern,
   type DenextConfig,

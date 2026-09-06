@@ -82,31 +82,84 @@ export function GET(_req: Request): Response {
 }
 ```
 
-**A typed route handler + calling it with end-to-end types (no tRPC):** return
-`TypedResponse<T>` (and take a `TypedRequest<B>`) from `denext/server` so
-`denext dev`/`build` can generate `.denext/api.ts`; then `createApiClient` type-checks
-every call to your own API — a wrong path/method/param/body is a compile error.
+**A validated route handler + calling it with end-to-end types (no tRPC):** `defineApi`
+takes Standard Schemas (Zod/Valibot/ArkType/TypeBox/hand-rolled) for `params` / `query` /
+`body` / `response` plus the `errors` it may fail with; the handler gets parsed, typed input
+and a schema mismatch is a structured 400 before it runs. `denext dev`/`build` generate
+`.denext/api.ts` from the route modules' TYPES and register it, so `createApiClient()` and
+`useApi` type-check every call — path, method, params, query, body, response, error codes.
 
 ```ts
 // app/api/user/[id]/route.ts
-import { json, type TypedRequest, type TypedResponse } from "denext/server";
-export function GET(): TypedResponse<{ id: string; name: string }> {
-  return json({ id: "1", name: "Ada" }); // json() === Response.json() at runtime
-}
-export async function POST(
-  req: TypedRequest<{ name: string }>,
-): Promise<TypedResponse<{ ok: true }>> {
-  await req.json(); // typed as { name: string }
-  return json({ ok: true }, { status: 201 });
-}
+import { createApi, defineApi, requireSession } from "denext/server";
+import { z } from "zod";
+export const GET = defineApi({
+  params: z.object({ id: z.string() }),
+  response: z.object({ id: z.string(), name: z.string() }), // strips undeclared keys, in prod too
+  errors: { not_found: 404 },
+}, async ({ params, fail }) => (await db.users.get(params.id)) ?? fail("not_found"));
+export const PATCH = createApi().use(requireSession()).define({
+  params: z.object({ id: z.string() }),
+  body: z.object({ name: z.string().min(1) }),
+  errors: { not_owner: 403 },
+}, async ({ params, body, ctx, fail }) => {
+  if (ctx.session.userId !== params.id) fail("not_owner");
+  return db.users.update(params.id, body);
+});
 ```
 
 ```ts
 // anywhere (server component, client component, or a test)
-import { createApiClient } from "denext";
-import type { ApiSchema } from "./.denext/api.ts";
-const api = createApiClient<ApiSchema>();
+import { createApiClient, isApiClientError } from "denext";
+import type {} from "./.denext/api.ts"; // registers the schema (type-only; nothing ships)
+const api = createApiClient(); // typed against THIS app's routes
 const user = await api("/api/user/[id]", "GET", { params: { id: "1" } }); // user is typed
+try {
+  await api("/api/user/[id]", "PATCH", { params: { id: "1" }, body: { name: "" } });
+} catch (err) {
+  if (isApiClientError(err) && err.code === "not_owner") { /* narrowed to the declared codes */ }
+}
+```
+
+```tsx
+// a client component — the hook; GETs in one tick ride ONE batched request
+"use client";
+import { useApi } from "denext";
+export function User({ id }: { id: string }) {
+  const { data, error, pending } = useApi("/api/user/[id]", "GET", { params: { id } });
+  return pending ? <p>…</p> : error ? <p>{error.code}</p> : <p>{data.name}</p>;
+}
+```
+
+A plain handler still works and is still typed: return `TypedResponse<T>` / take a
+`TypedRequest<B>` from `denext/server`. A plain `route.ts` body is capped at 1 MiB
+(`export const maxBodyBytes = N | false`); `redirect()`/`notFound()` inside one are HTTP
+responses; a thrown `ApiError(status, code, { data })` is a typed JSON error envelope.
+
+**Typed live data (validated subscription + server push):**
+
+```ts
+// app/live.ts
+"use server";
+import { createChannel, defineSubscription } from "denext/server";
+export const orderStatus = defineSubscription({
+  input: z.object({ id: z.string() }), // validated on every subscribe
+  tags: ({ id }) => [`order:${id}`], // server-derived; re-pushed on revalidateTag
+  authorize: async ({ id }) => (await auth())?.userId === (await db.orders.owner(id)),
+  resolve: ({ id }) => db.orders.status(id),
+});
+export const orderEvents = createChannel<{ status: string }>({
+  authorize: async (ctx, key) => key === `user:${(await getSession())?.data.userId}`, // REQUIRED
+});
+// anywhere on the server: await orderEvents.publish(`user:${userId}`, { status: "shipped" });
+```
+
+```tsx
+"use client";
+import { useChannel, useSubscription } from "denext/live";
+import { orderEvents, orderStatus } from "./live.ts";
+const { data } = useSubscription(orderStatus, { id }, { initial });
+const { data: event } = useChannel(orderEvents, `user:${userId}`);
 ```
 
 **A typed Server Action (the mutation side, also type-checked):** `defineAction` validates

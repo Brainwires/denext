@@ -182,6 +182,15 @@ security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
 Two capabilities the React/Next architecture can't produce without a major
 rework (the enhancement rationale + mechanism is in **Part 2 §4**):
 
+- **Typed live queries and server push.** `defineSubscription({ input, tags, authorize,
+  resolve })` (`src/runtime/define-subscription.ts`) is a `useLive` source whose input the
+  SERVER validates, whose tags are server-derived and whose row-level `authorize` re-runs
+  per recompute; `useSubscription(ref, input)` (`denext/live`) returns `{ data, error,
+  status }` with structured errors. `createChannel({ schema, authorize })`
+  (`src/runtime/channel.ts`) + `publish(key, payload)` from anywhere on the server pushes
+  to every authorized `useChannel(ref, key)` subscriber — required `authorize`, lazy TTL
+  re-auth + `revoke`, latest-wins under back-pressure, a `ChannelTransport` for
+  multi-instance delivery (`src/server/live-channels.ts`).
 - **Live Server Components** — `<Live tags={[...]}>` (from
   `@denext/denext/live`): the server re-renders **just that boundary**, under
   the viewer's own session, and **pushes** it over a WebSocket when any of its
@@ -341,12 +350,43 @@ built-in `node:sqlite`.)
 
 ## End-to-end typed API surface
 
-- **Typed route handlers.** Return `TypedResponse<T>` (and accept a
-  `TypedRequest<B>`) from `denext/server` — `json()` is `Response.json()` at
-  runtime — and `denext dev`/`build` generate `.denext/api.ts` from the route
-  manifest; `createApiClient<ApiSchema>()` (from `denext`) type-checks every
-  call to your own API: a wrong path, method, param or body is a compile error.
-  `apiRequest` is the untyped escape hatch.
+- **Schema-validated route handlers — `defineApi`** (`src/server/define-api.ts`).
+  Declare `params` / `query` / `body` / `response` as Standard Schemas (Zod, Valibot,
+  ArkType, TypeBox, or hand-rolled — zero denext dependency) plus the `errors` the
+  handler may `fail()` with; the handler receives parsed, typed input. A mismatch is a
+  structured 400 (`validation`, field errors, `data.source`) before the handler runs; a
+  declared `response` schema always runs (a stripping validator is a data-leak guard).
+  `createApi().use(mw).define(…)` composes "before" middleware with typed context
+  accumulation (auth and rate limiting reject before any schema runs); first-party
+  `requireSession()` and `rateLimit()` ship (`src/server/api-middleware.ts`).
+  `apiDefinitionOf(handler)` (also in `denext/plugin-kit`) exposes a route's definition
+  for an OpenAPI/docs plugin.
+- **Typed errors.** `ApiError(status, code, { message?, data?, fieldErrors?, headers? })`
+  (`src/server/api-error.ts`) → `{ error: { code, status, message, data?, fieldErrors?,
+  digest? } }` + `x-request-id`; the client rebuilds it as `ApiClientError` with `code`
+  narrowed to the endpoint's declared codes. `redirect()` / `notFound()` / `forbidden()` /
+  `unauthorized()` thrown in a `route.ts` are the HTTP responses they name; route bodies
+  are capped (1 MiB default; `export const maxBodyBytes = N | false`); a `defineApi`
+  route's unknown throw is a redacted JSON 500 (`internal` + digest).
+- **Typed route handlers without a schema.** Return `TypedResponse<T>` (and accept a
+  `TypedRequest<B>`) from `denext/server` and the generated `.denext/api.ts` still types
+  the call; `json()` additionally carries Date / Map / Set / BigInt through the wire
+  codec (`src/runtime/wire-codec.ts`) — a plain-JSON body stays byte-identical to
+  `Response.json()`.
+- **The generated schema infers, it does not spawn.** `.denext/api.ts` imports each route
+  module's TYPE (`ModuleEndpoints<typeof Route, Params>`, `src/runtime/api-infer.ts`) —
+  no `deno doc`, zero I/O, non-exported local types preserved, catch-alls `string[]`,
+  typed `query`, an `errors` union — and registers itself so `createApiClient()` and
+  `useApi` need no type argument once it is imported.
+- **The client** (`src/runtime/api-client.ts`): `createApiClient({ base?, dedupe?, batch?,
+  fetch? })`. Concurrent equal GET/HEAD calls share one fetch (per request during SSR —
+  never across users); the GET/HEAD calls of one tick ride ONE `POST /_denext/api-batch`
+  (`src/server/api-batch-handler.ts`: same-origin, a marker header, caps; items run as
+  sub-requests through the FULL pipeline so middleware applies); a server-side call runs
+  in-process through the pipeline and the tag-aware cache (`src/server/api-dispatcher.ts`,
+  no loopback HTTP). `useApi(path, method, opts, { tags?, suspense? })` is the hook
+  (`src/client/use-api.ts`; Suspense mode seeds hydration from the SSR value on Flight
+  routes; `useApiLive` from `denext/live` refetches on a Live tag invalidation).
 - **Typed Server Actions.** `defineAction({ input, handler })` (from
   `denext/server`) validates `FormData` into a typed input — a parser function or
   any Standard Schema (Zod, Valibot, …) — and its output type flows into

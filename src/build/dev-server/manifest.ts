@@ -35,9 +35,9 @@ export function getUnbundled(st: DevState): UnbundledDev {
 /**
  * Scan the routes (once per generation), registering plugins first so route-synthesizer
  * plugins are in place — a re-scan after an edit re-applies as a no-op. Typed modules
- * (`.denext/routes.ts` + `.denext/api.ts`) are re-emitted FIRE-AND-FORGET: generating
- * api.ts spawns a `deno doc` per API route, which must not block the request that
- * triggered the rescan; guarded so it runs once per new manifest.
+ * (`.denext/routes.ts` + `.denext/api.ts`) are re-emitted FIRE-AND-FORGET: the writes are
+ * I/O that must not block the request that triggered the rescan; guarded so it runs once
+ * per new manifest.
  */
 async function scanManifest(st: DevState): Promise<RouteManifest> {
   await applyPlugins({

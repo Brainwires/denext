@@ -158,7 +158,7 @@ export interface RateLimitKeyOptions {
  * whatever the client sent — so a per-request forged header can't dodge the limiter.
  * `"unknown"` only when neither is available (an embedder calling the handler directly).
  */
-function clientIp(request: Request, options: RateLimitKeyOptions): string {
+export function clientIp(request: Request, options: RateLimitKeyOptions): string {
   if (options.trustForwardedHeaders) {
     const hops = request.headers.get("x-forwarded-for")?.split(",").map((h) => h.trim());
     const last = hops?.filter(Boolean).at(-1);

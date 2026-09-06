@@ -227,6 +227,85 @@ export const stats = liveReadable(
         hook), so enabling anonymous presence never exposes an unmarked or mutating action over the
         socket.
       </Callout>
+      <h2>Typed subscriptions — useSubscription</h2>
+      <p>
+        <code>useLive</code> runs a registered action with the client's raw <code>args</code>{" "}
+        and trusts the client's <code>tags</code>. <code>defineSubscription</code> (from{" "}
+        <code>denext/server</code>) is the validated form: the input is checked by a Standard Schema
+        on every subscribe (rejected → a structured <code>invalid-input</code>{" "}
+        with field errors; the resolver never runs), the tags are derived on the server from the
+        parsed input, and an optional row-level <code>authorize</code>{" "}
+        re-runs on every recompute. Registering a definition is the live opt-in.
+      </p>
+      <Code lang="ts">
+        {`"use server";
+import { defineSubscription } from "denext/server";
+export const orderStatus = defineSubscription({
+  input: z.object({ id: z.string() }),
+  tags: ({ id }) => [\`order:\${id}\`],
+  authorize: async ({ id }) => (await auth())?.userId === (await db.orders.owner(id)),
+  resolve: ({ id }) => db.orders.status(id),
+});
+
+// client
+import { useSubscription } from "denext/live";
+const { data, error, status } = useSubscription(orderStatus, { id }, { initial });`}
+      </Code>
+
+      <h2>Server push — channels</h2>
+      <p>
+        Everything above is pull-recompute on a tag invalidation. <code>createChannel</code>{" "}
+        is the push half: <code>publish(key, payload)</code>{" "}
+        from anywhere on the server — an action, a webhook, a cron, <code>after()</code>{" "}
+        — reaches every authorized <code>useChannel(ref, key)</code>{" "}
+        subscriber over the same socket, no recompute.
+      </p>
+      <Code lang="ts">
+        {`"use server";
+import { createChannel } from "denext/server";
+export const orderEvents = createChannel<{ status: string }>({
+  schema: z.object({ status: z.string() }),                              // validated at the publisher
+  authorize: async (ctx, key) => key === \`user:\${(await getSession())?.data.userId}\`, // required
+});
+await orderEvents.publish(\`user:\${userId}\`, { status: "shipped" });
+
+// client
+import { useChannel } from "denext/live";
+const { data: event } = useChannel(orderEvents, \`user:\${userId}\`);`}
+      </Code>
+
+      <h2>Delivery semantics &amp; scaling</h2>
+      <ul>
+        <li>
+          <strong>Authorization.</strong> A channel's <code>authorize</code>{" "}
+          is required by construction and runs in the subscriber's session at subscribe time, then
+          lazily on traffic once <code>live.limits.channelAuthTtlSeconds</code> (300) has passed;
+          {" "}
+          <code>channel.revoke(key)</code>{" "}
+          ends access immediately, cluster-wide. An unknown channel id is <code>denied</code>.
+        </li>
+        <li>
+          <strong>Delivery.</strong>{" "}
+          At-most-once; latest-wins per subscription under back-pressure (the last held frame
+          replays when the socket drains — no recompute) and within a 16 ms publisher burst; no
+          replay on reconnect (compute a cold-start value during SSR and pass it as{" "}
+          <code>initial</code>); <code>seq</code> orders frames from one instance only.
+        </li>
+        <li>
+          <strong>Instances.</strong>{" "}
+          Tag-driven pushes reach the connections on the instance that invalidated. Channel events
+          cross instances through a <code>ChannelTransport</code>:{" "}
+          <code>broadcastChannelTransport()</code>{" "}
+          (Deno Deploy isolates, workers) or your own two-method Redis/NATS transport via{" "}
+          <code>setChannelTransport</code>.
+        </li>
+        <li>
+          <strong>Tag watches.</strong> <code>useApi({"{ tags }"})</code>{" "}
+          refetches over HTTP when a tag is invalidated; the socket carries only tag names, gated by
+          {" "}
+          <code>live.canWatchTags</code> or <code>allowAnonymous</code>.
+        </li>
+      </ul>
     </DocsShell>
   );
 }

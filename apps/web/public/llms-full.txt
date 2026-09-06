@@ -86,31 +86,84 @@ export function GET(_req: Request): Response {
 }
 ```
 
-**A typed route handler + calling it with end-to-end types (no tRPC):** return
-`TypedResponse<T>` (and take a `TypedRequest<B>`) from `denext/server` so
-`denext dev`/`build` can generate `.denext/api.ts`; then `createApiClient` type-checks
-every call to your own API — a wrong path/method/param/body is a compile error.
+**A validated route handler + calling it with end-to-end types (no tRPC):** `defineApi`
+takes Standard Schemas (Zod/Valibot/ArkType/TypeBox/hand-rolled) for `params` / `query` /
+`body` / `response` plus the `errors` it may fail with; the handler gets parsed, typed input
+and a schema mismatch is a structured 400 before it runs. `denext dev`/`build` generate
+`.denext/api.ts` from the route modules' TYPES and register it, so `createApiClient()` and
+`useApi` type-check every call — path, method, params, query, body, response, error codes.
 
 ```ts
 // app/api/user/[id]/route.ts
-import { json, type TypedRequest, type TypedResponse } from "denext/server";
-export function GET(): TypedResponse<{ id: string; name: string }> {
-  return json({ id: "1", name: "Ada" }); // json() === Response.json() at runtime
-}
-export async function POST(
-  req: TypedRequest<{ name: string }>,
-): Promise<TypedResponse<{ ok: true }>> {
-  await req.json(); // typed as { name: string }
-  return json({ ok: true }, { status: 201 });
-}
+import { createApi, defineApi, requireSession } from "denext/server";
+import { z } from "zod";
+export const GET = defineApi({
+  params: z.object({ id: z.string() }),
+  response: z.object({ id: z.string(), name: z.string() }), // strips undeclared keys, in prod too
+  errors: { not_found: 404 },
+}, async ({ params, fail }) => (await db.users.get(params.id)) ?? fail("not_found"));
+export const PATCH = createApi().use(requireSession()).define({
+  params: z.object({ id: z.string() }),
+  body: z.object({ name: z.string().min(1) }),
+  errors: { not_owner: 403 },
+}, async ({ params, body, ctx, fail }) => {
+  if (ctx.session.userId !== params.id) fail("not_owner");
+  return db.users.update(params.id, body);
+});
 ```
 
 ```ts
 // anywhere (server component, client component, or a test)
-import { createApiClient } from "denext";
-import type { ApiSchema } from "./.denext/api.ts";
-const api = createApiClient<ApiSchema>();
+import { createApiClient, isApiClientError } from "denext";
+import type {} from "./.denext/api.ts"; // registers the schema (type-only; nothing ships)
+const api = createApiClient(); // typed against THIS app's routes
 const user = await api("/api/user/[id]", "GET", { params: { id: "1" } }); // user is typed
+try {
+  await api("/api/user/[id]", "PATCH", { params: { id: "1" }, body: { name: "" } });
+} catch (err) {
+  if (isApiClientError(err) && err.code === "not_owner") { /* narrowed to the declared codes */ }
+}
+```
+
+```tsx
+// a client component — the hook; GETs in one tick ride ONE batched request
+"use client";
+import { useApi } from "denext";
+export function User({ id }: { id: string }) {
+  const { data, error, pending } = useApi("/api/user/[id]", "GET", { params: { id } });
+  return pending ? <p>…</p> : error ? <p>{error.code}</p> : <p>{data.name}</p>;
+}
+```
+
+A plain handler still works and is still typed: return `TypedResponse<T>` / take a
+`TypedRequest<B>` from `denext/server`. A plain `route.ts` body is capped at 1 MiB
+(`export const maxBodyBytes = N | false`); `redirect()`/`notFound()` inside one are HTTP
+responses; a thrown `ApiError(status, code, { data })` is a typed JSON error envelope.
+
+**Typed live data (validated subscription + server push):**
+
+```ts
+// app/live.ts
+"use server";
+import { createChannel, defineSubscription } from "denext/server";
+export const orderStatus = defineSubscription({
+  input: z.object({ id: z.string() }), // validated on every subscribe
+  tags: ({ id }) => [`order:${id}`], // server-derived; re-pushed on revalidateTag
+  authorize: async ({ id }) => (await auth())?.userId === (await db.orders.owner(id)),
+  resolve: ({ id }) => db.orders.status(id),
+});
+export const orderEvents = createChannel<{ status: string }>({
+  authorize: async (ctx, key) => key === `user:${(await getSession())?.data.userId}`, // REQUIRED
+});
+// anywhere on the server: await orderEvents.publish(`user:${userId}`, { status: "shipped" });
+```
+
+```tsx
+"use client";
+import { useChannel, useSubscription } from "denext/live";
+import { orderEvents, orderStatus } from "./live.ts";
+const { data } = useSubscription(orderStatus, { id }, { initial });
+const { data: event } = useChannel(orderEvents, `user:${userId}`);
 ```
 
 **A typed Server Action (the mutation side, also type-checked):** `defineAction` validates
@@ -273,12 +326,18 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `Activity(props: object): VNode` — React.Activity (experimental; formerly unstable_Offscreen) — wraps a subtree whose rendering can be deprioritized or hidden (mode="hidden"). denext has no offscreen scheduler, so it renders as a transparent passthrough of its children (the mode prop is accepted and ignored). Lets apps that adopt the API build and render.
 - `type AnchorProps = Omit<Record<string, unknown>, href | children>` — The anchor attributes a Link forwards (everything an <a> takes except href).
 - `interface ApiClient<S>` — A typed callable over an app's ApiSchema.
-- `interface ApiEndpoint` — One endpoint's typed shape: its params, optional request/response bodies.
-- `apiRequest(pattern: string, method: HttpMethod, opts?: ApiRequestOptions, base?: string): Promise<unknown>` — Perform one typed API request (the runtime the typed client dispatches to). Substitutes params, JSON-encodes a body, and parses a JSON response (a 204/empty body → undefined).
+- `class ApiClientError<Code>` — A failed typed API call: the HTTP status plus, when the server answered with denext's JSON error envelope ({ error: { code, status, message, data?, fieldErrors?, digest? } } — an ApiError, a validation failure, a control signal, or a redacted 500), the envelope's fields. code narrows to the endpoint's declared codes (ErrorsOf<E>); a non-envelope failure (a plain text 500, an HTML error page) has code: "http_error".
+- `interface ApiClientOptions` — Options for createApiClient.
+- `interface ApiEndpoint` — One endpoint's typed shape: its params, optional request/response bodies, query, error codes.
+- `type ApiEndpointOf<P, M> = NonNullable<indexedAccess>` — The registered schema's entry for one route + method (what useApi is typed against).
+- `interface ApiErrorEnvelope` — The shape of denext's JSON error envelope (the server's ApiErrorBody).
+- `type ApiInvalidationSource = (tags: string[], onInvalidate: () => void) => () => void` — Subscribes to tag invalidations; installed by the Live transport. Returns an unsubscribe.
+- `type ApiPhantom<H> = conditional` — The { def; result } phantom a defineApi handler carries, or never for a plain one.
+- `apiRequest(pattern: string, method: HttpMethod, opts?: ApiRequestOptions, base?: string, fetchImpl?: fetch): Promise<unknown>` — Perform one typed API request (the runtime the typed client dispatches to). Substitutes params, encodes a body through the wire codec (flagging it only when a tag was needed), and parses the JSON response (decoding it when the server flagged it; a 204/empty body → undefined). A non-2xx response throws an ApiClientError carrying the server's error envelope when there is one.
 - `interface ApiRequestOptions` — Options accepted by the untyped runtime call (the typed client narrows these).
 - `type ApiSchema = Record<string, Partial<Record<HttpMethod, ApiEndpoint>>>` — A whole app's API surface: route pattern → (method → endpoint).
 - `AsyncContext: object` — The TC39-shaped namespace object: AsyncContext.Variable / AsyncContext.Snapshot.
-- `buildPath(pattern: string, params?: Record<string, string>, query?: Record<string, string>): string` — Substitute path params into a route pattern, appending any query params.
+- `buildPath(pattern: string, params?: Record<string, string | string[]>, query?: Record<string, unknown>): string` — Substitute path params into a route pattern, appending any query params.
 - `cache<A, R>(fn: (...args: A) => R): (...args: A) => R` — React.cache — memoize a function by its arguments.
 - `interface ChangeEvent<T>` — A change event (inputs).
 - `Children: ChildrenApi` — React.Children utilities over denext children.
@@ -293,7 +352,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type ComponentPropsWithRef<T> = ComponentProps<T>` — ComponentProps with ref.
 - `type ComponentType<P> = FunctionComponent<P> | ComponentClass<P>` — Either a function or class component.
 - `interface Context<T>` — A context object created by createContext. It is itself usable as a provider element (<MyContext value={v}>…</MyContext>, React 19 style) and also exposes the classic .Provider component. useContext(MyContext) reads the nearest provided value, falling back to the default.
-- `createApiClient<S>(base?: string): ApiClient<S>` — Create a typed API client bound to an app's generated ApiSchema.
+- `createApiClient<S>(baseOrOptions?: string | ApiClientOptions): ApiClient<S>` — Create a typed API client bound to an app's generated ApiSchema (the registered schema when .denext/api.ts is imported). Concurrent GET/HEAD calls with equal inputs share one fetch (see ApiClientOptions.dedupe).
 - `createContext<T>(defaultValue: T): Context<T>` — Create a context with the given default value. The returned Context is usable directly as a provider element (<MyContext value={v}>, React 19 style) and also exposes .Provider; useContext(MyContext) reads the nearest provided value, falling back to defaultValue.
 - `createElement`
 - `createRef<T>(): object` — React.createRef — create a mutable ref object { current: null } (used by class components and imperative code).
@@ -314,6 +373,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ErrorBoundaryProps` — Props for the ErrorBoundary component.
 - `interface ErrorFallbackProps` — Props passed to the fallback component rendered when a child throws.
 - `type ErrorResult<E> = typeOperator` — A failed operation result.
+- `type ErrorsOf<E> = conditional` — The error codes a call to one endpoint may fail with.
 - `escapeHtml(value: string): string` — Escape &, <, >, ", and ' so a string is safe as HTML text or attribute content.
 - `type FC<P> = FunctionComponent<P>` — Alias for FunctionComponent.
 - `FontFace(props: object): VNode` — Render a font's @font-face CSS into a <style> tag.
@@ -327,6 +387,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `forwardRef<T, P>(render: (props: P, ref: ForwardedRef<T>) => ReactNode): ForwardRefExoticComponent<PropsWithoutRef<P> & RefAttributes<T>>` — React.forwardRef — best-effort. denext threads ref through props, so the render function receives (props, props.ref).
 - `interface ForwardRefExoticComponent<P>` — The result of forwardRef — callable, ref-forwarding, with a settable name.
 - `Fragment: typeOperator` — Marker used as a VNode type to group children without a wrapping element.
+- `interface FreeQuery` — Free-form query strings (an endpoint without a query schema).
 - `interface FunctionComponent<P>` — A function component.
 - `getImageProps(props: ImageProps): object` — next/image's getImageProps — resolve ImageProps to the concrete <img> attributes without rendering, for spreading onto your own element (e.g. a background, a <picture> source, or a custom <img>). Mirrors Next's { props } return shape; srcSet is exposed under both srcSet and srcset for convenience.
 - `getNavigatingHref(): string | null` — The target href of the in-flight soft navigation, or null when idle.
@@ -335,6 +396,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `googleFontUrl(options: GoogleFontOptions): string` — Build the Google Fonts CSS2 stylesheet URL for the given options.
 - `h(type: VNodeType, props: VProps | null, ...children: VNodeChildren[]): VNode` — Classic-runtime style helper, also handy for programmatic node creation: h("div", { class: "x" }, child1, child2)
 - `handleClientScriptLoad(props: ScriptProps): void` — next/script's handleClientScriptLoad — imperatively inject a <script> from ScriptProps into the live document (client-only; a no-op during SSR, which has no document). Deduplicates by src. Used to load a script outside the render tree.
+- `type HandlerBody<H> = conditional` — The JSON request body a handler expects: a defineApi route's body schema input, else the B of a TypedRequest<B> first parameter, else never (no body key).
+- `type HandlerErrors<H> = conditional` — The error codes a call may fail with: the endpoint's declared codes plus the builtins.
+- `type HandlerLike = (...args: never[]) => Response | Promise<Response>` — Anything shaped like a route handler (sync or async).
+- `type HandlerParams<H, P> = conditional` — The params the client must pass: a defineApi route's params schema input when declared, else the pattern-derived record P ({ id: string }, { path: string[] }).
+- `type HandlerQuery<H> = conditional` — The typed query record of a defineApi route (query schema input), else never.
+- `type HandlerResponse<H> = conditional` — The JSON response body of a handler: a defineApi route's response schema output (or its handler's non-Response return), else the T of a TypedResponse<T>, else unknown.
 - `interface HeadCollector` — Collects document metadata (<title>/<meta>/<link>) hoisted out of the body during rendering (React 19 behavior). When passed to renderToString, matching elements are gathered here instead of being emitted inline, so the caller can place them in <head>.
 - `interface HeadTag` — One hoisted <meta>/<link> in a HeadCollector.
 - `type Href = conditional` — A navigable path: the app's registered routes when typed-routes is wired, else string.
@@ -346,7 +413,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type ImageLoader = (props: ImageLoaderProps) => string` — Builds a (possibly resized) URL for a given width — e.g. a CDN transform.
 - `interface ImageLoaderProps` — Arguments a ImageLoader receives to build a source URL.
 - `interface ImageProps` — Props for Image. Extra props pass through to the underlying <img>.
+- `type InferEndpoint<H, P> = parenthesized & parenthesized & parenthesized & object` — One endpoint's schema entry. params / body / query keys are present ONLY when the handler has them — the client's RequestOf keys its required-options logic on presence.
+- `type Informative<B> = conditional` — A body type that is any/unknown carries no information → never (the key is omitted).
 - `initScriptLoader(scriptLoaderItems: ScriptProps[]): void` — next/script's initScriptLoader — imperatively load an array of scripts at startup (each via handleClientScriptLoad). Client-only.
+- `type IsAny<T> = conditional` — True when T is any.
+- `isApiClientError(value: unknown): value is ApiClientError` — Is value an ApiClientError?
 - `isControlSignal(value: unknown): boolean` — True for any denext control-flow signal (notFound/forbidden/unauthorized/ redirect) that error boundaries must re-throw rather than catch.
 - `isForbidden(value: unknown): value is ForbiddenError` — True if value is a ForbiddenError raised by forbidden().
 - `isNotFound(value: unknown): value is NotFoundError` — True if value is a NotFoundError raised by notFound().
@@ -367,6 +438,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface LocalFontOptions` — Options for localFont.
 - `memo<P>(component: Component<P>, areEqual?: (prev: P, next: P) => boolean): Component<P>` — Wrap a component so the reconciler bails out of re-rendering it when its props have not meaningfully changed. Without areEqual, props are compared with shallowEqualProps (the same default the reconciler applies to every component); pass areEqual for custom control (return true to skip the re-render). Context changes always bypass the bailout — a consumer still re-renders when a context it reads changes.
 - `interface MemoExoticComponent<T>` — The result of memo.
+- `type ModuleEndpoints<M, P> = mapped` — Every exported HTTP-method handler of a route module, as { GET: InferEndpoint; … }. P is the pattern-derived params record (never for a static route).
 - `interface MouseEvent<T, E>` — A mouse event.
 - `interface MutableRefObject<T>` — A mutable ref cell.
 - `navigate(href: string, options?: NavigateOptions): Promise<void>` — Perform a soft navigation to href: fetch the target page, swap its markup into the hydration root, update history and <head>, and re-hydrate. Falls back to a full-page navigation on cross-origin URLs or network failure.
@@ -375,6 +447,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `class NotFoundError` — Error thrown by notFound to trigger the nearest not-found UI (HTTP 404).
 - `permanentRedirect(url: string, type?: RedirectType): never` — Throw to issue a permanent (308) redirect to url.
 - `interface PictureInPictureControls` — The controls returned by usePictureInPicture.
+- `type PlainBody<H> = conditional` — A plain handler's request body: the B of its TypedRequest<B> first param, else never.
+- `type PlainResponse<H> = conditional` — A plain handler's response: the T of its TypedResponse<T> return, else unknown.
 - `prefetch(href: string): void` — Prefetch the page at href in the background (same-origin only) and cache its HTML, so a subsequent navigate is instant. No-op on the server, for cross-origin URLs, or when already prefetched/in-flight.
 - `Profiler(props: ProfilerProps): VNode` — Measure render timing for children and report it to onRender after each commit. Renders as a Fragment carrying the profiler config for the reconciler, so it adds no DOM of its own and is transparent during SSR.
 - `type ProfilerOnRender = (id: string, phase: ProfilerPhase, actualDuration: number, baseDuration: number, startTime: number, commitTime: number) => void` — Callback invoked after each commit of a Profiler's subtree.
@@ -394,12 +468,14 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type Ref<T> = object | parenthesized | null | undefined` — A mutable ref object or a callback ref, as accepted by ref/useImperativeHandle.
 - `type RefCallback<T> = (instance: T | null) => void | parenthesized` — A callback ref.
 - `interface RefObject<T>` — A ref cell (React 19's RefObject: current is writable).
+- `interface RegisteredApi` — Augmentation target for the generated .denext/api.ts: declare module "denext" { interface RegisteredApi { schema: ApiSchema } } makes createApiClient() typed with no type argument.
 - `interface RegisteredRoutes` — Typed-routes registry (augmentation seam). denext build/dev emit .denext/routes.ts, which augments this interface with routes: Routes; import that file anywhere in your app and Link / Router.push narrow to real paths. Empty by default ⇒ Href is string (no enforcement until you opt in).
+- `type RegisteredSchema = conditional` — The registered app schema when .denext/api.ts is imported, else the open ApiSchema.
 - `interface RenderOptions` — Options for renderToString.
 - `renderToReadableStream(node: VNodeChildren, options?: StreamOptions): ReadableStream<Uint8Array>` — Render a VNode tree to a streaming HTML ReadableStream<Uint8Array>, resolving Suspense boundaries progressively.
 - `renderToString(node: VNodeChildren, options?: RenderOptions): Promise<string>` — Render a VNode (or renderable child) to an HTML string. This is the primary SSR entry point.
 - `type RequestArgs<E> = conditional` — The trailing call args: the opts object is required only when it has a required key.
-- `type RequestOf<E> = parenthesized & parenthesized & object` — The options object for one endpoint: params/body appear only when the route has them.
+- `type RequestOf<E> = parenthesized & parenthesized & parenthesized & object` — The options object for one endpoint: params/body/query are typed when the route declares them.
 - `type RequiredKeys<T> = indexedAccess` — The keys of T that are required (used to decide whether the opts arg is optional).
 - `type ResponseOf<E> = conditional` — The awaited response type for one endpoint.
 - `interface Router` — Imperative navigation API returned by useRouter (Next.js AppRouterInstance).
@@ -413,6 +489,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `SessionProvider(props: SessionProviderProps): VNode` — Provide session state to the tree. Seed it with session from the server for no loading flash, or omit it to fetch /auth/session on mount.
 - `interface SessionProviderProps` — Props for SessionProvider.
 - `interface SessionUser` — The signed-in user exposed to the client (non-sensitive fields only).
+- `setApiInvalidationSource(source: ApiInvalidationSource | null): void` — Install the transport that delivers tag invalidations to useApi({ tags }) (the Live client does this in configureLive / useApiLive).
 - `type SetStateAction<S> = S | parenthesized` — The updater passed to a state setter (a value or a function of the previous).
 - `interface Signal<T>` — A reactive box holding a single serializable value.
 - `signIn(provider: string, options?: SignInOptions): Promise<unknown>` — Start sign-in. For an OAuth/OIDC provider this navigates to the provider; for a Credentials provider (pass credentials) it POSTs and resolves with the result.
@@ -434,12 +511,16 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `tryCatch<T, E>(operation: () => T | PromiseLike<T>): Promise<TryCatchResult<T, E>>` — Runs an operation and captures its return value, thrown value, or rejection.
 - `type TryCatchResult<T, E> = SuccessResult<T> | ErrorResult<E>` — The result of a synchronous or asynchronous operation.
 - `type TypedAction<Out> = (prevState: ActionResult<Out>, formData: FormData) => Promise<ActionResult<Out>>` — A typed action, shaped for useActionState(action, initial).
+- `type TypedQuery<Q> = conditional` — A schema-typed query, required; an uninformative (any/unknown) schema stays free-form.
 - `unauthorized(): never` — Throw to render the nearest unauthorized.tsx UI with a 401 status.
 - `class UnauthorizedError` — Error thrown by unauthorized to render the nearest unauthorized UI (HTTP 401).
 - `unstable_rethrow(error: unknown): void` — Next's unstable_rethrow — re-throw denext's control-flow signals (redirect(), notFound(), forbidden(), unauthorized(), a PPR postpone) from inside a try/catch, so a catch-all handler doesn't swallow them. Also rethrows an Error whose cause chain wraps such a signal (a library that re-wraps what it caught). A no-op for any other value.
 - `interface UrlObject` — Next.js UrlObject — the object form Link/useRouter accept as an href.
 - `use<T>(usable: Promise<T> | Context<T>): T` — React 19's use: read a resource during render. Given a **promise**, unwrap its value, suspending (throwing the promise) while it is pending — the same promise instance must be passed across renders (cache it). Given a **context** (from createContext), read its current value like useContext — this overload may be called conditionally. Works on the client and under every SSR renderer, since both delegate to the active hook dispatcher.
 - `useActionState<State, Payload>(action: (state: State, payload: Payload) => State | Promise<State>, initialState: State, permalink?: string): tuple` — Manage state driven by a form action (React 19 useActionState).
+- `useApi<P, M>(path: P, method: M, opts?: RequestOf<ApiEndpointOf<P, M>>, options?: UseApiOptions): UseApiResult<ResponseOf<ApiEndpointOf<P, M>>, ErrorsOf<ApiEndpointOf<P, M>>>` — Call one of the app's own route handlers from a component, typed end to end.
+- `interface UseApiOptions` — Options for useApi.
+- `interface UseApiResult<T, E>` — What useApi returns.
 - `useAsyncEffect(effect: Effect, deps: DependencyList): void` — Runs an async effect and re-runs it whenever dependencies change.
 - `useCallback<T>(fn: T, deps?: DependencyList): T` — Return a memoized version of fn that only changes when deps change.
 - `useContext<T>(context: Context<T>): T` — Read the current value of context from the nearest enclosing provider.
@@ -478,8 +559,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useTranslations(): TranslateFn` — Access a translation function t(key, vars?) for the active locale (reactive). Looks up key in the locale's catalog and interpolates {var} placeholders; a missing key returns the key itself. The catalog comes from the render-time provider during SSR and from the hydration payload on the client, re-read on soft navigation (so switching locales updates the strings).
 - `useWakeLock(options?: UseWakeLockOptions): WakeLockControls` — Keep the screen awake via the Screen Wake Lock API, as a hook. Call WakeLockControls.request request to add this instance's claim and WakeLockControls.release release to drop it; the claim is also dropped automatically on unmount. Because the screen is device-global, the lock is refcounted: it stays on while any instance has a claim, and WakeLockControls.count count/WakeLockControls.active active report the shared state to every instance. WakeLockControls.releaseAll releaseAll drops every claim at once.
 - `interface UseWakeLockOptions` — Options for useWakeLock.
+- `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type (a returned Response carries no body type).
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 2.0.7` — The denext framework version.
+- `VERSION: 2.1.0-rc.1` — The denext framework version.
 - `ViewTransition(props: object): VNode` — React.ViewTransition (experimental) — the client-driven view-transition wrapper. denext renders it as a transparent passthrough of its children (SSR + hydration safe). **Route-level** view transitions DO apply: a Flight soft-navigation commits inside document.startViewTransition where the browser supports it, so the route swap cross-fades (see withViewTransition in src/client/navigation.ts). The component's per-element props (name, enter, exit, update) are not yet honored — that needs this wrapper to emit real view-transition-name DOM markers — and the isomorphic/HTML nav paths (async reconcile) don't animate yet either.
 - `interface VNode` — A single virtual DOM node.
 - `type VNodeChild = VNode | string | number | bigint | boolean | null | undefined` — Anything that can appear as a child in JSX.
@@ -497,11 +579,30 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `class ActionValidationError` — Throw this from an input parser (or a handler) to return per-field form errors.
 - `after(callback: () => unknown): void` — Schedule work to run after the response is produced (Next.js after()). Useful for logging, analytics, or cache warm-up that should not delay the response. Callbacks run once the handler returns; a throw is logged, not propagated. Outside a request, the callback runs immediately.
 - `interface AlternatesMetadata` — Alternate-URL metadata (<link rel="canonical"> and hreflang alternates).
+- `interface ApiBatchConfig` — Limits for the typed-API batch endpoint (POST /_denext/api-batch).
+- `interface ApiBuilder<Ctx>` — A chain of middleware with a typed accumulated context, ending in .define().
 - `interface ApiContext` — Context passed to an API route handler.
+- `interface ApiDefinition` — What an endpoint declares: its schemas, error codes, and per-method body cap.
+- `apiDefinitionOf(handler: unknown): ApiRouteMeta | undefined` — The definition + middleware attached to a defineApi handler, or undefined for a plain function. The seam handleApi reads (body cap, error redaction) and the accessor an OpenAPI/docs plugin uses to describe an app's endpoints.
+- `interface ApiDispatchOptions` — Per-dispatch options the pipeline passes to handleApi.
+- `class ApiError` — A typed API failure: an HTTP status, a machine-readable code, and optional data / fieldErrors / headers. Throw it from a route handler (plain or defineApi) or from defineApi middleware; the dispatch seam turns it into the JSON error envelope and the client rebuilds it as an ApiClientError with the same fields.
+- `interface ApiErrorBody` — The JSON body of a failed API response.
+- `type ApiErrorCodes<D> = conditional` — The error codes an endpoint declares (keyof def.errors).
+- `interface ApiErrorInit` — Optional parts of an ApiError.
+- `apiErrorResponse(err: ApiError, requestId?: string, digest?: string): Response` — Build the JSON error Response for an ApiError: the envelope body, the error's status and extra headers, x-request-id when known, and digest on a redacted internal error.
 - `type ApiHandler = (request: Request, context: ApiContext) => Response | Promise<Response>` — A single-method API route handler.
+- `interface ApiHandlerInput<D, Ctx>` — What a defineApi handler receives: parsed input, the request, the middleware context.
+- `type ApiHandlerResult<D> = conditional` — What a handler may return: a value matching def.response (or anything), or a Response.
 - `interface ApiMatch` — An API route matched against a pathname, with its extracted params.
+- `type ApiMiddleware<Ctx, Ext> = (input: ApiMiddlewareInput<Ctx>) => Ext | Response | void | Promise<Ext | Response | void>` — A "before" middleware: return an object to extend the context (typed), a Response to short-circuit, or nothing. Throw (unauthorized(), an ApiError) to fail.
+- `interface ApiMiddlewareInput<Ctx>` — What a middleware receives.
 - `type ApiModule = Partial<Record<HttpMethod, ApiHandler>>` — Shape of an API route module: one exported fn per supported method.
+- `interface ApiRateLimitOptions` — Options for rateLimit.
 - `interface ApiRoute` — An API endpoint route discovered by scanning the app directory.
+- `interface ApiRouteHandler<D, R>` — The route handler defineApi returns: a plain ApiHandler at runtime, carrying the definition and the handler's result type as a phantom for the typed-API-client generator.
+- `interface ApiRouteMeta` — The metadata attached to a defineApi handler (what handleApi and plugins read).
+- `class ApiValidationError` — A request that failed schema validation: a 400 with code "validation", the per-field messages, and data.source naming the offending part of the request.
+- `type ApiValidationSource = params | query | body` — Which part of the request a validation failure came from.
 - `interface AppConfig` — Configuration for createApp: how to resolve the route manifest and load modules, plus optional cross-cutting behavior (request logging, per-request timeout, and the rest). ServeOptions extends this for the higher-level serve entry point.
 - `interface AppleWebAppMetadata` — appleWebApp metadata (apple-mobile-web-app-*).
 - `type AppLinksMetadata = Record<string, Record<string, string | number> | Array<Record<string, string | number>>>` — al:* app-link tags (Next.js appLinks); each entry is a record of al:<platform>:<key>.
@@ -517,6 +618,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type AwaitableCookieStore = CookieStore & PromiseLike<CookieStore>` — cookies()'s return: usable synchronously AND awaitable (await cookies(), Next 15).
 - `type AwaitableDraftMode = DraftMode & PromiseLike<DraftMode>` — draftMode()'s return: usable synchronously AND awaitable (await draftMode(), Next 15).
 - `type AwaitableHeaders = Headers & PromiseLike<Headers>` — headers()'s return: usable synchronously AND awaitable (await headers(), Next 15).
+- `broadcastChannelTransport(name?: string): ChannelTransport` — A transport over the Web BroadcastChannel API: every instance that shares the channel name (Deno Deploy isolates, workers in one host) receives each event. Zero dependencies.
+- `type BuiltinApiErrorCode = validation | bad_request | unauthorized | forbidden | not_found | method_not_allowed | payload_too_large | request_timeout | rate_limited | internal` — The error codes the framework itself may produce for any endpoint. An endpoint's declared errors (see defineApi) are unioned with these on the client.
 - `cache<A, R>(fn: (...args: A) => R): (...args: A) => R` — Memoize fn for the duration of the current request: repeated calls with the same arguments return the first computed value (React's cache). Outside a request the function runs uncached. Define the wrapper once (e.g. at module scope) so its identity is stable.
 - `interface CacheConfig` — Cache Components / ISR cache-store configuration (DenextConfig.cache).
 - `cachedFetch(input: string | URL, options?: CacheOptions & RequestInit): Promise<string>` — Fetch input and cache the response body across requests (a small fetch-with-caching helper). Returns the cached text on a hit.
@@ -530,6 +633,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `cacheStoreHealthy(): Promise<boolean>` — Probe the active CacheStore for reachability with a guarded no-op read (returns false if the store is unreachable). The health endpoint uses this to report cache status without ever throwing.
 - `cacheTag(...tags: string[]): void` — Tag the enclosing use cache entry (Next.js cacheTag) so revalidateTag / updateTag can purge it, and propagate the tags to the enclosing page render so revalidateTag purges the page too. Safe to call outside a cache scope (then it only does the page propagation).
 - `cappedBody(request: Request, maxBytes: number): Request` — request with its body wrapped so that reading past maxBytes errors the stream (the consumer — formData(), json(), a multipart parser — then throws). For streaming consumers that cannot use readCappedBody; a declared content-length over the cap is refused up front.
+- `interface Channel<T>` — A channel on the server.
+- `interface ChannelConfig<T>` — The definition passed to createChannel.
+- `interface ChannelContext` — The subscriber's identity handed to authorize (the Live connection context).
+- `interface ChannelEvent` — One transport event: a publish (encoded payload) or a revoke.
+- `interface ChannelRef<T>` — A channel as the browser sees it: the id (and the phantom type).
+- `interface ChannelTransport` — Carries ChannelEvents to every hub that should deliver them (across instances).
 - `collapseHeadTags(tags: HeadTag[]): string` — Join a HeadCollector's tags into head HTML, collapsing entries that share a HeadTag.dedup identity to the LAST occurrence at its own position (the earlier duplicate is dropped — next/head's reverse-filter order). Tags without an identity pass through in tree order. Operates on the already-serialized strings; nothing is re-escaped.
 - `compareSpecificity(a: Segment[], b: Segment[]): number` — Order two patterns by specificity the way Next.js does: compare segment by segment from the left, and at the first position that differs the more specific kind wins (static > dynamic > catch-all > optional catch-all). A pattern that has run out of segments (its catch-all consumed the rest) ranks below one that still has a concrete segment there. Returns negative when a should be tried first.
 - `interface CompiledPattern` — A source pattern compiled to a matcher with its capture keys.
@@ -539,7 +648,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `cookies(): AwaitableCookieStore` — Access the current request's cookies (reads incoming, writes Set-Cookie).
 - `interface CookieSetOptions` — Options accepted when setting a cookie.
 - `interface CookieStore` — A read/write view of the request/response cookies, shaped like Next.js's cookies(): get(name)?.value, getAll() as an array, has, set, delete, iteration.
+- `createApi(): ApiBuilder<Record<never, never>>` — Start a middleware chain for one or more endpoints: const authed = createApi().use(requireSession()); export const GET = authed.define(...).
 - `createApp(config: AppConfig): RequestHandler` — Build the core request handler from an AppConfig: routing, SSR/streaming, API routes, the image endpoint, static files, caching, and the optional request-logging/timeout wrappers. Most apps use serve instead; use createApp directly to embed denext in a custom server.
+- `createChannel<T>(config: ChannelConfig<T>): Channel<T>` — Create a channel. Export it from a "use server" module (or give it an id).
 - `createMiddlewareRunner(mod: MiddlewareModule): MiddlewareRunner` — Build a runner from a loaded middleware module. The module may export a single handler or an ordered array of handlers/entries (composed into one chain). Returns null if the module exports no handler.
 - `credentials(options: CredentialsOptions): CredentialsProvider` — An email/password (or any custom) credentials provider.
 - `interface CredentialsOptions` — Options for the credentials provider.
@@ -549,7 +660,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DataEntry` — A cached data entry (the value returned by an unstable_cache loader).
 - `defaultLoader(filePath: unknown): Promise<unknown>` — Default module loader: dynamic import by absolute file path.
 - `defineAction<Out, In>(config: object): TypedAction<Out>` — Define a typed Server Action. Put it in a "use server" module and pass it to useActionState; denext dispatches the form submission to the server, where this runs.
+- `defineApi<D, R>(def: D, handler: (input: ApiHandlerInput<D, Record<never, never>>) => R | Promise<R>): ApiRouteHandler<D, R>` — Define a schema-validated route handler with no middleware (createApi().define(def, handler)). Export it as the method: export const POST = defineApi(…).
 - `defineConfig(config: DenextConfig): DenextConfig` — Validating helper that gives a denext.config.ts full editor autocomplete and inline type-checking — the idiomatic way to author config (like Vite's defineConfig):
+- `defineSubscription<Out, In>(config: SubscriptionConfig<In, Out>): SubscriptionRef<In, Out>` — Define a typed, validated live query. Export it from a "use server" module (or give it an id) and subscribe from the client with useSubscription.
 - `denextAuth(config: AuthConfig): DenextPlugin` — Create the denext auth plugin. Add it to plugins in denext.config.ts; it auto-mounts the /auth/* endpoints and makes auth available.
 - `interface DenextConfig` — Project configuration exported from denext.config.{ts,js} (as default or named).
 - `interface DenextPlugin` — A denext plugin. Declared in denext.config.ts as plugins: [myPlugin()]; its setup runs once per process, before the first route scan.
@@ -559,18 +672,25 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `draftMode(): AwaitableDraftMode` — Read and control draft (preview) mode for the current request. Backed by an httpOnly cookie holding a **server-minted random token** — a forged cookie value cannot enable draft mode. Still gate enable() behind your own authorization in a route handler (defense in depth); only that authorized call mints a valid token.
 - `interface DraftMode` — Draft (preview) mode state and controls, returned by draftMode.
 - `interface DraftTokenStore` — Backing store for server-minted draft tokens. Draft mode is "on" only when the request cookie holds a token this server issued via enable(); a forged or guessed value is not in the store, so it cannot turn draft mode on.
+- `type ErrorSpec = number | object` — How a declared error code maps to HTTP: a status, or a status with a default message.
 - `interface ExperimentalConfig` — Opt-in experimental features, set under experimental in denext.config.ts. Each is off by default. A feature lives here only while it is genuinely **incomplete** — being new is not enough — so shipped, complete capabilities (streaming, Live, islands, resumability, SPA mode, Cache Components) are top-level config, not here.
 - `interface FlightActionRef` — A serialized server-action reference (as a node or a prop value).
+- `interface FlightBigInt` — A serialized bigint (JSON has no integer type wide enough; the digits travel as text).
 - `interface FlightBoundary` — A client-side error boundary: a segment's error.tsx (a "use client" component) around its children, so a render throw AFTER hydration swaps in the fallback on the client the way Next does. Emitted only when the boundary's fallback is a client reference; a server-only fallback stays transparent (the boundary lives on the server alone).
+- `interface FlightChannelRef` — A serialized createChannel reference (the client subscribes by id).
 - `interface FlightClient` — A serialized client-component reference.
 - `interface FlightDate` — A serialized Date value.
 - `interface FlightEventHandler` — A serialized lazily-loaded event handler (Qrl) reference.
 - `interface FlightHost` — A serialized host (intrinsic) element.
+- `interface FlightMap` — A serialized Map: entries as [key, value] pairs, each side a Flight value.
 - `type FlightNode = FlightPrimitive | FlightNode[] | FlightHost | FlightClient | FlightBoundary | FlightActionRef` — A node in a Flight tree.
+- `interface FlightNonFinite` — A serialized non-finite number or negative zero (JSON would emit null / 0).
 - `type FlightPrimitive = string | number | boolean | null` — A JSON primitive leaf in a Flight tree.
 - `type FlightProps = Record<string, FlightValue>` — A serialized props object (VNode-valued props are themselves Flight nodes).
+- `interface FlightSet` — A serialized Set: its values in insertion order.
 - `interface FlightStreamOptions` — Options for renderToFlightStream.
-- `type FlightValue = FlightPrimitive | FlightValue[] | object | FlightNode | FlightActionRef | FlightDate | FlightEventHandler` — A serialized prop value.
+- `interface FlightUrl` — A serialized URL (its href).
+- `type FlightValue = FlightPrimitive | FlightValue[] | object | FlightNode | FlightActionRef | FlightDate | FlightBigInt | FlightNonFinite | FlightUrl | FlightMap | FlightSet | FlightChannelRef | FlightEventHandler` — A serialized prop value.
 - `forbidden(): never` — Throw to render the nearest forbidden.tsx UI with a 403 status.
 - `interface FormatDetectionMetadata` — format-detection (telephone=no etc.).
 - `type FormFields = Record<string, FormDataEntryValue>` — The form fields of a submission as a plain object (the default input shape).
@@ -601,6 +721,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ImageResponseOptions` — Options for ImageResponse (dimensions + @denext/og passthrough).
 - `interface ImagesConfig` — Image-optimization config (the /_denext/image endpoint).
 - `inMemoryCacheStore(): CacheStore` — The default per-process, in-memory CacheStore.
+- `inMemoryChannelTransport(): ChannelTransport` — The default transport: loopback, this instance only.
 - `inMemoryRateLimitStore(options?: InMemoryRateLimitStoreOptions): RateLimitStore` — The default per-process RateLimitStore: a bounded Map of fixed windows. Expired windows are dropped on read; past maxKeys expired windows go first, then the least-recently-incremented quiet keys — never a key mid-lockout — so a flood of distinct identifiers can't grow memory without bound.
 - `interface InMemoryRateLimitStoreOptions` — Options for inMemoryRateLimitStore.
 - `inMemorySessionStore(options?: InMemorySessionStoreOptions): SessionStore` — The per-process, in-memory SessionStore. Bounded: past maxEntries expired sessions are dropped first, then the least recently used live ones; expired ones are also swept on a throttled schedule. Sessions don't survive a restart and aren't shared across replicas — use sqliteSessionStore (or your own) for that.
@@ -611,6 +732,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface Intercept` — An intercepting-route marker parsed from a folder name like (.)photo, (..)photo, (..)(..)photo, or (...)photo.
 - `interpolate(template: string, vars?: TranslationVars): string` — Substitute {name} placeholders in template with vars.name. Unmatched placeholders are left intact (so a missing var is visible, not silently blank).
 - `interface InvalidationEvent` — One cache invalidation (a revalidateTag/revalidatePath), with timing.
+- `isApiError(value: unknown): value is ApiError` — Is value an ApiError (from any loaded copy of denext)?
+- `isChannel(value: unknown): value is Channel` — Is value a server-side channel object?
 - `isControlSignal(value: unknown): boolean` — True for any denext control-flow signal (notFound/forbidden/unauthorized/ redirect) that error boundaries must re-throw rather than catch.
 - `isForbidden(value: unknown): value is ForbiddenError` — True if value is a ForbiddenError raised by forbidden().
 - `interface IslandPayload` — A deferred-hydration island: its tree-path id, strategy, and own Flight tree.
@@ -687,6 +810,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `provideMessages(messages: Messages, child: VNodeChild): VNode` — Wrap child in a MessagesContext provider so descendants resolve useTranslations() against messages during server rendering.
 - `PUBLIC_ENV_PREFIXES: typeOperator` — Prefixes that mark an environment variable as safe to expose to the browser. NEXT_PUBLIC_ matches Next.js for drop-in compatibility; DENEXT_PUBLIC_ is the denext-native prefix. Any other variable stays server-only.
 - `publicEnv(): Record<string, string>` — Read the public environment variables (isomorphic). On the client, returns the variables embedded in the page — only ever the public-prefixed ones. On the server, returns the public subset of the live process environment.
+- `type QueryRecord = Record<string, string | string[]>` — The query string as a record: repeated keys become arrays.
+- `rateLimit(options: ApiRateLimitOptions): ApiMiddleware<object>` — Fixed-window rate limit per key: the (max+1)th request in a window fails with a 429 rate_limited envelope carrying retry-after (seconds) — before validation, so a flood never reaches a schema or the handler. The client identity is the socket peer, or the last x-forwarded-for hop only when trustForwardedHeaders is set (a forged header can't dodge it).
 - `interface RateLimitOptions` — Rate-limit settings on AuthConfig.rateLimit.
 - `interface RateLimitStore` — Where the per-key failure counts live. All methods may be sync or async.
 - `interface RateLimitWindow` — One key's open failure window.
@@ -716,6 +841,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `requestOrigin(request: Request, opts?: OriginOptions): string` — The public origin (scheme://host) for request. Resolution order: canonicalOrigin (if set) → forwarded headers (only when trustForwardedHeaders is set) → the Host header → the request URL. Only the first value of a comma-separated forwarded header is used.
 - `requireAuth(request: Request, options?: RequireAuthOptions): Promise<Response | null>` — Middleware guard: allow the request through when signed in, otherwise return a redirect to the sign-in page carrying a callbackUrl back to the target. Use in middleware.ts (matcher-gated): ``ts export async function middleware(request: Request) { return await requireAuth(request); // returns a Response to redirect, or null to continue } export const config = { matcher: ["/dashboard/:path*"] }; ``
 - `interface RequireAuthOptions` — Options for requireAuth.
+- `requireSession(options?: RequireSessionOptions): ApiMiddleware<object, object>` — Require a signed-in viewer (denext auth): extends the context with { session }, or fails with a 401 unauthorized envelope before any schema runs.
+- `interface RequireSessionOptions` — Options for requireSession.
 - `resetCacheStats(): void` — Reset the cache-activity counters (tests / a fresh monitoring window).
 - `resolveCacheLife(profile: string | CacheLifeProfile): CacheLifeProfile` — Resolve a cacheLife argument — a built-in/custom profile name or an inline profile object — to a concrete CacheLifeProfile. An unknown name falls back to the default profile. Missing fields inherit from default.
 - `type ResolvedMetadata = Metadata` — The merged metadata of the segments ABOVE the current one (what parent resolves to).
@@ -747,6 +874,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SafeFetchOptions` — Options for safeFetch.
 - `safeRedirectLocation(location: string): string` — Make a redirect Location safe against open redirects. An explicit http(s):// absolute URL is preserved (a deliberately-configured external redirect); anything else is forced to a single-slash, same-origin path so a protocol-relative (//host) or backslash (/\host) prefix — which browsers resolve cross-origin — cannot escape the current origin.
 - `scanRoutes(appDir: string): Promise<RouteManifest>` — Scan appDir recursively and produce a sorted route manifest.
+- `type SchemaInput<S> = conditional` — The value a Standard Schema accepts (what a client must send); its output when unknown.
+- `type SchemaOutput<S> = conditional` — The value a Standard Schema produces.
 - `type SearchParams = object` — Next.js's searchParams record: repeated keys become arrays, absent keys undefined.
 - `searchParamsRecord(usp: URLSearchParams, raw?: URLSearchParams): SearchParams & object` — Next.js's searchParams record for a query string, with the underlying URLSearchParams reachable as the non-enumerable raw property (raw may be a read-tracking wrapper of usp; the record itself is built from the plain usp).
 - `interface Segment` — A single parsed route pattern segment.
@@ -770,6 +899,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SessionOptions` — Options for getSession.
 - `interface SessionStore` — Where store-backed sessions live. Every method may be sync or async; get must return only an **unexpired** session (treat expiresAt in the past as a miss).
 - `setCacheStore(store: CacheStore): void` — Replace the CacheStore backing the data cache and page (ISR) cache. Use this to share cached data and rendered pages across instances — back it with a custom or shared store (Redis, etc.) so a render or data entry produced on one replica is served by another, and revalidateTag/revalidatePath invalidate every instance. Called explicitly, this overrides the smart default (resolveDefaultCacheStore).
+- `setChannelTransport(t: ChannelTransport): void` — Install the transport that carries channel events between instances (default: in-memory, single instance). The Live hub re-subscribes to the new transport.
 - `interface SignalSink` — The status a caught control signal asks for (0 = none caught).
 - `type Sitemap = SitemapEntry[]` — A sitemap: the array a sitemap.ts default export returns.
 - `interface SitemapEntry` — One entry in a sitemap (Next.js MetadataRoute.Sitemap element).
@@ -791,6 +921,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type StandardResult<Output> = object | object` — A Standard Schema validation result: a parsed value, or a list of issues.
 - `interface StandardSchemaV1<Output>` — The Standard Schema v1 surface (https://standardschema.dev) — validator-agnostic.
 - `type StaticParamsGenerator = (context: object) => RouteParams[] | Promise<RouteParams[]>` — generateStaticParams — the param sets to pre-render. Called with the parent segments' params (from a layout's own generator, or {} at the root), Next.js style; a [...rest] value may be a string[].
+- `interface SubscriptionConfig<In, Out>` — The definition passed to defineSubscription.
+- `interface SubscriptionContext` — What a subscription's authorize / resolve receive besides the input.
+- `interface SubscriptionDef` — The hub-facing half of a defineSubscription: validate, gate, compute.
+- `interface SubscriptionRef<In, Out>` — The reference defineSubscription returns: callable on the server (validate → authorize → resolve), an opaque id on the client; typed for useSubscription.
+- `interface SubscriptionRunContext` — What a subscription's authorize / resolve receive besides the parsed input.
 - `interface TailwindConfig` — Tailwind CSS integration. When set, denext compiles input (which contains the raw @import "tailwindcss"; directives) into output using the Tailwind v4 standalone binary — which denext downloads and manages itself — before its own CSS pipeline runs. The output file is what your layout imports.
 - `interface ThemeColorDescriptor` — <meta name="theme-color"> with an optional media query.
 - `TOO_LARGE: Symbol` — Sentinel returned by readCappedBody when the body exceeds the cap.
@@ -821,16 +956,22 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type ActionResult<Out> = object | object` — The result an action returns: ok carries the typed handler output, else an error.
 - `type AnchorProps = Omit<Record<string, unknown>, href | children>` — The anchor attributes a Link forwards (everything an <a> takes except href).
 - `interface ApiClient<S>` — A typed callable over an app's ApiSchema.
-- `interface ApiEndpoint` — One endpoint's typed shape: its params, optional request/response bodies.
-- `apiRequest(pattern: string, method: HttpMethod, opts?: ApiRequestOptions, base?: string): Promise<unknown>` — Perform one typed API request (the runtime the typed client dispatches to). Substitutes params, JSON-encodes a body, and parses a JSON response (a 204/empty body → undefined).
+- `class ApiClientError<Code>` — A failed typed API call: the HTTP status plus, when the server answered with denext's JSON error envelope ({ error: { code, status, message, data?, fieldErrors?, digest? } } — an ApiError, a validation failure, a control signal, or a redacted 500), the envelope's fields. code narrows to the endpoint's declared codes (ErrorsOf<E>); a non-envelope failure (a plain text 500, an HTML error page) has code: "http_error".
+- `interface ApiClientOptions` — Options for createApiClient.
+- `interface ApiEndpoint` — One endpoint's typed shape: its params, optional request/response bodies, query, error codes.
+- `type ApiEndpointOf<P, M> = NonNullable<indexedAccess>` — The registered schema's entry for one route + method (what useApi is typed against).
+- `interface ApiErrorEnvelope` — The shape of denext's JSON error envelope (the server's ApiErrorBody).
+- `type ApiInvalidationSource = (tags: string[], onInvalidate: () => void) => () => void` — Subscribes to tag invalidations; installed by the Live transport. Returns an unsubscribe.
+- `type ApiPhantom<H> = conditional` — The { def; result } phantom a defineApi handler carries, or never for a plain one.
+- `apiRequest(pattern: string, method: HttpMethod, opts?: ApiRequestOptions, base?: string, fetchImpl?: fetch): Promise<unknown>` — Perform one typed API request (the runtime the typed client dispatches to). Substitutes params, encodes a body through the wire codec (flagging it only when a tag was needed), and parses the JSON response (decoding it when the server flagged it; a 204/empty body → undefined). A non-2xx response throws an ApiClientError carrying the server's error envelope when there is one.
 - `interface ApiRequestOptions` — Options accepted by the untyped runtime call (the typed client narrows these).
 - `type ApiSchema = Record<string, Partial<Record<HttpMethod, ApiEndpoint>>>` — A whole app's API surface: route pattern → (method → endpoint).
 - `AsyncContext: object` — The TC39-shaped namespace object: AsyncContext.Variable / AsyncContext.Snapshot.
-- `buildPath(pattern: string, params?: Record<string, string>, query?: Record<string, string>): string` — Substitute path params into a route pattern, appending any query params.
+- `buildPath(pattern: string, params?: Record<string, string | string[]>, query?: Record<string, unknown>): string` — Substitute path params into a route pattern, appending any query params.
 - `capturedScope<T>(): T` — Read the captured lexical scope inside an extracted qrl handler segment. The build transform emits const [a, b] = capturedScope() at the top of a segment whose handler closed over component-local a/b; the values are the capture array passed to qrl (restored from the resume payload on the client). Must be called synchronously at handler entry.
 - `type Component<P> = (props: P & object) => VNode | Promise<VNode>` — A component is a function that receives props and returns a renderable node.
 - `interface Context<T>` — A context object created by createContext. It is itself usable as a provider element (<MyContext value={v}>…</MyContext>, React 19 style) and also exposes the classic .Provider component. useContext(MyContext) reads the nearest provided value, falling back to the default.
-- `createApiClient<S>(base?: string): ApiClient<S>` — Create a typed API client bound to an app's generated ApiSchema.
+- `createApiClient<S>(baseOrOptions?: string | ApiClientOptions): ApiClient<S>` — Create a typed API client bound to an app's generated ApiSchema (the registered schema when .denext/api.ts is imported). Concurrent GET/HEAD calls with equal inputs share one fetch (see ApiClientOptions.dedupe).
 - `createContext<T>(defaultValue: T): Context<T>` — Create a context with the given default value. The returned Context is usable directly as a provider element (<MyContext value={v}>, React 19 style) and also exposes .Provider; useContext(MyContext) reads the nearest provided value, falling back to defaultValue.
 - `createPortal(children: VNodeChild, container: Element, key?: string | null): VNode` — Render children into a different DOM container while keeping their place in the component and context tree. Backs react-dom's createPortal.
 - `createResource<T>(factory: () => Promise<T>): () => T` — A tiny cache for turning an async factory into a stable, suspense-friendly resource. Reading it either returns the value or suspends.
@@ -843,17 +984,29 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ErrorBoundaryController` — Imperative control over the nearest enclosing error boundary, returned by useErrorBoundary.
 - `interface ErrorBoundaryProps` — Props for the ErrorBoundary component.
 - `interface ErrorFallbackProps` — Props passed to the fallback component rendered when a child throws.
+- `type ErrorsOf<E> = conditional` — The error codes a call to one endpoint may fail with.
 - `type FlightNode = FlightPrimitive | FlightNode[] | FlightHost | FlightClient | FlightBoundary | FlightActionRef` — A node in a Flight tree.
 - `flushSync<T>(fn?: () => T): T | undefined` — Run fn (if given) and then synchronously flush all pending state updates — including any pending transition work — before returning. Matches React's flushSync(fn).
 - `forbidden(): never` — Throw to render the nearest forbidden.tsx UI with a 403 status.
 - `interface FormStatus` — Status of the enclosing form's action, as returned by useFormStatus.
 - `Fragment: typeOperator` — Marker used as a VNode type to group children without a wrapping element.
+- `interface FreeQuery` — Free-form query strings (an endpoint without a query schema).
 - `h(type: VNodeType, props: VProps | null, ...children: VNodeChildren[]): VNode` — Classic-runtime style helper, also handy for programmatic node creation: h("div", { class: "x" }, child1, child2)
+- `type HandlerBody<H> = conditional` — The JSON request body a handler expects: a defineApi route's body schema input, else the B of a TypedRequest<B> first parameter, else never (no body key).
+- `type HandlerErrors<H> = conditional` — The error codes a call may fail with: the endpoint's declared codes plus the builtins.
+- `type HandlerLike = (...args: never[]) => Response | Promise<Response>` — Anything shaped like a route handler (sync or async).
+- `type HandlerParams<H, P> = conditional` — The params the client must pass: a defineApi route's params schema input when declared, else the pattern-derived record P ({ id: string }, { path: string[] }).
+- `type HandlerQuery<H> = conditional` — The typed query record of a defineApi route (query schema input), else never.
+- `type HandlerResponse<H> = conditional` — The JSON response body of a handler: a defineApi route's response schema output (or its handler's non-Response return), else the T of a TypedResponse<T>, else unknown.
 - `type HrefInput = Href | UrlObject` — A string href, or the object form.
 - `type HttpMethod = GET | POST | PUT | PATCH | DELETE | HEAD | OPTIONS` — An HTTP method an API route module can handle.
 - `hydrateRoot(container: Element, vnode: VNode, options?: RootOptions): Root` — Hydrate vnode against server-rendered markup already in container.
 - `idleActionState<Out>(): ActionResult<Out>` — The initial ActionResult for useActionState — an idle (not-yet-submitted) state.
+- `type InferEndpoint<H, P> = parenthesized & parenthesized & parenthesized & object` — One endpoint's schema entry. params / body / query keys are present ONLY when the handler has them — the client's RequestOf keys its required-options logic on presence.
+- `type Informative<B> = conditional` — A body type that is any/unknown carries no information → never (the key is omitted).
 - `interpolate(template: string, vars?: TranslationVars): string` — Substitute {name} placeholders in template with vars.name. Unmatched placeholders are left intact (so a missing var is visible, not silently blank).
+- `type IsAny<T> = conditional` — True when T is any.
+- `isApiClientError(value: unknown): value is ApiClientError` — Is value an ApiClientError?
 - `isPublicEnvKey(key: string): boolean` — Is key a client-exposable (public-prefixed) environment variable name?
 - `type Key = string | number | null | undefined` — A stable identity for a VNode among its siblings, used to keep lists reconciled.
 - `Link(props: LinkProps): VNode` — A client-side navigating anchor with hover/viewport prefetching.
@@ -861,9 +1014,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `makeTranslate(messages: Messages): TranslateFn` — Build a TranslateFn over messages (missing keys return the key).
 - `memo<P>(component: Component<P>, areEqual?: (prev: P, next: P) => boolean): Component<P>` — Wrap a component so the reconciler bails out of re-rendering it when its props have not meaningfully changed. Without areEqual, props are compared with shallowEqualProps (the same default the reconciler applies to every component); pass areEqual for custom control (return true to skip the re-render). Context changes always bypass the bailout — a consumer still re-renders when a context it reads changes.
 - `type Messages = Record<string, string>` — A flat message catalog for one locale: message key → template string.
+- `type ModuleEndpoints<M, P> = mapped` — Every exported HTTP-method handler of a route module, as { GET: InferEndpoint; … }. P is the pattern-derived params record (never for a static route).
 - `navigate(href: string, options?: NavigateOptions): Promise<void>` — Perform a soft navigation to href: fetch the target page, swap its markup into the hydration root, update history and <head>, and re-hydrate. Falls back to a full-page navigation on cross-origin URLs or network failure.
 - `interface NavigateOptions` — Options controlling a soft (client-side) navigation.
 - `notFound(): never` — Throw to render the nearest not-found UI with a 404 status.
+- `type PlainBody<H> = conditional` — A plain handler's request body: the B of its TypedRequest<B> first param, else never.
+- `type PlainResponse<H> = conditional` — A plain handler's response: the T of its TypedResponse<T> return, else unknown.
 - `prefetch(href: string): void` — Prefetch the page at href in the background (same-origin only) and cache its HTML, so a subsequent navigate is instant. No-op on the server, for cross-origin URLs, or when already prefetched/in-flight.
 - `Profiler(props: ProfilerProps): VNode` — Measure render timing for children and report it to onRender after each commit. Renders as a Fragment carrying the profiler config for the reconciler, so it adds no DOM of its own and is transparent during SSR.
 - `type ProfilerOnRender = (id: string, phase: ProfilerPhase, actualDuration: number, baseDuration: number, startTime: number, commitTime: number) => void` — Callback invoked after each commit of a Profiler's subtree.
@@ -875,14 +1031,17 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `publicEnv(): Record<string, string>` — Read the public environment variables (isomorphic). On the client, returns the variables embedded in the page — only ever the public-prefixed ones. On the server, returns the public subset of the live process environment.
 - `qrl<E>(loader: () => Promise<(event: E) => unknown>, id: string, capture?: typeOperator): Qrl<E>` — Define a lazily-loaded event handler. Give it a **stable, explicit id** so the server-serialized reference and the client loader agree.
 - `interface Qrl<E>` — A reference to a lazily-loaded handler: callable, tagged with its stable id.
+- `interface RegisteredApi` — Augmentation target for the generated .denext/api.ts: declare module "denext" { interface RegisteredApi { schema: ApiSchema } } makes createApiClient() typed with no type argument.
+- `type RegisteredSchema = conditional` — The registered app schema when .denext/api.ts is imported, else the open ApiSchema.
 - `type RequestArgs<E> = conditional` — The trailing call args: the opts object is required only when it has a required key.
-- `type RequestOf<E> = parenthesized & parenthesized & object` — The options object for one endpoint: params/body appear only when the route has them.
+- `type RequestOf<E> = parenthesized & parenthesized & parenthesized & object` — The options object for one endpoint: params/body/query are typed when the route declares them.
 - `type RequiredKeys<T> = indexedAccess` — The keys of T that are required (used to decide whether the opts arg is optional).
 - `type ResponseOf<E> = conditional` — The awaited response type for one endpoint.
 - `interface Root` — A mounted (or hydrated) render root that can be re-rendered or torn down.
 - `interface RootOptions` — Options accepted by createRoot/hydrateRoot for React parity. identifierPrefix is wired into the root's useId scope; the three error callbacks observe error handling without changing denext's default behavior (a boundary still catches, an uncaught error still surfaces, a hydration mismatch still keeps the client render).
 - `interface Router` — Imperative navigation API returned by useRouter (Next.js AppRouterInstance).
 - `interface RouterNavigateOptions` — Options for Router.push / Router.replace (Next.js NavigateOptions).
+- `setApiInvalidationSource(source: ApiInvalidationSource | null): void` — Install the transport that delivers tag invalidations to useApi({ tags }) (the Live client does this in configureLive / useApiLive).
 - `startTransition(callback: () => void): void` — Run callback as a low-priority "transition": the callback runs synchronously (like React), but any state updates it triggers are scheduled at transition priority — flushed after the reconciler yields to the browser, so urgent updates and paint/input happen first. On the server (no scheduler installed) it just runs the callback. The transition render is time-sliced and interruptible: a higher-priority (sync) update abandons the in-flight transition and restarts it (see the Async transitions guide: /docs/rendering#async-transitions).
 - `type StateUpdater<S> = (value: S | parenthesized) => void` — State setter returned by useState. Accepts either the next value or an updater function that receives the previous value and returns the next one.
 - `Suspense(props: SuspenseProps): VNode` — A Suspense boundary. Renders fallback until its children stop suspending.
@@ -892,10 +1051,14 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type TranslateFn = (key: string, vars?: TranslationVars) => string` — A translation function: look up key and interpolate any {var} placeholders.
 - `type TranslationVars = Record<string, string | number>` — Values interpolated into a message template's {name} placeholders.
 - `type TypedAction<Out> = (prevState: ActionResult<Out>, formData: FormData) => Promise<ActionResult<Out>>` — A typed action, shaped for useActionState(action, initial).
+- `type TypedQuery<Q> = conditional` — A schema-typed query, required; an uninformative (any/unknown) schema stays free-form.
 - `unauthorized(): never` — Throw to render the nearest unauthorized.tsx UI with a 401 status.
 - `interface UrlObject` — Next.js UrlObject — the object form Link/useRouter accept as an href.
 - `use<T>(usable: Promise<T> | Context<T>): T` — React 19's use: read a resource during render. Given a **promise**, unwrap its value, suspending (throwing the promise) while it is pending — the same promise instance must be passed across renders (cache it). Given a **context** (from createContext), read its current value like useContext — this overload may be called conditionally. Works on the client and under every SSR renderer, since both delegate to the active hook dispatcher.
 - `useActionState<State, Payload>(action: (state: State, payload: Payload) => State | Promise<State>, initialState: State, permalink?: string): tuple` — Manage state driven by a form action (React 19 useActionState).
+- `useApi<P, M>(path: P, method: M, opts?: RequestOf<ApiEndpointOf<P, M>>, options?: UseApiOptions): UseApiResult<ResponseOf<ApiEndpointOf<P, M>>, ErrorsOf<ApiEndpointOf<P, M>>>` — Call one of the app's own route handlers from a component, typed end to end.
+- `interface UseApiOptions` — Options for useApi.
+- `interface UseApiResult<T, E>` — What useApi returns.
 - `useCallback<T>(fn: T, deps?: DependencyList): T` — Return a memoized version of fn that only changes when deps change.
 - `useContext<T>(context: Context<T>): T` — Read the current value of context from the nearest enclosing provider.
 - `useDebugValue<T>(_value: T, _format?: (value: T) => unknown): void` — Label a custom hook's value for React DevTools. A no-op at runtime (React itself only invokes it when DevTools is attached), provided for API compatibility.
@@ -923,6 +1086,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useSyncExternalStore<T>(subscribe: (onChange: () => void) => () => void, getSnapshot: () => T, getServerSnapshot?: () => T): T` — Subscribe to an external (non-React) store and re-render when it changes. subscribe registers a change listener and returns an unsubscribe function; getSnapshot reads the current value; getServerSnapshot (optional) provides the value used during server rendering.
 - `useTransition(): tuple` — Return [isPending, startTransition]. isPending stays true from the moment the transition starts until its low-priority updates have been flushed — so a pending indicator can paint (and the browser can handle input) before the transition's work runs. For an async callback it is held until the returned promise settles and the resulting flush lands. Falls back to a synchronous run when no client scheduler is installed.
 - `useTranslations(): TranslateFn` — Access a translation function t(key, vars?) for the active locale (reactive). Looks up key in the locale's catalog and interpolates {var} placeholders; a missing key returns the key itself. The catalog comes from the render-time provider during SSR and from the hydration payload on the client, re-read on soft navigation (so switching locales updates the strings).
+- `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type (a returned Response carries no body type).
 - `interface VNode` — A single virtual DOM node.
 - `type VNodeChild = VNode | string | number | bigint | boolean | null | undefined` — Anything that can appear as a child in JSX.
 - `type VNodeChildren = VNodeChild | VNodeChild[]` — One child or an array of children, as accepted by JSX.
@@ -1019,17 +1183,29 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 ### `denext/live`
 
+- `interface ChannelRef<T>` — A channel as the browser sees it: the id (and the phantom type).
 - `configureLive(opts: object): void` — Install the Flight parser and route-refresh used by the live transport, and wire <Live> boundary registration. Called once by the generated Flight client entry.
 - `Live(props: LiveProps): VNode` — A real-time server-component boundary. See the module docs.
 - `interface LiveActionRef<A, R>` — A reference to a server function usable as a live query (a serverAction).
+- `interface LiveErrorInfo` — The structured part of a server error frame, handed to a data subscription's callback.
 - `interface LiveProps` — Props for Live.
 - `liveReadable<T>(action: T): T` — Mark a server action as readable over the Live data channel (useLive), and return it unchanged for chaining. Only actions marked here — or admitted by the Live hub's canSubscribe policy — may be run via a data-subscribe. Use it for read-only fetchers you intend to stream; never for mutations.
+- `interface LiveSubscriptionError` — Why a subscription is not (or no longer) delivering.
 - `interface Presence<S>` — The presence of the current room, from usePresence.
+- `subscribeChannel(channelId: string, key: string, onValue: (value: unknown, seq: number) => void, onError: (info: LiveErrorInfo) => void): () => void` — Receive a createChannel channel's pushes for key. Backs useChannel. Returns an unsubscribe. A refusal (denied / no-policy / …) arrives through onError and marks the subscription dead so a reconnect does not re-send it.
+- `subscribeLiveTags(tags: string[], onInvalidate: () => void): () => void` — Be told when any of tags is invalidated on the server (revalidateTag); backs useApi({ tags }). Returns an unsubscribe.
+- `interface SubscriptionRefLike<In, Out>` — A defineSubscription ref as the client sees it (the id, plus the phantom types).
+- `interface SubscriptionState<Out>` — What useSubscription returns.
+- `useApiLive<P, M>(path: P, method: M, opts?: RequestOf<ApiEndpointOf<P, M>>, options?: UseApiOptions): UseApiResult<ResponseOf<ApiEndpointOf<P, M>>, ErrorsOf<ApiEndpointOf<P, M>>>` — useApi whose tags refetch on a server-side revalidateTag — the Live socket delivers the invalidation; the refetch itself is an ordinary HTTP call with the viewer's cookies. Same signature and result as useApi.
+- `useChannel<T>(channel: ChannelRef<T> | object, key: string, options?: UseChannelOptions<T>): SubscriptionState<T>` — Receive a createChannel channel's pushes for key. The server authorizes the subscription in this viewer's session (and re-checks it lazily); every publish(key, payload) — from an action, a webhook, a cron — arrives as a new data. At-most-once, latest-wins; no replay on reconnect.
+- `interface UseChannelOptions<T>` — Options for useChannel.
 - `useLive<A, R>(action: LiveActionRef<A, R>, args: A, options: UseLiveOptions<R>): R | undefined` — Subscribe to a server function's result, re-rendering whenever one of options.tags is invalidated. The function runs on the server under the viewer's own session (it must authorize its own access, like any server action). Pass a **read** action.
 - `useLiveOptimistic<T, A>(liveValue: T, reducer: (current: T, action: A) => T): tuple` — Pair an optimistic overlay with a live value: apply a local update immediately, and let it reconcile automatically when the authoritative value arrives over the socket (the overlay resets whenever liveValue's identity changes).
 - `interface UseLiveOptions<R>` — Options for useLive.
 - `usePresence<S>(room: string, options?: UsePresenceOptions<S>): Presence<S>` — Join a presence room and observe its members (who's-online, cursors, typing…). Orthogonal to cache tags — updates push on join/update/leave.
 - `interface UsePresenceOptions<S>` — Options for usePresence.
+- `useSubscription<In, Out>(sub: SubscriptionRefLike<In, Out>, input: In, options?: UseSubscriptionOptions<Out>): SubscriptionState<Out>` — Subscribe to a defineSubscription over the Live socket. The server validates input, derives the tags, authorizes on every recompute, and pushes each new value.
+- `interface UseSubscriptionOptions<Out>` — Options for useSubscription.
 
 ### `denext/lazy`
 

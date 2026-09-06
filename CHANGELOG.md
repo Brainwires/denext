@@ -8,6 +8,217 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.1.0-rc.1] - 2026-09-06
+
+### Added
+
+- **`defineApi` — schema-validated route handlers, the route twin of `defineAction`.**
+  Declare an endpoint's `params` / `query` / `body` / `response` as Standard Schemas (Zod,
+  Valibot, ArkType, TypeBox, or hand-rolled — zero denext dependency) plus the `errors` it may
+  fail with, and the handler receives parsed, typed input: `defineApi({ body: z.object({…}),
+  errors: { not_owner: 403 } }, ({ params, query, body, fail, ctx }) => …)`. A schema mismatch
+  is a structured 400 (`validation`, field errors, `data.source`) before the handler runs; a
+  declared `response` schema always runs (a stripping validator is a data-leak guard); a
+  returned value is JSON, `undefined` a 204, a `Response` passes through; `fail("code")` throws
+  the declared status. `createApi().use(mw).define(…)` composes "before" middleware with typed
+  context accumulation (return an extension, a `Response` to short-circuit, or throw) — auth
+  and rate limiting reject before any schema runs. First-party middleware: `requireSession()`
+  (401 + `ctx.session`) and `rateLimit({ max, windowMs, key?, store?, trustForwardedHeaders? })`
+  (fixed window, 429 + `retry-after`, socket peer unless a trusted proxy hop). An unknown
+  throw in a defined route is a redacted JSON 500 (`internal` + digest) like a `defineAction`
+  error. `apiDefinitionOf(handler)` (also in `denext/plugin-kit`) exposes the definition for an
+  OpenAPI/docs plugin; a definition's `maxBodyBytes` overrides the route/app cap. Public-surface
+  golden refreshed. `src/server/{define-api,api-middleware}.ts` (new), `src/server/api.ts`,
+  `src/runtime/define-action.ts` (exports `isStandardSchema`, `fieldErrorsFrom`),
+  `src/server/auth/rate-limit.ts` (exports `clientIp`), `src/plugin/kit.ts`.
+- **Typed API errors.** `ApiError(status, code, { message?, data?, fieldErrors?, headers? })`
+  from `denext/server`: throw it from a route handler for a structured JSON failure
+  `{ error: { code, status, message, data?, fieldErrors?, digest? } }` with `x-request-id`.
+  `ApiValidationError` is the 400 `validation` shape (field errors + `data.source`). An
+  `ApiError` is authored for the client, so it passes through production redaction
+  unchanged; an arbitrary throw is still redacted. `isApiError`, `apiErrorResponse`,
+  `ApiDispatchOptions` exported (public-surface golden refreshed). `src/server/api-error.ts`
+  (new), `src/server/api.ts`, `src/server/mod.ts`.
+- **Wire codec.** `src/runtime/wire-codec.ts` (new): the one `$`-tagged JSON superset every
+  denext wire shares — Date, `undefined`, BigInt, Map, Set, URL, NaN/±Infinity/-0 — with
+  `$`-key escaping (user data can never forge a tag), prototype-key refusal, bounded decode,
+  and copy-on-write encode so plain JSON pays nothing. Flight props (all three renderers),
+  Server Action args/results, and Live `data` frames now round-trip those values (a Map used
+  to arrive as `{}`, NaN as `null`, a Date in an action as a string). Envelopes carry
+  `enc: 1` only when a tag was needed, so a plain payload is byte-identical to before.
+  `denext/server` exports the new Flight value types (`FlightBigInt`, `FlightMap`,
+  `FlightNonFinite`, `FlightSet`, `FlightUrl`; public-surface golden refreshed).
+  `src/jsx/{flight-scalar,render-shared,render-to-flight,render-to-flight-stream}.ts`,
+  `src/client/{flight-client,live-client}.ts`, `src/runtime/{server-action,live-protocol}.ts`,
+  `src/server/{action-handler,live}.ts`.
+
+### Added
+
+- **`examples/typed-api`** — the whole typed surface in one small app: `defineApi` routes over
+  a hand-rolled Standard Schema, `createApiClient()` / `useApiLive` typed against the generated
+  `.denext/api.ts`, batching, `defineSubscription` / `useSubscription`, `createChannel` /
+  `useChannel`, and a `defineAction` no-JS form. Built, served and probed end to end by
+  `tests/integration/example-typed-api.test.ts` (typed 400/409/404 envelopes, the batch endpoint,
+  an `invalid-input` subscription refusal, a channel push after a create); a two-tab real-browser
+  run in `tests/e2e/typed-api.e2e.test.ts` (opt-in).
+- **`createChannel` / `useChannel` — server push over the Live socket.** `<Live>`, `useLive`
+  and `useSubscription` are pull-recompute on tag invalidation; a channel is the push half:
+  `const orderEvents = createChannel<{ status }>({ schema, authorize })` exported from a
+  `"use server"` module, then `await orderEvents.publish(\`user:${id}\`, payload)` from anywhere
+  on the server (an action, a webhook, a cron, `after()`) reaches every authorized subscriber of
+  that key: `useChannel(orderEvents, \`user:${id}\`, { initial })`→`{ data, error, status }`.
+  Security by construction:`authorize(ctx, key)`is REQUIRED (construction throws without it)
+  and runs in the subscriber's session at subscribe time, then lazily on traffic once`authTtlSeconds`(default`live.limits.channelAuthTtlSeconds`, 300 s) has passed — per-push
+  re-authorization would cost subscribers × authorize per emit — while`channel.revoke(key,
+  { peerId? })`ends access immediately, cluster-wide; an unknown channel id is`denied`, never
+  a distinguishable "unknown"; keys are shape-checked; payloads are validated (Standard Schema)
+  and byte-capped at the PUBLISHER (a failure is thrown to the publisher, never sent). Delivery:
+  at-most-once, latest-wins per subscription under back-pressure (the last held frame replays on
+  drain, no recompute) and within a 16 ms publisher burst; no history or replay on reconnect;`seq`orders frames from one instance only. Multi-instance delivery goes through a`ChannelTransport`:`inMemoryChannelTransport()`(default, single instance),`broadcastChannelTransport()`(Deno Deploy isolates / workers, zero deps), or your own
+  two-method Redis/NATS transport via`setChannelTransport`. A channel passed to a client
+  component crosses Flight as`{ $: "ch", i }`. Limits:`live.limits.maxChannelsPerConnection`(32),`maxChannelPayloadBytes`(16 KiB),`channelAuthTtlSeconds`(300).`src/runtime/channel.ts`,`src/server/live-channels.ts`(new),`src/server/{live,config}.ts`,`src/runtime/{live-protocol,server-action}.ts`,`src/jsx/{flight-scalar,render-to-flight,
+  render-to-flight-stream}.ts`,`src/client/{flight-client,live-client,live-typed}.ts`,`src/live.ts`,`src/server/mod.ts` (public-surface golden refreshed; config schema regenerated).
+- **`defineSubscription` / `useSubscription` — typed, validated live queries** (the `useLive`
+  twin of `defineApi`). `defineSubscription({ input: z.object({ id }), tags: ({ id }) =>
+  [\`order:${id}\`], authorize, resolve })`exported from a`"use server"`module (or with an
+  explicit`id`);`useSubscription(orderStatus, { id }, { initial })`from`denext/live`returns`{ data, error, status }`typed by the definition. What the socket was missing: the client's
+  input is validated by a Standard Schema on every`data-subscribe`(rejected → a structured`invalid-input`error with field errors, nothing stored, the resolver never runs), the tags are
+  derived on the server from the parsed input (the client's tags are ignored), and the optional
+  row-level`authorize`runs on EVERY recompute (denied → dropped). Registering a definition IS
+  the live opt-in. The ref is also a plain callable (validate → authorize → resolve) for SSR`initial`values. Recompute failures are now structured`error`frames instead of a`data`frame with an opaque string:`denied`(forbidden/unauthorized — dropped),`failed`(the
+  resolver threw — redacted in production with a`digest`; kept for the next invalidation).
+  Hardening for every`data-subscribe`, plain actions included: the input is capped
+  (`live.limits.maxSubscriptionInputBytes`, default 16 KiB — it is stored for the connection's
+  lifetime and re-run per recompute) and depth-bounded (32). The client marks a subscription
+  the server refused for good as dead so a reconnect does not re-spam it.`src/runtime/define-subscription.ts`,`src/client/live-typed.ts`(new),`src/runtime/{server-action,live-protocol}.ts`,`src/server/{live,config}.ts`,`src/client/live-client.ts`,`src/live.ts`,`src/server/mod.ts` (public-surface golden
+  refreshed; config schema regenerated).
+- **`useApi` — the typed API client as a hook** (`denext` / `denext/client`).
+  `const { data, error, pending, refetch, invalidate } = useApi("/api/user/[id]", "GET", { params })`,
+  typed end to end against the registered `.denext/api.ts` schema (params, query, body,
+  response, and `error.code` narrowed to the endpoint's codes). Default mode is
+  `useSyncExternalStore` over a small entry store — the fetch starts after mount, SSR renders
+  `pending: true` and never fetches; `suspense: true` uses `use()`, runs the call in-process on
+  the server inside the nearest `<Suspense>`, records the value under the hook's `useId()` into
+  the `#__denext_state` island (Flight routes), and the client adopts it so hydration never
+  refetches. Entries are ref-counted by mounted hooks in the browser and live in the request's
+  own memo during SSR (two renders never share one). `tags` refetch on a server-side
+  `revalidateTag` when a Live transport is present: `useApiLive` from `denext/live` (or any
+  configured Live feature) installs it; without one the option is a no-op with a one-time dev
+  warning, and `useApi` itself never imports the socket. New Live frames `tags-subscribe` /
+  `tags-unsubscribe` / `invalidate` carry only TAG NAMES (the client refetches over HTTP with
+  its own cookies, so the route handler still authorizes the data); a watch is admitted by
+  `live.allowAnonymous` or the new `live.canWatchTags(ctx, tags)` hook, else `no-policy`
+  (tags are bounded: ≤ 32 per watch, ≤ 256 chars each; the per-connection subscription cap
+  applies). `src/client/{use-api,use-api-live}.ts` (new), `src/client/live-client.ts`,
+  `src/server/{live,config}.ts`, `src/runtime/live-protocol.ts`, `src/live.ts`, `mod.ts`,
+  `src/client/mod.ts` (public-surface golden refreshed; config schema regenerated).
+- **In-process SSR dispatch for the typed API client.** A Server Component (or route handler)
+  calling its own API through `createApiClient` no longer loops back over HTTP. Inside a
+  request, the call runs as a sub-request through the full pipeline (middleware, rewrites, the
+  redacted-500 contract) under the caller's identity — an allowlisted copy of its headers
+  (cookie, authorization, …), its socket peer, its abort signal, a derived `x-request-id` — and
+  what the route learns flows back to the render (a `cookies()` read inside the API route makes
+  the page dynamic; cache tags it read purge the page). A GET takes the same cache decision as
+  the patched global `fetch`: pass `cache` / `next: { revalidate, tags }` on the call and it is
+  served by the tag-aware data cache (`revalidateTag` purges it, `updateTag` read-your-writes
+  applies, concurrent misses coalesce) with the caller's cookie/authorization in the key — no
+  cross-user confusion; without those options it is uncached, like `fetch`. A route calling
+  itself terminates at depth 3 (508). Outside a request, for a foreign `base`, or for a
+  `/_denext/*` path the client falls back to a real `fetch`; batching is skipped on the server
+  when the dispatcher is present. `src/server/api-dispatcher.ts` (new),
+  `src/runtime/api-dispatch.ts` (new — the client-safe seam), `src/server/{app,cache}.ts`,
+  `src/runtime/api-client.ts`.
+- **Request batching on the typed API client.** The GET/HEAD calls a page makes in one tick
+  (three `useApi`/`createApiClient` reads in one render) ride ONE `POST /_denext/api-batch`;
+  each caller gets back an ordinary result or `ApiClientError` synthesized from its item
+  (status, header subset, raw body, the `enc` codec flag). One microtask flush per turn; a
+  single pending call skips the batch framing; batches are chunked by `maxItems` (default 20);
+  an item whose abort signal fires is rejected on its own; a batch-level failure (403, 413, …)
+  surfaces on every item as an `http_error`. A call with custom headers or a body, a mutation,
+  or `batch: false` (per call or `createApiClient({ batch: false })`) always goes alone.
+  Dedupe composes: two equal GETs plus one other in a tick is one batch of two items.
+  `src/runtime/api-batch.ts` (new), `src/runtime/api-client.ts`.
+- **`POST /_denext/api-batch` — N typed GET/HEAD calls in one round trip.** The server half
+  of request batching for `createApiClient`: `{ v: 1, items: [{ id, m: "GET" | "HEAD", p }] }`
+  → `{ v: 1, r: [{ id, s, h?, t?, enc? }] }` (item bodies as raw text, never re-parsed; the
+  per-item `x-denext-wire` flag carried as `enc`). Same-origin only (`verifyOrigin`, the Server
+  Action CSRF gate, extracted to `src/server/origin-check.ts`), a required `x-denext-api-batch`
+  marker header (a `<form>` cannot set one), JSON content-type, body cap, item count cap; each
+  item must be an integer-id GET/HEAD to a same-origin path that is not `/_denext/*`, and ANY
+  malformed item fails the whole batch before anything runs. Items run concurrently under a
+  gate as **sub-requests through the full pipeline** — middleware, rewrites, i18n, header rules,
+  the redacted-500 contract all apply exactly as to a direct call — each with a fresh request
+  context, the batch's abort signal, an allowlisted copy of the batch's headers (cookie,
+  authorization, accept-language, user-agent, forwarded-*), the caller's socket peer, and a
+  suffixed `x-request-id`. A sub-request is API-only (a page or asset path is a JSON 404; no
+  actions, no nested batch). Item Set-Cookies merge onto the batch response, which is
+  `cache-control: no-store`. Config: `apiBatch: { enabled, maxItems (≤100), maxBodyBytes,
+  concurrency, maxItemResponseBytes }` on `denext.config.ts` (validated; schema regenerated).
+  `src/server/{api-batch-handler,sub-request,origin-check}.ts` (new),
+  `src/runtime/api-batch-protocol.ts` (new), `src/server/{request-pipeline,request-context,
+  action-handler,app-config,config,config-validate}.ts`, `src/build/{prod-server/app,
+  dev-server/dev-app}.ts`.
+- **In-flight request dedupe on the typed API client.** Concurrent GET/HEAD calls with equal
+  path, params, query, body, and headers share one fetch; the entry is dropped when it
+  settles, mutations are never deduped, and `dedupe: false` opts out per call or per client.
+  In the browser the in-flight table is per client instance; during SSR it lives in the
+  request's own memo (two users' renders can never share a promise) and is off outside a
+  request. `createApiClient` now also takes `{ base?, dedupe?, fetch? }` (the `fetch` seam is
+  for tests and custom transports); the string form still works. `ApiClientOptions` exported.
+  `src/runtime/api-client.ts`.
+
+### Changed
+
+- **The typed API client throws `ApiClientError` and speaks the wire codec.** A non-2xx
+  response from `createApiClient` / `apiRequest` used to reject with a bare `Error` naming the
+  status. It is now an `ApiClientError` carrying `status`, `statusText`, `method`, `url`,
+  `requestId`, and — when the server answered with denext's JSON error envelope (an `ApiError`,
+  a validation failure, a control signal, a redacted 500) — its `code` (narrowed to the
+  endpoint's `ErrorsOf<E>`), `data`, `fieldErrors`, and `digest`; a non-envelope failure has
+  `code: "http_error"`. The envelope body is read bounded (64 KiB). Request bodies and
+  responses ride the wire codec: a Date / Map / Set / BigInt in a body reaches the handler
+  intact (`handleApi` decodes an `x-denext-wire: 1` request for a plain handler's `req.json()`;
+  `defineApi` decodes before the schema), and `json()` from `denext/server` flags a response
+  only when a tag was needed — a plain-JSON `json()` body is byte-identical to
+  `Response.json()`. A malformed flagged body is a 400 `bad_request`. `isApiClientError`,
+  `ApiErrorEnvelope` exported from `denext` / `denext/client` (public-surface golden
+  refreshed). `src/runtime/api-client.ts`, `src/server/{typed-response,api,define-api}.ts`.
+- **The typed-API generator no longer spawns `deno doc`.** `.denext/api.ts` now imports each
+  route module's TYPE (`import type * as R0 from "…/route.ts"`) and applies
+  `ModuleEndpoints<typeof R0, Params>` (`denext`'s new type-level inference helpers), so
+  TypeScript itself derives every handler's body / query / response / error codes — from a
+  `defineApi` definition or from `TypedRequest` / `TypedResponse` annotations. Generation is a
+  pure function of the manifest (zero I/O; 50 routes in well under a millisecond where a
+  `deno doc` per route took seconds and once stalled the dev loop). Fixes on the way: a
+  non-exported local type in a handler signature no longer degrades to `unknown`; a catch-all
+  param is typed `string[]` (the runtime shape; the client accepts a `string[]` or a `/`-joined
+  string); an optional catch-all is optional. The schema also carries each endpoint's typed
+  `query` (required when the route declares a `query` schema) and its `errors` union
+  (`ErrorsOf<E>`). The generated module registers itself (`declare module "denext" { interface
+  RegisteredApi { schema } }`) so `createApiClient()` needs no type argument once
+  `./.denext/api.ts` is imported; the explicit `createApiClient<ApiSchema>()` still works.
+  Consumers type-check route modules transitively now: a `route.ts` that itself imports
+  `.denext/api.ts` and returns an un-annotated value derived from it should annotate the
+  return or declare a `response` schema. Public-surface golden refreshed.
+  `src/runtime/api-infer.ts` (new), `src/build/api-types.ts` (rewritten),
+  `src/runtime/api-client.ts`, `mod.ts`, `src/client/mod.ts`.
+
+### Fixed
+
+- **`redirect()` / `notFound()` / `forbidden()` / `unauthorized()` thrown inside a
+  `route.ts` handler were a 500.** They are now the response they name: the redirect (its
+  status, target normalized), or 404/403/401 as a JSON envelope — plain text when the
+  request prefers `text/html`. `src/server/api.ts`.
+
+### Security
+
+- **Route handler request bodies are capped** (1 MiB default, like Server Actions; they
+  were unbounded). A declared over-cap `Content-Length` is a 413 before the handler runs; a
+  chunked body errors the stream as the handler reads past the cap (→ 413). Streaming
+  consumers keep streaming. Raise or lift per route with `export const maxBodyBytes = N |
+  false`, or app-wide with `apiMaxBodyBytes`. A rebuilt capped/buffered request now also
+  carries the original `signal`. `src/server/{api,body,segment-config,app-config,request-pipeline}.ts`.
+
 ## [2.0.7] - 2026-09-06
 
 ### Added
@@ -5518,6 +5729,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.1.0-rc.1]: https://jsr.io/@denext/denext@2.1.0-rc.1
 [2.0.7]: https://jsr.io/@denext/denext@2.0.7
 [2.0.6]: https://jsr.io/@denext/denext@2.0.6
 [2.0.5]: https://jsr.io/@denext/denext@2.0.5

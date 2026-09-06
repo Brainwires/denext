@@ -372,3 +372,20 @@ Deno.test("renderToFlightStream: an island's children are not invoked by the Fli
   assertEquals(consumerRuns, 1, "rendered once for HTML; the Flight walk emitted a reference");
   assertStringIncludes(html, "c_stream_ctx#Consumer");
 });
+
+Deno.test("renderToFlightStream: a deferred value inside a Map/Set prop fills its hole at tail time", async () => {
+  // Value-hole substitution must descend into the wire codec's `M`/`S` containers, or a
+  // `defer()` promise nested in a Set would reach the client as an unfilled `{$:"vh"}`.
+  const slow = new Promise((r) => setTimeout(() => r("late"), 0));
+  const tree = h(DeferIsland, {
+    loaderData: { bag: new Set(["now", slow]), byId: new Map([["a", slow]]) },
+  });
+
+  const html = await streamToString(renderToFlightStream(tree));
+  const m = /<script id="__denext_flight"[^>]*>([\s\S]*?)<\/script>/.exec(html);
+  assert(m, "flight island present");
+  const json = JSON.stringify(JSON.parse(m![1]));
+  assert(!json.includes(`"$":"vh"`), "no unfilled value holes remain inside Map/Set");
+  assertStringIncludes(json, `{"$":"S","v":["now","late"]}`);
+  assertStringIncludes(json, `{"$":"M","v":[["a","late"]]}`);
+});

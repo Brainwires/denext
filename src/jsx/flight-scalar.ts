@@ -3,15 +3,18 @@
 // The streaming Flight, HTML-flight, and PPR renderers each serialize props into a
 // FlightValue tree. Their per-node structure differs (host nodes, client references,
 // `$`-key escaping, PPR provider scopes), but the LEAF cascade — primitives, a
-// server-action / qrl reference, a dropped function, a Date, and a thenable (a Remix
-// `defer()` field / promise passed as data) — is identical across all three. This
-// module owns that cascade so a fix for a leaf case (e.g. resolving a deferred promise)
-// lands in ONE place and can't drift between the serializers.
+// server-action / qrl reference, a dropped function, a Date / bigint / URL / non-finite
+// number, and a thenable (a Remix `defer()` field / promise passed as data) — is identical
+// across all three. This module owns that cascade so a fix for a leaf case (e.g. resolving
+// a deferred promise) lands in ONE place and can't drift between the serializers. The tag
+// vocabulary is the wire codec's (`src/runtime/wire-codec.ts`); the client decodes both
+// with the same `decodeTagged` switch.
 
 import { isServerAction } from "../runtime/server-action.ts";
 import { taintMessageFor } from "../runtime/taint.ts";
 import { isAsyncProps } from "../runtime/async-props.ts";
 import { isQrl } from "../runtime/qrl.ts";
+import { isChannel } from "../runtime/channel.ts";
 import { isThenable } from "../runtime/suspense.ts";
 import type { FlightValue } from "./render-to-flight.ts";
 
@@ -32,9 +35,10 @@ const COMPOUND_RESULT: ScalarResult = { kind: "compound" };
 /**
  * Serialize the leaf-value cases every Flight serializer shares. Returns `skip`
  * (`undefined` or a function — dropped), a serialized `value` (null, a primitive, a
- * server-action / qrl reference, or a Date), a `thenable` the caller must resolve and
- * re-serialize (a Remix `defer()` field / promise data), or `compound` — an array,
- * VNode, or plain object the caller serializes itself.
+ * server-action / qrl reference, a Date, a bigint, a URL, or a non-finite number), a
+ * `thenable` the caller must resolve and re-serialize (a Remix `defer()` field / promise
+ * data), or `compound` — an array, Map, Set, VNode, or plain object the caller serializes
+ * itself.
  */
 export function serializeScalar(value: unknown): ScalarResult {
   // `taintObjectReference` / `taintUniqueValue`: a tainted value must never cross to the
@@ -45,13 +49,14 @@ export function serializeScalar(value: unknown): ScalarResult {
   if (value === undefined) return SKIP_RESULT;
   if (value === null) return { kind: "value", value: null };
   const t = typeof value;
-  if (t === "string" || t === "number" || t === "boolean") {
-    return { kind: "value", value: value as FlightValue };
-  }
-  if (isServerAction(value)) return { kind: "value", value: { $: "a", i: value.denextActionId } };
-  if (isQrl(value)) return { kind: "value", value: { $: "e", i: value.denextQrlId } };
+  if (t === "number") return { kind: "value", value: serializeNumber(value as number) };
+  if (t === "string" || t === "boolean") return { kind: "value", value: value as FlightValue };
+  if (t === "bigint") return { kind: "value", value: { $: "n", v: (value as bigint).toString() } };
+  const ref = serializeRef(value);
+  if (ref) return ref;
   if (t === "function") return SKIP_RESULT;
   if (value instanceof Date) return { kind: "value", value: { $: "D", v: value.toISOString() } };
+  if (value instanceof URL) return { kind: "value", value: { $: "U", v: value.href } };
   // A thenable (a Remix `defer()` field / promise data): the caller resolves it and
   // re-serializes the result, so deferred data crosses the boundary as its value.
   // `params`/`searchParams` are awaitable-to-themselves (Next 15 shape); they are DATA, not
@@ -59,6 +64,29 @@ export function serializeScalar(value: unknown): ScalarResult {
   if (isAsyncProps(value)) return COMPOUND_RESULT;
   if (isThenable(value)) return { kind: "thenable", promise: value };
   return COMPOUND_RESULT;
+}
+
+/**
+ * The cross-boundary references: a server action (`a`), a qrl (`e`), a channel (`ch`) — each
+ * crosses as its stable id. `null` for anything else.
+ */
+function serializeRef(value: unknown): ScalarResult | null {
+  if (isServerAction(value)) return { kind: "value", value: { $: "a", i: value.denextActionId } };
+  if (isQrl(value)) return { kind: "value", value: { $: "e", i: value.denextQrlId } };
+  if (!isChannel(value)) return null;
+  if (!value.denextChannelId) {
+    throw new Error(
+      'denext: a channel passed to a client component must be exported from a "use server" ' +
+        "module (or created with an explicit `id`) so the client can subscribe to it",
+    );
+  }
+  return { kind: "value", value: { $: "ch", i: value.denextChannelId } };
+}
+
+/** A finite number is itself; NaN / ±Infinity / -0 (which JSON turns into null / 0) are tagged. */
+function serializeNumber(n: number): FlightValue {
+  if (Number.isFinite(n) && !Object.is(n, -0)) return n;
+  return { $: "N", v: Object.is(n, -0) ? "-0" : String(n) };
 }
 
 /**

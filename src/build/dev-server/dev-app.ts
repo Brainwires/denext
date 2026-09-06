@@ -122,6 +122,7 @@ export function createDevApp(st: DevState): RequestHandler {
     csp: paths.config?.csp,
     streaming: resolveStreaming(paths.config),
     hsts: paths.config?.hsts,
+    apiBatch: paths.config?.apiBatch,
   });
   // Live Server Components hub (dev): push `<Live>` boundary updates over a WebSocket.
   // Same-origin gate reuses the dev-origin allowlist used for SSE.

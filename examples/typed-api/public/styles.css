@@ -1,0 +1,88 @@
+:root {
+  color-scheme: light dark;
+  font: 15px/1.5 system-ui, sans-serif;
+}
+body {
+  margin: 0;
+  background: Canvas;
+  color: CanvasText;
+}
+.shell {
+  max-width: 60rem;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+.shell > nav {
+  display: flex;
+  gap: 1rem;
+  align-items: baseline;
+  border-bottom: 1px solid color-mix(in srgb, CanvasText 15%, transparent);
+  padding-bottom: 0.75rem;
+}
+.shell > nav strong {
+  font-size: 1.1rem;
+}
+.shell > nav span {
+  opacity: 0.7;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+}
+.lead,
+.foot-note {
+  opacity: 0.8;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+  gap: 1rem;
+}
+.card {
+  border: 1px solid color-mix(in srgb, CanvasText 15%, transparent);
+  border-radius: 0.5rem;
+  padding: 1rem;
+  margin-block: 1rem;
+}
+.entries {
+  list-style: none;
+  padding: 0;
+}
+.entries li {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.25rem 0;
+}
+.entries li.done label {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+.add {
+  display: flex;
+  gap: 0.5rem;
+}
+.add input {
+  flex: 1;
+  padding: 0.4rem;
+}
+.remove {
+  opacity: 0.5;
+}
+.count {
+  font-size: 1.6rem;
+  margin: 0.25rem 0;
+}
+.count small {
+  font-size: 0.8rem;
+  margin-left: 0.5rem;
+  opacity: 0.7;
+}
+.toast {
+  font-family: ui-monospace, monospace;
+  font-size: 0.9rem;
+}
+.error {
+  color: #c0392b;
+}
+.hint {
+  opacity: 0.6;
+  font-size: 0.85rem;
+}

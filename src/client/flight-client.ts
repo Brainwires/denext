@@ -11,6 +11,7 @@ import type { Component, VNodeChild } from "../jsx/types.ts";
 import type { FlightNode, FlightProps, FlightValue } from "../jsx/render-to-flight.ts";
 import { clientActionStub } from "../runtime/server-action.ts";
 import { qrlStub } from "../runtime/qrl.ts";
+import { decodeTagged, NOT_TAGGED } from "../runtime/wire-codec.ts";
 import { ErrorBoundary } from "../runtime/error-boundary.ts";
 
 /** Maps client-reference ids (`clientId#export`) to client component functions. */
@@ -125,11 +126,19 @@ function parseValue(value: FlightValue, registry: ClientRegistry): unknown {
   const tagged = value as { $?: string };
   if (tagged.$ === "a") return clientActionStub((value as { i: string }).i);
   if (tagged.$ === "e") return qrlStub((value as { i: string }).i);
-  if (tagged.$ === "D") return new Date((value as { v: string }).v);
+  if (tagged.$ === "ch") return { denextChannelId: (value as { i: string }).i };
   if (tagged.$ === "h" || tagged.$ === "c") {
     // A VNode-valued prop.
     return parseFlight(value as FlightNode, registry);
   }
+  // Date / bigint / URL / non-finite / Map / Set: the wire codec's tags, decoded by the same
+  // switch the HTTP + Live wires use so the two decoders can't drift. Nested Map/Set entries
+  // come back through `parseValue` (they may hold VNodes or action refs).
+  const revived = decodeTagged(
+    value as Record<string, unknown>,
+    (v) => parseValue(v as FlightValue, registry),
+  );
+  if (revived !== NOT_TAGGED) return revived;
 
   // A plain object. Reverse the serializer's `$`-key escaping (a leading `$` was
   // doubled) so a user object with a `$`-prefixed key round-trips as DATA and can never

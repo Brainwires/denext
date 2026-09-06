@@ -14,6 +14,14 @@ import type { ApiMatch } from "../src/router/match.ts";
 import type { ApiRoute, RouteManifest } from "../src/router/manifest.ts";
 import type { RouteParams } from "../src/router/segments.ts";
 import type { ApiModule, ModuleLoader } from "../src/server/types.ts";
+import { ApiError } from "../src/server/api-error.ts";
+import {
+  forbidden,
+  notFound,
+  permanentRedirect,
+  redirect,
+  unauthorized,
+} from "../src/runtime/error-boundary.ts";
 
 // --- helpers for the direct handleApi layer -------------------------------
 
@@ -295,4 +303,177 @@ Deno.test("createApp threads dynamic API params from the matched route", async (
   });
   const res = await app(new Request("http://localhost/api/users/99"));
   assertEquals(await res.json(), { id: "99" });
+});
+
+// --- 3. control signals, typed errors, and the body cap (the handleApi seam) -----
+
+Deno.test("handleApi: redirect()/permanentRedirect() thrown in a handler become the redirect", async () => {
+  const res = await dispatch({ GET: () => redirect("/login") }, req("GET"));
+  assertEquals([res.status, res.headers.get("location")], [307, "/login"]);
+  const perm = await dispatch({ GET: () => permanentRedirect("/new") }, req("GET"));
+  assertEquals(perm.status, 308);
+  // A user-controlled target is normalized so it cannot become a protocol-relative escape.
+  const evil = await dispatch({ GET: () => redirect("//evil.com/x") }, req("GET"));
+  assertEquals(evil.headers.get("location"), "/evil.com/x");
+});
+
+Deno.test("handleApi: notFound()/forbidden()/unauthorized() are 404/403/401 (JSON, or text for a browser)", async () => {
+  const nf = await dispatch({ GET: () => notFound() }, req("GET"));
+  assertEquals(nf.status, 404);
+  assertEquals((await nf.json()).error.code, "not_found");
+  const fb = await dispatch({ GET: () => forbidden() }, req("GET"));
+  assertEquals([fb.status, (await fb.json()).error.code], [403, "forbidden"]);
+  const ua = await dispatch({ GET: () => unauthorized() }, req("GET"));
+  assertEquals([ua.status, (await ua.json()).error.code], [401, "unauthorized"]);
+  const browser = await dispatch(
+    { GET: () => notFound() },
+    new Request("http://localhost/api/x", { headers: { accept: "text/html,*/*" } }),
+  );
+  assertEquals(browser.status, 404);
+  assertStringIncludes(browser.headers.get("content-type") ?? "", "text/plain");
+  assertEquals(await browser.text(), "Not Found");
+});
+
+Deno.test("createApp: a thrown ApiError is its JSON envelope verbatim, with a request id", async () => {
+  const app = appWithApi({
+    GET: () => {
+      throw new ApiError(409, "conflict", { message: "already exists", data: { id: 7 } });
+    },
+  });
+  const res = await app(new Request("http://localhost/api/thing"));
+  assertEquals(res.status, 409);
+  assert(res.headers.get("x-request-id"));
+  assertEquals(await res.json(), {
+    error: { code: "conflict", status: 409, message: "already exists", data: { id: 7 } },
+  });
+});
+
+Deno.test("createApp: a declared over-cap body is a 413 before the handler runs", async () => {
+  let ran = false;
+  const app = appWithApi({
+    POST: async (r) => {
+      ran = true;
+      return Response.json(await r.json());
+    },
+  }, { apiMaxBodyBytes: 16 });
+  const body = JSON.stringify({ padding: "x".repeat(64) });
+  // A real server sets Content-Length from the socket; a constructed Request needs it spelled out.
+  const res = await app(
+    new Request("http://localhost/api/thing", {
+      method: "POST",
+      body,
+      headers: { "content-type": "application/json", "content-length": String(body.length) },
+    }),
+  );
+  assertEquals(res.status, 413);
+  assertEquals((await res.json()).error.code, "payload_too_large");
+  assertEquals(ran, false, "the declared-length fast path must refuse before the handler runs");
+});
+
+Deno.test("handleApi: a chunked body read past the cap is a 413; under the cap it streams", async () => {
+  const chunked = (chunks: string[]) =>
+    new Request("http://localhost/api/x", {
+      method: "POST",
+      body: new ReadableStream({
+        start(c) {
+          for (const ch of chunks) c.enqueue(new TextEncoder().encode(ch));
+          c.close();
+        },
+      }),
+      // @ts-ignore duplex is required by the spec for streaming bodies
+      duplex: "half",
+    });
+  const echo: ApiModule = { POST: async (r) => new Response(await r.text()) };
+  const over = await handleApiWithCap(echo, chunked(["0123456789", "0123456789"]), 16);
+  assertEquals(over.status, 413);
+  const under = await handleApiWithCap(echo, chunked(["0123", "4567"]), 16);
+  assertEquals([under.status, await under.text()], [200, "01234567"]);
+});
+
+Deno.test("handleApi: `export const maxBodyBytes = false` lifts the cap; a number raises it", async () => {
+  const big = "x".repeat(2 * 1024 * 1024);
+  const unbounded = {
+    POST: async (r: Request) => new Response(String((await r.text()).length)),
+    maxBodyBytes: false,
+  };
+  const res = await handleApiWithCap(unbounded as unknown as ApiModule, req("POST", big), 16);
+  assertEquals([res.status, await res.text()], [200, String(big.length)]);
+  const raised = {
+    POST: async (r: Request) => new Response(String((await r.text()).length)),
+    maxBodyBytes: 4 * 1024 * 1024,
+  };
+  const ok = await handleApiWithCap(raised as unknown as ApiModule, req("POST", big), 16);
+  assertEquals(ok.status, 200);
+  // Default cap (1 MiB) refuses the 2 MiB body on a plain route.
+  const capped = await dispatch(
+    { POST: async (r) => new Response(await r.text()) },
+    req("POST", big),
+  );
+  assertEquals(capped.status, 413);
+});
+
+Deno.test("handleApi: the cap leaves GET, and a small multipart formData(), untouched", async () => {
+  const get = await handleApiWithCap({ GET: () => new Response("ok") }, req("GET"), 1);
+  assertEquals(await get.text(), "ok");
+  const fd = new FormData();
+  fd.set("name", "Ada");
+  const mod: ApiModule = {
+    POST: async (r) => new Response(String((await r.formData()).get("name"))),
+  };
+  const res = await dispatch(
+    mod,
+    new Request("http://localhost/api/x", { method: "POST", body: fd }),
+  );
+  assertEquals([res.status, await res.text()], [200, "Ada"]);
+});
+
+/** Direct handleApi with an explicit app-level cap. */
+function handleApiWithCap(
+  mod: ApiModule,
+  request: Request,
+  maxBodyBytes: number,
+): Promise<Response> {
+  const match: ApiMatch = {
+    route: {
+      kind: "api",
+      filePath: "route.ts",
+      pattern: parsePattern("/api/x"),
+      routePath: "/api/x",
+    },
+    params: {},
+  };
+  return handleApi(match, request, () => Promise.resolve(mod), { maxBodyBytes });
+}
+
+Deno.test("handleApi: a request flagged x-denext-wire is decoded before a plain handler's req.json()", async () => {
+  const seen: unknown[] = [];
+  const mod: ApiModule = {
+    POST: async (r) => {
+      seen.push(await r.json());
+      return new Response("ok");
+    },
+  };
+  const flagged = (body: unknown) =>
+    new Request("http://localhost/api/x", {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "content-type": "application/json", "x-denext-wire": "1" },
+    });
+  const ok = await dispatch(mod, flagged({ when: { $: "D", v: "1970-01-01T00:00:00.000Z" } }));
+  assertEquals(ok.status, 200);
+  assert((seen[0] as { when: Date }).when instanceof Date);
+  // Unflagged: untouched (a literal `$` object stays data).
+  await dispatch(
+    mod,
+    new Request("http://localhost/api/x", {
+      method: "POST",
+      body: JSON.stringify({ when: { $: "D", v: "x" } }),
+      headers: { "content-type": "application/json" },
+    }),
+  );
+  assertEquals(seen[1], { when: { $: "D", v: "x" } });
+  // A malformed tag in a flagged body is a 400, not a 500.
+  const bad = await dispatch(mod, flagged({ when: { $: "Z" } }));
+  assertEquals(bad.status, 400);
+  assertEquals((await bad.json()).error.code, "bad_request");
 });

@@ -102,18 +102,56 @@ export {
 // Public environment variables (client reads only the public-prefixed subset).
 export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "../runtime/public-env.ts";
 // Typed API client (pair with the generated `./.denext/api.ts` ApiSchema).
-export { apiRequest, buildPath, createApiClient } from "../runtime/api-client.ts";
+export {
+  ApiClientError,
+  apiRequest,
+  buildPath,
+  createApiClient,
+  isApiClientError,
+} from "../runtime/api-client.ts";
+// `useApi`: the typed client as a hook (Suspense-capable; tag invalidation via a Live transport).
+export { setApiInvalidationSource, useApi } from "../client/use-api.ts";
+export type {
+  ApiEndpointOf,
+  ApiInvalidationSource,
+  UseApiOptions,
+  UseApiResult,
+} from "../client/use-api.ts";
 export type {
   ApiClient,
+  ApiClientOptions,
   ApiEndpoint,
+  ApiErrorEnvelope,
   ApiRequestOptions,
   ApiSchema,
+  ErrorsOf,
+  FreeQuery,
   HttpMethod,
+  RegisteredApi,
+  RegisteredSchema,
   RequestArgs,
   RequestOf,
   RequiredKeys,
   ResponseOf,
+  TypedQuery,
 } from "../runtime/api-client.ts";
+// Type-level inference behind the generated `.denext/api.ts` (`ModuleEndpoints<typeof Route, P>`).
+export type {
+  ApiPhantom,
+  HandlerBody,
+  HandlerErrors,
+  HandlerLike,
+  HandlerParams,
+  HandlerQuery,
+  HandlerResponse,
+  InferEndpoint,
+  Informative,
+  IsAny,
+  ModuleEndpoints,
+  PlainBody,
+  PlainResponse,
+  ValueResult,
+} from "../runtime/api-infer.ts";
 
 export {
   Link,

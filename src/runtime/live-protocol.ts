@@ -57,10 +57,12 @@ export interface LiveDataSubscribe {
   subId: string;
   /** The registered server-function id to run (a `serverAction`'s `denextActionId`). */
   actionId: string;
-  /** Arguments passed to the server function. */
+  /** Arguments passed to the server function (wire-codec encoded when `enc` is set). */
   args: unknown[];
   /** Cache tags whose invalidation triggers a recompute + push. */
   tags: string[];
+  /** `1` when `args` carries wire-codec tags (Date/Map/Set/BigInt/…) and must be decoded. */
+  enc?: 1;
 }
 
 /** Client → server: drop a {@link LiveDataSubscribe}. */
@@ -75,8 +77,10 @@ export interface LiveData {
   type: "data";
   /** The subscription this value is for. */
   subId: string;
-  /** The server function's return value (JSON), or `undefined` on error. */
+  /** The server function's return value (JSON; wire-codec encoded when `enc` is set), or `undefined` on error. */
   value: unknown;
+  /** `1` when `value` carries wire-codec tags and must be decoded. */
+  enc?: 1;
   /** Present when the recompute failed. */
   error?: string;
 }
@@ -128,11 +132,75 @@ export interface LivePresenceState {
 }
 
 /** Any message the client may send. */
+/**
+ * Client → server: be told when any of `tags` is invalidated (`revalidateTag`). Backs
+ * `useApi({ tags })`: the client REFETCHES over HTTP with its own cookies on an `invalidate`,
+ * so data authorization stays with the route handler — the socket only carries tag names.
+ */
+export interface LiveTagsSubscribe {
+  type: "tags-subscribe";
+  /** Client-generated id correlating invalidations back to this watch. */
+  subId: string;
+  /** The cache tags to watch. */
+  tags: string[];
+}
+
+/** Client → server: drop a {@link LiveTagsSubscribe}. */
+export interface LiveTagsUnsubscribe {
+  type: "tags-unsubscribe";
+  /** The watch to drop. */
+  subId: string;
+}
+
+/** Server → client: some of a watch's tags were invalidated. */
+export interface LiveInvalidate {
+  type: "invalidate";
+  /** The watch this concerns. */
+  subId: string;
+  /** The watched tags that were invalidated. */
+  tags: string[];
+}
+
+/** Client → server: receive a `createChannel` channel's pushes for `key`. */
+export interface LiveChannelSubscribe {
+  type: "channel-subscribe";
+  /** Client-generated id correlating pushes back to this subscription. */
+  subId: string;
+  /** The channel's stable id. */
+  channelId: string;
+  /** The key within the channel. */
+  key: string;
+}
+
+/** Client → server: drop a {@link LiveChannelSubscribe}. */
+export interface LiveChannelUnsubscribe {
+  type: "channel-unsubscribe";
+  /** The subscription to drop. */
+  subId: string;
+}
+
+/** Server → client: one published payload. */
+export interface LiveChannel {
+  type: "channel";
+  /** The subscription this payload is for. */
+  subId: string;
+  /** The publishing instance's per-key sequence (orders frames from one instance only). */
+  seq: number;
+  /** The payload (wire-codec encoded when `enc` is set). */
+  value: unknown;
+  /** `1` when `value` carries codec tags. */
+  enc?: 1;
+}
+
 export type LiveClientMessage =
   | LiveSubscribe
   | LivePong
   | LiveDataSubscribe
   | LiveDataUnsubscribe
+  | LiveTagsSubscribe
+  | LiveTagsUnsubscribe
+  | LiveChannelSubscribe
+  | LiveChannelUnsubscribe
   | LivePresenceJoin
   | LivePresenceUpdate
   | LivePresenceLeave;
@@ -165,11 +233,17 @@ export interface LiveError {
   /**
    * Machine-readable cause: `denied` (a policy said no), `no-policy` (a gated hook
    * was used with NO `live` policy configured — a setup error, surfaced
-   * loudly), `limit` (a cap/size was hit), `bad-message`.
+   * loudly), `limit` (a cap/size was hit), `bad-message`, `invalid-input` (a
+   * `defineSubscription` schema rejected the input — see `fieldErrors`), `failed` (a
+   * resolver threw — redacted in production, `digest` correlates with the server log).
    */
-  code: "denied" | "no-policy" | "limit" | "bad-message";
+  code: "denied" | "no-policy" | "limit" | "bad-message" | "invalid-input" | "failed";
   /** A short, non-sensitive human explanation (dev-facing). */
   reason?: string;
+  /** Per-field validation messages (`invalid-input`). */
+  fieldErrors?: Record<string, string>;
+  /** The redaction digest of a resolver failure (`failed`, production). */
+  digest?: string;
   /** The data subscription this error concerns, when applicable. */
   subId?: string;
   /** The presence room this error concerns, when applicable. */
@@ -182,5 +256,7 @@ export type LiveServerMessage =
   | LiveRefresh
   | LivePing
   | LiveData
+  | LiveInvalidate
+  | LiveChannel
   | LivePresenceState
   | LiveError;

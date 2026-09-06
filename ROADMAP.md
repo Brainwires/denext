@@ -6,7 +6,7 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the mission + its superiority
 > pillars in [MISSION.md](./MISSION.md).
 >
-> `development` is **2.0.7** (the version line `deno task bump` rewrites).
+> `development` is **2.1.0-rc.1** (the version line `deno task bump` rewrites).
 > 2.0 — the DX release (unified CLI, universal migration, scaffolding/codegen, an
 > instant dev loop, first-party DevTools, end-to-end typed routes and actions) —
 > shipped from it. **2.1 is the next engineering cycle**: a typed,
@@ -18,48 +18,40 @@
 
 ## 2.1 keystone — a typed, self-documenting API surface
 
-**Where 2.0 leaves it.** API routes are `route.ts` files exporting plain
-`GET`/`POST`/… functions over `Request → Response`, dispatched through
-`handleApi` (`src/server/api.ts`). 2.0 already gives them **static** end-to-end
-types: `TypedResponse<T>` / `TypedRequest<B>` (`denext/server`) feed the generated
-`.denext/api.ts`, and `createApiClient` type-checks every call to your own API;
-`defineAction` validates `FormData` through any Standard-Schema validator with its
-`Out` type flowing into `useActionState`. **Still missing:** runtime request
-validation for route handlers (a malformed body reaches user code), a
-machine-readable description (no OpenAPI), a docs UI, and a GraphQL surface. 2.1
-closes that gap with first-party plugins on the settled plugin contract — the
+**Where 2.1.0-rc.1 leaves it.** Route handlers are schema-validated in core:
+`defineApi({ params, query, body, response, errors }, handler)` (`denext/server`)
+validates through any Standard Schema before user code runs, `createApi().use()`
+composes typed middleware, `ApiError` / `ApiClientError` type the failure path, the
+generated `.denext/api.ts` infers everything from the route modules' types (no
+`deno doc`), and the client dedupes, batches and dispatches in-process during SSR.
+`apiDefinitionOf(handler)` (`denext/plugin-kit`) exposes a route's definition.
+**Still missing:** a machine-readable description (no OpenAPI), a docs UI, and a
+GraphQL surface. Those are first-party plugins on the settled plugin contract — the
 developer experience people praise in NestJS's `@nestjs/swagger`, reached the
 Deno-idiomatic way.
 
-**Approach (decided — CHANGELOG, 2.0.7):** schema-first, not decorator-first —
+**Approach (decided — CHANGELOG, 2.1.0-rc.1):** schema-first, not decorator-first —
 one schema per route, colocated with the handler, from which validation, static
 types and the OpenAPI document derive.
 
 ### WS1 — `@denext/openapi` (the anchor deliverable)
 
-- **Route helper.** `defineApi({ summary, params, query, body, response }, handler)`
-  — the route-handler twin of `defineAction`: one Standard-Schema validator (Zod /
-  Valibot / TypeBox / ArkType) per method; handlers receive parsed, typed
-  `params` / `query` / `body` instead of a raw `Request`. It must compose with
-  `TypedResponse` and the generated `.denext/api.ts`, so a schema authored once
-  feeds the static client types, the runtime validation **and** the spec.
-- **Validation seam.** Wrap `handleApi` — the single dispatch choke point — so a
-  schema mismatch returns a structured `400` before user code runs. Additive, and
-  a no-op for un-annotated routes.
 - **Spec generation.** Walk the route manifest (`src/router/manifest.ts`), read
-  each route's attached schema, emit `openapi.json` three ways through the plugin
-  contract (`src/plugin/mod.ts`): `addRequestHandler` serves `/openapi.json` live,
-  `addBuildStep` writes a static spec at `denext build`, `addCommand` adds
-  `denext openapi` (emit / diff / lint the spec in CI).
+  each route's definition through `apiDefinitionOf` (`denext/plugin-kit` — the
+  `summary` / `description` / schemas / `errors` a `defineApi` declares), emit
+  `openapi.json` three ways through the plugin contract (`src/plugin/mod.ts`):
+  `addRequestHandler` serves `/openapi.json` live, `addBuildStep` writes a static
+  spec at `denext build`, `addCommand` adds `denext openapi` (emit / diff / lint the
+  spec in CI). Standard Schema carries no JSON-Schema export of its own: emit from
+  validators that expose one (TypeBox natively; Zod via `z.toJSONSchema`), and fall
+  back to `{}` with a lint warning for opaque ones.
 - **Docs UI.** Serve Swagger UI or Scalar at `/docs` via `addRequestHandler` —
   core routes always win, so it never shadows an app page.
 - **Reference to follow:** `packages/pages-router` dogfoods the same seams with a
   whole alternate pipeline; this plugin is far smaller.
 
-**Definition of done:** an unmodified app adds `@denext/openapi`, annotates one
-route with `defineApi`, and gets request validation + a live `/openapi.json` +
-`/docs` with **zero** config or toolchain change — and `createApiClient` still
-type-checks the call.
+**Definition of done:** an app that already uses `defineApi` adds `@denext/openapi`
+and gets a live `/openapi.json` + `/docs` with **zero** config or toolchain change.
 
 ### WS2 — `@denext/graphql`
 
@@ -68,8 +60,9 @@ type-checks the call.
 - **Schema.** **Pothos** (code-first, type-safe, **no decorators**) is the
   recommended builder. TypeGraphQL / `@nestjs/graphql` are out: both are
   decorator-metadata-based and hit the blocker WS1 rejected.
-- **Subscriptions.** GraphQL-over-SSE on denext's existing SSE/Live transport, not
-  a separate WebSocket server.
+- **Subscriptions.** GraphQL subscriptions over the Live socket's channels
+  (`createChannel` + a `ChannelTransport` for multi-instance delivery), not a
+  separate WebSocket server.
 - **CLI.** `denext graphql` (`addCommand`) to print the SDL / run codegen in CI.
 
 **Definition of done:** `@denext/graphql` + a Pothos schema serves a working
@@ -80,8 +73,8 @@ type-checks the call.
 Both plugins build entirely on the **settled** public contract (`@denext/denext`
 
 - `@denext/denext/plugin-kit`; [PLUGINS.md](./PLUGINS.md) → "Stability — the
-  three tiers"). If either surfaces a genuinely missing primitive (e.g. a typed
-  accessor for a route's attached schema on the manifest), **add it to
+  three tiers"). `apiDefinitionOf` (a route's attached definition) already lives
+  there. If either surfaces another genuinely missing primitive, **add it to
   `plugin-kit`** as a deliberate, tested semver addition guarded in
   `tests/plugin-kit.test.ts` — never widen the private `src/router` / `src/build` /
   `src/server` surface.

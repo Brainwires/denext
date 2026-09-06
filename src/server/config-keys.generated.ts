@@ -30,6 +30,7 @@ export const CONFIG_KEYS = [
   "publicEnv",
   "streaming",
   "live",
+  "apiBatch",
   "nodeResolve",
   "cacheComponents",
   "experimental",

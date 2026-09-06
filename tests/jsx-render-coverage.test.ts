@@ -76,7 +76,7 @@ Deno.test("flight: a plain fragment expands to its children array", async () => 
   assertEquals(flight[1].t, "b");
 });
 
-Deno.test("flight: array + object props serialize; symbol/bigint props are dropped", async () => {
+Deno.test("flight: array + object props serialize; symbols are dropped, a bigint is tagged", async () => {
   const flight = await renderToFlight(
     h(Island, {
       list: [1, "two", Symbol("gone"), 3],
@@ -90,8 +90,8 @@ Deno.test("flight: array + object props serialize; symbol/bigint props are dropp
   assertEquals(flight.p.list, [1, "two", 3]);
   // Object drops the symbol-valued key.
   assertEquals(flight.p.obj, { a: 1, nested: { keep: true } });
-  // Bigint is not serializable → dropped entirely.
-  assert(!("big" in flight.p));
+  // A bigint crosses as the wire codec's `n` tag (JSON itself has no bigint).
+  assertEquals(flight.p.big, { $: "n", v: "10" });
   assertEquals(flight.p.keepStr, "y");
 });
 

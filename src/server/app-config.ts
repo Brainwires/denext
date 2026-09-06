@@ -3,6 +3,7 @@
 // bridge (`reportRequestError`). Imported by every pipeline module; imports none of them.
 
 import type { PageRoute, RouteManifest } from "../router/manifest.ts";
+import type { ApiBatchConfig } from "./config.ts";
 import type { ModuleLoader } from "./types.ts";
 import type { MiddlewareRunner } from "./middleware.ts";
 import type { I18nConfig } from "./i18n.ts";
@@ -155,6 +156,15 @@ export interface AppConfig {
    * uploads).
    */
   actionMaxBodyBytes?: number;
+  /**
+   * Max request body size in bytes for `route.ts` handlers (default 1 MiB). A route raises
+   * or lifts its own cap with `export const maxBodyBytes = N | false`. An over-cap body is a
+   * 413 before the handler runs (declared `Content-Length`) or errors the body stream as
+   * the handler reads it.
+   */
+  apiMaxBodyBytes?: number;
+  /** Limits for the typed-API batch endpoint (`POST /_denext/api-batch`). */
+  apiBatch?: ApiBatchConfig;
   /**
    * An explicit public origin (e.g. `"https://example.com"`) used to build
    * absolute URLs (auto-populated `og:image`, canonical). Overrides request

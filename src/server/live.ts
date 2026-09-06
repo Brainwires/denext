@@ -24,6 +24,22 @@
  */
 
 import type { FlightNode } from "../jsx/render-to-flight.ts";
+import {
+  isForbidden,
+  isNotFound,
+  isRedirect,
+  isUnauthorized,
+  toClientError,
+} from "../runtime/error-boundary.ts";
+import { decodeWire, prepareWire, WIRE_ENC } from "../runtime/wire-codec.ts";
+import { getSubscriptionDef, type SubscriptionDef } from "../runtime/server-action.ts";
+import { type ChannelHub, type ChannelSub, createChannelHub } from "./live-channels.ts";
+import {
+  type ChannelTransport,
+  setChannelPayloadCap,
+  watchChannelTransport,
+} from "../runtime/channel.ts";
+import { ActionValidationError } from "../runtime/define-action.ts";
 import type { FlightNavPayload } from "./document.ts";
 import type { LiveConfig, LiveConnectionContext, LiveLimits } from "./config.ts";
 import { ID_PATH_PROP } from "../jsx/tree-id.ts";
@@ -44,6 +60,8 @@ interface DataSub {
   actionId: string;
   args: unknown[];
   tags: string[];
+  /** The `defineSubscription` definition when the action is one (validated + gated). */
+  def?: SubscriptionDef;
   /**
    * Per-subscription single-flight (mirrors the `<Live>` boundary's `conn.busy`/
    * `conn.dirty`): a recompute in flight sets `busy`; a further invalidation sets
@@ -78,6 +96,12 @@ interface Conn {
   boundaries: LiveBoundarySub[];
   /** Live-data subscriptions ({@link useLive}), keyed by client sub id. */
   dataSubs: Map<string, DataSub>;
+  /** Tag watches (`useApi({ tags })`): client sub id → the tags it watches. */
+  tagSubs: Map<string, string[]>;
+  /** Channel subscriptions (`useChannel`), keyed by client sub id. */
+  channelSubs: Map<string, ChannelSub>;
+  /** Channel sub ids whose last frame was shed (replayed by drain recovery). */
+  recoverChannels?: Set<string>;
   /** Presence rooms this connection is in → this peer's state in each. */
   presenceRooms: Map<string, unknown>;
   /** A re-render is in flight; further invalidations set `dirty` to re-run once. */
@@ -115,6 +139,10 @@ const DEFAULT_LIMITS: Required<LiveLimits> = {
   maxRoomsPerConnection: 32,
   maxBoundaries: 256,
   maxMessageBytes: 64 * 1024,
+  maxSubscriptionInputBytes: 16 * 1024,
+  maxChannelsPerConnection: 32,
+  maxChannelPayloadBytes: 16 * 1024,
+  channelAuthTtlSeconds: 300,
   idleTimeoutSeconds: 120,
   maxConcurrentRenders: 40,
   renderTimeoutSeconds: 30,
@@ -202,6 +230,8 @@ export function installLiveHub(opts: {
   limits = sanitizeLimits(policy.limits);
   warnedNoPolicy = false;
   setLiveInvalidateHook(onTagInvalidated);
+  bindChannelTransport();
+  setChannelPayloadCap(limits.maxChannelPayloadBytes);
 }
 
 /**
@@ -232,6 +262,7 @@ export function sanitizeLimits(overrides?: LiveLimits): Required<LiveLimits> {
 /** Tear down the hub (tests / shutdown): clear the cache hook and drop connections. */
 export function uninstallLiveHub(): void {
   setLiveInvalidateHook(null);
+  unbindChannelTransport();
   appHandler = null;
   policy = {};
   limits = DEFAULT_LIMITS;
@@ -425,6 +456,8 @@ function attachConnection(
     url: "",
     boundaries: [],
     dataSubs: new Map(),
+    tagSubs: new Map(),
+    channelSubs: new Map(),
     presenceRooms: new Map(),
     busy: false,
     dirty: null,
@@ -459,6 +492,7 @@ function attachConnection(
 /** Remove a connection from the hub and every presence room it was in (rebroadcasting). */
 function dropConnection(conn: Conn): void {
   connections.delete(conn);
+  channelHub.drop(conn);
   if (conn.recoverTimer != null) {
     clearTimeout(conn.recoverTimer);
     conn.recoverTimer = null;
@@ -522,6 +556,18 @@ function handleClientMessage(conn: Conn, raw: string): void {
     case "data-unsubscribe":
       if (typeof msg.subId === "string") conn.dataSubs.delete(msg.subId);
       return;
+    case "tags-subscribe":
+      void handleTagsSubscribe(conn, msg);
+      return;
+    case "tags-unsubscribe":
+      if (typeof msg.subId === "string") conn.tagSubs.delete(msg.subId);
+      return;
+    case "channel-subscribe":
+      void channelHub.subscribe(conn, msg);
+      return;
+    case "channel-unsubscribe":
+      if (typeof msg.subId === "string") channelHub.unsubscribe(conn, msg.subId);
+      return;
     case "presence-join":
     case "presence-update":
       void handlePresence(conn, msg);
@@ -568,7 +614,7 @@ function handlePresenceLeave(
 /** Authorize + register a `useLive` data subscription (subscribing runs the action). */
 async function handleDataSubscribe(
   conn: Conn,
-  msg: { subId?: unknown; actionId?: unknown; args?: unknown; tags?: unknown },
+  msg: { subId?: unknown; actionId?: unknown; args?: unknown; tags?: unknown; enc?: unknown },
 ): Promise<void> {
   if (typeof msg.subId !== "string" || typeof msg.actionId !== "string") return;
   const subId = msg.subId;
@@ -577,14 +623,20 @@ async function handleDataSubscribe(
     sendError(conn, "limit", "too many subscriptions", { subId });
     return;
   }
-  const sub: DataSub = {
-    actionId: msg.actionId,
-    args: Array.isArray(msg.args) ? msg.args : [],
-    tags: Array.isArray(msg.tags) ? msg.tags : [],
-  };
+  const args = decodeSubscribeArgs(msg);
+  if (args === null || depthOf(args, 0) > MAX_INPUT_DEPTH) {
+    sendError(conn, "bad-message", "malformed subscription args", { subId });
+    return;
+  }
+  if (utf8Bytes(JSON.stringify(args) ?? "") > limits.maxSubscriptionInputBytes) {
+    sendError(conn, "limit", "subscription input too large", { subId });
+    return;
+  }
+  const sub = await buildDataSub(conn, subId, msg.actionId, args, msg.tags);
+  if (!sub) return; // refused — the error frame was sent
   let decision: AuthDecision = "deny";
   try {
-    decision = await authorizeData(conn, sub);
+    decision = await authorizeSub(conn, sub);
   } catch {
     decision = "deny";
   }
@@ -696,7 +748,74 @@ function flush(): void {
   for (const conn of connections) {
     void pushUpdates(conn, invalidated); // <Live> boundary patches
     pushDataUpdates(conn, invalidated); // useLive data subscriptions
+    pushTagInvalidations(conn, invalidated); // useApi({ tags }) watches
   }
+}
+
+/** Tell each tag watch which of its tags were invalidated (the client refetches over HTTP). */
+function pushTagInvalidations(conn: Conn, invalidated: Set<string>): void {
+  for (const [subId, tags] of conn.tagSubs) {
+    const hit = tags.filter((t) => invalidated.has(t));
+    if (hit.length) send(conn, { type: "invalidate", subId, tags: hit });
+  }
+}
+
+/** Caps on a tag watch's shape (a hostile frame can't stuff the per-connection table). */
+const MAX_WATCH_TAGS = 32;
+const MAX_TAG_LENGTH = 256;
+
+/** The frame's `tags`: an array of bounded strings, else `null`. */
+function sanitizeTags(raw: unknown): string[] | null {
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_WATCH_TAGS) return null;
+  const out: string[] = [];
+  for (const t of raw) {
+    if (typeof t !== "string" || t.length === 0 || t.length > MAX_TAG_LENGTH) return null;
+    out.push(t);
+  }
+  return out;
+}
+
+/** Decide whether a connection may watch `tags` (names only — the data is re-authorized on refetch). */
+async function authorizeTags(conn: Conn, tags: string[]): Promise<AuthDecision> {
+  if (policy.canWatchTags) {
+    const ok = await withConnContext(conn, () => policy.canWatchTags!(connContext(conn), tags));
+    return ok ? "allow" : "deny";
+  }
+  return policy.allowAnonymous ? "allow" : "no-policy";
+}
+
+/** Authorize + register a `useApi({ tags })` watch. */
+async function handleTagsSubscribe(
+  conn: Conn,
+  msg: { subId?: unknown; tags?: unknown },
+): Promise<void> {
+  if (typeof msg.subId !== "string" || msg.subId.length > 64) return;
+  const subId = msg.subId;
+  const tags = sanitizeTags(msg.tags);
+  if (!tags) {
+    sendError(conn, "bad-message", "malformed tags", { subId });
+    return;
+  }
+  if (!conn.tagSubs.has(subId) && conn.tagSubs.size >= limits.maxSubscriptionsPerConnection) {
+    sendError(conn, "limit", "too many subscriptions", { subId });
+    return;
+  }
+  let decision: AuthDecision = "deny";
+  try {
+    decision = await authorizeTags(conn, tags);
+  } catch {
+    decision = "deny";
+  }
+  if (decision !== "allow") {
+    refuse(conn, decision, "tag watch", { subId });
+    return;
+  }
+  if (!connections.has(conn)) return; // disconnected while authorizing
+  if (!conn.tagSubs.has(subId) && conn.tagSubs.size >= limits.maxSubscriptionsPerConnection) {
+    sendError(conn, "limit", "too many subscriptions", { subId });
+    return;
+  }
+  conn.tagSubs.set(subId, tags);
 }
 
 /** Recompute + push every live-data subscription whose tags were invalidated. */
@@ -704,6 +823,103 @@ function pushDataUpdates(conn: Conn, invalidated: Set<string>): void {
   for (const [subId, sub] of conn.dataSubs) {
     if (sub.tags.some((t) => invalidated.has(t))) void recomputeData(conn, subId, sub);
   }
+}
+
+/** Nesting deeper than this in a subscription input is refused (a hostile frame, not data). */
+const MAX_INPUT_DEPTH = 32;
+
+/** The nesting depth of a JSON value (bails early past the cap). */
+function depthOf(v: unknown, d: number): number {
+  if (d > MAX_INPUT_DEPTH || v === null || typeof v !== "object") return d;
+  let max = d;
+  for (const child of Object.values(v as Record<string, unknown>)) {
+    max = Math.max(max, depthOf(child, d + 1));
+    if (max > MAX_INPUT_DEPTH) return max;
+  }
+  return max;
+}
+
+/**
+ * The subscription to store: a plain live-readable action keeps the client's args and tags; a
+ * `defineSubscription` has its input VALIDATED (rejected → `invalid-input`, nothing stored) and
+ * its tags derived on the server — the client's tags are ignored.
+ */
+async function buildDataSub(
+  conn: Conn,
+  subId: string,
+  actionId: string,
+  args: unknown[],
+  clientTags: unknown,
+): Promise<DataSub | null> {
+  const def = getSubscriptionDef(actionId);
+  if (!def) return { actionId, args, tags: Array.isArray(clientTags) ? clientTags : [] };
+  try {
+    // A user schema may be slow or async: bound it like a render.
+    const { parsed, tags } = await withDeadline(renderDeadlineMs(), () => def.parse(args[0]));
+    return { actionId, args: [parsed], tags: [...tags], def };
+  } catch (err) {
+    const validation = err instanceof ActionValidationError ? err : null;
+    sendError(conn, "invalid-input", validation?.message ?? "invalid input", {
+      subId,
+      ...(validation?.fieldErrors ? { fieldErrors: { ...validation.fieldErrors } } : {}),
+    });
+    return null;
+  }
+}
+
+/** `authorizeData`, then a `defineSubscription`'s own row-level `authorize` (both re-run per recompute). */
+async function authorizeSub(conn: Conn, sub: DataSub): Promise<AuthDecision> {
+  const base = await authorizeData(conn, sub);
+  if (base !== "allow" || !sub.def?.authorize) return base;
+  const ok = await withConnContext(
+    conn,
+    () => sub.def!.authorize!(sub.args[0], { connection: connContext(conn) }),
+  );
+  return ok ? "allow" : "deny";
+}
+
+/**
+ * A recompute that threw. Forbidden/unauthorized → `denied` and the subscription is dropped;
+ * a redirect is a bug in a fetcher (dropped silently); not-found → `failed` but kept (it may
+ * exist after the next invalidation); anything else → `failed` with the production redaction
+ * (generic message + digest; the real error is logged server-side), kept for the next try.
+ */
+function subFailure(conn: Conn, subId: string, err: unknown): void {
+  if (isForbidden(err) || isUnauthorized(err)) {
+    sendError(conn, "denied", "subscription not permitted", { subId });
+    conn.dataSubs.delete(subId);
+    return;
+  }
+  if (isRedirect(err)) {
+    conn.dataSubs.delete(subId);
+    return;
+  }
+  if (isNotFound(err)) return sendError(conn, "failed", "not found", { subId });
+  const client = toClientError(err);
+  sendError(conn, "failed", client.message, {
+    subId,
+    ...(client.digest ? { digest: client.digest } : {}),
+  });
+}
+
+/** The subscription's `args` — wire-codec decoded when flagged `enc`; `null` when malformed. */
+function decodeSubscribeArgs(msg: { args?: unknown; enc?: unknown }): unknown[] | null {
+  const raw = Array.isArray(msg.args) ? msg.args : [];
+  if (msg.enc !== WIRE_ENC) return raw;
+  try {
+    const decoded = decodeWire(raw);
+    return Array.isArray(decoded) ? decoded : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A `data` frame whose value rides the wire codec (`enc` only when a tag was needed). */
+function dataFrame(subId: string, value: unknown): LiveServerMessage {
+  const p = prepareWire(value);
+  return p.tagged
+    ? { type: "data", subId, value: p.value, enc: WIRE_ENC }
+    : { type: "data", subId, value: p.value };
 }
 
 /** Run a subscription's server function under the viewer's session and push the result. */
@@ -719,21 +935,21 @@ async function recomputeData(conn: Conn, subId: string, sub: DataSub): Promise<v
       // Re-authorize on every recompute. `canSubscribe` ran once at subscribe time;
       // a mid-session authorization change (role/tenant revoked) must stop further
       // pushes, or a long-lived socket keeps receiving updates after access is lost.
-      const decision = await authorizeData(conn, sub);
+      const decision = await authorizeSub(conn, sub);
       if (decision !== "allow") {
-        send(conn, { type: "data", subId, value: undefined, error: "unauthorized" });
+        sendError(conn, "denied", "subscription not permitted", { subId });
         conn.dataSubs.delete(subId); // drop it; the client may re-subscribe if re-granted
         break;
       }
       try {
         const value = await withRenderSlot(() =>
-          withDeadline(renderDeadlineMs(), (s) => runFetcher(conn, sub.actionId, sub.args, s))
+          withDeadline(renderDeadlineMs(), (s) => runFetcher(conn, sub, s))
         );
-        send(conn, { type: "data", subId, value });
-      } catch {
+        send(conn, dataFrame(subId, value));
+      } catch (err) {
         // A thrown deadline (or a real fetcher error) lands here; the slot was already
         // released by `withDeadline`, so the fleet keeps moving.
-        send(conn, { type: "data", subId, value: undefined, error: "recompute failed" });
+        subFailure(conn, subId, err);
       }
       // Re-run only while still subscribed (unsubscribe deletes the sub mid-flight).
     } while (sub.dirty && conn.dataSubs.get(subId) === sub);
@@ -743,7 +959,7 @@ async function recomputeData(conn: Conn, subId: string, sub: DataSub): Promise<v
     // (most plausibly the app's `canSubscribe`/`authorizeData` hook dereferencing a
     // revoked session) would crash the whole process, dropping every connection — not
     // just this socket. Degrade like a denied recompute: notify + drop the sub.
-    send(conn, { type: "data", subId, value: undefined, error: "recompute failed" });
+    sendError(conn, "failed", "recompute failed", { subId });
     conn.dataSubs.delete(subId);
   } finally {
     sub.busy = false;
@@ -756,13 +972,13 @@ async function recomputeData(conn: Conn, subId: string, sub: DataSub): Promise<v
  * `getSession` / cache reads run as the viewer. The socket was origin-gated at
  * handshake; the fn must still authorize its own access (same as any server action).
  */
-function runFetcher(
-  conn: Conn,
-  actionId: string,
-  args: unknown[],
-  signal?: AbortSignal,
-): Promise<unknown> {
-  const handler = getServerAction(actionId);
+function runFetcher(conn: Conn, sub: DataSub, signal?: AbortSignal): Promise<unknown> {
+  const { actionId, args } = sub;
+  // A `defineSubscription` runs its resolver with the connection's identity; a plain
+  // live-readable action is invoked as registered.
+  const handler = sub.def
+    ? (input: unknown) => sub.def!.run(input, { connection: connContext(conn), signal })
+    : getServerAction(actionId);
   if (!handler) return Promise.reject(new Error(`unknown live action: ${actionId}`));
   const request = new Request(conn.url || conn.origin, {
     headers: conn.cookie ? { cookie: conn.cookie } : {},
@@ -907,6 +1123,48 @@ function drainRecover(conn: Conn): void {
       if (sub) void recomputeData(conn, subId, sub); // re-push the sub's latest value
     }
   }
+  channelHub.replayPending(conn); // channel frames: the LAST held value per sub, no recompute
+}
+
+// ── Channels (`createChannel` → `useChannel`) ────────────────────────────────
+
+const channelHub: ChannelHub<Conn> = createChannelHub<Conn>({
+  limits: () => limits,
+  sendFrame,
+  sendError,
+  refuse,
+  withConnContext,
+  connContext,
+  isConnected: (conn) => connections.has(conn),
+  withRenderSlot,
+  backPressured: (conn) => conn.socket.bufferedAmount > MAX_BUFFERED,
+  armRecover: (conn) => {
+    if (conn.recoverTimer == null) {
+      conn.recoverTimer = setTimeout(() => drainRecover(conn), RECOVER_POLL_MS);
+    }
+  },
+});
+
+/** The transport subscription delivering channel events to this hub (re-bound on transport change). */
+let stopChannelTransport: (() => void) | null = null;
+let stopWatchingTransport: (() => void) | null = null;
+
+/** Subscribe the hub to the channel transport (and follow transport swaps). */
+function bindChannelTransport(): void {
+  const bind = (t: ChannelTransport): void => {
+    stopChannelTransport?.();
+    stopChannelTransport = t.subscribe((ev) => channelHub.deliver(ev));
+  };
+  const { current, stop } = watchChannelTransport(bind);
+  stopWatchingTransport = stop;
+  bind(current);
+}
+
+function unbindChannelTransport(): void {
+  stopChannelTransport?.();
+  stopChannelTransport = null;
+  stopWatchingTransport?.();
+  stopWatchingTransport = null;
 }
 
 /**
@@ -955,6 +1213,8 @@ export const __backpressureTestSeam = {
       cookie: "",
       boundaries: [],
       dataSubs: new Map(),
+      tagSubs: new Map(),
+      channelSubs: new Map(),
       presenceRooms: new Map(),
       busy: false,
       dirty: null,

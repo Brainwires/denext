@@ -41,6 +41,8 @@ export interface StandardSchemaV1<Output = unknown> {
     readonly validate: (
       value: unknown,
     ) => StandardResult<Output> | Promise<StandardResult<Output>>;
+    /** The spec's optional inference slot: what the schema accepts and what it produces. */
+    readonly types?: { readonly input: unknown; readonly output: Output };
   };
 }
 
@@ -113,13 +115,25 @@ export function idleActionState<Out>(): ActionResult<Out> {
   return { ok: false, error: "" };
 }
 
-/** Is this a Standard Schema (vs a plain parser function)? */
-function isStandardSchema<In>(spec: InputSpec<In>): spec is StandardSchemaV1<In> {
+/**
+ * Is this a Standard Schema (vs a plain parser function)? Shared with `defineApi`, which
+ * accepts the same validator-agnostic schemas.
+ *
+ * @param spec A parser function or a Standard Schema.
+ * @returns True for a Standard Schema object.
+ */
+export function isStandardSchema<In>(spec: InputSpec<In>): spec is StandardSchemaV1<In> {
   return typeof spec === "object" && spec !== null && "~standard" in spec;
 }
 
-/** Collect a Standard Schema's issues into per-field messages (top-level path key → message). */
-function fieldErrorsFrom(issues: ReadonlyArray<StandardIssue>): Record<string, string> {
+/**
+ * Collect a Standard Schema's issues into per-field messages (top-level path key → message;
+ * the first message per field wins). Shared by every validated boundary.
+ *
+ * @param issues The schema's reported issues.
+ * @returns Field name → message.
+ */
+export function fieldErrorsFrom(issues: ReadonlyArray<StandardIssue>): Record<string, string> {
   const out: Record<string, string> = {};
   for (const issue of issues) {
     const first = issue.path?.[0];

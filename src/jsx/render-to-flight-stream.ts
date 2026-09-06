@@ -281,7 +281,7 @@ class StreamFlightRenderer extends VNodeRenderer<Dual> implements IslandRenderer
 }
 
 /** Serialized-leaf discriminants that carry no nested value holes to substitute. */
-const LEAF_FLIGHT_TAGS = new Set(["a", "D", "e"]);
+const LEAF_FLIGHT_TAGS = new Set(["a", "D", "e", "n", "N", "U", "ch"]);
 
 /** Resolve a `{$:"vh",r}` placeholder to its deferred value, or leave a look-alike as data. */
 function fillValueHole(value: FlightValue, resolved: Map<string, FlightValue>): FlightValue {
@@ -303,6 +303,11 @@ function substituteValueHoles(value: FlightValue, resolved: Map<string, FlightVa
   const tag = (value as { $?: string }).$;
   if (tag === "vh") return fillValueHole(value, resolved);
   if (tag && LEAF_FLIGHT_TAGS.has(tag)) return value;
+  if (tag === "M" || tag === "S") {
+    // A Map / Set prop: its entries may hold deferred values (a `defer()` field in a Set).
+    const v = (value as { v: FlightValue[] }).v;
+    return { $: tag, v: v.map((item) => substituteValueHoles(item, resolved)) } as FlightValue;
+  }
   if (tag === "h" || tag === "c") {
     const n = value as unknown as { p: FlightProps; c: FlightNode[] };
     const c = n.c.map((child) =>

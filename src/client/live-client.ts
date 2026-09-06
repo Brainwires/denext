@@ -24,6 +24,8 @@
 import type { FlightNode } from "../jsx/render-to-flight.ts";
 import type { VNodeChild } from "../jsx/types.ts";
 import { setLiveRegistrar } from "../runtime/live-registry.ts";
+import { decodeWire, prepareWire, WIRE_ENC } from "../runtime/wire-codec.ts";
+import { setApiInvalidationSource } from "./use-api.ts";
 import {
   LIVE_ENDPOINT,
   type LiveClientMessage,
@@ -37,20 +39,55 @@ interface Boundary {
   onPatch: (children: VNodeChild) => void;
 }
 
+/** The structured part of a server `error` frame, handed to a data subscription's callback. */
+export interface LiveErrorInfo {
+  /** The frame's machine-readable code. */
+  code: string;
+  /** The frame's short explanation. */
+  reason?: string;
+  /** Per-field validation messages (`invalid-input`). */
+  fieldErrors?: Record<string, string>;
+  /** The redaction digest (`failed`). */
+  digest?: string;
+}
+
 interface DataSub {
   actionId: string;
+  /** Already wire-encoded (sent verbatim on every reconnect). */
   args: unknown[];
   tags: string[];
-  onData: (value: unknown, error?: string) => void;
+  /** `1` when `args` carries codec tags. */
+  enc?: 1;
+  /** Set when the server refused it for good (invalid input, denied, …): not re-sent on reconnect. */
+  dead?: boolean;
+  onData: (value: unknown, error?: string, info?: LiveErrorInfo) => void;
 }
+
+/** Error codes after which re-sending the same subscription can only fail again. */
+const TERMINAL_CODES = new Set(["invalid-input", "denied", "no-policy", "bad-message", "limit"]);
 
 interface PresenceRoom {
   state: unknown;
   onState: (peers: LivePeer[], selfId: string) => void;
 }
 
+interface TagSub {
+  tags: string[];
+  onInvalidate: () => void;
+}
+
+interface ChannelSubClient {
+  channelId: string;
+  key: string;
+  dead?: boolean;
+  onValue: (value: unknown, seq: number) => void;
+  onError: (info: LiveErrorInfo) => void;
+}
+
 const boundaries = new Map<string, Boundary>();
 const dataSubs = new Map<string, DataSub>();
+const tagSubs = new Map<string, TagSub>();
+const channelSubs = new Map<string, ChannelSubClient>();
 const presenceRooms = new Map<string, PresenceRoom>();
 let subCounter = 0;
 
@@ -60,7 +97,8 @@ let refresh: (() => void) | null = null;
 
 /** Any live subscription (boundary, data, or presence) that keeps the socket alive. */
 function hasSubscriptions(): boolean {
-  return boundaries.size > 0 || dataSubs.size > 0 || presenceRooms.size > 0;
+  return boundaries.size > 0 || dataSubs.size > 0 || tagSubs.size > 0 || channelSubs.size > 0 ||
+    presenceRooms.size > 0;
 }
 
 /** Send one client frame if the socket is open (no-op otherwise; resent on reconnect). */
@@ -93,6 +131,54 @@ export function configureLive(opts: {
   parse = opts.parse;
   refresh = opts.refresh;
   setLiveRegistrar(register);
+  // `useApi({ tags })` refetches on a tag invalidation whenever the Live transport is present.
+  setApiInvalidationSource(subscribeLiveTags);
+}
+
+/**
+ * Receive a `createChannel` channel's pushes for `key`. Backs `useChannel`. Returns an
+ * unsubscribe. A refusal (`denied` / `no-policy` / …) arrives through `onError` and marks the
+ * subscription dead so a reconnect does not re-send it.
+ *
+ * @param channelId The channel's stable id (`ref.denextChannelId`, or the `"use server"` stub's id).
+ * @param key The key within the channel.
+ * @param onValue Called with each pushed payload and the publisher's `seq`.
+ * @param onError Called with a structured refusal.
+ */
+export function subscribeChannel(
+  channelId: string,
+  key: string,
+  onValue: (value: unknown, seq: number) => void,
+  onError: (info: LiveErrorInfo) => void,
+): () => void {
+  const subId = `c${++subCounter}`;
+  channelSubs.set(subId, { channelId, key, onValue, onError });
+  ensureSocket();
+  sendFrame({ type: "channel-subscribe", subId, channelId, key });
+  return () => {
+    channelSubs.delete(subId);
+    sendFrame({ type: "channel-unsubscribe", subId });
+    if (!hasSubscriptions()) closeSocket();
+  };
+}
+
+/**
+ * Be told when any of `tags` is invalidated on the server (`revalidateTag`); backs
+ * `useApi({ tags })`. Returns an unsubscribe.
+ *
+ * @param tags The cache tags to watch.
+ * @param onInvalidate Called with no arguments when one of them is invalidated.
+ */
+export function subscribeLiveTags(tags: string[], onInvalidate: () => void): () => void {
+  const subId = `t${++subCounter}`;
+  tagSubs.set(subId, { tags, onInvalidate });
+  ensureSocket();
+  sendFrame({ type: "tags-subscribe", subId, tags });
+  return () => {
+    tagSubs.delete(subId);
+    sendFrame({ type: "tags-unsubscribe", subId });
+    if (!hasSubscriptions()) closeSocket();
+  };
 }
 
 /** Register a mounted boundary; opens the socket on the first one. Returns an unsubscribe. */
@@ -124,12 +210,16 @@ export function subscribeLiveData(
   actionId: string,
   args: unknown[],
   tags: string[],
-  onData: (value: unknown, error?: string) => void,
+  onData: (value: unknown, error?: string, info?: LiveErrorInfo) => void,
 ): () => void {
   const subId = `d${++subCounter}`;
-  dataSubs.set(subId, { actionId, args, tags, onData });
+  // Encode once (the frame is re-sent verbatim on every reconnect).
+  const p = prepareWire(args);
+  const sub: DataSub = { actionId, args: p.value as unknown[], tags, onData };
+  if (p.tagged) sub.enc = WIRE_ENC;
+  dataSubs.set(subId, sub);
   ensureSocket();
-  sendFrame({ type: "data-subscribe", subId, actionId, args, tags });
+  sendFrame(subscribeFrame(subId, sub));
   return () => {
     dataSubs.delete(subId);
     sendFrame({ type: "data-unsubscribe", subId });
@@ -232,7 +322,13 @@ function handleServerMessage(raw: string): void {
       refresh?.();
       break;
     case "data":
-      dataSubs.get(msg.subId)?.onData(msg.value, msg.error);
+      deliverData(msg);
+      break;
+    case "invalidate":
+      tagSubs.get(msg.subId)?.onInvalidate();
+      break;
+    case "channel":
+      deliverChannel(msg);
       break;
     case "presence-state":
       presenceRooms.get(msg.room)?.onState(msg.peers, msg.selfId);
@@ -240,17 +336,68 @@ function handleServerMessage(raw: string): void {
     case "ping":
       if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "pong" }));
       break;
-    case "error": {
-      // A refused subscription/join, a hit limit, or a missing policy. Deliver to the
-      // owning data subscription if it has one. `no-policy` is a setup error, logged
-      // as an ERROR (loud, and identical in dev and prod) so it's caught immediately;
-      // other codes are advisory warnings.
-      const text = `denext live: ${msg.reason ?? msg.code}`;
-      if (msg.code === "no-policy") console.error(text);
-      else if (!msg.subId) console.warn(text);
-      if (msg.subId) dataSubs.get(msg.subId)?.onData(undefined, msg.reason ?? msg.code);
+    case "error":
+      deliverError(msg);
       break;
-    }
+  }
+}
+
+/** The `data-subscribe` frame for one subscription (its args are already wire-encoded). */
+function subscribeFrame(subId: string, s: DataSub): LiveClientMessage {
+  const frame: LiveClientMessage = {
+    type: "data-subscribe",
+    subId,
+    actionId: s.actionId,
+    args: s.args,
+    tags: s.tags,
+  };
+  if (s.enc) frame.enc = s.enc;
+  return frame;
+}
+
+/** Hand a pushed value to its subscription, decoding a codec-flagged (`enc`) value first. */
+function deliverData(msg: { subId: string; value: unknown; enc?: 1; error?: string }): void {
+  const sub = dataSubs.get(msg.subId);
+  if (!sub) return;
+  if (msg.enc !== WIRE_ENC) return sub.onData(msg.value, msg.error);
+  try {
+    sub.onData(decodeWire(msg.value), msg.error);
+  } catch {
+    sub.onData(undefined, "malformed value");
+  }
+}
+
+/**
+ * A refused subscription/join, a hit limit, a missing policy, or a failed recompute. Deliver to
+ * the owning data subscription if it has one (marking it dead when re-sending could only fail
+ * again). `no-policy` is a setup error, logged as an ERROR (loud, and identical in dev and prod)
+ * so it's caught immediately; other codes are advisory warnings.
+ */
+function deliverError(msg: LiveErrorInfo & { subId?: string }): void {
+  const text = `denext live: ${msg.reason ?? msg.code}`;
+  if (msg.code === "no-policy") console.error(text);
+  else if (!msg.subId) console.warn(text);
+  if (!msg.subId) return;
+  const channel = channelSubs.get(msg.subId);
+  if (channel) {
+    if (TERMINAL_CODES.has(msg.code) || msg.code === "denied") channel.dead = true;
+    channel.onError(msg);
+    return;
+  }
+  const sub = dataSubs.get(msg.subId);
+  if (!sub) return;
+  if (TERMINAL_CODES.has(msg.code)) sub.dead = true;
+  sub.onData(undefined, msg.reason ?? msg.code, msg);
+}
+
+/** Hand a pushed channel payload to its subscription, decoding a codec-flagged value first. */
+function deliverChannel(msg: { subId: string; seq: number; value: unknown; enc?: 1 }): void {
+  const sub = channelSubs.get(msg.subId);
+  if (!sub) return;
+  try {
+    sub.onValue(msg.enc === WIRE_ENC ? decodeWire(msg.value) : msg.value, msg.seq);
+  } catch {
+    sub.onError({ code: "bad-message", reason: "malformed channel payload" });
   }
 }
 
@@ -277,8 +424,12 @@ function sendSubscribe(): void {
 /** (Re)send every live subscription — called on connect and reconnect. */
 function sendAllSubscriptions(): void {
   if (boundaries.size > 0) sendSubscribe();
-  for (const [subId, s] of dataSubs) {
-    sendFrame({ type: "data-subscribe", subId, actionId: s.actionId, args: s.args, tags: s.tags });
+  for (const [subId, s] of dataSubs) if (!s.dead) sendFrame(subscribeFrame(subId, s));
+  for (const [subId, t] of tagSubs) sendFrame({ type: "tags-subscribe", subId, tags: t.tags });
+  for (const [subId, c] of channelSubs) {
+    if (!c.dead) {
+      sendFrame({ type: "channel-subscribe", subId, channelId: c.channelId, key: c.key });
+    }
   }
   for (const [room, r] of presenceRooms) {
     sendFrame({ type: "presence-join", room, state: r.state });

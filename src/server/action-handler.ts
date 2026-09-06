@@ -13,6 +13,8 @@
 //   to a same-origin path derived from Referer.
 
 import { bufferedRequest, readCappedBody, STALLED, TOO_LARGE } from "./body.ts";
+import { verifyOrigin } from "./origin-check.ts";
+import { prepareWire, WIRE_ENC } from "../runtime/wire-codec.ts";
 import { ACTION_PREFIX, decodeActionArgs, getServerAction } from "../runtime/server-action.ts";
 import {
   isForbidden,
@@ -114,7 +116,7 @@ export async function handleAction(
   // 5. Run the handler.
   try {
     const result = await handler(...args);
-    if (isXhr) return jsonResponse({ result: result ?? null, ...refreshDirectives() });
+    if (isXhr) return xhrResult(result);
     // No-JS form post: redirect back to the (same-origin) referring page (a full
     // reload, which itself satisfies any updateTag/refresh the action requested).
     // sameOriginBackPath already host-checks the Referer; normalize as defense in
@@ -177,95 +179,6 @@ function redirectFromAction(
   );
 }
 
-// ---- Origin verification ---------------------------------------------------
-
-/**
- * Verify the request is same-origin (or from an explicitly allowed origin).
- * Prefers the `Origin` header, falls back to `Referer`, and rejects when neither
- * is present — a state-changing RPC defaults to deny.
- *
- * Full-origin allowlist entries (and `canonicalOrigin`) are matched
- * scheme-strictly. For the request's own Host, the scheme is compared only when we
- * can determine the site is HTTPS (via `canonicalOrigin`, a trusted
- * `X-Forwarded-Proto`, or the request URL) — so an `http://host` origin is rejected
- * for an HTTPS app, without breaking a TLS-terminating proxy where the scheme is
- * unknown. Bare-host allowlist entries stay scheme-agnostic (compat).
- */
-function verifyOrigin(request: Request, options: ActionHandlerOptions): boolean {
-  const host = request.headers.get("host");
-  if (!host) return false;
-
-  const candidate = request.headers.get("origin") ?? request.headers.get("referer");
-  if (!candidate) return false;
-  let u: URL;
-  try {
-    u = new URL(candidate);
-  } catch {
-    return false;
-  }
-
-  const { fullOrigins, bareHosts } = allowedOriginSets(options);
-  if (fullOrigins.has(u.origin)) return true;
-  if (bareHosts.has(u.host)) return true;
-  if (u.host === host) {
-    // Own host: block an HTTP → HTTPS downgrade when we know the site is HTTPS.
-    return !isKnownHttps(request, options) || u.protocol === "https:";
-  }
-  return false;
-}
-
-/**
- * The configured allowlist: `canonicalOrigin` + full-origin entries are scheme-strict;
- * a bare-host entry (no `/`) matches any scheme (compat). Malformed entries are ignored.
- */
-function allowedOriginSets(
-  options: ActionHandlerOptions,
-): { fullOrigins: Set<string>; bareHosts: Set<string> } {
-  const fullOrigins = new Set<string>();
-  const bareHosts = new Set<string>();
-  if (options.canonicalOrigin) {
-    try {
-      fullOrigins.add(new URL(options.canonicalOrigin).origin);
-    } catch { /* ignore malformed config */ }
-  }
-  for (const o of options.allowedOrigins ?? []) {
-    try {
-      fullOrigins.add(new URL(o).origin);
-    } catch {
-      if (o.length > 0 && !o.includes("/")) bareHosts.add(o);
-    }
-  }
-  return { fullOrigins, bareHosts };
-}
-
-/**
- * Whether the site is known to be served over HTTPS (for CSRF downgrade
- * rejection).
- *
- * SEC-L2 — behind a TLS-terminating proxy, `request.url` is the internal `http://`
- * URL, so this can't tell the public scheme is HTTPS on its own. Set
- * `canonicalOrigin` (e.g. `https://example.com`) or `trustForwardedHeaders: true`
- * (only when the proxy sets `x-forwarded-proto` and clients can't spoof it) so the
- * HTTP→HTTPS action-origin downgrade check actually engages. Without either, a
- * proxied HTTPS site is treated as HTTP here and the downgrade guard is a no-op.
- */
-function isKnownHttps(request: Request, options: ActionHandlerOptions): boolean {
-  if (options.canonicalOrigin) {
-    try {
-      return new URL(options.canonicalOrigin).protocol === "https:";
-    } catch { /* ignore */ }
-  }
-  if (options.trustForwardedHeaders) {
-    const xfp = request.headers.get("x-forwarded-proto");
-    if (xfp) return xfp.split(",")[0].trim().toLowerCase() === "https";
-  }
-  try {
-    return new URL(request.url).protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
 /** A safe same-origin path to redirect back to after a no-JS action post. */
 function sameOriginBackPath(request: Request): string {
   const referer = request.headers.get("referer");
@@ -294,6 +207,16 @@ function refreshDirectives(): { refresh?: true; updatedTags?: string[] } {
   if (ctx?.refreshRequested) out.refresh = true;
   if (ctx?.updatedTags && ctx.updatedTags.size > 0) out.updatedTags = [...ctx.updatedTags];
   return out;
+}
+
+/**
+ * The XHR success envelope: the result rides the wire codec (Date/Map/Set/BigInt survive) with
+ * `enc: 1` only when a tag was needed, plus the refresh directives the action requested.
+ */
+function xhrResult(result: unknown): Response {
+  const p = prepareWire(result ?? null);
+  const envelope = p.tagged ? { result: p.value, enc: WIRE_ENC } : { result: p.value };
+  return jsonResponse({ ...envelope, ...refreshDirectives() });
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
