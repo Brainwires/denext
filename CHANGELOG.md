@@ -52,6 +52,22 @@ and this project adheres to
 
 ### Added
 
+- **In-process SSR dispatch for the typed API client.** A Server Component (or route handler)
+  calling its own API through `createApiClient` no longer loops back over HTTP. Inside a
+  request, the call runs as a sub-request through the full pipeline (middleware, rewrites, the
+  redacted-500 contract) under the caller's identity — an allowlisted copy of its headers
+  (cookie, authorization, …), its socket peer, its abort signal, a derived `x-request-id` — and
+  what the route learns flows back to the render (a `cookies()` read inside the API route makes
+  the page dynamic; cache tags it read purge the page). A GET takes the same cache decision as
+  the patched global `fetch`: pass `cache` / `next: { revalidate, tags }` on the call and it is
+  served by the tag-aware data cache (`revalidateTag` purges it, `updateTag` read-your-writes
+  applies, concurrent misses coalesce) with the caller's cookie/authorization in the key — no
+  cross-user confusion; without those options it is uncached, like `fetch`. A route calling
+  itself terminates at depth 3 (508). Outside a request, for a foreign `base`, or for a
+  `/_denext/*` path the client falls back to a real `fetch`; batching is skipped on the server
+  when the dispatcher is present. `src/server/api-dispatcher.ts` (new),
+  `src/runtime/api-dispatch.ts` (new — the client-safe seam), `src/server/{app,cache}.ts`,
+  `src/runtime/api-client.ts`.
 - **Request batching on the typed API client.** The GET/HEAD calls a page makes in one tick
   (three `useApi`/`createApiClient` reads in one render) ride ONE `POST /_denext/api-batch`;
   each caller gets back an ordinary result or `ApiClientError` synthesized from its item

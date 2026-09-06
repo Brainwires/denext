@@ -8,6 +8,11 @@ import type { ApiModule } from "../../src/server/types.ts";
 import { createMiddlewareRunner } from "../../src/server/middleware.ts";
 import { ApiError } from "../../src/server/api-error.ts";
 import { json } from "../../src/server/typed-response.ts";
+import { cookies } from "../../src/server/request-context.ts";
+import { createApiClient } from "../../src/runtime/api-client.ts";
+
+/** How many times `/api/count` ran (reset by tests). */
+export const counters = { count: 0 };
 
 /** The app's origin (what a browser would send as `Origin`). */
 export const ORIGIN = "http://localhost";
@@ -35,6 +40,19 @@ export function batchApp(extra: Record<string, unknown> = {}, middleware?: unkno
     },
     "echo.ts": {
       GET: (req) => json({ q: new URL(req.url).search, cookie: req.headers.get("cookie") }),
+    },
+    // Reads a dynamic request API — a render calling this must become dynamic too.
+    "dynamic.ts": {
+      GET: async () => json({ theme: (await cookies()).get("theme")?.value ?? null }),
+    },
+    // Counts its runs, so a test can prove an in-process call was served from the cache.
+    "count.ts": { GET: () => json({ n: ++counters.count }) },
+    // Calls ITSELF through the typed client: in-process recursion must terminate (508).
+    "self.ts": {
+      GET: async () => {
+        const api = createApiClient<{ "/api/self": { GET: { response: unknown } } }>();
+        return json({ inner: await api("/api/self", "GET") });
+      },
     },
   };
   const api = Object.keys(routes).map((f) => ({

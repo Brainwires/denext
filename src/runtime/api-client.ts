@@ -24,6 +24,7 @@ export type { HttpMethod } from "../server/types.ts";
 import type { HttpMethod } from "../server/types.ts";
 import { decodeWire, encodeWire, stableKey, WIRE_HEADER } from "./wire-codec.ts";
 import { type Batcher, createBatcher } from "./api-batch.ts";
+import { getApiDispatcher } from "./api-dispatch.ts";
 
 /** One endpoint's typed shape: its params, optional request/response bodies, query, error codes. */
 export interface ApiEndpoint {
@@ -76,6 +77,10 @@ export type RequestOf<E extends ApiEndpoint> =
     dedupe?: boolean;
     /** Opt this call out of batching (GET/HEAD calls in one tick ride one `/_denext/api-batch` POST). */
     batch?: boolean;
+    /** SSR only: Next-style fetch cache mode for the in-process call (`"force-cache"` / `"no-store"`). */
+    cache?: RequestCache;
+    /** SSR only: cache the in-process call for `revalidate` seconds and/or under `tags`. */
+    next?: { revalidate?: number | false; tags?: string[] };
   };
 
 /** Free-form query strings (an endpoint without a `query` schema). */
@@ -128,6 +133,10 @@ export interface ApiRequestOptions {
   dedupe?: boolean;
   /** Opt this call out of batching. */
   batch?: boolean;
+  /** SSR only: Next-style fetch cache mode for the in-process call. */
+  cache?: RequestCache;
+  /** SSR only: cache the in-process call for `revalidate` seconds and/or under `tags`. */
+  next?: { revalidate?: number | false; tags?: string[] };
 }
 
 /** Options for {@link createApiClient}. */
@@ -354,13 +363,35 @@ export async function apiRequest(
     if (!headers.has("content-type")) headers.set("content-type", "application/json");
     if (encoded.tagged) headers.set(WIRE_HEADER, "1");
   }
-  const res = await (fetchImpl ?? fetch)(url, {
+  const signal = resolveSignal(opts.signal, opts.timeoutMs);
+  // On the server inside a request, the installed dispatcher runs the call in-process (the full
+  // pipeline, this request's cookies, the tag cache) — no loopback HTTP. `null` → real fetch.
+  const inProcess = serverDispatch(url, {
     method,
     headers,
     body,
-    signal: resolveSignal(opts.signal, opts.timeoutMs),
+    signal,
+    cache: opts.cache,
+    next: opts.next,
   });
+  const res = inProcess
+    ? await inProcess
+    : await (fetchImpl ?? fetch)(url, { method, headers, body, signal });
   return await settle(method, url, res);
+}
+
+/** The server installs the context bridge; a browser bundle never has it. */
+function isServerRuntime(): boolean {
+  return !!(globalThis as ContextBridge).__denextCurrentRequestContext;
+}
+
+/** The in-process dispatch for a server-side call, or `null` (browser, no request, foreign origin). */
+function serverDispatch(
+  url: string,
+  init: Parameters<NonNullable<ReturnType<typeof getApiDispatcher>>>[1],
+): Promise<Response> | null {
+  if (!isServerRuntime()) return null;
+  return getApiDispatcher()?.(url, init) ?? null;
 }
 
 /** Turn a response into the call's result, or throw the typed error (shared with batching). */
@@ -464,8 +495,11 @@ export function createApiClient<S extends ApiSchema = RegisteredSchema>(
     : null;
   const local = new Map<string, Promise<unknown>>();
   return ((path: string, method: HttpMethod, opts: ApiRequestOptions = {}) => {
+    // Batching is a browser optimization; a server-side call with a dispatcher goes in-process.
+    const canBatch = batcher && batchable(method, opts) &&
+      !(isServerRuntime() && getApiDispatcher());
     const run = () =>
-      batcher && batchable(method, opts)
+      canBatch
         ? batchedRequest(batcher, path, method as "GET" | "HEAD", opts, base)
         : apiRequest(path, method, opts, base, options.fetch);
     const readOnly = method === "GET" || method === "HEAD";

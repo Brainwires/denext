@@ -1068,7 +1068,7 @@ export const cachedFetch = async (
 // ---- Automatic fetch() caching (uncached by default) -----------------------
 
 /** RequestInit plus Next.js's `next: { revalidate, tags }` cache directive. */
-type FetchCacheInit = RequestInit & {
+export type FetchCacheInit = RequestInit & {
   next?: { revalidate?: number | false; tags?: string[] };
 };
 
@@ -1085,12 +1085,24 @@ const responseFrom = (c: CachedResponse): Response =>
 /** The un-patched global fetch, captured by {@link installFetchCache}. */
 let originalFetch: typeof fetch | null = null;
 
-/** Fetch `input`, caching its status/headers/body across requests, single-flighted. */
-async function cachedResponse(
+/**
+ * Fetch `input`, caching its status/headers/body across requests, single-flighted. `doFetch`
+ * performs the miss (default: the un-patched global fetch; the typed client's in-process SSR
+ * dispatch passes its sub-request runner so self-calls share this cache and its tags).
+ *
+ * @param input The request.
+ * @param init Fetch init incl. the Next-style `cache` / `next` options.
+ * @param revalidate TTL in seconds, or `false` for none.
+ * @param tags Cache tags (`revalidateTag` purges the entry; a page render collects them).
+ * @param doFetch Performs the actual request on a miss.
+ * @returns The (possibly cached) response.
+ */
+export async function cachedResponse(
   input: RequestInfo | URL,
   init: FetchCacheInit | undefined,
   revalidate: number | false,
   tags: string[],
+  doFetch: () => Promise<Response> = () => originalFetch!(input, init),
 ): Promise<Response> {
   collectTags(tags);
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -1122,7 +1134,7 @@ async function cachedResponse(
     if (retry) return retry;
   }
   const compute = (async (): Promise<CachedResponse> => {
-    const res = await originalFetch!(input, init);
+    const res = await doFetch();
     const value: CachedResponse = {
       status: res.status,
       headers: [...res.headers],
@@ -1172,7 +1184,7 @@ async function cachedResponse(
  * `default-cache` caches unless the call says `no-store`; otherwise caching is opt-in
  * (`cache: "force-cache"`, `next.revalidate > 0`, or tags).
  */
-function fetchCacheDecision(
+export function fetchCacheDecision(
   fc: string | undefined,
   init: FetchCacheInit | undefined,
 ): { revalidate: number | false; tags: string[] } | null {

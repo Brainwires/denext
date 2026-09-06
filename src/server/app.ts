@@ -14,6 +14,7 @@ import {
 } from "./app-config.ts";
 import { createRequestContext, runWithContext } from "./request-context.ts";
 import { installFetchCache } from "./cache.ts";
+import { installApiDispatcher } from "./api-dispatcher.ts";
 import { setBasePath } from "../client/navigation.ts";
 import { applyDefaultSecurityHeaders } from "./response-headers.ts";
 import { type AppRuntime, type CompiledRules, compileRules } from "./pipeline-state.ts";
@@ -54,6 +55,9 @@ export function createApp(config: AppConfig): RequestHandler {
     rules: () => (compiled ??= compileRules(config)),
     handle: null!, // wired below — the ISR background regen loops back through it
   };
+  // The typed API client's server-side calls run in-process through this app's pipeline
+  // (no loopback HTTP) — see src/server/api-dispatcher.ts.
+  installApiDispatcher(app);
 
   const handle = (originalRequest: Request): Promise<Response> => {
     // A background ISR regen (x-denext-regen) is a detached internal task, not a
