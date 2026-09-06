@@ -86,6 +86,14 @@ export type {
   SchemaOutput,
 } from "./define-api.ts";
 export { rateLimit, requireSession } from "./api-middleware.ts";
+// Typed live queries: a validated, gated `useLive` source (`defineSubscription`).
+export { defineSubscription } from "../runtime/define-subscription.ts";
+export type {
+  SubscriptionConfig,
+  SubscriptionContext,
+  SubscriptionRef,
+} from "../runtime/define-subscription.ts";
+export type { SubscriptionDef, SubscriptionRunContext } from "../runtime/server-action.ts";
 export type { ApiRateLimitOptions, RequireSessionOptions } from "./api-middleware.ts";
 export type * from "./types.ts";
 

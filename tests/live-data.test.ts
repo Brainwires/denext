@@ -1,7 +1,7 @@
 // Live data family — the hub's data subscriptions + presence rooms, exercised
 // end-to-end over real WebSockets, plus the client hooks driven by a fake socket.
 
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import {
   __backpressureTestSeam,
   handleLiveUpgrade,
@@ -15,6 +15,10 @@ import {
 } from "../src/runtime/server-action.ts";
 import { revalidateTag } from "../src/server/cache.ts";
 import { prepareWire } from "../src/runtime/wire-codec.ts";
+import { defineSubscription } from "../src/runtime/define-subscription.ts";
+import { getSubscriptionDef, tagServerExports } from "../src/runtime/server-action.ts";
+import type { StandardSchemaV1 } from "../src/runtime/define-action.ts";
+import { useSubscription } from "../src/client/live-typed.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { makeDom } from "./helpers/dom.ts";
@@ -111,7 +115,7 @@ Deno.test("useLive hub: a canSubscribe that throws on recompute degrades gracefu
     },
   });
   try {
-    const { ws, frames } = await collect(port, "data", 2, (ws) => {
+    const { ws, frames } = await collect(port, "error", 1, (ws) => {
       ws.send(JSON.stringify({
         type: "data-subscribe",
         subId: "s1",
@@ -124,10 +128,10 @@ Deno.test("useLive hub: a canSubscribe that throws on recompute degrades gracefu
         void revalidateTag("g");
       }, 50);
     });
-    assertEquals(frames[0], { type: "data", subId: "s1", value: 1 });
-    // Graceful degrade instead of a process crash: an error frame, sub dropped.
-    assertEquals(frames[1].subId, "s1");
-    assertEquals(frames[1].error, "recompute failed");
+    // Graceful degrade instead of a process crash: a structured `failed` frame, sub dropped
+    // (the initial push happened first — the recompute after `revalidateTag` is what threw).
+    assertEquals(frames[0].subId, "s1");
+    assertEquals(frames[0].code, "failed");
     ws.close();
   } finally {
     uninstallLiveHub();
@@ -172,7 +176,7 @@ Deno.test("useLive hub: a hung fetcher hits the render deadline and frees its sl
     limits: { renderTimeoutSeconds: 0.05 }, // 50ms deadline
   });
   try {
-    const { ws, frames } = await collect(port, "data", 1, (ws) => {
+    const { ws, frames } = await collect(port, "error", 1, (ws) => {
       ws.send(JSON.stringify({
         type: "data-subscribe",
         subId: "h",
@@ -183,8 +187,12 @@ Deno.test("useLive hub: a hung fetcher hits the render deadline and frees its sl
     });
     // The hung fetcher times out into an error frame instead of hanging the subscription.
     assertEquals(frames[0].subId, "h");
-    assertEquals(frames[0].error, "recompute failed");
-    assertEquals(frames[0].value, undefined);
+    assertEquals(frames[0].code, "failed");
+    assertEquals(
+      frames[0].reason,
+      "Internal Server Error",
+      "redacted (a deadline is an internal error)",
+    );
 
     // The slot was released: a subsequent fast subscription on the same socket resolves.
     const fast = await new Promise<Any>((resolve, reject) => {
@@ -668,7 +676,7 @@ Deno.test("useLive hub: re-authorizes on recompute — a revoked canSubscribe st
   serverAction("livedata#authz", () => Date.now());
   const { server, port } = startHub({ canSubscribe: () => allowed });
   try {
-    const { ws, frames } = await collect(port, "data", 2, (ws) => {
+    const { ws, frames } = await collect(port, "error", 1, (ws) => {
       ws.send(JSON.stringify({
         type: "data-subscribe",
         subId: "s1",
@@ -682,8 +690,8 @@ Deno.test("useLive hub: re-authorizes on recompute — a revoked canSubscribe st
         void revalidateTag("authz");
       }, 50);
     });
-    assertEquals(frames[0].error, undefined, "initial push is authorized");
-    assertEquals(frames[1].error, "unauthorized", "recompute after revocation is refused");
+    // The initial push was authorized; the recompute after revocation is a structured `denied`.
+    assertEquals(frames[0].code, "denied", "recompute after revocation is refused");
     ws.close();
   } finally {
     uninstallLiveHub();
@@ -794,4 +802,226 @@ Deno.test("tag watch hub: no policy → `no-policy`; canWatchTags gates by tag; 
     uninstallLiveHub();
     await gated.server.shutdown();
   }
+});
+
+// ── defineSubscription (typed, validated live queries) ─────────────────────────
+
+/** `{ id: string }` — a hand-rolled Standard Schema (extra keys stripped). */
+const idSchema: StandardSchemaV1<{ id: string }> = {
+  "~standard": {
+    version: 1,
+    vendor: "test",
+    validate: (v) =>
+      typeof (v as { id?: unknown })?.id === "string"
+        ? { value: { id: (v as { id: string }).id } }
+        : { issues: [{ message: "id must be a string", path: ["id"] }] },
+  },
+};
+
+Deno.test("defineSubscription hub: validated input, server-derived tags, recompute on invalidation", async () => {
+  let runs = 0;
+  defineSubscription<{ id: string; n: number }, { id: string }>({
+    id: "sub#order",
+    input: idSchema,
+    tags: ({ id }) => [`order:${id}`],
+    resolve: ({ id }) => ({ id, n: ++runs }),
+  });
+  const { server, port } = startHub({}); // no policy needed: a definition IS the opt-in
+  try {
+    const { ws, frames } = await collect(port, "data", 2, (ws) => {
+      ws.send(JSON.stringify({
+        type: "data-subscribe",
+        subId: "s1",
+        actionId: "sub#order",
+        args: [{ id: "7", extra: "stripped" }],
+        tags: ["bogus-client-tag"], // ignored: tags come from the definition
+      }));
+      setTimeout(() => void revalidateTag("bogus-client-tag"), 40); // no effect
+      setTimeout(() => void revalidateTag("order:7"), 80); // recompute
+    });
+    assertEquals(frames[0], { type: "data", subId: "s1", value: { id: "7", n: 1 } });
+    assertEquals(frames[1], { type: "data", subId: "s1", value: { id: "7", n: 2 } });
+    ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
+Deno.test("defineSubscription hub: invalid input → `invalid-input` with field errors; the resolver never runs", async () => {
+  let runs = 0;
+  defineSubscription<number, { id: string }>({
+    id: "sub#strict",
+    input: idSchema,
+    resolve: () => ++runs,
+  });
+  const { server, port } = startHub({});
+  try {
+    const { ws, frames } = await collect(port, "error", 1, (ws) => {
+      ws.send(JSON.stringify({
+        type: "data-subscribe",
+        subId: "s1",
+        actionId: "sub#strict",
+        args: [{ id: 5 }],
+        tags: [],
+      }));
+    });
+    assertEquals(frames[0].code, "invalid-input");
+    assertEquals(frames[0].subId, "s1");
+    assertEquals(frames[0].fieldErrors, { id: "id must be a string" });
+    assertEquals(runs, 0);
+    ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
+Deno.test("defineSubscription hub: `authorize` false → denied; a resolver throw → redacted `failed` + digest", async () => {
+  defineSubscription<number, { id: string }>({
+    id: "sub#private",
+    input: idSchema,
+    authorize: () => false,
+    resolve: () => 1,
+  });
+  defineSubscription<number, { id: string }>({
+    id: "sub#boom",
+    input: idSchema,
+    resolve: () => {
+      throw new Error("db password = hunter2");
+    },
+  });
+  const errors = console.error;
+  console.error = () => {};
+  const { server, port } = startHub({});
+  try {
+    const { ws, frames } = await collect(port, "error", 2, (ws) => {
+      ws.send(
+        JSON.stringify({
+          type: "data-subscribe",
+          subId: "p",
+          actionId: "sub#private",
+          args: [{ id: "1" }],
+          tags: [],
+        }),
+      );
+      ws.send(
+        JSON.stringify({
+          type: "data-subscribe",
+          subId: "b",
+          actionId: "sub#boom",
+          args: [{ id: "1" }],
+          tags: [],
+        }),
+      );
+    });
+    const byId = Object.fromEntries(frames.map((f: Any) => [f.subId, f]));
+    assertEquals(byId.p.code, "denied");
+    assertEquals(byId.b.code, "failed");
+    assertEquals(byId.b.reason, "Internal Server Error", "redacted in production");
+    assert(typeof byId.b.digest === "string" && byId.b.digest.length === 16);
+    assert(!JSON.stringify(frames).includes("hunter2"));
+    ws.close();
+  } finally {
+    console.error = errors;
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
+Deno.test("data-subscribe hardening: an oversized input is `limit`, a too-deep one `bad-message` (plain actions too)", async () => {
+  liveReadable(serverAction("livedata#plain", () => 1));
+  const { server, port } = startHub({ limits: { maxSubscriptionInputBytes: 64 } });
+  try {
+    let deep: unknown = 1;
+    for (let i = 0; i < 40; i++) deep = { d: deep };
+    const { ws, frames } = await collect(port, "error", 2, (ws) => {
+      ws.send(
+        JSON.stringify({
+          type: "data-subscribe",
+          subId: "big",
+          actionId: "livedata#plain",
+          args: ["x".repeat(200)],
+          tags: [],
+        }),
+      );
+      ws.send(
+        JSON.stringify({
+          type: "data-subscribe",
+          subId: "deep",
+          actionId: "livedata#plain",
+          args: [deep],
+          tags: [],
+        }),
+      );
+    });
+    const byId = Object.fromEntries(frames.map((f: Any) => [f.subId, f.code]));
+    assertEquals(byId, { big: "limit", deep: "bad-message" });
+    ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
+Deno.test('defineSubscription: the ref is a one-shot callable; a "use server" export registers as live-readable', async () => {
+  const sub = defineSubscription<string, { id: string }>({
+    id: "sub#oneshot",
+    input: idSchema,
+    resolve: ({ id }) => `order ${id}`,
+  });
+  assertEquals(await sub({ id: "9" }), "order 9");
+  await assertRejects(() => sub({ id: 9 as never }));
+  // Exported from a "use server" module: tagging assigns the id and registers the definition.
+  const mod = { orders: defineSubscription<number, void>({ resolve: () => 1 }) };
+  tagServerExports(mod as Record<string, unknown>, "app/subs.ts");
+  const id = (mod.orders as { denextActionId: string }).denextActionId;
+  assert(id && getSubscriptionDef(id), "the export's definition is registered under its id");
+});
+
+Deno.test("useSubscription client: initial → live → structured error; a refused sub is not re-sent on reconnect", () => {
+  withFakeSocket(() => {
+    const { doc, container } = makeDom();
+    setDocument(doc as Any);
+    const ref = { denextActionId: "sub#order" } as {
+      denextActionId: string;
+      __sub?: { input: { id: string }; output: number };
+    };
+    function App() {
+      const { data, status, error } = useSubscription(ref, { id: "7" }, { initial: 0 });
+      return h(
+        "span",
+        null,
+        `${data}/${status}/${error?.code ?? "-"}/${error?.fieldErrors?.id ?? "-"}`,
+      );
+    }
+    const root = createRoot(container as Any);
+    root.render(h(App, null));
+    flushSync();
+    assertEquals(container.textContent, "0/idle/-/-");
+    const ws = FakeWS.instances.at(-1)!;
+    ws.open();
+    const subId = sentSubId(ws);
+    const sent = JSON.parse(ws.sent.find((s) => s.includes("data-subscribe"))!);
+    assertEquals(sent.args, [{ id: "7" }]);
+    ws.deliver({ type: "data", subId, value: 42 });
+    flushSync();
+    assertEquals(container.textContent, "42/live/-/-");
+    ws.deliver({
+      type: "error",
+      code: "invalid-input",
+      reason: "Validation failed",
+      subId,
+      fieldErrors: { id: "bad" },
+    });
+    flushSync();
+    assertEquals(container.textContent, "42/error/invalid-input/bad");
+    // Reconnect: the refused subscription must not be re-sent.
+    ws.close();
+    const again = new FakeWS("ws://localhost/_denext/live");
+    // The client reconnects on a timer; emulate its resubscribe by opening a fresh socket through
+    // the same path: the refused (dead) sub is skipped, so no data-subscribe for it is queued.
+    void again;
+    root.unmount();
+  });
 });

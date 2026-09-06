@@ -39,6 +39,18 @@ interface Boundary {
   onPatch: (children: VNodeChild) => void;
 }
 
+/** The structured part of a server `error` frame, handed to a data subscription's callback. */
+export interface LiveErrorInfo {
+  /** The frame's machine-readable code. */
+  code: string;
+  /** The frame's short explanation. */
+  reason?: string;
+  /** Per-field validation messages (`invalid-input`). */
+  fieldErrors?: Record<string, string>;
+  /** The redaction digest (`failed`). */
+  digest?: string;
+}
+
 interface DataSub {
   actionId: string;
   /** Already wire-encoded (sent verbatim on every reconnect). */
@@ -46,8 +58,13 @@ interface DataSub {
   tags: string[];
   /** `1` when `args` carries codec tags. */
   enc?: 1;
-  onData: (value: unknown, error?: string) => void;
+  /** Set when the server refused it for good (invalid input, denied, …): not re-sent on reconnect. */
+  dead?: boolean;
+  onData: (value: unknown, error?: string, info?: LiveErrorInfo) => void;
 }
+
+/** Error codes after which re-sending the same subscription can only fail again. */
+const TERMINAL_CODES = new Set(["invalid-input", "denied", "no-policy", "bad-message", "limit"]);
 
 interface PresenceRoom {
   state: unknown;
@@ -156,7 +173,7 @@ export function subscribeLiveData(
   actionId: string,
   args: unknown[],
   tags: string[],
-  onData: (value: unknown, error?: string) => void,
+  onData: (value: unknown, error?: string, info?: LiveErrorInfo) => void,
 ): () => void {
   const subId = `d${++subCounter}`;
   // Encode once (the frame is re-sent verbatim on every reconnect).
@@ -279,17 +296,9 @@ function handleServerMessage(raw: string): void {
     case "ping":
       if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "pong" }));
       break;
-    case "error": {
-      // A refused subscription/join, a hit limit, or a missing policy. Deliver to the
-      // owning data subscription if it has one. `no-policy` is a setup error, logged
-      // as an ERROR (loud, and identical in dev and prod) so it's caught immediately;
-      // other codes are advisory warnings.
-      const text = `denext live: ${msg.reason ?? msg.code}`;
-      if (msg.code === "no-policy") console.error(text);
-      else if (!msg.subId) console.warn(text);
-      if (msg.subId) dataSubs.get(msg.subId)?.onData(undefined, msg.reason ?? msg.code);
+    case "error":
+      deliverError(msg);
       break;
-    }
   }
 }
 
@@ -318,6 +327,23 @@ function deliverData(msg: { subId: string; value: unknown; enc?: 1; error?: stri
   }
 }
 
+/**
+ * A refused subscription/join, a hit limit, a missing policy, or a failed recompute. Deliver to
+ * the owning data subscription if it has one (marking it dead when re-sending could only fail
+ * again). `no-policy` is a setup error, logged as an ERROR (loud, and identical in dev and prod)
+ * so it's caught immediately; other codes are advisory warnings.
+ */
+function deliverError(msg: LiveErrorInfo & { subId?: string }): void {
+  const text = `denext live: ${msg.reason ?? msg.code}`;
+  if (msg.code === "no-policy") console.error(text);
+  else if (!msg.subId) console.warn(text);
+  if (!msg.subId) return;
+  const sub = dataSubs.get(msg.subId);
+  if (!sub) return;
+  if (TERMINAL_CODES.has(msg.code)) sub.dead = true;
+  sub.onData(undefined, msg.reason ?? msg.code, msg);
+}
+
 /** Batch multiple mount/unmount events into a single subscribe on the next microtask. */
 function scheduleSubscribe(): void {
   if (subscribeQueued) return;
@@ -341,7 +367,7 @@ function sendSubscribe(): void {
 /** (Re)send every live subscription — called on connect and reconnect. */
 function sendAllSubscriptions(): void {
   if (boundaries.size > 0) sendSubscribe();
-  for (const [subId, s] of dataSubs) sendFrame(subscribeFrame(subId, s));
+  for (const [subId, s] of dataSubs) if (!s.dead) sendFrame(subscribeFrame(subId, s));
   for (const [subId, t] of tagSubs) sendFrame({ type: "tags-subscribe", subId, tags: t.tags });
   for (const [room, r] of presenceRooms) {
     sendFrame({ type: "presence-join", room, state: r.state });

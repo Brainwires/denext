@@ -200,11 +200,17 @@ export interface LiveError {
   /**
    * Machine-readable cause: `denied` (a policy said no), `no-policy` (a gated hook
    * was used with NO `live` policy configured — a setup error, surfaced
-   * loudly), `limit` (a cap/size was hit), `bad-message`.
+   * loudly), `limit` (a cap/size was hit), `bad-message`, `invalid-input` (a
+   * `defineSubscription` schema rejected the input — see `fieldErrors`), `failed` (a
+   * resolver threw — redacted in production, `digest` correlates with the server log).
    */
-  code: "denied" | "no-policy" | "limit" | "bad-message";
+  code: "denied" | "no-policy" | "limit" | "bad-message" | "invalid-input" | "failed";
   /** A short, non-sensitive human explanation (dev-facing). */
   reason?: string;
+  /** Per-field validation messages (`invalid-input`). */
+  fieldErrors?: Record<string, string>;
+  /** The redaction digest of a resolver failure (`failed`, production). */
+  digest?: string;
   /** The data subscription this error concerns, when applicable. */
   subId?: string;
   /** The presence room this error concerns, when applicable. */

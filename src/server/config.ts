@@ -553,6 +553,12 @@ export interface LiveLimits {
   maxBoundaries?: number;
   /** Max inbound message size in bytes (default 65536). */
   maxMessageBytes?: number;
+  /**
+   * Max size in bytes of one subscription's input / args (default 16384): the input is
+   * stored for the connection's lifetime and re-used on every recompute, so it is capped
+   * tighter than a frame.
+   */
+  maxSubscriptionInputBytes?: number;
   /** Socket idle timeout in seconds passed to `Deno.upgradeWebSocket` (default 120). */
   idleTimeoutSeconds?: number;
   /**

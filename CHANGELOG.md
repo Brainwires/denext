@@ -52,6 +52,20 @@ and this project adheres to
 
 ### Added
 
+- **`defineSubscription` / `useSubscription` — typed, validated live queries** (the `useLive`
+  twin of `defineApi`). `defineSubscription({ input: z.object({ id }), tags: ({ id }) =>
+  [\`order:${id}\`], authorize, resolve })`exported from a`"use server"`module (or with an
+  explicit`id`);`useSubscription(orderStatus, { id }, { initial })`from`denext/live`returns`{ data, error, status }`typed by the definition. What the socket was missing: the client's
+  input is validated by a Standard Schema on every`data-subscribe`(rejected → a structured`invalid-input`error with field errors, nothing stored, the resolver never runs), the tags are
+  derived on the server from the parsed input (the client's tags are ignored), and the optional
+  row-level`authorize`runs on EVERY recompute (denied → dropped). Registering a definition IS
+  the live opt-in. The ref is also a plain callable (validate → authorize → resolve) for SSR`initial`values. Recompute failures are now structured`error`frames instead of a`data`frame with an opaque string:`denied`(forbidden/unauthorized — dropped),`failed`(the
+  resolver threw — redacted in production with a`digest`; kept for the next invalidation).
+  Hardening for every`data-subscribe`, plain actions included: the input is capped
+  (`live.limits.maxSubscriptionInputBytes`, default 16 KiB — it is stored for the connection's
+  lifetime and re-run per recompute) and depth-bounded (32). The client marks a subscription
+  the server refused for good as dead so a reconnect does not re-spam it.`src/runtime/define-subscription.ts`,`src/client/live-typed.ts`(new),`src/runtime/{server-action,live-protocol}.ts`,`src/server/{live,config}.ts`,`src/client/live-client.ts`,`src/live.ts`,`src/server/mod.ts` (public-surface golden
+  refreshed; config schema regenerated).
 - **`useApi` — the typed API client as a hook** (`denext` / `denext/client`).
   `const { data, error, pending, refetch, invalidate } = useApi("/api/user/[id]", "GET", { params })`,
   typed end to end against the registered `.denext/api.ts` schema (params, query, body,

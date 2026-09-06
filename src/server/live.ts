@@ -24,7 +24,16 @@
  */
 
 import type { FlightNode } from "../jsx/render-to-flight.ts";
+import {
+  isForbidden,
+  isNotFound,
+  isRedirect,
+  isUnauthorized,
+  toClientError,
+} from "../runtime/error-boundary.ts";
 import { decodeWire, prepareWire, WIRE_ENC } from "../runtime/wire-codec.ts";
+import { getSubscriptionDef, type SubscriptionDef } from "../runtime/server-action.ts";
+import { ActionValidationError } from "../runtime/define-action.ts";
 import type { FlightNavPayload } from "./document.ts";
 import type { LiveConfig, LiveConnectionContext, LiveLimits } from "./config.ts";
 import { ID_PATH_PROP } from "../jsx/tree-id.ts";
@@ -45,6 +54,8 @@ interface DataSub {
   actionId: string;
   args: unknown[];
   tags: string[];
+  /** The `defineSubscription` definition when the action is one (validated + gated). */
+  def?: SubscriptionDef;
   /**
    * Per-subscription single-flight (mirrors the `<Live>` boundary's `conn.busy`/
    * `conn.dirty`): a recompute in flight sets `busy`; a further invalidation sets
@@ -118,6 +129,7 @@ const DEFAULT_LIMITS: Required<LiveLimits> = {
   maxRoomsPerConnection: 32,
   maxBoundaries: 256,
   maxMessageBytes: 64 * 1024,
+  maxSubscriptionInputBytes: 16 * 1024,
   idleTimeoutSeconds: 120,
   maxConcurrentRenders: 40,
   renderTimeoutSeconds: 30,
@@ -588,18 +600,19 @@ async function handleDataSubscribe(
     return;
   }
   const args = decodeSubscribeArgs(msg);
-  if (args === null) {
+  if (args === null || depthOf(args, 0) > MAX_INPUT_DEPTH) {
     sendError(conn, "bad-message", "malformed subscription args", { subId });
     return;
   }
-  const sub: DataSub = {
-    actionId: msg.actionId,
-    args,
-    tags: Array.isArray(msg.tags) ? msg.tags : [],
-  };
+  if (utf8Bytes(JSON.stringify(args) ?? "") > limits.maxSubscriptionInputBytes) {
+    sendError(conn, "limit", "subscription input too large", { subId });
+    return;
+  }
+  const sub = await buildDataSub(conn, subId, msg.actionId, args, msg.tags);
+  if (!sub) return; // refused — the error frame was sent
   let decision: AuthDecision = "deny";
   try {
-    decision = await authorizeData(conn, sub);
+    decision = await authorizeSub(conn, sub);
   } catch {
     decision = "deny";
   }
@@ -788,6 +801,83 @@ function pushDataUpdates(conn: Conn, invalidated: Set<string>): void {
   }
 }
 
+/** Nesting deeper than this in a subscription input is refused (a hostile frame, not data). */
+const MAX_INPUT_DEPTH = 32;
+
+/** The nesting depth of a JSON value (bails early past the cap). */
+function depthOf(v: unknown, d: number): number {
+  if (d > MAX_INPUT_DEPTH || v === null || typeof v !== "object") return d;
+  let max = d;
+  for (const child of Object.values(v as Record<string, unknown>)) {
+    max = Math.max(max, depthOf(child, d + 1));
+    if (max > MAX_INPUT_DEPTH) return max;
+  }
+  return max;
+}
+
+/**
+ * The subscription to store: a plain live-readable action keeps the client's args and tags; a
+ * `defineSubscription` has its input VALIDATED (rejected → `invalid-input`, nothing stored) and
+ * its tags derived on the server — the client's tags are ignored.
+ */
+async function buildDataSub(
+  conn: Conn,
+  subId: string,
+  actionId: string,
+  args: unknown[],
+  clientTags: unknown,
+): Promise<DataSub | null> {
+  const def = getSubscriptionDef(actionId);
+  if (!def) return { actionId, args, tags: Array.isArray(clientTags) ? clientTags : [] };
+  try {
+    // A user schema may be slow or async: bound it like a render.
+    const { parsed, tags } = await withDeadline(renderDeadlineMs(), () => def.parse(args[0]));
+    return { actionId, args: [parsed], tags: [...tags], def };
+  } catch (err) {
+    const validation = err instanceof ActionValidationError ? err : null;
+    sendError(conn, "invalid-input", validation?.message ?? "invalid input", {
+      subId,
+      ...(validation?.fieldErrors ? { fieldErrors: { ...validation.fieldErrors } } : {}),
+    });
+    return null;
+  }
+}
+
+/** `authorizeData`, then a `defineSubscription`'s own row-level `authorize` (both re-run per recompute). */
+async function authorizeSub(conn: Conn, sub: DataSub): Promise<AuthDecision> {
+  const base = await authorizeData(conn, sub);
+  if (base !== "allow" || !sub.def?.authorize) return base;
+  const ok = await withConnContext(
+    conn,
+    () => sub.def!.authorize!(sub.args[0], { connection: connContext(conn) }),
+  );
+  return ok ? "allow" : "deny";
+}
+
+/**
+ * A recompute that threw. Forbidden/unauthorized → `denied` and the subscription is dropped;
+ * a redirect is a bug in a fetcher (dropped silently); not-found → `failed` but kept (it may
+ * exist after the next invalidation); anything else → `failed` with the production redaction
+ * (generic message + digest; the real error is logged server-side), kept for the next try.
+ */
+function subFailure(conn: Conn, subId: string, err: unknown): void {
+  if (isForbidden(err) || isUnauthorized(err)) {
+    sendError(conn, "denied", "subscription not permitted", { subId });
+    conn.dataSubs.delete(subId);
+    return;
+  }
+  if (isRedirect(err)) {
+    conn.dataSubs.delete(subId);
+    return;
+  }
+  if (isNotFound(err)) return sendError(conn, "failed", "not found", { subId });
+  const client = toClientError(err);
+  sendError(conn, "failed", client.message, {
+    subId,
+    ...(client.digest ? { digest: client.digest } : {}),
+  });
+}
+
 /** The subscription's `args` — wire-codec decoded when flagged `enc`; `null` when malformed. */
 function decodeSubscribeArgs(msg: { args?: unknown; enc?: unknown }): unknown[] | null {
   const raw = Array.isArray(msg.args) ? msg.args : [];
@@ -821,21 +911,21 @@ async function recomputeData(conn: Conn, subId: string, sub: DataSub): Promise<v
       // Re-authorize on every recompute. `canSubscribe` ran once at subscribe time;
       // a mid-session authorization change (role/tenant revoked) must stop further
       // pushes, or a long-lived socket keeps receiving updates after access is lost.
-      const decision = await authorizeData(conn, sub);
+      const decision = await authorizeSub(conn, sub);
       if (decision !== "allow") {
-        send(conn, { type: "data", subId, value: undefined, error: "unauthorized" });
+        sendError(conn, "denied", "subscription not permitted", { subId });
         conn.dataSubs.delete(subId); // drop it; the client may re-subscribe if re-granted
         break;
       }
       try {
         const value = await withRenderSlot(() =>
-          withDeadline(renderDeadlineMs(), (s) => runFetcher(conn, sub.actionId, sub.args, s))
+          withDeadline(renderDeadlineMs(), (s) => runFetcher(conn, sub, s))
         );
         send(conn, dataFrame(subId, value));
-      } catch {
+      } catch (err) {
         // A thrown deadline (or a real fetcher error) lands here; the slot was already
         // released by `withDeadline`, so the fleet keeps moving.
-        send(conn, { type: "data", subId, value: undefined, error: "recompute failed" });
+        subFailure(conn, subId, err);
       }
       // Re-run only while still subscribed (unsubscribe deletes the sub mid-flight).
     } while (sub.dirty && conn.dataSubs.get(subId) === sub);
@@ -845,7 +935,7 @@ async function recomputeData(conn: Conn, subId: string, sub: DataSub): Promise<v
     // (most plausibly the app's `canSubscribe`/`authorizeData` hook dereferencing a
     // revoked session) would crash the whole process, dropping every connection — not
     // just this socket. Degrade like a denied recompute: notify + drop the sub.
-    send(conn, { type: "data", subId, value: undefined, error: "recompute failed" });
+    sendError(conn, "failed", "recompute failed", { subId });
     conn.dataSubs.delete(subId);
   } finally {
     sub.busy = false;
@@ -858,13 +948,13 @@ async function recomputeData(conn: Conn, subId: string, sub: DataSub): Promise<v
  * `getSession` / cache reads run as the viewer. The socket was origin-gated at
  * handshake; the fn must still authorize its own access (same as any server action).
  */
-function runFetcher(
-  conn: Conn,
-  actionId: string,
-  args: unknown[],
-  signal?: AbortSignal,
-): Promise<unknown> {
-  const handler = getServerAction(actionId);
+function runFetcher(conn: Conn, sub: DataSub, signal?: AbortSignal): Promise<unknown> {
+  const { actionId, args } = sub;
+  // A `defineSubscription` runs its resolver with the connection's identity; a plain
+  // live-readable action is invoked as registered.
+  const handler = sub.def
+    ? (input: unknown) => sub.def!.run(input, { connection: connContext(conn), signal })
+    : getServerAction(actionId);
   if (!handler) return Promise.reject(new Error(`unknown live action: ${actionId}`));
   const request = new Request(conn.url || conn.origin, {
     headers: conn.cookie ? { cookie: conn.cookie } : {},

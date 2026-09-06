@@ -110,6 +110,9 @@ export function tagServerExports(mod: Record<string, unknown>, moduleId: string)
       enumerable: false,
       configurable: true,
     });
+    // A `defineSubscription` export: its definition is registered (and made live-readable).
+    const def = (value as { [SUBSCRIPTION_DEF]?: SubscriptionDef })[SUBSCRIPTION_DEF];
+    if (def) registerSubscription(id, def);
   }
 }
 
@@ -181,6 +184,53 @@ export function liveReadable<T extends { denextActionId: string }>(action: T): T
 /** True if `id` was opted in via {@link liveReadable} (server-side). */
 export function isLiveReadable(id: string): boolean {
   return liveReadableIds.has(id);
+}
+
+// ── Subscription definitions (`defineSubscription`) ──────────────────────────
+
+/** What a subscription's `authorize` / `resolve` receive besides the parsed input. */
+export interface SubscriptionRunContext {
+  /** The Live connection's identity over the socket; `null` on the one-shot path. */
+  connection: { origin: string; url: string; cookie: string; peerId: string } | null;
+  /** The recompute deadline (Live) or the request's signal. */
+  signal?: AbortSignal;
+}
+
+/** The hub-facing half of a `defineSubscription`: validate, gate, compute. */
+export interface SubscriptionDef {
+  /** Validate the client's raw input; returns the parsed input and the server-derived tags. */
+  parse(input: unknown): Promise<{ parsed: unknown; tags: string[] }>;
+  /** Row-level gate, re-run on every recompute. */
+  authorize?: (parsed: unknown, ctx: SubscriptionRunContext) => Promise<boolean>;
+  /** Compute the value. */
+  run(parsed: unknown, ctx: SubscriptionRunContext): Promise<unknown>;
+}
+
+/** The symbol under which a `defineSubscription` ref carries its {@link SubscriptionDef}. */
+export const SUBSCRIPTION_DEF: unique symbol = Symbol.for("denext.subscriptionDef") as never;
+
+const subscriptionDefs = new Map<string, SubscriptionDef>();
+
+/**
+ * Register a subscription definition under `id`. Registering IS the live opt-in: a definition
+ * exists only to be subscribed to, and it validates and gates its own input.
+ *
+ * @param id The server-reference id.
+ * @param def The definition.
+ */
+export function registerSubscription(id: string, def: SubscriptionDef): void {
+  subscriptionDefs.set(id, def);
+  liveReadableIds.add(id);
+}
+
+/**
+ * The subscription definition registered under `id`, if any.
+ *
+ * @param id The server-reference id.
+ * @returns The definition, or `undefined` for a plain action.
+ */
+export function getSubscriptionDef(id: string): SubscriptionDef | undefined {
+  return subscriptionDefs.get(id);
 }
 
 /** The dispatch URL for an action id. */
