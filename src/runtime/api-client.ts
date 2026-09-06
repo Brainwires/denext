@@ -23,6 +23,7 @@
 export type { HttpMethod } from "../server/types.ts";
 import type { HttpMethod } from "../server/types.ts";
 import { decodeWire, encodeWire, stableKey, WIRE_HEADER } from "./wire-codec.ts";
+import { type Batcher, createBatcher } from "./api-batch.ts";
 
 /** One endpoint's typed shape: its params, optional request/response bodies, query, error codes. */
 export interface ApiEndpoint {
@@ -73,6 +74,8 @@ export type RequestOf<E extends ApiEndpoint> =
     timeoutMs?: number;
     /** Opt this call out of in-flight dedupe (GET/HEAD calls with equal inputs share one fetch). */
     dedupe?: boolean;
+    /** Opt this call out of batching (GET/HEAD calls in one tick ride one `/_denext/api-batch` POST). */
+    batch?: boolean;
   };
 
 /** Free-form query strings (an endpoint without a `query` schema). */
@@ -123,6 +126,8 @@ export interface ApiRequestOptions {
   timeoutMs?: number;
   /** Opt this call out of in-flight dedupe. */
   dedupe?: boolean;
+  /** Opt this call out of batching. */
+  batch?: boolean;
 }
 
 /** Options for {@link createApiClient}. */
@@ -136,6 +141,13 @@ export interface ApiClientOptions {
    * requests), and off outside a request.
    */
   dedupe?: boolean;
+  /**
+   * Coalesce the GET/HEAD calls made in one tick into a single `POST /_denext/api-batch`
+   * (default true; `{ maxItems }` caps a batch, default 20). A call with custom headers or a
+   * body, a mutation, or `batch: false` always goes as its own request; a single pending call
+   * skips the batch framing entirely.
+   */
+  batch?: boolean | { maxItems?: number };
   /** The `fetch` to use (default: the global; a seam for tests and custom transports). */
   fetch?: typeof fetch;
 }
@@ -348,8 +360,35 @@ export async function apiRequest(
     body,
     signal: resolveSignal(opts.signal, opts.timeoutMs),
   });
+  return await settle(method, url, res);
+}
+
+/** Turn a response into the call's result, or throw the typed error (shared with batching). */
+async function settle(method: HttpMethod, url: string, res: Response): Promise<unknown> {
   if (!res.ok) throw new ApiClientError(method, url, res, await readErrorEnvelope(res));
   return await readResult(res);
+}
+
+// ── Batching ─────────────────────────────────────────────────────────────────
+
+/** GET/HEAD with no custom headers or body and no per-call opt-out may ride a batch. */
+function batchable(method: HttpMethod, opts: ApiRequestOptions): boolean {
+  return (method === "GET" || method === "HEAD") && opts.batch !== false && !opts.headers &&
+    opts.body === undefined;
+}
+
+/** Run one call through the batcher; its item response settles like a direct one. */
+async function batchedRequest(
+  batcher: Batcher,
+  pattern: string,
+  method: "GET" | "HEAD",
+  opts: ApiRequestOptions,
+  base: string,
+): Promise<unknown> {
+  const path = buildPath(pattern, opts.params, opts.query);
+  const signal = resolveSignal(opts.signal, opts.timeoutMs);
+  const res = await batcher.enqueue(method, path, signal, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  return await settle(method, base + path, res);
 }
 
 // ── In-flight dedupe ─────────────────────────────────────────────────────────
@@ -415,9 +454,20 @@ export function createApiClient<S extends ApiSchema = RegisteredSchema>(
   const options = typeof baseOrOptions === "string" ? { base: baseOrOptions } : baseOrOptions;
   const base = options.base ?? "";
   const dedupe = options.dedupe ?? true;
+  const batchOpt = options.batch ?? true;
+  const batcher = batchOpt
+    ? createBatcher({
+      fetch: options.fetch,
+      base,
+      maxItems: typeof batchOpt === "object" ? batchOpt.maxItems : undefined,
+    })
+    : null;
   const local = new Map<string, Promise<unknown>>();
   return ((path: string, method: HttpMethod, opts: ApiRequestOptions = {}) => {
-    const run = () => apiRequest(path, method, opts, base, options.fetch);
+    const run = () =>
+      batcher && batchable(method, opts)
+        ? batchedRequest(batcher, path, method as "GET" | "HEAD", opts, base)
+        : apiRequest(path, method, opts, base, options.fetch);
     const readOnly = method === "GET" || method === "HEAD";
     if (!dedupe || opts.dedupe === false || !readOnly) return run();
     return deduped(local, path, method, opts, run);

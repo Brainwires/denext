@@ -29,6 +29,8 @@ import {
 } from "../src/runtime/api-client.ts";
 import { json } from "../src/server/typed-response.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
+import { batchApp, ORIGIN } from "./helpers/batch-app.ts";
+import { API_BATCH_PATH } from "../src/runtime/api-batch-protocol.ts";
 import { ApiError, apiErrorResponse } from "../src/server/api-error.ts";
 
 const REPO_CONFIG = new URL("../deno.json", import.meta.url).pathname;
@@ -520,7 +522,7 @@ async function asBrowser(fn: () => Promise<void>): Promise<void> {
 Deno.test("createApiClient: concurrent equal GETs share one fetch in the browser; mutations never do", async () => {
   await asBrowser(async () => {
     const { fetch, calls } = countingFetch();
-    const api = createApiClient<DedupeSchema>({ fetch });
+    const api = createApiClient<DedupeSchema>({ fetch, batch: false });
     const [a, b] = await Promise.all([
       api("/api/user/[id]", "GET", { params: { id: "1" }, query: { q: "x" } }),
       api("/api/user/[id]", "GET", { params: { id: "1" }, query: { q: "x" } }),
@@ -544,7 +546,7 @@ Deno.test("createApiClient: concurrent equal GETs share one fetch in the browser
       api("/api/x", "GET", { dedupe: false }),
     ]);
     assertEquals(calls.length, 8);
-    const off = createApiClient<DedupeSchema>({ fetch, dedupe: false });
+    const off = createApiClient<DedupeSchema>({ fetch, dedupe: false, batch: false });
     await Promise.all([off("/api/x", "GET"), off("/api/x", "GET")]);
     assertEquals(calls.length, 10);
   });
@@ -552,7 +554,7 @@ Deno.test("createApiClient: concurrent equal GETs share one fetch in the browser
 
 Deno.test("createApiClient: on the server, dedupe is per request context and off outside one", async () => {
   const { fetch, calls } = countingFetch();
-  const api = createApiClient<DedupeSchema>({ fetch });
+  const api = createApiClient<DedupeSchema>({ fetch, batch: false });
   const ctxA = createRequestContext(new Request("http://localhost/a"));
   const ctxB = createRequestContext(new Request("http://localhost/b"));
   // Two users' requests, interleaved, each calling the same endpoint twice.
@@ -564,4 +566,116 @@ Deno.test("createApiClient: on the server, dedupe is per request context and off
   // Outside any request context a shared module-level client must not coalesce.
   await Promise.all([api("/api/me", "GET"), api("/api/me", "GET")]);
   assertEquals(calls.length, 4);
+});
+
+// ── Runtime: batching (client) ────────────────────────────────────────────────
+
+/** A `fetch` over a createApp handler that adds what a browser would (Origin/Host) and logs calls. */
+function appFetch(
+  app: (req: Request) => Promise<Response>,
+  opts: { origin?: boolean } = {},
+): { fetch: typeof fetch; calls: string[] } {
+  const calls: string[] = [];
+  const impl = ((input: URL | RequestInfo, init?: RequestInit) => {
+    const req = new Request(new URL(String(input), ORIGIN), init);
+    calls.push(`${req.method} ${new URL(req.url).pathname}`);
+    const headers = new Headers(req.headers);
+    headers.set("host", "localhost");
+    if (opts.origin !== false) headers.set("origin", ORIGIN);
+    return app(new Request(req, { headers }));
+  }) as typeof fetch;
+  return { fetch: impl, calls };
+}
+
+type BatchSchema = {
+  "/api/hello": { GET: { response: { hello: string } } };
+  "/api/when": { GET: { response: { at: Date } } };
+  "/api/boom": { GET: { response: unknown; errors: "conflict" } };
+  "/api/nope": { GET: { response: unknown } };
+  "/api/echo": { GET: { response: { q: string } } };
+  "/api/x": { POST: { body: unknown; response: unknown } };
+};
+
+Deno.test("createApiClient: concurrent GETs in one tick ride one batch POST; each settles on its own", async () => {
+  await asBrowser(async () => {
+    const { fetch, calls } = appFetch(batchApp());
+    const api = createApiClient<BatchSchema>({ fetch });
+    const [hello, when, boom, nope] = await Promise.allSettled([
+      api("/api/hello", "GET"),
+      api("/api/when", "GET"),
+      api("/api/boom", "GET"),
+      api("/api/nope", "GET"),
+    ]);
+    assertEquals(calls, [`POST ${API_BATCH_PATH}`], "exactly one request for four calls");
+    assertEquals(hello.status, "fulfilled");
+    assertEquals((hello as PromiseFulfilledResult<{ hello: string }>).value.hello, "world");
+    // A codec-tagged item is decoded through the same path as a direct response.
+    assert((when as PromiseFulfilledResult<{ at: Date }>).value.at instanceof Date);
+    // A typed error item is the same ApiClientError a direct call would throw.
+    assertEquals(boom.status, "rejected");
+    const err = (boom as PromiseRejectedResult).reason as ApiClientError;
+    assert(isApiClientError(err));
+    assertEquals([err.status, err.code, err.message.includes("conflict")], [409, "conflict", true]);
+    const nf = (nope as PromiseRejectedResult).reason as ApiClientError;
+    assertEquals([nf.status, nf.code], [404, "not_found"]);
+  });
+});
+
+Deno.test("createApiClient: a single call, a mutation, custom headers, or batch:false go alone", async () => {
+  await asBrowser(async () => {
+    const { fetch, calls } = appFetch(batchApp());
+    const api = createApiClient<BatchSchema>({ fetch });
+    await api("/api/hello", "GET"); // alone in its tick → plain GET, no batch framing
+    assertEquals(calls, ["GET /api/hello"]);
+    calls.length = 0;
+    await Promise.allSettled([
+      api("/api/hello", "GET", { batch: false }),
+      api("/api/hello", "GET", { headers: { "x-extra": "1" } }),
+      api("/api/x", "POST", { body: { a: 1 } }),
+    ]);
+    assertEquals(calls.sort(), ["GET /api/hello", "GET /api/hello", "POST /api/x"]);
+    calls.length = 0;
+    const off = createApiClient<BatchSchema>({ fetch, batch: false });
+    await Promise.allSettled([off("/api/hello", "GET"), off("/api/echo", "GET")]);
+    assertEquals(calls.sort(), ["GET /api/echo", "GET /api/hello"]);
+  });
+});
+
+Deno.test("createApiClient: batches chunk by maxItems and compose with dedupe", async () => {
+  await asBrowser(async () => {
+    const { fetch, calls } = appFetch(batchApp());
+    const api = createApiClient<BatchSchema>({ fetch, batch: { maxItems: 2 } });
+    await Promise.allSettled([
+      api("/api/hello", "GET"),
+      api("/api/hello", "GET"), // deduped into the first
+      api("/api/echo", "GET", { query: { a: "1" } }),
+      api("/api/echo", "GET", { query: { a: "2" } }),
+    ]);
+    // 3 distinct requests, chunked 2 + 1: two batch POSTs.
+    assertEquals(calls, [`POST ${API_BATCH_PATH}`, `POST ${API_BATCH_PATH}`]);
+  });
+});
+
+Deno.test("createApiClient: an aborted item rejects alone; a batch-level failure fails every item", async () => {
+  await asBrowser(async () => {
+    const { fetch } = appFetch(batchApp());
+    const api = createApiClient<BatchSchema>({ fetch });
+    const ac = new AbortController();
+    ac.abort();
+    const [aborted, fine] = await Promise.allSettled([
+      api("/api/hello", "GET", { signal: ac.signal }),
+      api("/api/echo", "GET"),
+    ]);
+    assertEquals(aborted.status, "rejected");
+    assertEquals(fine.status, "fulfilled");
+    // No Origin header → the batch itself is a 403 → every item is an http_error with that status.
+    const cross = appFetch(batchApp(), { origin: false });
+    const api2 = createApiClient<BatchSchema>({ fetch: cross.fetch });
+    const results = await Promise.allSettled([api2("/api/hello", "GET"), api2("/api/echo", "GET")]);
+    for (const r of results) {
+      assertEquals(r.status, "rejected");
+      const e = (r as PromiseRejectedResult).reason as ApiClientError;
+      assertEquals([e.status, e.code], [403, "http_error"]);
+    }
+  });
 });

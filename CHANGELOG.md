@@ -52,6 +52,16 @@ and this project adheres to
 
 ### Added
 
+- **Request batching on the typed API client.** The GET/HEAD calls a page makes in one tick
+  (three `useApi`/`createApiClient` reads in one render) ride ONE `POST /_denext/api-batch`;
+  each caller gets back an ordinary result or `ApiClientError` synthesized from its item
+  (status, header subset, raw body, the `enc` codec flag). One microtask flush per turn; a
+  single pending call skips the batch framing; batches are chunked by `maxItems` (default 20);
+  an item whose abort signal fires is rejected on its own; a batch-level failure (403, 413, …)
+  surfaces on every item as an `http_error`. A call with custom headers or a body, a mutation,
+  or `batch: false` (per call or `createApiClient({ batch: false })`) always goes alone.
+  Dedupe composes: two equal GETs plus one other in a tick is one batch of two items.
+  `src/runtime/api-batch.ts` (new), `src/runtime/api-client.ts`.
 - **`POST /_denext/api-batch` — N typed GET/HEAD calls in one round trip.** The server half
   of request batching for `createApiClient`: `{ v: 1, items: [{ id, m: "GET" | "HEAD", p }] }`
   → `{ v: 1, r: [{ id, s, h?, t?, enc? }] }` (item bodies as raw text, never re-parsed; the
