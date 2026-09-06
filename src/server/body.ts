@@ -67,6 +67,7 @@ export function bufferedRequest(request: Request, body: Uint8Array): Request {
       method: request.method,
       headers: request.headers,
       body: body.byteLength > 0 ? (body as BodyInit) : undefined,
+      signal: request.signal,
     }),
   );
 }
@@ -107,6 +108,7 @@ export function cappedBody(request: Request, maxBytes: number): Request {
       method: request.method,
       headers: request.headers,
       body: limited,
+      signal: request.signal,
       // @ts-ignore duplex is required by the spec for streaming bodies (Deno accepts it)
       duplex: "half",
     }),
@@ -119,4 +121,15 @@ class BodyTooLarge extends Error {
     super(`request body exceeds ${maxBytes} bytes`);
     this.name = "BodyTooLarge";
   }
+}
+
+/**
+ * Did a body consumer fail because {@linkcode cappedBody}'s cap was exceeded? (The error
+ * surfaces from `json()`/`formData()`/a reader as the stream's error.)
+ *
+ * @param err The caught value.
+ * @returns True for the cap error (→ a 413).
+ */
+export function isBodyTooLarge(err: unknown): err is Error {
+  return err instanceof Error && err.name === "BodyTooLarge";
 }

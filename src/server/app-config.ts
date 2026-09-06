@@ -156,6 +156,13 @@ export interface AppConfig {
    */
   actionMaxBodyBytes?: number;
   /**
+   * Max request body size in bytes for `route.ts` handlers (default 1 MiB). A route raises
+   * or lifts its own cap with `export const maxBodyBytes = N | false`. An over-cap body is a
+   * 413 before the handler runs (declared `Content-Length`) or errors the body stream as
+   * the handler reads it.
+   */
+  apiMaxBodyBytes?: number;
+  /**
    * An explicit public origin (e.g. `"https://example.com"`) used to build
    * absolute URLs (auto-populated `og:image`, canonical). Overrides request
    * headers — the most robust option when the origin is fixed. Also makes Server

@@ -25,14 +25,19 @@ export type { PageContext, RenderedPage, RenderPageOptions, SignalSink } from ".
 // Flight (RSC) types, referenced by RenderedPage/DocumentOptions.
 export type {
   FlightActionRef,
+  FlightBigInt,
   FlightBoundary,
   FlightClient,
   FlightDate,
   FlightEventHandler,
   FlightHost,
+  FlightMap,
   FlightNode,
+  FlightNonFinite,
   FlightPrimitive,
   FlightProps,
+  FlightSet,
+  FlightUrl,
   FlightValue,
 } from "../jsx/render-to-flight.ts";
 export { renderToFlight } from "../jsx/render-to-flight.ts";
@@ -52,6 +57,16 @@ export type { ServeUtilOptions } from "./serve-utils.ts";
 // can recover request/response body shapes (see src/build/api-types.ts).
 export { json } from "./typed-response.ts";
 export type { TypedRequest, TypedResponse } from "./typed-response.ts";
+// Typed API errors: throw an `ApiError` from a route handler for a structured JSON failure
+// (status + code + data); the dispatch seam also maps redirect()/notFound()/… and the body cap.
+export { ApiError, apiErrorResponse, ApiValidationError, isApiError } from "./api-error.ts";
+export type {
+  ApiErrorBody,
+  ApiErrorInit,
+  ApiValidationSource,
+  BuiltinApiErrorCode,
+} from "./api-error.ts";
+export type { ApiDispatchOptions } from "./api.ts";
 export type * from "./types.ts";
 
 // Re-export the router and JSX types referenced by the public API so that they

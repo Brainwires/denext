@@ -8,6 +8,45 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Typed API errors.** `ApiError(status, code, { message?, data?, fieldErrors?, headers? })`
+  from `denext/server`: throw it from a route handler for a structured JSON failure
+  `{ error: { code, status, message, data?, fieldErrors?, digest? } }` with `x-request-id`.
+  `ApiValidationError` is the 400 `validation` shape (field errors + `data.source`). An
+  `ApiError` is authored for the client, so it passes through production redaction
+  unchanged; an arbitrary throw is still redacted. `isApiError`, `apiErrorResponse`,
+  `ApiDispatchOptions` exported (public-surface golden refreshed). `src/server/api-error.ts`
+  (new), `src/server/api.ts`, `src/server/mod.ts`.
+- **Wire codec.** `src/runtime/wire-codec.ts` (new): the one `$`-tagged JSON superset every
+  denext wire shares — Date, `undefined`, BigInt, Map, Set, URL, NaN/±Infinity/-0 — with
+  `$`-key escaping (user data can never forge a tag), prototype-key refusal, bounded decode,
+  and copy-on-write encode so plain JSON pays nothing. Flight props (all three renderers),
+  Server Action args/results, and Live `data` frames now round-trip those values (a Map used
+  to arrive as `{}`, NaN as `null`, a Date in an action as a string). Envelopes carry
+  `enc: 1` only when a tag was needed, so a plain payload is byte-identical to before.
+  `denext/server` exports the new Flight value types (`FlightBigInt`, `FlightMap`,
+  `FlightNonFinite`, `FlightSet`, `FlightUrl`; public-surface golden refreshed).
+  `src/jsx/{flight-scalar,render-shared,render-to-flight,render-to-flight-stream}.ts`,
+  `src/client/{flight-client,live-client}.ts`, `src/runtime/{server-action,live-protocol}.ts`,
+  `src/server/{action-handler,live}.ts`.
+
+### Fixed
+
+- **`redirect()` / `notFound()` / `forbidden()` / `unauthorized()` thrown inside a
+  `route.ts` handler were a 500.** They are now the response they name: the redirect (its
+  status, target normalized), or 404/403/401 as a JSON envelope — plain text when the
+  request prefers `text/html`. `src/server/api.ts`.
+
+### Security
+
+- **Route handler request bodies are capped** (1 MiB default, like Server Actions; they
+  were unbounded). A declared over-cap `Content-Length` is a 413 before the handler runs; a
+  chunked body errors the stream as the handler reads past the cap (→ 413). Streaming
+  consumers keep streaming. Raise or lift per route with `export const maxBodyBytes = N |
+  false`, or app-wide with `apiMaxBodyBytes`. A rebuilt capped/buffered request now also
+  carries the original `signal`. `src/server/{api,body,segment-config,app-config,request-pipeline}.ts`.
+
 ## [2.0.7] - 2026-09-06
 
 ### Added

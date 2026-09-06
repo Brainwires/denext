@@ -160,6 +160,21 @@ export function readSegmentConfig(mod: unknown): SegmentConfig {
   return cfg;
 }
 
+/**
+ * Read a route module's `export const maxBodyBytes` — the per-route request-body cap for its
+ * handlers: a non-negative finite number of bytes, or `false` to lift the cap (an upload
+ * route that streams to storage). Anything else is ignored (→ the server default).
+ *
+ * @param mod A loaded route module.
+ * @returns The cap, `false` for unbounded, or `undefined` when the module says nothing.
+ */
+export function readApiBodyLimit(mod: unknown): number | false | undefined {
+  const v = (mod as { maxBodyBytes?: unknown } | null)?.maxBodyBytes;
+  if (v === false) return false;
+  if (typeof v === "number" && Number.isFinite(v) && v >= 0) return v;
+  return undefined;
+}
+
 /** Non-enumerable record of which fields a module SET (vs. inherited defaults). */
 const EXPLICIT = Symbol("denext.segmentConfig.explicit");
 
