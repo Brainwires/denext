@@ -17,6 +17,8 @@ and this project adheres to
   client component is now emitted as a Flight boundary node (`{ $: "b", f, c }`) that the client
   parses into a real `ErrorBoundary` — the fallback swaps in and `reset()` remounts the children,
   as in Next. The lazy island loader fetches the fallback's module with the rest.
+  `denext/server` gains the `FlightBoundary` and `SignalSink` types (public-surface golden
+  refreshed).
 - **Parallel-route slots keep their content across soft navigations.** Next.js
   renders a slot's `default.tsx` only on a hard load; on a client navigation a
   slot the new URL does not match keeps showing what it showed — including the

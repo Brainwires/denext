@@ -148,6 +148,7 @@ export interface PageContext {
 
 /** The status a caught control signal asks for (0 = none caught). */
 export interface SignalSink {
+  /** 404/403/401 once a signal boundary caught during the render; 0 until then. */
   status: number;
 }
 
