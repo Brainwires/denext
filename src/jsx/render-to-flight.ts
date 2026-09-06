@@ -90,6 +90,14 @@ export interface FlightSet {
   v: FlightValue[];
 }
 
+/** A serialized `createChannel` reference (the client subscribes by id). */
+export interface FlightChannelRef {
+  /** Discriminant: channel reference. */
+  $: "ch";
+  /** The channel's stable id. */
+  i: string;
+}
+
 /** A serialized lazily-loaded event handler ({@link Qrl}) reference. */
 export interface FlightEventHandler {
   /** Discriminant: event-handler (qrl) reference. */
@@ -159,6 +167,7 @@ export type FlightValue =
   | FlightUrl
   | FlightMap
   | FlightSet
+  | FlightChannelRef
   | FlightEventHandler;
 
 /** A serialized props object (VNode-valued props are themselves Flight nodes). */

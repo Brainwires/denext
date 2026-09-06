@@ -34,7 +34,10 @@ export { Live } from "./runtime/live-boundary.ts";
 export type { LiveProps } from "./runtime/live-boundary.ts";
 export { configureLive, subscribeLiveTags } from "./client/live-client.ts";
 export { useApiLive } from "./client/use-api-live.ts";
-export { useSubscription } from "./client/live-typed.ts";
+export { useChannel, useSubscription } from "./client/live-typed.ts";
+export type { UseChannelOptions } from "./client/live-typed.ts";
+export { subscribeChannel } from "./client/live-client.ts";
+export type { ChannelRef } from "./runtime/channel.ts";
 export type {
   LiveSubscriptionError,
   SubscriptionRefLike,

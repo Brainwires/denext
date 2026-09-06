@@ -281,7 +281,7 @@ class StreamFlightRenderer extends VNodeRenderer<Dual> implements IslandRenderer
 }
 
 /** Serialized-leaf discriminants that carry no nested value holes to substitute. */
-const LEAF_FLIGHT_TAGS = new Set(["a", "D", "e", "n", "N", "U"]);
+const LEAF_FLIGHT_TAGS = new Set(["a", "D", "e", "n", "N", "U", "ch"]);
 
 /** Resolve a `{$:"vh",r}` placeholder to its deferred value, or leave a look-alike as data. */
 function fillValueHole(value: FlightValue, resolved: Map<string, FlightValue>): FlightValue {

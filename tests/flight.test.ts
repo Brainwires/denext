@@ -6,6 +6,7 @@ import { renderToString } from "../src/jsx/render-to-string.ts";
 import { tagClientExports } from "../src/runtime/client-reference.ts";
 import { parseFlight } from "../src/client/flight-client.ts";
 import { serverAction } from "../src/runtime/server-action.ts";
+import { createChannel } from "../src/runtime/channel.ts";
 import type { Component } from "../src/jsx/types.ts";
 
 // A "client" component, tagged as if discovered by the boundary manifest.
@@ -205,4 +206,21 @@ Deno.test("flight: a `$`-keyed user object inside a Map value round-trips as dat
   const tree = parseFlight(flight, new Map()) as any;
   const m = tree.props["data-m"] as Map<string, unknown>;
   assertEquals(m.get("k"), { $: "M", v: [] });
+});
+
+Deno.test('flight: a channel prop crosses as {$:"ch"} and rehydrates to a subscribable ref', async () => {
+  const ch = createChannel<number>({ id: "flight#ch", authorize: () => true });
+  const flight = await renderToFlight(h(Counter, { start: 1, events: ch } as never));
+  assertEquals((flight as any).p.events, { $: "ch", i: "flight#ch" });
+  const tree = parseFlight(flight, new Map([["c_counter#Counter", Counter as Component]])) as any;
+  assertEquals(tree.props.events, { denextChannelId: "flight#ch" });
+  // A channel with no id (not exported from a "use server" module) is a guided error.
+  const anon = createChannel<number>({ authorize: () => true });
+  let msg = "";
+  try {
+    await renderToFlight(h(Counter, { start: 1, events: anon } as never));
+  } catch (e) {
+    msg = (e as Error).message;
+  }
+  assertStringIncludes(msg, "use server");
 });

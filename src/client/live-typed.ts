@@ -4,7 +4,8 @@
 
 import { useEffect, useState } from "../runtime/hooks.ts";
 import type { LiveErrorInfo } from "./live-client.ts";
-import { subscribeLiveData } from "./live-client.ts";
+import { subscribeChannel, subscribeLiveData } from "./live-client.ts";
+import type { ChannelRef } from "../runtime/channel.ts";
 
 /** A `defineSubscription` ref as the client sees it (the id, plus the phantom types). */
 export interface SubscriptionRefLike<In, Out> {
@@ -89,4 +90,59 @@ function toSubscriptionError(reason: string, info?: LiveErrorInfo): LiveSubscrip
   if (info?.fieldErrors) out.fieldErrors = info.fieldErrors;
   if (info?.digest) out.digest = info.digest;
   return out;
+}
+
+/** Options for {@link useChannel}. */
+export interface UseChannelOptions<T> {
+  /** The value before the first push (channels carry no history — compute it during SSR). */
+  initial?: T;
+  /** `false` keeps the hook idle (no subscription). Default true. */
+  enabled?: boolean;
+}
+
+/** The id under which a channel ref subscribes: the server object's id, or the "use server" stub's. */
+function channelIdOf(ref: ChannelRef<unknown> | { denextActionId: string }): string {
+  return (ref as ChannelRef<unknown>).denextChannelId ??
+    (ref as { denextActionId: string }).denextActionId;
+}
+
+/**
+ * Receive a `createChannel` channel's pushes for `key`. The server authorizes the subscription
+ * in this viewer's session (and re-checks it lazily); every `publish(key, payload)` — from an
+ * action, a webhook, a cron — arrives as a new `data`. At-most-once, latest-wins; no replay on
+ * reconnect.
+ *
+ * @param channel The channel ref (imported from a `"use server"` module or received as a prop).
+ * @param key The key to subscribe to.
+ * @param options `initial`, `enabled`.
+ * @returns `{ data, error, status }` typed by the channel's payload.
+ */
+export function useChannel<T>(
+  channel: ChannelRef<T> | { denextActionId: string; __channel?: { payload: T } },
+  key: string,
+  options: UseChannelOptions<T> = {},
+): SubscriptionState<T> {
+  const [state, setState] = useState<SubscriptionState<T>>({
+    data: options.initial,
+    error: undefined,
+    status: "idle",
+  });
+  const enabled = options.enabled ?? true;
+  const id = channelIdOf(channel);
+  useEffect(() => {
+    if (!enabled) return;
+    return subscribeChannel(
+      id,
+      key,
+      (value) => setState({ data: value as T, error: undefined, status: "live" }),
+      (info) =>
+        setState((s) => ({
+          ...s,
+          error: toSubscriptionError(info.reason ?? info.code, info),
+          status: "error",
+        })),
+    );
+    // deno-lint-ignore no-explicit-any
+  }, [id, key, enabled] as any);
+  return state;
 }

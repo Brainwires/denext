@@ -126,6 +126,7 @@ function parseValue(value: FlightValue, registry: ClientRegistry): unknown {
   const tagged = value as { $?: string };
   if (tagged.$ === "a") return clientActionStub((value as { i: string }).i);
   if (tagged.$ === "e") return qrlStub((value as { i: string }).i);
+  if (tagged.$ === "ch") return { denextChannelId: (value as { i: string }).i };
   if (tagged.$ === "h" || tagged.$ === "c") {
     // A VNode-valued prop.
     return parseFlight(value as FlightNode, registry);

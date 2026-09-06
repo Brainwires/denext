@@ -559,6 +559,16 @@ export interface LiveLimits {
    * tighter than a frame.
    */
   maxSubscriptionInputBytes?: number;
+  /** Max `useChannel` subscriptions per connection (default 32). */
+  maxChannelsPerConnection?: number;
+  /** Max bytes of one channel payload (default 16384); `publish` throws past it. */
+  maxChannelPayloadBytes?: number;
+  /**
+   * Seconds after which a channel subscriber is lazily re-authorized on the next push
+   * (default 300). Per-push re-authorization would cost subscribers × `authorize` per emit;
+   * `channel.revoke(key)` ends access immediately when that matters.
+   */
+  channelAuthTtlSeconds?: number;
   /** Socket idle timeout in seconds passed to `Deno.upgradeWebSocket` (default 120). */
   idleTimeoutSeconds?: number;
   /**

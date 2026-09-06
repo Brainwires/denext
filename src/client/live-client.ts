@@ -76,9 +76,18 @@ interface TagSub {
   onInvalidate: () => void;
 }
 
+interface ChannelSubClient {
+  channelId: string;
+  key: string;
+  dead?: boolean;
+  onValue: (value: unknown, seq: number) => void;
+  onError: (info: LiveErrorInfo) => void;
+}
+
 const boundaries = new Map<string, Boundary>();
 const dataSubs = new Map<string, DataSub>();
 const tagSubs = new Map<string, TagSub>();
+const channelSubs = new Map<string, ChannelSubClient>();
 const presenceRooms = new Map<string, PresenceRoom>();
 let subCounter = 0;
 
@@ -88,7 +97,8 @@ let refresh: (() => void) | null = null;
 
 /** Any live subscription (boundary, data, or presence) that keeps the socket alive. */
 function hasSubscriptions(): boolean {
-  return boundaries.size > 0 || dataSubs.size > 0 || tagSubs.size > 0 || presenceRooms.size > 0;
+  return boundaries.size > 0 || dataSubs.size > 0 || tagSubs.size > 0 || channelSubs.size > 0 ||
+    presenceRooms.size > 0;
 }
 
 /** Send one client frame if the socket is open (no-op otherwise; resent on reconnect). */
@@ -123,6 +133,33 @@ export function configureLive(opts: {
   setLiveRegistrar(register);
   // `useApi({ tags })` refetches on a tag invalidation whenever the Live transport is present.
   setApiInvalidationSource(subscribeLiveTags);
+}
+
+/**
+ * Receive a `createChannel` channel's pushes for `key`. Backs `useChannel`. Returns an
+ * unsubscribe. A refusal (`denied` / `no-policy` / …) arrives through `onError` and marks the
+ * subscription dead so a reconnect does not re-send it.
+ *
+ * @param channelId The channel's stable id (`ref.denextChannelId`, or the `"use server"` stub's id).
+ * @param key The key within the channel.
+ * @param onValue Called with each pushed payload and the publisher's `seq`.
+ * @param onError Called with a structured refusal.
+ */
+export function subscribeChannel(
+  channelId: string,
+  key: string,
+  onValue: (value: unknown, seq: number) => void,
+  onError: (info: LiveErrorInfo) => void,
+): () => void {
+  const subId = `c${++subCounter}`;
+  channelSubs.set(subId, { channelId, key, onValue, onError });
+  ensureSocket();
+  sendFrame({ type: "channel-subscribe", subId, channelId, key });
+  return () => {
+    channelSubs.delete(subId);
+    sendFrame({ type: "channel-unsubscribe", subId });
+    if (!hasSubscriptions()) closeSocket();
+  };
 }
 
 /**
@@ -290,6 +327,9 @@ function handleServerMessage(raw: string): void {
     case "invalidate":
       tagSubs.get(msg.subId)?.onInvalidate();
       break;
+    case "channel":
+      deliverChannel(msg);
+      break;
     case "presence-state":
       presenceRooms.get(msg.room)?.onState(msg.peers, msg.selfId);
       break;
@@ -338,10 +378,27 @@ function deliverError(msg: LiveErrorInfo & { subId?: string }): void {
   if (msg.code === "no-policy") console.error(text);
   else if (!msg.subId) console.warn(text);
   if (!msg.subId) return;
+  const channel = channelSubs.get(msg.subId);
+  if (channel) {
+    if (TERMINAL_CODES.has(msg.code) || msg.code === "denied") channel.dead = true;
+    channel.onError(msg);
+    return;
+  }
   const sub = dataSubs.get(msg.subId);
   if (!sub) return;
   if (TERMINAL_CODES.has(msg.code)) sub.dead = true;
   sub.onData(undefined, msg.reason ?? msg.code, msg);
+}
+
+/** Hand a pushed channel payload to its subscription, decoding a codec-flagged value first. */
+function deliverChannel(msg: { subId: string; seq: number; value: unknown; enc?: 1 }): void {
+  const sub = channelSubs.get(msg.subId);
+  if (!sub) return;
+  try {
+    sub.onValue(msg.enc === WIRE_ENC ? decodeWire(msg.value) : msg.value, msg.seq);
+  } catch {
+    sub.onError({ code: "bad-message", reason: "malformed channel payload" });
+  }
 }
 
 /** Batch multiple mount/unmount events into a single subscribe on the next microtask. */
@@ -369,6 +426,11 @@ function sendAllSubscriptions(): void {
   if (boundaries.size > 0) sendSubscribe();
   for (const [subId, s] of dataSubs) if (!s.dead) sendFrame(subscribeFrame(subId, s));
   for (const [subId, t] of tagSubs) sendFrame({ type: "tags-subscribe", subId, tags: t.tags });
+  for (const [subId, c] of channelSubs) {
+    if (!c.dead) {
+      sendFrame({ type: "channel-subscribe", subId, channelId: c.channelId, key: c.key });
+    }
+  }
   for (const [room, r] of presenceRooms) {
     sendFrame({ type: "presence-join", room, state: r.state });
   }

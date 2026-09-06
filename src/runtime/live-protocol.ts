@@ -161,6 +161,37 @@ export interface LiveInvalidate {
   tags: string[];
 }
 
+/** Client → server: receive a `createChannel` channel's pushes for `key`. */
+export interface LiveChannelSubscribe {
+  type: "channel-subscribe";
+  /** Client-generated id correlating pushes back to this subscription. */
+  subId: string;
+  /** The channel's stable id. */
+  channelId: string;
+  /** The key within the channel. */
+  key: string;
+}
+
+/** Client → server: drop a {@link LiveChannelSubscribe}. */
+export interface LiveChannelUnsubscribe {
+  type: "channel-unsubscribe";
+  /** The subscription to drop. */
+  subId: string;
+}
+
+/** Server → client: one published payload. */
+export interface LiveChannel {
+  type: "channel";
+  /** The subscription this payload is for. */
+  subId: string;
+  /** The publishing instance's per-key sequence (orders frames from one instance only). */
+  seq: number;
+  /** The payload (wire-codec encoded when `enc` is set). */
+  value: unknown;
+  /** `1` when `value` carries codec tags. */
+  enc?: 1;
+}
+
 export type LiveClientMessage =
   | LiveSubscribe
   | LivePong
@@ -168,6 +199,8 @@ export type LiveClientMessage =
   | LiveDataUnsubscribe
   | LiveTagsSubscribe
   | LiveTagsUnsubscribe
+  | LiveChannelSubscribe
+  | LiveChannelUnsubscribe
   | LivePresenceJoin
   | LivePresenceUpdate
   | LivePresenceLeave;
@@ -224,5 +257,6 @@ export type LiveServerMessage =
   | LivePing
   | LiveData
   | LiveInvalidate
+  | LiveChannel
   | LivePresenceState
   | LiveError;

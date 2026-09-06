@@ -52,6 +52,23 @@ and this project adheres to
 
 ### Added
 
+- **`createChannel` / `useChannel` — server push over the Live socket.** `<Live>`, `useLive`
+  and `useSubscription` are pull-recompute on tag invalidation; a channel is the push half:
+  `const orderEvents = createChannel<{ status }>({ schema, authorize })` exported from a
+  `"use server"` module, then `await orderEvents.publish(\`user:${id}\`, payload)` from anywhere
+  on the server (an action, a webhook, a cron, `after()`) reaches every authorized subscriber of
+  that key: `useChannel(orderEvents, \`user:${id}\`, { initial })`→`{ data, error, status }`.
+  Security by construction:`authorize(ctx, key)`is REQUIRED (construction throws without it)
+  and runs in the subscriber's session at subscribe time, then lazily on traffic once`authTtlSeconds`(default`live.limits.channelAuthTtlSeconds`, 300 s) has passed — per-push
+  re-authorization would cost subscribers × authorize per emit — while`channel.revoke(key,
+  { peerId? })`ends access immediately, cluster-wide; an unknown channel id is`denied`, never
+  a distinguishable "unknown"; keys are shape-checked; payloads are validated (Standard Schema)
+  and byte-capped at the PUBLISHER (a failure is thrown to the publisher, never sent). Delivery:
+  at-most-once, latest-wins per subscription under back-pressure (the last held frame replays on
+  drain, no recompute) and within a 16 ms publisher burst; no history or replay on reconnect;`seq`orders frames from one instance only. Multi-instance delivery goes through a`ChannelTransport`:`inMemoryChannelTransport()`(default, single instance),`broadcastChannelTransport()`(Deno Deploy isolates / workers, zero deps), or your own
+  two-method Redis/NATS transport via`setChannelTransport`. A channel passed to a client
+  component crosses Flight as`{ $: "ch", i }`. Limits:`live.limits.maxChannelsPerConnection`(32),`maxChannelPayloadBytes`(16 KiB),`channelAuthTtlSeconds`(300).`src/runtime/channel.ts`,`src/server/live-channels.ts`(new),`src/server/{live,config}.ts`,`src/runtime/{live-protocol,server-action}.ts`,`src/jsx/{flight-scalar,render-to-flight,
+  render-to-flight-stream}.ts`,`src/client/{flight-client,live-client,live-typed}.ts`,`src/live.ts`,`src/server/mod.ts` (public-surface golden refreshed; config schema regenerated).
 - **`defineSubscription` / `useSubscription` — typed, validated live queries** (the `useLive`
   twin of `defineApi`). `defineSubscription({ input: z.object({ id }), tags: ({ id }) =>
   [\`order:${id}\`], authorize, resolve })`exported from a`"use server"`module (or with an

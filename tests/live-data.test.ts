@@ -1,7 +1,7 @@
 // Live data family — the hub's data subscriptions + presence rooms, exercised
 // end-to-end over real WebSockets, plus the client hooks driven by a fake socket.
 
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import {
   __backpressureTestSeam,
   handleLiveUpgrade,
@@ -18,7 +18,13 @@ import { prepareWire } from "../src/runtime/wire-codec.ts";
 import { defineSubscription } from "../src/runtime/define-subscription.ts";
 import { getSubscriptionDef, tagServerExports } from "../src/runtime/server-action.ts";
 import type { StandardSchemaV1 } from "../src/runtime/define-action.ts";
-import { useSubscription } from "../src/client/live-typed.ts";
+import { useChannel, useSubscription } from "../src/client/live-typed.ts";
+import {
+  broadcastChannelTransport,
+  createChannel,
+  inMemoryChannelTransport,
+  setChannelTransport,
+} from "../src/runtime/channel.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { makeDom } from "./helpers/dom.ts";
@@ -1022,6 +1028,220 @@ Deno.test("useSubscription client: initial → live → structured error; a refu
     // The client reconnects on a timer; emulate its resubscribe by opening a fresh socket through
     // the same path: the refused (dead) sub is skipped, so no data-subscribe for it is queued.
     void again;
+    root.unmount();
+  });
+});
+
+// ── Channels (`createChannel` → `useChannel`) ──────────────────────────────────
+
+/** Subscribe `ws` to a channel key and return a promise for the first N `channel` frames. */
+function channelSubscribe(ws: WebSocket, subId: string, channelId: string, key: string): void {
+  ws.send(JSON.stringify({ type: "channel-subscribe", subId, channelId, key }));
+}
+
+Deno.test("channel hub: an authorized subscriber receives publishes (codec-encoded), fanned out to every connection", async () => {
+  const ch = createChannel<{ at: Date; n: number }>({ id: "ch#orders", authorize: () => true });
+  const { server, port } = startHub({});
+  try {
+    const a = collect(
+      port,
+      "channel",
+      1,
+      (ws) => channelSubscribe(ws, "a1", "ch#orders", "user:1"),
+    );
+    const b = collect(
+      port,
+      "channel",
+      1,
+      (ws) => channelSubscribe(ws, "b1", "ch#orders", "user:1"),
+    );
+    // Give both subscribes a moment to register, then publish once.
+    setTimeout(() => void ch.publish("user:1", { at: new Date(0), n: 1 }), 80);
+    const [ra, rb] = await Promise.all([a, b]);
+    for (const [frames, subId] of [[ra.frames, "a1"], [rb.frames, "b1"]] as const) {
+      assertEquals(frames[0].type, "channel");
+      assertEquals(frames[0].subId, subId);
+      assertEquals(frames[0].seq, 1);
+      assertEquals(frames[0].enc, 1);
+      assertEquals(frames[0].value, { at: { $: "D", v: "1970-01-01T00:00:00.000Z" }, n: 1 });
+    }
+    ra.ws.close();
+    rb.ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
+Deno.test("channel hub: unknown channel → denied (not distinguishable), bad key → bad-message, authorize false → denied", async () => {
+  createChannel<number>({ id: "ch#private", authorize: (_ctx, key) => key === "public" });
+  const { server, port } = startHub({});
+  try {
+    const { ws, frames } = await collect(port, "error", 3, (ws) => {
+      channelSubscribe(ws, "u", "ch#does-not-exist", "k");
+      channelSubscribe(ws, "k", "ch#private", "bad key with spaces!");
+      channelSubscribe(ws, "d", "ch#private", "secret");
+    });
+    const byId = Object.fromEntries(frames.map((f: Any) => [f.subId, f.code]));
+    assertEquals(byId, { u: "denied", k: "bad-message", d: "denied" });
+    ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
+Deno.test("channel hub: revoke ends a key's subscriptions with `denied`; nothing more is delivered", async () => {
+  const ch = createChannel<number>({ id: "ch#revocable", authorize: () => true });
+  const { server, port } = startHub({});
+  try {
+    const { ws, frames } = await collect(port, "error", 1, (ws) => {
+      channelSubscribe(ws, "r1", "ch#revocable", "room:9");
+      setTimeout(() => ch.revoke("room:9"), 60);
+      setTimeout(() => void ch.publish("room:9", 1), 120); // after the revoke: no subscriber
+    });
+    assertEquals([frames[0].code, frames[0].subId], ["denied", "r1"]);
+    await new Promise((r) => setTimeout(r, 150));
+    ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
+Deno.test("channel hub: a publisher burst coalesces into one frame carrying the LAST value", async () => {
+  const ch = createChannel<number>({ id: "ch#burst", authorize: () => true });
+  const { server, port } = startHub({});
+  try {
+    const seen: Any[] = [];
+    const { ws } = await collect(port, "channel", 1, (ws) => {
+      ws.addEventListener("message", (ev) => {
+        const m = JSON.parse((ev as MessageEvent).data as string);
+        if (m.type === "channel") seen.push(m);
+      });
+      channelSubscribe(ws, "s", "ch#burst", "k");
+      setTimeout(() => {
+        void ch.publish("k", 1);
+        void ch.publish("k", 2);
+        void ch.publish("k", 3);
+      }, 60);
+    });
+    await new Promise((r) => setTimeout(r, 80));
+    assertEquals(seen.length, 1, "three publishes within the coalesce window → one frame");
+    assertEquals(seen[0].value, 3);
+    ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
+Deno.test("createChannel: authorize is required; publish validates the schema and caps the payload at the publisher", async () => {
+  assertThrows(() => createChannel({} as never), TypeError, "authorize");
+  const strict = createChannel<{ n: number }>({
+    id: "ch#strict",
+    authorize: () => true,
+    schema: {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate: (v) =>
+          typeof (v as { n?: unknown })?.n === "number"
+            ? { value: v as { n: number } }
+            : { issues: [{ message: "n must be a number", path: ["n"] }] },
+      },
+    },
+  });
+  await assertRejects(
+    () => strict.publish("k", { n: "x" } as never),
+    Error,
+    "Invalid channel payload",
+  );
+  await assertRejects(() => strict.publish("bad key!", { n: 1 }), TypeError, "invalid key");
+  const { server } = startHub({ limits: { maxChannelPayloadBytes: 32 } }); // sets the cap
+  try {
+    await assertRejects(
+      () => strict.publish("k", { n: 1, pad: "x".repeat(100) } as never),
+      RangeError,
+    );
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
+Deno.test("channel hub: after the auth TTL, the next push re-authorizes lazily; a revoked viewer is denied", async () => {
+  let allowed = true;
+  const ch = createChannel<number>({
+    id: "ch#ttl",
+    authorize: () => allowed,
+    authTtlSeconds: 0.01,
+  });
+  const { server, port } = startHub({});
+  try {
+    const { ws, frames } = await collect(port, "error", 1, (ws) => {
+      channelSubscribe(ws, "t", "ch#ttl", "k");
+      setTimeout(() => {
+        allowed = false; // role revoked mid-session
+        void ch.publish("k", 1); // TTL (10 ms) has passed → re-auth → denied
+      }, 80);
+    });
+    assertEquals([frames[0].code, frames[0].subId], ["denied", "t"]);
+    ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
+Deno.test("channel transports: the in-memory default loops back; BroadcastChannel spans instances when available", async () => {
+  const mem = inMemoryChannelTransport();
+  const got: unknown[] = [];
+  const stop = mem.subscribe((ev) => got.push(ev.key));
+  await mem.publish({ kind: "publish", channelId: "c", key: "k", seq: 1, instance: "i" });
+  assertEquals(got, ["k"]);
+  stop();
+  if (typeof BroadcastChannel !== "undefined") {
+    const a = broadcastChannelTransport("denext-test-channels");
+    const b = broadcastChannelTransport("denext-test-channels");
+    const seen = new Promise<string>((resolve) => b.subscribe((ev) => resolve(ev.key)));
+    await a.publish({ kind: "publish", channelId: "c", key: "cross", seq: 1, instance: "other" });
+    assertEquals(await seen, "cross");
+  }
+  setChannelTransport(inMemoryChannelTransport()); // restore the default for later tests
+});
+
+Deno.test("useChannel client: initial → pushed value → a denial marks the sub dead", () => {
+  withFakeSocket(() => {
+    const { doc, container } = makeDom();
+    setDocument(doc as Any);
+    const ref = { denextChannelId: "ch#orders" } as {
+      denextChannelId: string;
+      __channel?: { payload: number };
+    };
+    function App() {
+      const { data, status, error } = useChannel(ref, "user:1", { initial: 0 });
+      return h("span", null, `${data}/${status}/${error?.code ?? "-"}`);
+    }
+    const root = createRoot(container as Any);
+    root.render(h(App, null));
+    flushSync();
+    assertEquals(container.textContent, "0/idle/-");
+    const ws = FakeWS.instances.at(-1)!;
+    ws.open();
+    const sent = JSON.parse(ws.sent.find((s) => s.includes("channel-subscribe"))!);
+    assertEquals([sent.channelId, sent.key], ["ch#orders", "user:1"]);
+    ws.deliver({ type: "channel", subId: sent.subId, seq: 1, value: 42 });
+    flushSync();
+    assertEquals(container.textContent, "42/live/-");
+    ws.deliver({
+      type: "error",
+      code: "denied",
+      reason: "channel access revoked",
+      subId: sent.subId,
+    });
+    flushSync();
+    assertEquals(container.textContent, "42/error/denied");
     root.unmount();
   });
 });

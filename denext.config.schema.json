@@ -559,6 +559,18 @@
               "description": "Max size in bytes of one subscription's input / args (default 16384): the input is stored for the connection's lifetime and re-used on every recompute, so it is capped tighter than a frame.",
               "type": "number"
             },
+            "maxChannelsPerConnection": {
+              "description": "Max `useChannel` subscriptions per connection (default 32).",
+              "type": "number"
+            },
+            "maxChannelPayloadBytes": {
+              "description": "Max bytes of one channel payload (default 16384); `publish` throws past it.",
+              "type": "number"
+            },
+            "channelAuthTtlSeconds": {
+              "description": "Seconds after which a channel subscriber is lazily re-authorized on the next push (default 300). Per-push re-authorization would cost subscribers × `authorize` per emit; `channel.revoke(key)` ends access immediately when that matters.",
+              "type": "number"
+            },
             "idleTimeoutSeconds": {
               "description": "Socket idle timeout in seconds passed to `Deno.upgradeWebSocket` (default 120).",
               "type": "number"

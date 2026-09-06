@@ -14,6 +14,7 @@ import { isServerAction } from "../runtime/server-action.ts";
 import { taintMessageFor } from "../runtime/taint.ts";
 import { isAsyncProps } from "../runtime/async-props.ts";
 import { isQrl } from "../runtime/qrl.ts";
+import { isChannel } from "../runtime/channel.ts";
 import { isThenable } from "../runtime/suspense.ts";
 import type { FlightValue } from "./render-to-flight.ts";
 
@@ -51,8 +52,8 @@ export function serializeScalar(value: unknown): ScalarResult {
   if (t === "number") return { kind: "value", value: serializeNumber(value as number) };
   if (t === "string" || t === "boolean") return { kind: "value", value: value as FlightValue };
   if (t === "bigint") return { kind: "value", value: { $: "n", v: (value as bigint).toString() } };
-  if (isServerAction(value)) return { kind: "value", value: { $: "a", i: value.denextActionId } };
-  if (isQrl(value)) return { kind: "value", value: { $: "e", i: value.denextQrlId } };
+  const ref = serializeRef(value);
+  if (ref) return ref;
   if (t === "function") return SKIP_RESULT;
   if (value instanceof Date) return { kind: "value", value: { $: "D", v: value.toISOString() } };
   if (value instanceof URL) return { kind: "value", value: { $: "U", v: value.href } };
@@ -63,6 +64,23 @@ export function serializeScalar(value: unknown): ScalarResult {
   if (isAsyncProps(value)) return COMPOUND_RESULT;
   if (isThenable(value)) return { kind: "thenable", promise: value };
   return COMPOUND_RESULT;
+}
+
+/**
+ * The cross-boundary references: a server action (`a`), a qrl (`e`), a channel (`ch`) — each
+ * crosses as its stable id. `null` for anything else.
+ */
+function serializeRef(value: unknown): ScalarResult | null {
+  if (isServerAction(value)) return { kind: "value", value: { $: "a", i: value.denextActionId } };
+  if (isQrl(value)) return { kind: "value", value: { $: "e", i: value.denextQrlId } };
+  if (!isChannel(value)) return null;
+  if (!value.denextChannelId) {
+    throw new Error(
+      'denext: a channel passed to a client component must be exported from a "use server" ' +
+        "module (or created with an explicit `id`) so the client can subscribe to it",
+    );
+  }
+  return { kind: "value", value: { $: "ch", i: value.denextChannelId } };
 }
 
 /** A finite number is itself; NaN / ±Infinity / -0 (which JSON turns into null / 0) are tagged. */

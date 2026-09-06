@@ -33,6 +33,12 @@ import {
 } from "../runtime/error-boundary.ts";
 import { decodeWire, prepareWire, WIRE_ENC } from "../runtime/wire-codec.ts";
 import { getSubscriptionDef, type SubscriptionDef } from "../runtime/server-action.ts";
+import { type ChannelHub, type ChannelSub, createChannelHub } from "./live-channels.ts";
+import {
+  type ChannelTransport,
+  setChannelPayloadCap,
+  watchChannelTransport,
+} from "../runtime/channel.ts";
 import { ActionValidationError } from "../runtime/define-action.ts";
 import type { FlightNavPayload } from "./document.ts";
 import type { LiveConfig, LiveConnectionContext, LiveLimits } from "./config.ts";
@@ -92,6 +98,10 @@ interface Conn {
   dataSubs: Map<string, DataSub>;
   /** Tag watches (`useApi({ tags })`): client sub id → the tags it watches. */
   tagSubs: Map<string, string[]>;
+  /** Channel subscriptions (`useChannel`), keyed by client sub id. */
+  channelSubs: Map<string, ChannelSub>;
+  /** Channel sub ids whose last frame was shed (replayed by drain recovery). */
+  recoverChannels?: Set<string>;
   /** Presence rooms this connection is in → this peer's state in each. */
   presenceRooms: Map<string, unknown>;
   /** A re-render is in flight; further invalidations set `dirty` to re-run once. */
@@ -130,6 +140,9 @@ const DEFAULT_LIMITS: Required<LiveLimits> = {
   maxBoundaries: 256,
   maxMessageBytes: 64 * 1024,
   maxSubscriptionInputBytes: 16 * 1024,
+  maxChannelsPerConnection: 32,
+  maxChannelPayloadBytes: 16 * 1024,
+  channelAuthTtlSeconds: 300,
   idleTimeoutSeconds: 120,
   maxConcurrentRenders: 40,
   renderTimeoutSeconds: 30,
@@ -217,6 +230,8 @@ export function installLiveHub(opts: {
   limits = sanitizeLimits(policy.limits);
   warnedNoPolicy = false;
   setLiveInvalidateHook(onTagInvalidated);
+  bindChannelTransport();
+  setChannelPayloadCap(limits.maxChannelPayloadBytes);
 }
 
 /**
@@ -247,6 +262,7 @@ export function sanitizeLimits(overrides?: LiveLimits): Required<LiveLimits> {
 /** Tear down the hub (tests / shutdown): clear the cache hook and drop connections. */
 export function uninstallLiveHub(): void {
   setLiveInvalidateHook(null);
+  unbindChannelTransport();
   appHandler = null;
   policy = {};
   limits = DEFAULT_LIMITS;
@@ -441,6 +457,7 @@ function attachConnection(
     boundaries: [],
     dataSubs: new Map(),
     tagSubs: new Map(),
+    channelSubs: new Map(),
     presenceRooms: new Map(),
     busy: false,
     dirty: null,
@@ -475,6 +492,7 @@ function attachConnection(
 /** Remove a connection from the hub and every presence room it was in (rebroadcasting). */
 function dropConnection(conn: Conn): void {
   connections.delete(conn);
+  channelHub.drop(conn);
   if (conn.recoverTimer != null) {
     clearTimeout(conn.recoverTimer);
     conn.recoverTimer = null;
@@ -543,6 +561,12 @@ function handleClientMessage(conn: Conn, raw: string): void {
       return;
     case "tags-unsubscribe":
       if (typeof msg.subId === "string") conn.tagSubs.delete(msg.subId);
+      return;
+    case "channel-subscribe":
+      void channelHub.subscribe(conn, msg);
+      return;
+    case "channel-unsubscribe":
+      if (typeof msg.subId === "string") channelHub.unsubscribe(conn, msg.subId);
       return;
     case "presence-join":
     case "presence-update":
@@ -1099,6 +1123,48 @@ function drainRecover(conn: Conn): void {
       if (sub) void recomputeData(conn, subId, sub); // re-push the sub's latest value
     }
   }
+  channelHub.replayPending(conn); // channel frames: the LAST held value per sub, no recompute
+}
+
+// ── Channels (`createChannel` → `useChannel`) ────────────────────────────────
+
+const channelHub: ChannelHub<Conn> = createChannelHub<Conn>({
+  limits: () => limits,
+  sendFrame,
+  sendError,
+  refuse,
+  withConnContext,
+  connContext,
+  isConnected: (conn) => connections.has(conn),
+  withRenderSlot,
+  backPressured: (conn) => conn.socket.bufferedAmount > MAX_BUFFERED,
+  armRecover: (conn) => {
+    if (conn.recoverTimer == null) {
+      conn.recoverTimer = setTimeout(() => drainRecover(conn), RECOVER_POLL_MS);
+    }
+  },
+});
+
+/** The transport subscription delivering channel events to this hub (re-bound on transport change). */
+let stopChannelTransport: (() => void) | null = null;
+let stopWatchingTransport: (() => void) | null = null;
+
+/** Subscribe the hub to the channel transport (and follow transport swaps). */
+function bindChannelTransport(): void {
+  const bind = (t: ChannelTransport): void => {
+    stopChannelTransport?.();
+    stopChannelTransport = t.subscribe((ev) => channelHub.deliver(ev));
+  };
+  const { current, stop } = watchChannelTransport(bind);
+  stopWatchingTransport = stop;
+  bind(current);
+}
+
+function unbindChannelTransport(): void {
+  stopChannelTransport?.();
+  stopChannelTransport = null;
+  stopWatchingTransport?.();
+  stopWatchingTransport = null;
 }
 
 /**
@@ -1148,6 +1214,7 @@ export const __backpressureTestSeam = {
       boundaries: [],
       dataSubs: new Map(),
       tagSubs: new Map(),
+      channelSubs: new Map(),
       presenceRooms: new Map(),
       busy: false,
       dirty: null,

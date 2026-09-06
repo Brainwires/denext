@@ -27,6 +27,7 @@ export type {
   FlightActionRef,
   FlightBigInt,
   FlightBoundary,
+  FlightChannelRef,
   FlightClient,
   FlightDate,
   FlightEventHandler,
@@ -94,6 +95,22 @@ export type {
   SubscriptionRef,
 } from "../runtime/define-subscription.ts";
 export type { SubscriptionDef, SubscriptionRunContext } from "../runtime/server-action.ts";
+// Server-push channels: `createChannel` + `publish(key, payload)` → `useChannel` on the client.
+export {
+  broadcastChannelTransport,
+  createChannel,
+  inMemoryChannelTransport,
+  isChannel,
+  setChannelTransport,
+} from "../runtime/channel.ts";
+export type {
+  Channel,
+  ChannelConfig,
+  ChannelContext,
+  ChannelEvent,
+  ChannelRef,
+  ChannelTransport,
+} from "../runtime/channel.ts";
 export type { ApiRateLimitOptions, RequireSessionOptions } from "./api-middleware.ts";
 export type * from "./types.ts";
 

@@ -1,5 +1,6 @@
 // Server Actions — call a server function from the client over an RPC endpoint.
 import { djb2 } from "./djb2.ts";
+import { isChannel, registerChannel } from "./channel.ts";
 import { decodeWire, prepareWire, WIRE_ENC } from "./wire-codec.ts";
 //
 // denext has no bundler transform of `"use server"`, so actions are registered
@@ -102,6 +103,12 @@ export function describeActionId(id: string): string | undefined {
  */
 export function tagServerExports(mod: Record<string, unknown>, moduleId: string): void {
   for (const [name, value] of Object.entries(mod)) {
+    // A `createChannel` export (an object, not a function): assign its id and register it.
+    // It is NOT an action — a channel is never HTTP-callable, only subscribed to.
+    if (isChannel(value)) {
+      if (!value.denextChannelId) registerChannel(actionIdFor(moduleId, name), value);
+      continue;
+    }
     if (typeof value !== "function" || isServerAction(value)) continue;
     const id = actionIdFor(moduleId, name);
     registry.set(id, value as (...args: unknown[]) => unknown);
