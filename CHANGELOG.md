@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.1.0-rc.1] - 2026-09-06
+
 ### Added
 
 - **`defineApi` — schema-validated route handlers, the route twin of `defineAction`.**
@@ -5727,6 +5729,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.1.0-rc.1]: https://jsr.io/@denext/denext@2.1.0-rc.1
 [2.0.7]: https://jsr.io/@denext/denext@2.0.7
 [2.0.6]: https://jsr.io/@denext/denext@2.0.6
 [2.0.5]: https://jsr.io/@denext/denext@2.0.5
