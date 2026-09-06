@@ -270,16 +270,14 @@ The nuances worth knowing (reported as review notes, never silently changed):
   (the DB query) and renders the route from the echoed data. Always-revalidate stays the default
   (first paint, hard nav, no `shouldRevalidate`, or an explicit `true`) and is never stale.
 
-- **`entry.client.tsx` is dropped, startup effects included.** `hydrateRoot` is denext's job, but
-  a client-side startup effect the entry performed (the Epic Stack's conditional
-  `import("./utils/monitoring.client.tsx")` for Sentry) is not carried over — move it into the
-  root component (a `useEffect`) if you need it. The SERVER entry's startup statements are kept
-  (`instrumentation.ts`).
-- **A custom server's `getLoadContext` is not carried over.** denext replaces the app's
-  Express/Node server, so loaders receive an empty `context` — values a custom server injected
-  (the Epic Stack's `context.serverBuild`, which `@nasa-gcn/remix-seo` reads to generate a
-  sitemap from the Remix route manifest) are not provided. Move such data to a module the
-  loader imports, or generate the sitemap from your own route list.
+- **`getLoadContext` values read from the Express request/response are stubs.** `denext migrate`
+  ports a custom server's `getLoadContext` to `load-context.ts`: `serverBuild` becomes denext's
+  synthesized Remix `ServerBuild` (`remixServerBuild()`) and `cspNonce` is `undefined` (denext's CSP
+  is hash-based — there is no per-request nonce); any other key (`req.ip`, a per-request handle the
+  server created) is a `TODO` stub carrying the original expression — fill it in from the request
+  `defineLoadContext` hands you. The synthesized build is flat: every route's `path` is its full
+  pattern under `root`, which is what `parentId` composition yields, but code that walks the real
+  nesting sees one level.
 
 - **`useBlocker` guards in-app navigations and browser back/forward, not a hard unload.** A
   registered blocker vetoes `<Link>`/`useNavigate`/`<Form>` navigations **and** the browser

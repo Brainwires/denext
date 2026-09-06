@@ -8,10 +8,33 @@ and this project adheres to
 
 ## [Unreleased]
 
-## [2.0.6] - 2026-09-06
+### Added
+
+- **`instrumentation-client.ts`.** A root `instrumentation-client.{ts,tsx,js}` (Next's
+  convention) is bundled into every browser entry — native and compat, per-route and Flight, dev
+  and build — and runs before the app's client code starts (monitoring/analytics init).
+- **Remix load context + server build.** `denext/remix/server` gained `defineLoadContext`
+  (Remix's `getLoadContext` on denext: its result is every loader/action's `context`, computed
+  once per request) and `remixServerBuild()` — a Remix-shaped `ServerBuild` (`routes` keyed by
+  Remix id with `path`/`index`/`module.handle`/`module.default`, `.build` aliasing itself for
+  the `{ error, build }` wrapper shape) synthesized from the route manifest and the generated
+  wrappers' `remixRoute` markers — so `@nasa-gcn/remix-seo`'s `generateSitemap` works from
+  `context.serverBuild`. `AppLoadContext`, `ServerBuild`, `ServerRoute` types come along.
+- **`denext migrate --json`** prints the migration result as one JSON document (no banner;
+  `--codemod` applies with `--yes`, else reports its plan).
 
 ### Fixed
 
+- **Remix migration: the custom server and the client entry.** `denext migrate --from remix`
+  now ports a custom server's `getLoadContext` (Express/Hono `server/index.ts`) to a root
+  `load-context.ts` — `serverBuild`/`build` → `remixServerBuild()`, `cspNonce` → a documented
+  `undefined` (denext's CSP is hash-based), anything else a `TODO` stub carrying the original
+  expression — imported by `instrumentation.ts` at boot; `entry.client.tsx`'s startup effects
+  (the Epic Stack's conditional Sentry `import("./utils/monitoring.client")`) become
+  `instrumentation-client.ts` instead of vanishing with the file (the hydration call is
+  dropped); type-only imports (`{ type LoaderFunctionArgs } from "@remix-run/node"`) survive
+  the AST-based import pruning; every generated page/layout/`route.ts` wrapper exports a
+  `remixRoute` marker; `register()` is emitted synchronous when its body has no `await`.
 - **Remix migration: real-world apps (the Epic Stack round).** `denext migrate --from remix`
   now handles what production Remix apps actually do: remix-flat-routes `+` folders with
   `_layout`/`index` files and `__ignored` colocation; honored layout break-outs (`$username_+`,
@@ -51,6 +74,11 @@ and this project adheres to
   (6.7.0's query compiler broke `$queryRawUnsafe` and relation `connect`), and the setup script runs
   `prisma migrate deploy` when the app has `prisma/migrations/` (seed rows such as roles live there)
   instead of a schema-only `db push`.
+
+## [2.0.6] - 2026-09-06
+
+### Fixed
+
 - **`error.tsx` catches client-side render errors.** A segment's `"use client"` `error.tsx`
   used to exist only on the server: error boundaries were transparent in the Flight payload, so
   an island that threw during a client re-render (the playground's "Trigger Error" button)

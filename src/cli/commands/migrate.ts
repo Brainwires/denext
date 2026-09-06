@@ -254,7 +254,8 @@ export const migrateCommand: CommandSpec = {
   ],
   run: async (ctx: CommandContext) => {
     const target = resolve(ctx.global.cwd ?? ctx.positionals[0] ?? ".");
-    console.log(`\n  denext migrate  ▸  ${target}\n`);
+    const json = ctx.global.json;
+    if (!json) console.log(`\n  denext migrate  ▸  ${target}\n`);
     const desktop = ctx.flags.desktop === true;
     const proxyCsv = ctx.flags.proxy as string | undefined;
     const r = await migrateProject(target, {
@@ -266,6 +267,15 @@ export const migrateCommand: CommandSpec = {
         : undefined,
       denextLocalPath: ctx.flags["denext-local-path"] as string | undefined,
     });
+    if (json) {
+      // Machine-readable: the result object only (no banner, no prompts). `--codemod`
+      // applies with `--yes`, else reports its plan as a dry run.
+      const codemod = ctx.flags.codemod === true
+        ? await runCodemod(target, { write: ctx.flags.yes === true })
+        : undefined;
+      console.log(JSON.stringify({ target, ...r, codemod }, null, 2));
+      return;
+    }
     reportDeps(r);
     reportFramework(r, desktop);
     if (r.effect) reportEffect(r);

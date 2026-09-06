@@ -113,3 +113,28 @@ Deno.test("dev bundles carry an inline source map; production bundles do not", a
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("generateRouteEntry imports instrumentation-client FIRST when the project has one", () => {
+  const route: PageRoute = {
+    kind: "page",
+    pattern: [],
+    routePath: "/",
+    filePath: "/app/page.tsx",
+    layoutChain: [],
+    loading: null,
+    error: null,
+    notFound: null,
+    forbidden: null,
+    unauthorized: null,
+    templateChain: [],
+  };
+  const entry = generateRouteEntry(route, false, false, "/proj/instrumentation-client.ts");
+  const lines = entry.split("\n");
+  assertEquals(
+    lines[1],
+    'import "file:///proj/instrumentation-client.ts";',
+    "before everything else",
+  );
+  assertStringIncludes(lines[2], "denext/client-runtime");
+  assert(!generateRouteEntry(route).includes("instrumentation-client"), "none by default");
+});

@@ -681,6 +681,10 @@ compact one-line-per-request logger, or `DENEXT_LOG=json` for one structured
 JSON object per request (with a `statusClass` field), ready to ingest into a log
 pipeline. `requestTimeout` (ms) responds `503` when exceeded.
 
+**Client-side instrumentation.** A root `instrumentation-client.{ts,tsx,js}` (Next's
+convention) is bundled into every browser entry and runs before the app's client code
+starts — the place for a monitoring/analytics init.
+
 **OpenTelemetry recipe.** Wire `onRequest` to a histogram and `onRequestError`
 (from `instrumentation.ts`) to your tracer/error sink:
 

@@ -163,7 +163,7 @@ security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
   **`userAgent()`/`userAgentFromString()`** UA parsing.
 - **`useServerInsertedHTML`** — stream-safe `<head>` injection for CSS-in-JS and
   other server-inserted markup.
-- **Instrumentation** (`instrumentation.ts`): `register()` + `onRequestError()`
+- **Instrumentation** (`instrumentation.ts`, `instrumentation-client.ts`): `register()` + `onRequestError()`
   with Next-shaped context (`routerKind`, `routePath`, `routeType`,
   `renderSource`, `revalidateReason`).
 - **`safeFetch`** (SSRF-guarded fetch for untrusted URLs).

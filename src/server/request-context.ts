@@ -2,7 +2,9 @@
 // `cookies()` / `headers()` without prop-drilling the Request. Backed by Deno's
 // built-in AsyncLocalStorage (survives `await` in async components).
 
+import type { RouteManifest } from "../router/manifest.ts";
 import { awaitable } from "../runtime/async-props.ts";
+import type { ModuleLoader } from "./types.ts";
 import type { RenderScope } from "../runtime/render-scope.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { deleteCookie, getCookies, getSetCookies, setCookie } from "@std/http/cookie";
@@ -123,10 +125,24 @@ function effectiveCookies(ctx: RequestContext): Record<string, string> {
   return incoming;
 }
 
+/** The manifest + loader a request can reflect over (see {@link RequestContext.routes}). */
+export interface RouteRegistry {
+  /** The current route manifest (re-scanned per request in dev). */
+  manifest: () => RouteManifest | Promise<RouteManifest>;
+  /** Load a route/layout/api module by file path. */
+  load: ModuleLoader;
+}
+
 /** Ambient state for the request currently being handled. */
 export interface RequestContext {
   /** The incoming request. */
   request: Request;
+  /**
+   * The app's route manifest + module loader, for a runtime that reflects over the routes
+   * while handling a request (the Remix compat's synthesized `ServerBuild`). Set by
+   * `createApp`; absent outside an app (unit renders, export).
+   */
+  routes?: RouteRegistry;
   /**
    * Correlation id for this request. Surfaced in the request log and the
    * server-side error log, and echoed as the `x-request-id` response header on an

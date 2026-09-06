@@ -598,7 +598,7 @@ Deno.test("transformRemixApp: a root `Layout` export wraps the app + ErrorBounda
     );
     const info = await transformRemixApp(tmp);
     const instrumentation = await Deno.readTextFile(join(tmp, "instrumentation.ts"));
-    assertStringIncludes(instrumentation, "export async function register()");
+    assertStringIncludes(instrumentation, "export function register(): void");
     assertStringIncludes(instrumentation, "init();");
     assertStringIncludes(instrumentation, "global.ENV = getEnv();");
     assertStringIncludes(
@@ -622,6 +622,98 @@ Deno.test("transformRemixApp: a root `Layout` export wraps the app + ErrorBounda
     assertStringIncludes(client, "<Layout><App /></Layout>");
     assertStringIncludes(client, "<Layout><ErrorBoundary /></Layout>");
     assert(/import \{[^}]*DocumentHtml[^}]*\} from "denext\/remix"/.test(client), "runtime import");
+  } finally {
+    await Deno.remove(tmp, { recursive: true });
+  }
+});
+
+Deno.test("transformRemixApp: getLoadContext → load-context.ts, entry.client → instrumentation-client, route markers", async () => {
+  const tmp = await Deno.makeTempDir({ prefix: "remix_loadctx_" });
+  const app = join(tmp, "app");
+  try {
+    await Deno.mkdir(join(app, "routes"), { recursive: true });
+    await Deno.mkdir(join(app, "utils"), { recursive: true });
+    await Deno.mkdir(join(tmp, "server"), { recursive: true });
+    await Deno.writeTextFile(join(app, "root.tsx"), LAYOUT("Root"));
+    await Deno.writeTextFile(join(app, "routes", "_index.tsx"), PAGE("Home"));
+    await Deno.writeTextFile(
+      join(app, "routes", "users.$username.tsx"),
+      `export const handle = { getSitemapEntries: () => null };\n` + PAGE("User"),
+    );
+    // The Epic Stack's sitemap: a resource route reading the server build from `context`,
+    // with TYPE-ONLY imports from @remix-run/node.
+    await Deno.writeTextFile(
+      join(app, "routes", "sitemap[.]xml.ts"),
+      `import { type ServerBuild, type LoaderFunctionArgs } from "@remix-run/node";\n` +
+        `export async function loader({ request, context }: LoaderFunctionArgs) {\n` +
+        `  const serverBuild = (await context.serverBuild) as { build: ServerBuild };\n` +
+        `  return new Response(Object.keys(serverBuild.build.routes).join(","));\n}\n`,
+    );
+    // The custom Express server: what `getLoadContext` gave loaders as `context`.
+    await Deno.writeTextFile(
+      join(tmp, "server", "index.ts"),
+      `import express from "express";\nconst app = express();\n` +
+        `app.all("*", createRequestHandler({\n` +
+        `  getLoadContext: (req: any, res: any) => ({\n` +
+        `    cspNonce: res.locals.cspNonce,\n    serverBuild: getBuild(),\n    ip: req.ip,\n  }),\n` +
+        `  build: () => getBuild(),\n}));\n`,
+    );
+    // The client entry: Remix's hydration (dropped) + a startup effect (kept).
+    await Deno.writeTextFile(
+      join(app, "entry.client.tsx"),
+      `import { RemixBrowser } from "@remix-run/react";\nimport { startTransition } from "react";\n` +
+        `import { hydrateRoot } from "react-dom/client";\n` +
+        `if (ENV.MODE === "production" && ENV.SENTRY_DSN) {\n` +
+        `  void import("./utils/monitoring.client.tsx").then(({ init }) => init());\n}\n` +
+        `startTransition(() => {\n  hydrateRoot(document, <RemixBrowser />);\n});\n`,
+    );
+    const info = await transformRemixApp(tmp);
+
+    const loadContext = await Deno.readTextFile(join(tmp, "load-context.ts"));
+    assertStringIncludes(
+      loadContext,
+      'import { defineLoadContext, remixServerBuild } from "denext/remix/server";',
+    );
+    assertStringIncludes(loadContext, "export default defineLoadContext(() => ({");
+    assertStringIncludes(loadContext, "serverBuild: remixServerBuild(),");
+    assertStringIncludes(loadContext, "// was: getBuild() —");
+    assertStringIncludes(loadContext, "cspNonce: undefined,");
+    assertStringIncludes(loadContext, "// was: res.locals.cspNonce — denext's CSP is hash-based");
+    assertStringIncludes(loadContext, "// TODO: was `req.ip` — provide it here\n  ip: undefined,");
+    assert(info.warnings.some((w) => w.includes("getLoadContext → load-context.ts")));
+    // No entry.server here — instrumentation.ts still exists to register the load context.
+    const instrumentation = await Deno.readTextFile(join(tmp, "instrumentation.ts"));
+    assertStringIncludes(instrumentation, 'import "./load-context.ts";');
+    assertStringIncludes(instrumentation, "export function register(): void {");
+
+    const client = await Deno.readTextFile(join(tmp, "instrumentation-client.ts"));
+    assertStringIncludes(client, 'if (ENV.MODE === "production" && ENV.SENTRY_DSN)');
+    assertStringIncludes(client, 'import("./app/utils/monitoring.client.tsx")', "re-based");
+    assert(!client.includes("hydrateRoot"), "Remix's hydration is dropped");
+    assert(!client.includes("RemixBrowser") && !client.includes("react-dom/client"));
+    assert(!client.includes("startTransition"), "its imports go with it");
+    assert(info.entriesDeleted.includes("app/entry.client.tsx"));
+    assert(info.warnings.some((w) => w.includes("instrumentation-client.ts")));
+
+    // Type-only imports survive the AST-based pruning (rewritten to the runtime).
+    const sitemapData = await Deno.readTextFile(join(app, "sitemap.xml", "page.data.tsx"));
+    assertStringIncludes(
+      sitemapData,
+      'import { type ServerBuild, type LoaderFunctionArgs } from "denext/remix/server";',
+    );
+    // Every wrapper exports the marker `remixServerBuild()` maps routes back with.
+    const sitemapRoute = await Deno.readTextFile(join(app, "sitemap.xml", "route.ts"));
+    assertStringIncludes(
+      sitemapRoute,
+      'export const remixRoute = { id: "routes/sitemap[.]xml", module: data };',
+    );
+    const userPage = await Deno.readTextFile(join(app, "users", "[username]", "page.tsx"));
+    assertStringIncludes(
+      userPage,
+      'export const remixRoute = { id: "routes/users.$username", module: data };',
+    );
+    const home = await Deno.readTextFile(join(app, "page.tsx"));
+    assertStringIncludes(home, 'export const remixRoute = { id: "routes/_index", module: {} };');
   } finally {
     await Deno.remove(tmp, { recursive: true });
   }

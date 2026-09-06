@@ -348,6 +348,8 @@ export interface BuildNextCompatFlightOptions {
   boundary: BoundaryManifest;
   /** Output basename for the flight entry (default `flight.js`). */
   flightFile?: string;
+  /** The project's `instrumentation-client` module (absolute path), run before the app's client code. */
+  instrumentationClient?: string | null;
   /** Vite-style asset handling (see {@link AssetOptions.emitDir}); islands import images too. */
   assets?: AssetOptions;
   /** Minify the output bundle (production). */
@@ -404,7 +406,13 @@ export async function buildNextCompatFlightEntry(
   const entryPath = join(entriesDir, `${flightId}.tsx`);
   await Deno.writeTextFile(
     entryPath,
-    generateFlightEntry(options.boundary, options.dev, false, options.usesLive ?? true),
+    generateFlightEntry(
+      options.boundary,
+      options.dev,
+      false,
+      options.usesLive ?? true,
+      options.instrumentationClient ?? null,
+    ),
   );
   await bundleNextCompatModules({
     entryPoints: { [flightId]: entryPath },

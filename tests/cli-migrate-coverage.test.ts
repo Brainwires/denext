@@ -129,3 +129,23 @@ Deno.test("codemod verb reports 'nothing to rewrite' when there are no next/reac
   assertStringIncludes(out, "denext codemod");
   assertStringIncludes(out, "No next/*+react imports to rewrite");
 });
+
+Deno.test("migrate --json prints the result as one JSON document (no banner)", async () => {
+  const dir = await nextApp(false);
+  const cap = capture();
+  try {
+    await migrateCommand.run(makeCtx({ positionals: [dir], global: { json: true } }));
+  } finally {
+    cap.restore();
+  }
+  try {
+    const out = cap.logs.join("\n");
+    assert(!out.includes("denext migrate  ▸"), "no banner in --json mode");
+    const result = JSON.parse(out);
+    assertStringIncludes(result.target, dir.split("/").pop()!);
+    assert(result.kind === "next", `kind: ${result.kind}`);
+    assert(Array.isArray(result.aliased));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

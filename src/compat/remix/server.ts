@@ -27,6 +27,7 @@ import { serverAction } from "../../runtime/server-action.ts";
 import { registerServerMatch } from "./matches-server.ts";
 import { serverRenderMatches } from "./matches-bridge.ts";
 import { setDocumentAttrsSink } from "./document.ts";
+import { type AppLoadContext, loadContext } from "./load-context.ts";
 import type { RemixMatch } from "./client.ts";
 import {
   FORM_ACTION_HEADER,
@@ -49,6 +50,21 @@ import type { VNode, VNodeChildren } from "../../jsx/types.ts";
  * rewrites the specifier to `denext/remix/server`.
  */
 export const cssBundleHref: string | undefined = undefined;
+
+// ── The app load context (`getLoadContext`) + the synthesized ServerBuild ──────────
+export {
+  type AppLoadContext,
+  defineLoadContext,
+  type LoadContextArgs,
+  type LoadContextProvider,
+} from "./load-context.ts";
+export {
+  type RemixRouteExport,
+  remixServerBuild,
+  type ServerBuild,
+  type ServerRoute,
+  type ServerRouteModule,
+} from "./server-build.ts";
 
 // ── Remix data helpers (json / redirect / data) — see responses.ts (isomorphic) ────
 export {
@@ -200,7 +216,8 @@ function setErrorStatus(status: number): void {
 export interface LoaderFunctionArgs {
   request: Request;
   params: Record<string, string>;
-  context: Record<string, unknown>;
+  /** The app load context — what {@link defineLoadContext}'s provider returned for this request. */
+  context: AppLoadContext;
 }
 /** Remix `ActionFunctionArgs` — identical shape to {@link LoaderFunctionArgs}. */
 export type ActionFunctionArgs = LoaderFunctionArgs;
@@ -222,11 +239,11 @@ type Unwrapped<V> = V extends DataWithResponseInit<infer D> ? D
 export type ActionFunction = (args: ActionFunctionArgs) => unknown | Promise<unknown>;
 
 /** Build the `{ request, params, context }` a loader/action receives. */
-function loaderArgs(params: Record<string, string>): LoaderFunctionArgs {
+async function loaderArgs(params: Record<string, string>): Promise<LoaderFunctionArgs> {
   const ctx = currentContext();
   const request = ctx?.request ??
     new Request("http://localhost/"); // export/prerender fallback (no live request)
-  return { request, params, context: {} };
+  return { request, params, context: await loadContext(request, params) };
 }
 
 /** Per-request memo key for loader results ({@link runLoaderOnce}). */
@@ -267,7 +284,7 @@ export async function runLoader(
 ): Promise<unknown> {
   if (!loader) return undefined;
   try {
-    return await unwrap(await loader(loaderArgs(params)));
+    return await unwrap(await loader(await loaderArgs(params)));
   } catch (thrown) {
     // A loader that THREW (`throw redirect()` / `throw json()`): honor it as Remix would.
     // A returned redirect's signal (a RedirectError, not a Response) falls through unchanged.
@@ -301,7 +318,8 @@ export function bindAction(
     headers.delete("content-length");
     const request = new Request(url, { method: "POST", body: formData, headers });
     try {
-      return await unwrap(await action({ request, params, context: {} }));
+      const context = await loadContext(request, params);
+      return await unwrap(await action({ request, params, context }));
     } catch (thrown) {
       // `throw redirect()` / `throw json()` from an action — honored like a return.
       if (isResponse(thrown)) return await unwrapThrown(thrown);
@@ -319,7 +337,8 @@ export async function runLoaderResponse(
   const url = new URL(request.url);
   const params: Record<string, string> = Object.fromEntries(url.searchParams);
   try {
-    return toResourceResponse(await loader({ request, params, context: {} }));
+    const context = await loadContext(request, params);
+    return toResourceResponse(await loader({ request, params, context }));
   } catch (thrown) {
     return thrownToResourceResponse(thrown); // a thrown redirect/Response IS the response
   }
@@ -340,7 +359,8 @@ export async function runActionResponse(
 ): Promise<Response> {
   if (!action) return new Response("Method Not Allowed", { status: 405 });
   try {
-    return toResourceResponse(await action({ request, params, context: {} }));
+    const context = await loadContext(request, params);
+    return toResourceResponse(await action({ request, params, context }));
   } catch (thrown) {
     return thrownToResourceResponse(thrown); // a thrown redirect/Response IS the response
   }

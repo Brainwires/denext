@@ -339,11 +339,27 @@ function hydrationCatch(dev: boolean, message: string): string {
   return dev ? `if (window.__denextRefreshing) location.reload();\n    else ${warn}` : warn;
 }
 
-export function generateRouteEntry(route: PageRoute, dev = false, perModule = false): string {
+/**
+ * The `instrumentation-client` prelude of a generated browser entry: a side-effect import
+ * of the project's `instrumentation-client.{ts,tsx,js}` FIRST, so it runs before the app's
+ * client code starts (Next's semantics). Empty when the project has none.
+ */
+function clientInstrumentationImport(path: string | null | undefined): string {
+  return path ? `import ${JSON.stringify(toFileUrl(path).href)};\n` : "";
+}
+
+export function generateRouteEntry(
+  route: PageRoute,
+  dev = false,
+  perModule = false,
+  instrumentationClient: string | null = null,
+): string {
   const slots = routeSlotEntries(route);
   const { refreshImport, refreshReg } = routeRefreshBlock(route, slots, dev, perModule);
   return `// denext generated route entry — do not edit.
-import { startClient, provideLayoutSegments } from "denext/client-runtime";
+${
+    clientInstrumentationImport(instrumentationClient)
+  }import { startClient, provideLayoutSegments } from "denext/client-runtime";
 import { Suspense, ErrorBoundary } from "denext/client";
 import { h } from "denext/jsx-runtime";
 ${refreshImport}${routeEntryImports(route, slots)}
@@ -530,6 +546,7 @@ export function generateFlightEntry(
   dev = false,
   perModule = false,
   usesLive = true,
+  instrumentationClient: string | null = null,
 ): string {
   const entries = [...boundary.client.entries()];
   // Islands are code-split: one dynamic `import()` per island module, run on demand for the
@@ -543,7 +560,7 @@ export function generateFlightEntry(
   const { refreshImport, regFamily, enableRefresh } = flightRefreshBlock(dev, perModule);
   const { clientImport, liveImport, liveRegister, liveConfigure } = flightLiveBlock(usesLive);
   return `// denext generated Flight entry — do not edit.
-${clientImport}
+${clientInstrumentationImport(instrumentationClient)}${clientImport}
 ${liveImport}${refreshImport}
 const registry = new Map();
 // Functions AND React's non-callable memo()/forwardRef() element objects — the server tags
@@ -615,6 +632,11 @@ export interface BundleOptions {
    * (safe: keep Live) when unset — dev and callers that don't scan.
    */
   usesLive?: boolean;
+  /**
+   * The project's `instrumentation-client.{ts,tsx,js}` (absolute path), imported first by
+   * every generated browser entry so it runs before the app's client code. Null/unset: none.
+   */
+  instrumentationClient?: string | null;
 }
 
 /**
@@ -657,7 +679,13 @@ export async function bundleFlightEntry(
       importMap[ref.url] = toFileUrl(stubPath).href;
     }
     return await bundleSourceFiles(
-      generateFlightEntry(boundary, opts.dev, false, opts.usesLive ?? true),
+      generateFlightEntry(
+        boundary,
+        opts.dev,
+        false,
+        opts.usesLive ?? true,
+        opts.instrumentationClient ?? null,
+      ),
       {
         configPath: opts.configPath,
         minify: opts.minify,
@@ -1014,7 +1042,10 @@ export function bundleRoute(
   route: PageRoute,
   opts: BundleOptions,
 ): Promise<BundleOutput> {
-  return bundleSourceFiles(generateRouteEntry(route, opts.dev), opts);
+  return bundleSourceFiles(
+    generateRouteEntry(route, opts.dev, false, opts.instrumentationClient ?? null),
+    opts,
+  );
 }
 
 /**

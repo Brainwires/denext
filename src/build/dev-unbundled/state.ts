@@ -93,6 +93,8 @@ export interface UnbundledDevOptions {
   compat?: boolean;
   /** Class-component runtime flag, threaded into the react→denext runtime prebuild. */
   classComponents?: boolean;
+  /** The project's `instrumentation-client` module (absolute path), imported first by every entry. */
+  instrumentationClient?: string | null;
   /**
    * SPA mode: the app's single client entry (absolute path to `main.tsx`). When set,
    * {@link ENTRY_PATH} (with no `?p=`) serves a per-module SPA entry that imports the

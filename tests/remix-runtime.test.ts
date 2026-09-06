@@ -28,6 +28,7 @@ import {
   isCookie,
   isSession,
   json,
+  type LoaderFunctionArgs,
   redirect,
   remixMeta,
   RemixRoute,
@@ -53,6 +54,10 @@ import {
   currentContext,
   runWithContext,
 } from "../src/server/request-context.ts";
+import { clearLoadContext, defineLoadContext } from "../src/compat/remix/load-context.ts";
+import { remixPath, remixServerBuild } from "../src/compat/remix/server-build.ts";
+import type { RouteManifest } from "../src/router/manifest.ts";
+import { parsePattern } from "../src/router/segments.ts";
 
 Deno.test("useLoaderData reads the data the provider threads across the boundary", async () => {
   function Child() {
@@ -739,4 +744,148 @@ Deno.test("document shell: DocumentHtml/DocumentBody record attributes for the s
   });
   assertStringIncludes(doc, '<html lang="fr" class="dark h-full">');
   assertStringIncludes(doc, '<body class="bg-background">');
+});
+
+Deno.test("defineLoadContext: loaders/actions receive the provider's context, computed once per request", async () => {
+  let calls = 0;
+  defineLoadContext(({ request }) => ({ n: ++calls, url: request.url }));
+  try {
+    const seen: unknown[] = [];
+    const loader = ({ context }: LoaderFunctionArgs) => {
+      seen.push(context);
+      return { ok: true };
+    };
+    const request = new Request("http://localhost/a");
+    await runWithContext(createRequestContext(request), async () => {
+      await runLoader(loader, {});
+      await runLoaderResponse(loader, request);
+      await runActionResponse(loader, request);
+    });
+    assertEquals(seen.length, 3);
+    assertEquals(seen[0], { n: 1, url: "http://localhost/a" });
+    assertEquals(seen[1], seen[0], "one getLoadContext per request");
+    assertEquals(seen[2], seen[0]);
+    await runWithContext(createRequestContext(new Request("http://localhost/b")), async () => {
+      await runLoader(loader, {});
+    });
+    assertEquals(seen[3], { n: 2, url: "http://localhost/b" }, "a new request → a new context");
+  } finally {
+    clearLoadContext();
+  }
+  const bare: unknown[] = [];
+  await runLoader(({ context }: LoaderFunctionArgs) => void bare.push(context), {});
+  assertEquals(bare, [{}], "no provider → an empty context");
+});
+
+Deno.test("remixServerBuild synthesizes a flat Remix ServerBuild from the manifest + route markers", async () => {
+  const Comp = () => null;
+  const manifest = {
+    pages: [
+      {
+        kind: "page",
+        pattern: [],
+        routePath: "/",
+        filePath: "/app/page.tsx",
+        layoutChain: ["/app/layout.tsx"],
+        layoutDepths: [0],
+        loading: null,
+        error: null,
+        notFound: null,
+        forbidden: null,
+        unauthorized: null,
+        templateChain: [],
+      },
+      {
+        kind: "page",
+        pattern: parsePattern("users/[username]/notes"),
+        routePath: "/users/[username]/notes",
+        filePath: "/app/users/[username]/notes/page.tsx",
+        layoutChain: ["/app/layout.tsx", "/app/users/[username]/layout.tsx"],
+        layoutDepths: [0, 2],
+        loading: null,
+        error: null,
+        notFound: null,
+        forbidden: null,
+        unauthorized: null,
+        templateChain: [],
+      },
+    ],
+    api: [
+      {
+        kind: "api",
+        pattern: parsePattern("sitemap.xml"),
+        routePath: "/sitemap.xml",
+        filePath: "/app/sitemap.xml/route.ts",
+      },
+      // A page's own POST handler shares the page's id — not a second route.
+      {
+        kind: "api",
+        pattern: parsePattern("users/[username]/notes"),
+        routePath: "/users/[username]/notes",
+        filePath: "/app/users/[username]/notes/route.ts",
+      },
+    ],
+    rootLayout: "/app/layout.tsx",
+    rootNotFound: null,
+    rootGlobalError: null,
+  } as unknown as RouteManifest;
+  const handle = { getSitemapEntries: () => null };
+  const modules: Record<string, Record<string, unknown>> = {
+    "/app/layout.tsx": { default: Comp, remixRoute: { id: "root", module: { loader: () => 1 } } },
+    "/app/page.tsx": { default: Comp, remixRoute: { id: "routes/_index", module: {} } },
+    "/app/users/[username]/layout.tsx": {
+      default: Comp,
+      remixRoute: { id: "routes/users+/$username", module: {} },
+    },
+    "/app/users/[username]/notes/page.tsx": {
+      default: Comp,
+      remixRoute: { id: "routes/users+/$username_+/notes", module: { handle } },
+    },
+    "/app/sitemap.xml/route.ts": {
+      GET: () => null,
+      remixRoute: { id: "routes/_seo+/sitemap[.]xml", module: { loader: () => 2 } },
+    },
+    "/app/users/[username]/notes/route.ts": {
+      POST: () => null,
+      remixRoute: { id: "routes/users+/$username_+/notes", module: { handle } },
+    },
+  };
+  const ctx = createRequestContext(new Request("http://localhost/sitemap.xml"));
+  ctx.routes = { manifest: () => manifest, load: (f) => Promise.resolve(modules[f]) };
+  const build = await runWithContext(ctx, async () => {
+    const first = await remixServerBuild();
+    assert(first === await remixServerBuild(), "memoized per request");
+    return first;
+  });
+  assertEquals(build.build, build, "`.build` aliases the build (the { error, build } shape)");
+  assertEquals(build.error, undefined);
+  assertEquals(
+    Object.keys(build.routes).sort(),
+    [
+      "root",
+      "routes/_index",
+      "routes/_seo+/sitemap[.]xml",
+      "routes/users+/$username",
+      "routes/users+/$username_+/notes",
+    ],
+  );
+  assertEquals(build.routes.root.path, "");
+  assertEquals(typeof build.routes.root.module.loader, "function");
+  const index = build.routes["routes/_index"];
+  assertEquals(index.index, true);
+  assertEquals(index.path, undefined);
+  assertEquals(index.parentId, "root");
+  assertEquals(index.module.default, Comp);
+  const notes = build.routes["routes/users+/$username_+/notes"];
+  assertEquals(notes.path, "users/:username/notes", "the full pattern, Remix-style");
+  assertEquals(notes.module.handle, handle);
+  assertEquals(notes.module.default, Comp);
+  assertEquals(build.routes["routes/users+/$username"].path, "users/:username");
+  const sitemap = build.routes["routes/_seo+/sitemap[.]xml"];
+  assertEquals(sitemap.path, "sitemap.xml");
+  assert(!("default" in sitemap.module), "a resource route has no component");
+  assertEquals(typeof sitemap.module.loader, "function");
+  // Outside a request (or without a registry): just the root.
+  assertEquals(Object.keys((await remixServerBuild()).routes), ["root"]);
+  assertEquals(remixPath(parsePattern("docs/[...slug]")), "docs/*");
 });
