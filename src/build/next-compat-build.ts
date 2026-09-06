@@ -372,17 +372,6 @@ export interface BuildNextCompatFlightOptions {
 }
 
 /**
- * Build the app-wide compat Flight CLIENT bundle: ONLY the `"use client"` island
- * modules (react→denext rewritten), registered by their stable client id, with
- * every `"use server"` module redirected to a client action stub so server code
- * is stripped. This is the esbuild-compat twin of the native {@link bundleFlightEntry}
- * — same generated entry + registry keys, so a compat route's server-rendered
- * Flight payload (islands as references) hydrates through it on denext's single
- * React. Writes `flight.js` (+ shared chunks) into `clientDir`.
- *
- * @param options Build configuration.
- */
-/**
  * The browser bundle can't leave denext external (no runtime import map), so a prebuilt
  * denext runtime (`<outDir>/client-runtime`, shared across entries via splitting) is inlined;
  * the generated entries are staged under `<clientDir>/.entries`.
@@ -406,6 +395,17 @@ async function prepareClientBuild(options: {
   return { runtimeDir, entriesDir };
 }
 
+/**
+ * Build the app-wide compat Flight CLIENT bundle: ONLY the `"use client"` island
+ * modules (react→denext rewritten), registered by their stable client id, with
+ * every `"use server"` module redirected to a client action stub so server code
+ * is stripped. This is the esbuild-compat twin of the native {@link bundleFlightEntry}
+ * — same generated entry + registry keys, so a compat route's server-rendered
+ * Flight payload (islands as references) hydrates through it on denext's single
+ * React. Writes `flight.js` (+ shared chunks) into `clientDir`.
+ *
+ * @param options Build configuration.
+ */
 export async function buildNextCompatFlightEntry(
   options: BuildNextCompatFlightOptions,
 ): Promise<void> {
