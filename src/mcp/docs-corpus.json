@@ -1896,7 +1896,7 @@
       "title": "VERSION",
       "module": "denext",
       "url": "/docs/api/denext/VERSION",
-      "text": "VERSION VERSION: 2.0.6 The denext framework version.",
+      "text": "VERSION VERSION: 2.0.7 The denext framework version.",
       "denextOnly": true
     },
     {
@@ -4201,6 +4201,15 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/RouteParams",
       "text": "RouteParams type RouteParams = Record<string, string | string[]> Extracted dynamic route parameters, keyed by segment name. A [slug] segment yields a string; a [...rest] / [[...rest]] catch-all yields the remaining parts as a string[] (Next.js's shape — params.rest.join(\"/\") for the path form).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/RouteRegistry",
+      "kind": "interface",
+      "title": "RouteRegistry",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/RouteRegistry",
+      "text": "RouteRegistry interface RouteRegistry The manifest + loader a request can reflect over (see RequestContext.routes).",
       "denextOnly": true
     },
     {

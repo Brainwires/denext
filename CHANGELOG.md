@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.0.7] - 2026-09-06
+
 ### Added
 
 - **`denext patch` — patch-package for denext, denext itself included.** `denext patch create
@@ -5516,6 +5518,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.0.7]: https://jsr.io/@denext/denext@2.0.7
 [2.0.6]: https://jsr.io/@denext/denext@2.0.6
 [2.0.5]: https://jsr.io/@denext/denext@2.0.5
 [2.0.4]: https://jsr.io/@denext/denext@2.0.4
