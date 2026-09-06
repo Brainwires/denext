@@ -41,6 +41,7 @@ Deno.test("plugin-kit does not leak an over-broad value surface", () => {
     "PageCache",
     "STALLED",
     "TOO_LARGE",
+    "apiDefinitionOf",
     "buildAppCss",
     "buildNextCompatModules",
     "bundleRoutes",

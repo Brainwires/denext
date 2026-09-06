@@ -67,6 +67,26 @@ export type {
   BuiltinApiErrorCode,
 } from "./api-error.ts";
 export type { ApiDispatchOptions } from "./api.ts";
+// Schema-validated route handlers (`defineApi`, the route twin of `defineAction`) and the
+// first-party middleware for `createApi().use(...)`.
+export { apiDefinitionOf, createApi, defineApi } from "./define-api.ts";
+export type {
+  ApiBuilder,
+  ApiDefinition,
+  ApiErrorCodes,
+  ApiHandlerInput,
+  ApiHandlerResult,
+  ApiMiddleware,
+  ApiMiddlewareInput,
+  ApiRouteHandler,
+  ApiRouteMeta,
+  ErrorSpec,
+  QueryRecord,
+  SchemaInput,
+  SchemaOutput,
+} from "./define-api.ts";
+export { rateLimit, requireSession } from "./api-middleware.ts";
+export type { ApiRateLimitOptions, RequireSessionOptions } from "./api-middleware.ts";
 export type * from "./types.ts";
 
 // Re-export the router and JSX types referenced by the public API so that they

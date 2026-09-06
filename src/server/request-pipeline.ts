@@ -319,8 +319,11 @@ async function dispatchApi(
   const api = matchApi(manifest, routingPath);
   if (!api || softNavPost) return null;
   state.dispatchRouteType = "route"; // so a THROWING API handler is labeled "route"
-  const apiRes = await handleApi(api, state.request, state.app.config.load, {
-    maxBodyBytes: state.app.config.apiMaxBodyBytes,
+  const { config } = state.app;
+  const apiRes = await handleApi(api, state.request, config.load, {
+    maxBodyBytes: config.apiMaxBodyBytes,
+    onError: (err) =>
+      reportRequestError(config, err, state.request, state.pathname, { routeType: "route" }),
   });
   const fallThroughToPage = apiRes.status === 405 && isReadMethod(state.request) &&
     matchPage(manifest, routingPath, { soft: false }) !== null;

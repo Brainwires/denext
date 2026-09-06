@@ -10,9 +10,11 @@
 //   thrown inside a handler become the HTTP response they name (they used to fall out of the
 //   pipeline as a 500), JSON or text by `Accept`.
 // - **Typed errors.** A thrown `ApiError` becomes its JSON error envelope verbatim.
-//
-// Anything else a plain handler throws is rethrown to the pipeline's redacted text 500
-// (the long-standing contract; `config.onError` may render it).
+// - **`defineApi` routes** (a contract-typed endpoint) turn any other throw into a redacted
+//   JSON 500 (`{ code: "internal", message, digest }` — the real error logged server-side),
+//   so a typed client always gets the envelope. A plain handler's unknown throw is rethrown
+//   to the pipeline's redacted text 500 (the long-standing contract; `config.onError` may
+//   render it).
 
 import { adaptRequest } from "./middleware.ts";
 import type { ApiMatch } from "../router/match.ts";
@@ -22,7 +24,14 @@ import { currentContext } from "./request-context.ts";
 import { asyncProps } from "../runtime/async-props.ts";
 import { cappedBody, isBodyTooLarge } from "./body.ts";
 import { ApiError, apiErrorResponse, isApiError } from "./api-error.ts";
-import { isForbidden, isNotFound, isRedirect, isUnauthorized } from "../runtime/error-boundary.ts";
+import { apiDefinitionOf } from "./define-api.ts";
+import {
+  isForbidden,
+  isNotFound,
+  isRedirect,
+  isUnauthorized,
+  toClientError,
+} from "../runtime/error-boundary.ts";
 import { safeRedirectLocation } from "./config.ts";
 
 const METHODS: HttpMethod[] = [
@@ -42,6 +51,8 @@ const DEFAULT_MAX_API_BODY = 1024 * 1024;
 export interface ApiDispatchOptions {
   /** The app-level body cap (`AppConfig.apiMaxBodyBytes`); a route's own export overrides it. */
   maxBodyBytes?: number;
+  /** Reports an unknown throw from a `defineApi` route (instrumentation) before it is redacted. */
+  onError?: (err: unknown) => void | Promise<void>;
 }
 
 /**
@@ -69,7 +80,9 @@ export async function handleApi(
   const handler = mod[method];
   if (!handler && !(method === "HEAD" && mod.GET)) return methodNotAllowed(mod);
 
-  const cap = readApiBodyLimit(mod) ?? options.maxBodyBytes ?? DEFAULT_MAX_API_BODY;
+  const meta = apiDefinitionOf(handler ?? mod.GET);
+  const cap = meta?.def.maxBodyBytes ?? readApiBodyLimit(mod) ?? options.maxBodyBytes ??
+    DEFAULT_MAX_API_BODY;
   try {
     // Like middleware, a route handler receives the adapted request — a `NextRequest`
     // (`nextUrl`, `cookies`) once `next/server` is loaded, the plain Request otherwise.
@@ -78,7 +91,7 @@ export async function handleApi(
     if (handler) return await handler(req, context);
     return await headFromGet(mod, req, context);
   } catch (err) {
-    return apiErrorFor(err, request, ctx?.requestId);
+    return await apiErrorFor(err, request, ctx?.requestId, meta !== undefined, options);
   }
 }
 
@@ -109,9 +122,16 @@ function methodNotAllowed(mod: ApiModule): Response {
  * Map what a handler threw to its HTTP response, or rethrow. A `redirect()` is the redirect
  * (its status, target normalized so a user-controlled URL can't leave the origin);
  * `notFound()`/`forbidden()`/`unauthorized()` are 404/403/401; an `ApiError` is its envelope;
- * reading past the body cap is a 413. Everything else keeps the pipeline's redacted-500 path.
+ * reading past the body cap is a 413. Anything else: a `defineApi` route answers a redacted
+ * JSON 500 (reported through `onError`); a plain handler keeps the pipeline's text-500 path.
  */
-function apiErrorFor(err: unknown, request: Request, requestId: string | undefined): Response {
+async function apiErrorFor(
+  err: unknown,
+  request: Request,
+  requestId: string | undefined,
+  defined: boolean,
+  options: ApiDispatchOptions,
+): Promise<Response> {
   if (isRedirect(err)) {
     return new Response(null, {
       status: err.status,
@@ -125,7 +145,13 @@ function apiErrorFor(err: unknown, request: Request, requestId: string | undefin
     const tooLarge = new ApiError(413, "payload_too_large", { message: "request body too large" });
     return apiErrorResponse(tooLarge, requestId);
   }
-  throw err;
+  if (!defined) throw err;
+  await options.onError?.(err);
+  // `toClientError` logs the real error (prod) and hands back a generic message + digest;
+  // in dev it is the real error, so the message is the real one and there is no digest.
+  const client = toClientError(err);
+  const internal = new ApiError(500, "internal", { message: client.message });
+  return apiErrorResponse(internal, requestId, client.digest);
 }
 
 /** The `ApiError` equivalent of a thrown control signal, or null for anything else. */

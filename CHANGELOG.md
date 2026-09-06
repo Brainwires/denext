@@ -10,6 +10,25 @@ and this project adheres to
 
 ### Added
 
+- **`defineApi` — schema-validated route handlers, the route twin of `defineAction`.**
+  Declare an endpoint's `params` / `query` / `body` / `response` as Standard Schemas (Zod,
+  Valibot, ArkType, TypeBox, or hand-rolled — zero denext dependency) plus the `errors` it may
+  fail with, and the handler receives parsed, typed input: `defineApi({ body: z.object({…}),
+  errors: { not_owner: 403 } }, ({ params, query, body, fail, ctx }) => …)`. A schema mismatch
+  is a structured 400 (`validation`, field errors, `data.source`) before the handler runs; a
+  declared `response` schema always runs (a stripping validator is a data-leak guard); a
+  returned value is JSON, `undefined` a 204, a `Response` passes through; `fail("code")` throws
+  the declared status. `createApi().use(mw).define(…)` composes "before" middleware with typed
+  context accumulation (return an extension, a `Response` to short-circuit, or throw) — auth
+  and rate limiting reject before any schema runs. First-party middleware: `requireSession()`
+  (401 + `ctx.session`) and `rateLimit({ max, windowMs, key?, store?, trustForwardedHeaders? })`
+  (fixed window, 429 + `retry-after`, socket peer unless a trusted proxy hop). An unknown
+  throw in a defined route is a redacted JSON 500 (`internal` + digest) like a `defineAction`
+  error. `apiDefinitionOf(handler)` (also in `denext/plugin-kit`) exposes the definition for an
+  OpenAPI/docs plugin; a definition's `maxBodyBytes` overrides the route/app cap. Public-surface
+  golden refreshed. `src/server/{define-api,api-middleware}.ts` (new), `src/server/api.ts`,
+  `src/runtime/define-action.ts` (exports `isStandardSchema`, `fieldErrorsFrom`),
+  `src/server/auth/rate-limit.ts` (exports `clientIp`), `src/plugin/kit.ts`.
 - **Typed API errors.** `ApiError(status, code, { message?, data?, fieldErrors?, headers? })`
   from `denext/server`: throw it from a route handler for a structured JSON failure
   `{ error: { code, status, message, data?, fieldErrors?, digest? } }` with `x-request-id`.
