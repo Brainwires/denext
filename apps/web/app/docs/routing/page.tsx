@@ -91,10 +91,38 @@ export function GET(): TypedResponse<{ id: string; name: string }> {
 
 // anywhere (a component, a test)
 import { createApiClient } from "denext";
-import type { ApiSchema } from "./.denext/api.ts";
-const api = createApiClient<ApiSchema>();
+import type {} from "./.denext/api.ts"; // registers the schema (type-only)
+const api = createApiClient();
 const user = await api("/api/user/[id]", "GET", { params: { id: "1" } }); // typed`}
       </Code>
+      <p>
+        To validate the request too, declare the schemas with{" "}
+        <code>defineApi</code>: the handler receives parsed, typed input and a mismatch is a
+        structured 400 before it runs. The generated schema infers the endpoint's body, query,
+        response and error codes from it.
+      </p>
+      <Code lang="ts">
+        {`import { defineApi } from "denext/server";
+export const POST = defineApi({
+  body: z.object({ name: z.string().min(1) }),
+  errors: { duplicate: 409 },
+}, async ({ body, fail }) => {
+  if (await db.users.exists(body.name)) fail("duplicate");
+  return db.users.create(body);
+});`}
+      </Code>
+      <p>
+        Every route handler, plain or defined: <code>redirect()</code>, <code>notFound()</code>,
+        {" "}
+        <code>forbidden()</code> and <code>unauthorized()</code>{" "}
+        thrown inside one are the HTTP responses they name; a thrown{" "}
+        <code>ApiError(status, code)</code>{" "}
+        is a typed JSON error envelope; request bodies are capped at 1 MiB (<code>
+          export const maxBodyBytes = N | false
+        </code>{" "}
+        per route). The full tour — the client, batching, in-process SSR calls, live queries and
+        server push — is on the <a href="/docs/typed-api">Typed API</a> page.
+      </p>
 
       <h2>Navigation & middleware</h2>
       <Code lang="tsx">

@@ -52,12 +52,84 @@
           "denextOnly": true
         },
         {
+          "name": "ApiClientError",
+          "slug": "ApiClientError",
+          "kind": "class",
+          "signature": "class ApiClientError<Code>",
+          "doc": "A failed typed API call: the HTTP status plus, when the server answered with denext's JSON error envelope ({ error: { code, status, message, data?, fieldErrors?, digest? } } — an ApiError, a validation failure, a control signal, or a redacted 500), the envelope's fields. code narrows to the endpoint's declared codes (ErrorsOf<E>); a non-envelope failure (a plain text 500, an HTML error page) has code: \"http_error\".",
+          "docFull": "A failed typed API call: the HTTP status plus, when the server answered with denext's JSON\nerror envelope (`{ error: { code, status, message, data?, fieldErrors?, digest? } }` — an\n`ApiError`, a validation failure, a control signal, or a redacted 500), the envelope's\nfields. `code` narrows to the endpoint's declared codes (`ErrorsOf<E>`); a non-envelope\nfailure (a plain text 500, an HTML error page) has `code: \"http_error\"`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ApiClientOptions",
+          "slug": "ApiClientOptions",
+          "kind": "interface",
+          "signature": "interface ApiClientOptions",
+          "doc": "Options for createApiClient.",
+          "docFull": "Options for {@link createApiClient}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "ApiEndpoint",
           "slug": "ApiEndpoint",
           "kind": "interface",
           "signature": "interface ApiEndpoint",
-          "doc": "One endpoint's typed shape: its params, optional request/response bodies.",
-          "docFull": "One endpoint's typed shape: its params, optional request/response bodies.",
+          "doc": "One endpoint's typed shape: its params, optional request/response bodies, query, error codes.",
+          "docFull": "One endpoint's typed shape: its params, optional request/response bodies, query, error codes.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ApiEndpointOf",
+          "slug": "ApiEndpointOf",
+          "kind": "typeAlias",
+          "signature": "type ApiEndpointOf<P, M> = NonNullable<indexedAccess>",
+          "doc": "The registered schema's entry for one route + method (what useApi is typed against).",
+          "docFull": "The registered schema's entry for one route + method (what `useApi` is typed against).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ApiErrorEnvelope",
+          "slug": "ApiErrorEnvelope",
+          "kind": "interface",
+          "signature": "interface ApiErrorEnvelope",
+          "doc": "The shape of denext's JSON error envelope (the server's ApiErrorBody).",
+          "docFull": "The shape of denext's JSON error envelope (the server's `ApiErrorBody`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ApiInvalidationSource",
+          "slug": "ApiInvalidationSource",
+          "kind": "typeAlias",
+          "signature": "type ApiInvalidationSource = (tags: string[], onInvalidate: () => void) => () => void",
+          "doc": "Subscribes to tag invalidations; installed by the Live transport. Returns an unsubscribe.",
+          "docFull": "Subscribes to tag invalidations; installed by the Live transport. Returns an unsubscribe.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ApiPhantom",
+          "slug": "ApiPhantom",
+          "kind": "typeAlias",
+          "signature": "type ApiPhantom<H> = conditional",
+          "doc": "The { def; result } phantom a defineApi handler carries, or never for a plain one.",
+          "docFull": "The `{ def; result }` phantom a `defineApi` handler carries, or `never` for a plain one.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -67,9 +139,9 @@
           "name": "apiRequest",
           "slug": "apiRequest",
           "kind": "function",
-          "signature": "apiRequest(pattern: string, method: HttpMethod, opts?: ApiRequestOptions, base?: string): Promise<unknown>",
-          "doc": "Perform one typed API request (the runtime the typed client dispatches to). Substitutes params, JSON-encodes a body, and parses a JSON response (a 204/empty body → undefined).",
-          "docFull": "Perform one typed API request (the runtime the typed client dispatches to). Substitutes\nparams, JSON-encodes a body, and parses a JSON response (a 204/empty body → undefined).",
+          "signature": "apiRequest(pattern: string, method: HttpMethod, opts?: ApiRequestOptions, base?: string, fetchImpl?: fetch): Promise<unknown>",
+          "doc": "Perform one typed API request (the runtime the typed client dispatches to). Substitutes params, encodes a body through the wire codec (flagging it only when a tag was needed), and parses the JSON response (decoding it when the server flagged it; a 204/empty body → undefined). A non-2xx response throws an ApiClientError carrying the server's error envelope when there is one.",
+          "docFull": "Perform one typed API request (the runtime the typed client dispatches to). Substitutes\nparams, encodes a body through the wire codec (flagging it only when a tag was needed), and\nparses the JSON response (decoding it when the server flagged it; a 204/empty body →\nundefined). A non-2xx response throws an {@link ApiClientError} carrying the server's error\nenvelope when there is one.",
           "params": [
             {
               "name": "pattern",
@@ -86,9 +158,13 @@
             {
               "name": "base",
               "doc": "Optional origin/base prefix (default: relative to the current origin)."
+            },
+            {
+              "name": "fetchImpl",
+              "doc": "The fetch to use (default: the global)."
             }
           ],
-          "returns": "The parsed JSON response body.",
+          "returns": "The parsed response body.",
           "examples": [],
           "denextOnly": true
         },
@@ -132,7 +208,7 @@
           "name": "buildPath",
           "slug": "buildPath",
           "kind": "function",
-          "signature": "buildPath(pattern: string, params?: Record<string, string>, query?: Record<string, string>): string",
+          "signature": "buildPath(pattern: string, params?: Record<string, string | string[]>, query?: Record<string, unknown>): string",
           "doc": "Substitute path params into a route pattern, appending any query params.",
           "docFull": "Substitute path params into a route pattern, appending any query params.",
           "params": [
@@ -348,13 +424,13 @@
           "name": "createApiClient",
           "slug": "createApiClient",
           "kind": "function",
-          "signature": "createApiClient<S>(base?: string): ApiClient<S>",
-          "doc": "Create a typed API client bound to an app's generated ApiSchema.",
-          "docFull": "Create a typed API client bound to an app's generated {@link ApiSchema}.",
+          "signature": "createApiClient<S>(baseOrOptions?: string | ApiClientOptions): ApiClient<S>",
+          "doc": "Create a typed API client bound to an app's generated ApiSchema (the registered schema when .denext/api.ts is imported). Concurrent GET/HEAD calls with equal inputs share one fetch (see ApiClientOptions.dedupe).",
+          "docFull": "Create a typed API client bound to an app's generated {@link ApiSchema} (the registered\nschema when `.denext/api.ts` is imported). Concurrent GET/HEAD calls with equal inputs share\none fetch (see {@link ApiClientOptions.dedupe}).",
           "params": [
             {
-              "name": "base",
-              "doc": "Optional origin/base prefix for every request (default: relative)."
+              "name": "baseOrOptions",
+              "doc": "A base prefix (default: relative), or ApiClientOptions."
             }
           ],
           "returns": "A callable (path, method, opts?) => Promise<response>, checked against S.",
@@ -613,6 +689,18 @@
           "denextOnly": true
         },
         {
+          "name": "ErrorsOf",
+          "slug": "ErrorsOf",
+          "kind": "typeAlias",
+          "signature": "type ErrorsOf<E> = conditional",
+          "doc": "The error codes a call to one endpoint may fail with.",
+          "docFull": "The error codes a call to one endpoint may fail with.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "escapeHtml",
           "slug": "escapeHtml",
           "kind": "function",
@@ -774,6 +862,18 @@
           "denextOnly": false
         },
         {
+          "name": "FreeQuery",
+          "slug": "FreeQuery",
+          "kind": "interface",
+          "signature": "interface FreeQuery",
+          "doc": "Free-form query strings (an endpoint without a query schema).",
+          "docFull": "Free-form query strings (an endpoint without a `query` schema).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "FunctionComponent",
           "slug": "FunctionComponent",
           "kind": "interface",
@@ -888,6 +988,78 @@
           "returns": "",
           "examples": [],
           "denextOnly": false
+        },
+        {
+          "name": "HandlerBody",
+          "slug": "HandlerBody",
+          "kind": "typeAlias",
+          "signature": "type HandlerBody<H> = conditional",
+          "doc": "The JSON request body a handler expects: a defineApi route's body schema input, else the B of a TypedRequest<B> first parameter, else never (no body key).",
+          "docFull": "The JSON request body a handler expects: a `defineApi` route's `body` schema input, else the\n`B` of a `TypedRequest<B>` first parameter, else `never` (no body key).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "HandlerErrors",
+          "slug": "HandlerErrors",
+          "kind": "typeAlias",
+          "signature": "type HandlerErrors<H> = conditional",
+          "doc": "The error codes a call may fail with: the endpoint's declared codes plus the builtins.",
+          "docFull": "The error codes a call may fail with: the endpoint's declared codes plus the builtins.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "HandlerLike",
+          "slug": "HandlerLike",
+          "kind": "typeAlias",
+          "signature": "type HandlerLike = (...args: never[]) => Response | Promise<Response>",
+          "doc": "Anything shaped like a route handler (sync or async).",
+          "docFull": "Anything shaped like a route handler (sync or async).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "HandlerParams",
+          "slug": "HandlerParams",
+          "kind": "typeAlias",
+          "signature": "type HandlerParams<H, P> = conditional",
+          "doc": "The params the client must pass: a defineApi route's params schema input when declared, else the pattern-derived record P ({ id: string }, { path: string[] }).",
+          "docFull": "The params the client must pass: a `defineApi` route's `params` schema input when declared,\nelse the pattern-derived record `P` (`{ id: string }`, `{ path: string[] }`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "HandlerQuery",
+          "slug": "HandlerQuery",
+          "kind": "typeAlias",
+          "signature": "type HandlerQuery<H> = conditional",
+          "doc": "The typed query record of a defineApi route (query schema input), else never.",
+          "docFull": "The typed query record of a `defineApi` route (`query` schema input), else `never`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "HandlerResponse",
+          "slug": "HandlerResponse",
+          "kind": "typeAlias",
+          "signature": "type HandlerResponse<H> = conditional",
+          "doc": "The JSON response body of a handler: a defineApi route's response schema output (or its handler's non-Response return), else the T of a TypedResponse<T>, else unknown.",
+          "docFull": "The JSON response body of a handler: a `defineApi` route's `response` schema output (or its\nhandler's non-`Response` return), else the `T` of a `TypedResponse<T>`, else `unknown`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "HeadCollector",
@@ -1022,6 +1194,30 @@
           "denextOnly": true
         },
         {
+          "name": "InferEndpoint",
+          "slug": "InferEndpoint",
+          "kind": "typeAlias",
+          "signature": "type InferEndpoint<H, P> = parenthesized & parenthesized & parenthesized & object",
+          "doc": "One endpoint's schema entry. params / body / query keys are present ONLY when the handler has them — the client's RequestOf keys its required-options logic on presence.",
+          "docFull": "One endpoint's schema entry. `params` / `body` / `query` keys are present ONLY when the\nhandler has them — the client's `RequestOf` keys its required-options logic on presence.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Informative",
+          "slug": "Informative",
+          "kind": "typeAlias",
+          "signature": "type Informative<B> = conditional",
+          "doc": "A body type that is any/unknown carries no information → never (the key is omitted).",
+          "docFull": "A body type that is `any`/`unknown` carries no information → `never` (the key is omitted).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "initScriptLoader",
           "slug": "initScriptLoader",
           "kind": "function",
@@ -1037,6 +1233,35 @@
           "returns": "",
           "examples": [],
           "denextOnly": false
+        },
+        {
+          "name": "IsAny",
+          "slug": "IsAny",
+          "kind": "typeAlias",
+          "signature": "type IsAny<T> = conditional",
+          "doc": "True when T is any.",
+          "docFull": "True when `T` is `any`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "isApiClientError",
+          "slug": "isApiClientError",
+          "kind": "function",
+          "signature": "isApiClientError(value: unknown): value is ApiClientError",
+          "doc": "Is value an ApiClientError?",
+          "docFull": "Is `value` an {@link ApiClientError}?",
+          "params": [
+            {
+              "name": "value",
+              "doc": "The caught value."
+            }
+          ],
+          "returns": "True for a typed API client failure.",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "isControlSignal",
@@ -1303,6 +1528,20 @@
           "denextOnly": true
         },
         {
+          "name": "ModuleEndpoints",
+          "slug": "ModuleEndpoints",
+          "kind": "typeAlias",
+          "signature": "type ModuleEndpoints<M, P> = mapped",
+          "doc": "Every exported HTTP-method handler of a route module, as { GET: InferEndpoint; … }. P is the pattern-derived params record (never for a static route).",
+          "docFull": "Every exported HTTP-method handler of a route module, as `{ GET: InferEndpoint; … }`. `P` is\nthe pattern-derived params record (`never` for a static route).",
+          "params": [],
+          "returns": "",
+          "examples": [
+            "import type * as R0 from \"../app/api/user/[id]/route.ts\";\ntype UserEndpoints = ModuleEndpoints<typeof R0, { id: string }>;"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "MouseEvent",
           "slug": "MouseEvent",
           "kind": "interface",
@@ -1402,6 +1641,30 @@
           "signature": "interface PictureInPictureControls",
           "doc": "The controls returned by usePictureInPicture.",
           "docFull": "The controls returned by {@linkcode usePictureInPicture}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PlainBody",
+          "slug": "PlainBody",
+          "kind": "typeAlias",
+          "signature": "type PlainBody<H> = conditional",
+          "doc": "A plain handler's request body: the B of its TypedRequest<B> first param, else never.",
+          "docFull": "A plain handler's request body: the `B` of its `TypedRequest<B>` first param, else `never`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PlainResponse",
+          "slug": "PlainResponse",
+          "kind": "typeAlias",
+          "signature": "type PlainResponse<H> = conditional",
+          "doc": "A plain handler's response: the T of its TypedResponse<T> return, else unknown.",
+          "docFull": "A plain handler's response: the `T` of its `TypedResponse<T>` return, else `unknown`.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -1650,12 +1913,36 @@
           "denextOnly": true
         },
         {
+          "name": "RegisteredApi",
+          "slug": "RegisteredApi",
+          "kind": "interface",
+          "signature": "interface RegisteredApi",
+          "doc": "Augmentation target for the generated .denext/api.ts: declare module \"denext\" { interface RegisteredApi { schema: ApiSchema } } makes createApiClient() typed with no type argument.",
+          "docFull": "Augmentation target for the generated `.denext/api.ts`: `declare module \"denext\" { interface\nRegisteredApi { schema: ApiSchema } }` makes `createApiClient()` typed with no type argument.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "RegisteredRoutes",
           "slug": "RegisteredRoutes",
           "kind": "interface",
           "signature": "interface RegisteredRoutes",
           "doc": "Typed-routes registry (augmentation seam). denext build/dev emit .denext/routes.ts, which augments this interface with routes: Routes; import that file anywhere in your app and Link / Router.push narrow to real paths. Empty by default ⇒ Href is string (no enforcement until you opt in).",
           "docFull": "Typed-routes registry (augmentation seam). `denext build`/`dev` emit `.denext/routes.ts`,\nwhich augments this interface with `routes: Routes`; import that file anywhere in your app\nand {@link Link} / {@link Router.push} narrow to real paths. Empty by default ⇒\n{@link Href} is `string` (no enforcement until you opt in).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RegisteredSchema",
+          "slug": "RegisteredSchema",
+          "kind": "typeAlias",
+          "signature": "type RegisteredSchema = conditional",
+          "doc": "The registered app schema when .denext/api.ts is imported, else the open ApiSchema.",
+          "docFull": "The registered app schema when `.denext/api.ts` is imported, else the open `ApiSchema`.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -1713,9 +2000,9 @@
           "name": "RequestOf",
           "slug": "RequestOf",
           "kind": "typeAlias",
-          "signature": "type RequestOf<E> = parenthesized & parenthesized & object",
-          "doc": "The options object for one endpoint: params/body appear only when the route has them.",
-          "docFull": "The options object for one endpoint: `params`/`body` appear only when the route has them.",
+          "signature": "type RequestOf<E> = parenthesized & parenthesized & parenthesized & object",
+          "doc": "The options object for one endpoint: params/body/query are typed when the route declares them.",
+          "docFull": "The options object for one endpoint: `params`/`body`/`query` are typed when the route declares them.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -1892,6 +2179,23 @@
           "doc": "The signed-in user exposed to the client (non-sensitive fields only).",
           "docFull": "The signed-in user exposed to the client (non-sensitive fields only).",
           "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "setApiInvalidationSource",
+          "slug": "setApiInvalidationSource",
+          "kind": "function",
+          "signature": "setApiInvalidationSource(source: ApiInvalidationSource | null): void",
+          "doc": "Install the transport that delivers tag invalidations to useApi({ tags }) (the Live client does this in configureLive / useApiLive).",
+          "docFull": "Install the transport that delivers tag invalidations to `useApi({ tags })` (the Live\nclient does this in `configureLive` / `useApiLive`).",
+          "params": [
+            {
+              "name": "source",
+              "doc": "The subscriber, or null to remove it."
+            }
+          ],
           "returns": "",
           "examples": [],
           "denextOnly": true
@@ -2168,6 +2472,18 @@
           "denextOnly": true
         },
         {
+          "name": "TypedQuery",
+          "slug": "TypedQuery",
+          "kind": "typeAlias",
+          "signature": "type TypedQuery<Q> = conditional",
+          "doc": "A schema-typed query, required; an uninformative (any/unknown) schema stays free-form.",
+          "docFull": "A schema-typed query, required; an uninformative (`any`/`unknown`) schema stays free-form.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "unauthorized",
           "slug": "unauthorized",
           "kind": "function",
@@ -2238,6 +2554,59 @@
           "returns": "",
           "examples": [],
           "denextOnly": false
+        },
+        {
+          "name": "useApi",
+          "slug": "useApi",
+          "kind": "function",
+          "signature": "useApi<P, M>(path: P, method: M, opts?: RequestOf<ApiEndpointOf<P, M>>, options?: UseApiOptions): UseApiResult<ResponseOf<ApiEndpointOf<P, M>>, ErrorsOf<ApiEndpointOf<P, M>>>",
+          "doc": "Call one of the app's own route handlers from a component, typed end to end.",
+          "docFull": "Call one of the app's own route handlers from a component, typed end to end.",
+          "params": [
+            {
+              "name": "path",
+              "doc": "The route pattern (\"/api/user/[id]\")."
+            },
+            {
+              "name": "method",
+              "doc": "The HTTP method the route exports."
+            },
+            {
+              "name": "opts",
+              "doc": "Params / query / body for the call (typed by the schema)."
+            },
+            {
+              "name": "options",
+              "doc": "Tags, suspense, enabled, client."
+            }
+          ],
+          "returns": "The typed data / error / pending state plus refetch and invalidate.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "UseApiOptions",
+          "slug": "UseApiOptions",
+          "kind": "interface",
+          "signature": "interface UseApiOptions",
+          "doc": "Options for useApi.",
+          "docFull": "Options for {@link useApi}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "UseApiResult",
+          "slug": "UseApiResult",
+          "kind": "interface",
+          "signature": "interface UseApiResult<T, E>",
+          "doc": "What useApi returns.",
+          "docFull": "What {@link useApi} returns.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "useAsyncEffect",
@@ -2761,6 +3130,18 @@
           "denextOnly": true
         },
         {
+          "name": "ValueResult",
+          "slug": "ValueResult",
+          "kind": "typeAlias",
+          "signature": "type ValueResult<R> = conditional",
+          "doc": "A defineApi handler's returned VALUE type (a returned Response carries no body type).",
+          "docFull": "A `defineApi` handler's returned VALUE type (a returned `Response` carries no body type).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "Variable",
           "slug": "Variable",
           "kind": "class",
@@ -3000,6 +3381,30 @@
           "denextOnly": true
         },
         {
+          "name": "ApiBatchConfig",
+          "slug": "ApiBatchConfig",
+          "kind": "interface",
+          "signature": "interface ApiBatchConfig",
+          "doc": "Limits for the typed-API batch endpoint (POST /_denext/api-batch).",
+          "docFull": "Limits for the typed-API batch endpoint (`POST /_denext/api-batch`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ApiBuilder",
+          "slug": "ApiBuilder",
+          "kind": "interface",
+          "signature": "interface ApiBuilder<Ctx>",
+          "doc": "A chain of middleware with a typed accumulated context, ending in .define().",
+          "docFull": "A chain of middleware with a typed accumulated context, ending in `.define()`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "ApiContext",
           "slug": "ApiContext",
           "kind": "interface",
@@ -3012,12 +3417,150 @@
           "denextOnly": true
         },
         {
+          "name": "ApiDefinition",
+          "slug": "ApiDefinition",
+          "kind": "interface",
+          "signature": "interface ApiDefinition",
+          "doc": "What an endpoint declares: its schemas, error codes, and per-method body cap.",
+          "docFull": "What an endpoint declares: its schemas, error codes, and per-method body cap.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "apiDefinitionOf",
+          "slug": "apiDefinitionOf",
+          "kind": "function",
+          "signature": "apiDefinitionOf(handler: unknown): ApiRouteMeta | undefined",
+          "doc": "The definition + middleware attached to a defineApi handler, or undefined for a plain function. The seam handleApi reads (body cap, error redaction) and the accessor an OpenAPI/docs plugin uses to describe an app's endpoints.",
+          "docFull": "The definition + middleware attached to a `defineApi` handler, or `undefined` for a plain\nfunction. The seam `handleApi` reads (body cap, error redaction) and the accessor an\nOpenAPI/docs plugin uses to describe an app's endpoints.",
+          "params": [
+            {
+              "name": "handler",
+              "doc": "A route module export."
+            }
+          ],
+          "returns": "The metadata, or undefined.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ApiDispatchOptions",
+          "slug": "ApiDispatchOptions",
+          "kind": "interface",
+          "signature": "interface ApiDispatchOptions",
+          "doc": "Per-dispatch options the pipeline passes to handleApi.",
+          "docFull": "Per-dispatch options the pipeline passes to {@link handleApi}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ApiError",
+          "slug": "ApiError",
+          "kind": "class",
+          "signature": "class ApiError",
+          "doc": "A typed API failure: an HTTP status, a machine-readable code, and optional data / fieldErrors / headers. Throw it from a route handler (plain or defineApi) or from defineApi middleware; the dispatch seam turns it into the JSON error envelope and the client rebuilds it as an ApiClientError with the same fields.",
+          "docFull": "A typed API failure: an HTTP `status`, a machine-readable `code`, and optional `data` /\n`fieldErrors` / `headers`. Throw it from a route handler (plain or `defineApi`) or from\n`defineApi` middleware; the dispatch seam turns it into the JSON error envelope and the\nclient rebuilds it as an `ApiClientError` with the same fields.\n\nAuthored for the caller: it is NOT redacted in production (unlike an arbitrary throw), so\nnever put internal detail in `message` or `data`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ApiErrorBody",
+          "slug": "ApiErrorBody",
+          "kind": "interface",
+          "signature": "interface ApiErrorBody",
+          "doc": "The JSON body of a failed API response.",
+          "docFull": "The JSON body of a failed API response.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ApiErrorCodes",
+          "slug": "ApiErrorCodes",
+          "kind": "typeAlias",
+          "signature": "type ApiErrorCodes<D> = conditional",
+          "doc": "The error codes an endpoint declares (keyof def.errors).",
+          "docFull": "The error codes an endpoint declares (`keyof def.errors`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ApiErrorInit",
+          "slug": "ApiErrorInit",
+          "kind": "interface",
+          "signature": "interface ApiErrorInit",
+          "doc": "Optional parts of an ApiError.",
+          "docFull": "Optional parts of an {@link ApiError}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "apiErrorResponse",
+          "slug": "apiErrorResponse",
+          "kind": "function",
+          "signature": "apiErrorResponse(err: ApiError, requestId?: string, digest?: string): Response",
+          "doc": "Build the JSON error Response for an ApiError: the envelope body, the error's status and extra headers, x-request-id when known, and digest on a redacted internal error.",
+          "docFull": "Build the JSON error `Response` for an {@link ApiError}: the envelope body, the error's\nstatus and extra headers, `x-request-id` when known, and `digest` on a redacted internal\nerror.",
+          "params": [
+            {
+              "name": "err",
+              "doc": "The error to serialize."
+            },
+            {
+              "name": "requestId",
+              "doc": "The request's correlation id (echoed as x-request-id)."
+            },
+            {
+              "name": "digest",
+              "doc": "The redaction digest (only for a redacted internal error)."
+            }
+          ],
+          "returns": "The response to send.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "ApiHandler",
           "slug": "ApiHandler",
           "kind": "typeAlias",
           "signature": "type ApiHandler = (request: Request, context: ApiContext) => Response | Promise<Response>",
           "doc": "A single-method API route handler.",
           "docFull": "A single-method API route handler.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ApiHandlerInput",
+          "slug": "ApiHandlerInput",
+          "kind": "interface",
+          "signature": "interface ApiHandlerInput<D, Ctx>",
+          "doc": "What a defineApi handler receives: parsed input, the request, the middleware context.",
+          "docFull": "What a `defineApi` handler receives: parsed input, the request, the middleware context.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ApiHandlerResult",
+          "slug": "ApiHandlerResult",
+          "kind": "typeAlias",
+          "signature": "type ApiHandlerResult<D> = conditional",
+          "doc": "What a handler may return: a value matching def.response (or anything), or a Response.",
+          "docFull": "What a handler may return: a value matching `def.response` (or anything), or a `Response`.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -3036,6 +3579,30 @@
           "denextOnly": true
         },
         {
+          "name": "ApiMiddleware",
+          "slug": "ApiMiddleware",
+          "kind": "typeAlias",
+          "signature": "type ApiMiddleware<Ctx, Ext> = (input: ApiMiddlewareInput<Ctx>) => Ext | Response | void | Promise<Ext | Response | void>",
+          "doc": "A \"before\" middleware: return an object to extend the context (typed), a Response to short-circuit, or nothing. Throw (unauthorized(), an ApiError) to fail.",
+          "docFull": "A \"before\" middleware: return an object to extend the context (typed), a `Response` to\nshort-circuit, or nothing. Throw (`unauthorized()`, an `ApiError`) to fail.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ApiMiddlewareInput",
+          "slug": "ApiMiddlewareInput",
+          "kind": "interface",
+          "signature": "interface ApiMiddlewareInput<Ctx>",
+          "doc": "What a middleware receives.",
+          "docFull": "What a middleware receives.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "ApiModule",
           "slug": "ApiModule",
           "kind": "typeAlias",
@@ -3048,12 +3615,72 @@
           "denextOnly": true
         },
         {
+          "name": "ApiRateLimitOptions",
+          "slug": "ApiRateLimitOptions",
+          "kind": "interface",
+          "signature": "interface ApiRateLimitOptions",
+          "doc": "Options for rateLimit.",
+          "docFull": "Options for {@link rateLimit}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "ApiRoute",
           "slug": "ApiRoute",
           "kind": "interface",
           "signature": "interface ApiRoute",
           "doc": "An API endpoint route discovered by scanning the app directory.",
           "docFull": "An API endpoint route discovered by scanning the app directory.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ApiRouteHandler",
+          "slug": "ApiRouteHandler",
+          "kind": "interface",
+          "signature": "interface ApiRouteHandler<D, R>",
+          "doc": "The route handler defineApi returns: a plain ApiHandler at runtime, carrying the definition and the handler's result type as a phantom for the typed-API-client generator.",
+          "docFull": "The route handler `defineApi` returns: a plain {@link ApiHandler} at runtime, carrying the\ndefinition and the handler's result type as a phantom for the typed-API-client generator.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ApiRouteMeta",
+          "slug": "ApiRouteMeta",
+          "kind": "interface",
+          "signature": "interface ApiRouteMeta",
+          "doc": "The metadata attached to a defineApi handler (what handleApi and plugins read).",
+          "docFull": "The metadata attached to a `defineApi` handler (what `handleApi` and plugins read).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ApiValidationError",
+          "slug": "ApiValidationError",
+          "kind": "class",
+          "signature": "class ApiValidationError",
+          "doc": "A request that failed schema validation: a 400 with code \"validation\", the per-field messages, and data.source naming the offending part of the request.",
+          "docFull": "A request that failed schema validation: a 400 with code `\"validation\"`, the per-field\nmessages, and `data.source` naming the offending part of the request.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ApiValidationSource",
+          "slug": "ApiValidationSource",
+          "kind": "typeAlias",
+          "signature": "type ApiValidationSource = params | query | body",
+          "doc": "Which part of the request a validation failure came from.",
+          "docFull": "Which part of the request a validation failure came from.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -3242,6 +3869,35 @@
           "denextOnly": true
         },
         {
+          "name": "broadcastChannelTransport",
+          "slug": "broadcastChannelTransport",
+          "kind": "function",
+          "signature": "broadcastChannelTransport(name?: string): ChannelTransport",
+          "doc": "A transport over the Web BroadcastChannel API: every instance that shares the channel name (Deno Deploy isolates, workers in one host) receives each event. Zero dependencies.",
+          "docFull": "A transport over the Web `BroadcastChannel` API: every instance that shares the channel\nname (Deno Deploy isolates, workers in one host) receives each event. Zero dependencies.",
+          "params": [
+            {
+              "name": "name",
+              "doc": "The BroadcastChannel name (default \"denext-channels\")."
+            }
+          ],
+          "returns": "The transport.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "BuiltinApiErrorCode",
+          "slug": "BuiltinApiErrorCode",
+          "kind": "typeAlias",
+          "signature": "type BuiltinApiErrorCode = validation | bad_request | unauthorized | forbidden | not_found | method_not_allowed | payload_too_large | request_timeout | rate_limited | internal",
+          "doc": "The error codes the framework itself may produce for any endpoint. An endpoint's declared errors (see defineApi) are unioned with these on the client.",
+          "docFull": "The error codes the framework itself may produce for any endpoint. An endpoint's declared\n`errors` (see `defineApi`) are unioned with these on the client.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "cache",
           "slug": "cache",
           "kind": "function",
@@ -3422,6 +4078,78 @@
           "denextOnly": true
         },
         {
+          "name": "Channel",
+          "slug": "Channel",
+          "kind": "interface",
+          "signature": "interface Channel<T>",
+          "doc": "A channel on the server.",
+          "docFull": "A channel on the server.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ChannelConfig",
+          "slug": "ChannelConfig",
+          "kind": "interface",
+          "signature": "interface ChannelConfig<T>",
+          "doc": "The definition passed to createChannel.",
+          "docFull": "The definition passed to {@link createChannel}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ChannelContext",
+          "slug": "ChannelContext",
+          "kind": "interface",
+          "signature": "interface ChannelContext",
+          "doc": "The subscriber's identity handed to authorize (the Live connection context).",
+          "docFull": "The subscriber's identity handed to `authorize` (the Live connection context).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ChannelEvent",
+          "slug": "ChannelEvent",
+          "kind": "interface",
+          "signature": "interface ChannelEvent",
+          "doc": "One transport event: a publish (encoded payload) or a revoke.",
+          "docFull": "One transport event: a publish (encoded payload) or a revoke.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ChannelRef",
+          "slug": "ChannelRef",
+          "kind": "interface",
+          "signature": "interface ChannelRef<T>",
+          "doc": "A channel as the browser sees it: the id (and the phantom type).",
+          "docFull": "A channel as the browser sees it: the id (and the phantom type).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ChannelTransport",
+          "slug": "ChannelTransport",
+          "kind": "interface",
+          "signature": "interface ChannelTransport",
+          "doc": "Carries ChannelEvents to every hub that should deliver them (across instances).",
+          "docFull": "Carries {@link ChannelEvent}s to every hub that should deliver them (across instances).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "collapseHeadTags",
           "slug": "collapseHeadTags",
           "kind": "function",
@@ -3539,6 +4267,18 @@
           "denextOnly": true
         },
         {
+          "name": "createApi",
+          "slug": "createApi",
+          "kind": "function",
+          "signature": "createApi(): ApiBuilder<Record<never, never>>",
+          "doc": "Start a middleware chain for one or more endpoints: const authed = createApi().use(requireSession()); export const GET = authed.define(...).",
+          "docFull": "Start a middleware chain for one or more endpoints:\n`const authed = createApi().use(requireSession()); export const GET = authed.define(...)`.",
+          "params": [],
+          "returns": "A builder with an empty context.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "createApp",
           "slug": "createApp",
           "kind": "function",
@@ -3552,6 +4292,23 @@
             }
           ],
           "returns": "A (Request) => Promise<Response> handler.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "createChannel",
+          "slug": "createChannel",
+          "kind": "function",
+          "signature": "createChannel<T>(config: ChannelConfig<T>): Channel<T>",
+          "doc": "Create a channel. Export it from a \"use server\" module (or give it an id).",
+          "docFull": "Create a channel. Export it from a `\"use server\"` module (or give it an `id`).",
+          "params": [
+            {
+              "name": "config",
+              "doc": "Schema, key shape, the REQUIRED authorize, and the re-auth TTL."
+            }
+          ],
+          "returns": "The channel (publish / revoke on the server; an opaque id in the browser).",
           "examples": [],
           "denextOnly": true
         },
@@ -3669,6 +4426,27 @@
           "denextOnly": true
         },
         {
+          "name": "defineApi",
+          "slug": "defineApi",
+          "kind": "function",
+          "signature": "defineApi<D, R>(def: D, handler: (input: ApiHandlerInput<D, Record<never, never>>) => R | Promise<R>): ApiRouteHandler<D, R>",
+          "doc": "Define a schema-validated route handler with no middleware (createApi().define(def, handler)). Export it as the method: export const POST = defineApi(…).",
+          "docFull": "Define a schema-validated route handler with no middleware\n(`createApi().define(def, handler)`). Export it as the method: `export const POST = defineApi(…)`.",
+          "params": [
+            {
+              "name": "def",
+              "doc": "The endpoint definition (schemas, error codes)."
+            },
+            {
+              "name": "handler",
+              "doc": "Runs over the parsed, typed input."
+            }
+          ],
+          "returns": "A route handler handleApi dispatches like any other.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "defineConfig",
           "slug": "defineConfig",
           "kind": "function",
@@ -3682,6 +4460,23 @@
             }
           ],
           "returns": "The same object, typed as DenextConfig.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "defineSubscription",
+          "slug": "defineSubscription",
+          "kind": "function",
+          "signature": "defineSubscription<Out, In>(config: SubscriptionConfig<In, Out>): SubscriptionRef<In, Out>",
+          "doc": "Define a typed, validated live query. Export it from a \"use server\" module (or give it an id) and subscribe from the client with useSubscription.",
+          "docFull": "Define a typed, validated live query. Export it from a `\"use server\"` module (or give it an\n`id`) and subscribe from the client with `useSubscription`.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "Input schema, tag derivation, row-level authorize, and the resolver."
+            }
+          ],
+          "returns": "The subscription reference.",
           "examples": [],
           "denextOnly": true
         },
@@ -3799,6 +4594,18 @@
           "denextOnly": true
         },
         {
+          "name": "ErrorSpec",
+          "slug": "ErrorSpec",
+          "kind": "typeAlias",
+          "signature": "type ErrorSpec = number | object",
+          "doc": "How a declared error code maps to HTTP: a status, or a status with a default message.",
+          "docFull": "How a declared error code maps to HTTP: a status, or a status with a default message.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "ExperimentalConfig",
           "slug": "ExperimentalConfig",
           "kind": "interface",
@@ -3823,12 +4630,36 @@
           "denextOnly": true
         },
         {
+          "name": "FlightBigInt",
+          "slug": "FlightBigInt",
+          "kind": "interface",
+          "signature": "interface FlightBigInt",
+          "doc": "A serialized bigint (JSON has no integer type wide enough; the digits travel as text).",
+          "docFull": "A serialized `bigint` (JSON has no integer type wide enough; the digits travel as text).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "FlightBoundary",
           "slug": "FlightBoundary",
           "kind": "interface",
           "signature": "interface FlightBoundary",
           "doc": "A client-side error boundary: a segment's error.tsx (a \"use client\" component) around its children, so a render throw AFTER hydration swaps in the fallback on the client the way Next does. Emitted only when the boundary's fallback is a client reference; a server-only fallback stays transparent (the boundary lives on the server alone).",
           "docFull": "A client-side error boundary: a segment's `error.tsx` (a `\"use client\"` component) around\nits children, so a render throw AFTER hydration swaps in the fallback on the client the\nway Next does. Emitted only when the boundary's fallback is a client reference; a\nserver-only fallback stays transparent (the boundary lives on the server alone).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FlightChannelRef",
+          "slug": "FlightChannelRef",
+          "kind": "interface",
+          "signature": "interface FlightChannelRef",
+          "doc": "A serialized createChannel reference (the client subscribes by id).",
+          "docFull": "A serialized `createChannel` reference (the client subscribes by id).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -3883,12 +4714,36 @@
           "denextOnly": true
         },
         {
+          "name": "FlightMap",
+          "slug": "FlightMap",
+          "kind": "interface",
+          "signature": "interface FlightMap",
+          "doc": "A serialized Map: entries as [key, value] pairs, each side a Flight value.",
+          "docFull": "A serialized `Map`: entries as `[key, value]` pairs, each side a Flight value.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "FlightNode",
           "slug": "FlightNode",
           "kind": "typeAlias",
           "signature": "type FlightNode = FlightPrimitive | FlightNode[] | FlightHost | FlightClient | FlightBoundary | FlightActionRef",
           "doc": "A node in a Flight tree.",
           "docFull": "A node in a Flight tree.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FlightNonFinite",
+          "slug": "FlightNonFinite",
+          "kind": "interface",
+          "signature": "interface FlightNonFinite",
+          "doc": "A serialized non-finite number or negative zero (JSON would emit null / 0).",
+          "docFull": "A serialized non-finite number or negative zero (JSON would emit `null` / `0`).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -3919,6 +4774,18 @@
           "denextOnly": true
         },
         {
+          "name": "FlightSet",
+          "slug": "FlightSet",
+          "kind": "interface",
+          "signature": "interface FlightSet",
+          "doc": "A serialized Set: its values in insertion order.",
+          "docFull": "A serialized `Set`: its values in insertion order.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "FlightStreamOptions",
           "slug": "FlightStreamOptions",
           "kind": "interface",
@@ -3931,10 +4798,22 @@
           "denextOnly": true
         },
         {
+          "name": "FlightUrl",
+          "slug": "FlightUrl",
+          "kind": "interface",
+          "signature": "interface FlightUrl",
+          "doc": "A serialized URL (its href).",
+          "docFull": "A serialized `URL` (its `href`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "FlightValue",
           "slug": "FlightValue",
           "kind": "typeAlias",
-          "signature": "type FlightValue = FlightPrimitive | FlightValue[] | object | FlightNode | FlightActionRef | FlightDate | FlightEventHandler",
+          "signature": "type FlightValue = FlightPrimitive | FlightValue[] | object | FlightNode | FlightActionRef | FlightDate | FlightBigInt | FlightNonFinite | FlightUrl | FlightMap | FlightSet | FlightChannelRef | FlightEventHandler",
           "doc": "A serialized prop value.",
           "docFull": "A serialized prop value.",
           "params": [],
@@ -4330,6 +5209,18 @@
           "denextOnly": true
         },
         {
+          "name": "inMemoryChannelTransport",
+          "slug": "inMemoryChannelTransport",
+          "kind": "function",
+          "signature": "inMemoryChannelTransport(): ChannelTransport",
+          "doc": "The default transport: loopback, this instance only.",
+          "docFull": "The default transport: loopback, this instance only.",
+          "params": [],
+          "returns": "An in-memory transport.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "inMemoryRateLimitStore",
           "slug": "inMemoryRateLimitStore",
           "kind": "function",
@@ -4465,6 +5356,40 @@
           "docFull": "One cache invalidation (a `revalidateTag`/`revalidatePath`), with timing.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "isApiError",
+          "slug": "isApiError",
+          "kind": "function",
+          "signature": "isApiError(value: unknown): value is ApiError",
+          "doc": "Is value an ApiError (from any loaded copy of denext)?",
+          "docFull": "Is `value` an {@link ApiError} (from any loaded copy of denext)?",
+          "params": [
+            {
+              "name": "value",
+              "doc": "The caught value."
+            }
+          ],
+          "returns": "True for an ApiError.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "isChannel",
+          "slug": "isChannel",
+          "kind": "function",
+          "signature": "isChannel(value: unknown): value is Channel",
+          "doc": "Is value a server-side channel object?",
+          "docFull": "Is `value` a server-side channel object?",
+          "params": [
+            {
+              "name": "value",
+              "doc": "Any export."
+            }
+          ],
+          "returns": "True for a createChannel result.",
           "examples": [],
           "denextOnly": true
         },
@@ -5453,6 +6378,35 @@
           "denextOnly": true
         },
         {
+          "name": "QueryRecord",
+          "slug": "QueryRecord",
+          "kind": "typeAlias",
+          "signature": "type QueryRecord = Record<string, string | string[]>",
+          "doc": "The query string as a record: repeated keys become arrays.",
+          "docFull": "The query string as a record: repeated keys become arrays.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "rateLimit",
+          "slug": "rateLimit",
+          "kind": "function",
+          "signature": "rateLimit(options: ApiRateLimitOptions): ApiMiddleware<object>",
+          "doc": "Fixed-window rate limit per key: the (max+1)th request in a window fails with a 429 rate_limited envelope carrying retry-after (seconds) — before validation, so a flood never reaches a schema or the handler. The client identity is the socket peer, or the last x-forwarded-for hop only when trustForwardedHeaders is set (a forged header can't dodge it).",
+          "docFull": "Fixed-window rate limit per key: the (max+1)th request in a window fails with a 429\n`rate_limited` envelope carrying `retry-after` (seconds) — before validation, so a flood\nnever reaches a schema or the handler. The client identity is the socket peer, or the last\n`x-forwarded-for` hop only when `trustForwardedHeaders` is set (a forged header can't dodge it).",
+          "params": [
+            {
+              "name": "options",
+              "doc": "Limit, window, key, store."
+            }
+          ],
+          "returns": "A middleware (no context extension).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "RateLimitOptions",
           "slug": "RateLimitOptions",
           "kind": "interface",
@@ -5850,6 +6804,35 @@
           "signature": "interface RequireAuthOptions",
           "doc": "Options for requireAuth.",
           "docFull": "Options for {@link requireAuth}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "requireSession",
+          "slug": "requireSession",
+          "kind": "function",
+          "signature": "requireSession(options?: RequireSessionOptions): ApiMiddleware<object, object>",
+          "doc": "Require a signed-in viewer (denext auth): extends the context with { session }, or fails with a 401 unauthorized envelope before any schema runs.",
+          "docFull": "Require a signed-in viewer (denext auth): extends the context with `{ session }`, or fails\nwith a 401 `unauthorized` envelope before any schema runs.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The 401 message."
+            }
+          ],
+          "returns": "A middleware adding session: AuthSession to the handler's ctx.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RequireSessionOptions",
+          "slug": "RequireSessionOptions",
+          "kind": "interface",
+          "signature": "interface RequireSessionOptions",
+          "doc": "Options for requireSession.",
+          "docFull": "Options for {@link requireSession}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -6284,6 +7267,30 @@
           "denextOnly": true
         },
         {
+          "name": "SchemaInput",
+          "slug": "SchemaInput",
+          "kind": "typeAlias",
+          "signature": "type SchemaInput<S> = conditional",
+          "doc": "The value a Standard Schema accepts (what a client must send); its output when unknown.",
+          "docFull": "The value a Standard Schema accepts (what a client must send); its output when unknown.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SchemaOutput",
+          "slug": "SchemaOutput",
+          "kind": "typeAlias",
+          "signature": "type SchemaOutput<S> = conditional",
+          "doc": "The value a Standard Schema produces.",
+          "docFull": "The value a Standard Schema produces.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "SearchParams",
           "slug": "SearchParams",
           "kind": "typeAlias",
@@ -6589,6 +7596,23 @@
           "denextOnly": true
         },
         {
+          "name": "setChannelTransport",
+          "slug": "setChannelTransport",
+          "kind": "function",
+          "signature": "setChannelTransport(t: ChannelTransport): void",
+          "doc": "Install the transport that carries channel events between instances (default: in-memory, single instance). The Live hub re-subscribes to the new transport.",
+          "docFull": "Install the transport that carries channel events between instances (default: in-memory,\nsingle instance). The Live hub re-subscribes to the new transport.",
+          "params": [
+            {
+              "name": "t",
+              "doc": "The transport."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "SignalSink",
           "slug": "SignalSink",
           "kind": "interface",
@@ -6845,6 +7869,66 @@
           "signature": "type StaticParamsGenerator = (context: object) => RouteParams[] | Promise<RouteParams[]>",
           "doc": "generateStaticParams — the param sets to pre-render. Called with the parent segments' params (from a layout's own generator, or {} at the root), Next.js style; a [...rest] value may be a string[].",
           "docFull": "`generateStaticParams` — the param sets to pre-render. Called with the parent segments'\nparams (from a layout's own generator, or `{}` at the root), Next.js style; a\n`[...rest]` value may be a `string[]`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SubscriptionConfig",
+          "slug": "SubscriptionConfig",
+          "kind": "interface",
+          "signature": "interface SubscriptionConfig<In, Out>",
+          "doc": "The definition passed to defineSubscription.",
+          "docFull": "The definition passed to {@link defineSubscription}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SubscriptionContext",
+          "slug": "SubscriptionContext",
+          "kind": "interface",
+          "signature": "interface SubscriptionContext",
+          "doc": "What a subscription's authorize / resolve receive besides the input.",
+          "docFull": "What a subscription's `authorize` / `resolve` receive besides the input.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SubscriptionDef",
+          "slug": "SubscriptionDef",
+          "kind": "interface",
+          "signature": "interface SubscriptionDef",
+          "doc": "The hub-facing half of a defineSubscription: validate, gate, compute.",
+          "docFull": "The hub-facing half of a `defineSubscription`: validate, gate, compute.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SubscriptionRef",
+          "slug": "SubscriptionRef",
+          "kind": "interface",
+          "signature": "interface SubscriptionRef<In, Out>",
+          "doc": "The reference defineSubscription returns: callable on the server (validate → authorize → resolve), an opaque id on the client; typed for useSubscription.",
+          "docFull": "The reference `defineSubscription` returns: callable on the server (validate → authorize →\nresolve), an opaque id on the client; typed for `useSubscription`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SubscriptionRunContext",
+          "slug": "SubscriptionRunContext",
+          "kind": "interface",
+          "signature": "interface SubscriptionRunContext",
+          "doc": "What a subscription's authorize / resolve receive besides the parsed input.",
+          "docFull": "What a subscription's `authorize` / `resolve` receive besides the parsed input.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -7219,12 +8303,84 @@
           "denextOnly": true
         },
         {
+          "name": "ApiClientError",
+          "slug": "ApiClientError",
+          "kind": "class",
+          "signature": "class ApiClientError<Code>",
+          "doc": "A failed typed API call: the HTTP status plus, when the server answered with denext's JSON error envelope ({ error: { code, status, message, data?, fieldErrors?, digest? } } — an ApiError, a validation failure, a control signal, or a redacted 500), the envelope's fields. code narrows to the endpoint's declared codes (ErrorsOf<E>); a non-envelope failure (a plain text 500, an HTML error page) has code: \"http_error\".",
+          "docFull": "A failed typed API call: the HTTP status plus, when the server answered with denext's JSON\nerror envelope (`{ error: { code, status, message, data?, fieldErrors?, digest? } }` — an\n`ApiError`, a validation failure, a control signal, or a redacted 500), the envelope's\nfields. `code` narrows to the endpoint's declared codes (`ErrorsOf<E>`); a non-envelope\nfailure (a plain text 500, an HTML error page) has `code: \"http_error\"`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ApiClientOptions",
+          "slug": "ApiClientOptions",
+          "kind": "interface",
+          "signature": "interface ApiClientOptions",
+          "doc": "Options for createApiClient.",
+          "docFull": "Options for {@link createApiClient}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "ApiEndpoint",
           "slug": "ApiEndpoint",
           "kind": "interface",
           "signature": "interface ApiEndpoint",
-          "doc": "One endpoint's typed shape: its params, optional request/response bodies.",
-          "docFull": "One endpoint's typed shape: its params, optional request/response bodies.",
+          "doc": "One endpoint's typed shape: its params, optional request/response bodies, query, error codes.",
+          "docFull": "One endpoint's typed shape: its params, optional request/response bodies, query, error codes.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ApiEndpointOf",
+          "slug": "ApiEndpointOf",
+          "kind": "typeAlias",
+          "signature": "type ApiEndpointOf<P, M> = NonNullable<indexedAccess>",
+          "doc": "The registered schema's entry for one route + method (what useApi is typed against).",
+          "docFull": "The registered schema's entry for one route + method (what `useApi` is typed against).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ApiErrorEnvelope",
+          "slug": "ApiErrorEnvelope",
+          "kind": "interface",
+          "signature": "interface ApiErrorEnvelope",
+          "doc": "The shape of denext's JSON error envelope (the server's ApiErrorBody).",
+          "docFull": "The shape of denext's JSON error envelope (the server's `ApiErrorBody`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ApiInvalidationSource",
+          "slug": "ApiInvalidationSource",
+          "kind": "typeAlias",
+          "signature": "type ApiInvalidationSource = (tags: string[], onInvalidate: () => void) => () => void",
+          "doc": "Subscribes to tag invalidations; installed by the Live transport. Returns an unsubscribe.",
+          "docFull": "Subscribes to tag invalidations; installed by the Live transport. Returns an unsubscribe.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ApiPhantom",
+          "slug": "ApiPhantom",
+          "kind": "typeAlias",
+          "signature": "type ApiPhantom<H> = conditional",
+          "doc": "The { def; result } phantom a defineApi handler carries, or never for a plain one.",
+          "docFull": "The `{ def; result }` phantom a `defineApi` handler carries, or `never` for a plain one.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -7234,9 +8390,9 @@
           "name": "apiRequest",
           "slug": "apiRequest",
           "kind": "function",
-          "signature": "apiRequest(pattern: string, method: HttpMethod, opts?: ApiRequestOptions, base?: string): Promise<unknown>",
-          "doc": "Perform one typed API request (the runtime the typed client dispatches to). Substitutes params, JSON-encodes a body, and parses a JSON response (a 204/empty body → undefined).",
-          "docFull": "Perform one typed API request (the runtime the typed client dispatches to). Substitutes\nparams, JSON-encodes a body, and parses a JSON response (a 204/empty body → undefined).",
+          "signature": "apiRequest(pattern: string, method: HttpMethod, opts?: ApiRequestOptions, base?: string, fetchImpl?: fetch): Promise<unknown>",
+          "doc": "Perform one typed API request (the runtime the typed client dispatches to). Substitutes params, encodes a body through the wire codec (flagging it only when a tag was needed), and parses the JSON response (decoding it when the server flagged it; a 204/empty body → undefined). A non-2xx response throws an ApiClientError carrying the server's error envelope when there is one.",
+          "docFull": "Perform one typed API request (the runtime the typed client dispatches to). Substitutes\nparams, encodes a body through the wire codec (flagging it only when a tag was needed), and\nparses the JSON response (decoding it when the server flagged it; a 204/empty body →\nundefined). A non-2xx response throws an {@link ApiClientError} carrying the server's error\nenvelope when there is one.",
           "params": [
             {
               "name": "pattern",
@@ -7253,9 +8409,13 @@
             {
               "name": "base",
               "doc": "Optional origin/base prefix (default: relative to the current origin)."
+            },
+            {
+              "name": "fetchImpl",
+              "doc": "The fetch to use (default: the global)."
             }
           ],
-          "returns": "The parsed JSON response body.",
+          "returns": "The parsed response body.",
           "examples": [],
           "denextOnly": true
         },
@@ -7299,7 +8459,7 @@
           "name": "buildPath",
           "slug": "buildPath",
           "kind": "function",
-          "signature": "buildPath(pattern: string, params?: Record<string, string>, query?: Record<string, string>): string",
+          "signature": "buildPath(pattern: string, params?: Record<string, string | string[]>, query?: Record<string, unknown>): string",
           "doc": "Substitute path params into a route pattern, appending any query params.",
           "docFull": "Substitute path params into a route pattern, appending any query params.",
           "params": [
@@ -7360,13 +8520,13 @@
           "name": "createApiClient",
           "slug": "createApiClient",
           "kind": "function",
-          "signature": "createApiClient<S>(base?: string): ApiClient<S>",
-          "doc": "Create a typed API client bound to an app's generated ApiSchema.",
-          "docFull": "Create a typed API client bound to an app's generated {@link ApiSchema}.",
+          "signature": "createApiClient<S>(baseOrOptions?: string | ApiClientOptions): ApiClient<S>",
+          "doc": "Create a typed API client bound to an app's generated ApiSchema (the registered schema when .denext/api.ts is imported). Concurrent GET/HEAD calls with equal inputs share one fetch (see ApiClientOptions.dedupe).",
+          "docFull": "Create a typed API client bound to an app's generated {@link ApiSchema} (the registered\nschema when `.denext/api.ts` is imported). Concurrent GET/HEAD calls with equal inputs share\none fetch (see {@link ApiClientOptions.dedupe}).",
           "params": [
             {
-              "name": "base",
-              "doc": "Optional origin/base prefix for every request (default: relative)."
+              "name": "baseOrOptions",
+              "doc": "A base prefix (default: relative), or ApiClientOptions."
             }
           ],
           "returns": "A callable (path, method, opts?) => Promise<response>, checked against S.",
@@ -7529,6 +8689,18 @@
           "denextOnly": true
         },
         {
+          "name": "ErrorsOf",
+          "slug": "ErrorsOf",
+          "kind": "typeAlias",
+          "signature": "type ErrorsOf<E> = conditional",
+          "doc": "The error codes a call to one endpoint may fail with.",
+          "docFull": "The error codes a call to one endpoint may fail with.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "FlightNode",
           "slug": "FlightNode",
           "kind": "typeAlias",
@@ -7589,12 +8761,96 @@
           "denextOnly": false
         },
         {
+          "name": "FreeQuery",
+          "slug": "FreeQuery",
+          "kind": "interface",
+          "signature": "interface FreeQuery",
+          "doc": "Free-form query strings (an endpoint without a query schema).",
+          "docFull": "Free-form query strings (an endpoint without a `query` schema).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "h",
           "slug": "h",
           "kind": "function",
           "signature": "h(type: VNodeType, props: VProps | null, ...children: VNodeChildren[]): VNode",
           "doc": "Classic-runtime style helper, also handy for programmatic node creation: h(\"div\", { class: \"x\" }, child1, child2)",
           "docFull": "Classic-runtime style helper, also handy for programmatic node creation:\n  h(\"div\", { class: \"x\" }, child1, child2)",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "HandlerBody",
+          "slug": "HandlerBody",
+          "kind": "typeAlias",
+          "signature": "type HandlerBody<H> = conditional",
+          "doc": "The JSON request body a handler expects: a defineApi route's body schema input, else the B of a TypedRequest<B> first parameter, else never (no body key).",
+          "docFull": "The JSON request body a handler expects: a `defineApi` route's `body` schema input, else the\n`B` of a `TypedRequest<B>` first parameter, else `never` (no body key).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "HandlerErrors",
+          "slug": "HandlerErrors",
+          "kind": "typeAlias",
+          "signature": "type HandlerErrors<H> = conditional",
+          "doc": "The error codes a call may fail with: the endpoint's declared codes plus the builtins.",
+          "docFull": "The error codes a call may fail with: the endpoint's declared codes plus the builtins.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "HandlerLike",
+          "slug": "HandlerLike",
+          "kind": "typeAlias",
+          "signature": "type HandlerLike = (...args: never[]) => Response | Promise<Response>",
+          "doc": "Anything shaped like a route handler (sync or async).",
+          "docFull": "Anything shaped like a route handler (sync or async).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "HandlerParams",
+          "slug": "HandlerParams",
+          "kind": "typeAlias",
+          "signature": "type HandlerParams<H, P> = conditional",
+          "doc": "The params the client must pass: a defineApi route's params schema input when declared, else the pattern-derived record P ({ id: string }, { path: string[] }).",
+          "docFull": "The params the client must pass: a `defineApi` route's `params` schema input when declared,\nelse the pattern-derived record `P` (`{ id: string }`, `{ path: string[] }`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "HandlerQuery",
+          "slug": "HandlerQuery",
+          "kind": "typeAlias",
+          "signature": "type HandlerQuery<H> = conditional",
+          "doc": "The typed query record of a defineApi route (query schema input), else never.",
+          "docFull": "The typed query record of a `defineApi` route (`query` schema input), else `never`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "HandlerResponse",
+          "slug": "HandlerResponse",
+          "kind": "typeAlias",
+          "signature": "type HandlerResponse<H> = conditional",
+          "doc": "The JSON response body of a handler: a defineApi route's response schema output (or its handler's non-Response return), else the T of a TypedResponse<T>, else unknown.",
+          "docFull": "The JSON response body of a handler: a `defineApi` route's `response` schema output (or its\nhandler's non-`Response` return), else the `T` of a `TypedResponse<T>`, else `unknown`.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -7649,6 +8905,30 @@
           "denextOnly": true
         },
         {
+          "name": "InferEndpoint",
+          "slug": "InferEndpoint",
+          "kind": "typeAlias",
+          "signature": "type InferEndpoint<H, P> = parenthesized & parenthesized & parenthesized & object",
+          "doc": "One endpoint's schema entry. params / body / query keys are present ONLY when the handler has them — the client's RequestOf keys its required-options logic on presence.",
+          "docFull": "One endpoint's schema entry. `params` / `body` / `query` keys are present ONLY when the\nhandler has them — the client's `RequestOf` keys its required-options logic on presence.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Informative",
+          "slug": "Informative",
+          "kind": "typeAlias",
+          "signature": "type Informative<B> = conditional",
+          "doc": "A body type that is any/unknown carries no information → never (the key is omitted).",
+          "docFull": "A body type that is `any`/`unknown` carries no information → `never` (the key is omitted).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "interpolate",
           "slug": "interpolate",
           "kind": "function",
@@ -7666,6 +8946,35 @@
             }
           ],
           "returns": "The interpolated string.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "IsAny",
+          "slug": "IsAny",
+          "kind": "typeAlias",
+          "signature": "type IsAny<T> = conditional",
+          "doc": "True when T is any.",
+          "docFull": "True when `T` is `any`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "isApiClientError",
+          "slug": "isApiClientError",
+          "kind": "function",
+          "signature": "isApiClientError(value: unknown): value is ApiClientError",
+          "doc": "Is value an ApiClientError?",
+          "docFull": "Is `value` an {@link ApiClientError}?",
+          "params": [
+            {
+              "name": "value",
+              "doc": "The caught value."
+            }
+          ],
+          "returns": "True for a typed API client failure.",
           "examples": [],
           "denextOnly": true
         },
@@ -7763,6 +9072,20 @@
           "denextOnly": true
         },
         {
+          "name": "ModuleEndpoints",
+          "slug": "ModuleEndpoints",
+          "kind": "typeAlias",
+          "signature": "type ModuleEndpoints<M, P> = mapped",
+          "doc": "Every exported HTTP-method handler of a route module, as { GET: InferEndpoint; … }. P is the pattern-derived params record (never for a static route).",
+          "docFull": "Every exported HTTP-method handler of a route module, as `{ GET: InferEndpoint; … }`. `P` is\nthe pattern-derived params record (`never` for a static route).",
+          "params": [],
+          "returns": "",
+          "examples": [
+            "import type * as R0 from \"../app/api/user/[id]/route.ts\";\ntype UserEndpoints = ModuleEndpoints<typeof R0, { id: string }>;"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "navigate",
           "slug": "navigate",
           "kind": "function",
@@ -7797,6 +9120,30 @@
           "returns": "",
           "examples": [],
           "denextOnly": false
+        },
+        {
+          "name": "PlainBody",
+          "slug": "PlainBody",
+          "kind": "typeAlias",
+          "signature": "type PlainBody<H> = conditional",
+          "doc": "A plain handler's request body: the B of its TypedRequest<B> first param, else never.",
+          "docFull": "A plain handler's request body: the `B` of its `TypedRequest<B>` first param, else `never`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PlainResponse",
+          "slug": "PlainResponse",
+          "kind": "typeAlias",
+          "signature": "type PlainResponse<H> = conditional",
+          "doc": "A plain handler's response: the T of its TypedResponse<T> return, else unknown.",
+          "docFull": "A plain handler's response: the `T` of its `TypedResponse<T>` return, else `unknown`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "prefetch",
@@ -7958,6 +9305,30 @@
           "denextOnly": true
         },
         {
+          "name": "RegisteredApi",
+          "slug": "RegisteredApi",
+          "kind": "interface",
+          "signature": "interface RegisteredApi",
+          "doc": "Augmentation target for the generated .denext/api.ts: declare module \"denext\" { interface RegisteredApi { schema: ApiSchema } } makes createApiClient() typed with no type argument.",
+          "docFull": "Augmentation target for the generated `.denext/api.ts`: `declare module \"denext\" { interface\nRegisteredApi { schema: ApiSchema } }` makes `createApiClient()` typed with no type argument.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RegisteredSchema",
+          "slug": "RegisteredSchema",
+          "kind": "typeAlias",
+          "signature": "type RegisteredSchema = conditional",
+          "doc": "The registered app schema when .denext/api.ts is imported, else the open ApiSchema.",
+          "docFull": "The registered app schema when `.denext/api.ts` is imported, else the open `ApiSchema`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "RequestArgs",
           "slug": "RequestArgs",
           "kind": "typeAlias",
@@ -7973,9 +9344,9 @@
           "name": "RequestOf",
           "slug": "RequestOf",
           "kind": "typeAlias",
-          "signature": "type RequestOf<E> = parenthesized & parenthesized & object",
-          "doc": "The options object for one endpoint: params/body appear only when the route has them.",
-          "docFull": "The options object for one endpoint: `params`/`body` appear only when the route has them.",
+          "signature": "type RequestOf<E> = parenthesized & parenthesized & parenthesized & object",
+          "doc": "The options object for one endpoint: params/body/query are typed when the route declares them.",
+          "docFull": "The options object for one endpoint: `params`/`body`/`query` are typed when the route declares them.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -8049,6 +9420,23 @@
           "doc": "Options for Router.push / Router.replace (Next.js NavigateOptions).",
           "docFull": "Options for {@link Router.push} / {@link Router.replace} (Next.js `NavigateOptions`).",
           "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "setApiInvalidationSource",
+          "slug": "setApiInvalidationSource",
+          "kind": "function",
+          "signature": "setApiInvalidationSource(source: ApiInvalidationSource | null): void",
+          "doc": "Install the transport that delivers tag invalidations to useApi({ tags }) (the Live client does this in configureLive / useApiLive).",
+          "docFull": "Install the transport that delivers tag invalidations to `useApi({ tags })` (the Live\nclient does this in `configureLive` / `useApiLive`).",
+          "params": [
+            {
+              "name": "source",
+              "doc": "The subscriber, or null to remove it."
+            }
+          ],
           "returns": "",
           "examples": [],
           "denextOnly": true
@@ -8167,6 +9555,18 @@
           "denextOnly": true
         },
         {
+          "name": "TypedQuery",
+          "slug": "TypedQuery",
+          "kind": "typeAlias",
+          "signature": "type TypedQuery<Q> = conditional",
+          "doc": "A schema-typed query, required; an uninformative (any/unknown) schema stays free-form.",
+          "docFull": "A schema-typed query, required; an uninformative (`any`/`unknown`) schema stays free-form.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "unauthorized",
           "slug": "unauthorized",
           "kind": "function",
@@ -8213,6 +9613,59 @@
           "returns": "",
           "examples": [],
           "denextOnly": false
+        },
+        {
+          "name": "useApi",
+          "slug": "useApi",
+          "kind": "function",
+          "signature": "useApi<P, M>(path: P, method: M, opts?: RequestOf<ApiEndpointOf<P, M>>, options?: UseApiOptions): UseApiResult<ResponseOf<ApiEndpointOf<P, M>>, ErrorsOf<ApiEndpointOf<P, M>>>",
+          "doc": "Call one of the app's own route handlers from a component, typed end to end.",
+          "docFull": "Call one of the app's own route handlers from a component, typed end to end.",
+          "params": [
+            {
+              "name": "path",
+              "doc": "The route pattern (\"/api/user/[id]\")."
+            },
+            {
+              "name": "method",
+              "doc": "The HTTP method the route exports."
+            },
+            {
+              "name": "opts",
+              "doc": "Params / query / body for the call (typed by the schema)."
+            },
+            {
+              "name": "options",
+              "doc": "Tags, suspense, enabled, client."
+            }
+          ],
+          "returns": "The typed data / error / pending state plus refetch and invalidate.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "UseApiOptions",
+          "slug": "UseApiOptions",
+          "kind": "interface",
+          "signature": "interface UseApiOptions",
+          "doc": "Options for useApi.",
+          "docFull": "Options for {@link useApi}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "UseApiResult",
+          "slug": "UseApiResult",
+          "kind": "interface",
+          "signature": "interface UseApiResult<T, E>",
+          "doc": "What useApi returns.",
+          "docFull": "What {@link useApi} returns.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "useCallback",
@@ -8569,6 +10022,18 @@
           "returns": "",
           "examples": [],
           "denextOnly": false
+        },
+        {
+          "name": "ValueResult",
+          "slug": "ValueResult",
+          "kind": "typeAlias",
+          "signature": "type ValueResult<R> = conditional",
+          "doc": "A defineApi handler's returned VALUE type (a returned Response carries no body type).",
+          "docFull": "A `defineApi` handler's returned VALUE type (a returned `Response` carries no body type).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "VNode",
@@ -9672,6 +11137,18 @@
       "module": "denext/live",
       "symbols": [
         {
+          "name": "ChannelRef",
+          "slug": "ChannelRef",
+          "kind": "interface",
+          "signature": "interface ChannelRef<T>",
+          "doc": "A channel as the browser sees it: the id (and the phantom type).",
+          "docFull": "A channel as the browser sees it: the id (and the phantom type).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "configureLive",
           "slug": "configureLive",
           "kind": "function",
@@ -9724,6 +11201,18 @@
           "denextOnly": true
         },
         {
+          "name": "LiveErrorInfo",
+          "slug": "LiveErrorInfo",
+          "kind": "interface",
+          "signature": "interface LiveErrorInfo",
+          "doc": "The structured part of a server error frame, handed to a data subscription's callback.",
+          "docFull": "The structured part of a server `error` frame, handed to a data subscription's callback.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "LiveProps",
           "slug": "LiveProps",
           "kind": "interface",
@@ -9753,12 +11242,164 @@
           "denextOnly": true
         },
         {
+          "name": "LiveSubscriptionError",
+          "slug": "LiveSubscriptionError",
+          "kind": "interface",
+          "signature": "interface LiveSubscriptionError",
+          "doc": "Why a subscription is not (or no longer) delivering.",
+          "docFull": "Why a subscription is not (or no longer) delivering.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "Presence",
           "slug": "Presence",
           "kind": "interface",
           "signature": "interface Presence<S>",
           "doc": "The presence of the current room, from usePresence.",
           "docFull": "The presence of the current room, from {@linkcode usePresence}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "subscribeChannel",
+          "slug": "subscribeChannel",
+          "kind": "function",
+          "signature": "subscribeChannel(channelId: string, key: string, onValue: (value: unknown, seq: number) => void, onError: (info: LiveErrorInfo) => void): () => void",
+          "doc": "Receive a createChannel channel's pushes for key. Backs useChannel. Returns an unsubscribe. A refusal (denied / no-policy / …) arrives through onError and marks the subscription dead so a reconnect does not re-send it.",
+          "docFull": "Receive a `createChannel` channel's pushes for `key`. Backs `useChannel`. Returns an\nunsubscribe. A refusal (`denied` / `no-policy` / …) arrives through `onError` and marks the\nsubscription dead so a reconnect does not re-send it.",
+          "params": [
+            {
+              "name": "channelId",
+              "doc": "The channel's stable id (ref.denextChannelId, or the \"use server\" stub's id)."
+            },
+            {
+              "name": "key",
+              "doc": "The key within the channel."
+            },
+            {
+              "name": "onValue",
+              "doc": "Called with each pushed payload and the publisher's seq."
+            },
+            {
+              "name": "onError",
+              "doc": "Called with a structured refusal."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "subscribeLiveTags",
+          "slug": "subscribeLiveTags",
+          "kind": "function",
+          "signature": "subscribeLiveTags(tags: string[], onInvalidate: () => void): () => void",
+          "doc": "Be told when any of tags is invalidated on the server (revalidateTag); backs useApi({ tags }). Returns an unsubscribe.",
+          "docFull": "Be told when any of `tags` is invalidated on the server (`revalidateTag`); backs\n`useApi({ tags })`. Returns an unsubscribe.",
+          "params": [
+            {
+              "name": "tags",
+              "doc": "The cache tags to watch."
+            },
+            {
+              "name": "onInvalidate",
+              "doc": "Called with no arguments when one of them is invalidated."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SubscriptionRefLike",
+          "slug": "SubscriptionRefLike",
+          "kind": "interface",
+          "signature": "interface SubscriptionRefLike<In, Out>",
+          "doc": "A defineSubscription ref as the client sees it (the id, plus the phantom types).",
+          "docFull": "A `defineSubscription` ref as the client sees it (the id, plus the phantom types).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SubscriptionState",
+          "slug": "SubscriptionState",
+          "kind": "interface",
+          "signature": "interface SubscriptionState<Out>",
+          "doc": "What useSubscription returns.",
+          "docFull": "What {@link useSubscription} returns.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "useApiLive",
+          "slug": "useApiLive",
+          "kind": "function",
+          "signature": "useApiLive<P, M>(path: P, method: M, opts?: RequestOf<ApiEndpointOf<P, M>>, options?: UseApiOptions): UseApiResult<ResponseOf<ApiEndpointOf<P, M>>, ErrorsOf<ApiEndpointOf<P, M>>>",
+          "doc": "useApi whose tags refetch on a server-side revalidateTag — the Live socket delivers the invalidation; the refetch itself is an ordinary HTTP call with the viewer's cookies. Same signature and result as useApi.",
+          "docFull": "{@link useApi} whose `tags` refetch on a server-side `revalidateTag` — the Live socket\ndelivers the invalidation; the refetch itself is an ordinary HTTP call with the viewer's\ncookies. Same signature and result as `useApi`.",
+          "params": [
+            {
+              "name": "path",
+              "doc": "The route pattern."
+            },
+            {
+              "name": "method",
+              "doc": "The HTTP method the route exports."
+            },
+            {
+              "name": "opts",
+              "doc": "Params / query / body for the call."
+            },
+            {
+              "name": "options",
+              "doc": "Tags, suspense, enabled, client."
+            }
+          ],
+          "returns": "The useApi result.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "useChannel",
+          "slug": "useChannel",
+          "kind": "function",
+          "signature": "useChannel<T>(channel: ChannelRef<T> | object, key: string, options?: UseChannelOptions<T>): SubscriptionState<T>",
+          "doc": "Receive a createChannel channel's pushes for key. The server authorizes the subscription in this viewer's session (and re-checks it lazily); every publish(key, payload) — from an action, a webhook, a cron — arrives as a new data. At-most-once, latest-wins; no replay on reconnect.",
+          "docFull": "Receive a `createChannel` channel's pushes for `key`. The server authorizes the subscription\nin this viewer's session (and re-checks it lazily); every `publish(key, payload)` — from an\naction, a webhook, a cron — arrives as a new `data`. At-most-once, latest-wins; no replay on\nreconnect.",
+          "params": [
+            {
+              "name": "channel",
+              "doc": "The channel ref (imported from a \"use server\" module or received as a prop)."
+            },
+            {
+              "name": "key",
+              "doc": "The key to subscribe to."
+            },
+            {
+              "name": "options",
+              "doc": "initial, enabled."
+            }
+          ],
+          "returns": "{ data, error, status } typed by the channel's payload.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "UseChannelOptions",
+          "slug": "UseChannelOptions",
+          "kind": "interface",
+          "signature": "interface UseChannelOptions<T>",
+          "doc": "Options for useChannel.",
+          "docFull": "Options for {@link useChannel}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -9854,6 +11495,43 @@
           "signature": "interface UsePresenceOptions<S>",
           "doc": "Options for usePresence.",
           "docFull": "Options for {@linkcode usePresence}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "useSubscription",
+          "slug": "useSubscription",
+          "kind": "function",
+          "signature": "useSubscription<In, Out>(sub: SubscriptionRefLike<In, Out>, input: In, options?: UseSubscriptionOptions<Out>): SubscriptionState<Out>",
+          "doc": "Subscribe to a defineSubscription over the Live socket. The server validates input, derives the tags, authorizes on every recompute, and pushes each new value.",
+          "docFull": "Subscribe to a `defineSubscription` over the Live socket. The server validates `input`,\nderives the tags, authorizes on every recompute, and pushes each new value.",
+          "params": [
+            {
+              "name": "sub",
+              "doc": "The subscription ref (imported from a \"use server\" module)."
+            },
+            {
+              "name": "input",
+              "doc": "The typed input."
+            },
+            {
+              "name": "options",
+              "doc": "initial, enabled."
+            }
+          ],
+          "returns": "{ data, error, status }.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "UseSubscriptionOptions",
+          "slug": "UseSubscriptionOptions",
+          "kind": "interface",
+          "signature": "interface UseSubscriptionOptions<Out>",
+          "doc": "Options for useSubscription.",
+          "docFull": "Options for {@link useSubscription}.",
           "params": [],
           "returns": "",
           "examples": [],

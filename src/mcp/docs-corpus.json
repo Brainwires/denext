@@ -37,12 +37,66 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext/ApiClientError",
+      "kind": "class",
+      "title": "ApiClientError",
+      "module": "denext",
+      "url": "/docs/api/denext/ApiClientError",
+      "text": "ApiClientError class ApiClientError<Code> A failed typed API call: the HTTP status plus, when the server answered with denext's JSON error envelope ({ error: { code, status, message, data?, fieldErrors?, digest? } } — an ApiError, a validation failure, a control signal, or a redacted 500), the envelope's fields. code narrows to the endpoint's declared codes (ErrorsOf<E>); a non-envelope failure (a plain text 500, an HTML error page) has code: \"http_error\".",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/ApiClientOptions",
+      "kind": "interface",
+      "title": "ApiClientOptions",
+      "module": "denext",
+      "url": "/docs/api/denext/ApiClientOptions",
+      "text": "ApiClientOptions interface ApiClientOptions Options for createApiClient.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/ApiEndpoint",
       "kind": "interface",
       "title": "ApiEndpoint",
       "module": "denext",
       "url": "/docs/api/denext/ApiEndpoint",
-      "text": "ApiEndpoint interface ApiEndpoint One endpoint's typed shape: its params, optional request/response bodies.",
+      "text": "ApiEndpoint interface ApiEndpoint One endpoint's typed shape: its params, optional request/response bodies, query, error codes.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/ApiEndpointOf",
+      "kind": "typeAlias",
+      "title": "ApiEndpointOf",
+      "module": "denext",
+      "url": "/docs/api/denext/ApiEndpointOf",
+      "text": "ApiEndpointOf type ApiEndpointOf<P, M> = NonNullable<indexedAccess> The registered schema's entry for one route + method (what useApi is typed against).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/ApiErrorEnvelope",
+      "kind": "interface",
+      "title": "ApiErrorEnvelope",
+      "module": "denext",
+      "url": "/docs/api/denext/ApiErrorEnvelope",
+      "text": "ApiErrorEnvelope interface ApiErrorEnvelope The shape of denext's JSON error envelope (the server's ApiErrorBody).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/ApiInvalidationSource",
+      "kind": "typeAlias",
+      "title": "ApiInvalidationSource",
+      "module": "denext",
+      "url": "/docs/api/denext/ApiInvalidationSource",
+      "text": "ApiInvalidationSource type ApiInvalidationSource = (tags: string[], onInvalidate: () => void) => () => void Subscribes to tag invalidations; installed by the Live transport. Returns an unsubscribe.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/ApiPhantom",
+      "kind": "typeAlias",
+      "title": "ApiPhantom",
+      "module": "denext",
+      "url": "/docs/api/denext/ApiPhantom",
+      "text": "ApiPhantom type ApiPhantom<H> = conditional The { def; result } phantom a defineApi handler carries, or never for a plain one.",
       "denextOnly": true
     },
     {
@@ -51,7 +105,7 @@
       "title": "apiRequest",
       "module": "denext",
       "url": "/docs/api/denext/apiRequest",
-      "text": "apiRequest apiRequest(pattern: string, method: HttpMethod, opts?: ApiRequestOptions, base?: string): Promise<unknown> Perform one typed API request (the runtime the typed client dispatches to). Substitutes params, JSON-encodes a body, and parses a JSON response (a 204/empty body → undefined). The route pattern to call. The HTTP method. Params, body, query, headers, and abort signal. Optional origin/base prefix (default: relative to the current origin). The parsed JSON response body.",
+      "text": "apiRequest apiRequest(pattern: string, method: HttpMethod, opts?: ApiRequestOptions, base?: string, fetchImpl?: fetch): Promise<unknown> Perform one typed API request (the runtime the typed client dispatches to). Substitutes params, encodes a body through the wire codec (flagging it only when a tag was needed), and parses the JSON response (decoding it when the server flagged it; a 204/empty body → undefined). A non-2xx response throws an ApiClientError carrying the server's error envelope when there is one. The route pattern to call. The HTTP method. Params, body, query, headers, and abort signal. Optional origin/base prefix (default: relative to the current origin). The fetch to use (default: the global). The parsed response body.",
       "denextOnly": true
     },
     {
@@ -87,7 +141,7 @@
       "title": "buildPath",
       "module": "denext",
       "url": "/docs/api/denext/buildPath",
-      "text": "buildPath buildPath(pattern: string, params?: Record<string, string>, query?: Record<string, string>): string Substitute path params into a route pattern, appending any query params. A route pattern like /api/user/[id] or /files/[...path]. Values for the pattern's dynamic segments. Extra query-string params. The concrete request path (relative; prefix with a base to make it absolute).",
+      "text": "buildPath buildPath(pattern: string, params?: Record<string, string | string[]>, query?: Record<string, unknown>): string Substitute path params into a route pattern, appending any query params. A route pattern like /api/user/[id] or /files/[...path]. Values for the pattern's dynamic segments. Extra query-string params. The concrete request path (relative; prefix with a base to make it absolute).",
       "denextOnly": true
     },
     {
@@ -222,7 +276,7 @@
       "title": "createApiClient",
       "module": "denext",
       "url": "/docs/api/denext/createApiClient",
-      "text": "createApiClient createApiClient<S>(base?: string): ApiClient<S> Create a typed API client bound to an app's generated ApiSchema. Optional origin/base prefix for every request (default: relative). A callable (path, method, opts?) => Promise<response>, checked against S.",
+      "text": "createApiClient createApiClient<S>(baseOrOptions?: string | ApiClientOptions): ApiClient<S> Create a typed API client bound to an app's generated ApiSchema (the registered schema when .denext/api.ts is imported). Concurrent GET/HEAD calls with equal inputs share one fetch (see ApiClientOptions.dedupe). A base prefix (default: relative), or ApiClientOptions. A callable (path, method, opts?) => Promise<response>, checked against S.",
       "denextOnly": true
     },
     {
@@ -406,6 +460,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext/ErrorsOf",
+      "kind": "typeAlias",
+      "title": "ErrorsOf",
+      "module": "denext",
+      "url": "/docs/api/denext/ErrorsOf",
+      "text": "ErrorsOf type ErrorsOf<E> = conditional The error codes a call to one endpoint may fail with.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/escapeHtml",
       "kind": "function",
       "title": "escapeHtml",
@@ -523,6 +586,15 @@
       "denextOnly": false
     },
     {
+      "id": "api:denext/FreeQuery",
+      "kind": "interface",
+      "title": "FreeQuery",
+      "module": "denext",
+      "url": "/docs/api/denext/FreeQuery",
+      "text": "FreeQuery interface FreeQuery Free-form query strings (an endpoint without a query schema).",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/FunctionComponent",
       "kind": "interface",
       "title": "FunctionComponent",
@@ -593,6 +665,60 @@
       "url": "/docs/api/denext/handleClientScriptLoad",
       "text": "handleClientScriptLoad handleClientScriptLoad(props: ScriptProps): void next/script's handleClientScriptLoad — imperatively inject a <script> from ScriptProps into the live document (client-only; a no-op during SSR, which has no document). Deduplicates by src. Used to load a script outside the render tree. The script props (src/children/attributes; onLoad/onError wired).",
       "denextOnly": false
+    },
+    {
+      "id": "api:denext/HandlerBody",
+      "kind": "typeAlias",
+      "title": "HandlerBody",
+      "module": "denext",
+      "url": "/docs/api/denext/HandlerBody",
+      "text": "HandlerBody type HandlerBody<H> = conditional The JSON request body a handler expects: a defineApi route's body schema input, else the B of a TypedRequest<B> first parameter, else never (no body key).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/HandlerErrors",
+      "kind": "typeAlias",
+      "title": "HandlerErrors",
+      "module": "denext",
+      "url": "/docs/api/denext/HandlerErrors",
+      "text": "HandlerErrors type HandlerErrors<H> = conditional The error codes a call may fail with: the endpoint's declared codes plus the builtins.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/HandlerLike",
+      "kind": "typeAlias",
+      "title": "HandlerLike",
+      "module": "denext",
+      "url": "/docs/api/denext/HandlerLike",
+      "text": "HandlerLike type HandlerLike = (...args: never[]) => Response | Promise<Response> Anything shaped like a route handler (sync or async).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/HandlerParams",
+      "kind": "typeAlias",
+      "title": "HandlerParams",
+      "module": "denext",
+      "url": "/docs/api/denext/HandlerParams",
+      "text": "HandlerParams type HandlerParams<H, P> = conditional The params the client must pass: a defineApi route's params schema input when declared, else the pattern-derived record P ({ id: string }, { path: string[] }).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/HandlerQuery",
+      "kind": "typeAlias",
+      "title": "HandlerQuery",
+      "module": "denext",
+      "url": "/docs/api/denext/HandlerQuery",
+      "text": "HandlerQuery type HandlerQuery<H> = conditional The typed query record of a defineApi route (query schema input), else never.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/HandlerResponse",
+      "kind": "typeAlias",
+      "title": "HandlerResponse",
+      "module": "denext",
+      "url": "/docs/api/denext/HandlerResponse",
+      "text": "HandlerResponse type HandlerResponse<H> = conditional The JSON response body of a handler: a defineApi route's response schema output (or its handler's non-Response return), else the T of a TypedResponse<T>, else unknown.",
+      "denextOnly": true
     },
     {
       "id": "api:denext/HeadCollector",
@@ -694,6 +820,24 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext/InferEndpoint",
+      "kind": "typeAlias",
+      "title": "InferEndpoint",
+      "module": "denext",
+      "url": "/docs/api/denext/InferEndpoint",
+      "text": "InferEndpoint type InferEndpoint<H, P> = parenthesized & parenthesized & parenthesized & object One endpoint's schema entry. params / body / query keys are present ONLY when the handler has them — the client's RequestOf keys its required-options logic on presence.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/Informative",
+      "kind": "typeAlias",
+      "title": "Informative",
+      "module": "denext",
+      "url": "/docs/api/denext/Informative",
+      "text": "Informative type Informative<B> = conditional A body type that is any/unknown carries no information → never (the key is omitted).",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/initScriptLoader",
       "kind": "function",
       "title": "initScriptLoader",
@@ -701,6 +845,24 @@
       "url": "/docs/api/denext/initScriptLoader",
       "text": "initScriptLoader initScriptLoader(scriptLoaderItems: ScriptProps[]): void next/script's initScriptLoader — imperatively load an array of scripts at startup (each via handleClientScriptLoad). Client-only. The scripts to inject.",
       "denextOnly": false
+    },
+    {
+      "id": "api:denext/IsAny",
+      "kind": "typeAlias",
+      "title": "IsAny",
+      "module": "denext",
+      "url": "/docs/api/denext/IsAny",
+      "text": "IsAny type IsAny<T> = conditional True when T is any.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/isApiClientError",
+      "kind": "function",
+      "title": "isApiClientError",
+      "module": "denext",
+      "url": "/docs/api/denext/isApiClientError",
+      "text": "isApiClientError isApiClientError(value: unknown): value is ApiClientError Is value an ApiClientError? The caught value. True for a typed API client failure.",
+      "denextOnly": true
     },
     {
       "id": "api:denext/isControlSignal",
@@ -883,6 +1045,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext/ModuleEndpoints",
+      "kind": "typeAlias",
+      "title": "ModuleEndpoints",
+      "module": "denext",
+      "url": "/docs/api/denext/ModuleEndpoints",
+      "text": "ModuleEndpoints type ModuleEndpoints<M, P> = mapped Every exported HTTP-method handler of a route module, as { GET: InferEndpoint; … }. P is the pattern-derived params record (never for a static route).",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/MouseEvent",
       "kind": "interface",
       "title": "MouseEvent",
@@ -952,6 +1123,24 @@
       "module": "denext",
       "url": "/docs/api/denext/PictureInPictureControls",
       "text": "PictureInPictureControls interface PictureInPictureControls The controls returned by usePictureInPicture.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/PlainBody",
+      "kind": "typeAlias",
+      "title": "PlainBody",
+      "module": "denext",
+      "url": "/docs/api/denext/PlainBody",
+      "text": "PlainBody type PlainBody<H> = conditional A plain handler's request body: the B of its TypedRequest<B> first param, else never.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/PlainResponse",
+      "kind": "typeAlias",
+      "title": "PlainResponse",
+      "module": "denext",
+      "url": "/docs/api/denext/PlainResponse",
+      "text": "PlainResponse type PlainResponse<H> = conditional A plain handler's response: the T of its TypedResponse<T> return, else unknown.",
       "denextOnly": true
     },
     {
@@ -1126,12 +1315,30 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext/RegisteredApi",
+      "kind": "interface",
+      "title": "RegisteredApi",
+      "module": "denext",
+      "url": "/docs/api/denext/RegisteredApi",
+      "text": "RegisteredApi interface RegisteredApi Augmentation target for the generated .denext/api.ts: declare module \"denext\" { interface RegisteredApi { schema: ApiSchema } } makes createApiClient() typed with no type argument.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/RegisteredRoutes",
       "kind": "interface",
       "title": "RegisteredRoutes",
       "module": "denext",
       "url": "/docs/api/denext/RegisteredRoutes",
       "text": "RegisteredRoutes interface RegisteredRoutes Typed-routes registry (augmentation seam). denext build/dev emit .denext/routes.ts, which augments this interface with routes: Routes; import that file anywhere in your app and Link / Router.push narrow to real paths. Empty by default ⇒ Href is string (no enforcement until you opt in).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/RegisteredSchema",
+      "kind": "typeAlias",
+      "title": "RegisteredSchema",
+      "module": "denext",
+      "url": "/docs/api/denext/RegisteredSchema",
+      "text": "RegisteredSchema type RegisteredSchema = conditional The registered app schema when .denext/api.ts is imported, else the open ApiSchema.",
       "denextOnly": true
     },
     {
@@ -1176,7 +1383,7 @@
       "title": "RequestOf",
       "module": "denext",
       "url": "/docs/api/denext/RequestOf",
-      "text": "RequestOf type RequestOf<E> = parenthesized & parenthesized & object The options object for one endpoint: params/body appear only when the route has them.",
+      "text": "RequestOf type RequestOf<E> = parenthesized & parenthesized & parenthesized & object The options object for one endpoint: params/body/query are typed when the route declares them.",
       "denextOnly": true
     },
     {
@@ -1294,6 +1501,15 @@
       "module": "denext",
       "url": "/docs/api/denext/SessionUser",
       "text": "SessionUser interface SessionUser The signed-in user exposed to the client (non-sensitive fields only).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/setApiInvalidationSource",
+      "kind": "function",
+      "title": "setApiInvalidationSource",
+      "module": "denext",
+      "url": "/docs/api/denext/setApiInvalidationSource",
+      "text": "setApiInvalidationSource setApiInvalidationSource(source: ApiInvalidationSource | null): void Install the transport that delivers tag invalidations to useApi({ tags }) (the Live client does this in configureLive / useApiLive). The subscriber, or null to remove it.",
       "denextOnly": true
     },
     {
@@ -1486,6 +1702,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext/TypedQuery",
+      "kind": "typeAlias",
+      "title": "TypedQuery",
+      "module": "denext",
+      "url": "/docs/api/denext/TypedQuery",
+      "text": "TypedQuery type TypedQuery<Q> = conditional A schema-typed query, required; an uninformative (any/unknown) schema stays free-form.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/unauthorized",
       "kind": "function",
       "title": "unauthorized",
@@ -1538,6 +1763,33 @@
       "url": "/docs/api/denext/useActionState",
       "text": "useActionState useActionState<State, Payload>(action: (state: State, payload: Payload) => State | Promise<State>, initialState: State, permalink?: string): tuple Manage state driven by a form action (React 19 useActionState). Returns [state, dispatch, isPending]. Pass dispatch as a form's action (<form action={dispatch}>) — submitting the form calls action(currentState, formData) and stores the result as the new state. dispatch can also be called directly with a payload. dispatch returns the action's promise so the enclosing form's useFormStatus tracks it.",
       "denextOnly": false
+    },
+    {
+      "id": "api:denext/useApi",
+      "kind": "function",
+      "title": "useApi",
+      "module": "denext",
+      "url": "/docs/api/denext/useApi",
+      "text": "useApi useApi<P, M>(path: P, method: M, opts?: RequestOf<ApiEndpointOf<P, M>>, options?: UseApiOptions): UseApiResult<ResponseOf<ApiEndpointOf<P, M>>, ErrorsOf<ApiEndpointOf<P, M>>> Call one of the app's own route handlers from a component, typed end to end. The route pattern (\"/api/user/[id]\"). The HTTP method the route exports. Params / query / body for the call (typed by the schema). Tags, suspense, enabled, client. The typed data / error / pending state plus refetch and invalidate.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/UseApiOptions",
+      "kind": "interface",
+      "title": "UseApiOptions",
+      "module": "denext",
+      "url": "/docs/api/denext/UseApiOptions",
+      "text": "UseApiOptions interface UseApiOptions Options for useApi.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/UseApiResult",
+      "kind": "interface",
+      "title": "UseApiResult",
+      "module": "denext",
+      "url": "/docs/api/denext/UseApiResult",
+      "text": "UseApiResult interface UseApiResult<T, E> What useApi returns.",
+      "denextOnly": true
     },
     {
       "id": "api:denext/useAsyncEffect",
@@ -1882,6 +2134,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext/ValueResult",
+      "kind": "typeAlias",
+      "title": "ValueResult",
+      "module": "denext",
+      "url": "/docs/api/denext/ValueResult",
+      "text": "ValueResult type ValueResult<R> = conditional A defineApi handler's returned VALUE type (a returned Response carries no body type).",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/Variable",
       "kind": "class",
       "title": "Variable",
@@ -2026,12 +2287,102 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/ApiBatchConfig",
+      "kind": "interface",
+      "title": "ApiBatchConfig",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ApiBatchConfig",
+      "text": "ApiBatchConfig interface ApiBatchConfig Limits for the typed-API batch endpoint (POST /_denext/api-batch).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/ApiBuilder",
+      "kind": "interface",
+      "title": "ApiBuilder",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ApiBuilder",
+      "text": "ApiBuilder interface ApiBuilder<Ctx> A chain of middleware with a typed accumulated context, ending in .define().",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/ApiContext",
       "kind": "interface",
       "title": "ApiContext",
       "module": "denext/server",
       "url": "/docs/api/denext-server/ApiContext",
       "text": "ApiContext interface ApiContext Context passed to an API route handler.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/ApiDefinition",
+      "kind": "interface",
+      "title": "ApiDefinition",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ApiDefinition",
+      "text": "ApiDefinition interface ApiDefinition What an endpoint declares: its schemas, error codes, and per-method body cap.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/apiDefinitionOf",
+      "kind": "function",
+      "title": "apiDefinitionOf",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/apiDefinitionOf",
+      "text": "apiDefinitionOf apiDefinitionOf(handler: unknown): ApiRouteMeta | undefined The definition + middleware attached to a defineApi handler, or undefined for a plain function. The seam handleApi reads (body cap, error redaction) and the accessor an OpenAPI/docs plugin uses to describe an app's endpoints. A route module export. The metadata, or undefined.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/ApiDispatchOptions",
+      "kind": "interface",
+      "title": "ApiDispatchOptions",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ApiDispatchOptions",
+      "text": "ApiDispatchOptions interface ApiDispatchOptions Per-dispatch options the pipeline passes to handleApi.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/ApiError",
+      "kind": "class",
+      "title": "ApiError",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ApiError",
+      "text": "ApiError class ApiError A typed API failure: an HTTP status, a machine-readable code, and optional data / fieldErrors / headers. Throw it from a route handler (plain or defineApi) or from defineApi middleware; the dispatch seam turns it into the JSON error envelope and the client rebuilds it as an ApiClientError with the same fields. Authored for the caller: it is NOT redacted in production (unlike an arbitrary throw), so never put internal detail in message or data.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/ApiErrorBody",
+      "kind": "interface",
+      "title": "ApiErrorBody",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ApiErrorBody",
+      "text": "ApiErrorBody interface ApiErrorBody The JSON body of a failed API response.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/ApiErrorCodes",
+      "kind": "typeAlias",
+      "title": "ApiErrorCodes",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ApiErrorCodes",
+      "text": "ApiErrorCodes type ApiErrorCodes<D> = conditional The error codes an endpoint declares (keyof def.errors).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/ApiErrorInit",
+      "kind": "interface",
+      "title": "ApiErrorInit",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ApiErrorInit",
+      "text": "ApiErrorInit interface ApiErrorInit Optional parts of an ApiError.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/apiErrorResponse",
+      "kind": "function",
+      "title": "apiErrorResponse",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/apiErrorResponse",
+      "text": "apiErrorResponse apiErrorResponse(err: ApiError, requestId?: string, digest?: string): Response Build the JSON error Response for an ApiError: the envelope body, the error's status and extra headers, x-request-id when known, and digest on a redacted internal error. The error to serialize. The request's correlation id (echoed as x-request-id). The redaction digest (only for a redacted internal error). The response to send.",
       "denextOnly": true
     },
     {
@@ -2044,12 +2395,48 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/ApiHandlerInput",
+      "kind": "interface",
+      "title": "ApiHandlerInput",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ApiHandlerInput",
+      "text": "ApiHandlerInput interface ApiHandlerInput<D, Ctx> What a defineApi handler receives: parsed input, the request, the middleware context.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/ApiHandlerResult",
+      "kind": "typeAlias",
+      "title": "ApiHandlerResult",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ApiHandlerResult",
+      "text": "ApiHandlerResult type ApiHandlerResult<D> = conditional What a handler may return: a value matching def.response (or anything), or a Response.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/ApiMatch",
       "kind": "interface",
       "title": "ApiMatch",
       "module": "denext/server",
       "url": "/docs/api/denext-server/ApiMatch",
       "text": "ApiMatch interface ApiMatch An API route matched against a pathname, with its extracted params.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/ApiMiddleware",
+      "kind": "typeAlias",
+      "title": "ApiMiddleware",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ApiMiddleware",
+      "text": "ApiMiddleware type ApiMiddleware<Ctx, Ext> = (input: ApiMiddlewareInput<Ctx>) => Ext | Response | void | Promise<Ext | Response | void> A \"before\" middleware: return an object to extend the context (typed), a Response to short-circuit, or nothing. Throw (unauthorized(), an ApiError) to fail.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/ApiMiddlewareInput",
+      "kind": "interface",
+      "title": "ApiMiddlewareInput",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ApiMiddlewareInput",
+      "text": "ApiMiddlewareInput interface ApiMiddlewareInput<Ctx> What a middleware receives.",
       "denextOnly": true
     },
     {
@@ -2062,12 +2449,57 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/ApiRateLimitOptions",
+      "kind": "interface",
+      "title": "ApiRateLimitOptions",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ApiRateLimitOptions",
+      "text": "ApiRateLimitOptions interface ApiRateLimitOptions Options for rateLimit.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/ApiRoute",
       "kind": "interface",
       "title": "ApiRoute",
       "module": "denext/server",
       "url": "/docs/api/denext-server/ApiRoute",
       "text": "ApiRoute interface ApiRoute An API endpoint route discovered by scanning the app directory.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/ApiRouteHandler",
+      "kind": "interface",
+      "title": "ApiRouteHandler",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ApiRouteHandler",
+      "text": "ApiRouteHandler interface ApiRouteHandler<D, R> The route handler defineApi returns: a plain ApiHandler at runtime, carrying the definition and the handler's result type as a phantom for the typed-API-client generator.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/ApiRouteMeta",
+      "kind": "interface",
+      "title": "ApiRouteMeta",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ApiRouteMeta",
+      "text": "ApiRouteMeta interface ApiRouteMeta The metadata attached to a defineApi handler (what handleApi and plugins read).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/ApiValidationError",
+      "kind": "class",
+      "title": "ApiValidationError",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ApiValidationError",
+      "text": "ApiValidationError class ApiValidationError A request that failed schema validation: a 400 with code \"validation\", the per-field messages, and data.source naming the offending part of the request.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/ApiValidationSource",
+      "kind": "typeAlias",
+      "title": "ApiValidationSource",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ApiValidationSource",
+      "text": "ApiValidationSource type ApiValidationSource = params | query | body Which part of the request a validation failure came from.",
       "denextOnly": true
     },
     {
@@ -2206,6 +2638,24 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/broadcastChannelTransport",
+      "kind": "function",
+      "title": "broadcastChannelTransport",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/broadcastChannelTransport",
+      "text": "broadcastChannelTransport broadcastChannelTransport(name?: string): ChannelTransport A transport over the Web BroadcastChannel API: every instance that shares the channel name (Deno Deploy isolates, workers in one host) receives each event. Zero dependencies. The BroadcastChannel name (default \"denext-channels\"). The transport.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/BuiltinApiErrorCode",
+      "kind": "typeAlias",
+      "title": "BuiltinApiErrorCode",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/BuiltinApiErrorCode",
+      "text": "BuiltinApiErrorCode type BuiltinApiErrorCode = validation | bad_request | unauthorized | forbidden | not_found | method_not_allowed | payload_too_large | request_timeout | rate_limited | internal The error codes the framework itself may produce for any endpoint. An endpoint's declared errors (see defineApi) are unioned with these on the client.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/cache",
       "kind": "function",
       "title": "cache",
@@ -2323,6 +2773,60 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/Channel",
+      "kind": "interface",
+      "title": "Channel",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/Channel",
+      "text": "Channel interface Channel<T> A channel on the server.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/ChannelConfig",
+      "kind": "interface",
+      "title": "ChannelConfig",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ChannelConfig",
+      "text": "ChannelConfig interface ChannelConfig<T> The definition passed to createChannel.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/ChannelContext",
+      "kind": "interface",
+      "title": "ChannelContext",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ChannelContext",
+      "text": "ChannelContext interface ChannelContext The subscriber's identity handed to authorize (the Live connection context).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/ChannelEvent",
+      "kind": "interface",
+      "title": "ChannelEvent",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ChannelEvent",
+      "text": "ChannelEvent interface ChannelEvent One transport event: a publish (encoded payload) or a revoke.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/ChannelRef",
+      "kind": "interface",
+      "title": "ChannelRef",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ChannelRef",
+      "text": "ChannelRef interface ChannelRef<T> A channel as the browser sees it: the id (and the phantom type).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/ChannelTransport",
+      "kind": "interface",
+      "title": "ChannelTransport",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ChannelTransport",
+      "text": "ChannelTransport interface ChannelTransport Carries ChannelEvents to every hub that should deliver them (across instances).",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/collapseHeadTags",
       "kind": "function",
       "title": "collapseHeadTags",
@@ -2404,12 +2908,30 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/createApi",
+      "kind": "function",
+      "title": "createApi",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/createApi",
+      "text": "createApi createApi(): ApiBuilder<Record<never, never>> Start a middleware chain for one or more endpoints: const authed = createApi().use(requireSession()); export const GET = authed.define(...). A builder with an empty context.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/createApp",
       "kind": "function",
       "title": "createApp",
       "module": "denext/server",
       "url": "/docs/api/denext-server/createApp",
       "text": "createApp createApp(config: AppConfig): RequestHandler Build the core request handler from an AppConfig: routing, SSR/streaming, API routes, the image endpoint, static files, caching, and the optional request-logging/timeout wrappers. Most apps use serve instead; use createApp directly to embed denext in a custom server. How to resolve the manifest, load modules, and behave. A (Request) => Promise<Response> handler.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/createChannel",
+      "kind": "function",
+      "title": "createChannel",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/createChannel",
+      "text": "createChannel createChannel<T>(config: ChannelConfig<T>): Channel<T> Create a channel. Export it from a \"use server\" module (or give it an id). Schema, key shape, the REQUIRED authorize, and the re-auth TTL. The channel (publish / revoke on the server; an opaque id in the browser).",
       "denextOnly": true
     },
     {
@@ -2494,12 +3016,30 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/defineApi",
+      "kind": "function",
+      "title": "defineApi",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/defineApi",
+      "text": "defineApi defineApi<D, R>(def: D, handler: (input: ApiHandlerInput<D, Record<never, never>>) => R | Promise<R>): ApiRouteHandler<D, R> Define a schema-validated route handler with no middleware (createApi().define(def, handler)). Export it as the method: export const POST = defineApi(…). The endpoint definition (schemas, error codes). Runs over the parsed, typed input. A route handler handleApi dispatches like any other.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/defineConfig",
       "kind": "function",
       "title": "defineConfig",
       "module": "denext/server",
       "url": "/docs/api/denext-server/defineConfig",
       "text": "defineConfig defineConfig(config: DenextConfig): DenextConfig Validating helper that gives a denext.config.ts full editor autocomplete and inline type-checking — the idiomatic way to author config (like Vite's defineConfig): ``ts // denext.config.ts import { defineConfig } from \"denext/server\"; export default defineConfig({ basePath: \"/app\", cache: { store: \"sqlite\" }, }); ` A misspelled or wrongly-typed field is a compile error at the config site, and every field completes as you type — no separate schema to keep in sync (the DenextConfig type _is_ the schema). Beyond the compile-time types, this also validates at runtime: an **unknown key** (a typo, or a stale Next.js option TypeScript can't catch on a plain object literal cast elsewhere) prints a \"did you mean\" warning, and a malformed **value** (e.g. basePath: \"docs\" without a leading slash, or a non-finite images.qualities`) throws a clear, field-scoped error at the config site rather than misbehaving at request time. The project configuration. The same object, typed as DenextConfig.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/defineSubscription",
+      "kind": "function",
+      "title": "defineSubscription",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/defineSubscription",
+      "text": "defineSubscription defineSubscription<Out, In>(config: SubscriptionConfig<In, Out>): SubscriptionRef<In, Out> Define a typed, validated live query. Export it from a \"use server\" module (or give it an id) and subscribe from the client with useSubscription. Input schema, tag derivation, row-level authorize, and the resolver. The subscription reference.",
       "denextOnly": true
     },
     {
@@ -2584,6 +3124,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/ErrorSpec",
+      "kind": "typeAlias",
+      "title": "ErrorSpec",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ErrorSpec",
+      "text": "ErrorSpec type ErrorSpec = number | object How a declared error code maps to HTTP: a status, or a status with a default message.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/ExperimentalConfig",
       "kind": "interface",
       "title": "ExperimentalConfig",
@@ -2602,12 +3151,30 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/FlightBigInt",
+      "kind": "interface",
+      "title": "FlightBigInt",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/FlightBigInt",
+      "text": "FlightBigInt interface FlightBigInt A serialized bigint (JSON has no integer type wide enough; the digits travel as text).",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/FlightBoundary",
       "kind": "interface",
       "title": "FlightBoundary",
       "module": "denext/server",
       "url": "/docs/api/denext-server/FlightBoundary",
       "text": "FlightBoundary interface FlightBoundary A client-side error boundary: a segment's error.tsx (a \"use client\" component) around its children, so a render throw AFTER hydration swaps in the fallback on the client the way Next does. Emitted only when the boundary's fallback is a client reference; a server-only fallback stays transparent (the boundary lives on the server alone).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/FlightChannelRef",
+      "kind": "interface",
+      "title": "FlightChannelRef",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/FlightChannelRef",
+      "text": "FlightChannelRef interface FlightChannelRef A serialized createChannel reference (the client subscribes by id).",
       "denextOnly": true
     },
     {
@@ -2647,12 +3214,30 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/FlightMap",
+      "kind": "interface",
+      "title": "FlightMap",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/FlightMap",
+      "text": "FlightMap interface FlightMap A serialized Map: entries as [key, value] pairs, each side a Flight value.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/FlightNode",
       "kind": "typeAlias",
       "title": "FlightNode",
       "module": "denext/server",
       "url": "/docs/api/denext-server/FlightNode",
       "text": "FlightNode type FlightNode = FlightPrimitive | FlightNode[] | FlightHost | FlightClient | FlightBoundary | FlightActionRef A node in a Flight tree.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/FlightNonFinite",
+      "kind": "interface",
+      "title": "FlightNonFinite",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/FlightNonFinite",
+      "text": "FlightNonFinite interface FlightNonFinite A serialized non-finite number or negative zero (JSON would emit null / 0).",
       "denextOnly": true
     },
     {
@@ -2674,6 +3259,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/FlightSet",
+      "kind": "interface",
+      "title": "FlightSet",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/FlightSet",
+      "text": "FlightSet interface FlightSet A serialized Set: its values in insertion order.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/FlightStreamOptions",
       "kind": "interface",
       "title": "FlightStreamOptions",
@@ -2683,12 +3277,21 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/FlightUrl",
+      "kind": "interface",
+      "title": "FlightUrl",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/FlightUrl",
+      "text": "FlightUrl interface FlightUrl A serialized URL (its href).",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/FlightValue",
       "kind": "typeAlias",
       "title": "FlightValue",
       "module": "denext/server",
       "url": "/docs/api/denext-server/FlightValue",
-      "text": "FlightValue type FlightValue = FlightPrimitive | FlightValue[] | object | FlightNode | FlightActionRef | FlightDate | FlightEventHandler A serialized prop value.",
+      "text": "FlightValue type FlightValue = FlightPrimitive | FlightValue[] | object | FlightNode | FlightActionRef | FlightDate | FlightBigInt | FlightNonFinite | FlightUrl | FlightMap | FlightSet | FlightChannelRef | FlightEventHandler A serialized prop value.",
       "denextOnly": true
     },
     {
@@ -2962,6 +3565,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/inMemoryChannelTransport",
+      "kind": "function",
+      "title": "inMemoryChannelTransport",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/inMemoryChannelTransport",
+      "text": "inMemoryChannelTransport inMemoryChannelTransport(): ChannelTransport The default transport: loopback, this instance only. An in-memory transport.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/inMemoryRateLimitStore",
       "kind": "function",
       "title": "inMemoryRateLimitStore",
@@ -3049,6 +3661,24 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/InvalidationEvent",
       "text": "InvalidationEvent interface InvalidationEvent One cache invalidation (a revalidateTag/revalidatePath), with timing.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/isApiError",
+      "kind": "function",
+      "title": "isApiError",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/isApiError",
+      "text": "isApiError isApiError(value: unknown): value is ApiError Is value an ApiError (from any loaded copy of denext)? The caught value. True for an ApiError.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/isChannel",
+      "kind": "function",
+      "title": "isChannel",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/isChannel",
+      "text": "isChannel isChannel(value: unknown): value is Channel Is value a server-side channel object? Any export. True for a createChannel result.",
       "denextOnly": true
     },
     {
@@ -3736,6 +4366,24 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/QueryRecord",
+      "kind": "typeAlias",
+      "title": "QueryRecord",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/QueryRecord",
+      "text": "QueryRecord type QueryRecord = Record<string, string | string[]> The query string as a record: repeated keys become arrays.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/rateLimit",
+      "kind": "function",
+      "title": "rateLimit",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/rateLimit",
+      "text": "rateLimit rateLimit(options: ApiRateLimitOptions): ApiMiddleware<object> Fixed-window rate limit per key: the (max+1)th request in a window fails with a 429 rate_limited envelope carrying retry-after (seconds) — before validation, so a flood never reaches a schema or the handler. The client identity is the socket peer, or the last x-forwarded-for hop only when trustForwardedHeaders is set (a forged header can't dodge it). Limit, window, key, store. A middleware (no context extension).",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/RateLimitOptions",
       "kind": "interface",
       "title": "RateLimitOptions",
@@ -3994,6 +4642,24 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/RequireAuthOptions",
       "text": "RequireAuthOptions interface RequireAuthOptions Options for requireAuth.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/requireSession",
+      "kind": "function",
+      "title": "requireSession",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/requireSession",
+      "text": "requireSession requireSession(options?: RequireSessionOptions): ApiMiddleware<object, object> Require a signed-in viewer (denext auth): extends the context with { session }, or fails with a 401 unauthorized envelope before any schema runs. The 401 message. A middleware adding session: AuthSession to the handler's ctx.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/RequireSessionOptions",
+      "kind": "interface",
+      "title": "RequireSessionOptions",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/RequireSessionOptions",
+      "text": "RequireSessionOptions interface RequireSessionOptions Options for requireSession.",
       "denextOnly": true
     },
     {
@@ -4276,6 +4942,24 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/SchemaInput",
+      "kind": "typeAlias",
+      "title": "SchemaInput",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/SchemaInput",
+      "text": "SchemaInput type SchemaInput<S> = conditional The value a Standard Schema accepts (what a client must send); its output when unknown.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/SchemaOutput",
+      "kind": "typeAlias",
+      "title": "SchemaOutput",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/SchemaOutput",
+      "text": "SchemaOutput type SchemaOutput<S> = conditional The value a Standard Schema produces.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/SearchParams",
       "kind": "typeAlias",
       "title": "SearchParams",
@@ -4483,6 +5167,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/setChannelTransport",
+      "kind": "function",
+      "title": "setChannelTransport",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/setChannelTransport",
+      "text": "setChannelTransport setChannelTransport(t: ChannelTransport): void Install the transport that carries channel events between instances (default: in-memory, single instance). The Live hub re-subscribes to the new transport. The transport.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/SignalSink",
       "kind": "interface",
       "title": "SignalSink",
@@ -4669,6 +5362,51 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/StaticParamsGenerator",
       "text": "StaticParamsGenerator type StaticParamsGenerator = (context: object) => RouteParams[] | Promise<RouteParams[]> generateStaticParams — the param sets to pre-render. Called with the parent segments' params (from a layout's own generator, or {} at the root), Next.js style; a [...rest] value may be a string[].",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/SubscriptionConfig",
+      "kind": "interface",
+      "title": "SubscriptionConfig",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/SubscriptionConfig",
+      "text": "SubscriptionConfig interface SubscriptionConfig<In, Out> The definition passed to defineSubscription.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/SubscriptionContext",
+      "kind": "interface",
+      "title": "SubscriptionContext",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/SubscriptionContext",
+      "text": "SubscriptionContext interface SubscriptionContext What a subscription's authorize / resolve receive besides the input.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/SubscriptionDef",
+      "kind": "interface",
+      "title": "SubscriptionDef",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/SubscriptionDef",
+      "text": "SubscriptionDef interface SubscriptionDef The hub-facing half of a defineSubscription: validate, gate, compute.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/SubscriptionRef",
+      "kind": "interface",
+      "title": "SubscriptionRef",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/SubscriptionRef",
+      "text": "SubscriptionRef interface SubscriptionRef<In, Out> The reference defineSubscription returns: callable on the server (validate → authorize → resolve), an opaque id on the client; typed for useSubscription.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/SubscriptionRunContext",
+      "kind": "interface",
+      "title": "SubscriptionRunContext",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/SubscriptionRunContext",
+      "text": "SubscriptionRunContext interface SubscriptionRunContext What a subscription's authorize / resolve receive besides the parsed input.",
       "denextOnly": true
     },
     {
@@ -4915,12 +5653,66 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-client/ApiClientError",
+      "kind": "class",
+      "title": "ApiClientError",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/ApiClientError",
+      "text": "ApiClientError class ApiClientError<Code> A failed typed API call: the HTTP status plus, when the server answered with denext's JSON error envelope ({ error: { code, status, message, data?, fieldErrors?, digest? } } — an ApiError, a validation failure, a control signal, or a redacted 500), the envelope's fields. code narrows to the endpoint's declared codes (ErrorsOf<E>); a non-envelope failure (a plain text 500, an HTML error page) has code: \"http_error\".",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/ApiClientOptions",
+      "kind": "interface",
+      "title": "ApiClientOptions",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/ApiClientOptions",
+      "text": "ApiClientOptions interface ApiClientOptions Options for createApiClient.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-client/ApiEndpoint",
       "kind": "interface",
       "title": "ApiEndpoint",
       "module": "denext/client",
       "url": "/docs/api/denext-client/ApiEndpoint",
-      "text": "ApiEndpoint interface ApiEndpoint One endpoint's typed shape: its params, optional request/response bodies.",
+      "text": "ApiEndpoint interface ApiEndpoint One endpoint's typed shape: its params, optional request/response bodies, query, error codes.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/ApiEndpointOf",
+      "kind": "typeAlias",
+      "title": "ApiEndpointOf",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/ApiEndpointOf",
+      "text": "ApiEndpointOf type ApiEndpointOf<P, M> = NonNullable<indexedAccess> The registered schema's entry for one route + method (what useApi is typed against).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/ApiErrorEnvelope",
+      "kind": "interface",
+      "title": "ApiErrorEnvelope",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/ApiErrorEnvelope",
+      "text": "ApiErrorEnvelope interface ApiErrorEnvelope The shape of denext's JSON error envelope (the server's ApiErrorBody).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/ApiInvalidationSource",
+      "kind": "typeAlias",
+      "title": "ApiInvalidationSource",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/ApiInvalidationSource",
+      "text": "ApiInvalidationSource type ApiInvalidationSource = (tags: string[], onInvalidate: () => void) => () => void Subscribes to tag invalidations; installed by the Live transport. Returns an unsubscribe.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/ApiPhantom",
+      "kind": "typeAlias",
+      "title": "ApiPhantom",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/ApiPhantom",
+      "text": "ApiPhantom type ApiPhantom<H> = conditional The { def; result } phantom a defineApi handler carries, or never for a plain one.",
       "denextOnly": true
     },
     {
@@ -4929,7 +5721,7 @@
       "title": "apiRequest",
       "module": "denext/client",
       "url": "/docs/api/denext-client/apiRequest",
-      "text": "apiRequest apiRequest(pattern: string, method: HttpMethod, opts?: ApiRequestOptions, base?: string): Promise<unknown> Perform one typed API request (the runtime the typed client dispatches to). Substitutes params, JSON-encodes a body, and parses a JSON response (a 204/empty body → undefined). The route pattern to call. The HTTP method. Params, body, query, headers, and abort signal. Optional origin/base prefix (default: relative to the current origin). The parsed JSON response body.",
+      "text": "apiRequest apiRequest(pattern: string, method: HttpMethod, opts?: ApiRequestOptions, base?: string, fetchImpl?: fetch): Promise<unknown> Perform one typed API request (the runtime the typed client dispatches to). Substitutes params, encodes a body through the wire codec (flagging it only when a tag was needed), and parses the JSON response (decoding it when the server flagged it; a 204/empty body → undefined). A non-2xx response throws an ApiClientError carrying the server's error envelope when there is one. The route pattern to call. The HTTP method. Params, body, query, headers, and abort signal. Optional origin/base prefix (default: relative to the current origin). The fetch to use (default: the global). The parsed response body.",
       "denextOnly": true
     },
     {
@@ -4965,7 +5757,7 @@
       "title": "buildPath",
       "module": "denext/client",
       "url": "/docs/api/denext-client/buildPath",
-      "text": "buildPath buildPath(pattern: string, params?: Record<string, string>, query?: Record<string, string>): string Substitute path params into a route pattern, appending any query params. A route pattern like /api/user/[id] or /files/[...path]. Values for the pattern's dynamic segments. Extra query-string params. The concrete request path (relative; prefix with a base to make it absolute).",
+      "text": "buildPath buildPath(pattern: string, params?: Record<string, string | string[]>, query?: Record<string, unknown>): string Substitute path params into a route pattern, appending any query params. A route pattern like /api/user/[id] or /files/[...path]. Values for the pattern's dynamic segments. Extra query-string params. The concrete request path (relative; prefix with a base to make it absolute).",
       "denextOnly": true
     },
     {
@@ -5001,7 +5793,7 @@
       "title": "createApiClient",
       "module": "denext/client",
       "url": "/docs/api/denext-client/createApiClient",
-      "text": "createApiClient createApiClient<S>(base?: string): ApiClient<S> Create a typed API client bound to an app's generated ApiSchema. Optional origin/base prefix for every request (default: relative). A callable (path, method, opts?) => Promise<response>, checked against S.",
+      "text": "createApiClient createApiClient<S>(baseOrOptions?: string | ApiClientOptions): ApiClient<S> Create a typed API client bound to an app's generated ApiSchema (the registered schema when .denext/api.ts is imported). Concurrent GET/HEAD calls with equal inputs share one fetch (see ApiClientOptions.dedupe). A base prefix (default: relative), or ApiClientOptions. A callable (path, method, opts?) => Promise<response>, checked against S.",
       "denextOnly": true
     },
     {
@@ -5113,6 +5905,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-client/ErrorsOf",
+      "kind": "typeAlias",
+      "title": "ErrorsOf",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/ErrorsOf",
+      "text": "ErrorsOf type ErrorsOf<E> = conditional The error codes a call to one endpoint may fail with.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-client/FlightNode",
       "kind": "typeAlias",
       "title": "FlightNode",
@@ -5158,12 +5959,75 @@
       "denextOnly": false
     },
     {
+      "id": "api:denext-client/FreeQuery",
+      "kind": "interface",
+      "title": "FreeQuery",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/FreeQuery",
+      "text": "FreeQuery interface FreeQuery Free-form query strings (an endpoint without a query schema).",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-client/h",
       "kind": "function",
       "title": "h",
       "module": "denext/client",
       "url": "/docs/api/denext-client/h",
       "text": "h h(type: VNodeType, props: VProps | null, ...children: VNodeChildren[]): VNode Classic-runtime style helper, also handy for programmatic node creation: h(\"div\", { class: \"x\" }, child1, child2)",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/HandlerBody",
+      "kind": "typeAlias",
+      "title": "HandlerBody",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/HandlerBody",
+      "text": "HandlerBody type HandlerBody<H> = conditional The JSON request body a handler expects: a defineApi route's body schema input, else the B of a TypedRequest<B> first parameter, else never (no body key).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/HandlerErrors",
+      "kind": "typeAlias",
+      "title": "HandlerErrors",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/HandlerErrors",
+      "text": "HandlerErrors type HandlerErrors<H> = conditional The error codes a call may fail with: the endpoint's declared codes plus the builtins.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/HandlerLike",
+      "kind": "typeAlias",
+      "title": "HandlerLike",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/HandlerLike",
+      "text": "HandlerLike type HandlerLike = (...args: never[]) => Response | Promise<Response> Anything shaped like a route handler (sync or async).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/HandlerParams",
+      "kind": "typeAlias",
+      "title": "HandlerParams",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/HandlerParams",
+      "text": "HandlerParams type HandlerParams<H, P> = conditional The params the client must pass: a defineApi route's params schema input when declared, else the pattern-derived record P ({ id: string }, { path: string[] }).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/HandlerQuery",
+      "kind": "typeAlias",
+      "title": "HandlerQuery",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/HandlerQuery",
+      "text": "HandlerQuery type HandlerQuery<H> = conditional The typed query record of a defineApi route (query schema input), else never.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/HandlerResponse",
+      "kind": "typeAlias",
+      "title": "HandlerResponse",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/HandlerResponse",
+      "text": "HandlerResponse type HandlerResponse<H> = conditional The JSON response body of a handler: a defineApi route's response schema output (or its handler's non-Response return), else the T of a TypedResponse<T>, else unknown.",
       "denextOnly": true
     },
     {
@@ -5203,12 +6067,48 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-client/InferEndpoint",
+      "kind": "typeAlias",
+      "title": "InferEndpoint",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/InferEndpoint",
+      "text": "InferEndpoint type InferEndpoint<H, P> = parenthesized & parenthesized & parenthesized & object One endpoint's schema entry. params / body / query keys are present ONLY when the handler has them — the client's RequestOf keys its required-options logic on presence.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/Informative",
+      "kind": "typeAlias",
+      "title": "Informative",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/Informative",
+      "text": "Informative type Informative<B> = conditional A body type that is any/unknown carries no information → never (the key is omitted).",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-client/interpolate",
       "kind": "function",
       "title": "interpolate",
       "module": "denext/client",
       "url": "/docs/api/denext-client/interpolate",
       "text": "interpolate interpolate(template: string, vars?: TranslationVars): string Substitute {name} placeholders in template with vars.name. Unmatched placeholders are left intact (so a missing var is visible, not silently blank). The message template, e.g. \"Hello, {name}!\". The interpolation values, if any. The interpolated string.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/IsAny",
+      "kind": "typeAlias",
+      "title": "IsAny",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/IsAny",
+      "text": "IsAny type IsAny<T> = conditional True when T is any.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/isApiClientError",
+      "kind": "function",
+      "title": "isApiClientError",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/isApiClientError",
+      "text": "isApiClientError isApiClientError(value: unknown): value is ApiClientError Is value an ApiClientError? The caught value. True for a typed API client failure.",
       "denextOnly": true
     },
     {
@@ -5275,6 +6175,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-client/ModuleEndpoints",
+      "kind": "typeAlias",
+      "title": "ModuleEndpoints",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/ModuleEndpoints",
+      "text": "ModuleEndpoints type ModuleEndpoints<M, P> = mapped Every exported HTTP-method handler of a route module, as { GET: InferEndpoint; … }. P is the pattern-derived params record (never for a static route).",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-client/navigate",
       "kind": "function",
       "title": "navigate",
@@ -5300,6 +6209,24 @@
       "url": "/docs/api/denext-client/notFound",
       "text": "notFound notFound(): never Throw to render the nearest not-found UI with a 404 status.",
       "denextOnly": false
+    },
+    {
+      "id": "api:denext-client/PlainBody",
+      "kind": "typeAlias",
+      "title": "PlainBody",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/PlainBody",
+      "text": "PlainBody type PlainBody<H> = conditional A plain handler's request body: the B of its TypedRequest<B> first param, else never.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/PlainResponse",
+      "kind": "typeAlias",
+      "title": "PlainResponse",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/PlainResponse",
+      "text": "PlainResponse type PlainResponse<H> = conditional A plain handler's response: the T of its TypedResponse<T> return, else unknown.",
+      "denextOnly": true
     },
     {
       "id": "api:denext-client/prefetch",
@@ -5401,6 +6328,24 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-client/RegisteredApi",
+      "kind": "interface",
+      "title": "RegisteredApi",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/RegisteredApi",
+      "text": "RegisteredApi interface RegisteredApi Augmentation target for the generated .denext/api.ts: declare module \"denext\" { interface RegisteredApi { schema: ApiSchema } } makes createApiClient() typed with no type argument.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/RegisteredSchema",
+      "kind": "typeAlias",
+      "title": "RegisteredSchema",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/RegisteredSchema",
+      "text": "RegisteredSchema type RegisteredSchema = conditional The registered app schema when .denext/api.ts is imported, else the open ApiSchema.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-client/RequestArgs",
       "kind": "typeAlias",
       "title": "RequestArgs",
@@ -5415,7 +6360,7 @@
       "title": "RequestOf",
       "module": "denext/client",
       "url": "/docs/api/denext-client/RequestOf",
-      "text": "RequestOf type RequestOf<E> = parenthesized & parenthesized & object The options object for one endpoint: params/body appear only when the route has them.",
+      "text": "RequestOf type RequestOf<E> = parenthesized & parenthesized & parenthesized & object The options object for one endpoint: params/body/query are typed when the route declares them.",
       "denextOnly": true
     },
     {
@@ -5470,6 +6415,15 @@
       "module": "denext/client",
       "url": "/docs/api/denext-client/RouterNavigateOptions",
       "text": "RouterNavigateOptions interface RouterNavigateOptions Options for Router.push / Router.replace (Next.js NavigateOptions).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/setApiInvalidationSource",
+      "kind": "function",
+      "title": "setApiInvalidationSource",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/setApiInvalidationSource",
+      "text": "setApiInvalidationSource setApiInvalidationSource(source: ApiInvalidationSource | null): void Install the transport that delivers tag invalidations to useApi({ tags }) (the Live client does this in configureLive / useApiLive). The subscriber, or null to remove it.",
       "denextOnly": true
     },
     {
@@ -5554,6 +6508,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-client/TypedQuery",
+      "kind": "typeAlias",
+      "title": "TypedQuery",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/TypedQuery",
+      "text": "TypedQuery type TypedQuery<Q> = conditional A schema-typed query, required; an uninformative (any/unknown) schema stays free-form.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-client/unauthorized",
       "kind": "function",
       "title": "unauthorized",
@@ -5588,6 +6551,33 @@
       "url": "/docs/api/denext-client/useActionState",
       "text": "useActionState useActionState<State, Payload>(action: (state: State, payload: Payload) => State | Promise<State>, initialState: State, permalink?: string): tuple Manage state driven by a form action (React 19 useActionState). Returns [state, dispatch, isPending]. Pass dispatch as a form's action (<form action={dispatch}>) — submitting the form calls action(currentState, formData) and stores the result as the new state. dispatch can also be called directly with a payload. dispatch returns the action's promise so the enclosing form's useFormStatus tracks it.",
       "denextOnly": false
+    },
+    {
+      "id": "api:denext-client/useApi",
+      "kind": "function",
+      "title": "useApi",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/useApi",
+      "text": "useApi useApi<P, M>(path: P, method: M, opts?: RequestOf<ApiEndpointOf<P, M>>, options?: UseApiOptions): UseApiResult<ResponseOf<ApiEndpointOf<P, M>>, ErrorsOf<ApiEndpointOf<P, M>>> Call one of the app's own route handlers from a component, typed end to end. The route pattern (\"/api/user/[id]\"). The HTTP method the route exports. Params / query / body for the call (typed by the schema). Tags, suspense, enabled, client. The typed data / error / pending state plus refetch and invalidate.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/UseApiOptions",
+      "kind": "interface",
+      "title": "UseApiOptions",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/UseApiOptions",
+      "text": "UseApiOptions interface UseApiOptions Options for useApi.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/UseApiResult",
+      "kind": "interface",
+      "title": "UseApiResult",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/UseApiResult",
+      "text": "UseApiResult interface UseApiResult<T, E> What useApi returns.",
+      "denextOnly": true
     },
     {
       "id": "api:denext-client/useCallback",
@@ -5831,6 +6821,15 @@
       "url": "/docs/api/denext-client/useTranslations",
       "text": "useTranslations useTranslations(): TranslateFn Access a translation function t(key, vars?) for the active locale (reactive). Looks up key in the locale's catalog and interpolates {var} placeholders; a missing key returns the key itself. The catalog comes from the render-time provider during SSR and from the hydration payload on the client, re-read on soft navigation (so switching locales updates the strings). ``ts const t = useTranslations(); t(\"greeting\", { name }); // \"Bonjour, Ada\" for the \"fr\" catalog ``",
       "denextOnly": false
+    },
+    {
+      "id": "api:denext-client/ValueResult",
+      "kind": "typeAlias",
+      "title": "ValueResult",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/ValueResult",
+      "text": "ValueResult type ValueResult<R> = conditional A defineApi handler's returned VALUE type (a returned Response carries no body type).",
+      "denextOnly": true
     },
     {
       "id": "api:denext-client/VNode",
@@ -6616,6 +7615,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-live/ChannelRef",
+      "kind": "interface",
+      "title": "ChannelRef",
+      "module": "denext/live",
+      "url": "/docs/api/denext-live/ChannelRef",
+      "text": "ChannelRef interface ChannelRef<T> A channel as the browser sees it: the id (and the phantom type).",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-live/configureLive",
       "kind": "function",
       "title": "configureLive",
@@ -6643,6 +7651,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-live/LiveErrorInfo",
+      "kind": "interface",
+      "title": "LiveErrorInfo",
+      "module": "denext/live",
+      "url": "/docs/api/denext-live/LiveErrorInfo",
+      "text": "LiveErrorInfo interface LiveErrorInfo The structured part of a server error frame, handed to a data subscription's callback.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-live/LiveProps",
       "kind": "interface",
       "title": "LiveProps",
@@ -6661,12 +7678,84 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-live/LiveSubscriptionError",
+      "kind": "interface",
+      "title": "LiveSubscriptionError",
+      "module": "denext/live",
+      "url": "/docs/api/denext-live/LiveSubscriptionError",
+      "text": "LiveSubscriptionError interface LiveSubscriptionError Why a subscription is not (or no longer) delivering.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-live/Presence",
       "kind": "interface",
       "title": "Presence",
       "module": "denext/live",
       "url": "/docs/api/denext-live/Presence",
       "text": "Presence interface Presence<S> The presence of the current room, from usePresence.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-live/subscribeChannel",
+      "kind": "function",
+      "title": "subscribeChannel",
+      "module": "denext/live",
+      "url": "/docs/api/denext-live/subscribeChannel",
+      "text": "subscribeChannel subscribeChannel(channelId: string, key: string, onValue: (value: unknown, seq: number) => void, onError: (info: LiveErrorInfo) => void): () => void Receive a createChannel channel's pushes for key. Backs useChannel. Returns an unsubscribe. A refusal (denied / no-policy / …) arrives through onError and marks the subscription dead so a reconnect does not re-send it. The channel's stable id (ref.denextChannelId, or the \"use server\" stub's id). The key within the channel. Called with each pushed payload and the publisher's seq. Called with a structured refusal.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-live/subscribeLiveTags",
+      "kind": "function",
+      "title": "subscribeLiveTags",
+      "module": "denext/live",
+      "url": "/docs/api/denext-live/subscribeLiveTags",
+      "text": "subscribeLiveTags subscribeLiveTags(tags: string[], onInvalidate: () => void): () => void Be told when any of tags is invalidated on the server (revalidateTag); backs useApi({ tags }). Returns an unsubscribe. The cache tags to watch. Called with no arguments when one of them is invalidated.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-live/SubscriptionRefLike",
+      "kind": "interface",
+      "title": "SubscriptionRefLike",
+      "module": "denext/live",
+      "url": "/docs/api/denext-live/SubscriptionRefLike",
+      "text": "SubscriptionRefLike interface SubscriptionRefLike<In, Out> A defineSubscription ref as the client sees it (the id, plus the phantom types).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-live/SubscriptionState",
+      "kind": "interface",
+      "title": "SubscriptionState",
+      "module": "denext/live",
+      "url": "/docs/api/denext-live/SubscriptionState",
+      "text": "SubscriptionState interface SubscriptionState<Out> What useSubscription returns.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-live/useApiLive",
+      "kind": "function",
+      "title": "useApiLive",
+      "module": "denext/live",
+      "url": "/docs/api/denext-live/useApiLive",
+      "text": "useApiLive useApiLive<P, M>(path: P, method: M, opts?: RequestOf<ApiEndpointOf<P, M>>, options?: UseApiOptions): UseApiResult<ResponseOf<ApiEndpointOf<P, M>>, ErrorsOf<ApiEndpointOf<P, M>>> useApi whose tags refetch on a server-side revalidateTag — the Live socket delivers the invalidation; the refetch itself is an ordinary HTTP call with the viewer's cookies. Same signature and result as useApi. The route pattern. The HTTP method the route exports. Params / query / body for the call. Tags, suspense, enabled, client. The useApi result.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-live/useChannel",
+      "kind": "function",
+      "title": "useChannel",
+      "module": "denext/live",
+      "url": "/docs/api/denext-live/useChannel",
+      "text": "useChannel useChannel<T>(channel: ChannelRef<T> | object, key: string, options?: UseChannelOptions<T>): SubscriptionState<T> Receive a createChannel channel's pushes for key. The server authorizes the subscription in this viewer's session (and re-checks it lazily); every publish(key, payload) — from an action, a webhook, a cron — arrives as a new data. At-most-once, latest-wins; no replay on reconnect. The channel ref (imported from a \"use server\" module or received as a prop). The key to subscribe to. initial, enabled. { data, error, status } typed by the channel's payload.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-live/UseChannelOptions",
+      "kind": "interface",
+      "title": "UseChannelOptions",
+      "module": "denext/live",
+      "url": "/docs/api/denext-live/UseChannelOptions",
+      "text": "UseChannelOptions interface UseChannelOptions<T> Options for useChannel.",
       "denextOnly": true
     },
     {
@@ -6712,6 +7801,24 @@
       "module": "denext/live",
       "url": "/docs/api/denext-live/UsePresenceOptions",
       "text": "UsePresenceOptions interface UsePresenceOptions<S> Options for usePresence.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-live/useSubscription",
+      "kind": "function",
+      "title": "useSubscription",
+      "module": "denext/live",
+      "url": "/docs/api/denext-live/useSubscription",
+      "text": "useSubscription useSubscription<In, Out>(sub: SubscriptionRefLike<In, Out>, input: In, options?: UseSubscriptionOptions<Out>): SubscriptionState<Out> Subscribe to a defineSubscription over the Live socket. The server validates input, derives the tags, authorizes on every recompute, and pushes each new value. The subscription ref (imported from a \"use server\" module). The typed input. initial, enabled. { data, error, status }.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-live/UseSubscriptionOptions",
+      "kind": "interface",
+      "title": "UseSubscriptionOptions",
+      "module": "denext/live",
+      "url": "/docs/api/denext-live/UseSubscriptionOptions",
+      "text": "UseSubscriptionOptions interface UseSubscriptionOptions<Out> Options for useSubscription.",
       "denextOnly": true
     },
     {
@@ -6873,7 +7980,7 @@
       "title": "Common tasks",
       "module": "guide",
       "url": "https://github.com/Brainwires/denext/blob/main/AGENTS.md#common-tasks",
-      "text": "## Common tasks **A page with data (Server Component):** ``tsx // app/page.tsx export default async function Home() { const posts = await getPosts(); return <ul>{posts.map((p) => <li key={p.id}>{p.title}</li>)}</ul>; } ` **An interactive component:** `tsx // app/counter.tsx \"use client\"; import { useState } from \"denext\"; export function Counter() { const [n, setN] = useState(0); return <button type=\"button\" onClick={() => setN(n + 1)}>Clicked {n}</button>; } ` **A route handler (API):** `ts // app/api/hello/route.ts export function GET(_req: Request): Response { return Response.json({ ok: true }); } ` **A typed route handler + calling it with end-to-end types (no tRPC):** return TypedResponse<T> (and take a TypedRequest<B>) from denext/server so denext dev/build can generate .denext/api.ts; then createApiClient type-checks every call to your own API — a wrong path/method/param/body is a compile error. `ts // app/api/user/[id]/route.ts import { json, type TypedRequest, type TypedResponse } from \"denext/server\"; export function GET(): TypedResponse<{ id: string; name: string }> { return json({ id: \"1\", name: \"Ada\" }); // json() === Response.json() at runtime } export async function POST( req: TypedRequest<{ name: string }>, ): Promise<TypedResponse<{ ok: true }>> { await req.json(); // typed as { name: string } return json({ ok: true }, { status: 201 }); } ` `ts // anywhere (server component, client component, or a test) import { createApiClient } from \"denext\"; import type { ApiSchema } from \"./.denext/api.ts\"; const api = createApiClient<ApiSchema>(); const user = await api(\"/api/user/[id]\", \"GET\", { params: { id: \"1\" } }); // user is typed ` **A typed Server Action (the mutation side, also type-checked):** defineAction validates FormData into a typed input (a parser, or a Zod/Valibot/any Standard Schema) and its Out flows into useActionState. `ts // app/actions.ts \"use server\"; import { ActionValidationError, defineAction } from \"denext/server\"; export const createPost = defineAction({ input: (f) => ({ title: String(f.title ?? \"\").trim() }), // typed input: { title: string } handler: async ({ title }) => { if (!title) throw new ActionValidationError(\"bad\", { title: \"Title is required\" }); return { id: await db.posts.insert({ title }) }; // Out inferred: { id: string } }, }); ` `tsx // app/new-post.tsx \"use client\"; import { idleActionState, useActionState } from \"denext\"; import { createPost } from \"./actions.ts\"; export function NewPost() { const [state, action] = useActionState(createPost, idleActionState<{ id: string }>()); return ( <form action={action}> <input name=\"title\" /> {!state.ok && state.fieldErrors?.title} {/* typed */} {state.ok && created ${state.data.id}} {/* typed */} </form> ); } ` **Reading cookies / a session (auth):** `ts import { cookies, getSession } from \"denext/server\"; // cookies are Secure + httpOnly + SameSite=Lax by DEFAULT; pass { httpOnly: false } to opt out. const session = await getSession<{ userId: string }>({ secret: Deno.env.get(\"SESSION_SECRET\")!, }); if (!session.data) redirect(\"/login\"); await session.set({ userId: user.id }); // sign in ` **A database (zero-npm, server-only module):** `ts // lib/db.ts — Deno's built-in SQLite; no install. See DATABASE.md for KV/Postgres. import { DatabaseSync } from \"node:sqlite\"; const db = new DatabaseSync(Deno.env.get(\"DB_PATH\") ?? \"app.db\"); export const listNotes = () => db.prepare(\"SELECT * FROM notes\").all(); ` Open the connection once at module scope; do writes in Server Actions. **Testing an app (no browser, JS-disabled path):** `ts import { createTestApp, createTestClient } from \"denext/testing\"; const client = createTestClient(await createTestApp(\"./\")); const res = await client.submit( client.form((await client.get(\"/login\")).text), { email, password, }, ); // res.status, client.cookies — a cookie jar persists the session across requests. ` **Testing a component (hooks/effects/events, no browser):** `ts import { fireEvent, render } from \"denext/testing\"; import { h } from \"denext/jsx-runtime\"; const screen = await render(h(Counter, null)); // async — await it await screen.fireEvent.click(screen.getByRole(\"button\")); // getByRole/getByText/getByLabelText/getByTestId; fireEvent.change wires to onChange. ` **Conformance-probing every route (CI gate):** `ts import { formatReport, probeApp } from \"denext/testing\"; const report = await probeApp(\"./\"); // renders every route, asserts valid HTML docs if (!report.ok) throw new Error(formatReport(report)); // or run denext doctor ` **Config:** denext.config.ts exports { ... } (redirects, rewrites, headers, i18n, images, cacheComponents, streaming, live, plugins, experimental, tailwind, csp, compatibilityMode; mode: \"spa\" + spa: { entry, … } for SPA mode). Not next.config.js. **Writing a plugin:** a DenextPlugin ({ name, setup(ctx) } from denext/plugin-kit, the semver-stable toolkit) hooks five seams — addRouteSynthesizer (add/adjust routes), addRequestHandler (claim unmatched requests), addBuildStep (emit assets), addTeardown (dispose on drain), and addCommand (contribute a CLI verb). Declare it as plugins: [myPlugin()]. See [PLUGINS.md](./PLUGINS.md) and [examples/plugin-aliases`](./examples/plugin-aliases).",
+      "text": "## Common tasks **A page with data (Server Component):** ``tsx // app/page.tsx export default async function Home() { const posts = await getPosts(); return <ul>{posts.map((p) => <li key={p.id}>{p.title}</li>)}</ul>; } ` **An interactive component:** `tsx // app/counter.tsx \"use client\"; import { useState } from \"denext\"; export function Counter() { const [n, setN] = useState(0); return <button type=\"button\" onClick={() => setN(n + 1)}>Clicked {n}</button>; } ` **A route handler (API):** `ts // app/api/hello/route.ts export function GET(_req: Request): Response { return Response.json({ ok: true }); } ` **A validated route handler + calling it with end-to-end types (no tRPC):** defineApi takes Standard Schemas (Zod/Valibot/ArkType/TypeBox/hand-rolled) for params / query / body / response plus the errors it may fail with; the handler gets parsed, typed input and a schema mismatch is a structured 400 before it runs. denext dev/build generate .denext/api.ts from the route modules' TYPES and register it, so createApiClient() and useApi type-check every call — path, method, params, query, body, response, error codes. `ts // app/api/user/[id]/route.ts import { createApi, defineApi, requireSession } from \"denext/server\"; import { z } from \"zod\"; export const GET = defineApi({ params: z.object({ id: z.string() }), response: z.object({ id: z.string(), name: z.string() }), // strips undeclared keys, in prod too errors: { not_found: 404 }, }, async ({ params, fail }) => (await db.users.get(params.id)) ?? fail(\"not_found\")); export const PATCH = createApi().use(requireSession()).define({ params: z.object({ id: z.string() }), body: z.object({ name: z.string().min(1) }), errors: { not_owner: 403 }, }, async ({ params, body, ctx, fail }) => { if (ctx.session.userId !== params.id) fail(\"not_owner\"); return db.users.update(params.id, body); }); ` `ts // anywhere (server component, client component, or a test) import { createApiClient, isApiClientError } from \"denext\"; import type {} from \"./.denext/api.ts\"; // registers the schema (type-only; nothing ships) const api = createApiClient(); // typed against THIS app's routes const user = await api(\"/api/user/[id]\", \"GET\", { params: { id: \"1\" } }); // user is typed try { await api(\"/api/user/[id]\", \"PATCH\", { params: { id: \"1\" }, body: { name: \"\" } }); } catch (err) { if (isApiClientError(err) && err.code === \"not_owner\") { /* narrowed to the declared codes */ } } ` `tsx // a client component — the hook; GETs in one tick ride ONE batched request \"use client\"; import { useApi } from \"denext\"; export function User({ id }: { id: string }) { const { data, error, pending } = useApi(\"/api/user/[id]\", \"GET\", { params: { id } }); return pending ? <p>…</p> : error ? <p>{error.code}</p> : <p>{data.name}</p>; } ` A plain handler still works and is still typed: return TypedResponse<T> / take a TypedRequest<B> from denext/server. A plain route.ts body is capped at 1 MiB (export const maxBodyBytes = N | false); redirect()/notFound() inside one are HTTP responses; a thrown ApiError(status, code, { data }) is a typed JSON error envelope. **Typed live data (validated subscription + server push):** `ts // app/live.ts \"use server\"; import { createChannel, defineSubscription } from \"denext/server\"; export const orderStatus = defineSubscription({ input: z.object({ id: z.string() }), // validated on every subscribe tags: ({ id }) => [order:${id}], // server-derived; re-pushed on revalidateTag authorize: async ({ id }) => (await auth())?.userId === (await db.orders.owner(id)), resolve: ({ id }) => db.orders.status(id), }); export const orderEvents = createChannel<{ status: string }>({ authorize: async (ctx, key) => key === user:${(await getSession())?.data.userId}, // REQUIRED }); // anywhere on the server: await orderEvents.publish(user:${userId}, { status: \"shipped\" }); ` `tsx \"use client\"; import { useChannel, useSubscription } from \"denext/live\"; import { orderEvents, orderStatus } from \"./live.ts\"; const { data } = useSubscription(orderStatus, { id }, { initial }); const { data: event } = useChannel(orderEvents, user:${userId}); ` **A typed Server Action (the mutation side, also type-checked):** defineAction validates FormData into a typed input (a parser, or a Zod/Valibot/any Standard Schema) and its Out flows into useActionState. `ts // app/actions.ts \"use server\"; import { ActionValidationError, defineAction } from \"denext/server\"; export const createPost = defineAction({ input: (f) => ({ title: String(f.title ?? \"\").trim() }), // typed input: { title: string } handler: async ({ title }) => { if (!title) throw new ActionValidationError(\"bad\", { title: \"Title is required\" }); return { id: await db.posts.insert({ title }) }; // Out inferred: { id: string } }, }); ` `tsx // app/new-post.tsx \"use client\"; import { idleActionState, useActionState } from \"denext\"; import { createPost } from \"./actions.ts\"; export function NewPost() { const [state, action] = useActionState(createPost, idleActionState<{ id: string }>()); return ( <form action={action}> <input name=\"title\" /> {!state.ok && state.fieldErrors?.title} {/* typed */} {state.ok && created ${state.data.id}} {/* typed */} </form> ); } ` **Reading cookies / a session (auth):** `ts import { cookies, getSession } from \"denext/server\"; // cookies are Secure + httpOnly + SameSite=Lax by DEFAULT; pass { httpOnly: false } to opt out. const session = await getSession<{ userId: string }>({ secret: Deno.env.get(\"SESSION_SECRET\")!, }); if (!session.data) redirect(\"/login\"); await session.set({ userId: user.id }); // sign in ` **A database (zero-npm, server-only module):** `ts // lib/db.ts — Deno's built-in SQLite; no install. See DATABASE.md for KV/Postgres. import { DatabaseSync } from \"node:sqlite\"; const db = new DatabaseSync(Deno.env.get(\"DB_PATH\") ?? \"app.db\"); export const listNotes = () => db.prepare(\"SELECT * FROM notes\").all(); ` Open the connection once at module scope; do writes in Server Actions. **Testing an app (no browser, JS-disabled path):** `ts import { createTestApp, createTestClient } from \"denext/testing\"; const client = createTestClient(await createTestApp(\"./\")); const res = await client.submit( client.form((await client.get(\"/login\")).text), { email, password, }, ); // res.status, client.cookies — a cookie jar persists the session across requests. ` **Testing a component (hooks/effects/events, no browser):** `ts import { fireEvent, render } from \"denext/testing\"; import { h } from \"denext/jsx-runtime\"; const screen = await render(h(Counter, null)); // async — await it await screen.fireEvent.click(screen.getByRole(\"button\")); // getByRole/getByText/getByLabelText/getByTestId; fireEvent.change wires to onChange. ` **Conformance-probing every route (CI gate):** `ts import { formatReport, probeApp } from \"denext/testing\"; const report = await probeApp(\"./\"); // renders every route, asserts valid HTML docs if (!report.ok) throw new Error(formatReport(report)); // or run denext doctor ` **Config:** denext.config.ts exports { ... } (redirects, rewrites, headers, i18n, images, cacheComponents, streaming, live, plugins, experimental, tailwind, csp, compatibilityMode; mode: \"spa\" + spa: { entry, … } for SPA mode). Not next.config.js. **Writing a plugin:** a DenextPlugin ({ name, setup(ctx) } from denext/plugin-kit, the semver-stable toolkit) hooks five seams — addRouteSynthesizer (add/adjust routes), addRequestHandler (claim unmatched requests), addBuildStep (emit assets), addTeardown (dispose on drain), and addCommand (contribute a CLI verb). Declare it as plugins: [myPlugin()]. See [PLUGINS.md](./PLUGINS.md) and [examples/plugin-aliases`](./examples/plugin-aliases).",
       "denextOnly": false
     },
     {

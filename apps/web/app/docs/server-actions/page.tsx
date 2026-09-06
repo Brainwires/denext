@@ -72,6 +72,35 @@ export async function signIn(formData: FormData) {
 }`}
       </Code>
 
+      <h2>Typed actions — defineAction</h2>
+      <p>
+        A bare action takes raw <code>FormData</code> and returns whatever.{" "}
+        <code>defineAction</code>{" "}
+        validates the fields into a typed input — a parser function or any Standard Schema (Zod,
+        Valibot, ArkType, …) — and its result type flows into{" "}
+        <code>useActionState</code>. Validation errors reach the form verbatim (they are authored
+        for the user); any other throw is redacted in production to a generic message plus a{" "}
+        <code>digest</code>.
+      </p>
+      <Code lang="ts">
+        {`// app/actions.ts
+"use server";
+import { ActionValidationError, defineAction } from "denext/server";
+export const createPost = defineAction({
+  input: z.object({ title: z.string().min(1) }),           // or (f) => ({ title: String(f.title) })
+  handler: async ({ title }) => {
+    if (await db.posts.exists(title)) throw new ActionValidationError("Taken", { title: "Taken" });
+    return { id: await db.posts.insert({ title }) };       // Out inferred: { id: string }
+  },
+});
+
+// app/new-post.tsx
+"use client";
+import { idleActionState, useActionState } from "denext";
+const [state, action] = useActionState(createPost, idleActionState<{ id: string }>());
+// state.ok ? state.data.id : state.fieldErrors?.title   — both typed`}
+      </Code>
+
       <h2>Refreshing cached data</h2>
       <p>
         After a write, tell the framework what to invalidate. All are importable from{" "}

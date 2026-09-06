@@ -42,6 +42,29 @@ internal design choice with no observable difference lives in
   Server Error"` + a `digest` that correlates with the server log), exactly like a
   render error handed to `error.tsx`; `ActionValidationError` messages and field
   errors pass through verbatim because they are authored for the user.
+- **`defineApi` routes follow the same redaction split.** A thrown `ApiError` (and
+  a schema `validation` failure) is authored for the client and passes through
+  verbatim as the JSON error envelope; any other throw is a redacted JSON 500
+  (`{ error: { code: "internal", message: "Internal Server Error", digest } }`). A
+  plain `route.ts` handler's unknown throw keeps the text 500 it always had. Likewise
+  a `defineSubscription` resolver failure reaches the client as a redacted `failed`
+  frame (with `digest`), while its `invalid-input` field errors are verbatim; a
+  channel payload is app-authored and never redacted.
+- **`redirect()` / `notFound()` / `forbidden()` / `unauthorized()` thrown in a
+  `route.ts` handler are HTTP responses** — the redirect with its status, or
+  404/403/401 as a JSON error envelope (plain text when the request prefers
+  `text/html`). Next has no equivalent for route handlers.
+- **Route handler request bodies are capped** at 1 MiB by default (Next: unbounded),
+  matching Server Actions. Raise or lift per route with `export const maxBodyBytes =
+  N | false`, app-wide with `apiMaxBodyBytes`; streaming consumers keep streaming.
+- **A typed client call made during SSR never goes over the network.** Inside a
+  request, `createApiClient` / `useApi` run the call in-process through the full
+  pipeline under the caller's identity (and through the tag-aware cache when `cache` /
+  `next` options are passed); outside a request, or to a foreign `base`, it is a fetch.
+- **`json()` from `denext/server` may add an `x-denext-wire: 1` header** when the body
+  carried a Date / Map / Set / BigInt / `undefined` (the wire codec); a plain-JSON body
+  stays byte-identical to `Response.json()`. Third-party consumers of a route that
+  returned a previously-lossy value now see `{ "$": … }` tags plus that header.
 
 ## Non-goals
 

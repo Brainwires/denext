@@ -182,6 +182,31 @@ three documented bounds of the opt-in:
   with-holes PPR shell can escape the read into a per-request hole, so it relies
   on that boundary rather than the store refusal.
 
+### Typed API & live data (`defineApi`, `useApi`, `defineSubscription`, `createChannel`)
+
+- **Live push is per-instance by default.** A `revalidateTag` fires the hub's
+  invalidation hook in-process, so `<Live>`, `useLive`, `useSubscription` re-pushes and
+  `useApi({ tags })` invalidations reach only the connections on the instance that
+  invalidated; `createChannel` publishes cross instances only through a configured
+  `ChannelTransport` (`broadcastChannelTransport()` for Deno Deploy isolates / workers,
+  or your own two-method Redis/NATS transport via `setChannelTransport`). Publishing tag
+  invalidations over the same transport is the natural follow-up.
+- **Channels carry no history.** A subscriber gets pushes from the moment it subscribes;
+  nothing replays on reconnect (compute a cold-start value during SSR and pass it as
+  `initial`). Delivery is at-most-once and latest-wins under back-pressure; `seq` orders
+  frames from one instance only.
+- **Channel re-authorization is lazy.** A subscriber is re-authorized on traffic once
+  `authTtlSeconds` (default 300) has passed, not per push; `channel.revoke(key)` is the
+  immediate path.
+- **Only GET/HEAD calls batch.** A mutation, a call with custom headers or a body, or
+  `batch: false` always goes as its own request.
+- **`useApi({ suspense: true })` seeds hydration on Flight routes only.** Signal
+  collection runs in the Flight renderers; on an isomorphic route the hook fetches on
+  mount instead.
+- **The production Live handshake requires a browser `Origin` header.** A non-browser
+  client (Deno's stable `WebSocket`, `curl`) cannot subscribe to the production hub;
+  that is the same-origin check working as intended.
+
 ## DevTools (dev-only)
 
 denext ships its **own** in-page glass-box panel (`denext/devtools`,
