@@ -3,6 +3,7 @@
 // bridge (`reportRequestError`). Imported by every pipeline module; imports none of them.
 
 import type { PageRoute, RouteManifest } from "../router/manifest.ts";
+import type { ApiBatchConfig } from "./config.ts";
 import type { ModuleLoader } from "./types.ts";
 import type { MiddlewareRunner } from "./middleware.ts";
 import type { I18nConfig } from "./i18n.ts";
@@ -162,6 +163,8 @@ export interface AppConfig {
    * the handler reads it.
    */
   apiMaxBodyBytes?: number;
+  /** Limits for the typed-API batch endpoint (`POST /_denext/api-batch`). */
+  apiBatch?: ApiBatchConfig;
   /**
    * An explicit public origin (e.g. `"https://example.com"`) used to build
    * absolute URLs (auto-populated `og:image`, canonical). Overrides request

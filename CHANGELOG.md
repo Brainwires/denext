@@ -52,6 +52,26 @@ and this project adheres to
 
 ### Added
 
+- **`POST /_denext/api-batch` — N typed GET/HEAD calls in one round trip.** The server half
+  of request batching for `createApiClient`: `{ v: 1, items: [{ id, m: "GET" | "HEAD", p }] }`
+  → `{ v: 1, r: [{ id, s, h?, t?, enc? }] }` (item bodies as raw text, never re-parsed; the
+  per-item `x-denext-wire` flag carried as `enc`). Same-origin only (`verifyOrigin`, the Server
+  Action CSRF gate, extracted to `src/server/origin-check.ts`), a required `x-denext-api-batch`
+  marker header (a `<form>` cannot set one), JSON content-type, body cap, item count cap; each
+  item must be an integer-id GET/HEAD to a same-origin path that is not `/_denext/*`, and ANY
+  malformed item fails the whole batch before anything runs. Items run concurrently under a
+  gate as **sub-requests through the full pipeline** — middleware, rewrites, i18n, header rules,
+  the redacted-500 contract all apply exactly as to a direct call — each with a fresh request
+  context, the batch's abort signal, an allowlisted copy of the batch's headers (cookie,
+  authorization, accept-language, user-agent, forwarded-*), the caller's socket peer, and a
+  suffixed `x-request-id`. A sub-request is API-only (a page or asset path is a JSON 404; no
+  actions, no nested batch). Item Set-Cookies merge onto the batch response, which is
+  `cache-control: no-store`. Config: `apiBatch: { enabled, maxItems (≤100), maxBodyBytes,
+  concurrency, maxItemResponseBytes }` on `denext.config.ts` (validated; schema regenerated).
+  `src/server/{api-batch-handler,sub-request,origin-check}.ts` (new),
+  `src/runtime/api-batch-protocol.ts` (new), `src/server/{request-pipeline,request-context,
+  action-handler,app-config,config,config-validate}.ts`, `src/build/{prod-server/app,
+  dev-server/dev-app}.ts`.
 - **In-flight request dedupe on the typed API client.** Concurrent GET/HEAD calls with equal
   path, params, query, body, and headers share one fetch; the entry is dropped when it
   settles, mutations are never deduped, and `dedupe: false` opts out per call or per client.

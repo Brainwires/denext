@@ -10,6 +10,7 @@
  */
 
 import { absoluteUrl } from "../absolute-url.ts";
+import { originCandidate } from "../origin-check.ts";
 import { safeRedirectLocation } from "../config.ts";
 import { getSession, type SessionOptions } from "../session.ts";
 import { buildAuthorizationUrl, generatePkce, randomToken } from "./oauth.ts";
@@ -87,14 +88,8 @@ function findProvider(config: AuthConfig, id: string): AuthProvider | undefined 
 
 /** Same-origin gate for state-changing POSTs (signout, credentials). */
 function isSameOrigin(request: Request, config: AuthConfig): boolean {
-  const candidate = request.headers.get("origin") ?? request.headers.get("referer");
-  if (!candidate) return false;
-  let u: URL;
-  try {
-    u = new URL(candidate);
-  } catch {
-    return false;
-  }
+  const u = originCandidate(request);
+  if (!u) return false;
   // With a canonical origin configured, match it exactly (scheme-strict) — the Host
   // header is attacker-controllable and unnecessary here.
   if (config.canonicalOrigin) {

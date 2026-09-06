@@ -193,6 +193,11 @@ export interface RequestContext {
   /** Per-request memoization store backing {@link cache}, keyed by function. */
   memo: Map<unknown, Map<string, unknown>>;
   /**
+   * How many self-calls deep this request is (a typed-API batch item, or the typed client
+   * called during SSR — see `server/sub-request.ts`). Absent for a client request.
+   */
+  subRequestDepth?: number;
+  /**
    * Set when the render read a dynamic request API (`cookies()`/`headers()`),
    * implying per-request output. The page cache checks this and refuses to cache
    * such a render even when the route opts in via `revalidate`.

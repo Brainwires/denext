@@ -568,6 +568,32 @@
         }
       }
     },
+    "apiBatch": {
+      "description": "The typed-API batch endpoint (`POST /_denext/api-batch`: N GET/HEAD calls from `createApiClient` in one round trip). Same-origin only; caps on items, body, fan-out concurrency, and per-item response size. See ApiBatchConfig.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Serve the endpoint at all (default true; `false` → 404).",
+          "type": "boolean"
+        },
+        "maxItems": {
+          "description": "Max items per batch (default 20, at most 100).",
+          "type": "number"
+        },
+        "maxBodyBytes": {
+          "description": "Max batch request body in bytes (default 1 MiB).",
+          "type": "number"
+        },
+        "concurrency": {
+          "description": "Items run concurrently per batch (default 4).",
+          "type": "number"
+        },
+        "maxItemResponseBytes": {
+          "description": "Max bytes of one item's response body carried back (default 4 MiB; over → a 500 item).",
+          "type": "number"
+        }
+      }
+    },
     "nodeResolve": {
       "description": "denext's tolerant node_modules resolver for the compat (npm-React) build — default ON.",
       "type": "boolean"

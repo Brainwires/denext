@@ -330,6 +330,7 @@
     "ActionResult:typeAlias",
     "ActionValidationError:class",
     "AlternatesMetadata:interface",
+    "ApiBatchConfig:interface",
     "ApiBuilder:interface",
     "ApiContext:interface",
     "ApiDefinition:interface",

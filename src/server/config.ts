@@ -300,6 +300,20 @@ export interface CacheConfig {
   maxPageEntries?: number;
 }
 
+/** Limits for the typed-API batch endpoint (`POST /_denext/api-batch`). */
+export interface ApiBatchConfig {
+  /** Serve the endpoint at all (default true; `false` → 404). */
+  enabled?: boolean;
+  /** Max items per batch (default 20, at most 100). */
+  maxItems?: number;
+  /** Max batch request body in bytes (default 1 MiB). */
+  maxBodyBytes?: number;
+  /** Items run concurrently per batch (default 4). */
+  concurrency?: number;
+  /** Max bytes of one item's response body carried back (default 4 MiB; over → a 500 item). */
+  maxItemResponseBytes?: number;
+}
+
 /** Project configuration exported from `denext.config.{ts,js}` (as `default` or named). */
 export interface DenextConfig {
   /**
@@ -414,6 +428,12 @@ export interface DenextConfig {
    * **security-policy** field, not an on/off experiment.
    */
   live?: LiveConfig;
+  /**
+   * The typed-API batch endpoint (`POST /_denext/api-batch`: N GET/HEAD calls from
+   * `createApiClient` in one round trip). Same-origin only; caps on items, body, fan-out
+   * concurrency, and per-item response size. See {@link ApiBatchConfig}.
+   */
+  apiBatch?: ApiBatchConfig;
   /**
    * denext's tolerant node_modules resolver for the compat (npm-React) build — default ON.
    *

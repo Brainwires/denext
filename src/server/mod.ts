@@ -181,6 +181,7 @@ export type {
 
 // Project configuration (denext.config): redirects / rewrites / headers / etc.
 export {
+  type ApiBatchConfig,
   type CacheConfig,
   type CompiledPattern,
   type DenextConfig,

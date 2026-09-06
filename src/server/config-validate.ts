@@ -295,6 +295,33 @@ function validateHsts(hsts: DenextConfig["hsts"], fail: Fail): void {
 function validateSecurity(config: DenextConfig, fail: Fail): void {
   validateCsp(config.csp, fail);
   validateHsts(config.hsts, fail);
+  validateApiBatch(config.apiBatch, fail);
+}
+
+/** `apiBatch` caps are finite whole numbers in sane ranges; `enabled` is a boolean. */
+function validateApiBatch(apiBatch: DenextConfig["apiBatch"], fail: Fail): void {
+  if (apiBatch === undefined) return;
+  if (typeof apiBatch !== "object" || apiBatch === null) {
+    return fail("apiBatch", "must be an object");
+  }
+  if (apiBatch.enabled !== undefined && typeof apiBatch.enabled !== "boolean") {
+    fail("apiBatch.enabled", "must be a boolean");
+  }
+  if (apiBatch.maxItems !== undefined) {
+    num(fail, "apiBatch.maxItems", apiBatch.maxItems, { int: true, min: 1, max: 100 });
+  }
+  if (apiBatch.maxBodyBytes !== undefined) {
+    num(fail, "apiBatch.maxBodyBytes", apiBatch.maxBodyBytes, { int: true, min: 1 });
+  }
+  if (apiBatch.concurrency !== undefined) {
+    num(fail, "apiBatch.concurrency", apiBatch.concurrency, { int: true, min: 1, max: 64 });
+  }
+  if (apiBatch.maxItemResponseBytes !== undefined) {
+    num(fail, "apiBatch.maxItemResponseBytes", apiBatch.maxItemResponseBytes, {
+      int: true,
+      min: 1,
+    });
+  }
 }
 
 /** Cache eviction counts (finite whole numbers >= 1) and the `publicEnv` allowlist. */
