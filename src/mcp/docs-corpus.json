@@ -1896,7 +1896,7 @@
       "title": "VERSION",
       "module": "denext",
       "url": "/docs/api/denext/VERSION",
-      "text": "VERSION VERSION: 2.0.5 The denext framework version.",
+      "text": "VERSION VERSION: 2.0.6 The denext framework version.",
       "denextOnly": true
     },
     {
@@ -2602,6 +2602,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/FlightBoundary",
+      "kind": "interface",
+      "title": "FlightBoundary",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/FlightBoundary",
+      "text": "FlightBoundary interface FlightBoundary A client-side error boundary: a segment's error.tsx (a \"use client\" component) around its children, so a render throw AFTER hydration swaps in the fallback on the client the way Next does. Emitted only when the boundary's fallback is a client reference; a server-only fallback stays transparent (the boundary lives on the server alone).",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/FlightClient",
       "kind": "interface",
       "title": "FlightClient",
@@ -2643,7 +2652,7 @@
       "title": "FlightNode",
       "module": "denext/server",
       "url": "/docs/api/denext-server/FlightNode",
-      "text": "FlightNode type FlightNode = FlightPrimitive | FlightNode[] | FlightHost | FlightClient | FlightActionRef A node in a Flight tree.",
+      "text": "FlightNode type FlightNode = FlightPrimitive | FlightNode[] | FlightHost | FlightClient | FlightBoundary | FlightActionRef A node in a Flight tree.",
       "denextOnly": true
     },
     {
@@ -4465,6 +4474,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/SignalSink",
+      "kind": "interface",
+      "title": "SignalSink",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/SignalSink",
+      "text": "SignalSink interface SignalSink The status a caught control signal asks for (0 = none caught).",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/Sitemap",
       "kind": "typeAlias",
       "title": "Sitemap",
@@ -5091,7 +5109,7 @@
       "title": "FlightNode",
       "module": "denext/client",
       "url": "/docs/api/denext-client/FlightNode",
-      "text": "FlightNode type FlightNode = FlightPrimitive | FlightNode[] | FlightHost | FlightClient | FlightActionRef A node in a Flight tree.",
+      "text": "FlightNode type FlightNode = FlightPrimitive | FlightNode[] | FlightHost | FlightClient | FlightBoundary | FlightActionRef A node in a Flight tree.",
       "denextOnly": true
     },
     {

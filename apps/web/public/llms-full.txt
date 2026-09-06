@@ -479,7 +479,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWakeLock(options?: UseWakeLockOptions): WakeLockControls` — Keep the screen awake via the Screen Wake Lock API, as a hook. Call WakeLockControls.request request to add this instance's claim and WakeLockControls.release release to drop it; the claim is also dropped automatically on unmount. Because the screen is device-global, the lock is refcounted: it stays on while any instance has a claim, and WakeLockControls.count count/WakeLockControls.active active report the shared state to every instance. WakeLockControls.releaseAll releaseAll drops every claim at once.
 - `interface UseWakeLockOptions` — Options for useWakeLock.
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 2.0.5` — The denext framework version.
+- `VERSION: 2.0.6` — The denext framework version.
 - `ViewTransition(props: object): VNode` — React.ViewTransition (experimental) — the client-driven view-transition wrapper. denext renders it as a transparent passthrough of its children (SSR + hydration safe). **Route-level** view transitions DO apply: a Flight soft-navigation commits inside document.startViewTransition where the browser supports it, so the route swap cross-fades (see withViewTransition in src/client/navigation.ts). The component's per-element props (name, enter, exit, update) are not yet honored — that needs this wrapper to emit real view-transition-name DOM markers — and the isomorphic/HTML nav paths (async reconcile) don't animate yet either.
 - `interface VNode` — A single virtual DOM node.
 - `type VNodeChild = VNode | string | number | bigint | boolean | null | undefined` — Anything that can appear as a child in JSX.
@@ -561,11 +561,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DraftTokenStore` — Backing store for server-minted draft tokens. Draft mode is "on" only when the request cookie holds a token this server issued via enable(); a forged or guessed value is not in the store, so it cannot turn draft mode on.
 - `interface ExperimentalConfig` — Opt-in experimental features, set under experimental in denext.config.ts. Each is off by default. A feature lives here only while it is genuinely **incomplete** — being new is not enough — so shipped, complete capabilities (streaming, Live, islands, resumability, SPA mode, Cache Components) are top-level config, not here.
 - `interface FlightActionRef` — A serialized server-action reference (as a node or a prop value).
+- `interface FlightBoundary` — A client-side error boundary: a segment's error.tsx (a "use client" component) around its children, so a render throw AFTER hydration swaps in the fallback on the client the way Next does. Emitted only when the boundary's fallback is a client reference; a server-only fallback stays transparent (the boundary lives on the server alone).
 - `interface FlightClient` — A serialized client-component reference.
 - `interface FlightDate` — A serialized Date value.
 - `interface FlightEventHandler` — A serialized lazily-loaded event handler (Qrl) reference.
 - `interface FlightHost` — A serialized host (intrinsic) element.
-- `type FlightNode = FlightPrimitive | FlightNode[] | FlightHost | FlightClient | FlightActionRef` — A node in a Flight tree.
+- `type FlightNode = FlightPrimitive | FlightNode[] | FlightHost | FlightClient | FlightBoundary | FlightActionRef` — A node in a Flight tree.
 - `type FlightPrimitive = string | number | boolean | null` — A JSON primitive leaf in a Flight tree.
 - `type FlightProps = Record<string, FlightValue>` — A serialized props object (VNode-valued props are themselves Flight nodes).
 - `interface FlightStreamOptions` — Options for renderToFlightStream.
@@ -768,6 +769,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SessionOptions` — Options for getSession.
 - `interface SessionStore` — Where store-backed sessions live. Every method may be sync or async; get must return only an **unexpired** session (treat expiresAt in the past as a miss).
 - `setCacheStore(store: CacheStore): void` — Replace the CacheStore backing the data cache and page (ISR) cache. Use this to share cached data and rendered pages across instances — back it with a custom or shared store (Redis, etc.) so a render or data entry produced on one replica is served by another, and revalidateTag/revalidatePath invalidate every instance. Called explicitly, this overrides the smart default (resolveDefaultCacheStore).
+- `interface SignalSink` — The status a caught control signal asks for (0 = none caught).
 - `type Sitemap = SitemapEntry[]` — A sitemap: the array a sitemap.ts default export returns.
 - `interface SitemapEntry` — One entry in a sitemap (Next.js MetadataRoute.Sitemap element).
 - `interface SitemapIndexEntry` — One entry in a sitemap index (a reference to a child sitemap).
@@ -840,7 +842,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ErrorBoundaryController` — Imperative control over the nearest enclosing error boundary, returned by useErrorBoundary.
 - `interface ErrorBoundaryProps` — Props for the ErrorBoundary component.
 - `interface ErrorFallbackProps` — Props passed to the fallback component rendered when a child throws.
-- `type FlightNode = FlightPrimitive | FlightNode[] | FlightHost | FlightClient | FlightActionRef` — A node in a Flight tree.
+- `type FlightNode = FlightPrimitive | FlightNode[] | FlightHost | FlightClient | FlightBoundary | FlightActionRef` — A node in a Flight tree.
 - `flushSync<T>(fn?: () => T): T | undefined` — Run fn (if given) and then synchronously flush all pending state updates — including any pending transition work — before returning. Matches React's flushSync(fn).
 - `forbidden(): never` — Throw to render the nearest forbidden.tsx UI with a 403 status.
 - `interface FormStatus` — Status of the enclosing form's action, as returned by useFormStatus.
