@@ -294,3 +294,25 @@ Deno.test("handleApi: an ApiError from defineApi middleware is its envelope", as
     message: "pay up",
   });
 });
+
+Deno.test("defineApi: a codec-flagged body is decoded before the schema sees it", async () => {
+  const isDate: StandardSchemaV1<{ when: Date }> = {
+    "~standard": {
+      version: 1,
+      vendor: "test",
+      validate: (v) =>
+        (v as { when?: unknown })?.when instanceof Date
+          ? { value: v as { when: Date } }
+          : { issues: [{ message: "when must be a Date", path: ["when"] }] },
+    },
+  };
+  const POST = defineApi({ body: isDate }, ({ body }) => body.when.getTime());
+  const res = await POST(
+    post({ when: { $: "D", v: "1970-01-01T00:00:00.005Z" } }, { "x-denext-wire": "1" }),
+    ctx(),
+  );
+  assertEquals([res.status, await res.json()], [200, 5]);
+  // Unflagged, the same JSON is a plain object → the schema rejects it.
+  const plain = await rejects(POST(post({ when: { $: "D", v: "x" } }), ctx()));
+  assertEquals([plain.status, plain.code], [400, "validation"]);
+});

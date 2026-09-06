@@ -33,6 +33,7 @@ import {
   toClientError,
 } from "../runtime/error-boundary.ts";
 import { safeRedirectLocation } from "./config.ts";
+import { decodeWire, WIRE_HEADER, WireCodecError } from "../runtime/wire-codec.ts";
 
 const METHODS: HttpMethod[] = [
   "GET",
@@ -86,7 +87,7 @@ export async function handleApi(
   try {
     // Like middleware, a route handler receives the adapted request — a `NextRequest`
     // (`nextUrl`, `cookies`) once `next/server` is loaded, the plain Request otherwise.
-    const req = adaptRequest(boundRequest(request, cap));
+    const req = withWireJson(adaptRequest(boundRequest(request, cap)));
     const context: ApiContext = { params: asyncProps({ ...match.params }) };
     if (handler) return await handler(req, context);
     return await headFromGet(mod, req, context);
@@ -99,6 +100,21 @@ export async function handleApi(
 function boundRequest(request: Request, cap: number | false): Request {
   if (cap === false || !request.body) return request;
   return cappedBody(request, cap); // a declared over-cap Content-Length throws right here
+}
+
+/**
+ * A request flagged `x-denext-wire: 1` (the typed client sent a Date / Map / BigInt / …) gets a
+ * `json()` that decodes the codec tags, so a plain handler's `await req.json()` sees the real
+ * values. Unflagged requests are untouched (no walk).
+ */
+function withWireJson(req: Request): Request {
+  if (req.headers.get(WIRE_HEADER) !== "1") return req;
+  const raw = req.json.bind(req);
+  Object.defineProperty(req, "json", {
+    value: async () => decodeWire(await raw()),
+    configurable: true,
+  });
+  return req;
 }
 
 /** Auto-implement HEAD from GET: same status + headers, no body. */
@@ -141,6 +157,10 @@ async function apiErrorFor(
   const signal = controlSignalError(err);
   if (signal) return signalResponse(signal, request, requestId);
   if (isApiError(err)) return apiErrorResponse(err, requestId);
+  if (err instanceof WireCodecError) {
+    const bad = new ApiError(400, "bad_request", { message: "malformed encoded body" });
+    return apiErrorResponse(bad, requestId);
+  }
   if (isBodyTooLarge(err)) {
     const tooLarge = new ApiError(413, "payload_too_large", { message: "request body too large" });
     return apiErrorResponse(tooLarge, requestId);

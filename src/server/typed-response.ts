@@ -22,6 +22,8 @@
 // The phantom carrier is a `readonly` optional field that never exists at runtime — it
 // only marks the variance of `T`, so structural typing can recover it.
 
+import { encodeWire, WIRE_HEADER } from "../runtime/wire-codec.ts";
+
 /**
  * A `Response` that remembers the type of the JSON body it carries. Structurally a plain
  * `Response` at runtime; the `__body` phantom exists only in the type system so the
@@ -52,5 +54,12 @@ export interface TypedRequest<TBody> extends Request {
  * @returns A `TypedResponse<T>` — a real `Response` carrying `T` as a phantom type.
  */
 export function json<T>(data: T, init?: ResponseInit): TypedResponse<T> {
-  return Response.json(data, init) as TypedResponse<T>;
+  // Through the wire codec: a Date / Map / Set / BigInt / undefined survives, and the response
+  // carries `x-denext-wire: 1` ONLY when a tag was needed — a plain-JSON body is byte-identical
+  // to `Response.json(data)` and the typed client skips the decode walk.
+  const { body, tagged } = encodeWire(data);
+  const headers = new Headers(init?.headers);
+  if (!headers.has("content-type")) headers.set("content-type", "application/json");
+  if (tagged) headers.set(WIRE_HEADER, "1");
+  return new Response(body, { ...init, headers }) as TypedResponse<T>;
 }

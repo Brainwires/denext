@@ -52,6 +52,20 @@ and this project adheres to
 
 ### Changed
 
+- **The typed API client throws `ApiClientError` and speaks the wire codec.** A non-2xx
+  response from `createApiClient` / `apiRequest` used to reject with a bare `Error` naming the
+  status. It is now an `ApiClientError` carrying `status`, `statusText`, `method`, `url`,
+  `requestId`, and — when the server answered with denext's JSON error envelope (an `ApiError`,
+  a validation failure, a control signal, a redacted 500) — its `code` (narrowed to the
+  endpoint's `ErrorsOf<E>`), `data`, `fieldErrors`, and `digest`; a non-envelope failure has
+  `code: "http_error"`. The envelope body is read bounded (64 KiB). Request bodies and
+  responses ride the wire codec: a Date / Map / Set / BigInt in a body reaches the handler
+  intact (`handleApi` decodes an `x-denext-wire: 1` request for a plain handler's `req.json()`;
+  `defineApi` decodes before the schema), and `json()` from `denext/server` flags a response
+  only when a tag was needed — a plain-JSON `json()` body is byte-identical to
+  `Response.json()`. A malformed flagged body is a 400 `bad_request`. `isApiClientError`,
+  `ApiErrorEnvelope` exported from `denext` / `denext/client` (public-surface golden
+  refreshed). `src/runtime/api-client.ts`, `src/server/{typed-response,api,define-api}.ts`.
 - **The typed-API generator no longer spawns `deno doc`.** `.denext/api.ts` now imports each
   route module's TYPE (`import type * as R0 from "…/route.ts"`) and applies
   `ModuleEndpoints<typeof R0, Params>` (`denext`'s new type-level inference helpers), so

@@ -102,10 +102,17 @@ export {
 // Public environment variables (client reads only the public-prefixed subset).
 export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "../runtime/public-env.ts";
 // Typed API client (pair with the generated `./.denext/api.ts` ApiSchema).
-export { apiRequest, buildPath, createApiClient } from "../runtime/api-client.ts";
+export {
+  ApiClientError,
+  apiRequest,
+  buildPath,
+  createApiClient,
+  isApiClientError,
+} from "../runtime/api-client.ts";
 export type {
   ApiClient,
   ApiEndpoint,
+  ApiErrorEnvelope,
   ApiRequestOptions,
   ApiSchema,
   ErrorsOf,

@@ -29,6 +29,9 @@
 /** The `enc` envelope value marking a codec-encoded JSON field (actions, Live frames, batches). */
 export const WIRE_ENC = 1 as const;
 
+/** The HTTP header (value `"1"`) marking a codec-encoded JSON request/response body. */
+export const WIRE_HEADER = "x-denext-wire";
+
 /** The result of {@link prepareWire}: the JSON-ready value and whether any node needed a tag. */
 export interface PreparedWire {
   /** A value `JSON.stringify` can take as-is (tags applied, `$` keys escaped). */

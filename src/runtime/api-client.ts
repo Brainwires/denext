@@ -13,13 +13,16 @@
 //   //    ^? the handler's response type — a wrong param name or method is a type error
 //
 // The runtime is a thin `fetch` wrapper: it substitutes params into the route pattern,
-// appends the query, JSON-encodes a body, and parses the JSON response. It has no denext
-// dependency, so the generated client works from a Server Component, a client component,
-// a test, or any other `fetch` context.
+// appends the query, encodes a body through the wire codec (Date / Map / Set / BigInt survive;
+// the `x-denext-wire` header is set only when needed), parses the JSON response (decoding it
+// when the server flagged it), and turns a non-2xx into an `ApiClientError` carrying the
+// server's error envelope. It works from a Server Component, a client component, a test, or
+// any other `fetch` context.
 
 /** The HTTP methods a route handler may export. */
 export type { HttpMethod } from "../server/types.ts";
 import type { HttpMethod } from "../server/types.ts";
+import { decodeWire, encodeWire, WIRE_HEADER } from "./wire-codec.ts";
 
 /** One endpoint's typed shape: its params, optional request/response bodies, query, error codes. */
 export interface ApiEndpoint {
@@ -171,14 +174,137 @@ export function buildPath(
 }
 
 /**
+ * A failed typed API call: the HTTP status plus, when the server answered with denext's JSON
+ * error envelope (`{ error: { code, status, message, data?, fieldErrors?, digest? } }` — an
+ * `ApiError`, a validation failure, a control signal, or a redacted 500), the envelope's
+ * fields. `code` narrows to the endpoint's declared codes (`ErrorsOf<E>`); a non-envelope
+ * failure (a plain text 500, an HTML error page) has `code: "http_error"`.
+ */
+export class ApiClientError<Code extends string = string> extends Error {
+  /** The HTTP status. */
+  readonly status: number;
+  /** The HTTP status text. */
+  readonly statusText: string;
+  /** The request method. */
+  readonly method: HttpMethod;
+  /** The request URL. */
+  readonly url: string;
+  /** The envelope's machine-readable code, or `"http_error"` without an envelope. */
+  readonly code: Code | "http_error";
+  /** Structured detail the server attached. */
+  readonly data?: unknown;
+  /** Per-field validation messages (a 400 `validation`). */
+  readonly fieldErrors?: Readonly<Record<string, string>>;
+  /** The redaction digest of an internal error (correlates with the server log). */
+  readonly digest?: string;
+  /** The server's `x-request-id`. */
+  readonly requestId?: string;
+
+  /**
+   * Build the error for a non-2xx response.
+   *
+   * @param method The request method.
+   * @param url The request URL.
+   * @param res The failed response (status/headers; the body is passed separately).
+   * @param envelope The parsed error envelope body, when the server sent one.
+   */
+  constructor(method: HttpMethod, url: string, res: Response, envelope?: ApiErrorEnvelope) {
+    const e = envelope?.error;
+    super(
+      e?.message
+        ? `denext api client: ${method} ${url} → ${res.status} ${e.code}: ${e.message}`
+        : `denext api client: ${method} ${url} → ${res.status} ${res.statusText}`,
+    );
+    this.name = "ApiClientError";
+    this.status = res.status;
+    this.statusText = res.statusText;
+    this.method = method;
+    this.url = url;
+    this.code = (e?.code as Code) ?? "http_error";
+    if (e?.data !== undefined) this.data = e.data;
+    if (e?.fieldErrors) this.fieldErrors = e.fieldErrors;
+    if (e?.digest) this.digest = e.digest;
+    const id = res.headers.get("x-request-id");
+    if (id) this.requestId = id;
+  }
+}
+
+/** The shape of denext's JSON error envelope (the server's `ApiErrorBody`). */
+export interface ApiErrorEnvelope {
+  /** The error. */
+  error: {
+    /** Machine-readable code. */
+    code: string;
+    /** HTTP status. */
+    status?: number;
+    /** Human-readable message. */
+    message?: string;
+    /** Structured detail. */
+    data?: unknown;
+    /** Per-field messages. */
+    fieldErrors?: Record<string, string>;
+    /** Redaction digest. */
+    digest?: string;
+  };
+}
+
+/**
+ * Is `value` an {@link ApiClientError}?
+ *
+ * @param value The caught value.
+ * @returns True for a typed API client failure.
+ */
+export function isApiClientError(value: unknown): value is ApiClientError {
+  return value instanceof Error && value.name === "ApiClientError";
+}
+
+/** Bound on how much of a failed response body is read to look for the error envelope. */
+const MAX_ERROR_BODY_BYTES = 64 * 1024;
+
+/** Read a failed response's envelope (bounded; a huge or non-JSON body yields undefined). */
+async function readErrorEnvelope(res: Response): Promise<ApiErrorEnvelope | undefined> {
+  const declared = Number(res.headers.get("content-length") ?? "0");
+  const ct = res.headers.get("content-type") ?? "";
+  if (declared > MAX_ERROR_BODY_BYTES || !ct.includes("application/json")) {
+    await res.body?.cancel();
+    return undefined;
+  }
+  try {
+    const text = await res.text();
+    if (text.length > MAX_ERROR_BODY_BYTES) return undefined;
+    const parsed = JSON.parse(text) as unknown;
+    const body = res.headers.get(WIRE_HEADER) === "1" ? decodeWire(parsed) : parsed;
+    const err = (body as { error?: { code?: unknown } } | null)?.error;
+    return err && typeof err.code === "string" ? (body as ApiErrorEnvelope) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Parse a successful response: JSON (codec-decoded when flagged), or undefined for no body. */
+async function readResult(res: Response): Promise<unknown> {
+  if (res.status === 204 || res.headers.get("content-length") === "0") return undefined;
+  const ct = res.headers.get("content-type") ?? "";
+  if (!ct.includes("application/json")) {
+    await res.body?.cancel();
+    return undefined;
+  }
+  const parsed = await res.json();
+  return res.headers.get(WIRE_HEADER) === "1" ? decodeWire(parsed) : parsed;
+}
+
+/**
  * Perform one typed API request (the runtime the typed client dispatches to). Substitutes
- * params, JSON-encodes a body, and parses a JSON response (a 204/empty body → undefined).
+ * params, encodes a body through the wire codec (flagging it only when a tag was needed), and
+ * parses the JSON response (decoding it when the server flagged it; a 204/empty body →
+ * undefined). A non-2xx response throws an {@link ApiClientError} carrying the server's error
+ * envelope when there is one.
  *
  * @param pattern The route pattern to call.
  * @param method The HTTP method.
  * @param opts Params, body, query, headers, and abort signal.
  * @param base Optional origin/base prefix (default: relative to the current origin).
- * @returns The parsed JSON response body.
+ * @returns The parsed response body.
  */
 export async function apiRequest(
   pattern: string,
@@ -187,24 +313,22 @@ export async function apiRequest(
   base = "",
 ): Promise<unknown> {
   const url = base + buildPath(pattern, opts.params, opts.query);
-  const hasBody = opts.body !== undefined;
   const headers = new Headers(opts.headers);
-  if (hasBody && !headers.has("content-type")) headers.set("content-type", "application/json");
+  let body: string | undefined;
+  if (opts.body !== undefined) {
+    const encoded = encodeWire(opts.body);
+    body = encoded.body;
+    if (!headers.has("content-type")) headers.set("content-type", "application/json");
+    if (encoded.tagged) headers.set(WIRE_HEADER, "1");
+  }
   const res = await fetch(url, {
     method,
     headers,
-    body: hasBody ? JSON.stringify(opts.body) : undefined,
+    body,
     signal: resolveSignal(opts.signal, opts.timeoutMs),
   });
-  if (!res.ok) {
-    await res.body?.cancel();
-    throw new Error(`denext api client: ${method} ${url} → ${res.status} ${res.statusText}`);
-  }
-  if (res.status === 204 || res.headers.get("content-length") === "0") return undefined;
-  const ct = res.headers.get("content-type") ?? "";
-  if (ct.includes("application/json")) return await res.json();
-  await res.body?.cancel();
-  return undefined;
+  if (!res.ok) throw new ApiClientError(method, url, res, await readErrorEnvelope(res));
+  return await readResult(res);
 }
 
 /**

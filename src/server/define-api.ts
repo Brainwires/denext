@@ -43,6 +43,7 @@ import {
 } from "../runtime/define-action.ts";
 import { ApiError, type ApiErrorInit, ApiValidationError } from "./api-error.ts";
 import { json } from "./typed-response.ts";
+import { decodeWire, WIRE_HEADER } from "../runtime/wire-codec.ts";
 
 /** How a declared error code maps to HTTP: a status, or a status with a default message. */
 export type ErrorSpec = number | { status: number; message?: string };
@@ -287,11 +288,15 @@ async function readJsonBody(request: Request): Promise<unknown> {
   }
   const text = await request.text(); // reads through the body cap (→ 413 on overflow)
   if (text.length === 0) return undefined;
+  let parsed: unknown;
   try {
-    return JSON.parse(text);
+    parsed = JSON.parse(text);
   } catch {
     throw new ApiError(400, "bad_request", { message: "malformed JSON body" });
   }
+  // A codec-flagged body (a Date / Map / BigInt from the typed client) is decoded before the
+  // schema sees it; a malformed tag is the WireCodecError → handleApi's 400.
+  return request.headers.get(WIRE_HEADER) === "1" ? decodeWire(parsed) : parsed;
 }
 
 /** `fail(code)`: the declared status/message for `code`, merged with the caller's init. */

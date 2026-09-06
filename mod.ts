@@ -170,10 +170,17 @@ export { handleClientScriptLoad, initScriptLoader, Script } from "./src/runtime/
 export type { ScriptProps, ScriptStrategy } from "./src/runtime/script.ts";
 // Typed API client — pair with the generated `./.denext/api.ts` ApiSchema for end-to-end
 // type-checked calls to your own route handlers (see src/runtime/api-client.ts).
-export { apiRequest, buildPath, createApiClient } from "./src/runtime/api-client.ts";
+export {
+  ApiClientError,
+  apiRequest,
+  buildPath,
+  createApiClient,
+  isApiClientError,
+} from "./src/runtime/api-client.ts";
 export type {
   ApiClient,
   ApiEndpoint,
+  ApiErrorEnvelope,
   ApiRequestOptions,
   ApiSchema,
   ErrorsOf,

@@ -20,7 +20,15 @@ import { join } from "@std/path";
 import { scanRoutes } from "../src/router/manifest.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import { generateApiTypes } from "../src/build/api-types.ts";
-import { apiRequest, buildPath, createApiClient } from "../src/runtime/api-client.ts";
+import {
+  ApiClientError,
+  apiRequest,
+  buildPath,
+  createApiClient,
+  isApiClientError,
+} from "../src/runtime/api-client.ts";
+import { json } from "../src/server/typed-response.ts";
+import { ApiError, apiErrorResponse } from "../src/server/api-error.ts";
 
 const REPO_CONFIG = new URL("../deno.json", import.meta.url).pathname;
 
@@ -388,6 +396,90 @@ Deno.test("createApiClient: dispatches through apiRequest with the bound base", 
     const api = createApiClient<any>(srv.origin);
     const res = await api("/api/hello", "GET");
     assertEquals(res, { path: "/api/hello" });
+  } finally {
+    await srv.close();
+  }
+});
+
+Deno.test("apiRequest: Date/Map/BigInt bodies and results ride the wire codec; plain JSON is unflagged", async () => {
+  let sawHeader: string | null = "unset";
+  let sawBody: unknown;
+  const srv = await tinyServer(async (req) => {
+    sawHeader = req.headers.get("x-denext-wire");
+    sawBody = await req.json(); // raw: the server-side decode lives in handleApi
+    return json({ at: new Date(0), ids: new Set([1n]), plain: 1 });
+  });
+  try {
+    const got = await apiRequest("/api/x", "POST", {
+      body: { when: new Date(5), m: new Map([["k", 1]]) },
+    }, srv.origin) as { at: Date; ids: Set<bigint>; plain: number };
+    assertEquals(sawHeader, "1", "a tagged body is flagged");
+    assertEquals((sawBody as { when: unknown }).when, { $: "D", v: "1970-01-01T00:00:00.005Z" });
+    assert(got.at instanceof Date && got.at.getTime() === 0);
+    assert(got.ids instanceof Set && got.ids.has(1n));
+    assertEquals(got.plain, 1);
+    await apiRequest("/api/x", "POST", { body: { hello: "world" } }, srv.origin);
+    assertEquals(sawHeader, null, "plain JSON is not flagged");
+    assertEquals(sawBody, { hello: "world" });
+  } finally {
+    await srv.close();
+  }
+});
+
+Deno.test("apiRequest: a non-2xx with the error envelope throws a typed ApiClientError", async () => {
+  const srv = await tinyServer(() =>
+    apiErrorResponse(
+      new ApiError(409, "conflict", {
+        message: "taken",
+        data: { id: 7 },
+        fieldErrors: { name: "dup" },
+      }),
+      "req-42",
+      "abcdef0123456789",
+    )
+  );
+  try {
+    let err: unknown;
+    try {
+      await apiRequest("/api/x", "POST", { body: {} }, srv.origin);
+    } catch (e) {
+      err = e;
+    }
+    assert(isApiClientError(err));
+    assert(err instanceof ApiClientError);
+    assertEquals([err.status, err.code, err.data], [409, "conflict", { id: 7 }]);
+    assertEquals(err.fieldErrors, { name: "dup" });
+    assertEquals([err.requestId, err.digest, err.method], ["req-42", "abcdef0123456789", "POST"]);
+    assertStringIncludes(err.message, "409 conflict: taken");
+  } finally {
+    await srv.close();
+  }
+});
+
+Deno.test("apiRequest: a non-envelope failure (text 500, HTML page, huge body) is `http_error`", async () => {
+  const srv = await tinyServer((req) => {
+    const p = new URL(req.url).pathname;
+    if (p === "/html") {
+      return new Response("<h1>oops</h1>", {
+        status: 502,
+        headers: { "content-type": "text/html" },
+      });
+    }
+    if (p === "/huge") {
+      return new Response(JSON.stringify({ error: { code: "x", pad: "y".repeat(70_000) } }), {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response("nope", { status: 500 });
+  });
+  try {
+    for (const path of ["/text", "/html", "/huge"]) {
+      const err = await apiRequest(path, "GET", {}, srv.origin).catch((e) => e as ApiClientError);
+      assert(isApiClientError(err), path);
+      assertEquals(err.code, "http_error", path);
+      assertEquals(err.data, undefined, path);
+    }
   } finally {
     await srv.close();
   }

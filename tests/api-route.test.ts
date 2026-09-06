@@ -444,3 +444,36 @@ function handleApiWithCap(
   };
   return handleApi(match, request, () => Promise.resolve(mod), { maxBodyBytes });
 }
+
+Deno.test("handleApi: a request flagged x-denext-wire is decoded before a plain handler's req.json()", async () => {
+  const seen: unknown[] = [];
+  const mod: ApiModule = {
+    POST: async (r) => {
+      seen.push(await r.json());
+      return new Response("ok");
+    },
+  };
+  const flagged = (body: unknown) =>
+    new Request("http://localhost/api/x", {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "content-type": "application/json", "x-denext-wire": "1" },
+    });
+  const ok = await dispatch(mod, flagged({ when: { $: "D", v: "1970-01-01T00:00:00.000Z" } }));
+  assertEquals(ok.status, 200);
+  assert((seen[0] as { when: Date }).when instanceof Date);
+  // Unflagged: untouched (a literal `$` object stays data).
+  await dispatch(
+    mod,
+    new Request("http://localhost/api/x", {
+      method: "POST",
+      body: JSON.stringify({ when: { $: "D", v: "x" } }),
+      headers: { "content-type": "application/json" },
+    }),
+  );
+  assertEquals(seen[1], { when: { $: "D", v: "x" } });
+  // A malformed tag in a flagged body is a 400, not a 500.
+  const bad = await dispatch(mod, flagged({ when: { $: "Z" } }));
+  assertEquals(bad.status, 400);
+  assertEquals((await bad.json()).error.code, "bad_request");
+});
