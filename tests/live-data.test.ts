@@ -746,3 +746,52 @@ Deno.test("useLive hub: malformed codec-flagged args are refused as bad-message 
     await server.shutdown();
   }
 });
+
+// ── Tag watches (`useApi({ tags })`) ──────────────────────────────────────────
+
+Deno.test("tag watch hub: allowAnonymous admits a watch; revalidateTag pushes an `invalidate` for the hit tags", async () => {
+  const { server, port } = startHub({ allowAnonymous: true });
+  try {
+    const { ws, frames } = await collect(port, "invalidate", 1, (ws) => {
+      ws.send(JSON.stringify({ type: "tags-subscribe", subId: "t1", tags: ["orders", "users"] }));
+      setTimeout(() => void revalidateTag("orders"), 50);
+    });
+    assertEquals(frames[0], { type: "invalidate", subId: "t1", tags: ["orders"] });
+    ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
+Deno.test("tag watch hub: no policy → `no-policy`; canWatchTags gates by tag; malformed tags → bad-message", async () => {
+  const { server, port } = startHub({});
+  try {
+    const { ws, frames } = await collect(port, "error", 1, (ws) => {
+      ws.send(JSON.stringify({ type: "tags-subscribe", subId: "t1", tags: ["orders"] }));
+    });
+    assertEquals([frames[0].code, frames[0].subId], ["no-policy", "t1"]);
+    ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+  const gated = startHub({
+    canWatchTags: (_ctx, tags) => tags.every((t) => t.startsWith("public:")),
+  });
+  try {
+    const { ws, frames } = await collect(gated.port, "error", 2, (ws) => {
+      ws.send(JSON.stringify({ type: "tags-subscribe", subId: "ok", tags: ["public:news"] }));
+      ws.send(JSON.stringify({ type: "tags-subscribe", subId: "no", tags: ["secret:ledger"] }));
+      ws.send(JSON.stringify({ type: "tags-subscribe", subId: "bad", tags: [42] }));
+    });
+    const byId = Object.fromEntries(frames.map((f: Any) => [f.subId, f.code]));
+    assertEquals(byId.no, "denied");
+    assertEquals(byId.bad, "bad-message");
+    assertEquals(byId.ok, undefined, "the permitted watch produced no error");
+    ws.close();
+  } finally {
+    uninstallLiveHub();
+    await gated.server.shutdown();
+  }
+});

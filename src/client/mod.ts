@@ -109,6 +109,14 @@ export {
   createApiClient,
   isApiClientError,
 } from "../runtime/api-client.ts";
+// `useApi`: the typed client as a hook (Suspense-capable; tag invalidation via a Live transport).
+export { setApiInvalidationSource, useApi } from "../client/use-api.ts";
+export type {
+  ApiEndpointOf,
+  ApiInvalidationSource,
+  UseApiOptions,
+  UseApiResult,
+} from "../client/use-api.ts";
 export type {
   ApiClient,
   ApiClientOptions,

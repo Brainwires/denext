@@ -79,6 +79,8 @@ interface Conn {
   boundaries: LiveBoundarySub[];
   /** Live-data subscriptions ({@link useLive}), keyed by client sub id. */
   dataSubs: Map<string, DataSub>;
+  /** Tag watches (`useApi({ tags })`): client sub id → the tags it watches. */
+  tagSubs: Map<string, string[]>;
   /** Presence rooms this connection is in → this peer's state in each. */
   presenceRooms: Map<string, unknown>;
   /** A re-render is in flight; further invalidations set `dirty` to re-run once. */
@@ -426,6 +428,7 @@ function attachConnection(
     url: "",
     boundaries: [],
     dataSubs: new Map(),
+    tagSubs: new Map(),
     presenceRooms: new Map(),
     busy: false,
     dirty: null,
@@ -522,6 +525,12 @@ function handleClientMessage(conn: Conn, raw: string): void {
       return;
     case "data-unsubscribe":
       if (typeof msg.subId === "string") conn.dataSubs.delete(msg.subId);
+      return;
+    case "tags-subscribe":
+      void handleTagsSubscribe(conn, msg);
+      return;
+    case "tags-unsubscribe":
+      if (typeof msg.subId === "string") conn.tagSubs.delete(msg.subId);
       return;
     case "presence-join":
     case "presence-update":
@@ -702,7 +711,74 @@ function flush(): void {
   for (const conn of connections) {
     void pushUpdates(conn, invalidated); // <Live> boundary patches
     pushDataUpdates(conn, invalidated); // useLive data subscriptions
+    pushTagInvalidations(conn, invalidated); // useApi({ tags }) watches
   }
+}
+
+/** Tell each tag watch which of its tags were invalidated (the client refetches over HTTP). */
+function pushTagInvalidations(conn: Conn, invalidated: Set<string>): void {
+  for (const [subId, tags] of conn.tagSubs) {
+    const hit = tags.filter((t) => invalidated.has(t));
+    if (hit.length) send(conn, { type: "invalidate", subId, tags: hit });
+  }
+}
+
+/** Caps on a tag watch's shape (a hostile frame can't stuff the per-connection table). */
+const MAX_WATCH_TAGS = 32;
+const MAX_TAG_LENGTH = 256;
+
+/** The frame's `tags`: an array of bounded strings, else `null`. */
+function sanitizeTags(raw: unknown): string[] | null {
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_WATCH_TAGS) return null;
+  const out: string[] = [];
+  for (const t of raw) {
+    if (typeof t !== "string" || t.length === 0 || t.length > MAX_TAG_LENGTH) return null;
+    out.push(t);
+  }
+  return out;
+}
+
+/** Decide whether a connection may watch `tags` (names only — the data is re-authorized on refetch). */
+async function authorizeTags(conn: Conn, tags: string[]): Promise<AuthDecision> {
+  if (policy.canWatchTags) {
+    const ok = await withConnContext(conn, () => policy.canWatchTags!(connContext(conn), tags));
+    return ok ? "allow" : "deny";
+  }
+  return policy.allowAnonymous ? "allow" : "no-policy";
+}
+
+/** Authorize + register a `useApi({ tags })` watch. */
+async function handleTagsSubscribe(
+  conn: Conn,
+  msg: { subId?: unknown; tags?: unknown },
+): Promise<void> {
+  if (typeof msg.subId !== "string" || msg.subId.length > 64) return;
+  const subId = msg.subId;
+  const tags = sanitizeTags(msg.tags);
+  if (!tags) {
+    sendError(conn, "bad-message", "malformed tags", { subId });
+    return;
+  }
+  if (!conn.tagSubs.has(subId) && conn.tagSubs.size >= limits.maxSubscriptionsPerConnection) {
+    sendError(conn, "limit", "too many subscriptions", { subId });
+    return;
+  }
+  let decision: AuthDecision = "deny";
+  try {
+    decision = await authorizeTags(conn, tags);
+  } catch {
+    decision = "deny";
+  }
+  if (decision !== "allow") {
+    refuse(conn, decision, "tag watch", { subId });
+    return;
+  }
+  if (!connections.has(conn)) return; // disconnected while authorizing
+  if (!conn.tagSubs.has(subId) && conn.tagSubs.size >= limits.maxSubscriptionsPerConnection) {
+    sendError(conn, "limit", "too many subscriptions", { subId });
+    return;
+  }
+  conn.tagSubs.set(subId, tags);
 }
 
 /** Recompute + push every live-data subscription whose tags were invalidated. */
@@ -981,6 +1057,7 @@ export const __backpressureTestSeam = {
       cookie: "",
       boundaries: [],
       dataSubs: new Map(),
+      tagSubs: new Map(),
       presenceRooms: new Map(),
       busy: false,
       dirty: null,

@@ -52,6 +52,26 @@ and this project adheres to
 
 ### Added
 
+- **`useApi` — the typed API client as a hook** (`denext` / `denext/client`).
+  `const { data, error, pending, refetch, invalidate } = useApi("/api/user/[id]", "GET", { params })`,
+  typed end to end against the registered `.denext/api.ts` schema (params, query, body,
+  response, and `error.code` narrowed to the endpoint's codes). Default mode is
+  `useSyncExternalStore` over a small entry store — the fetch starts after mount, SSR renders
+  `pending: true` and never fetches; `suspense: true` uses `use()`, runs the call in-process on
+  the server inside the nearest `<Suspense>`, records the value under the hook's `useId()` into
+  the `#__denext_state` island (Flight routes), and the client adopts it so hydration never
+  refetches. Entries are ref-counted by mounted hooks in the browser and live in the request's
+  own memo during SSR (two renders never share one). `tags` refetch on a server-side
+  `revalidateTag` when a Live transport is present: `useApiLive` from `denext/live` (or any
+  configured Live feature) installs it; without one the option is a no-op with a one-time dev
+  warning, and `useApi` itself never imports the socket. New Live frames `tags-subscribe` /
+  `tags-unsubscribe` / `invalidate` carry only TAG NAMES (the client refetches over HTTP with
+  its own cookies, so the route handler still authorizes the data); a watch is admitted by
+  `live.allowAnonymous` or the new `live.canWatchTags(ctx, tags)` hook, else `no-policy`
+  (tags are bounded: ≤ 32 per watch, ≤ 256 chars each; the per-connection subscription cap
+  applies). `src/client/{use-api,use-api-live}.ts` (new), `src/client/live-client.ts`,
+  `src/server/{live,config}.ts`, `src/runtime/live-protocol.ts`, `src/live.ts`, `mod.ts`,
+  `src/client/mod.ts` (public-surface golden refreshed; config schema regenerated).
 - **In-process SSR dispatch for the typed API client.** A Server Component (or route handler)
   calling its own API through `createApiClient` no longer loops back over HTTP. Inside a
   request, the call runs as a sub-request through the full pipeline (middleware, rewrites, the

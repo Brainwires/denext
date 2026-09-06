@@ -603,6 +603,13 @@ export interface LiveConfig {
     ctx: LiveConnectionContext,
     sub: LiveSubscriptionRequest,
   ): boolean | Promise<boolean>;
+  /**
+   * Gate a `useApi({ tags })` tag watch: may this viewer be TOLD that `tags` were invalidated?
+   * The socket carries only tag names (the client then refetches over HTTP with its own
+   * cookies, so the route handler still authorizes the data). Under `allowAnonymous` every
+   * same-origin client may watch; without either it is a `no-policy` refusal.
+   */
+  canWatchTags?(ctx: LiveConnectionContext, tags: string[]): boolean | Promise<boolean>;
   /** Resource caps for the hub. */
   limits?: LiveLimits;
 }

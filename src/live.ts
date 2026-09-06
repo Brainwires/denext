@@ -32,7 +32,8 @@
 
 export { Live } from "./runtime/live-boundary.ts";
 export type { LiveProps } from "./runtime/live-boundary.ts";
-export { configureLive } from "./client/live-client.ts";
+export { configureLive, subscribeLiveTags } from "./client/live-client.ts";
+export { useApiLive } from "./client/use-api-live.ts";
 
 // Mark a server action readable over the live data channel (`useLive`). See the
 // Live security model — data subscriptions are default-deny in production.

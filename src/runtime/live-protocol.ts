@@ -132,11 +132,42 @@ export interface LivePresenceState {
 }
 
 /** Any message the client may send. */
+/**
+ * Client → server: be told when any of `tags` is invalidated (`revalidateTag`). Backs
+ * `useApi({ tags })`: the client REFETCHES over HTTP with its own cookies on an `invalidate`,
+ * so data authorization stays with the route handler — the socket only carries tag names.
+ */
+export interface LiveTagsSubscribe {
+  type: "tags-subscribe";
+  /** Client-generated id correlating invalidations back to this watch. */
+  subId: string;
+  /** The cache tags to watch. */
+  tags: string[];
+}
+
+/** Client → server: drop a {@link LiveTagsSubscribe}. */
+export interface LiveTagsUnsubscribe {
+  type: "tags-unsubscribe";
+  /** The watch to drop. */
+  subId: string;
+}
+
+/** Server → client: some of a watch's tags were invalidated. */
+export interface LiveInvalidate {
+  type: "invalidate";
+  /** The watch this concerns. */
+  subId: string;
+  /** The watched tags that were invalidated. */
+  tags: string[];
+}
+
 export type LiveClientMessage =
   | LiveSubscribe
   | LivePong
   | LiveDataSubscribe
   | LiveDataUnsubscribe
+  | LiveTagsSubscribe
+  | LiveTagsUnsubscribe
   | LivePresenceJoin
   | LivePresenceUpdate
   | LivePresenceLeave;
@@ -186,5 +217,6 @@ export type LiveServerMessage =
   | LiveRefresh
   | LivePing
   | LiveData
+  | LiveInvalidate
   | LivePresenceState
   | LiveError;

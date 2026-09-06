@@ -25,6 +25,7 @@ import type { FlightNode } from "../jsx/render-to-flight.ts";
 import type { VNodeChild } from "../jsx/types.ts";
 import { setLiveRegistrar } from "../runtime/live-registry.ts";
 import { decodeWire, prepareWire, WIRE_ENC } from "../runtime/wire-codec.ts";
+import { setApiInvalidationSource } from "./use-api.ts";
 import {
   LIVE_ENDPOINT,
   type LiveClientMessage,
@@ -53,8 +54,14 @@ interface PresenceRoom {
   onState: (peers: LivePeer[], selfId: string) => void;
 }
 
+interface TagSub {
+  tags: string[];
+  onInvalidate: () => void;
+}
+
 const boundaries = new Map<string, Boundary>();
 const dataSubs = new Map<string, DataSub>();
+const tagSubs = new Map<string, TagSub>();
 const presenceRooms = new Map<string, PresenceRoom>();
 let subCounter = 0;
 
@@ -64,7 +71,7 @@ let refresh: (() => void) | null = null;
 
 /** Any live subscription (boundary, data, or presence) that keeps the socket alive. */
 function hasSubscriptions(): boolean {
-  return boundaries.size > 0 || dataSubs.size > 0 || presenceRooms.size > 0;
+  return boundaries.size > 0 || dataSubs.size > 0 || tagSubs.size > 0 || presenceRooms.size > 0;
 }
 
 /** Send one client frame if the socket is open (no-op otherwise; resent on reconnect). */
@@ -97,6 +104,27 @@ export function configureLive(opts: {
   parse = opts.parse;
   refresh = opts.refresh;
   setLiveRegistrar(register);
+  // `useApi({ tags })` refetches on a tag invalidation whenever the Live transport is present.
+  setApiInvalidationSource(subscribeLiveTags);
+}
+
+/**
+ * Be told when any of `tags` is invalidated on the server (`revalidateTag`); backs
+ * `useApi({ tags })`. Returns an unsubscribe.
+ *
+ * @param tags The cache tags to watch.
+ * @param onInvalidate Called with no arguments when one of them is invalidated.
+ */
+export function subscribeLiveTags(tags: string[], onInvalidate: () => void): () => void {
+  const subId = `t${++subCounter}`;
+  tagSubs.set(subId, { tags, onInvalidate });
+  ensureSocket();
+  sendFrame({ type: "tags-subscribe", subId, tags });
+  return () => {
+    tagSubs.delete(subId);
+    sendFrame({ type: "tags-unsubscribe", subId });
+    if (!hasSubscriptions()) closeSocket();
+  };
 }
 
 /** Register a mounted boundary; opens the socket on the first one. Returns an unsubscribe. */
@@ -242,6 +270,9 @@ function handleServerMessage(raw: string): void {
     case "data":
       deliverData(msg);
       break;
+    case "invalidate":
+      tagSubs.get(msg.subId)?.onInvalidate();
+      break;
     case "presence-state":
       presenceRooms.get(msg.room)?.onState(msg.peers, msg.selfId);
       break;
@@ -311,6 +342,7 @@ function sendSubscribe(): void {
 function sendAllSubscriptions(): void {
   if (boundaries.size > 0) sendSubscribe();
   for (const [subId, s] of dataSubs) sendFrame(subscribeFrame(subId, s));
+  for (const [subId, t] of tagSubs) sendFrame({ type: "tags-subscribe", subId, tags: t.tags });
   for (const [room, r] of presenceRooms) {
     sendFrame({ type: "presence-join", room, state: r.state });
   }
