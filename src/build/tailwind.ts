@@ -186,6 +186,70 @@ export interface CompileTailwindOptions {
   bin?: string;
   /** Working directory for Tailwind's content scan (defaults to the input's project). */
   cwd?: string;
+  /**
+   * The project whose `node_modules/tailwindcss` decides the compiler: a Tailwind **v3**
+   * install (a `tailwind.config.*` + `@tailwind` directives app) is compiled with its OWN
+   * `tailwindcss` CLI — the v4 standalone binary can't read v3 configs/plugins. Absent or
+   * v4+: the standalone binary.
+   */
+  projectDir?: string;
+}
+
+/** The project's installed `tailwindcss` version, or null when it has none. */
+async function installedTailwindVersion(projectDir: string): Promise<string | null> {
+  try {
+    const pkg = await Deno.readTextFile(
+      join(projectDir, "node_modules", "tailwindcss", "package.json"),
+    );
+    return (JSON.parse(pkg) as { version?: string }).version ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Compile with the project's own Tailwind v3 CLI (`deno run npm:tailwindcss@3`, which
+ * resolves the config, plugins and presets from the app's `node_modules`). `--postcss` is
+ * added when the app has a PostCSS config (nesting, autoprefixer) and dropped on a retry
+ * if that config can't load under Deno.
+ */
+async function compileTailwindV3(
+  version: string,
+  opts: CompileTailwindOptions,
+): Promise<void> {
+  const cwd = opts.cwd ?? opts.projectDir!;
+  const hasPostcss = (await Promise.all(
+    ["postcss.config.js", "postcss.config.cjs", "postcss.config.mjs", "postcss.config.ts"]
+      .map((f) => Deno.stat(join(cwd, f)).then(() => true, () => false)),
+  )).some(Boolean);
+  const attempt = async (postcss: boolean): Promise<string> => {
+    const args = [
+      "run",
+      "-A",
+      "--node-modules-dir=manual",
+      "--no-lock",
+      `npm:tailwindcss@${version}`,
+      "-i",
+      opts.input,
+      "-o",
+      opts.output,
+      ...(opts.minify ? ["--minify"] : []),
+      ...(postcss ? ["--postcss"] : []),
+    ];
+    const { code, stderr } = await new Deno.Command(Deno.execPath(), {
+      args,
+      cwd,
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    return code === 0 ? "" : new TextDecoder().decode(stderr) || `exit ${code}`;
+  };
+  let failure = await attempt(hasPostcss);
+  if (failure && hasPostcss) failure = await attempt(false);
+  if (failure) {
+    throw new Error(`denext: Tailwind v${version} compile failed:
+${failure}`);
+  }
 }
 
 /**
@@ -195,6 +259,10 @@ export interface CompileTailwindOptions {
  * @param opts Input/output paths and flags.
  */
 export async function compileTailwind(opts: CompileTailwindOptions): Promise<void> {
+  if (!opts.bin && opts.projectDir) {
+    const installed = await installedTailwindVersion(opts.projectDir);
+    if (installed && /^3\./.test(installed)) return compileTailwindV3(installed, opts);
+  }
   const bin = opts.bin ?? await resolveTailwindBin();
   const args = ["-i", opts.input, "-o", opts.output];
   if (opts.minify) args.push("--minify");

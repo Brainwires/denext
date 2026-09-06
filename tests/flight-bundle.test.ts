@@ -108,3 +108,16 @@ Deno.test("flightClientIds collects every referenced client id, nested props inc
   assertEquals([...flightClientIds(flight)].sort(), ["c_deep", "c_slot", "c_widget"]);
   assertEquals(flightClientIds(null).size, 0);
 });
+
+Deno.test("generateFlightEntry imports instrumentation-client first when the project has one", () => {
+  const boundary: BoundaryManifest = { client: new Map(), server: new Map() } as BoundaryManifest;
+  const src = generateFlightEntry(
+    boundary,
+    false,
+    false,
+    false,
+    "/proj/instrumentation-client.tsx",
+  );
+  assertEquals(src.split("\n")[1], 'import "file:///proj/instrumentation-client.tsx";');
+  assert(!generateFlightEntry(boundary, false, false, false).includes("instrumentation-client"));
+});

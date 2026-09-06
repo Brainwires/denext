@@ -11,6 +11,7 @@ import { startDevServer } from "../../build/dev-server.ts";
 import { startProdServer } from "../../build/prod-server.ts";
 import { build } from "../../build/build.ts";
 import { staticExport } from "../../build/export.ts";
+import { applyPatchesAtBoot } from "./patch.ts";
 
 /** `--port`/`--host` shared by the two serving verbs. */
 const SERVE_FLAGS = [
@@ -46,6 +47,7 @@ function portOf(ctx: CommandContext): number | undefined {
  */
 async function appProject(ctx: CommandContext): Promise<{ dir: string; paths: ProjectPaths }> {
   const dir = projectDir(ctx);
+  await applyPatchesAtBoot(dir); // patches/*.patch → node_modules + the denext import map
   const paths = await resolveProject(dir);
   if (paths.config?.mode !== "spa") await ensureAppDir(paths.appDir, paths.projectDir);
   return { dir, paths };
@@ -61,6 +63,7 @@ export const devCommand: CommandSpec = {
     "With --port, that exact port is required and the server errors if it is taken.",
   run: async (ctx) => {
     const { paths } = await appProject(ctx);
+    markDevelopment();
     const controller = new AbortController();
     installShutdown(controller);
     const port = portOf(ctx);
@@ -109,6 +112,15 @@ export const exportCommand: CommandSpec = {
   },
 };
 
+/** `denext dev`: npm code reads `process.env.NODE_ENV`; default it to `development`. */
+function markDevelopment(): void {
+  try {
+    if (!Deno.env.get("NODE_ENV")) Deno.env.set("NODE_ENV", "development");
+  } catch {
+    // no env write permission
+  }
+}
+
 /**
  * `denext start` IS the production signal: when the deploy set neither `NODE_ENV` nor
  * `DENEXT_ENV`, set `DENEXT_ENV=production` so every "refuse in production" guard
@@ -119,6 +131,14 @@ function markProduction(): void {
   try {
     if (!Deno.env.get("NODE_ENV") && !Deno.env.get("DENEXT_ENV")) {
       Deno.env.set("DENEXT_ENV", "production");
+    }
+    // npm code (and an app's own env validation — the Epic Stack's zod schema requires it)
+    // reads `process.env.NODE_ENV`; Remix's start script set it via cross-env, so do we.
+    if (!Deno.env.get("NODE_ENV")) {
+      Deno.env.set(
+        "NODE_ENV",
+        Deno.env.get("DENEXT_ENV") === "development" ? "development" : "production",
+      );
     }
   } catch {
     // no env write permission — the deployer opted out of the signal
@@ -134,6 +154,7 @@ export const startCommand: CommandSpec = {
   run: async (ctx) => {
     markProduction();
     const dir = projectDir(ctx);
+    await applyPatchesAtBoot(dir);
     const controller = new AbortController();
     installShutdown(controller);
     const port = portOf(ctx);

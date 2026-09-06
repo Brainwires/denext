@@ -30,13 +30,14 @@ async function exists(p: string): Promise<boolean> {
 }
 
 Deno.test("parseRemixStem: dot-nesting, params, splat, index, pathless, break-out", () => {
-  assertEquals(parseRemixStem("_index"), { segments: [], isIndex: true, warnings: [] });
-  assertEquals(parseRemixStem("about"), { segments: ["about"], isIndex: false, warnings: [] });
+  const none = { breakOuts: [], warnings: [] };
+  assertEquals(parseRemixStem("_index"), { segments: [], isIndex: true, ...none });
+  assertEquals(parseRemixStem("about"), { segments: ["about"], isIndex: false, ...none });
   assertEquals(parseRemixStem("concerts.trending").segments, ["concerts", "trending"]);
   assertEquals(parseRemixStem("concerts._index"), {
     segments: ["concerts"],
     isIndex: true,
-    warnings: [],
+    ...none,
   });
   assertEquals(parseRemixStem("concerts.$city").segments, ["concerts", "[city]"]);
   assertEquals(parseRemixStem("$").segments, ["[...splat]"]);
@@ -46,9 +47,15 @@ Deno.test("parseRemixStem: dot-nesting, params, splat, index, pathless, break-ou
   assertEquals(auth.segments, ["(auth)", "login"]);
   assert(auth.warnings.some((w) => w.includes("route group")));
 
+  // A trailing `_` breaks the route out of that segment's layout — honored, not flagged.
   const brk = parseRemixStem("dashboard_.settings");
   assertEquals(brk.segments, ["dashboard", "settings"]);
-  assert(brk.warnings.some((w) => w.includes("break-out")));
+  assertEquals(brk.breakOuts, ["dashboard"]);
+  assertEquals(brk.warnings, []);
+  // …also on a param segment (remix-flat-routes `$username_+/notes.tsx`).
+  const param = parseRemixStem("users.$username_.notes.$noteId_.edit");
+  assertEquals(param.segments, ["users", "[username]", "notes", "[noteId]", "edit"]);
+  assertEquals(param.breakOuts, ["users/[username]", "users/[username]/notes/[noteId]"]);
 
   assertEquals(parseRemixStem("sitemap[.]xml").segments, ["sitemap.xml"]);
 });
@@ -114,7 +121,7 @@ Deno.test("analyzeModule: a v1 CatchBoundary is detected and kept client-side", 
   assertEquals(parts.serverStatements.length, 0);
 });
 
-Deno.test("analyzeModule: shouldRevalidate is a server export (extracted to page.data.ts)", async () => {
+Deno.test("analyzeModule: shouldRevalidate is a server export (extracted to page.data.tsx)", async () => {
   const src = [
     `import { json } from "@remix-run/node";`,
     `export function loader() { return json({ n: 1 }); }`,
@@ -192,8 +199,8 @@ async function assertRouteTreeSplit(app: string, m: RemixReport): Promise<void> 
 
   // Each data route is split: wrapper + client component + server data module.
   assert(await exists(join(app, "page.client.tsx")), "client component split out");
-  assert(await exists(join(app, "page.data.ts")), "server data module split out");
-  assert(await exists(join(app, "concerts/[city]/page.data.ts")));
+  assert(await exists(join(app, "page.data.tsx")), "server data module split out");
+  assert(await exists(join(app, "concerts/[city]/page.data.tsx")));
 
   // Old Remix scaffolding removed.
   assert(!(await exists(join(app, "routes"))), "app/routes removed");
@@ -225,7 +232,7 @@ async function assertIndexPageSplit(app: string): Promise<void> {
   assertStringIncludes(pageClient, "RemixRouteProvider");
   assertStringIncludes(pageClient, "loaderData={props.loaderData}");
 
-  const pageData = await Deno.readTextFile(join(app, "page.data.ts"));
+  const pageData = await Deno.readTextFile(join(app, "page.data.tsx"));
   assertStringIncludes(pageData, `import { json } from "denext/remix/server"`);
   assertStringIncludes(pageData, "export function loader()");
 }

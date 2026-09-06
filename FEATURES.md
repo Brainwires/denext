@@ -163,9 +163,13 @@ security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
   **`userAgent()`/`userAgentFromString()`** UA parsing.
 - **`useServerInsertedHTML`** — stream-safe `<head>` injection for CSS-in-JS and
   other server-inserted markup.
-- **Instrumentation** (`instrumentation.ts`): `register()` + `onRequestError()`
+- **Instrumentation** (`instrumentation.ts`, `instrumentation-client.ts`): `register()` + `onRequestError()`
   with Next-shaped context (`routerKind`, `routePath`, `routeType`,
   `renderSource`, `revalidateReason`).
+- **`denext patch`** — patch-package for denext: record an edit to an npm package (or to
+  denext's own sources, installed from JSR) as `patches/<name>+<version>.patch` and re-apply
+  it at every `dev`/`build`/`start`; a denext patch overrides single framework files through
+  the import map (natively) and in memory in the compat runtime prebuild.
 - **`safeFetch`** (SSRF-guarded fetch for untrusted URLs).
 - **Databases**: any DB that runs on Deno works — built-in **`node:sqlite`** and
   **Deno KV** are zero-npm; Postgres/MySQL/Drizzle via standard drivers. See

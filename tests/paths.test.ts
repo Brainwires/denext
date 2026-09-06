@@ -89,12 +89,17 @@ Deno.test("resolveProject uses top-level app/ by default", async () => {
 });
 
 Deno.test("resolveProject uses src/app when present (public/config stay at root)", async () => {
-  const dir = await scaffold("src", ["middleware.ts", "instrumentation.ts"]);
+  const dir = await scaffold("src", [
+    "middleware.ts",
+    "instrumentation.ts",
+    "instrumentation-client.ts",
+  ]);
   try {
     const paths = await resolveProject(dir);
     assertEquals(paths.appDir, join(dir, "src", "app"));
     assertEquals(paths.middlewarePath, join(dir, "src", "middleware.ts"));
     assertEquals(paths.instrumentationPath, join(dir, "src", "instrumentation.ts"));
+    assertEquals(paths.instrumentationClientPath, join(dir, "src", "instrumentation-client.ts"));
     // public/ and the build output stay at the project root (Next.js semantics).
     assertEquals(paths.publicDir, join(dir, "public"));
     assertEquals(paths.outDir, join(dir, ".denext"));

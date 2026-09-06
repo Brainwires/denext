@@ -26,6 +26,11 @@ export interface ProjectPaths {
   middlewarePath: string | null;
   /** Root instrumentation module path (instrumentation.{ts,js}), or null. */
   instrumentationPath: string | null;
+  /**
+   * Root client instrumentation module (`instrumentation-client.{ts,tsx,js}`), or null. Like
+   * Next's: bundled into every browser entry and run before the app's client code starts.
+   */
+  instrumentationClientPath: string | null;
   /** i18n config from `denext.config.{ts,js}`, or null when absent. */
   i18n: I18nConfig | null;
   /** Full `denext.config.{ts,js}` export, or null when absent. */
@@ -39,6 +44,15 @@ async function exists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** The first of `names` that exists under `dir` (absolute path), or null. */
+async function firstOf(dir: string, names: string[]): Promise<string | null> {
+  for (const name of names) {
+    const p = join(dir, name);
+    if (await exists(p)) return p;
+  }
+  return null;
 }
 
 export async function resolveProject(projectDir: string): Promise<ProjectPaths> {
@@ -70,14 +84,12 @@ export async function resolveProject(projectDir: string): Promise<ProjectPaths> 
     }
   }
 
-  let instrumentationPath: string | null = null;
-  for (const name of ["instrumentation.ts", "instrumentation.js"]) {
-    const p = join(srcBase, name);
-    if (await exists(p)) {
-      instrumentationPath = p;
-      break;
-    }
-  }
+  const instrumentationPath = await firstOf(srcBase, ["instrumentation.ts", "instrumentation.js"]);
+  const instrumentationClientPath = await firstOf(srcBase, [
+    "instrumentation-client.ts",
+    "instrumentation-client.tsx",
+    "instrumentation-client.js",
+  ]);
 
   const config = await loadDenextConfig(projectDir);
 
@@ -89,6 +101,7 @@ export async function resolveProject(projectDir: string): Promise<ProjectPaths> 
     outDir: join(projectDir, ".denext"),
     middlewarePath,
     instrumentationPath,
+    instrumentationClientPath,
     i18n: config?.i18n ?? null,
     config,
   };

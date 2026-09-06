@@ -122,6 +122,10 @@ export interface DocumentOptions {
   devScriptSrc?: string;
   /** Document language for the `<html lang>` attribute; defaults to "en". */
   lang?: string;
+  /** Extra attributes for the real `<html>` (a root component's own `className`/`lang`/`data-*`). */
+  htmlAttrs?: Record<string, unknown>;
+  /** Extra attributes for the real `<body>`. */
+  bodyAttrs?: Record<string, unknown>;
   /**
    * Flight payload for a route using the client/server boundary. Embedded as a
    * `#__denext_flight` JSON island the client entry reads to hydrate its islands.
@@ -279,10 +283,77 @@ export function renderDocument(opts: DocumentOptions): string {
   const scripts = renderBodyScripts(opts);
 
   return `<!DOCTYPE html>
-<html lang="${escapeHtml(lang)}">
+${htmlOpenTag(lang, opts.htmlAttrs)}
 <head>${head}</head>
-<body><div id="${ROOT_ID}"${rootRouteAttr(opts)}>${bodyHtml}</div>${scripts}</body>
+${bodyOpenTag(opts.bodyAttrs)}<div id="${ROOT_ID}"${
+    rootRouteAttr(opts)
+  }>${bodyHtml}</div>${scripts}</body>
 </html>`;
+}
+
+/** Serialize a root component's document attributes (`className` → `class`; values escaped). */
+function documentAttrString(attrs: Record<string, unknown> | undefined, skip: string[]): string {
+  if (!attrs) return "";
+  let out = "";
+  for (const [name, value] of Object.entries(attrs)) {
+    if (skip.includes(name) || value === null || value === undefined || value === false) continue;
+    const attr = name === "className" ? "class" : name;
+    if (attr === "children" || attr === "style" || attr === "dangerouslySetInnerHTML") continue;
+    out += value === true ? ` ${attr}` : ` ${attr}="${escapeHtml(String(value))}"`;
+  }
+  return out;
+}
+
+/** The document's `<html>` open tag: denext's `lang` unless the root set its own. */
+function htmlOpenTag(lang: string, attrs: Record<string, unknown> | undefined): string {
+  const ownLang = typeof attrs?.lang === "string" ? attrs.lang : lang;
+  return `<html lang="${escapeHtml(ownLang)}"${documentAttrString(attrs, ["lang"])}>`;
+}
+
+/**
+ * What every streaming variant needs before its first chunk: the encoder, the document
+ * options (rootRouteAttr/renderBodyScripts read only head/hydration/script fields, never
+ * `bodyHtml` — hence the cast), the prefix chunk, and the dev render-mode island captured
+ * NOW while the request context is live (the tail is written inside the stream's async
+ * `start()`, after the context has unwound).
+ */
+function streamedDocumentStart(
+  opts: Omit<DocumentOptions, "bodyHtml">,
+  shellHtml: string,
+): { encoder: TextEncoder; docOpts: DocumentOptions; prefix: string; renderModeScript: string } {
+  const docOpts = opts as unknown as DocumentOptions;
+  const lang = opts.lang ?? "en";
+  const head = renderHeadContent(opts.metadata, opts.viewport, opts.styles);
+  return {
+    encoder: new TextEncoder(),
+    docOpts,
+    prefix: streamedDocumentPrefix(docOpts, lang, head, shellHtml),
+    renderModeScript: renderModeIsland(docOpts.hydration?.pathname),
+  };
+}
+
+/**
+ * The streamed document's first chunk: doctype, `<html>`/`<head>`, the `<body>` and the root
+ * element holding the rendered shell, then the swap runtime. Shared by every streaming
+ * variant so their documents stay byte-for-byte alike.
+ */
+function streamedDocumentPrefix(
+  docOpts: DocumentOptions,
+  lang: string,
+  head: string,
+  shellHtml: string,
+): string {
+  return `<!DOCTYPE html>
+${htmlOpenTag(lang, docOpts.htmlAttrs)}
+<head>${head}</head>
+${bodyOpenTag(docOpts.bodyAttrs)}<div id="${ROOT_ID}"${
+    rootRouteAttr(docOpts)
+  }>${shellHtml}</div>${SWAP_RUNTIME}`;
+}
+
+/** The document's `<body>` open tag with a root component's own attributes. */
+function bodyOpenTag(attrs: Record<string, unknown> | undefined): string {
+  return `<body${documentAttrString(attrs, [])}>`;
 }
 
 /**
@@ -404,9 +475,11 @@ export function streamPprDocument(
   const lang = opts.lang ?? "en";
   const head = renderHeadContent(opts.metadata, opts.viewport, opts.styles);
   const prefix = `<!DOCTYPE html>
-<html lang="${escapeHtml(lang)}">
+${htmlOpenTag(lang, opts.htmlAttrs)}
 <head>${head}</head>
-<body><div id="${ROOT_ID}"${rootRouteAttr(opts)}>${opts.bodyHtml}</div>${SWAP_RUNTIME}`;
+${bodyOpenTag(opts.bodyAttrs)}<div id="${ROOT_ID}"${
+    rootRouteAttr(opts)
+  }>${opts.bodyHtml}</div>${SWAP_RUNTIME}`;
   const tail = `${renderBodyScripts(opts)}</body>
 </html>`;
   const active = pprHoles(opts.holes);
@@ -448,16 +521,7 @@ export function streamPageDocument(
     signal?: AbortSignal;
   },
 ): ReadableStream<Uint8Array> {
-  const encoder = new TextEncoder();
-  const lang = opts.lang ?? "en";
-  const head = renderHeadContent(opts.metadata, opts.viewport, opts.styles);
-  // rootRouteAttr/renderBodyScripts read only head/hydration/script fields, never
-  // bodyHtml — cast to satisfy the shared DocumentOptions shape.
-  const docOpts = opts as unknown as DocumentOptions;
-  const prefix = `<!DOCTYPE html>
-<html lang="${escapeHtml(lang)}">
-<head>${head}</head>
-<body><div id="${ROOT_ID}"${rootRouteAttr(docOpts)}>${opts.shell.shell}</div>${SWAP_RUNTIME}`;
+  const { encoder, docOpts, prefix } = streamedDocumentStart(opts, opts.shell.shell);
   const tail = `${renderBodyScripts(docOpts)}</body>
 </html>`;
   return new ReadableStream<Uint8Array>({
@@ -493,19 +557,10 @@ export function streamFlightDocument(
     signal?: AbortSignal;
   },
 ): ReadableStream<Uint8Array> {
-  const encoder = new TextEncoder();
-  const lang = opts.lang ?? "en";
-  const head = renderHeadContent(opts.metadata, opts.viewport, opts.styles);
-  const docOpts = opts as unknown as DocumentOptions;
-  // Capture the dev render-mode island now, while the request context is still live —
-  // renderBodyScripts below runs inside the stream's async start(), after it unwinds.
-  const renderModeScript = renderModeIsland(docOpts.hydration?.pathname);
-  const prefix = `<!DOCTYPE html>
-<html lang="${escapeHtml(lang)}">
-<head>${head}</head>
-<body><div id="${ROOT_ID}"${
-    rootRouteAttr(docOpts)
-  }>${opts.flightShell.shellHtml}</div>${SWAP_RUNTIME}`;
+  const { encoder, docOpts, prefix, renderModeScript } = streamedDocumentStart(
+    opts,
+    opts.flightShell.shellHtml,
+  );
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
@@ -564,17 +619,10 @@ export function streamPprFlightDocument(
       signal?: AbortSignal;
     },
 ): ReadableStream<Uint8Array> {
-  const encoder = new TextEncoder();
-  const lang = opts.lang ?? "en";
-  const head = renderHeadContent(opts.metadata, opts.viewport, opts.styles);
-  const docOpts = opts as unknown as DocumentOptions;
-  // Capture the dev render-mode island now (context is live); the tail below runs
-  // inside the stream's async start(), after the request context has unwound.
-  const renderModeScript = renderModeIsland(docOpts.hydration?.pathname);
-  const prefix = `<!DOCTYPE html>
-<html lang="${escapeHtml(lang)}">
-<head>${head}</head>
-<body><div id="${ROOT_ID}"${rootRouteAttr(docOpts)}>${opts.shellBody}</div>${SWAP_RUNTIME}`;
+  const { encoder, docOpts, prefix, renderModeScript } = streamedDocumentStart(
+    opts,
+    opts.shellBody,
+  );
   const active = settlingHoles(opts.resume.holes);
   return new ReadableStream<Uint8Array>({
     async start(controller) {

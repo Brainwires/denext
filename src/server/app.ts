@@ -85,6 +85,7 @@ function dispatch(
   // Establish the per-request async context so cookies()/headers() work in
   // server components, route handlers, and middleware.
   const requestCtx = createRequestContext(originalRequest);
+  requestCtx.routes = { manifest: config.getManifest, load: config.load };
   const startedAt = performance.now();
   // Per-request abort signal — fires on client disconnect or (when configured)
   // request timeout. Exposed on the context so handlers/components can thread it

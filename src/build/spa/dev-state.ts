@@ -153,6 +153,7 @@ export function ensureUnbundled(st: SpaDevState): Promise<boolean> {
       outDir: paths.outDir,
       compat,
       classComponents: paths.config?.classComponents ?? true,
+      instrumentationClient: paths.instrumentationClientPath,
       spaEntry: entryPath,
     });
     return true;

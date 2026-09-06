@@ -407,3 +407,66 @@ Deno.test({
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test({
+  name:
+    "compat assets: image + css?url imports emit content-hashed files with ONE URL for server and client",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const { bundleNextCompatModules } = await import("../src/build/next-compat.ts");
+  const { join } = await import("@std/path");
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_assets_" }));
+  try {
+    await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify({ imports: {} }));
+    await Deno.writeFile(join(dir, "logo.png"), new Uint8Array([137, 80, 78, 71, 1, 2, 3]));
+    await Deno.writeTextFile(join(dir, "styles.css"), "body { color: red }\n");
+    await Deno.writeTextFile(
+      join(dir, "entry.ts"),
+      `import logo from "./logo.png";\nimport css from "./styles.css?url";\nexport const urls = [logo, css];\n`,
+    );
+    const clientDir = join(dir, "client");
+    const assets = {
+      publicPath: "/_denext/client/",
+      emitDir: clientDir,
+      compileCss: (p: string) =>
+        Deno.readTextFile(p).then((s) => new TextEncoder().encode(s.replace("red", "blue"))),
+    };
+    const outputs: string[] = [];
+    for (const platform of ["deno", "browser"] as const) {
+      await bundleNextCompatModules({
+        entryPoints: { app: join(dir, "entry.ts") },
+        outdir: join(dir, `out-${platform}`),
+        configPath: join(dir, "deno.json"),
+        platform,
+        denextExternal: true,
+        denoLoader: false,
+        absWorkingDir: dir,
+        assets,
+      });
+      outputs.push(await Deno.readTextFile(join(dir, `out-${platform}`, "app.js")));
+    }
+    const urlsOf = (code: string) =>
+      [...code.matchAll(/"(\/_denext\/client\/assets\/[^"]+)"/g)].map((m) => m[1]);
+    const [server, client] = outputs.map(urlsOf);
+    assertEquals(server.length, 2, `server URLs: ${server}`);
+    assertEquals(server, client, "the SSR and client bundles mint identical asset URLs");
+    assert(server[0].startsWith("/_denext/client/assets/logo-") && server[0].endsWith(".png"));
+    assert(server[1].startsWith("/_denext/client/assets/styles-") && server[1].endsWith(".css"));
+    // The files exist under the client dir, the stylesheet holding the COMPILED css.
+    const cssFile = join(clientDir, server[1].slice("/_denext/client/".length));
+    assertStringIncludes(await Deno.readTextFile(cssFile), "blue");
+    await Deno.stat(join(clientDir, server[0].slice("/_denext/client/".length)));
+  } finally {
+    const esbuild = await import("esbuild");
+    await esbuild.stop();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("css-url: isTailwindInput recognizes v3 directives and the v4 import", async () => {
+  const { isTailwindInput } = await import("../src/build/css-url.ts");
+  assert(isTailwindInput("@tailwind base;\n@tailwind utilities;"));
+  assert(isTailwindInput(`@import "tailwindcss";`));
+  assert(!isTailwindInput("body { color: red }"));
+});

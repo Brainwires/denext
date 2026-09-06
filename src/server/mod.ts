@@ -223,6 +223,7 @@ export type {
   DraftMode,
   DraftTokenStore,
   RequestContext,
+  RouteRegistry,
 } from "./request-context.ts";
 export type { RenderScope } from "../runtime/render-scope.ts";
 

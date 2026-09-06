@@ -28,6 +28,7 @@ export function getUnbundled(st: DevState): UnbundledDev {
     outDir: st.paths.outDir,
     compat: st.unbundledCompat,
     classComponents: st.paths.config?.classComponents ?? true,
+    instrumentationClient: st.paths.instrumentationClientPath,
   });
 }
 

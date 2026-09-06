@@ -61,10 +61,11 @@ Deno.test("parseRemixStem: nested params, splat-only, escaped dots, pathless, br
   const p = parseRemixStem("_marketing.home");
   assertEquals(p.segments, ["(marketing)", "home"]);
   assert(p.warnings.some((w) => w.includes("route group")));
-  // A trailing `_` layout break-out is flattened + flagged.
+  // A trailing `_` layout break-out is honored (recorded, not flagged).
   const b = parseRemixStem("app_.admin");
   assertEquals(b.segments, ["app", "admin"]);
-  assert(b.warnings.some((w) => w.includes("break-out")));
+  assertEquals(b.breakOuts, ["app"]);
+  assertEquals(b.warnings, []);
 });
 
 // ── rewriteRemixImports ───────────────────────────────────────────────────────
@@ -239,7 +240,7 @@ async function assertRootAndResourceRoute(app: string, info: TransformInfo): Pro
   // Root went through the client boundary (a hook is present) — client + data + wrapper.
   assert(info.rootConverted);
   assert(await exists(join(app, "layout.client.tsx")), "client-root boundary written");
-  assert(await exists(join(app, "layout.data.ts")), "root data module (meta/links) written");
+  assert(await exists(join(app, "layout.data.tsx")), "root data module (meta/links) written");
   const rootWrapper = await read("layout.tsx");
   assertStringIncludes(rootWrapper, "RemixLayout({");
   assertStringIncludes(rootWrapper, `id: "root"`);
@@ -342,3 +343,378 @@ async function exists(p: string): Promise<boolean> {
     return false;
   }
 }
+
+// ── remix-flat-routes (`+` folders) ──────────────────────────────────────────
+
+const PAGE = (name: string) =>
+  `export default function ${name}() { return <main>${name}</main>; }\n`;
+const LAYOUT = (name: string) =>
+  `import { Outlet } from "@remix-run/react";\nexport default function ${name}() { return <section>${name}<Outlet/></section>; }\n`;
+const LOADER = `export async function loader() { return new Response("ok"); }\n`;
+
+/** The Epic Stack's shape: `+` folders, `_layout`/`index`, break-outs, colocated + ignored files. */
+async function writeFlatRoutesApp(routes: string): Promise<void> {
+  const files: Record<string, string> = {
+    "_marketing+/index.tsx": PAGE("Home"),
+    "_marketing+/about.tsx": PAGE("About"),
+    "_marketing+/logos/logos.ts": "export const logos = [];\n",
+    "users+/index.tsx": PAGE("Users"),
+    "users+/$username.tsx": PAGE("Profile") + LOADER,
+    "users+/$username.test.tsx": "test('x', () => {});\n",
+    "users+/$username_+/notes.tsx": LAYOUT("Notes") + LOADER,
+    "users+/$username_+/notes.index.tsx": PAGE("NotesIndex"),
+    "users+/$username_+/notes.$noteId.tsx": PAGE("Note") + LOADER,
+    "users+/$username_+/notes.$noteId_.edit.tsx": PAGE("Edit") + LOADER,
+    "users+/$username_+/__note-editor.tsx": PAGE("Editor"),
+    "users+/$username_+/__note-editor.server.tsx": "export const x = 1;\n",
+    "settings+/profile.password.tsx": PAGE("Password"),
+    "settings+/profile.password_.create.tsx": PAGE("CreatePassword"),
+    "admin+/cache.tsx": PAGE("Cache") + LOADER,
+    "admin+/cache_.sqlite.$cacheKey.ts": LOADER,
+    // Colocated server helpers + re-exported server exports (the Epic Stack's shape).
+    "_auth+/login.tsx": `import { handleNewSession } from "./login.server.ts";\n` +
+      `import { helper } from "../../utils/helper.ts";\n` +
+      `export { action } from "./login.server.ts";\n` +
+      `export async function loader() { return handleNewSession(helper()); }\n` + PAGE("Login"),
+    // `logout` is referenced ONLY by the action; the component merely mentions "/logout" in
+    // a string — a textual check would keep the server import in the client module.
+    "_auth+/logout-form.tsx": `import { logout } from "./login.server.ts";\n` +
+      `export async function action() { return logout(); }\n` +
+      `export default function LogoutForm() { return <form action="/logout">out</form>; }\n`,
+    // `typeof profileUpdateAction` in the component's generics must not pull the helper
+    // (and the server module it uses) into the client module — it gets a `declare` stub.
+    "settings+/profile.index.tsx": `import { useFetcher } from "@remix-run/react";\n` +
+      `import { prisma } from "./db.server.ts";\n` +
+      `async function profileUpdateAction(id: string) { return prisma.update(id); }\n` +
+      `export async function action() { return profileUpdateAction("1"); }\n` +
+      `export default function Profile() { const f = useFetcher<typeof profileUpdateAction>(); return <b>{String(!!f)}</b>; }\n`,
+    "settings+/db.server.ts": `export const prisma = { update: (id: string) => id };\n`,
+    // Source order is semantic: the non-exported helper reads the exported const declared
+    // BEFORE it (a hoisted helper would hit the const's TDZ at module evaluation).
+    "settings+/profile.tsx": `import { Outlet } from "@remix-run/react";\n` +
+      `export const BreadcrumbHandle = { parse: (x: unknown) => x };\n` +
+      `const BreadcrumbHandleMatch = { handle: BreadcrumbHandle };\n` +
+      `export default function Layout() { return <section>{String(!!BreadcrumbHandleMatch)}<Outlet/></section>; }\n`,
+    "_auth+/login.server.ts": `export const handleNewSession = (x: unknown) => x;\n` +
+      `export const logout = () => new Response("bye");\n` +
+      `export async function action() { return new Response("posted"); }\n`,
+    "admin+/cache_.sqlite.tsx": `export { action } from "./cache_.sqlite.server.ts";\n`,
+    "admin+/cache_.sqlite.server.ts":
+      `export async function action() { return new Response("ok"); }\n`,
+    "_seo+/robots[.]txt.ts": LOADER,
+    "docs+/_layout.tsx": LAYOUT("Docs"),
+    "docs+/intro.tsx": PAGE("Intro"),
+    "legacy/route.tsx": PAGE("Legacy"),
+    "$.tsx": PAGE("Splat"),
+    "_marketing+/tailwind-preset.ts": "export const marketingPreset = {};\n",
+    // Cross-route imports (the Epic Stack): a colocated server helper reads a constant
+    // and a type from ROUTE modules; a resource route exports a component the root uses.
+    "settings+/profile.two-factor.tsx": `export const twoFAVerificationType = "2fa";\n` +
+      `export type VerificationTypes = "2fa" | "onboarding";\n` + LOADER + PAGE("TwoFactor"),
+    "_auth+/verify.server.ts":
+      `import { twoFAVerificationType } from "#app/routes/settings+/profile.two-factor.tsx";\n` +
+      `import { type VerificationTypes } from "../settings+/profile.two-factor.tsx";\n` +
+      `import { loader as twoFactorLoader } from "#app/routes/settings+/profile.two-factor.tsx";\n` +
+      `export const isCodeValid = (t: VerificationTypes) => t === twoFAVerificationType && !!twoFactorLoader;\n`,
+    "resources+/theme-switch.tsx": `import { useFetcher } from "@remix-run/react";\n` +
+      `export async function action() { return new Response("ok"); }\n` +
+      `export function ThemeSwitch() { const f = useFetcher(); return <button>{String(!!f)}</button>; }\n`,
+  };
+  for (const [rel, src] of Object.entries(files)) {
+    const full = join(routes, rel);
+    await Deno.mkdir(join(full, ".."), { recursive: true });
+    await Deno.writeTextFile(full, src);
+  }
+}
+
+Deno.test("transformRemixApp: remix-flat-routes `+` folders, _layout/index, break-outs, ignored files", async () => {
+  const tmp = await Deno.makeTempDir({ prefix: "remix_flat_" });
+  const routes = join(tmp, "app", "routes");
+  try {
+    await Deno.mkdir(routes, { recursive: true });
+    await writeClientRoot(tmp);
+    await writeFlatRoutesApp(routes);
+    // Node subpath imports, the way the Epic Stack spells `#app/…`.
+    await Deno.writeTextFile(
+      join(tmp, "package.json"),
+      JSON.stringify({ name: "flat", imports: { "#app/*": "./app/*" } }),
+    );
+    const info = await transformRemixApp(tmp);
+    const app = join(tmp, "app");
+    const has = (rel: string) => exists(join(app, rel));
+
+    // `+` folders prefix their files; `index` is the index route; pathless → route group.
+    assert(await has("(marketing)/page.tsx"), "_marketing+/index.tsx → (marketing)/page.tsx");
+    assert(await has("(marketing)/about/page.tsx"));
+    assert(!(await has("(marketing)/logos")), "a colocated non-route folder is ignored");
+    assert(await has("users/page.tsx"), "users+/index.tsx");
+    // Break-outs: $username stays a PAGE (not a layout) and the param loses its `_`.
+    assert(await has("users/[username]/page.tsx"));
+    assert(!(await has("users/[username]/layout.tsx")), "$username must not become a layout");
+    assert(!(await has("users/[username_]")), "the break-out underscore is not a param char");
+    assert(await has("users/[username]/notes/layout.tsx"), "notes.tsx is a real layout");
+    assert(await has("users/[username]/notes/page.tsx"), "notes.index.tsx");
+    assert(await has("users/[username]/notes/[noteId]/page.tsx"));
+    assert(!(await has("users/[username]/notes/[noteId]/layout.tsx")), "$noteId_ break-out");
+    assert(await has("users/[username]/notes/[noteId]/edit/page.tsx"));
+    // `__x` files (and their .server twins) and `.test` files are never routes.
+    assert(!(await has("users/[username]/__note-editor")));
+    // A resource-route child does not make its parent a layout.
+    assert(await has("admin/cache/page.tsx"));
+    assert(!(await has("admin/cache/layout.tsx")));
+    assert(await has("admin/cache/sqlite/[cacheKey]/route.ts"));
+    // Escaped dots, `_layout.tsx` in a `+` folder, the v2 folder form, the root splat.
+    assert(await has("(seo)/robots.txt/route.ts"));
+    assert(await has("docs/layout.tsx"), "docs+/_layout.tsx → docs/layout.tsx");
+    assert(await has("docs/intro/page.tsx"));
+    assert(await has("legacy/page.tsx"));
+    assert(await has("[...splat]/page.tsx"));
+    assert(await has("settings/profile/layout.tsx"));
+    assert(await has("settings/profile/password/page.tsx"));
+    assert(!(await has("settings/profile/password/layout.tsx")), "password_ break-out");
+    assert(await has("settings/profile/password/create/page.tsx"));
+    // Route ids are the module paths remix-flat-routes gives them.
+    const notes = await Deno.readTextFile(join(app, "users/[username]/notes/layout.tsx"));
+    assertStringIncludes(notes, '"routes/users+/$username_+/notes"');
+    const home = await Deno.readTextFile(join(app, "(marketing)/page.tsx"));
+    assertStringIncludes(home, '"routes/_marketing+/index"');
+    assert(!info.warnings.some((w) => w.includes("break-out")), "break-outs are not flagged");
+    assertEquals(info.routesConverted, 24);
+
+    // Colocated modules moved to the private app/_routes/ mirror; imports re-based.
+    assert(await has("_routes/_auth+/login.server.ts"), "login.server.ts relocated");
+    assert(await has("_routes/_marketing+/logos/logos.ts"), "colocated folder relocated");
+    assert(await has("_routes/users+/$username_+/__note-editor.tsx"), "__ files relocated");
+    assert(!(await has("routes")), "app/routes removed");
+    const loginData = await Deno.readTextFile(join(app, "(auth)/login/page.data.tsx"));
+    assertStringIncludes(loginData, '"../../_routes/_auth+/login.server.ts"');
+    assertStringIncludes(
+      loginData,
+      '"../../utils/helper.ts"',
+      "an import outside routes/ is re-based too",
+    );
+    // A re-exported `action` is a server export: it lands in the data module (with its
+    // POST route), never in the "use client" module.
+    assertStringIncludes(
+      loginData,
+      'export { action } from "../../_routes/_auth+/login.server.ts"',
+    );
+    const loginClient = await Deno.readTextFile(join(app, "(auth)/login/page.client.tsx"));
+    assert(!loginClient.includes("login.server"), "server re-export kept out of the client module");
+    const logoutClient = await Deno.readTextFile(join(app, "(auth)/logout-form/page.client.tsx"));
+    assert(!logoutClient.includes("login.server"), "import pruning is AST-based, not textual");
+    const logoutData = await Deno.readTextFile(join(app, "(auth)/logout-form/page.data.tsx"));
+    assertStringIncludes(
+      logoutData,
+      "login.server.ts",
+      "the action's import stays in the data module",
+    );
+    const profileClient = await Deno.readTextFile(join(app, "settings/profile/page.client.tsx"));
+    assert(
+      !profileClient.includes("db.server"),
+      "a typeof-only reference must not pull server code",
+    );
+    assertStringIncludes(profileClient, "declare const profileUpdateAction:");
+    assert(!profileClient.includes("async function profileUpdateAction"));
+    const profileLayout = await Deno.readTextFile(join(app, "settings/profile/layout.client.tsx"));
+    assert(
+      profileLayout.indexOf("export const BreadcrumbHandle") <
+        profileLayout.indexOf("const BreadcrumbHandleMatch"),
+      "helpers keep their source order relative to exported statements",
+    );
+    const profileData = await Deno.readTextFile(join(app, "settings/profile/page.data.tsx"));
+    assertStringIncludes(profileData, "async function profileUpdateAction");
+    assertStringIncludes(profileData, "db.server.ts");
+    assert(await has("(auth)/login/route.ts"), "the re-exported action gets its POST handler");
+    // A module that is ONLY a re-exported action is an action-only resource route.
+    const sqlite = await Deno.readTextFile(join(app, "admin/cache/sqlite/route.ts"));
+    assertStringIncludes(sqlite, "POST");
+    assertStringIncludes(sqlite, 'from "./page.data.tsx"', "generated siblings are not re-based");
+    const loginWrapper = await Deno.readTextFile(join(app, "(auth)/login/page.tsx"));
+    assertStringIncludes(loginWrapper, 'from "./page.client.tsx"');
+    // A module with no loader/action/component is colocated, not a route.
+    assert(!(await has("(marketing)/tailwind-preset")), "tailwind-preset.ts is not a route");
+    assert(await has("_routes/_marketing+/tailwind-preset.ts"), "…it is relocated instead");
+
+    // Cross-route imports are re-pointed at the generated modules by imported name.
+    const verifyServer = await Deno.readTextFile(join(app, "_routes/_auth+/verify.server.ts"));
+    assertStringIncludes(verifyServer, '"../../settings/profile/two-factor/page.client.tsx"');
+    assertStringIncludes(
+      verifyServer,
+      'loader as twoFactorLoader } from "../../settings/profile/two-factor/page.data.tsx"',
+    );
+    assert(!verifyServer.includes("#app/routes/"), "alias imports of route modules re-pointed");
+    // The exported type + constant live in the client module (the type always, not by reference).
+    const twoFactorClient = await Deno.readTextFile(
+      join(app, "settings/profile/two-factor/page.client.tsx"),
+    );
+    assertStringIncludes(twoFactorClient, "export type VerificationTypes");
+    assertStringIncludes(twoFactorClient, "export const twoFAVerificationType");
+    // A resource route with client-side exports gets a client module beside its route.ts.
+    assert(await has("resources/theme-switch/route.ts"));
+    const themeClient = await Deno.readTextFile(
+      join(app, "resources/theme-switch/page.client.tsx"),
+    );
+    assertStringIncludes(themeClient, '"use client"');
+    assertStringIncludes(themeClient, "export function ThemeSwitch");
+    assert(!themeClient.includes("export async function action"), "server export stays out");
+    assertStringIncludes(themeClient, 'from "denext/remix"');
+  } finally {
+    await Deno.remove(tmp, { recursive: true });
+  }
+});
+
+Deno.test("transformRemixApp: a root `Layout` export wraps the app + ErrorBoundary; its document tags become denext's", async () => {
+  const tmp = await Deno.makeTempDir({ prefix: "remix_layoutexport_" });
+  const app = join(tmp, "app");
+  try {
+    await Deno.mkdir(join(app, "routes"), { recursive: true });
+    await Deno.writeTextFile(
+      join(app, "root.tsx"),
+      `import { Outlet, useLoaderData } from "@remix-run/react";\n` +
+        `export async function loader() { return { theme: "dark" }; }\n` +
+        // The shell lives in a NON-exported helper, as the Epic Stack does (\`Document\`).
+        `function Document({ children, theme }: { children: React.ReactNode; theme?: string }) {\n` +
+        `  return (<html lang="en" className={\`\${theme} h-full\`}><head><meta charSet="utf-8" /></head>` +
+        `<body className="bg-background"><header>chrome</header>{children}</body></html>);\n}\n` +
+        `export function Layout({ children }: { children: React.ReactNode }) {\n` +
+        `  const data = useLoaderData<typeof loader | null>();\n` +
+        `  return <Document theme={data?.theme}>{children}</Document>;\n}\n` +
+        `export default function App() { return <Outlet />; }\n` +
+        `export function ErrorBoundary() { return <p>oops</p>; }\n`,
+    );
+    await Deno.writeTextFile(join(app, "routes", "_index.tsx"), PAGE("Home"));
+    // The server entry: Remix rendering hooks (dropped) + startup effects (kept).
+    await Deno.writeTextFile(
+      join(app, "entry.server.tsx"),
+      `import { renderToPipeableStream } from "react-dom/server";\n` +
+        `import { getEnv, init } from "./utils/env.server.ts";\n` +
+        `const ABORT_DELAY = 5000;\n` +
+        `init();\n` +
+        `global.ENV = getEnv();\n` +
+        `if (process.env.SENTRY_DSN) { void import("./utils/monitoring.server.ts"); }\n` +
+        `export default function handleRequest() { return renderToPipeableStream(null, { timeout: ABORT_DELAY }); }\n` +
+        `export function handleError() {}\n`,
+    );
+    const info = await transformRemixApp(tmp);
+    const instrumentation = await Deno.readTextFile(join(tmp, "instrumentation.ts"));
+    assertStringIncludes(instrumentation, "export function register(): void");
+    assertStringIncludes(instrumentation, "init();");
+    assertStringIncludes(instrumentation, "global.ENV = getEnv();");
+    assertStringIncludes(
+      instrumentation,
+      'from "./app/utils/env.server.ts"',
+      "imports re-based to the root",
+    );
+    assertStringIncludes(instrumentation, 'import("./app/utils/monitoring.server.ts")');
+    assert(
+      !instrumentation.includes("function handleRequest"),
+      "Remix's rendering hook is dropped",
+    );
+    assert(!instrumentation.includes("react-dom/server"), "its imports go with it");
+    assert(!instrumentation.includes("ABORT_DELAY"), "an unreferenced declaration is left out");
+    assert(info.warnings.some((w) => w.includes("instrumentation.ts")));
+    const client = await Deno.readTextFile(join(app, "layout.client.tsx"));
+    assertStringIncludes(client, '<DocumentHtml lang="en" className={`${theme} h-full`}>');
+    assertStringIncludes(client, "<DocumentHead>");
+    assertStringIncludes(client, '<DocumentBody className="bg-background">');
+    assert(!/<html\b|<body\b|<\/head>/.test(client), "no raw document tags remain");
+    assertStringIncludes(client, "<Layout><App /></Layout>");
+    assertStringIncludes(client, "<Layout><ErrorBoundary /></Layout>");
+    assert(/import \{[^}]*DocumentHtml[^}]*\} from "denext\/remix"/.test(client), "runtime import");
+  } finally {
+    await Deno.remove(tmp, { recursive: true });
+  }
+});
+
+Deno.test("transformRemixApp: getLoadContext → load-context.ts, entry.client → instrumentation-client, route markers", async () => {
+  const tmp = await Deno.makeTempDir({ prefix: "remix_loadctx_" });
+  const app = join(tmp, "app");
+  try {
+    await Deno.mkdir(join(app, "routes"), { recursive: true });
+    await Deno.mkdir(join(app, "utils"), { recursive: true });
+    await Deno.mkdir(join(tmp, "server"), { recursive: true });
+    await Deno.writeTextFile(join(app, "root.tsx"), LAYOUT("Root"));
+    await Deno.writeTextFile(join(app, "routes", "_index.tsx"), PAGE("Home"));
+    await Deno.writeTextFile(
+      join(app, "routes", "users.$username.tsx"),
+      `export const handle = { getSitemapEntries: () => null };\n` + PAGE("User"),
+    );
+    // The Epic Stack's sitemap: a resource route reading the server build from `context`,
+    // with TYPE-ONLY imports from @remix-run/node.
+    await Deno.writeTextFile(
+      join(app, "routes", "sitemap[.]xml.ts"),
+      `import { type ServerBuild, type LoaderFunctionArgs } from "@remix-run/node";\n` +
+        `export async function loader({ request, context }: LoaderFunctionArgs) {\n` +
+        `  const serverBuild = (await context.serverBuild) as { build: ServerBuild };\n` +
+        `  return new Response(Object.keys(serverBuild.build.routes).join(","));\n}\n`,
+    );
+    // The custom Express server: what `getLoadContext` gave loaders as `context`.
+    await Deno.writeTextFile(
+      join(tmp, "server", "index.ts"),
+      `import express from "express";\nconst app = express();\n` +
+        `app.all("*", createRequestHandler({\n` +
+        `  getLoadContext: (req: any, res: any) => ({\n` +
+        `    cspNonce: res.locals.cspNonce,\n    serverBuild: getBuild(),\n    ip: req.ip,\n  }),\n` +
+        `  build: () => getBuild(),\n}));\n`,
+    );
+    // The client entry: Remix's hydration (dropped) + a startup effect (kept).
+    await Deno.writeTextFile(
+      join(app, "entry.client.tsx"),
+      `import { RemixBrowser } from "@remix-run/react";\nimport { startTransition } from "react";\n` +
+        `import { hydrateRoot } from "react-dom/client";\n` +
+        `if (ENV.MODE === "production" && ENV.SENTRY_DSN) {\n` +
+        `  void import("./utils/monitoring.client.tsx").then(({ init }) => init());\n}\n` +
+        `startTransition(() => {\n  hydrateRoot(document, <RemixBrowser />);\n});\n`,
+    );
+    const info = await transformRemixApp(tmp);
+
+    const loadContext = await Deno.readTextFile(join(tmp, "load-context.ts"));
+    assertStringIncludes(
+      loadContext,
+      'import { defineLoadContext, remixServerBuild } from "denext/remix/server";',
+    );
+    assertStringIncludes(loadContext, "export default defineLoadContext(() => ({");
+    assertStringIncludes(loadContext, "serverBuild: remixServerBuild(),");
+    assertStringIncludes(loadContext, "// was: getBuild() —");
+    assertStringIncludes(loadContext, "cspNonce: undefined,");
+    assertStringIncludes(loadContext, "// was: res.locals.cspNonce — denext's CSP is hash-based");
+    assertStringIncludes(loadContext, "// TODO: was `req.ip` — provide it here\n  ip: undefined,");
+    assert(info.warnings.some((w) => w.includes("getLoadContext → load-context.ts")));
+    // No entry.server here — instrumentation.ts still exists to register the load context.
+    const instrumentation = await Deno.readTextFile(join(tmp, "instrumentation.ts"));
+    assertStringIncludes(instrumentation, 'import "./load-context.ts";');
+    assertStringIncludes(instrumentation, "export function register(): void {");
+
+    const client = await Deno.readTextFile(join(tmp, "instrumentation-client.ts"));
+    assertStringIncludes(client, 'if (ENV.MODE === "production" && ENV.SENTRY_DSN)');
+    assertStringIncludes(client, 'import("./app/utils/monitoring.client.tsx")', "re-based");
+    assert(!client.includes("hydrateRoot"), "Remix's hydration is dropped");
+    assert(!client.includes("RemixBrowser") && !client.includes("react-dom/client"));
+    assert(!client.includes("startTransition"), "its imports go with it");
+    assert(info.entriesDeleted.includes("app/entry.client.tsx"));
+    assert(info.warnings.some((w) => w.includes("instrumentation-client.ts")));
+
+    // Type-only imports survive the AST-based pruning (rewritten to the runtime).
+    const sitemapData = await Deno.readTextFile(join(app, "sitemap.xml", "page.data.tsx"));
+    assertStringIncludes(
+      sitemapData,
+      'import { type ServerBuild, type LoaderFunctionArgs } from "denext/remix/server";',
+    );
+    // Every wrapper exports the marker `remixServerBuild()` maps routes back with.
+    const sitemapRoute = await Deno.readTextFile(join(app, "sitemap.xml", "route.ts"));
+    assertStringIncludes(
+      sitemapRoute,
+      'export const remixRoute = { id: "routes/sitemap[.]xml", module: data };',
+    );
+    const userPage = await Deno.readTextFile(join(app, "users", "[username]", "page.tsx"));
+    assertStringIncludes(
+      userPage,
+      'export const remixRoute = { id: "routes/users.$username", module: data };',
+    );
+    const home = await Deno.readTextFile(join(app, "page.tsx"));
+    assertStringIncludes(home, 'export const remixRoute = { id: "routes/_index", module: {} };');
+  } finally {
+    await Deno.remove(tmp, { recursive: true });
+  }
+});

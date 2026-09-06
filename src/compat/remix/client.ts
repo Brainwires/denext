@@ -47,6 +47,7 @@ import {
   PARAMS_HEADER,
   REVALIDATE_HEADER,
 } from "./revalidation.ts";
+import { remixRoutePathname, resolveRoutePath } from "./route-path.ts";
 import type { VNode, VNodeChildren } from "../../jsx/types.ts";
 
 // ── Route match + contexts ────────────────────────────────────────────────────
@@ -76,6 +77,8 @@ interface RouteInfo {
   id: string;
   handle: unknown;
   params: Record<string, string>;
+  /** The pathname this route matched (relative `to`s resolve against it). */
+  pathname: string;
   /** The route's denext Server Action, if it declared an `action`. */
   formAction?: (formData: FormData) => Promise<unknown>;
 }
@@ -232,6 +235,7 @@ export function RemixRouteProvider(props: RemixRouteProviderProps): VNode {
     id: props.id,
     handle: props.handle,
     params: props.params,
+    pathname: remixRoutePathname(props.id, props.params),
     formAction: props.formAction,
   };
   return h(
@@ -354,14 +358,18 @@ export interface RemixNavigateOptions {
 /** Programmatic navigation (Remix `useNavigate`) — a path (with options) or a history delta. */
 export function useNavigate(): (to: string | number, options?: RemixNavigateOptions) => void {
   const router = useRouter();
+  const route = useContext(RouteContext);
+  const current = usePathname();
+  const base = route?.pathname ?? current;
   return useCallback((to: string | number, options?: RemixNavigateOptions) => {
     if (typeof to === "number") {
       if (typeof history !== "undefined") history.go(to);
       return;
     }
-    if (options?.replace) router.replace(to);
-    else router.push(to);
-  }, [router]);
+    const dest = resolveRoutePath(to, base);
+    if (options?.replace) router.replace(dest);
+    else router.push(dest);
+  }, [router, base]);
 }
 
 /** Remix `useSearchParams` — the tuple form `[params, setSearchParams]`. */
@@ -484,7 +492,14 @@ export function useFormAction(action?: string, _opts?: RelativeRoutingOpts): str
 
 /** Resolve an href (Remix `useHref`) — best-effort passthrough. */
 export function useHref(to: string, _opts?: RelativeRoutingOpts): string {
-  return to;
+  return useRouteRelative(to);
+}
+
+/** A `to` resolved against the current route's pathname (route-relative, as Remix does). */
+function useRouteRelative(to: string): string {
+  const route = useContext(RouteContext);
+  const current = usePathname();
+  return resolveRoutePath(to, route?.pathname ?? current);
 }
 
 /** Resolve a path relative to the current route (Remix `useResolvedPath`). */
@@ -492,7 +507,8 @@ export function useResolvedPath(
   to: string,
   _opts?: RelativeRoutingOpts,
 ): { pathname: string; search: string; hash: string } {
-  const [path, rest = ""] = to.split("?");
+  const resolved = useRouteRelative(to);
+  const [path, rest = ""] = resolved.split("?");
   const [search, hash = ""] = rest.split("#");
   return { pathname: path, search: search ? `?${search}` : "", hash: hash ? `#${hash}` : "" };
 }
@@ -853,7 +869,7 @@ export interface LinkProps {
 /** Remix `<Link>` → denext `<Link>` (`to` mapped to `href`; `reloadDocument` → plain `<a>`). */
 export function Link(props: LinkProps): VNode {
   const { to, href, prefetch, reloadDocument, state: _state, ...rest } = props;
-  const dest = String(href ?? to ?? "");
+  const dest = useRouteRelative(String(href ?? to ?? ""));
   if (reloadDocument) return h("a", { ...rest, href: dest });
   const pf = prefetch === "none" || prefetch === false ? false : undefined;
   return h(DenextLink, { href: dest, prefetch: pf, ...rest });
@@ -873,7 +889,7 @@ export interface NavLinkProps extends Omit<LinkProps, "children" | "className" |
 /** Remix `<NavLink>` → denext `<Link>` with an `isActive` computed from the pathname. */
 export function NavLink(props: NavLinkProps): VNode {
   const { to, href, end, caseSensitive, className, style, children, ...rest } = props;
-  const dest = String(href ?? to ?? "");
+  const dest = useRouteRelative(String(href ?? to ?? ""));
   const pathname = usePathname();
   const a = caseSensitive ? pathname : pathname.toLowerCase();
   const b = caseSensitive ? dest : dest.toLowerCase();

@@ -59,7 +59,7 @@ export async function bundleNativeRoutes(ctx: BuildContext): Promise<void> {
   const out = await bundleRoutes(
     clientRoutes.map((route) => ({
       key: routeId(route.routePath),
-      source: generateRouteEntry(route),
+      source: generateRouteEntry(route, false, false, paths.instrumentationClientPath),
     })),
     { configPath: paths.configPath, minify: true, importMap: ctx.cssImportMap },
   );
@@ -122,6 +122,7 @@ export async function bundleNativeFlight(ctx: BuildContext): Promise<void> {
     minify: true,
     importMap: ctx.cssImportMap,
     usesLive: ctx.usesLive,
+    instrumentationClient: ctx.paths.instrumentationClientPath,
   });
   await writeBundleOutput(ctx.clientDir, flightBundle, FLIGHT_BUNDLE_FILE);
 }

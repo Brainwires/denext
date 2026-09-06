@@ -7,6 +7,7 @@ import { ensureDir } from "@std/fs";
 import {
   BROWSER_CONDITIONS,
   catalogResolverPlugin,
+  frameworkPatchPlugins,
   nodeBuiltinStubPlugin,
   prebuildDenextRuntime,
 } from "../next-compat.ts";
@@ -37,7 +38,10 @@ async function buildDeps(st: UnbundledState): Promise<void> {
     // Native helper packages (used by next/og etc.) are lazily imported at
     // runtime — never reached by native App Router client code; keep external.
     external: ["@denext/photon", "@denext/avif", "@denext/og"],
-    plugins: [...denoPlugins({ configPath: cfg })],
+    plugins: [
+      ...(await frameworkPatchPlugins(st.opts.projectDir, base)),
+      ...denoPlugins({ configPath: cfg }),
+    ],
   });
 }
 
@@ -56,6 +60,7 @@ function ensureRuntime(st: UnbundledState): Promise<void> {
     outDir: st.runtimeDir,
     configPath: st.opts.configPath,
     classComponents: st.opts.classComponents ?? true,
+    projectDir: st.opts.projectDir,
   }).then(() => {});
 }
 

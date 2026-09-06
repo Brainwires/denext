@@ -284,6 +284,18 @@ export function unstable_rethrow(error: unknown): void {
   }
 }
 
+/**
+ * Brand for an error a boundary may receive UNREDACTED in production: it was thrown
+ * to be rendered (a Remix `ErrorResponse`: status + data), not an internal failure.
+ */
+export const EXPOSE_ERROR: unique symbol = Symbol.for("denext.exposeError") as never;
+
+/** Whether `value` is an Error flagged {@link EXPOSE_ERROR}. */
+export function isExposedError(value: unknown): value is Error {
+  return value instanceof Error &&
+    (value as { [EXPOSE_ERROR]?: boolean })[EXPOSE_ERROR] === true;
+}
+
 /** Normalize a caught error into an Error instance for a fallback component. */
 export function toError(value: unknown): Error {
   if (value instanceof Error) return value;
@@ -327,6 +339,9 @@ export function errorDigest(error: unknown): string {
 export function toClientError(error: unknown): Error & { digest?: string } {
   const isDev = (globalThis as { __denextDev?: boolean }).__denextDev === true;
   if (isDev) return error instanceof Error ? error : new Error(String(error));
+  // An error built FOR the UI (a Remix thrown `Response` → status/data the boundary renders
+  // as "not found") carries nothing to hide and is not a server failure: pass it through.
+  if (isExposedError(error)) return error;
   const digest = errorDigest(error);
   console.error(`denext: server error [digest ${digest}]`, error);
   return Object.assign(new Error("Internal Server Error"), { digest });

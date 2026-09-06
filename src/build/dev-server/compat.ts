@@ -20,6 +20,7 @@ import { routeId } from "../paths.ts";
 import { getCss } from "./assets.ts";
 import { baseLoaderFor } from "./loaders.ts";
 import type { DevState } from "./state.ts";
+import { compatAssets } from "../pipeline-shared.ts";
 
 /** Whether this project runs as a next-compat drop-in (detected once). */
 export function isCompat(st: DevState): Promise<boolean> {
@@ -37,6 +38,7 @@ function compatBuildOptions(st: DevState, outDir: string, cssImportMap?: Record<
     mdxOptions: st.paths.config?.mdx,
     useCache: resolveCacheComponents(st.paths.config),
     cssImportMap,
+    assets: compatAssets(st.paths.projectDir, join(outDir, "client")),
   };
 }
 
@@ -52,7 +54,8 @@ function compatModules(st: DevState, m: RouteManifest): string[] {
   const servers = st.compatBoundary
     ? [...st.compatBoundary.server.values()].map((r) => fromFileUrl(r.url))
     : [];
-  return [...new Set([...m.pages.flatMap(routeServerModules), ...islands, ...servers])];
+  const api = m.api.map((r) => r.filePath);
+  return [...new Set([...m.pages.flatMap(routeServerModules), ...api, ...islands, ...servers])];
 }
 
 /**
@@ -106,6 +109,7 @@ async function buildCompat(st: DevState, m: RouteManifest): Promise<void> {
   const outDir = join(st.paths.outDir, "dev-compat", String(st.generation));
   const clientOut = join(outDir, "client");
   await ensureDir(clientOut);
+  st.compatClientDir = clientOut;
   // CSS shim map so stylesheet imports (incl. sibling-package `.scss`) redirect to
   // their shims in the esbuild compat bundle. getCss() is current for this generation.
   const opts = compatBuildOptions(st, outDir, (await getCss(st))?.importMap);
@@ -117,7 +121,7 @@ async function buildCompat(st: DevState, m: RouteManifest): Promise<void> {
     clientDir: clientOut,
     entries: clientRoutes.map((r) => ({
       id: routeId(r.routePath),
-      source: generateRouteEntry(r, true),
+      source: generateRouteEntry(r, true, false, st.paths.instrumentationClientPath),
     })),
   });
   // Compat Flight client bundle (react→denext islands, keyed by client id).
@@ -128,6 +132,7 @@ async function buildCompat(st: DevState, m: RouteManifest): Promise<void> {
       boundary: st.compatBoundary,
       flightFile: "flight.js",
       dev: true,
+      instrumentationClient: st.paths.instrumentationClientPath,
     });
   }
   await loadCompatOutputs(st, clientOut, clientRoutes);

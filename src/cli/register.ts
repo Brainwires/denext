@@ -16,6 +16,7 @@ import { analyzeCommand } from "./commands/analyze.ts";
 import { desktopCommand } from "./commands/desktop.ts";
 import { deployCommand } from "./commands/deploy.ts";
 import { pluginCommand } from "./commands/plugin.ts";
+import { patchCommand } from "./commands/patch.ts";
 import { mcpCommand } from "./commands/mcp.ts";
 import { makeCompletionsCommand } from "./commands/completions.ts";
 
@@ -51,6 +52,7 @@ export function buildRegistry(): CommandRegistry {
   reg.register(desktopCommand);
   reg.register(deployCommand);
   reg.register(pluginCommand);
+  reg.register(patchCommand);
   // AI-agent tooling (MCP server over stdio).
   reg.register(mcpCommand);
   // Completions (bound to the assembled registry, so it lists the real verb set).

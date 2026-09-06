@@ -151,8 +151,10 @@ export default function Page(props: { params: Record<string, string> }) {
         <code>{"{children}"}</code>, and a <code>meta</code> export is bridged to{" "}
         <code>generateMetadata</code>. A pure document-shell root becomes a plain server layout; a
         root that uses hooks, event handlers, or a loader goes through the same client/data split as
-        a route. <code>entry.server.*</code> and <code>entry.client.*</code> are deleted, and{" "}
-        <code>@remix-run/*</code> imports in shared modules outside <code>routes/</code>{" "}
+        a route. <code>entry.server.*</code> and <code>entry.client.*</code>{" "}
+        are deleted (their startup effects move to <code>instrumentation.ts</code> and{" "}
+        <code>instrumentation-client.ts</code>), and <code>@remix-run/*</code>{" "}
+        imports in shared modules outside <code>routes/</code>{" "}
         (sessions, utils, components) are rewritten too.
       </p>
 
@@ -228,6 +230,54 @@ export default function Page(props: { params: Record<string, string> }) {
           {" "}
           <code>ErrorBoundary</code> (with <code>useRouteError</code> and{" "}
           <code>isRouteErrorResponse</code>) maps to an <code>error.tsx</code>.
+        </li>
+        <li>
+          <strong>remix-flat-routes and colocation</strong>: <code>users+/</code> folders,{" "}
+          <code>_layout.tsx</code>/<code>index.tsx</code>, layout break-outs (<code>
+            $username_+
+          </code>) and <code>__ignored</code>{" "}
+          files convert; colocated modules (<code>login.server.ts</code>, components, images) move
+          to <code>app/_routes/</code>{" "}
+          with every import re-based, and an import of another route module for a constant,
+          component or type is pointed at the module that now holds it.
+        </li>
+        <li>
+          <strong>The root</strong>: a <code>Layout</code>{" "}
+          export wraps the app and the ErrorBoundary, its{" "}
+          <code>&lt;html&gt;</code>/<code>&lt;head&gt;</code>/<code>
+            &lt;body&gt;
+          </code>{" "}
+          attributes reach the real document (and update live — a theme class on{" "}
+          <code>&lt;html&gt;</code> works), <code>links()</code> becomes head tags,{" "}
+          <code>meta()</code> receives <code>matches</code>, and the startup statements of{" "}
+          <code>entry.server.tsx</code> (<code>init()</code>,{" "}
+          <code>global.ENV</code>) become a denext <code>instrumentation.ts</code>; those of{" "}
+          <code>entry.client.tsx</code> (a Sentry init) become{" "}
+          <code>instrumentation-client.ts</code>.
+        </li>
+        <li>
+          <strong>The custom server's load context</strong>: <code>getLoadContext</code>{" "}
+          becomes a root <code>load-context.ts</code>{" "}
+          (<code>defineLoadContext</code>), so loaders keep their <code>context</code>.{" "}
+          <code>context.serverBuild</code> is denext's synthesized Remix <code>ServerBuild</code>
+          {" "}
+          (<code>remixServerBuild()</code>
+          ), which is what <code>@nasa-gcn/remix-seo</code>{" "}
+          reads to generate a sitemap; a value the server read off the Express request is a{" "}
+          <code>TODO</code> stub to fill in.
+        </li>
+        <li>
+          <strong>Route-relative links</strong>: <code>&lt;Link to="new"&gt;</code>,{" "}
+          <code>useNavigate</code> and <code>useResolvedPath</code>{" "}
+          resolve against the route's own pathname, and <code>..</code> climbs a route.
+        </li>
+        <li>
+          <strong>Assets and Tailwind</strong>: <code>import logo from "./logo.svg"</code> and{" "}
+          <code>styles.css?url</code> are served under{" "}
+          <code>/_denext/client/assets/</code>; a Tailwind v3 stylesheet is compiled through the
+          project's own{" "}
+          <code>tailwindcss</code>. Prisma apps get the Rust-free client and their SQL migrations
+          applied by <code>deno task prisma:setup</code>.
         </li>
       </ul>
 

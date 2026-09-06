@@ -405,7 +405,7 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
   const appBase = opts.srcDir ? "src/app" : "app";
   // Generated / build outputs to keep out of version control.
   // `.denext/` (build output), `out/` (`denext export`), env files with secrets.
-  const ignore = [".denext/", "out/", ".env*.local", "*.local"];
+  const ignore = [".denext/", "out/", ".env*.local", "*.local", "patches/.work/"];
   if (opts.tailwind) ignore.push(`${appBase}/globals.css`);
   if (opts.desktop) ignore.push("dist/"); // packaged desktop binaries
   if (opts.capacitor) ignore.push("node_modules/", "ios/", "android/"); // Capacitor

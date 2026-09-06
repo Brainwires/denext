@@ -86,6 +86,8 @@ export function documentOptions(pr: PageRequest) {
     devScriptSrc: config.devScriptSrc,
     lang: pr.locale || undefined,
     publicEnv: restrictPublicEnv(publicEnv(), config.publicEnvKeys),
+    htmlAttrs: pr.state.ctx.documentAttrs?.html,
+    bodyAttrs: pr.state.ctx.documentAttrs?.body,
   };
 }
 
