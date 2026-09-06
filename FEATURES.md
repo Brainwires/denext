@@ -36,7 +36,9 @@ security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
   responses; works on `"use client"` (Flight) routes too. Opt out with
   `streaming: false`.
 - **RSC/Flight** boundary (server components stay server-side; only islands
-  hydrate).
+  hydrate). Islands are **code-split**: the Flight entry loads just the islands a
+  page references (and the ones a soft navigation, a deferred `client:*` island or
+  a Live patch brings in), never the whole app's.
 - **Metadata**: static `metadata`, `generateMetadata`, `generateViewport`,
   `generateStaticParams`; file-based `opengraph-image`/`twitter-image`/`icon`/
   `apple-icon` (**nested per-route**, inherited down the tree), `sitemap` (with

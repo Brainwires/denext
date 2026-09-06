@@ -12,7 +12,7 @@ import { routeNeedsHydration } from "../hydration.ts";
 import { type BoundaryManifest, computeBoundaryRoutes, routeEntryFiles } from "../module-graph.ts";
 import { buildNextCompatModules } from "../next-compat-build.ts";
 import { detectNextCompat } from "../next-compat-detect.ts";
-import { createNextCompatServerLoader, redirectBoundaryToCompat } from "../next-compat-loader.ts";
+import { boundaryRefLoader, createNextCompatServerLoader } from "../next-compat-loader.ts";
 import { routeId } from "../paths.ts";
 import {
   appBoundaryManifest,
@@ -90,7 +90,6 @@ export async function setupCompat(ctx: ExportContext): Promise<void> {
   // Route the render loader through the compat bundles, and point boundary refs at their
   // compat bundles so Flight island/action identity holds across the rewrite.
   ctx.load = createNextCompatServerLoader(ctx.load, { moduleMap });
-  if (boundary) redirectBoundaryToCompat(boundary, moduleMap);
   ctx.compatModuleMap = moduleMap;
 }
 
@@ -125,9 +124,11 @@ export async function bundleExportFlight(ctx: ExportContext): Promise<void> {
     importMap: ctx.css?.importMap,
   });
   await writeBundleOutput(ctx.clientOut, flightBundle, FLIGHT_BUNDLE_FILE);
-  if (ctx.compatModuleMap) redirectBoundaryToCompat(boundary, ctx.compatModuleMap);
-  await tagClientModules(boundary.client);
-  await tagServerModules(boundary.server);
+  // Tag through the (compat-aware) loader so the tagged instances are the ones the page
+  // bundles reference.
+  const load = boundaryRefLoader(ctx.load);
+  await tagClientModules(boundary.client, load);
+  await tagServerModules(boundary.server, load);
 }
 
 /**

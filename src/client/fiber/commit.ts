@@ -106,6 +106,11 @@ function clearCommittedFlags(wipRoot: Fiber): void {
     f.flags = NoFlags;
     f.subtreeFlags = NoFlags;
     f.deletions = null;
+    // Promote each stateful hook's rendered value to "committed" — the baseline the no-op
+    // state bailout (begin-work) compares a pending update against.
+    if (f.hooks) {
+      for (const cell of f.hooks) if ("rendered" in cell) cell.committed = cell.rendered;
+    }
   });
 }
 

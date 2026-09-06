@@ -13,7 +13,35 @@ import { clientActionStub } from "../runtime/server-action.ts";
 import { qrlStub } from "../runtime/qrl.ts";
 
 /** Maps client-reference ids (`clientId#export`) to client component functions. */
-export type ClientRegistry = Map<string, Component>;
+export type ClientRegistry = Map<string, Component> & {
+  /**
+   * Load (and register) the island modules a Flight payload references — the generated Flight
+   * entry installs this. Islands are code-split and imported on demand, so a page ships only
+   * its own islands' chunks; every consumer of a payload awaits this before `parseFlight`.
+   */
+  ensure?: (flight: unknown) => Promise<void>;
+};
+
+/**
+ * The client ids (`c_<hash>`, the part before `#`) every client reference in a Flight payload
+ * names — walked generically, so references nested in props (serialized vnodes) count too.
+ */
+export function flightClientIds(flight: unknown, out: Set<string> = new Set()): Set<string> {
+  if (flight === null || typeof flight !== "object") return out;
+  if (Array.isArray(flight)) {
+    for (const item of flight) flightClientIds(item, out);
+    return out;
+  }
+  const node = flight as Record<string, unknown>;
+  if (node.$ === "c" && typeof node.i === "string") out.add(node.i.split("#")[0]);
+  for (const key of Object.keys(node)) flightClientIds(node[key], out);
+  return out;
+}
+
+/** Await the registry's island loader for `flight` (a no-op registry without one). */
+export function ensureFlightModules(registry: ClientRegistry, flight: unknown): Promise<void> {
+  return registry.ensure ? registry.ensure(flight) : Promise.resolve();
+}
 
 /**
  * Reconstruct a VNode tree from a {@linkcode FlightNode} payload, resolving

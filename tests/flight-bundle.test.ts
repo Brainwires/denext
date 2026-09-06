@@ -1,6 +1,6 @@
-import { assert, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
-import { bundleSource, generateFlightEntry } from "../src/build/bundle.ts";
+import { bundleSourceFiles, generateFlightEntry } from "../src/build/bundle.ts";
 import type { BoundaryManifest } from "../src/build/module-graph.ts";
 
 // Bundling shells out to `deno bundle`; give it room.
@@ -39,14 +39,19 @@ Deno.test("flight bundle contains client code but NOT server-component code", as
       server: new Map(),
     };
 
-    const bundle = await bundleSource(generateFlightEntry(boundary), {
+    // Islands are code-split: the entry holds the loader map, the island's code lands in its
+    // own chunk. Check across every emitted file.
+    const out = await bundleSourceFiles(generateFlightEntry(boundary), {
       configPath: join(dir, "deno.json"),
     });
+    const all = [...out.files.values()].join("\n");
+    const entry = out.files.get(out.entry)!;
 
-    // Client code is present; server-only secret is provably absent.
-    assertStringIncludes(bundle, "CLIENT_MARKER");
-    assert(!bundle.includes("SUPER_SECRET_TOKEN_9animal"), "server secret leaked into bundle");
-    assertStringIncludes(bundle, "c_widget"); // registry wiring present
+    // Client code is present (in a chunk); server-only secret is provably absent everywhere.
+    assertStringIncludes(all, "CLIENT_MARKER");
+    assert(!all.includes("SUPER_SECRET_TOKEN_9animal"), "server secret leaked into bundle");
+    assertStringIncludes(entry, "c_widget"); // registry wiring present in the entry
+    assert(!entry.includes("CLIENT_MARKER"), "the island is not inlined into the entry");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -74,4 +79,32 @@ Deno.test("flight entry: usesLive=true keeps the Live import + transport wiring"
   assertStringIncludes(src, "configureLive");
   assertStringIncludes(src, "denext#Live");
   assertStringIncludes(src, "navigate");
+});
+
+// memo()/forwardRef() exports are non-callable objects; the server tags them as client refs, so
+// the generated entry must register them too or the reference has nothing to hydrate against.
+Deno.test("flight entry: registers memo/forwardRef element objects as well as functions", () => {
+  const src = generateFlightEntry(emptyBoundary(), false, false, false);
+  assert(src.includes('typeof v === "function"'), src);
+  assert(src.includes('typeof v === "object" && v.$$typeof'), src);
+});
+
+Deno.test("flightClientIds collects every referenced client id, nested props included", async () => {
+  const { flightClientIds } = await import("../src/client/flight-client.ts");
+  const flight = {
+    $: "h",
+    t: "main",
+    p: { slot: { $: "c", i: "c_slot#Chip", p: {}, c: [] } },
+    c: [
+      {
+        $: "c",
+        i: "c_widget#Widget",
+        p: { nested: [{ $: "c", i: "c_deep#D", p: {}, c: [] }] },
+        c: [],
+      },
+      ["text", { $: "c", i: "c_widget#Other", p: {}, c: [] }],
+    ],
+  };
+  assertEquals([...flightClientIds(flight)].sort(), ["c_deep", "c_slot", "c_widget"]);
+  assertEquals(flightClientIds(null).size, 0);
 });

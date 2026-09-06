@@ -295,13 +295,6 @@ The nuances worth knowing (reported as review notes, never silently changed):
 
 A few capabilities aren't built yet (none affects the zero-npm runtime):
 
-- **The Flight island bundle is app-wide.** Every `"use client"` island is a static
-  import of one `flight.js` (plus code-split chunks), so a soft navigation into any
-  route already has its islands registered. Fine for typical apps; on a very large
-  compat app it is the whole component library up front (shadcn/ui's site: 2,700
-  islands, 10 MB raw / 2.4 MB gz). Per-route splitting is on the
-  [ROADMAP](./ROADMAP.md).
-
 - **`next/font`: metric-matched fallback face.** `next/font` self-hosts Google
   fonts at build for **both** the prod server (`deno task start`) and the static
   export (`deno task export`) — no runtime Google request either way — and honors

@@ -13,14 +13,44 @@
 // raw `import`) so dev cache-busting and the use-cache loader still apply, and it
 // falls back to the original path on any failure so it can never break loading.
 
-import { fromFileUrl, join, toFileUrl } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import type { ModuleLoader } from "../server/types.ts";
-import type { BoundaryManifest } from "./module-graph.ts";
 
 /** Options for {@link createNextCompatServerLoader}. */
 export interface NextCompatServerLoaderOptions {
-  /** Map of absolute source module path → absolute prebuilt server bundle path. */
+  /**
+   * Absolute source module path → its compat server bundle: either a bundle path (one file
+   * per module) or a keyed ref `<bundle>#<export>` (one bundle for the whole app; the module
+   * is the namespace exported under `<export>`). See {@link keyedBundleRef}.
+   */
   moduleMap: Map<string, string>;
+}
+
+/** A module's ref inside the single server bundle: `<bundle path>#<namespace export>`. */
+export function keyedBundleRef(bundle: string, key: string): string {
+  return `${bundle}#${key}`;
+}
+
+/** Split a {@link keyedBundleRef} (a plain bundle path has no key). */
+export function splitBundleRef(ref: string): { bundle: string; key: string | null } {
+  const i = ref.lastIndexOf("#");
+  return i < 0 ? { bundle: ref, key: null } : { bundle: ref.slice(0, i), key: ref.slice(i + 1) };
+}
+
+/**
+ * Load a module through `base` by its bundle ref: the whole bundle for a plain path, the
+ * keyed namespace for `<bundle>#<key>` (the bundle module itself is imported once and cached
+ * by the module system, so 2,700 refs cost one load).
+ */
+export async function loadBundleRef(base: ModuleLoader, ref: string): Promise<unknown> {
+  const { bundle, key } = splitBundleRef(ref);
+  const ns = await base(bundle);
+  if (key === null) return ns;
+  const sub = (ns as Record<string, unknown>)[key];
+  if (sub === undefined) {
+    throw new Error(`denext: compat server bundle ${bundle} has no module export "${key}"`);
+  }
+  return sub;
 }
 
 /**
@@ -60,29 +90,16 @@ export function createNextCompatServerLoader(
       // Unparseable specifier — leave as-is; the lookup just misses.
     }
     const bundle = opts.moduleMap.get(abs);
-    return base(bundle ?? filePath);
+    return bundle ? loadBundleRef(base, bundle) : base(filePath);
   };
 }
 
 /**
- * Rewrite each boundary ref's module URL to its react→denext compat server bundle
- * (from a source→bundle map), so the Flight SSR renderer tags — and renders for
- * first paint — the SAME island/action instances the page's compat server bundle
- * references (they resolve to one shared runtime chunk). Identity holds because
- * each island/action is bundled as its own build entry (a chunk), never inlined.
- * A ref with no compat bundle is left on its source URL (native fallback).
- *
- * @param boundary The app's boundary manifest (its refs are mutated in place).
- * @param moduleMap Absolute source path → absolute compat server bundle path.
+ * A loader for the boundary's refs (`file://` source URLs → the compat module), for
+ * {@link ../runtime/client-reference.ts | tagClientModules} / `tagServerModules`: tagging
+ * must see the SAME instances the page bundles reference, which the keyed bundle gives by
+ * construction. Non-compat refs load from source.
  */
-export function redirectBoundaryToCompat(
-  boundary: BoundaryManifest,
-  moduleMap: Map<string, string>,
-): void {
-  for (const ref of [...boundary.client.values(), ...boundary.server.values()]) {
-    try {
-      const bundle = moduleMap.get(fromFileUrl(ref.url));
-      if (bundle) ref.url = toFileUrl(bundle).href;
-    } catch { /* non-file URL — leave as-is */ }
-  }
+export function boundaryRefLoader(load: ModuleLoader): (url: string) => Promise<unknown> {
+  return (url) => load(url.startsWith("file:") ? fromFileUrl(url) : url);
 }

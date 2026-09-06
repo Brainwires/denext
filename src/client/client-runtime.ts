@@ -12,7 +12,12 @@
 export { setFlightParser, startClient } from "./navigation.ts";
 export { type LayoutSegmentInfo, provideLayoutSegments } from "../runtime/layout-segments.ts";
 // Flight hydration: reconstruct a VNode tree from the server's Flight payload.
-export { type ClientRegistry, parseFlight } from "./flight-client.ts";
+export {
+  type ClientRegistry,
+  ensureFlightModules,
+  flightClientIds,
+  parseFlight,
+} from "./flight-client.ts";
 // Server Actions: the browser dispatch stub emitted for each `"use server"` export.
 export { clientActionStub } from "../runtime/server-action.ts";
 // Resumability: the lazily-loaded event-handler reference the qrl transform emits.

@@ -61,6 +61,13 @@ and this project adheres to
   thenable and retrying — the way Next's app router's implicit root boundary does. The
   unhandled-error log names the situation instead of printing `Promise { <pending> }`, and
   `DENEXT_DEBUG_SUSPENSE=1` records where `use()` first saw the thenable.
+- **No-op state updates bail out of re-rendering (React parity).** A component scheduled only by
+  state setters whose values ended up unchanged is no longer re-rendered. radix's
+  `DismissableLayer` recreates its callback ref every render, and each commit's detach/attach
+  calls `setNode(null)` then `setNode(node)` — React's bailout ends that; denext re-rendered,
+  produced another ref, and looped until "Maximum update depth exceeded" (shadcn/ui's ⌘K
+  dialog and theme toggle). Updates from a Suspense retry, an external store, a boundary reset
+  or Fast Refresh still always render.
 - **The client "Maximum update depth exceeded" error names the component** that scheduled the
   last update, so an effect/state ping-pong in a large app is traceable instead of a minified
   chunk offset.
@@ -83,6 +90,29 @@ and this project adheres to
   nuqs) import `next/navigation.js`, `next/link.js`, `next/image.js` with Node's explicit
   extension; the alias lookup missed them and the REAL Next router landed in the SSR bundle
   ("invariant expected app router to be mounted"). The extension is normalized away first.
+- **Link prefetching is capped at four in flight.** A docs sidebar scrolling dozens of links
+  into view fired one full server render per link at once, starving the navigation the user
+  actually made; further prefetches now queue.
+- **Islands are code-split and loaded per page.** The Flight entry statically imported every
+  `"use client"` island, so any page shipped the whole app's islands (shadcn/ui's site: a 10 MB
+  `flight.js`). The entry now holds one dynamic `import()` per island and loads only the islands
+  a payload references — on first hydration, on soft navigation, for deferred `client:*`
+  islands and for Live patches — so a page ships the entry plus its own islands' chunks
+  (shadcn/ui's `flight.js`: 10.5 MB → 147 KB). The soft-nav Flight parser and Live's `parse`
+  may now return a Promise; soft navigation loads the chunks BEFORE starting the view
+  transition (an async transition callback is aborted by the browser).
+- **One server bundle per compat app.** The react→denext server build emitted one entry per
+  route module and island — 2,715 entries and ~14,000 code-split chunk files for shadcn/ui's
+  site, which Deno loads at roughly 80 ms a module: a nine-minute `denext start`. The build now
+  emits ONE keyed bundle (`server/app.js`, each module a namespace export; dynamic `import()`s
+  still split into their own chunks) and the compat loader resolves `<bundle>#<key>`; islands and
+  actions are tagged through that loader, so startup loads one module. Stale bundles from
+  earlier builds are removed (they had accumulated to 448 MB). `redirectBoundaryToCompat` is
+  gone — the loader is the redirect.
+- **The prod server reuses the build's Flight boundary.** `manifest.json` now records the
+  client/server boundary the build crawled (project-relative paths), so `denext start` skips
+  the two import-graph crawls it used to repeat at startup (30 s on shadcn/ui's site); an older
+  manifest without it still triggers the crawl.
 - **The prod server warms every route module before listening.** A large app's first request
   spent its whole timeout budget evaluating the page's module graph (shadcn/ui's docs page:
   32 s → a 503 on first hit); page + layout modules are now imported at startup.
@@ -92,6 +122,9 @@ and this project adheres to
   them (radix's forwardRef `Dialog.Content`, a module-private helper) as a server component,
   outside its provider: shadcn/ui's site failed every page with `` `DialogContent` must be used
   within `Dialog` ``. Uncarved nested islands now contribute no Flight of their own.
+- **`memo()` / `forwardRef()` islands hydrate.** The generated Flight entry registered only
+  function exports on the client, so a server-tagged memo/forwardRef reference (see below) had
+  no registry entry to hydrate against; both shapes are registered now.
 - **`memo()` / `forwardRef()` exports of a `"use client"` module are client references.**
   Tagging only covered function exports; React's non-callable memo/forwardRef element objects
   (radix's `Dialog.Content`, now an island of its own) went untagged and the Flight renderer

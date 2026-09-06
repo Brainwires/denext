@@ -7,12 +7,17 @@
 // island-identity / server-code-elision path in seconds.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { join, toFileUrl } from "@std/path";
+import { fromFileUrl, join, toFileUrl } from "@std/path";
 import {
   buildNextCompatFlightEntry,
   buildNextCompatModules,
 } from "../../src/build/next-compat-build.ts";
-import { redirectBoundaryToCompat } from "../../src/build/next-compat-loader.ts";
+import {
+  createNextCompatServerLoader,
+  loadBundleRef,
+  splitBundleRef,
+} from "../../src/build/next-compat-loader.ts";
+import { defaultLoader } from "../../src/server/mod.ts";
 import { stopNextCompat } from "../../src/build/next-compat.ts";
 import {
   type BoundaryManifest,
@@ -115,21 +120,15 @@ async function tagIsland(
   fx: Fixture,
   boundary: BoundaryManifest,
   moduleMap: Map<string, string>,
-  islandBundle: string,
 ): Promise<void> {
-  // Redirect the boundary ref to the compat island bundle, then tag it — exactly
-  // what the prod/dev server does before rendering. The page bundle imports the
-  // island through the same shared chunk, so tagging the compat bundle's export
-  // tags the very instance the page renders.
-  redirectBoundaryToCompat(boundary, moduleMap);
+  // Tag through the compat loader — exactly what the prod/dev server does before rendering.
+  // The page bundle and the island resolve to the SAME module inside the single keyed server
+  // bundle, so tagging the loader's namespace tags the very instance the page renders.
+  const load = createNextCompatServerLoader(defaultLoader, { moduleMap });
   const islandRef = [...boundary.client.values()][0];
-  assertEquals(
-    islandRef.url,
-    toFileUrl(islandBundle).href,
-    "boundary ref redirected to the compat island bundle",
-  );
-  const islandMod = await import(islandRef.url) as Record<string, unknown>;
+  const islandMod = await load(fromFileUrl(islandRef.url)) as Record<string, unknown>;
   tagClientExports(islandMod, clientIdFor(fx.appDir, toFileUrl(fx.islandPath).href));
+  void fx;
 }
 
 async function renderPageBundle(pageBundle: string): Promise<{ html: string; payload: string }> {
@@ -137,7 +136,7 @@ async function renderPageBundle(pageBundle: string): Promise<{ html: string; pay
   // path: source renderer + compat-bundled components, one dispatcher on
   // globalThis). The async Server Component must render server-side; the island
   // must appear only as a REFERENCE in the Flight payload.
-  const pageMod = await import(toFileUrl(pageBundle).href) as {
+  const pageMod = await loadBundleRef(defaultLoader, pageBundle) as {
     default: (p: unknown) => unknown;
   };
   const tree = await (pageMod.default as (p: unknown) => Promise<unknown>)({});
@@ -164,13 +163,18 @@ async function assertFlightClientBundle(clientDir: string, clientId: string): Pr
   // island code, and NEVER the server-only marker or npm React.
   const flightJs = await Deno.readTextFile(join(clientDir, "flight.js"));
   assertStringIncludes(flightJs, `"${clientId}"`, "flight bundle registers the island id");
-  assertStringIncludes(flightJs, "ISLAND_COUNT", "island code is in the flight bundle");
+  // Islands are code-split: the island's code is in its own chunk, loaded on demand.
+  let all = "";
+  for await (const e of Deno.readDir(clientDir)) {
+    if (e.isFile && e.name.endsWith(".js")) all += await Deno.readTextFile(join(clientDir, e.name));
+  }
+  assertStringIncludes(all, "ISLAND_COUNT", "island code is in a client chunk");
   assert(
-    !flightJs.includes("SERVER_ONLY_MARKER_XYZZY"),
+    !all.includes("SERVER_ONLY_MARKER_XYZZY"),
     "server-only code must NOT be in the client flight bundle",
   );
   assert(
-    !/react\.development|react\.production|__SECRET_INTERNALS_DO_NOT_USE/.test(flightJs),
+    !/react\.development|react\.production|__SECRET_INTERNALS_DO_NOT_USE/.test(all),
     "flight bundle must be denext's React, not npm React",
   );
 }
@@ -182,13 +186,15 @@ Deno.test("next-compat Flight: async Server Component stays server-side; island 
     const boundary = await discoverBoundary(fx);
     const moduleMap = await buildCompat(fx, boundary);
 
-    // The island is bundled as its OWN entry (a separate module → shared runtime
-    // chunk), never inlined into the page bundle. This is what makes identity hold.
+    // Page and island are namespaces of ONE server bundle (`<bundle>#<key>`), so the page's
+    // reference to the island and the tagged island are the same module by construction.
     const pageBundle = moduleMap.get(fx.pagePath)!;
     const islandBundle = moduleMap.get(fx.islandPath)!;
-    assert(pageBundle && islandBundle, "page + island each have a compat bundle");
+    assert(pageBundle && islandBundle, "page + island each have a compat ref");
+    assertEquals(splitBundleRef(pageBundle).bundle, splitBundleRef(islandBundle).bundle);
+    assert(splitBundleRef(islandBundle).key, "keyed ref");
 
-    await tagIsland(fx, boundary, moduleMap, islandBundle);
+    await tagIsland(fx, boundary, moduleMap);
     const { html, payload } = await renderPageBundle(pageBundle);
     const clientId = clientIdFor(fx.appDir, toFileUrl(fx.islandPath).href);
     assertServerSideRender(html, payload, clientId);

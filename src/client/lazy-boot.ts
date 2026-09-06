@@ -6,7 +6,7 @@
 // same "tiny by default" discipline the `denext/live` subpath follows.
 
 import { createRoot, hydrateRoot } from "./reconciler.ts";
-import { type ClientRegistry, parseFlight } from "./flight-client.ts";
+import { type ClientRegistry, ensureFlightModules, parseFlight } from "./flight-client.ts";
 import { registerLazyIsland, resetLazyIslands } from "./lazy-hydrate.ts";
 import { installQrlDispatch } from "./qrl-dispatch.ts";
 import { setResumabilityReboot } from "./navigation.ts";
@@ -94,14 +94,15 @@ function readIslandsIsland(): Record<string, FlightNode> | null {
  * server DOM to adopt — it mounts fresh with createRoot (same as the soft-nav path), never
  * hydrateRoot. Marks the wrapper first, so a re-run skips it.
  */
-function hydrateIsland(
+async function hydrateIsland(
   wrapper: Element,
   flight: FlightNode,
   reg: ClientRegistry,
   mount: boolean,
-): void {
+): Promise<void> {
   wrapper.setAttribute(HYDRATED_ATTR, "");
   try {
+    await ensureFlightModules(reg, flight); // code-split islands: load this island's chunks
     const tree = parseFlight(flight, reg) as never;
     if (mount) createRoot(wrapper).render(tree);
     else hydrateRoot(wrapper, tree);
@@ -139,7 +140,9 @@ function scheduleIsland(
   const island = islandOf(wrapper, islands);
   if (!island) return;
   const mountFresh = eager || island.strategy === "only";
-  const hydrate = () => hydrateIsland(wrapper, island.flight, reg, mountFresh);
+  const hydrate = () => {
+    void hydrateIsland(wrapper, island.flight, reg, mountFresh);
+  };
   if (eager) return hydrate();
   registerLazyIsland({
     container: wrapper,

@@ -119,7 +119,10 @@ async function assertSharedRuntimeChunk(clientDir: string): Promise<void> {
  * details, the superseded-navigation check — ~+0.7 KB raw).
  * The over-the-wire cost is the GZIPPED figure, verified by bench Layer 1; this raw guard
  * is a "did the runtime get inlined into a route entry" tripwire, not an over-the-wire
- * budget — the 6 KB per-route entry budget is the real one.
+ * budget — the 6 KB per-route entry budget is the real one. Re-based 60 → 62 KB for 2.0.5:
+ * React's no-op-state bailout (`HookCell.rendered`/`committed`, `Fiber.forceRender`), the
+ * component-naming update-depth error, and the code-split island loader (`flightClientIds`,
+ * `registry.ensure`) — each a parity/size win worth more than its ~400 bytes.
  */
 async function assertBundleBudgets(clientDir: string): Promise<void> {
   let sharedTotal = 0;
@@ -128,7 +131,7 @@ async function assertBundleBudgets(clientDir: string): Promise<void> {
       sharedTotal += (await Deno.stat(join(clientDir, e.name))).size;
     }
   }
-  assert(sharedTotal < 60_000, `shared chunks total ${sharedTotal} bytes (budget 60 KB raw)`);
+  assert(sharedTotal < 62_000, `shared chunks total ${sharedTotal} bytes (budget 62 KB raw)`);
   for (const f of ["about.js", "blog___slug_.js"]) {
     const n = (await Deno.stat(join(clientDir, f))).size;
     assert(n < 6_000, `${f} is ${n} bytes (budget 6 KB) — is the runtime inlined again?`);

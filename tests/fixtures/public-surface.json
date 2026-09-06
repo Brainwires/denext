@@ -824,6 +824,8 @@
     "clientActionStub:function",
     "enableFastRefresh:function",
     "enablePerModuleRefresh:function",
+    "ensureFlightModules:function",
+    "flightClientIds:function",
     "parseFlight:function",
     "performModuleRefresh:function",
     "provideLayoutSegments:function",

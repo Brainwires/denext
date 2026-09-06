@@ -11,7 +11,8 @@
  * @module
  */
 
-import { join, relative } from "@std/path";
+import { join } from "@std/path";
+import { keyedBundleRef } from "./next-compat-loader.ts";
 import type * as esbuild from "esbuild";
 import {
   type AssetOptions,
@@ -121,34 +122,6 @@ export interface BuildNextCompatModulesOptions {
   cssImportMap?: Record<string, string>;
 }
 
-/** Stable, filesystem-safe id for a source module (unique per project-relative path). */
-function moduleId(projectDir: string, absPath: string): string {
-  return relative(projectDir, absPath)
-    .replace(/\\/g, "/")
-    .replace(/[^a-zA-Z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-}
-
-/**
- * Whether a module source has a default export. A re-export entry can only emit
- * `export { default } from "…"` for modules that actually have one — `export *`
- * never carries the default, and `export { default }` from a default-less module
- * is a hard esbuild error. Route conventions (page/layout/…) always have a
- * default; `"use client"` islands frequently have only named exports, so this is
- * checked per module rather than assumed. Read-failure → assume a default (the
- * route-convention common case; a genuine miss surfaces as a build error).
- */
-async function hasDefaultExport(absPath: string): Promise<boolean> {
-  let src: string;
-  try {
-    src = await Deno.readTextFile(absPath);
-  } catch {
-    return true;
-  }
-  return /\bexport\s+default\b/.test(src) ||
-    /\bexport\s*\{[^}]*\bdefault\b[^}]*\}/.test(src);
-}
-
 /**
  * Build react→denext-rewritten SSR bundles for a set of route source modules,
  * each RE-EXPORTING the source module's shape (`default` + named exports:
@@ -185,26 +158,25 @@ export async function buildNextCompatModules(
     classComponents: options.classComponents,
   });
 
-  // One re-export entry per source module. `export *` carries the named exports
-  // render-page reads (metadata/segment-config/…); the default is re-exported only
-  // when the module has one (islands often don't → `export { default }` would fail).
-  const entryPoints: Record<string, string> = {};
-  const idToSrc = new Map<string, string>();
-  for (const abs of options.modules) {
-    const id = moduleId(options.projectDir, abs);
-    const entryPath = join(entriesDir, `${id}.tsx`);
-    const withDefault = await hasDefaultExport(abs);
-    await Deno.writeTextFile(
-      entryPath,
-      `export * from ${JSON.stringify(abs)};\n` +
-        (withDefault ? `export { default } from ${JSON.stringify(abs)};\n` : ""),
-    );
-    entryPoints[id] = entryPath;
-    idToSrc.set(id, abs);
-  }
+  // ONE entry re-exporting every module as a namespace (`export * as m<i>`): the whole
+  // server side becomes a single bundle file (plus the chunks dynamic `import()`s split
+  // off), and each source module maps to `<bundle>#m<i>`. Module identity is trivially
+  // shared, and the server loads ONE module at startup instead of one per route/island —
+  // Deno spends ~80 ms per module on a large graph, which made shadcn/ui's 2,700 islands a
+  // nine-minute startup as separate entries. `export * as` carries `default` when present.
+  await cleanStaleServerBundles(outRoot);
+  const keys = new Map<string, string>();
+  const lines: string[] = [];
+  options.modules.forEach((abs, i) => {
+    const key = `m${i}`;
+    keys.set(abs, key);
+    lines.push(`export * as ${key} from ${JSON.stringify(abs)};`);
+  });
+  const entryPath = join(entriesDir, "app.tsx");
+  await Deno.writeTextFile(entryPath, lines.join("\n") + "\n");
 
   await bundleNextCompatModules({
-    entryPoints,
+    entryPoints: { [SERVER_BUNDLE_NAME]: entryPath },
     runtimeDir,
     outdir: outRoot,
     configPath: options.configPath,
@@ -217,11 +189,26 @@ export async function buildNextCompatModules(
     cssImportMap: options.cssImportMap,
   });
 
+  const bundle = join(outRoot, `${SERVER_BUNDLE_NAME}.js`);
   const map = new Map<string, string>();
-  for (const [id, abs] of idToSrc) {
-    map.set(abs, join(outRoot, `${id}.js`));
-  }
+  for (const [abs, key] of keys) map.set(abs, keyedBundleRef(bundle, key));
   return map;
+}
+
+/** Base name of the single compat server bundle (`server/app.js`). */
+const SERVER_BUNDLE_NAME = "app";
+
+/**
+ * Drop the previous build's server bundle + chunks (not the prebuilt `runtime/` or the
+ * generated `.entries/`). Chunk names are content-hashed, so without this every build
+ * left its predecessors behind — 448 MB after a dozen builds of a large app.
+ */
+async function cleanStaleServerBundles(outRoot: string): Promise<void> {
+  try {
+    for await (const e of Deno.readDir(outRoot)) {
+      if (e.isFile && e.name.endsWith(".js")) await Deno.remove(join(outRoot, e.name));
+    }
+  } catch { /* first build */ }
 }
 
 /** A compat client entry to build: an output id + its generated entry source. */

@@ -338,3 +338,26 @@ Deno.test("module graph cache: a crawl over a subset of an earlier crawl's entri
     await Deno.remove(app, { recursive: true });
   }
 });
+
+// The build manifest carries the boundary (project-relative paths) so the prod server skips the
+// startup crawl; node_modules islands outside the project dir round-trip through `../`.
+Deno.test("boundary manifest serializes to project-relative paths and back", async () => {
+  const { deserializeBoundary, serializeBoundary } = await import("../src/build/module-graph.ts");
+  const project = "/repo/apps/web";
+  const b = {
+    client: new Map([
+      ["c_a", { url: "file:///repo/apps/web/components/a.tsx", exports: ["A"] }],
+      ["c_nm", { url: "file:///repo/node_modules/vaul/dist/index.mjs", exports: ["Drawer"] }],
+    ]),
+    server: new Map([["s_x", { url: "file:///repo/apps/web/app/actions.ts", exports: ["save"] }]]),
+  };
+  const s = serializeBoundary(b, project);
+  assertEquals(s.client.c_a.path, "components/a.tsx");
+  assertEquals(s.client.c_nm.path, "../../node_modules/vaul/dist/index.mjs");
+  const back = deserializeBoundary(JSON.parse(JSON.stringify(s)), project);
+  assertEquals(back.client.get("c_nm")?.url, "file:///repo/node_modules/vaul/dist/index.mjs");
+  assertEquals(back.server.get("s_x"), {
+    url: "file:///repo/apps/web/app/actions.ts",
+    exports: ["save"],
+  });
+});

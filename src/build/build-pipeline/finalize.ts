@@ -13,6 +13,7 @@ import {
   compatModuleMapFromManifest,
   createNextCompatServerLoader,
 } from "../next-compat-loader.ts";
+import { serializeBoundary } from "../module-graph.ts";
 import { collectPageFontEntries } from "../pipeline-shared.ts";
 import { precompressDir } from "../precompress.ts";
 import { FONTS_PUBLIC_PREFIX, selfHostFonts } from "../self-host-fonts.ts";
@@ -76,6 +77,9 @@ function buildManifestFor(
     generatedRoutes: ctx.routes,
     flight: ctx.hasFlight,
     boundaryRoutes: ctx.boundaryRoutes.map((p) => p.routePath),
+    // The client/server boundary the build crawled, so the prod server can skip re-crawling
+    // the import graph at startup (paths relative to the project dir).
+    boundary: ctx.boundary ? serializeBoundary(ctx.boundary, ctx.projectDir) : null,
     // Routes that ship no client JS (pure server-rendered HTML). The prod server reads
     // this to skip both the hydration <script> and the missing-bundle check.
     staticRoutes: ctx.staticRoutes,

@@ -96,15 +96,18 @@ const taggedClients = new Set<string>();
  */
 export async function tagClientModules(
   clients: Iterable<[string, { url: string }]>,
+  load?: (url: string) => Promise<unknown>,
 ): Promise<void> {
   const pending = [...clients].filter(([clientId]) => !taggedClients.has(clientId));
   if (pending.length === 0) return;
-  const barrel = pending.length > BARREL_MIN
+  // With an app loader (compat: the keyed single server bundle) every ref costs one lookup;
+  // bare `import()`s go through one barrel module instead (see importViaBarrel).
+  const barrel = !load && pending.length > BARREL_MIN
     ? await importViaBarrel(pending.map(([, ref]) => ref.url))
     : null;
   await Promise.all(
     pending.map(async ([clientId, ref], i) => {
-      const mod = barrel ? barrel[i] : await import(ref.url);
+      const mod = barrel ? barrel[i] : load ? await load(ref.url) : await import(ref.url);
       tagClientExports(mod as Record<string, unknown>, clientId);
       taggedClients.add(clientId);
     }),

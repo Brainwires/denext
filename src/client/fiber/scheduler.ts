@@ -81,7 +81,14 @@ export function resetConcurrentState(): void {
  * child-lane hint up to the root (marking both buffers so whichever is current
  * sees it), and schedule the appropriate flush.
  */
-export function scheduleUpdate(fiber: Fiber): void {
+export function scheduleUpdate(fiber: Fiber, fromState = false): void {
+  if (fromState) {
+    fiber.stateUpdate = true;
+    if (fiber.alternate) fiber.alternate.stateUpdate = true;
+  } else {
+    fiber.forceRender = true;
+    if (fiber.alternate) fiber.alternate.forceRender = true;
+  }
   // With AsyncContext scoping enabled (experimental.asyncContext + the build
   // transform), priority is decided by transition IDENTITY: an update belongs to a
   // transition iff it is enqueued inside that transition's context — which the

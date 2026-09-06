@@ -10,7 +10,7 @@
 // build-time graph split (which modules the browser bundle may contain) and the
 // runtime registration of client-component and server references.
 
-import { fromFileUrl, join, relative, SEPARATOR, toFileUrl } from "@std/path";
+import { fromFileUrl, join, relative, resolve, SEPARATOR, toFileUrl } from "@std/path";
 import { type Directive, readDirective } from "./directives.ts";
 import { denoExecutable, frameworkRoot, minDepAgeArgs } from "./bundle.ts";
 
@@ -101,6 +101,40 @@ function runtimeReachable(info: DenoInfo, roots: string[]): DenoInfoModule[] {
     }
   }
   return out;
+}
+
+/** {@link BoundaryManifest} as the build manifest stores it: ids → project-relative paths. */
+export interface SerializedBoundary {
+  client: Record<string, { path: string; exports: string[] }>;
+  server: Record<string, { path: string; exports: string[] }>;
+}
+
+/**
+ * Serialize a boundary manifest for `manifest.json` (module URLs → paths relative to
+ * `projectDir`, so a deployed build is portable), and rebuild it at server startup — which
+ * saves the prod server the import-graph crawl the build already did (30 s on a large app).
+ */
+export function serializeBoundary(b: BoundaryManifest, projectDir: string): SerializedBoundary {
+  const rel = (m: Map<string, BoundaryRef>) =>
+    Object.fromEntries(
+      [...m].map(([id, ref]) => [id, {
+        path: relative(projectDir, fromFileUrl(ref.url)),
+        exports: ref.exports,
+      }]),
+    );
+  return { client: rel(b.client), server: rel(b.server) };
+}
+
+/** Inverse of {@link serializeBoundary}. */
+export function deserializeBoundary(sb: SerializedBoundary, projectDir: string): BoundaryManifest {
+  const abs = (r: Record<string, { path: string; exports: string[] }>) =>
+    new Map(
+      Object.entries(r).map(([id, ref]) => [id, {
+        url: toFileUrl(resolve(projectDir, ref.path)).href,
+        exports: ref.exports,
+      }]),
+    );
+  return { client: abs(sb.client), server: abs(sb.server) };
 }
 
 /** Options for {@linkcode crawlLocalModules}. */

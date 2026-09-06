@@ -55,7 +55,7 @@ const presenceRooms = new Map<string, PresenceRoom>();
 let subCounter = 0;
 
 let socket: WebSocket | null = null;
-let parse: ((flight: FlightNode) => VNodeChild) | null = null;
+let parse: ((flight: FlightNode) => VNodeChild | Promise<VNodeChild>) | null = null;
 let refresh: (() => void) | null = null;
 
 /** Any live subscription (boundary, data, or presence) that keeps the socket alive. */
@@ -87,7 +87,7 @@ let hadConnection = false;
  * @param opts.refresh Re-render the current route (the router's `refresh`).
  */
 export function configureLive(opts: {
-  parse: (flight: FlightNode) => VNodeChild;
+  parse: (flight: FlightNode) => VNodeChild | Promise<VNodeChild>;
   refresh: () => void;
 }): void {
   parse = opts.parse;
@@ -199,6 +199,22 @@ function ensureSocket(): void {
   };
 }
 
+/**
+ * Deliver a parsed patch to its boundary. The parser may first load island chunks the patch
+ * references (code-split islands) and return a Promise; a synchronous parser patches
+ * synchronously.
+ */
+function applyPatch(
+  b: { onPatch: (tree: VNodeChild) => void },
+  tree: VNodeChild | Promise<VNodeChild>,
+): void {
+  if (tree instanceof Promise) {
+    tree.then((t) => b.onPatch(t)).catch((err) => {
+      console.warn("denext: live patch failed:", (err as Error)?.message);
+    });
+  } else b.onPatch(tree);
+}
+
 function handleServerMessage(raw: string): void {
   let msg: LiveServerMessage;
   try {
@@ -209,7 +225,7 @@ function handleServerMessage(raw: string): void {
   switch (msg.type) {
     case "patch": {
       const b = boundaries.get(msg.boundaryId);
-      if (b && parse) b.onPatch(parse(msg.flight));
+      if (b && parse) applyPatch(b, parse(msg.flight));
       break;
     }
     case "refresh":
