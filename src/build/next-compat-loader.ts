@@ -54,14 +54,6 @@ export async function loadBundleRef(base: ModuleLoader, ref: string): Promise<un
 }
 
 /**
- * Wrap a base {@link ModuleLoader} so route source modules that have a react→denext
- * rewritten server bundle load from that bundle instead of source.
- *
- * @param base The underlying loader (dev cache-bust / use-cache / defaultLoader).
- * @param opts The source→bundle map produced by the build.
- * @returns A loader that redirects mapped modules and passes through the rest.
- */
-/**
  * Rebuild the absolute source → compat server bundle map from the build manifest's
  * relative form (`compatServerModules`: project-relative source → outDir-relative bundle).
  * Shared by the prod server at startup and the build's own finalize stage.
@@ -78,6 +70,15 @@ export function compatModuleMapFromManifest(
   return map;
 }
 
+/**
+ * Wrap a base {@link ModuleLoader} so route source modules that have a react→denext
+ * rewritten server bundle load from that bundle instead of source (a keyed ref resolves to
+ * the module's namespace inside the single server bundle).
+ *
+ * @param base The underlying loader (dev cache-bust / use-cache / defaultLoader).
+ * @param opts The source→bundle map produced by the build.
+ * @returns A loader that redirects mapped modules and passes through the rest.
+ */
 export function createNextCompatServerLoader(
   base: ModuleLoader,
   opts: NextCompatServerLoaderOptions,

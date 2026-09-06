@@ -87,14 +87,6 @@ function isContextUsable(value: unknown): value is Context<unknown> {
     typeof (value as { _id?: unknown })._id === "symbol";
 }
 
-/**
- * React 19's `use`: read a resource during render. Given a **promise**, unwrap its
- * value, suspending (throwing the promise) while it is pending — the same promise
- * instance must be passed across renders (cache it). Given a **context** (from
- * `createContext`), read its current value like `useContext` — this overload may be
- * called conditionally. Works on the client and under every SSR renderer, since
- * both delegate to the active hook dispatcher.
- */
 let debugSuspenseFlag: boolean | null = null;
 function debugSuspense(): boolean {
   if (debugSuspenseFlag === null) {
@@ -107,6 +99,14 @@ function debugSuspense(): boolean {
   return debugSuspenseFlag;
 }
 
+/**
+ * React 19's `use`: read a resource during render. Given a **promise**, unwrap its
+ * value, suspending (throwing the promise) while it is pending — the same promise
+ * instance must be passed across renders (cache it). Given a **context** (from
+ * `createContext`), read its current value like `useContext` — this overload may be
+ * called conditionally. Works on the client and under every SSR renderer, since
+ * both delegate to the active hook dispatcher.
+ */
 export function use<T>(usable: Promise<T> | Context<T>): T {
   // `use` is React's primitive for reading a context during render; it may be called
   // conditionally by design, and its lowercase name isn't a `useX` hook — so the
