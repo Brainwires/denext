@@ -176,12 +176,34 @@ export type {
   ApiEndpoint,
   ApiRequestOptions,
   ApiSchema,
+  ErrorsOf,
+  FreeQuery,
   HttpMethod,
+  RegisteredApi,
+  RegisteredSchema,
   RequestArgs,
   RequestOf,
   RequiredKeys,
   ResponseOf,
+  TypedQuery,
 } from "./src/runtime/api-client.ts";
+// Type-level inference behind the generated `.denext/api.ts` (`ModuleEndpoints<typeof Route, P>`).
+export type {
+  ApiPhantom,
+  HandlerBody,
+  HandlerErrors,
+  HandlerLike,
+  HandlerParams,
+  HandlerQuery,
+  HandlerResponse,
+  InferEndpoint,
+  Informative,
+  IsAny,
+  ModuleEndpoints,
+  PlainBody,
+  PlainResponse,
+  ValueResult,
+} from "./src/runtime/api-infer.ts";
 export { FontFace, localFont } from "./src/runtime/font.ts";
 export type { FontResult, FontSource, LocalFontOptions } from "./src/runtime/font.ts";
 export { googleFont, googleFontUrl } from "./src/runtime/font-google.ts";

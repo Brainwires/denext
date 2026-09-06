@@ -108,12 +108,34 @@ export type {
   ApiEndpoint,
   ApiRequestOptions,
   ApiSchema,
+  ErrorsOf,
+  FreeQuery,
   HttpMethod,
+  RegisteredApi,
+  RegisteredSchema,
   RequestArgs,
   RequestOf,
   RequiredKeys,
   ResponseOf,
+  TypedQuery,
 } from "../runtime/api-client.ts";
+// Type-level inference behind the generated `.denext/api.ts` (`ModuleEndpoints<typeof Route, P>`).
+export type {
+  ApiPhantom,
+  HandlerBody,
+  HandlerErrors,
+  HandlerLike,
+  HandlerParams,
+  HandlerQuery,
+  HandlerResponse,
+  InferEndpoint,
+  Informative,
+  IsAny,
+  ModuleEndpoints,
+  PlainBody,
+  PlainResponse,
+  ValueResult,
+} from "../runtime/api-infer.ts";
 
 export {
   Link,

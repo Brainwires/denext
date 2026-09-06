@@ -50,6 +50,28 @@ and this project adheres to
   `src/client/{flight-client,live-client}.ts`, `src/runtime/{server-action,live-protocol}.ts`,
   `src/server/{action-handler,live}.ts`.
 
+### Changed
+
+- **The typed-API generator no longer spawns `deno doc`.** `.denext/api.ts` now imports each
+  route module's TYPE (`import type * as R0 from "…/route.ts"`) and applies
+  `ModuleEndpoints<typeof R0, Params>` (`denext`'s new type-level inference helpers), so
+  TypeScript itself derives every handler's body / query / response / error codes — from a
+  `defineApi` definition or from `TypedRequest` / `TypedResponse` annotations. Generation is a
+  pure function of the manifest (zero I/O; 50 routes in well under a millisecond where a
+  `deno doc` per route took seconds and once stalled the dev loop). Fixes on the way: a
+  non-exported local type in a handler signature no longer degrades to `unknown`; a catch-all
+  param is typed `string[]` (the runtime shape; the client accepts a `string[]` or a `/`-joined
+  string); an optional catch-all is optional. The schema also carries each endpoint's typed
+  `query` (required when the route declares a `query` schema) and its `errors` union
+  (`ErrorsOf<E>`). The generated module registers itself (`declare module "denext" { interface
+  RegisteredApi { schema } }`) so `createApiClient()` needs no type argument once
+  `./.denext/api.ts` is imported; the explicit `createApiClient<ApiSchema>()` still works.
+  Consumers type-check route modules transitively now: a `route.ts` that itself imports
+  `.denext/api.ts` and returns an un-annotated value derived from it should annotate the
+  return or declare a `response` schema. Public-surface golden refreshed.
+  `src/runtime/api-infer.ts` (new), `src/build/api-types.ts` (rewritten),
+  `src/runtime/api-client.ts`, `mod.ts`, `src/client/mod.ts`.
+
 ### Fixed
 
 - **`redirect()` / `notFound()` / `forbidden()` / `unauthorized()` thrown inside a

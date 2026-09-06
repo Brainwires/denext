@@ -21,18 +21,33 @@
 export type { HttpMethod } from "../server/types.ts";
 import type { HttpMethod } from "../server/types.ts";
 
-/** One endpoint's typed shape: its params, optional request/response bodies. */
+/** One endpoint's typed shape: its params, optional request/response bodies, query, error codes. */
 export interface ApiEndpoint {
   /** Path params for the route's dynamic segments (absent for a fully-static route). */
-  params?: Record<string, string>;
+  params?: Record<string, string | string[]>;
   /** The JSON request body the handler parses (absent when it reads none). */
   body?: unknown;
+  /** The typed query record of a `defineApi` route (absent → free-form strings). */
+  query?: unknown;
   /** The JSON response body the handler returns (`unknown` when it isn't a `TypedResponse`). */
   response?: unknown;
+  /** The error codes a call may fail with (an endpoint's declared codes + the builtins). */
+  errors?: string;
 }
 
 /** A whole app's API surface: route pattern → (method → endpoint). */
 export type ApiSchema = Record<string, Partial<Record<HttpMethod, ApiEndpoint>>>;
+
+/**
+ * Augmentation target for the generated `.denext/api.ts`: `declare module "denext" { interface
+ * RegisteredApi { schema: ApiSchema } }` makes `createApiClient()` typed with no type argument.
+ */
+// deno-lint-ignore no-empty-interface
+export interface RegisteredApi {}
+
+/** The registered app schema when `.denext/api.ts` is imported, else the open `ApiSchema`. */
+export type RegisteredSchema = RegisteredApi extends { schema: infer S extends ApiSchema } ? S
+  : ApiSchema;
 
 // ── Request/response type mapping ────────────────────────────────────────────
 
@@ -41,13 +56,12 @@ export type RequiredKeys<T> = {
   [K in keyof T]-?: Record<never, never> extends Pick<T, K> ? never : K;
 }[keyof T];
 
-/** The options object for one endpoint: `params`/`body` appear only when the route has them. */
+/** The options object for one endpoint: `params`/`body`/`query` are typed when the route declares them. */
 export type RequestOf<E extends ApiEndpoint> =
   & (E extends { params: infer P } ? { params: P } : unknown)
   & (E extends { body: infer B } ? { body: B } : unknown)
+  & (E extends { query: infer Q } ? TypedQuery<Q> : FreeQuery)
   & {
-    /** Extra query-string params appended to the URL. */
-    query?: Record<string, string>;
     /** Extra request headers (merged over the JSON content-type). */
     headers?: HeadersInit;
     /** Abort signal forwarded to `fetch` (composed with the default timeout). */
@@ -56,8 +70,21 @@ export type RequestOf<E extends ApiEndpoint> =
     timeoutMs?: number;
   };
 
+/** Free-form query strings (an endpoint without a `query` schema). */
+export interface FreeQuery {
+  /** Extra query-string params appended to the URL. */
+  query?: Record<string, string>;
+}
+
+/** A schema-typed query, required; an uninformative (`any`/`unknown`) schema stays free-form. */
+export type TypedQuery<Q> = unknown extends Q ? FreeQuery : { query: Q };
+
 /** The awaited response type for one endpoint. */
 export type ResponseOf<E extends ApiEndpoint> = E extends { response: infer R } ? R : unknown;
+
+/** The error codes a call to one endpoint may fail with. */
+export type ErrorsOf<E extends ApiEndpoint> = E extends { errors: infer C extends string } ? C
+  : string;
 
 /** The trailing call args: the opts object is required only when it has a required key. */
 export type RequestArgs<E extends ApiEndpoint> = RequiredKeys<RequestOf<E>> extends never
@@ -77,12 +104,12 @@ export interface ApiClient<S extends ApiSchema> {
 
 /** Options accepted by the untyped runtime call (the typed client narrows these). */
 export interface ApiRequestOptions {
-  /** Values for the route pattern's dynamic segments. */
-  params?: Record<string, string>;
+  /** Values for the route pattern's dynamic segments (a catch-all takes a `string[]`). */
+  params?: Record<string, string | string[]>;
   /** A JSON request body (serialized with `JSON.stringify`). */
   body?: unknown;
-  /** Extra query-string params appended to the URL. */
-  query?: Record<string, string>;
+  /** Query-string params appended to the URL (arrays repeat the key; other values stringify). */
+  query?: Record<string, unknown>;
   /** Extra request headers (merged over the JSON content-type). */
   headers?: HeadersInit;
   /** Abort signal forwarded to `fetch` (composed with the default timeout). */
@@ -103,9 +130,22 @@ function resolveSignal(
   return caller ? AbortSignal.any([caller, timeout]) : timeout;
 }
 
-/** Encode one param value, preserving `/` so a catch-all value spans path segments. */
-function encodeParam(value: string): string {
-  return value.split("/").map(encodeURIComponent).join("/");
+/** Encode one param value; a catch-all is a `string[]` (or a `/`-joined string) of segments. */
+function encodeParam(value: string | string[]): string {
+  const segments = Array.isArray(value) ? value : value.split("/");
+  return segments.map(encodeURIComponent).join("/");
+}
+
+/** Serialize a query record: arrays repeat the key, `undefined` is skipped, else `String(v)`. */
+function queryString(query: Record<string, unknown> | undefined): string {
+  if (!query) return "";
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(query)) {
+    if (v === undefined) continue;
+    if (Array.isArray(v)) { for (const item of v) qs.append(k, String(item)); }
+    else qs.append(k, String(v));
+  }
+  return qs.toString();
 }
 
 /**
@@ -118,15 +158,15 @@ function encodeParam(value: string): string {
  */
 export function buildPath(
   pattern: string,
-  params?: Record<string, string>,
-  query?: Record<string, string>,
+  params?: Record<string, string | string[]>,
+  query?: Record<string, unknown>,
 ): string {
   const path = pattern.replace(/\[\[?\.{0,3}([^\]]+)\]?\]/g, (_m, name: string) => {
     const value = params?.[name];
     if (value == null) throw new Error(`denext api client: missing param "${name}" for ${pattern}`);
     return encodeParam(value);
   });
-  const qs = query ? new URLSearchParams(query).toString() : "";
+  const qs = queryString(query);
   return qs ? `${path}?${qs}` : path;
 }
 
@@ -173,7 +213,7 @@ export async function apiRequest(
  * @param base Optional origin/base prefix for every request (default: relative).
  * @returns A callable `(path, method, opts?) => Promise<response>`, checked against `S`.
  */
-export function createApiClient<S extends ApiSchema>(base = ""): ApiClient<S> {
+export function createApiClient<S extends ApiSchema = RegisteredSchema>(base = ""): ApiClient<S> {
   return ((path: string, method: HttpMethod, opts?: ApiRequestOptions) =>
     apiRequest(path, method, opts, base)) as ApiClient<S>;
 }

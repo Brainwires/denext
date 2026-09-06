@@ -1,10 +1,11 @@
 // Typed API client (src/build/api-types.ts + src/runtime/api-client.ts).
 //
 // Two halves:
-//   1. The GENERATOR reconstructs each route handler's TypedRequest/TypedResponse body
-//      types (via `deno doc`) into an `ApiSchema`. We assert the emitted source, then
-//      `deno check` a real consumer to prove the schema type-checks a correct call AND
-//      rejects the mistakes it's meant to catch (unknown path, wrong body, missing params).
+//   1. The GENERATOR emits an `ApiSchema` that imports each route module's TYPE and infers
+//      its handlers' shapes (`ModuleEndpoints`) — no `deno doc`. We assert the emitted
+//      source, then `deno check` a real consumer to prove the schema type-checks a correct
+//      call AND rejects the mistakes it's meant to catch (unknown path, wrong body, missing
+//      params, wrong catch-all shape, typed query, undeclared error code).
 //   2. The RUNTIME (`buildPath` / `apiRequest` / `createApiClient`) does param substitution
 //      and the fetch round-trip — driven against a tiny in-process handler, no browser.
 
@@ -17,6 +18,7 @@ import {
 } from "@std/assert";
 import { join } from "@std/path";
 import { scanRoutes } from "../src/router/manifest.ts";
+import { parsePattern } from "../src/router/segments.ts";
 import { generateApiTypes } from "../src/build/api-types.ts";
 import { apiRequest, buildPath, createApiClient } from "../src/runtime/api-client.ts";
 
@@ -63,8 +65,9 @@ export function GET(): TypedResponse<{ message: string; runtime: "deno" }> {
 const USER_ROUTE = `
 import { json, type TypedRequest, type TypedResponse } from "denext/server";
 export interface User { id: string; name?: string; tags: string[] }
-export function GET(): TypedResponse<{ user: User; next: string | null }> {
-  return json({ user: { id: "1", tags: [] }, next: null });
+type Local = { secret: number }; // NOT exported — must still reach the client's types
+export function GET(): TypedResponse<{ user: User; next: string | null; local: Local }> {
+  return json({ user: { id: "1", tags: [] }, next: null, local: { secret: 1 } });
 }
 export async function POST(req: TypedRequest<{ name: string }>): Promise<TypedResponse<{ ok: true }>> {
   await req.json();
@@ -73,77 +76,107 @@ export async function POST(req: TypedRequest<{ name: string }>): Promise<TypedRe
 export function DELETE(): Response { return new Response(null, { status: 204 }); }
 `;
 
-Deno.test("generateApiTypes: reconstructs params, request/response bodies, and 'unknown' for plain Response", async () => {
+/** A `defineApi` route with a hand-rolled Standard Schema that carries the inference slot. */
+const POSTS_ROUTE = `
+import { defineApi, type StandardSchemaV1 } from "denext/server";
+function schema<T>(): StandardSchemaV1<T> & { "~standard": { types: { input: T; output: T } } } {
+  return {
+    "~standard": {
+      version: 1,
+      vendor: "test",
+      validate: (v: unknown) => ({ value: v as T }),
+      types: undefined as unknown as { input: T; output: T },
+    },
+  };
+}
+export const POST = defineApi({
+  body: schema<{ title: string }>(),
+  query: schema<{ page: number }>(),
+  response: schema<{ id: number }>(),
+  errors: { conflict: 409 },
+}, ({ body }) => ({ id: body.title.length }));
+`;
+
+const FILES_ROUTE = `
+import { json, type TypedResponse } from "denext/server";
+export function GET(): TypedResponse<{ n: number }> { return json({ n: 1 }); }
+`;
+
+Deno.test("generateApiTypes: imports each route's type and infers via ModuleEndpoints (no deno doc)", async () => {
   const { dir, outDir } = await makeApp({
     "app/api/hello/route.ts": HELLO_ROUTE,
     "app/api/user/[id]/route.ts": USER_ROUTE,
+    "app/api/files/[...path]/route.ts": FILES_ROUTE,
+    "app/api/docs/[[...slug]]/route.ts": FILES_ROUTE,
   });
   try {
     const src = await generateFor(dir, outDir);
+    assertStringIncludes(src, `import type { ModuleEndpoints } from "denext";`);
     // A `type` alias (not interface) so keyof stays literal yet satisfies the Record constraint.
     assertStringIncludes(src, "export type ApiSchema = {");
-    // Static route: response body only, no params.
-    assertStringIncludes(src, `"/api/hello": {`);
-    assertStringIncludes(src, `GET: { response: { message: string; runtime: "deno" } };`);
-    // Dynamic route: params inferred from the pattern; request + response bodies recovered.
-    assertStringIncludes(src, `"/api/user/[id]": {`);
+    // Routes sorted by path; each imports the route module's TYPE and infers from it.
+    assertStringIncludes(src, `import type * as R0 from "../app/api/docs/[[...slug]]/route.ts";`);
     assertStringIncludes(
       src,
-      `POST: { params: { id: string }; body: { name: string }; response: { ok: true } };`,
+      `"/api/docs/[[...slug]]": ModuleEndpoints<typeof R0, { slug?: string[] }>;`,
     );
-    // A nullable union renders as a union; a plain `Response` handler is `response: unknown`.
-    assertStringIncludes(src, "next: string | null");
-    assertStringIncludes(src, `DELETE: { params: { id: string }; response: unknown };`);
-    // A named, exported local type is re-imported (aliased) rather than lost.
-    assert(/import type \{ User as \w+ \} from/.test(src), "exported local type is imported");
+    assertStringIncludes(
+      src,
+      `"/api/files/[...path]": ModuleEndpoints<typeof R1, { path: string[] }>;`,
+    );
+    assertStringIncludes(src, `"/api/hello": ModuleEndpoints<typeof R2, never>;`);
+    assertStringIncludes(src, `"/api/user/[id]": ModuleEndpoints<typeof R3, { id: string }>;`);
+    // Registered so `createApiClient()` needs no type argument.
+    assertStringIncludes(src, `declare module "denext"`);
+    assertStringIncludes(src, "interface RegisteredApi");
+    assert(!src.includes("deno doc"), "the generator no longer mentions deno doc");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
 });
 
-Deno.test("generateApiTypes: renders arrays, nested objects, optional props, and index signatures", async () => {
-  const { dir, outDir } = await makeApp({
-    "app/api/shapes/route.ts": `
-import { json, type TypedResponse } from "denext/server";
-export function GET(): TypedResponse<{
-  items: { id: number }[];
-  meta?: { total: number };
-  byId: { [key: string]: string };
-}> {
-  return json({ items: [], byId: {} });
-}
-`,
-  });
-  try {
-    const src = await generateFor(dir, outDir);
-    assertStringIncludes(src, "items: { id: number }[]");
-    assertStringIncludes(src, "meta?: { total: number }");
-    assertStringIncludes(src, "[key: string]: string");
-  } finally {
-    await Deno.remove(dir, { recursive: true });
-  }
-});
-
-Deno.test("generateApiTypes: empty when an app has no route handlers", async () => {
+Deno.test("generateApiTypes: empty (and unregistered) when an app has no route handlers", async () => {
   const { dir, outDir } = await makeApp({
     "app/page.tsx": "export default function P() { return null; }",
   });
   try {
     const src = await generateFor(dir, outDir);
     assertStringIncludes(src, "// (no route handlers)");
+    assert(!src.includes("RegisteredApi"), "an empty schema must not be registered");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
 });
 
-/** Write a consumer module under `dir` that binds a typed client, followed by `body`. */
+Deno.test("generateApiTypes: is a pure function of the manifest — no subprocess, sub-millisecond per route", async () => {
+  const api = Array.from({ length: 50 }, (_, i) => ({
+    kind: "api" as const,
+    pattern: parsePattern(`/api/r${i}/[id]`),
+    routePath: `/api/r${i}/[id]`,
+    filePath: `/app/api/r${i}/[id]/route.ts`,
+  }));
+  const manifest = { pages: [], api, rootLayout: null, rootNotFound: null, rootGlobalError: null };
+  const t0 = performance.now();
+  const src = await generateApiTypes(manifest as never, { outDir: "/app/.denext" });
+  const ms = performance.now() - t0;
+  assert(ms < 50, `50 routes took ${ms.toFixed(1)} ms (a deno doc per route took seconds)`);
+  assertStringIncludes(src, "typeof R49");
+});
+
+/**
+ * Write a consumer module under `dir` that binds a typed client, followed by `body`. It imports
+ * the generated module for its side effect only: the `declare module "denext"` augmentation
+ * registers the schema, so `createApiClient()` is typed with NO type argument.
+ */
 async function writeConsumer(dir: string, name: string, body: string): Promise<string> {
   const file = join(dir, name);
   await Deno.writeTextFile(
     file,
-    `import { createApiClient } from "denext";\n` +
+    `import { createApiClient, type ErrorsOf } from "denext";\n` +
+      `import "./.denext/api.ts";\n` +
       `import type { ApiSchema } from "./.denext/api.ts";\n` +
-      `const api = createApiClient<ApiSchema>();\n` + body,
+      `const api = createApiClient();\n` +
+      `type Posts = ApiSchema["/api/posts"]["POST"];\n` + body,
   );
   return file;
 }
@@ -161,6 +194,13 @@ const BAD_CONSUMERS: Record<string, string> = {
     `await api("/api/user/[id]", "POST", { params: { id: "1" }, body: { name: 1 } });`,
   "misused response type":
     `const h = await api("/api/hello", "GET"); const n: number = h.message; void n;`,
+  "catch-all param must be a string[]":
+    `await api("/api/files/[...path]", "GET", { params: { path: "a/b" } });`,
+  "defineApi body wrong type":
+    `await api("/api/posts", "POST", { body: { title: 1 }, query: { page: 1 } });`,
+  "typed query rejects an unknown key":
+    `await api("/api/posts", "POST", { body: { title: "x" }, query: { pag: 1 } });`,
+  "undeclared error code": `const c: ErrorsOf<Posts> = "nope"; void c;`,
 };
 
 async function stepCorrectConsumer(dir: string): Promise<void> {
@@ -173,9 +213,17 @@ const _msg: string = hello.message;
 const _rt: "deno" = hello.runtime;
 const u = await api("/api/user/[id]", "GET", { params: { id: "1" } });
 const _next: string | null = u.next;
+const _secret: number = u.local.secret; // a NON-exported local type came through
 const created = await api("/api/user/[id]", "POST", { params: { id: "1" }, body: { name: "Ada" } });
 const _ok: true = created.ok;
-void [_msg, _rt, _next, _ok];
+const f = await api("/api/files/[...path]", "GET", { params: { path: ["a", "b"] } });
+const _n: number = f.n;
+const p = await api("/api/posts", "POST", { body: { title: "x" }, query: { page: 2 } });
+const _id: number = p.id;
+const _declared: ErrorsOf<Posts> = "conflict";
+const _builtin: ErrorsOf<Posts> = "not_found";
+const explicit = createApiClient<ApiSchema>(); // the explicit form still works
+void [_msg, _rt, _next, _secret, _ok, _n, _id, _declared, _builtin, explicit];
 `,
   );
   assertEquals(await denoCheck(file), 0);
@@ -207,6 +255,8 @@ Deno.test({
   const { dir, outDir } = await makeApp({
     "app/api/hello/route.ts": HELLO_ROUTE,
     "app/api/user/[id]/route.ts": USER_ROUTE,
+    "app/api/posts/route.ts": POSTS_ROUTE,
+    "app/api/files/[...path]/route.ts": FILES_ROUTE,
   });
   try {
     await generateFor(dir, outDir);
@@ -225,8 +275,14 @@ Deno.test("buildPath: substitutes params, spans catch-alls, and appends query", 
   assertEquals(buildPath("/api/user/[id]", { id: "42" }), "/api/user/42");
   // A value is percent-encoded.
   assertEquals(buildPath("/api/user/[id]", { id: "a b" }), "/api/user/a%20b");
-  // A catch-all value keeps its slashes (each segment encoded).
+  // A catch-all value keeps its slashes (each segment encoded) — as a string or a string[].
   assertEquals(buildPath("/files/[...path]", { path: "a/b c/d" }), "/files/a/b%20c/d");
+  assertEquals(buildPath("/files/[...path]", { path: ["a", "b c", "d"] }), "/files/a/b%20c/d");
+  // A typed query: arrays repeat the key, numbers stringify, undefined is skipped.
+  assertEquals(
+    buildPath("/api/posts", undefined, { page: 2, tag: ["a", "b"], skip: undefined }),
+    "/api/posts?page=2&tag=a&tag=b",
+  );
   // An optional catch-all substitutes like a catch-all when present.
   assertEquals(buildPath("/docs/[[...slug]]", { slug: "x/y" }), "/docs/x/y");
   // Query params are appended.

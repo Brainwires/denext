@@ -2,9 +2,8 @@
 // `<outDir>/api.ts` (the typed API client's `ApiSchema`). Both `denext build` and the
 // `denext dev` route-tree rescan call this, so the two lifecycles share one implementation.
 //
-// Best-effort by design: a failed write (or a `deno doc` hiccup while reading handler
-// signatures) must never break a build or the dev loop — the app still runs; only the
-// editor types go briefly stale until the next successful emit.
+// Best-effort by design: a failed write must never break a build or the dev loop — the app
+// still runs; only the editor types go briefly stale until the next successful emit.
 
 import { join } from "@std/path";
 import type { RouteManifest } from "../router/manifest.ts";
@@ -27,8 +26,8 @@ export async function emitTypedModules(
   await Deno.writeTextFile(join(opts.outDir, "routes.ts"), generateRouteTypes(manifest))
     .catch(() => {});
   // Typed API client: calls to this app's own route handlers are type-checked end-to-end
-  // (createApiClient<ApiSchema>()). Reads each handler's TypedRequest/TypedResponse via
-  // `deno doc`. (Follow-up: re-`deno doc` only the route files that actually changed.)
+  // (`createApiClient()`). A pure function of the manifest: the generated module imports each
+  // route's TYPE and TypeScript infers the endpoint shapes (no `deno doc`, no subprocess).
   await generateApiTypes(manifest, opts)
     .then((src) => Deno.writeTextFile(join(opts.outDir, "api.ts"), src))
     .catch(() => {});
