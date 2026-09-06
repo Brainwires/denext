@@ -27,7 +27,9 @@ security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
   `default.tsx`.
 - Dynamic (`[slug]`), catch-all (`[...all]`), optional catch-all (`[[...opt]]`),
   **route groups** (`(group)`), **parallel routes / slots** (`@slot` +
-  `default`), and **intercepting routes** (`(.)`/`(..)`/`(...)`,
+  `default`; on soft navigation an unmatched slot keeps the content it was
+  showing, as in Next — `default.tsx` is the hard-load fallback), and
+  **intercepting routes** (`(.)`/`(..)`/`(...)`,
   soft-nav-aware).
 - **Server Components** (default), async Server Components (`await` data in a
   page), and **`"use client"`** islands.

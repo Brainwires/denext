@@ -63,6 +63,7 @@ export function navData(pr: PageRequest): HydrationData {
     pathname: pr.state.pathname,
     messages: pr.messages,
     basePath: pr.state.app.basePath || undefined,
+    ...(pr.state.ctx.renderedSlotState ? { slotState: pr.state.ctx.renderedSlotState } : {}),
   };
 }
 

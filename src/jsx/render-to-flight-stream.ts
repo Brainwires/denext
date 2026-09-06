@@ -23,6 +23,9 @@ import { deferErrorMarker, serializeScalar } from "./flight-scalar.ts";
 import {
   type CarvedIsland,
   type Dual,
+  dualBoundary,
+  flightOnlyChildren,
+  type FlightWalker,
   type IslandPayload,
   type IslandRenderer,
   renderClientIsland,
@@ -30,6 +33,7 @@ import {
   renderHostDual,
   serializeCompound,
   type Serialized,
+  serializeFlightProps,
   SKIP,
 } from "./render-shared.ts";
 import { takeSettled, VNodeRenderer } from "./renderer-base.ts";
@@ -65,6 +69,11 @@ interface FlightValueHole {
 }
 
 class StreamFlightRenderer extends VNodeRenderer<Dual> implements IslandRenderer {
+  /** A client `error.tsx` fallback becomes a Flight boundary node around its children. */
+  protected override wrapErrorBoundary(props: Record<string, unknown>, rendered: Dual): Dual {
+    return dualBoundary(props, rendered);
+  }
+
   private id = 0;
   /**
    * In-flight boundary renders: each **resolves, never rejects**, to id + streamed
@@ -200,6 +209,21 @@ class StreamFlightRenderer extends VNodeRenderer<Dual> implements IslandRenderer
     head: HeadCollector | null,
   ): Promise<Dual> {
     return renderClientIsland(this, node, type, ref, props, prefix, scopes, head);
+  }
+
+  /**
+   * An island's serialized children, walked WITHOUT invoking client components (the shared
+   * Flight-only walk): rendering them through `renderChild` would run a consumer island
+   * outside the providers its parent island rendered around it.
+   */
+  flightChildren(children: VNodeChildren, scopes: ProviderScope[]): Promise<FlightNode[]> {
+    const walker: FlightWalker = {
+      ids: this.ids,
+      activate: (s) => this.activate(s),
+      carvedNested: this.carvedNested,
+      serializeProps: (props, s) => serializeFlightProps(props, (v) => this.serializeValue(v, s)),
+    };
+    return flightOnlyChildren(children, walker, scopes);
   }
 
   /** Lazy islands are emitted as `#__denext_islands` in the tail (shell and hole renders alike). */

@@ -40,6 +40,11 @@ export interface HydrationData {
   messages?: Messages;
   /** The app's basePath (from denext.config), so client `<Link>` can prefix URLs. */
   basePath?: string;
+  /**
+   * Parallel-route slot state: slot key → the pathname it last matched. The client echoes
+   * it on soft-nav fetches so unmatched slots keep their content (`server/slot-state.ts`).
+   */
+  slotState?: Record<string, string>;
 }
 
 /**

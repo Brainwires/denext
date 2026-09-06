@@ -21,10 +21,11 @@ import { serveWithPortFallback } from "./serve-utils.ts";
 export { createApp } from "./app.ts";
 export type { AppConfig, RequestHandler, RequestLogInfo } from "./app.ts";
 export { renderPage } from "./render-page.ts";
-export type { PageContext, RenderedPage, RenderPageOptions } from "./render-page.ts";
+export type { PageContext, RenderedPage, RenderPageOptions, SignalSink } from "./render-page.ts";
 // Flight (RSC) types, referenced by RenderedPage/DocumentOptions.
 export type {
   FlightActionRef,
+  FlightBoundary,
   FlightClient,
   FlightDate,
   FlightEventHandler,

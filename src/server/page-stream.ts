@@ -45,10 +45,11 @@ async function streamedResponse(
   stream: ReadableStream<Uint8Array>,
   shellPrefix: string,
   routeCsp: CspSetting | undefined,
+  status: number,
 ): Promise<Response> {
   pr.state.ctx.renderStreamed = true; // dev render-mode telemetry: Suspense holes stream
   const csp = await resolveStreamingCsp(shellPrefix, routeCsp, pr.state.app.config.csp);
-  return htmlResponse(pr.state, stream, 200, csp, NO_STORE);
+  return htmlResponse(pr.state, stream, status, csp, NO_STORE);
 }
 
 /**
@@ -60,9 +61,10 @@ async function bufferedShellResponse(
   pr: PageRequest,
   doc: string,
   routeCsp: CspSetting | undefined,
+  status: number,
 ): Promise<Response> {
   const csp = await resolveCsp(doc, routeCsp, pr.state.app.config.csp);
-  return htmlResponse(pr.state, doc, 200, csp, dynamicHeaders(pr));
+  return htmlResponse(pr.state, doc, status, csp, dynamicHeaders(pr));
 }
 
 /**
@@ -103,10 +105,11 @@ async function streamHtmlRoute(pr: PageRequest, prepared: PageContext): Promise<
   if (shell && shell.holes.size > 0) {
     const stream = streamPageDocument({ ...doc, shell, signal: ctx.signal });
     const shellPrefix = renderHeadContent(doc.metadata, doc.viewport, doc.styles) + shell.shell;
-    return streamedResponse(pr, stream, shellPrefix, routeCsp);
+    return streamedResponse(pr, stream, shellPrefix, routeCsp, shellResult.status);
   }
   if (shell) {
-    return bufferedShellResponse(pr, renderDocument({ ...doc, bodyHtml: shell.shell }), routeCsp);
+    const buffered = renderDocument({ ...doc, bodyHtml: shell.shell });
+    return bufferedShellResponse(pr, buffered, routeCsp, shellResult.status);
   }
   const signalDoc = renderDocument({ ...doc, bodyHtml: shellResult.html ?? "" });
   return signalPageResponse(pr, signalDoc, shellResult.status, routeCsp);
@@ -154,7 +157,7 @@ async function streamFlightRoute(pr: PageRequest, prepared: PageContext): Promis
     const stream = streamFlightDocument({ ...doc, flightShell, signal: ctx.signal });
     const shellPrefix = renderHeadContent(doc.metadata, doc.viewport, doc.styles) +
       flightShell.shellHtml;
-    return streamedResponse(pr, stream, shellPrefix, routeCsp);
+    return streamedResponse(pr, stream, shellPrefix, routeCsp, shellResult.status);
   }
   if (flightShell) {
     const tail = await drainFlightTail(flightShell, ctx.signal);
@@ -165,7 +168,7 @@ async function streamFlightRoute(pr: PageRequest, prepared: PageContext): Promis
       islands: tail.islands,
       signalState: tail.signalState,
     });
-    return bufferedShellResponse(pr, bufferedDoc, routeCsp);
+    return bufferedShellResponse(pr, bufferedDoc, routeCsp, shellResult.status);
   }
   const signalDoc = renderDocument({ ...doc, bodyHtml: shellResult.html ?? "" });
   return signalPageResponse(pr, signalDoc, shellResult.status, routeCsp);

@@ -3,6 +3,7 @@
 // coalesced so a burst of requests in one generation builds once.
 
 import { fromFileUrl, join } from "@std/path";
+import { resolveCacheComponents } from "../../server/config.ts";
 import { ensureDir } from "@std/fs";
 import type { PageRoute, RouteManifest } from "../../router/manifest.ts";
 import { nodeResolveEnabled } from "../../server/config.ts";
@@ -34,6 +35,7 @@ function compatBuildOptions(st: DevState, outDir: string, cssImportMap?: Record<
     classComponents: st.paths.config?.classComponents ?? true,
     resolveAllNodeModules: nodeResolveEnabled(st.paths.config),
     mdxOptions: st.paths.config?.mdx,
+    useCache: resolveCacheComponents(st.paths.config),
     cssImportMap,
   };
 }

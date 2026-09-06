@@ -6,6 +6,7 @@
 // nearest <Suspense>.
 
 import { isPostpone } from "./postpone.ts";
+import { isThenable } from "./suspense.ts";
 import type { Component, VNode, VNodeChildren } from "../jsx/types.ts";
 
 /** Re-exported so the public error-boundary API surface stays documentable. */
@@ -39,6 +40,14 @@ export interface ErrorBoundaryProps {
    * error silently. Not part of the public `error.tsx` contract.
    */
   onCaught?: (error: unknown) => void;
+  /**
+   * Makes this a *signal* boundary: it catches exactly the throws for which `catches`
+   * returns true (a control signal such as `notFound()`) and lets everything else —
+   * suspensions, other signals, real errors — propagate to the boundaries above. The
+   * caught value reaches `fallback` unredacted. This is how the per-segment
+   * `not-found.tsx` / `forbidden.tsx` / `unauthorized.tsx` boundaries are built.
+   */
+  catches?: (error: unknown) => boolean;
 }
 
 /**
@@ -56,6 +65,38 @@ export function reportBoundaryError(props: Record<string, unknown>, error: unkno
       cb(error);
     } catch { /* a reporter must never break rendering */ }
   }
+}
+
+/**
+ * Whether an error caught at an error boundary must propagate instead: a suspension (the
+ * enclosing Suspense retries), a control signal (redirect/notFound bubble to the page handler),
+ * or a renderer-specific pass-through such as PPR's Postpone.
+ */
+function passesThroughBoundary(
+  err: unknown,
+  alsoPasses?: (err: unknown) => boolean,
+): boolean {
+  return isThenable(err) || isControlSignal(err) || (alsoPasses?.(err) ?? false);
+}
+
+/**
+ * Whether the boundary described by `props` must let `err` propagate. A signal boundary
+ * (`catches` set — `not-found.tsx` and friends) decides by its predicate alone, so it
+ * catches its control signal and passes suspensions, other signals and real errors up;
+ * an ordinary error boundary follows {@link passesThroughBoundary}.
+ */
+export function boundaryLetsThrough(
+  props: Record<string, unknown>,
+  err: unknown,
+  alsoPasses?: (err: unknown) => boolean,
+): boolean {
+  const catches = props.catches as ((err: unknown) => boolean) | undefined;
+  return catches ? !catches(err) : passesThroughBoundary(err, alsoPasses);
+}
+
+/** The Error a boundary's fallback receives: raw for a signal boundary, redacted (prod) otherwise. */
+export function boundaryFallbackError(props: Record<string, unknown>, err: unknown): Error {
+  return props.catches ? toError(err) : toClientError(err);
 }
 
 /** An error boundary. Renders `fallback` when a child throws during render. */

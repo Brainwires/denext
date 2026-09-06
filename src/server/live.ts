@@ -924,7 +924,9 @@ export function sliceBoundary(node: FlightNode, boundaryId: string): FlightNode[
   if (node.$ === "c" && node.i === LIVE_REF_ID && node.p?.[ID_PATH_PROP] === boundaryId) {
     return node.c;
   }
-  return node.$ === "h" || node.$ === "c" ? firstBoundaryIn(node.c, boundaryId) : null;
+  return node.$ === "h" || node.$ === "c" || node.$ === "b"
+    ? firstBoundaryIn(node.c, boundaryId)
+    : null;
 }
 
 function firstBoundaryIn(children: FlightNode[], boundaryId: string): FlightNode[] | null {

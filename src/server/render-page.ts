@@ -28,6 +28,7 @@ import {
   toClientError,
 } from "../runtime/error-boundary.ts";
 import { matchSlot, type PageMatch } from "../router/match.ts";
+import { recordSlotState } from "./slot-state.ts";
 import type { RouteManifest, SegmentLevel, SlotRoutes } from "../router/manifest.ts";
 import { provideLayoutSegments } from "../runtime/layout-segments.ts";
 import { paramPath, type RouteParams } from "../router/segments.ts";
@@ -136,6 +137,19 @@ export interface PageContext {
    * their try/catch so it becomes the 404 UI. See {@link isStaticParamDisallowed}.
    */
   staticParamsNotFound?: boolean;
+  /**
+   * Written by the per-segment signal boundaries ({@link wrapSignalBoundaries}) when one
+   * catches during the render: the HTTP status the response should carry (404/403/401),
+   * or 0. Only a catch BEFORE the first flush can change the status; a boundary that
+   * fires inside a streamed hole after the shell went out renders its UI at 200, as Next.
+   */
+  signal: SignalSink;
+}
+
+/** The status a caught control signal asks for (0 = none caught). */
+export interface SignalSink {
+  /** 404/403/401 once a signal boundary caught during the render; 0 until then. */
+  status: number;
 }
 
 /**
@@ -243,8 +257,9 @@ export async function buildPageContext(
   const page = h(pageModule.default, props as never);
   options.signal?.throwIfAborted();
   const soft = request.headers.get("x-denext-nav") === "1";
+  const signal: SignalSink = { status: 0 };
   const wrapped = match.route.levels
-    ? await wrapLevels(match, page, load, options, url.pathname, soft, props)
+    ? await wrapLevels(match, page, load, options, url.pathname, soft, props, signal)
     : await wrapLayouts(
       match,
       await wrapBoundaries(match, page, load, options),
@@ -265,7 +280,7 @@ export async function buildPageContext(
     ...wrapped.layoutViewports,
     await resolvePageViewport(pageModule, props, wrapped.layoutViewports),
   ]);
-  return { tree, metadata, viewport, config, staticParamsNotFound };
+  return { tree, metadata, viewport, config, staticParamsNotFound, signal };
 }
 
 /**
@@ -395,7 +410,8 @@ export async function renderPage(
       html = await timed("renderToString", () => renderToString(tree, { head }));
     }
     hoistHeadIntoMetadata(head, metadata);
-    return { html, metadata, status: 200, config, flight, islands, signalState, viewport };
+    const status = ctx.signal.status || 200;
+    return { html, metadata, status, config, flight, islands, signalState, viewport };
   } catch (err) {
     const signal = signalUiFor(err, match);
     if (!signal) throw err;
@@ -403,32 +419,32 @@ export async function renderPage(
   }
 }
 
-/** The built-in UI for each control signal, keyed by the predicate that detects it. */
-const SIGNAL_UIS: Array<
-  [
-    (err: unknown) => boolean,
-    keyof Pick<PageMatch["route"], "notFound" | "forbidden" | "unauthorized">,
-    SignalUI,
-  ]
-> = [
-  [isNotFound, "notFound", {
+/** The built-in UI for each control signal, with the predicate that detects it. */
+const SIGNAL_UIS: SignalUI[] = [
+  {
+    is: isNotFound,
+    key: "notFound",
     status: 404,
     title: "404 — Not Found",
     heading: "404",
     message: "This page could not be found.",
-  }],
-  [isForbidden, "forbidden", {
+  },
+  {
+    is: isForbidden,
+    key: "forbidden",
     status: 403,
     title: "403 — Forbidden",
     heading: "403",
     message: "You don't have access to this resource.",
-  }],
-  [isUnauthorized, "unauthorized", {
+  },
+  {
+    is: isUnauthorized,
+    key: "unauthorized",
     status: 401,
     title: "401 — Unauthorized",
     heading: "401",
     message: "You must be signed in to view this page.",
-  }],
+  },
 ];
 
 /**
@@ -436,10 +452,18 @@ const SIGNAL_UIS: Array<
  * the route's own file for it, or `null` for redirect() and real errors (which bubble).
  */
 function signalUiFor(err: unknown, match: PageMatch): (SignalUI & { route: string | null }) | null {
-  for (const [is, file, ui] of SIGNAL_UIS) {
-    if (is(err)) return { ...ui, route: match.route[file] };
+  for (const ui of SIGNAL_UIS) {
+    if (ui.is(err)) return { ...ui, route: match.route[ui.key] };
   }
   return null;
+}
+
+/** The framework's own UI for a control signal (no `not-found.tsx` etc. in the app). */
+function builtinSignalUI(ui: SignalUI): VNode {
+  return h("div", { class: "denext-status" }, [
+    h("h1", null, ui.heading),
+    h("p", null, ui.message),
+  ]);
 }
 
 /**
@@ -545,7 +569,7 @@ async function renderShellEnvelope<R>(
     if (ctx.staticParamsNotFound) notFound();
     const inner = await renderInner(tree, head, config);
     hoistHeadIntoMetadata(head, metadata);
-    return { inner, metadata, viewport, config, status: 200 };
+    return { inner, metadata, viewport, config, status: ctx.signal.status || 200 };
   } catch (err) {
     return await bufferedSignalPage(err, match, load, metadata, viewport, config);
   }
@@ -686,7 +710,8 @@ export async function prerenderPage(
   try {
     const head: HeadCollector = { tags: [] };
     const result = await withPrerender(() => prerenderToShell(tree, { head }));
-    if (result.dynamic) return bail();
+    // A caught control signal must not be cached as a 200 shell either.
+    if (result.dynamic || ctx.signal.status) return bail();
     return {
       dynamic: false,
       shellBody: result.shell,
@@ -790,7 +815,8 @@ export async function prerenderPageFlight(
     const result = await withPrerender(() =>
       prerenderToShellFlight(tree, { head, resumable: config.resumable })
     );
-    if (result.dynamic) return bail();
+    // A caught control signal must not be cached as a 200 shell either.
+    if (result.dynamic || ctx.signal.status) return bail();
     return {
       dynamic: false,
       shellBody: result.shell,
@@ -918,14 +944,25 @@ export async function resumePageHolesStream(
   return { holes, metadata, viewport };
 }
 
+/** One control signal's built-in UI + the route file convention that customizes it. */
 interface SignalUI {
+  /** Detects this signal's thrown value. */
+  is: (err: unknown) => boolean;
+  /** The per-level / per-route file key (`not-found.tsx` → `notFound`, …). */
+  key: "notFound" | "forbidden" | "unauthorized";
   status: number;
   title: string;
   heading: string;
   message: string;
 }
 
-/** Render a control-signal UI (not-found/forbidden/unauthorized) within layouts. */
+/**
+ * Render a control-signal UI (not-found/forbidden/unauthorized) that escaped every
+ * boundary — `generateMetadata` throwing, `dynamicParams: false`, or a root layout calling
+ * `notFound()`: the route's file (or the built-in UI) inside the leveled tree, boundaries
+ * included; should a layout throw the same signal again, the bare built-in UI. Routes
+ * without levels wrap the file in the plain layout chain.
+ */
 async function renderSignalUI(
   match: PageMatch,
   load: ModuleLoader,
@@ -934,26 +971,37 @@ async function renderSignalUI(
   file: string | null,
   ui: SignalUI,
 ): Promise<RenderedPage> {
-  let content: VNode;
-  if (file) {
-    const mod = (await load(file)) as { default: () => VNode };
-    content = h(mod.default, {});
-  } else {
-    content = h("div", { class: "denext-status" }, [
-      h("h1", null, ui.heading),
-      h("p", null, ui.message),
-    ]);
-  }
+  const content = file
+    ? h(((await load(file)) as { default: () => VNode }).default, {})
+    : builtinSignalUI(ui);
   // Signal UI (404/403/…): render slot defaults (no URL to match against).
   const signalProps: PageProps = pageProps(match.params, new URLSearchParams());
-  const { tree } = await wrapLayouts(match, content, load, "", false, signalProps);
-  const html = await renderToString(tree);
+  const html = match.route.levels
+    ? await renderEscapedSignal(match, content, load, signalProps, ui)
+    : await renderToString((await wrapLayouts(match, content, load, "", false, signalProps)).tree);
   return {
     html,
     metadata: { ...metadata, title: metadata.title ?? ui.title },
     status: ui.status,
     config,
   };
+}
+
+/** `content` through the leveled tree; if a layout re-throws the signal, the bare built-in UI. */
+async function renderEscapedSignal(
+  match: PageMatch,
+  content: VNode,
+  load: ModuleLoader,
+  props: PageProps,
+  ui: SignalUI,
+): Promise<string> {
+  const tree = await wrapLevelTree(match, content, load, {}, "", false, props, { status: 0 });
+  try {
+    return await renderToString(tree);
+  } catch (err) {
+    if (!ui.is(err)) throw err;
+    return await renderToString(builtinSignalUI(ui));
+  }
 }
 
 /** Wrap a content node in the page's layout chain (innermost -> outermost). */
@@ -979,7 +1027,7 @@ async function wrapLayouts(
     // named props, matched against the current URL (so a slot spans children).
     const slotMap = layoutSlots?.[i];
     const slotProps = slotMap
-      ? await renderSlotMap(slotMap, match.params, load, pathname, soft)
+      ? await renderSlotMap(slotMap, match.params, load, pathname, soft, i)
       : {};
     tree = h(layoutModule.default, {
       children: tree,
@@ -1011,20 +1059,36 @@ async function wrapLevels(
   pathname: string,
   soft: boolean,
   props: PageProps,
+  signal: SignalSink,
 ): Promise<{ tree: VNode; layoutMetas: Metadata[]; layoutViewports: Viewport[] }> {
-  const levels = match.route.levels ?? [];
   const { layoutMetas, layoutViewports } = await resolveLayoutMetadata(match, load, props);
+  const tree = await wrapLevelTree(match, page, load, options, pathname, soft, props, signal);
+  return { tree, layoutMetas, layoutViewports };
+}
+
+/** The leveled tree itself (no metadata resolution): see {@link wrapLevels}. */
+async function wrapLevelTree(
+  match: PageMatch,
+  page: VNode,
+  load: ModuleLoader,
+  options: RenderPageOptions,
+  pathname: string,
+  soft: boolean,
+  props: PageProps,
+  signal: SignalSink,
+): Promise<VNode> {
+  const levels = match.route.levels ?? [];
   let layoutIdx = match.route.layoutChain.length - 1;
   let tree = page;
   for (let i = levels.length - 1; i >= 0; i--) {
     const level = levels[i];
-    tree = await wrapLevelBoundaries(level, tree, load, options);
+    tree = await wrapLevelBoundaries(level, tree, load, options, signal, i === 0);
     if (level.template) tree = await wrapTemplate(level.template, tree, match.params, load);
     if (level.layout) {
       tree = await wrapOneLayout(match, layoutIdx--, tree, load, pathname, soft, props);
     }
   }
-  return { tree, layoutMetas, layoutViewports };
+  return tree;
 }
 
 /**
@@ -1052,14 +1116,16 @@ async function resolveLayoutMetadata(
   return { layoutMetas, layoutViewports };
 }
 
-/** `error( loading( content ) )` for one level's own boundary files. */
+/** `error( loading( signals( content ) ) )` for one level's own boundary files (Next's order). */
 async function wrapLevelBoundaries(
   level: SegmentLevel,
   content: VNode,
   load: ModuleLoader,
   options: RenderPageOptions,
+  signal: SignalSink,
+  isRoot: boolean,
 ): Promise<VNode> {
-  let tree = content;
+  let tree = await wrapSignalBoundaries(level, content, load, signal, isRoot);
   if (level.loading) {
     const loadingMod = (await load(level.loading)) as { default: () => VNode };
     tree = h(Suspense, { fallback: h(loadingMod.default, {}), children: tree });
@@ -1070,6 +1136,40 @@ async function wrapLevelBoundaries(
       fallback: errorMod.default,
       children: tree,
       onCaught: options.onCaughtError,
+    });
+  }
+  return tree;
+}
+
+/**
+ * Next.js's per-segment signal boundaries: a level's `not-found.tsx` / `forbidden.tsx` /
+ * `unauthorized.tsx` catches that signal from the level's page and children, while the
+ * level's OWN layout throwing escalates to the parent level (the boundary sits inside the
+ * layout). The root level always has one per signal — the built-in UI stands in for a
+ * missing file — so only a root layout's throw escapes to {@link renderSignalUI}. A catch
+ * records its status in `signal` for the response (the outermost catch wins).
+ */
+async function wrapSignalBoundaries(
+  level: SegmentLevel,
+  content: VNode,
+  load: ModuleLoader,
+  signal: SignalSink,
+  isRoot: boolean,
+): Promise<VNode> {
+  let tree = content;
+  for (const ui of SIGNAL_UIS) {
+    const file = level[ui.key];
+    if (!file && !isRoot) continue;
+    const fallback = file
+      ? ((await load(file)) as { default: never }).default
+      : (() => builtinSignalUI(ui)) as never;
+    tree = h(ErrorBoundary, {
+      fallback,
+      catches: ui.is,
+      onCaught: () => {
+        signal.status = ui.status;
+      },
+      children: tree,
     });
   }
   return tree;
@@ -1102,7 +1202,9 @@ async function wrapOneLayout(
     throw new Error(`Layout module ${file} has no default.`);
   }
   const slotMap = match.route.layoutSlots?.[i];
-  const slotProps = slotMap ? await renderSlotMap(slotMap, match.params, load, pathname, soft) : {};
+  const slotProps = slotMap
+    ? await renderSlotMap(slotMap, match.params, load, pathname, soft, i)
+    : {};
   const tree = h(layoutModule.default, {
     children: content,
     params: props.params,
@@ -1123,12 +1225,16 @@ async function renderSlotMap(
   load: ModuleLoader,
   pathname: string,
   soft: boolean,
+  layoutIndex: number,
 ): Promise<Record<string, VNode>> {
   const out: Record<string, VNode> = {};
+  const ctx = currentContext();
   for (const [name, slot] of Object.entries(slots)) {
-    const slotMatch = matchSlot(slot, pathname, { soft });
-    if (slotMatch) {
-      out[name] = await composeSlotPage(slotMatch, load);
+    const key = `${layoutIndex}:${name}`;
+    const kept = matchSlotWithState(slot, pathname, soft, ctx?.slotState?.[key]);
+    if (kept) {
+      recordSlotState(ctx, key, kept.pathname);
+      out[name] = await composeSlotPage(kept.match, load);
     } else if (slot.default) {
       const mod = (await load(slot.default)) as { default?: (p: unknown) => VNode };
       if (typeof mod.default === "function") {
@@ -1137,6 +1243,23 @@ async function renderSlotMap(
     }
   }
   return out;
+}
+
+/**
+ * A slot's match for the current URL — or, on a soft navigation, for the pathname the
+ * client says the slot last showed (Next.js keeps an unmatched slot's content across
+ * client navigations; `default.tsx` is the hard-load fallback). See `slot-state.ts`.
+ */
+function matchSlotWithState(
+  slot: SlotRoutes,
+  pathname: string,
+  soft: boolean,
+  remembered: string | undefined,
+): { match: PageMatch; pathname: string } | null {
+  const current = matchSlot(slot, pathname, { soft });
+  if (current) return { match: current, pathname };
+  const kept = soft && remembered ? matchSlot(slot, remembered, { soft }) : null;
+  return kept ? { match: kept, pathname: remembered! } : null;
 }
 
 /** Compose a matched slot page with its slot-internal layout/loading/error chain. */

@@ -11,6 +11,7 @@ import type { Component, VNodeChild } from "../jsx/types.ts";
 import type { FlightNode, FlightProps, FlightValue } from "../jsx/render-to-flight.ts";
 import { clientActionStub } from "../runtime/server-action.ts";
 import { qrlStub } from "../runtime/qrl.ts";
+import { ErrorBoundary } from "../runtime/error-boundary.ts";
 
 /** Maps client-reference ids (`clientId#export`) to client component functions. */
 export type ClientRegistry = Map<string, Component> & {
@@ -33,7 +34,8 @@ export function flightClientIds(flight: unknown, out: Set<string> = new Set()): 
     return out;
   }
   const node = flight as Record<string, unknown>;
-  if (node.$ === "c" && typeof node.i === "string") out.add(node.i.split("#")[0]);
+  const id = node.$ === "c" ? node.i : node.$ === "b" ? node.f : undefined;
+  if (typeof id === "string") out.add(id.split("#")[0]);
   for (const key of Object.keys(node)) flightClientIds(node[key], out);
   return out;
 }
@@ -74,6 +76,15 @@ export function parseFlight(node: FlightNode, registry: ClientRegistry): VNodeCh
         return null;
       }
       return h(component, parseProps(node.p, registry), ...parseChildren(node.c, registry));
+    }
+    case "b": {
+      // A segment's client `error.tsx` around its children: a real boundary on the client,
+      // so a render throw after hydration swaps in the fallback (Next.js semantics). With
+      // no registered fallback (bundle/registry mismatch) the boundary is transparent.
+      const fallback = registry.get(node.f);
+      const children = parseChildren(node.c, registry);
+      if (!fallback) return children as unknown as VNodeChild;
+      return h(ErrorBoundary, { fallback: fallback as never }, ...children);
     }
     case "a":
       // A bare action reference as a node has no visual output.

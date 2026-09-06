@@ -1,6 +1,6 @@
 // Next.js-compat entrypoints: `import ... from "next/*"` resolving to denext.
 
-import { assert, assertEquals, assertThrows } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { composeMiddleware } from "../src/server/middleware.ts";
 import Link from "../src/compat/next/link.ts";
 import Image from "../src/compat/next/image.ts";
@@ -318,6 +318,91 @@ export const pub = process.env.NEXT_PUBLIC_APP_URL; export const isBrowser = pro
     assertEquals(mod.pub, undefined);
     assertEquals(mod.isBrowser, true);
   } finally {
+    await esbuild.stop();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+// `cacheComponents`: the "use cache" transform runs INSIDE the compat bundle. The runtime
+// loader's rewritten copy (`.denext/server-cache/uc_*.tsx`) is imported natively and, for a
+// compat app, its `next/*` and `.mdx` imports fail under Deno — every cacheComponents route of
+// the Next App Router playground 500'd.
+Deno.test({
+  name:
+    'cacheDirectivePlugin: a module with "use cache" is transformed in the bundle; others fall through',
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const { cacheDirectivePlugin } = await import("../src/build/next-compat.ts");
+  const esbuild = await import("esbuild");
+  const { join } = await import("@std/path");
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_use_cache_plugin_" }));
+  try {
+    await Deno.writeTextFile(
+      join(dir, "data.ts"),
+      `export async function getPosts(tag: string) { "use cache"; return [tag]; }\n`,
+    );
+    await Deno.writeTextFile(join(dir, "plain.ts"), `export const plain = "PLAIN_OK";\n`);
+    await Deno.writeTextFile(
+      join(dir, "entry.ts"),
+      `export { getPosts } from "./data.ts";\nexport { plain } from "./plain.ts";\n`,
+    );
+    const out = await esbuild.build({
+      entryPoints: [join(dir, "entry.ts")],
+      bundle: true,
+      write: false,
+      format: "esm",
+      platform: "node",
+      packages: "external",
+      plugins: [cacheDirectivePlugin()],
+      logLevel: "silent",
+    });
+    const text = out.outputFiles[0].text;
+    assertStringIncludes(text, "_dnxUseCache(", "the cached function is wrapped in the bundle");
+    assertStringIncludes(text, "PLAIN_OK", "modules without the directive bundle normally");
+  } finally {
+    await esbuild.stop();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+// A build-time transform's runtime import is an absolute URL into the framework (the
+// "use cache" wrapper imports `src/server/cache.ts`); the SSR bundle must leave it external —
+// bundling it fails on the framework's `@std/*` deps and would double the runtime.
+Deno.test({
+  name: "SSR bundle: an absolute import into the framework stays external",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const { bundleNextCompatModules } = await import("../src/build/next-compat.ts");
+  const { frameworkFileUrl } = await import("../src/build/bundle.ts");
+  const { join } = await import("@std/path");
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_fw_external_" }));
+  try {
+    const runtime = frameworkFileUrl("src/server/cache.ts");
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({ imports: { "denext/": frameworkFileUrl("") } }),
+    );
+    await Deno.writeTextFile(
+      join(dir, "entry.ts"),
+      `import { __useCache } from ${
+        JSON.stringify(runtime)
+      };\nexport const k = typeof __useCache;\n`,
+    );
+    await bundleNextCompatModules({
+      entryPoints: { app: join(dir, "entry.ts") },
+      outdir: join(dir, "out"),
+      configPath: join(dir, "deno.json"),
+      platform: "deno",
+      denextExternal: true,
+      denoLoader: false,
+      absWorkingDir: dir,
+    });
+    const out = await Deno.readTextFile(join(dir, "out", "app.js"));
+    assertStringIncludes(out, `from "${runtime}"`, "framework URL kept as an external import");
+  } finally {
+    const esbuild = await import("esbuild");
     await esbuild.stop();
     await Deno.remove(dir, { recursive: true });
   }

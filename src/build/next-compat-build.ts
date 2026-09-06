@@ -118,6 +118,8 @@ export interface BuildNextCompatModulesOptions {
   resolveAllNodeModules?: boolean;
   /** App MDX plugin config, forwarded to {@link BundleNextCompatModulesOptions.mdxOptions}. */
   mdxOptions?: MdxBuildOptions;
+  /** `cacheComponents` on: apply the `"use cache"` transform inside the server bundle. */
+  useCache?: boolean;
   /** CSS shim map, forwarded to {@link BundleNextCompatModulesOptions.cssImportMap}. */
   cssImportMap?: Record<string, string>;
 }
@@ -186,6 +188,7 @@ export async function buildNextCompatModules(
     absWorkingDir: options.projectDir,
     resolveAllNodeModules: options.resolveAllNodeModules,
     mdxOptions: options.mdxOptions,
+    useCache: options.useCache,
     cssImportMap: options.cssImportMap,
   });
 
@@ -260,6 +263,8 @@ export interface BuildNextCompatClientOptions {
   resolveAllNodeModules?: boolean;
   /** App MDX plugin config, forwarded to {@link BundleNextCompatModulesOptions.mdxOptions}. */
   mdxOptions?: MdxBuildOptions;
+  /** `cacheComponents` on: apply the `"use cache"` transform inside the server bundle. */
+  useCache?: boolean;
   /** CSS shim map, forwarded to {@link BundleNextCompatModulesOptions.cssImportMap}. */
   cssImportMap?: Record<string, string>;
   /**
@@ -351,6 +356,8 @@ export interface BuildNextCompatFlightOptions {
   resolveAllNodeModules?: boolean;
   /** App MDX plugin config, forwarded to {@link BundleNextCompatModulesOptions.mdxOptions}. */
   mdxOptions?: MdxBuildOptions;
+  /** `cacheComponents` on: apply the `"use cache"` transform inside the server bundle. */
+  useCache?: boolean;
   /** CSS shim map, forwarded to {@link BundleNextCompatModulesOptions.cssImportMap}. */
   cssImportMap?: Record<string, string>;
   /**

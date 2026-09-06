@@ -190,8 +190,16 @@ async function buildAppRouterImports(
     imports["denext/remix/server"] = jsr("remix/server");
   }
   for (const spec of DENEXT_ALIAS_SPECS) imports[spec] = jsr(spec);
-  imports["next/"] = R.prefix("next/");
-  imports["next-intl/"] = R.prefix("next-intl/");
+  // Every `next/*` / `next-intl/*` subpath denext ships gets an EXACT entry: Deno cannot
+  // resolve a specifier against a `jsr:` trailing-slash prefix ("could not be URL-parsed"),
+  // so a module loaded natively — `middleware.ts`, an instrumentation file — that imports
+  // `next/server` failed under the prefix alone. A URL prefix (local checkout) still works and
+  // is kept as the catch-all.
+  for (const spec of await frameworkSubpaths(["next/", "next-intl/"])) imports[spec] = R.sub(spec);
+  for (const prefix of ["next/", "next-intl/"]) {
+    const target = R.prefix(prefix);
+    if (/^(?:file|https?):/.test(target)) imports[prefix] = target;
+  }
   addServerClientStubs(imports, deps, jsr);
   // `/mdx` provides the type-only `mdx/types` module; MDX apps often import it at value syntax.
   if ("@types/mdx" in deps) imports["mdx/types"] = jsr("empty");
@@ -375,6 +383,16 @@ async function collectTsPathAliases(
     out.push([key, val]);
   }
   return out;
+}
+
+/** The framework's exported subpaths under any of `prefixes` (e.g. `next/link`, `next/image`). */
+async function frameworkSubpaths(prefixes: string[]): Promise<string[]> {
+  const cfg = await readFrameworkJson("deno.json");
+  const exports = (cfg.exports ?? {}) as Record<string, string>;
+  return Object.keys(exports)
+    .map((k) => k.replace(/^\.\//, ""))
+    .filter((k) => prefixes.some((p) => k.startsWith(p)))
+    .sort();
 }
 
 /**

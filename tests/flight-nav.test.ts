@@ -396,3 +396,61 @@ Deno.test("withViewTransition: runs the commit with and without startViewTransit
     (globalThis as Any).document = origDoc;
   }
 });
+
+Deno.test("soft-nav fetch echoes the data island's slot state in x-denext-slot-state", async () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  (doc as Any).body = (doc as Any).createElement("body");
+  const g = globalThis as Any;
+  const save = installNavGlobals(doc);
+  // The current page's data island carries the slot state the server recorded.
+  const island = (doc as Any).createElement("script");
+  island.id = "__denext_data";
+  island.textContent = JSON.stringify({
+    params: {},
+    searchParams: "",
+    pathname: "/from",
+    slotState: { children: "/from", "1:audience": "/from/demographics" },
+  });
+  (doc as Any).body.appendChild(island);
+  (doc as Any).register("__denext_data", island);
+
+  let sentHeaders: Record<string, string> | undefined;
+  const payload: FlightNavPayload = {
+    flight: { $: "h", t: "div", p: {}, c: ["B"] } as Any,
+    title: "t",
+    data: { params: {}, searchParams: "", pathname: "/to", slotState: { children: "/from" } },
+  };
+  const answer = jsonFetch("x-denext-flight", payload);
+  g.fetch = ((input: string, init?: RequestInit) => {
+    sentHeaders = init?.headers as Record<string, string>;
+    return answer(input, init);
+  }) as typeof fetch;
+
+  try {
+    const registry = new Map<string, Component>();
+    setFlightParser((flight) => parseFlight(flight as Any, registry));
+    startClient(container as Any, h("div", null, "A"));
+    flushSync();
+    await navigate("/to");
+    flushSync();
+    assertEquals(
+      sentHeaders?.["x-denext-slot-state"],
+      JSON.stringify({ children: "/from", "1:audience": "/from/demographics" }),
+    );
+    assertEquals(sentHeaders?.["x-denext-nav"], "1");
+    // The island now carries the state the server answered with.
+    const after = (doc as Any).body.childNodes.find((n: Any) => n.id === "__denext_data");
+    assertEquals(JSON.parse(after.textContent).slotState, { children: "/from" });
+  } finally {
+    if (save.loc === undefined) delete g.location;
+    else g.location = save.loc;
+    if (save.hist === undefined) delete g.history;
+    else g.history = save.hist;
+    if (save.doc === undefined) delete g.document;
+    else g.document = save.doc;
+    if (save.nav === undefined) delete g.__denextNav;
+    else g.__denextNav = save.nav;
+    g.fetch = save.fetch;
+  }
+});

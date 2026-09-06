@@ -588,3 +588,35 @@ Deno.test("App Router: the Tailwind block points at the stylesheet that imports 
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+// Deno cannot resolve `next/server` against a `jsr:…/next/` trailing-slash prefix, so migrate
+// writes an exact entry per `next/*` subpath denext ships (a natively loaded `middleware.ts`
+// importing `next/server` failed under the prefix alone).
+Deno.test("App Router: every next/* subpath gets an exact jsr alias", async () => {
+  const dir = await tmp("mig_next_aliases");
+  try {
+    await Deno.writeTextFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { react: "19.0.0", "react-dom": "19.0.0" } }),
+    );
+    await Deno.mkdir(join(dir, "app"), { recursive: true });
+    const r = await migrateProject(dir);
+    assertEquals(r.kind, "next");
+    const imports = (await readDenoJson(dir)).imports as Record<string, string>;
+    for (
+      const spec of [
+        "next/server",
+        "next/navigation",
+        "next/link",
+        "next/image",
+        "next/font/google",
+      ]
+    ) {
+      assert(imports[spec]?.startsWith("jsr:@denext/denext@"), `${spec} → ${imports[spec]}`);
+      assert(imports[spec].endsWith("/" + spec), imports[spec]);
+    }
+    assertEquals(imports["next/"], undefined, "no unresolvable jsr: prefix entry");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

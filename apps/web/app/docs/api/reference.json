@@ -2776,7 +2776,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 2.0.5",
+          "signature": "VERSION: 2.0.6",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -3823,6 +3823,18 @@
           "denextOnly": true
         },
         {
+          "name": "FlightBoundary",
+          "slug": "FlightBoundary",
+          "kind": "interface",
+          "signature": "interface FlightBoundary",
+          "doc": "A client-side error boundary: a segment's error.tsx (a \"use client\" component) around its children, so a render throw AFTER hydration swaps in the fallback on the client the way Next does. Emitted only when the boundary's fallback is a client reference; a server-only fallback stays transparent (the boundary lives on the server alone).",
+          "docFull": "A client-side error boundary: a segment's `error.tsx` (a `\"use client\"` component) around\nits children, so a render throw AFTER hydration swaps in the fallback on the client the\nway Next does. Emitted only when the boundary's fallback is a client reference; a\nserver-only fallback stays transparent (the boundary lives on the server alone).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "FlightClient",
           "slug": "FlightClient",
           "kind": "interface",
@@ -3874,7 +3886,7 @@
           "name": "FlightNode",
           "slug": "FlightNode",
           "kind": "typeAlias",
-          "signature": "type FlightNode = FlightPrimitive | FlightNode[] | FlightHost | FlightClient | FlightActionRef",
+          "signature": "type FlightNode = FlightPrimitive | FlightNode[] | FlightHost | FlightClient | FlightBoundary | FlightActionRef",
           "doc": "A node in a Flight tree.",
           "docFull": "A node in a Flight tree.",
           "params": [],
@@ -6565,6 +6577,18 @@
           "denextOnly": true
         },
         {
+          "name": "SignalSink",
+          "slug": "SignalSink",
+          "kind": "interface",
+          "signature": "interface SignalSink",
+          "doc": "The status a caught control signal asks for (0 = none caught).",
+          "docFull": "The status a caught control signal asks for (0 = none caught).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "Sitemap",
           "slug": "Sitemap",
           "kind": "typeAlias",
@@ -7496,7 +7520,7 @@
           "name": "FlightNode",
           "slug": "FlightNode",
           "kind": "typeAlias",
-          "signature": "type FlightNode = FlightPrimitive | FlightNode[] | FlightHost | FlightClient | FlightActionRef",
+          "signature": "type FlightNode = FlightPrimitive | FlightNode[] | FlightHost | FlightClient | FlightBoundary | FlightActionRef",
           "doc": "A node in a Flight tree.",
           "docFull": "A node in a Flight tree.",
           "params": [],

@@ -43,6 +43,29 @@ export default async function Post({ params }) {
           @slot
         </code>), and intercepting routes (<code>(.)</code>) are all supported.
       </p>
+      <p>
+        Parallel-route slots follow Next.js's two rules: on a hard load a slot the URL does not
+        match renders its{" "}
+        <code>default.tsx</code>, and on a soft (client) navigation it keeps whatever it was showing
+        — including the <code>children</code>{" "}
+        page when the new URL only addresses a slot. The server records which URL each slot last
+        matched and the client echoes that on its soft-nav fetches (the{" "}
+        <code>x-denext-slot-state</code>{" "}
+        header), so the behavior needs no client-side state of your own.
+      </p>
+      <p>
+        <code>notFound()</code>, <code>forbidden()</code> and <code>unauthorized()</code>{" "}
+        are caught per segment, exactly as in Next.js: each level's <code>not-found.tsx</code> (or
+        {" "}
+        <code>forbidden.tsx</code> /{" "}
+        <code>unauthorized.tsx</code>) is a boundary around that level's page and children, nested
+        inside the level's own layout. So a throw from a page renders the nearest such file inside
+        its layouts, while a throw from a <em>layout</em>{" "}
+        escalates to the parent level (the throwing layout is not rendered). With no file anywhere,
+        the framework's built-in UI renders inside the root layout. The response status is
+        404/403/401 when the signal fires before the shell flushes; inside a streamed Suspense hole
+        the UI still swaps in, at 200.
+      </p>
 
       <h2>Route handlers</h2>
       <Code lang="ts">

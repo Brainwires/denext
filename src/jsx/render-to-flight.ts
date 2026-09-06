@@ -17,6 +17,7 @@ import { ERROR_BOUNDARY } from "../runtime/error-boundary.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
 import { rootScope, scopePrefix } from "./tree-id.ts";
 import {
+  flightBoundary,
   flightClientRef,
   flightHost,
   invokeServerComponent,
@@ -81,12 +82,28 @@ export interface FlightClient {
   c: FlightNode[];
 }
 
+/**
+ * A client-side error boundary: a segment's `error.tsx` (a `"use client"` component) around
+ * its children, so a render throw AFTER hydration swaps in the fallback on the client the
+ * way Next does. Emitted only when the boundary's fallback is a client reference; a
+ * server-only fallback stays transparent (the boundary lives on the server alone).
+ */
+export interface FlightBoundary {
+  /** Discriminant: client error boundary. */
+  $: "b";
+  /** Client-reference id of the fallback component (`clientId#export`). */
+  f: string;
+  /** Serialized children (or the server-rendered fallback, when the server caught). */
+  c: FlightNode[];
+}
+
 /** A node in a Flight tree. */
 export type FlightNode =
   | FlightPrimitive
   | FlightNode[]
   | FlightHost
   | FlightClient
+  | FlightBoundary
   | FlightActionRef;
 
 /** A serialized prop value. */
@@ -183,12 +200,16 @@ async function flightFragment(
 }
 
 /** Error boundary (see {@link renderErrorBoundaryWith}). */
-function flightErrorBoundary(props: Record<string, unknown>, ctx: FlightCtx): Promise<FlightNode> {
-  return renderErrorBoundaryWith(props, ctx.ids, {
+async function flightErrorBoundary(
+  props: Record<string, unknown>,
+  ctx: FlightCtx,
+): Promise<FlightNode> {
+  const rendered = await renderErrorBoundaryWith(props, ctx.ids, {
     render: (children) => flightChildren(children, ctx),
     renderFallback: (child) => flightChild(child, ctx),
     activate: () => setDispatcher(ctx.dispatcher),
   });
+  return flightBoundary(props, rendered);
 }
 
 /**

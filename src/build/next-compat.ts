@@ -21,11 +21,13 @@
  */
 
 import { denoPlugins } from "@luca/esbuild-deno-loader";
+import { transformUseCache } from "./use-cache-transform.ts";
 import { PUBLIC_ENV_ID } from "../runtime/public-env.ts";
 import * as esbuild from "esbuild";
 import {
   basename,
   dirname,
+  extname,
   fromFileUrl,
   isAbsolute,
   join,
@@ -925,6 +927,11 @@ export interface BundleNextCompatModulesOptions {
    */
   mdxOptions?: MdxBuildOptions;
   /**
+   * Apply the `"use cache"` transform inside the SSR bundle (`cacheComponents` on). See
+   * `cacheDirectivePlugin`.
+   */
+  useCache?: boolean;
+  /**
    * CSS shim map (stylesheet file URL → precompiled JS shim path) from `buildAppCss`.
    * When set, every `.css`/`.scss`/`.sass` import is redirected to its shim uniformly —
    * needed so stylesheets imported from OUTSIDE the app dir (sibling workspace packages)
@@ -1443,6 +1450,54 @@ function nodeModulesPlugins(options: BundleNextCompatModulesOptions): esbuild.Pl
 }
 
 /**
+ * esbuild plugin (SSR bundle): an absolute URL INTO the framework — what a build-time
+ * transform emits for its runtime import (the `"use cache"` wrapper's `src/server/cache.ts`)
+ * — is the same shared denext instance the SSR loader runs on: external, never bundled (its
+ * `@std/*` deps aren't resolvable through the app's config anyway).
+ */
+function frameworkUrlExternalPlugin(): esbuild.Plugin {
+  const fwRoot = frameworkRootUrl();
+  return {
+    name: "denext-framework-url-external",
+    setup(build) {
+      build.onResolve({ filter: /^(?:file|https?):\/\// }, (args) => {
+        return args.path.startsWith(fwRoot) ? { path: args.path, external: true } : null;
+      });
+    },
+  };
+}
+
+/**
+ * esbuild plugin (SSR bundle): apply the `"use cache"` transform to app modules IN the bundle.
+ * The runtime use-cache loader rewrites a source module into a `.denext/server-cache/uc_*`
+ * copy and imports it natively — which, for a compat app, bypasses the react→denext bundle
+ * (the copy's `next/*` and `.mdx` imports then fail under Deno's loader). Transforming at
+ * bundle time keeps every module inside the one bundle, identity intact, and `use cache`
+ * semantics active. Modules without the directive fall through to the normal loader.
+ * Exported for testing.
+ */
+export function cacheDirectivePlugin(): esbuild.Plugin {
+  return {
+    name: "denext-use-cache",
+    setup(build) {
+      build.onLoad({ filter: /\.(tsx?|jsx?|mjs)$/, namespace: "file" }, async (args) => {
+        if (args.path.includes("/node_modules/")) return undefined;
+        const source = await Deno.readTextFile(args.path);
+        if (!source.includes("use cache")) return undefined;
+        const { code, changed } = await transformUseCache(source, toFileUrl(args.path).href);
+        if (!changed) return undefined;
+        const ext = extname(args.path).slice(1);
+        return {
+          contents: code,
+          loader: (ext === "mjs" ? "js" : ext) as esbuild.Loader,
+          resolveDir: dirname(args.path),
+        };
+      });
+    },
+  };
+}
+
+/**
  * esbuild plugin: a `file://` specifier pointing INTO `node_modules` → its filesystem path.
  * The Flight entry imports every client island by file URL; an island that is an npm
  * package's own `"use client"` module (next-themes, nuqs, vaul — a client boundary when a
@@ -1479,24 +1534,15 @@ async function compatPlugins(
   workerBuild: (entryPath: string, outName: string) => Promise<void>,
 ): Promise<esbuild.Plugin[]> {
   const deno = options.platform === "deno";
-  const fumadocs = await detectFumadocsMdx(
-    options.absWorkingDir ?? dirname(
-      options.configPath.startsWith("file:") ? fromFileUrl(options.configPath) : options.configPath,
-    ),
-    (dir, spec) => resolveNodeFrom(dir, spec, SSR_CONDITIONS),
-  );
   const plugins: esbuild.Plugin[] = [
     ...(options.extraPlugins ?? []),
     envPoisonPlugin(deno),
+    ...(deno ? [frameworkUrlExternalPlugin()] : []),
     googleFontsPlugin(),
     options.denextExternal
       ? await denextExternalPlugin()
       : denextRuntimePlugin(options.runtimeDir!),
-    ...(options.assets ? [viteAssetPlugin(options.assets, workerBuild)] : []),
-    ...(options.cssImportMap ? [cssShimPlugin(options.cssImportMap)] : []),
-    ...(fumadocs ? [fumadocsMdxPlugin(fumadocs)] : []),
-    mdxPlugin(options.mdxOptions),
-    ...(deno ? [prismaGeneratedClientExternalPlugin(options.configPath)] : []),
+    ...(await sourcePlugins(options, workerBuild)),
     appResolverPlugin(options.configPath),
     nodeModulesFileUrlPlugin(),
     ...(deno ? [nodeBuiltinResolvePlugin()] : []),
@@ -1510,6 +1556,32 @@ async function compatPlugins(
     }));
   }
   return plugins;
+}
+
+/**
+ * The source-transforming plugins of the compat chain: Vite-style asset queries, the CSS shim
+ * redirect, fumadocs-mdx (when the app has it), the `"use cache"` transform (SSR, when
+ * `cacheComponents` is on), plain MDX, and the Prisma client external (SSR).
+ */
+async function sourcePlugins(
+  options: BundleNextCompatModulesOptions,
+  workerBuild: (entryPath: string, outName: string) => Promise<void>,
+): Promise<esbuild.Plugin[]> {
+  const deno = options.platform === "deno";
+  const fumadocs = await detectFumadocsMdx(
+    options.absWorkingDir ?? dirname(
+      options.configPath.startsWith("file:") ? fromFileUrl(options.configPath) : options.configPath,
+    ),
+    (dir, spec) => resolveNodeFrom(dir, spec, SSR_CONDITIONS),
+  );
+  return [
+    ...(options.assets ? [viteAssetPlugin(options.assets, workerBuild)] : []),
+    ...(options.cssImportMap ? [cssShimPlugin(options.cssImportMap)] : []),
+    ...(fumadocs ? [fumadocsMdxPlugin(fumadocs)] : []),
+    ...(deno && options.useCache ? [cacheDirectivePlugin()] : []),
+    mdxPlugin(options.mdxOptions),
+    ...(deno ? [prismaGeneratedClientExternalPlugin(options.configPath)] : []),
+  ];
 }
 
 /**
