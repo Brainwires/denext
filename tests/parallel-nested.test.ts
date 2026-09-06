@@ -83,3 +83,131 @@ Deno.test("intercept inside a slot matches only on soft navigation", async () =>
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+// ---- Soft-navigation slot state (Next.js: unmatched slots keep their content) ----------
+
+import { assertEquals } from "@std/assert";
+import { createApp } from "../src/server/app.ts";
+
+/** The playground's dashboard shape under `dash/`: a `children` page + an `@audience` slot. */
+const SLOT_STATE_FILES: Record<string, string> = {
+  "layout.tsx": `import { h } from "${jsx()}";\n` +
+    "export default function R(p){ return h('html', null, h('body', null, p.children)); }\n",
+  "dash/layout.tsx": `import { h } from "${jsx()}";\n` +
+    "export default function L(p){ return h('div', null, [h('main', null, p.children), h('aside', null, p.audience)]); }\n",
+  "dash/page.tsx":
+    `import { h } from "${jsx()}";\nexport default function(){ return h('b', null, 'CHANNEL'); }\n`,
+  "dash/default.tsx":
+    `import { h } from "${jsx()}";\nexport default function(){ return h('b', null, 'CHILD-DEFAULT'); }\n`,
+  "dash/@audience/default.tsx":
+    `import { h } from "${jsx()}";\nexport default function(){ return h('i', null, 'AUD-DEFAULT'); }\n`,
+  "dash/@audience/demographics/page.tsx":
+    `import { h } from "${jsx()}";\nexport default function(){ return h('i', null, 'AUD-DEMO'); }\n`,
+  "other/page.tsx":
+    `import { h } from "${jsx()}";\nexport default function(){ return h('b', null, 'OTHER'); }\n`,
+};
+
+/** Soft-nav helpers: HTML from a no-client-entry app, the recorded state from an entry app's payload. */
+async function slotStateApp() {
+  const dir = await app(SLOT_STATE_FILES);
+  const manifest = await scanRoutes(dir);
+  const htmlApp = createApp({ getManifest: () => manifest, load: defaultLoader });
+  const entryApp = createApp({
+    getManifest: () => manifest,
+    load: defaultLoader,
+    clientEntryFor: () => "/_denext/entry.js",
+  });
+  const headers = (slotState?: unknown): Record<string, string> =>
+    slotState === undefined
+      ? {}
+      : { "x-denext-nav": "1", "x-denext-slot-state": JSON.stringify(slotState) };
+  const html = async (path: string, slotState?: unknown) =>
+    await (await htmlApp(new Request(`http://x${path}`, { headers: headers(slotState) }))).text();
+  const state = async (path: string, slotState?: unknown) => {
+    const res = await entryApp(new Request(`http://x${path}`, { headers: headers(slotState) }));
+    const body = await res.text();
+    const data = slotState === undefined
+      ? JSON.parse(body.match(/<script id="__denext_data"[^>]*>([^<]*)<\/script>/)![1])
+      : JSON.parse(body).data;
+    return data.slotState as Record<string, string> | undefined;
+  };
+  return { dir, html, state };
+}
+
+Deno.test("slot state: a HARD load of a slot-only URL renders default.tsx and records the state", async () => {
+  const { dir, html, state } = await slotStateApp();
+  try {
+    const home = await html("/dash");
+    assertStringIncludes(home, "CHANNEL");
+    assertStringIncludes(home, "AUD-DEFAULT");
+    assertEquals(await state("/dash"), { children: "/dash" });
+
+    const demo = await html("/dash/demographics");
+    assertStringIncludes(demo, "CHILD-DEFAULT");
+    assertStringIncludes(demo, "AUD-DEMO");
+    assertEquals(await state("/dash/demographics"), {
+      children: "/dash/demographics",
+      "1:audience": "/dash/demographics",
+    });
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("slot state: a SOFT navigation keeps the page and unmatched slots the client was showing", async () => {
+  const { dir, html, state } = await slotStateApp();
+  try {
+    // From "/dash" to the slot-only "/dash/demographics": children keeps the "/dash" page.
+    const demo = await html("/dash/demographics", { children: "/dash" });
+    assertStringIncludes(demo, "CHANNEL");
+    assertStringIncludes(demo, "AUD-DEMO");
+    assert(!demo.includes("CHILD-DEFAULT"));
+    const demoState = await state("/dash/demographics", { children: "/dash" });
+    assertEquals(demoState, { children: "/dash", "1:audience": "/dash/demographics" });
+
+    // Back to "/dash": the @audience slot no longer matches but keeps demographics.
+    const home = await html("/dash", demoState);
+    assertStringIncludes(home, "CHANNEL");
+    assertStringIncludes(home, "AUD-DEMO");
+    assert(!home.includes("AUD-DEFAULT"));
+    assertEquals(await state("/dash", demoState), {
+      children: "/dash",
+      "1:audience": "/dash/demographics",
+    });
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("slot state: a remembered page under OTHER layouts, or a malformed header, falls back to default.tsx", async () => {
+  const { dir, html } = await slotStateApp();
+  try {
+    // "/other" is not under dash/layout.tsx: it cannot stand in for the dash children.
+    const foreign = await html("/dash/demographics", { children: "/other" });
+    assertStringIncludes(foreign, "CHILD-DEFAULT");
+    assert(!foreign.includes("OTHER"));
+
+    const junk = await html("/dash/demographics", { children: "http://evil/", "1:audience": 42 });
+    assertStringIncludes(junk, "CHILD-DEFAULT");
+    assertStringIncludes(junk, "AUD-DEMO");
+
+    const empty = createApp({
+      getManifest: () => ({
+        pages: [],
+        api: [],
+        rootLayout: null,
+        rootNotFound: null,
+        rootGlobalError: null,
+      }),
+      load: defaultLoader,
+    });
+    const res = await empty(
+      new Request("http://x/", {
+        headers: { "x-denext-nav": "1", "x-denext-slot-state": "{not json" },
+      }),
+    );
+    assertEquals(res.status, 404); // parsed defensively: no throw, plain 404
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

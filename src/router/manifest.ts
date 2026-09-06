@@ -5,7 +5,7 @@
 // File conventions inside the app dir:
 //   page.{tsx,ts,jsx,js}     -> a rendered page at that path
 //   layout.{tsx,ts,jsx,js}   -> wraps this segment and everything beneath it
-//   route.{ts,js}            -> an API endpoint (exports GET/POST/... handlers)
+//   route.{ts,tsx,js,jsx}    -> an API endpoint (exports GET/POST/... handlers)
 //   (group)/                 -> a route group: folder name omitted from the URL
 
 import { join } from "@std/path";
@@ -89,6 +89,13 @@ export interface PageRoute {
    * falls through to the real route at the same path.
    */
   intercept?: Intercept;
+  /**
+   * Set on a route synthesized for a parallel-route slot's own URL (`@audience/stats/page.tsx`
+   * reached as `/dashboard/stats`): `filePath` is the level's `default.tsx`, standing in for
+   * the page that URL doesn't have. On soft navigation the page the client was already
+   * showing is kept instead (see `server/slot-state.ts`).
+   */
+  slotOnly?: true;
 }
 
 /** The convention files one route directory level contributes (own files, not inherited). */
@@ -103,6 +110,16 @@ export interface SegmentLevel {
   loading: string | null;
   /** This level's `error.*` file (an error boundary), if any. */
   error: string | null;
+  /**
+   * This level's `not-found.*` file, if any: the boundary for a `notFound()` thrown by
+   * this level's page/children — a throw from this level's OWN layout escalates to the
+   * parent level, as in Next.js. Optional only so hand-built routes may omit it.
+   */
+  notFound?: string | null;
+  /** This level's `forbidden.*` file (the `forbidden()` boundary), as {@link notFound}. */
+  forbidden?: string | null;
+  /** This level's `unauthorized.*` file (the `unauthorized()` boundary), as {@link notFound}. */
+  unauthorized?: string | null;
 }
 
 /** A parallel-route slot's own routable subtree (its pages + a default fallback). */
@@ -199,7 +216,9 @@ const TWITTER_IMAGE_SUFFIX = "/twitter-image";
 
 // Standard component extensions vs. handler-only (route) extensions.
 const COMPONENT_EXT = "(tsx|ts|jsx|js)";
-const HANDLER_EXT = "(ts|js)";
+// Route handlers accept the same extensions as Next's default `pageExtensions` (a
+// `route.tsx` that renders an OG image with JSX is common).
+const HANDLER_EXT = "(tsx|ts|jsx|js)";
 // Metadata images come as a static file or a dynamic module.
 const IMAGE_ASSET_EXT = "(png|ico|jpe?g|svg|gif|webp|avif|tsx|ts|jsx|js)";
 
@@ -391,6 +410,7 @@ async function walk(ctx: ScanCtx, dir: string, frame: WalkFrame, out: WalkOut): 
   const slots = await scanSlots(ctx, dir, entries, frame.segments);
   const here = levelFrame(ctx, dir, entries, frame, slots);
   collectRoutes(dir, entries, here, slots, out);
+  await synthesizeSlotRoutes(dir, here, slots, out);
   for (const entry of entries) {
     // Parallel slots are scanned above, not walked as standalone routes; a `_private`
     // folder (Next.js convention) is colocated code that is never routable.
@@ -461,8 +481,12 @@ function levelFrame(
     template: templateFile,
     loading: fileHere(conv("loading")),
     error: fileHere(conv("error")),
+    notFound: fileHere(conv("not-found")),
+    forbidden: fileHere(conv("forbidden")),
+    unauthorized: fileHere(conv("unauthorized")),
   };
-  const hasLevel = level.layout || level.template || level.loading || level.error;
+  const hasLevel = level.layout || level.template || level.loading || level.error ||
+    level.notFound || level.forbidden || level.unauthorized;
   return {
     ...frame,
     layoutChain: layoutFile ? [...frame.layoutChain, layoutFile] : frame.layoutChain,
@@ -525,6 +549,33 @@ function collectRoutes(
         routePath: patternToPath(here.segments),
         filePath: join(dir, entry.name),
       });
+    }
+  }
+}
+
+/**
+ * A URL that exists only inside a parallel slot (`@audience/demographics/page.tsx` with no
+ * `demographics/page.tsx` beside it) is still a route in Next: on a hard navigation the
+ * layout renders that slot's page and, for `children`, the level's `default.*` (no default →
+ * 404, as in Next). Synthesize the page route with the default as its component so the URL
+ * matches; the slot content itself is picked per URL by the layout's `layoutSlots`.
+ */
+async function synthesizeSlotRoutes(
+  dir: string,
+  here: WalkFrame,
+  slots: Record<string, SlotRoutes> | undefined,
+  out: WalkOut,
+): Promise<void> {
+  if (!slots) return;
+  const fallback = await slotDefault(dir);
+  if (!fallback) return;
+  const seen = new Set(out.pages.map((p) => p.routePath));
+  for (const slot of Object.values(slots)) {
+    for (const page of slot.pages) {
+      if (seen.has(page.routePath)) continue;
+      seen.add(page.routePath);
+      const route = pageRoute(fallback, { ...here, segments: page.pattern }, slots);
+      out.pages.push({ ...route, slotOnly: true });
     }
   }
 }

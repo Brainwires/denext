@@ -107,3 +107,55 @@ Deno.test("flight drops non-serializable function props (event handlers)", async
   );
   assertEquals((flight as any).p, { id: "b" }); // onClick dropped
 });
+
+// ---- Client error boundaries (a segment's "use client" error.tsx) ---------------------
+
+import { ErrorBoundary } from "../src/runtime/error-boundary.ts";
+import { flightClientIds } from "../src/client/flight-client.ts";
+
+function ErrTsx(props: { error: Error }) {
+  return h("p", null, "err:" + props.error.message);
+}
+const errMod = { ErrTsx };
+tagClientExports(errMod as Record<string, unknown>, "c_err");
+
+Deno.test("renderToFlight emits a client boundary node when the fallback is a client component", async () => {
+  const flight = await renderToFlight(
+    h(ErrorBoundary, { fallback: ErrTsx, children: h("span", null, "ok") }),
+  );
+  assertEquals((flight as any).$, "b");
+  assertEquals((flight as any).f, "c_err#ErrTsx");
+  assertEquals((flight as any).c[0].t, "span");
+  // The lazy island loader must fetch the fallback's module too.
+  assert(flightClientIds(flight).has("c_err"));
+
+  // A server-side catch still renders the fallback on the server, inside the boundary.
+  const caught = await renderToFlight(
+    h(ErrorBoundary, {
+      fallback: ErrTsx,
+      children: h(() => {
+        throw new Error("boom");
+      }, null),
+    }),
+  );
+  assertEquals((caught as any).$, "b");
+  assertEquals(JSON.stringify(caught).includes("err:"), true);
+
+  // A server-only fallback (no client reference) stays transparent.
+  const plain = await renderToFlight(
+    h(ErrorBoundary, { fallback: () => h("p", null, "x"), children: h("span", null, "ok") }),
+  );
+  assertEquals((plain as any)[0].$, "h"); // the children array itself, no wrapper
+});
+
+Deno.test("parseFlight turns a boundary node into an ErrorBoundary (transparent without the fallback)", () => {
+  const node = { $: "b", f: "c_err#ErrTsx", c: [{ $: "h", t: "span", p: {}, c: ["ok"] }] };
+  const registry = new Map<string, Component>([["c_err#ErrTsx", ErrTsx as Component]]);
+  const vnode = parseFlight(node as any, registry) as any;
+  assertEquals(vnode.props.fallback, ErrTsx);
+  assertEquals(vnode.props.children.type, "span");
+
+  const bare = parseFlight(node as any, new Map()) as any;
+  assertEquals(Array.isArray(bare), true);
+  assertEquals(bare[0].type, "span");
+});

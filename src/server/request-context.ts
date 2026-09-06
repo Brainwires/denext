@@ -160,6 +160,15 @@ export interface RequestContext {
    * to the core dispatch; the feature that sent it interprets it. Absent on normal requests.
    */
   softNavBody?: unknown;
+  /**
+   * Parallel-route slot state the client echoed on a soft navigation
+   * (`x-denext-slot-state`): slot key → the pathname that slot last matched, so an
+   * unmatched slot re-renders its previous content instead of `default.tsx`. See
+   * `server/slot-state.ts`. Absent on a hard load.
+   */
+  slotState?: Record<string, string>;
+  /** The slot state this render produced (shipped to the client in the nav/hydration data). */
+  renderedSlotState?: Record<string, string>;
   /** Per-request memoization store backing {@link cache}, keyed by function. */
   memo: Map<unknown, Map<string, unknown>>;
   /**

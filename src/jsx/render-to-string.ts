@@ -17,10 +17,10 @@ import {
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 import {
+  boundaryFallbackError,
+  boundaryLetsThrough,
   ERROR_BOUNDARY,
-  isControlSignal,
   reportBoundaryError,
-  toClientError,
 } from "../runtime/error-boundary.ts";
 import { actionEndpoint, isServerAction } from "../runtime/server-action.ts";
 import { DNX_H_ATTR, isQrl } from "../runtime/qrl.ts";
@@ -780,9 +780,9 @@ function renderErrorBoundaryToStr(props: Props, ctx: RenderCtx): string | Promis
   const savedCount = idScope.count;
   const savedLocal = idScope.local;
   const onError = (err: unknown): string | Promise<string> => {
-    // Suspensions go to <Suspense>; notFound()/forbidden()/unauthorized()
-    // bubble to the page handler for status-code rendering.
-    if (isThenable(err) || isControlSignal(err)) throw err;
+    // Suspensions go to <Suspense>; notFound()/forbidden()/unauthorized() bubble to
+    // their signal boundary (or the page handler) — unless THIS is that boundary.
+    if (boundaryLetsThrough(props, err)) throw err;
     ctx.ids.scope = idScope;
     idScope.count = savedCount;
     idScope.local = savedLocal;
@@ -804,7 +804,7 @@ function renderFallbackToStr(props: Props, err: unknown, ctx: RenderCtx): string
   ) => VNode | Promise<VNode>;
   setDispatcher(ctx.dispatcher);
   reportBoundaryError(props, err);
-  const fb = Fallback({ error: toClientError(err), reset: () => {} });
+  const fb = Fallback({ error: boundaryFallbackError(props, err), reset: () => {} });
   if (isThenable(fb)) {
     return (fb as Promise<VNode>).then((n) => renderToStr(n as VNodeChildren, ctx));
   }

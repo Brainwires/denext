@@ -345,3 +345,30 @@ Deno.test("renderToFlightStream: a user object shaped like a value hole is left 
   const json = JSON.stringify(JSON.parse(m![1]));
   assertStringIncludes(json, `"r":"not-ours"`); // preserved as data, not nulled
 });
+
+// A streamed island's serialized children must be WALKED, not rendered: rendering them ran a
+// consumer island outside the provider its parent island rendered around it (the App Router
+// playground's `/context`: a client `CounterProvider` in the layout, `useCounter` in the page).
+Deno.test("renderToFlightStream: an island's children are not invoked by the Flight walk", async () => {
+  const { createContext, useContext } = await import("../mod.ts");
+  const { tagClientExports } = await import("../src/runtime/client-reference.ts");
+  const Ctx = createContext<string | null>(null);
+  let consumerRuns = 0;
+  // deno-lint-ignore no-explicit-any
+  function Provider(props: any) {
+    return h(Ctx.Provider, { value: "ok" }, props.children);
+  }
+  function Consumer() {
+    consumerRuns++;
+    const v = useContext(Ctx);
+    if (v == null) throw new Error("useX must be used within Provider");
+    return h("b", null, v);
+  }
+  tagClientExports({ Provider, Consumer } as Record<string, unknown>, "c_stream_ctx");
+  // Server-authored: the consumer is the provider island's child.
+  const tree = h("main", null, h(Provider, null, h("div", null, h(Consumer, null))));
+  const html = await streamToString(renderToFlightStream(tree));
+  assertStringIncludes(html, "<b>ok</b>");
+  assertEquals(consumerRuns, 1, "rendered once for HTML; the Flight walk emitted a reference");
+  assertStringIncludes(html, "c_stream_ctx#Consumer");
+});

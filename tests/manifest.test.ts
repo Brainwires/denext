@@ -94,3 +94,39 @@ Deno.test("matchApi resolves an API route", async () => {
     await cleanup();
   }
 });
+
+// Route handlers may use any of Next's default page extensions — a `route.tsx` rendering an
+// OG image with JSX (the App Router playground's `/api/og`) was invisible to the scanner.
+Deno.test("scans route.tsx / route.jsx handlers as API routes", async () => {
+  const { dir, cleanup } = await buildAppTree(["api/og/route.tsx", "api/legacy/route.jsx"]);
+  try {
+    const manifest = await scanRoutes(dir);
+    assertEquals(manifest.api.map((a) => a.routePath).sort(), ["/api/legacy", "/api/og"]);
+  } finally {
+    await cleanup();
+  }
+});
+
+// A URL that exists only inside a parallel slot is a route: the level's `default.*` stands in
+// for `children` (Next's hard-navigation behavior); without a default it stays a 404.
+Deno.test("a slot-only URL routes to the level's default.* as children", async () => {
+  const { dir, cleanup } = await buildAppTree([
+    "dash/page.tsx",
+    "dash/layout.tsx",
+    "dash/default.tsx",
+    "dash/@audience/page.tsx",
+    "dash/@audience/demographics/page.tsx",
+    "nodefault/page.tsx",
+    "nodefault/@views/stats/page.tsx",
+  ]);
+  try {
+    const manifest = await scanRoutes(dir);
+    const demo = manifest.pages.find((p) => p.routePath === "/dash/demographics");
+    assertExists(demo, "slot-only URL synthesized");
+    assertEquals(demo.filePath.endsWith("dash/default.tsx"), true, demo.filePath);
+    assertEquals(demo.layoutChain.length, 1, "the level's layout wraps it");
+    assertEquals(manifest.pages.find((p) => p.routePath === "/nodefault/stats"), undefined);
+  } finally {
+    await cleanup();
+  }
+});

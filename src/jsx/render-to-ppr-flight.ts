@@ -41,6 +41,7 @@ import {
 import {
   type CarvedIsland,
   type Dual,
+  dualBoundary,
   holeClose,
   holeOpen,
   type IslandPayload,
@@ -59,6 +60,11 @@ import { type IdScope, scopePrefix } from "./tree-id.ts";
 export { fillFlightHoles, type ResumedFlightHole };
 
 class PPRFlightRenderer extends PprVNodeRenderer<Dual> implements IslandRenderer {
+  /** A client `error.tsx` fallback becomes a Flight boundary node around its children. */
+  protected override wrapErrorBoundary(props: Record<string, unknown>, rendered: Dual): Dual {
+    return dualBoundary(props, rendered);
+  }
+
   /** Holes discovered during a resume pass. */
   readonly holes: ResumedFlightHole[] = [];
   /** `client:*` islands carved out (kept passes only) for deferred hydration. */

@@ -8,10 +8,15 @@
 import { invokeWithRenderPhase } from "./render-phase.ts";
 import "../runtime/class-flag.ts";
 import { PROVIDER } from "../runtime/context.ts";
-import { isThenable } from "../runtime/suspense.ts";
-import { isControlSignal, reportBoundaryError, toClientError } from "../runtime/error-boundary.ts";
-import { invokeComponent, resolveComponentType } from "../runtime/react-brands.ts";
-import type { ClientRefInfo } from "../runtime/client-reference.ts";
+import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
+import {
+  boundaryFallbackError,
+  boundaryLetsThrough,
+  ERROR_BOUNDARY,
+  reportBoundaryError,
+} from "../runtime/error-boundary.ts";
+import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
+import { type ClientRefInfo, clientRefOf } from "../runtime/client-reference.ts";
 import { isServerAction } from "../runtime/server-action.ts";
 import { DNX_H_ATTR } from "../runtime/qrl.ts";
 import { type HydrationStrategy, parseStrategy } from "../runtime/lazy-directive.ts";
@@ -28,8 +33,8 @@ import {
   VOID_ELEMENTS,
   warnDangerousHtml,
 } from "./render-to-string.ts";
-import { enterScope, ID_PATH_PROP, type IdHolder, type IdScope } from "./tree-id.ts";
-import type { VNode, VNodeChild, VNodeChildren } from "./types.ts";
+import { enterScope, ID_PATH_PROP, type IdHolder, type IdScope, scopePrefix } from "./tree-id.ts";
+import { FRAGMENT, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
 import { islandWrapper, warnClientOnlySeoContent } from "./island-wrapper.ts";
 import type { FlightNode, FlightProps, FlightValue } from "./render-to-flight.ts";
 import { serializeScalar, serializeThenable } from "./flight-scalar.ts";
@@ -38,6 +43,22 @@ import { serializeScalar, serializeThenable } from "./flight-scalar.ts";
 export interface Dual {
   html: string;
   flight: FlightNode;
+}
+
+/**
+ * Wrap an error boundary's rendered Flight output in a a `FlightBoundary` node when its
+ * fallback is a client component; otherwise the output passes through unchanged.
+ */
+export function flightBoundary(props: Record<string, unknown>, rendered: FlightNode): FlightNode {
+  const ref = clientRefOf(props.fallback);
+  if (!ref) return rendered;
+  return { $: "b", f: ref.id, c: Array.isArray(rendered) ? rendered : [rendered] };
+}
+
+/** A dual render's Flight half wrapped in a client error boundary when the fallback is one. */
+export function dualBoundary(props: Record<string, unknown>, rendered: Dual): Dual {
+  const flight = flightBoundary(props, rendered.flight);
+  return flight === rendered.flight ? rendered : { ...rendered, flight };
 }
 
 // ---- Provider fragments ------------------------------------------------------------
@@ -114,18 +135,6 @@ export async function resolveInBoundaryScope<T>(
 // ---- Error boundaries ----------------------------------------------------------------
 
 /**
- * Whether an error caught at an error boundary must propagate instead: a suspension (the
- * enclosing Suspense retries), a control signal (redirect/notFound bubble to the page handler),
- * or a renderer-specific pass-through such as PPR's Postpone.
- */
-export function passesThroughBoundary(
-  err: unknown,
-  alsoPasses?: (err: unknown) => boolean,
-): boolean {
-  return isThenable(err) || isControlSignal(err) || (alsoPasses?.(err) ?? false);
-}
-
-/**
  * An error boundary's fallback for `err`: rewind the id scope to its pre-children state (so the
  * fallback's ids line up with the client's), re-activate the renderer's hook dispatcher, report
  * the error, and invoke the fallback component. Returns the fallback's rendered child.
@@ -145,7 +154,10 @@ export async function renderBoundaryFallback(
   const Fallback = props.fallback as (
     p: { error: Error; reset: () => void },
   ) => VNode | Promise<VNode>;
-  return await Fallback({ error: toClientError(err), reset: () => {} }) as VNodeChild;
+  return await Fallback({
+    error: boundaryFallbackError(props, err),
+    reset: () => {},
+  }) as VNodeChild;
 }
 
 /** What {@link renderErrorBoundaryWith} composes from a function-style renderer. */
@@ -171,7 +183,7 @@ export async function renderErrorBoundaryWith<T>(
   try {
     return await ops.render(props.children as VNodeChildren);
   } catch (err) {
-    if (passesThroughBoundary(err)) throw err;
+    if (boundaryLetsThrough(props, err)) throw err;
     return await ops.renderFallback(
       await renderBoundaryFallback(props, err, ids, checkpoint, ops.activate),
     );
@@ -427,6 +439,117 @@ export async function renderDualChildren(
     flight.push(d.flight);
   }
   return { html, flight };
+}
+
+// ---- Flight-only walk (an island's serialized children) -----------------------------------
+//
+// A top-level island carries its server-authored children as serialized Flight "holes" —
+// the browser passes the reconstructed elements to the client component. The walk must NOT
+// invoke client components: their HTML was produced when the island's own render consumed
+// its children, and invoking one here runs it outside the island's providers (a consumer of
+// a context the island provides would throw). Client refs become references; server
+// components are expanded; Suspense/error boundaries/providers are honored.
+
+/** What the Flight-only walk needs from a renderer. */
+export interface FlightWalker {
+  ids: IdHolder;
+  /** Make `scopes` the live context for a component about to run. */
+  activate(scopes: ProviderScope[]): void;
+  /** Nested islands already carved by the HTML pass (see `carveIsland`). */
+  carvedNested?: WeakMap<VNode, CarvedIsland>;
+  /** Serialize an element's props (nested elements walk through this walker again). */
+  serializeProps(props: Record<string, unknown>, scopes: ProviderScope[]): Promise<FlightProps>;
+}
+
+/** Flight nodes for `children`, walked under `scopes` without invoking client components. */
+export async function flightOnlyChildren(
+  children: VNodeChildren,
+  w: FlightWalker,
+  scopes: ProviderScope[],
+): Promise<FlightNode[]> {
+  const arr = Array.isArray(children) ? children : children == null ? [] : [children];
+  const out: FlightNode[] = [];
+  for (const c of arr) out.push(await flightOnlyChild(c, w, scopes));
+  return out;
+}
+
+export function flightOnlyChild(
+  child: VNodeChild,
+  w: FlightWalker,
+  scopes: ProviderScope[],
+): FlightNode | Promise<FlightNode> {
+  if (child == null || child === false || child === true) return null;
+  if (typeof child === "string" || typeof child === "number") return child;
+  if (Array.isArray(child)) return flightOnlyChildren(child, w, scopes);
+  return flightOnlyVNode(child as VNode, w, scopes);
+}
+
+async function flightOnlyVNode(
+  node: VNode,
+  w: FlightWalker,
+  scopes: ProviderScope[],
+): Promise<FlightNode> {
+  const { type } = node;
+  const props = node.props ?? {};
+  if (type === FRAGMENT) {
+    return flightOnlyChildren(
+      props.children as VNodeChildren,
+      w,
+      scopesWithProvider(scopes, props),
+    );
+  }
+  if ((type as unknown) === SUSPENSE) {
+    return resolveInBoundaryScope(
+      w.ids,
+      () => flightOnlyChildren(props.children as VNodeChildren, w, scopes),
+    );
+  }
+  if ((type as unknown) === ERROR_BOUNDARY) {
+    const rendered = await renderErrorBoundaryWith(props, w.ids, {
+      render: (children) => flightOnlyChildren(children, w, scopes),
+      renderFallback: (child) => flightOnlyChild(child, w, scopes),
+      activate: () => w.activate(scopes),
+    });
+    return flightBoundary(props, rendered);
+  }
+  if (!isComponentType(type)) {
+    const p = await w.serializeProps(props, scopes);
+    return flightHost(
+      type as string,
+      p,
+      await flightOnlyChildren(props.children as VNodeChildren, w, scopes),
+    );
+  }
+  const { parent, scope } = pushScope(w.ids);
+  try {
+    const ref = clientRefOf(type);
+    if (ref) return await flightOnlyIsland(node, ref, props, scopePrefix(scope), w, scopes);
+    w.activate(scopes);
+    return await flightOnlyChild(await invokeServerComponent(type, props, scopes), w, scopes);
+  } finally {
+    w.ids.scope = parent;
+  }
+}
+
+/**
+ * A client island inside serialized children. One the parent's dual render already carved
+ * emits a matching FOREIGN HOST (see `islandWrapper`) so the enclosing island's hydrateRoot
+ * adopts the wrapper without reconciling into it; otherwise a plain client ref.
+ */
+async function flightOnlyIsland(
+  node: VNode,
+  ref: ClientRefInfo,
+  props: Record<string, unknown>,
+  prefix: string,
+  w: FlightWalker,
+  scopes: ProviderScope[],
+): Promise<FlightNode> {
+  const carved = w.carvedNested?.get(node);
+  if (carved) return islandWrapper(carved.id, carved.strategy, carved.param, "").flight;
+  const { rest } = parseStrategy(props, ref.moduleHydrate);
+  const p = await w.serializeProps(rest, scopes);
+  const children = await flightOnlyChildren(rest.children as VNodeChildren, w, scopes);
+  return flightClientRef(ref.id, p, prefix, children);
 }
 
 /** Each child's Flight from a dual render (the HTML side is discarded). */

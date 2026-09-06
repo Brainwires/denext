@@ -2,7 +2,7 @@
 // render → soft-navigation payload / cached document / buffered document.
 
 import type { RouteManifest } from "../router/manifest.ts";
-import type { PageMatch } from "../router/match.ts";
+import { matchPage, type PageMatch } from "../router/match.ts";
 import type { PeeledLocale } from "./i18n.ts";
 import { resolveMessages } from "./i18n.ts";
 import {
@@ -33,6 +33,7 @@ import {
 import { cacheAndServeBuffered, pageCacheKey, serveFromPageCache } from "./page-cache-flow.ts";
 import { servePrerendered } from "./page-prerender.ts";
 import { serveStreamed } from "./page-stream.ts";
+import { CHILDREN_SLOT, readSlotState, recordSlotState } from "./slot-state.ts";
 
 /** What the routing stage hands over once a page matched. */
 export interface MatchedPageRequest {
@@ -41,6 +42,8 @@ export interface MatchedPageRequest {
   localeInfo: PeeledLocale | null;
   /** A soft (client) navigation (`x-denext-nav`). */
   soft: boolean;
+  /** The locale/basePath-stripped path the page was matched on. */
+  routingPath: string;
 }
 
 /** Soft-navigation JSON payloads are never cached and keyed on the nav header. */
@@ -60,12 +63,13 @@ const SOFT_NAV_HEADERS = {
  */
 async function preparePageRequest(
   state: RequestState,
-  { manifest, matched, localeInfo, soft }: MatchedPageRequest,
+  { manifest, matched, localeInfo, soft, routingPath }: MatchedPageRequest,
 ): Promise<PageRequest> {
   const { config } = state.app;
+  const base = withSlotState(state, manifest, matched, soft, routingPath);
   const page = localeInfo
-    ? { route: matched.route, params: { ...matched.params, locale: localeInfo.locale } }
-    : matched;
+    ? { route: base.route, params: { ...base.params, locale: localeInfo.locale } }
+    : base;
   const locale = localeInfo?.locale ?? config.i18n?.defaultLocale ?? "";
   const messages = config.i18n?.messages ? resolveMessages(config.i18n, locale) : undefined;
   const { useFlight, pageLoad } = await resolveFlightLoader(config, page.route, manifest);
@@ -87,6 +91,43 @@ async function preparePageRequest(
       (localeInfo ? `#${locale}` : ""),
     boundaryErrors: [],
   };
+}
+
+/**
+ * Parallel-route slot state for this request (see `slot-state.ts`): on a soft navigation
+ * the client's echoed state is installed for the slot renderer, and a slot-only URL keeps
+ * the page the client was showing — the remembered `children` pathname is re-matched and
+ * THAT page (with its params) renders under the shared layouts, as Next does. Records the
+ * `children` state for any route that has slots to render into.
+ */
+function withSlotState(
+  state: RequestState,
+  manifest: RouteManifest,
+  matched: PageMatch,
+  soft: boolean,
+  routingPath: string,
+): PageMatch {
+  const slotState = soft ? readSlotState(state.request) : {};
+  state.ctx.slotState = slotState;
+  const prev = slotState[CHILDREN_SLOT];
+  const kept = prev && matched.route.slotOnly ? matchUnderLayouts(manifest, prev, matched) : null;
+  const page = kept ?? matched;
+  if (page.route.layoutSlots) {
+    recordSlotState(state.ctx, CHILDREN_SLOT, kept ? prev : routingPath);
+  }
+  return page;
+}
+
+/** The real (non-slot-only) page at `pathname`, when it lives under `under`'s layouts. */
+function matchUnderLayouts(
+  manifest: RouteManifest,
+  pathname: string,
+  under: PageMatch,
+): PageMatch | null {
+  const pm = matchPage(manifest, pathname, { soft: true });
+  if (!pm || pm.route.slotOnly) return null;
+  const shared = under.route.layoutChain.every((f, i) => pm.route.layoutChain[i] === f);
+  return shared ? pm : null;
 }
 
 /**

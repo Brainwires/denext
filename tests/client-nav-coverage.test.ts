@@ -628,3 +628,32 @@ Deno.test("INTERACTION_EVENTS lists the first-touch hydration triggers", () => {
     ["pointerdown", "click", "keydown", "focusin", "touchstart"],
   );
 });
+
+Deno.test("withViewTransition: a skipped transition (hidden tab) rejects `ready` without an unhandled rejection", async () => {
+  const g = globalThis as AnyGlobal;
+  const origDoc = g.document;
+  let unhandled = 0;
+  const onUnhandled = (e: Event) => {
+    unhandled++;
+    e.preventDefault();
+  };
+  globalThis.addEventListener("unhandledrejection", onUnhandled);
+  try {
+    let committed = 0;
+    g.document = {
+      startViewTransition(cb: () => void) {
+        cb();
+        const aborted = () => Promise.reject(new Error("Transition was aborted"));
+        return { ready: aborted(), finished: aborted(), updateCallbackDone: Promise.resolve() };
+      },
+    };
+    withViewTransition(() => committed++);
+    await new Promise((r) => setTimeout(r, 0));
+    assertEquals(committed, 1);
+    assertEquals(unhandled, 0);
+  } finally {
+    globalThis.removeEventListener("unhandledrejection", onUnhandled);
+    if (origDoc === undefined) delete g.document;
+    else g.document = origDoc;
+  }
+});

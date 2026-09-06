@@ -9,7 +9,7 @@
 import { FRAGMENT, PORTAL, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
 import { type Dispatcher, setDispatcher } from "../runtime/hooks.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
-import { ERROR_BOUNDARY } from "../runtime/error-boundary.ts";
+import { boundaryLetsThrough, ERROR_BOUNDARY } from "../runtime/error-boundary.ts";
 import { isComponentType } from "../runtime/react-brands.ts";
 import { type ClientRefInfo, clientRefOf } from "../runtime/client-reference.ts";
 import { isPostpone } from "../runtime/postpone.ts";
@@ -23,7 +23,6 @@ import { enterScope, type IdScope, rootScope, scopePrefix } from "./tree-id.ts";
 import {
   checkpointScope,
   invokeServerComponent,
-  passesThroughBoundary,
   pushScope,
   renderBoundaryFallback,
   scopesWithProvider,
@@ -167,14 +166,25 @@ export abstract class VNodeRenderer<T> {
     head: HeadCollector | null,
   ): Promise<T> {
     const checkpoint = checkpointScope(this.ids);
+    let rendered: T;
     try {
-      return await this.resolveBoundaryChildren(props.children as VNodeChildren, scopes, head);
+      rendered = await this.resolveBoundaryChildren(props.children as VNodeChildren, scopes, head);
     } catch (err) {
-      if (passesThroughBoundary(err, (e) => this.boundaryPassthrough(e))) throw err;
+      if (boundaryLetsThrough(props, err, (e) => this.boundaryPassthrough(e))) throw err;
       const activate = () => this.activate(scopes);
       const fallback = await renderBoundaryFallback(props, err, this.ids, checkpoint, activate);
-      return await this.renderChild(fallback, scopes, head);
+      rendered = await this.renderChild(fallback, scopes, head);
     }
+    return this.wrapErrorBoundary(props, rendered);
+  }
+
+  /**
+   * What an error boundary contributes to the output around its rendered children (or
+   * fallback): nothing for HTML; a Flight renderer wraps a client `error.tsx` boundary
+   * (see `dualBoundary`) so the client can catch post-hydration throws.
+   */
+  protected wrapErrorBoundary(_props: Props, rendered: T): T {
+    return rendered;
   }
 
   /**

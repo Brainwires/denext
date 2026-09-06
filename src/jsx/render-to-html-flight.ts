@@ -16,14 +16,14 @@ import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 import { ERROR_BOUNDARY } from "../runtime/error-boundary.ts";
 import { beginSignalCollection, endSignalCollection } from "../runtime/signal-state.ts";
 import { type ClientRefInfo, clientRefOf } from "../runtime/client-reference.ts";
-import { parseStrategy } from "../runtime/lazy-directive.ts";
-import { islandWrapper } from "./island-wrapper.ts";
 import {
   type CarvedIsland,
   type Dual,
+  dualBoundary,
   type DualHost,
-  flightClientRef,
-  flightHost,
+  flightOnlyChild,
+  flightOnlyChildren,
+  type FlightWalker,
   invokeServerComponent,
   type IslandPayload,
   type IslandRenderer,
@@ -46,7 +46,7 @@ import {
   type HeadCollector,
   type IdHolder,
 } from "./render-to-string.ts";
-import type { FlightNode, FlightProps, FlightValue } from "./render-to-flight.ts";
+import type { FlightNode, FlightValue } from "./render-to-flight.ts";
 import { rootScope, scopePrefix } from "./tree-id.ts";
 
 /** Result of a unified render: SSR HTML plus the serializable Flight tree. */
@@ -226,12 +226,13 @@ async function renderFragmentDual(props: Record<string, unknown>, ctx: Ctx): Pro
 }
 
 /** Error boundary (see {@link renderErrorBoundaryWith}). */
-function renderErrorBoundaryDual(props: Record<string, unknown>, ctx: Ctx): Promise<Dual> {
-  return renderErrorBoundaryWith(props, ctx.ids, {
+async function renderErrorBoundaryDual(props: Record<string, unknown>, ctx: Ctx): Promise<Dual> {
+  const rendered = await renderErrorBoundaryWith(props, ctx.ids, {
     render: (children) => renderChildrenDual(children, ctx),
     renderFallback: (child) => renderChildDual(child, ctx),
     activate: () => setDispatcher(ctx.dispatcher),
   });
+  return dualBoundary(props, rendered);
 }
 
 /**
@@ -285,97 +286,28 @@ function renderIslandDual(
 
 // ---- Flight-only serialization for props and client-island children --------
 //
-// Client islands carry their children as serialized "holes"; the reconstructed
-// children are what the browser passes to the client component. We serialize
-// them without also rendering HTML here (the HTML was produced when the island's
-// own render consumed its children).
+// Client islands carry their children as serialized "holes"; the reconstructed children
+// are what the browser passes to the client component. The walk itself is shared with the
+// streaming renderer (`flightOnlyChildren` in render-shared) — it never invokes a client
+// component, only serializes references.
 
-async function flightOfChildren(children: VNodeChildren, ctx: Ctx): Promise<FlightNode[]> {
-  const arr = Array.isArray(children) ? children : children == null ? [] : [children];
-  const out: FlightNode[] = [];
-  for (const c of arr) out.push(await flightOfChild(c, ctx));
-  return out;
+/** The shared Flight-only walker over this renderer's context, rooted at `scopes`. */
+function walkerOf(ctx: Ctx): FlightWalker {
+  return {
+    ids: ctx.ids,
+    activate: () => setDispatcher(ctx.dispatcher),
+    carvedNested: ctx.carvedNested,
+    serializeProps: (props, scopes) =>
+      serializeFlightProps(props, (v) => serializeValue(v, { ...ctx, scopes })),
+  };
 }
 
-function flightOfChild(child: VNodeChild, ctx: Ctx): FlightNode | Promise<FlightNode> {
-  if (child == null || child === false || child === true) return null;
-  if (typeof child === "string") return child;
-  if (typeof child === "number") return child;
-  if (Array.isArray(child)) return flightOfChildren(child, ctx);
-  return flightOfVNode(child as VNode, ctx);
+function flightOfChildren(children: VNodeChildren, ctx: Ctx): Promise<FlightNode[]> {
+  return flightOnlyChildren(children, walkerOf(ctx), ctx.scopes);
 }
 
-async function flightOfVNode(node: VNode, ctx: Ctx): Promise<FlightNode> {
-  const { type } = node;
-  const props = node.props ?? {};
-  if (type === FRAGMENT) return flightOfFragment(props, ctx);
-  // Suspense / error boundaries authored by a server component inside an island's children
-  // (shadcn's `<ComponentPreview>` — a `React.lazy` demo under Suspense — passed into a
-  // `<Tabs>` island): resolve the suspension here like every other renderer, or the raw
-  // pending Promise escapes as an unhandled error.
-  if ((type as unknown) === SUSPENSE) {
-    return resolveInBoundaryScope(ctx.ids, () => flightOfChildren(props.children, ctx));
-  }
-  if ((type as unknown) === ERROR_BOUNDARY) {
-    return renderErrorBoundaryWith(props, ctx.ids, {
-      render: (children) => flightOfChildren(children, ctx),
-      renderFallback: (child) => flightOfChild(child, ctx),
-      activate: () => setDispatcher(ctx.dispatcher),
-    });
-  }
-  if (!isComponentType(type)) {
-    const p = await serializeProps(props, ctx);
-    return flightHost(type as string, p, await flightOfChildren(props.children, ctx));
-  }
-  const { parent, scope } = pushScope(ctx.ids);
-  try {
-    const ref = clientRefOf(type);
-    if (ref) return await flightOfIsland(node, ref, props, scopePrefix(scope), ctx);
-    // A server component nested inside a hole: expand it (flight-only).
-    setDispatcher(ctx.dispatcher);
-    return await flightOfChild(await invokeServerComponent(type, props, ctx.scopes), ctx);
-  } finally {
-    ctx.ids.scope = parent;
-  }
-}
-
-/** A fragment, or a context provider whose scope wraps its children (Flight-only walk). */
-async function flightOfFragment(props: Record<string, unknown>, ctx: Ctx): Promise<FlightNode> {
-  const scope = providerScopeOf(props);
-  if (!scope) return flightOfChildren(props.children as VNodeChildren, ctx);
-  ctx.scopes.push(scope);
-  try {
-    return await flightOfChildren(props.children as VNodeChildren, ctx);
-  } finally {
-    ctx.scopes.pop();
-  }
-}
-
-/**
- * A client island inside serialized children. One the parent's dual render already carved
- * (wrapper + islands entry) emits a matching FOREIGN HOST — the same node `islandWrapper` puts
- * in the page Flight for a top-level island — so the enclosing island's per-island `hydrateRoot`
- * adopts the child's wrapper element without reconciling into it (it hydrates on its own
- * strategy). Otherwise — an island's children that its component did not itself render, or a
- * Suspense hole — it is a plain client ref, hydrated with the enclosing island's root.
- */
-async function flightOfIsland(
-  node: VNode,
-  ref: { id: string; moduleHydrate?: unknown },
-  props: Record<string, unknown>,
-  prefix: string,
-  ctx: Ctx,
-): Promise<FlightNode> {
-  const carved = ctx.carvedNested?.get(node);
-  if (carved) return islandWrapper(carved.id, carved.strategy, carved.param, "").flight;
-  const { rest } = parseStrategy(props, ref.moduleHydrate);
-  const p = await serializeProps(rest, ctx);
-  const children = await flightOfChildren(rest.children as VNodeChildren, ctx);
-  return flightClientRef(ref.id, p, prefix, children);
-}
-
-function serializeProps(props: Record<string, unknown>, ctx: Ctx): Promise<FlightProps> {
-  return serializeFlightProps(props, (v) => serializeValue(v, ctx));
+function flightOfVNode(node: VNode, ctx: Ctx): FlightNode | Promise<FlightNode> {
+  return flightOnlyChild(node, walkerOf(ctx), ctx.scopes);
 }
 
 function serializeValue(value: unknown, ctx: Ctx): Promise<Serialized> {

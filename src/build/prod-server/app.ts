@@ -39,10 +39,13 @@ import type { BuildInfo, FlightBoundary } from "./manifest.ts";
  */
 async function prodLoader(paths: ProjectPaths, info: BuildInfo): Promise<ModuleLoader> {
   let load: ModuleLoader = defaultLoader;
-  if (info.nextCompat && info.compatModuleMap.size > 0) {
+  const compat = info.nextCompat && info.compatModuleMap.size > 0;
+  if (compat) {
     load = createNextCompatServerLoader(load, { moduleMap: info.compatModuleMap });
   }
-  if (resolveCacheComponents(paths.config)) {
+  // A compat bundle already carries the `"use cache"` transform (applied at bundle time, so
+  // the module stays inside the react→denext bundle); the runtime rewrite is for native apps.
+  if (resolveCacheComponents(paths.config) && !compat) {
     const cacheDir = join(paths.outDir, "server-cache");
     await Deno.remove(cacheDir, { recursive: true }).catch(() => {});
     load = createUseCacheLoader(load, { projectDir: paths.projectDir, cacheDir });

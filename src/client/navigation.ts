@@ -181,7 +181,7 @@ async function fetchRoute(href: string): Promise<RouteResponse> {
   const extra = navRequestProvider?.() ?? {};
   const res = await fetch(href, {
     method: extra.body ? "POST" : "GET",
-    headers: { ...extra.headers, "x-denext-nav": "1" },
+    headers: { ...extra.headers, ...slotStateHeader(), "x-denext-nav": "1" },
     body: extra.body,
   });
   if (!res.ok && res.status !== 404) throw new Error(`status ${res.status}`);
@@ -195,6 +195,29 @@ async function fetchRoute(href: string): Promise<RouteResponse> {
     flight: res.headers?.get("x-denext-flight") === "1",
     iso: res.headers?.get("x-denext-iso") === "1",
   };
+}
+
+/**
+ * The parallel-route slot state to echo on a soft-nav fetch: the `slotState` map the server
+ * put in the current page's data island, so a slot the new URL doesn't match keeps its
+ * content instead of dropping to `default.tsx` (Next.js semantics; `server/slot-state.ts`).
+ */
+function slotStateHeader(): Record<string, string> {
+  try {
+    const raw = document.getElementById("__denext_data")?.textContent;
+    const state = raw ? (JSON.parse(raw) as HydrationData).slotState : undefined;
+    return state && Object.keys(state).length > 0
+      ? { "x-denext-slot-state": JSON.stringify(state) }
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+/** The prefetch-cache key: the URL plus the slot state it was rendered under. */
+function prefetchKey(href: string): string {
+  const state = slotStateHeader()["x-denext-slot-state"];
+  return state ? `${href}\u0000${state}` : href;
 }
 
 // The Flight soft-nav parser, registered by the generated Flight entry
@@ -225,9 +248,10 @@ export function prefetch(href: string): void {
   if (url.origin !== location.origin) return;
   // Skip if in-flight ("") or still-fresh; a TTL-expired entry is dropped here
   // and re-fetched below.
-  if (prefetchGet(url.href) !== undefined) return;
-  prefetchStore(url.href, "", false, false); // dedupe in-flight
-  prefetchQueue.push(url.href);
+  const key = prefetchKey(url.href);
+  if (prefetchGet(key) !== undefined) return;
+  prefetchStore(key, "", false, false); // dedupe in-flight
+  prefetchQueue.push({ href: url.href, key });
   pumpPrefetches();
 }
 
@@ -237,16 +261,16 @@ export function prefetch(href: string): void {
  * navigation the user actually makes (and the server).
  */
 const MAX_PREFETCH_INFLIGHT = 4;
-const prefetchQueue: string[] = [];
+const prefetchQueue: Array<{ href: string; key: string }> = [];
 let prefetchInflight = 0;
 
 function pumpPrefetches(): void {
   while (prefetchInflight < MAX_PREFETCH_INFLIGHT && prefetchQueue.length > 0) {
-    const href = prefetchQueue.shift()!;
+    const { href, key } = prefetchQueue.shift()!;
     prefetchInflight++;
     fetchRoute(href)
-      .then(({ body, flight, iso }) => prefetchStore(href, body, flight, iso))
-      .catch(() => prefetchCache.delete(href))
+      .then(({ body, flight, iso }) => prefetchStore(key, body, flight, iso))
+      .catch(() => prefetchCache.delete(key))
       .finally(() => {
         prefetchInflight--;
         pumpPrefetches();
@@ -373,11 +397,17 @@ export async function navigate(
  */
 export function withViewTransition(commit: () => void): void {
   const doc = document as Document & {
-    startViewTransition?: (cb: () => void) => { finished?: Promise<void> } | undefined;
+    startViewTransition?: (
+      cb: () => void,
+    ) => { ready?: Promise<void>; finished?: Promise<void> } | undefined;
   };
   if (typeof doc.startViewTransition === "function") {
-    // A skipped/aborted transition (another one started, tab hidden) is not an error.
-    doc.startViewTransition(commit)?.finished?.catch(() => {});
+    // A skipped/aborted transition (another one started, tab hidden) is not an error:
+    // `ready` rejects with an InvalidStateError and `finished` may too. `updateCallbackDone`
+    // is left alone so a throwing `commit` still surfaces.
+    const transition = doc.startViewTransition(commit);
+    transition?.ready?.catch(() => {});
+    transition?.finished?.catch(() => {});
   } else commit();
 }
 
@@ -385,7 +415,7 @@ export function withViewTransition(commit: () => void): void {
 async function loadRoute(
   url: URL,
 ): Promise<{ body: string; flight: boolean; iso: boolean } | null> {
-  const prefetched = prefetchGet(url.href);
+  const prefetched = prefetchGet(prefetchKey(url.href));
   if (prefetched && prefetched.body.length > 0) return prefetched;
   try {
     return await fetchRoute(url.href);

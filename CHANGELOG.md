@@ -8,954 +8,3549 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **`error.tsx` catches client-side render errors.** A segment's `"use client"` `error.tsx`
+  used to exist only on the server: error boundaries were transparent in the Flight payload, so
+  an island that threw during a client re-render (the playground's "Trigger Error" button)
+  became an uncaught exception and the fallback never rendered. A boundary whose fallback is a
+  client component is now emitted as a Flight boundary node (`{ $: "b", f, c }`) that the client
+  parses into a real `ErrorBoundary` — the fallback swaps in and `reset()` remounts the children,
+  as in Next. The lazy island loader fetches the fallback's module with the rest.
+- **Parallel-route slots keep their content across soft navigations.** Next.js
+  renders a slot's `default.tsx` only on a hard load; on a client navigation a
+  slot the new URL does not match keeps showing what it showed — including the
+  `children` page when the URL only addresses a slot (the playground's
+  `/parallel-routes/demographics`). denext rendered `default.tsx` on every
+  navigation. The server now records the pathname each slot last matched
+  (`slotState` in the hydration/nav data) and the client echoes it on soft-nav
+  fetches in `x-denext-slot-state`; an unmatched slot re-renders its remembered
+  match, a slot-only URL re-renders the remembered page under the shared
+  layouts, and the prefetch cache is keyed on that state. `PageRoute.slotOnly`
+  marks the synthesized slot URLs.
+- **Per-segment `not-found.tsx` / `forbidden.tsx` / `unauthorized.tsx`
+  boundaries.** Each route level's file is now a real boundary around that
+  level's page and children (inside the level's own layout), matching Next.js.
+  Previously the nearest file was rendered inside the WHOLE layout chain, so a
+  layout that itself called `notFound()` (the playground's
+  `[section]/layout.tsx`) re-threw during the 404 render and the request 500'd
+  with an "unhandled error … NEXT_NOT_FOUND". A layout's throw now escalates to
+  the parent level; the root level always has a boundary (the built-in UI stands
+  in for a missing file), so only a root layout's throw reaches the bare
+  built-in page. The signal also swaps in inside a streamed Suspense hole
+  instead of leaving the loading fallback in place; the response status is
+  404/403/401 whenever the boundary fires before the shell flushes (the
+  streamed-shell response used to hard-code 200). `SegmentLevel` gains
+  `notFound`/`forbidden`/`unauthorized`; `ErrorBoundary` gains an internal
+  `catches` predicate.
+- **`cacheComponents` apps build and serve in compat mode.** The `"use cache"`
+  transform now runs INSIDE the compat server bundle (an esbuild plugin) instead
+  of rewriting source modules into `.denext/server-cache/uc_*` copies that were
+  imported natively — those copies' `next/*` and `.mdx` imports failed under
+  Deno's loader, so every cacheComponents route of the Next App Router
+  playground 500'd. The runtime rewrite remains for native apps.
+- **A cached COMPONENT keeps its rendered tree.** `"use cache"` stored a
+  component's element tree in the durable (SQLite) store and served the JSON
+  round-trip on a hit — component functions gone, an empty page (every cached
+  layout of the playground rendered blank). Results that don't survive JSON now
+  live in-process for their lifetime (expiry and tag invalidation still apply);
+  arguments that don't survive JSON — a layout's `children`, whose serialization
+  would give every page one key — bypass the cache for that call.
+- **A streamed island no longer re-invokes its children for Flight.** The
+  streaming renderer rendered an island's server-authored children a second time
+  to serialize them, running a consumer island outside the provider its parent
+  island rendered around it
+  (`useCounter must
+  be used within a CounterProvider`). Both renderers now
+  share one Flight-only walk that emits references without invoking client
+  components.
+- **A URL that exists only inside a parallel slot routes.**
+  `@audience/demographics/page.tsx` with no `demographics/page.tsx` beside it is
+  a route in Next (the layout renders the slot's page and the level's
+  `default.*` as `children`); the scanner now synthesizes it, 404 without a
+  default as in Next.
+- **`route.tsx` / `route.jsx` are route handlers** (Next's default page
+  extensions; an OG image handler written with JSX was invisible to the
+  scanner).
+- **`denext migrate` writes an exact alias per `next/*` subpath.** Deno cannot
+  resolve a specifier against a `jsr:…/next/` trailing-slash prefix ("could not
+  be URL-parsed"), so a natively loaded module importing `next/server` failed; a
+  URL prefix (local checkout) is kept.
+- **The SSR bundle leaves absolute framework URLs external** (a build-time
+  transform's runtime import) instead of bundling the framework's source.
+- `DENEXT_DEBUG_CACHE=1` logs every `"use cache"` hit, miss and bypass.
+
 ## [2.0.5] - 2026-09-06
 
 ### Added
 
-- **fumadocs-mdx sites build in compat mode.** A fumadocs app's generated `.source/server.ts`
-  imports every doc as `x.mdx?collection=docs` (and `meta.json?collection=docs`), expecting the
-  `fumadocs-mdx` bundler loader to compile it with the app's `source.config.ts`. denext now
-  detects `source.config.*` + `fumadocs-mdx` in the app and compiles those imports through
-  fumadocs' own Node loader, hosted in a byonm child process (the loader's deps only resolve
-  under Deno's manual-`node_modules` mode, which the CLI process deliberately doesn't run in) —
-  so frontmatter, TOC, structured data and the configured remark/rehype pipeline come out exactly
-  as under `next build`. Requires the app's `.source/` to be generated (fumadocs' `postinstall`).
-- **`DENEXT_TIMING=1 denext build`** prints each pipeline stage's wall time to stderr.
-- **Every Google Fonts family is importable from `next/font/google` in a compat build.** Next
-  exports one loader per catalogued family; denext's hand-written module carried a curated
-  subset, so a migrated app importing `Noto_Sans_Hebrew` or `Instrument_Serif` failed with "No
-  matching export". The compat bundler now serves a virtual `next/font/google` that layers a
-  loader for each of the 1,942 catalogued families (generated: `deno task gen:google-fonts`)
-  over the runtime module; unused ones tree-shake away.
+- **fumadocs-mdx sites build in compat mode.** A fumadocs app's generated
+  `.source/server.ts` imports every doc as `x.mdx?collection=docs` (and
+  `meta.json?collection=docs`), expecting the `fumadocs-mdx` bundler loader to
+  compile it with the app's `source.config.ts`. denext now detects
+  `source.config.*` + `fumadocs-mdx` in the app and compiles those imports
+  through fumadocs' own Node loader, hosted in a byonm child process (the
+  loader's deps only resolve under Deno's manual-`node_modules` mode, which the
+  CLI process deliberately doesn't run in) — so frontmatter, TOC, structured
+  data and the configured remark/rehype pipeline come out exactly as under
+  `next build`. Requires the app's `.source/` to be generated (fumadocs'
+  `postinstall`).
+- **`DENEXT_TIMING=1 denext build`** prints each pipeline stage's wall time to
+  stderr.
+- **Every Google Fonts family is importable from `next/font/google` in a compat
+  build.** Next exports one loader per catalogued family; denext's hand-written
+  module carried a curated subset, so a migrated app importing
+  `Noto_Sans_Hebrew` or `Instrument_Serif` failed with "No matching export". The
+  compat bundler now serves a virtual `next/font/google` that layers a loader
+  for each of the 1,942 catalogued families (generated:
+  `deno task gen:google-fonts`) over the runtime module; unused ones tree-shake
+  away.
 
 ### Changed
 
-- **`client-only` no longer fails the SSR bundle.** The compat server bundle server-renders the
-  `"use client"` tree too (it is not a `react-server` layer, the only place Next's `client-only`
-  throws), and UI libraries such as react-aria-components import `client-only` from modules that
-  legitimately SSR — shadcn/ui's site failed to build on it. `server-only` in the client bundle is
-  still a build error.
+- **`client-only` no longer fails the SSR bundle.** The compat server bundle
+  server-renders the `"use client"` tree too (it is not a `react-server` layer,
+  the only place Next's `client-only` throws), and UI libraries such as
+  react-aria-components import `client-only` from modules that legitimately SSR
+  — shadcn/ui's site failed to build on it. `server-only` in the client bundle
+  is still a build error.
 
 ### Fixed
 
-- **The app-wide boundary manifest no longer EXECUTES every client island.** To list an
-  island's exports the build imported the module — which, for a `"use client"` component,
-  loads its UI library's whole dependency tree under Deno's loader, per island: 11 minutes on
-  shadcn/ui's 2,700-island site, for names nothing consumed (islands are registered from the
-  module namespace at runtime). Client refs now get their export names from the static lexer;
-  only `"use server"` modules, whose names the client stubs need, are still imported.
-- **`"use client"` modules inside node_modules bundle as Flight islands.** A package's own
-  client boundary (next-themes, nuqs, vaul — a boundary when a server component imports it,
-  as in Next) is imported by the Flight entry by `file://` URL, which the deno-loader declines
-  under node_modules ("Could not resolve"); the compat chain now maps those URLs to paths.
-- **Font collection in a compat build executes the server bundles, not the raw sources.**
-  To self-host `next/font/google` fonts the build imports each page/layout module; a compat
-  build imported the Next sources under Deno's loader — the app's whole npm tree, 14 minutes
-  on shadcn/ui's site — instead of the react→denext server bundles it had just written.
-- **The first Flight request tags a large app's islands in seconds, not minutes.** Registering
-  client references imported every island with its own dynamic `import()`; Deno re-walks the
-  already-loaded graph per call, so shadcn/ui's 2,680 islands took 9 minutes (the request timed
-  out). Above a handful of islands they are now imported through one synthetic barrel module —
+- **The app-wide boundary manifest no longer EXECUTES every client island.** To
+  list an island's exports the build imported the module — which, for a
+  `"use client"` component, loads its UI library's whole dependency tree under
+  Deno's loader, per island: 11 minutes on shadcn/ui's 2,700-island site, for
+  names nothing consumed (islands are registered from the module namespace at
+  runtime). Client refs now get their export names from the static lexer; only
+  `"use server"` modules, whose names the client stubs need, are still imported.
+- **`"use client"` modules inside node_modules bundle as Flight islands.** A
+  package's own client boundary (next-themes, nuqs, vaul — a boundary when a
+  server component imports it, as in Next) is imported by the Flight entry by
+  `file://` URL, which the deno-loader declines under node_modules ("Could not
+  resolve"); the compat chain now maps those URLs to paths.
+- **Font collection in a compat build executes the server bundles, not the raw
+  sources.** To self-host `next/font/google` fonts the build imports each
+  page/layout module; a compat build imported the Next sources under Deno's
+  loader — the app's whole npm tree, 14 minutes on shadcn/ui's site — instead of
+  the react→denext server bundles it had just written.
+- **The first Flight request tags a large app's islands in seconds, not
+  minutes.** Registering client references imported every island with its own
+  dynamic `import()`; Deno re-walks the already-loaded graph per call, so
+  shadcn/ui's 2,680 islands took 9 minutes (the request timed out). Above a
+  handful of islands they are now imported through one synthetic barrel module —
   a single graph build.
-- **A suspension with no `<Suspense>` above it no longer fails the page.** An island that itself
-  suspends (a `React.lazy` component exported from a `"use client"` module, `use()` at an
-  island's top level) and, failing that, the root render now act as the boundary — awaiting the
-  thenable and retrying — the way Next's app router's implicit root boundary does. The
-  unhandled-error log names the situation instead of printing `Promise { <pending> }`, and
+- **A suspension with no `<Suspense>` above it no longer fails the page.** An
+  island that itself suspends (a `React.lazy` component exported from a
+  `"use client"` module, `use()` at an island's top level) and, failing that,
+  the root render now act as the boundary — awaiting the thenable and retrying —
+  the way Next's app router's implicit root boundary does. The unhandled-error
+  log names the situation instead of printing `Promise { <pending> }`, and
   `DENEXT_DEBUG_SUSPENSE=1` records where `use()` first saw the thenable.
-- **No-op state updates bail out of re-rendering (React parity).** A component scheduled only by
-  state setters whose values ended up unchanged is no longer re-rendered. radix's
-  `DismissableLayer` recreates its callback ref every render, and each commit's detach/attach
-  calls `setNode(null)` then `setNode(node)` — React's bailout ends that; denext re-rendered,
-  produced another ref, and looped until "Maximum update depth exceeded" (shadcn/ui's ⌘K
-  dialog and theme toggle). Updates from a Suspense retry, an external store, a boundary reset
-  or Fast Refresh still always render.
-- **The client "Maximum update depth exceeded" error names the component** that scheduled the
-  last update, so an effect/state ping-pong in a large app is traceable instead of a minified
-  chunk offset.
-- **`process` exists in compat browser bundles.** npm libraries read `process.env.NODE_ENV` /
-  `process.env.DEBUG` at module init and a migrated app reads `process.env.NEXT_PUBLIC_*`
-  (Next inlines those at build); the first client chunk of shadcn/ui's site threw
-  `ReferenceError: process is not defined` before hydration. Browser bundles now inject a
-  `process` shim whose `env` is `NODE_ENV` plus the page's public-env island.
-- **`denext migrate` finds the App Router Tailwind entry.** The `tailwind` block was written
-  only for a Vite-style `src/index.css`; a Next app's `app/globals.css` (`@import "tailwindcss"`)
-  went undetected and the migrated site built unstyled. Migrate now points the block at the
-  stylesheet that actually imports Tailwind.
-- **Suspense inside an island's server-authored children resolves.** The Flight-only walk over a
-  top-level island's children treated `<Suspense>` / error boundaries / context providers as
-  plain host elements, so a server component there rendering a `React.lazy` demo under Suspense
-  (shadcn's `<ComponentPreview>` inside a `<Tabs>` island) surfaced the raw pending Promise as
-  an unhandled error. The walk now resolves suspensions and boundaries like every other
-  renderer.
-- **`next/navigation.js`-style imports alias to denext too.** Node-ESM libraries (fumadocs,
-  nuqs) import `next/navigation.js`, `next/link.js`, `next/image.js` with Node's explicit
-  extension; the alias lookup missed them and the REAL Next router landed in the SSR bundle
-  ("invariant expected app router to be mounted"). The extension is normalized away first.
-- **Link prefetching is capped at four in flight.** A docs sidebar scrolling dozens of links
-  into view fired one full server render per link at once, starving the navigation the user
-  actually made; further prefetches now queue.
-- **Islands are code-split and loaded per page.** The Flight entry statically imported every
-  `"use client"` island, so any page shipped the whole app's islands (shadcn/ui's site: a 10 MB
-  `flight.js`). The entry now holds one dynamic `import()` per island and loads only the islands
-  a payload references — on first hydration, on soft navigation, for deferred `client:*`
-  islands and for Live patches — so a page ships the entry plus its own islands' chunks
-  (shadcn/ui's `flight.js`: 10.5 MB → 147 KB). The soft-nav Flight parser and Live's `parse`
-  may now return a Promise; soft navigation loads the chunks BEFORE starting the view
-  transition (an async transition callback is aborted by the browser).
-- **One server bundle per compat app.** The react→denext server build emitted one entry per
-  route module and island — 2,715 entries and ~14,000 code-split chunk files for shadcn/ui's
-  site, which Deno loads at roughly 80 ms a module: a nine-minute `denext start`. The build now
-  emits ONE keyed bundle (`server/app.js`, each module a namespace export; dynamic `import()`s
-  still split into their own chunks) and the compat loader resolves `<bundle>#<key>`; islands and
-  actions are tagged through that loader, so startup loads one module. Stale bundles from
-  earlier builds are removed (they had accumulated to 448 MB). `redirectBoundaryToCompat` is
-  gone — the loader is the redirect.
-- **The prod server reuses the build's Flight boundary.** `manifest.json` now records the
-  client/server boundary the build crawled (project-relative paths), so `denext start` skips
-  the two import-graph crawls it used to repeat at startup (30 s on shadcn/ui's site); an older
-  manifest without it still triggers the crawl.
-- **The prod server warms every route module before listening.** A large app's first request
-  spent its whole timeout budget evaluating the page's module graph (shadcn/ui's docs page:
-  32 s → a 503 on first hit); page + layout modules are now imported at startup.
-- **A nested island's client-authored children are no longer walked for Flight.** A tagged
-  client component rendered INSIDE another island's output had its children serialized for a
-  Flight node the parent discards — and that walk invoked any untagged client component among
-  them (radix's forwardRef `Dialog.Content`, a module-private helper) as a server component,
-  outside its provider: shadcn/ui's site failed every page with `` `DialogContent` must be used
-  within `Dialog` ``. Uncarved nested islands now contribute no Flight of their own.
-- **`memo()` / `forwardRef()` islands hydrate.** The generated Flight entry registered only
-  function exports on the client, so a server-tagged memo/forwardRef reference (see below) had
-  no registry entry to hydrate against; both shapes are registered now.
-- **`memo()` / `forwardRef()` exports of a `"use client"` module are client references.**
-  Tagging only covered function exports; React's non-callable memo/forwardRef element objects
-  (radix's `Dialog.Content`, now an island of its own) went untagged and the Flight renderer
-  invoked them as server components — outside their provider (`` `DialogContent` must be used
-  within `Dialog` ``). The prod server also tags islands at startup now, so the first request
-  doesn't pay for loading the island graph.
-- **CJS `__filename` / `__dirname` work in the compat SSR bundle.** esbuild leaves them unbound
-  in ESM output; a bundled Node library reading them at module init (esbuild's own JS API,
-  pulled in by a docs tool) threw `ReferenceError: __filename is not defined` on first render.
-  The SSR bundle now injects a per-chunk shim (Next's node-target server bundles keep the real
+- **No-op state updates bail out of re-rendering (React parity).** A component
+  scheduled only by state setters whose values ended up unchanged is no longer
+  re-rendered. radix's `DismissableLayer` recreates its callback ref every
+  render, and each commit's detach/attach calls `setNode(null)` then
+  `setNode(node)` — React's bailout ends that; denext re-rendered, produced
+  another ref, and looped until "Maximum update depth exceeded" (shadcn/ui's ⌘K
+  dialog and theme toggle). Updates from a Suspense retry, an external store, a
+  boundary reset or Fast Refresh still always render.
+- **The client "Maximum update depth exceeded" error names the component** that
+  scheduled the last update, so an effect/state ping-pong in a large app is
+  traceable instead of a minified chunk offset.
+- **`process` exists in compat browser bundles.** npm libraries read
+  `process.env.NODE_ENV` / `process.env.DEBUG` at module init and a migrated app
+  reads `process.env.NEXT_PUBLIC_*` (Next inlines those at build); the first
+  client chunk of shadcn/ui's site threw
+  `ReferenceError: process is not defined` before hydration. Browser bundles now
+  inject a `process` shim whose `env` is `NODE_ENV` plus the page's public-env
+  island.
+- **`denext migrate` finds the App Router Tailwind entry.** The `tailwind` block
+  was written only for a Vite-style `src/index.css`; a Next app's
+  `app/globals.css` (`@import "tailwindcss"`) went undetected and the migrated
+  site built unstyled. Migrate now points the block at the stylesheet that
+  actually imports Tailwind.
+- **Suspense inside an island's server-authored children resolves.** The
+  Flight-only walk over a top-level island's children treated `<Suspense>` /
+  error boundaries / context providers as plain host elements, so a server
+  component there rendering a `React.lazy` demo under Suspense (shadcn's
+  `<ComponentPreview>` inside a `<Tabs>` island) surfaced the raw pending
+  Promise as an unhandled error. The walk now resolves suspensions and
+  boundaries like every other renderer.
+- **`next/navigation.js`-style imports alias to denext too.** Node-ESM libraries
+  (fumadocs, nuqs) import `next/navigation.js`, `next/link.js`, `next/image.js`
+  with Node's explicit extension; the alias lookup missed them and the REAL Next
+  router landed in the SSR bundle ("invariant expected app router to be
+  mounted"). The extension is normalized away first.
+- **Link prefetching is capped at four in flight.** A docs sidebar scrolling
+  dozens of links into view fired one full server render per link at once,
+  starving the navigation the user actually made; further prefetches now queue.
+- **Islands are code-split and loaded per page.** The Flight entry statically
+  imported every `"use client"` island, so any page shipped the whole app's
+  islands (shadcn/ui's site: a 10 MB `flight.js`). The entry now holds one
+  dynamic `import()` per island and loads only the islands a payload references
+  — on first hydration, on soft navigation, for deferred `client:*` islands and
+  for Live patches — so a page ships the entry plus its own islands' chunks
+  (shadcn/ui's `flight.js`: 10.5 MB → 147 KB). The soft-nav Flight parser and
+  Live's `parse` may now return a Promise; soft navigation loads the chunks
+  BEFORE starting the view transition (an async transition callback is aborted
+  by the browser).
+- **One server bundle per compat app.** The react→denext server build emitted
+  one entry per route module and island — 2,715 entries and ~14,000 code-split
+  chunk files for shadcn/ui's site, which Deno loads at roughly 80 ms a module:
+  a nine-minute `denext start`. The build now emits ONE keyed bundle
+  (`server/app.js`, each module a namespace export; dynamic `import()`s still
+  split into their own chunks) and the compat loader resolves `<bundle>#<key>`;
+  islands and actions are tagged through that loader, so startup loads one
+  module. Stale bundles from earlier builds are removed (they had accumulated to
+  448 MB). `redirectBoundaryToCompat` is gone — the loader is the redirect.
+- **The prod server reuses the build's Flight boundary.** `manifest.json` now
+  records the client/server boundary the build crawled (project-relative paths),
+  so `denext start` skips the two import-graph crawls it used to repeat at
+  startup (30 s on shadcn/ui's site); an older manifest without it still
+  triggers the crawl.
+- **The prod server warms every route module before listening.** A large app's
+  first request spent its whole timeout budget evaluating the page's module
+  graph (shadcn/ui's docs page: 32 s → a 503 on first hit); page + layout
+  modules are now imported at startup.
+- **A nested island's client-authored children are no longer walked for
+  Flight.** A tagged client component rendered INSIDE another island's output
+  had its children serialized for a Flight node the parent discards — and that
+  walk invoked any untagged client component among them (radix's forwardRef
+  `Dialog.Content`, a module-private helper) as a server component, outside its
+  provider: shadcn/ui's site failed every page with
+  `` `DialogContent` must be used
+  within `Dialog` ``. Uncarved nested islands
+  now contribute no Flight of their own.
+- **`memo()` / `forwardRef()` islands hydrate.** The generated Flight entry
+  registered only function exports on the client, so a server-tagged
+  memo/forwardRef reference (see below) had no registry entry to hydrate
+  against; both shapes are registered now.
+- **`memo()` / `forwardRef()` exports of a `"use client"` module are client
+  references.** Tagging only covered function exports; React's non-callable
+  memo/forwardRef element objects (radix's `Dialog.Content`, now an island of
+  its own) went untagged and the Flight renderer invoked them as server
+  components — outside their provider
+  (`` `DialogContent` must be used
+  within `Dialog` ``). The prod server also
+  tags islands at startup now, so the first request doesn't pay for loading the
+  island graph.
+- **CJS `__filename` / `__dirname` work in the compat SSR bundle.** esbuild
+  leaves them unbound in ESM output; a bundled Node library reading them at
+  module init (esbuild's own JS API, pulled in by a docs tool) threw
+  `ReferenceError: __filename is not defined` on first render. The SSR bundle
+  now injects a per-chunk shim (Next's node-target server bundles keep the real
   values).
-- **Per-route CSS extraction crawls the graph once, not once per route.** The route CSS stage
-  primes a (separately cached — its resolution strips the css→shim redirects) whole-app crawl
-  and answers each route from it, scoped to what that route reaches; 73 s → one crawl.
-- **Builds crawl the module graph ONCE.** `deno info` over a large app graph takes tens of seconds (20 s on shadcn/ui's 2,700-component site), and a build used to spawn it per route for the hydration check, again per route for the Flight-boundary classification, and again for the boundary manifest and the Live scan — 8–10 minutes of re-crawling the same graph before bundling even started. The graph layer now keeps the largest crawl of the process and answers any request whose entries are a subset of it with a BFS over the cached graph (`denoInfoGraph`/`crawlLocalModules`, `resetModuleGraphCache` on dev-server changes); `computeBoundaryRoutes` primes it with one crawl over every route's entries. The CSS discovery crawl keeps its own run (it resolves with the css→shim redirects stripped). `src/build/module-graph.ts`.
-- **`next.config` translation survives a plugin wrapper that crashes after exporting** (fumadocs-mdx's `createMDX` spawns a watcher; the sandboxed evaluation had already printed the config when the child died) and the generated CLI tasks always pass `--node-modules-dir=none` (Deno ignores `nodeModulesDir` in a member `deno.json` under an npm/pnpm workspace root). `src/build/migrate.ts`.
+- **Per-route CSS extraction crawls the graph once, not once per route.** The
+  route CSS stage primes a (separately cached — its resolution strips the
+  css→shim redirects) whole-app crawl and answers each route from it, scoped to
+  what that route reaches; 73 s → one crawl.
+- **Builds crawl the module graph ONCE.** `deno info` over a large app graph
+  takes tens of seconds (20 s on shadcn/ui's 2,700-component site), and a build
+  used to spawn it per route for the hydration check, again per route for the
+  Flight-boundary classification, and again for the boundary manifest and the
+  Live scan — 8–10 minutes of re-crawling the same graph before bundling even
+  started. The graph layer now keeps the largest crawl of the process and
+  answers any request whose entries are a subset of it with a BFS over the
+  cached graph (`denoInfoGraph`/`crawlLocalModules`, `resetModuleGraphCache` on
+  dev-server changes); `computeBoundaryRoutes` primes it with one crawl over
+  every route's entries. The CSS discovery crawl keeps its own run (it resolves
+  with the css→shim redirects stripped). `src/build/module-graph.ts`.
+- **`next.config` translation survives a plugin wrapper that crashes after
+  exporting** (fumadocs-mdx's `createMDX` spawns a watcher; the sandboxed
+  evaluation had already printed the config when the child died) and the
+  generated CLI tasks always pass `--node-modules-dir=none` (Deno ignores
+  `nodeModulesDir` in a member `deno.json` under an npm/pnpm workspace root).
+  `src/build/migrate.ts`.
 
 ## [2.0.4] - 2026-09-05
 
 ### Fixed
 
-- **Composed desktop icons match the macOS grid.** An auto-detected web icon (a full-bleed square `apple-touch-icon`) is now composed into Apple's 824-of-1024 px tile WITH the rounded-tile mask (continuous-curvature corners at ~22 % of the tile); it used to be an 819 px sharp-cornered square, which the Dock renders visibly smaller and boxier than the neighbouring apps. `spa.desktop.icon` PNGs are still used verbatim. `src/build/desktop-icon.ts`.
+- **Composed desktop icons match the macOS grid.** An auto-detected web icon (a
+  full-bleed square `apple-touch-icon`) is now composed into Apple's 824-of-1024
+  px tile WITH the rounded-tile mask (continuous-curvature corners at ~22 % of
+  the tile); it used to be an 819 px sharp-cornered square, which the Dock
+  renders visibly smaller and boxier than the neighbouring apps.
+  `spa.desktop.icon` PNGs are still used verbatim. `src/build/desktop-icon.ts`.
 
 ## [2.0.3] - 2026-09-05
 
 ### Fixed
 
-- **Compat builds from the JSR-installed denext no longer try to bundle the wasm codecs.** JSR rewrites the published sources' `@denext/photon`/`@denext/avif`/`@denext/og` imports to `jsr:@denext/…@^x.y.z`, and the runtime prebuild's esbuild `external` list matched only the bare spelling — so esbuild descended into the codec and failed on its `.wasm` ("Do not know how to load path: …/denext_photon.wasm") for every compat-mode `denext build`/`export` run from JSR once the codec versions resolved. Both spellings are external now; a new opt-in e2e (`tests/e2e/jsr-runtime-prebuild.e2e.test.ts`) prebuilds the runtime from the latest PUBLISHED denext root so the JSR-rewritten form is exercised before a release. `src/build/next-compat.ts`.
+- **Compat builds from the JSR-installed denext no longer try to bundle the wasm
+  codecs.** JSR rewrites the published sources'
+  `@denext/photon`/`@denext/avif`/`@denext/og` imports to
+  `jsr:@denext/…@^x.y.z`, and the runtime prebuild's esbuild `external` list
+  matched only the bare spelling — so esbuild descended into the codec and
+  failed on its `.wasm` ("Do not know how to load path: …/denext_photon.wasm")
+  for every compat-mode `denext build`/`export` run from JSR once the codec
+  versions resolved. Both spellings are external now; a new opt-in e2e
+  (`tests/e2e/jsr-runtime-prebuild.e2e.test.ts`) prebuilds the runtime from the
+  latest PUBLISHED denext root so the JSR-rewritten form is exercised before a
+  release. `src/build/next-compat.ts`.
 
 ## [2.0.2] - 2026-09-05
 
 ### Fixed
 
-- **A `@denext/*` codec released within Deno's minimum-dependency-age window no longer breaks compat builds.** The esbuild deno-loader (and the `deno info` graph crawls) applied Deno's default 2-day policy on their own, so right after a `@denext/photon`/`@denext/avif` release every compat-mode `denext build`/`export` failed with "newer than the specified minimum dependency date" even when the CLI was run with `--min-dep-age=0`. The policy is now propagated everywhere denext resolves dependencies: `DENEXT_MIN_DEP_AGE` (or the app's own `minimumDependencyAge`) is written into the merged CSS/module configs, the runtime-prebuild config and a per-loader config copy, and passed to every `deno info` crawl — one crawl helper (`denoInfoGraph`) now serves both the CSS discovery and the boundary/hydration graph. `src/build/bundle.ts`, `src/build/next-compat.ts`, `src/build/module-graph.ts`.
+- **A `@denext/*` codec released within Deno's minimum-dependency-age window no
+  longer breaks compat builds.** The esbuild deno-loader (and the `deno info`
+  graph crawls) applied Deno's default 2-day policy on their own, so right after
+  a `@denext/photon`/`@denext/avif` release every compat-mode
+  `denext build`/`export` failed with "newer than the specified minimum
+  dependency date" even when the CLI was run with `--min-dep-age=0`. The policy
+  is now propagated everywhere denext resolves dependencies:
+  `DENEXT_MIN_DEP_AGE` (or the app's own `minimumDependencyAge`) is written into
+  the merged CSS/module configs, the runtime-prebuild config and a per-loader
+  config copy, and passed to every `deno info` crawl — one crawl helper
+  (`denoInfoGraph`) now serves both the CSS discovery and the boundary/hydration
+  graph. `src/build/bundle.ts`, `src/build/next-compat.ts`,
+  `src/build/module-graph.ts`.
 
 ## [2.0.1] - 2026-09-05
 
 ### Fixed
 
-- **A pnpm/Vite SPA migrated on the JSR-installed denext builds without hand fixes** (found migrating T3 Code on 2.0.0). Four defects, each with a regression test and a new end-to-end test (`tests/e2e/remote-spa-compat-build.e2e.test.ts`: a pnpm-shaped monorepo SPA exported through a REMOTE framework root): (1) the compat runtime prebuild turned the remote framework root (`https://jsr.io/@denext/denext/<v>/`) into a filesystem path — "Path must be absolute" on every `denext export`/`build` of a compat app from JSR (`runtimeEntryPoints`, `src/build/next-compat.ts`); (2) the generated `dev`/`build`/`export`/`start` tasks of a manual-`node_modules` app now run the CLI with `--node-modules-dir=none` — Deno resolved the JSR-hosted CLI's own `esbuild`/`lightningcss` imports against the app's manual tree ("Could not find a matching package for 'npm:esbuild'"), and the first run made Deno rewrite the monorepo's root `package.json` from `pnpm-workspace.yaml`; the re-exec'd build child keeps the merged manual config, so the app's node_modules (workspace links included) resolve as before (`src/build/migrate.ts`); (3) the node_modules resolver honors Node's package **self-reference** — a workspace package importing itself by name (`@t3tools/client-runtime/media-source` from inside `packages/client-runtime`) resolves through its own `exports`, since pnpm links a package into its consumers' `node_modules`, never its own (`resolveNodeFrom`); (4) the CLI's build re-exec forwards `DENEXT_MIN_DEP_AGE` as `--min-dep-age`, so a freshly published `@denext/*` dependency (the icon compositor's `@denext/photon`) is not refused inside the child while the parent resolved fine, and a failed icon composition now says why.
-- **`denext migrate --desktop` names the bundle after the app.** The generated `desktop` task passes `-o "<title>"` (parentheticals dropped: `"T3 Code (Alpha)"` → `T3 Code`) instead of letting `deno desktop` name it after the entry file (`desktop.app`, CFBundleName "desktop").
+- **A pnpm/Vite SPA migrated on the JSR-installed denext builds without hand
+  fixes** (found migrating T3 Code on 2.0.0). Four defects, each with a
+  regression test and a new end-to-end test
+  (`tests/e2e/remote-spa-compat-build.e2e.test.ts`: a pnpm-shaped monorepo SPA
+  exported through a REMOTE framework root): (1) the compat runtime prebuild
+  turned the remote framework root (`https://jsr.io/@denext/denext/<v>/`) into a
+  filesystem path — "Path must be absolute" on every `denext export`/`build` of
+  a compat app from JSR (`runtimeEntryPoints`, `src/build/next-compat.ts`); (2)
+  the generated `dev`/`build`/`export`/`start` tasks of a manual-`node_modules`
+  app now run the CLI with `--node-modules-dir=none` — Deno resolved the
+  JSR-hosted CLI's own `esbuild`/`lightningcss` imports against the app's manual
+  tree ("Could not find a matching package for 'npm:esbuild'"), and the first
+  run made Deno rewrite the monorepo's root `package.json` from
+  `pnpm-workspace.yaml`; the re-exec'd build child keeps the merged manual
+  config, so the app's node_modules (workspace links included) resolve as before
+  (`src/build/migrate.ts`); (3) the node_modules resolver honors Node's package
+  **self-reference** — a workspace package importing itself by name
+  (`@t3tools/client-runtime/media-source` from inside `packages/client-runtime`)
+  resolves through its own `exports`, since pnpm links a package into its
+  consumers' `node_modules`, never its own (`resolveNodeFrom`); (4) the CLI's
+  build re-exec forwards `DENEXT_MIN_DEP_AGE` as `--min-dep-age`, so a freshly
+  published `@denext/*` dependency (the icon compositor's `@denext/photon`) is
+  not refused inside the child while the parent resolved fine, and a failed icon
+  composition now says why.
+- **`denext migrate --desktop` names the bundle after the app.** The generated
+  `desktop` task passes `-o "<title>"` (parentheticals dropped:
+  `"T3 Code (Alpha)"` → `T3 Code`) instead of letting `deno desktop` name it
+  after the entry file (`desktop.app`, CFBundleName "desktop").
 
 ## [2.0.0] - 2026-09-05
 
 ### Breaking
 
-- **Catch-all params are `string[]`.** `app/docs/[...path]` now yields `params.path = ["a", "b", "c"]` (Next.js's shape) instead of the joined `"a/b/c"`; `RouteParams` is `Record<string, string | string[]>` and the generated `.denext/routes.ts` types follow. Join with `params.path.join("/")` where you need the path form. `src/router/segments.ts`.
-- **`params` / `searchParams` are Next.js 15-shaped.** Both are still plain records you can read synchronously, and both are now ALSO awaitable (`const { slug } = await params`), so Next 15 pages port unchanged. `searchParams` is the query as a record (`?a=1&a=2&b=x` → `{ a: ["1", "2"], b: "x" }`) instead of a `URLSearchParams`; the `URLSearchParams` is the non-enumerable `searchParams.raw`. Route-handler `context.params` is awaitable too. New `asyncProps`/`searchParamsRecord` + `AsyncProps`/`SearchParams` types on `denext/server`. `src/runtime/async-props.ts`, `src/server/types.ts`.
-- **`_folder` directories are private.** A folder whose name starts with `_` (and everything under it) is never routable, matching Next.js — colocated `_components/` no longer becomes `/_components`. `src/router/manifest.ts`.
-- **Route ordering is position-aware.** Specificity is compared segment by segment from the left (static > dynamic > catch-all > optional catch-all), so `/a/[b]` now wins the request `/a/b` over `/[a]/b`; the old positional sum let string order decide. `compareSpecificity` in `src/router/segments.ts`.
-- **Per-segment error/loading boundaries.** Each route directory level nests `layout → template → error → loading → children` like Next.js, so a throw in a nested `layout.tsx` is caught by the nearest ancestor segment's `error.tsx` (it previously escaped every boundary to the 500 path) and an outer `error.tsx` is the fallback for an inner one. The manifest records per-level files as `PageRoute.levels`. `src/server/render-page.ts`.
-- **`cookies()` is Next.js-shaped.** `cookies().get(name)` returns `{ name, value } | undefined` (read `.value`), `getAll()` returns an array, and the store has `size`, `toString()` and iteration; `has`/`set`/`delete` are unchanged. A cookie set or deleted earlier in the same request (in middleware or the page) is what a later `cookies().get()` sees. `denext/next/headers` re-exports the same store, so drop-in `cookies().get("x")?.value` code works. `src/server/request-context.ts`.
-- **`headers()` is read-only.** `set`/`append`/`delete` throw a `TypeError` (Next.js `ReadonlyHeaders`); the underlying request headers are no longer exposed for mutation.
-- **`unstable_noStore()` actually opts out of the page cache.** A `revalidate` route that calls it is rendered per request instead of being cached and served to other visitors (the old no-op could leak a per-user render). `denext/next/cache` also gains `unstable_rethrow`, `unstable_after`, `unstable_expirePath`, `unstable_expireTag`; `noStore()` and the `isControlSignal`/`isNotFound`/`isRedirect`/`isForbidden`/`isUnauthorized` predicates are exported from `denext` and `denext/server`.
-- **Middleware runs BEFORE config `rewrites`, and matchers see the locale-stripped path.** Next's order (redirects → middleware → rewrites); an `/admin/:path*` matcher now fires even when a rewrite maps `/admin/x` elsewhere, and `/dashboard/:path*` fires for `/fr/dashboard` under `i18n`. `src/server/request-pipeline.ts`.
-- **`redirect` on `denext/server` is renamed `redirectResponse`.** The old name collided with the throwing `redirect()` of `denext` (Server/Client Components); `redirect` stays on `denext/server` as a `@deprecated` alias (removed in 3.0), and `denext/server` now also re-exports the throwing `notFound`/`forbidden`/`unauthorized`/`permanentRedirect`/`RedirectType`. Middleware receives `waitUntil` (Next's `NextFetchEvent`) in its context. `src/server/middleware.ts`.
-- **`NextRequest.ip` no longer trusts the first `x-forwarded-for` hop.** It prefers the recorded socket peer, then the LAST `x-forwarded-for` hop (the one your proxy appended), then `x-real-ip`. `src/compat/next/request.ts`.
-- **`Metadata` is Next.js-shaped.** `openGraph.images` / `twitter.images` (was the singular `image` — a migrated `images: […]` used to emit no `og:image` at all); `metadataBase` accepts a `URL`; `keywords` accepts a string; `themeColor` accepts `{ media, color }` descriptors; icons accept `{ url, sizes, type, media, rel, color }` descriptors plus `icons.other`. New fields rendered: `applicationName`, `generator`, `referrer`, `creator`, `publisher`, `category`, `classification`, `manifest` (`<link rel="manifest">`, auto-linked from a `manifest.*` convention), `archives`/`assets`/`bookmarks`, `itemProp`, `other`, `appleWebApp`, `formatDetection`, `appLinks`, `alternates.media`/`.types`, `openGraph.videos`/`audio`/`locale`/`alternateLocale`/`determiner`/`publishedTime`/`modifiedTime`/`expirationTime`/`authors`/`section`/`tags`/`emails`/`phoneNumbers`/`faxNumbers`/`countryName`/`ttl`, `twitter.siteId`/`creatorId` and image descriptors; `Viewport` gains `minimumScale`, `viewportFit`, `interactiveWidget`. `src/server/types.ts`, `src/server/document.ts`.
-- **`useRouter()` is Next's `AppRouterInstance`.** `push(href, { scroll })`, `replace(href, { scroll })`, `prefetch(href)`, `back`, `forward`, `refresh`; `href` may be a `UrlObject`. The router is ONE stable object, so `useEffect(() => …, [router])` no longer re-runs every render. `src/client/navigation.ts`.
-- **`Link` keeps your props and respects the anchor.** A user `onClick`/`onMouseEnter`/`ref` is composed with (not overwritten by) the soft-navigation handlers; `preventDefault()` in yours cancels the navigation; `target="_blank"`, `download` and `rel="external"` links are left to the browser; `prefetch` is `boolean | null` (`null`, the default, prefetches in-viewport only; `true` also on hover); `legacyBehavior` clones the child `<a>` instead of nesting anchors; `shallow`/`locale`/`passHref` are accepted and never reach the DOM; `href` accepts a `UrlObject`.
-- **Internals leave the public barrels.** `Dispatcher` (the hook-set contract) is no longer exported from `denext`; `denext/build/next-compat` is now a curated barrel (`buildNextCompatModules`, `createNextCompatServerLoader`, `detectNextCompat`, the client/flight entry builders and their types) — the test seams `MOUNT_ID`/`routeToId`/`buildNextCompatPages`/`renderNextCompatPage` are not on it; `denext/remix` is a curated barrel without the fetcher/loader test seams; the Google-font fetch/rewrite/self-host build helpers moved off `denext/next/font/google` (now `src/compat/next/font/google-fetch.ts`, internal). (`NEXT`/`REWRITE` stay exported: the public `NextCommand`/`RewriteCommand` types key on them.)
-- **`nodeResolve` is a top-level config key** (default on; `experimental.nodeResolve` is a deprecated alias) and the auto-memo compiler flag is `experimental.reactCompiler` (Next.js's key; `experimental.compiler` is a deprecated alias). `denext.config` also accepts a **function default export** `(phase, { defaultConfig }) => config` and `.mts`/`.mjs` files; `tailwind.input`/`output` and `i18n.locales`/`defaultLocale` are validated at boot; `images.formats` is typed to the two supported formats; the generated JSON schema now expands the `i18n`/`csp`/`cache`/`plugins` sub-objects.
-- **`userAgent()` matches ua-parser-js**: `device.type` is `undefined` for a desktop (was `"desktop"`), plus `browser.major`, `engine.version`, `cpu.architecture`, `device.model`, `smarttv`.
-- **The Deno floor is `≥ 2.9`** (minor-aware; `deno bundle` needs 2.4, `deno desktop` 2.9) in `denext doctor`, the bundler probe and README — a Deno 2.1 install used to pass `doctor` and then fail inside `deno bundle`. `src/build/deno-version.ts`.
-- **Session and Remix cookie-session tokens are domain-separated.** `hmacSign`/`hmacVerify` mix a token-space label into the MAC, so a denext session cookie can never verify as a Remix cookie session (or a pages-router preview token) signed with the same secret. Sessions issued by a 2.0.0 release candidate are invalidated once (users sign in again). `src/server/session.ts`.
-- **`useSearchParams()` returns `ReadonlyURLSearchParams`** (Next's type — `append`/`delete`/`set`/`sort` throw) and is memoized per query string, so `useEffect(…, [searchParams])` no longer re-runs every render. `src/client/navigation.ts`.
-- **`dynamic()`'s `loading` component receives Next's props** (`{ error, isLoading, pastDelay, timedOut, retry }`) instead of the wrapped component's props. `src/runtime/dynamic.ts`.
-- **`composeRefs()` returns a cleanup** and honors a callback ref's returned cleanup (React 19) instead of calling every ref again with `null`; `react-is`'s `typeOf(<div/>)` is `Element` (was `undefined`) and `ContextProvider` is React 19's `Symbol.for("react.context")`; `redirectDocument()` (Remix) sets `X-Remix-Reload-Document` instead of aliasing `redirect()`.
-- **`defineAction` redacts handler errors in production.** A non-validation throw yields `{ ok: false, error: "Internal Server Error", digest }` with the real error logged server-side (development keeps the message); `redirect()`/`notFound()`/`forbidden()`/`unauthorized()` inside the handler propagate as control flow. `src/runtime/define-action.ts`.
-- **Segment config inherits what a child does not set.** `mergeSegmentConfig` overrides only the fields the child module EXPORTED, so a layout's `dynamic = "force-static"` reaches a page that says nothing about `dynamic` (the child's defaults used to clobber it). `src/server/segment-config.ts`.
-- **`global-error.tsx` owns the document.** It replaces the root layout and renders its own `<html>`/`<body>`, which denext no longer wraps in its shell (the old output nested two `<html>` elements). `RenderedPage.ownsDocument`.
-- **Breaking (from the audit fixes above).** An unset `trailingSlash` now behaves like Next's default (`/about/` 308 → `/about`; set `trailingSlash: true` to keep slashes). Parentheses in a middleware matcher are regex groups (escape `\(` for a literal). `Children.count`/`forEach` include holes and `Children.only` throws for anything but one element. The credentials rate limiter ignores `x-forwarded-for` unless `trustForwardedHeaders: true`. A short auth secret makes `denextAuth()` throw at boot in production, and `denext start` now marks the process as production. `@denext/htmx` ≥ 2.0.11 and `@denext/pages-router` ≥ 0.9.1 are required (older releases import barrel exports rc.7 removed).
-- **BREAKING: `nextCompat` → `compatibilityMode`.** The config flag that opts an app into the
-  next-compat React-rewrite build was renamed `nextCompat` → `compatibilityMode` (value unchanged:
-  `boolean | "auto"`; the old key is no longer accepted), and the scaffold flag `--next-compat` →
-  `--compatibility`. Pre-adoption break with no back-compat shim.
-- **Deno KV cache backend** (`denoKvCacheStore`) — removed. Deno KV is still a fine app
-  database; it is just no longer a denext cache store. **Breaking.**
+- **Catch-all params are `string[]`.** `app/docs/[...path]` now yields
+  `params.path = ["a", "b", "c"]` (Next.js's shape) instead of the joined
+  `"a/b/c"`; `RouteParams` is `Record<string, string | string[]>` and the
+  generated `.denext/routes.ts` types follow. Join with `params.path.join("/")`
+  where you need the path form. `src/router/segments.ts`.
+- **`params` / `searchParams` are Next.js 15-shaped.** Both are still plain
+  records you can read synchronously, and both are now ALSO awaitable
+  (`const { slug } = await params`), so Next 15 pages port unchanged.
+  `searchParams` is the query as a record (`?a=1&a=2&b=x` →
+  `{ a: ["1", "2"], b: "x" }`) instead of a `URLSearchParams`; the
+  `URLSearchParams` is the non-enumerable `searchParams.raw`. Route-handler
+  `context.params` is awaitable too. New `asyncProps`/`searchParamsRecord` +
+  `AsyncProps`/`SearchParams` types on `denext/server`.
+  `src/runtime/async-props.ts`, `src/server/types.ts`.
+- **`_folder` directories are private.** A folder whose name starts with `_`
+  (and everything under it) is never routable, matching Next.js — colocated
+  `_components/` no longer becomes `/_components`. `src/router/manifest.ts`.
+- **Route ordering is position-aware.** Specificity is compared segment by
+  segment from the left (static > dynamic > catch-all > optional catch-all), so
+  `/a/[b]` now wins the request `/a/b` over `/[a]/b`; the old positional sum let
+  string order decide. `compareSpecificity` in `src/router/segments.ts`.
+- **Per-segment error/loading boundaries.** Each route directory level nests
+  `layout → template → error → loading → children` like Next.js, so a throw in a
+  nested `layout.tsx` is caught by the nearest ancestor segment's `error.tsx`
+  (it previously escaped every boundary to the 500 path) and an outer
+  `error.tsx` is the fallback for an inner one. The manifest records per-level
+  files as `PageRoute.levels`. `src/server/render-page.ts`.
+- **`cookies()` is Next.js-shaped.** `cookies().get(name)` returns
+  `{ name, value } | undefined` (read `.value`), `getAll()` returns an array,
+  and the store has `size`, `toString()` and iteration; `has`/`set`/`delete` are
+  unchanged. A cookie set or deleted earlier in the same request (in middleware
+  or the page) is what a later `cookies().get()` sees. `denext/next/headers`
+  re-exports the same store, so drop-in `cookies().get("x")?.value` code works.
+  `src/server/request-context.ts`.
+- **`headers()` is read-only.** `set`/`append`/`delete` throw a `TypeError`
+  (Next.js `ReadonlyHeaders`); the underlying request headers are no longer
+  exposed for mutation.
+- **`unstable_noStore()` actually opts out of the page cache.** A `revalidate`
+  route that calls it is rendered per request instead of being cached and served
+  to other visitors (the old no-op could leak a per-user render).
+  `denext/next/cache` also gains `unstable_rethrow`, `unstable_after`,
+  `unstable_expirePath`, `unstable_expireTag`; `noStore()` and the
+  `isControlSignal`/`isNotFound`/`isRedirect`/`isForbidden`/`isUnauthorized`
+  predicates are exported from `denext` and `denext/server`.
+- **Middleware runs BEFORE config `rewrites`, and matchers see the
+  locale-stripped path.** Next's order (redirects → middleware → rewrites); an
+  `/admin/:path*` matcher now fires even when a rewrite maps `/admin/x`
+  elsewhere, and `/dashboard/:path*` fires for `/fr/dashboard` under `i18n`.
+  `src/server/request-pipeline.ts`.
+- **`redirect` on `denext/server` is renamed `redirectResponse`.** The old name
+  collided with the throwing `redirect()` of `denext` (Server/Client
+  Components); `redirect` stays on `denext/server` as a `@deprecated` alias
+  (removed in 3.0), and `denext/server` now also re-exports the throwing
+  `notFound`/`forbidden`/`unauthorized`/`permanentRedirect`/`RedirectType`.
+  Middleware receives `waitUntil` (Next's `NextFetchEvent`) in its context.
+  `src/server/middleware.ts`.
+- **`NextRequest.ip` no longer trusts the first `x-forwarded-for` hop.** It
+  prefers the recorded socket peer, then the LAST `x-forwarded-for` hop (the one
+  your proxy appended), then `x-real-ip`. `src/compat/next/request.ts`.
+- **`Metadata` is Next.js-shaped.** `openGraph.images` / `twitter.images` (was
+  the singular `image` — a migrated `images: […]` used to emit no `og:image` at
+  all); `metadataBase` accepts a `URL`; `keywords` accepts a string;
+  `themeColor` accepts `{ media, color }` descriptors; icons accept
+  `{ url, sizes, type, media, rel, color }` descriptors plus `icons.other`. New
+  fields rendered: `applicationName`, `generator`, `referrer`, `creator`,
+  `publisher`, `category`, `classification`, `manifest`
+  (`<link rel="manifest">`, auto-linked from a `manifest.*` convention),
+  `archives`/`assets`/`bookmarks`, `itemProp`, `other`, `appleWebApp`,
+  `formatDetection`, `appLinks`, `alternates.media`/`.types`,
+  `openGraph.videos`/`audio`/`locale`/`alternateLocale`/`determiner`/`publishedTime`/`modifiedTime`/`expirationTime`/`authors`/`section`/`tags`/`emails`/`phoneNumbers`/`faxNumbers`/`countryName`/`ttl`,
+  `twitter.siteId`/`creatorId` and image descriptors; `Viewport` gains
+  `minimumScale`, `viewportFit`, `interactiveWidget`. `src/server/types.ts`,
+  `src/server/document.ts`.
+- **`useRouter()` is Next's `AppRouterInstance`.** `push(href, { scroll })`,
+  `replace(href, { scroll })`, `prefetch(href)`, `back`, `forward`, `refresh`;
+  `href` may be a `UrlObject`. The router is ONE stable object, so
+  `useEffect(() => …, [router])` no longer re-runs every render.
+  `src/client/navigation.ts`.
+- **`Link` keeps your props and respects the anchor.** A user
+  `onClick`/`onMouseEnter`/`ref` is composed with (not overwritten by) the
+  soft-navigation handlers; `preventDefault()` in yours cancels the navigation;
+  `target="_blank"`, `download` and `rel="external"` links are left to the
+  browser; `prefetch` is `boolean | null` (`null`, the default, prefetches
+  in-viewport only; `true` also on hover); `legacyBehavior` clones the child
+  `<a>` instead of nesting anchors; `shallow`/`locale`/`passHref` are accepted
+  and never reach the DOM; `href` accepts a `UrlObject`.
+- **Internals leave the public barrels.** `Dispatcher` (the hook-set contract)
+  is no longer exported from `denext`; `denext/build/next-compat` is now a
+  curated barrel (`buildNextCompatModules`, `createNextCompatServerLoader`,
+  `detectNextCompat`, the client/flight entry builders and their types) — the
+  test seams
+  `MOUNT_ID`/`routeToId`/`buildNextCompatPages`/`renderNextCompatPage` are not
+  on it; `denext/remix` is a curated barrel without the fetcher/loader test
+  seams; the Google-font fetch/rewrite/self-host build helpers moved off
+  `denext/next/font/google` (now `src/compat/next/font/google-fetch.ts`,
+  internal). (`NEXT`/`REWRITE` stay exported: the public
+  `NextCommand`/`RewriteCommand` types key on them.)
+- **`nodeResolve` is a top-level config key** (default on;
+  `experimental.nodeResolve` is a deprecated alias) and the auto-memo compiler
+  flag is `experimental.reactCompiler` (Next.js's key; `experimental.compiler`
+  is a deprecated alias). `denext.config` also accepts a **function default
+  export** `(phase, { defaultConfig }) => config` and `.mts`/`.mjs` files;
+  `tailwind.input`/`output` and `i18n.locales`/`defaultLocale` are validated at
+  boot; `images.formats` is typed to the two supported formats; the generated
+  JSON schema now expands the `i18n`/`csp`/`cache`/`plugins` sub-objects.
+- **`userAgent()` matches ua-parser-js**: `device.type` is `undefined` for a
+  desktop (was `"desktop"`), plus `browser.major`, `engine.version`,
+  `cpu.architecture`, `device.model`, `smarttv`.
+- **The Deno floor is `≥ 2.9`** (minor-aware; `deno bundle` needs 2.4,
+  `deno desktop` 2.9) in `denext doctor`, the bundler probe and README — a Deno
+  2.1 install used to pass `doctor` and then fail inside `deno bundle`.
+  `src/build/deno-version.ts`.
+- **Session and Remix cookie-session tokens are domain-separated.**
+  `hmacSign`/`hmacVerify` mix a token-space label into the MAC, so a denext
+  session cookie can never verify as a Remix cookie session (or a pages-router
+  preview token) signed with the same secret. Sessions issued by a 2.0.0 release
+  candidate are invalidated once (users sign in again). `src/server/session.ts`.
+- **`useSearchParams()` returns `ReadonlyURLSearchParams`** (Next's type —
+  `append`/`delete`/`set`/`sort` throw) and is memoized per query string, so
+  `useEffect(…, [searchParams])` no longer re-runs every render.
+  `src/client/navigation.ts`.
+- **`dynamic()`'s `loading` component receives Next's props**
+  (`{ error, isLoading, pastDelay, timedOut, retry }`) instead of the wrapped
+  component's props. `src/runtime/dynamic.ts`.
+- **`composeRefs()` returns a cleanup** and honors a callback ref's returned
+  cleanup (React 19) instead of calling every ref again with `null`;
+  `react-is`'s `typeOf(<div/>)` is `Element` (was `undefined`) and
+  `ContextProvider` is React 19's `Symbol.for("react.context")`;
+  `redirectDocument()` (Remix) sets `X-Remix-Reload-Document` instead of
+  aliasing `redirect()`.
+- **`defineAction` redacts handler errors in production.** A non-validation
+  throw yields `{ ok: false, error: "Internal Server Error", digest }` with the
+  real error logged server-side (development keeps the message);
+  `redirect()`/`notFound()`/`forbidden()`/`unauthorized()` inside the handler
+  propagate as control flow. `src/runtime/define-action.ts`.
+- **Segment config inherits what a child does not set.** `mergeSegmentConfig`
+  overrides only the fields the child module EXPORTED, so a layout's
+  `dynamic = "force-static"` reaches a page that says nothing about `dynamic`
+  (the child's defaults used to clobber it). `src/server/segment-config.ts`.
+- **`global-error.tsx` owns the document.** It replaces the root layout and
+  renders its own `<html>`/`<body>`, which denext no longer wraps in its shell
+  (the old output nested two `<html>` elements). `RenderedPage.ownsDocument`.
+- **Breaking (from the audit fixes above).** An unset `trailingSlash` now
+  behaves like Next's default (`/about/` 308 → `/about`; set
+  `trailingSlash: true` to keep slashes). Parentheses in a middleware matcher
+  are regex groups (escape `\(` for a literal). `Children.count`/`forEach`
+  include holes and `Children.only` throws for anything but one element. The
+  credentials rate limiter ignores `x-forwarded-for` unless
+  `trustForwardedHeaders: true`. A short auth secret makes `denextAuth()` throw
+  at boot in production, and `denext start` now marks the process as production.
+  `@denext/htmx` ≥ 2.0.11 and `@denext/pages-router` ≥ 0.9.1 are required (older
+  releases import barrel exports rc.7 removed).
+- **BREAKING: `nextCompat` → `compatibilityMode`.** The config flag that opts an
+  app into the next-compat React-rewrite build was renamed `nextCompat` →
+  `compatibilityMode` (value unchanged: `boolean | "auto"`; the old key is no
+  longer accepted), and the scaffold flag `--next-compat` → `--compatibility`.
+  Pre-adoption break with no back-compat shim.
+- **Deno KV cache backend** (`denoKvCacheStore`) — removed. Deno KV is still a
+  fine app database; it is just no longer a denext cache store. **Breaking.**
 
 ### Added
 
-- **`generateStaticParams` receives `{ params }` and works on layouts.** A layout above a dynamic page may enumerate its own segment; the page's generator is then called once per parent set with the parent's params and its results merged, Next.js style (`src/server/static-params.ts`, used by the export, `probeApp`, and the `dynamicParams: false` check).
-- **`generateMetadata(props, parent)` / `generateViewport(props, parent)`.** Layouts and pages receive Next's second argument: a promise of the parent segments' merged metadata (`const prev = (await parent).openGraph?.images ?? []`). `ResolvingMetadata`, `ResolvedMetadata`, `ResolvingViewport` are exported from `denext/server` and `denext/next`.
-- **Metadata file conventions.** Static `app/robots.txt`, `app/sitemap.xml`, `app/manifest.json|.webmanifest` and `app/opengraph-image.png|jpg|…` are detected and served; `opengraph-image.alt.txt` sidecars set `og:image:alt`; `generateImageMetadata({ params })` enumerates variants served at `<route>/opengraph-image/<id>` (with `contentType`/`alt`), and `default({ params, id })` receives the route params; nested `opengraph-image`/`twitter-image` now work under dynamic segments (`app/blog/[slug]/opengraph-image.tsx`). `src/router/manifest.ts`, `src/server/metadata-files.ts`.
-- **`next/image`: `fill` and a real blur placeholder.** `fill` positions the image over its container (no `width`/`height` attributes, `sizes` defaults to `100vw`); `placeholder="blur"` paints the `blurDataURL` through an SVG `feGaussianBlur` filter (Next's technique) and clears it on load — via `onLoad` when hydrated and via the client boot for server-only trees — with the user's `style` winning; a `data:` URL is accepted as `placeholder`; `onLoad` is composed. `src/runtime/image.ts`.
-- **React core on the root barrel**: `Children`, `cloneElement`, `createElement`, `createRef`, `forwardRef`, `isValidElement`, `StrictMode` are exported from `denext` (previously only `denext/react`). Implementation moved to `src/runtime/react-core.ts`.
-- **`denext/plugin-kit` covers what a router plugin needs**: `compareSpecificity`, `revalidatePath`/`revalidateTag`, `buildNextCompatModules`/`createNextCompatServerLoader`, and the `Component`/`VNode*`/`DenextConfig`/`TailwindConfig`/`I18nConfig` type contracts, so `@denext/pages-router` imports from the kit instead of `denext/server` and `denext/build/next-compat`.
-- **Public-surface golden.** `tests/public-surface.test.ts` pins every `deno.json` entry's exported names to `tests/fixtures/public-surface.json` (`deno task surface:refresh` to change it deliberately); `NextConfig` is typed as `DenextConfig & Record<string, unknown>`; `next/server` exports `NextMiddleware` and `MiddlewareConfig`; `RequestCookies.set/delete/clear` write the `Cookie` header back (plus `toString`, object-form `set`); one `HttpMethod` type; `React.version` comes from one `REACT_COMPAT_VERSION` pinned to the parity baseline (19.2.8); a `displayName` on a `memo`/`forwardRef` wrapper is honored; single-valued security headers set by middleware REPLACE the config header rule instead of appending (`X-Frame-Options: DENY, SAMEORIGIN` is gone). The API reference generator renders defaulted/rest/destructured parameters and generic type arguments (no more `_: unknown` / bare `Promise`).
-- **`SECURITY.md`** — supported versions, private reporting via GitHub Security Advisories, scope, and the disclosure window. Linked from README and MISSION.
-- **Next 15 awaitable request APIs.** `cookies()`, `headers()` and `draftMode()` stay synchronous AND are awaitable (`const store = await cookies()`); `cookies().set()` accepts the object form (`set({ name, value, path })`), `delete()` accepts `{ name, path, domain }`, and both chain. `src/server/request-context.ts`.
-- **React surface on the root barrel**: `cache`, `Activity`, `ViewTransition`, `unstable_rethrow`, `ReadonlyURLSearchParams` and the common React types (`ReactNode`, `ReactElement`, `FC`, `ComponentType`, `ComponentProps`, `PropsWithChildren`, `CSSProperties`, `RefObject`, `MutableRefObject`, `Dispatch`, `SetStateAction`, `MemoExoticComponent`, the event types, …) are exported from `denext`; `denext/react` exports the `JSX` namespace; `useRef` has React's three overloads (`useRef<T>(null)` → `{ current: T | null }`); `RefObject.current` is writable (React 19); `ReactNode` admits `Promise<ReactNode>` and children may be `bigint`; `memo` accepts any object props; `Context<T>` is ONE type across `denext` and the `react` alias.
-- **`useFormStatus()` returns `data`, `method` and `action`** for the pending submission (React 19's shape), not just `pending`. `useActionState`'s `dispatch` runs the action inside a transition. `src/runtime/actions.ts`.
-- **`react-dom/static`**: `prerender` / `prerenderToNodeStream` (the whole tree resolved; `postponed` is always `null`); `renderToReadableStream` now resolves once the SHELL has rendered and REJECTS when the shell throws (React's contract — a try/catch can answer 500 before any bytes go out). `src/compat/react-dom-server.ts`.
-- **Route handlers receive a `NextRequest`** (`nextUrl`, `cookies`) once `next/server` is loaded, like middleware; `NextRequest.nextUrl.basePath`/`.locale` reflect the resolved routing inside the pipeline; `NextResponse.rewrite(url, { request: { headers } })` overrides the rewritten route's request headers; `ResponseCookies` gains `has()`, `toString()` and `delete({ name, path, domain } | string[])`. `src/server/api.ts`, `src/compat/next/`.
-- **`usePathname()`/`useSearchParams()` during SSR reflect the request being rendered** (a Client Component rendered on the server no longer sees `/`). `src/client/navigation.ts`.
-- **Types**: `PageProps<P>` is generic over its params (`PageProps<{ slug: string }>`), `LayoutProps<P, Slots>` names parallel-route slots, Remix's `SerializeFrom<typeof loader>` (`denext/remix/server`), `DynamicLoadingProps`.
-- **`next-intl` named formats**: `formats: { dateTime: { short: {…} } }` on the provider, `useFormatter().dateTime(d, "short")` (an unknown name throws). `createSlot`/`createSlottable` (Radix Slot 1.2). `unstable_rethrow` also rethrows a PPR postpone and a control signal wrapped in an Error's `cause` chain.
-- **`$PORT` is honored** by `denext start`/`dev` when `--port` is not given (what every PaaS injects). `src/cli/commands/serve.ts`.
-- **`denext/plugin-kit`** exports the signed-token primitives (`hmacSign`, `hmacVerify`, `toBase64Url`, `fromBase64Url`) so a router plugin's own cookies (the pages-router preview cookie uses them) never re-implement HMAC.
-- **Route handlers honor segment config.** `export const dynamic = "error" | "force-static"` on a `route.ts` now applies to `cookies()`/`headers()` inside the handler. `src/server/api.ts`.
-- **Generated config schema + `experimental.*` sub-key validation.** `deno task gen:config-schema` (chained into `deno task docs:api`) emits `denext.config.schema.json` (a JSON Schema derived from the `DenextConfig` type by a zero-dependency script over `deno doc --json` — no Zod, no npm; property names, kinds, and the JSDoc descriptions, deliberately shallow so it mirrors what the runtime validator enforces; a build-time artifact, never shipped in a bundle) and `src/server/config-keys.generated.ts`, the exhaustive top-level + `experimental.*` key list that the runtime validator and the config loader now share instead of three hand-kept copies (a drift test keeps the generated file current). `warnUnknownConfigKeys` recurses one level into `experimental`, so a typo like `experimental.complier` warns with a did-you-mean (`compiler`), and the graduated keys get a "moved to top-level" message naming the new field.
-- **Production-ready `denextAuth`: password hashing, brute-force protection, and opt-in revocable sessions.** The auth layer's OAuth/OIDC/CSRF core was already complete; what a real deployment still had to hand-roll now ships in the framework, all zero-npm. (1) **`hashPassword` / `verifyPassword`** (`denext/server`) — salted scrypt via `node:crypto`, stored as a self-describing `scrypt$N=…,r=…,p=…$salt$hash` string so the cost can be raised later; `verifyPassword` compares with `timingSafeEqual`, caps the parameters a stored hash may request (no self-DoS from a corrupted row), and returns `false` instead of throwing on malformed input, so a Credentials `authorize` is one line. (2) **Rate limiting on the credentials endpoint** — on by default: after 5 failed attempts per client IP (`x-forwarded-for` / `x-real-ip`) + submitted identifier per 15 minutes the endpoint answers a generic `429` + `Retry-After` (never revealing whether the account exists, like the `401`); a success resets the key. Configure via `AuthConfig.rateLimit` (`max`, `windowMs`, `keyGenerator(request, credentials)`, a shared `store` implementing `RateLimitStore`; `inMemoryRateLimitStore` is the per-process default) or pass `false`. (3) **Opt-in server-side sessions** — pass `sessionStore` (`inMemorySessionStore()`, the durable `sqliteSessionStore({ path })` on `node:sqlite`, or your own `SessionStore` over Redis/Postgres) and the `__Host-` cookie carries only a random session id while the payload lives in the store; `revokeSession(sessionId)` ("sign out this device" — `AuthSession.sessionId` is populated when store-backed) and `revokeAllSessions(userId)` ("sign out everywhere", after a password change) end sessions immediately, signout deletes the store record, and a closable store is released through the plugin teardown seam. **Without a `sessionStore` nothing changes**: sessions remain stateless signed cookies (zero-config, multi-replica safe), the same default Auth.js uses. A per-process store is not shared across replicas — point every replica at one shared store. Plus a runnable **`examples/auth`** app (scrypt-hashed accounts in sqlite, the rate-limited login, `requireAuth` gating `/dashboard`, the client `SessionProvider`/`useSession`/`signIn`/`signOut`, and "sign out everywhere" via the sqlite store), driven JS-disabled in CI by `tests/auth-example.test.ts`. `src/server/auth/{password,rate-limit,session-store,sqlite-session-store}.ts` (new), `src/server/auth/{session,routes,mod,types,providers}.ts`, `src/server/mod.ts`, `examples/auth/**`, `tests/auth-{password,rate-limit,session-store,providers,example}.test.ts` (new).
-- **Fallow health badge + score documentation.** The README carries a `fallow health` badge fed by `.github/badges/fallow.json` (`deno task badge:fallow`, regenerated at release like the test-count badge), and CONTRIBUTING.md → _The health score_ explains how to reproduce the number, why every code-quality penalty is zero, and why the two structural penalties (hotspots, coupling) put the ceiling at ≈ 88 (A) for an actively developed repository.
-- **"Migrating from Remix" documentation.** A new docs page (`/docs/migrating-remix`: the command, how routes convert with the three-file split and `route.ts`, the import map, what carries over, what to review, next steps) registered in the sidebar, the stale "(Remix is not supported.)" line on the Next migration page corrected, and `README-REMIX-MIGRATION.md`, the top-level guide in the same shape as `README-NEXT-MIGRATION.md`.
-- **`denext/client-runtime` — the stable import for denext's generated browser entries.** The route/Flight entries `denext build`/`dev` emit, the SPA dev entry, the Pages Router client entry and the Server Action client stubs import their boot and HMR plumbing (`startClient`, `provideLayoutSegments`, `parseFlight`, `setFlightParser`, `clientActionStub`, `qrl`/`capturedScope` (also kept on `denext/client`), `enableFastRefresh`, `enablePerModuleRefresh`, `performModuleRefresh`, `registerFamily`) from this entry instead of `denext/client`, the same way build-transform output imports `denext/compiler-runtime`. The bundlers resolve it (and `denext/devtools`, which the dev entries import `installDevtools` from) against the framework, so an app's import map need not list either subpath. Not an application API — apps keep using `denext/client`. `src/client/client-runtime.ts` (new), `deno.json`, `src/build/{bundle,spa,next-compat,dev-unbundled}.ts`, `packages/pages-router/src/client-entry.ts`.
-- **Typed Server Actions (`defineAction`) — the mutation half of end-to-end type safety.** The typed API client type-checks reads to your route handlers; `defineAction` (from `denext/server`) does the same for **writes**. A Server Action by itself takes raw `FormData` (untyped string blobs) and returns anything — so a missing/mistyped field is a runtime error and the result type never reaches the component. `defineAction({ input, handler })` validates `FormData` into a **typed input** (a plain parser over the form fields, or any **Standard Schema** — Zod/Valibot/ArkType — with zero denext dependency), runs a **typed `handler(input) => Out`**, and returns a discriminated `ActionResult<Out>` (`{ ok: true, data }` or `{ ok: false, error, fieldErrors }`). The `Out` type flows all the way into `useActionState` — `state.ok ? state.data.id : state.fieldErrors?.title` is fully typed, and a wrong-type usage is a compile error. Throw `ActionValidationError(msg, { field: "…" })` (from a parser or the handler) to surface per-field messages; `idleActionState<Out>()` (from `denext`/`denext/client`) is the initial state. It plugs into denext's existing Server Action dispatch + progressive enhancement (tolerates both the `useActionState` `(prevState, formData)` shape and a bare `(formData)` call). So the app's whole network boundary — routes, API calls, **and** actions — is type-checked, no tRPC and no extra dependency. `src/runtime/define-action.ts` (new), exports from `denext/server` (`defineAction`, `ActionValidationError`) + `denext`/`denext/client` (`idleActionState`, `ActionResult`).
-- **MCP codebase search — `denext_query_codebase`, `denext_find_definition`, `denext_find_references`, `denext_index_codebase`.** The MCP server could search denext's own docs (`denext_search_docs`) but not the developer's **own project code** — so an agent working in your app had to open files blind. Four new tools index the project the MCP server was launched in and answer over it: `denext_query_codebase` ranks source by relevance to a keyword/question (BM25), `denext_find_definition` locates where a symbol is declared (exports first), `denext_find_references` lists its usages, and `denext_index_codebase` warms/reports the index. It's **native, zero-npm, offline, in-process** — no model, no embeddings service, nothing sent anywhere. The index is built at runtime, cached at `.denext/rag/codebase.json`, and **refreshed incrementally by file mtime** so it stays correct as you edit. Traversal honors the project's **`.gitignore` in full** (negation, nested `.gitignore` files, `**`/`*`/`?` globs, anchoring, directory-only rules) plus a fixed floor (`.git`, `.denext`, `node_modules`, `out`, `dist`, `coverage`, `build`), so vendored/generated code and secrets in ignored paths are never indexed. Retrieval sits behind a pluggable `Retriever` seam (shared with docs search), so an embeddings retriever can drop in later without changing callers. The `/docs/mcp` page and `llms.txt` list the tools automatically (generated from the registry), bringing the surface to 14 tools. `src/mcp/rag/{gitignore,codebase,code-search,snippet}.ts` (new), `src/mcp/rag/search.ts`, `src/mcp/tools.ts`.
-- **`denext mcp --disable <groups|tools>`** hides tool groups (`authoring`, `project`, `inspect`, `dev`, `docs`, `rag`) or individual tools so an agent's context only carries what it needs.
-- **Typed API client — end-to-end type-checked calls to your own route handlers (no tRPC).** Calling an app's own `app/**/route.ts` was untyped: a handler returns a web `Response`, whose type erases the JSON body, so a caller got `any` back and a signature drift became a silent runtime 500. Handlers now opt into typed bodies with `TypedResponse<T>` / `TypedRequest<B>` + `json<T>()` from `denext/server` (`json` is `Response.json` at runtime — the typing is zero-cost, carried on a phantom type parameter). `denext build` / `denext dev` read those signatures via `deno doc` and generate `.denext/api.ts` — an `ApiSchema` mapping every route pattern → method → `{ params, body, response }`, with params inferred from the route pattern and named body types re-imported from the route module. Pair it with `createApiClient<ApiSchema>()` (from `denext`/`denext/client`) for a fully-typed call: `api("/api/user/[id]", "GET", { params: { id } })` returns the handler's response type, and an unknown path, wrong method, missing/mistyped param or body, or misused response is a **compile-time error**. The generated module is a `type` alias (so `keyof` stays the literal route patterns for autocomplete while still satisfying the client's `Record` constraint). The runtime client (`apiRequest`/`buildPath`) is a thin `fetch` wrapper (param substitution incl. catch-alls, query, JSON body) usable from a Server Component, a client component, or a test. `src/server/typed-response.ts` (new), `src/build/api-types.ts` (new — the generator), `src/runtime/api-client.ts` (new — the client), `src/build/emit-typed-modules.ts` (new — shared routes.ts + api.ts emit), `src/build/{build,dev-server}.ts`, `examples/hello`.
-- **First-party MCP server (`denext mcp`) — denext's tooling for AI agents and IDEs.** A Model Context Protocol server (newline-delimited JSON-RPC 2.0 over stdio, hand-rolled — no SDK, no npm, keeping the framework's zero-runtime-npm promise) that lets any MCP client write, verify, and scaffold denext correctly. Configure a client to run `deno run -A jsr:@denext/denext/cli mcp`. **Tools:** `denext_check_snippet` (lint a code string for the Next.js→denext mistakes an agent makes — wrong import source, a misplaced `"use client"`, an interactive component with no client boundary — instantly, with the fix, no type-checker needed), `denext_import_map` (map any Next/React specifier to its denext equivalent), `denext_generate` (scaffold a page/route/component/api/action/test), `denext_doctor` (project health), and `denext_codemod` (dry-run the Next→denext import rewrites). **Resources:** `denext://guide` (the AGENTS.md authoring guide) and `denext://import-map`, so a client can ground itself on denext's rules. The canonical import mapping lives once as data (`src/mcp/next-denext-map.ts`) shared by the checker, the tool, and the llms.txt generator. `src/mcp/{server,tools,check,next-denext-map,package-file}.ts` (new), `src/cli/commands/mcp.ts` (new), `src/cli/register.ts`.
-- **MCP "execute + inspect" tools (`denext_render`, `denext_route_map`).** The thing an agent couldn't do before: run the app. `denext_render` renders a route (by `path`) or a component (by `component` + `props`) **server-side, no browser**, and returns the real HTML + status — so an agent can SEE what its edit produces (or the error it throws), closing the edit→render→fix loop without a browser or a live server. It reuses `denext/testing`'s in-process app client and component renderer, so it runs the actual render (hooks and all) in milliseconds. `denext_route_map` maps everything that renders at a path — the matched page + params, its layout and template chains (each tagged **server**/**client**), its `loading`/`error`/`not-found` boundaries and parallel slots, and any API route at the same path — from the route manifest, so an agent gets the whole render tree without opening a dozen files. Both run against the project the MCP server was launched in (its own `deno.json`). The MCP surface is now nine tools, spanning read + observe + **execute** — a capability no peer framework MCP server offers. `src/mcp/inspect.ts` (new), `src/mcp/tools.ts`.
-- **Dev server black box + live MCP tools (`denext_list_routes`, `denext_dev_logs`).** The dev server now keeps a bounded in-memory recorder of the running app's runtime signal, so the same thing a developer sees in the terminal/browser is readable out-of-process — by the MCP live tools, or any localhost reader. It records: **server errors** (render/build/type errors, with the codeframe the overlay already builds); **server console** — the dev process's own `console.*` (a `console.log` in a Server Component or route handler), captured by the real `denext dev` CLI only (it wraps the process console, which is global — an embedded/parallel server leaves it off); the **browser's** `console.error`/`warn` + uncaught errors/rejections, shipped back over a new same-origin-gated `POST /_denext/dev-log` by the dev-reload client already on every dev page; each completed **request** (`GET /about → 200`, with duration); and **HMR** events (hot-swap / reload). Read it at `GET /_denext/dev-state` (filter by `kind=error|console|request|hmr`). On boot the dev server publishes its address to `.denext/dev.json` (removed on drain) so a reader can find it. Two new MCP tools: `denext_dev_logs` reads the **running** server's recent events (so an agent sees what actually happened at runtime, not just static source), and `denext_list_routes` lists an app's pages + API routes with their dynamic params (no dev server needed). Both endpoints reuse the reload stream's cross-origin gate — a server-side reader (no `Sec-Fetch-Site`) is allowed, a cross-site page is refused. `src/build/dev-events.ts` (new — ring buffer + console capture), `src/build/dev-server.ts`, `src/cli/commands/serve.ts`, `src/mcp/dev-client.ts` (new), `src/mcp/tools.ts`.
-- **`llms.txt` + `llms-full.txt` (served at denext.dev/llms.txt).** The [llms.txt convention](https://llmstxt.org) — a curated, low-noise entry point for LLMs. `llms.txt` is a concise index (what differs from Next.js, doc links, the agent tooling); `llms-full.txt` is the full authoring guide (AGENTS.md) plus a per-module API-surface summary an agent can load wholesale. Both are generated from AGENTS.md + the API reference so they never drift from the real surface (`deno task docs:llms`, folded into `deno task docs:build`), and emitted into `apps/web/public/` so the static export publishes them at the site root. `scripts/gen-llms-txt.ts` (new), `deno.json`.
-- **Dev loop: background type-checking + a richer error overlay (codeframe, open-in-editor).** The dev server now runs `deno check` **asynchronously and debounced** on each source edit, off the render critical path; a type error surfaces in the browser error overlay (with a codeframe) instead of reaching the browser silently, and a monotonic token drops a stale run when a newer edit lands (opt out with `DENEXT_DEV_TYPECHECK=0`; skipped for next-compat/drop-in apps, where raw-source `deno check` doesn't match the rewritten build graph). The overlay itself is upgraded from plain title/message/stack to a **codeframe** — the source snippet around the failing line with a caret at the column — plus a **clickable in-project stack frame** that opens the file in your editor via a new dev-only `/_denext/open-in-editor` endpoint (honors `DENEXT_EDITOR`/`VISUAL`/`EDITOR`, shaping the launch args for VS Code / JetBrains / Sublime / terminal editors; default `code`). Both the endpoint and the enrichment are dev-only and cross-origin-gated (same guard as the live-reload stream), and the editor endpoint refuses any path outside the project. `src/build/dev-codeframe.ts` (new — pure frame-parsing + codeframe), `src/build/dev-server.ts`.
-- **`denext analyze` + test DX (`generate test`, `test --watch`/`--coverage`).** A new `denext analyze` builds the app and prints a per-chunk client-bundle breakdown — every chunk ranked largest-first (by gzip / over-the-wire size) with a proportion bar, its share of the total, and raw·gz sizes, plus the raw/gz totals — a terminal stand-in for a treemap that answers "why is my JS this big" at a glance (`--json` for the machine-readable form). `denext generate test <Component>` scaffolds a `tests/<Component>.test.tsx` using `denext/testing`'s in-process (no-browser) renderer, with the component import wired to the conventional `components/` dir (src-layout-aware). And `denext test`'s help now surfaces `--watch` (re-run on change) and `--coverage` (both already pass through to `deno test`). `src/cli/commands/analyze.ts` (new), `src/build/bundle-report.ts` (`bundleAnalysisLines`), `src/build/generate.ts`, `src/cli/commands/{generate,toolchain}.ts`, `src/cli/register.ts`.
-- **`denext.config` validation — `defineConfig` catches typos and bad values, `doctor` reports config correctness.** `defineConfig` is no longer an identity passthrough: at runtime it warns on an **unknown key** (a typo, or a stale Next.js option that TypeScript can't catch on a cast object) with a "did you mean" suggestion, and **throws a field-scoped error** on a malformed value (e.g. `basePath: "docs"` without a leading slash, a non-finite `images.qualities`) — right at the config site rather than misbehaving at request time. A plain `export default {…}` config gets the same unknown-key warning through the loader. A commented/JSONC `deno.json` no longer silently loses its import map (parsed as JSONC now, with a stderr warning on genuine breakage instead of a silent `{}`). `denext doctor`'s config check now reports **correctness** (loaded & validated / the field-scoped error), not just presence. `src/server/config-validate.ts` (new — shared, build-dep-free), `src/server/define-config.ts`, `src/build/{paths,module-config}.ts`, `src/cli/commands/doctor.ts`.
-- **`denext migrate` auto-wires Prisma to the Rust-free Deno client.** A migrated app (Next or Remix) that uses Prisma now runs on denext end-to-end with **zero manual edits** — the native Rust query-engine client (which doesn't bundle under Deno) is replaced by Prisma 6's ESM/Deno `prisma-client` generator with the **query compiler** (no native `.node` engine) driven through the `@prisma/adapter-better-sqlite3` driver adapter over Deno's built-in `node:sqlite`. Migrate rewrites the schema generator (`provider = "prisma-client"`, `runtime = "deno"`, `previewFeatures = ["queryCompiler", "driverAdapters"]`), repoints every `@prisma/client` import at the generated client, injects the adapter at each `new PrismaClient()` (empty + object-literal forms; a non-object arg is flagged), folds the `deno.json` wiring in (`nodeModulesDir: "manual"` + a `links` shim for the compat + `@prisma/client`/adapter npm pins + a `prisma:setup` task), and drops the superseded `@prisma/client`/`prisma` from `package.json`. Only **runtime** source (`app/`/`src/`/`lib/`/…) is transformed — Node-only tooling (a `prisma/seed.ts`, Cypress helpers) is left untouched. One post-migrate step: `deno task prisma:setup` (bundle the compat → install → `prisma generate` → `db push`). On the **next-compat** build path the generated client is externalized from the SSR bundle so its runtime engine-loading survives (esbuild would otherwise mangle its `globalThis['__dirname']` shim + baked config). Validated end-to-end on the stock `remix-run/indie-stack` (auth, sessions, nested-route loaders, note create/read) — the last real-world caveat from the Remix stress test is closed. `src/build/prisma-migrate.ts` (new), `src/build/migrate.ts`, `src/build/next-compat.ts`, `src/cli/commands/migrate.ts`, `examples/prisma`.
-- **Remix support: `denext/remix` runtime + `denext migrate --from remix`.** Remix apps now run on denext with their **data model intact** — no manual loader inversion. A new first-party compat runtime (`denext/remix` + `denext/remix/server`) implements Remix's surface on denext primitives: `useLoaderData`/`useActionData` (the `loader` runs server-side, its data crosses the Flight boundary into a client provider — SSR **and** hydrate), `<Form>`/`useSubmit`/`useFetcher` (denext **Server Actions**), `useNavigate`/`useLocation`/`useSearchParams` (Remix's `[params,setter]` tuple)/`useParams`/`useMatches`/`useRevalidator`, `<Link>`/`<NavLink>`/`<Outlet>`/`useOutletContext`, `defer`/`<Await>`/`useAsyncValue`, `useRouteError`/`isRouteErrorResponse`, and `json`/`redirect`/`defer`. The migration (auto-detected from `@remix-run/*` deps / `remix.config.*` / `app/root.tsx`+`app/routes/`, short-circuiting the Vite-SPA detector so Remix-Vite isn't miscaptured) restructures `app/routes/*` (flat-file + dot-nested + the `route.tsx` folder form) into `app/**/page.tsx`+`layout.tsx` — `$param` → `[param]`, `$` → `[...splat]`, `_index` → the segment page, pathless `_x` → a `(x)` route group, trailing-`_` break-out flattened + flagged — converts `app/root.tsx` → `app/layout.tsx` (Remix doc components stripped, `<Outlet/>` → the layout `children`), deletes `entry.{server,client}.*`, and **splits each route** into a client component (`page.client.tsx`) + a server data module (`page.data.ts`) wired by a generated `page.tsx` wrapper (a `loader` can't share a `"use client"` module with the component). `meta` → `generateMetadata`, `ErrorBoundary` → `error.tsx`, `@remix-run/*` imports → `denext/remix`(`/server`), and a resource route (loader/action, no component) → a denext `route.ts` API handler. The follow-ups first reported as review notes (cross-route `useFetcher`, `useNavigation` on plain link clicks, session storage, streamed `defer`, cross-route submit to a page action) were subsequently closed — see the Fixed entries below. `src/compat/remix/{client,server}.ts` (new), `src/build/remix-migrate.ts` (new), `src/build/migrate.ts`, `src/cli/commands/migrate.ts`, `src/build/codemod.ts`.
-- **Unbundled dev loop — true per-module HMR, now the default for the native App Router.** A Vite-class dev server that serves each source module transformed-but-unbundled at its own URL (`/_denext/@fs…`, with `denext` pre-bundled once as a single instance under `/_denext/@dep/`), so the browser loads the native ESM graph. On a save, only the edited module is re-transformed (**~5 ms** warm, vs a ~460 ms `deno bundle` subprocess) and re-imported; a new reconciler seam substitutes the component's **family-current** implementation onto the live fiber, so a **single** module swaps in place with hook state preserved and **no full reload** — a non-component edit propagates up the module graph to the nearest accept boundary. It covers the full native surface: static and dynamic (`[param]`) routes, nested layout/template chains, and loading/error boundaries. Opt out with `DENEXT_DEV_UNBUNDLED=0` to force the bundled whole-route refresh. It also covers **Flight/islands** routes: the app-wide Flight entry imports each `"use client"` island by its own `@fs` URL, so editing an island hot-swaps that single module in place with its `useState`/signal state preserved. A route whose entry needs the full pipeline (MDX), or an app using a build-time module rewrite (`experimental.compiler` / resumability qrl extraction), automatically stays bundled; and an edit the unbundled graph does not own falls back to the bundled whole-entry Fast Refresh — so nothing downgrades to a full reload. The dev-origin SSE gate and same-origin re-import checks are preserved; the substitution seam is null-guarded and never taken in production. It also covers **next-compat** (drop-in npm React): `react`/`react-dom`/`next/*` are served from a pre-bundled react→denext runtime and the app's npm packages from an on-demand npm bundle (Vite-optimizeDeps style — bundled together with `splitting` so packages sharing a transitive dep get one instance, and `react` external so every lib uses denext's single React), all as `@dep`/`@npm` dev modules, while the app's own source hot-swaps per-module. It also covers **SPA** (`mode: "spa"`, its own dev server): the SPA entry + its module graph serve unbundled (native denext or the compat runtime), a component edit hot-swaps one module in place, and the app's extracted stylesheet is linked separately (the `.css` imports become empty shims). So per-module HMR is now the default on **every** path — native App Router, Flight/islands, next-compat, and SPA — and the "Per-module granular HMR" KNOWN-LIMITATIONS entry is retired. `src/build/dev-unbundled.ts` (new), `src/build/dev-server.ts`, `src/build/spa.ts`, `src/build/bundle.ts`, `src/build/next-compat.ts`, `src/client/fiber/reconciler.ts`, `src/client/vnode-utils.ts`, `src/client/refresh-runtime.ts`.
-- **Static export (`deno task export`) now self-hosts `next/font/google` fonts** (previously it emitted a runtime `fonts.googleapis.com` `<link>`; the prod server already self-hosted). The export force-loads route modules so their font loaders register, downloads the `@font-face` CSS + woff2 files under `out/_denext/fonts`, and inlines the local faces — so a purely static site makes **no runtime request to Google** (privacy + no third-party dependency), matching the prod-server path. Best-effort: an unfetchable font (offline build) still falls back to a runtime `<link>`. `src/build/export.ts`.
-- **Pages Router `res.revalidate(path)` — on-demand ISR.** An API route can now purge a cached render on demand (Next parity), delegating to App Router's `revalidatePath`. It is **purge-only** — a bad/unknown path is a safe no-op, never a re-render — so it cannot poison the page cache; the next request regenerates through the normal ISR path. Returns a promise you can await. `packages/pages-router/src/api.ts`.
-- **Route-level View Transitions on soft navigation.** A Flight soft-nav now commits inside `document.startViewTransition` where the browser supports it (Chromium today), so the route swap cross-fades; the browser honors `prefers-reduced-motion`, and unsupported browsers navigate instantly exactly as before (feature-detected, zero cost when absent). The `<ViewTransition>` component stays a passthrough — its per-element `name`/`enter`/`exit` props aren't honored yet, and the isomorphic/HTML nav paths (async reconcile) don't animate yet. `src/client/navigation.ts`, `src/compat/react.ts`.
-- **Domain-based i18n routing (`i18n.domains`).** Serve a locale per host without a URL prefix (Next parity): `example.fr/about` renders French with no `/fr`. Each `{ domain, defaultLocale, locales?, http? }` entry pins a host to a default locale (served unprefixed there; the host's other locales are still prefixed); an explicit prefix always wins, and a host outside the map keeps the normal prefix behavior. Host resolution uses the request's **trusted** host (honoring `trustForwardedHeaders`), never a raw `Host` header on the render path, and only runs when `domains` is configured. `localeMiddleware` no longer redirects an unprefixed path on a pinned host, and generated `hreflang` alternates now cross hosts (absolute per-domain URLs). `src/server/i18n.ts`, `src/server/app.ts`. (Metric-matched `next/font` fallback remains tracked.)
-- **Pages Router `res.write` now streams incrementally (SSE / chunked responses).** Previously `res.write` buffered into one response sent at `res.end`; the first `res.write()` before a terminal call now switches the response into streaming mode — status + headers flush immediately, chunks are delivered as written, and `runApiRoute` returns the streamed `Response` **before** the handler finishes (essential for long-lived SSE, which would otherwise never start). A handler that never calls `res.write` is byte-for-byte unchanged (single buffered response), and an unhandled throw before any output still yields a 500. `packages/pages-router/src/api.ts`.
-- **`denext desktop package` now builds Windows bundles** (previously macOS + Linux only). `deno desktop` cross-compiles the `.exe` for `x86_64`/`arm64` (`x86_64`/`aarch64-pc-windows-msvc`) from any OS; the new scaffolded `scripts/package-windows.ts` builds one or both arches, wraps each as a `.zip`, and **Authenticode-signs** the `.exe` when `DENEXT_WINDOWS_CERT` is set and `signtool` is available (no secrets baked in — signing is env-gated and skipped with a warning otherwise, mirroring the macOS codesign/notarize pattern). `denext desktop package --target-os windows` selects it. The target machine needs the Edge WebView2 runtime (preinstalled on current Windows). macOS/Linux packaging and the OS-agnostic `denext desktop run` are unchanged. `src/cli/commands/desktop.ts`, `src/build/scaffold.ts`, `examples/native/scripts/package-windows.ts`.
-- **React `taint*` (`experimental_taintObjectReference` / `experimental_taintUniqueValue`).** Mark a value — an object reference, or a secret string/bigint — that must never be serialized to a client component; denext's Flight serializer throws instead of sending a tainted value across the server→client boundary. A `taintUniqueValue` taint is released when its `lifetime` object is garbage-collected (matching React). Defense-in-depth — a guardrail against _accidentally_ leaking a secret to the client, not a substitute for not passing it — and two empty-map lookups per serialized value when nothing is tainted. `src/runtime/taint.ts` (new), `src/jsx/render-to-html-flight.ts`, `src/compat/react.ts`.
-- **New package `@denext/effect` — first-class [Effect](https://effect.website) support.** Run an `Effect` from a Server Component, route handler, or Server Action and get typed errors, dependency injection (services from a `Layer`), structured concurrency, and client-disconnect cancellation, all wired into denext's per-request context. Effect is npm-only (deliberately not on JSR), so the package depends on `npm:effect` as a peer and serves nothing — it is a set of runtime _bridges_, not a served asset (unlike `@denext/htmx`). Exports: `DenextRequest` (a request-scoped Effect service), `runEffect`/`runEffectExit` (ambient), `createEffectRuntime(layer)` (a fully-typed runner whose requirements are compile-checked), the `effect()` plugin (make an app `Layer` ambient + manage its lifecycle), and `effectHandler`/`effectAction` (adapt Effect-returning functions into a route handler / Server Action with typed-error mapping). The request is provided **fresh per run** (a `ManagedRuntime` memoizes its layers, so putting it in the layer would leak one request across all later runs), the request abort signal interrupts the fiber, and every run is `Effect.scoped`. `packages/effect/`. Example in `examples/effect/`.
-- **`next/font/google` now honors `subsets` and `preload`.** Self-hosting already stripped the runtime Google request at build; now `subsets` actually reduces the payload — `rewriteGoogleFontFaceCss` keeps only the requested subsets' `@font-face` blocks, so other subsets' files aren't downloaded — and `preload` emits `<link rel="preload" as="font" crossorigin>` for a font's self-hosted files (ahead of the `<style>`, so the fetch isn't render-blocked). Both were previously accepted-but-advisory. `src/compat/next/font/{google,registry}.ts`, `src/build/self-host-fonts.ts`. (The metric-matched fallback `@font-face` and static-export self-hosting remain tracked separately — the former needs a bundled font-metrics database.)
-- **`<Image>` now optimizes by default (behavior change, matching Next).** Previously `<Image>` rendered a plain `<img>` unless you passed a `loader`; it now routes through denext's built-in `/_denext/image` endpoint (resize + webp/avif) and generates a responsive `srcSet` with **allowlist-correct** widths (drawn from `deviceSizes ∪ imageSizes`, since the optimizer refuses any other `w=`) — the device-size ladder for a responsive image (`sizes` set), or the nearest allowlisted 1×/2× for a fixed-width one. Opt out per-image with the new `unoptimized` prop, or app-wide with `images.unoptimized`. **Static export forces `unoptimized`** (there's no server to optimize against; a per-image custom `loader` still works), and the resolved config is embedded as a `#__denext_image_config` island when non-default so a client re-render matches the server. `src/runtime/image.ts`, `src/server/{config,document}.ts`, `src/build/{prod-server,dev-server,export}.ts`.
-- **OIDC `id_token` verification now accepts the ES and PS signature families, not just RS256.** `verifyIdToken` was hardcoded to `RSASSA-PKCS1-v1_5` + SHA-256, so a provider issuing `ES256` (ECDSA, common with modern IdPs), `PS256` (RSA-PSS), or `RS384`/`RS512` tokens failed sign-in with `unsupported id_token alg`. An `algParams` map now drives WebCrypto import + verify for `RS256/384/512`, `PS256/384/512`, and `ES256/384/512` (EC keys read `crv`/`x`/`y` from the JWKS); the key `kty` must match the alg family. Any other `alg` — including `none` and the `HS*` confusion vector — is still refused. `src/server/auth/jwt.ts`.
-- **`identifierPrefix` now disambiguates `useId` across multiple roots.** `createRoot(el, { identifierPrefix })` / `hydrateRoot(el, ui, { identifierPrefix })` and the server `renderToString`/`renderToStaticMarkup({ identifierPrefix })` previously accepted the option but ignored it, so two React roots on one page emitted colliding `useId` values. The prefix now seeds the root's `useId` scope on both the client reconciler and the SSR renderer (default `""` — byte-identical to before); pass the same prefix to the server render and to `hydrateRoot` so ids align on hydration. `src/client/fiber/reconciler.ts`, `src/jsx/render-to-string.ts`, `src/compat/react-dom-server.ts`. (The three `RootOptions` error callbacks remain accepted-but-not-invoked, tracked separately.)
-- **`better-sqlite3` compat gains `aggregate`, `backup`, `serialize`, `loadExtension`, and a real `expand`.** Calling any of the four missing methods previously threw `undefined is not a function`, and `expand()` was a no-op. Now: `aggregate(name, {start, step, inverse, result})` delegates to `node:sqlite`'s aggregate (custom aggregate/window functions); `backup(dest)` returns a Promise and writes an atomic copy via `VACUUM INTO`; `serialize()` returns the DB as a `Uint8Array` (via a temp `VACUUM INTO`, so it works for `:memory:` too); `loadExtension(path)` delegates to `node:sqlite` (opt in with the new `{ allowExtension: true }` open option, which `node:sqlite` requires); and `expand()` now groups a row's columns under their source table (`{ users: {...}, posts: {...} }`) using array-mode rows so same-named JOIN columns don't collide. `src/compat/better-sqlite3.ts`.
-- **`next-intl` localized pathnames now translate URLs per locale.** `createLocalizedPathnamesNavigation` was a bare alias of `createNavigation` that ignored the `pathnames` map, so a route like `/en/about` ↔ `/de/ueber-uns` produced the untranslated URL. When the routing config carries `pathnames` (`{ "/about": { en: "/about", de: "/ueber-uns" } }`), `Link`/`getPathname`/`redirect`/`router.push`/`replace` now translate the internal href to the active locale's path (and interpolate params for the `{ pathname, params }` href form), while `usePathname` reverse-translates the localized path back to the internal one. `src/compat/next-intl/routing.ts` (new `Pathnames` type + `pathnames` config), `navigation.ts`. Bound: reverse translation covers static paths (dynamic-segment reverse lookup is not matched).
-- **`next-intl` translators now support `t.rich()` and `t.markup()`.** A message with `<tag>…</tag>` callback markup — `t.rich("msg", { link: (chunks) => <a>{chunks}</a> })` — previously threw `t.rich is not a function`; both are now first-class on every translator (`useTranslations`, `getTranslations`, `createTranslator`). `rich` returns a node tree (tag handlers return nodes); `markup` returns a string (tag handlers return strings, for non-React contexts). Top-level and nested tags, self-closing tags, and ICU interpolation inside text runs are all handled, reusing the existing zero-dependency ICU engine (`src/compat/next-intl/rich.ts`, `context.ts`). Bound: a tag placed **inside** an ICU `{…}` argument (e.g. within a `plural` branch) is left to the ICU engine as literal text — put rich tags at the message top level.
-- **`denext desktop package` now builds Linux bundles** (previously macOS-only). `deno desktop` cross-compiles a complete Linux app bundle (executable + `.so` + a freedesktop `.desktop` launcher); the new scaffolded `scripts/package-linux.ts` builds one or both arches (`x64`/`arm64`) and wraps each as a distributable `.tar.gz` — plus an AppImage when `appimagetool` is on PATH. `denext desktop package --target-os linux` cross-builds the Linux bundle from any OS (verified: a cross-built binary runs on a real x86_64 Linux host). App names are slugified for artifact paths, and arch labels are underscore-free so `deno desktop` keeps the `.desktop` launcher. macOS packaging (`.app`, codesign/notarize) is unchanged; Windows is still tracked in KNOWN-LIMITATIONS. `src/build/scaffold.ts`, `src/cli/commands/desktop.ts`.
-- **`react-dom/server` Node-stream APIs now work** (previously threw). `renderToPipeableStream(node, options)` returns a `{ pipe(writable), abort() }` controller and `renderToStaticNodeStream(node)` returns a Node `Readable`, implemented as a thin `node:stream` adapter over denext's Web-stream renderer — so npm libraries that hard-code the Node-stream SSR API interoperate. They honor `onShellReady`/`onAllReady`/`onError`/`signal`; the documented fidelity caveat is that the document is buffered (no `Writable` backpressure) and `onShellReady` ≈ first-chunk-available. denext's own apps should still use `renderToReadableStream`. `src/compat/react-dom-server.ts`.
-- **`denext/testing` gains `userEvent`, async `findBy*`/`waitFor`, and a broader `getByRole` table.** The component-testing surface moves closer to `@testing-library/react`: **`userEvent`** (`click`/`dblClick`/`type`/`clear`/`keyboard`/`selectOptions`, plus `userEvent.setup()`) dispatches the realistic multi-event sequence a user interaction produces (e.g. `type` fires keydown → value+char → input → keyup per character), more faithful than a single `fireEvent`; **`waitFor(cb, {timeout, interval})`** retries an assertion (flushing pending effects/state between attempts) and **`findBy*`/`findAllBy*`** await an element that appears after an async effect; and **`getByRole`'s implicit-role table** now covers `main`/`article`/`banner`/`contentinfo`/`complementary`/`region`/`form`/`figure`/`separator`/`progressbar`/`dialog`/`table`/`row`/`cell`/`columnheader`/`rowgroup`/`group`/`option`/`searchbox`/`slider`/`spinbutton` and `listbox` for a multi-select, on top of the existing set. `src/testing/render.ts`, `src/testing/mod.ts`.
-- **i18n `localePrefix: "always"`.** In addition to the default `"as-needed"` (default locale unprefixed, others prefixed), i18n now supports `localePrefix: "always"` — every locale is prefixed including the default, so `localeHref` produces `/en/about` and `localeMiddleware` redirects an unprefixed path to the detected (or default) locale's prefix. `src/server/i18n.ts`. (Domain-based per-domain locale routing remains tracked in KNOWN-LIMITATIONS — it needs host-aware routing.)
-- **Compat correctness cluster: `react-is` classification, bounded `React.cache`, and a runtime `server-only` guard.** (1) `react-is`'s `typeOf` now classifies context providers/consumers, `Profiler`, and `StrictMode` (returning `ContextProvider`/`ContextConsumer`/`Profiler`/`StrictMode`) instead of `undefined` — the `isX` predicates already recognized them; `typeOf` now agrees (`src/compat/react-is.ts`). (2) `React.cache`'s off-request persistent memo no longer accumulates distinct **primitive** args without limit — each node is bounded (1024, oldest evicted); request-scoped memos stay uncapped (freed with the request, matching React) and object args already used a WeakMap (`src/compat/react.ts`). (3) The compat `server-only` module now throws at import if evaluated in a **client** runtime (defense-in-depth behind the build-time env-poison plugin, matching the npm package); `client-only` stays inert because denext server-renders client components, so their `import "client-only"` runs on the server legitimately — a throw there would break SSR (`src/compat/{server-only,client-only}.ts`).
-- **`createRoot`/`hydrateRoot` now invoke the `onCaughtError`/`onUncaughtError`/`onRecoverableError` callbacks (React 19 parity).** They were accepted but ignored. Now `onCaughtError` fires when an error boundary catches a render, effect, or event error; `onUncaughtError` fires when an error reaches the root with no boundary (the error still surfaces afterward, as before); and `onRecoverableError` fires on a hydration mismatch (where denext keeps the client render), replacing the dev-only mismatch console warning and firing in production too. Behavior is unchanged when no callback is passed — a boundary still catches, an uncaught error still throws, a mismatch still dev-warns — and a callback that itself throws is caught so it can't corrupt the reconciler. `src/client/fiber/reconciler.ts`.
-- **Pages Router Preview Mode (`res.setPreviewData` / `context.preview` / `previewData`).** An API route can now call `res.setPreviewData(data)` to enter Preview Mode and `res.clearPreviewData()` to exit; on a subsequent page request `getStaticProps`/`getServerSideProps` see `context.preview === true` and `context.previewData`, and the static/prerendered cache is bypassed so a CMS draft renders live. The preview cookie is **HMAC-SHA256 signed** so it can't be forged (a forged cookie is ignored — it never discloses drafts, only forces a live render); the signing secret is read from `DENEXT_PREVIEW_SECRET` (comma-separated to rotate), falling back to a random per-process key with a one-time warning (preview then works within a process but not across restarts/instances). `packages/pages-router/src/{preview,api,handler}.ts`.
-- **Pages Router `getStaticPaths` `fallback: true` now serves a props-less shell + `router.isFallback`.** Previously an unlisted dynamic path with `fallback: true` behaved like `"blocking"` (rendered live, `isFallback` never true). Now the HTML request renders a **props-less shell** with `router.isFallback === true` (and `isReady === false`), and after hydration the client fetches the real `getStaticProps` data for that path and re-renders with it (`isFallback → false`); a not-found/redirect during that fetch falls back to a full load. `fallback: false` still 404s an unlisted path and `"blocking"` still renders live. `router.isFallback` is now a first-class field on `NextRouter` (Next parity). `packages/pages-router/src/{handler,client-runtime,render}.ts`, `packages/pages-router/router.ts`.
-- **Pages Router `next/head` now hoists `<script>` (e.g. JSON-LD), `<style>`, `<base>`, and `<noscript>` into `<head>`, not just `<title>`/`<meta>`/`<link>`.** Previously only the React-19 metadata tags were hoisted; a `<script type="application/ld+json">` or `<style>` inside `<Head>` rendered inline in the body. On the server these are now routed into `<head>` via the `useServerInsertedHTML` sink (scoped to the `<Head>`'s own children, so an ordinary body `<script>` is untouched — unlike the renderer's tree-wide metadata hoist), while `<title>`/`<meta>`/`<link>` keep the hoist-and-dedupe path. On the client the head manager applies and reconciles the broader tag set across soft navigation (content-hashed dedupe keys so two distinct JSON-LD blocks coexist). `packages/pages-router/head.ts`, `packages/pages-router/src/{head-manager,render}.ts`.
-- **Pages Router SSG now threads the default locale into `getStaticProps` and `__NEXT_DATA__`.** Prerendering hardcoded `context.locale = undefined`, so a `getStaticProps` on an i18n site couldn't tell which locale it was rendering and the prerendered `__NEXT_DATA__` carried no locale metadata. It now passes the real `defaultLocale` (plus `locales`/`defaultLocale`) to `getStaticProps` and embeds them in the page's `__NEXT_DATA__` + `props.json`, matching the live-render path. Non-default locales continue to render live at request time (the handler's existing design), so they aren't prewritten. `packages/pages-router/src/ssg.ts`, `packages/pages-router/mod.ts`.
-- **Pages Router API routes honor `export const config.api.bodyParser` and parse `multipart/form-data`.** Previously an API route always parsed JSON / urlencoded / text and ignored `config`. Now `export const config = { api: { bodyParser: false } }` hands the handler the **raw `Uint8Array`** body unparsed (for webhooks that verify a signature over the exact bytes), `{ bodyParser: { sizeLimit: "500kb" } }` (or a byte count) rejects an oversize body with **413** before the handler runs (default 1 MiB, matching Next), and a `multipart/form-data` request is parsed into `req.body` as an object of fields + `File` objects (a denext convenience — Next requires an external parser). `packages/pages-router/src/api.ts`. (On-demand `res.revalidate` and true `res.write` streaming remain tracked separately.)
-- **A discrete DOM event stays urgent while an async transition is pending, and the AsyncContext transform now instruments async generators.** Two parts of the concurrent-scheduling story, both low-impact: (1) **The default (non-scoping) async-transition window no longer demotes user interactions.** Previously, while any `startTransition(async …)` promise was pending, _every_ update was entangled at transition priority — so a click or keystroke during a slow transition was deferred and felt laggy. An update enqueued synchronously in a DOM event handler now keeps its natural (urgent) priority, matching React's lane model where discrete events are never demoted by a transition; only updates _outside_ any event handler (the transition's own post-`await` continuations) remain entangled. `src/client/event-priority.ts` (new), `src/client/dom-props.ts`, `src/client/fiber/reconciler.ts`. (2) **`experimental.asyncContext` now instruments async generators** (`async function*`), the documented v1 gap: each `await` is bracketed as before and each `yield V` becomes `__asyncResume($, yield __asyncYield($, V))`, so the frame's AsyncContext is handed back to the caller while suspended and restored on resume — proven by a test where the frame's value survives awaits and yields even when the caller resumes the generator under a different context. The frame is captured at the first `.next()` (resume-time; TC39 [hasn't settled](https://github.com/tc39/proposal-async-context/issues/18) creation- vs. resume-time capture). A generator using `yield*` delegation is left uninstrumented (delegation suspends through a sub-iterator) rather than mis-instrumented. `src/build/async-context-transform.ts`, `src/runtime/async-context.ts` (`__asyncYield`/`__asyncResume`). Both changes are inert for code that isn't an event handler / async generator.
-- **The auto-memo compiler now memoizes `.map()` / list expression containers and no longer bails a whole module on dynamic `import()`.** Previously the experimental compiler (`experimental.autoMemo`) only reached JSX _elements_ in return/child position — it left every `{…}` expression container verbatim, so the single biggest win, `{items.map((it) => <Row … />)}`, was never memoized — and it skipped any module using a dynamic `import()` entirely. Now a `{…}` child whose expression contains a component element is memoized **as a whole** (keyed on its reactive dependencies), so a stable list reuses the same element array across parent re-renders and the reconciler bails the whole subtree (proven by a render-count test: a 3-item list renders each row once and skips re-render across parent updates). Soundness is preserved by a conservative free-variable analysis — every free identifier in the container must be classifiable as a tracked component-scope dependency, a module-level/imported name, or a well-known global; an unclassifiable free var (e.g. a nested-block binding the top-level scan can't see) leaves the container verbatim rather than risk a stale value. And a dynamic `import("./rel")` is now absolutized like a static import (so the temp-dir transformed module resolves it), which is what let the whole-module dynamic-import bail be removed. SSR output is byte-identical (server `useMemoCache` returns a fresh sentinel array each render). `src/build/compiler.ts`.
-- **The migration codemod now rewrites `require()` / dynamic `import()` and never silently skips a `next/*` import.** `denext codemod` previously rewrote only static `import`/`export … from` statements — a `require("react-dom/client")` or `const m = await import("react")` was left pointing at the npm package, and an unrecognized `next/*` subpath (e.g. `next/experimental/foo`) passed through with no notice. Now a plain module-identity remap (react → denext, `react-dom/client` → `denext/client`, …) is rewritten inside `require(…)`/`import(…)` too; a default-component specifier (`next/link`) or a Pages-Router file seen in call form is flagged with a hand-conversion hint (its module _shape_ changes, so it can't be safely rewritten inside a call); and any unmapped `next/*`/`next-intl/*` subpath now raises a warning noting it was left to resolve through the `next/*` compat alias. `src/build/codemod.ts`.
-- **`denext migrate` now gives per-key guidance for unsupported `next.config` keys instead of a lumped drop.** A recognized-but-unhonored key (`env`, `transpilePackages`, `output`, `reactStrictMode`, `pageExtensions`) was reported only as a bare name in a `// Dropped unsupported next.config keys: …` comment. The generated `denext.config.ts` now emits a specific line per load-bearing key pointing at its denext equivalent (`env` → `publicEnv`/runtime env; `output` → `deno task export`/`build`; `transpilePackages` → not needed, Deno transpiles deps natively; `reactStrictMode` → `<StrictMode>`), and groups only the genuinely-inert keys (`webpack`, `compiler`, …) on a single "no equivalent needed" line — so nothing load-bearing is dropped without a pointer to how to reproduce it. `src/build/migrate.ts`.
-- **`denext generate docker`** — scaffold container files on request (Angular/Nest-style), writing `Dockerfile`, `docker-compose.yml`, and `.dockerignore` at the project root. The image is auto-detected from the app: an App Router / SSR app gets a build-and-`deno task start` server image (listens on 3000, binds `0.0.0.0`); a `mode: "spa"` app gets an export-and-serve static image (`deno task export` → `@std/http/file-server` on `out/`). Force the variant with `denext generate docker server` / `denext generate docker spa`. The base image is pinned to the Deno version that generated it, the compose file ships a commented Postgres service, and existing files are never overwritten (idempotent, so a hand-edited `Dockerfile` is safe on re-run).
-- **`useAsyncEffect` and `tryCatch` are now exported from `denext`.** `useAsyncEffect(effect, deps)` runs an async effect with an `AbortSignal` and typed error handling (plus `useAsyncEffect.wrap` / `useAsyncEffect.setTimeout` helpers); `tryCatch` returns a `[ok, data] | [ok, error]` tuple (with `SuccessResult`/`ErrorResult`/`TryCatchResult` types) so error handling composes without a `try` block's scoping. Both were internal utilities; they are now first-class framework APIs.
-- **Editor support out of the box.** The repo ships a shared Deno LSP config (`.vscode/settings.json` → `deno.enable`, `.vscode/extensions.json` → recommends `denoland.vscode-deno`) so a fresh clone resolves `denext`, the import map, and `jsxImportSource: "denext"` in VSCode/Cursor without setup — instead of the built-in Node TS server flagging bogus `react/jsx-runtime` errors. `denext migrate` generates the same config for converted apps (both App Router and SPA), merged additively into any existing `.vscode` and idempotent.
-- **`DependencyList` is exported from the bare `denext` entrypoint** (previously only under the `react` compat alias), so code annotating deps arrays for denext's own hooks can import it from `denext`.
-- **`spa.desktop.icon` — a config-file setting for the desktop app icon.** Point it at any file (`denext.config.ts` → `spa: { desktop: { icon: "../../assets/app-icon.png" } }`) and `export` prepares the bundle icon from it, overriding auto-detection. A configured **PNG is used verbatim** (supply a finished 1024² macOS master, e.g. from the app's own icon set); a JPEG/WebP is composed; when unset, denext auto-detects a web icon (`apple-touch-icon`, a named `icon`/`logo`, `favicon.png`) and composes it into Apple's macOS template (centered in the ~824px safe area of a 1024² canvas) so a small full-bleed favicon isn't baked oversized into the Dock. `deno desktop` bakes `--icon` full-bleed and ignores the macOS grid, which this works around. Editing the config and rebuilding is enough when an app icon was detected at migrate time (which wires `--icon` into the `deno task desktop` command); an app that had no icon then needs one `denext migrate --desktop` re-run after setting it.
-- **`denext migrate --denext-local-path=<path>`** points the generated config at a local denext checkout (`file://`, resolved via its `deno.json` exports) instead of published JSR, and runs its local `cli.ts` in the tasks. For testing an unreleased/dev denext against a real app without publishing — a dev aid, not the shipped drop-in.
-- **React/ReactDOM/Next signature-parity tool** (`scripts/parity/`, `deno task
-  parity:refresh` / `parity:gaps` / `parity:drift`; gate test `tests/react-parity.test.ts`).
-  Extracts the full public surface of the latest React, ReactDOM, and Next (via the
-  TypeScript compiler API) and denext's compat surface (via `deno doc`), then asserts **no
-  structural signature deviation** — export presence, value-vs-type, function arity/
-  optionality, and object/namespace members — tolerant of internal type differences. A
-  committed baseline + a burn-down "known-gaps" ledger keep the gate offline and
+- **`generateStaticParams` receives `{ params }` and works on layouts.** A
+  layout above a dynamic page may enumerate its own segment; the page's
+  generator is then called once per parent set with the parent's params and its
+  results merged, Next.js style (`src/server/static-params.ts`, used by the
+  export, `probeApp`, and the `dynamicParams: false` check).
+- **`generateMetadata(props, parent)` / `generateViewport(props, parent)`.**
+  Layouts and pages receive Next's second argument: a promise of the parent
+  segments' merged metadata
+  (`const prev = (await parent).openGraph?.images ?? []`). `ResolvingMetadata`,
+  `ResolvedMetadata`, `ResolvingViewport` are exported from `denext/server` and
+  `denext/next`.
+- **Metadata file conventions.** Static `app/robots.txt`, `app/sitemap.xml`,
+  `app/manifest.json|.webmanifest` and `app/opengraph-image.png|jpg|…` are
+  detected and served; `opengraph-image.alt.txt` sidecars set `og:image:alt`;
+  `generateImageMetadata({ params })` enumerates variants served at
+  `<route>/opengraph-image/<id>` (with `contentType`/`alt`), and
+  `default({ params, id })` receives the route params; nested
+  `opengraph-image`/`twitter-image` now work under dynamic segments
+  (`app/blog/[slug]/opengraph-image.tsx`). `src/router/manifest.ts`,
+  `src/server/metadata-files.ts`.
+- **`next/image`: `fill` and a real blur placeholder.** `fill` positions the
+  image over its container (no `width`/`height` attributes, `sizes` defaults to
+  `100vw`); `placeholder="blur"` paints the `blurDataURL` through an SVG
+  `feGaussianBlur` filter (Next's technique) and clears it on load — via
+  `onLoad` when hydrated and via the client boot for server-only trees — with
+  the user's `style` winning; a `data:` URL is accepted as `placeholder`;
+  `onLoad` is composed. `src/runtime/image.ts`.
+- **React core on the root barrel**: `Children`, `cloneElement`,
+  `createElement`, `createRef`, `forwardRef`, `isValidElement`, `StrictMode` are
+  exported from `denext` (previously only `denext/react`). Implementation moved
+  to `src/runtime/react-core.ts`.
+- **`denext/plugin-kit` covers what a router plugin needs**:
+  `compareSpecificity`, `revalidatePath`/`revalidateTag`,
+  `buildNextCompatModules`/`createNextCompatServerLoader`, and the
+  `Component`/`VNode*`/`DenextConfig`/`TailwindConfig`/`I18nConfig` type
+  contracts, so `@denext/pages-router` imports from the kit instead of
+  `denext/server` and `denext/build/next-compat`.
+- **Public-surface golden.** `tests/public-surface.test.ts` pins every
+  `deno.json` entry's exported names to `tests/fixtures/public-surface.json`
+  (`deno task surface:refresh` to change it deliberately); `NextConfig` is typed
+  as `DenextConfig & Record<string, unknown>`; `next/server` exports
+  `NextMiddleware` and `MiddlewareConfig`; `RequestCookies.set/delete/clear`
+  write the `Cookie` header back (plus `toString`, object-form `set`); one
+  `HttpMethod` type; `React.version` comes from one `REACT_COMPAT_VERSION`
+  pinned to the parity baseline (19.2.8); a `displayName` on a
+  `memo`/`forwardRef` wrapper is honored; single-valued security headers set by
+  middleware REPLACE the config header rule instead of appending
+  (`X-Frame-Options: DENY, SAMEORIGIN` is gone). The API reference generator
+  renders defaulted/rest/destructured parameters and generic type arguments (no
+  more `_: unknown` / bare `Promise`).
+- **`SECURITY.md`** — supported versions, private reporting via GitHub Security
+  Advisories, scope, and the disclosure window. Linked from README and MISSION.
+- **Next 15 awaitable request APIs.** `cookies()`, `headers()` and `draftMode()`
+  stay synchronous AND are awaitable (`const store = await cookies()`);
+  `cookies().set()` accepts the object form (`set({ name, value, path })`),
+  `delete()` accepts `{ name, path, domain }`, and both chain.
+  `src/server/request-context.ts`.
+- **React surface on the root barrel**: `cache`, `Activity`, `ViewTransition`,
+  `unstable_rethrow`, `ReadonlyURLSearchParams` and the common React types
+  (`ReactNode`, `ReactElement`, `FC`, `ComponentType`, `ComponentProps`,
+  `PropsWithChildren`, `CSSProperties`, `RefObject`, `MutableRefObject`,
+  `Dispatch`, `SetStateAction`, `MemoExoticComponent`, the event types, …) are
+  exported from `denext`; `denext/react` exports the `JSX` namespace; `useRef`
+  has React's three overloads (`useRef<T>(null)` → `{ current: T | null }`);
+  `RefObject.current` is writable (React 19); `ReactNode` admits
+  `Promise<ReactNode>` and children may be `bigint`; `memo` accepts any object
+  props; `Context<T>` is ONE type across `denext` and the `react` alias.
+- **`useFormStatus()` returns `data`, `method` and `action`** for the pending
+  submission (React 19's shape), not just `pending`. `useActionState`'s
+  `dispatch` runs the action inside a transition. `src/runtime/actions.ts`.
+- **`react-dom/static`**: `prerender` / `prerenderToNodeStream` (the whole tree
+  resolved; `postponed` is always `null`); `renderToReadableStream` now resolves
+  once the SHELL has rendered and REJECTS when the shell throws (React's
+  contract — a try/catch can answer 500 before any bytes go out).
+  `src/compat/react-dom-server.ts`.
+- **Route handlers receive a `NextRequest`** (`nextUrl`, `cookies`) once
+  `next/server` is loaded, like middleware;
+  `NextRequest.nextUrl.basePath`/`.locale` reflect the resolved routing inside
+  the pipeline; `NextResponse.rewrite(url, { request: { headers } })` overrides
+  the rewritten route's request headers; `ResponseCookies` gains `has()`,
+  `toString()` and `delete({ name, path, domain } | string[])`.
+  `src/server/api.ts`, `src/compat/next/`.
+- **`usePathname()`/`useSearchParams()` during SSR reflect the request being
+  rendered** (a Client Component rendered on the server no longer sees `/`).
+  `src/client/navigation.ts`.
+- **Types**: `PageProps<P>` is generic over its params
+  (`PageProps<{ slug: string }>`), `LayoutProps<P, Slots>` names parallel-route
+  slots, Remix's `SerializeFrom<typeof loader>` (`denext/remix/server`),
+  `DynamicLoadingProps`.
+- **`next-intl` named formats**: `formats: { dateTime: { short: {…} } }` on the
+  provider, `useFormatter().dateTime(d, "short")` (an unknown name throws).
+  `createSlot`/`createSlottable` (Radix Slot 1.2). `unstable_rethrow` also
+  rethrows a PPR postpone and a control signal wrapped in an Error's `cause`
+  chain.
+- **`$PORT` is honored** by `denext start`/`dev` when `--port` is not given
+  (what every PaaS injects). `src/cli/commands/serve.ts`.
+- **`denext/plugin-kit`** exports the signed-token primitives (`hmacSign`,
+  `hmacVerify`, `toBase64Url`, `fromBase64Url`) so a router plugin's own cookies
+  (the pages-router preview cookie uses them) never re-implement HMAC.
+- **Route handlers honor segment config.**
+  `export const dynamic = "error" | "force-static"` on a `route.ts` now applies
+  to `cookies()`/`headers()` inside the handler. `src/server/api.ts`.
+- **Generated config schema + `experimental.*` sub-key validation.**
+  `deno task gen:config-schema` (chained into `deno task docs:api`) emits
+  `denext.config.schema.json` (a JSON Schema derived from the `DenextConfig`
+  type by a zero-dependency script over `deno doc --json` — no Zod, no npm;
+  property names, kinds, and the JSDoc descriptions, deliberately shallow so it
+  mirrors what the runtime validator enforces; a build-time artifact, never
+  shipped in a bundle) and `src/server/config-keys.generated.ts`, the exhaustive
+  top-level + `experimental.*` key list that the runtime validator and the
+  config loader now share instead of three hand-kept copies (a drift test keeps
+  the generated file current). `warnUnknownConfigKeys` recurses one level into
+  `experimental`, so a typo like `experimental.complier` warns with a
+  did-you-mean (`compiler`), and the graduated keys get a "moved to top-level"
+  message naming the new field.
+- **Production-ready `denextAuth`: password hashing, brute-force protection, and
+  opt-in revocable sessions.** The auth layer's OAuth/OIDC/CSRF core was already
+  complete; what a real deployment still had to hand-roll now ships in the
+  framework, all zero-npm. (1) **`hashPassword` / `verifyPassword`**
+  (`denext/server`) — salted scrypt via `node:crypto`, stored as a
+  self-describing `scrypt$N=…,r=…,p=…$salt$hash` string so the cost can be
+  raised later; `verifyPassword` compares with `timingSafeEqual`, caps the
+  parameters a stored hash may request (no self-DoS from a corrupted row), and
+  returns `false` instead of throwing on malformed input, so a Credentials
+  `authorize` is one line. (2) **Rate limiting on the credentials endpoint** —
+  on by default: after 5 failed attempts per client IP (`x-forwarded-for` /
+  `x-real-ip`) + submitted identifier per 15 minutes the endpoint answers a
+  generic `429` + `Retry-After` (never revealing whether the account exists,
+  like the `401`); a success resets the key. Configure via
+  `AuthConfig.rateLimit` (`max`, `windowMs`,
+  `keyGenerator(request, credentials)`, a shared `store` implementing
+  `RateLimitStore`; `inMemoryRateLimitStore` is the per-process default) or pass
+  `false`. (3) **Opt-in server-side sessions** — pass `sessionStore`
+  (`inMemorySessionStore()`, the durable `sqliteSessionStore({ path })` on
+  `node:sqlite`, or your own `SessionStore` over Redis/Postgres) and the
+  `__Host-` cookie carries only a random session id while the payload lives in
+  the store; `revokeSession(sessionId)` ("sign out this device" —
+  `AuthSession.sessionId` is populated when store-backed) and
+  `revokeAllSessions(userId)` ("sign out everywhere", after a password change)
+  end sessions immediately, signout deletes the store record, and a closable
+  store is released through the plugin teardown seam. **Without a `sessionStore`
+  nothing changes**: sessions remain stateless signed cookies (zero-config,
+  multi-replica safe), the same default Auth.js uses. A per-process store is not
+  shared across replicas — point every replica at one shared store. Plus a
+  runnable **`examples/auth`** app (scrypt-hashed accounts in sqlite, the
+  rate-limited login, `requireAuth` gating `/dashboard`, the client
+  `SessionProvider`/`useSession`/`signIn`/`signOut`, and "sign out everywhere"
+  via the sqlite store), driven JS-disabled in CI by
+  `tests/auth-example.test.ts`.
+  `src/server/auth/{password,rate-limit,session-store,sqlite-session-store}.ts`
+  (new), `src/server/auth/{session,routes,mod,types,providers}.ts`,
+  `src/server/mod.ts`, `examples/auth/**`,
+  `tests/auth-{password,rate-limit,session-store,providers,example}.test.ts`
+  (new).
+- **Fallow health badge + score documentation.** The README carries a
+  `fallow health` badge fed by `.github/badges/fallow.json`
+  (`deno task badge:fallow`, regenerated at release like the test-count badge),
+  and CONTRIBUTING.md → _The health score_ explains how to reproduce the number,
+  why every code-quality penalty is zero, and why the two structural penalties
+  (hotspots, coupling) put the ceiling at ≈ 88 (A) for an actively developed
+  repository.
+- **"Migrating from Remix" documentation.** A new docs page
+  (`/docs/migrating-remix`: the command, how routes convert with the three-file
+  split and `route.ts`, the import map, what carries over, what to review, next
+  steps) registered in the sidebar, the stale "(Remix is not supported.)" line
+  on the Next migration page corrected, and `README-REMIX-MIGRATION.md`, the
+  top-level guide in the same shape as `README-NEXT-MIGRATION.md`.
+- **`denext/client-runtime` — the stable import for denext's generated browser
+  entries.** The route/Flight entries `denext build`/`dev` emit, the SPA dev
+  entry, the Pages Router client entry and the Server Action client stubs import
+  their boot and HMR plumbing (`startClient`, `provideLayoutSegments`,
+  `parseFlight`, `setFlightParser`, `clientActionStub`, `qrl`/`capturedScope`
+  (also kept on `denext/client`), `enableFastRefresh`, `enablePerModuleRefresh`,
+  `performModuleRefresh`, `registerFamily`) from this entry instead of
+  `denext/client`, the same way build-transform output imports
+  `denext/compiler-runtime`. The bundlers resolve it (and `denext/devtools`,
+  which the dev entries import `installDevtools` from) against the framework, so
+  an app's import map need not list either subpath. Not an application API —
+  apps keep using `denext/client`. `src/client/client-runtime.ts` (new),
+  `deno.json`, `src/build/{bundle,spa,next-compat,dev-unbundled}.ts`,
+  `packages/pages-router/src/client-entry.ts`.
+- **Typed Server Actions (`defineAction`) — the mutation half of end-to-end type
+  safety.** The typed API client type-checks reads to your route handlers;
+  `defineAction` (from `denext/server`) does the same for **writes**. A Server
+  Action by itself takes raw `FormData` (untyped string blobs) and returns
+  anything — so a missing/mistyped field is a runtime error and the result type
+  never reaches the component. `defineAction({ input, handler })` validates
+  `FormData` into a **typed input** (a plain parser over the form fields, or any
+  **Standard Schema** — Zod/Valibot/ArkType — with zero denext dependency), runs
+  a **typed `handler(input) => Out`**, and returns a discriminated
+  `ActionResult<Out>` (`{ ok: true, data }` or
+  `{ ok: false, error, fieldErrors }`). The `Out` type flows all the way into
+  `useActionState` — `state.ok ? state.data.id : state.fieldErrors?.title` is
+  fully typed, and a wrong-type usage is a compile error. Throw
+  `ActionValidationError(msg, { field: "…" })` (from a parser or the handler) to
+  surface per-field messages; `idleActionState<Out>()` (from
+  `denext`/`denext/client`) is the initial state. It plugs into denext's
+  existing Server Action dispatch + progressive enhancement (tolerates both the
+  `useActionState` `(prevState, formData)` shape and a bare `(formData)` call).
+  So the app's whole network boundary — routes, API calls, **and** actions — is
+  type-checked, no tRPC and no extra dependency. `src/runtime/define-action.ts`
+  (new), exports from `denext/server` (`defineAction`,
+  `ActionValidationError`) + `denext`/`denext/client` (`idleActionState`,
+  `ActionResult`).
+- **MCP codebase search — `denext_query_codebase`, `denext_find_definition`,
+  `denext_find_references`, `denext_index_codebase`.** The MCP server could
+  search denext's own docs (`denext_search_docs`) but not the developer's **own
+  project code** — so an agent working in your app had to open files blind. Four
+  new tools index the project the MCP server was launched in and answer over it:
+  `denext_query_codebase` ranks source by relevance to a keyword/question
+  (BM25), `denext_find_definition` locates where a symbol is declared (exports
+  first), `denext_find_references` lists its usages, and `denext_index_codebase`
+  warms/reports the index. It's **native, zero-npm, offline, in-process** — no
+  model, no embeddings service, nothing sent anywhere. The index is built at
+  runtime, cached at `.denext/rag/codebase.json`, and **refreshed incrementally
+  by file mtime** so it stays correct as you edit. Traversal honors the
+  project's **`.gitignore` in full** (negation, nested `.gitignore` files,
+  `**`/`*`/`?` globs, anchoring, directory-only rules) plus a fixed floor
+  (`.git`, `.denext`, `node_modules`, `out`, `dist`, `coverage`, `build`), so
+  vendored/generated code and secrets in ignored paths are never indexed.
+  Retrieval sits behind a pluggable `Retriever` seam (shared with docs search),
+  so an embeddings retriever can drop in later without changing callers. The
+  `/docs/mcp` page and `llms.txt` list the tools automatically (generated from
+  the registry), bringing the surface to 14 tools.
+  `src/mcp/rag/{gitignore,codebase,code-search,snippet}.ts` (new),
+  `src/mcp/rag/search.ts`, `src/mcp/tools.ts`.
+- **`denext mcp --disable <groups|tools>`** hides tool groups (`authoring`,
+  `project`, `inspect`, `dev`, `docs`, `rag`) or individual tools so an agent's
+  context only carries what it needs.
+- **Typed API client — end-to-end type-checked calls to your own route handlers
+  (no tRPC).** Calling an app's own `app/**/route.ts` was untyped: a handler
+  returns a web `Response`, whose type erases the JSON body, so a caller got
+  `any` back and a signature drift became a silent runtime 500. Handlers now opt
+  into typed bodies with `TypedResponse<T>` / `TypedRequest<B>` + `json<T>()`
+  from `denext/server` (`json` is `Response.json` at runtime — the typing is
+  zero-cost, carried on a phantom type parameter). `denext build` / `denext dev`
+  read those signatures via `deno doc` and generate `.denext/api.ts` — an
+  `ApiSchema` mapping every route pattern → method →
+  `{ params, body, response }`, with params inferred from the route pattern and
+  named body types re-imported from the route module. Pair it with
+  `createApiClient<ApiSchema>()` (from `denext`/`denext/client`) for a
+  fully-typed call: `api("/api/user/[id]", "GET", { params: { id } })` returns
+  the handler's response type, and an unknown path, wrong method,
+  missing/mistyped param or body, or misused response is a **compile-time
+  error**. The generated module is a `type` alias (so `keyof` stays the literal
+  route patterns for autocomplete while still satisfying the client's `Record`
+  constraint). The runtime client (`apiRequest`/`buildPath`) is a thin `fetch`
+  wrapper (param substitution incl. catch-alls, query, JSON body) usable from a
+  Server Component, a client component, or a test.
+  `src/server/typed-response.ts` (new), `src/build/api-types.ts` (new — the
+  generator), `src/runtime/api-client.ts` (new — the client),
+  `src/build/emit-typed-modules.ts` (new — shared routes.ts + api.ts emit),
+  `src/build/{build,dev-server}.ts`, `examples/hello`.
+- **First-party MCP server (`denext mcp`) — denext's tooling for AI agents and
+  IDEs.** A Model Context Protocol server (newline-delimited JSON-RPC 2.0 over
+  stdio, hand-rolled — no SDK, no npm, keeping the framework's zero-runtime-npm
+  promise) that lets any MCP client write, verify, and scaffold denext
+  correctly. Configure a client to run `deno run -A jsr:@denext/denext/cli mcp`.
+  **Tools:** `denext_check_snippet` (lint a code string for the Next.js→denext
+  mistakes an agent makes — wrong import source, a misplaced `"use client"`, an
+  interactive component with no client boundary — instantly, with the fix, no
+  type-checker needed), `denext_import_map` (map any Next/React specifier to its
+  denext equivalent), `denext_generate` (scaffold a
+  page/route/component/api/action/test), `denext_doctor` (project health), and
+  `denext_codemod` (dry-run the Next→denext import rewrites). **Resources:**
+  `denext://guide` (the AGENTS.md authoring guide) and `denext://import-map`, so
+  a client can ground itself on denext's rules. The canonical import mapping
+  lives once as data (`src/mcp/next-denext-map.ts`) shared by the checker, the
+  tool, and the llms.txt generator.
+  `src/mcp/{server,tools,check,next-denext-map,package-file}.ts` (new),
+  `src/cli/commands/mcp.ts` (new), `src/cli/register.ts`.
+- **MCP "execute + inspect" tools (`denext_render`, `denext_route_map`).** The
+  thing an agent couldn't do before: run the app. `denext_render` renders a
+  route (by `path`) or a component (by `component` + `props`) **server-side, no
+  browser**, and returns the real HTML + status — so an agent can SEE what its
+  edit produces (or the error it throws), closing the edit→render→fix loop
+  without a browser or a live server. It reuses `denext/testing`'s in-process
+  app client and component renderer, so it runs the actual render (hooks and
+  all) in milliseconds. `denext_route_map` maps everything that renders at a
+  path — the matched page + params, its layout and template chains (each tagged
+  **server**/**client**), its `loading`/`error`/`not-found` boundaries and
+  parallel slots, and any API route at the same path — from the route manifest,
+  so an agent gets the whole render tree without opening a dozen files. Both run
+  against the project the MCP server was launched in (its own `deno.json`). The
+  MCP surface is now nine tools, spanning read + observe + **execute** — a
+  capability no peer framework MCP server offers. `src/mcp/inspect.ts` (new),
+  `src/mcp/tools.ts`.
+- **Dev server black box + live MCP tools (`denext_list_routes`,
+  `denext_dev_logs`).** The dev server now keeps a bounded in-memory recorder of
+  the running app's runtime signal, so the same thing a developer sees in the
+  terminal/browser is readable out-of-process — by the MCP live tools, or any
+  localhost reader. It records: **server errors** (render/build/type errors,
+  with the codeframe the overlay already builds); **server console** — the dev
+  process's own `console.*` (a `console.log` in a Server Component or route
+  handler), captured by the real `denext dev` CLI only (it wraps the process
+  console, which is global — an embedded/parallel server leaves it off); the
+  **browser's** `console.error`/`warn` + uncaught errors/rejections, shipped
+  back over a new same-origin-gated `POST /_denext/dev-log` by the dev-reload
+  client already on every dev page; each completed **request**
+  (`GET /about → 200`, with duration); and **HMR** events (hot-swap / reload).
+  Read it at `GET /_denext/dev-state` (filter by
+  `kind=error|console|request|hmr`). On boot the dev server publishes its
+  address to `.denext/dev.json` (removed on drain) so a reader can find it. Two
+  new MCP tools: `denext_dev_logs` reads the **running** server's recent events
+  (so an agent sees what actually happened at runtime, not just static source),
+  and `denext_list_routes` lists an app's pages + API routes with their dynamic
+  params (no dev server needed). Both endpoints reuse the reload stream's
+  cross-origin gate — a server-side reader (no `Sec-Fetch-Site`) is allowed, a
+  cross-site page is refused. `src/build/dev-events.ts` (new — ring buffer +
+  console capture), `src/build/dev-server.ts`, `src/cli/commands/serve.ts`,
+  `src/mcp/dev-client.ts` (new), `src/mcp/tools.ts`.
+- **`llms.txt` + `llms-full.txt` (served at denext.dev/llms.txt).** The
+  [llms.txt convention](https://llmstxt.org) — a curated, low-noise entry point
+  for LLMs. `llms.txt` is a concise index (what differs from Next.js, doc links,
+  the agent tooling); `llms-full.txt` is the full authoring guide (AGENTS.md)
+  plus a per-module API-surface summary an agent can load wholesale. Both are
+  generated from AGENTS.md + the API reference so they never drift from the real
+  surface (`deno task docs:llms`, folded into `deno task docs:build`), and
+  emitted into `apps/web/public/` so the static export publishes them at the
+  site root. `scripts/gen-llms-txt.ts` (new), `deno.json`.
+- **Dev loop: background type-checking + a richer error overlay (codeframe,
+  open-in-editor).** The dev server now runs `deno check` **asynchronously and
+  debounced** on each source edit, off the render critical path; a type error
+  surfaces in the browser error overlay (with a codeframe) instead of reaching
+  the browser silently, and a monotonic token drops a stale run when a newer
+  edit lands (opt out with `DENEXT_DEV_TYPECHECK=0`; skipped for
+  next-compat/drop-in apps, where raw-source `deno check` doesn't match the
+  rewritten build graph). The overlay itself is upgraded from plain
+  title/message/stack to a **codeframe** — the source snippet around the failing
+  line with a caret at the column — plus a **clickable in-project stack frame**
+  that opens the file in your editor via a new dev-only
+  `/_denext/open-in-editor` endpoint (honors `DENEXT_EDITOR`/`VISUAL`/`EDITOR`,
+  shaping the launch args for VS Code / JetBrains / Sublime / terminal editors;
+  default `code`). Both the endpoint and the enrichment are dev-only and
+  cross-origin-gated (same guard as the live-reload stream), and the editor
+  endpoint refuses any path outside the project. `src/build/dev-codeframe.ts`
+  (new — pure frame-parsing + codeframe), `src/build/dev-server.ts`.
+- **`denext analyze` + test DX (`generate test`, `test --watch`/`--coverage`).**
+  A new `denext analyze` builds the app and prints a per-chunk client-bundle
+  breakdown — every chunk ranked largest-first (by gzip / over-the-wire size)
+  with a proportion bar, its share of the total, and raw·gz sizes, plus the
+  raw/gz totals — a terminal stand-in for a treemap that answers "why is my JS
+  this big" at a glance (`--json` for the machine-readable form).
+  `denext generate test <Component>` scaffolds a `tests/<Component>.test.tsx`
+  using `denext/testing`'s in-process (no-browser) renderer, with the component
+  import wired to the conventional `components/` dir (src-layout-aware). And
+  `denext test`'s help now surfaces `--watch` (re-run on change) and
+  `--coverage` (both already pass through to `deno test`).
+  `src/cli/commands/analyze.ts` (new), `src/build/bundle-report.ts`
+  (`bundleAnalysisLines`), `src/build/generate.ts`,
+  `src/cli/commands/{generate,toolchain}.ts`, `src/cli/register.ts`.
+- **`denext.config` validation — `defineConfig` catches typos and bad values,
+  `doctor` reports config correctness.** `defineConfig` is no longer an identity
+  passthrough: at runtime it warns on an **unknown key** (a typo, or a stale
+  Next.js option that TypeScript can't catch on a cast object) with a "did you
+  mean" suggestion, and **throws a field-scoped error** on a malformed value
+  (e.g. `basePath: "docs"` without a leading slash, a non-finite
+  `images.qualities`) — right at the config site rather than misbehaving at
+  request time. A plain `export default {…}` config gets the same unknown-key
+  warning through the loader. A commented/JSONC `deno.json` no longer silently
+  loses its import map (parsed as JSONC now, with a stderr warning on genuine
+  breakage instead of a silent `{}`). `denext doctor`'s config check now reports
+  **correctness** (loaded & validated / the field-scoped error), not just
+  presence. `src/server/config-validate.ts` (new — shared, build-dep-free),
+  `src/server/define-config.ts`, `src/build/{paths,module-config}.ts`,
+  `src/cli/commands/doctor.ts`.
+- **`denext migrate` auto-wires Prisma to the Rust-free Deno client.** A
+  migrated app (Next or Remix) that uses Prisma now runs on denext end-to-end
+  with **zero manual edits** — the native Rust query-engine client (which
+  doesn't bundle under Deno) is replaced by Prisma 6's ESM/Deno `prisma-client`
+  generator with the **query compiler** (no native `.node` engine) driven
+  through the `@prisma/adapter-better-sqlite3` driver adapter over Deno's
+  built-in `node:sqlite`. Migrate rewrites the schema generator
+  (`provider = "prisma-client"`, `runtime = "deno"`,
+  `previewFeatures = ["queryCompiler", "driverAdapters"]`), repoints every
+  `@prisma/client` import at the generated client, injects the adapter at each
+  `new PrismaClient()` (empty + object-literal forms; a non-object arg is
+  flagged), folds the `deno.json` wiring in (`nodeModulesDir: "manual"` + a
+  `links` shim for the compat + `@prisma/client`/adapter npm pins + a
+  `prisma:setup` task), and drops the superseded `@prisma/client`/`prisma` from
+  `package.json`. Only **runtime** source (`app/`/`src/`/`lib/`/…) is
+  transformed — Node-only tooling (a `prisma/seed.ts`, Cypress helpers) is left
+  untouched. One post-migrate step: `deno task prisma:setup` (bundle the compat
+  → install → `prisma generate` → `db push`). On the **next-compat** build path
+  the generated client is externalized from the SSR bundle so its runtime
+  engine-loading survives (esbuild would otherwise mangle its
+  `globalThis['__dirname']` shim + baked config). Validated end-to-end on the
+  stock `remix-run/indie-stack` (auth, sessions, nested-route loaders, note
+  create/read) — the last real-world caveat from the Remix stress test is
+  closed. `src/build/prisma-migrate.ts` (new), `src/build/migrate.ts`,
+  `src/build/next-compat.ts`, `src/cli/commands/migrate.ts`, `examples/prisma`.
+- **Remix support: `denext/remix` runtime + `denext migrate --from remix`.**
+  Remix apps now run on denext with their **data model intact** — no manual
+  loader inversion. A new first-party compat runtime (`denext/remix` +
+  `denext/remix/server`) implements Remix's surface on denext primitives:
+  `useLoaderData`/`useActionData` (the `loader` runs server-side, its data
+  crosses the Flight boundary into a client provider — SSR **and** hydrate),
+  `<Form>`/`useSubmit`/`useFetcher` (denext **Server Actions**),
+  `useNavigate`/`useLocation`/`useSearchParams` (Remix's `[params,setter]`
+  tuple)/`useParams`/`useMatches`/`useRevalidator`,
+  `<Link>`/`<NavLink>`/`<Outlet>`/`useOutletContext`,
+  `defer`/`<Await>`/`useAsyncValue`, `useRouteError`/`isRouteErrorResponse`, and
+  `json`/`redirect`/`defer`. The migration (auto-detected from `@remix-run/*`
+  deps / `remix.config.*` / `app/root.tsx`+`app/routes/`, short-circuiting the
+  Vite-SPA detector so Remix-Vite isn't miscaptured) restructures `app/routes/*`
+  (flat-file + dot-nested + the `route.tsx` folder form) into
+  `app/**/page.tsx`+`layout.tsx` — `$param` → `[param]`, `$` → `[...splat]`,
+  `_index` → the segment page, pathless `_x` → a `(x)` route group, trailing-`_`
+  break-out flattened + flagged — converts `app/root.tsx` → `app/layout.tsx`
+  (Remix doc components stripped, `<Outlet/>` → the layout `children`), deletes
+  `entry.{server,client}.*`, and **splits each route** into a client component
+  (`page.client.tsx`) + a server data module (`page.data.ts`) wired by a
+  generated `page.tsx` wrapper (a `loader` can't share a `"use client"` module
+  with the component). `meta` → `generateMetadata`, `ErrorBoundary` →
+  `error.tsx`, `@remix-run/*` imports → `denext/remix`(`/server`), and a
+  resource route (loader/action, no component) → a denext `route.ts` API
+  handler. The follow-ups first reported as review notes (cross-route
+  `useFetcher`, `useNavigation` on plain link clicks, session storage, streamed
+  `defer`, cross-route submit to a page action) were subsequently closed — see
+  the Fixed entries below. `src/compat/remix/{client,server}.ts` (new),
+  `src/build/remix-migrate.ts` (new), `src/build/migrate.ts`,
+  `src/cli/commands/migrate.ts`, `src/build/codemod.ts`.
+- **Unbundled dev loop — true per-module HMR, now the default for the native App
+  Router.** A Vite-class dev server that serves each source module
+  transformed-but-unbundled at its own URL (`/_denext/@fs…`, with `denext`
+  pre-bundled once as a single instance under `/_denext/@dep/`), so the browser
+  loads the native ESM graph. On a save, only the edited module is
+  re-transformed (**~5 ms** warm, vs a ~460 ms `deno bundle` subprocess) and
+  re-imported; a new reconciler seam substitutes the component's
+  **family-current** implementation onto the live fiber, so a **single** module
+  swaps in place with hook state preserved and **no full reload** — a
+  non-component edit propagates up the module graph to the nearest accept
+  boundary. It covers the full native surface: static and dynamic (`[param]`)
+  routes, nested layout/template chains, and loading/error boundaries. Opt out
+  with `DENEXT_DEV_UNBUNDLED=0` to force the bundled whole-route refresh. It
+  also covers **Flight/islands** routes: the app-wide Flight entry imports each
+  `"use client"` island by its own `@fs` URL, so editing an island hot-swaps
+  that single module in place with its `useState`/signal state preserved. A
+  route whose entry needs the full pipeline (MDX), or an app using a build-time
+  module rewrite (`experimental.compiler` / resumability qrl extraction),
+  automatically stays bundled; and an edit the unbundled graph does not own
+  falls back to the bundled whole-entry Fast Refresh — so nothing downgrades to
+  a full reload. The dev-origin SSE gate and same-origin re-import checks are
+  preserved; the substitution seam is null-guarded and never taken in
+  production. It also covers **next-compat** (drop-in npm React):
+  `react`/`react-dom`/`next/*` are served from a pre-bundled react→denext
+  runtime and the app's npm packages from an on-demand npm bundle
+  (Vite-optimizeDeps style — bundled together with `splitting` so packages
+  sharing a transitive dep get one instance, and `react` external so every lib
+  uses denext's single React), all as `@dep`/`@npm` dev modules, while the app's
+  own source hot-swaps per-module. It also covers **SPA** (`mode: "spa"`, its
+  own dev server): the SPA entry + its module graph serve unbundled (native
+  denext or the compat runtime), a component edit hot-swaps one module in place,
+  and the app's extracted stylesheet is linked separately (the `.css` imports
+  become empty shims). So per-module HMR is now the default on **every** path —
+  native App Router, Flight/islands, next-compat, and SPA — and the "Per-module
+  granular HMR" KNOWN-LIMITATIONS entry is retired. `src/build/dev-unbundled.ts`
+  (new), `src/build/dev-server.ts`, `src/build/spa.ts`, `src/build/bundle.ts`,
+  `src/build/next-compat.ts`, `src/client/fiber/reconciler.ts`,
+  `src/client/vnode-utils.ts`, `src/client/refresh-runtime.ts`.
+- **Static export (`deno task export`) now self-hosts `next/font/google` fonts**
+  (previously it emitted a runtime `fonts.googleapis.com` `<link>`; the prod
+  server already self-hosted). The export force-loads route modules so their
+  font loaders register, downloads the `@font-face` CSS + woff2 files under
+  `out/_denext/fonts`, and inlines the local faces — so a purely static site
+  makes **no runtime request to Google** (privacy + no third-party dependency),
+  matching the prod-server path. Best-effort: an unfetchable font (offline
+  build) still falls back to a runtime `<link>`. `src/build/export.ts`.
+- **Pages Router `res.revalidate(path)` — on-demand ISR.** An API route can now
+  purge a cached render on demand (Next parity), delegating to App Router's
+  `revalidatePath`. It is **purge-only** — a bad/unknown path is a safe no-op,
+  never a re-render — so it cannot poison the page cache; the next request
+  regenerates through the normal ISR path. Returns a promise you can await.
+  `packages/pages-router/src/api.ts`.
+- **Route-level View Transitions on soft navigation.** A Flight soft-nav now
+  commits inside `document.startViewTransition` where the browser supports it
+  (Chromium today), so the route swap cross-fades; the browser honors
+  `prefers-reduced-motion`, and unsupported browsers navigate instantly exactly
+  as before (feature-detected, zero cost when absent). The `<ViewTransition>`
+  component stays a passthrough — its per-element `name`/`enter`/`exit` props
+  aren't honored yet, and the isomorphic/HTML nav paths (async reconcile) don't
+  animate yet. `src/client/navigation.ts`, `src/compat/react.ts`.
+- **Domain-based i18n routing (`i18n.domains`).** Serve a locale per host
+  without a URL prefix (Next parity): `example.fr/about` renders French with no
+  `/fr`. Each `{ domain, defaultLocale, locales?, http? }` entry pins a host to
+  a default locale (served unprefixed there; the host's other locales are still
+  prefixed); an explicit prefix always wins, and a host outside the map keeps
+  the normal prefix behavior. Host resolution uses the request's **trusted**
+  host (honoring `trustForwardedHeaders`), never a raw `Host` header on the
+  render path, and only runs when `domains` is configured. `localeMiddleware` no
+  longer redirects an unprefixed path on a pinned host, and generated `hreflang`
+  alternates now cross hosts (absolute per-domain URLs). `src/server/i18n.ts`,
+  `src/server/app.ts`. (Metric-matched `next/font` fallback remains tracked.)
+- **Pages Router `res.write` now streams incrementally (SSE / chunked
+  responses).** Previously `res.write` buffered into one response sent at
+  `res.end`; the first `res.write()` before a terminal call now switches the
+  response into streaming mode — status + headers flush immediately, chunks are
+  delivered as written, and `runApiRoute` returns the streamed `Response`
+  **before** the handler finishes (essential for long-lived SSE, which would
+  otherwise never start). A handler that never calls `res.write` is
+  byte-for-byte unchanged (single buffered response), and an unhandled throw
+  before any output still yields a 500. `packages/pages-router/src/api.ts`.
+- **`denext desktop package` now builds Windows bundles** (previously macOS +
+  Linux only). `deno desktop` cross-compiles the `.exe` for `x86_64`/`arm64`
+  (`x86_64`/`aarch64-pc-windows-msvc`) from any OS; the new scaffolded
+  `scripts/package-windows.ts` builds one or both arches, wraps each as a
+  `.zip`, and **Authenticode-signs** the `.exe` when `DENEXT_WINDOWS_CERT` is
+  set and `signtool` is available (no secrets baked in — signing is env-gated
+  and skipped with a warning otherwise, mirroring the macOS codesign/notarize
+  pattern). `denext desktop package --target-os windows` selects it. The target
+  machine needs the Edge WebView2 runtime (preinstalled on current Windows).
+  macOS/Linux packaging and the OS-agnostic `denext desktop run` are unchanged.
+  `src/cli/commands/desktop.ts`, `src/build/scaffold.ts`,
+  `examples/native/scripts/package-windows.ts`.
+- **React `taint*` (`experimental_taintObjectReference` /
+  `experimental_taintUniqueValue`).** Mark a value — an object reference, or a
+  secret string/bigint — that must never be serialized to a client component;
+  denext's Flight serializer throws instead of sending a tainted value across
+  the server→client boundary. A `taintUniqueValue` taint is released when its
+  `lifetime` object is garbage-collected (matching React). Defense-in-depth — a
+  guardrail against _accidentally_ leaking a secret to the client, not a
+  substitute for not passing it — and two empty-map lookups per serialized value
+  when nothing is tainted. `src/runtime/taint.ts` (new),
+  `src/jsx/render-to-html-flight.ts`, `src/compat/react.ts`.
+- **New package `@denext/effect` — first-class [Effect](https://effect.website)
+  support.** Run an `Effect` from a Server Component, route handler, or Server
+  Action and get typed errors, dependency injection (services from a `Layer`),
+  structured concurrency, and client-disconnect cancellation, all wired into
+  denext's per-request context. Effect is npm-only (deliberately not on JSR), so
+  the package depends on `npm:effect` as a peer and serves nothing — it is a set
+  of runtime _bridges_, not a served asset (unlike `@denext/htmx`). Exports:
+  `DenextRequest` (a request-scoped Effect service), `runEffect`/`runEffectExit`
+  (ambient), `createEffectRuntime(layer)` (a fully-typed runner whose
+  requirements are compile-checked), the `effect()` plugin (make an app `Layer`
+  ambient + manage its lifecycle), and `effectHandler`/`effectAction` (adapt
+  Effect-returning functions into a route handler / Server Action with
+  typed-error mapping). The request is provided **fresh per run** (a
+  `ManagedRuntime` memoizes its layers, so putting it in the layer would leak
+  one request across all later runs), the request abort signal interrupts the
+  fiber, and every run is `Effect.scoped`. `packages/effect/`. Example in
+  `examples/effect/`.
+- **`next/font/google` now honors `subsets` and `preload`.** Self-hosting
+  already stripped the runtime Google request at build; now `subsets` actually
+  reduces the payload — `rewriteGoogleFontFaceCss` keeps only the requested
+  subsets' `@font-face` blocks, so other subsets' files aren't downloaded — and
+  `preload` emits `<link rel="preload" as="font" crossorigin>` for a font's
+  self-hosted files (ahead of the `<style>`, so the fetch isn't render-blocked).
+  Both were previously accepted-but-advisory.
+  `src/compat/next/font/{google,registry}.ts`, `src/build/self-host-fonts.ts`.
+  (The metric-matched fallback `@font-face` and static-export self-hosting
+  remain tracked separately — the former needs a bundled font-metrics database.)
+- **`<Image>` now optimizes by default (behavior change, matching Next).**
+  Previously `<Image>` rendered a plain `<img>` unless you passed a `loader`; it
+  now routes through denext's built-in `/_denext/image` endpoint (resize +
+  webp/avif) and generates a responsive `srcSet` with **allowlist-correct**
+  widths (drawn from `deviceSizes ∪ imageSizes`, since the optimizer refuses any
+  other `w=`) — the device-size ladder for a responsive image (`sizes` set), or
+  the nearest allowlisted 1×/2× for a fixed-width one. Opt out per-image with
+  the new `unoptimized` prop, or app-wide with `images.unoptimized`. **Static
+  export forces `unoptimized`** (there's no server to optimize against; a
+  per-image custom `loader` still works), and the resolved config is embedded as
+  a `#__denext_image_config` island when non-default so a client re-render
+  matches the server. `src/runtime/image.ts`, `src/server/{config,document}.ts`,
+  `src/build/{prod-server,dev-server,export}.ts`.
+- **OIDC `id_token` verification now accepts the ES and PS signature families,
+  not just RS256.** `verifyIdToken` was hardcoded to `RSASSA-PKCS1-v1_5` +
+  SHA-256, so a provider issuing `ES256` (ECDSA, common with modern IdPs),
+  `PS256` (RSA-PSS), or `RS384`/`RS512` tokens failed sign-in with
+  `unsupported id_token alg`. An `algParams` map now drives WebCrypto import +
+  verify for `RS256/384/512`, `PS256/384/512`, and `ES256/384/512` (EC keys read
+  `crv`/`x`/`y` from the JWKS); the key `kty` must match the alg family. Any
+  other `alg` — including `none` and the `HS*` confusion vector — is still
+  refused. `src/server/auth/jwt.ts`.
+- **`identifierPrefix` now disambiguates `useId` across multiple roots.**
+  `createRoot(el, { identifierPrefix })` /
+  `hydrateRoot(el, ui, { identifierPrefix })` and the server
+  `renderToString`/`renderToStaticMarkup({ identifierPrefix })` previously
+  accepted the option but ignored it, so two React roots on one page emitted
+  colliding `useId` values. The prefix now seeds the root's `useId` scope on
+  both the client reconciler and the SSR renderer (default `""` — byte-identical
+  to before); pass the same prefix to the server render and to `hydrateRoot` so
+  ids align on hydration. `src/client/fiber/reconciler.ts`,
+  `src/jsx/render-to-string.ts`, `src/compat/react-dom-server.ts`. (The three
+  `RootOptions` error callbacks remain accepted-but-not-invoked, tracked
+  separately.)
+- **`better-sqlite3` compat gains `aggregate`, `backup`, `serialize`,
+  `loadExtension`, and a real `expand`.** Calling any of the four missing
+  methods previously threw `undefined is not a function`, and `expand()` was a
+  no-op. Now: `aggregate(name, {start, step, inverse, result})` delegates to
+  `node:sqlite`'s aggregate (custom aggregate/window functions); `backup(dest)`
+  returns a Promise and writes an atomic copy via `VACUUM INTO`; `serialize()`
+  returns the DB as a `Uint8Array` (via a temp `VACUUM INTO`, so it works for
+  `:memory:` too); `loadExtension(path)` delegates to `node:sqlite` (opt in with
+  the new `{ allowExtension: true }` open option, which `node:sqlite` requires);
+  and `expand()` now groups a row's columns under their source table
+  (`{ users: {...}, posts: {...} }`) using array-mode rows so same-named JOIN
+  columns don't collide. `src/compat/better-sqlite3.ts`.
+- **`next-intl` localized pathnames now translate URLs per locale.**
+  `createLocalizedPathnamesNavigation` was a bare alias of `createNavigation`
+  that ignored the `pathnames` map, so a route like `/en/about` ↔
+  `/de/ueber-uns` produced the untranslated URL. When the routing config carries
+  `pathnames` (`{ "/about": { en: "/about", de: "/ueber-uns" } }`),
+  `Link`/`getPathname`/`redirect`/`router.push`/`replace` now translate the
+  internal href to the active locale's path (and interpolate params for the
+  `{ pathname, params }` href form), while `usePathname` reverse-translates the
+  localized path back to the internal one. `src/compat/next-intl/routing.ts`
+  (new `Pathnames` type + `pathnames` config), `navigation.ts`. Bound: reverse
+  translation covers static paths (dynamic-segment reverse lookup is not
+  matched).
+- **`next-intl` translators now support `t.rich()` and `t.markup()`.** A message
+  with `<tag>…</tag>` callback markup —
+  `t.rich("msg", { link: (chunks) => <a>{chunks}</a> })` — previously threw
+  `t.rich is not a function`; both are now first-class on every translator
+  (`useTranslations`, `getTranslations`, `createTranslator`). `rich` returns a
+  node tree (tag handlers return nodes); `markup` returns a string (tag handlers
+  return strings, for non-React contexts). Top-level and nested tags,
+  self-closing tags, and ICU interpolation inside text runs are all handled,
+  reusing the existing zero-dependency ICU engine
+  (`src/compat/next-intl/rich.ts`, `context.ts`). Bound: a tag placed **inside**
+  an ICU `{…}` argument (e.g. within a `plural` branch) is left to the ICU
+  engine as literal text — put rich tags at the message top level.
+- **`denext desktop package` now builds Linux bundles** (previously macOS-only).
+  `deno desktop` cross-compiles a complete Linux app bundle (executable +
+  `.so` + a freedesktop `.desktop` launcher); the new scaffolded
+  `scripts/package-linux.ts` builds one or both arches (`x64`/`arm64`) and wraps
+  each as a distributable `.tar.gz` — plus an AppImage when `appimagetool` is on
+  PATH. `denext desktop package --target-os linux` cross-builds the Linux bundle
+  from any OS (verified: a cross-built binary runs on a real x86_64 Linux host).
+  App names are slugified for artifact paths, and arch labels are
+  underscore-free so `deno desktop` keeps the `.desktop` launcher. macOS
+  packaging (`.app`, codesign/notarize) is unchanged; Windows is still tracked
+  in KNOWN-LIMITATIONS. `src/build/scaffold.ts`, `src/cli/commands/desktop.ts`.
+- **`react-dom/server` Node-stream APIs now work** (previously threw).
+  `renderToPipeableStream(node, options)` returns a
+  `{ pipe(writable), abort() }` controller and `renderToStaticNodeStream(node)`
+  returns a Node `Readable`, implemented as a thin `node:stream` adapter over
+  denext's Web-stream renderer — so npm libraries that hard-code the Node-stream
+  SSR API interoperate. They honor
+  `onShellReady`/`onAllReady`/`onError`/`signal`; the documented fidelity caveat
+  is that the document is buffered (no `Writable` backpressure) and
+  `onShellReady` ≈ first-chunk-available. denext's own apps should still use
+  `renderToReadableStream`. `src/compat/react-dom-server.ts`.
+- **`denext/testing` gains `userEvent`, async `findBy*`/`waitFor`, and a broader
+  `getByRole` table.** The component-testing surface moves closer to
+  `@testing-library/react`: **`userEvent`**
+  (`click`/`dblClick`/`type`/`clear`/`keyboard`/`selectOptions`, plus
+  `userEvent.setup()`) dispatches the realistic multi-event sequence a user
+  interaction produces (e.g. `type` fires keydown → value+char → input → keyup
+  per character), more faithful than a single `fireEvent`;
+  **`waitFor(cb, {timeout, interval})`** retries an assertion (flushing pending
+  effects/state between attempts) and **`findBy*`/`findAllBy*`** await an
+  element that appears after an async effect; and **`getByRole`'s implicit-role
+  table** now covers
+  `main`/`article`/`banner`/`contentinfo`/`complementary`/`region`/`form`/`figure`/`separator`/`progressbar`/`dialog`/`table`/`row`/`cell`/`columnheader`/`rowgroup`/`group`/`option`/`searchbox`/`slider`/`spinbutton`
+  and `listbox` for a multi-select, on top of the existing set.
+  `src/testing/render.ts`, `src/testing/mod.ts`.
+- **i18n `localePrefix: "always"`.** In addition to the default `"as-needed"`
+  (default locale unprefixed, others prefixed), i18n now supports
+  `localePrefix: "always"` — every locale is prefixed including the default, so
+  `localeHref` produces `/en/about` and `localeMiddleware` redirects an
+  unprefixed path to the detected (or default) locale's prefix.
+  `src/server/i18n.ts`. (Domain-based per-domain locale routing remains tracked
+  in KNOWN-LIMITATIONS — it needs host-aware routing.)
+- **Compat correctness cluster: `react-is` classification, bounded
+  `React.cache`, and a runtime `server-only` guard.** (1) `react-is`'s `typeOf`
+  now classifies context providers/consumers, `Profiler`, and `StrictMode`
+  (returning `ContextProvider`/`ContextConsumer`/`Profiler`/`StrictMode`)
+  instead of `undefined` — the `isX` predicates already recognized them;
+  `typeOf` now agrees (`src/compat/react-is.ts`). (2) `React.cache`'s
+  off-request persistent memo no longer accumulates distinct **primitive** args
+  without limit — each node is bounded (1024, oldest evicted); request-scoped
+  memos stay uncapped (freed with the request, matching React) and object args
+  already used a WeakMap (`src/compat/react.ts`). (3) The compat `server-only`
+  module now throws at import if evaluated in a **client** runtime
+  (defense-in-depth behind the build-time env-poison plugin, matching the npm
+  package); `client-only` stays inert because denext server-renders client
+  components, so their `import "client-only"` runs on the server legitimately —
+  a throw there would break SSR (`src/compat/{server-only,client-only}.ts`).
+- **`createRoot`/`hydrateRoot` now invoke the
+  `onCaughtError`/`onUncaughtError`/`onRecoverableError` callbacks (React 19
+  parity).** They were accepted but ignored. Now `onCaughtError` fires when an
+  error boundary catches a render, effect, or event error; `onUncaughtError`
+  fires when an error reaches the root with no boundary (the error still
+  surfaces afterward, as before); and `onRecoverableError` fires on a hydration
+  mismatch (where denext keeps the client render), replacing the dev-only
+  mismatch console warning and firing in production too. Behavior is unchanged
+  when no callback is passed — a boundary still catches, an uncaught error still
+  throws, a mismatch still dev-warns — and a callback that itself throws is
+  caught so it can't corrupt the reconciler. `src/client/fiber/reconciler.ts`.
+- **Pages Router Preview Mode (`res.setPreviewData` / `context.preview` /
+  `previewData`).** An API route can now call `res.setPreviewData(data)` to
+  enter Preview Mode and `res.clearPreviewData()` to exit; on a subsequent page
+  request `getStaticProps`/`getServerSideProps` see `context.preview === true`
+  and `context.previewData`, and the static/prerendered cache is bypassed so a
+  CMS draft renders live. The preview cookie is **HMAC-SHA256 signed** so it
+  can't be forged (a forged cookie is ignored — it never discloses drafts, only
+  forces a live render); the signing secret is read from `DENEXT_PREVIEW_SECRET`
+  (comma-separated to rotate), falling back to a random per-process key with a
+  one-time warning (preview then works within a process but not across
+  restarts/instances). `packages/pages-router/src/{preview,api,handler}.ts`.
+- **Pages Router `getStaticPaths` `fallback: true` now serves a props-less
+  shell + `router.isFallback`.** Previously an unlisted dynamic path with
+  `fallback: true` behaved like `"blocking"` (rendered live, `isFallback` never
+  true). Now the HTML request renders a **props-less shell** with
+  `router.isFallback === true` (and `isReady === false`), and after hydration
+  the client fetches the real `getStaticProps` data for that path and re-renders
+  with it (`isFallback → false`); a not-found/redirect during that fetch falls
+  back to a full load. `fallback: false` still 404s an unlisted path and
+  `"blocking"` still renders live. `router.isFallback` is now a first-class
+  field on `NextRouter` (Next parity).
+  `packages/pages-router/src/{handler,client-runtime,render}.ts`,
+  `packages/pages-router/router.ts`.
+- **Pages Router `next/head` now hoists `<script>` (e.g. JSON-LD), `<style>`,
+  `<base>`, and `<noscript>` into `<head>`, not just
+  `<title>`/`<meta>`/`<link>`.** Previously only the React-19 metadata tags were
+  hoisted; a `<script type="application/ld+json">` or `<style>` inside `<Head>`
+  rendered inline in the body. On the server these are now routed into `<head>`
+  via the `useServerInsertedHTML` sink (scoped to the `<Head>`'s own children,
+  so an ordinary body `<script>` is untouched — unlike the renderer's tree-wide
+  metadata hoist), while `<title>`/`<meta>`/`<link>` keep the hoist-and-dedupe
+  path. On the client the head manager applies and reconciles the broader tag
+  set across soft navigation (content-hashed dedupe keys so two distinct JSON-LD
+  blocks coexist). `packages/pages-router/head.ts`,
+  `packages/pages-router/src/{head-manager,render}.ts`.
+- **Pages Router SSG now threads the default locale into `getStaticProps` and
+  `__NEXT_DATA__`.** Prerendering hardcoded `context.locale = undefined`, so a
+  `getStaticProps` on an i18n site couldn't tell which locale it was rendering
+  and the prerendered `__NEXT_DATA__` carried no locale metadata. It now passes
+  the real `defaultLocale` (plus `locales`/`defaultLocale`) to `getStaticProps`
+  and embeds them in the page's `__NEXT_DATA__` + `props.json`, matching the
+  live-render path. Non-default locales continue to render live at request time
+  (the handler's existing design), so they aren't prewritten.
+  `packages/pages-router/src/ssg.ts`, `packages/pages-router/mod.ts`.
+- **Pages Router API routes honor `export const config.api.bodyParser` and parse
+  `multipart/form-data`.** Previously an API route always parsed JSON /
+  urlencoded / text and ignored `config`. Now
+  `export const config = { api: { bodyParser: false } }` hands the handler the
+  **raw `Uint8Array`** body unparsed (for webhooks that verify a signature over
+  the exact bytes), `{ bodyParser: { sizeLimit: "500kb" } }` (or a byte count)
+  rejects an oversize body with **413** before the handler runs (default 1 MiB,
+  matching Next), and a `multipart/form-data` request is parsed into `req.body`
+  as an object of fields + `File` objects (a denext convenience — Next requires
+  an external parser). `packages/pages-router/src/api.ts`. (On-demand
+  `res.revalidate` and true `res.write` streaming remain tracked separately.)
+- **A discrete DOM event stays urgent while an async transition is pending, and
+  the AsyncContext transform now instruments async generators.** Two parts of
+  the concurrent-scheduling story, both low-impact: (1) **The default
+  (non-scoping) async-transition window no longer demotes user interactions.**
+  Previously, while any `startTransition(async …)` promise was pending, _every_
+  update was entangled at transition priority — so a click or keystroke during a
+  slow transition was deferred and felt laggy. An update enqueued synchronously
+  in a DOM event handler now keeps its natural (urgent) priority, matching
+  React's lane model where discrete events are never demoted by a transition;
+  only updates _outside_ any event handler (the transition's own post-`await`
+  continuations) remain entangled. `src/client/event-priority.ts` (new),
+  `src/client/dom-props.ts`, `src/client/fiber/reconciler.ts`. (2)
+  **`experimental.asyncContext` now instruments async generators**
+  (`async function*`), the documented v1 gap: each `await` is bracketed as
+  before and each `yield V` becomes
+  `__asyncResume($, yield __asyncYield($, V))`, so the frame's AsyncContext is
+  handed back to the caller while suspended and restored on resume — proven by a
+  test where the frame's value survives awaits and yields even when the caller
+  resumes the generator under a different context. The frame is captured at the
+  first `.next()` (resume-time; TC39
+  [hasn't settled](https://github.com/tc39/proposal-async-context/issues/18)
+  creation- vs. resume-time capture). A generator using `yield*` delegation is
+  left uninstrumented (delegation suspends through a sub-iterator) rather than
+  mis-instrumented. `src/build/async-context-transform.ts`,
+  `src/runtime/async-context.ts` (`__asyncYield`/`__asyncResume`). Both changes
+  are inert for code that isn't an event handler / async generator.
+- **The auto-memo compiler now memoizes `.map()` / list expression containers
+  and no longer bails a whole module on dynamic `import()`.** Previously the
+  experimental compiler (`experimental.autoMemo`) only reached JSX _elements_ in
+  return/child position — it left every `{…}` expression container verbatim, so
+  the single biggest win, `{items.map((it) => <Row … />)}`, was never memoized —
+  and it skipped any module using a dynamic `import()` entirely. Now a `{…}`
+  child whose expression contains a component element is memoized **as a whole**
+  (keyed on its reactive dependencies), so a stable list reuses the same element
+  array across parent re-renders and the reconciler bails the whole subtree
+  (proven by a render-count test: a 3-item list renders each row once and skips
+  re-render across parent updates). Soundness is preserved by a conservative
+  free-variable analysis — every free identifier in the container must be
+  classifiable as a tracked component-scope dependency, a module-level/imported
+  name, or a well-known global; an unclassifiable free var (e.g. a nested-block
+  binding the top-level scan can't see) leaves the container verbatim rather
+  than risk a stale value. And a dynamic `import("./rel")` is now absolutized
+  like a static import (so the temp-dir transformed module resolves it), which
+  is what let the whole-module dynamic-import bail be removed. SSR output is
+  byte-identical (server `useMemoCache` returns a fresh sentinel array each
+  render). `src/build/compiler.ts`.
+- **The migration codemod now rewrites `require()` / dynamic `import()` and
+  never silently skips a `next/*` import.** `denext codemod` previously rewrote
+  only static `import`/`export … from` statements — a
+  `require("react-dom/client")` or `const m = await import("react")` was left
+  pointing at the npm package, and an unrecognized `next/*` subpath (e.g.
+  `next/experimental/foo`) passed through with no notice. Now a plain
+  module-identity remap (react → denext, `react-dom/client` → `denext/client`,
+  …) is rewritten inside `require(…)`/`import(…)` too; a default-component
+  specifier (`next/link`) or a Pages-Router file seen in call form is flagged
+  with a hand-conversion hint (its module _shape_ changes, so it can't be safely
+  rewritten inside a call); and any unmapped `next/*`/`next-intl/*` subpath now
+  raises a warning noting it was left to resolve through the `next/*` compat
+  alias. `src/build/codemod.ts`.
+- **`denext migrate` now gives per-key guidance for unsupported `next.config`
+  keys instead of a lumped drop.** A recognized-but-unhonored key (`env`,
+  `transpilePackages`, `output`, `reactStrictMode`, `pageExtensions`) was
+  reported only as a bare name in a `// Dropped unsupported next.config keys: …`
+  comment. The generated `denext.config.ts` now emits a specific line per
+  load-bearing key pointing at its denext equivalent (`env` →
+  `publicEnv`/runtime env; `output` → `deno task export`/`build`;
+  `transpilePackages` → not needed, Deno transpiles deps natively;
+  `reactStrictMode` → `<StrictMode>`), and groups only the genuinely-inert keys
+  (`webpack`, `compiler`, …) on a single "no equivalent needed" line — so
+  nothing load-bearing is dropped without a pointer to how to reproduce it.
+  `src/build/migrate.ts`.
+- **`denext generate docker`** — scaffold container files on request
+  (Angular/Nest-style), writing `Dockerfile`, `docker-compose.yml`, and
+  `.dockerignore` at the project root. The image is auto-detected from the app:
+  an App Router / SSR app gets a build-and-`deno task start` server image
+  (listens on 3000, binds `0.0.0.0`); a `mode: "spa"` app gets an
+  export-and-serve static image (`deno task export` → `@std/http/file-server` on
+  `out/`). Force the variant with `denext generate docker server` /
+  `denext generate docker spa`. The base image is pinned to the Deno version
+  that generated it, the compose file ships a commented Postgres service, and
+  existing files are never overwritten (idempotent, so a hand-edited
+  `Dockerfile` is safe on re-run).
+- **`useAsyncEffect` and `tryCatch` are now exported from `denext`.**
+  `useAsyncEffect(effect, deps)` runs an async effect with an `AbortSignal` and
+  typed error handling (plus `useAsyncEffect.wrap` / `useAsyncEffect.setTimeout`
+  helpers); `tryCatch` returns a `[ok, data] | [ok, error]` tuple (with
+  `SuccessResult`/`ErrorResult`/`TryCatchResult` types) so error handling
+  composes without a `try` block's scoping. Both were internal utilities; they
+  are now first-class framework APIs.
+- **Editor support out of the box.** The repo ships a shared Deno LSP config
+  (`.vscode/settings.json` → `deno.enable`, `.vscode/extensions.json` →
+  recommends `denoland.vscode-deno`) so a fresh clone resolves `denext`, the
+  import map, and `jsxImportSource: "denext"` in VSCode/Cursor without setup —
+  instead of the built-in Node TS server flagging bogus `react/jsx-runtime`
+  errors. `denext migrate` generates the same config for converted apps (both
+  App Router and SPA), merged additively into any existing `.vscode` and
+  idempotent.
+- **`DependencyList` is exported from the bare `denext` entrypoint** (previously
+  only under the `react` compat alias), so code annotating deps arrays for
+  denext's own hooks can import it from `denext`.
+- **`spa.desktop.icon` — a config-file setting for the desktop app icon.** Point
+  it at any file (`denext.config.ts` →
+  `spa: { desktop: { icon: "../../assets/app-icon.png" } }`) and `export`
+  prepares the bundle icon from it, overriding auto-detection. A configured
+  **PNG is used verbatim** (supply a finished 1024² macOS master, e.g. from the
+  app's own icon set); a JPEG/WebP is composed; when unset, denext auto-detects
+  a web icon (`apple-touch-icon`, a named `icon`/`logo`, `favicon.png`) and
+  composes it into Apple's macOS template (centered in the ~824px safe area of a
+  1024² canvas) so a small full-bleed favicon isn't baked oversized into the
+  Dock. `deno desktop` bakes `--icon` full-bleed and ignores the macOS grid,
+  which this works around. Editing the config and rebuilding is enough when an
+  app icon was detected at migrate time (which wires `--icon` into the
+  `deno task desktop` command); an app that had no icon then needs one
+  `denext migrate --desktop` re-run after setting it.
+- **`denext migrate --denext-local-path=<path>`** points the generated config at
+  a local denext checkout (`file://`, resolved via its `deno.json` exports)
+  instead of published JSR, and runs its local `cli.ts` in the tasks. For
+  testing an unreleased/dev denext against a real app without publishing — a dev
+  aid, not the shipped drop-in.
+- **React/ReactDOM/Next signature-parity tool** (`scripts/parity/`,
+  `deno task
+  parity:refresh` / `parity:gaps` / `parity:drift`; gate test
+  `tests/react-parity.test.ts`). Extracts the full public surface of the latest
+  React, ReactDOM, and Next (via the TypeScript compiler API) and denext's
+  compat surface (via `deno doc`), then asserts **no structural signature
+  deviation** — export presence, value-vs-type, function arity/ optionality, and
+  object/namespace members — tolerant of internal type differences. A committed
+  baseline + a burn-down "known-gaps" ledger keep the gate offline and
   deterministic; a weekly `parity-drift` CI job flags upstream surface changes.
-- **Closed every signature-parity gap with React 19.2 / Next 16** (ledger 64 → 0):
-  - **React:** `Activity`, `cacheSignal`, `captureOwnerStack`, `addTransitionType`,
-    `optimisticKey`; `useState()` no-arg overload; `useOptimistic` single-arg form;
-    `useActionState` `permalink`; `jsxDEV` dev args.
-  - **ReactDOM:** `preloadModule`, `preinitModule`, `requestFormReset`; `createPortal` key;
-    `createRoot`/`hydrateRoot` options; `react-dom/server` `resume`/`resumeToPipeableStream`
-    and threaded `renderToString`/`renderToStaticMarkup` options.
+- **Closed every signature-parity gap with React 19.2 / Next 16** (ledger 64 →
+  0):
+  - **React:** `Activity`, `cacheSignal`, `captureOwnerStack`,
+    `addTransitionType`, `optimisticKey`; `useState()` no-arg overload;
+    `useOptimistic` single-arg form; `useActionState` `permalink`; `jsxDEV` dev
+    args.
+  - **ReactDOM:** `preloadModule`, `preinitModule`, `requestFormReset`;
+    `createPortal` key; `createRoot`/`hydrateRoot` options; `react-dom/server`
+    `resume`/`resumeToPipeableStream` and threaded
+    `renderToString`/`renderToStaticMarkup` options.
   - **Next:** `next/navigation` `ReadonlyURLSearchParams` / `RedirectType` /
-    `ServerInsertedHTMLContext` and `redirect(url, RedirectType)` push/replace; `next/head`
-    `defaultHead`; `next/image` `getImageProps`; `next/script` `handleClientScriptLoad` /
-    `initScriptLoader`; `next/dynamic` `noSSR`; `next/cache` `io` + `unstable_*` aliases;
-    `next/server` `ImageResponse` / `URLPattern` / `userAgentFromString` / `NextFetchEvent`.
-  - **next-intl:** `createTranslator`, `createFormatter`, `hasLocale`, `initializeConfig`,
-    `IntlError` / `IntlErrorCode`, `IntlProvider`; `useNow(options)`; `createNavigation()`.
-  - **Pages Router (`next/router`):** the `Router` singleton (default export) and `withRouter`.
-- **Unified CLI (2.0 Pillar I).** The CLI was rebuilt from an ad-hoc `switch` + `Deno.args`
-  scanning into a real command framework (`src/cli/command.ts`): a registry with a declarative
-  flag schema, uniform global flags (`--cwd`/`--config`/`--json`/`--verbose`/`--quiet`),
-  per-command `--help`, "did you mean" suggestions, and `denext completions bash|zsh|fish`.
-  New verbs round out a cargo-style surface: `add`/`remove`/`update` (dependency UX over
-  `deno`), `test`/`lint`/`fmt`/`check` (passthrough to `deno`), `doctor`/`info` (diagnostics;
-  `doctor` supersedes `probe`, kept as an alias), `audit` (dependency inventory + zero-npm
-  runtime proof + CycloneDX SBOM via `--sbom` + baseline permission suggestion),
-  `deploy` (pluggable adapter framework + a Deno Deploy adapter wrapping `deployctl`, with
-  `--dry-run`), and `desktop build|run|package`. Plugins can contribute their own verbs through
-  a new `PluginContext.addCommand` seam. Existing verbs keep their behavior.
-- **DevTools depth (2.0 Pillar VI).** The glass-box panel (`denext/devtools`) gains the full depth
-  set on top of the component inspector: **live prop overrides** (pin a prop, see it re-render),
-  **source links** (a `vscode://file` editor link per component) + **owner/ancestor stack**, a
-  **Profiler** tab (per-component render counts + total/max timing), and a **per-Suspense-boundary
-  server timeline** in the Render-modes tab (`#__denext_boundary_timing`, emitted by the streaming
-  renderer). All dev-only and DCE-clean.
-- **Dev loop (2.0 Pillar II).** A CSS edit now **hot-swaps the stylesheet with no page reload**
-  (a new `css` live-reload message re-fetches the `<link>`); `.tsx/.jsx` edits keep Fast Refresh.
-  The dev server **watches `denext.config.{ts,js}` + `deno.json`** and prints a clear "restart to
-  apply" note instead of ignoring config edits. **Server-side render errors now surface in the
-  in-browser dev overlay** (not just the terminal), with source-accurate SSR stacks.
-- **Scaffolding & codegen (2.0 Pillar IV).** `denext generate <page|route|layout|component|api|
-  action> <name>` scaffolds artifacts into an existing app — placed per the project layout (App
-  Router root or `src/app`), never overwriting, with denext-native templates. `denext create
-  --template <default|minimal>` selects a starter from a named template registry.
-- **Migrate CRA + generic React (2.0 Pillar III).** `denext migrate` now handles two more source
-  families alongside Next and Vite: **Create React App** (detected by `react-scripts`, or
-  `public/index.html` + React; reads the entry from `src/index.*`, title from `public/index.html`,
-  and env from `process.env.REACT_APP_*`) and **generic React SPAs** (React + a root `index.html`,
-  no framework config). All land in `mode: "spa"` with react→denext aliases. A `--from
-  next|vite|cra|generic` flag forces detection for ambiguous apps.
-- **Typed routes.** `denext build`/`dev` emit `.denext/routes.ts` from the route manifest:
-  `Routes` (valid paths; dynamic segments as `` `${string}` ``, optional catch-all → both
-  variants), `ApiRoutes`, `RouteParams`, `ParamsOf<R>`. Importing the file registers the
-  routes (`RegisteredRoutes`), so `<Link href>` / `router.push` / `router.replace` narrow to
-  real paths — backward-compatible (`Href` is `string` until you opt in).
-- **`defineConfig`** (`denext/server`) — identity helper giving `denext.config.ts` full editor
-  autocomplete and inline type-checking.
-- **Durable cache on `node:sqlite`** — the default cache store is now Deno's built-in real
-  SQLite (native speed, zero-npm, no unstable flag). Bounded (FIFO row-count eviction + a
-  throttled hard-expiry sweep) with stale-while-revalidate; a new `cache` config field
-  (`store` / `path` / `maxDataEntries` / `maxPageEntries`) and a smart default resolver
-  (in-memory fallback; in-memory on Deno Deploy).
-- **In-site API reference** at `/docs/api` — every public symbol of `denext`, `denext/server`,
-  and `denext/client` (522), generated from `deno doc` and rendered as static 0-KB-JS HTML.
-- **`llms.txt`** at denext.dev — the denext-vs-Next delta plus a curated docs map so coding
-  agents emit correct denext.
-- **Bundle-size build summary** — every build prints route count, how many ship 0 KB JS, total
-  client JS, and the largest chunks.
-- **Islands inspector (dev).** `getIslandTimeline()` (`denext/client`) / `window.__denextIslands`
-  — which islands hydrated, when, and under which `client:*` strategy.
-- **Cache observability.** `getCacheStats()` (`denext/server`) — page (ISR) cache hit/miss/set
-  counts plus a recent-invalidations log (`revalidateTag`/`revalidatePath` + timing), for a
-  devtools glass-box and production monitoring.
-- **Dev glass-box panel.** `DevPanel` (`denext/server`) — an opt-in Server Component you render
-  in development (`{dev && <DevPanel />}`) that surfaces the page-cache snapshot (hits/misses/sets
-  - recent invalidations) and the live island-hydration timeline (from `window.__denextIslands`).
-    Self-contained — inlined styles + a tiny timeline script, no bundle, no dev-server wiring.
-- **First-party DevTools — component inspector (`denext/devtools`).** A native, dev-only glass-box
-  over denext's own reconciler: an in-page panel (auto-mounted in dev; toggle with Ctrl+Shift+D) showing the
-  live **component tree** with each node's **props, hooks/state, and context**, and **live editing** of
-  `useState` values (through the hook's own setter, the normal re-render path). Plus a **Render modes**
-  tab — the **server-emitted page verdict** (static / dynamic / streamed + page-cache HIT/STALE/MISS,
-  via a dev-only `#__denext_render_modes` JSON island) and the client-island hydration waterfall. The
-  stock React DevTools extension
-  can't show hooks or render modes for denext's non-React fiber, so this is native, not a shim. A typed
-  API (`getInspectorTree` / `setHookState` / `subscribe` / `getRenderModes`) backs it for tooling/tests.
-  DCE-clean: imported only by dev bundles, so nothing ships in production.
-- **`@denext/pages-router` `router.events`** (0.4.0) — `useRouter().events` now exposes
-  Next's route-change event emitter (`routeChangeStart`, `routeChangeComplete`,
-  `routeChangeError`, `beforeHistoryChange`, `hashChange*`), fired around soft navigation.
-  Unblocks NProgress-style loading bars and analytics pageview tracking.
-- **`@denext/pages-router` shallow routing** (0.5.0) — `router.push`/`replace` take Next's
-  `(url, as?, options?)` signature; `options.shallow` swaps URL/query on the same page without
-  re-running data fetching, `as` overrides the address-bar URL, `options.scroll: false` keeps
-  the scroll position.
-- **`@denext/pages-router` `<Link prefetch>`** (0.6.0) — an opt-in `<Link prefetch>` /
-  `router.prefetch()` warms a route's code chunk when it scrolls into view (via
-  `IntersectionObserver`), through a server "head" mode that returns only the chunk URL and
-  never runs `getServerSideProps`/`getStaticProps` (side-effect-free, like Next).
-- **`@denext/pages-router` legacy `getInitialProps`** (0.7.0) — page- and `_app`-level
-  `getInitialProps(ctx)` now supplies `pageProps` (ctx: pattern `pathname`, real `asPath`,
-  `query`, `params`, `req`). Resolved server-side for both initial render and soft-nav
-  data requests.
-- **`@denext/pages-router` i18n locale routing** (0.8.0) — `i18n: { locales, defaultLocale }`
-  enables `/{locale}`-prefixed routing; the active locale flows into data fetching (`ctx.locale`),
-  `__NEXT_DATA__`, and the router (`router.locale`/`locales`/`defaultLocale`), and `<Link locale>`
-  prefixes the href. Reuses denext's shared `peelLocale`. **Closes the pages-router compat gap.**
-- **Markdown-authored docs.** The docs site can now write pages as `.md` files with
-  `title`/`lead`/`slug` frontmatter, rendered through the docs shell by a first-party,
-  zero-dependency Markdown renderer (headings with anchor ids, fenced code matching the site's
-  `<Code>` component, GitHub-style `> [!NOTE]`/`[!WARNING]` callouts, lists, links, emphasis)
-  — no npm markdown stack pulled into the tree.
-- **`denext migrate` — Vite React SPA path.** Alongside the Next App Router path, `migrate` now
-  auto-detects a Vite SPA (`vite.config.*` + React, no `next.config.*`) and generates a `deno.json`
-  (react aliases, `~/` path alias) + a `denext.config.ts` (`mode:"spa"`, `compatibilityMode`, Tailwind,
-  and `spa.env` as the union of Vite `define` keys and grepped `import.meta.env.VITE_*` usage, entry/
-  title from `index.html`) + tasks — so an existing Vite app boots on denext with one command. Verified
-  against a real upstream Vite SPA (build + serve smoke).
-- **`denext/desktop` runtime (`runDesktop`).** A thin desktop entry that reuses the SPA production
-  server, with a config-driven HTTP/WebSocket reverse proxy (`spa.proxy`, loopback-guarded) so a
-  packaged `deno desktop` app can relay `/api` to a separate backend — the SPA analogue of a Vite dev
-  server's `server.proxy`. Emitted by `migrate --desktop`, scaffold, and `examples/native`.
-- **`denext migrate` wires Pages Router apps to `@denext/pages-router`.** A migrated `pages/` app gets a
-  `denext.config.ts` importing the plugin, so a Next Pages Router project runs on the plugin out of the box.
-- **CSS-in-JS SSR (`useServerInsertedHTML`).** `next/navigation`'s `useServerInsertedHTML` is
-  implemented, so styled-components / emotion register their collected `<style>` tags during SSR
-  and denext floats them into `<head>` — including on the streaming / Flight / PPR shells. The
-  compat SSR bundle resolves each library's server build (CJS-first export conditions) so a
+    `ServerInsertedHTMLContext` and `redirect(url, RedirectType)` push/replace;
+    `next/head` `defaultHead`; `next/image` `getImageProps`; `next/script`
+    `handleClientScriptLoad` / `initScriptLoader`; `next/dynamic` `noSSR`;
+    `next/cache` `io` + `unstable_*` aliases; `next/server` `ImageResponse` /
+    `URLPattern` / `userAgentFromString` / `NextFetchEvent`.
+  - **next-intl:** `createTranslator`, `createFormatter`, `hasLocale`,
+    `initializeConfig`, `IntlError` / `IntlErrorCode`, `IntlProvider`;
+    `useNow(options)`; `createNavigation()`.
+  - **Pages Router (`next/router`):** the `Router` singleton (default export)
+    and `withRouter`.
+- **Unified CLI (2.0 Pillar I).** The CLI was rebuilt from an ad-hoc `switch` +
+  `Deno.args` scanning into a real command framework (`src/cli/command.ts`): a
+  registry with a declarative flag schema, uniform global flags
+  (`--cwd`/`--config`/`--json`/`--verbose`/`--quiet`), per-command `--help`,
+  "did you mean" suggestions, and `denext completions bash|zsh|fish`. New verbs
+  round out a cargo-style surface: `add`/`remove`/`update` (dependency UX over
+  `deno`), `test`/`lint`/`fmt`/`check` (passthrough to `deno`), `doctor`/`info`
+  (diagnostics; `doctor` supersedes `probe`, kept as an alias), `audit`
+  (dependency inventory + zero-npm runtime proof + CycloneDX SBOM via `--sbom` +
+  baseline permission suggestion), `deploy` (pluggable adapter framework + a
+  Deno Deploy adapter wrapping `deployctl`, with `--dry-run`), and
+  `desktop build|run|package`. Plugins can contribute their own verbs through a
+  new `PluginContext.addCommand` seam. Existing verbs keep their behavior.
+- **DevTools depth (2.0 Pillar VI).** The glass-box panel (`denext/devtools`)
+  gains the full depth set on top of the component inspector: **live prop
+  overrides** (pin a prop, see it re-render), **source links** (a
+  `vscode://file` editor link per component) + **owner/ancestor stack**, a
+  **Profiler** tab (per-component render counts + total/max timing), and a
+  **per-Suspense-boundary server timeline** in the Render-modes tab
+  (`#__denext_boundary_timing`, emitted by the streaming renderer). All dev-only
+  and DCE-clean.
+- **Dev loop (2.0 Pillar II).** A CSS edit now **hot-swaps the stylesheet with
+  no page reload** (a new `css` live-reload message re-fetches the `<link>`);
+  `.tsx/.jsx` edits keep Fast Refresh. The dev server **watches
+  `denext.config.{ts,js}` + `deno.json`** and prints a clear "restart to apply"
+  note instead of ignoring config edits. **Server-side render errors now surface
+  in the in-browser dev overlay** (not just the terminal), with source-accurate
+  SSR stacks.
+- **Scaffolding & codegen (2.0 Pillar IV).**
+  `denext generate <page|route|layout|component|api|
+  action> <name>` scaffolds
+  artifacts into an existing app — placed per the project layout (App Router
+  root or `src/app`), never overwriting, with denext-native templates.
+  `denext create
+  --template <default|minimal>` selects a starter from a named
+  template registry.
+- **Migrate CRA + generic React (2.0 Pillar III).** `denext migrate` now handles
+  two more source families alongside Next and Vite: **Create React App**
+  (detected by `react-scripts`, or `public/index.html` + React; reads the entry
+  from `src/index.*`, title from `public/index.html`, and env from
+  `process.env.REACT_APP_*`) and **generic React SPAs** (React + a root
+  `index.html`, no framework config). All land in `mode: "spa"` with
+  react→denext aliases. A `--from
+  next|vite|cra|generic` flag forces detection
+  for ambiguous apps.
+- **Typed routes.** `denext build`/`dev` emit `.denext/routes.ts` from the route
+  manifest: `Routes` (valid paths; dynamic segments as `` `${string}` ``,
+  optional catch-all → both variants), `ApiRoutes`, `RouteParams`,
+  `ParamsOf<R>`. Importing the file registers the routes (`RegisteredRoutes`),
+  so `<Link href>` / `router.push` / `router.replace` narrow to real paths —
+  backward-compatible (`Href` is `string` until you opt in).
+- **`defineConfig`** (`denext/server`) — identity helper giving
+  `denext.config.ts` full editor autocomplete and inline type-checking.
+- **Durable cache on `node:sqlite`** — the default cache store is now Deno's
+  built-in real SQLite (native speed, zero-npm, no unstable flag). Bounded (FIFO
+  row-count eviction + a throttled hard-expiry sweep) with
+  stale-while-revalidate; a new `cache` config field (`store` / `path` /
+  `maxDataEntries` / `maxPageEntries`) and a smart default resolver (in-memory
+  fallback; in-memory on Deno Deploy).
+- **In-site API reference** at `/docs/api` — every public symbol of `denext`,
+  `denext/server`, and `denext/client` (522), generated from `deno doc` and
+  rendered as static 0-KB-JS HTML.
+- **`llms.txt`** at denext.dev — the denext-vs-Next delta plus a curated docs
+  map so coding agents emit correct denext.
+- **Bundle-size build summary** — every build prints route count, how many ship
+  0 KB JS, total client JS, and the largest chunks.
+- **Islands inspector (dev).** `getIslandTimeline()` (`denext/client`) /
+  `window.__denextIslands` — which islands hydrated, when, and under which
+  `client:*` strategy.
+- **Cache observability.** `getCacheStats()` (`denext/server`) — page (ISR)
+  cache hit/miss/set counts plus a recent-invalidations log
+  (`revalidateTag`/`revalidatePath` + timing), for a devtools glass-box and
+  production monitoring.
+- **Dev glass-box panel.** `DevPanel` (`denext/server`) — an opt-in Server
+  Component you render in development (`{dev && <DevPanel />}`) that surfaces
+  the page-cache snapshot (hits/misses/sets
+  - recent invalidations) and the live island-hydration timeline (from
+    `window.__denextIslands`). Self-contained — inlined styles + a tiny timeline
+    script, no bundle, no dev-server wiring.
+- **First-party DevTools — component inspector (`denext/devtools`).** A native,
+  dev-only glass-box over denext's own reconciler: an in-page panel
+  (auto-mounted in dev; toggle with Ctrl+Shift+D) showing the live **component
+  tree** with each node's **props, hooks/state, and context**, and **live
+  editing** of `useState` values (through the hook's own setter, the normal
+  re-render path). Plus a **Render modes** tab — the **server-emitted page
+  verdict** (static / dynamic / streamed + page-cache HIT/STALE/MISS, via a
+  dev-only `#__denext_render_modes` JSON island) and the client-island hydration
+  waterfall. The stock React DevTools extension can't show hooks or render modes
+  for denext's non-React fiber, so this is native, not a shim. A typed API
+  (`getInspectorTree` / `setHookState` / `subscribe` / `getRenderModes`) backs
+  it for tooling/tests. DCE-clean: imported only by dev bundles, so nothing
+  ships in production.
+- **`@denext/pages-router` `router.events`** (0.4.0) — `useRouter().events` now
+  exposes Next's route-change event emitter (`routeChangeStart`,
+  `routeChangeComplete`, `routeChangeError`, `beforeHistoryChange`,
+  `hashChange*`), fired around soft navigation. Unblocks NProgress-style loading
+  bars and analytics pageview tracking.
+- **`@denext/pages-router` shallow routing** (0.5.0) — `router.push`/`replace`
+  take Next's `(url, as?, options?)` signature; `options.shallow` swaps
+  URL/query on the same page without re-running data fetching, `as` overrides
+  the address-bar URL, `options.scroll: false` keeps the scroll position.
+- **`@denext/pages-router` `<Link prefetch>`** (0.6.0) — an opt-in
+  `<Link prefetch>` / `router.prefetch()` warms a route's code chunk when it
+  scrolls into view (via `IntersectionObserver`), through a server "head" mode
+  that returns only the chunk URL and never runs
+  `getServerSideProps`/`getStaticProps` (side-effect-free, like Next).
+- **`@denext/pages-router` legacy `getInitialProps`** (0.7.0) — page- and
+  `_app`-level `getInitialProps(ctx)` now supplies `pageProps` (ctx: pattern
+  `pathname`, real `asPath`, `query`, `params`, `req`). Resolved server-side for
+  both initial render and soft-nav data requests.
+- **`@denext/pages-router` i18n locale routing** (0.8.0) —
+  `i18n: { locales, defaultLocale }` enables `/{locale}`-prefixed routing; the
+  active locale flows into data fetching (`ctx.locale`), `__NEXT_DATA__`, and
+  the router (`router.locale`/`locales`/`defaultLocale`), and `<Link locale>`
+  prefixes the href. Reuses denext's shared `peelLocale`. **Closes the
+  pages-router compat gap.**
+- **Markdown-authored docs.** The docs site can now write pages as `.md` files
+  with `title`/`lead`/`slug` frontmatter, rendered through the docs shell by a
+  first-party, zero-dependency Markdown renderer (headings with anchor ids,
+  fenced code matching the site's `<Code>` component, GitHub-style
+  `> [!NOTE]`/`[!WARNING]` callouts, lists, links, emphasis) — no npm markdown
+  stack pulled into the tree.
+- **`denext migrate` — Vite React SPA path.** Alongside the Next App Router
+  path, `migrate` now auto-detects a Vite SPA (`vite.config.*` + React, no
+  `next.config.*`) and generates a `deno.json` (react aliases, `~/` path
+  alias) + a `denext.config.ts` (`mode:"spa"`, `compatibilityMode`, Tailwind,
+  and `spa.env` as the union of Vite `define` keys and grepped
+  `import.meta.env.VITE_*` usage, entry/ title from `index.html`) + tasks — so
+  an existing Vite app boots on denext with one command. Verified against a real
+  upstream Vite SPA (build + serve smoke).
+- **`denext/desktop` runtime (`runDesktop`).** A thin desktop entry that reuses
+  the SPA production server, with a config-driven HTTP/WebSocket reverse proxy
+  (`spa.proxy`, loopback-guarded) so a packaged `deno desktop` app can relay
+  `/api` to a separate backend — the SPA analogue of a Vite dev server's
+  `server.proxy`. Emitted by `migrate --desktop`, scaffold, and
+  `examples/native`.
+- **`denext migrate` wires Pages Router apps to `@denext/pages-router`.** A
+  migrated `pages/` app gets a `denext.config.ts` importing the plugin, so a
+  Next Pages Router project runs on the plugin out of the box.
+- **CSS-in-JS SSR (`useServerInsertedHTML`).** `next/navigation`'s
+  `useServerInsertedHTML` is implemented, so styled-components / emotion
+  register their collected `<style>` tags during SSR and denext floats them into
+  `<head>` — including on the streaming / Flight / PPR shells. The compat SSR
+  bundle resolves each library's server build (CJS-first export conditions) so a
   CSS-in-JS registry runs once, without the dual-package hazard.
-- **Next-compat build depth.** The esbuild compat bundle now resolves **cross-package
-  stylesheets**, supports **SSR node builtins** and **`tsconfig` `baseUrl`/`paths` imports**,
-  externalizes `@denext/*` runtime modules, and shares the request-context `AsyncLocalStorage`
-  across the inlined compat runtime. `@next/mdx` plugins are recovered at build time so MDX apps
-  build with commit-parity, and `server-only` / `client-only` are neutralized on the native path.
-- **`React.ViewTransition`** — added as a transparent passthrough so apps adopting the
-  experimental view-transition API build and render (without the animation).
-- **Pages Router compat-mode SSR.** npm-React page modules render through denext's own React
-  under `compatibilityMode`, and the plugin is wired through `dev`/`build`/`start`/`export`.
+- **Next-compat build depth.** The esbuild compat bundle now resolves
+  **cross-package stylesheets**, supports **SSR node builtins** and **`tsconfig`
+  `baseUrl`/`paths` imports**, externalizes `@denext/*` runtime modules, and
+  shares the request-context `AsyncLocalStorage` across the inlined compat
+  runtime. `@next/mdx` plugins are recovered at build time so MDX apps build
+  with commit-parity, and `server-only` / `client-only` are neutralized on the
+  native path.
+- **`React.ViewTransition`** — added as a transparent passthrough so apps
+  adopting the experimental view-transition API build and render (without the
+  animation).
+- **Pages Router compat-mode SSR.** npm-React page modules render through
+  denext's own React under `compatibilityMode`, and the plugin is wired through
+  `dev`/`build`/`start`/`export`.
 
 ### Changed
 
-- **Release script: a stable version folds its rc entries; the gate runs what publish runs.** `deno task release X.Y.Z` now merges `[Unreleased]` and every `[X.Y.Z-rc.N]` section into one grouped `## [X.Y.Z]` entry (`### Breaking` first, identical bullets deduped) and appends the link reference; the gate regenerates the MCP docs corpus + llms.txt (they ship in the package and embed the version — rc.7 shipped an rc.6 corpus) and runs `doc-lint` + `deno publish --dry-run` before tagging. `scripts/release.ts`.
-- **Docs, scaffold and packaging follow-ups from the 2.0 audit.** README: the cache default is the durable `node:sqlite` store (the text had it backwards), `cacheStoreHealthy` is exported from `denext/server`, the benchmark link points at `bench/REPORT.md`, the Deno floor reads `≥ 2.9`; CONTRIBUTING's release procedure describes the real flow (`deno task release` on `development`, then the `development → main` merge, plugin tags, docs deploy); FEATURES gains the Remix migration family, the end-to-end typed API surface (`TypedResponse`/`createApiClient`/`defineAction`) and `@denext/effect`, and its `file:line` citations are checked by `scripts/check-doc-refs.ts` in `deno task doc-lint`; PLUGINS.md/AGENTS.md point plugin authors at `denext/plugin-kit` and count five seams; the migration guide no longer claims `package.json` is never touched (Prisma stripping); a new KNOWN-DIFFERENCES.md names the deliberate React/Next differences (implicit memo, event-handler capture, `useDeferredValue` under `act`, single-phase rewrites, default-on `nodeResolve`, opaque action ids) so KNOWN-LIMITATIONS lists only genuine gaps (incl. the real esbuild footprint) and ROADMAP.md only work (its "Post-2.0 deferred" items moved there; the safe-default security posture moved to KNOWN-DIFFERENCES); the docs-site snippets import `denext` (not `@denext/denext`); the pages-router README requires `@denext/denext@^2`; `deno task bump` also rewrites `examples/*/deno.json` JSR pins. Scaffold: `--compatibility` maps bare `next`, `server-only` and `client-only`; `@std/assert` and `denext/testing` are mapped (so `denext generate test` type-checks); `.gitignore` covers `out/` and `.env*.local`; a `README.md` is generated (and skipped by `init` when one exists); `--template` help lists the values; `create` notes that the first run downloads the framework. `denext export` cleans `out/` first (no stale HTML for deleted routes); the MCP docs corpus no longer embeds a generation timestamp; the JSR package excludes `.github/`, `.vscode/`, `.agents/`, `.codex/`, `.githooks/`, `.claude/`, `.mcp.json`, `fallow.toml`, `deno.lock`, `CLAUDE.md`, `CONTRIBUTING.md`, `scripts/`, `coverage/`.
-- **Decided: the 2.1 typed API surface is schema-first, not decorator-first.** Replicating NestJS's mechanism was evaluated and **rejected**. Its OpenAPI generation depends on `emitDecoratorMetadata` + `reflect-metadata` and a `tsc` compiler plugin; denext's toolchain supports neither (no legacy decorators in any config, esbuild cannot emit decorator metadata, `@swc/wasm-web` is a parser only, no `tsc` invocation to host a plugin). Instead: **one schema per route, colocated with the handler**, from which runtime validation, static types and the OpenAPI document are all derived — the direction Hono (`@hono/zod-openapi`), Elysia (TypeBox) and tRPC-openapi have converged on, and the pattern `defineAction` already established on the mutation side. (Delivered as `@denext/openapi` / `@denext/graphql` in the 2.1 cycle — see [ROADMAP.md](./ROADMAP.md).)
-- **Decided: config field names are final.** `compatibilityMode` (renamed once from `nextCompat`), `mode`/`spa`, `classComponents`, `streaming`, `live`, `cacheComponents`, `basePath`, `assetPrefix`, `trailingSlash` read cleanly and match their Next analogs; the schema is generated from the type (`denext.config.schema.json`). A second rename is exactly the churn to avoid.
-- **One roadmap, targeting 2.1.** `ROADMAP-FUTURE.md` (the "3.0 typed API surface" tracker) is folded into `ROADMAP.md`, which now targets the **2.1** cycle: the typed, self-documenting API surface (`@denext/openapi` / `@denext/graphql`, re-based on 2.0's `TypedResponse` + `createApiClient` + `defineAction`), the `lightningcss`/`swc` WASM repoints, the ecosystem router plugins, the `deno bundle --define` watch item, and one consolidated settled-decisions + guardrails list. Closed 2.0 items are dropped (they live in this changelog). `ROADMAP.md`, `ROADMAP-FUTURE.md` (deleted), `MISSION.md`.
-- **Ecosystem decisions settled + codec license notices.** `ROADMAP.md`'s two open ecosystem questions are closed: every first-party package stays under the `@denext/*` JSR scope (codecs included), and each vendored codec's upstream license was verified to permit redistributing the built wasm/bundle. `@denext/photon` 0.3.5 and `@denext/avif` 0.1.1 now ship `THIRD-PARTY-LICENSES.md` (photon's is generated from `cargo metadata` by the new `deno task licenses:photon`; `@denext/og` already shipped one). No framework code change. `scripts/gen-third-party-licenses.ts` (new), `packages/{photon,avif}/**`, `ROADMAP.md`, `ROADMAP-FUTURE.md`.
-- **Cache Components graduated to a stable, opt-in top-level `cacheComponents`.** `use cache` / `cacheLife` / `cacheTag` and PPR (a cached static shell + per-request dynamic holes) leave `experimental`: enable them with `cacheComponents: true` in `denext.config.ts`. Not default-on — caching stays a choice, since a cache bug's failure class is severe and shouldn't be imposed on apps that never asked. The legacy `experimental: { cacheComponents: true }` is still honored (soft migration) and emits a dev warning naming the new key. The three documented bounds are unchanged and now live in KNOWN-LIMITATIONS as the bounded scope of a shipped feature rather than an experimental caveat: request data inside `use cache` throws; a streamed hole can't add an inline `<style>`/`<script>` to the already-flushed head (dev-warned, now tested) or hoist an in-boundary `<title>`/`<meta>`; a `searchParams` read outside a Suspense boundary with `cacheKeyParams` set relies on the store-refusal guard.
-- **Fiber reconciler refactored into layered modules (internal; no public API change).** `src/client/fiber/reconciler.ts` was a 3.4k-line module holding every phase of the fiber engine and fallow's #2 refactoring target (hotspot score 38, fan-out 24, four CRAP suppressions). It is now a barrel over 17 modules that each import only from the layers below — `state`, `fiber-utils`, `root-callbacks`, `hydration`, `scheduler`, `devtools-bridge`, `hooks-dispatcher`, `boundaries`, `render-component`, `reconcile-children`, `context-propagation`, `begin-work`, `complete-work`, `unwind`, `commit`, `work-loop`, `root` — with the one inherent cycle (hooks → scheduler → work loop → beginWork → hooks) broken by injecting the work loop's entry points into the scheduler at init. Before the split, the ten functions over fallow's cognitive/cyclomatic thresholds (`renderComponent` at cognitive 38 down to `disconnectEffects`) were decomposed into named single-purpose helpers, the four `fallow-ignore` markers were deleted, and the two duplicate-clone groups (`useState`/`useReducer` setters, `createRoot`/`hydrateRoot`) were folded into shared helpers. The public surface (`createRoot`, `hydrateRoot`, `flushSync`, `act`, `createPortal`, the DevTools hooks, the `__*ForTests` seams) is unchanged and behavior is identical — the full suite is green. The shared client runtime grows ~1.6 KB raw / ~0.7 KB gzipped (esbuild does not inline the extracted helpers); the build-smoke size tripwire is re-based 56 → 58 KB accordingly. `src/client/fiber/*` (17 new modules), `src/client/fiber/reconciler.ts` (now a barrel).
-- **Request pipeline (`createApp`) split into staged server modules (internal; no public API change).** `src/server/app.ts` held the whole request pipeline as one 1.4k-line closure (`pipeline`, cyclomatic 227 / cognitive 427 — fallow's #1 refactoring target) plus the config types and every helper. The routing stages are now one function each in `request-pipeline.ts` (canonicalization → config rules → middleware → Server Actions → metadata files → i18n → API routes → pages → 405 / plugin / static / 404, plus the top-level error handling), the page path lives in `page-response.ts` / `page-document.ts` / `page-cache-flow.ts` (ISR) / `page-prerender.ts` (PPR) / `page-stream.ts` (streaming), the closure's captured locals became explicit `AppRuntime` + `RequestState` records (`pipeline-state.ts`), and `app-config.ts` / `response-headers.ts` / `flight-routing.ts` hold the types and helpers. The two near-duplicate PPR branches and the two streaming branches (HTML vs Flight) share one implementation each, and the eight copies of the hydration literal are one `navData`. `createApp` and every public name still resolve through `app.ts`; behavior is identical (every createApp-driven suite is green). `src/server/{app-config,response-headers,flight-routing,pipeline-state,request-pipeline,page-document,page-cache-flow,page-prerender,page-stream,page-response}.ts` (new), `src/server/app.ts`.
-- **Repo-wide fallow dead-code sweep to zero (internal; no public API removed).** `fallow dead-code` reported 102 "unused" files, 299 unused exports, 18 types, 28 class members and 30 unlisted dependencies — almost all of it fallow not knowing how denext loads things. `fallow.toml` now states those facts: the file conventions denext resolves by path (`denext.config.ts`, `middleware.ts`, `instrumentation.ts`, the App Router metadata files, Pages Router `pages/`, SPA `src/main.tsx`, `public/`, the Tailwind input), the `deno task` roots under `bench/` and `examples/`, the user-run migration probes (`examples/next-compat-feasibility`), the generated wasm glue (`packages/{photon,avif}/lib/*.js`), the text-read fixtures (`tests/fixtures/**`), the Deno import-map dependencies fallow can't see in a `package.json`, the lazily-`import()`ed dev proxy, and the DOM interface members the fake-DOM test doubles implement. The remaining ~110 real findings were resolved by hand: helpers used only inside their module lost the `export` keyword (`dom-props.ts`, `dev-unbundled.ts`, the auth/image/CSP constants, …), redundant re-export chains were dropped (`auth/mod.ts`, `next/request.ts`, the reconciler barrels, `error-boundary.ts`), genuinely unreferenced code was deleted (`registerServerInsertedHTML`, `registerDeployAdapter`, `serverRefId`, `collectedStylesheets`, the `TEXT` marker, `StaticResult`, `FileConvention`, `src/router/mod.ts`, dead bench helpers), the AsyncContext transform's output now imports its helpers from `denext/compiler-runtime` like every other build transform (which therefore exports `__asyncScope`/`__asyncScopeEnd`/`__asyncAwait`/`__asyncYield`/`__asyncResume`/`__asyncIter` + the `AsyncScope`/`Bindings` types), and two examples were improved rather than trimmed — `examples/notes` demonstrates Next's `RedirectType.push`, the Effect examples use `Data.TaggedError`, and the game engine owns its audio lifecycle. Every name that was reachable from a public `denext/*` entry still is (through its canonical module). `fallow.toml`, `src/**`, `packages/pages-router/src/**`, `examples/**`, `bench/lib/**`, `tests/helpers/dom.ts`.
-- **Dev server split into staged modules (internal; no public API change).** `src/build/dev-server.ts` held the whole development server as one 1.2k-line `startDevServer` closure (cyclomatic 24; its request `handler` alone cyclomatic 31 / cognitive 43) — fallow's largest remaining `src/build` target. The closure's captured locals are now an explicit `DevState` record (`dev-server/state.ts`), and each concern is its own module under `src/build/dev-server/`: `assets` (CSS + transform maps), `compat` (the react→denext compat build), `manifest` (route manifest + Flight boundary per generation), `bundles` (route/Flight client bundles + chunk cache), `loaders` (the module loader over the manifest), `reload` (the live-reload channel), `reload-script` (the injected client script), `dev-endpoints` (`/_denext/*` dev-only routes, `devOriginAllowed`, `editorCommand`), `watch` (the file watcher + invalidation), `dev-app` (the `createApp` wiring) and `handler` (the per-request dispatch, one function per route class). `dev-server.ts` is a 120-line orchestrator that wires them and keeps re-exporting `DevServerOptions`, `DEV_RELOAD_SCRIPT`, `devOriginAllowed` and `editorCommand`, so every importer is unchanged. Every function is under fallow's complexity and 60-line thresholds; behavior is identical — the dev-server, SPA dev, HMR, devtools, live and next-compat suites are green. `src/build/dev-server/*` (12 new modules), `src/build/dev-server.ts`.
-- **Unbundled dev loop split into staged modules (internal; no public API change).** `src/build/dev-unbundled.ts` was one 640-line `createUnbundledDev` closure (maintainability index 68.7, the only `src/` file under fallow's 70 floor; its request `handle` cognitive 27). The captured locals are now an explicit `UnbundledState` record and each concern is a module under `src/build/dev-unbundled/`: `state` (URL scheme, dep tables, versions, the transform cache and reverse import graph), `resolve` (specifier → first-party path → dev URL, incl. the compat react/next/npm mapping), `deps` (the native `@dep` pre-bundle, the compat runtime prebuild and the on-demand npm bundle), `transform` (the per-module transform with its cache check, Fast Refresh footer and rewrite plugin, plus the generated-entry transform), `entries` (route / Flight / SPA entries), `handler` (one function per `/_denext/@*` URL class) and `hmr` (`onChange` + `propagate`). `dev-unbundled.ts` is a 70-line orchestrator returning the same object (including the `_internal` test seams), so `dev-server`, `spa.ts` and the tests are unchanged. Every function is under the complexity and 60-line thresholds; behavior is identical — the HMR, SPA dev, dev-server and next-compat suites are green. `src/build/dev-unbundled/*` (7 new modules), `src/build/dev-unbundled.ts`.
-- **`denext build` split into a staged pipeline (internal; no public API change).** `src/build/build.ts` was one 434-line `build` function (cyclomatic 60 / cognitive 71). Its locals are now an explicit `BuildContext` record and the stages are modules under `src/build/build-pipeline/`: `prepare` (the SPA and plugin-only builds, cache reset, plugin setup, route scan, compat detection, the staging dir), `transforms` (app CSS + the auto-memo / qrl / AsyncContext client rewrites merged into the bundler import map), `routes` (per-route stylesheets, the static/interactive partition, the native route and Flight bundles, the boundary manifest), `compat` (the next-compat server, Flight and client-entry bundles) and `finalize` (public-env tree-shaking, self-hosted fonts, the build manifest, precompression, the atomic `client/` swap, typed modules, plugin build steps, the size summary). `build.ts` runs them in order in ~30 lines and still exports `build`, `BuildResult` and `FLIGHT_BUNDLE_FILE`, so the CLI, prod server, static export and tests are unchanged. Stage order and every side effect are identical; the build-smoke, prod-server, asset-compression, next-compat and example integration suites are green. `src/build/build-pipeline/*` (6 new modules), `src/build/build.ts`.
-- **`denext export` split into a staged pipeline; build/export helpers shared (internal; no public API change).** `src/build/export.ts` was one 269-line `staticExport` (cyclomatic 50 / cognitive 77) plus an untested `exportPagesRouter`. Its locals are now an `ExportContext` record and the stages are modules under `src/build/export-pipeline/`: `prepare` (the SPA and Pages Router exports, plugin setup, route scan, output dirs, the Cache Components loader), `assets` (route classification, stylesheets, the next-compat SSR bundles, the route and Flight client bundles, self-hosted fonts) and `render` (every page × param set × locale, `notFound()` skips, `public/`). The preparation, next-compat module discovery, boundary crawl and font collection the build and export pipelines both perform live once in `src/build/pipeline-shared.ts`, and the `fillPath` duplicated between the export and the conformance prober is `fillPattern` on `src/router/segments.ts`. `export.ts` runs the stages in ~30 lines and still exports `staticExport` and its option/result types. Behavior is identical; the export, Flight export, static SEO, i18n, next/font, desktop, conformance and build suites are green. `src/build/export-pipeline/*` (4 new modules), `src/build/pipeline-shared.ts` (new), `src/build/export.ts`, `src/build/build-pipeline/*`, `src/router/segments.ts`, `src/testing/conformance.ts`.
-- **`denext start` split into staged modules (internal; no public API change).** `src/build/prod-server.ts` was one 343-line `startProdServer` (cyclomatic 55 / cognitive 46). It is now a ~60-line orchestrator over `src/build/prod-server/`: `manifest` (reading `manifest.json` into a `BuildInfo` record, the Flight boundary + server-action tagging, the complete-build check), `assets` (the client entry / stylesheet URL resolvers with `assetPrefix`/`basePath`), `app` (the SSR loader chain, middleware, instrumentation, config rules, the durable cache store, `createApp`, the Live hub) and `handler` (health, self-hosted fonts, the image optimizer, immutable client assets, the Live upgrade, then the app). `startProdServer` and `ProdServerOptions` are unchanged; the startup order and every side effect are identical — the prod-server, asset-compression, example and live suites are green. `src/build/prod-server/*` (4 new modules), `src/build/prod-server.ts`.
-- **SPA mode split into modules; dev servers share their SSE plumbing (internal; no public API change).** `src/build/spa.ts` was a 950-line module whose `startSpaDevServer` was a 330-line closure (its request `handler` cyclomatic 24 / cognitive 37). It is now a barrel over `src/build/spa/`: `shared` (constants, the generated entry, `classifySpaChange`, the HTML shell with its CSP meta, entry resolution), `bundle` (the native `deno bundle` and next-compat esbuild paths + stylesheet extraction; `pnpmCatalogPackages` is exported and unit-tested), `build` (production build + static export sharing one bundle-and-shell step), `prod-server`, and the dev server as `dev-state` (per-generation bundle, subscribers, the unbundled loop), `dev-watch` (debounced batches → css / per-module update / refresh / reload), `dev-handler` (one function per URL class), `dev-reload-script` and `dev-server`. The SSE subscriber fan-out and stream that the App Router dev server (`dev-server/reload.ts`) and the SPA dev server both implemented live once in `src/build/sse.ts`. Every importer keeps importing from `spa.ts`; behavior is identical — the SPA mode/Fast Refresh/dev/integration, export, dev-server, HMR and prod-server suites are green. `src/build/spa/*` (9 new modules), `src/build/sse.ts` (new), `src/build/spa.ts`, `src/build/dev-server/reload.ts`, `tests/spa-mode.test.ts`.
-- **Scaffold, codemod and migrate decomposed (internal; no public API change).** `scaffold.ts`: the three desktop packaging scripts (macOS 337 lines, Windows 205, Linux 193) were parameterless functions returning a template and are now constants; `denoJson` is a task builder plus an import-map builder. `codemod.ts`: the 135-line `rewriteSource` is a `RewriteCtx` plus one function per statement form (static import/export, the default-component and default-`React` cases, side-effect import, `require`/dynamic `import()` call). `migrate.ts`: `migrateProject` (cyclomatic 33) delegates source detection to `migrateNonNextProject` and the config writing to `writePagesRouterConfig` / `writeAppRouterConfig`; `nextConfigSource` (cognitive 27) hands the next.config translation to `nextConfigTranslationLines` + `droppedKeyNotes`; `migrateSpaProject` (180 lines, cyclomatic 29) uses `spaImportMap`, `spaEnvKeys`, `spaProxy`, `writeSpaDesktop`, `spaDenoJson` and `finishSpaProjectFiles`; `denextResolver` splits into the JSR and local-checkout resolvers; `readNextConfig` into MDX detection + the bounded subprocess eval. The two copies of the deno.json write-unless-authored block are one `writeDenoJsonUnlessAuthored`, and the `exists`/`anyExists`/`firstExisting` probes duplicated with `remix-migrate.ts` live in `src/build/migrate-fs.ts`. Output is byte-identical; the scaffold, codemod, create/init, migrate, remix and prisma suites are green. `src/build/{scaffold,codemod,migrate,remix-migrate}.ts`, `src/build/migrate-fs.ts` (new).
-- **Directive scanner, hydration stripper, entry generators and next-compat plugins decomposed (internal; no public API change).** `directives.ts`: the 86-line `scanDirectiveCore` (cyclomatic 30 / cognitive 50) is a loop over `scanPrologueStatement` with `skipTrivia`/`readStringLiteral`/comment-skipping helpers. `hydration.ts`: the 118-line `stripLiteralsAndComments` (cyclomatic 38 / cognitive 82) is a `StripState` record with one handler per token kind (line/block comment, regex literal with `regexEnd`, string/template literal, code char). `bundle.ts`: `generateRouteEntry` and `generateFlightEntry` (125 / 137 lines) compose `routeEntryImports`/`routeEntryTree`/`routeRefreshBlock` and `flightRefreshBlock`/`flightLiveBlock`/`flightMain`, sharing one `hydrationCatch`. `next-compat.ts`: the app resolver uses `appImportBase` + an exported `probeSourceFile` (now also used by the unbundled dev resolver, replacing its private copy); the runtime plugin's resolvers, the `./*` exports wildcard, the Vite asset namespaces/worker stub and the compat plugin chain (`compatPlugins`, `nodeModulesPlugins`) are named functions. Generated entries and resolution results are byte-identical; the directive, hydration, bundle, next-compat, Flight, dev-server and build suites are green. `src/build/{directives,hydration,bundle,next-compat}.ts`, `src/build/dev-unbundled/{resolve,state}.ts`.
-- **swc-based build transforms share one substrate; each transform decomposed (internal; no public API change).** The auto-memo compiler, the `qrl` handler extractor, the AsyncContext instrumenter and the `"use cache"` rewrite each re-implemented the marker parse, the directive-prologue import point, the child walk, the relative-specifier absolutizing and the write-transformed-modules loop; those now live once in `src/build/swc-ast.ts` (`parseModule`, `prologueEnd`, `forEachChild`, `absolutizeSpecifiers`, `writeTransformedModules`). On top of that: `compiler.ts`'s `collectFreeRefs` (cyclomatic 32) is a per-node-type handler table and `transformModule` (191 lines) delegates to `memoizeComponent` / `absolutizeDynamicImports`; `qrl-transform.ts`'s `collectStmtDecls` and `walkFree` (cyclomatic 32 / 31) are handler tables and `transformQrl` is a `QrlState` with module-level `visitQrl` / `tryExtract` / `extractInlineHandler` / `extractImportRef`; `async-context-transform.ts`'s `visit` (cyclomatic 29 / cognitive 49) is `visitFunction` + `visitSuspension` over an `AcState`, with `walkOwnScope` replacing the two duplicated nested-function-aware walkers; `use-cache-transform.ts`'s `transformUseCache` (cyclomatic 54 / cognitive 88) is a `CacheState` with one wrapper per top-level item form. Emitted code is byte-identical; the compiler, qrl, async-context, use-cache and resumable suites are green. `src/build/{swc-ast,compiler,qrl-transform,async-context-transform,use-cache-transform}.ts`.
-- **Config loader, plugin installer, framework-deps installer and desktop runtime decomposed (internal; no public API change).** `paths.ts`: `loadDenextConfig` (cyclomatic 30 from 23 chained fallbacks) merges named exports over the default object through a `CONFIG_KEYS` table and a per-file `importConfigFile`. `plugin-install.ts`: `injectPlugin` (148 lines) uses `addImportLine` / `defaultExportObjectStart` / `insertPluginCall`, `listPlugins` uses `splitTopLevel` / `namedImportSpec`, `ejectPlugin` uses `removePluginCall`. `module-config.ts`: `ensureFrameworkNodeModules` (90 lines) is `frameworkNpmImports` → `installFwdeps` → `linkFrameworkNodeModules`; `satisfiesRange` and `pinNpmToLock` are exported and unit-tested (they had no coverage). `desktop.ts`: `runDesktop` is `resolveOutDir` + `installWindowCloseHandler` + an exported `createDesktopHandler` (unit-tested: no-store assets, the shell for navigations, `onRequest`, 404s), and its `wantsShell` is the SPA mode one. Behavior is identical; the module-config, desktop, plugin and config suites are green. `src/build/{paths,plugin-install,module-config,desktop}.ts`, `tests/desktop-runtime.test.ts` (new), `tests/module-config.test.ts`.
-- **Remaining `src/build` hot spots decomposed (internal; no public API change).** `remix-migrate.ts`: `freeIdentifiers` (99 lines) is a table of module-level scope walkers, `analyzeModule` (93) classifies items through `classifyItem`/`classifyExport`, `clientModuleSource` (65) composes `delocalizedClientStatements`/`serverTypeImports`/`boundarySource`, and the 154-line `transformRemixApp` (cyclomatic 35 / cognitive 63) is a `RemixPlan` filled by `planRoute` (`planResourceRoute` / `planComponentRoute`), `planRoot` and `removeOldTree`. `multi-select.ts`: the key loop is `drawFrame` + `decodeKey` + `applyKey`. `module-graph.ts`: `staticExportNames` uses `stripCommentsAndStrings` + `exportListNames`. `dev-proxy.ts`: the 96-line WebSocket relay is `upgradeHeaders` + `wireUpstream` + `wireClient` over a `WsBridge`. `generate.ts`: `generateArtifact`'s switch is an `artifactTarget` table. `next-mdx-recover.ts`: `resolveNextMdx` is `readNextConfigSource` + `runProbe`. `prisma-migrate.ts`: the per-file rewrite loop is `rewritePrismaSources`. `migrate.ts`: `spaSourceFacts` and `spaMigrateResult` trim the SPA path. With this, `src/build` has no function over fallow's complexity or 60-line thresholds. Behavior is identical; the remix, migrate, module-graph, plugin, proxy, generate, MDX and prisma suites are green.
-- **`src/server` hot spots decomposed (internal; no public API change).** All 27 functions fallow flagged in the server layer are now under its complexity thresholds: `document.ts` `renderHead` (134 lines, cyclomatic 45) is `headBasics` + `headLinks` + `headSocial` + `headExtras` and `renderBodyScripts` is `hydrationScripts` + `devScript` over one `jsonIsland`; `image-optimizer.ts` `probeImageDimensions` (cyclomatic 43) is a PNG/GIF/JPEG/WebP probe chain, `optimizeImage` (115 lines) is `parseOptimizeRequest` → `acquireGate` → `loadAndEncode`, and `fetchRemoteImage` uses `remoteHopAllowed`/`redirectTarget`; `static.ts` `serveStatic` is `resolveWithin`/`statFile`/`realPathWithin`/`serveGzipSibling`; `metadata-files.ts` `serveMetadataFile` is favicon/sitemap/image-convention helpers; `action-handler.ts` gains `resolveAction`/`redirectFromAction`/`allowedOriginSets`; `auth/routes.ts` `handleAuthRequest` is `handleFixedEndpoint` + `handleCallback`, `auth/mod.ts` `validateConfig` is `validateProviders`/`assertOAuthCredentials`/`requireCanonicalOriginInProd`, `auth/jwt.ts` `verifyIdToken` is `anyKeyVerifies` + `assertIdTokenClaims`; `augment-metadata.ts` splits into image and hreflang augmentation; `render-page.ts` `mergeMetadata` (cognitive 62) merges through `OVERRIDE_FIELDS`/`SHALLOW_MERGE_FIELDS` tables plus `mergeTitle`/`mergeJsonLd`; `cache.ts`'s fetch wrapper decides through `fetchCacheDecision`; `session.ts` `getSession` is `sessionCookieAttrs`/`sessionSecrets`/`readSessionCookie`; `safe-fetch.ts` gains `embeddedIPv4`, `openConnection`/`closeQuietly`, `parseHeaderBlock`/`frameBody`, `resolvePinned`/`responseFromRaw` and a `RedirectHop` + `followRedirect` for the safe fetch; `env.ts` `parseEnv` is per-line; `live.ts`, `middleware.ts` and `serve-utils.ts` extract their per-message, header-merge and single-port helpers. Behavior is identical; the document, metadata, image, static, env, action, auth, cache, session, safe-fetch, live, middleware and serve-utils suites are green. `src/server/**`.
-- **`src/client` hot spots decomposed; DevTools panel split into pane modules (internal; no public API change).** `dom-props.ts` `applyProps` (85 lines, cyclomatic 35) is `removeProp`/`setProp` over prop-kind predicates and `patchStyle` is flat; `navigation.ts` `navigateSameOrigin` is `loadRoute` + `applyHtmlNav`, and `shouldIntercept` is `isPlainClick` + `isSoftNavAnchor`; `devtools-inspect.ts` gets a per-tag badge table, `livePropValue`/`readContextValue`, and `changedKeys`/`changedHooks`/`recordRenderReason` for the why-did-this-render diff; `lazy-boot.ts` `bootResumability` uses `readIslandsIsland`/`islandOf`/`scheduleIsland`/`hydrateIsland`; `qrl-dispatch.ts` `dispatchQrl` uses `qrlLoaderFor`. The 985-line `devtools-panel.ts` (whose `mount` was a 775-line closure) is now a ~200-line shell + wiring over `src/client/devtools-panel/`: `styles` (the CSSOM style table + element helper), `ctx` (the shared `PanelCtx`), `values` (live value rows, editors, source links), `tree`, `detail`, `render-modes`, `profiler` and `picker` (highlight overlay + element picker). The panel is dev-only, so the production client bundle is unchanged; the navigation, reconciler, devtools and resumability suites are green. `src/client/{dom-props,navigation,devtools-inspect,lazy-boot,qrl-dispatch,devtools-panel}.ts`, `src/client/devtools-panel/*` (8 new modules).
-- **Server renderers share one skeleton (internal; no public API change).** The six server renderers (`renderToString`, the HTML stream, PPR, Flight, HTML+Flight, the Flight stream and PPR+Flight) each re-implemented the same per-node walk. `src/jsx/render-shared.ts` now owns the renderer-neutral pieces — provider scopes, the Suspense retry loop, error-boundary recovery, server-component invocation, host-element attributes and hoisting, client-island carving, and Flight prop/value serialization — and `src/jsx/renderer-base.ts` is the abstract base the four class renderers extend (`VNodeRenderer` for dispatch, error boundaries and components; `PprVNodeRenderer` for mode-driven Suspense holes). `renderToString`'s node walk, `serializeAttributes` and `createElement` were split per node/prop kind. Behavior is unchanged except three harmonizations that fell out of sharing: a `<Portal>` in a streamed Flight route now emits nothing (it previously hit the host-element path), a rejected `defer()` promise in a PPR+Flight route now serializes as the `<Await>` error marker like every other Flight renderer, and a class component's hoisted `<title>` now reaches the head collector in the HTML stream renderer like a function component's does. `src/jsx` has no remaining complexity findings and the renderer clone family is gone.
-- **`@denext/pages-router` handler split into stages; client runtime covered by unit tests (internal; no public API change).** `src/handler.ts` held the whole request pipeline as one 650-line closure (`handle` alone was 156 lines, cyclomatic 38). It is now a thin entry over `src/handler/`: `shared` (options, state, response helpers), `data` (gSSP/gSP with `getStaticPaths` gating + Preview Mode, the legacy `getInitialProps` fallback), `render` (HTML document, soft-nav data, prefetch, error pages), `prerendered` (SSG files + stale-while-revalidate ISR with the stampede guard) and `handle` (base path, bundles, API routes, page dispatch, backstop). The SSG writer and the runtime now share one `staticPageDir` escape guard; `prerenderStaticPages` is a per-target pipeline; the pages scan files each module through one classifier; the API `req` shim parses the body per content type in named helpers; the head manager's tag identity is table-driven; `navigate` in the browser runtime is a small state machine over `fetchRouteData`/`ensureRouteChunk`/`commitRoute`, and link interception is `isPlainClick` + `isSoftNavAnchor`. A new fake-DOM unit test (`tests/pages-router-client-runtime.test.ts`) drives the browser runtime — bootstrap, soft navigation and its redirect/not-found/failure/superseded outcomes, fallback-shell completion, prefetch, link and popstate interception — so it is measured instead of estimated. Behavior unchanged; the ten pages-router suites are green.
-- **CLI parser and commands decomposed (internal; no public API change).** `CommandRegistry.parse` (128 lines, cyclomatic 44) is now verb resolution over `parseCommandArgv`, a token walk with `parseLongFlag`/`parseShortFlag`/`parseBare` handlers and a `FlagIndex`; command help is `positionalsHelp` + `flagsHelp`. The `migrate` command's 167-line report is one reporter per section (deps, SPA/CRA, Remix, pages router, effect, Prisma) and the codemod prompt is `printCodemodPlan` + `confirmCodemod`; `desktop` has one function per action with a packaging-script table; `create` splits target/feature selection/notes; `audit`, `plugin` and `generate` validate through named helpers; `cli.ts` prints non-run outcomes in `printOutcome`. Client entry points that only a browser runs (`installDevtools`, `bootResumability`, `installQrlDispatch`, `patchStyle`) were trimmed to small helpers. Output and exit codes are unchanged; the CLI suites are green.
-- **Compat, runtime, testing, lint and router hot spots decomposed (internal; no public API change).** The ICU formatter's `renderArg` (cyclomatic 42) is a per-type renderer table and its date/number skeleton parsers are field/token tables; the rich-text parser walks a cursor with a `tagAt` classifier; `cache()`'s memo trie descends through one `childFor`, `cloneElement` overlays config in a helper, and `preinit`/`preinitModule` share `ensureScript`; `handleClientScriptLoad` and `parseStrategy` extract their dedupe/directive checks. `denext/testing`'s implicit-role lookup is a table, form-field collection is one helper per control kind, and the conformance report renders one route per helper; the lint plugin's `directive-placement` visitor is prologue detection + two reporters. The route manifest scanner (`scanRoutes` was 263 lines with a 169-line inner walk) now walks with an explicit `WalkFrame` — slots, level frame, nested metadata images, route collection and child descent are named steps, and the root metadata files come from a convention table — and `matchSegments` splits catch-all/single-segment matching. The compat package resolver is exported and unit-tested (`tests/next-compat-resolve.test.ts`). Behavior unchanged; all affected suites are green.
-- **Examples, scripts, bench and test bodies brought under the complexity gate (internal; no public API change).** The game example's physics now lives in `examples/game/app/physics.ts` (a pure simulation with no Three.js or DOM) driven by `engine.ts` and by a new unit test, and its page is `TopBar`/`Overlay`/`TouchControls` over a `useGameEngine` hook; the native example's desk cat runs on `examples/native/app/cat-sim.ts` (pure rabbit/chase/hunt simulation, unit-tested) with the component reduced to refs, listeners and markup; the six next-compat example servers share `examples/_shared/serve-compat.ts`; the macOS packaging script's `main` is a pipeline (`signingFromEnv`/`buildArtifacts`/`finishArtifacts`), mirrored into its scaffold template. `scripts/release.ts` runs as named steps (preconditions, prepare, gate, confirm, publish table, dry run) with `rollChangelog`/`prepareRelease` exported and dry-run tested; `bump-version`, `gen-api-reference` and the parity extractors/differ are table-driven per kind; the bench report, microbench calibration, byte analysis and load test are small helpers; five oversized test bodies became named assertion helpers. The Remix migration header comment and `migrateRemixProject` docstring now describe the real behavior (the data model is preserved and runs on the `denext/remix` runtime; edge cases are review warnings). `fallow health` reports zero complexity findings and zero dead code repo-wide.
-- **Build helpers deduplicated (internal; no public API change).** `bundle.ts`'s `absolutizeImports` and `css.ts`'s `normalizeImports` were the same import-map absolutizer; `next-compat.ts` and `dev-unbundled.ts` each re-implemented the same "read the app's `deno.json` prefix aliases" loop. `css.ts` now reuses `absolutizeImports`, both dev bundlers call one `readAliasPrefixes(configPath)`, and `buildAppCss` (cyclomatic 29 / cognitive 42) is a short pipeline over named stages — collect stylesheets, alias the Tailwind input, compute alias-form css redirects, write `css-config.json`, decide the transient app-config redirects. Behavior is identical; the CSS, dev-server and next-compat suites are green. `src/build/{bundle,css,next-compat,dev-unbundled}.ts`.
-- **fallow gate: measured coverage for CRAP scoring (`deno task coverage:fallow`).** Fallow's CRAP score (complexity × untested-ness) estimated coverage from the import graph when no coverage file was supplied, scoring modules that tests reach only transitively (the reconciler, driven through `createRoot()`) at a 40 % tier — so CRAP fired on any function there with cyclomatic ≥ 10 regardless of the real coverage (82 % lines measured). The new task runs the unit suite with coverage, exports lcov (already source-mapped to TypeScript lines) and converts it to the Istanbul map fallow reads; the pre-commit hook passes `--coverage coverage/coverage-final.json` whenever that file exists. Thresholds and gate mode are unchanged. `scripts/coverage-to-istanbul.ts` (new), `.githooks/pre-commit`, `deno.json`, `CONTRIBUTING.md`.
-- **`InMemoryCache`/`SqliteCache` use `#private` fields (internal).** Wrap a store by delegation (`{ ...store }` spreads lose the private state); no such usage exists in the repo or examples.
-- **Pinned Deno toolchain bumped `2.9.5` → `2.9.6`** (CI `fmt`/`lint` reproducibility). The four `deno-version` pins in `.github/workflows/ci.yml` now track `2.9.6`, and the repo was re-formatted with it (`deno fmt`) — a formatter-only normalization (line-wrapping / trailing commas across `examples/`, `packages/`, `bench/`, and the docs site; **no `src/` changes** and no behavior change). Contributors should run Deno `2.9.6` locally so `deno fmt --check` matches CI.
-- **CI/publish:** `@denext/htmx` is wired into the tag-triggered publish workflow.
-- **Version:** `development` is `2.0.0-rc.1` (was inconsistent — `deno.json` `1.4.0`, `mod.ts`
-  `1.3.0`); the docs site tracks the released `1.4.0`.
-- **First-party Rust→WASM is on-brand** (MISSION.md); the cache uses the runtime's built-in
-  `node:sqlite` rather than a bespoke WASM SQLite engine.
-- **Server Actions are typed end-to-end** across the client/server boundary (verified) — a call
-  is type-checked against the handler's signature wherever it's imported (Next types actions
-  only within a module).
-- **`denext migrate` writes config only by default.** Source rewriting is now opt-in via `--codemod`
-  (was implied), the desktop entry via `--desktop`, and the old `--drop-in` flag was removed — so the
-  default migrate is non-destructive to app source.
-- **Docs: product/GTM strategy split out to `STRATEGY.md`.** The go-to-market strategy
-  (positioning, objections, phased adoption plan, launch, risk) moved out of `ROADMAP.md` into a
-  permanent `STRATEGY.md`; `ROADMAP.md` is now purely the pending engineering backlog — a step
-  toward the 2.0 goal of shipping with no roadmap files, while keeping the strategy content.
+- **Release script: a stable version folds its rc entries; the gate runs what
+  publish runs.** `deno task release X.Y.Z` now merges `[Unreleased]` and every
+  `[X.Y.Z-rc.N]` section into one grouped `## [X.Y.Z]` entry (`### Breaking`
+  first, identical bullets deduped) and appends the link reference; the gate
+  regenerates the MCP docs corpus + llms.txt (they ship in the package and embed
+  the version — rc.7 shipped an rc.6 corpus) and runs `doc-lint` +
+  `deno publish --dry-run` before tagging. `scripts/release.ts`.
+- **Docs, scaffold and packaging follow-ups from the 2.0 audit.** README: the
+  cache default is the durable `node:sqlite` store (the text had it backwards),
+  `cacheStoreHealthy` is exported from `denext/server`, the benchmark link
+  points at `bench/REPORT.md`, the Deno floor reads `≥ 2.9`; CONTRIBUTING's
+  release procedure describes the real flow (`deno task release` on
+  `development`, then the `development → main` merge, plugin tags, docs deploy);
+  FEATURES gains the Remix migration family, the end-to-end typed API surface
+  (`TypedResponse`/`createApiClient`/`defineAction`) and `@denext/effect`, and
+  its `file:line` citations are checked by `scripts/check-doc-refs.ts` in
+  `deno task doc-lint`; PLUGINS.md/AGENTS.md point plugin authors at
+  `denext/plugin-kit` and count five seams; the migration guide no longer claims
+  `package.json` is never touched (Prisma stripping); a new KNOWN-DIFFERENCES.md
+  names the deliberate React/Next differences (implicit memo, event-handler
+  capture, `useDeferredValue` under `act`, single-phase rewrites, default-on
+  `nodeResolve`, opaque action ids) so KNOWN-LIMITATIONS lists only genuine gaps
+  (incl. the real esbuild footprint) and ROADMAP.md only work (its "Post-2.0
+  deferred" items moved there; the safe-default security posture moved to
+  KNOWN-DIFFERENCES); the docs-site snippets import `denext` (not
+  `@denext/denext`); the pages-router README requires `@denext/denext@^2`;
+  `deno task bump` also rewrites `examples/*/deno.json` JSR pins. Scaffold:
+  `--compatibility` maps bare `next`, `server-only` and `client-only`;
+  `@std/assert` and `denext/testing` are mapped (so `denext generate test`
+  type-checks); `.gitignore` covers `out/` and `.env*.local`; a `README.md` is
+  generated (and skipped by `init` when one exists); `--template` help lists the
+  values; `create` notes that the first run downloads the framework.
+  `denext export` cleans `out/` first (no stale HTML for deleted routes); the
+  MCP docs corpus no longer embeds a generation timestamp; the JSR package
+  excludes `.github/`, `.vscode/`, `.agents/`, `.codex/`, `.githooks/`,
+  `.claude/`, `.mcp.json`, `fallow.toml`, `deno.lock`, `CLAUDE.md`,
+  `CONTRIBUTING.md`, `scripts/`, `coverage/`.
+- **Decided: the 2.1 typed API surface is schema-first, not decorator-first.**
+  Replicating NestJS's mechanism was evaluated and **rejected**. Its OpenAPI
+  generation depends on `emitDecoratorMetadata` + `reflect-metadata` and a `tsc`
+  compiler plugin; denext's toolchain supports neither (no legacy decorators in
+  any config, esbuild cannot emit decorator metadata, `@swc/wasm-web` is a
+  parser only, no `tsc` invocation to host a plugin). Instead: **one schema per
+  route, colocated with the handler**, from which runtime validation, static
+  types and the OpenAPI document are all derived — the direction Hono
+  (`@hono/zod-openapi`), Elysia (TypeBox) and tRPC-openapi have converged on,
+  and the pattern `defineAction` already established on the mutation side.
+  (Delivered as `@denext/openapi` / `@denext/graphql` in the 2.1 cycle — see
+  [ROADMAP.md](./ROADMAP.md).)
+- **Decided: config field names are final.** `compatibilityMode` (renamed once
+  from `nextCompat`), `mode`/`spa`, `classComponents`, `streaming`, `live`,
+  `cacheComponents`, `basePath`, `assetPrefix`, `trailingSlash` read cleanly and
+  match their Next analogs; the schema is generated from the type
+  (`denext.config.schema.json`). A second rename is exactly the churn to avoid.
+- **One roadmap, targeting 2.1.** `ROADMAP-FUTURE.md` (the "3.0 typed API
+  surface" tracker) is folded into `ROADMAP.md`, which now targets the **2.1**
+  cycle: the typed, self-documenting API surface (`@denext/openapi` /
+  `@denext/graphql`, re-based on 2.0's `TypedResponse` + `createApiClient` +
+  `defineAction`), the `lightningcss`/`swc` WASM repoints, the ecosystem router
+  plugins, the `deno bundle --define` watch item, and one consolidated
+  settled-decisions + guardrails list. Closed 2.0 items are dropped (they live
+  in this changelog). `ROADMAP.md`, `ROADMAP-FUTURE.md` (deleted), `MISSION.md`.
+- **Ecosystem decisions settled + codec license notices.** `ROADMAP.md`'s two
+  open ecosystem questions are closed: every first-party package stays under the
+  `@denext/*` JSR scope (codecs included), and each vendored codec's upstream
+  license was verified to permit redistributing the built wasm/bundle.
+  `@denext/photon` 0.3.5 and `@denext/avif` 0.1.1 now ship
+  `THIRD-PARTY-LICENSES.md` (photon's is generated from `cargo metadata` by the
+  new `deno task licenses:photon`; `@denext/og` already shipped one). No
+  framework code change. `scripts/gen-third-party-licenses.ts` (new),
+  `packages/{photon,avif}/**`, `ROADMAP.md`, `ROADMAP-FUTURE.md`.
+- **Cache Components graduated to a stable, opt-in top-level
+  `cacheComponents`.** `use cache` / `cacheLife` / `cacheTag` and PPR (a cached
+  static shell + per-request dynamic holes) leave `experimental`: enable them
+  with `cacheComponents: true` in `denext.config.ts`. Not default-on — caching
+  stays a choice, since a cache bug's failure class is severe and shouldn't be
+  imposed on apps that never asked. The legacy
+  `experimental: { cacheComponents: true }` is still honored (soft migration)
+  and emits a dev warning naming the new key. The three documented bounds are
+  unchanged and now live in KNOWN-LIMITATIONS as the bounded scope of a shipped
+  feature rather than an experimental caveat: request data inside `use cache`
+  throws; a streamed hole can't add an inline `<style>`/`<script>` to the
+  already-flushed head (dev-warned, now tested) or hoist an in-boundary
+  `<title>`/`<meta>`; a `searchParams` read outside a Suspense boundary with
+  `cacheKeyParams` set relies on the store-refusal guard.
+- **Fiber reconciler refactored into layered modules (internal; no public API
+  change).** `src/client/fiber/reconciler.ts` was a 3.4k-line module holding
+  every phase of the fiber engine and fallow's #2 refactoring target (hotspot
+  score 38, fan-out 24, four CRAP suppressions). It is now a barrel over 17
+  modules that each import only from the layers below — `state`, `fiber-utils`,
+  `root-callbacks`, `hydration`, `scheduler`, `devtools-bridge`,
+  `hooks-dispatcher`, `boundaries`, `render-component`, `reconcile-children`,
+  `context-propagation`, `begin-work`, `complete-work`, `unwind`, `commit`,
+  `work-loop`, `root` — with the one inherent cycle (hooks → scheduler → work
+  loop → beginWork → hooks) broken by injecting the work loop's entry points
+  into the scheduler at init. Before the split, the ten functions over fallow's
+  cognitive/cyclomatic thresholds (`renderComponent` at cognitive 38 down to
+  `disconnectEffects`) were decomposed into named single-purpose helpers, the
+  four `fallow-ignore` markers were deleted, and the two duplicate-clone groups
+  (`useState`/`useReducer` setters, `createRoot`/`hydrateRoot`) were folded into
+  shared helpers. The public surface (`createRoot`, `hydrateRoot`, `flushSync`,
+  `act`, `createPortal`, the DevTools hooks, the `__*ForTests` seams) is
+  unchanged and behavior is identical — the full suite is green. The shared
+  client runtime grows ~1.6 KB raw / ~0.7 KB gzipped (esbuild does not inline
+  the extracted helpers); the build-smoke size tripwire is re-based 56 → 58 KB
+  accordingly. `src/client/fiber/*` (17 new modules),
+  `src/client/fiber/reconciler.ts` (now a barrel).
+- **Request pipeline (`createApp`) split into staged server modules (internal;
+  no public API change).** `src/server/app.ts` held the whole request pipeline
+  as one 1.4k-line closure (`pipeline`, cyclomatic 227 / cognitive 427 —
+  fallow's #1 refactoring target) plus the config types and every helper. The
+  routing stages are now one function each in `request-pipeline.ts`
+  (canonicalization → config rules → middleware → Server Actions → metadata
+  files → i18n → API routes → pages → 405 / plugin / static / 404, plus the
+  top-level error handling), the page path lives in `page-response.ts` /
+  `page-document.ts` / `page-cache-flow.ts` (ISR) / `page-prerender.ts` (PPR) /
+  `page-stream.ts` (streaming), the closure's captured locals became explicit
+  `AppRuntime` + `RequestState` records (`pipeline-state.ts`), and
+  `app-config.ts` / `response-headers.ts` / `flight-routing.ts` hold the types
+  and helpers. The two near-duplicate PPR branches and the two streaming
+  branches (HTML vs Flight) share one implementation each, and the eight copies
+  of the hydration literal are one `navData`. `createApp` and every public name
+  still resolve through `app.ts`; behavior is identical (every createApp-driven
+  suite is green).
+  `src/server/{app-config,response-headers,flight-routing,pipeline-state,request-pipeline,page-document,page-cache-flow,page-prerender,page-stream,page-response}.ts`
+  (new), `src/server/app.ts`.
+- **Repo-wide fallow dead-code sweep to zero (internal; no public API
+  removed).** `fallow dead-code` reported 102 "unused" files, 299 unused
+  exports, 18 types, 28 class members and 30 unlisted dependencies — almost all
+  of it fallow not knowing how denext loads things. `fallow.toml` now states
+  those facts: the file conventions denext resolves by path (`denext.config.ts`,
+  `middleware.ts`, `instrumentation.ts`, the App Router metadata files, Pages
+  Router `pages/`, SPA `src/main.tsx`, `public/`, the Tailwind input), the
+  `deno task` roots under `bench/` and `examples/`, the user-run migration
+  probes (`examples/next-compat-feasibility`), the generated wasm glue
+  (`packages/{photon,avif}/lib/*.js`), the text-read fixtures
+  (`tests/fixtures/**`), the Deno import-map dependencies fallow can't see in a
+  `package.json`, the lazily-`import()`ed dev proxy, and the DOM interface
+  members the fake-DOM test doubles implement. The remaining ~110 real findings
+  were resolved by hand: helpers used only inside their module lost the `export`
+  keyword (`dom-props.ts`, `dev-unbundled.ts`, the auth/image/CSP constants, …),
+  redundant re-export chains were dropped (`auth/mod.ts`, `next/request.ts`, the
+  reconciler barrels, `error-boundary.ts`), genuinely unreferenced code was
+  deleted (`registerServerInsertedHTML`, `registerDeployAdapter`, `serverRefId`,
+  `collectedStylesheets`, the `TEXT` marker, `StaticResult`, `FileConvention`,
+  `src/router/mod.ts`, dead bench helpers), the AsyncContext transform's output
+  now imports its helpers from `denext/compiler-runtime` like every other build
+  transform (which therefore exports
+  `__asyncScope`/`__asyncScopeEnd`/`__asyncAwait`/`__asyncYield`/`__asyncResume`/`__asyncIter` +
+  the `AsyncScope`/`Bindings` types), and two examples were improved rather than
+  trimmed — `examples/notes` demonstrates Next's `RedirectType.push`, the Effect
+  examples use `Data.TaggedError`, and the game engine owns its audio lifecycle.
+  Every name that was reachable from a public `denext/*` entry still is (through
+  its canonical module). `fallow.toml`, `src/**`,
+  `packages/pages-router/src/**`, `examples/**`, `bench/lib/**`,
+  `tests/helpers/dom.ts`.
+- **Dev server split into staged modules (internal; no public API change).**
+  `src/build/dev-server.ts` held the whole development server as one 1.2k-line
+  `startDevServer` closure (cyclomatic 24; its request `handler` alone
+  cyclomatic 31 / cognitive 43) — fallow's largest remaining `src/build` target.
+  The closure's captured locals are now an explicit `DevState` record
+  (`dev-server/state.ts`), and each concern is its own module under
+  `src/build/dev-server/`: `assets` (CSS + transform maps), `compat` (the
+  react→denext compat build), `manifest` (route manifest + Flight boundary per
+  generation), `bundles` (route/Flight client bundles + chunk cache), `loaders`
+  (the module loader over the manifest), `reload` (the live-reload channel),
+  `reload-script` (the injected client script), `dev-endpoints` (`/_denext/*`
+  dev-only routes, `devOriginAllowed`, `editorCommand`), `watch` (the file
+  watcher + invalidation), `dev-app` (the `createApp` wiring) and `handler` (the
+  per-request dispatch, one function per route class). `dev-server.ts` is a
+  120-line orchestrator that wires them and keeps re-exporting
+  `DevServerOptions`, `DEV_RELOAD_SCRIPT`, `devOriginAllowed` and
+  `editorCommand`, so every importer is unchanged. Every function is under
+  fallow's complexity and 60-line thresholds; behavior is identical — the
+  dev-server, SPA dev, HMR, devtools, live and next-compat suites are green.
+  `src/build/dev-server/*` (12 new modules), `src/build/dev-server.ts`.
+- **Unbundled dev loop split into staged modules (internal; no public API
+  change).** `src/build/dev-unbundled.ts` was one 640-line `createUnbundledDev`
+  closure (maintainability index 68.7, the only `src/` file under fallow's 70
+  floor; its request `handle` cognitive 27). The captured locals are now an
+  explicit `UnbundledState` record and each concern is a module under
+  `src/build/dev-unbundled/`: `state` (URL scheme, dep tables, versions, the
+  transform cache and reverse import graph), `resolve` (specifier → first-party
+  path → dev URL, incl. the compat react/next/npm mapping), `deps` (the native
+  `@dep` pre-bundle, the compat runtime prebuild and the on-demand npm bundle),
+  `transform` (the per-module transform with its cache check, Fast Refresh
+  footer and rewrite plugin, plus the generated-entry transform), `entries`
+  (route / Flight / SPA entries), `handler` (one function per `/_denext/@*` URL
+  class) and `hmr` (`onChange` + `propagate`). `dev-unbundled.ts` is a 70-line
+  orchestrator returning the same object (including the `_internal` test seams),
+  so `dev-server`, `spa.ts` and the tests are unchanged. Every function is under
+  the complexity and 60-line thresholds; behavior is identical — the HMR, SPA
+  dev, dev-server and next-compat suites are green. `src/build/dev-unbundled/*`
+  (7 new modules), `src/build/dev-unbundled.ts`.
+- **`denext build` split into a staged pipeline (internal; no public API
+  change).** `src/build/build.ts` was one 434-line `build` function (cyclomatic
+  60 / cognitive 71). Its locals are now an explicit `BuildContext` record and
+  the stages are modules under `src/build/build-pipeline/`: `prepare` (the SPA
+  and plugin-only builds, cache reset, plugin setup, route scan, compat
+  detection, the staging dir), `transforms` (app CSS + the auto-memo / qrl /
+  AsyncContext client rewrites merged into the bundler import map), `routes`
+  (per-route stylesheets, the static/interactive partition, the native route and
+  Flight bundles, the boundary manifest), `compat` (the next-compat server,
+  Flight and client-entry bundles) and `finalize` (public-env tree-shaking,
+  self-hosted fonts, the build manifest, precompression, the atomic `client/`
+  swap, typed modules, plugin build steps, the size summary). `build.ts` runs
+  them in order in ~30 lines and still exports `build`, `BuildResult` and
+  `FLIGHT_BUNDLE_FILE`, so the CLI, prod server, static export and tests are
+  unchanged. Stage order and every side effect are identical; the build-smoke,
+  prod-server, asset-compression, next-compat and example integration suites are
+  green. `src/build/build-pipeline/*` (6 new modules), `src/build/build.ts`.
+- **`denext export` split into a staged pipeline; build/export helpers shared
+  (internal; no public API change).** `src/build/export.ts` was one 269-line
+  `staticExport` (cyclomatic 50 / cognitive 77) plus an untested
+  `exportPagesRouter`. Its locals are now an `ExportContext` record and the
+  stages are modules under `src/build/export-pipeline/`: `prepare` (the SPA and
+  Pages Router exports, plugin setup, route scan, output dirs, the Cache
+  Components loader), `assets` (route classification, stylesheets, the
+  next-compat SSR bundles, the route and Flight client bundles, self-hosted
+  fonts) and `render` (every page × param set × locale, `notFound()` skips,
+  `public/`). The preparation, next-compat module discovery, boundary crawl and
+  font collection the build and export pipelines both perform live once in
+  `src/build/pipeline-shared.ts`, and the `fillPath` duplicated between the
+  export and the conformance prober is `fillPattern` on
+  `src/router/segments.ts`. `export.ts` runs the stages in ~30 lines and still
+  exports `staticExport` and its option/result types. Behavior is identical; the
+  export, Flight export, static SEO, i18n, next/font, desktop, conformance and
+  build suites are green. `src/build/export-pipeline/*` (4 new modules),
+  `src/build/pipeline-shared.ts` (new), `src/build/export.ts`,
+  `src/build/build-pipeline/*`, `src/router/segments.ts`,
+  `src/testing/conformance.ts`.
+- **`denext start` split into staged modules (internal; no public API change).**
+  `src/build/prod-server.ts` was one 343-line `startProdServer` (cyclomatic 55 /
+  cognitive 46). It is now a ~60-line orchestrator over
+  `src/build/prod-server/`: `manifest` (reading `manifest.json` into a
+  `BuildInfo` record, the Flight boundary + server-action tagging, the
+  complete-build check), `assets` (the client entry / stylesheet URL resolvers
+  with `assetPrefix`/`basePath`), `app` (the SSR loader chain, middleware,
+  instrumentation, config rules, the durable cache store, `createApp`, the Live
+  hub) and `handler` (health, self-hosted fonts, the image optimizer, immutable
+  client assets, the Live upgrade, then the app). `startProdServer` and
+  `ProdServerOptions` are unchanged; the startup order and every side effect are
+  identical — the prod-server, asset-compression, example and live suites are
+  green. `src/build/prod-server/*` (4 new modules), `src/build/prod-server.ts`.
+- **SPA mode split into modules; dev servers share their SSE plumbing (internal;
+  no public API change).** `src/build/spa.ts` was a 950-line module whose
+  `startSpaDevServer` was a 330-line closure (its request `handler` cyclomatic
+  24 / cognitive 37). It is now a barrel over `src/build/spa/`: `shared`
+  (constants, the generated entry, `classifySpaChange`, the HTML shell with its
+  CSP meta, entry resolution), `bundle` (the native `deno bundle` and
+  next-compat esbuild paths + stylesheet extraction; `pnpmCatalogPackages` is
+  exported and unit-tested), `build` (production build + static export sharing
+  one bundle-and-shell step), `prod-server`, and the dev server as `dev-state`
+  (per-generation bundle, subscribers, the unbundled loop), `dev-watch`
+  (debounced batches → css / per-module update / refresh / reload),
+  `dev-handler` (one function per URL class), `dev-reload-script` and
+  `dev-server`. The SSE subscriber fan-out and stream that the App Router dev
+  server (`dev-server/reload.ts`) and the SPA dev server both implemented live
+  once in `src/build/sse.ts`. Every importer keeps importing from `spa.ts`;
+  behavior is identical — the SPA mode/Fast Refresh/dev/integration, export,
+  dev-server, HMR and prod-server suites are green. `src/build/spa/*` (9 new
+  modules), `src/build/sse.ts` (new), `src/build/spa.ts`,
+  `src/build/dev-server/reload.ts`, `tests/spa-mode.test.ts`.
+- **Scaffold, codemod and migrate decomposed (internal; no public API change).**
+  `scaffold.ts`: the three desktop packaging scripts (macOS 337 lines, Windows
+  205, Linux 193) were parameterless functions returning a template and are now
+  constants; `denoJson` is a task builder plus an import-map builder.
+  `codemod.ts`: the 135-line `rewriteSource` is a `RewriteCtx` plus one function
+  per statement form (static import/export, the default-component and
+  default-`React` cases, side-effect import, `require`/dynamic `import()` call).
+  `migrate.ts`: `migrateProject` (cyclomatic 33) delegates source detection to
+  `migrateNonNextProject` and the config writing to `writePagesRouterConfig` /
+  `writeAppRouterConfig`; `nextConfigSource` (cognitive 27) hands the
+  next.config translation to `nextConfigTranslationLines` + `droppedKeyNotes`;
+  `migrateSpaProject` (180 lines, cyclomatic 29) uses `spaImportMap`,
+  `spaEnvKeys`, `spaProxy`, `writeSpaDesktop`, `spaDenoJson` and
+  `finishSpaProjectFiles`; `denextResolver` splits into the JSR and
+  local-checkout resolvers; `readNextConfig` into MDX detection + the bounded
+  subprocess eval. The two copies of the deno.json write-unless-authored block
+  are one `writeDenoJsonUnlessAuthored`, and the
+  `exists`/`anyExists`/`firstExisting` probes duplicated with `remix-migrate.ts`
+  live in `src/build/migrate-fs.ts`. Output is byte-identical; the scaffold,
+  codemod, create/init, migrate, remix and prisma suites are green.
+  `src/build/{scaffold,codemod,migrate,remix-migrate}.ts`,
+  `src/build/migrate-fs.ts` (new).
+- **Directive scanner, hydration stripper, entry generators and next-compat
+  plugins decomposed (internal; no public API change).** `directives.ts`: the
+  86-line `scanDirectiveCore` (cyclomatic 30 / cognitive 50) is a loop over
+  `scanPrologueStatement` with `skipTrivia`/`readStringLiteral`/comment-skipping
+  helpers. `hydration.ts`: the 118-line `stripLiteralsAndComments` (cyclomatic
+  38 / cognitive 82) is a `StripState` record with one handler per token kind
+  (line/block comment, regex literal with `regexEnd`, string/template literal,
+  code char). `bundle.ts`: `generateRouteEntry` and `generateFlightEntry` (125 /
+  137 lines) compose `routeEntryImports`/`routeEntryTree`/`routeRefreshBlock`
+  and `flightRefreshBlock`/`flightLiveBlock`/`flightMain`, sharing one
+  `hydrationCatch`. `next-compat.ts`: the app resolver uses `appImportBase` + an
+  exported `probeSourceFile` (now also used by the unbundled dev resolver,
+  replacing its private copy); the runtime plugin's resolvers, the `./*` exports
+  wildcard, the Vite asset namespaces/worker stub and the compat plugin chain
+  (`compatPlugins`, `nodeModulesPlugins`) are named functions. Generated entries
+  and resolution results are byte-identical; the directive, hydration, bundle,
+  next-compat, Flight, dev-server and build suites are green.
+  `src/build/{directives,hydration,bundle,next-compat}.ts`,
+  `src/build/dev-unbundled/{resolve,state}.ts`.
+- **swc-based build transforms share one substrate; each transform decomposed
+  (internal; no public API change).** The auto-memo compiler, the `qrl` handler
+  extractor, the AsyncContext instrumenter and the `"use cache"` rewrite each
+  re-implemented the marker parse, the directive-prologue import point, the
+  child walk, the relative-specifier absolutizing and the
+  write-transformed-modules loop; those now live once in `src/build/swc-ast.ts`
+  (`parseModule`, `prologueEnd`, `forEachChild`, `absolutizeSpecifiers`,
+  `writeTransformedModules`). On top of that: `compiler.ts`'s `collectFreeRefs`
+  (cyclomatic 32) is a per-node-type handler table and `transformModule` (191
+  lines) delegates to `memoizeComponent` / `absolutizeDynamicImports`;
+  `qrl-transform.ts`'s `collectStmtDecls` and `walkFree` (cyclomatic 32 / 31)
+  are handler tables and `transformQrl` is a `QrlState` with module-level
+  `visitQrl` / `tryExtract` / `extractInlineHandler` / `extractImportRef`;
+  `async-context-transform.ts`'s `visit` (cyclomatic 29 / cognitive 49) is
+  `visitFunction` + `visitSuspension` over an `AcState`, with `walkOwnScope`
+  replacing the two duplicated nested-function-aware walkers;
+  `use-cache-transform.ts`'s `transformUseCache` (cyclomatic 54 / cognitive 88)
+  is a `CacheState` with one wrapper per top-level item form. Emitted code is
+  byte-identical; the compiler, qrl, async-context, use-cache and resumable
+  suites are green.
+  `src/build/{swc-ast,compiler,qrl-transform,async-context-transform,use-cache-transform}.ts`.
+- **Config loader, plugin installer, framework-deps installer and desktop
+  runtime decomposed (internal; no public API change).** `paths.ts`:
+  `loadDenextConfig` (cyclomatic 30 from 23 chained fallbacks) merges named
+  exports over the default object through a `CONFIG_KEYS` table and a per-file
+  `importConfigFile`. `plugin-install.ts`: `injectPlugin` (148 lines) uses
+  `addImportLine` / `defaultExportObjectStart` / `insertPluginCall`,
+  `listPlugins` uses `splitTopLevel` / `namedImportSpec`, `ejectPlugin` uses
+  `removePluginCall`. `module-config.ts`: `ensureFrameworkNodeModules` (90
+  lines) is `frameworkNpmImports` → `installFwdeps` →
+  `linkFrameworkNodeModules`; `satisfiesRange` and `pinNpmToLock` are exported
+  and unit-tested (they had no coverage). `desktop.ts`: `runDesktop` is
+  `resolveOutDir` + `installWindowCloseHandler` + an exported
+  `createDesktopHandler` (unit-tested: no-store assets, the shell for
+  navigations, `onRequest`, 404s), and its `wantsShell` is the SPA mode one.
+  Behavior is identical; the module-config, desktop, plugin and config suites
+  are green. `src/build/{paths,plugin-install,module-config,desktop}.ts`,
+  `tests/desktop-runtime.test.ts` (new), `tests/module-config.test.ts`.
+- **Remaining `src/build` hot spots decomposed (internal; no public API
+  change).** `remix-migrate.ts`: `freeIdentifiers` (99 lines) is a table of
+  module-level scope walkers, `analyzeModule` (93) classifies items through
+  `classifyItem`/`classifyExport`, `clientModuleSource` (65) composes
+  `delocalizedClientStatements`/`serverTypeImports`/`boundarySource`, and the
+  154-line `transformRemixApp` (cyclomatic 35 / cognitive 63) is a `RemixPlan`
+  filled by `planRoute` (`planResourceRoute` / `planComponentRoute`), `planRoot`
+  and `removeOldTree`. `multi-select.ts`: the key loop is `drawFrame` +
+  `decodeKey` + `applyKey`. `module-graph.ts`: `staticExportNames` uses
+  `stripCommentsAndStrings` + `exportListNames`. `dev-proxy.ts`: the 96-line
+  WebSocket relay is `upgradeHeaders` + `wireUpstream` + `wireClient` over a
+  `WsBridge`. `generate.ts`: `generateArtifact`'s switch is an `artifactTarget`
+  table. `next-mdx-recover.ts`: `resolveNextMdx` is `readNextConfigSource` +
+  `runProbe`. `prisma-migrate.ts`: the per-file rewrite loop is
+  `rewritePrismaSources`. `migrate.ts`: `spaSourceFacts` and `spaMigrateResult`
+  trim the SPA path. With this, `src/build` has no function over fallow's
+  complexity or 60-line thresholds. Behavior is identical; the remix, migrate,
+  module-graph, plugin, proxy, generate, MDX and prisma suites are green.
+- **`src/server` hot spots decomposed (internal; no public API change).** All 27
+  functions fallow flagged in the server layer are now under its complexity
+  thresholds: `document.ts` `renderHead` (134 lines, cyclomatic 45) is
+  `headBasics` + `headLinks` + `headSocial` + `headExtras` and
+  `renderBodyScripts` is `hydrationScripts` + `devScript` over one `jsonIsland`;
+  `image-optimizer.ts` `probeImageDimensions` (cyclomatic 43) is a
+  PNG/GIF/JPEG/WebP probe chain, `optimizeImage` (115 lines) is
+  `parseOptimizeRequest` → `acquireGate` → `loadAndEncode`, and
+  `fetchRemoteImage` uses `remoteHopAllowed`/`redirectTarget`; `static.ts`
+  `serveStatic` is
+  `resolveWithin`/`statFile`/`realPathWithin`/`serveGzipSibling`;
+  `metadata-files.ts` `serveMetadataFile` is favicon/sitemap/image-convention
+  helpers; `action-handler.ts` gains
+  `resolveAction`/`redirectFromAction`/`allowedOriginSets`; `auth/routes.ts`
+  `handleAuthRequest` is `handleFixedEndpoint` + `handleCallback`, `auth/mod.ts`
+  `validateConfig` is
+  `validateProviders`/`assertOAuthCredentials`/`requireCanonicalOriginInProd`,
+  `auth/jwt.ts` `verifyIdToken` is `anyKeyVerifies` + `assertIdTokenClaims`;
+  `augment-metadata.ts` splits into image and hreflang augmentation;
+  `render-page.ts` `mergeMetadata` (cognitive 62) merges through
+  `OVERRIDE_FIELDS`/`SHALLOW_MERGE_FIELDS` tables plus
+  `mergeTitle`/`mergeJsonLd`; `cache.ts`'s fetch wrapper decides through
+  `fetchCacheDecision`; `session.ts` `getSession` is
+  `sessionCookieAttrs`/`sessionSecrets`/`readSessionCookie`; `safe-fetch.ts`
+  gains `embeddedIPv4`, `openConnection`/`closeQuietly`,
+  `parseHeaderBlock`/`frameBody`, `resolvePinned`/`responseFromRaw` and a
+  `RedirectHop` + `followRedirect` for the safe fetch; `env.ts` `parseEnv` is
+  per-line; `live.ts`, `middleware.ts` and `serve-utils.ts` extract their
+  per-message, header-merge and single-port helpers. Behavior is identical; the
+  document, metadata, image, static, env, action, auth, cache, session,
+  safe-fetch, live, middleware and serve-utils suites are green.
+  `src/server/**`.
+- **`src/client` hot spots decomposed; DevTools panel split into pane modules
+  (internal; no public API change).** `dom-props.ts` `applyProps` (85 lines,
+  cyclomatic 35) is `removeProp`/`setProp` over prop-kind predicates and
+  `patchStyle` is flat; `navigation.ts` `navigateSameOrigin` is `loadRoute` +
+  `applyHtmlNav`, and `shouldIntercept` is `isPlainClick` + `isSoftNavAnchor`;
+  `devtools-inspect.ts` gets a per-tag badge table,
+  `livePropValue`/`readContextValue`, and
+  `changedKeys`/`changedHooks`/`recordRenderReason` for the why-did-this-render
+  diff; `lazy-boot.ts` `bootResumability` uses
+  `readIslandsIsland`/`islandOf`/`scheduleIsland`/`hydrateIsland`;
+  `qrl-dispatch.ts` `dispatchQrl` uses `qrlLoaderFor`. The 985-line
+  `devtools-panel.ts` (whose `mount` was a 775-line closure) is now a ~200-line
+  shell + wiring over `src/client/devtools-panel/`: `styles` (the CSSOM style
+  table + element helper), `ctx` (the shared `PanelCtx`), `values` (live value
+  rows, editors, source links), `tree`, `detail`, `render-modes`, `profiler` and
+  `picker` (highlight overlay + element picker). The panel is dev-only, so the
+  production client bundle is unchanged; the navigation, reconciler, devtools
+  and resumability suites are green.
+  `src/client/{dom-props,navigation,devtools-inspect,lazy-boot,qrl-dispatch,devtools-panel}.ts`,
+  `src/client/devtools-panel/*` (8 new modules).
+- **Server renderers share one skeleton (internal; no public API change).** The
+  six server renderers (`renderToString`, the HTML stream, PPR, Flight,
+  HTML+Flight, the Flight stream and PPR+Flight) each re-implemented the same
+  per-node walk. `src/jsx/render-shared.ts` now owns the renderer-neutral pieces
+  — provider scopes, the Suspense retry loop, error-boundary recovery,
+  server-component invocation, host-element attributes and hoisting,
+  client-island carving, and Flight prop/value serialization — and
+  `src/jsx/renderer-base.ts` is the abstract base the four class renderers
+  extend (`VNodeRenderer` for dispatch, error boundaries and components;
+  `PprVNodeRenderer` for mode-driven Suspense holes). `renderToString`'s node
+  walk, `serializeAttributes` and `createElement` were split per node/prop kind.
+  Behavior is unchanged except three harmonizations that fell out of sharing: a
+  `<Portal>` in a streamed Flight route now emits nothing (it previously hit the
+  host-element path), a rejected `defer()` promise in a PPR+Flight route now
+  serializes as the `<Await>` error marker like every other Flight renderer, and
+  a class component's hoisted `<title>` now reaches the head collector in the
+  HTML stream renderer like a function component's does. `src/jsx` has no
+  remaining complexity findings and the renderer clone family is gone.
+- **`@denext/pages-router` handler split into stages; client runtime covered by
+  unit tests (internal; no public API change).** `src/handler.ts` held the whole
+  request pipeline as one 650-line closure (`handle` alone was 156 lines,
+  cyclomatic 38). It is now a thin entry over `src/handler/`: `shared` (options,
+  state, response helpers), `data` (gSSP/gSP with `getStaticPaths` gating +
+  Preview Mode, the legacy `getInitialProps` fallback), `render` (HTML document,
+  soft-nav data, prefetch, error pages), `prerendered` (SSG files +
+  stale-while-revalidate ISR with the stampede guard) and `handle` (base path,
+  bundles, API routes, page dispatch, backstop). The SSG writer and the runtime
+  now share one `staticPageDir` escape guard; `prerenderStaticPages` is a
+  per-target pipeline; the pages scan files each module through one classifier;
+  the API `req` shim parses the body per content type in named helpers; the head
+  manager's tag identity is table-driven; `navigate` in the browser runtime is a
+  small state machine over `fetchRouteData`/`ensureRouteChunk`/`commitRoute`,
+  and link interception is `isPlainClick` + `isSoftNavAnchor`. A new fake-DOM
+  unit test (`tests/pages-router-client-runtime.test.ts`) drives the browser
+  runtime — bootstrap, soft navigation and its
+  redirect/not-found/failure/superseded outcomes, fallback-shell completion,
+  prefetch, link and popstate interception — so it is measured instead of
+  estimated. Behavior unchanged; the ten pages-router suites are green.
+- **CLI parser and commands decomposed (internal; no public API change).**
+  `CommandRegistry.parse` (128 lines, cyclomatic 44) is now verb resolution over
+  `parseCommandArgv`, a token walk with
+  `parseLongFlag`/`parseShortFlag`/`parseBare` handlers and a `FlagIndex`;
+  command help is `positionalsHelp` + `flagsHelp`. The `migrate` command's
+  167-line report is one reporter per section (deps, SPA/CRA, Remix, pages
+  router, effect, Prisma) and the codemod prompt is `printCodemodPlan` +
+  `confirmCodemod`; `desktop` has one function per action with a
+  packaging-script table; `create` splits target/feature selection/notes;
+  `audit`, `plugin` and `generate` validate through named helpers; `cli.ts`
+  prints non-run outcomes in `printOutcome`. Client entry points that only a
+  browser runs (`installDevtools`, `bootResumability`, `installQrlDispatch`,
+  `patchStyle`) were trimmed to small helpers. Output and exit codes are
+  unchanged; the CLI suites are green.
+- **Compat, runtime, testing, lint and router hot spots decomposed (internal; no
+  public API change).** The ICU formatter's `renderArg` (cyclomatic 42) is a
+  per-type renderer table and its date/number skeleton parsers are field/token
+  tables; the rich-text parser walks a cursor with a `tagAt` classifier;
+  `cache()`'s memo trie descends through one `childFor`, `cloneElement` overlays
+  config in a helper, and `preinit`/`preinitModule` share `ensureScript`;
+  `handleClientScriptLoad` and `parseStrategy` extract their dedupe/directive
+  checks. `denext/testing`'s implicit-role lookup is a table, form-field
+  collection is one helper per control kind, and the conformance report renders
+  one route per helper; the lint plugin's `directive-placement` visitor is
+  prologue detection + two reporters. The route manifest scanner (`scanRoutes`
+  was 263 lines with a 169-line inner walk) now walks with an explicit
+  `WalkFrame` — slots, level frame, nested metadata images, route collection and
+  child descent are named steps, and the root metadata files come from a
+  convention table — and `matchSegments` splits catch-all/single-segment
+  matching. The compat package resolver is exported and unit-tested
+  (`tests/next-compat-resolve.test.ts`). Behavior unchanged; all affected suites
+  are green.
+- **Examples, scripts, bench and test bodies brought under the complexity gate
+  (internal; no public API change).** The game example's physics now lives in
+  `examples/game/app/physics.ts` (a pure simulation with no Three.js or DOM)
+  driven by `engine.ts` and by a new unit test, and its page is
+  `TopBar`/`Overlay`/`TouchControls` over a `useGameEngine` hook; the native
+  example's desk cat runs on `examples/native/app/cat-sim.ts` (pure
+  rabbit/chase/hunt simulation, unit-tested) with the component reduced to refs,
+  listeners and markup; the six next-compat example servers share
+  `examples/_shared/serve-compat.ts`; the macOS packaging script's `main` is a
+  pipeline (`signingFromEnv`/`buildArtifacts`/`finishArtifacts`), mirrored into
+  its scaffold template. `scripts/release.ts` runs as named steps
+  (preconditions, prepare, gate, confirm, publish table, dry run) with
+  `rollChangelog`/`prepareRelease` exported and dry-run tested; `bump-version`,
+  `gen-api-reference` and the parity extractors/differ are table-driven per
+  kind; the bench report, microbench calibration, byte analysis and load test
+  are small helpers; five oversized test bodies became named assertion helpers.
+  The Remix migration header comment and `migrateRemixProject` docstring now
+  describe the real behavior (the data model is preserved and runs on the
+  `denext/remix` runtime; edge cases are review warnings). `fallow health`
+  reports zero complexity findings and zero dead code repo-wide.
+- **Build helpers deduplicated (internal; no public API change).** `bundle.ts`'s
+  `absolutizeImports` and `css.ts`'s `normalizeImports` were the same import-map
+  absolutizer; `next-compat.ts` and `dev-unbundled.ts` each re-implemented the
+  same "read the app's `deno.json` prefix aliases" loop. `css.ts` now reuses
+  `absolutizeImports`, both dev bundlers call one
+  `readAliasPrefixes(configPath)`, and `buildAppCss` (cyclomatic 29 /
+  cognitive 42) is a short pipeline over named stages — collect stylesheets,
+  alias the Tailwind input, compute alias-form css redirects, write
+  `css-config.json`, decide the transient app-config redirects. Behavior is
+  identical; the CSS, dev-server and next-compat suites are green.
+  `src/build/{bundle,css,next-compat,dev-unbundled}.ts`.
+- **fallow gate: measured coverage for CRAP scoring
+  (`deno task coverage:fallow`).** Fallow's CRAP score (complexity ×
+  untested-ness) estimated coverage from the import graph when no coverage file
+  was supplied, scoring modules that tests reach only transitively (the
+  reconciler, driven through `createRoot()`) at a 40 % tier — so CRAP fired on
+  any function there with cyclomatic ≥ 10 regardless of the real coverage (82 %
+  lines measured). The new task runs the unit suite with coverage, exports lcov
+  (already source-mapped to TypeScript lines) and converts it to the Istanbul
+  map fallow reads; the pre-commit hook passes
+  `--coverage coverage/coverage-final.json` whenever that file exists.
+  Thresholds and gate mode are unchanged. `scripts/coverage-to-istanbul.ts`
+  (new), `.githooks/pre-commit`, `deno.json`, `CONTRIBUTING.md`.
+- **`InMemoryCache`/`SqliteCache` use `#private` fields (internal).** Wrap a
+  store by delegation (`{ ...store }` spreads lose the private state); no such
+  usage exists in the repo or examples.
+- **Pinned Deno toolchain bumped `2.9.5` → `2.9.6`** (CI `fmt`/`lint`
+  reproducibility). The four `deno-version` pins in `.github/workflows/ci.yml`
+  now track `2.9.6`, and the repo was re-formatted with it (`deno fmt`) — a
+  formatter-only normalization (line-wrapping / trailing commas across
+  `examples/`, `packages/`, `bench/`, and the docs site; **no `src/` changes**
+  and no behavior change). Contributors should run Deno `2.9.6` locally so
+  `deno fmt --check` matches CI.
+- **CI/publish:** `@denext/htmx` is wired into the tag-triggered publish
+  workflow.
+- **Version:** `development` is `2.0.0-rc.1` (was inconsistent — `deno.json`
+  `1.4.0`, `mod.ts` `1.3.0`); the docs site tracks the released `1.4.0`.
+- **First-party Rust→WASM is on-brand** (MISSION.md); the cache uses the
+  runtime's built-in `node:sqlite` rather than a bespoke WASM SQLite engine.
+- **Server Actions are typed end-to-end** across the client/server boundary
+  (verified) — a call is type-checked against the handler's signature wherever
+  it's imported (Next types actions only within a module).
+- **`denext migrate` writes config only by default.** Source rewriting is now
+  opt-in via `--codemod` (was implied), the desktop entry via `--desktop`, and
+  the old `--drop-in` flag was removed — so the default migrate is
+  non-destructive to app source.
+- **Docs: product/GTM strategy split out to `STRATEGY.md`.** The go-to-market
+  strategy (positioning, objections, phased adoption plan, launch, risk) moved
+  out of `ROADMAP.md` into a permanent `STRATEGY.md`; `ROADMAP.md` is now purely
+  the pending engineering backlog — a step toward the 2.0 goal of shipping with
+  no roadmap files, while keeping the strategy content.
 
 ### Deprecated
 
-- `redirect` on `denext/server` → `redirectResponse`; `experimental.nodeResolve` → top-level `nodeResolve`; `experimental.compiler` → `experimental.reactCompiler`; `experimental.cacheComponents` → top-level `cacheComponents`; `images.domains` → `images.remotePatterns` (removed in Next 16); `useFormState` → `useActionState`; `unstable_noStore` → `connection()`; `io()` (a no-op). All still work through 2.x and are removed in 3.0; each carries an `@deprecated` JSDoc tag so editors strike them through.
+- `redirect` on `denext/server` → `redirectResponse`; `experimental.nodeResolve`
+  → top-level `nodeResolve`; `experimental.compiler` →
+  `experimental.reactCompiler`; `experimental.cacheComponents` → top-level
+  `cacheComponents`; `images.domains` → `images.remotePatterns` (removed in Next
+  16); `useFormState` → `useActionState`; `unstable_noStore` → `connection()`;
+  `io()` (a no-op). All still work through 2.x and are removed in 3.0; each
+  carries an `@deprecated` JSDoc tag so editors strike them through.
 
 ### Removed
 
-- **`experimental.streaming` / `experimental.live` legacy aliases (breaking for apps still setting them — e.g. `experimental.streaming: false` for a CSS-in-JS app now streams; set top-level `streaming: false`).** Both fields have been top-level (`streaming`, `live`) since 1.4; the loose-cast fallbacks that still read the old keys are gone. Setting either legacy key now does nothing except emit a dev warning naming the top-level field — move the value up.
-- **Framework plumbing dropped from the public barrels (`denext`, `denext/server`, `denext/client`, `denext/testing`).** A public-surface audit classified every symbol the `deno.json` entries expose; 89 were internal machinery an application never calls, reachable (and documented in the API reference) only because the barrels double as the framework's own import hub. They are no longer exported from the public entries — the implementations are unchanged and still imported internally from their source modules. From `denext/server`: the ids and constants `ROOT_ID`, `PUBLIC_ENV_ID`, `DEFAULT_SEGMENT_CONFIG`, `APPLE_ICON_PATH`/`ICON_PATH`/`OPENGRAPH_IMAGE_PATH`/`TWITTER_IMAGE_PATH`, `MIDDLEWARE_*_HEADER`/`MIDDLEWARE_REQUEST_PREFIX`, `NEXT`/`REWRITE`, `FRAGMENT`; the registries and setters `setRequestAdapter`, `setNextRuntimeEnv`, `setDraftTokenStore`, `resolveDefaultCacheStore`, `runRegister`, `registerRouteSynthesizer`, `registerConvention`, `registerServerReference`; the Server Action wire internals `tagServerExports`, `tagServerModules`, `getServerAction`, `decodeActionArgs`, `clientActionStub`, `isActionRequest`, `handleAction`, `handleApi`, `actionEndpoint`; the route-matcher and segment-config internals `compilePattern`, `fillDestination`, `matchSlot`, `matcherToRegExp`, `matches`, `splitPath`, `parseSegment`, `matchPattern`, `mergeSegmentConfig`, `readSegmentConfig`; and `serializeSvg`, `DevPanel`, `loadInstrumentation`, `resolveConfigRules`, `filterPublicEnv`, `publicEnvFrom`, `parseEnv`. From `denext/client`: the boot/HMR hooks now on `denext/client-runtime` (above; `qrl`/`capturedScope` stay on `denext/client` as well since they are documented for hand use), `setDocument`, `setHookState`, and the DevTools API that `denext/devtools` already owns (`installDevtools`, `installInspector`, `getInspectorTree`, `getIslandTimeline`, `getRenderModes`, `getPageRenderMode`, `subscribe`, and the `DenextDevtoolsApi`/`Inspect*`/`PageRenderMode`/`RenderModeEntry`/`SerializedValue`/`IslandHydration`/`ClientRegistry`/`Qrl`/`LayoutSegmentInfo` types), plus `useMemoCache` (the compiler primitive lives on `denext/compiler-runtime`). From `denext`: `IMAGE_ENDPOINT`, `actionEndpoint`, `isValidAttrName`, `serializeStyle`, `streamToString`, `useMemoCache`, `isServerAction`. From `denext/testing`: `FRAGMENT` (use `Fragment` from `denext`). The embedding and plugin API stays public: `createApp`, `defaultLoader`, `scanRoutes`, `renderPage`/`renderDocument`/`renderToFlight*`, `serve*`, the middleware runner, and the i18n and cache-store helpers; `denext/plugin-kit` is unchanged (`enableFastRefresh`/`registerFamily` there now come from the refresh runtime directly). Plugin packages that re-exported `FRAGMENT` from `@denext/denext/server` import `Fragment` from `@denext/denext` instead. The API reference (`apps/web/app/docs/api/reference.json`) and `llms-full.txt` are regenerated. `mod.ts`, `src/server/mod.ts`, `src/client/mod.ts`, `src/testing/mod.ts`, `src/plugin/kit.ts`, `src/compat/next/server.ts`, `src/testing/render.ts`, `packages/{htmx,pages-router}/mod.ts`.
+- **`experimental.streaming` / `experimental.live` legacy aliases (breaking for
+  apps still setting them — e.g. `experimental.streaming: false` for a CSS-in-JS
+  app now streams; set top-level `streaming: false`).** Both fields have been
+  top-level (`streaming`, `live`) since 1.4; the loose-cast fallbacks that still
+  read the old keys are gone. Setting either legacy key now does nothing except
+  emit a dev warning naming the top-level field — move the value up.
+- **Framework plumbing dropped from the public barrels (`denext`,
+  `denext/server`, `denext/client`, `denext/testing`).** A public-surface audit
+  classified every symbol the `deno.json` entries expose; 89 were internal
+  machinery an application never calls, reachable (and documented in the API
+  reference) only because the barrels double as the framework's own import hub.
+  They are no longer exported from the public entries — the implementations are
+  unchanged and still imported internally from their source modules. From
+  `denext/server`: the ids and constants `ROOT_ID`, `PUBLIC_ENV_ID`,
+  `DEFAULT_SEGMENT_CONFIG`,
+  `APPLE_ICON_PATH`/`ICON_PATH`/`OPENGRAPH_IMAGE_PATH`/`TWITTER_IMAGE_PATH`,
+  `MIDDLEWARE_*_HEADER`/`MIDDLEWARE_REQUEST_PREFIX`, `NEXT`/`REWRITE`,
+  `FRAGMENT`; the registries and setters `setRequestAdapter`,
+  `setNextRuntimeEnv`, `setDraftTokenStore`, `resolveDefaultCacheStore`,
+  `runRegister`, `registerRouteSynthesizer`, `registerConvention`,
+  `registerServerReference`; the Server Action wire internals
+  `tagServerExports`, `tagServerModules`, `getServerAction`, `decodeActionArgs`,
+  `clientActionStub`, `isActionRequest`, `handleAction`, `handleApi`,
+  `actionEndpoint`; the route-matcher and segment-config internals
+  `compilePattern`, `fillDestination`, `matchSlot`, `matcherToRegExp`,
+  `matches`, `splitPath`, `parseSegment`, `matchPattern`, `mergeSegmentConfig`,
+  `readSegmentConfig`; and `serializeSvg`, `DevPanel`, `loadInstrumentation`,
+  `resolveConfigRules`, `filterPublicEnv`, `publicEnvFrom`, `parseEnv`. From
+  `denext/client`: the boot/HMR hooks now on `denext/client-runtime` (above;
+  `qrl`/`capturedScope` stay on `denext/client` as well since they are
+  documented for hand use), `setDocument`, `setHookState`, and the DevTools API
+  that `denext/devtools` already owns (`installDevtools`, `installInspector`,
+  `getInspectorTree`, `getIslandTimeline`, `getRenderModes`,
+  `getPageRenderMode`, `subscribe`, and the
+  `DenextDevtoolsApi`/`Inspect*`/`PageRenderMode`/`RenderModeEntry`/`SerializedValue`/`IslandHydration`/`ClientRegistry`/`Qrl`/`LayoutSegmentInfo`
+  types), plus `useMemoCache` (the compiler primitive lives on
+  `denext/compiler-runtime`). From `denext`: `IMAGE_ENDPOINT`, `actionEndpoint`,
+  `isValidAttrName`, `serializeStyle`, `streamToString`, `useMemoCache`,
+  `isServerAction`. From `denext/testing`: `FRAGMENT` (use `Fragment` from
+  `denext`). The embedding and plugin API stays public: `createApp`,
+  `defaultLoader`, `scanRoutes`,
+  `renderPage`/`renderDocument`/`renderToFlight*`, `serve*`, the middleware
+  runner, and the i18n and cache-store helpers; `denext/plugin-kit` is unchanged
+  (`enableFastRefresh`/`registerFamily` there now come from the refresh runtime
+  directly). Plugin packages that re-exported `FRAGMENT` from
+  `@denext/denext/server` import `Fragment` from `@denext/denext` instead. The
+  API reference (`apps/web/app/docs/api/reference.json`) and `llms-full.txt` are
+  regenerated. `mod.ts`, `src/server/mod.ts`, `src/client/mod.ts`,
+  `src/testing/mod.ts`, `src/plugin/kit.ts`, `src/compat/next/server.ts`,
+  `src/testing/render.ts`, `packages/{htmx,pages-router}/mod.ts`.
 
 ### Fixed
 
-- **React semantics.** A render-phase `setState` on the SERVER now converges in place like the client (the "derive state from props" idiom no longer produces a hydration mismatch); `useOptimistic` reverts when the transition/action that applied it settles — success or failure — even if `state` did not change, and `addOptimistic` keeps one identity; `useActionState`'s `dispatch` keeps one identity, never closes over stale state, and an action that throws surfaces through the nearest error boundary instead of a `console.error`; a `forwardRef` render function receives `props` WITHOUT `ref`; `use()` honors React-tagged thenables (`status`/`value`/`reason`); `useImperativeHandle` re-runs when the `ref` changes; a class boundary whose `getDerivedStateFromError` returns `null` still handles the error; `createPortal` and a `useSyncExternalStore` without `getServerSnapshot` throw on the server exactly as React's server renderers do; `denext/testing` exports `act`.
-- **Effects record their deps at COMMIT, not at render** (React's semantics): a render that is abandoned before commit (interrupted, or a shared hook cell touched by a discarded work-in-progress) no longer marks an effect's deps as already applied, so the committed re-render fires it; StrictMode's second render pass queues no duplicate effects. A mounted component that renders MORE hooks than before now throws React's "Rendered more hooks than during the previous render" instead of silently mis-pairing hook cells (a Fast Refresh swap is exempt). `src/client/fiber/hooks-dispatcher.ts`.
-- **Soft navigation.** A navigation superseded while its fetch was in flight no longer clobbers the newer navigation's document; a soft-nav fetch that lands on ANOTHER origin (an auth provider) hard-navigates instead of splicing the foreign body in; `router.refresh()` evicts the prefetch cache; `popstate` keeps the browser's restored scroll position; a `redirect()` thrown during a client render navigates instead of aborting the render. `src/client/navigation.ts`, `src/client/fiber/unwind.ts`.
-- **Middleware.** The routed request (header overrides applied) is what `headers()` / `NextRequest` adapters see; the socket peer address survives every request rebuild (middleware overrides, body caps), so the auth rate limiter and `NextRequest.ip` keep the real client; matchers are compiled once, not per request; the `NextRequest` adapter clones only requests WITH a body. `src/server/request-pipeline.ts`, `src/server/body.ts`.
-- **Build outputs are swapped atomically.** `denext build` renames the previous `client/` aside before the new one lands (a `denext start` reading mid-build sees the old or the new tree, never none); `denext export` renders into `out.staging/` and swaps it into `out/` at the end (a failed export never leaves an empty `out/`), and refuses a `generateStaticParams` value whose segment would write outside `out/`. `src/build/build-pipeline/finalize.ts`, `src/build/export-pipeline/`.
-- **Smaller fixes.** Build assets whose NAME does not change between builds (`<routeId>.js/.css`, `flight.js`) are `max-age=0, must-revalidate` (ETag/304) instead of `immutable` for a year — only content-hashed chunks and fonts are immutable; `loadEnv` skips a `.env` key the process has no `--allow-env` grant for instead of crashing at boot; the image optimizer's output-cache byte counter no longer drifts when a key is overwritten; a metadata `title.template` applies to a child's `title.default` (Next's semantics) and inserts titles containing `$&` literally; `NextResponse.rewrite`/`next` request-header overrides and Remix actions carry the viewer's request headers; one abort listener per streamed document (not one per hole); `requestTimeout`'s JSDoc states its 30 s default.
-- **Least-privilege `denext start` no longer 500s.** `publicEnv()` (every render), `isProductionEnv()` (every `getSession()`) and the shutdown-drain env read used `Deno.env.toObject()`/`get()` unguarded, which throw under a partial `--allow-env=PORT`; they go through a never-throwing reader now (`src/runtime/env-safe.ts`).
-- **Static files from `public/` speak HTTP properly**: a weak `ETag` + `Last-Modified` with `If-None-Match`/`If-Modified-Since` → 304, single byte `Range` → 206 (`Accept-Ranges: bytes`; Safari `<video>` seeking works), `Vary: Accept-Encoding` on every variant, `Cache-Control: public, max-age=0, must-revalidate`, and the length is taken from the OPEN handle (no stat/open race). `src/server/static.ts`.
-- **A connected Live viewer no longer forces a hard exit on deploy.** Live WebSockets never close on their own, so a graceful drain always ran to its deadline and `Deno.exit(0)`'d with requests in flight; the hub is now torn down (sockets closed) the moment shutdown begins. `src/build/prod-server.ts`.
-- **A loader `data(value, { status: 204 })` on a body-bearing response** no longer throws (the body is dropped for null-body statuses). `src/server/response-headers.ts`.
-- **`.env` tiers match Next.js**: `.env`, `.env.<mode>`, `.env.local` (not for `test`), `.env.<mode>.local`, later wins; mode = `DENEXT_ENV` ?? `NODE_ENV` ?? `development`. `src/server/env.ts`.
-- **A syntax error in a page shows in the browser.** The dev server answered a failed first render with a bare `Internal Server Error`; an HTML navigation that 500s now gets the recorded error (title, message, codeframe, stack) as a page that reloads when the rebuild succeeds. `src/build/dev-server/error-page.ts`.
-- **CSS-importing apps work from a JSR install.** The CSS import-map re-exec treated every non-`file://` entrypoint as a compiled binary and skipped itself, so `deno run -A jsr:@denext/denext/cli start` (and `deno install`) 500ed on `import "./globals.css"` with "identified a Css module". The guard is now `Deno.build.standalone` (a real `deno compile` binary); a JSR/https CLI re-execs its own module URL. `cli.ts`, `src/cli/self-exec.ts`.
-- **Generated `deno task`s pin the CLI.** `denext create` and `denext migrate` wrote `jsr:@denext/denext/cli` (JSR `latest`) next to an import map pinned to `^<version>`, so a fresh app ran a different denext than it imported. Tasks now use `jsr:@denext/denext@^<version>/cli`. `src/build/scaffold.ts`, `src/build/migrate.ts`, README.
-- **`denext migrate` wires a compatible Pages Router and a pinned denext.** `@denext/pages-router@^0.8.0` excluded the 0.9.x the rc.7 barrel requires; the version reader used `join(frameworkRoot(), …)` (corrupts a `https://` root from JSR) and silently emitted an unpinned `jsr:@denext/denext`. Now `^0.9.1` (asserted against the workspace package) and a scheme-agnostic `readFrameworkJson`.
-- **MCP import map matches AGENTS.md.** `next/navigation` mapped to `denext/server` (four of five names don't exist there; `redirect` has middleware semantics), `next/server` to `denext/server` (`NextRequest`/`NextResponse` live on `denext/next/server`), `next/font/google` to `denext`. `denext_check_snippet` flagged the _correct_ import as an error. `src/mcp/next-denext-map.ts`.
-- **`deno bundle` under Deno's minimum-dependency-age policy.** `DENEXT_MIN_DEP_AGE` is forwarded to the bundle child as `--min-dep-age`, and the opaque "Do not know how to load path: deno:jsr:@denext/…" failure (what every new app hits for 24 h after a publish) now explains the cause. `src/build/bundle.ts`.
-- **`next/head` dedupes by `key` and collapses singletons.** Two `<Head>` blocks emitting a `<meta>`/`<link>` with the same `key` now keep only the last one (Next's semantics), and `<meta charSet>` plus `<meta name="viewport">` collapse to one each; keyless distinct tags (two `<meta property="og:image">`) are all preserved, and `<title>` stays last-wins. The collapse set is deliberately conservative — only a user `key` and those two singletons — so nothing distinct is ever dropped. The dedup identity is captured when the tag is hoisted, before its attributes are serialized. `HeadCollector.tags` is now `HeadTag[]` (`{ html, dedup? }`) and the new `collapseHeadTags` export joins them; the KNOWN-LIMITATIONS entry is trimmed to the remaining gap (same-`name`/`httpEquiv`/`itemProp` metas and `<base>` are not collapsed).
-- **`Children.map`/`Children.toArray` re-key like React.** Both now return re-keyed clones using React's namespaced-key scheme (`.0`, `.1:0`, `.$userKey`, `mappedKey/.0`, with React's `=0`/`=2` escaping), instead of flattened copies of the authored vnodes; `null`/`undefined` callback results are dropped and `forEach`/`count`/`only` still hand back the authored vnodes. Derivation is purely positional, so server and client keys match byte-for-byte and hydration is unaffected. `Slot` (Radix `asChild`) inherits the React-correct keys. The `Children` re-key clause is gone from the KNOWN-LIMITATIONS internals-shim bullet.
-- **A named config export for a newly added `DenextConfig` field is no longer silently dropped.** `loadDenextConfig` merged named exports over the default object through a hand-listed key table whose `satisfies` clause checked validity but not exhaustiveness, so a field added to the type without a table entry was ignored when exported by name. The table is now the generated key list.
-- **Middleware matcher modifiers match Next.js.** `/dashboard/:path*` now matches bare `/dashboard` as well as `/dashboard/a/b` (the `*` and `?` modifiers make the segment and its leading slash optional; `+` needs at least one segment), so a `requireAuth` matcher no longer needs a second entry for the bare path.
-- **PPR shells render server-action forms with `method="post"`.** The Partial Prerendering host renderer was the one renderer that omitted it, so a `<form action={serverAction}>` inside a prerendered shell submitted as GET without JavaScript.
-- **Every Flight serializer escapes `$`-prefixed user keys.** Only the HTML+Flight renderer doubled a leading `$`; the buffered, streaming and PPR Flight serializers did not — and since the client parser reverses the escape unconditionally, a user object with a `$` key was silently mangled (`{ $count }` → `{ count }`) and a store document shaped like a Flight control tag could reach the parser un-escaped. The escape now lives in the shared object serializer.
-- **Auth cookie + secret hardening.** (1) `getSession` now pins `Secure` on every `__Host-`-prefixed session cookie at the session layer instead of relying on `x-forwarded-proto` detection — the prefix requires it, and a `__Host-` cookie emitted without `Secure` is silently dropped by browsers (the `@std/http` cookie layer already enforced this on the wire; the guarantee is now explicit and tested behind a proxy that omits the header). (2) A session secret shorter than 32 chars now **throws** under the production signal (`NODE_ENV`/`DENEXT_ENV=production`) instead of only warning, so a deploy with a placeholder secret fails fast rather than serving forgeable sessions; development keeps the once-per-process warning. The signal is shared with `denextAuth`'s `canonicalOrigin` check via the new `isProductionEnv()`. (3) `verifyIdToken` rejects an OIDC `id_token` whose `iat` lies in the future beyond the clock tolerance. Plus test coverage for the provider `profile` mappers (verified-email selection), the non-OIDC OAuth userinfo/emails path, the `signIn`/`session` callbacks and `requireAuth`'s authenticated pass-through. `src/server/session.ts`, `src/server/auth/{jwt,mod}.ts`, `tests/{session,auth-crypto,auth-providers}.test.ts`.
-- **`denext/testing`'s test client lives in `src/testing/client.ts` (internal; the barrel exports the same names).** The conformance prober imports it directly, which removes the one remaining `fallow-ignore` marker (a suppressed barrel cycle) — the repository now carries none.
-- **Every function in the repo is now at most 60 lines (internal; no public API change).** The last unit-size sweep of the fallow compliance drive: the in-memory and SQLite cache stores are classes (`LruTable`/`InMemoryCache`, `SqliteCache` over a module-level schema init + `tx`/`reindexTags`/`evict`), `unstable_cache` and `__useCache` share `lookupData`/`awaitLeader`/`leadFlight`/`storeData`/`reviveInBackground`; `buildPageContext` is segment-config + boundary wrapping + metadata/viewport resolution, the two PPR prerenders share `dynamicPrerender`/`hoistStaticHead`, and the control-signal UIs come from one `SIGNAL_UIS` table; the Flight PPR document, `renderFlightShell` and the streaming document all race holes through one `takeSettled`; the Pages Router `res` object is a `ResponseBuilder` class and its client bundler serves/writes through `serveBuiltFile`/`writePrebuilt`; `createTestClient`, `probeApp`, `usePictureInPicture` (listener + action hooks), the DevTools panel styles (per-section builders), inspector `buildNode`, the React DevTools hook handlers, the lint `hookCallFindings`, the `react-dom/server` stream adapters, the Remix fetcher's `postToAction`, class-component bailout/lifecycle helpers, `handleLiveUpgrade`, `createApp`'s `dispatch`, `createWorkInProgress`'s `carryOver`, the SSR dispatcher, and the migrate entry points were each split along the same lines. Examples (concurrency, image, native, resumability, actions, auth) and the bench hello workload extract their prose/controls into components, and every oversized e2e, integration and unit test body became named steps or helpers with identical assertions. `fallow health` now reports zero functions over 60 lines alongside zero complexity findings and zero dead code.
-- **Pre-rc.7 audit (security, production readiness, docs, React/Next parity).** Security: (1) a middleware matcher's trailing slash is now always optional and an unset `trailingSlash` 308-redirects `/x/` → `/x` (Next's default), so `GET /dashboard/` can no longer skip a `matcher: "/dashboard/:path*"` auth guard while the router still serves the page (CVE-2024-51479 class; the rc.6→HEAD matcher rewrite had traded one hole for another); matchers also gained Next's regex groups (`/((?!api|_next).*)`, `:id(\d+)`) — previously escaped to a literal that matched nothing, silently disabling a migrated app's middleware — and `{ source, has, missing }` object entries. (2) The credentials rate limiter no longer trusts `x-forwarded-for`/`x-real-ip` by default (a per-request forged header minted a fresh key per attempt): it keys on the socket peer `Deno.serve` reported (new `remoteAddrOf`), or the LAST forwarded hop when `AuthConfig.trustForwardedHeaders` is set; its in-memory store evicts expired windows first and never a key mid-lockout. (3) `verifyPassword` does a full scrypt derivation even for a missing/malformed stored hash, closing a user-enumeration timing oracle (empty hash rejected in 0.01 ms vs ~100 ms), and refuses a stored hash whose working set exceeds 256 MiB. (4) `denextAuth()` throws at boot (not per request) on a `<32`-char secret in production, and `denext start` sets `DENEXT_ENV=production` when the deploy set no signal — so the production guards actually fire under a plain `deno task start`. (5) `safeFetch` drops `authorization`/`cookie` on a cross-origin redirect hop. (6) Dev endpoints require a loopback or `allowedDevOrigins` Host (DNS-rebinding). (7) `/auth/signin/%zz` is a 404, not a URIError 500; a non-string `callbackUrl` is ignored; a `session` callback that mangles `expiresAt` gets the configured lifetime back.
-- **React/Next parity (pre-rc.7 audit).** SSR attributes follow ReactDOMServer: `defaultValue`/`defaultChecked` → `value`/`checked`, a `<textarea>`'s value is its text, a `<select>`'s value marks its `<option>`s `selected` (forms render filled-in before hydration and without JS), React's camelCase → HTML/SVG name map (`httpEquiv` → `http-equiv`, `strokeWidth` → `stroke-width`, `xlinkHref` → `xlink:href`), `"true"`/`"false"` for `draggable`/`spellCheck`/`contentEditable` and `aria-*`/`data-*`, CSS custom properties without `px`, `ms` vendor prefix. `Children.count`/`forEach`/`map` visit `null`/boolean leaves as `null` (React counts `[null, "a"]` as 2), flatten iterables, throw for plain objects; `Children.only` accepts only a single element. `next/head`: `<base>`/`<script>`/`<style>`/`<noscript>` inside `<Head>` reach the document head (server-inserted-HTML sink); `key` dedup survives `Children.map`/`cloneElement` (the identity now comes from the element, unwrapping React's `.$key` namespacing like Next's `unique()`). `renderToReadableStream` honors `identifierPrefix`. `Slot` (`asChild`) with nothing to merge onto renders `null` like Radix instead of throwing. Pages Router: `getServerSideProps`/`getStaticProps` `redirect.statusCode` is honored; same-page hash navigations emit `hashChangeStart`/`hashChangeComplete`. `next-intl`: the `yyyy` skeleton is the full year (only `yy` is 2-digit). `denext migrate` passes Next 16's top-level `cacheComponents` through.
-- **Production readiness (pre-rc.7 audit).** The Flight-bundle Live gate (`usesLive`) also scans modules the routes import from sibling workspace packages, so a `<Live>` component living outside the project directory no longer loses the transport in production builds.
-- **Pre-RC audit hardening (production, security, docs) of the above.** A four-dimension audit (production, security, documentation, React/Next parity) of everything since rc.5; parity was clean (0 gaps, no compat changes), and the findings on the new surface were fixed: (1) **Dev-loop stall** — the typed-module emit (`.denext/api.ts`) `await`ed a `deno doc` pass per API route on the request that triggered a rescan, stalling every reload after an edit; it's now fire-and-forget, guarded to run once per new manifest (`src/build/dev-server.ts`). (2) **Hang bound** — the typed API client's `apiRequest` had no timeout, so a Server-Component call to a wedged endpoint could pin an SSR render forever; it now applies a default 30s timeout composed with any caller signal (`timeoutMs` to override), and the MCP dev-state fetch got a 5s timeout (`src/runtime/api-client.ts`, `src/mcp/dev-client.ts`). (3) **Path containment** — `denext_render`'s component path (untrusted MCP input, `import()`ed) is now confined to the project tree, and `readPackageFile` rejects traversal paths (`src/mcp/inspect.ts`, `src/mcp/package-file.ts`). (4) **Console-capture opt-out** — server console capture (readable via the local dev-state endpoint) can be disabled with `DENEXT_DEV_CAPTURE_CONSOLE=0` for anyone who logs secrets in dev (`src/cli/commands/serve.ts`). (5) **Robustness** — `.denext/dev.json` is now removed on SIGINT (not only on drain), the MCP stdio read buffer is capped against an oversized message, and the concise `llms.txt` tool list is derived from the live tool registry so it can't under-report (it was listing 5 of 9). `src/mcp/server.ts`, `scripts/gen-llms-txt.ts`.
-- **Remix compat surface: all parity gaps closed (`denext/remix` fully mirrors `@remix-run/react`/`@remix-run/node`).** After bringing `src/compat/remix/` under the signature-parity gate, burned the known-gaps ledger to **0**. The signature-only deviations: `isCookie`/`createSession` are now exported (they existed privately), `isSession` is added, `useSearchParams(defaultInit)` honors default params for keys absent from the URL, and `defer(data, init?)` / `useFetcher({ key })` / `useHref`/`useFormAction`/`useResolvedPath` accept their Remix optional arguments. The two that needed real runtime work: **`data(value, init?)`** returns a value with a custom status/headers without JSON-serializing it (the value reaches `useLoaderData`/`useActionData` unchanged; a page loader's `init` is applied to the document response, a resource route builds `Response.json(value, init)`) — this also makes a loader/action's response **headers** apply generally (previously only `Set-Cookie` did), and **`replace(url, init?)`** issues a redirect the client follows with `location.replace` (no back-stack entry) instead of a push. `replace` also **fixes denext's own `redirect(url, "replace")` / `permanentRedirect(url, "replace")`** — the `RedirectType.replace` history mode was previously set on the signal but never honored; a Server Action redirect now threads it to the client. `src/compat/remix/{client,server}.ts`, `src/server/{app,action-handler,request-context}.ts`, `src/runtime/server-action.ts`.
-- **Post-Phase-3 audit (production, security, docs, React/Next deviation).** A four-dimension audit; findings fixed: (1) **Prod** — a `<Live>` data subscription's per-recompute re-authorization (`canSubscribe`) that threw (e.g. on a revoked mid-session) became an unhandled rejection in the fire-and-forget recompute and, with no global handler, **crashed the whole prod server**; it now degrades like a denied recompute (`src/server/live.ts`). The SQLite cache's `deleteByPath` orphaned tag rows (unbounded `tags` growth under repeated `revalidatePath`); it now cleans them in the same tx (`src/server/sqlite-cache.ts`). (2) **Security (dev-only)** — `devOriginAllowed` treated a missing `Origin` as allowed, but a cross-origin subresource GET (`<img>`/`<script>`) sends none, so a page a developer visited while `deno task dev` ran could reach the new `/_denext/open-in-editor` endpoint and spawn/flood their editor; the gate now rejects any request whose `Sec-Fetch-Site` is present and not `same-origin` first (`src/build/dev-server.ts`), plus a symlink `realPath` re-containment check in `resolveInProjectFile` and a `--` separator on the dev `deno check` spawn. (3) **React parity** — `react-is.isElement` accepted any unbranded `{type,props}` object (diverging from React and from denext's own `React.isValidElement`); it now requires the `$$typeof` brand, so libraries routing on `react-is` (Radix, emotion, react-hook-form) no longer misclassify data objects as elements (`src/compat/react-is.ts`; internal classifiers still unwrap structurally). Several documented-in-code-only deviations (`React.cache` off-request persistence, `next-intl` ICU subset, `next/head` no key-dedup, `Children`/introspection shims) are now in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
-- **Remix `shouldRevalidate` is unbounded, and `useBlocker` catches browser back/forward.** Two follow-on bounds closed: (1) the `shouldRevalidate` prior-data echo is no longer capped — when it's too large for request headers (Deno drops headers past ~16 KB) the client sends it in a JSON **POST body** instead (a soft-nav POST carrying `x-denext-nav`, which the dispatch treats as a render, not an action), so a skipped loader works for any data size. (2) `useBlocker` now also vetoes the **browser back/forward buttons** — the popstate is undone (the prior entry restored) and re-applied on `proceed()` — not just in-app `<Link>`/`useNavigate`/`<Form>` navigations. Validated end-to-end on the indie-stack with a 20 KB echo body. `src/compat/remix/{server,client,revalidation}.ts`, `src/client/navigation.ts`, `src/server/{app,request-context}.ts`.
-- **Remix `shouldRevalidate` now genuinely skips loaders on client revalidations.** A route's `shouldRevalidate` export is honored end-to-end: on a soft nav (or `router.refresh()`) the client echoes each mounted route's prior loader data + params (small, size-budgeted request headers, with the URL it's coming from and any submit's form context); the server evaluates `shouldRevalidate` and, when it returns `false`, **skips that loader's work** (the DB query) and renders the route from the echoed data — so an unchanged ancestor/route isn't re-queried on navigation. A route whose data exceeds the echo budget (~6 KB JSON) simply revalidates as normal (never stale). Always-revalidate remains the default (first paint, hard nav, no `shouldRevalidate`, or an explicit `true`). New isomorphic `src/compat/remix/revalidation.ts`; a generic `setNavHeadersProvider` seam in `src/client/navigation.ts`; server evaluation in `src/compat/remix/server.ts` (`RemixRoute`/`RemixLayout` deduped through a shared runner); the migration threads `shouldRevalidate` into the generated wrappers. Validated end-to-end on the indie-stack (an echoed marker proves the DB loader is skipped). Also: `migrate.ts` deduplicated (a shared `classifyDeps` + `writeAppRouterDenoJson` across the Next/Remix/SPA paths — which also fixes the SPA path pinning a non-numeric `catalog:` version) and the Flight serializers share a `serializeThenable` helper. `src/compat/remix/{revalidation,server,client}.ts`, `src/client/navigation.ts`, `src/build/{remix-migrate,migrate}.ts`, `src/jsx/{flight-scalar,render-to-flight,render-to-html-flight}.ts`.
-- **Remix migration: more of the surface, and the deferred-rejection edge (`useFetchers`, `useBlocker`, `useCatch`/`CatchBoundary`, `<Await errorElement>`, and the `start`-task perms).** Five follow-ups from the "perfect-ish" review: (1) **`useFetchers`** — an app-wide registry of in-flight fetchers for aggregated optimistic UI / a global pending indicator (each `useFetcher` publishes its live snapshot; the array surfaces the active ones). (2) **`useBlocker`** — veto an in-app soft navigation (unsaved-changes guard) via a new `navigate()` seam (`setSoftNavBlocker`), with the blocked→proceed/reset state machine; one active blocker, soft-nav only (browser back/forward + unload are documented bounds). (3) **`<Await errorElement>` now renders on a rejected `defer()`** — the rejection serializes to a plain error marker in the tail Flight (shared across all three serializers via `flight-scalar`), and `<Await>` renders `errorElement` with the error on `useAsyncError` (previously it rendered children with `null`); the client-promise path is covered too. (4) **Remix v1 `CatchBoundary`** — detected and wired to `error.tsx` (rendering it when it's the only boundary), with `useCatch()` added to read a thrown `Response`, plus a review note steering toward the v2 `ErrorBoundary` + `isRouteErrorResponse`. (5) The migrate-generated **`start` task now uses `-A`** — a migrated app re-execs a child `deno` at startup (CSS shim map + manual-node_modules module config), which a scoped perm set crashed on (`NotCapable`). Also: `shouldRevalidate` is extracted + flagged (denext always-revalidates — a documented perf-parity gap, not a correctness one). Validated end-to-end on the stock indie-stack. `src/compat/remix/client.ts`, `src/client/navigation.ts`, `src/jsx/{flight-scalar,render-to-flight,render-to-html-flight,render-to-flight-stream}.ts`, `src/build/{remix-migrate,hydration,migrate}.ts`.
-- **Remix migration: two real-world bugs (found validating a shop app with `lucide-react`/`clsx` + sessions).** (1) `@remix-run/*` imports in **shared non-route modules** (e.g. `app/sessions.ts`, utils, components) were left un-rewritten — the route transform only touched `app/routes/*` — so the build couldn't resolve them; the migration now remaps `@remix-run/*` / react-router imports across **all** app source. (2) A loader/action `Response`'s **`Set-Cookie` was dropped** when denext converted it to a redirect signal or JSON payload — breaking the canonical Remix login (`session.set(...)` then `redirect(url, { headers: { "Set-Cookie": await commitSession(session) } })`); the unwrap now forwards `Set-Cookie` onto the request's outgoing response, so the session cookie is set alongside the redirect. Verified end-to-end: the app migrates, builds (npm UI libs bundled), and the full login → Server Action → session commit → redirect → signed-in flow works in a real browser. `src/build/remix-migrate.ts`, `src/compat/remix/server.ts`.
-- **Remix session & cookie storage is now implemented** (previously a stub that didn't persist). `createCookie` is a first-class cookie that JSON-encodes its value and, given `secrets`, signs it with HMAC-SHA256 (tamper-evident, secret rotation) — reusing denext's own signed-cookie crypto — with a proper `Set-Cookie` serializer (Path/HttpOnly on by default, plus Max-Age/Expires/Domain/Secure/SameSite). On top of it: `createCookieSessionStorage` (whole session in the signed cookie, 4 KB guard), `createSessionStorage` (session id in the cookie, data in a caller-supplied store), and `createMemorySessionStorage` (a `Map`-backed store for dev/tests), each returning `getSession`/`commitSession`/`destroySession`, with a `Session` that supports `get`/`set`/`has`/`unset` and read-once `flash`. Multipart uploads land too: `unstable_parseMultipartFormData` (+ `parseMultipartFormData` alias) streams file parts through an `uploadHandler`, with `unstable_createMemoryUploadHandler` provided. `src/compat/remix/server.ts`, `src/server/session.ts` (crypto helpers exported).
-- **Remix `defer()` data now crosses the Flight boundary, and `useFetcher` loads/submits cross-route.** Two fixes: (1) a promise-valued client-component prop — a Remix `defer()` field, or any promise passed as data — previously serialized to `{}` (deferred data silently lost); the Flight serializers (streaming, HTML-flight, and PPR) now **await** a thenable prop and serialize its resolved value, so `<Await>`/`useAsyncValue` render real data (awaited, not yet incrementally streamed). Applied consistently across all three serializers via a new shared leaf-serialization helper (`src/jsx/flight-scalar.ts`), with taint-checking preserved on the resolved value. (2) `useFetcher` is no longer a soft-navigation stub: `fetcher.load(href)` fetches a route's loader data without navigating (a page route via its Flight payload, a resource route via its JSON), and `fetcher.submit`/`fetcher.Form` with an explicit `action` URL POSTs there and reads back the result — each settling into `fetcher.data` and revalidating. A mutating `<Form>`/`<fetcher.Form>` now also honors an explicit cross-route `action` URL as its DOM action (progressive-enhancement + resource-route targets), while a form with no explicit action still binds to the current route's Server Action. `src/jsx/render-to-flight.ts`, `src/jsx/render-to-html-flight.ts`, `src/jsx/render-to-ppr-flight.ts`, `src/compat/remix/client.ts`.
-- **Remix `defer()` now streams incrementally, and `useFetcher`/`<Form>` submit cross-route to a _page_ action** (the two remaining Remix review notes, closed). (1) On the default streaming Flight path a deferred promise prop no longer blocks the shell: the streaming serializer leaves a **value-hole placeholder** (instead of awaiting the promise — or, worse, the latent bug where it serialized to `{}`, which the non-streaming serializers were fixed for but `render-to-flight-stream` was not), so first paint flushes immediately with the `<Await>` fallback, the deferred content streams in as its Suspense boundary resolves, and the resolved value is substituted into the tail Flight — the client hydrates with real data. Placeholder ids are framework-generated (`dnxv…`) so user data shaped like a hole is never resolved away. (2) A migrated **page** route that has an `action` now also gets a generated `route.ts` POST handler, so a plain POST to the page URL runs the action (its URL params threaded from the matched pattern) — exactly Remix's "a POST to a route runs its action". denext dispatch lets `page.tsx` and `route.ts` coexist in one segment: a `route.ts` that has no handler for the request method (a 405) falls through to the page for a GET/HEAD render, so the page's GET and the route's action-POST are each served by method. `useFetcher.submit`/`<Form action>` to another page's action works (following a redirecting action as a soft navigation), and the no-JS cross-page post lands on the same handler. `src/jsx/render-to-flight-stream.ts`, `src/build/remix-migrate.ts`, `src/server/app.ts`, `src/compat/remix/{server,client}.ts`.
-- **Remix migration: thrown `redirect()`/`Response` from a loader/action are honored, and routes keep their Remix-canonical ids** (both found stress-testing the real `remix-run/indie-stack` — auth, sessions, Prisma, nested routes — end-to-end). (1) Remix uses **thrown** `Response`s as control flow — `throw redirect(url)` is the ubiquitous `requireUserId` auth-guard, and `throw json()/new Response()` signals errors. denext previously honored only a _returned_ redirect and turned a thrown one into an unhandled 500; now `runLoader`/`bindAction` route a thrown redirect to denext's redirect signal and a thrown non-redirect `Response` to a `RemixRouteErrorResponse` (so `ErrorBoundary`/`useRouteError`/`isRouteErrorResponse` see it), and `runLoaderResponse`/`runActionResponse` (resource routes + the page-action `route.ts`) return a thrown `Response` as the response, forwarding its `Set-Cookie`. (2) The migration now threads each route's **Remix-canonical id** (`root`, `routes/notes`, `routes/notes.$noteId`) into the route provider instead of a denext-internal `<key>:<role>` — so an app that keys on those strings (`useRouteLoaderData("root")`, `matches.find(m => m.id === "routes/notes")`) resolves after migration. Verified against a fresh indie-stack: signup→session cookie→protected route, create/read a note, dynamic `[noteId]`, resource-route `logout`, and thrown-redirect auth guards all work through the migrated tree. `src/compat/remix/server.ts`, `src/build/remix-migrate.ts`.
-- **Remix: a nested route can read an _ancestor_ layout's loader data during SSR** (`useRouteLoaderData("root")`, `useMatches().find(...)`, or `useUser()` → root loader — the indie-stack's protected `/notes` crashed on it). The streaming Flight renderer renders a client boundary's children twice — once for first-paint HTML (the ancestor `RemixRouteProvider`'s context is in scope) and once to serialize the boundary's `children`, where the nested route's server wrappers are re-expanded in the outer scope, so the parent provider's client context is missing and `useMatches` saw only the current route (any ancestor read threw and 500'd). Fixed with a **render-scoped matches store**: the server wrappers register each route's match (request-isolated via a `WeakMap` keyed by the request context, so it survives both passes and never leaks across requests), and `useMatches` prefers it when it is at least as complete as React context. A process-global seam bridges the server store to the `"use client"` hook without pulling `node:async_hooks` into the client bundle (and works even when the boundary is a separate bundle, e.g. next-compat); on the client the store is unset so the hydrated React tree is authoritative. Also: `@remix-run/css-bundle` is now rewritten to `denext/remix/server` (which re-exports `cssBundleHref` as `undefined`, since denext owns CSS), instead of being left as an unresolved import. `src/compat/remix/{matches-bridge,matches-server}.ts` (new), `src/compat/remix/{client,server}.ts`, `src/build/remix-migrate.ts`.
-- **Remix `useNavigation` now reports `loading` during a plain `<Link>`/`useNavigate`/history navigation** (previously it only reflected `<Form>`/`useSubmit`/`useFetcher` submissions and stayed `idle` on a link click). denext's client router now publishes a process-wide soft-navigation signal — new public `subscribeNavigating` / `getNavigatingHref` on the client-navigation API — raised for the whole same-origin navigation (covering delegated link clicks, `useNavigate`, and `popstate`), with a monotonic token so an overlapping navigation, not a slow earlier one settling late, owns the signal. Remix's `useNavigation` reads it and returns `{ state: "loading", location }` with the target, while an in-flight submission still takes precedence as `submitting`. `src/client/navigation.ts`, `mod.ts`, `src/compat/remix/client.ts`.
-- **Remix `<Form method="post">` action round-trip now drives the full Remix lifecycle** (browser-validated end-to-end). Two bugs kept a migrated Remix route's `<Form>` inert: (1) an interactive Remix route was misclassified as **static** — the hydration heuristic scans an app module for interactivity tokens but excludes framework internals, so a component whose only interactivity is `denext/remix`'s `useActionData`/`useNavigation`/`<Form>` shipped **zero JS** and never hydrated; the heuristic now recognizes the interactive Remix hooks/components (read-only `useLoaderData`/`useParams`/`useMatches` stay static). (2) The `<Form>` handed denext's reconciler the **Server-Action ref itself** as the DOM `action` — a _function_-valued `action` triggers denext's native React-19 form-action handling, which ran the action **outside** Remix's submit lifecycle (bypassing `useActionData`/`useNavigation`/revalidation); the `<Form>` now exposes only the endpoint **URL string** (no-JS progressive-enhancement fallback) and drives the submit through its own `onSubmit`→`runRouteAction`. Confirmed in a real browser: submit → `useNavigation` flips to `submitting` → the Server Action runs → `useActionData` reflects the result → the loader revalidates, with no full-page reload. `src/compat/remix/client.ts`, `src/build/hydration.ts`.
-- **`renderToPipeableStream` fires `onShellReady` at the real shell flush.** It previously fired the instant the stream object existed — before any rendering — because the compat `renderToReadableStream` resolves immediately and the callback was attached to that. The adapter now peeks the shell (denext enqueues the whole shell as the first chunk) and fires `onShellReady` only once it has rendered; a shell that throws surfaces as `onShellError` (not a spurious `onShellReady`), matching React's contract. The remaining fidelity caveat — the document is buffered, not `Writable`-backpressured — is unchanged (it's a property of denext's push-based streaming core, documented in KNOWN-LIMITATIONS with the full rationale). `src/compat/react-dom-server.ts`.
-- **`useActionState`'s `permalink` argument now enables no-JS form submits.** The React 19 third argument was accepted but ignored. When you pass a permalink, the `dispatch` used as `<form action={dispatch}>` now renders that URL as the SSR `action` attribute, so a form submitted before hydration navigates to the permalink instead of being lost; after hydration the client dispatch takes over. `src/runtime/actions.ts`, `src/jsx/render-to-string.ts`.
-- **A capturing `qrl` handler now resumes correctly instead of throwing.** In resumable mode the server stamped `data-dnx-h="evt:id"` for every `qrl` handler, so the delegated dispatcher ran a _capture-carrying_ handler with no scope and its `capturedScope()` threw (`capturedScope() called outside a qrl handler`). Because a handler's captures are the component's **live** signals/stores — which exist only once it mounts — such a handler can't run without mounting; it's now stamped bare `evt` (like a plain handler), so the client hydrates its island and re-runs it with the live captures. Closure-free qrls keep the fast no-mount `evt:id` path. `src/jsx/render-to-string.ts`.
-- **The lint plugin's hook rules are now independently toggleable.** The module documented four rules but registered only two: `hooks-in-component` and `no-hooks-in-async` were emitted from inside `rules-of-hooks`, so all three hook findings reported under one id and couldn't be enabled/disabled or `// deno-lint-ignore denext/no-hooks-in-async`'d on their own. They're now three separate rules over one shared traversal (identical detection, so no behavior change) — each carries its own `denext/<rule>` id. `src/lint/denext-plugin.ts`.
-- **`getServerSideProps` can now set cookies/headers via `context.res`, and sees `locales`/`defaultLocale` (Pages Router).** The gSSP context previously carried `req` but no `res`, so a page couldn't set a `Set-Cookie` or `Cache-Control` header from data fetching, and the i18n `locales`/`defaultLocale` were only in `__NEXT_DATA__`, not the context. `context.res` is now a minimal `ServerResponse`-shaped shim (`setHeader`/`getHeader`/`removeHeader`/`hasHeader`) whose headers are merged onto the outgoing response (multiple `Set-Cookie`s preserved), and `context.locales`/`context.defaultLocale` are populated from the i18n config. `packages/pages-router/src/handler.ts`.
-- **`<Link replace>` now replaces the history entry (Pages Router).** The `replace` prop was accepted and documented but dropped — a soft-nav click always pushed. `Link` now emits a `data-denext-replace` marker that the client runtime honors by calling `history.replaceState` instead of `pushState` (matching `router.replace`). `packages/pages-router/link.ts`, `src/client-runtime.ts`.
-- **The build now warns instead of silently dropping a transform rewrite.** When the experimental `experimental.asyncContext` pass instruments a module that the auto-memo compiler or the qrl handler-splitter also rewrote, only one rewrite could reach the client bundle (the maps are keyed by module URL and the last spread won). The build now logs a `WARNING` naming the affected modules rather than losing a rewrite in silence — the two experimental passes still aren't expected to be combined, but the collision is no longer invisible. Also removed a dead always-true ternary in the catch-all route matcher and corrected two stale source comments (`next/router` file scan, `react-dom/test-utils`). `src/build/build.ts`, `src/router/segments.ts`, `packages/pages-router/src/scan.ts`, `src/compat/test-utils.ts`.
-- **`client:*` island directives now type-check on any component.** Writing a resumability hydration directive on an island — `<Widget label="x" client:idle />` — was a TypeScript error (`Property 'client:idle' does not exist on type '{ label: string; }'`) because the directives weren't declared anywhere in denext's JSX namespace. They're now on `JSX.IntrinsicAttributes` (`src/jsx/types.ts`) — the standard mechanism for props allowed on every element, the same place `key` lives — so `client:load` / `client:idle` / `client:visible` / `client:interaction` / `client:media` (boolean or a media-query string) / `client:only` are optional on all intrinsic tags and components without each component redeclaring them. Purely additive; the runtime already strips every `client:*` key before it reaches the DOM.
-- **`cacheKeyParams` now dev-warns when a cached render bakes in a dropped `searchParams`.** Narrowing the ISR key with `cacheKeyParams` (so junk params don't fork the cache) has a documented edge: a `searchParams` value the key ignores, read into a whole-body-cached render, is baked into the shared entry and can be served to other requests. When the entire body is cached (a plain ISR render or a no-hole PPR/Flight shell), denext now records which param names the render read and, in dev, warns and names the dropped ones — turning a silent correctness boundary into a loud one. A with-holes PPR shell can still escape the read into a per-request hole, so it relies on the documented boundary rather than the warning. Zero cost when `cacheKeyParams` isn't set (the `searchParams` object is untouched). `src/server/request-context.ts`, `src/server/render-page.ts`, `src/server/app.ts`.
-- **The build now works when denext is run straight from JSR**, not only from a local checkout. `frameworkRoot()` and 12 build call sites assumed the framework was on the local filesystem (`fromFileUrl(import.meta.url)` / `join(frameworkRoot(), …)` + `readTextFile`), so a migrated app's generated `deno task build` — which runs `deno run -A jsr:@denext/denext/cli build .` — threw `URL must be a file URL: received "https:"` before the build started. Framework-resource access is now scheme-agnostic (fetches when remote); validated by building minimal native **and** compat apps through an `http://`-served framework, guarded by `tests/e2e/remote-framework-build.e2e.test.ts`. (Pre-existing since ≤1.4.0; all prior validation used a local-file overlay that masked it.)
-- **`migrate --desktop` generates a correct, runnable, right-sized `deno desktop` bundle.** The generated `desktop` task now bakes in what the packaged app needs: `--allow-net --allow-read --allow-env` (a compiled app runs with no permissions otherwise, so `runDesktop` threw `Requires env access to "PORT"` and the window came up black), `--include out` (embed the static export itself — it is read at runtime via dynamic paths, so without this it was left out of the bundle and the packaged app served nothing on another machine — verified: the `out/` assets return 200 from the packaged binary), and `--exclude-unused-npm` (embed only the npm packages the desktop entry reaches, not the app's whole lockfile — a monorepo SPA dropped from **2.4GB to ~104MB**). Validated by rebuilding + running a real monorepo SPA (T3) end to end.
-- **`migrate` writes a `.gitignore` for denext's generated build artifacts** — `.denext/` (build cache), `out/` (static export), and (with `--desktop`) `desktop-icon.png` (the icon `export` composes from `spa.desktop.icon`; the config is the source of truth, this is just a build artifact). Creates the file if absent, appends only the missing lines under a one-line marker (never reorders/removes yours), and is idempotent.
-- **The generated desktop `desktop.ts` always wires `spa.proxy`.** It now reads `config.spa?.proxy` unconditionally (harmlessly `undefined` when unset), so **adding a backend reverse proxy to `denext.config.ts` after migrating just works** — no `desktop.ts` hand-edit or re-migration. Previously the proxy branch was only emitted when `migrate --desktop --backend …` was used, so a proxy added later was silently ignored and the packaged app couldn't reach its backend same-origin (breaking cookie-authed local backends).
-- **A converted pnpm/yarn app (`nodeModulesDir: "manual"`) now builds from a local denext checkout.** The build re-execs under the app's manual mode, which resolves _every_ npm specifier — the framework's own build machinery (`esbuild`, `sass`, `lightningcss-wasm`, …) included — from the `node_modules` beside the merged config. That tree carried only the app's deps, so the re-exec died with `Could not find a matching package for 'npm:esbuild@^0.24.0' in the node_modules directory` the moment it loaded `next-compat.ts`. The framework's own npm deps are now materialized into a framework-only `node_modules` beside the merged config (an isolated `deno install`, cached across builds); the app's own deps still resolve via the app's own config. Covers both the CSS and module re-exec paths; guarded by `tests/e2e/manual-node-modules-build.e2e.test.ts`. (Surfaced via `--denext-local-path`; the JSR path skips the re-exec entirely.)
-- **`build`/`export`/`dev` no longer mutate a converted app's committed `deno.json`.** For a manual-`node_modules` app (converted Next/SPA), Deno resolves an app module's `.css` imports via the app's own `deno.json`, so denext had to add css→shim redirects there — and left them committed, with machine-specific absolute paths (`/Users/…/.denext/css-shims/*`), re-dirtying the file on every build (a commit-parity problem). Those redirects are now applied **transiently**: the CLI backs up the config, injects them for the build child, and restores the exact bytes once it exits (self-healing a killed run on the next build). `deno task build/export` leaves `deno.json` byte-identical. `migrate` also now gitignores the compiled Tailwind output (`src/index.gen.css`). Guarded by `tests/css.test.ts`.
-- **Hook `deps` params now accept a `readonly` array (React parity).** `useEffect`, `useMemo`, `useCallback`, `useLayoutEffect`, `useInsertionEffect`, and `useImperativeHandle` (and the internal `Dispatcher` contract) typed `deps` as a mutable `unknown[]`, stricter than React's `readonly DependencyList` — so passing a `readonly` deps array (as `useAsyncEffect` does) was a type error. The whole surface is widened to `DependencyList`; strictly more permissive, so existing mutable-array callers are unaffected.
-- **Cross-app cache poisoning.** The durable cache lives in each project's `.denext/cache.db`
-  (not the launcher's cwd) and is cleared on `build`, so parallel apps/tests never share or
-  poison one cache. Server restarts still persist it.
-- **PPR shell fields dropped by the durable cache.** The SQLite store now persists a cached PPR
-  shell's `holeIds` / `flightShell` / `headExtras` / etc., so a cached PPR page re-splices its
-  dynamic holes instead of being served verbatim.
-- **CSS-in-JS SSR correctness.** `useServerInsertedHTML` callbacks now flush on the streaming /
-  Flight / PPR shells (audit H1), styled-components reads its static boundary + tags correctly, and
-  the SSR bundle picks each dependency's Node build with a working `require` (not browser code).
-- **`tsconfig` parsing.** `tsconfig.json` is JSONC-parsed, fixing a silent drop of the `@/` path
-  alias; a `next/head` shim resolves on the native path.
-- **Compat hardening (audit).** `@denext/htmx`'s vendored runtime integrity hash is pinned and
-  asserted in tests; `migrate` / pages-router gain a `deno.json` guard, a config-eval timeout, and
-  a node-resolve opt-out.
+- **React semantics.** A render-phase `setState` on the SERVER now converges in
+  place like the client (the "derive state from props" idiom no longer produces
+  a hydration mismatch); `useOptimistic` reverts when the transition/action that
+  applied it settles — success or failure — even if `state` did not change, and
+  `addOptimistic` keeps one identity; `useActionState`'s `dispatch` keeps one
+  identity, never closes over stale state, and an action that throws surfaces
+  through the nearest error boundary instead of a `console.error`; a
+  `forwardRef` render function receives `props` WITHOUT `ref`; `use()` honors
+  React-tagged thenables (`status`/`value`/`reason`); `useImperativeHandle`
+  re-runs when the `ref` changes; a class boundary whose
+  `getDerivedStateFromError` returns `null` still handles the error;
+  `createPortal` and a `useSyncExternalStore` without `getServerSnapshot` throw
+  on the server exactly as React's server renderers do; `denext/testing` exports
+  `act`.
+- **Effects record their deps at COMMIT, not at render** (React's semantics): a
+  render that is abandoned before commit (interrupted, or a shared hook cell
+  touched by a discarded work-in-progress) no longer marks an effect's deps as
+  already applied, so the committed re-render fires it; StrictMode's second
+  render pass queues no duplicate effects. A mounted component that renders MORE
+  hooks than before now throws React's "Rendered more hooks than during the
+  previous render" instead of silently mis-pairing hook cells (a Fast Refresh
+  swap is exempt). `src/client/fiber/hooks-dispatcher.ts`.
+- **Soft navigation.** A navigation superseded while its fetch was in flight no
+  longer clobbers the newer navigation's document; a soft-nav fetch that lands
+  on ANOTHER origin (an auth provider) hard-navigates instead of splicing the
+  foreign body in; `router.refresh()` evicts the prefetch cache; `popstate`
+  keeps the browser's restored scroll position; a `redirect()` thrown during a
+  client render navigates instead of aborting the render.
+  `src/client/navigation.ts`, `src/client/fiber/unwind.ts`.
+- **Middleware.** The routed request (header overrides applied) is what
+  `headers()` / `NextRequest` adapters see; the socket peer address survives
+  every request rebuild (middleware overrides, body caps), so the auth rate
+  limiter and `NextRequest.ip` keep the real client; matchers are compiled once,
+  not per request; the `NextRequest` adapter clones only requests WITH a body.
+  `src/server/request-pipeline.ts`, `src/server/body.ts`.
+- **Build outputs are swapped atomically.** `denext build` renames the previous
+  `client/` aside before the new one lands (a `denext start` reading mid-build
+  sees the old or the new tree, never none); `denext export` renders into
+  `out.staging/` and swaps it into `out/` at the end (a failed export never
+  leaves an empty `out/`), and refuses a `generateStaticParams` value whose
+  segment would write outside `out/`. `src/build/build-pipeline/finalize.ts`,
+  `src/build/export-pipeline/`.
+- **Smaller fixes.** Build assets whose NAME does not change between builds
+  (`<routeId>.js/.css`, `flight.js`) are `max-age=0, must-revalidate` (ETag/304)
+  instead of `immutable` for a year — only content-hashed chunks and fonts are
+  immutable; `loadEnv` skips a `.env` key the process has no `--allow-env` grant
+  for instead of crashing at boot; the image optimizer's output-cache byte
+  counter no longer drifts when a key is overwritten; a metadata
+  `title.template` applies to a child's `title.default` (Next's semantics) and
+  inserts titles containing `$&` literally; `NextResponse.rewrite`/`next`
+  request-header overrides and Remix actions carry the viewer's request headers;
+  one abort listener per streamed document (not one per hole);
+  `requestTimeout`'s JSDoc states its 30 s default.
+- **Least-privilege `denext start` no longer 500s.** `publicEnv()` (every
+  render), `isProductionEnv()` (every `getSession()`) and the shutdown-drain env
+  read used `Deno.env.toObject()`/`get()` unguarded, which throw under a partial
+  `--allow-env=PORT`; they go through a never-throwing reader now
+  (`src/runtime/env-safe.ts`).
+- **Static files from `public/` speak HTTP properly**: a weak `ETag` +
+  `Last-Modified` with `If-None-Match`/`If-Modified-Since` → 304, single byte
+  `Range` → 206 (`Accept-Ranges: bytes`; Safari `<video>` seeking works),
+  `Vary: Accept-Encoding` on every variant,
+  `Cache-Control: public, max-age=0, must-revalidate`, and the length is taken
+  from the OPEN handle (no stat/open race). `src/server/static.ts`.
+- **A connected Live viewer no longer forces a hard exit on deploy.** Live
+  WebSockets never close on their own, so a graceful drain always ran to its
+  deadline and `Deno.exit(0)`'d with requests in flight; the hub is now torn
+  down (sockets closed) the moment shutdown begins. `src/build/prod-server.ts`.
+- **A loader `data(value, { status: 204 })` on a body-bearing response** no
+  longer throws (the body is dropped for null-body statuses).
+  `src/server/response-headers.ts`.
+- **`.env` tiers match Next.js**: `.env`, `.env.<mode>`, `.env.local` (not for
+  `test`), `.env.<mode>.local`, later wins; mode = `DENEXT_ENV` ?? `NODE_ENV` ??
+  `development`. `src/server/env.ts`.
+- **A syntax error in a page shows in the browser.** The dev server answered a
+  failed first render with a bare `Internal Server Error`; an HTML navigation
+  that 500s now gets the recorded error (title, message, codeframe, stack) as a
+  page that reloads when the rebuild succeeds.
+  `src/build/dev-server/error-page.ts`.
+- **CSS-importing apps work from a JSR install.** The CSS import-map re-exec
+  treated every non-`file://` entrypoint as a compiled binary and skipped
+  itself, so `deno run -A jsr:@denext/denext/cli start` (and `deno install`)
+  500ed on `import "./globals.css"` with "identified a Css module". The guard is
+  now `Deno.build.standalone` (a real `deno compile` binary); a JSR/https CLI
+  re-execs its own module URL. `cli.ts`, `src/cli/self-exec.ts`.
+- **Generated `deno task`s pin the CLI.** `denext create` and `denext migrate`
+  wrote `jsr:@denext/denext/cli` (JSR `latest`) next to an import map pinned to
+  `^<version>`, so a fresh app ran a different denext than it imported. Tasks
+  now use `jsr:@denext/denext@^<version>/cli`. `src/build/scaffold.ts`,
+  `src/build/migrate.ts`, README.
+- **`denext migrate` wires a compatible Pages Router and a pinned denext.**
+  `@denext/pages-router@^0.8.0` excluded the 0.9.x the rc.7 barrel requires; the
+  version reader used `join(frameworkRoot(), …)` (corrupts a `https://` root
+  from JSR) and silently emitted an unpinned `jsr:@denext/denext`. Now `^0.9.1`
+  (asserted against the workspace package) and a scheme-agnostic
+  `readFrameworkJson`.
+- **MCP import map matches AGENTS.md.** `next/navigation` mapped to
+  `denext/server` (four of five names don't exist there; `redirect` has
+  middleware semantics), `next/server` to `denext/server`
+  (`NextRequest`/`NextResponse` live on `denext/next/server`),
+  `next/font/google` to `denext`. `denext_check_snippet` flagged the _correct_
+  import as an error. `src/mcp/next-denext-map.ts`.
+- **`deno bundle` under Deno's minimum-dependency-age policy.**
+  `DENEXT_MIN_DEP_AGE` is forwarded to the bundle child as `--min-dep-age`, and
+  the opaque "Do not know how to load path: deno:jsr:@denext/…" failure (what
+  every new app hits for 24 h after a publish) now explains the cause.
+  `src/build/bundle.ts`.
+- **`next/head` dedupes by `key` and collapses singletons.** Two `<Head>` blocks
+  emitting a `<meta>`/`<link>` with the same `key` now keep only the last one
+  (Next's semantics), and `<meta charSet>` plus `<meta name="viewport">`
+  collapse to one each; keyless distinct tags (two `<meta property="og:image">`)
+  are all preserved, and `<title>` stays last-wins. The collapse set is
+  deliberately conservative — only a user `key` and those two singletons — so
+  nothing distinct is ever dropped. The dedup identity is captured when the tag
+  is hoisted, before its attributes are serialized. `HeadCollector.tags` is now
+  `HeadTag[]` (`{ html, dedup? }`) and the new `collapseHeadTags` export joins
+  them; the KNOWN-LIMITATIONS entry is trimmed to the remaining gap
+  (same-`name`/`httpEquiv`/`itemProp` metas and `<base>` are not collapsed).
+- **`Children.map`/`Children.toArray` re-key like React.** Both now return
+  re-keyed clones using React's namespaced-key scheme (`.0`, `.1:0`,
+  `.$userKey`, `mappedKey/.0`, with React's `=0`/`=2` escaping), instead of
+  flattened copies of the authored vnodes; `null`/`undefined` callback results
+  are dropped and `forEach`/`count`/`only` still hand back the authored vnodes.
+  Derivation is purely positional, so server and client keys match byte-for-byte
+  and hydration is unaffected. `Slot` (Radix `asChild`) inherits the
+  React-correct keys. The `Children` re-key clause is gone from the
+  KNOWN-LIMITATIONS internals-shim bullet.
+- **A named config export for a newly added `DenextConfig` field is no longer
+  silently dropped.** `loadDenextConfig` merged named exports over the default
+  object through a hand-listed key table whose `satisfies` clause checked
+  validity but not exhaustiveness, so a field added to the type without a table
+  entry was ignored when exported by name. The table is now the generated key
+  list.
+- **Middleware matcher modifiers match Next.js.** `/dashboard/:path*` now
+  matches bare `/dashboard` as well as `/dashboard/a/b` (the `*` and `?`
+  modifiers make the segment and its leading slash optional; `+` needs at least
+  one segment), so a `requireAuth` matcher no longer needs a second entry for
+  the bare path.
+- **PPR shells render server-action forms with `method="post"`.** The Partial
+  Prerendering host renderer was the one renderer that omitted it, so a
+  `<form action={serverAction}>` inside a prerendered shell submitted as GET
+  without JavaScript.
+- **Every Flight serializer escapes `$`-prefixed user keys.** Only the
+  HTML+Flight renderer doubled a leading `$`; the buffered, streaming and PPR
+  Flight serializers did not — and since the client parser reverses the escape
+  unconditionally, a user object with a `$` key was silently mangled
+  (`{ $count }` → `{ count }`) and a store document shaped like a Flight control
+  tag could reach the parser un-escaped. The escape now lives in the shared
+  object serializer.
+- **Auth cookie + secret hardening.** (1) `getSession` now pins `Secure` on
+  every `__Host-`-prefixed session cookie at the session layer instead of
+  relying on `x-forwarded-proto` detection — the prefix requires it, and a
+  `__Host-` cookie emitted without `Secure` is silently dropped by browsers (the
+  `@std/http` cookie layer already enforced this on the wire; the guarantee is
+  now explicit and tested behind a proxy that omits the header). (2) A session
+  secret shorter than 32 chars now **throws** under the production signal
+  (`NODE_ENV`/`DENEXT_ENV=production`) instead of only warning, so a deploy with
+  a placeholder secret fails fast rather than serving forgeable sessions;
+  development keeps the once-per-process warning. The signal is shared with
+  `denextAuth`'s `canonicalOrigin` check via the new `isProductionEnv()`. (3)
+  `verifyIdToken` rejects an OIDC `id_token` whose `iat` lies in the future
+  beyond the clock tolerance. Plus test coverage for the provider `profile`
+  mappers (verified-email selection), the non-OIDC OAuth userinfo/emails path,
+  the `signIn`/`session` callbacks and `requireAuth`'s authenticated
+  pass-through. `src/server/session.ts`, `src/server/auth/{jwt,mod}.ts`,
+  `tests/{session,auth-crypto,auth-providers}.test.ts`.
+- **`denext/testing`'s test client lives in `src/testing/client.ts` (internal;
+  the barrel exports the same names).** The conformance prober imports it
+  directly, which removes the one remaining `fallow-ignore` marker (a suppressed
+  barrel cycle) — the repository now carries none.
+- **Every function in the repo is now at most 60 lines (internal; no public API
+  change).** The last unit-size sweep of the fallow compliance drive: the
+  in-memory and SQLite cache stores are classes (`LruTable`/`InMemoryCache`,
+  `SqliteCache` over a module-level schema init + `tx`/`reindexTags`/`evict`),
+  `unstable_cache` and `__useCache` share
+  `lookupData`/`awaitLeader`/`leadFlight`/`storeData`/`reviveInBackground`;
+  `buildPageContext` is segment-config + boundary wrapping + metadata/viewport
+  resolution, the two PPR prerenders share `dynamicPrerender`/`hoistStaticHead`,
+  and the control-signal UIs come from one `SIGNAL_UIS` table; the Flight PPR
+  document, `renderFlightShell` and the streaming document all race holes
+  through one `takeSettled`; the Pages Router `res` object is a
+  `ResponseBuilder` class and its client bundler serves/writes through
+  `serveBuiltFile`/`writePrebuilt`; `createTestClient`, `probeApp`,
+  `usePictureInPicture` (listener + action hooks), the DevTools panel styles
+  (per-section builders), inspector `buildNode`, the React DevTools hook
+  handlers, the lint `hookCallFindings`, the `react-dom/server` stream adapters,
+  the Remix fetcher's `postToAction`, class-component bailout/lifecycle helpers,
+  `handleLiveUpgrade`, `createApp`'s `dispatch`, `createWorkInProgress`'s
+  `carryOver`, the SSR dispatcher, and the migrate entry points were each split
+  along the same lines. Examples (concurrency, image, native, resumability,
+  actions, auth) and the bench hello workload extract their prose/controls into
+  components, and every oversized e2e, integration and unit test body became
+  named steps or helpers with identical assertions. `fallow health` now reports
+  zero functions over 60 lines alongside zero complexity findings and zero dead
+  code.
+- **Pre-rc.7 audit (security, production readiness, docs, React/Next parity).**
+  Security: (1) a middleware matcher's trailing slash is now always optional and
+  an unset `trailingSlash` 308-redirects `/x/` → `/x` (Next's default), so
+  `GET /dashboard/` can no longer skip a `matcher: "/dashboard/:path*"` auth
+  guard while the router still serves the page (CVE-2024-51479 class; the
+  rc.6→HEAD matcher rewrite had traded one hole for another); matchers also
+  gained Next's regex groups (`/((?!api|_next).*)`, `:id(\d+)`) — previously
+  escaped to a literal that matched nothing, silently disabling a migrated app's
+  middleware — and `{ source, has, missing }` object entries. (2) The
+  credentials rate limiter no longer trusts `x-forwarded-for`/`x-real-ip` by
+  default (a per-request forged header minted a fresh key per attempt): it keys
+  on the socket peer `Deno.serve` reported (new `remoteAddrOf`), or the LAST
+  forwarded hop when `AuthConfig.trustForwardedHeaders` is set; its in-memory
+  store evicts expired windows first and never a key mid-lockout. (3)
+  `verifyPassword` does a full scrypt derivation even for a missing/malformed
+  stored hash, closing a user-enumeration timing oracle (empty hash rejected in
+  0.01 ms vs ~100 ms), and refuses a stored hash whose working set exceeds 256
+  MiB. (4) `denextAuth()` throws at boot (not per request) on a `<32`-char
+  secret in production, and `denext start` sets `DENEXT_ENV=production` when the
+  deploy set no signal — so the production guards actually fire under a plain
+  `deno task start`. (5) `safeFetch` drops `authorization`/`cookie` on a
+  cross-origin redirect hop. (6) Dev endpoints require a loopback or
+  `allowedDevOrigins` Host (DNS-rebinding). (7) `/auth/signin/%zz` is a 404, not
+  a URIError 500; a non-string `callbackUrl` is ignored; a `session` callback
+  that mangles `expiresAt` gets the configured lifetime back.
+- **React/Next parity (pre-rc.7 audit).** SSR attributes follow ReactDOMServer:
+  `defaultValue`/`defaultChecked` → `value`/`checked`, a `<textarea>`'s value is
+  its text, a `<select>`'s value marks its `<option>`s `selected` (forms render
+  filled-in before hydration and without JS), React's camelCase → HTML/SVG name
+  map (`httpEquiv` → `http-equiv`, `strokeWidth` → `stroke-width`, `xlinkHref` →
+  `xlink:href`), `"true"`/`"false"` for
+  `draggable`/`spellCheck`/`contentEditable` and `aria-*`/`data-*`, CSS custom
+  properties without `px`, `ms` vendor prefix. `Children.count`/`forEach`/`map`
+  visit `null`/boolean leaves as `null` (React counts `[null, "a"]` as 2),
+  flatten iterables, throw for plain objects; `Children.only` accepts only a
+  single element. `next/head`: `<base>`/`<script>`/`<style>`/`<noscript>` inside
+  `<Head>` reach the document head (server-inserted-HTML sink); `key` dedup
+  survives `Children.map`/`cloneElement` (the identity now comes from the
+  element, unwrapping React's `.$key` namespacing like Next's `unique()`).
+  `renderToReadableStream` honors `identifierPrefix`. `Slot` (`asChild`) with
+  nothing to merge onto renders `null` like Radix instead of throwing. Pages
+  Router: `getServerSideProps`/`getStaticProps` `redirect.statusCode` is
+  honored; same-page hash navigations emit
+  `hashChangeStart`/`hashChangeComplete`. `next-intl`: the `yyyy` skeleton is
+  the full year (only `yy` is 2-digit). `denext migrate` passes Next 16's
+  top-level `cacheComponents` through.
+- **Production readiness (pre-rc.7 audit).** The Flight-bundle Live gate
+  (`usesLive`) also scans modules the routes import from sibling workspace
+  packages, so a `<Live>` component living outside the project directory no
+  longer loses the transport in production builds.
+- **Pre-RC audit hardening (production, security, docs) of the above.** A
+  four-dimension audit (production, security, documentation, React/Next parity)
+  of everything since rc.5; parity was clean (0 gaps, no compat changes), and
+  the findings on the new surface were fixed: (1) **Dev-loop stall** — the
+  typed-module emit (`.denext/api.ts`) `await`ed a `deno doc` pass per API route
+  on the request that triggered a rescan, stalling every reload after an edit;
+  it's now fire-and-forget, guarded to run once per new manifest
+  (`src/build/dev-server.ts`). (2) **Hang bound** — the typed API client's
+  `apiRequest` had no timeout, so a Server-Component call to a wedged endpoint
+  could pin an SSR render forever; it now applies a default 30s timeout composed
+  with any caller signal (`timeoutMs` to override), and the MCP dev-state fetch
+  got a 5s timeout (`src/runtime/api-client.ts`, `src/mcp/dev-client.ts`). (3)
+  **Path containment** — `denext_render`'s component path (untrusted MCP input,
+  `import()`ed) is now confined to the project tree, and `readPackageFile`
+  rejects traversal paths (`src/mcp/inspect.ts`, `src/mcp/package-file.ts`). (4)
+  **Console-capture opt-out** — server console capture (readable via the local
+  dev-state endpoint) can be disabled with `DENEXT_DEV_CAPTURE_CONSOLE=0` for
+  anyone who logs secrets in dev (`src/cli/commands/serve.ts`). (5)
+  **Robustness** — `.denext/dev.json` is now removed on SIGINT (not only on
+  drain), the MCP stdio read buffer is capped against an oversized message, and
+  the concise `llms.txt` tool list is derived from the live tool registry so it
+  can't under-report (it was listing 5 of 9). `src/mcp/server.ts`,
+  `scripts/gen-llms-txt.ts`.
+- **Remix compat surface: all parity gaps closed (`denext/remix` fully mirrors
+  `@remix-run/react`/`@remix-run/node`).** After bringing `src/compat/remix/`
+  under the signature-parity gate, burned the known-gaps ledger to **0**. The
+  signature-only deviations: `isCookie`/`createSession` are now exported (they
+  existed privately), `isSession` is added, `useSearchParams(defaultInit)`
+  honors default params for keys absent from the URL, and `defer(data, init?)` /
+  `useFetcher({ key })` / `useHref`/`useFormAction`/`useResolvedPath` accept
+  their Remix optional arguments. The two that needed real runtime work:
+  **`data(value, init?)`** returns a value with a custom status/headers without
+  JSON-serializing it (the value reaches `useLoaderData`/`useActionData`
+  unchanged; a page loader's `init` is applied to the document response, a
+  resource route builds `Response.json(value, init)`) — this also makes a
+  loader/action's response **headers** apply generally (previously only
+  `Set-Cookie` did), and **`replace(url, init?)`** issues a redirect the client
+  follows with `location.replace` (no back-stack entry) instead of a push.
+  `replace` also **fixes denext's own `redirect(url, "replace")` /
+  `permanentRedirect(url, "replace")`** — the `RedirectType.replace` history
+  mode was previously set on the signal but never honored; a Server Action
+  redirect now threads it to the client. `src/compat/remix/{client,server}.ts`,
+  `src/server/{app,action-handler,request-context}.ts`,
+  `src/runtime/server-action.ts`.
+- **Post-Phase-3 audit (production, security, docs, React/Next deviation).** A
+  four-dimension audit; findings fixed: (1) **Prod** — a `<Live>` data
+  subscription's per-recompute re-authorization (`canSubscribe`) that threw
+  (e.g. on a revoked mid-session) became an unhandled rejection in the
+  fire-and-forget recompute and, with no global handler, **crashed the whole
+  prod server**; it now degrades like a denied recompute (`src/server/live.ts`).
+  The SQLite cache's `deleteByPath` orphaned tag rows (unbounded `tags` growth
+  under repeated `revalidatePath`); it now cleans them in the same tx
+  (`src/server/sqlite-cache.ts`). (2) **Security (dev-only)** —
+  `devOriginAllowed` treated a missing `Origin` as allowed, but a cross-origin
+  subresource GET (`<img>`/`<script>`) sends none, so a page a developer visited
+  while `deno task dev` ran could reach the new `/_denext/open-in-editor`
+  endpoint and spawn/flood their editor; the gate now rejects any request whose
+  `Sec-Fetch-Site` is present and not `same-origin` first
+  (`src/build/dev-server.ts`), plus a symlink `realPath` re-containment check in
+  `resolveInProjectFile` and a `--` separator on the dev `deno check` spawn. (3)
+  **React parity** — `react-is.isElement` accepted any unbranded `{type,props}`
+  object (diverging from React and from denext's own `React.isValidElement`); it
+  now requires the `$$typeof` brand, so libraries routing on `react-is` (Radix,
+  emotion, react-hook-form) no longer misclassify data objects as elements
+  (`src/compat/react-is.ts`; internal classifiers still unwrap structurally).
+  Several documented-in-code-only deviations (`React.cache` off-request
+  persistence, `next-intl` ICU subset, `next/head` no key-dedup,
+  `Children`/introspection shims) are now in
+  [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
+- **Remix `shouldRevalidate` is unbounded, and `useBlocker` catches browser
+  back/forward.** Two follow-on bounds closed: (1) the `shouldRevalidate`
+  prior-data echo is no longer capped — when it's too large for request headers
+  (Deno drops headers past ~16 KB) the client sends it in a JSON **POST body**
+  instead (a soft-nav POST carrying `x-denext-nav`, which the dispatch treats as
+  a render, not an action), so a skipped loader works for any data size. (2)
+  `useBlocker` now also vetoes the **browser back/forward buttons** — the
+  popstate is undone (the prior entry restored) and re-applied on `proceed()` —
+  not just in-app `<Link>`/`useNavigate`/`<Form>` navigations. Validated
+  end-to-end on the indie-stack with a 20 KB echo body.
+  `src/compat/remix/{server,client,revalidation}.ts`,
+  `src/client/navigation.ts`, `src/server/{app,request-context}.ts`.
+- **Remix `shouldRevalidate` now genuinely skips loaders on client
+  revalidations.** A route's `shouldRevalidate` export is honored end-to-end: on
+  a soft nav (or `router.refresh()`) the client echoes each mounted route's
+  prior loader data + params (small, size-budgeted request headers, with the URL
+  it's coming from and any submit's form context); the server evaluates
+  `shouldRevalidate` and, when it returns `false`, **skips that loader's work**
+  (the DB query) and renders the route from the echoed data — so an unchanged
+  ancestor/route isn't re-queried on navigation. A route whose data exceeds the
+  echo budget (~6 KB JSON) simply revalidates as normal (never stale).
+  Always-revalidate remains the default (first paint, hard nav, no
+  `shouldRevalidate`, or an explicit `true`). New isomorphic
+  `src/compat/remix/revalidation.ts`; a generic `setNavHeadersProvider` seam in
+  `src/client/navigation.ts`; server evaluation in `src/compat/remix/server.ts`
+  (`RemixRoute`/`RemixLayout` deduped through a shared runner); the migration
+  threads `shouldRevalidate` into the generated wrappers. Validated end-to-end
+  on the indie-stack (an echoed marker proves the DB loader is skipped). Also:
+  `migrate.ts` deduplicated (a shared `classifyDeps` + `writeAppRouterDenoJson`
+  across the Next/Remix/SPA paths — which also fixes the SPA path pinning a
+  non-numeric `catalog:` version) and the Flight serializers share a
+  `serializeThenable` helper.
+  `src/compat/remix/{revalidation,server,client}.ts`,
+  `src/client/navigation.ts`, `src/build/{remix-migrate,migrate}.ts`,
+  `src/jsx/{flight-scalar,render-to-flight,render-to-html-flight}.ts`.
+- **Remix migration: more of the surface, and the deferred-rejection edge
+  (`useFetchers`, `useBlocker`, `useCatch`/`CatchBoundary`,
+  `<Await errorElement>`, and the `start`-task perms).** Five follow-ups from
+  the "perfect-ish" review: (1) **`useFetchers`** — an app-wide registry of
+  in-flight fetchers for aggregated optimistic UI / a global pending indicator
+  (each `useFetcher` publishes its live snapshot; the array surfaces the active
+  ones). (2) **`useBlocker`** — veto an in-app soft navigation (unsaved-changes
+  guard) via a new `navigate()` seam (`setSoftNavBlocker`), with the
+  blocked→proceed/reset state machine; one active blocker, soft-nav only
+  (browser back/forward + unload are documented bounds). (3)
+  **`<Await errorElement>` now renders on a rejected `defer()`** — the rejection
+  serializes to a plain error marker in the tail Flight (shared across all three
+  serializers via `flight-scalar`), and `<Await>` renders `errorElement` with
+  the error on `useAsyncError` (previously it rendered children with `null`);
+  the client-promise path is covered too. (4) **Remix v1 `CatchBoundary`** —
+  detected and wired to `error.tsx` (rendering it when it's the only boundary),
+  with `useCatch()` added to read a thrown `Response`, plus a review note
+  steering toward the v2 `ErrorBoundary` + `isRouteErrorResponse`. (5) The
+  migrate-generated **`start` task now uses `-A`** — a migrated app re-execs a
+  child `deno` at startup (CSS shim map + manual-node_modules module config),
+  which a scoped perm set crashed on (`NotCapable`). Also: `shouldRevalidate` is
+  extracted + flagged (denext always-revalidates — a documented perf-parity gap,
+  not a correctness one). Validated end-to-end on the stock indie-stack.
+  `src/compat/remix/client.ts`, `src/client/navigation.ts`,
+  `src/jsx/{flight-scalar,render-to-flight,render-to-html-flight,render-to-flight-stream}.ts`,
+  `src/build/{remix-migrate,hydration,migrate}.ts`.
+- **Remix migration: two real-world bugs (found validating a shop app with
+  `lucide-react`/`clsx` + sessions).** (1) `@remix-run/*` imports in **shared
+  non-route modules** (e.g. `app/sessions.ts`, utils, components) were left
+  un-rewritten — the route transform only touched `app/routes/*` — so the build
+  couldn't resolve them; the migration now remaps `@remix-run/*` / react-router
+  imports across **all** app source. (2) A loader/action `Response`'s
+  **`Set-Cookie` was dropped** when denext converted it to a redirect signal or
+  JSON payload — breaking the canonical Remix login (`session.set(...)` then
+  `redirect(url, { headers: { "Set-Cookie": await commitSession(session) } })`);
+  the unwrap now forwards `Set-Cookie` onto the request's outgoing response, so
+  the session cookie is set alongside the redirect. Verified end-to-end: the app
+  migrates, builds (npm UI libs bundled), and the full login → Server Action →
+  session commit → redirect → signed-in flow works in a real browser.
+  `src/build/remix-migrate.ts`, `src/compat/remix/server.ts`.
+- **Remix session & cookie storage is now implemented** (previously a stub that
+  didn't persist). `createCookie` is a first-class cookie that JSON-encodes its
+  value and, given `secrets`, signs it with HMAC-SHA256 (tamper-evident, secret
+  rotation) — reusing denext's own signed-cookie crypto — with a proper
+  `Set-Cookie` serializer (Path/HttpOnly on by default, plus
+  Max-Age/Expires/Domain/Secure/SameSite). On top of it:
+  `createCookieSessionStorage` (whole session in the signed cookie, 4 KB guard),
+  `createSessionStorage` (session id in the cookie, data in a caller-supplied
+  store), and `createMemorySessionStorage` (a `Map`-backed store for dev/tests),
+  each returning `getSession`/`commitSession`/`destroySession`, with a `Session`
+  that supports `get`/`set`/`has`/`unset` and read-once `flash`. Multipart
+  uploads land too: `unstable_parseMultipartFormData` (+
+  `parseMultipartFormData` alias) streams file parts through an `uploadHandler`,
+  with `unstable_createMemoryUploadHandler` provided.
+  `src/compat/remix/server.ts`, `src/server/session.ts` (crypto helpers
+  exported).
+- **Remix `defer()` data now crosses the Flight boundary, and `useFetcher`
+  loads/submits cross-route.** Two fixes: (1) a promise-valued client-component
+  prop — a Remix `defer()` field, or any promise passed as data — previously
+  serialized to `{}` (deferred data silently lost); the Flight serializers
+  (streaming, HTML-flight, and PPR) now **await** a thenable prop and serialize
+  its resolved value, so `<Await>`/`useAsyncValue` render real data (awaited,
+  not yet incrementally streamed). Applied consistently across all three
+  serializers via a new shared leaf-serialization helper
+  (`src/jsx/flight-scalar.ts`), with taint-checking preserved on the resolved
+  value. (2) `useFetcher` is no longer a soft-navigation stub:
+  `fetcher.load(href)` fetches a route's loader data without navigating (a page
+  route via its Flight payload, a resource route via its JSON), and
+  `fetcher.submit`/`fetcher.Form` with an explicit `action` URL POSTs there and
+  reads back the result — each settling into `fetcher.data` and revalidating. A
+  mutating `<Form>`/`<fetcher.Form>` now also honors an explicit cross-route
+  `action` URL as its DOM action (progressive-enhancement + resource-route
+  targets), while a form with no explicit action still binds to the current
+  route's Server Action. `src/jsx/render-to-flight.ts`,
+  `src/jsx/render-to-html-flight.ts`, `src/jsx/render-to-ppr-flight.ts`,
+  `src/compat/remix/client.ts`.
+- **Remix `defer()` now streams incrementally, and `useFetcher`/`<Form>` submit
+  cross-route to a _page_ action** (the two remaining Remix review notes,
+  closed). (1) On the default streaming Flight path a deferred promise prop no
+  longer blocks the shell: the streaming serializer leaves a **value-hole
+  placeholder** (instead of awaiting the promise — or, worse, the latent bug
+  where it serialized to `{}`, which the non-streaming serializers were fixed
+  for but `render-to-flight-stream` was not), so first paint flushes immediately
+  with the `<Await>` fallback, the deferred content streams in as its Suspense
+  boundary resolves, and the resolved value is substituted into the tail Flight
+  — the client hydrates with real data. Placeholder ids are framework-generated
+  (`dnxv…`) so user data shaped like a hole is never resolved away. (2) A
+  migrated **page** route that has an `action` now also gets a generated
+  `route.ts` POST handler, so a plain POST to the page URL runs the action (its
+  URL params threaded from the matched pattern) — exactly Remix's "a POST to a
+  route runs its action". denext dispatch lets `page.tsx` and `route.ts` coexist
+  in one segment: a `route.ts` that has no handler for the request method
+  (a 405) falls through to the page for a GET/HEAD render, so the page's GET and
+  the route's action-POST are each served by method.
+  `useFetcher.submit`/`<Form action>` to another page's action works (following
+  a redirecting action as a soft navigation), and the no-JS cross-page post
+  lands on the same handler. `src/jsx/render-to-flight-stream.ts`,
+  `src/build/remix-migrate.ts`, `src/server/app.ts`,
+  `src/compat/remix/{server,client}.ts`.
+- **Remix migration: thrown `redirect()`/`Response` from a loader/action are
+  honored, and routes keep their Remix-canonical ids** (both found
+  stress-testing the real `remix-run/indie-stack` — auth, sessions, Prisma,
+  nested routes — end-to-end). (1) Remix uses **thrown** `Response`s as control
+  flow — `throw redirect(url)` is the ubiquitous `requireUserId` auth-guard, and
+  `throw json()/new Response()` signals errors. denext previously honored only a
+  _returned_ redirect and turned a thrown one into an unhandled 500; now
+  `runLoader`/`bindAction` route a thrown redirect to denext's redirect signal
+  and a thrown non-redirect `Response` to a `RemixRouteErrorResponse` (so
+  `ErrorBoundary`/`useRouteError`/`isRouteErrorResponse` see it), and
+  `runLoaderResponse`/`runActionResponse` (resource routes + the page-action
+  `route.ts`) return a thrown `Response` as the response, forwarding its
+  `Set-Cookie`. (2) The migration now threads each route's **Remix-canonical
+  id** (`root`, `routes/notes`, `routes/notes.$noteId`) into the route provider
+  instead of a denext-internal `<key>:<role>` — so an app that keys on those
+  strings (`useRouteLoaderData("root")`,
+  `matches.find(m => m.id === "routes/notes")`) resolves after migration.
+  Verified against a fresh indie-stack: signup→session cookie→protected route,
+  create/read a note, dynamic `[noteId]`, resource-route `logout`, and
+  thrown-redirect auth guards all work through the migrated tree.
+  `src/compat/remix/server.ts`, `src/build/remix-migrate.ts`.
+- **Remix: a nested route can read an _ancestor_ layout's loader data during
+  SSR** (`useRouteLoaderData("root")`, `useMatches().find(...)`, or `useUser()`
+  → root loader — the indie-stack's protected `/notes` crashed on it). The
+  streaming Flight renderer renders a client boundary's children twice — once
+  for first-paint HTML (the ancestor `RemixRouteProvider`'s context is in scope)
+  and once to serialize the boundary's `children`, where the nested route's
+  server wrappers are re-expanded in the outer scope, so the parent provider's
+  client context is missing and `useMatches` saw only the current route (any
+  ancestor read threw and 500'd). Fixed with a **render-scoped matches store**:
+  the server wrappers register each route's match (request-isolated via a
+  `WeakMap` keyed by the request context, so it survives both passes and never
+  leaks across requests), and `useMatches` prefers it when it is at least as
+  complete as React context. A process-global seam bridges the server store to
+  the `"use client"` hook without pulling `node:async_hooks` into the client
+  bundle (and works even when the boundary is a separate bundle, e.g.
+  next-compat); on the client the store is unset so the hydrated React tree is
+  authoritative. Also: `@remix-run/css-bundle` is now rewritten to
+  `denext/remix/server` (which re-exports `cssBundleHref` as `undefined`, since
+  denext owns CSS), instead of being left as an unresolved import.
+  `src/compat/remix/{matches-bridge,matches-server}.ts` (new),
+  `src/compat/remix/{client,server}.ts`, `src/build/remix-migrate.ts`.
+- **Remix `useNavigation` now reports `loading` during a plain
+  `<Link>`/`useNavigate`/history navigation** (previously it only reflected
+  `<Form>`/`useSubmit`/`useFetcher` submissions and stayed `idle` on a link
+  click). denext's client router now publishes a process-wide soft-navigation
+  signal — new public `subscribeNavigating` / `getNavigatingHref` on the
+  client-navigation API — raised for the whole same-origin navigation (covering
+  delegated link clicks, `useNavigate`, and `popstate`), with a monotonic token
+  so an overlapping navigation, not a slow earlier one settling late, owns the
+  signal. Remix's `useNavigation` reads it and returns
+  `{ state: "loading", location }` with the target, while an in-flight
+  submission still takes precedence as `submitting`. `src/client/navigation.ts`,
+  `mod.ts`, `src/compat/remix/client.ts`.
+- **Remix `<Form method="post">` action round-trip now drives the full Remix
+  lifecycle** (browser-validated end-to-end). Two bugs kept a migrated Remix
+  route's `<Form>` inert: (1) an interactive Remix route was misclassified as
+  **static** — the hydration heuristic scans an app module for interactivity
+  tokens but excludes framework internals, so a component whose only
+  interactivity is `denext/remix`'s `useActionData`/`useNavigation`/`<Form>`
+  shipped **zero JS** and never hydrated; the heuristic now recognizes the
+  interactive Remix hooks/components (read-only
+  `useLoaderData`/`useParams`/`useMatches` stay static). (2) The `<Form>` handed
+  denext's reconciler the **Server-Action ref itself** as the DOM `action` — a
+  _function_-valued `action` triggers denext's native React-19 form-action
+  handling, which ran the action **outside** Remix's submit lifecycle (bypassing
+  `useActionData`/`useNavigation`/revalidation); the `<Form>` now exposes only
+  the endpoint **URL string** (no-JS progressive-enhancement fallback) and
+  drives the submit through its own `onSubmit`→`runRouteAction`. Confirmed in a
+  real browser: submit → `useNavigation` flips to `submitting` → the Server
+  Action runs → `useActionData` reflects the result → the loader revalidates,
+  with no full-page reload. `src/compat/remix/client.ts`,
+  `src/build/hydration.ts`.
+- **`renderToPipeableStream` fires `onShellReady` at the real shell flush.** It
+  previously fired the instant the stream object existed — before any rendering
+  — because the compat `renderToReadableStream` resolves immediately and the
+  callback was attached to that. The adapter now peeks the shell (denext
+  enqueues the whole shell as the first chunk) and fires `onShellReady` only
+  once it has rendered; a shell that throws surfaces as `onShellError` (not a
+  spurious `onShellReady`), matching React's contract. The remaining fidelity
+  caveat — the document is buffered, not `Writable`-backpressured — is unchanged
+  (it's a property of denext's push-based streaming core, documented in
+  KNOWN-LIMITATIONS with the full rationale). `src/compat/react-dom-server.ts`.
+- **`useActionState`'s `permalink` argument now enables no-JS form submits.**
+  The React 19 third argument was accepted but ignored. When you pass a
+  permalink, the `dispatch` used as `<form action={dispatch}>` now renders that
+  URL as the SSR `action` attribute, so a form submitted before hydration
+  navigates to the permalink instead of being lost; after hydration the client
+  dispatch takes over. `src/runtime/actions.ts`, `src/jsx/render-to-string.ts`.
+- **A capturing `qrl` handler now resumes correctly instead of throwing.** In
+  resumable mode the server stamped `data-dnx-h="evt:id"` for every `qrl`
+  handler, so the delegated dispatcher ran a _capture-carrying_ handler with no
+  scope and its `capturedScope()` threw
+  (`capturedScope() called outside a qrl handler`). Because a handler's captures
+  are the component's **live** signals/stores — which exist only once it mounts
+  — such a handler can't run without mounting; it's now stamped bare `evt` (like
+  a plain handler), so the client hydrates its island and re-runs it with the
+  live captures. Closure-free qrls keep the fast no-mount `evt:id` path.
+  `src/jsx/render-to-string.ts`.
+- **The lint plugin's hook rules are now independently toggleable.** The module
+  documented four rules but registered only two: `hooks-in-component` and
+  `no-hooks-in-async` were emitted from inside `rules-of-hooks`, so all three
+  hook findings reported under one id and couldn't be enabled/disabled or
+  `// deno-lint-ignore denext/no-hooks-in-async`'d on their own. They're now
+  three separate rules over one shared traversal (identical detection, so no
+  behavior change) — each carries its own `denext/<rule>` id.
+  `src/lint/denext-plugin.ts`.
+- **`getServerSideProps` can now set cookies/headers via `context.res`, and sees
+  `locales`/`defaultLocale` (Pages Router).** The gSSP context previously
+  carried `req` but no `res`, so a page couldn't set a `Set-Cookie` or
+  `Cache-Control` header from data fetching, and the i18n
+  `locales`/`defaultLocale` were only in `__NEXT_DATA__`, not the context.
+  `context.res` is now a minimal `ServerResponse`-shaped shim
+  (`setHeader`/`getHeader`/`removeHeader`/`hasHeader`) whose headers are merged
+  onto the outgoing response (multiple `Set-Cookie`s preserved), and
+  `context.locales`/`context.defaultLocale` are populated from the i18n config.
+  `packages/pages-router/src/handler.ts`.
+- **`<Link replace>` now replaces the history entry (Pages Router).** The
+  `replace` prop was accepted and documented but dropped — a soft-nav click
+  always pushed. `Link` now emits a `data-denext-replace` marker that the client
+  runtime honors by calling `history.replaceState` instead of `pushState`
+  (matching `router.replace`). `packages/pages-router/link.ts`,
+  `src/client-runtime.ts`.
+- **The build now warns instead of silently dropping a transform rewrite.** When
+  the experimental `experimental.asyncContext` pass instruments a module that
+  the auto-memo compiler or the qrl handler-splitter also rewrote, only one
+  rewrite could reach the client bundle (the maps are keyed by module URL and
+  the last spread won). The build now logs a `WARNING` naming the affected
+  modules rather than losing a rewrite in silence — the two experimental passes
+  still aren't expected to be combined, but the collision is no longer
+  invisible. Also removed a dead always-true ternary in the catch-all route
+  matcher and corrected two stale source comments (`next/router` file scan,
+  `react-dom/test-utils`). `src/build/build.ts`, `src/router/segments.ts`,
+  `packages/pages-router/src/scan.ts`, `src/compat/test-utils.ts`.
+- **`client:*` island directives now type-check on any component.** Writing a
+  resumability hydration directive on an island —
+  `<Widget label="x" client:idle />` — was a TypeScript error
+  (`Property 'client:idle' does not exist on type '{ label: string; }'`) because
+  the directives weren't declared anywhere in denext's JSX namespace. They're
+  now on `JSX.IntrinsicAttributes` (`src/jsx/types.ts`) — the standard mechanism
+  for props allowed on every element, the same place `key` lives — so
+  `client:load` / `client:idle` / `client:visible` / `client:interaction` /
+  `client:media` (boolean or a media-query string) / `client:only` are optional
+  on all intrinsic tags and components without each component redeclaring them.
+  Purely additive; the runtime already strips every `client:*` key before it
+  reaches the DOM.
+- **`cacheKeyParams` now dev-warns when a cached render bakes in a dropped
+  `searchParams`.** Narrowing the ISR key with `cacheKeyParams` (so junk params
+  don't fork the cache) has a documented edge: a `searchParams` value the key
+  ignores, read into a whole-body-cached render, is baked into the shared entry
+  and can be served to other requests. When the entire body is cached (a plain
+  ISR render or a no-hole PPR/Flight shell), denext now records which param
+  names the render read and, in dev, warns and names the dropped ones — turning
+  a silent correctness boundary into a loud one. A with-holes PPR shell can
+  still escape the read into a per-request hole, so it relies on the documented
+  boundary rather than the warning. Zero cost when `cacheKeyParams` isn't set
+  (the `searchParams` object is untouched). `src/server/request-context.ts`,
+  `src/server/render-page.ts`, `src/server/app.ts`.
+- **The build now works when denext is run straight from JSR**, not only from a
+  local checkout. `frameworkRoot()` and 12 build call sites assumed the
+  framework was on the local filesystem (`fromFileUrl(import.meta.url)` /
+  `join(frameworkRoot(), …)` + `readTextFile`), so a migrated app's generated
+  `deno task build` — which runs `deno run -A jsr:@denext/denext/cli build .` —
+  threw `URL must be a file URL: received "https:"` before the build started.
+  Framework-resource access is now scheme-agnostic (fetches when remote);
+  validated by building minimal native **and** compat apps through an
+  `http://`-served framework, guarded by
+  `tests/e2e/remote-framework-build.e2e.test.ts`. (Pre-existing since ≤1.4.0;
+  all prior validation used a local-file overlay that masked it.)
+- **`migrate --desktop` generates a correct, runnable, right-sized
+  `deno desktop` bundle.** The generated `desktop` task now bakes in what the
+  packaged app needs: `--allow-net --allow-read --allow-env` (a compiled app
+  runs with no permissions otherwise, so `runDesktop` threw
+  `Requires env access to "PORT"` and the window came up black), `--include out`
+  (embed the static export itself — it is read at runtime via dynamic paths, so
+  without this it was left out of the bundle and the packaged app served nothing
+  on another machine — verified: the `out/` assets return 200 from the packaged
+  binary), and `--exclude-unused-npm` (embed only the npm packages the desktop
+  entry reaches, not the app's whole lockfile — a monorepo SPA dropped from
+  **2.4GB to ~104MB**). Validated by rebuilding + running a real monorepo SPA
+  (T3) end to end.
+- **`migrate` writes a `.gitignore` for denext's generated build artifacts** —
+  `.denext/` (build cache), `out/` (static export), and (with `--desktop`)
+  `desktop-icon.png` (the icon `export` composes from `spa.desktop.icon`; the
+  config is the source of truth, this is just a build artifact). Creates the
+  file if absent, appends only the missing lines under a one-line marker (never
+  reorders/removes yours), and is idempotent.
+- **The generated desktop `desktop.ts` always wires `spa.proxy`.** It now reads
+  `config.spa?.proxy` unconditionally (harmlessly `undefined` when unset), so
+  **adding a backend reverse proxy to `denext.config.ts` after migrating just
+  works** — no `desktop.ts` hand-edit or re-migration. Previously the proxy
+  branch was only emitted when `migrate --desktop --backend …` was used, so a
+  proxy added later was silently ignored and the packaged app couldn't reach its
+  backend same-origin (breaking cookie-authed local backends).
+- **A converted pnpm/yarn app (`nodeModulesDir: "manual"`) now builds from a
+  local denext checkout.** The build re-execs under the app's manual mode, which
+  resolves _every_ npm specifier — the framework's own build machinery
+  (`esbuild`, `sass`, `lightningcss-wasm`, …) included — from the `node_modules`
+  beside the merged config. That tree carried only the app's deps, so the
+  re-exec died with
+  `Could not find a matching package for 'npm:esbuild@^0.24.0' in the node_modules directory`
+  the moment it loaded `next-compat.ts`. The framework's own npm deps are now
+  materialized into a framework-only `node_modules` beside the merged config (an
+  isolated `deno install`, cached across builds); the app's own deps still
+  resolve via the app's own config. Covers both the CSS and module re-exec
+  paths; guarded by `tests/e2e/manual-node-modules-build.e2e.test.ts`. (Surfaced
+  via `--denext-local-path`; the JSR path skips the re-exec entirely.)
+- **`build`/`export`/`dev` no longer mutate a converted app's committed
+  `deno.json`.** For a manual-`node_modules` app (converted Next/SPA), Deno
+  resolves an app module's `.css` imports via the app's own `deno.json`, so
+  denext had to add css→shim redirects there — and left them committed, with
+  machine-specific absolute paths (`/Users/…/.denext/css-shims/*`), re-dirtying
+  the file on every build (a commit-parity problem). Those redirects are now
+  applied **transiently**: the CLI backs up the config, injects them for the
+  build child, and restores the exact bytes once it exits (self-healing a killed
+  run on the next build). `deno task build/export` leaves `deno.json`
+  byte-identical. `migrate` also now gitignores the compiled Tailwind output
+  (`src/index.gen.css`). Guarded by `tests/css.test.ts`.
+- **Hook `deps` params now accept a `readonly` array (React parity).**
+  `useEffect`, `useMemo`, `useCallback`, `useLayoutEffect`,
+  `useInsertionEffect`, and `useImperativeHandle` (and the internal `Dispatcher`
+  contract) typed `deps` as a mutable `unknown[]`, stricter than React's
+  `readonly DependencyList` — so passing a `readonly` deps array (as
+  `useAsyncEffect` does) was a type error. The whole surface is widened to
+  `DependencyList`; strictly more permissive, so existing mutable-array callers
+  are unaffected.
+- **Cross-app cache poisoning.** The durable cache lives in each project's
+  `.denext/cache.db` (not the launcher's cwd) and is cleared on `build`, so
+  parallel apps/tests never share or poison one cache. Server restarts still
+  persist it.
+- **PPR shell fields dropped by the durable cache.** The SQLite store now
+  persists a cached PPR shell's `holeIds` / `flightShell` / `headExtras` / etc.,
+  so a cached PPR page re-splices its dynamic holes instead of being served
+  verbatim.
+- **CSS-in-JS SSR correctness.** `useServerInsertedHTML` callbacks now flush on
+  the streaming / Flight / PPR shells (audit H1), styled-components reads its
+  static boundary + tags correctly, and the SSR bundle picks each dependency's
+  Node build with a working `require` (not browser code).
+- **`tsconfig` parsing.** `tsconfig.json` is JSONC-parsed, fixing a silent drop
+  of the `@/` path alias; a `next/head` shim resolves on the native path.
+- **Compat hardening (audit).** `@denext/htmx`'s vendored runtime integrity hash
+  is pinned and asserted in tests; `migrate` / pages-router gain a `deno.json`
+  guard, a config-eval timeout, and a node-resolve opt-out.
 
 ### Security
 
-- **Live hub hardening.** A client frame that parses to `null`/a primitive no longer throws inside the socket handler (an uncaught throw there would take the whole process down); the handler is wrapped so no hook throw can; inbound frames are rate-limited per connection (100/s → a `limit` error, not unbounded authorization work); the data-subscription and presence-room caps are re-checked AFTER the async authorization (N concurrent frames could all pass the pre-await check); a presence broadcast encodes the peer list once (O(n), not O(n²)). `src/server/live.ts`.
-- **Dev servers.** EVERY `/_denext/*` endpoint of the app dev server — the route/flight bundles, chunks and stylesheets (dev bundles carry inline source maps = project source), not just four paths — sits behind the Host/Origin (DNS-rebinding) gate, and the SPA dev server gets the same gate (`allowedDevOrigins` on its options). The SPA `spa.proxy` no longer forges the backend's `Origin` on a bridged WebSocket (the browser's own is forwarded, so the backend's origin check sees who connected) and strips `Secure` from proxied cookies only on a plain-http front. `src/build/dev-server/handler.ts`, `src/build/spa/dev-handler.ts`, `src/build/dev-proxy.ts`.
-- **Auth.** The credentials body is read through the shared cap (64 KiB; oversized/stalled → treated as no credentials, never buffered), only STRING values reach `authorize` (nested JSON is dropped); an IP-wide second rate-limit bucket (10× the per-identifier `max`) catches an attacker who varies the identifier — or the identifier FIELD — per attempt; `email_verified` sent as the string `"false"` counts as unverified; concurrent scrypt derivations are bounded to the core count with a bounded waiter queue. `src/server/auth/`.
-- **Tainted values are refused by EVERY Flight serializer** (`experimental_taintObjectReference`/`taintUniqueValue` used to be enforced only by the HTML+Flight renderer): the check lives in the shared leaf cascade. `src/jsx/flight-scalar.ts`.
-- **`denext mcp` confines `dir` to the launch directory** (over stdio): a prompt-injected client can no longer point a tool at `../../other-app` or an absolute path elsewhere to read, scaffold into or render another project. `denext migrate` evaluates the app's `next.config.*` with read/env/sys permissions scoped to the project instead of `-A`; the Remix migrator refuses a route whose segments would write outside `app/`. `src/mcp/tools.ts`, `src/build/migrate.ts`, `src/build/remix-migrate.ts`.
-- **ISR.** A single-flight follower now RESUMES a cached PPR shell (holes rendered for its own request, CSP applied) instead of serving the raw shell body with unfilled holes; the page-cache key includes the locale (domain- or `Accept-Language`-detected locales share a URL); a failed background regeneration backs off (5 s → 5 min) instead of re-firing on every stale hit; the fetch cache no longer stores non-OK responses. `src/server/page-cache-flow.ts`, `src/server/cache.ts`.
-- **`@denext/pages-router`**: a preview cookie is VERIFIED (not just detected) before it bypasses the static cache — a forged cookie can't force every request into a live render; `res.setHeader("Set-Cookie", [...])` emits one header per element; a `finish()` failure no longer hangs the request. The pages-router preview token uses its own MAC domain.
-- **Server-side render collectors are per request.** The signal-state collector and the `useServerInsertedHTML` sink were module globals shared by every concurrent render (request A's values could land in request B's document); both live on the request context now (`src/runtime/render-scope.ts`). A PPR hole whose render rejects before the streamer consumes it is no longer an unhandled rejection.
-- **`NextResponse.next({ request: { headers } })` no longer 500s on requests with a body.** The pipeline re-wrapped the original request after the middleware runner had already consumed its body ("Input request's body is unusable") — every POST, form submit and Server Action through such a middleware failed. The runner now hands back the request it built and the pipeline routes that one. `src/server/middleware.ts`, `src/server/request-pipeline.ts`.
-- **A short-circuit middleware `Response` keeps queued cookies.** `cookies().delete("session"); return NextResponse.redirect("/login")` dropped the `Set-Cookie` because the response bypassed `finalize()`; it now leaves through the same path as every other response.
-- **An external `NextResponse.rewrite("https://other/…")` is proxied through `safeFetch`** (SSRF-guarded: private/internal targets are refused with a 502) instead of being silently routed to the LOCAL page of the same path.
-- **`notFound()`/`forbidden()`/`unauthorized()` inside a Server Action** return a 404/403/401 signal the client renders as the matching boundary, instead of a redacted 500 (`src/server/action-handler.ts`).
-- **`sitemap.ts` escapes `changeFrequency`** like every other field (a DB-sourced value could inject XML). `src/server/metadata-files.ts`.
-- **Soft-navigation body cap and the request deadline now cover streamed responses.** The per-request timeout used to be cleared as soon as a streamed shell was produced, so a Suspense hole awaiting a black-holed upstream held the socket and the render tree forever; it now stays armed until the body is consumed and aborts the hole renders on expiry (the shell fallbacks stay in place). `src/server/app.ts`.
-- **A background ISR regeneration no longer replays the triggering visitor's `Cookie`/`Authorization`/request id** — only content-negotiation and `x-forwarded-*` headers are forwarded, so a page side effect can't run as that visitor. `src/server/page-cache-flow.ts`.
-- **Framework endpoints are GET/HEAD only** (`/_denext/health`, `/_denext/image` → 405 otherwise: a POST to the optimizer bypassed every edge cache); the Live connection cap is re-checked after the async authorization (no overshoot under concurrent handshakes) and `live.maxMessageBytes` counts UTF-8 bytes, not UTF-16 units. `@denext/pages-router` API routes enforce `bodyParser.sizeLimit` while the body STREAMS (it was checked after buffering the whole body), including multipart and `bodyParser: false`. Server-action ids on the wire are opaque hashes of `module#export` (no longer an enumeration aid); the in-memory draft-mode token store is bounded (10k, 24 h TTL). `images.remotePatterns` honors `port` and `search` and treats `pathname` as a glob (`/public/**`), so `pathname: "/public/"` no longer admits `/public-internal/…`.
-- **Dev server: `/_denext/@fs<abs>` no longer reads arbitrary files.** The unbundled dev loop served any absolute path (transformed, with the source echoed in an inline source map) with no project containment and outside the Host/Origin gate the other dev endpoints use. It now serves only files under the project (real paths on both sides, so an in-project symlink pointing outside is refused) or modules the dev graph itself imported, and every `/_denext/@*` URL sits behind the same DNS-rebinding gate as `/_denext/reload`. `src/build/dev-unbundled/handler.ts`, `src/build/dev-server/handler.ts`.
-- **`safeRedirectLocation` strips control characters first.** A tab (`/%09/evil.com`) survived the leading-slash collapse and, because the URL parser drops tabs, reached the browser as protocol-relative `//evil.com` — an open redirect through any user-controlled redirect target (`?callbackUrl=`, middleware `redirect()`, action redirects). C0 controls, space and DEL are now removed before the collapse; a bare `\r`/`\n` (which made `new Response` throw a 500) is removed too. `src/server/config.ts`.
-- **Soft-navigation POST bodies are capped.** The `x-denext-nav: 1` POST echo buffered `request.clone().json()` with no size cap or idle timeout, before routing, for any path — an unauthenticated memory-exhaustion lever. It now shares the Server Action reader (`readCappedBody`, 1 MiB, 30 s idle → 413/408) from the new `src/server/body.ts`.
-- **Production-readiness + security audit remediation.** A fresh adversarial audit (six analysis passes + a multi-step chain pass, scoped _beyond_ the CVE-guide floor) surfaced and this release fixes:
-  - **Middleware auth-bypass via duplicate slashes (HIGH).** The router drops empty path segments (`//admin` resolves to the `/admin` page) but an anchored middleware matcher / config rule tested against the raw pathname did not — so `//admin` reached a page while skipping its `/admin` guard. The pipeline now collapses `/`-runs and 308-redirects the non-canonical form before config rules, middleware, and routing, so all three evaluate the same path. `src/server/app.ts`.
-  - **`unstable_cache` cross-request data leak (HIGH).** Reading `cookies()`/`headers()`/`connection()` inside an `unstable_cache` body did **not** throw (its sibling `"use cache"` does), so a per-user value could be cached under a session-less key and served to others. The loader (and its SWR revive) now run inside a cache scope, so such a read throws — matching `"use cache"` and Next. `src/server/cache.ts`.
-  - **`cacheKeyParams` cross-user cache poisoning in production (HIGH).** A whole-body-cached render that read a non-allowlisted `searchParams` baked that value into the shared entry; the guard was **dev-only**. The store now **refuses** such a render in every environment (dev still warns). `src/server/{request-context,app}.ts`.
-  - **`<Live>` re-render fan-out DoS (HIGH).** A single `revalidateTag` could spawn one full-route re-render per connection (default cap 10 000) simultaneously. A fleet-wide `live.limits.maxConcurrentRenders` gate (default 40) bounds the fan-out; excess queues. `src/server/{live,config}.ts`.
-  - **Flight `$`-discriminant collision → forged VNode / XSS (MED).** An attacker-influenced data object shaped like a Flight control tag (`{ $: "h", … }` — e.g. a store document, or `searchParams` `?$=h`) was re-read on the client as a tag, forging a `dangerouslySetInnerHTML` VNode (XSS) or crashing hydration. The serializer now escapes a leading `$` in user-object keys and the parser reverses it, so such objects round-trip as data. `src/jsx/render-to-html-flight.ts`, `src/client/flight-client.ts`.
-  - **OIDC `email_verified` not enforced (MED).** The built-in Google / generic-OIDC profile mappers copied `email` unconditionally, so an attacker-controlled unverified address could feed an app that links accounts by email. The mappers now drop the email when the IdP marks it `email_verified: false` and surface `AuthUser.emailVerified`. `src/server/auth/providers.ts`, `types.ts`.
-  - **Tailwind standalone binary executed without integrity check (MED, build-time).** The downloaded binary now has its SHA-256 verified against a pin (`DENEXT_TAILWIND_SHA256` or a built-in table) and fails closed on mismatch; an unpinned download prints its digest and warns instead of running silently. `src/build/tailwind.ts`.
-  - Plus hardening: Live data-subscription **re-authorization on every recompute** (stops pushes after mid-session revocation) and **numeric-limit validation** (a bad-type cap like `maxMessageBytes: "64kb"` can no longer silently disable a control); JWT **`typ` pinning** (rejects an `at+jwt` access token as an id_token) and **per-candidate JWKS resilience** (a malformed key mid-rollover no longer aborts verification); ICU parser **nesting-depth cap** (untrusted message strings can't overflow the stack); and the precompressed **`.gz` static sibling** now gets the same symlink-escape recheck as the identity file. Regression tests in `tests/{security-remediation,auth-crypto,middleware,cache,config,static,live-data}.test.ts`.
-- **Deferred-item hardening (audit follow-up).** The four items the audit above tracked as PLAUSIBLE / lower-severity are now closed:
-  - **Data-cache follower abort-escape.** A single-flight _follower_ (`unstable_cache` / `"use cache"` coalescing onto another request's in-flight compute) awaited the leader with a bare `await`, so a hung leader body pinned every follower even after the follower's own client disconnected. Followers now race the wait against their request signal and unwind on abort — the leader keeps running for others — mirroring the page-cache follower. `raceAbort`/`isAbortError` extracted to `src/server/abort.ts`; `src/server/{cache,app,request-context}.ts`.
-  - **Live per-render deadline (slot-exhaustion DoS).** A `<Live>` re-render or `useLive` fetcher holds one of the `maxConcurrentRenders` slots for its whole duration; a hung user fetcher held its slot forever, and enough hung fetchers pegged the gate and stalled the fleet. New `live.limits.renderTimeoutSeconds` (default **30**, on by default) aborts an over-running render (a cooperative `AbortSignal` reaches the fetcher's `fetch`/cache reads) and releases the slot, sending an error/refresh frame. `src/server/{live,config}.ts`.
-  - **Config numeric validation now throws at boot.** `hsts.maxAge`, `images.{deviceSizes,imageSizes,qualities,minimumCacheTTL,maximumRedirects}`, and `cache.{maxDataEntries,maxPageEntries}` were trusted unvalidated — a `NaN`/`Infinity`/negative flowed into a `max-age` header, a redirect-loop bound, or an eviction count. `validateDenextConfig` now rejects non-finite / out-of-range values (fail fast, field-named). `src/build/paths.ts`.
-  - **GitHub verified-email enforcement.** The `github` provider copied `userinfo.email` unconditionally (an unverified, user-chosen address). The flow now fetches `/user/emails` (via the already-requested `user:email` scope) and the mapper exposes only a provider-**verified** address, setting `AuthUser.emailVerified` — matching the Google/OIDC `email_verified` hardening. New `OAuthProvider.userEmailsUrl` + `ProfileInput.emails`. `src/server/auth/{providers,routes,flow,types}.ts`.
-  - Regression tests in `tests/{cache,use-cache,live-data,paths,security-remediation}.test.ts`.
-- **CVE defense suite: eleven new Next.js/React parity tests** (`tests/nextjs-cve-parity.test.ts`), from an August-2026 review pass against the Next.js **August 2026 security release** plus a back-propagation sweep. Covers the two new August advisories — **CVE-2026-75604 / GHSA-p293-qw3h-jr36** (Windows-filesystem path-traversal RCE: `serveStatic` containment holds under backslash/UNC/drive/mixed-encoding escapes; denext also has no dual Pages+App legacy cache-path) and **GHSA-2xp9-vwfh-vxw4** (AVIF/`libheif` RCE: denext ships no `sharp`/`libheif`, decodes with wasm `@denext/photon`, and only ever _encodes_ AVIF via wasm `@denext/avif` when a route opts in **and** the client `Accept`s it) — and nine previously-`⚪`/back-propagated rows: image-fetch credential non-forwarding (CVE-2025-57752), inline data-island `<script>`-breakout escaping (CVE-2026-44580), hash-based CSP with no reflected nonce (CVE-2026-44581), SSR attribute-name injection (React CVE-2018-6341), i18n internal-path DoS (CVE-2022-21721), unhandled-rejection containment (CVE-2022-36046), i18n data-route middleware bypass (CVE-2026-44573), soft-nav cache-variant partitioning (CVE-2026-44582), and a disputed open-redirect confirm (CVE-2020-15242). All assessed as **already immune** (regression tests, no source fix needed). `CVE-DEFENSE-GUIDE.md` updated.
-- **CVE defense round 2: ten more parity tests** for CVE classes the guide did not yet track, prioritized worst-first. A new **§15 "first-party auth"** section back-propagates the **next-auth / Auth.js / `jsonwebtoken`** CVE history against denext's own OAuth/OIDC/JWT/session code (`tests/auth-crypto.test.ts`, `tests/auth.test.ts`, `tests/session.test.ts`): JWT `alg:none`/unsigned rejection (**CVE-2022-23540**), RS256→HS256 algorithm-confusion rejection (**CVE-2022-23541**), OAuth callback state/nonce/PKCE binding incl. foreign-provider tx (**CVE-2023-27490**, CVSS 8.1), foreign-JWT-as-session rejection (**CVE-2023-48309**), id_token `aud`/`iss`/nonce binding, no email-provider comma-injection (**CVE-2022-35924**, N/A by design), OAuth `callbackUrl` open-redirect coercion, and session fixation (CWE-384). Plus two fresh 2026 Next.js CVEs in `tests/nextjs-cve-parity.test.ts`: rewrite HTTP request smuggling (**CVE-2026-29057** — denext never proxies rewrites) and `/_next/image` disk-cache exhaustion (**CVE-2026-27980** — width+quality allowlists bound the variant space). All **already immune** (regression tests, no source fix). Two residuals documented in Known Gaps (weak-secret warn-not-throw; OIDC multi-`aud` membership).
-- **The desktop task now scopes `--allow-net` to loopback** (`--allow-net=127.0.0.1,localhost`) instead of granting unrestricted network to the compiled, distributable app. `runDesktop` binds `127.0.0.1` and the reverse proxy targets a loopback backend (the `spa.proxy` default), so the app has everything it needs while the binary can't reach the wider network. A non-loopback proxy (`allowNonLoopback`) needs the flag widened by hand. (`--allow-read`/`--allow-env` stay broad — a local desktop app needs them and narrowing risks breaking the runtime.)
-- **Hardening of the new migrate/desktop surface** (from a pre-release audit): the framework-deps materialization now **pins exact versions** from the framework's `deno.lock` instead of caret ranges (no in-range / supply-chain drift for `.fwdeps`) and verifies the install actually completed before reusing it; `ensureGitignore` and the desktop-icon writer now **remove any pre-existing entry before writing** (a `.gitignore`/`desktop-icon.png` planted as a symlink can no longer redirect the write out of tree — `migrate` runs on cloned third-party repos); the `spa.proxy` loopback check matches the whole `127.0.0.0/8` block as a dotted quad instead of a `127.` prefix (rejecting `127.0.0.1.evil.com`); a configured `spa.desktop.icon` is format-validated (non-PNG rasters composed, `.ico`/`.icns` refused with a clear message + fallback) so an undecodable icon can't be written under a `.png` name; and a failed `node_modules` symlink now reports a clear diagnostic (Windows Developer Mode) instead of failing cryptically later.
-- **The `.fwdeps` framework-deps install is serialized with a lock file**, so two concurrent builds of one app (a `dev` + a `build`, parallel CI) can't run `deno install` into the same directory at once and corrupt it — the loser waits and reuses the winner's install; a crashed holder's lock is stolen after a stale timeout.
-- **The desktop icon is composed platform-aware**: the ~80% macOS safe-area margin is applied only when building on macOS; Windows/Linux get a full-bleed 1024² icon (a margined icon renders undersized in their taskbars/docks).
-- **A `--denext-local-path` desktop build is now self-contained.** With a `file://` denext (the dev aid), the app config mapped `denext/*` to local files but not denext's OWN deps, so `deno desktop` compiled `denext/desktop`'s graph and the packaged app then died at launch with `Import "@std/path" not a dependency and not in import map`. `migrate --denext-local-path` now also carries denext's `jsr:`/`npm:` deps (`@std/*`, `ws`, …) into the app config so those modules resolve. No-op for published JSR (the package carries its own deps).
+- **Live hub hardening.** A client frame that parses to `null`/a primitive no
+  longer throws inside the socket handler (an uncaught throw there would take
+  the whole process down); the handler is wrapped so no hook throw can; inbound
+  frames are rate-limited per connection (100/s → a `limit` error, not unbounded
+  authorization work); the data-subscription and presence-room caps are
+  re-checked AFTER the async authorization (N concurrent frames could all pass
+  the pre-await check); a presence broadcast encodes the peer list once (O(n),
+  not O(n²)). `src/server/live.ts`.
+- **Dev servers.** EVERY `/_denext/*` endpoint of the app dev server — the
+  route/flight bundles, chunks and stylesheets (dev bundles carry inline source
+  maps = project source), not just four paths — sits behind the Host/Origin
+  (DNS-rebinding) gate, and the SPA dev server gets the same gate
+  (`allowedDevOrigins` on its options). The SPA `spa.proxy` no longer forges the
+  backend's `Origin` on a bridged WebSocket (the browser's own is forwarded, so
+  the backend's origin check sees who connected) and strips `Secure` from
+  proxied cookies only on a plain-http front. `src/build/dev-server/handler.ts`,
+  `src/build/spa/dev-handler.ts`, `src/build/dev-proxy.ts`.
+- **Auth.** The credentials body is read through the shared cap (64 KiB;
+  oversized/stalled → treated as no credentials, never buffered), only STRING
+  values reach `authorize` (nested JSON is dropped); an IP-wide second
+  rate-limit bucket (10× the per-identifier `max`) catches an attacker who
+  varies the identifier — or the identifier FIELD — per attempt;
+  `email_verified` sent as the string `"false"` counts as unverified; concurrent
+  scrypt derivations are bounded to the core count with a bounded waiter queue.
+  `src/server/auth/`.
+- **Tainted values are refused by EVERY Flight serializer**
+  (`experimental_taintObjectReference`/`taintUniqueValue` used to be enforced
+  only by the HTML+Flight renderer): the check lives in the shared leaf cascade.
+  `src/jsx/flight-scalar.ts`.
+- **`denext mcp` confines `dir` to the launch directory** (over stdio): a
+  prompt-injected client can no longer point a tool at `../../other-app` or an
+  absolute path elsewhere to read, scaffold into or render another project.
+  `denext migrate` evaluates the app's `next.config.*` with read/env/sys
+  permissions scoped to the project instead of `-A`; the Remix migrator refuses
+  a route whose segments would write outside `app/`. `src/mcp/tools.ts`,
+  `src/build/migrate.ts`, `src/build/remix-migrate.ts`.
+- **ISR.** A single-flight follower now RESUMES a cached PPR shell (holes
+  rendered for its own request, CSP applied) instead of serving the raw shell
+  body with unfilled holes; the page-cache key includes the locale (domain- or
+  `Accept-Language`-detected locales share a URL); a failed background
+  regeneration backs off (5 s → 5 min) instead of re-firing on every stale hit;
+  the fetch cache no longer stores non-OK responses.
+  `src/server/page-cache-flow.ts`, `src/server/cache.ts`.
+- **`@denext/pages-router`**: a preview cookie is VERIFIED (not just detected)
+  before it bypasses the static cache — a forged cookie can't force every
+  request into a live render; `res.setHeader("Set-Cookie", [...])` emits one
+  header per element; a `finish()` failure no longer hangs the request. The
+  pages-router preview token uses its own MAC domain.
+- **Server-side render collectors are per request.** The signal-state collector
+  and the `useServerInsertedHTML` sink were module globals shared by every
+  concurrent render (request A's values could land in request B's document);
+  both live on the request context now (`src/runtime/render-scope.ts`). A PPR
+  hole whose render rejects before the streamer consumes it is no longer an
+  unhandled rejection.
+- **`NextResponse.next({ request: { headers } })` no longer 500s on requests
+  with a body.** The pipeline re-wrapped the original request after the
+  middleware runner had already consumed its body ("Input request's body is
+  unusable") — every POST, form submit and Server Action through such a
+  middleware failed. The runner now hands back the request it built and the
+  pipeline routes that one. `src/server/middleware.ts`,
+  `src/server/request-pipeline.ts`.
+- **A short-circuit middleware `Response` keeps queued cookies.**
+  `cookies().delete("session"); return NextResponse.redirect("/login")` dropped
+  the `Set-Cookie` because the response bypassed `finalize()`; it now leaves
+  through the same path as every other response.
+- **An external `NextResponse.rewrite("https://other/…")` is proxied through
+  `safeFetch`** (SSRF-guarded: private/internal targets are refused with a 502)
+  instead of being silently routed to the LOCAL page of the same path.
+- **`notFound()`/`forbidden()`/`unauthorized()` inside a Server Action** return
+  a 404/403/401 signal the client renders as the matching boundary, instead of a
+  redacted 500 (`src/server/action-handler.ts`).
+- **`sitemap.ts` escapes `changeFrequency`** like every other field (a
+  DB-sourced value could inject XML). `src/server/metadata-files.ts`.
+- **Soft-navigation body cap and the request deadline now cover streamed
+  responses.** The per-request timeout used to be cleared as soon as a streamed
+  shell was produced, so a Suspense hole awaiting a black-holed upstream held
+  the socket and the render tree forever; it now stays armed until the body is
+  consumed and aborts the hole renders on expiry (the shell fallbacks stay in
+  place). `src/server/app.ts`.
+- **A background ISR regeneration no longer replays the triggering visitor's
+  `Cookie`/`Authorization`/request id** — only content-negotiation and
+  `x-forwarded-*` headers are forwarded, so a page side effect can't run as that
+  visitor. `src/server/page-cache-flow.ts`.
+- **Framework endpoints are GET/HEAD only** (`/_denext/health`, `/_denext/image`
+  → 405 otherwise: a POST to the optimizer bypassed every edge cache); the Live
+  connection cap is re-checked after the async authorization (no overshoot under
+  concurrent handshakes) and `live.maxMessageBytes` counts UTF-8 bytes, not
+  UTF-16 units. `@denext/pages-router` API routes enforce `bodyParser.sizeLimit`
+  while the body STREAMS (it was checked after buffering the whole body),
+  including multipart and `bodyParser: false`. Server-action ids on the wire are
+  opaque hashes of `module#export` (no longer an enumeration aid); the in-memory
+  draft-mode token store is bounded (10k, 24 h TTL). `images.remotePatterns`
+  honors `port` and `search` and treats `pathname` as a glob (`/public/**`), so
+  `pathname: "/public/"` no longer admits `/public-internal/…`.
+- **Dev server: `/_denext/@fs<abs>` no longer reads arbitrary files.** The
+  unbundled dev loop served any absolute path (transformed, with the source
+  echoed in an inline source map) with no project containment and outside the
+  Host/Origin gate the other dev endpoints use. It now serves only files under
+  the project (real paths on both sides, so an in-project symlink pointing
+  outside is refused) or modules the dev graph itself imported, and every
+  `/_denext/@*` URL sits behind the same DNS-rebinding gate as
+  `/_denext/reload`. `src/build/dev-unbundled/handler.ts`,
+  `src/build/dev-server/handler.ts`.
+- **`safeRedirectLocation` strips control characters first.** A tab
+  (`/%09/evil.com`) survived the leading-slash collapse and, because the URL
+  parser drops tabs, reached the browser as protocol-relative `//evil.com` — an
+  open redirect through any user-controlled redirect target (`?callbackUrl=`,
+  middleware `redirect()`, action redirects). C0 controls, space and DEL are now
+  removed before the collapse; a bare `\r`/`\n` (which made `new Response` throw
+  a 500) is removed too. `src/server/config.ts`.
+- **Soft-navigation POST bodies are capped.** The `x-denext-nav: 1` POST echo
+  buffered `request.clone().json()` with no size cap or idle timeout, before
+  routing, for any path — an unauthenticated memory-exhaustion lever. It now
+  shares the Server Action reader (`readCappedBody`, 1 MiB, 30 s idle → 413/408)
+  from the new `src/server/body.ts`.
+- **Production-readiness + security audit remediation.** A fresh adversarial
+  audit (six analysis passes + a multi-step chain pass, scoped _beyond_ the
+  CVE-guide floor) surfaced and this release fixes:
+  - **Middleware auth-bypass via duplicate slashes (HIGH).** The router drops
+    empty path segments (`//admin` resolves to the `/admin` page) but an
+    anchored middleware matcher / config rule tested against the raw pathname
+    did not — so `//admin` reached a page while skipping its `/admin` guard. The
+    pipeline now collapses `/`-runs and 308-redirects the non-canonical form
+    before config rules, middleware, and routing, so all three evaluate the same
+    path. `src/server/app.ts`.
+  - **`unstable_cache` cross-request data leak (HIGH).** Reading
+    `cookies()`/`headers()`/`connection()` inside an `unstable_cache` body did
+    **not** throw (its sibling `"use cache"` does), so a per-user value could be
+    cached under a session-less key and served to others. The loader (and its
+    SWR revive) now run inside a cache scope, so such a read throws — matching
+    `"use cache"` and Next. `src/server/cache.ts`.
+  - **`cacheKeyParams` cross-user cache poisoning in production (HIGH).** A
+    whole-body-cached render that read a non-allowlisted `searchParams` baked
+    that value into the shared entry; the guard was **dev-only**. The store now
+    **refuses** such a render in every environment (dev still warns).
+    `src/server/{request-context,app}.ts`.
+  - **`<Live>` re-render fan-out DoS (HIGH).** A single `revalidateTag` could
+    spawn one full-route re-render per connection (default cap 10 000)
+    simultaneously. A fleet-wide `live.limits.maxConcurrentRenders` gate
+    (default 40) bounds the fan-out; excess queues.
+    `src/server/{live,config}.ts`.
+  - **Flight `$`-discriminant collision → forged VNode / XSS (MED).** An
+    attacker-influenced data object shaped like a Flight control tag
+    (`{ $: "h", … }` — e.g. a store document, or `searchParams` `?$=h`) was
+    re-read on the client as a tag, forging a `dangerouslySetInnerHTML` VNode
+    (XSS) or crashing hydration. The serializer now escapes a leading `$` in
+    user-object keys and the parser reverses it, so such objects round-trip as
+    data. `src/jsx/render-to-html-flight.ts`, `src/client/flight-client.ts`.
+  - **OIDC `email_verified` not enforced (MED).** The built-in Google /
+    generic-OIDC profile mappers copied `email` unconditionally, so an
+    attacker-controlled unverified address could feed an app that links accounts
+    by email. The mappers now drop the email when the IdP marks it
+    `email_verified: false` and surface `AuthUser.emailVerified`.
+    `src/server/auth/providers.ts`, `types.ts`.
+  - **Tailwind standalone binary executed without integrity check (MED,
+    build-time).** The downloaded binary now has its SHA-256 verified against a
+    pin (`DENEXT_TAILWIND_SHA256` or a built-in table) and fails closed on
+    mismatch; an unpinned download prints its digest and warns instead of
+    running silently. `src/build/tailwind.ts`.
+  - Plus hardening: Live data-subscription **re-authorization on every
+    recompute** (stops pushes after mid-session revocation) and **numeric-limit
+    validation** (a bad-type cap like `maxMessageBytes: "64kb"` can no longer
+    silently disable a control); JWT **`typ` pinning** (rejects an `at+jwt`
+    access token as an id_token) and **per-candidate JWKS resilience** (a
+    malformed key mid-rollover no longer aborts verification); ICU parser
+    **nesting-depth cap** (untrusted message strings can't overflow the stack);
+    and the precompressed **`.gz` static sibling** now gets the same
+    symlink-escape recheck as the identity file. Regression tests in
+    `tests/{security-remediation,auth-crypto,middleware,cache,config,static,live-data}.test.ts`.
+- **Deferred-item hardening (audit follow-up).** The four items the audit above
+  tracked as PLAUSIBLE / lower-severity are now closed:
+  - **Data-cache follower abort-escape.** A single-flight _follower_
+    (`unstable_cache` / `"use cache"` coalescing onto another request's
+    in-flight compute) awaited the leader with a bare `await`, so a hung leader
+    body pinned every follower even after the follower's own client
+    disconnected. Followers now race the wait against their request signal and
+    unwind on abort — the leader keeps running for others — mirroring the
+    page-cache follower. `raceAbort`/`isAbortError` extracted to
+    `src/server/abort.ts`; `src/server/{cache,app,request-context}.ts`.
+  - **Live per-render deadline (slot-exhaustion DoS).** A `<Live>` re-render or
+    `useLive` fetcher holds one of the `maxConcurrentRenders` slots for its
+    whole duration; a hung user fetcher held its slot forever, and enough hung
+    fetchers pegged the gate and stalled the fleet. New
+    `live.limits.renderTimeoutSeconds` (default **30**, on by default) aborts an
+    over-running render (a cooperative `AbortSignal` reaches the fetcher's
+    `fetch`/cache reads) and releases the slot, sending an error/refresh frame.
+    `src/server/{live,config}.ts`.
+  - **Config numeric validation now throws at boot.** `hsts.maxAge`,
+    `images.{deviceSizes,imageSizes,qualities,minimumCacheTTL,maximumRedirects}`,
+    and `cache.{maxDataEntries,maxPageEntries}` were trusted unvalidated — a
+    `NaN`/`Infinity`/negative flowed into a `max-age` header, a redirect-loop
+    bound, or an eviction count. `validateDenextConfig` now rejects non-finite /
+    out-of-range values (fail fast, field-named). `src/build/paths.ts`.
+  - **GitHub verified-email enforcement.** The `github` provider copied
+    `userinfo.email` unconditionally (an unverified, user-chosen address). The
+    flow now fetches `/user/emails` (via the already-requested `user:email`
+    scope) and the mapper exposes only a provider-**verified** address, setting
+    `AuthUser.emailVerified` — matching the Google/OIDC `email_verified`
+    hardening. New `OAuthProvider.userEmailsUrl` + `ProfileInput.emails`.
+    `src/server/auth/{providers,routes,flow,types}.ts`.
+  - Regression tests in
+    `tests/{cache,use-cache,live-data,paths,security-remediation}.test.ts`.
+- **CVE defense suite: eleven new Next.js/React parity tests**
+  (`tests/nextjs-cve-parity.test.ts`), from an August-2026 review pass against
+  the Next.js **August 2026 security release** plus a back-propagation sweep.
+  Covers the two new August advisories — **CVE-2026-75604 /
+  GHSA-p293-qw3h-jr36** (Windows-filesystem path-traversal RCE: `serveStatic`
+  containment holds under backslash/UNC/drive/mixed-encoding escapes; denext
+  also has no dual Pages+App legacy cache-path) and **GHSA-2xp9-vwfh-vxw4**
+  (AVIF/`libheif` RCE: denext ships no `sharp`/`libheif`, decodes with wasm
+  `@denext/photon`, and only ever _encodes_ AVIF via wasm `@denext/avif` when a
+  route opts in **and** the client `Accept`s it) — and nine
+  previously-`⚪`/back-propagated rows: image-fetch credential non-forwarding
+  (CVE-2025-57752), inline data-island `<script>`-breakout escaping
+  (CVE-2026-44580), hash-based CSP with no reflected nonce (CVE-2026-44581), SSR
+  attribute-name injection (React CVE-2018-6341), i18n internal-path DoS
+  (CVE-2022-21721), unhandled-rejection containment (CVE-2022-36046), i18n
+  data-route middleware bypass (CVE-2026-44573), soft-nav cache-variant
+  partitioning (CVE-2026-44582), and a disputed open-redirect confirm
+  (CVE-2020-15242). All assessed as **already immune** (regression tests, no
+  source fix needed). `CVE-DEFENSE-GUIDE.md` updated.
+- **CVE defense round 2: ten more parity tests** for CVE classes the guide did
+  not yet track, prioritized worst-first. A new **§15 "first-party auth"**
+  section back-propagates the **next-auth / Auth.js / `jsonwebtoken`** CVE
+  history against denext's own OAuth/OIDC/JWT/session code
+  (`tests/auth-crypto.test.ts`, `tests/auth.test.ts`, `tests/session.test.ts`):
+  JWT `alg:none`/unsigned rejection (**CVE-2022-23540**), RS256→HS256
+  algorithm-confusion rejection (**CVE-2022-23541**), OAuth callback
+  state/nonce/PKCE binding incl. foreign-provider tx (**CVE-2023-27490**, CVSS
+  8.1), foreign-JWT-as-session rejection (**CVE-2023-48309**), id_token
+  `aud`/`iss`/nonce binding, no email-provider comma-injection
+  (**CVE-2022-35924**, N/A by design), OAuth `callbackUrl` open-redirect
+  coercion, and session fixation (CWE-384). Plus two fresh 2026 Next.js CVEs in
+  `tests/nextjs-cve-parity.test.ts`: rewrite HTTP request smuggling
+  (**CVE-2026-29057** — denext never proxies rewrites) and `/_next/image`
+  disk-cache exhaustion (**CVE-2026-27980** — width+quality allowlists bound the
+  variant space). All **already immune** (regression tests, no source fix). Two
+  residuals documented in Known Gaps (weak-secret warn-not-throw; OIDC
+  multi-`aud` membership).
+- **The desktop task now scopes `--allow-net` to loopback**
+  (`--allow-net=127.0.0.1,localhost`) instead of granting unrestricted network
+  to the compiled, distributable app. `runDesktop` binds `127.0.0.1` and the
+  reverse proxy targets a loopback backend (the `spa.proxy` default), so the app
+  has everything it needs while the binary can't reach the wider network. A
+  non-loopback proxy (`allowNonLoopback`) needs the flag widened by hand.
+  (`--allow-read`/`--allow-env` stay broad — a local desktop app needs them and
+  narrowing risks breaking the runtime.)
+- **Hardening of the new migrate/desktop surface** (from a pre-release audit):
+  the framework-deps materialization now **pins exact versions** from the
+  framework's `deno.lock` instead of caret ranges (no in-range / supply-chain
+  drift for `.fwdeps`) and verifies the install actually completed before
+  reusing it; `ensureGitignore` and the desktop-icon writer now **remove any
+  pre-existing entry before writing** (a `.gitignore`/`desktop-icon.png` planted
+  as a symlink can no longer redirect the write out of tree — `migrate` runs on
+  cloned third-party repos); the `spa.proxy` loopback check matches the whole
+  `127.0.0.0/8` block as a dotted quad instead of a `127.` prefix (rejecting
+  `127.0.0.1.evil.com`); a configured `spa.desktop.icon` is format-validated
+  (non-PNG rasters composed, `.ico`/`.icns` refused with a clear message +
+  fallback) so an undecodable icon can't be written under a `.png` name; and a
+  failed `node_modules` symlink now reports a clear diagnostic (Windows
+  Developer Mode) instead of failing cryptically later.
+- **The `.fwdeps` framework-deps install is serialized with a lock file**, so
+  two concurrent builds of one app (a `dev` + a `build`, parallel CI) can't run
+  `deno install` into the same directory at once and corrupt it — the loser
+  waits and reuses the winner's install; a crashed holder's lock is stolen after
+  a stale timeout.
+- **The desktop icon is composed platform-aware**: the ~80% macOS safe-area
+  margin is applied only when building on macOS; Windows/Linux get a full-bleed
+  1024² icon (a margined icon renders undersized in their taskbars/docks).
+- **A `--denext-local-path` desktop build is now self-contained.** With a
+  `file://` denext (the dev aid), the app config mapped `denext/*` to local
+  files but not denext's OWN deps, so `deno desktop` compiled `denext/desktop`'s
+  graph and the packaged app then died at launch with
+  `Import "@std/path" not a dependency and not in import map`.
+  `migrate --denext-local-path` now also carries denext's `jsr:`/`npm:` deps
+  (`@std/*`, `ws`, …) into the app config so those modules resolve. No-op for
+  published JSR (the package carries its own deps).
 
 ### Docs
 
-- **KNOWN-LIMITATIONS honesty pass.** Corrected entries that were labeled "intentional non-goal / by design" when the truth was "not yet built": `next/og`'s satori subset is named as **Next.js parity** (satori's engine, not a denext choice); `ViewTransition` now documents the route-level transition it ships; React `taint*` is now implemented (see Added); `Activity` real scheduling and Next `dynamicIO` are reclassified as tracked work (the latter under the experimental Cache Components effort) rather than non-goals. The static-export, `res.revalidate`, `res.write` streaming, and `i18n.domains` bullets are retired as those features landed.
-- CONTRIBUTING.md documents the run-from-JSR build rule + how to test it locally; a new **Contributing** page on denext.dev renders it. The migrating guide notes that migrating a repo with `node_modules` needs `--node-modules-dir=none`, and that `migrate` writes a `.gitignore` for `.denext/`/`out/`/`desktop-icon.png`. The SPA/desktop guides document `spa.desktop.icon` and steer packaging to the flag-complete `deno task desktop`.
+- **KNOWN-LIMITATIONS honesty pass.** Corrected entries that were labeled
+  "intentional non-goal / by design" when the truth was "not yet built":
+  `next/og`'s satori subset is named as **Next.js parity** (satori's engine, not
+  a denext choice); `ViewTransition` now documents the route-level transition it
+  ships; React `taint*` is now implemented (see Added); `Activity` real
+  scheduling and Next `dynamicIO` are reclassified as tracked work (the latter
+  under the experimental Cache Components effort) rather than non-goals. The
+  static-export, `res.revalidate`, `res.write` streaming, and `i18n.domains`
+  bullets are retired as those features landed.
+- CONTRIBUTING.md documents the run-from-JSR build rule + how to test it
+  locally; a new **Contributing** page on denext.dev renders it. The migrating
+  guide notes that migrating a repo with `node_modules` needs
+  `--node-modules-dir=none`, and that `migrate` writes a `.gitignore` for
+  `.denext/`/`out/`/`desktop-icon.png`. The SPA/desktop guides document
+  `spa.desktop.icon` and steer packaging to the flag-complete
+  `deno task desktop`.
 
 ## [1.4.0] - 2026-08-23
 
 Rendering strategies reach Next.js parity **and** go beyond it. Incremental
-streaming is now on by default and — like buffered responses — carries the strict
-hash-based CSP; Partial Prerendering works on `"use client"` (Flight) routes; and
-the island directive set reaches 6/6 Astro parity with `client:media` and
-`client:only`. Route segment config (`dynamic: "error"`, `force-static`,
-`dynamicParams`, `fetchCache`) is now honored, and the Live socket recovers shed
-frames under back-pressure.
+streaming is now on by default and — like buffered responses — carries the
+strict hash-based CSP; Partial Prerendering works on `"use client"` (Flight)
+routes; and the island directive set reaches 6/6 Astro parity with
+`client:media` and `client:only`. Route segment config (`dynamic: "error"`,
+`force-static`, `dynamicParams`, `fetchCache`) is now honored, and the Live
+socket recovers shed frames under back-pressure.
 
 ### Added
 
 - **Streaming SSR is on by default** and Flight-capable. A route with pending
-  `<Suspense>` boundaries streams its shell + fallbacks first, then each boundary's
-  real content as a `<template>` revealed by a single hashed swap-runtime script; a
-  hole-less route still buffers (cache-friendly). Works on `"use client"` (Flight)
-  routes via a dual HTML+Flight streamer. Opt out with `experimental.streaming: false`.
-- **Streamed and PPR responses carry the strict hash-based CSP.** `resolveStreamingCsp`
-  derives `script-src` from a single fixed swap-runtime hash (a framework constant, not
-  output-derived) plus the buffered head's inline-`<style>` hashes — no whole-body
-  buffering required. Streaming is no longer gated by CSP.
-- **Partial Prerendering on Flight routes.** A postpone-aware dual HTML+Flight renderer
-  serves a cached static shell with per-request dynamic holes on routes with a
-  `"use client"` boundary — client islands in the cached shell and inside resumed holes
-  both hydrate. Still behind `experimental.cacheComponents`.
-- **Route segment config honoring.** `dynamic: "error"` throws on a dynamic-API read;
-  `force-static` empties the dynamic APIs and lets the page cache; `dynamicParams: false`
-  404s params outside `generateStaticParams`; segment-level `fetchCache` sets the baseline.
-  `runtime`/`preferredRegion`/`maxDuration` remain informational (one Deno runtime).
-- **Two new island directives → 6/6 Astro parity.** `client:media="(min-width:800px)"`
-  hydrates when a CSS media query matches (`matchMedia`); `client:only` skips SSR and
-  renders on the client only (empty wrapper server-side, `createRoot` on mount).
-- **Module-level `export const hydrate` default.** An island's own module can set a
-  default strategy; a usage-site `client:*` overrides it (precedence: usage-site >
-  module default > eager).
-- **Docs.** New "Rendering strategies" and "Islands & hydration" pages on the docs
-  site, and a new `examples/islands` app exercising all six directives.
+  `<Suspense>` boundaries streams its shell + fallbacks first, then each
+  boundary's real content as a `<template>` revealed by a single hashed
+  swap-runtime script; a hole-less route still buffers (cache-friendly). Works
+  on `"use client"` (Flight) routes via a dual HTML+Flight streamer. Opt out
+  with `experimental.streaming: false`.
+- **Streamed and PPR responses carry the strict hash-based CSP.**
+  `resolveStreamingCsp` derives `script-src` from a single fixed swap-runtime
+  hash (a framework constant, not output-derived) plus the buffered head's
+  inline-`<style>` hashes — no whole-body buffering required. Streaming is no
+  longer gated by CSP.
+- **Partial Prerendering on Flight routes.** A postpone-aware dual HTML+Flight
+  renderer serves a cached static shell with per-request dynamic holes on routes
+  with a `"use client"` boundary — client islands in the cached shell and inside
+  resumed holes both hydrate. Still behind `experimental.cacheComponents`.
+- **Route segment config honoring.** `dynamic: "error"` throws on a dynamic-API
+  read; `force-static` empties the dynamic APIs and lets the page cache;
+  `dynamicParams: false` 404s params outside `generateStaticParams`;
+  segment-level `fetchCache` sets the baseline.
+  `runtime`/`preferredRegion`/`maxDuration` remain informational (one Deno
+  runtime).
+- **Two new island directives → 6/6 Astro parity.**
+  `client:media="(min-width:800px)"` hydrates when a CSS media query matches
+  (`matchMedia`); `client:only` skips SSR and renders on the client only (empty
+  wrapper server-side, `createRoot` on mount).
+- **Module-level `export const hydrate` default.** An island's own module can
+  set a default strategy; a usage-site `client:*` overrides it (precedence:
+  usage-site > module default > eager).
+- **Docs.** New "Rendering strategies" and "Islands & hydration" pages on the
+  docs site, and a new `examples/islands` app exercising all six directives.
 
 ### Fixed
 
-- **Live back-pressure recovery.** When a client's send buffer is saturated (>1 MiB
-  buffered), the hub sheds frames rather than buffering unboundedly — but a shed
-  _stateful_ frame previously left that client stale indefinitely. Shed frames are now
-  recovered once the socket drains: a dropped `<Live>` patch replays as a single
-  `refresh` (catching every boundary up), and a dropped `useLive` `data` frame re-runs
-  its fetcher to push the latest value. Presence frames are self-superseding and still
-  shed freely. The drain is polled (Deno's `WebSocket` has no drain event) and the
-  recovery intent is dropped if the socket closes first (a reconnect refreshes anyway).
+- **Live back-pressure recovery.** When a client's send buffer is saturated (>1
+  MiB buffered), the hub sheds frames rather than buffering unboundedly — but a
+  shed _stateful_ frame previously left that client stale indefinitely. Shed
+  frames are now recovered once the socket drains: a dropped `<Live>` patch
+  replays as a single `refresh` (catching every boundary up), and a dropped
+  `useLive` `data` frame re-runs its fetcher to push the latest value. Presence
+  frames are self-superseding and still shed freely. The drain is polled (Deno's
+  `WebSocket` has no drain event) and the recovery intent is dropped if the
+  socket closes first (a reconnect refreshes anyway).
 - **`client:visible` on a `display:contents` wrapper.** The island wrapper is
   `display:contents` (no layout box), so an `IntersectionObserver` on it never
-  intersected and the island never hydrated on scroll. The `visible` scheduler now
-  observes the wrapper's first real child (the island's rendered root).
-- **Nested `client:*` islands.** A `client:*` island rendered inside another island's
-  subtree previously carved a stray wrapper (breaking the parent's hydration structure;
-  the streamer even double-carved it). It now renders eagerly with its parent (inline,
-  no wrapper, marker stripped) so the parent's server HTML and client render match.
-- **A failing Suspense/PPR hole no longer truncates the document.** Each streamed hole
-  is drained under its own try/catch — a rejected boundary keeps its fallback (and logs)
-  instead of erroring the whole stream.
-- **Client bundle no longer pulls in `node:async_hooks`.** A pure `fillFlightHoles` was
-  extracted to a dependency-free leaf module so the prerender scope's top-level
-  `AsyncLocalStorage` can never reach the browser bundle (which had silently broken
-  hydration on every isomorphic route).
-- **Streamed Server Action `<form>`** now emits `method="post"` in the Flight/stream
-  renderers (matching the buffered path), so a JS-less form submit hits the action.
+  intersected and the island never hydrated on scroll. The `visible` scheduler
+  now observes the wrapper's first real child (the island's rendered root).
+- **Nested `client:*` islands.** A `client:*` island rendered inside another
+  island's subtree previously carved a stray wrapper (breaking the parent's
+  hydration structure; the streamer even double-carved it). It now renders
+  eagerly with its parent (inline, no wrapper, marker stripped) so the parent's
+  server HTML and client render match.
+- **A failing Suspense/PPR hole no longer truncates the document.** Each
+  streamed hole is drained under its own try/catch — a rejected boundary keeps
+  its fallback (and logs) instead of erroring the whole stream.
+- **Client bundle no longer pulls in `node:async_hooks`.** A pure
+  `fillFlightHoles` was extracted to a dependency-free leaf module so the
+  prerender scope's top-level `AsyncLocalStorage` can never reach the browser
+  bundle (which had silently broken hydration on every isomorphic route).
+- **Streamed Server Action `<form>`** now emits `method="post"` in the
+  Flight/stream renderers (matching the buffered path), so a JS-less form submit
+  hits the action.
 
 ## [1.3.0] - 2026-08-23
 
-macOS desktop packaging becomes first-class, and a production-readiness / security /
-documentation audit of everything since 1.0.2 lands its fixes: a Live-socket
-authorization tightening, single-flight for `useLive` data, and a batch of
-build-pipeline and resource-cleanup hardening.
+macOS desktop packaging becomes first-class, and a production-readiness /
+security / documentation audit of everything since 1.0.2 lands its fixes: a
+Live-socket authorization tightening, single-flight for `useLive` data, and a
+batch of build-pipeline and resource-cleanup hardening.
 
 ### Added
 
 - **macOS desktop packaging.** Scaffolding the desktop target now emits
-  `scripts/package-macos.ts` and points `deno task desktop:package` at it. It builds
-  `--arch host|arm64|x86_64|both|universal` (cross-compiling and `lipo`-merging for a
-  universal bundle), ad-hoc signs by default, and — when `DENEXT_CODESIGN_IDENTITY`
-  is a Developer ID identity — signs inside-out with the Hardened Runtime + a secure
-  timestamp; with `DENEXT_NOTARY_PROFILE` also set it notarizes and staples. Optional
-  `--dmg`. New "Desktop apps (macOS)" docs page. (The old bare `desktop:package` task
-  also omitted `--include out`, so packaged binaries shipped without their static
-  assets — fixed here.)
-- **`react-dom/client` namespace default export.** `import ReactDOM from
-  "react-dom/client"; ReactDOM.createRoot(…)` (esModuleInterop / CJS-interop code)
-  now bundles, matching the default exports already on the `react`/`react-dom` shims.
+  `scripts/package-macos.ts` and points `deno task desktop:package` at it. It
+  builds `--arch host|arm64|x86_64|both|universal` (cross-compiling and
+  `lipo`-merging for a universal bundle), ad-hoc signs by default, and — when
+  `DENEXT_CODESIGN_IDENTITY` is a Developer ID identity — signs inside-out with
+  the Hardened Runtime + a secure timestamp; with `DENEXT_NOTARY_PROFILE` also
+  set it notarizes and staples. Optional `--dmg`. New "Desktop apps (macOS)"
+  docs page. (The old bare `desktop:package` task also omitted `--include out`,
+  so packaged binaries shipped without their static assets — fixed here.)
+- **`react-dom/client` namespace default export.**
+  `import ReactDOM from
+  "react-dom/client"; ReactDOM.createRoot(…)`
+  (esModuleInterop / CJS-interop code) now bundles, matching the default exports
+  already on the `react`/`react-dom` shims.
 
 ### Fixed
 
 - **Scaffolded `deno desktop` entry quits on window close.** The generated
   `desktop.ts` was `Deno.serve(...)`-only; since that task is permanently live,
-  closing the window (red button / ⌘W) did nothing. The entry now adopts the window
-  via `Deno.BrowserWindow` and `Deno.exit(0)`s on its `close` event.
-- **Tailwind input aliased to the compiled output.** An app that imports the Tailwind
-  input file it authored (`import "./index.css"`) previously produced an unstyled
-  build; the input is now aliased to the compiled output so importing either yields
-  the same linked stylesheet.
-- **`useLive` data recomputes are single-flighted** (per subscription), so a burst of
-  tag invalidations can no longer race the async fetcher and push out-of-order `data`
-  frames — the last frame always reflects the latest state (mirrors the `<Live>`
-  boundary's existing `busy`/`dirty` guard).
-- **SPA build/dev pipeline hardening:** `denext build` no longer leaves a half-written
-  staging dir behind on a failed build; `export` surfaces a real `public/` copy error
-  instead of silently shipping missing assets; the dev watcher ignores events under
-  the output dir / `node_modules` / `.git` (stops a self-triggered rebuild loop when
-  the entry sits at the project root); the esbuild service is kept warm across dev
-  rebuilds and torn down once on shutdown; and a dev-server races that could deref a
-  pruned build dir is closed.
-- **Auth robustness:** `denextAuth` fails fast at config time when an OAuth provider's
-  `clientId`/`clientSecret` is empty (a missing env var previously POSTed the literal
-  `"undefined"` and failed every login opaquely), and a misconfigured provider now
-  degrades the sign-in _initiation_ to the sign-in page with `?error=config` instead
-  of a raw 500 (matching the callback path).
+  closing the window (red button / ⌘W) did nothing. The entry now adopts the
+  window via `Deno.BrowserWindow` and `Deno.exit(0)`s on its `close` event.
+- **Tailwind input aliased to the compiled output.** An app that imports the
+  Tailwind input file it authored (`import "./index.css"`) previously produced
+  an unstyled build; the input is now aliased to the compiled output so
+  importing either yields the same linked stylesheet.
+- **`useLive` data recomputes are single-flighted** (per subscription), so a
+  burst of tag invalidations can no longer race the async fetcher and push
+  out-of-order `data` frames — the last frame always reflects the latest state
+  (mirrors the `<Live>` boundary's existing `busy`/`dirty` guard).
+- **SPA build/dev pipeline hardening:** `denext build` no longer leaves a
+  half-written staging dir behind on a failed build; `export` surfaces a real
+  `public/` copy error instead of silently shipping missing assets; the dev
+  watcher ignores events under the output dir / `node_modules` / `.git` (stops a
+  self-triggered rebuild loop when the entry sits at the project root); the
+  esbuild service is kept warm across dev rebuilds and torn down once on
+  shutdown; and a dev-server races that could deref a pruned build dir is
+  closed.
+- **Auth robustness:** `denextAuth` fails fast at config time when an OAuth
+  provider's `clientId`/`clientSecret` is empty (a missing env var previously
+  POSTed the literal `"undefined"` and failed every login opaquely), and a
+  misconfigured provider now degrades the sign-in _initiation_ to the sign-in
+  page with `?error=config` instead of a raw 500 (matching the callback path).
 - **Resource cleanup:** the Live hub clears its coalesce timer + pending tags on
-  teardown (no dangling timer on the test path); a wake-lock claim is rolled back if
-  its sentinel fails to acquire (no phantom "screen held"); and macOS packaging always
-  removes its per-arch temp bundles and the notarization zip, even on error paths
-  (plus a `plutil` exit-code check so the main executable can't be signed twice).
+  teardown (no dangling timer on the test path); a wake-lock claim is rolled
+  back if its sentinel fails to acquire (no phantom "screen held"); and macOS
+  packaging always removes its per-arch temp bundles and the notarization zip,
+  even on error paths (plus a `plutil` exit-code check so the main executable
+  can't be signed twice).
 
 ### Security
 
-- **`experimental.live.allowAnonymous` no longer opens arbitrary data over the Live
-  socket.** It gates presence-room joins; `useLive` data subscriptions still require
-  the per-action `liveReadable(...)` opt-in (or a `canSubscribe` hook). Previously,
-  enabling anonymous presence also admitted a `data-subscribe` to _any_ registered
-  action — including mutations, which a data subscription re-runs on every tag
-  invalidation — defeating the `liveReadable` guard. Unmarked actions are now a
-  `no-policy` refusal even under `allowAnonymous`.
-- **`spa.head` gets the dev-only raw-HTML injection warning** that `metadata.head`
-  already emits, flagging it as an untrusted-input sink.
+- **`experimental.live.allowAnonymous` no longer opens arbitrary data over the
+  Live socket.** It gates presence-room joins; `useLive` data subscriptions
+  still require the per-action `liveReadable(...)` opt-in (or a `canSubscribe`
+  hook). Previously, enabling anonymous presence also admitted a
+  `data-subscribe` to _any_ registered action — including mutations, which a
+  data subscription re-runs on every tag invalidation — defeating the
+  `liveReadable` guard. Unmarked actions are now a `no-policy` refusal even
+  under `allowAnonymous`.
+- **`spa.head` gets the dev-only raw-HTML injection warning** that
+  `metadata.head` already emits, flagging it as an untrusted-input sink.
 
 ## [1.2.0] - 2026-08-23
 
-Run your existing React SPA on denext: a first-class `mode: "spa"`, the next-compat
-pipeline that resolves an npm library's `import "react"` to denext's single React,
-and a set of React-fidelity reconciler fixes that make heavy component libraries
-(Base UI, Radix, floating-ui, `@effect/atom`) render correctly.
+Run your existing React SPA on denext: a first-class `mode: "spa"`, the
+next-compat pipeline that resolves an npm library's `import "react"` to denext's
+single React, and a set of React-fidelity reconciler fixes that make heavy
+component libraries (Base UI, Radix, floating-ui, `@effect/atom`) render
+correctly.
 
 ### Added
 
 - **SPA mode (`mode: "spa"`) — host a client-only React app ("React but not
-  Next").** Set `mode: "spa"` with a `spa.entry` in `denext.config.ts` and denext
-  bundles that single client entry, wraps it in an HTML shell, and serves the shell
-  for every navigation (history-API fallback) — no `app/` directory, no SSR/Flight.
-  `dev` (live reload), `build`, `export`, and `start` all support it; `export`
-  emits a static `out/` that `deno desktop` packages unchanged. Bring your own
-  router (TanStack, etc.) and data layer — denext only bundles and mounts. The CSS
-  pipeline/Tailwind and the next-compat react→denext aliases apply, so an existing
-  Vite-style React SPA runs on denext's small, zero-npm runtime. New
-  `examples/spa` (with a `bench.ts` bundle-size comparison vs React+ReactDOM) and a
-  docs page. `SpaConfig` is exported from `denext/server`.
+  Next").** Set `mode: "spa"` with a `spa.entry` in `denext.config.ts` and
+  denext bundles that single client entry, wraps it in an HTML shell, and serves
+  the shell for every navigation (history-API fallback) — no `app/` directory,
+  no SSR/Flight. `dev` (live reload), `build`, `export`, and `start` all support
+  it; `export` emits a static `out/` that `deno desktop` packages unchanged.
+  Bring your own router (TanStack, etc.) and data layer — denext only bundles
+  and mounts. The CSS pipeline/Tailwind and the next-compat react→denext aliases
+  apply, so an existing Vite-style React SPA runs on denext's small, zero-npm
+  runtime. New `examples/spa` (with a `bench.ts` bundle-size comparison vs
+  React+ReactDOM) and a docs page. `SpaConfig` is exported from `denext/server`.
 - **SPA mode runs npm-React apps on denext's single React (next-compat path).**
   When the app uses npm React (`node_modules/react`, or `nextCompat: true`), SPA
   mode bundles through the next-compat esbuild rewrite so an npm library's own
-  `import "react"` also resolves to denext's React — the "two Reacts" fix a plain
-  `deno bundle` cannot do. This is what lets an existing Vite-style React SPA (Radix,
-  TanStack Router, etc.) run on denext's runtime. A denext-native SPA keeps the fast
-  plain-`deno bundle` path.
+  `import "react"` also resolves to denext's React — the "two Reacts" fix a
+  plain `deno bundle` cannot do. This is what lets an existing Vite-style React
+  SPA (Radix, TanStack Router, etc.) run on denext's runtime. A denext-native
+  SPA keeps the fast plain-`deno bundle` path.
 - **`import.meta.env` for SPA mode** (the Vite `define` analogue): the built-ins
-  `MODE`/`DEV`/`PROD`/`SSR`/`BASE_URL` are injected with correct types (`DEV`/`PROD`
-  are real booleans — `dev` on `denext dev`, production on `build`), and `spa.env`
-  `{ KEY: "value" }` adds/overrides string values. Substituted at build time on the
-  next-compat path.
-- **Vite-style asset imports on the SPA compat path**: `?url` (emit a file, import
-  its URL), `?worker` (bundle the module + `new Worker(url)`), `?raw` (text),
-  `?inline` (data URL), bare `.wasm`/`.woff2`/image imports, and `new URL(…,
-  import.meta.url)` — all emitted under `/_denext/client/assets/` and served by the
-  SPA server / copied by `export`. New esbuild `assets` option on
-  `bundleNextCompatModules` (`publicPath`/`assetNames`/`loaders`).
-- **pnpm `catalog:` / `workspace:*` support on the SPA compat path.** The esbuild
-  deno-loader's resolver can't parse those version protocols (the real version lives
-  in `pnpm-workspace.yaml`), so denext now front-runs it: packages whose
-  `package.json` version is `catalog:`/`workspace:*` (and their whole transitive
-  subtree) are resolved straight from `node_modules` via a Node-style importer-relative
-  walk that realpaths through pnpm's symlinks — honoring each package's `exports`
-  map. Auto-detected from `package.json`; only active for such apps. This is what lets
-  a real pnpm-workspace Vite app (e.g. an Effect + TanStack monorepo) build on denext.
-- **Opt-in Content-Security-Policy for SPA mode (`spa.csp`).** A client-only React
-  SPA (Vite/CRA and denext alike) ships no CSP by default, so this is opt-in:
-  `spa.csp: "strict"` emits denext's strict policy (`default-src 'self'`,
-  `script-src 'self'`, `object-src 'none'`, `base-uri 'self'`, `style-src-attr
-  'unsafe-inline'` so React `style={{}}` keeps working) as a `<meta http-equiv>` in
-  the generated shell — so it applies for `export` (any static host), `start`, and
-  `dev`. Pass a `{ connectSrc: [...] }`-style object to add global opt-ins (your API
-  host, etc.). `frame-ancestors` is header-only (ignored in `<meta>`); the always-on
+  `MODE`/`DEV`/`PROD`/`SSR`/`BASE_URL` are injected with correct types
+  (`DEV`/`PROD` are real booleans — `dev` on `denext dev`, production on
+  `build`), and `spa.env` `{ KEY: "value" }` adds/overrides string values.
+  Substituted at build time on the next-compat path.
+- **Vite-style asset imports on the SPA compat path**: `?url` (emit a file,
+  import its URL), `?worker` (bundle the module + `new Worker(url)`), `?raw`
+  (text), `?inline` (data URL), bare `.wasm`/`.woff2`/image imports, and
+  `new URL(…,
+  import.meta.url)` — all emitted under `/_denext/client/assets/`
+  and served by the SPA server / copied by `export`. New esbuild `assets` option
+  on `bundleNextCompatModules` (`publicPath`/`assetNames`/`loaders`).
+- **pnpm `catalog:` / `workspace:*` support on the SPA compat path.** The
+  esbuild deno-loader's resolver can't parse those version protocols (the real
+  version lives in `pnpm-workspace.yaml`), so denext now front-runs it: packages
+  whose `package.json` version is `catalog:`/`workspace:*` (and their whole
+  transitive subtree) are resolved straight from `node_modules` via a Node-style
+  importer-relative walk that realpaths through pnpm's symlinks — honoring each
+  package's `exports` map. Auto-detected from `package.json`; only active for
+  such apps. This is what lets a real pnpm-workspace Vite app (e.g. an Effect +
+  TanStack monorepo) build on denext.
+- **Opt-in Content-Security-Policy for SPA mode (`spa.csp`).** A client-only
+  React SPA (Vite/CRA and denext alike) ships no CSP by default, so this is
+  opt-in: `spa.csp: "strict"` emits denext's strict policy
+  (`default-src 'self'`, `script-src 'self'`, `object-src 'none'`,
+  `base-uri 'self'`, `style-src-attr
+  'unsafe-inline'` so React `style={{}}`
+  keeps working) as a `<meta http-equiv>` in the generated shell — so it applies
+  for `export` (any static host), `start`, and `dev`. Pass a
+  `{ connectSrc: [...] }`-style object to add global opt-ins (your API host,
+  etc.). `frame-ancestors` is header-only (ignored in `<meta>`); the always-on
   `X-Frame-Options: SAMEORIGIN` covers clickjacking.
 
 ### Changed
 
-- **Bundled Tailwind standalone bumped `v4.1.11` → `v4.3.0`.** 4.1.11 predates the
-  logical inset shorthands `inset-s-*` / `inset-e-*` (`inset-inline-start/end`), so a
-  class like `inset-e-2.5` compiled to nothing and an element relying on it fell back
-  to its static position — e.g. an `absolute inset-e-2.5` "Add" button landing on top
-  of a left-aligned control instead of pinned to the right. Real Tailwind 4.3.0 (what
-  Vite-built apps use) emits these utilities; matching it keeps denext a faithful
-  drop-in. Override still available via `DENEXT_TAILWIND_VERSION`.
+- **Bundled Tailwind standalone bumped `v4.1.11` → `v4.3.0`.** 4.1.11 predates
+  the logical inset shorthands `inset-s-*` / `inset-e-*`
+  (`inset-inline-start/end`), so a class like `inset-e-2.5` compiled to nothing
+  and an element relying on it fell back to its static position — e.g. an
+  `absolute inset-e-2.5` "Add" button landing on top of a left-aligned control
+  instead of pinned to the right. Real Tailwind 4.3.0 (what Vite-built apps use)
+  emits these utilities; matching it keeps denext a faithful drop-in. Override
+  still available via `DENEXT_TAILWIND_VERSION`.
 
 ### Fixed
 
-- **Inline styles are patched per-property instead of by rewriting the whole `style`
-  attribute — foreign inline properties now survive re-renders.** denext replaced the
-  entire `style` attribute on every commit, which erased CSS custom properties set
-  imperatively on the element from outside the render. floating-ui (used by Base UI /
-  Radix popovers, menus, tooltips) writes `--available-width` / `--available-height` /
-  `--anchor-width` / `--transform-origin` directly onto the positioned element and
-  relies — as with react-dom — on the renderer never clobbering them. Wiping them each
-  commit changed the popup's size (`max-height: var(--available-height)`), which fired
-  floating-ui's `ResizeObserver`, which repositioned and re-rendered — an infinite
-  reposition loop that made a dropdown/menu flicker and dismiss itself. denext now
-  diffs the style object against the previous one and touches only the keys it manages
-  (`element.style.setProperty` / `removeProperty`), leaving foreign inline properties
-  intact — matching react-dom, so positioning settles.
+- **Inline styles are patched per-property instead of by rewriting the whole
+  `style` attribute — foreign inline properties now survive re-renders.** denext
+  replaced the entire `style` attribute on every commit, which erased CSS custom
+  properties set imperatively on the element from outside the render.
+  floating-ui (used by Base UI / Radix popovers, menus, tooltips) writes
+  `--available-width` / `--available-height` / `--anchor-width` /
+  `--transform-origin` directly onto the positioned element and relies — as with
+  react-dom — on the renderer never clobbering them. Wiping them each commit
+  changed the popup's size (`max-height: var(--available-height)`), which fired
+  floating-ui's `ResizeObserver`, which repositioned and re-rendered — an
+  infinite reposition loop that made a dropdown/menu flicker and dismiss itself.
+  denext now diffs the style object against the previous one and touches only
+  the keys it manages (`element.style.setProperty` / `removeProperty`), leaving
+  foreign inline properties intact — matching react-dom, so positioning settles.
 - **An unkeyed top-level Fragment returned by a component is now transparent
-  (React's `isUnkeyedTopLevelFragment`), so a keyed child inside it survives a change
-  in the surrounding structure.** denext kept the returned fragment as its own fiber,
-  so when a component conditionally wrapped a keyed element in extra siblings the new
-  unkeyed fragment could not match the previous keyed one and the whole subtree — the
-  keyed element's DOM node — was remounted. This broke every Base UI floating
-  component (menu, select, popover, tooltip): `MenuTrigger` wraps its `<button>` in
-  `<Fragment key={triggerId}>` and, when open, returns that keyed wrapper alongside
-  focus guards inside an outer unkeyed fragment (its comment: "a fragment with key is
-  required to ensure the element is mounted to the same DOM node regardless of whether
-  the focus guards are rendered") — so opening a menu remounted the trigger, detaching
-  the node floating-ui uses as its positioning anchor; the popup then measured a zero
-  rect and stayed at `opacity: 0`, unpositioned (open in state, but invisible). denext
-  now reconciles a plain unkeyed fragment's children directly, matching react-dom.
-  Marker-carrying fragments (context Providers, StrictMode, SuspenseList, Profiler)
-  keep their own fiber, so their behavior is unaffected.
+  (React's `isUnkeyedTopLevelFragment`), so a keyed child inside it survives a
+  change in the surrounding structure.** denext kept the returned fragment as
+  its own fiber, so when a component conditionally wrapped a keyed element in
+  extra siblings the new unkeyed fragment could not match the previous keyed one
+  and the whole subtree — the keyed element's DOM node — was remounted. This
+  broke every Base UI floating component (menu, select, popover, tooltip):
+  `MenuTrigger` wraps its `<button>` in `<Fragment key={triggerId}>` and, when
+  open, returns that keyed wrapper alongside focus guards inside an outer
+  unkeyed fragment (its comment: "a fragment with key is required to ensure the
+  element is mounted to the same DOM node regardless of whether the focus guards
+  are rendered") — so opening a menu remounted the trigger, detaching the node
+  floating-ui uses as its positioning anchor; the popup then measured a zero
+  rect and stayed at `opacity: 0`, unpositioned (open in state, but invisible).
+  denext now reconciles a plain unkeyed fragment's children directly, matching
+  react-dom. Marker-carrying fragments (context Providers, StrictMode,
+  SuspenseList, Profiler) keep their own fiber, so their behavior is unaffected.
 - **SVG (and MathML) elements are now created in their own namespace, so icons
-  render.** The client reconciler created every element with `createElement` (HTML
-  namespace), so an `<svg>` and its `<path>`/`<circle>`/… children occupied layout
-  space but drew nothing — the classic "an icon shifts the text but is invisible"
-  (all lucide-react / Radix / Base UI icons in a client-rendered app). Elements in an
-  `<svg>`/`<math>` subtree are now created with `createElementNS` (a `<foreignObject>`
-  switches its children back to HTML), and React's camelCase SVG presentation
-  attributes (`strokeWidth` → `stroke-width`, `strokeLinecap` → `stroke-linecap`, …)
-  are converted to the hyphenated names SVG expects (structural attributes like
-  `viewBox` are kept as-is), so icons render at the correct weight.
-- **A deferred passive effect (`useEffect`) scheduled during a multi-render commit
-  cycle could be stranded and never run.** `renderRoot` flushes to completion in a
-  render+commit loop; it flushed pending passive effects only once before the loop, so
-  an effect scheduled and committed in one iteration could have its fiber's
-  `passiveEffects` cleared by a later iteration's `createWorkInProgress` (buffer reuse)
-  before the deferred flush ran it. Passive effects are now flushed before **each**
-  iteration, matching React (which flushes them before any new unit of work). This
-  manifested as a Base UI dialog that opened correctly but **never unmounted on close**
-  (its root's unmount-watcher `useEffect` was the stranded effect), so it stayed
-  invisibly mounted and could not be reopened.
+  render.** The client reconciler created every element with `createElement`
+  (HTML namespace), so an `<svg>` and its `<path>`/`<circle>`/… children
+  occupied layout space but drew nothing — the classic "an icon shifts the text
+  but is invisible" (all lucide-react / Radix / Base UI icons in a
+  client-rendered app). Elements in an `<svg>`/`<math>` subtree are now created
+  with `createElementNS` (a `<foreignObject>` switches its children back to
+  HTML), and React's camelCase SVG presentation attributes (`strokeWidth` →
+  `stroke-width`, `strokeLinecap` → `stroke-linecap`, …) are converted to the
+  hyphenated names SVG expects (structural attributes like `viewBox` are kept
+  as-is), so icons render at the correct weight.
+- **A deferred passive effect (`useEffect`) scheduled during a multi-render
+  commit cycle could be stranded and never run.** `renderRoot` flushes to
+  completion in a render+commit loop; it flushed pending passive effects only
+  once before the loop, so an effect scheduled and committed in one iteration
+  could have its fiber's `passiveEffects` cleared by a later iteration's
+  `createWorkInProgress` (buffer reuse) before the deferred flush ran it.
+  Passive effects are now flushed before **each** iteration, matching React
+  (which flushes them before any new unit of work). This manifested as a Base UI
+  dialog that opened correctly but **never unmounted on close** (its root's
+  unmount-watcher `useEffect` was the stranded effect), so it stayed invisibly
+  mounted and could not be reopened.
 - **React-fidelity reconciler fixes — real, unmodified npm-React libraries now
   render on denext's own React.** These land together and are what let heavy
-  component libraries (Base UI, Radix, floating-ui, `@effect/atom`, React-Compiler
-  output) work:
-  - **`useState`/`useReducer` return a referentially stable setter/dispatch** across
-    renders (React's guarantee). A fresh closure each render re-fired effects that
-    depend on the setter and, when such an effect writes back through it (Base UI's
-    label/id registration), looped until the update-depth guard tripped.
+  component libraries (Base UI, Radix, floating-ui, `@effect/atom`,
+  React-Compiler output) work:
+  - **`useState`/`useReducer` return a referentially stable setter/dispatch**
+    across renders (React's guarantee). A fresh closure each render re-fired
+    effects that depend on the setter and, when such an effect writes back
+    through it (Base UI's label/id registration), looped until the update-depth
+    guard tripped.
   - **Render-phase state updates converge locally** (the "adjust state while
     rendering" idiom — Base UI's transition status, `usePrevious`-style prop
-    adjustments): denext now re-invokes just that component to convergence, as React
-    does, instead of scheduling a whole-tree commit that never settles.
+    adjustments): denext now re-invokes just that component to convergence, as
+    React does, instead of scheduling a whole-tree commit that never settles.
   - **Unkeyed children are matched by type bucket, not a consuming cursor**, so
-    inserting a node at the front of an unkeyed list no longer remounts the siblings
-    after it (lost DOM state, re-run effects).
+    inserting a node at the front of an unkeyed list no longer remounts the
+    siblings after it (lost DOM state, re-run effects).
   - **Legacy class `contextType` consumers no longer go stale** under the new
     context-aware bailout: a class reads context via `this.context` (not the
-    `useContext` dispatcher), so it was invisible to the consumer-only re-render pass
-    and missed a provider value change when a memoized non-consumer ancestor bailed
-    the subtree. Class reads are now recorded like `useContext` reads.
+    `useContext` dispatcher), so it was invisible to the consumer-only re-render
+    pass and missed a provider value change when a memoized non-consumer
+    ancestor bailed the subtree. Class reads are now recorded like `useContext`
+    reads.
 - **Reflected XSS in the `next-compat` page emitter** (`renderNextCompatPage`, a
-  `./build/next-compat` public export): URL-derived props were embedded in an inline
-  `<script>` with an unescaped `JSON.stringify`, so a `</script>` in a param value
-  could break out. Now escaped (`<`), matching the document shell.
+  `./build/next-compat` public export): URL-derived props were embedded in an
+  inline `<script>` with an unescaped `JSON.stringify`, so a `</script>` in a
+  param value could break out. Now escaped (`<`), matching the document shell.
 
-- **`useSyncExternalStore`: a subscription scheduled by a render that was superseded
-  before its (deferred) passive-effect commit could be lost, so the store never
-  notified that consumer.** The subscribe effect is keyed on `cell.deps`; denext marked
-  that key satisfied during render, but the hook cell is shared across a fiber's two
-  buffers, so if the mount render was superseded by a re-render before its passive
-  effect ran (a component that re-renders as its subtree mounts, under StrictMode /
-  an interrupted transition), the committed re-render saw `depsChanged === false` and
-  never re-queued the subscribe. The consumer then silently stopped re-rendering on
-  store changes. Concretely: a Base UI dialog opened at its enter start-frame
-  (`data-starting-style`, `opacity: 0`) and never advanced, because its popup/viewport
-  (which re-render as their contents mount) never subscribed to the transition-status
-  store while a leaf sibling backdrop did. Fixed by marking `cell.deps` only when the
-  subscription actually commits, and by scheduling store updates against the live
-  fiber buffer (`cell.owner`) rather than the render-time fiber.
+- **`useSyncExternalStore`: a subscription scheduled by a render that was
+  superseded before its (deferred) passive-effect commit could be lost, so the
+  store never notified that consumer.** The subscribe effect is keyed on
+  `cell.deps`; denext marked that key satisfied during render, but the hook cell
+  is shared across a fiber's two buffers, so if the mount render was superseded
+  by a re-render before its passive effect ran (a component that re-renders as
+  its subtree mounts, under StrictMode / an interrupted transition), the
+  committed re-render saw `depsChanged === false` and never re-queued the
+  subscribe. The consumer then silently stopped re-rendering on store changes.
+  Concretely: a Base UI dialog opened at its enter start-frame
+  (`data-starting-style`, `opacity: 0`) and never advanced, because its
+  popup/viewport (which re-render as their contents mount) never subscribed to
+  the transition-status store while a leaf sibling backdrop did. Fixed by
+  marking `cell.deps` only when the subscription actually commits, and by
+  scheduling store updates against the live fiber buffer (`cell.owner`) rather
+  than the render-time fiber.
 - **Client events now expose `event.nativeEvent`** (a self-reference to the DOM
-  event, as React's `SyntheticEvent.nativeEvent` is). Libraries that read it or gate
-  on `"nativeEvent" in event` (Base UI / floating-ui-react: `getTarget(event.nativeEvent)`,
-  `"composedPath" in event.nativeEvent`) previously got `undefined` and threw on hover.
-- **`useSyncExternalStore`: a throwing `getSnapshot` in the subscribe callback tore
-  down the tree.** When a store's `getSnapshot` throws (e.g. `@effect/atom-react`'s
-  `useAtomValue`, which asserts on a value transiently absent mid-notify), denext let
-  the throw escape the store's notify callback — where no error boundary can catch it —
-  and the root was removed (blank screen). Now, exactly as React's `checkIfSnapshotChanged`
-  does, a throwing snapshot check is treated as "changed" and forces a re-render, so the
-  throw (if it recurs) surfaces during render where an error boundary catches it — and
+  event, as React's `SyntheticEvent.nativeEvent` is). Libraries that read it or
+  gate on `"nativeEvent" in event` (Base UI / floating-ui-react:
+  `getTarget(event.nativeEvent)`, `"composedPath" in event.nativeEvent`)
+  previously got `undefined` and threw on hover.
+- **`useSyncExternalStore`: a throwing `getSnapshot` in the subscribe callback
+  tore down the tree.** When a store's `getSnapshot` throws (e.g.
+  `@effect/atom-react`'s `useAtomValue`, which asserts on a value transiently
+  absent mid-notify), denext let the throw escape the store's notify callback —
+  where no error boundary can catch it — and the root was removed (blank
+  screen). Now, exactly as React's `checkIfSnapshotChanged` does, a throwing
+  snapshot check is treated as "changed" and forces a re-render, so the throw
+  (if it recurs) surfaces during render where an error boundary catches it — and
   usually the store has settled by the scheduled microtask, so it doesn't recur.
-- **Portal commit evicted foreign siblings from a shared container.** Committing a portal
-  into a container the reconciler doesn't exclusively own (`document.body`, which also
-  holds `#root`, the entry `<script>`, and other portals) count-pruned the container to
-  the portal's children — removing those foreign nodes (a body-level Base UI toast/tooltip
-  would blank the app by evicting `#root`). Portals now place only their own nodes (new
-  `placePortalChildren`); sibling nodes the reconciler didn't insert are never pruned, as
-  in React.
+- **Portal commit evicted foreign siblings from a shared container.** Committing
+  a portal into a container the reconciler doesn't exclusively own
+  (`document.body`, which also holds `#root`, the entry `<script>`, and other
+  portals) count-pruned the container to the portal's children — removing those
+  foreign nodes (a body-level Base UI toast/tooltip would blank the app by
+  evicting `#root`). Portals now place only their own nodes (new
+  `placePortalChildren`); sibling nodes the reconciler didn't insert are never
+  pruned, as in React.
 - **CSS was not extracted for apps whose `deno.json` anchors resolution**
-  (`nodeModulesDir` / `npm:` imports — e.g. a converted Next/Vite app). `buildAppCss`
-  mirrors the css→shim redirect into the app config so the module loader resolves
-  `.css`, but the CSS graph crawl (`discoverCssFiles` via `deno info`) then
-  auto-discovered that same config and resolved every `.css` to its empty shim →
-  found zero stylesheets → emitted none. The crawl now temporarily strips the
-  css→shim redirects from the app's own `deno.json` (restoring it afterward; every
-  build re-mirrors them), so `deno info` reports the real `.css`.
+  (`nodeModulesDir` / `npm:` imports — e.g. a converted Next/Vite app).
+  `buildAppCss` mirrors the css→shim redirect into the app config so the module
+  loader resolves `.css`, but the CSS graph crawl (`discoverCssFiles` via
+  `deno info`) then auto-discovered that same config and resolved every `.css`
+  to its empty shim → found zero stylesheets → emitted none. The crawl now
+  temporarily strips the css→shim redirects from the app's own `deno.json`
+  (restoring it afterward; every build re-mirrors them), so `deno info` reports
+  the real `.css`.
 - **Import-map prefix mappings lost their trailing slash** when absolutized to
   file URLs (`"~/": "./src/"` → `…/src` instead of `…/src/`), breaking subpath
-  resolution and, in a merged module config, tripping Deno's "package address must
-  end with /" error. Fixed in the bundle, CSS, and module-config absolutizers.
+  resolution and, in a merged module config, tripping Deno's "package address
+  must end with /" error. Fixed in the bundle, CSS, and module-config
+  absolutizers.
 - **`loadDenextConfig` silently dropped `nextCompat` and `classComponents`**, so
-  the explicit `nextCompat: true` override never reached `detectNextCompat` (both
-  the App Router and SPA mode relied on `node_modules/react` detection instead).
-  All `denext.config` fields now carry through.
+  the explicit `nextCompat: true` override never reached `detectNextCompat`
+  (both the App Router and SPA mode relied on `node_modules/react` detection
+  instead). All `denext.config` fields now carry through.
 
 ### Changed
 
 - **Isomorphic soft navigation now transfers a compact JSON payload instead of
   the full HTML document.** A soft nav (`x-denext-nav`) to an interactive route
-  that has no Flight boundary previously answered with the entire server-rendered
-  HTML document — whose `<body>` the client immediately discarded, since the
-  re-run route bundle rebuilds the DOM from its own tree. The server now answers
-  such a nav with `{title, data, entry, styles}` (header `x-denext-iso: 1`, the
-  isomorphic analogue of the Flight-nav JSON path), and the client applies the
-  title, the `#__denext_data` island, and — newly — swaps the **per-route
-  stylesheets** before re-injecting the entry. This trims each isomorphic soft
-  nav to the bytes it actually uses and fixes a latent bug where per-route CSS was
-  never swapped on navigation. Hard requests still return the full HTML document.
+  that has no Flight boundary previously answered with the entire
+  server-rendered HTML document — whose `<body>` the client immediately
+  discarded, since the re-run route bundle rebuilds the DOM from its own tree.
+  The server now answers such a nav with `{title, data, entry, styles}` (header
+  `x-denext-iso: 1`, the isomorphic analogue of the Flight-nav JSON path), and
+  the client applies the title, the `#__denext_data` island, and — newly — swaps
+  the **per-route stylesheets** before re-injecting the entry. This trims each
+  isomorphic soft nav to the bytes it actually uses and fixes a latent bug where
+  per-route CSS was never swapped on navigation. Hard requests still return the
+  full HTML document.
 
 ### Performance
 
 - **Context-aware memo bailout — a provider value change re-renders only the
   components that actually read that context**, letting a memoized non-consumer
   ancestor between the provider and a consumer bail its subtree (mirrors React's
-  `propagateContextChange`). Previously any context value change forced the whole
-  subtree below the provider to re-render. A stable-value provider still costs
-  nothing.
+  `propagateContextChange`). Previously any context value change forced the
+  whole subtree below the provider to re-render. A stable-value provider still
+  costs nothing.
 
 ## [1.1.0] - 2026-08-21
 

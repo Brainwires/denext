@@ -244,3 +244,71 @@ Deno.test("integration: a transformed module's cached export runs once across re
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+// ---- B3: cached COMPONENTS (element-tree results, element-tree arguments) ------------
+
+Deno.test("B3: a result that doesn't survive JSON stays live in-process (a cached component's tree)", async () => {
+  const { clearLiveCacheResults, isJsonSafe } = await import("../src/server/cache.ts");
+  setCacheStore(inMemoryCacheStore());
+  clearLiveCacheResults();
+  let n = 0;
+  // What a cached layout returns: an element tree whose `type` is a component function.
+  const Comp = () => null;
+  const f = __useCache(
+    "m#tree",
+    (id: number) => Promise.resolve({ type: Comp, props: { id, n: ++n } }),
+  );
+  const ctx = createRequestContext(new Request("http://x/"));
+  await runWithContext(ctx, async () => {
+    const first = await f(1);
+    const again = await f(1);
+    assertEquals(again.type, Comp, "the hit hands back the live tree, component function intact");
+    assertEquals(again.props.n, first.props.n, "computed once");
+    assertEquals((await f(2)).props.n, 2, "different args compute");
+  });
+  assertEquals(isJsonSafe({ a: [1, "x", { b: null }] }), true);
+  assertEquals(isJsonSafe({ type: Comp }), false);
+  assertEquals(isJsonSafe([undefined]), false);
+  assertEquals(isJsonSafe(new Map()), false);
+});
+
+Deno.test("B3: non-serializable ARGUMENTS bypass the cache (children trees can't key an entry)", async () => {
+  setCacheStore(inMemoryCacheStore());
+  let n = 0;
+  const Layout = __useCache("m#layout", (props: { children: unknown }) => {
+    cacheTag("layout");
+    return Promise.resolve({ n: ++n, children: props.children });
+  });
+  const ctx = createRequestContext(new Request("http://x/"));
+  await runWithContext(ctx, async () => {
+    const PageA = () => null;
+    const PageB = () => null;
+    const a = await Layout({ children: { type: PageA, props: {} } });
+    const b = await Layout({ children: { type: PageB, props: {} } });
+    assertEquals(a.n, 1);
+    assertEquals(b.n, 2, "ran again — a lossy key must not serve page A's tree to page B");
+    assertEquals((b.children as { type: unknown }).type, PageB);
+  });
+});
+
+Deno.test("B3: a live component result is dropped by revalidateTag and by expiry", async () => {
+  const { clearLiveCacheResults, revalidateTag } = await import("../src/server/cache.ts");
+  setCacheStore(inMemoryCacheStore());
+  clearLiveCacheResults();
+  let n = 0;
+  const Comp = () => null;
+  const f = __useCache("m#live-tag", () => {
+    cacheTag("widgets");
+    return Promise.resolve({ type: Comp, n: ++n });
+  });
+  const ctx = createRequestContext(new Request("http://x/"));
+  await runWithContext(ctx, async () => {
+    assertEquals((await f()).n, 1);
+    assertEquals((await f()).n, 1, "live hit");
+  });
+  await revalidateTag("widgets");
+  const ctx2 = createRequestContext(new Request("http://x/"));
+  await runWithContext(ctx2, async () => {
+    assertEquals((await f()).n, 2, "recomputed after the tag was invalidated");
+  });
+});

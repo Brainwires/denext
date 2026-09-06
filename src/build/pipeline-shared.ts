@@ -3,6 +3,7 @@
 // discovery and font collection over a project.
 
 import { fromFileUrl } from "@std/path";
+import { resolveCacheComponents } from "../server/config.ts";
 import { collectedFontEntries, resetFonts } from "../compat/next/font/registry.ts";
 import { applyPlugins } from "../plugin/mod.ts";
 import type { PageRoute } from "../router/manifest.ts";
@@ -77,6 +78,7 @@ export function compatBuildOptions(
     classComponents: paths.config?.classComponents ?? true,
     resolveAllNodeModules: nodeResolveEnabled(paths.config),
     mdxOptions: paths.config?.mdx,
+    useCache: resolveCacheComponents(paths.config),
     cssImportMap,
   };
 }

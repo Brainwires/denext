@@ -623,6 +623,7 @@ function recordInvalidation(kind: "tag" | "path", value: string): void {
 
 function invalidate(kind: "tag" | "path", value: string): Promise<void> {
   recordInvalidation(kind, value);
+  if (kind === "tag") purgeLiveByTag(value);
   const raw = kind === "tag"
     ? currentCacheStore.deleteByTag(value)
     : currentCacheStore.deleteByPath(value);
@@ -881,6 +882,19 @@ function reviveStaleUseCache(
  * @param options Optional transform-supplied fallback `profile` and static `tags`.
  * @returns A wrapper with `fn`'s signature, always returning a Promise.
  */
+let debugCacheFlag: boolean | null = null;
+/** `DENEXT_DEBUG_CACHE=1`: log every `"use cache"` hit/miss to stderr. */
+function debugCache(): boolean {
+  if (debugCacheFlag === null) {
+    try {
+      debugCacheFlag = !!Deno.env.get("DENEXT_DEBUG_CACHE");
+    } catch {
+      debugCacheFlag = false;
+    }
+  }
+  return debugCacheFlag;
+}
+
 export function __useCache<A extends unknown[], R>(
   id: string,
   fn: (...args: A) => R | Promise<R>,
@@ -888,9 +902,23 @@ export function __useCache<A extends unknown[], R>(
 ): (...args: A) => Promise<R> {
   const staticTags = options.tags ?? [];
   return async (...args: A): Promise<R> => {
+    // Arguments that don't survive JSON (a component's `children` element tree, a
+    // function prop) can't key an entry: their serialization drops exactly what tells two
+    // calls apart, so every page under a cached layout would share one entry. React keys
+    // those as opaque references; here the call runs uncached (its `cacheTag`s still
+    // reach the page) — the cheap-and-correct choice until reference keys exist.
+    if (!isJsonSafe(args)) {
+      if (debugCache()) console.error(`[cache] ${id} BYPASS (non-serializable arguments)`);
+      const { value, entry } = await runCachedBody(() => fn(...args), staticTags, options.profile);
+      collectTags(entry.tags);
+      return value;
+    }
     const key = safeKey([id, args]);
     collectTags(staticTags);
-    const hit = await lookupData(key);
+    const hit = lookupLive(key) ?? await lookupData(key);
+    if (debugCache()) {
+      console.error(`[cache] ${id} ${hit ? "HIT" : "MISS"} key=${key.length}b`);
+    }
     if (hit) {
       // The body didn't run on a hit, so replay its tag propagation to the page
       // from the stored tags.
@@ -921,6 +949,16 @@ export function __useCache<A extends unknown[], R>(
   };
 }
 
+/**
+ * `"use cache"` entries whose VALUE doesn't survive JSON — a cached COMPONENT's element
+ * tree (component functions in `type`), a function-bearing object. The durable store would
+ * hand back a lifeless copy on a hit (an empty page), so these live here, in-process, for
+ * their lifetime; the entry's expiry/staleness rules still apply. React caches a
+ * component's RSC output instead; the in-process tree is the equivalent within one server.
+ */
+const liveResults = new Map<string, DataEntry>();
+const LIVE_RESULTS_MAX = 500;
+
 /** The `"use cache"` leader: run the body in its cache scope and store the entry. */
 async function computeUseCache<R>(
   key: string,
@@ -929,8 +967,56 @@ async function computeUseCache<R>(
   profile: string | CacheLifeProfile | undefined,
 ): Promise<DataEntry> {
   const { entry } = await runCachedBody(run, staticTags, profile);
-  await storeData(key, entry);
+  if (isJsonSafe(entry.value)) {
+    await storeData(key, entry);
+  } else {
+    if (liveResults.size >= LIVE_RESULTS_MAX) liveResults.delete(liveResults.keys().next().value!);
+    liveResults.set(key, entry);
+  }
   return entry;
+}
+
+/** A live entry for `key` that is unexpired and not invalidated by this request's tag updates. */
+function lookupLive(key: string): DataEntry | undefined {
+  const entry = liveResults.get(key);
+  if (!entry) return undefined;
+  if (entry.expiresAt <= now()) {
+    liveResults.delete(key);
+    return undefined;
+  }
+  return tagUpdatedThisRequest(entry.tags) ? undefined : entry;
+}
+
+/** Purge live entries carrying `tag` (the in-process half of a tag invalidation). */
+function purgeLiveByTag(tag: string): void {
+  for (const [key, entry] of liveResults) if (entry.tags.includes(tag)) liveResults.delete(key);
+}
+
+/** Drop every in-process `"use cache"` component result (tests; a full cache reset). */
+export function clearLiveCacheResults(): void {
+  liveResults.clear();
+}
+
+/**
+ * Whether `value` survives `JSON.stringify` → `JSON.parse` unchanged: no functions,
+ * symbols, bigints, class instances with methods, or `undefined` array holes are involved.
+ * Element trees fail on their component `type`.
+ */
+export function isJsonSafe(value: unknown, depth = 0): boolean {
+  if (depth > 64) return false;
+  if (value === null || value === undefined) return true;
+  const t = typeof value;
+  if (t === "string" || t === "boolean") return true;
+  if (t === "number") return Number.isFinite(value as number);
+  if (t === "function" || t === "symbol" || t === "bigint") return false;
+  if (Array.isArray(value)) return value.every((v) => v !== undefined && isJsonSafe(v, depth + 1));
+  if (t === "object") {
+    const proto = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) return false; // Map, Date, class, thenable…
+    if (Object.getOwnPropertySymbols(value as object).length > 0) return false;
+    return Object.values(value as Record<string, unknown>).every((v) => isJsonSafe(v, depth + 1));
+  }
+  return false;
 }
 
 // Inner memoized fetch: caches the response text keyed on its arguments.
