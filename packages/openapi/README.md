@@ -118,6 +118,7 @@ const { document, warnings } = await buildOpenApi({
 | -------------- | ----------------- | ------------------------------------------------------------------------- |
 | `path`         | `/openapi.json`   | Where the document is served (app-relative; `basePath` is stripped first) |
 | `docs`         | `/docs`           | Where the docs page is served; `false` disables it                        |
+| `expose`       | `"always"`        | `"always"` serves in every mode; `"dev"` serves only under `denext dev`   |
 | `ui`           | `"builtin"`       | `builtin` \| `scalar` \| `swagger`                                        |
 | `cdn`          | per renderer      | Scalar script URL / Swagger dist base URL                                 |
 | `info`         | dir name, `0.0.0` | `title`, `version`, `description`                                         |
@@ -145,8 +146,9 @@ const { document, warnings } = await buildOpenApi({
 
 ## Security notes
 
-- The document describes your API's shape. Gate it with `authorize` when that is not
-  public information — a refused request falls through to the app's ordinary 404, so
+- The document describes your API's shape. It is served in every mode by default; set
+  `expose: "dev"` to serve it only under `denext dev`, or gate it with `authorize` when it
+  is not public information — a refused request falls through to the app's ordinary 404, so
   there is no "forbidden" oracle.
 - The builtin renderer escapes everything it prints and contains no script.
 - The plugin reads `apiDefinitionOf` metadata only; it never executes a handler. It does

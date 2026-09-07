@@ -169,8 +169,15 @@ export interface OpenApiOptions {
   /** Tag an operation (default: the first path segment after `/api`). */
   tags?: (route: ApiRoute) => string[];
   /**
+   * When the live endpoints are served. `"always"` (default) serves `/openapi.json` and
+   * `/docs` in every mode — the zero-config default, since a document describing your own API
+   * is usually fine to expose. `"dev"` serves them only under `denext dev` (like GraphiQL),
+   * so production reveals no route/schema map. Either way {@link authorize} still applies.
+   */
+  expose?: "always" | "dev";
+  /**
    * Gate the live endpoints. Return `false` to hide them from a request (the app's own
-   * 404 answers — no distinguishable "forbidden"). Default: open to everyone.
+   * 404 answers — no distinguishable "forbidden"). Runs after {@link expose}. Default: open.
    */
   authorize?: (request: Request) => boolean | Promise<boolean>;
   /**
@@ -195,33 +202,19 @@ export function openapi(options: OpenApiOptions = {}): DenextPlugin {
       const specPath = options.path ?? "/openapi.json";
       const docsPath = options.docs === false ? null : options.docs ?? "/docs";
       const ui = options.ui ?? "builtin";
+      const exposed = (options.expose ?? "always") === "always" || ctx.mode === "dev";
       const build = specBuilder(ctx, options, basePath);
 
-      ctx.addRequestHandler(async (request) => {
-        const url = new URL(request.url);
-        const wants = url.pathname === specPath || (docsPath !== null &&
-          (url.pathname === docsPath || (ui === "builtin" && url.pathname === docsPath + ".css")));
-        if (!wants || (request.method !== "GET" && request.method !== "HEAD")) return null;
-        if (options.authorize && !(await options.authorize(request))) return null;
-        if (url.pathname === specPath) return specResponse(request, await build());
-        if (url.pathname === docsPath) {
-          const html = renderDocsHtml((await build()).document, {
-            specUrl: basePath + specPath,
-            ui,
-            cdn: options.cdn,
-            styleUrl: ui === "builtin" ? basePath + docsPath + ".css" : undefined,
-          });
-          return new Response(request.method === "HEAD" ? null : html, {
-            headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" },
-          });
-        }
-        return new Response(DOCS_CSS, {
-          headers: {
-            "content-type": "text/css; charset=utf-8",
-            "cache-control": "public, max-age=3600",
-          },
-        });
-      });
+      const routes: Endpoints = {
+        specPath,
+        docsPath,
+        ui,
+        basePath,
+        build,
+        authorize: options.authorize,
+        cdn: options.cdn,
+      };
+      ctx.addRequestHandler((request) => exposed ? serveDocs(request, routes) : null);
 
       const outFile = options.outFile ?? "openapi.json";
       if (outFile !== false) {
@@ -241,6 +234,44 @@ export function openapi(options: OpenApiOptions = {}): DenextPlugin {
       ctx.addCommand(createOpenapiCommand(build));
     },
   };
+}
+
+/** The resolved endpoint config the request handler serves from. */
+interface Endpoints {
+  specPath: string;
+  docsPath: string | null;
+  ui: DocsUi;
+  basePath: string;
+  build: () => Promise<OpenApiBuild>;
+  authorize?: (request: Request) => boolean | Promise<boolean>;
+  cdn?: string;
+}
+
+/** Serve `/openapi.json`, `/docs` or the docs stylesheet; `null` for anything else. */
+async function serveDocs(request: Request, e: Endpoints): Promise<Response | null> {
+  const url = new URL(request.url);
+  const isCss = e.ui === "builtin" && e.docsPath !== null && url.pathname === e.docsPath + ".css";
+  const wants = url.pathname === e.specPath || url.pathname === e.docsPath || isCss;
+  if (!wants || (request.method !== "GET" && request.method !== "HEAD")) return null;
+  if (e.authorize && !(await e.authorize(request))) return null;
+  if (url.pathname === e.specPath) return specResponse(request, await e.build());
+  if (url.pathname === e.docsPath) return docsPageResponse(request, e);
+  return new Response(DOCS_CSS, {
+    headers: { "content-type": "text/css; charset=utf-8", "cache-control": "public, max-age=3600" },
+  });
+}
+
+/** The rendered docs page for the configured renderer. */
+async function docsPageResponse(request: Request, e: Endpoints): Promise<Response> {
+  const html = renderDocsHtml((await e.build()).document, {
+    specUrl: e.basePath + e.specPath,
+    ui: e.ui,
+    cdn: e.cdn,
+    styleUrl: e.ui === "builtin" ? e.basePath + e.docsPath + ".css" : undefined,
+  });
+  return new Response(request.method === "HEAD" ? null : html, {
+    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" },
+  });
 }
 
 /**

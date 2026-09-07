@@ -397,12 +397,13 @@ Deno.test("renderDocsHtml: builtin is script-free and escaped; scalar/swagger lo
 function applyOpenapi(
   options: Parameters<typeof openapi>[0] = {},
   config: Partial<DenextConfig> = {},
+  mode: "prod" | "dev" = "prod",
 ) {
   return applyPlugins({
     projectRoot: join(ROOT, "my-project"),
     appDir: APP_DIR,
     config: { plugins: [openapi(options)], ...config } as DenextConfig,
-    mode: "prod",
+    mode,
     load,
   });
 }
@@ -411,9 +412,10 @@ function applyOpenapi(
 async function setup(
   options: Parameters<typeof openapi>[0] = {},
   config: Partial<DenextConfig> = {},
+  mode: "prod" | "dev" = "prod",
 ) {
   resetPlugins();
-  await applyOpenapi(options, config);
+  await applyOpenapi(options, config, mode);
   await scanRoutes(APP_DIR);
   return getPluginRequestHandler()!;
 }
@@ -520,6 +522,29 @@ Deno.test("openapi plugin: the build step writes openapi.json; outFile: false sk
   } finally {
     resetPlugins();
     await Deno.remove(outDir, { recursive: true });
+  }
+});
+
+Deno.test('openapi plugin: expose:"dev" hides the endpoints in prod, serves them in dev', async () => {
+  try {
+    const prod = await setup({ expose: "dev" }, {}, "prod");
+    assertEquals(await prod(new Request("https://x/openapi.json")), null, "hidden in prod");
+    assertEquals(await prod(new Request("https://x/docs")), null);
+  } finally {
+    resetPlugins();
+  }
+  try {
+    const dev = await setup({ expose: "dev" }, {}, "dev");
+    assertEquals((await dev(new Request("https://x/openapi.json")))!.status, 200, "served in dev");
+  } finally {
+    resetPlugins();
+  }
+  try {
+    // Default is "always": served in prod.
+    const always = await setup({}, {}, "prod");
+    assertEquals((await always(new Request("https://x/openapi.json")))!.status, 200);
+  } finally {
+    resetPlugins();
   }
 });
 

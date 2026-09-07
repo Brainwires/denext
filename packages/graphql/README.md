@@ -96,9 +96,12 @@ GraphQL client supports. It ends when the key is revoked, when `signal` aborts, 
 the client disconnects; past the buffer cap (64) the oldest undelivered payload is dropped
 — a subscription is a live feed, not a log.
 
-The same `publish` also reaches every `useChannel` subscriber on the Live socket, and a
-`ChannelTransport` (`broadcastChannelTransport`, Redis/NATS) carries it across instances
-— the GraphQL side follows automatically.
+A publisher burst within 16 ms delivers only the last value per key (the hub coalesces
+publishes, independent of back-pressure) — a channel carries state, not a log; keep a
+list in a Server Action for chat-style history. The same `publish` also reaches every
+`useChannel` subscriber on the Live socket, and a `ChannelTransport`
+(`broadcastChannelTransport`, Redis/NATS) carries it across instances — the GraphQL side
+follows automatically.
 
 **Authorization is yours.** A channel's `authorize` gates Live-socket subscribers; a
 server-side subscription sees every publish to the key. Check the viewer in the resolver
