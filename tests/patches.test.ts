@@ -93,6 +93,100 @@ Deno.test("npm: create records the node_modules edit; apply is idempotent; delet
   }
 });
 
+Deno.test("npm: a deleted and an added file are recorded (/dev/null), applied (remove / create) and reverted", async () => {
+  const { dir, installed, pristine } = await npmProject();
+  const opts = { npmPristine: () => Promise.resolve(pristine), log: () => {} };
+  try {
+    // The install deletes a pristine file and adds a new one.
+    await Deno.writeTextFile(join(pristine, "extra.js"), "module.exports = 1;\n");
+    await Deno.writeTextFile(join(installed, "added.js"), "module.exports = 2;\n");
+    const created = await createNpmPatch(dir, "left-pad", opts);
+    assertEquals(created.files.sort(), ["added.js", "extra.js"]);
+    const patch = await Deno.readTextFile(created.file);
+    assertStringIncludes(patch, "--- /dev/null\n+++ b/node_modules/left-pad/added.js\n");
+    assertStringIncludes(patch, "--- a/node_modules/left-pad/extra.js\n+++ /dev/null\n");
+    const [entry] = await listPatches(dir);
+    // Already in the patched state → recognized.
+    assertEquals(await applyNpmPatch(dir, entry, opts), "already-applied");
+    // A fresh install (pristine tree): the deletion removes, the creation writes.
+    await Deno.writeTextFile(join(installed, "extra.js"), "module.exports = 1;\n");
+    await Deno.remove(join(installed, "added.js"));
+    assertEquals(await applyNpmPatch(dir, entry, opts), "applied");
+    assertEquals(await exists(join(installed, "extra.js")), false, "deleted by the patch");
+    assertEquals(await Deno.readTextFile(join(installed, "added.js")), "module.exports = 2;\n");
+    // Revert restores the deleted file and removes the added one.
+    assertEquals(await revertNpmPatch(dir, entry), []);
+    assertEquals(await Deno.readTextFile(join(installed, "extra.js")), "module.exports = 1;\n");
+    assertEquals(await exists(join(installed, "added.js")), false);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("npm: a file too large to diff is skipped with a note, the rest of the patch is recorded", async () => {
+  const { dir, installed, pristine } = await npmProject();
+  const notes: string[] = [];
+  const opts = { npmPristine: () => Promise.resolve(pristine), log: (m: string) => notes.push(m) };
+  try {
+    const huge = Array.from({ length: 60_000 }, (_, i) => `l${i}`).join("\n") + "\n";
+    await Deno.writeTextFile(join(pristine, "bundle.js"), huge);
+    await Deno.writeTextFile(join(installed, "bundle.js"), huge.replace("l7\n", "L7\n"));
+    await Deno.writeTextFile(join(installed, "index.js"), LEFT_PAD.replace("str +", 'str + "!" +'));
+    const created = await createNpmPatch(dir, "left-pad", opts);
+    assertEquals(created.files, ["index.js"]);
+    assertEquals(notes.length, 1);
+    assertStringIncludes(notes[0], "bundle.js is too large to diff");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await Deno.stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+Deno.test("npm: a patch may only write inside the package it names — traversal and absolute paths are refused", async () => {
+  const { dir, pristine } = await npmProject();
+  const opts = { npmPristine: () => Promise.resolve(pristine), log: () => {} };
+  try {
+    await Deno.mkdir(join(dir, "patches"), { recursive: true });
+    // All-`+` hunks apply to a missing file, so a hostile patch could CREATE any path.
+    const hostile = [
+      "--- a/node_modules/left-pad/../../../pwned.txt",
+      "+++ b/node_modules/left-pad/../../../pwned.txt",
+      "@@ -0,0 +1 @@",
+      "+owned",
+      "",
+    ].join("\n");
+    await Deno.writeTextFile(join(dir, "patches", "left-pad+1.3.0.patch"), hostile);
+    const [entry] = await listPatches(dir);
+    await assertRejects(() => applyNpmPatch(dir, entry, opts), Error, "outside its package");
+    await assertRejects(() => revertNpmPatch(dir, entry), Error, "outside its package");
+    let exists = true;
+    try {
+      await Deno.stat(join(dir, "..", "..", "pwned.txt"));
+    } catch {
+      exists = false;
+    }
+    assertEquals(exists, false, "nothing was written outside the project");
+    // A project file outside node_modules/left-pad is just as off-limits.
+    const sibling = hostile.replaceAll(
+      "node_modules/left-pad/../../../pwned.txt",
+      "app/api/admin/route.ts",
+    );
+    await Deno.writeTextFile(join(dir, "patches", "left-pad+1.3.0.patch"), sibling);
+    const [siblingEntry] = await listPatches(dir);
+    await assertRejects(() => applyNpmPatch(dir, siblingEntry, opts), Error, "outside its package");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("npm: a version mismatch warns; a hunk that no longer fits throws naming it", async () => {
   const { dir, installed, pristine } = await npmProject();
   const warnings: string[] = [];

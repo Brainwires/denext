@@ -207,6 +207,18 @@ ledger in [FEATURES.md](./FEATURES.md).
   CSS pipeline, live reload, and single-binary `deno desktop` packaging. The
   on-ramp for hosting an existing Vite-style React SPA on denext's small,
   zero-npm runtime. See [`examples/spa`](./examples/spa).
+- **Typed API, end to end** — `defineApi({ params, query, body, response, errors },
+  handler)` validates a route handler through any Standard Schema (Zod, Valibot,
+  ArkType, TypeBox, hand-rolled) before your code runs; the generated
+  `.denext/api.ts` types `createApiClient()` and `useApi` against the routes
+  themselves (path, method, params, query, body, response, error codes) — no tRPC,
+  no client codegen. The client dedupes, batches GETs into one request, and runs
+  in-process during SSR. `defineSubscription` / `useSubscription` (validated live
+  queries) and `createChannel` / `useChannel` (authorized server push) ride the
+  Live socket. Two plugins finish the surface: **`@denext/openapi`** turns the same
+  definitions into `/openapi.json` + a docs page + `denext openapi` for CI, and
+  **`@denext/graphql`** mounts GraphQL Yoga with subscriptions over channels. See
+  [docs → Typed API](https://denext.dev/docs/typed-api).
 - **i18n routing** — optional default-locale prefix (`/about` = default,
   `/fr/about` = `fr`); the locale lands in `params.locale` and in the
   `useLocale()` hook, with `Accept-Language`/cookie negotiation via
@@ -814,6 +826,8 @@ import {
   useSyncExternalStore,
   useTransition,
 } from "denext";
+// Typed API client (typed against ./.denext/api.ts once it is imported as a type)
+import { createApiClient, isApiClientError, useApi } from "denext";
 // Context is also usable directly as a provider: <MyContext value={v}>…</MyContext>
 
 // Server helpers & types
@@ -826,6 +840,19 @@ import {
   serve,
 } from "denext/server";
 import type { ApiContext, LayoutProps, Metadata, PageProps } from "denext/server";
+// Typed API surface (server side)
+import {
+  ApiError,
+  createApi,
+  createChannel,
+  defineAction,
+  defineApi,
+  defineSubscription,
+  rateLimit,
+  requireSession,
+  tapChannel,
+} from "denext/server";
+import { useChannel, useSubscription } from "denext/live";
 
 // Client runtime
 import { createRoot, hydrateRoot } from "denext/client";
@@ -1098,8 +1125,8 @@ Each doc owns one job, so the same fact lives in exactly one canonical place:
   vulnerability privately.
 - [CONTRIBUTING.md](./CONTRIBUTING.md) — the check/lint gate, conventions, and
   the JSR release flow.
-- [ROADMAP.md](./ROADMAP.md) — what still needs doing (the 2.1 cycle: the typed,
-  self-documenting API surface, build-time WASM codecs, router plugins).
+- [ROADMAP.md](./ROADMAP.md) — what still needs doing (the rest of the 2.1 cycle:
+  build-time WASM codecs, router plugins).
 - [CHANGELOG.md](./CHANGELOG.md) — release history.
 
 ## License

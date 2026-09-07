@@ -1,7 +1,7 @@
 // SPA mode: the pieces every SPA path (build, export, prod, dev) shares — URL/file
 // constants, the generated entry, the HTML shell, and the config/entry resolution.
 
-import { resolve } from "@std/path";
+import { resolve, toFileUrl } from "@std/path";
 import type { SpaConfig } from "../../server/config.ts";
 import { computeCsp } from "../../server/csp.ts";
 import type { ProjectPaths } from "../paths.ts";
@@ -39,11 +39,22 @@ export function escapeHtml(s: string): string {
  * hoisted and execute before the inline enable call. The refresh runtime is dev-only,
  * so a production entry keeps the bare static import (nothing extra ships).
  */
-export function generateSpaEntry(entryUrl: string, dev = false): string {
+export function generateSpaEntry(
+  entryUrl: string,
+  dev = false,
+  instrumentationClient: string | null = null,
+): string {
+  // `instrumentation-client` runs FIRST, before the app's entry (Next's semantics) — the
+  // same prelude the App Router entries get.
+  const prelude = instrumentationClient
+    ? `import ${JSON.stringify(toFileUrl(instrumentationClient).href)};\n`
+    : "";
   if (!dev) {
-    return `// denext generated SPA entry — do not edit.\nimport ${JSON.stringify(entryUrl)};\n`;
+    return `// denext generated SPA entry — do not edit.\n${prelude}import ${
+      JSON.stringify(entryUrl)
+    };\n`;
   }
-  return `// denext generated SPA entry (dev) — do not edit.\n` +
+  return `// denext generated SPA entry (dev) — do not edit.\n${prelude}` +
     `import { enableFastRefresh } from "denext/client-runtime";\n` +
     `enableFastRefresh();\n` +
     `await import(${JSON.stringify(entryUrl)});\n`;

@@ -40,6 +40,8 @@ export interface SubscriptionState<Out> {
   error: LiveSubscriptionError | undefined;
   /** `idle` until the first push, `live` while delivering, `error` after a failure. */
   status: "idle" | "live" | "error";
+  /** A channel push's per-instance sequence number (orders frames from one instance). */
+  seq?: number;
 }
 
 /** Options for {@link useSubscription}. */
@@ -134,7 +136,7 @@ export function useChannel<T>(
     return subscribeChannel(
       id,
       key,
-      (value) => setState({ data: value as T, error: undefined, status: "live" }),
+      (value, seq) => setState({ data: value as T, error: undefined, status: "live", seq }),
       (info) =>
         setState((s) => ({
           ...s,

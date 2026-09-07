@@ -7,6 +7,24 @@ import { generateSpaEntry, pnpmCatalogPackages, spaShellHtml } from "../src/buil
 import { validateDenextConfig } from "../src/build/paths.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 
+Deno.test("generateSpaEntry imports instrumentation-client FIRST when the project has one (prod + dev)", () => {
+  const prod = generateSpaEntry(
+    "file:///app/src/main.tsx",
+    false,
+    "/proj/instrumentation-client.ts",
+  );
+  const lines = prod.split("\n");
+  assertEquals(lines[1], 'import "file:///proj/instrumentation-client.ts";', "before the entry");
+  assertEquals(lines[2], 'import "file:///app/src/main.tsx";');
+  const dev = generateSpaEntry("file:///app/src/main.tsx", true, "/proj/instrumentation-client.ts");
+  assertEquals(dev.split("\n")[1], 'import "file:///proj/instrumentation-client.ts";');
+  assertStringIncludes(dev, "enableFastRefresh();");
+  assert(
+    !generateSpaEntry("file:///app/src/main.tsx").includes("instrumentation"),
+    "none by default",
+  );
+});
+
 Deno.test("generateSpaEntry imports the entry module for its side effects", () => {
   const src = generateSpaEntry("file:///app/src/main.tsx");
   assertStringIncludes(src, 'import "file:///app/src/main.tsx";');

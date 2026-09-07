@@ -65,23 +65,34 @@ function dispatchInProcess(
     next: init.next,
   });
   if (!decision) return run();
-  // The cache key fingerprints the headers: keep the identity-bearing ones (cookie,
-  // authorization, accept-language …) so two users never share an entry, but drop the per-call
-  // derived request id and the sub-request marker, which would make every call a unique key.
+  // The cache key fingerprints the IDENTITY headers (cookie, authorization) plus whatever the
+  // caller set explicitly, so two users never share an entry — and nothing else: a key that
+  // varied on user-agent / x-forwarded-for / accept-* would let any client mint a fresh durable
+  // entry per request (tag-only entries never expire).
   return cachedResponse(
     request,
-    { headers: cacheKeyHeaders(request) },
+    { headers: cacheKeyHeaders(request, init.headers) },
     decision.revalidate,
     decision.tags,
     run,
   );
 }
 
-/** The synthesized request's headers minus the per-call ones (for the cache key only). */
-function cacheKeyHeaders(request: Request): Headers {
-  const h = new Headers(request.headers);
-  h.delete("x-request-id");
-  h.delete(BATCH_ITEM_HEADER);
+/** Identity headers every key must vary on. */
+const KEY_HEADERS = ["cookie", "authorization"];
+
+/** The headers the cache key fingerprints: identity + the caller's explicit ones (never UA/XFF). */
+function cacheKeyHeaders(request: Request, explicit: HeadersInit | undefined): Headers {
+  const h = new Headers();
+  for (const name of KEY_HEADERS) {
+    const v = request.headers.get(name);
+    if (v !== null) h.set(name, v);
+  }
+  for (const [name] of new Headers(explicit)) {
+    if (name === "x-request-id" || name === BATCH_ITEM_HEADER) continue;
+    const v = request.headers.get(name);
+    if (v !== null) h.set(name, v);
+  }
   return h;
 }
 

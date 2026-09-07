@@ -3,6 +3,7 @@
 // with a Response, redirect, rewrite the URL used for routing, or continue
 // (optionally injecting response headers).
 
+import { getCookies } from "@std/http/cookie";
 import { safeRedirectLocation } from "./config.ts";
 import { after } from "./request-context.ts";
 
@@ -97,18 +98,32 @@ export type Middleware = (
 ) => MiddlewareResult | Promise<MiddlewareResult>;
 
 /**
- * Next's object form of a matcher entry. `source` is the path pattern; `has`/`missing`
- * (header/cookie/query conditions) are accepted for compatibility but NOT evaluated —
- * the middleware runs for every request `source` matches, which is the safe direction
- * (it never runs less often than Next would).
+ * One `has`/`missing` condition of a matcher entry (Next's shape): the request must carry
+ * (`has`) or lack (`missing`) a header, cookie, query parameter, or host. Without `value`
+ * the condition is presence; with it, the actual value must equal `value` — or match it as a
+ * regular expression when it contains regex syntax (`(?<team>\w+)`, `a|b`, `.*`).
+ */
+export interface MatcherCondition {
+  /** What to inspect. */
+  type: "header" | "cookie" | "query" | "host";
+  /** The header/cookie/query name (unused for `host`). */
+  key?: string;
+  /** The exact value, or a regex-ish pattern (full match). */
+  value?: string;
+}
+
+/**
+ * Next's object form of a matcher entry: `source` is the path pattern; `has` must ALL hold
+ * and `missing` must NONE hold for the middleware to run on a matching path. Conditions are
+ * evaluated against the request the middleware would see (after an earlier entry's rewrite).
  */
 export interface MatcherEntry {
   /** The path pattern (same syntax as a string matcher). */
   source: string;
-  /** Ignored (accepted for Next compatibility). */
-  has?: unknown[];
-  /** Ignored (accepted for Next compatibility). */
-  missing?: unknown[];
+  /** Every condition here must hold. */
+  has?: MatcherCondition[];
+  /** No condition here may hold. */
+  missing?: MatcherCondition[];
 }
 
 /** Optional configuration exported by a middleware module. */
@@ -357,15 +372,76 @@ function paramRegExp(re: string, modifier: string | undefined, seg: string): str
   }
 }
 
-/** Does `pathname` match any of the configured matchers (or all if none)? */
-export function matches(config: MiddlewareConfig | undefined, pathname: string): boolean {
+/** What a matcher's `has`/`missing` conditions are evaluated against. */
+export interface MatchContext {
+  /** The request as the middleware would see it. */
+  request: Request;
+  /** Its URL (query + host). */
+  url: URL;
+}
+
+/**
+ * Does `pathname` match any of the configured matchers (or all if none)? An object entry's
+ * `has`/`missing` conditions are checked against `ctx` when given; a caller with no request
+ * at hand (a path-only check) evaluates the path alone.
+ */
+export function matches(
+  config: MiddlewareConfig | undefined,
+  pathname: string,
+  ctx?: MatchContext,
+): boolean {
   const matcher = config?.matcher;
   if (!matcher) return true;
   const entries = Array.isArray(matcher) ? matcher : [matcher];
   return entries.some((e) => {
     const source = typeof e === "string" ? e : e?.source;
-    return typeof source === "string" && compiledMatcher(source).test(pathname);
+    if (typeof source !== "string" || !compiledMatcher(source).test(pathname)) return false;
+    return typeof e === "string" || !ctx || conditionsHold(e, ctx);
   });
+}
+
+/** `has` all hold and `missing` none hold. */
+function conditionsHold(entry: MatcherEntry, ctx: MatchContext): boolean {
+  return (entry.has ?? []).every((c) => conditionHolds(c, ctx)) &&
+    !(entry.missing ?? []).some((c) => conditionHolds(c, ctx));
+}
+
+function conditionHolds(c: MatcherCondition, ctx: MatchContext): boolean {
+  const actual = conditionValue(c, ctx);
+  if (actual === null || actual === undefined) return false;
+  if (c.value === undefined) return true;
+  return valueMatcher(c.value).test(actual);
+}
+
+/** The request's current value for a condition, or null when absent. */
+function conditionValue(c: MatcherCondition, ctx: MatchContext): string | null {
+  switch (c.type) {
+    case "header":
+      return c.key ? ctx.request.headers.get(c.key) : null;
+    case "cookie":
+      return c.key ? getCookies(ctx.request.headers)[c.key] ?? null : null;
+    case "query":
+      return c.key ? ctx.url.searchParams.get(c.key) : null;
+    case "host":
+      return ctx.url.hostname;
+    default:
+      return null;
+  }
+}
+
+/** Regex syntax in a condition value → a full-match regex; otherwise an exact comparison. */
+const REGEX_SYNTAX = /[\\^$.*+?()[\]{}|]/;
+const valueCache = new Map<string, RegExp>();
+function valueMatcher(value: string): RegExp {
+  let re = valueCache.get(value);
+  if (!re) {
+    re = REGEX_SYNTAX.test(value)
+      ? new RegExp(`^(?:${value})$`)
+      : new RegExp(`^${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
+    if (valueCache.size >= 256) valueCache.clear(); // conditions are config, not input
+    valueCache.set(value, re);
+  }
+  return re;
 }
 
 /** `matcherToRegExp` memoized per source (a matcher is compiled once, not per request). */
@@ -395,7 +471,7 @@ async function runEntry(
   url: URL,
   matchPath: string,
 ): Promise<MiddlewareOutcome> {
-  if (!matches(entry.config, matchPath)) return { type: "next" };
+  if (!matches(entry.config, matchPath, { request, url })) return { type: "next" };
   const result = await entry.handler(requestAdapter(request), {
     url,
     waitUntil: (promise) => after(() => promise),
@@ -472,7 +548,7 @@ export function composeMiddleware(
     let path = matchPath ?? url.pathname;
 
     // A module-level matcher gates the entire chain.
-    if (!matches(moduleConfig, path)) return { type: "next", request };
+    if (!matches(moduleConfig, path, { request, url })) return { type: "next", request };
 
     const accumulated = new Headers();
     let hasHeaders = false;

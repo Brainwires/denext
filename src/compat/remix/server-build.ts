@@ -86,7 +86,11 @@ export async function remixServerBuild(): Promise<ServerBuild> {
   if (!slot) memo.set(BUILD_MEMO, slot = new Map());
   const cached = slot.get("build") as Promise<ServerBuild> | undefined;
   if (cached) return await cached;
-  const pending = synthesize(registry);
+  const pending = synthesize(registry).catch((err) => {
+    // A manifest/loader failure must not take the request down with an unhandled rejection.
+    console.warn("denext/remix: remixServerBuild failed — serving an empty build:", err);
+    return finishBuild({ root: { id: "root", path: "", module: {} } });
+  });
   slot.set("build", pending);
   return await pending;
 }

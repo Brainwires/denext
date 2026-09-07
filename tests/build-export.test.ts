@@ -116,3 +116,63 @@ Deno.test({
     await Deno.remove(outDir, { recursive: true }).catch(() => {});
   }
 });
+
+/** Every `.js` file under `dir`, recursively. */
+async function jsFiles(dir: string): Promise<string[]> {
+  const out: string[] = [];
+  for await (const e of Deno.readDir(dir)) {
+    const p = join(dir, e.name);
+    if (e.isDirectory) out.push(...await jsFiles(p));
+    else if (e.name.endsWith(".js")) out.push(p);
+  }
+  return out;
+}
+
+Deno.test({
+  name: "staticExport: instrumentation-client is bundled into the exported client entries",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_export_instr_" });
+  const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
+  try {
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({
+        compilerOptions: { jsx: "react-jsx", jsxImportSource: "denext" },
+        imports: {
+          "denext": abs("mod.ts"),
+          "denext/jsx-runtime": abs("src/jsx/jsx-runtime.ts"),
+          "denext/server": abs("src/server/mod.ts"),
+          "denext/client": abs("src/client/mod.ts"),
+        },
+      }),
+    );
+    await Deno.mkdir(join(dir, "app"), { recursive: true });
+    await Deno.writeTextFile(
+      join(dir, "instrumentation-client.ts"),
+      `console.log("INSTR_CLIENT_MARKER_7f3a");\n`,
+    );
+    // An interactive page, so the export emits a client bundle for the route.
+    await Deno.writeTextFile(
+      join(dir, "app", "page.tsx"),
+      `"use client";
+import { useState } from "denext";
+export default function Page() {
+  const [n, setN] = useState(0);
+  return <button type="button" onClick={() => setN(n + 1)}>{n}</button>;
+}
+`,
+    );
+    const result = await staticExport(dir, { outDir: "out" });
+    const bundles = await jsFiles(result.outDir);
+    assert(bundles.length > 0, "the export emitted client JavaScript");
+    let found = false;
+    for (const f of bundles) {
+      if ((await Deno.readTextFile(f)).includes("INSTR_CLIENT_MARKER_7f3a")) found = true;
+    }
+    assert(found, "instrumentation-client runs in the exported app (bundled into the entry)");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

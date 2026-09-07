@@ -23,7 +23,9 @@ import { EXPOSE_ERROR } from "../runtime/error-boundary.ts";
 
 /**
  * The error codes the framework itself may produce for any endpoint. An endpoint's declared
- * `errors` (see `defineApi`) are unioned with these on the client.
+ * `errors` (see `defineApi`) are unioned with these on the client. Two are reserved rather
+ * than emitted as envelopes today: a 405 is plain text and a batch 408 is `{ error: string }`,
+ * so a client sees them as `http_error`.
  */
 export type BuiltinApiErrorCode =
   | "validation"

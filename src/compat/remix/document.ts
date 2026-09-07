@@ -15,6 +15,7 @@ import { h } from "../../jsx/jsx-runtime.ts";
 import { Fragment } from "../../jsx/jsx-runtime.ts";
 import { useLayoutEffect } from "../../runtime/hooks.ts";
 import type { VNode, VNodeChildren } from "../../jsx/types.ts";
+import { isValidAttrName } from "../../jsx/render-to-string.ts";
 
 /** Attributes of the document element a root rendered (`className`, `lang`, `data-*`…). */
 export type DocumentAttrs = Record<string, unknown>;
@@ -37,8 +38,16 @@ const isBrowser = typeof document !== "undefined" && typeof window !== "undefine
 /** Props that are not attributes. */
 const NOT_ATTRS = new Set(["children", "key", "ref", "dangerouslySetInnerHTML"]);
 
-/** Apply `attrs` to a live element: `className` → class, `style` object → styles, the rest as attributes. */
-function applyDocumentAttrs(el: Element, attrs: DocumentAttrs): void {
+/**
+ * Apply `attrs` to a live element: `className` → class, `style` object → styles, the rest as
+ * attributes — through the same attribute-name chokepoint as the reconciler (no `on*`, nothing
+ * that could break out of the tag). Exported for the client-side test; the runtime calls it
+ * from `DocumentHtml`/`DocumentBody` effects.
+ *
+ * @param el The live `<html>` or `<body>` element.
+ * @param attrs The props the Remix root passed to the tag.
+ */
+export function applyDocumentAttrs(el: Element, attrs: DocumentAttrs): void {
   for (const [name, value] of Object.entries(attrs)) {
     if (!NOT_ATTRS.has(name)) applyDocumentAttr(el, name, value);
   }
@@ -50,6 +59,8 @@ function applyDocumentAttr(el: Element, name: string, value: unknown): void {
     return;
   }
   const attr = name === "className" ? "class" : name === "htmlFor" ? "for" : name;
+  // Same chokepoint as the reconciler's setAttribute: no `on*`, nothing that breaks the tag.
+  if (!isValidAttrName(attr)) return;
   if (value === null || value === undefined || value === false) el.removeAttribute(attr);
   else el.setAttribute(attr, value === true ? "" : String(value));
 }

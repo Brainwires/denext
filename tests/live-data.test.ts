@@ -23,7 +23,7 @@ import {
   broadcastChannelTransport,
   createChannel,
   inMemoryChannelTransport,
-  setChannelTransport,
+  resetChannels,
 } from "../src/runtime/channel.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
@@ -761,6 +761,39 @@ Deno.test("useLive hub: malformed codec-flagged args are refused as bad-message 
   }
 });
 
+Deno.test("useLive hub: a BigInt-tagged subscribe frame is refused, never crashes the process (C1 regression)", async () => {
+  // A decoded `{"$":"n"}` tag is a BigInt, which `JSON.stringify` cannot serialize; the size
+  // probe once ran on the DECODED args, outside any try, in a void-called async handler — one
+  // unauthenticated frame was an unhandled rejection that took the whole server down.
+  liveReadable(serverAction("livedata#alive", () => 1));
+  const { server, port } = startHub();
+  try {
+    const { ws, frames } = await collect(port, "data", 1, (ws) => {
+      ws.send(JSON.stringify({
+        type: "data-subscribe",
+        subId: "hostile",
+        actionId: "livedata#nope",
+        args: [{ $: "n", v: "1" }],
+        enc: 1,
+      }));
+      // The hub is still alive and serving after the hostile frame.
+      ws.send(JSON.stringify({
+        type: "data-subscribe",
+        subId: "ok",
+        actionId: "livedata#alive",
+        args: [],
+        tags: [],
+      }));
+    });
+    assertEquals(frames[0].subId, "ok");
+    assertEquals(frames[0].value, 1);
+    ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
 // ── Tag watches (`useApi({ tags })`) ──────────────────────────────────────────
 
 Deno.test("tag watch hub: allowAnonymous admits a watch; revalidateTag pushes an `invalidate` for the hit tags", async () => {
@@ -978,6 +1011,8 @@ Deno.test('defineSubscription: the ref is a one-shot callable; a "use server" ex
   });
   assertEquals(await sub({ id: "9" }), "order 9");
   await assertRejects(() => sub({ id: 9 as never }));
+  // The explicit-id ref carries its id — `useSubscription` subscribes by it.
+  assertEquals((sub as { denextActionId?: string }).denextActionId, "sub#oneshot");
   // Exported from a "use server" module: tagging assigns the id and registers the definition.
   const mod = { orders: defineSubscription<number, void>({ resolve: () => 1 }) };
   tagServerExports(mod as Record<string, unknown>, "app/subs.ts");
@@ -1073,7 +1108,7 @@ Deno.test("channel hub: an authorized subscriber receives publishes (codec-encod
   }
 });
 
-Deno.test("channel hub: unknown channel → denied (not distinguishable), bad key → bad-message, authorize false → denied", async () => {
+Deno.test("channel hub: unknown channel → denied, bad key → denied too (no id oracle), authorize false → denied", async () => {
   createChannel<number>({ id: "ch#private", authorize: (_ctx, key) => key === "public" });
   const { server, port } = startHub({});
   try {
@@ -1083,7 +1118,7 @@ Deno.test("channel hub: unknown channel → denied (not distinguishable), bad ke
       channelSubscribe(ws, "d", "ch#private", "secret");
     });
     const byId = Object.fromEntries(frames.map((f: Any) => [f.subId, f.code]));
-    assertEquals(byId, { u: "denied", k: "bad-message", d: "denied" });
+    assertEquals(byId, { u: "denied", k: "denied", d: "denied" });
     ws.close();
   } finally {
     uninstallLiveHub();
@@ -1208,7 +1243,7 @@ Deno.test("channel transports: the in-memory default loops back; BroadcastChanne
     await a.publish({ kind: "publish", channelId: "c", key: "cross", seq: 1, instance: "other" });
     assertEquals(await seen, "cross");
   }
-  setChannelTransport(inMemoryChannelTransport()); // restore the default for later tests
+  resetChannels(); // registry + transport back to defaults for later tests
 });
 
 Deno.test("useChannel client: initial → pushed value → a denial marks the sub dead", () => {

@@ -345,8 +345,10 @@ canonical migration doc).
 ## Ecosystem packages (first-party JSR)
 
 `@denext/photon`, `@denext/avif`, `@denext/og`, `@denext/pages-router`,
-`@denext/htmx`, `@denext/effect` — published independently, zero-npm. (The cache uses Deno's
-built-in `node:sqlite`.)
+`@denext/htmx`, `@denext/effect`, `@denext/openapi`, `@denext/graphql`, `@denext/react-router` — published
+independently. All zero-npm except the two deliberate npm bridges (`@denext/effect` →
+`npm:effect`, `@denext/graphql` → `npm:graphql-yoga`), which a consumer opts into. (The
+cache uses Deno's built-in `node:sqlite`.)
 
 ## End-to-end typed API surface
 
@@ -361,6 +363,20 @@ built-in `node:sqlite`.)
   `requireSession()` and `rateLimit()` ship (`src/server/api-middleware.ts`).
   `apiDefinitionOf(handler)` (also in `denext/plugin-kit`) exposes a route's definition
   for an OpenAPI/docs plugin.
+- **`@denext/openapi`** (`packages/openapi`): the same definitions as an OpenAPI 3.1
+  document — `GET /openapi.json` + a zero-JavaScript docs page at `GET /docs` (or Scalar /
+  Swagger UI), `openapi.json` in the build output, `denext openapi emit | diff | lint`.
+  JSON Schema via Standard JSON Schema (Zod ≥ 4.2, ArkType, Valibot), TypeBox, a
+  `toJsonSchema()` method, or a converter; the shared `ApiError` envelope with per-status
+  code enums; an `authorize` gate that falls through to the app's 404.
+- **`@denext/graphql`** (`packages/graphql`): GraphQL Yoga mounted at `/graphql` through
+  the plugin seam (same-origin gate on mutations, CORS off, body cap, introspection and
+  GraphiQL dev-only), `fromChannel(channel, key)` turning a `createChannel` key into a
+  subscription source over `tapChannel` (delivered as GraphQL over SSE, across instances
+  via the app's `ChannelTransport`), `schema.graphql` at build, `denext graphql sdl | diff`.
+- **Plugin-kit primitives for API plugins**: `apiDefinitionOf`, `tapChannel` (server-side
+  observer of a channel's pushes), `verifyOrigin` (the CSRF gate every state-changing
+  denext RPC applies), `bufferedRequest` + the body caps (`src/plugin/kit.ts`).
 - **Typed errors.** `ApiError(status, code, { message?, data?, fieldErrors?, headers? })`
   (`src/server/api-error.ts`) → `{ error: { code, status, message, data?, fieldErrors?,
   digest? } }` + `x-request-id`; the client rebuilds it as `ApiClientError` with `code`
@@ -429,8 +445,18 @@ built-in `node:sqlite`.)
   request-handler, build-step, teardown, CLI command) with the public
   `@denext/denext/plugin-kit` primitives (bundling, CSS, matchers, `PageCache`,
   body caps, signed-token helpers). See [PLUGINS.md](./PLUGINS.md) for the
-  authoring guide; consumed by `@denext/pages-router`, `@denext/htmx` and
+  authoring guide; consumed by `@denext/pages-router`, `@denext/react-router`,
+  `@denext/htmx`, `@denext/openapi`, `@denext/graphql` and
   [`examples/plugin-aliases`](./examples/plugin-aliases).
+- **React Router** (opt-in plugin: `@denext/react-router`) — runs a **React Router v7
+  framework-mode** app (config routing in `app/routes.ts`, `root.tsx`, loaders/actions,
+  `react-router.config.ts`) on denext with the app's source untouched. The plugin reads
+  `app/routes.ts` and generates denext route wrappers through the **route-synthesizer** seam,
+  so Flight, streaming SSR, per-segment error boundaries, soft navigation, ISR and Fast
+  Refresh are denext's own; loaders/actions, `meta`, `links`, `ErrorBoundary`, the root
+  `Layout` export and the `Route.ComponentProps` props contract run on the `denext/remix`
+  runtime. `denext migrate` detects an RR7 app and wires it. See
+  [/docs/react-router](https://denext.dev/docs/react-router).
 - **Lint plugin** (denext-specific rules), `deno fmt`/`deno lint` integration.
 - **Unified CLI** — a real command framework (declarative flags, uniform global
   flags `--cwd/--config/--json/--verbose/--quiet`, per-command `--help`, "did

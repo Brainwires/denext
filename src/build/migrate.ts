@@ -72,6 +72,8 @@ const DENEXT_OWNED = new Set([
  * denext's barrel surface, so an older 0.x line boots against a barrel it no longer matches.
  */
 export const PAGES_ROUTER_SPEC = "jsr:@denext/pages-router@^0.10.0";
+/** The `@denext/react-router` package the RR7 framework-mode plugin path pins. */
+const REACT_ROUTER_SPEC = "jsr:@denext/react-router@^0.1.0";
 /**
  * The `@denext/effect` bridge specifier, mapped (and its `effect()` plugin wired into the
  * generated `denext.config.ts`) whenever the app depends on the npm `effect` package. The
@@ -430,6 +432,8 @@ interface DenextResolver {
   pagesRouter: (sub: string) => string;
   /** The `@denext/pages-router` base + subpath-prefix import-map entries. */
   pagesRouterEntries: () => Record<string, string>;
+  /** The `@denext/react-router` base + subpath import-map entries (RR7 framework-mode plugin). */
+  reactRouterEntries: () => Record<string, string>;
   /** The `@denext/effect` bridge import-map entry (single `.` export — no subpaths). */
   effectEntry: () => Record<string, string>;
   /**
@@ -461,6 +465,11 @@ function jsrResolver(V: string): DenextResolver {
     pagesRouterEntries: () => ({
       "@denext/pages-router": PAGES_ROUTER_SPEC,
       "@denext/pages-router/": PAGES_ROUTER_SPEC + "/",
+    }),
+    reactRouterEntries: () => ({
+      "@denext/react-router": REACT_ROUTER_SPEC,
+      "@denext/react-router/routes": REACT_ROUTER_SPEC + "/routes",
+      "@denext/react-router/dom": REACT_ROUTER_SPEC + "/dom",
     }),
     effectEntry: () => ({ "@denext/effect": EFFECT_SPEC }),
     frameworkDeps: () => ({}),
@@ -503,6 +512,7 @@ async function denextResolver(V: string, localPath?: string): Promise<DenextReso
   const prExp = await packageExports(prDir);
   const efDir = join(abs, "packages", "effect");
   const efExp = await packageExports(efDir);
+  const rrExp = await packageExports(join(abs, "packages", "react-router"));
   return {
     base: local(""),
     sub: local,
@@ -523,6 +533,15 @@ async function denextResolver(V: string, localPath?: string): Promise<DenextReso
         if (k !== ".") {
           out["@denext/pages-router/" + k.slice(2)] = fileFor(prDir, rel);
         }
+      }
+      return out;
+    },
+    reactRouterEntries: () => {
+      const rrDir = join(abs, "packages", "react-router");
+      const out: Record<string, string> = {};
+      for (const [k, rel] of Object.entries(rrExp)) {
+        const key = k === "." ? "@denext/react-router" : "@denext/react-router/" + k.slice(2);
+        out[key] = fileFor(rrDir, rel);
       }
       return out;
     },
@@ -852,9 +871,35 @@ async function migrateNonNextProject(
 ): Promise<MigrateResult | null> {
   const from = options.from;
   if (from === "next") return null;
+  return (await migrateRemixFamily(dir, deps, options)) ??
+    (await migrateSpaFamily(dir, deps, options));
+}
+
+/** Remix v2 (source transform) or React Router v7 framework mode (the plugin). */
+async function migrateRemixFamily(
+  dir: string,
+  deps: Record<string, string>,
+  options: MigrateOptions,
+): Promise<MigrateResult | null> {
+  const from = options.from;
+  // RR7 config routing (`app/routes.ts`) runs on the @denext/react-router PLUGIN — sources
+  // untouched, unlike the Remix v2 transform.
+  if (from === "react-router" || (!from && await isReactRouterFramework(dir))) {
+    return await migrateReactRouterProject(dir, deps, options);
+  }
   if (from === "remix" || (!from && await isRemix(dir, deps))) {
     return await migrateRemixProject(dir, deps, options);
   }
+  return null;
+}
+
+/** CRA, Vite or a generic React SPA → SPA mode. */
+async function migrateSpaFamily(
+  dir: string,
+  deps: Record<string, string>,
+  options: MigrateOptions,
+): Promise<MigrateResult | null> {
+  const from = options.from;
   for (const source of ["cra", "vite", "generic"] as const) {
     const detect = source === "cra" ? isCra : source === "vite" ? isViteSpa : isGenericSpa;
     if (from === source || (!from && await detect(dir, deps))) {
@@ -1095,6 +1140,102 @@ async function writeMigratedConfig(
 // ── Remix migration (assisted: config + route-tree transform) ─────────────────
 
 /**
+ * The shared setup both Remix-family migrations do: reject a pnp tree, resolve denext, and
+ * build the App-Router import map with the Remix compat aliases.
+ */
+async function remixAppBase(
+  dir: string,
+  deps: Record<string, string>,
+  options: MigrateOptions,
+): Promise<{ R: DenextResolver; imports: Record<string, string> }> {
+  const { pnp } = await detectPackageManager(dir);
+  if (pnp) throw pnpUnsupported(dir);
+  const R = await denextResolver(await denextVersion(), options.denextLocalPath);
+  const imports = await buildAppRouterImports(dir, R, deps, { remix: true });
+  return { R, imports };
+}
+
+/** True for a React Router v7 framework-mode app: `app/routes.ts` (or `src/app/routes.ts`). */
+async function isReactRouterFramework(dir: string): Promise<boolean> {
+  return await anyExists(dir, [
+    "app/routes.ts",
+    "app/routes.tsx",
+    "app/routes.js",
+    "src/app/routes.ts",
+  ]);
+}
+
+/**
+ * React Router v7 framework mode → the `@denext/react-router` plugin. The app's sources stay
+ * untouched: migrate writes a `deno.json` whose import map aliases the RR toolchain to the
+ * denext runtimes (`@react-router/dev/routes` → the plugin's config DSL, `react-router`/
+ * `react-router-dom` → `denext/remix`, `react-router/dom` → the plugin's inert client shim,
+ * `@react-router/node`/`serve`/`express`/`cloudflare` → `denext/remix/server`) and a
+ * `denext.config.ts` registering `reactRouter()`. The plugin generates the denext wrappers at
+ * build/dev time from `app/routes.ts`.
+ */
+async function migrateReactRouterProject(
+  dir: string,
+  deps: Record<string, string>,
+  options: MigrateOptions,
+): Promise<MigrateResult> {
+  const { R, imports } = await remixAppBase(dir, deps, options);
+  // Classify first (it npm-pins passthrough deps like `react-router`), THEN assert the aliases
+  // so they win over any pin — RR's client/router runtime IS denext's.
+  const classified = classifyDeps(deps, imports, { dropRemix: true, pin: true });
+  Object.assign(imports, R.reactRouterEntries());
+  imports["react-router"] = imports["denext/remix"];
+  imports["react-router-dom"] = imports["denext/remix"];
+  imports["react-router/dom"] = imports["@denext/react-router/dom"];
+  // The RR7 config-routing DSL; the `@react-router/*` server adapters → the remix server runtime.
+  imports["@react-router/dev/routes"] = imports["@denext/react-router/routes"];
+  for (
+    const spec of [
+      "@react-router/node",
+      "@react-router/server-runtime",
+      "@react-router/cloudflare",
+      "@react-router/architect",
+    ]
+  ) {
+    imports[spec] = imports["denext/remix/server"];
+  }
+
+  const written: string[] = [];
+  const prismaWiring = await applyPrismaImports(dir, deps, imports, R);
+  const denoJsonExists = await writeAppRouterDenoJson(dir, R, imports, prismaWiring, written);
+
+  const configPath = join(dir, "denext.config.ts");
+  const hasEffect = "effect" in deps;
+  const pluginImports = [`import { reactRouter } from "@denext/react-router";`];
+  const pluginCalls = ["reactRouter()"];
+  if (hasEffect) {
+    pluginImports.push(`import { effect } from "@denext/effect";`);
+    pluginCalls.push("effect()");
+    Object.assign(imports, R.effectEntry());
+  }
+  const pagesConfigExists = !(await writeIfWritable(
+    configPath,
+    () =>
+      GEN_MARKER + "\n" + pluginImports.join("\n") + "\n\n" +
+      `export default {\n  plugins: [${pluginCalls.join(", ")}],\n};\n`,
+    written,
+  ));
+
+  const prisma = prismaWiring ? await prismaWiring.finalize() : undefined;
+  return {
+    kind: "remix",
+    wrote: written,
+    ...classified,
+    pagesRouter: false,
+    effect: hasEffect,
+    pagesConfigWritten: !pagesConfigExists,
+    pagesConfigExists,
+    denoJsonExists,
+    prisma,
+  };
+}
+
+/**
  * Migrate the Remix app at `dir`: write the denext config (import map + tasks +
  * gitignore + vscode, reusing the App Router shape — react→denext, `next/*` compat,
  * pinned npm passthrough) AND transform the route tree in place ({@link transformRemixApp}
@@ -1108,12 +1249,7 @@ async function migrateRemixProject(
   deps: Record<string, string>,
   options: MigrateOptions,
 ): Promise<MigrateResult> {
-  const { pnp } = await detectPackageManager(dir);
-  if (pnp) throw pnpUnsupported(dir);
-
-  const V = await denextVersion();
-  const R = await denextResolver(V, options.denextLocalPath);
-  const imports = await buildAppRouterImports(dir, R, deps, { remix: true });
+  const { R, imports } = await remixAppBase(dir, deps, options);
   // Classify deps like the Next path, additionally dropping Remix's own `@remix-run/*` /
   // react-router toolchain (its route/data model is ported, not run).
   const classified = classifyDeps(deps, imports, { dropRemix: true, pin: true });

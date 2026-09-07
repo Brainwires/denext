@@ -124,6 +124,40 @@ Deno.test("api batch: a declared over-cap body is a 413", async () => {
   assertEquals(res.status, 413);
 });
 
+Deno.test("api batch: an aggregate response budget bounds the whole batch; an explicit `undefined` keeps a cap", async () => {
+  // `{"secret":true}` is 15 bytes: the first item fits a 20-byte budget, the second does not.
+  const app = batchApp({ apiBatch: { maxTotalResponseBytes: 20 } });
+  const res = await app(batchRequest([
+    { id: 0, m: "GET", p: "/api/secret" },
+    { id: 1, m: "GET", p: "/api/secret" },
+  ]));
+  const { r } = await res.json();
+  const byId = Object.fromEntries(r.map((x: { id: number }) => [x.id, x]));
+  const over = [byId[0], byId[1]].filter((x) => x.s === 500 && x.t === "response too large");
+  assertEquals(over.length, 1, "exactly one item exceeded the shared budget");
+  // A config that spells a cap out as `undefined` must not lift it (object spread would).
+  const loose = batchApp({ apiBatch: { maxItems: undefined } });
+  const many = Array.from({ length: 21 }, (_, i) => ({ id: i, m: "GET", p: "/api/hello" }));
+  assertEquals((await loose(batchRequest(many))).status, 400);
+});
+
+Deno.test("api batch: concurrent batches share one gate per app — overflow is a 503 item, nothing is lost", async () => {
+  // concurrency 1, maxItems 1 → 1 slot + 4 waiters; 8 simultaneous single-item batches overflow.
+  const app = batchApp({ apiBatch: { concurrency: 1, maxItems: 1 } });
+  const responses = await Promise.all(
+    Array.from({ length: 8 }, () => app(batchRequest([{ id: 0, m: "GET", p: "/api/slow" }]))),
+  );
+  const results = await Promise.all(responses.map(async (r) => {
+    assertEquals(r.status, 200, "the batch itself always answers");
+    return (await r.json()).r[0] as { s: number; t?: string };
+  }));
+  const ok = results.filter((r) => r.s === 200).length;
+  const shed = results.filter((r) => r.s === 503 && r.t === "overloaded").length;
+  assertEquals(ok + shed, 8, "every item settled");
+  assert(shed >= 1, "the shared gate shed at least one item");
+  assert(ok >= 5, "the slot + waiters were all served");
+});
+
 Deno.test("api batch: `enabled: false` hides the endpoint", async () => {
   const app = batchApp({ apiBatch: { enabled: false } });
   assertEquals((await app(batchRequest([{ id: 0, m: "GET", p: "/api/hello" }]))).status, 404);

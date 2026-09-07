@@ -100,6 +100,7 @@ export const patchCommand: CommandSpec = {
     "  denext patch edit <package|denext> <file> [dir]\n\n" +
     "  create  diff the package's installed files (node_modules/<pkg>) — or denext's working\n" +
     "          copies (patches/.work/denext/) — against pristine → patches/<name>+<version>.patch\n" +
+    "          (added and deleted files are recorded; a file over 2 MiB / 50k lines is skipped)\n" +
     "  list    the patches, indexed\n" +
     "  delete  remove a patch and undo it (npm files reverted, denext mapping dropped)\n" +
     "  apply   apply every patch now (dev/build/start/export do this at boot)\n" +

@@ -1,8 +1,10 @@
-import { assert, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
-import { dynamic } from "../src/runtime/dynamic.ts";
+import { dynamic, type DynamicLoadingProps } from "../src/runtime/dynamic.ts";
+import { render, waitFor } from "../src/testing/mod.ts";
+import type { Component } from "../src/jsx/types.ts";
 import { bundleRoute } from "../src/build/bundle.ts";
 import type { PageRoute } from "../src/router/manifest.ts";
 import { parsePattern } from "../src/router/segments.ts";
@@ -120,4 +122,55 @@ Deno.test("lazy() has no internal boundary: the suspension propagates upward", a
     thrown = e;
   }
   assert(isThenable(thrown), "the Suspense signal propagated (no internal boundary)");
+});
+
+const Report = (p: DynamicLoadingProps) =>
+  h("p", {}, [
+    `err:${p.error ? p.error.message : "-"}`,
+    ` loading:${p.isLoading}`,
+    ` past:${p.pastDelay}`,
+    ` timedOut:${p.timedOut}`,
+    h("button", { type: "button", onClick: () => p.retry?.() }, "retry"),
+  ]);
+
+Deno.test("dynamic(): a rejected import renders the loading fallback with `error` (SSR), not a crash", async () => {
+  const Lazy = dynamic(
+    () => Promise.reject<{ default: Component<Record<string, unknown>> }>(new Error("chunk 404")),
+    { loading: Report },
+  );
+  const html = await renderToString(h(Lazy, {}));
+  assertStringIncludes(html, "err:chunk 404");
+  assertStringIncludes(html, "loading:false");
+});
+
+Deno.test("dynamic(): `retry` re-imports after a failure; `pastDelay`/`timedOut` follow delay/timeout (client)", async () => {
+  let calls = 0;
+  const Lazy = dynamic(
+    () => {
+      calls++;
+      return calls === 1
+        ? Promise.reject<{ default: Component<Record<string, unknown>> }>(new Error("first try"))
+        : Promise.resolve({ default: Loaded as Component<Record<string, unknown>> });
+    },
+    { loading: Report, delay: 0 },
+  );
+  const screen = await render(h(Lazy, {}));
+  await waitFor(() => screen.getByText(/err:first try/));
+  await screen.fireEvent.click(screen.getByRole("button"));
+  await waitFor(() => screen.getByText("loaded-content"));
+  assertEquals(calls, 2);
+
+  // A hung import: pastDelay after `delay`, timedOut after `timeout`.
+  const Hung = dynamic(
+    () => new Promise<{ default: Component<Record<string, unknown>> }>(() => {}),
+    {
+      loading: Report,
+      delay: 10,
+      timeout: 30,
+    },
+  );
+  const hung = await render(h(Hung, {}));
+  assertStringIncludes(hung.container.textContent ?? "", "past:false timedOut:false");
+  await waitFor(() => hung.getByText(/past:true/), { timeout: 500 });
+  await waitFor(() => hung.getByText(/timedOut:true/), { timeout: 500 });
 });

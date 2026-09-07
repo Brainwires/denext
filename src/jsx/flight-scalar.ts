@@ -14,7 +14,7 @@ import { isServerAction } from "../runtime/server-action.ts";
 import { taintMessageFor } from "../runtime/taint.ts";
 import { isAsyncProps } from "../runtime/async-props.ts";
 import { isQrl } from "../runtime/qrl.ts";
-import { isChannel } from "../runtime/channel.ts";
+import { isChannel } from "../runtime/channel-brand.ts";
 import { isThenable } from "../runtime/suspense.ts";
 import type { FlightValue } from "./render-to-flight.ts";
 

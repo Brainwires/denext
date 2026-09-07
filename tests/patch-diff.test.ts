@@ -115,3 +115,92 @@ Deno.test("parseUnifiedDiff reads a hand-written patch-package style file (no tr
   const src = `"use strict";\nmodule.exports = leftPad;\nvar cache = [];`;
   assert(applyFileDiff(src, file).includes("patchedLeftPad"));
 });
+
+// ── Linear-space diff, trailing-newline fidelity, /dev/null headers ──────────
+
+Deno.test("createUnifiedDiff: a 20k-line file with one edit diffs in linear memory, fast", () => {
+  const lines = Array.from({ length: 20_000 }, (_, i) => `line ${i} ${"x".repeat(i % 7)}`);
+  const before = lines.join("\n") + "\n";
+  const after = lines.map((l, i) => i === 9_999 ? "CHANGED" : l).join("\n") + "\n";
+  const rss0 = Deno.memoryUsage().rss;
+  const t0 = performance.now();
+  const patch = createUnifiedDiff(before, after, "a/big.js", "b/big.js");
+  const ms = performance.now() - t0;
+  const grew = (Deno.memoryUsage().rss - rss0) / 1024 / 1024;
+  assertStringIncludes(patch, "-line 9999");
+  assertStringIncludes(patch, "+CHANGED");
+  assertEquals(parseUnifiedDiff(patch)[0].hunks.length, 1);
+  assertEquals(applyFileDiff(before, parseUnifiedDiff(patch)[0]), after);
+  assert(ms < 2_000, `took ${ms.toFixed(0)} ms`);
+  assert(grew < 200, `RSS grew ${grew.toFixed(0)} MB (the old full-trace Myers needed gigabytes)`);
+  // Many scattered edits (the D-heavy case) stay bounded too.
+  const scattered = lines.map((l, i) => i % 97 === 0 ? l + "!" : l).join("\n") + "\n";
+  const t1 = performance.now();
+  const many = parseUnifiedDiff(createUnifiedDiff(before, scattered, "a/x", "b/x"))[0];
+  assert(performance.now() - t1 < 5_000, "scattered edits");
+  assertEquals(applyFileDiff(before, many), scattered);
+});
+
+Deno.test("createUnifiedDiff: a replacement lists `-` lines before `+` lines (diff convention)", () => {
+  const patch = createUnifiedDiff("a\nb\nc\n", "a\nX\nY\nc\n", "a/f", "b/f");
+  const kinds = parseUnifiedDiff(patch)[0].hunks[0].lines.map((l) => l.kind + l.text);
+  assertEquals(kinds, [" a", "-b", "+X", "+Y", " c"]);
+});
+
+Deno.test("trailing newline: removing or adding the final newline round-trips through the marker", async () => {
+  // Removed: "a\nb\n" → "a\nB"  — the marker sits after `+B`.
+  const removed = createUnifiedDiff("a\nb\n", "a\nB", "a/f", "b/f");
+  assertStringIncludes(removed, "+B\n\\ No newline at end of file\n");
+  const [d1] = parseUnifiedDiff(removed);
+  assertEquals(d1.hunks[0].lines.find((l) => l.text === "B")?.noEol, true);
+  assertEquals(applyFileDiff("a\nb\n", d1), "a\nB", "the newline is gone after apply");
+  assertEquals(applyFileDiff("a\nB", reverseFileDiff(d1)), "a\nb\n", "and comes back on revert");
+  assert(!fileDiffApplies("a\nB\n", reverseFileDiff(d1)), "the idempotency probe tells them apart");
+  // Added: "a\nb" → "a\nb\n" — the marker sits after `-b`.
+  const added = createUnifiedDiff("a\nb", "a\nb\n", "a/f", "b/f");
+  assertStringIncludes(added, "-b\n\\ No newline at end of file\n+b\n");
+  const [d2] = parseUnifiedDiff(added);
+  assertEquals(applyFileDiff("a\nb", d2), "a\nb\n");
+  assertEquals(applyFileDiff("a\nb\n", reverseFileDiff(d2)), "a\nb");
+  // Unchanged EOF context: one marker on the shared context line.
+  const ctx = createUnifiedDiff("x\na\nb", "y\na\nb", "a/f", "b/f");
+  assertEquals((ctx.match(/No newline/g) ?? []).length, 1);
+  assertEquals(applyFileDiff("x\na\nb", parseUnifiedDiff(ctx)[0]), "y\na\nb");
+  // The system `patch` agrees on the removed-newline case (soft gate, like the interop test).
+  const dir = await Deno.makeTempDir({ prefix: "denext_eol_" });
+  try {
+    await Deno.writeTextFile(join(dir, "f"), "a\nb\n");
+    await Deno.writeTextFile(join(dir, "x.patch"), removed.replace("a/f", "f").replace("b/f", "f"));
+    const out = await new Deno.Command("patch", {
+      args: ["-p0", "-i", "x.patch"],
+      cwd: dir,
+      stdout: "piped",
+      stderr: "piped",
+    }).output().catch(() => null);
+    if (out?.success) assertEquals(await Deno.readTextFile(join(dir, "f")), "a\nB");
+    else console.warn("patch(1) unavailable — interop check skipped");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("/dev/null headers mark created and deleted files; the real path stays on both sides", () => {
+  const created = createUnifiedDiff("", "one\ntwo\n", "/dev/null", "b/pkg/new.js");
+  assertStringIncludes(created, "--- /dev/null\n+++ b/pkg/new.js\n@@ -0,0 +1,2 @@\n+one\n+two\n");
+  const [c] = parseUnifiedDiff(created);
+  assertEquals([c.created, c.deleted, c.oldPath, c.newPath], [
+    true,
+    undefined,
+    "pkg/new.js",
+    "pkg/new.js",
+  ]);
+  assertEquals(applyFileDiff("", c), "one\ntwo\n");
+  const deleted = createUnifiedDiff("one\ntwo\n", "", "a/pkg/old.js", "/dev/null");
+  assertStringIncludes(deleted, "--- a/pkg/old.js\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-one\n-two\n");
+  const [d] = parseUnifiedDiff(deleted);
+  assertEquals([d.created, d.deleted, d.newPath], [undefined, true, "pkg/old.js"]);
+  assertEquals(applyFileDiff("one\ntwo\n", d), "");
+  const r = reverseFileDiff(d);
+  assertEquals([r.created, r.deleted], [true, undefined]);
+  assertEquals(applyFileDiff("", r), "one\ntwo\n", "reverting a deletion recreates the file");
+});

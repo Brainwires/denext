@@ -16,6 +16,9 @@ name: Publish to JSR
 #   git tag photon-v1.1.0     && git push origin photon-v1.1.0       # @denext/photon
 #   git tag htmx-v2.0.10      && git push origin htmx-v2.0.10        # @denext/htmx
 #   git tag effect-v0.1.0     && git push origin effect-v0.1.0       # @denext/effect
+#   git tag openapi-v0.1.0    && git push origin openapi-v0.1.0      # @denext/openapi
+#   git tag graphql-v0.1.0    && git push origin graphql-v0.1.0      # @denext/graphql
+#   git tag react-router-v0.1.0 && git push origin react-router-v0.1.0  # @denext/react-router
 #   (likewise avif-v* / og-v* / sqlite-v*)
 #
 # Bump the version in that package's deno.json before tagging — JSR rejects
@@ -33,6 +36,9 @@ on:
       - "pages-router-v*" # @denext/pages-router
       - "htmx-v*" # @denext/htmx
       - "effect-v*" # @denext/effect
+      - "openapi-v*" # @denext/openapi
+      - "graphql-v*" # @denext/graphql
+      - "react-router-v*" # @denext/react-router
 
 permissions:
   contents: read
@@ -70,6 +76,9 @@ jobs:
             pages-router-v*) cfg=packages/pages-router/deno.json ;;
             htmx-v*)         cfg=packages/htmx/deno.json ;;
             effect-v*)       cfg=packages/effect/deno.json ;;
+            openapi-v*)      cfg=packages/openapi/deno.json ;;
+            graphql-v*)      cfg=packages/graphql/deno.json ;;
+            react-router-v*) cfg=packages/react-router/deno.json ;;
             v*)              cfg=deno.json ;;
             *) echo "::error::unrecognized tag '$GITHUB_REF_NAME'"; exit 1 ;;
           esac

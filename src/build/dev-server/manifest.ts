@@ -50,8 +50,7 @@ async function scanManifest(st: DevState): Promise<RouteManifest> {
   const manifest = await scanRoutes(st.paths.appDir);
   if (manifest !== st.lastEmittedManifest) {
     st.lastEmittedManifest = manifest;
-    void emitTypedModules(manifest, { outDir: st.paths.outDir, configPath: st.paths.configPath })
-      .catch(() => {});
+    void emitTypedModules(manifest, { outDir: st.paths.outDir, configPath: st.paths.configPath });
   }
   return manifest;
 }
@@ -73,7 +72,14 @@ async function resolveUnbundledMode(st: DevState): Promise<void> {
 
 /** The current route manifest, with the boundary, CSS and dev-loop mode brought up to date. */
 export async function getManifest(st: DevState): Promise<RouteManifest> {
-  st.manifest ??= await scanManifest(st);
+  // Single-flight: `st.manifest ??= await scan()` reads and writes around the await, so N
+  // requests arriving after a rebuild each ran their own scan (and typed-module emit). The
+  // `??=` on the PROMISE is atomic.
+  if (!st.manifest) {
+    st.manifest = await (st.manifestInFlight ??= scanManifest(st).finally(() => {
+      st.manifestInFlight = null;
+    }));
+  }
   await refreshBoundary(st, st.manifest);
   await getCss(st); // ensure cssAssets is current before styleHrefsFor is read
   await resolveUnbundledMode(st);

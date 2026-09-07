@@ -34,3 +34,6 @@ out/
 
 # Coverage profiles (deno task test:coverage)
 coverage/
+
+# in-repo scratch dirs for tests that need the workspace import map
+tests/.tmp/

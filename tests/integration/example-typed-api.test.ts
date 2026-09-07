@@ -114,13 +114,67 @@ function flightIds(html: string, tag: "a" | "ch"): string[] {
 function stepRefsCrossFlight(ctx: Ctx): void {
   const actions = flightIds(ctx.html, "a");
   const channels = flightIds(ctx.html, "ch");
-  assert(actions.length >= 1, "the subscription ref crossed as a server reference");
-  assertEquals(channels.length, 1, "the channel crossed as a channel reference");
+  assert(
+    actions.length >= 1,
+    "the subscription ref crossed as a server reference",
+  );
+  assertEquals(
+    channels.length,
+    1,
+    "the channel crossed as a channel reference",
+  );
   assert(!ctx.html.includes("subscriptions.ts"), "an id, never a module path");
 }
 
+/** `@denext/openapi` over the real pipeline: the document derives from the same definitions. */
+async function stepOpenApi(ctx: Ctx): Promise<void> {
+  const res = await fetch(`${ctx.origin}/openapi.json`);
+  assertEquals(res.status, 200);
+  assertEquals(
+    res.headers.get("x-denext-openapi-warnings"),
+    "0",
+    "every schema is described",
+  );
+  const doc = await res.json();
+  assertEquals(doc.openapi, "3.1.0");
+  assertEquals(doc.info, { title: "Typed API example", version: "1.0.0" });
+  assertEquals(Object.keys(doc.paths), ["/api/todos", "/api/todos/{id}"]);
+  const create = doc.paths["/api/todos"].post;
+  assertEquals(create.summary, "Create a todo");
+  assertEquals(create.requestBody.content["application/json"].schema, {
+    type: "object",
+    properties: { title: { type: "string", minLength: 1 } },
+    required: ["title"],
+    additionalProperties: false,
+  });
+  assertEquals(Object.keys(create.responses), ["200", "400", "409", "default"]);
+  assertEquals(doc.paths["/api/todos"].get.parameters, [{
+    name: "done",
+    in: "query",
+    required: false,
+    schema: { enum: ["true", "false"] },
+  }]);
+  assertEquals(doc.paths["/api/todos/{id}"].delete.parameters[0].in, "path");
+  // The committed build output carries the same document.
+  const built = JSON.parse(
+    await Deno.readTextFile(`${APP}/.denext/openapi.json`),
+  );
+  assertEquals(built.paths, doc.paths);
+  // The docs page: server-rendered, no script, styled from our origin.
+  const docs = await fetch(`${ctx.origin}/docs`);
+  assertEquals(docs.headers.get("content-type"), "text/html; charset=utf-8");
+  const html = await docs.text();
+  assertStringIncludes(html, "Typed API example");
+  assertStringIncludes(html, 'id="postApiTodos"');
+  assert(!html.includes("<script"), "the builtin renderer ships no JavaScript");
+  assertEquals(
+    (await fetch(`${ctx.origin}/docs.css`)).headers.get("content-type"),
+    "text/css; charset=utf-8",
+  );
+}
+
 Deno.test({
-  name: "examples/typed-api: typed routes, batch, live refs",
+  name: "examples/typed-api: typed routes, batch, live refs, openapi",
   sanitizeOps: false,
   sanitizeResources: false,
 }, async (t) => {
@@ -133,7 +187,11 @@ Deno.test({
     assertStringIncludes(ctx.html, "Typed API, end to end");
     await t.step("typed route handlers", () => stepTypedRoutes(ctx));
     await t.step("batch endpoint", () => stepBatch(ctx));
-    await t.step("refs cross Flight as opaque ids", () => stepRefsCrossFlight(ctx));
+    await t.step(
+      "refs cross Flight as opaque ids",
+      () => stepRefsCrossFlight(ctx),
+    );
+    await t.step("openapi document + docs page", () => stepOpenApi(ctx));
   } finally {
     ac.abort();
     await server.finished;

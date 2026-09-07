@@ -99,6 +99,33 @@ Deno.test("in-process: the cache key includes the caller's cookie — two users 
   assertEquals((await call("session=bob")).n, 2, "other user: miss");
 });
 
+Deno.test("in-process: the cache key ignores non-identity headers (UA, XFF) — no per-request entry minting", async () => {
+  batchApp();
+  counters.count = 0;
+  const call = (headers: Record<string, string>) => {
+    const ctx = createRequestContext(new Request(`${ORIGIN}/page`, { headers }));
+    return runWithContext(
+      ctx,
+      () =>
+        createApiClient<S>({ fetch: noNetwork })("/api/count", "GET", {
+          next: { tags: ["by-ua"] },
+        }),
+    );
+  };
+  const cookie = "session=carol";
+  assertEquals((await call({ cookie, "user-agent": "one" })).n, 1);
+  assertEquals(
+    (await call({ cookie, "user-agent": "two", "x-forwarded-for": "9.9.9.9" })).n,
+    1,
+    "same user: hit",
+  );
+  assertEquals(
+    (await call({ cookie: "session=dave", "user-agent": "one" })).n,
+    2,
+    "other user: miss",
+  );
+});
+
 Deno.test("in-process: a route calling itself terminates (508 Loop Detected)", async () => {
   batchApp();
   await asRequest("", async () => {

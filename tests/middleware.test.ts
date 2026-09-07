@@ -104,8 +104,8 @@ Deno.test("matcherToRegExp: regex groups, custom param patterns, object entries"
   assertEquals(matcherToRegExp("/:lang(en|de)/:path*").test("/de/a/b"), true);
   assertEquals(matcherToRegExp("/:lang(en|de)/:path*").test("/fr"), false);
   assertEquals(matcherToRegExp("/(.*)").test("/anything/here"), true);
-  // Object entries (`{ source, has, missing }`): `source` is honored; has/missing are
-  // accepted but not evaluated (the middleware runs for every matching path).
+  // Object entries (`{ source, has, missing }`): `source` is honored; with no request context
+  // a path-only check evaluates the path alone.
   assertEquals(matches({ matcher: [{ source: "/admin/:path*", has: [] }] }, "/admin/x"), true);
   assertEquals(matches({ matcher: { source: "/admin/:path*" } }, "/other"), false);
   assertThrows(() => matcherToRegExp("/((?!api.*)"), Error, "unbalanced");
@@ -435,5 +435,156 @@ Deno.test("config.matcher limits which paths run middleware", async () => {
   const secret = await app(new Request("http://localhost/secret"));
   await secret.body?.cancel();
   assertEquals(secret.status, 403);
+  assertEquals(ran, 1);
+});
+
+Deno.test("matcher has/missing: header, cookie, query and host conditions (presence, exact, regex)", () => {
+  const ctx = (url: string, headers: Record<string, string> = {}) => {
+    const request = new Request(url, { headers });
+    return { request, url: new URL(request.url) };
+  };
+  const admin = (has?: unknown[], missing?: unknown[]) =>
+    ({
+      matcher: [{ source: "/admin/:path*", has, missing }],
+    }) as Parameters<typeof matches>[0];
+  // header presence / exact / regex
+  assertEquals(
+    matches(admin([{ type: "header", key: "x-team" }]), "/admin/x", ctx("http://a/admin/x")),
+    false,
+  );
+  assertEquals(
+    matches(
+      admin([{ type: "header", key: "x-team" }]),
+      "/admin/x",
+      ctx("http://a/admin/x", { "x-team": "ops" }),
+    ),
+    true,
+  );
+  assertEquals(
+    matches(
+      admin([{ type: "header", key: "x-team", value: "ops" }]),
+      "/admin/x",
+      ctx("http://a/admin/x", { "x-team": "dev" }),
+    ),
+    false,
+  );
+  assertEquals(
+    matches(
+      admin([{ type: "header", key: "x-team", value: "(?<team>ops|dev)" }]),
+      "/admin/x",
+      ctx("http://a/admin/x", { "x-team": "dev" }),
+    ),
+    true,
+  );
+  assertEquals(
+    matches(
+      admin([{ type: "header", key: "x-team", value: "op" }]),
+      "/admin/x",
+      ctx("http://a/admin/x", { "x-team": "ops" }),
+    ),
+    false,
+    "exact, not prefix",
+  );
+  // cookie
+  assertEquals(
+    matches(
+      admin([{ type: "cookie", key: "session" }]),
+      "/admin/x",
+      ctx("http://a/admin/x", { cookie: "theme=dark; session=abc" }),
+    ),
+    true,
+  );
+  assertEquals(
+    matches(
+      admin([{ type: "cookie", key: "session", value: "xyz" }]),
+      "/admin/x",
+      ctx("http://a/admin/x", { cookie: "session=abc" }),
+    ),
+    false,
+  );
+  // query + host
+  assertEquals(
+    matches(
+      admin([{ type: "query", key: "preview", value: "1" }]),
+      "/admin/x",
+      ctx("http://a/admin/x?preview=1"),
+    ),
+    true,
+  );
+  assertEquals(
+    matches(admin([{ type: "query", key: "preview" }]), "/admin/x", ctx("http://a/admin/x")),
+    false,
+  );
+  assertEquals(
+    matches(
+      admin([{ type: "host", value: "admin.example.com" }]),
+      "/admin/x",
+      ctx("http://admin.example.com/admin/x"),
+    ),
+    true,
+  );
+  assertEquals(
+    matches(
+      admin([{ type: "host", value: "admin.example.com" }]),
+      "/admin/x",
+      ctx("http://example.com/admin/x"),
+    ),
+    false,
+  );
+  // missing: none may hold; combined with has
+  assertEquals(
+    matches(
+      admin(undefined, [{ type: "cookie", key: "session" }]),
+      "/admin/x",
+      ctx("http://a/admin/x"),
+    ),
+    true,
+  );
+  assertEquals(
+    matches(
+      admin(undefined, [{ type: "cookie", key: "session" }]),
+      "/admin/x",
+      ctx("http://a/admin/x", { cookie: "session=1" }),
+    ),
+    false,
+  );
+  assertEquals(
+    matches(
+      admin([{ type: "header", key: "x-team" }], [{ type: "query", key: "skip" }]),
+      "/admin/x",
+      ctx("http://a/admin/x?skip", { "x-team": "ops" }),
+    ),
+    false,
+  );
+  // a string entry has no conditions; the path decides
+  assertEquals(matches({ matcher: ["/admin/:path*"] }, "/admin/x", ctx("http://a/admin/x")), true);
+});
+
+Deno.test("config.matcher has/missing gates the middleware end to end", async () => {
+  let ran = 0;
+  const app = appWith({
+    default: () => {
+      ran++;
+      return new Response("mw", { status: 403 });
+    },
+    config: {
+      matcher: [{
+        source: "/secret",
+        has: [{ type: "header", key: "x-team", value: "ops|dev" }],
+        missing: [{ type: "cookie", key: "bypass" }],
+      }],
+    },
+  });
+  const noHeader = await app(new Request("http://localhost/secret"));
+  assertEquals(noHeader.status, 200, "has-condition unmet → middleware skipped");
+  const blocked = await app(
+    new Request("http://localhost/secret", { headers: { "x-team": "ops" } }),
+  );
+  await blocked.body?.cancel();
+  assertEquals(blocked.status, 403);
+  const bypass = await app(
+    new Request("http://localhost/secret", { headers: { "x-team": "ops", cookie: "bypass=1" } }),
+  );
+  assertEquals(bypass.status, 200, "missing-condition present → skipped");
   assertEquals(ran, 1);
 });

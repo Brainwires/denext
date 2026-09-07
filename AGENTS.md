@@ -103,7 +103,7 @@ export const PATCH = createApi().use(requireSession()).define({
   body: z.object({ name: z.string().min(1) }),
   errors: { not_owner: 403 },
 }, async ({ params, body, ctx, fail }) => {
-  if (ctx.session.userId !== params.id) fail("not_owner");
+  if (ctx.session.user.id !== params.id) fail("not_owner");
   return db.users.update(params.id, body);
 });
 ```
@@ -127,9 +127,18 @@ try {
 import { useApi } from "denext";
 export function User({ id }: { id: string }) {
   const { data, error, pending } = useApi("/api/user/[id]", "GET", { params: { id } });
-  return pending ? <p>…</p> : error ? <p>{error.code}</p> : <p>{data.name}</p>;
+  return pending ? <p>…</p> : error ? <p>{error.code}</p> : <p>{data?.name}</p>;
 }
 ```
+
+Add the `@denext/openapi` plugin (`plugins: [openapi()]` in `denext.config.ts`) and those same
+definitions serve `GET /openapi.json` (OpenAPI 3.1) + a docs page at `GET /docs`, write
+`openapi.json` at build, and back `denext openapi emit | diff | lint` — zero extra annotation.
+Schemas that implement Standard JSON Schema (Zod ≥ 4.2, ArkType, Valibot) or TypeBox are
+described in full; others are `{}` + a lint warning.
+Need GraphQL? `@denext/graphql` mounts GraphQL Yoga at `/graphql` (any `GraphQLSchema`;
+Pothos recommended, no decorators) and `fromChannel(channel, key)` turns a `createChannel`
+into a subscription source — the same push the Live socket delivers.
 
 A plain handler still works and is still typed: return `TypedResponse<T>` / take a
 `TypedRequest<B>` from `denext/server`. A plain `route.ts` body is capped at 1 MiB
@@ -145,11 +154,11 @@ import { createChannel, defineSubscription } from "denext/server";
 export const orderStatus = defineSubscription({
   input: z.object({ id: z.string() }), // validated on every subscribe
   tags: ({ id }) => [`order:${id}`], // server-derived; re-pushed on revalidateTag
-  authorize: async ({ id }) => (await auth())?.userId === (await db.orders.owner(id)),
+  authorize: async ({ id }) => (await auth())?.user.id === (await db.orders.owner(id)),
   resolve: ({ id }) => db.orders.status(id),
 });
 export const orderEvents = createChannel<{ status: string }>({
-  authorize: async (ctx, key) => key === `user:${(await getSession())?.data.userId}`, // REQUIRED
+  authorize: async (_ctx, key) => key === `user:${(await auth())?.user.id}`, // REQUIRED
 });
 // anywhere on the server: await orderEvents.publish(`user:${userId}`, { status: "shipped" });
 ```

@@ -107,7 +107,7 @@ export const PATCH = createApi().use(requireSession()).define({
   body: z.object({ name: z.string().min(1) }),
   errors: { not_owner: 403 },
 }, async ({ params, body, ctx, fail }) => {
-  if (ctx.session.userId !== params.id) fail("not_owner");
+  if (ctx.session.user.id !== params.id) fail("not_owner");
   return db.users.update(params.id, body);
 });
 ```
@@ -131,9 +131,18 @@ try {
 import { useApi } from "denext";
 export function User({ id }: { id: string }) {
   const { data, error, pending } = useApi("/api/user/[id]", "GET", { params: { id } });
-  return pending ? <p>…</p> : error ? <p>{error.code}</p> : <p>{data.name}</p>;
+  return pending ? <p>…</p> : error ? <p>{error.code}</p> : <p>{data?.name}</p>;
 }
 ```
+
+Add the `@denext/openapi` plugin (`plugins: [openapi()]` in `denext.config.ts`) and those same
+definitions serve `GET /openapi.json` (OpenAPI 3.1) + a docs page at `GET /docs`, write
+`openapi.json` at build, and back `denext openapi emit | diff | lint` — zero extra annotation.
+Schemas that implement Standard JSON Schema (Zod ≥ 4.2, ArkType, Valibot) or TypeBox are
+described in full; others are `{}` + a lint warning.
+Need GraphQL? `@denext/graphql` mounts GraphQL Yoga at `/graphql` (any `GraphQLSchema`;
+Pothos recommended, no decorators) and `fromChannel(channel, key)` turns a `createChannel`
+into a subscription source — the same push the Live socket delivers.
 
 A plain handler still works and is still typed: return `TypedResponse<T>` / take a
 `TypedRequest<B>` from `denext/server`. A plain `route.ts` body is capped at 1 MiB
@@ -149,11 +158,11 @@ import { createChannel, defineSubscription } from "denext/server";
 export const orderStatus = defineSubscription({
   input: z.object({ id: z.string() }), // validated on every subscribe
   tags: ({ id }) => [`order:${id}`], // server-derived; re-pushed on revalidateTag
-  authorize: async ({ id }) => (await auth())?.userId === (await db.orders.owner(id)),
+  authorize: async ({ id }) => (await auth())?.user.id === (await db.orders.owner(id)),
   resolve: ({ id }) => db.orders.status(id),
 });
 export const orderEvents = createChannel<{ status: string }>({
-  authorize: async (ctx, key) => key === `user:${(await getSession())?.data.userId}`, // REQUIRED
+  authorize: async (_ctx, key) => key === `user:${(await auth())?.user.id}`, // REQUIRED
 });
 // anywhere on the server: await orderEvents.publish(`user:${userId}`, { status: "shipped" });
 ```
@@ -561,7 +570,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface UseWakeLockOptions` — Options for useWakeLock.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type (a returned Response carries no body type).
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 2.1.0-rc.1` — The denext framework version.
+- `VERSION: 2.1.0-rc.2` — The denext framework version.
 - `ViewTransition(props: object): VNode` — React.ViewTransition (experimental) — the client-driven view-transition wrapper. denext renders it as a transparent passthrough of its children (SSR + hydration safe). **Route-level** view transitions DO apply: a Flight soft-navigation commits inside document.startViewTransition where the browser supports it, so the route swap cross-fades (see withViewTransition in src/client/navigation.ts). The component's per-element props (name, enter, exit, update) are not yet honored — that needs this wrapper to emit real view-transition-name DOM markers — and the isomorphic/HTML nav paths (async reconcile) don't animate yet either.
 - `interface VNode` — A single virtual DOM node.
 - `type VNodeChild = VNode | string | number | bigint | boolean | null | undefined` — Anything that can appear as a child in JSX.
@@ -619,7 +628,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type AwaitableDraftMode = DraftMode & PromiseLike<DraftMode>` — draftMode()'s return: usable synchronously AND awaitable (await draftMode(), Next 15).
 - `type AwaitableHeaders = Headers & PromiseLike<Headers>` — headers()'s return: usable synchronously AND awaitable (await headers(), Next 15).
 - `broadcastChannelTransport(name?: string): ChannelTransport` — A transport over the Web BroadcastChannel API: every instance that shares the channel name (Deno Deploy isolates, workers in one host) receives each event. Zero dependencies.
-- `type BuiltinApiErrorCode = validation | bad_request | unauthorized | forbidden | not_found | method_not_allowed | payload_too_large | request_timeout | rate_limited | internal` — The error codes the framework itself may produce for any endpoint. An endpoint's declared errors (see defineApi) are unioned with these on the client.
+- `type BuiltinApiErrorCode = validation | bad_request | unauthorized | forbidden | not_found | method_not_allowed | payload_too_large | request_timeout | rate_limited | internal` — The error codes the framework itself may produce for any endpoint. An endpoint's declared errors (see defineApi) are unioned with these on the client. Two are reserved rather than emitted as envelopes today: a 405 is plain text and a batch 408 is { error: string }, so a client sees them as http_error.
 - `cache<A, R>(fn: (...args: A) => R): (...args: A) => R` — Memoize fn for the duration of the current request: repeated calls with the same arguments return the first computed value (React's cache). Outside a request the function runs uncached. Define the wrapper once (e.g. at module scope) so its identity is stable.
 - `interface CacheConfig` — Cache Components / ISR cache-store configuration (DenextConfig.cache).
 - `cachedFetch(input: string | URL, options?: CacheOptions & RequestInit): Promise<string>` — Fetch input and cache the response body across requests (a small fetch-with-caching helper). Returns the cached text on a hit.
@@ -638,6 +647,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ChannelContext` — The subscriber's identity handed to authorize (the Live connection context).
 - `interface ChannelEvent` — One transport event: a publish (encoded payload) or a revoke.
 - `interface ChannelRef<T>` — A channel as the browser sees it: the id (and the phantom type).
+- `interface ChannelTapHandlers<T>` — What tapChannel reports.
 - `interface ChannelTransport` — Carries ChannelEvents to every hub that should deliver them (across instances).
 - `collapseHeadTags(tags: HeadTag[]): string` — Join a HeadCollector's tags into head HTML, collapsing entries that share a HeadTag.dedup identity to the LAST occurrence at its own position (the earlier duplicate is dropped — next/head's reverse-filter order). Tags without an identity pass through in tree order. Operates on the already-serialized strings; nothing is re-escaped.
 - `compareSpecificity(a: Segment[], b: Segment[]): number` — Order two patterns by specificity the way Next.js does: compare segment by segment from the left, and at the first position that differs the more specific kind wins (static > dynamic > catch-all > optional catch-all). A pattern that has run out of segments (its catch-all consumed the rest) ranks below one that still has a concrete segment there. Returns negative when a should be tried first.
@@ -742,7 +752,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `isRedirect(value: unknown): value is RedirectError` — True if value is a RedirectError raised by redirect().
 - `isServerAction(value: unknown): value is ServerActionRef` — True if value is a ServerActionRef.
 - `isUnauthorized(value: unknown): value is UnauthorizedError` — True if value is an UnauthorizedError raised by unauthorized().
-- `json<T>(data: T, init?: ResponseInit): TypedResponse<T>` — Like Response.json, but the returned response remembers T. Use it in route handlers so callers of the route get a typed body back through the generated apiClient.
+- `json<T>(data: T, init?: ResponseInit): TypedResponse<T>` — Like Response.json, but the returned response remembers T. Use it in route handlers so callers of the route get a typed body back through the generated apiClient. The body goes through the wire codec: a Date / Map / Set / BigInt / undefined survives, and the response carries x-denext-wire: 1 only when a tag was needed (a plain-JSON body is byte-identical to Response.json).
 - `type JsonLd = object` — A JSON-LD structured-data object (schema.org), serialized to a <script type="application/ld+json"> in the document head. A lightweight structural type: @context/@type are hinted, any other schema.org field is allowed. Provide one object or an array of them via Metadata.jsonLd.
 - `type Key = string | number | null | undefined` — A stable identity for a VNode among its siblings, used to keep lists reconciled.
 - `interface LayoutModule` — Shape of a layout module.
@@ -757,7 +767,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `localeMiddleware(i18n: I18nConfig): Middleware` — A middleware entry that redirects an unprefixed request to the visitor's detected locale when it differs from the default. Compose it into the middleware chain to get automatic locale routing:
 - `interface LocalPattern` — An allowed **local** image source pattern (Next.js images.localPatterns). A local source (/… under public/) matches when its pathname matches pathname (a glob: * = one path segment, ** = any) and, if search is given, its query string equals it exactly (search: "" ⇒ only a query-less URL). When localPatterns is set, a local source matching none is refused — an enumeration guard for query-string variants.
 - `makeTranslate(messages: Messages): TranslateFn` — Build a TranslateFn over messages (missing keys return the key).
-- `interface MatcherEntry` — Next's object form of a matcher entry. source is the path pattern; has/missing (header/cookie/query conditions) are accepted for compatibility but NOT evaluated — the middleware runs for every request source matches, which is the safe direction (it never runs less often than Next would).
+- `interface MatchContext` — What a matcher's has/missing conditions are evaluated against.
+- `interface MatcherCondition` — One has/missing condition of a matcher entry (Next's shape): the request must carry (has) or lack (missing) a header, cookie, query parameter, or host. Without value the condition is presence; with it, the actual value must equal value — or match it as a regular expression when it contains regex syntax ((?<team>\w+), a|b, .*).
+- `interface MatcherEntry` — Next's object form of a matcher entry: source is the path pattern; has must ALL hold and missing must NONE hold for the middleware to run on a matching path. Conditions are evaluated against the request the middleware would see (after an earlier entry's rewrite).
 - `interface MatchOptions` — Options controlling how matchPage treats intercepting routes.
 - `matchSegments(pattern: Segment[], pathname: string): RouteParams | null` — Attempt to match a request pathname against a parsed pattern. Returns extracted params on success, or null if the pattern doesn't match.
 - `interface MdxConfig` — MDX compilation options (see DenextConfig.mdx). Each plugin list is a unified PluggableList: an array whose entries are either a plugin function or a [plugin, options] tuple. Typed loosely (unknown[]) so the public config surface doesn't depend on unified/@mdx-js types; the values are forwarded verbatim to MDX's compile.
@@ -927,6 +939,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SubscriptionRef<In, Out>` — The reference defineSubscription returns: callable on the server (validate → authorize → resolve), an opaque id on the client; typed for useSubscription.
 - `interface SubscriptionRunContext` — What a subscription's authorize / resolve receive besides the parsed input.
 - `interface TailwindConfig` — Tailwind CSS integration. When set, denext compiles input (which contains the raw @import "tailwindcss"; directives) into output using the Tailwind v4 standalone binary — which denext downloads and manages itself — before its own CSS pipeline runs. The output file is what your layout imports.
+- `tapChannel<T>(channel: Channel<T> | string, key: string, handlers: ChannelTapHandlers<T>): () => void` — Observe a channel's publishes on the SERVER: every payload published to key on any instance — through the installed transport, decoded, in seq order per instance — until the returned disposer runs. The seam a plugin uses to bridge channel pushes into another protocol (a GraphQL subscription in @denext/graphql, an SSE stream, a queue) without a second event bus. Survives setChannelTransport (re-binds to the new transport).
 - `interface ThemeColorDescriptor` — <meta name="theme-color"> with an optional media query.
 - `TOO_LARGE: Symbol` — Sentinel returned by readCappedBody when the body exceeds the cap.
 - `type TranslateFn = (key: string, vars?: TranslationVars) => string` — A translation function: look up key and interpolate any {var} placeholders.

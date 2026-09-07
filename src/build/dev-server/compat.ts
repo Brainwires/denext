@@ -106,10 +106,13 @@ function storeCompatOutput(
 
 /** One generation's compat build: server bundles, client entries, the compat Flight entry. */
 async function buildCompat(st: DevState, m: RouteManifest): Promise<void> {
+  const prevGen = st.compatBuiltGen;
   const outDir = join(st.paths.outDir, "dev-compat", String(st.generation));
   const clientOut = join(outDir, "client");
   await ensureDir(clientOut);
-  st.compatClientDir = clientOut;
+  // `st.compatClientDir` is assigned only once this generation is COMPLETE (below): an asset
+  // request racing the rebuild must keep serving the previous generation, never a half-written
+  // directory (that was a 404 window for every `/_denext/client/assets/*` during a rebuild).
   // CSS shim map so stylesheet imports (incl. sibling-package `.scss`) redirect to
   // their shims in the esbuild compat bundle. getCss() is current for this generation.
   const opts = compatBuildOptions(st, outDir, (await getCss(st))?.importMap);
@@ -137,7 +140,14 @@ async function buildCompat(st: DevState, m: RouteManifest): Promise<void> {
   }
   await loadCompatOutputs(st, clientOut, clientRoutes);
   st.compatLoad = createNextCompatServerLoader(baseLoaderFor(st), { moduleMap });
+  st.compatClientDir = clientOut;
   st.compatBuiltGen = st.generation;
+  // The previous generation is no longer referenced by anything we serve: reclaim it
+  // (best-effort — a browser still holding an old asset URL gets a 404, exactly as before).
+  if (prevGen !== st.generation) {
+    await Deno.remove(join(st.paths.outDir, "dev-compat", String(prevGen)), { recursive: true })
+      .catch(() => {});
+  }
 }
 
 /**

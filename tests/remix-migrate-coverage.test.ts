@@ -675,8 +675,12 @@ Deno.test("transformRemixApp: getLoadContext → load-context.ts, entry.client �
       'import { defineLoadContext, remixServerBuild } from "denext/remix/server";',
     );
     assertStringIncludes(loadContext, "export default defineLoadContext(() => ({");
-    assertStringIncludes(loadContext, "serverBuild: remixServerBuild(),");
+    assertStringIncludes(loadContext, "get serverBuild() {\n    return remixServerBuild();\n  },");
     assertStringIncludes(loadContext, "// was: getBuild() —");
+    assert(
+      !loadContext.includes("serverBuild: remixServerBuild()"),
+      "lazy getter, not an eager promise",
+    );
     assertStringIncludes(loadContext, "cspNonce: undefined,");
     assertStringIncludes(loadContext, "// was: res.locals.cspNonce — denext's CSP is hash-based");
     assertStringIncludes(loadContext, "// TODO: was `req.ip` — provide it here\n  ip: undefined,");
@@ -717,4 +721,110 @@ Deno.test("transformRemixApp: getLoadContext → load-context.ts, entry.client �
   } finally {
     await Deno.remove(tmp, { recursive: true });
   }
+});
+
+Deno.test("transformRemixApp: nothing is destroyed before the generated files exist; 220 colocated files survive; a route named `routes` keeps its generated page", async () => {
+  const tmp = await Deno.makeTempDir({ prefix: "remix_nodataloss_" });
+  const app = join(tmp, "app");
+  try {
+    await Deno.mkdir(join(app, "routes", "_marketing+", "assets"), { recursive: true });
+    await Deno.writeTextFile(join(app, "root.tsx"), LAYOUT("Root"));
+    await Deno.writeTextFile(join(app, "routes", "_index.tsx"), PAGE("Home"));
+    await Deno.writeTextFile(join(app, "routes", "routes.tsx"), PAGE("RoutesPage"));
+    // Colocated (non-route) modules: the kind a readDir-while-renaming walk used to skip.
+    for (let i = 0; i < 220; i++) {
+      await Deno.writeTextFile(
+        join(app, "routes", "_marketing+", "assets", `__asset-${i}.ts`),
+        `export const n = ${i};\n`,
+      );
+    }
+    const info = await transformRemixApp(tmp);
+    let colocated = 0;
+    for await (const _ of Deno.readDir(join(app, "_routes", "_marketing+", "assets"))) colocated++;
+    assertEquals(colocated, 220, "every colocated module relocated, none lost");
+    assertEquals(info.routesConverted, 2);
+    // `routes.tsx` → app/routes/page.tsx lands INSIDE the old routes dir and must survive it.
+    assertStringIncludes(await Deno.readTextFile(join(app, "routes", "page.tsx")), "RemixRoute");
+    assert(!(await exists(join(app, "routes", "routes.tsx"))), "the converted original is gone");
+    assert(!(await exists(join(app, "routes", "_index.tsx"))));
+    assert(!(await exists(join(app, "routes", "_marketing+"))), "emptied dirs are pruned");
+  } finally {
+    await Deno.remove(tmp, { recursive: true });
+  }
+});
+
+Deno.test("analyzeModule: JSX tag and attribute names are not free identifiers (a server `action` import stays out of the client split)", async () => {
+  const parts = await analyzeModule(
+    `import { Form } from "@remix-run/react";\n` +
+      `import { action } from "./login.server.ts";\nimport * as Icons from "./icons.tsx";\n` +
+      `export { action };\n` +
+      `export default function Login() {\n` +
+      `  return (<form action="/login" className="x"><Form method="post" /><Icons.Lock size={1} /><svg:path d="" /></form>);\n}\n`,
+  );
+  const free = [...parts.clientFree].sort();
+  assert(!free.includes("action"), `action leaked: ${free}`);
+  assert(!free.includes("form") && !free.includes("className") && !free.includes("method"));
+  assert(!free.includes("path") && !free.includes("d") && !free.includes("size"));
+  assert(free.includes("Form") && free.includes("Icons"), `component refs kept: ${free}`);
+});
+
+Deno.test("transformRemixApp: head-only routes get a passthrough component; nested plain folders nest; strings survive the document rename", async () => {
+  const tmp = await Deno.makeTempDir({ prefix: "remix_a5_" });
+  const app = join(tmp, "app");
+  try {
+    await Deno.mkdir(join(app, "routes", "users", "$id"), { recursive: true });
+    await Deno.mkdir(join(app, "routes", "docs", "api+"), { recursive: true });
+    // A root whose helper holds "<body>" inside a STRING (a dangerouslySetInnerHTML payload).
+    await Deno.writeTextFile(
+      join(app, "root.tsx"),
+      `import { Outlet, useLoaderData } from "@remix-run/react";\n` +
+        `export async function loader() { return { theme: "dark" }; }\n` +
+        `const RAW = "<body>literal</body>";\n` +
+        `function Document({ children }: { children: React.ReactNode }) {\n` +
+        `  return (<html lang="en"><head /><body><div dangerouslySetInnerHTML={{ __html: RAW }} />{children}</body></html>);\n}\n` +
+        `export default function App() { const d = useLoaderData<typeof loader>(); return <Document>{d.theme}<Outlet /></Document>; }\n`,
+    );
+    await Deno.writeTextFile(join(app, "routes", "_index.tsx"), PAGE("Home"));
+    // meta-only module: a route, not a colocated file.
+    await Deno.writeTextFile(
+      join(app, "routes", "about.tsx"),
+      `export const meta = () => [{ title: "About" }];\n`,
+    );
+    // links+handle-only LAYOUT (has children) → passthrough renders <Outlet />.
+    await Deno.writeTextFile(
+      join(app, "routes", "docs.tsx"),
+      `export const links = () => [{ rel: "stylesheet", href: "/docs.css" }];\nexport const handle = { docs: true };\n`,
+    );
+    await Deno.writeTextFile(join(app, "routes", "docs", "api+", "index.tsx"), PAGE("DocsApi"));
+    // Nested PLAIN folders (no `+`): users/$id/route.tsx → users.$id
+    await Deno.writeTextFile(join(app, "routes", "users", "$id", "route.tsx"), PAGE("User"));
+    const info = await transformRemixApp(tmp);
+    const has = (rel: string) => exists(join(app, rel));
+    assert(await has("about/page.tsx"), "meta-only route converted");
+    assertStringIncludes(
+      await Deno.readTextFile(join(app, "about", "page.client.tsx")),
+      "__RemixHeadOnly",
+    );
+    assertStringIncludes(
+      await Deno.readTextFile(join(app, "about", "page.tsx")),
+      "remixMeta(data.meta",
+    );
+    const docsLayout = await Deno.readTextFile(join(app, "docs", "layout.client.tsx"));
+    assertStringIncludes(docsLayout, "<Outlet />");
+    assert(/import \{[^}]*Outlet[^}]*\} from "denext\/remix"/.test(docsLayout), "Outlet imported");
+    assert(await has("docs/api/page.tsx"), "the + folder under docs nests");
+    assert(await has("users/[id]/page.tsx"), "nested plain folders nest as dot segments");
+    assert(!info.warnings.some((w) => w.includes("about") && w.includes("colocated")));
+    const root = await Deno.readTextFile(join(app, "layout.client.tsx"));
+    assertStringIncludes(root, '"<body>literal</body>"', "the string literal is untouched");
+    assertStringIncludes(root, "<DocumentBody>");
+    assertStringIncludes(root, "</DocumentHtml>");
+  } finally {
+    await Deno.remove(tmp, { recursive: true });
+  }
+});
+
+Deno.test("remix-migrate.ts carries no raw NUL bytes (git would treat it as binary)", async () => {
+  const src = await Deno.readTextFile(new URL("../src/build/remix-migrate.ts", import.meta.url));
+  assert(!src.includes(String.fromCharCode(0)));
 });

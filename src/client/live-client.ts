@@ -25,7 +25,6 @@ import type { FlightNode } from "../jsx/render-to-flight.ts";
 import type { VNodeChild } from "../jsx/types.ts";
 import { setLiveRegistrar } from "../runtime/live-registry.ts";
 import { decodeWire, prepareWire, WIRE_ENC } from "../runtime/wire-codec.ts";
-import { setApiInvalidationSource } from "./use-api.ts";
 import {
   LIVE_ENDPOINT,
   type LiveClientMessage,
@@ -131,8 +130,9 @@ export function configureLive(opts: {
   parse = opts.parse;
   refresh = opts.refresh;
   setLiveRegistrar(register);
-  // `useApi({ tags })` refetches on a tag invalidation whenever the Live transport is present.
-  setApiInvalidationSource(subscribeLiveTags);
+  // NOTE: the `useApi({ tags })` invalidation source is installed by `useApiLive`
+  // (`use-api-live.ts`), not here — importing the typed client from the transport would put it
+  // into every `<Live>`-only bundle.
 }
 
 /**

@@ -8,6 +8,211 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.1.0-rc.2] - 2026-09-07
+
+### Added
+
+- **`@denext/react-router` (0.1.0): React Router v7 framework mode as a plugin.** Runs an RR7
+  app (config routing in `app/routes.ts`, `root.tsx`, loaders/actions, `react-router.config.ts`)
+  on denext with the app's source untouched: the plugin evaluates `app/routes.ts`, generates
+  denext route wrappers under `.denext/react-router/`, and adds them through the route-synthesizer
+  seam, so Flight/streaming/boundaries/soft-nav/ISR/Fast-Refresh are denext's. Loaders/actions,
+  `meta`, `links`, `ErrorBoundary`, the root `Layout` export and the `Route.ComponentProps` props
+  contract run on the `denext/remix` runtime. `denext migrate` detects an RR7 app and wires
+  `reactRouter()` (aliasing `@react-router/dev/routes` and the `@react-router/*` toolchain); the
+  Remix v2 flat-file transform path is unchanged. The Remix route-module codegen was extracted
+  to `denext/plugin-kit`'s `remixCodegen` namespace so both share it.
+- **Middleware `matcher` `has`/`missing` conditions are evaluated** (they were accepted and
+  ignored): `{ source, has: [{ type: "header"|"cookie"|"query"|"host", key, value? }], missing }`
+  — every `has` must hold, no `missing` may; `value` absent means presence, a plain value is an
+  exact match, regex syntax (`ops|dev`, `(?<team>\w+)`) is a full-match regex. Evaluated against
+  the request the middleware would see (after an earlier entry's rewrite). `MatcherCondition` and
+  `MatchContext` are exported from `denext/server`.
+- **`dynamic()` loading props are real:** `error` is set when the import rejects (the fallback
+  renders it instead of the nearest error boundary swallowing the subtree), `retry()` re-imports,
+  `pastDelay` turns true after the new `delay` option (default 200 ms, Next's), `timedOut` after
+  the new `timeout` option. `ssr: false` on the server keeps the static props.
+- **`@denext/openapi` — the self-documenting half of the typed API surface.** The schemas a
+  `defineApi` route declares now describe it too: the new first-party plugin
+  (`packages/openapi`, published as `@denext/openapi`) walks the route manifest, reads each
+  handler's definition through the plugin-kit's `apiDefinitionOf`, and emits an OpenAPI 3.1
+  document — path and query parameters, request body, response, one response per declared
+  error status with the shared `ApiError` envelope and the codes as an enum, the `400`
+  validation response — three ways through the plugin contract alone: `GET /openapi.json`
+  and a docs page at `GET /docs` (request handler; core routes always win), `openapi.json`
+  in the build output (build step), and `denext openapi emit | diff <file> | lint` (command
+  seam) for CI. Schemas become JSON Schema through the Standard JSON Schema interface
+  (`~standard.jsonSchema` — Zod ≥ 4.2, ArkType, Valibot), TypeBox's native JSON Schema, a
+  `toJsonSchema()` method, or a `toJsonSchema` converter option; an opaque validator is
+  emitted as `{}` with an `opaque-schema` lint warning, so the document is always valid and
+  the lint says exactly what to fix. The docs page defaults to a server-rendered,
+  zero-JavaScript reference (strict-CSP clean; its stylesheet is served same-origin), with
+  `ui: "scalar"` / `"swagger"` for a CDN-loaded interactive console. An `authorize` hook
+  hides both endpoints behind the app's ordinary 404. Zero config: add the plugin and an app
+  already using `defineApi` gets both endpoints, and `expose: "dev"` restricts them to
+  `denext dev` when the API map should not be public. `examples/typed-api` wires it (its
+  hand-rolled schema now implements Standard JSON Schema, so every operation is fully described)
+  and the integration test asserts the document over the real prod server. No core change was
+  needed — the plugin-kit surface from rc.1 was sufficient.
+- **`tapChannel(channel, key, { onPayload, onRevoke })`** (`denext/server`, and
+  `denext/plugin-kit` as a deliberate semver addition) — the server-side observer of a
+  `createChannel` push stream: every payload published to a key on any instance, decoded, in
+  `seq` order, following the installed `ChannelTransport` across `setChannelTransport`. The
+  seam a plugin uses to bridge channel pushes into another protocol (GraphQL subscriptions in
+  `@denext/graphql`, an SSE stream, a queue) without a second event bus. Not authorization:
+  `authorize` gates socket subscribers; a tap sees every publish, so its consumer gates its own
+  audience. Public-surface golden refreshed. (`src/runtime/channel.ts`, `src/plugin/kit.ts`,
+  `tests/channel-tap.test.ts`.)
+- **`@denext/graphql` — a GraphQL endpoint as a plugin, with subscriptions over channels.**
+  The last "2.1 keystone" item (`packages/graphql`, published as `@denext/graphql`):
+  `graphql({ schema })` mounts a GraphQL Yoga server at `/graphql` through the plugin
+  request-handler seam (GraphiQL on a browser `GET` in dev, a `context` factory over the
+  request, Yoga passthrough for `plugins` / `maskedErrors` / `cors` / `batching`), so
+  resolvers run inside denext's request context — `cookies()`, `auth()`, the typed API client
+  all work. `fromChannel(channel, key, { signal, buffer })` turns one key of a `createChannel`
+  into the `AsyncIterable` a `subscribe` resolver returns, over the new `tapChannel` seam:
+  GraphQL subscriptions ride the app's push primitive and its `ChannelTransport` (Yoga
+  delivers them as GraphQL over SSE) — no second pub/sub, no separate WebSocket server. A
+  build step writes the sorted SDL (`schema.graphql`); `denext graphql sdl | diff <file>`
+  covers CI. Schema-first or code-first: any `GraphQLSchema`; Pothos (typed, no decorators) is
+  the recommended builder, `createSchema` is re-exported for SDL + resolvers. Like
+  `@denext/effect` it is a deliberate npm bridge (`graphql-yoga`, `graphql` as peers) a
+  consumer opts into; the runtime-purity guard lists it as such. `examples/graphql` is a Pothos
+  app with a channel-backed subscription. With this the keystone is complete and its ROADMAP
+  section is gone.
+
+### Security
+
+Findings of the post-2.0.5 audit (security + production-readiness + docs; all fixed here):
+
+- **`@denext/graphql` caps query depth and hides field suggestions.** A small deeply-nested
+  query over a cyclic type relation could exhaust CPU/memory (the 1 MiB body cap allows
+  thousands of levels); a default depth limit (`maxDepth`, 12; `false` to disable) rejects it at
+  validation via an AST rule, and with introspection off the "Did you mean …?" suggestions that
+  reconstruct the schema are stripped. Both are prepended like the introspection-disable rule,
+  with no value import of `graphql`. (A query cost/complexity budget is a stable-2.1.0 follow-up.)
+
+- **A single unauthenticated Live frame could crash the server.** `data-subscribe` args
+  decoded by the wire codec may hold a BigInt; the input-size probe ran `JSON.stringify` on the
+  DECODED value, outside any try, inside a `void`-called async handler — an unhandled rejection
+  in a process with no global handler. The size and depth gates now run on the raw, still-JSON
+  args before decoding, and every detached message handler (`data-subscribe`,
+  `tags-subscribe`, `channel-subscribe`, presence) is awaited through a logging guard.
+  (`src/server/live.ts`; regression in `tests/live-data.test.ts`.)
+- **`denext patch` could write outside the project.** A patch's `+++ b/<path>` was joined to
+  the project dir with no containment check, and an all-`+` hunk applies to a missing file —
+  a hostile `patches/*.patch` in a cloned repo was an arbitrary-file write at `dev`/`build`/
+  `start` boot. An npm patch may now only touch `node_modules/<its package>/`; a framework
+  patch only a plain relative path under denext. (`src/build/patches.ts`.)
+- **`@denext/graphql` shipped without a CSRF gate, with reflected credentialed CORS and no
+  body cap.** Yoga accepts `application/x-www-form-urlencoded` POSTs (a cross-site `<form>`
+  with the victim's cookies ran mutations) and reflects any `Origin` with
+  `Access-Control-Allow-Credentials`. Non-GET requests now require the same-origin proof every
+  denext RPC applies (`requireSameOrigin`, default on; `allowedOrigins`), CORS is off unless
+  `yoga.cors` is set, bodies are capped (`maxBodyBytes`, 1 MiB), and introspection is
+  dev-only (`introspection`). `verifyOrigin` and `bufferedRequest` join `denext/plugin-kit`
+  for any plugin mounting its own POST endpoint.
+- **Typed client path params could reach another route.** `buildPath` split EVERY param on
+  `/`, so `params: { id: "../../admin/x" }` on `/api/user/[id]` normalized to `/api/admin/x` —
+  in-process during SSR, with the viewer's cookies. A dynamic param is now encoded whole; a
+  catch-all refuses empty, `.` and `..` segments. (`src/runtime/api-client.ts`.)
+- **In-process SSR cache keys varied on every inbound header** (user-agent, x-forwarded-for,
+  accept-*), letting an unauthenticated client mint one durable entry per request. The key
+  now fingerprints identity headers (cookie, authorization) plus the caller's explicit ones.
+- **Batch endpoint memory.** Item responses are read under a STREAMING cap (a chunked body
+  never buffers past it), a shared `apiBatch.maxTotalResponseBytes` (16 MiB) bounds the whole
+  batch, and an explicit `undefined` in `apiBatch` no longer lifts a cap.
+- **Root `<html>`/`<body>` attributes** now pass the same attribute-name chokepoint as every
+  other element (no `on*`, no `<>"'=/` in a name). A channel-subscribe with a malformed key
+  is `denied` like an unknown channel (no id oracle); channel fan-out validates
+  transport-supplied `seq`/payload before splicing them into a frame; a throwing channel
+  subscriber is logged, never propagated into the publisher or later subscribers.
+
+### Fixed
+
+- **Suspense: a child REPLACED while re-suspending renders once resolved.** A committed
+  boundary whose child swaps to a new key/type and suspends (`<Child key={id}>` under a
+  state change, `dynamic()`'s retry) showed the fallback, then rendered NOTHING when the
+  promise settled: the replacement mounted during the Offscreen pass without rendering and
+  carried no lane, so the reveal's props-equal bailout kept its empty subtree. The reveal now
+  gives every un-hidden primary fiber the render lane + a forced render.
+- **Remix migrator/compat: the post-2.0.5 audit's Remix findings.** `denext migrate --from
+  remix` no longer mutates `app/routes/` while walking it (the old tree is listed first, every
+  generated file is written, then colocated modules move and the converted originals are removed
+  and their empty dirs pruned — a route literally named `routes` keeps its generated page); JSX
+  tag and attribute names are no longer treated as identifier references, so `<form action=…>`
+  can't keep `import { action } from "./login.server.ts"` in a client split (a server module in
+  the browser bundle); the generated `load-context.ts` exposes `serverBuild` as a lazy getter
+  (no eagerly created, unawaited O(routes) promise per request) and `remixServerBuild()` never
+  rejects (a failing manifest logs once and yields the root-only build); `runLoaderOnce`
+  memoizes a throwing loader too (one run per request for every reader); the Remix client
+  `DocumentHtml`/`DocumentBody` attribute writer goes through the shared `isValidAttrName`
+  chokepoint; `resolveRoutePath("..")` drops the trailing slash (root stays `/`, an explicit
+  `new/` keeps it); the root document-tag rename skips string/template literals; a
+  `meta`/`links`/`handle`-only module is a route with a passthrough component (not a colocated
+  file); nested plain route folders (`users/$id/route.tsx`) nest as dot segments; the migrator
+  source carries no raw NUL bytes (git no longer sees it as binary).
+- **Plugin paths under a `basePath`.** The pipeline strips `basePath` before the plugin seam,
+  so `@denext/openapi`, `@denext/graphql` and `@denext/htmx` prefixing it onto their paths
+  answered 404 in a `basePath` app. Plugin paths are app-relative now; the OpenAPI document
+  and docs page still DESCRIBE the public (prefixed) paths.
+- **`apiMaxBodyBytes` is a real `denext.config.ts` key** (validated, plumbed to the server) as
+  the docs claimed; it was reachable only from `createApp()`.
+- **`defineSubscription({ id })`** returned a ref with no `denextActionId` (the tagged wrapper
+  from `registerServerReference` was discarded), so `useSubscription` subscribed under
+  `undefined`.
+- **`useApi({ suspense: true })`** adopted the SSR seed by `useId()` alone, so after a param
+  change it rendered the previous call's data and never fetched; the seed is keyed to its
+  call. An `invalidate()` racing an in-flight fetch can no longer be overwritten by the stale
+  response; an entry whose last hook unmounted mid-fetch is dropped when it settles.
+- **`@denext/openapi`:** an optional catch-all emitted one shared operation under two paths
+  (a required path param without a template variable — invalid 3.1) and silently overwrote a
+  sibling static route; each variant is its own operation, a collision is a `path-collision`
+  warning. Responses gain `bad_request` (when a body is declared), a 204 note, and a `default`
+  `ApiError` response for middleware/framework errors. The document's serialization + ETag
+  are computed once per build; `HEAD /docs` sends no body; the Scalar / Swagger bundles are
+  pinned to exact versions.
+- **Typed client:** a 2xx with a non-JSON body is an `ApiClientError` (`http_error`), not a
+  silent `undefined`.
+- **`revalidatePath`** now drops in-process `"use cache"` results (they carry tags, not paths);
+  `denext dev` clears them on every file change.
+- Live hub: a second `installLiveHub` no longer leaks the previous transport watcher;
+  `uninstallLiveHub` disposes the channel hub's index and coalesce timer; the per-(channel,key)
+  sequence table is bounded. `denext patch delete` reports files it could not revert; a
+  non-OK pristine fetch is an error, never module source (30 s timeout).
+- **Dev server / export / SPA (M16).** A `/_denext/client/assets/*` request that races a
+  next-compat rebuild now awaits the in-flight build and serves from the completed generation
+  (it 404'd from a half-written dir for the whole rebuild window); the previous
+  `.denext/dev-compat/<n>` generation is reclaimed. `instrumentation-client` runs first in
+  static-export client entries and the bundled SPA entry (it was wired only for App Router
+  dev/build). The dev route-manifest scan is single-flight (concurrent first hits after a
+  rebuild shared nothing and each re-emitted the typed modules), and a failed `.denext/api.ts` /
+  `routes.ts` write is reported once instead of silently swallowed.
+- **Client bundle hygiene.** The channel brand moved to a side-effect-free
+  `src/runtime/channel-brand.ts`, so `server-action.ts` and the Flight scalar serializer no
+  longer drag `channel.ts` (a module-scope `crypto.randomUUID()` + default transport) into every
+  Flight bundle; and the Live transport no longer imports the typed API client, so a
+  `<Live>`-only app does not ship it. Shared chunks: 61,686 → 61,428 bytes.
+- **`denext patch` (M13).** The unified-diff builder is Myers' linear-space middle-snake
+  recursion (O(N+M) memory; the full-trace version needed hundreds of MB on a 6k-line file and
+  gigabytes on a minified bundle), with common prefix/suffix trimming and a 2 MiB / 50k-line
+  skip guard. The `\ No newline at end of file` marker is kept per line and honored on apply, so
+  a patch that adds or removes the final newline round-trips (it was dropped on parse before);
+  added and deleted files are recorded (`/dev/null` headers), applied and reverted.
+- **Live / batch / GraphQL (M14/M18).** Channel-hub de-index is O(1) (each subscription keeps
+  its index entry — a mass disconnect on a hot key was O(n·k)); `useChannel` surfaces the push
+  `seq`; the typed-API batch gate is one per app so N concurrent batches share its slots and
+  overflow sheds as a per-item 503 instead of multiplying server concurrency by the client count;
+  `resetChannels()` (test-only) makes the channel/graphql/live suites order-independent, and
+  `tapChannel` warns once on an unregistered id. `@denext/graphql` derives its SDL from an
+  introspection round-trip rather than printing the app's schema objects — `printSchema` threw
+  "Cannot use GraphQLScalarType from another module or realm" whenever the app's `graphql` copy
+  differed from the plugin's.
+- Docs: the auth-session shape (`session.user.id`, not `session.userId`) in AGENTS.md, the
+  docs site and JSDoc; `getSession()` examples; `useApi` `data` narrowing; the deprecated
+  middleware `redirect` in the routing page; example ports; the two `### Added` headings and
+  the compare link in this file; stale ROADMAP passages.
+
 ## [2.1.0-rc.1] - 2026-09-06
 
 ### Added
@@ -51,8 +256,6 @@ and this project adheres to
   `src/jsx/{flight-scalar,render-shared,render-to-flight,render-to-flight-stream}.ts`,
   `src/client/{flight-client,live-client}.ts`, `src/runtime/{server-action,live-protocol}.ts`,
   `src/server/{action-handler,live}.ts`.
-
-### Added
 
 - **`examples/typed-api`** — the whole typed surface in one small app: `defineApi` routes over
   a hand-rolled Standard Schema, `createApiClient()` / `useApiLive` typed against the generated
@@ -5729,6 +5932,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.1.0-rc.2]: https://jsr.io/@denext/denext@2.1.0-rc.2
 [2.1.0-rc.1]: https://jsr.io/@denext/denext@2.1.0-rc.1
 [2.0.7]: https://jsr.io/@denext/denext@2.0.7
 [2.0.6]: https://jsr.io/@denext/denext@2.0.6
@@ -5751,7 +5955,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
 [0.1.2]: https://jsr.io/@denext/denext@0.1.2
 [0.1.1]: https://jsr.io/@denext/denext@0.1.1
 [0.1.0]: https://jsr.io/@denext/denext@0.1.0
-[Unreleased]: https://github.com/Brainwires/denext/compare/v2.0.0-rc.7...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v2.1.0-rc.1...development
 [1.4.0]: https://jsr.io/@denext/denext@1.4.0
 [1.3.0]: https://jsr.io/@denext/denext@1.3.0
 [1.2.0]: https://jsr.io/@denext/denext@1.2.0

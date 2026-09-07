@@ -1,6 +1,13 @@
 import type { DenextConfig } from "denext/server";
+import { openapi } from "@denext/openapi";
 
 export default {
+  // `@denext/openapi`: the same `defineApi` definitions that validate these routes describe
+  // them — GET /openapi.json is the OpenAPI 3.1 document, GET /docs the reference page.
+  // lib/schema.ts implements Standard JSON Schema, so every schema is fully described.
+  plugins: [
+    openapi({ info: { title: "Typed API example", version: "1.0.0" } }),
+  ],
   // Live policy for this demo. The typed live primitives are default-deny like everything
   // on the socket; each opts in explicitly:
   // - `defineSubscription` (app/subscriptions.ts) needs no policy here: registering a

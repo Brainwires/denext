@@ -29,6 +29,9 @@ ignoreDependencies = [
   # the tool that consumes the file (`@import "tailwindcss"` is read by the Tailwind binary).
   "@db/postgres", # examples/postgres-load/deno.json: jsr:@db/postgres@^0.19
   "effect", # examples/effect*/deno.json + packages/effect/deno.json: npm:effect@^3.22.0
+  "graphql", # packages/graphql/deno.json + examples/graphql/deno.json: npm:graphql@^16.9.0
+  "graphql-yoga", # packages/graphql/deno.json + examples/graphql/deno.json: npm:graphql-yoga@^5.10.0
+  "@pothos/core", # examples/graphql/deno.json: npm:@pothos/core@^4.6.0 (the recommended schema builder)
   "drizzle-orm", # examples/drizzle/deno.json: npm:drizzle-orm@^0.44.7
   "@prisma/adapter-better-sqlite3", # examples/prisma/deno.json: npm:@prisma/adapter-better-sqlite3
   "@capacitor/cli", # examples/native/deno.json: npm:@capacitor/cli@^7

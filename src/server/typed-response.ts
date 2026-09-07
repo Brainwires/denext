@@ -47,11 +47,15 @@ export interface TypedRequest<TBody> extends Request {
 
 /**
  * Like `Response.json`, but the returned response remembers `T`. Use it in route handlers
- * so callers of the route get a typed body back through the generated `apiClient`.
+ * so callers of the route get a typed body back through the generated `apiClient`. The body
+ * goes through the wire codec: a Date / Map / Set / BigInt / undefined survives, and the
+ * response carries `x-denext-wire: 1` only when a tag was needed (a plain-JSON body is
+ * byte-identical to `Response.json`).
  *
  * @param data The value to serialize as the JSON body.
  * @param init Standard `ResponseInit` (status, headers, …).
  * @returns A `TypedResponse<T>` — a real `Response` carrying `T` as a phantom type.
+ * @throws TypeError for a value the codec refuses (a function, a symbol, nesting past 64).
  */
 export function json<T>(data: T, init?: ResponseInit): TypedResponse<T> {
   // Through the wire codec: a Date / Map / Set / BigInt / undefined survives, and the response

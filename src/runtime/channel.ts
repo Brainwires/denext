@@ -5,7 +5,7 @@
 //   "use server";
 //   export const orderEvents = createChannel<{ status: string }>({
 //     schema: z.object({ status: z.string() }),
-//     authorize: async (ctx, key) => (await getSession(ctx))?.userId === key.split(":")[1],
+//     authorize: async (_ctx, key) => (await auth())?.user.id === key.split(":")[1],
 //   });
 //   // anywhere: an action, a webhook, a cron, after()
 //   await orderEvents.publish(`user:${userId}`, { status: "shipped" });
@@ -35,7 +35,8 @@ import {
   isStandardSchema,
   type StandardSchemaV1,
 } from "./define-action.ts";
-import { prepareWire, WIRE_ENC } from "./wire-codec.ts";
+import { decodeWire, prepareWire, WIRE_ENC } from "./wire-codec.ts";
+import { CHANNEL_BRAND, setChannelRegistrar } from "./channel-brand.ts";
 
 /** The subscriber's identity handed to `authorize` (the Live connection context). */
 export interface ChannelContext {
@@ -124,7 +125,9 @@ export interface ChannelInternals {
 }
 
 /** Brand shared across module instances. */
-const CHANNEL_BRAND: unique symbol = Symbol.for("denext.channel") as never;
+// The brand lives in `channel-brand.ts` (side-effect free) so client bundles can recognize a
+// channel without loading this module's server-only state; `isChannel` is re-exported from here.
+export { isChannel } from "./channel-brand.ts";
 const DEFAULT_KEY = /^[A-Za-z0-9_:.\-]{1,128}$/;
 
 /** This process's instance id (orders `seq` within one instance). */
@@ -132,6 +135,17 @@ const INSTANCE = crypto.randomUUID();
 
 const channels = new Map<string, ChannelInternals>();
 const seqs = new Map<string, number>();
+/** Cap on remembered (channel, key) sequence counters (each is one short string + number). */
+const MAX_SEQ_KEYS = 10_000;
+
+/** Deliver one event to one subscriber; a throwing consumer is logged, never propagated. */
+function deliverTo(fn: (ev: ChannelEvent) => void, ev: ChannelEvent): void {
+  try {
+    fn(ev);
+  } catch (err) {
+    console.error("denext channels: a subscriber threw", err);
+  }
+}
 let payloadCap = 16 * 1024;
 let transport: ChannelTransport = inMemoryChannelTransport();
 
@@ -140,6 +154,7 @@ let transport: ChannelTransport = inMemoryChannelTransport();
  *
  * @param config Schema, key shape, the REQUIRED `authorize`, and the re-auth TTL.
  * @returns The channel (`publish` / `revoke` on the server; an opaque id in the browser).
+ * @throws TypeError when `authorize` is not a function.
  */
 export function createChannel<T>(config: ChannelConfig<T>): Channel<T> {
   if (typeof config.authorize !== "function") {
@@ -179,23 +194,13 @@ function keyMatcher(key: ChannelConfig<unknown>["key"]): (k: string) => boolean 
 }
 
 /**
- * Is `value` a server-side channel object?
- *
- * @param value Any export.
- * @returns True for a `createChannel` result.
- */
-export function isChannel(value: unknown): value is Channel<unknown> {
-  return typeof value === "object" && value !== null && CHANNEL_BRAND in value;
-}
-
-/**
  * Register a channel under `id` (called by `createChannel` for an explicit id and by the
  * `"use server"` export tagging). Sets the channel's `denextChannelId`.
  *
  * @param id The stable id.
  * @param channel The channel.
  */
-export function registerChannel(id: string, channel: Channel<unknown>): void {
+function registerChannel(id: string, channel: Channel<unknown>): void {
   const internals = (channel as unknown as { [CHANNEL_BRAND]: ChannelInternals })[CHANNEL_BRAND];
   internals.id = id;
   Object.defineProperty(channel, "denextChannelId", {
@@ -205,6 +210,10 @@ export function registerChannel(id: string, channel: Channel<unknown>): void {
   });
   channels.set(id, internals);
 }
+
+// Let the brand module (what `server-action.ts`'s export tagging imports) reach the registry
+// once this module is loaded — i.e. on the server, always.
+setChannelRegistrar(registerChannel);
 
 /**
  * The registered channel for `id`, if any.
@@ -252,6 +261,22 @@ export function setChannelPayloadCap(bytes: number): void {
   payloadCap = bytes;
 }
 
+/**
+ * Forget every registered channel and sequence counter and restore the default transport and
+ * payload cap — for tests, which share one process-wide registry (kept off the public barrels,
+ * like `resetPlugins`).
+ */
+export function resetChannels(): void {
+  channels.clear();
+  seqs.clear();
+  warnedUnknown.clear();
+  payloadCap = 16 * 1024;
+  setChannelTransport(inMemoryChannelTransport());
+}
+
+/** Channel ids a tap warned about (once each). */
+const warnedUnknown = new Set<string>();
+
 async function publish<T>(
   ch: ChannelInternals,
   schema: StandardSchemaV1<T> | undefined,
@@ -272,6 +297,9 @@ async function publish<T>(
   }
   const seqKey = `${ch.id} ${key}`;
   const seq = (seqs.get(seqKey) ?? 0) + 1;
+  // Bounded: a hot key keeps its counter (re-inserted at the tail); the oldest cold key goes.
+  seqs.delete(seqKey);
+  if (seqs.size >= MAX_SEQ_KEYS) seqs.delete(seqs.keys().next().value!);
   seqs.set(seqKey, seq);
   const ev: ChannelEvent = {
     kind: "publish",
@@ -312,7 +340,7 @@ export function inMemoryChannelTransport(): ChannelTransport {
   const subs = new Set<(ev: ChannelEvent) => void>();
   return {
     publish(ev) {
-      for (const fn of subs) fn(ev);
+      for (const fn of subs) deliverTo(fn, ev);
     },
     subscribe(fn) {
       subs.add(fn);
@@ -344,5 +372,77 @@ export function broadcastChannelTransport(name = "denext-channels"): ChannelTran
       local.publish(ev); // this instance
     },
     subscribe: (fn) => local.subscribe(fn),
+  };
+}
+
+/** What {@link tapChannel} reports. */
+export interface ChannelTapHandlers<T> {
+  /** A payload published to the key (decoded; `seq` orders publishes from one instance). */
+  onPayload: (payload: T, seq: number) => void;
+  /** The key was revoked cluster-wide (a peer-scoped revoke is not reported — the tap is no peer). */
+  onRevoke?: () => void;
+}
+
+/**
+ * Observe a channel's publishes on the SERVER: every payload published to `key` on any
+ * instance — through the installed transport, decoded, in `seq` order per instance — until
+ * the returned disposer runs. The seam a plugin uses to bridge channel pushes into another
+ * protocol (a GraphQL subscription in `@denext/graphql`, an SSE stream, a queue) without a
+ * second event bus. Survives `setChannelTransport` (re-binds to the new transport).
+ *
+ * Not authorization: `authorize` gates socket SUBSCRIBERS; a server-side tap sees every
+ * publish to the key, so the consumer gates its own audience.
+ *
+ * @param channel The channel (or its id).
+ * @param key The key to observe (exact match).
+ * @param handlers Payload and revoke callbacks.
+ * @returns A disposer that stops the tap.
+ * @throws Error when the channel has no id yet (not exported from a `"use server"` module, no `id`).
+ */
+export function tapChannel<T>(
+  channel: Channel<T> | string,
+  key: string,
+  handlers: ChannelTapHandlers<T>,
+): () => void {
+  const id = typeof channel === "string" ? channel : channel.denextChannelId;
+  if (!id) {
+    throw new Error(
+      'tapChannel: the channel has no id — export it from a "use server" module or pass `id`',
+    );
+  }
+  // A tap on an id no channel registered yields nothing forever — a typo, not a subscriber
+  // that has yet to appear; say so once (a programming error, so in production too).
+  if (!channels.has(id) && !warnedUnknown.has(id)) {
+    warnedUnknown.add(id);
+    console.warn(
+      `denext channels: tapChannel(${JSON.stringify(id)}) — no channel is registered under that id`,
+    );
+  }
+  let unsubscribe: (() => void) | null = null;
+  const bind = (t: ChannelTransport) => {
+    unsubscribe?.();
+    unsubscribe = t.subscribe((ev) => {
+      if (ev.channelId !== id || ev.key !== key) return;
+      if (ev.kind === "revoke") {
+        if (!ev.peerId) handlers.onRevoke?.();
+        return;
+      }
+      if (ev.encoded === undefined) return;
+      // A malformed event or a throwing consumer is logged and dropped — never propagated
+      // into the transport (which would starve later subscribers and reject the publisher).
+      try {
+        const parsed = JSON.parse(ev.encoded);
+        handlers.onPayload((ev.enc ? decodeWire(parsed) : parsed) as T, ev.seq);
+      } catch (err) {
+        console.error(`denext channels: tap on ${id}/${key} failed`, err);
+      }
+    });
+  };
+  const { current, stop } = watchChannelTransport(bind);
+  bind(current);
+  return () => {
+    stop();
+    unsubscribe?.();
+    unsubscribe = null;
   };
 }

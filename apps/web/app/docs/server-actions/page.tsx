@@ -97,6 +97,7 @@ export const createPost = defineAction({
 // app/new-post.tsx
 "use client";
 import { idleActionState, useActionState } from "denext";
+import { createPost } from "./actions.ts";
 const [state, action] = useActionState(createPost, idleActionState<{ id: string }>());
 // state.ok ? state.data.id : state.fieldErrors?.title   — both typed`}
       </Code>

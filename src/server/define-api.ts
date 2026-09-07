@@ -7,23 +7,25 @@
 // the `errors` it may fail with — and the handler receives PARSED, TYPED input:
 //
 //   // app/api/posts/[id]/route.ts
-//   import { defineApi } from "denext/server";
-//   export const PATCH = defineApi({
+//   import { createApi, requireSession } from "denext/server";
+//   export const PATCH = createApi().use(requireSession()).define({
 //     params: z.object({ id: z.string() }),
 //     body: z.object({ title: z.string().min(1) }),
 //     response: z.object({ id: z.string(), title: z.string() }),
 //     errors: { not_owner: 403 },
 //   }, async ({ params, body, fail, ctx }) => {
 //     const post = await db.posts.get(params.id);
-//     if (post.owner !== ctx.session.userId) fail("not_owner");   // → 403 { error: { code: "not_owner" } }
+//     if (post.owner !== ctx.session.user.id) fail("not_owner");  // → 403 { error: { code: "not_owner" } }
 //     return db.posts.update(params.id, body);                      // → 200, validated against `response`
 //   });
+//   // Without middleware the same endpoint is `defineApi(def, handler)`, and `ctx` is `{}`.
 //
 // Order per request: body cap (handleApi) → middleware → validate params, query, body →
 // handler → response validation. Auth and rate-limit middleware therefore reject BEFORE any
 // schema runs, so an unauthenticated caller learns nothing about the endpoint's shape. A
-// declared `response` schema always runs (also in production): a validator that strips
-// unknown keys is a data-leak guard (`passwordHash` never leaves), so it must not be dev-only.
+// declared `response` schema always runs for a returned VALUE (also in production): a validator
+// that strips unknown keys is a data-leak guard (`passwordHash` never leaves), so it must not be
+// dev-only. It is skipped when the handler returns a `Response` itself, or `undefined` (a 204).
 //
 // Middleware composes through `createApi().use(mw)`: each middleware returns a context
 // extension (typed accumulation — `use<Ext>` yields `ApiBuilder<Ctx & Ext>`), a `Response` to
@@ -60,7 +62,7 @@ export interface ApiDefinition {
   query?: StandardSchemaV1;
   /** Validates the JSON request body. Declaring it requires `content-type: application/json`. */
   body?: StandardSchemaV1;
-  /** Validates (and strips) the value the handler returns before it is serialized. */
+  /** Validates (and strips) the VALUE the handler returns before it is serialized (a returned `Response` or `undefined` bypasses it). */
   response?: StandardSchemaV1;
   /** The error codes the handler may `fail()` with, each mapped to a status. */
   errors?: Record<string, ErrorSpec>;

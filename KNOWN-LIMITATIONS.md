@@ -130,15 +130,9 @@ next-compat interop path — denext's own apps are unaffected):
   `«r0»` format is CSS-selector-safe without `CSS.escape`, these are not); and
   `defaultProps` on a **function** component is honored as a compat extension (React 19
   removed it) because popular npm libraries still rely on it.
-- **Middleware `matcher` object entries ignore `has`/`missing`.** `{ source, has, missing }`
-  is accepted, but only `source` is evaluated — the middleware runs for every request the
-  path matches (never less often than in Next).
 - **`notFound()` / `forbidden()` / `unauthorized()` thrown during a CLIENT render
   abort the render** instead of swapping in the matching `not-found.tsx` boundary
   (they work as documented on the server and inside Server Actions).
-- **`dynamic()`'s `loading` props have no timeout or retry.** `timedOut` is always
-  `false` and `retry` is a no-op — denext's `dynamic` has no `timeout`/`delay`
-  options; `isLoading`/`pastDelay`/`error` are real.
 - **A few React internals are shims.** The introspection hooks `captureOwnerStack()` /
   `cacheSignal()` return `null` and `addTransitionType()` is a no-op (rendering is
   unaffected — only dev tooling that reads them gets nothing).
@@ -193,8 +187,10 @@ three documented bounds of the opt-in:
   invalidations over the same transport is the natural follow-up.
 - **Channels carry no history.** A subscriber gets pushes from the moment it subscribes;
   nothing replays on reconnect (compute a cold-start value during SSR and pass it as
-  `initial`). Delivery is at-most-once and latest-wins under back-pressure; `seq` orders
-  frames from one instance only.
+  `initial`). Delivery is at-most-once and latest-wins under back-pressure; `seq` (surfaced by
+  `useChannel`) orders frames from one instance only. A publisher burst within 16 ms delivers
+  only the last value per key — the hub coalesces publishes, independent of back-pressure — so a
+  channel carries state, not a log; keep a list in a Server Action for chat-style history.
 - **Channel re-authorization is lazy.** A subscriber is re-authorized on traffic once
   `authTtlSeconds` (default 300) has passed, not per push; `channel.revoke(key)` is the
   immediate path.
@@ -206,6 +202,23 @@ three documented bounds of the opt-in:
 - **The production Live handshake requires a browser `Origin` header.** A non-browser
   client (Deno's stable `WebSocket`, `curl`) cannot subscribe to the production hub;
   that is the same-origin check working as intended.
+- **`@denext/openapi` describes what a validator can export.** A schema with no JSON
+  Schema (no Standard JSON Schema, not TypeBox, no `toJsonSchema()`, no converter) is
+  emitted as `{}` with an `opaque-schema` lint warning. Middleware-produced responses
+  (`requireSession` 401, `rateLimit` 429) appear only as the operation's `default`
+  response — a definition cannot name them. The `scalar` / `swagger` renderers load a
+  pinned bundle from a CDN (not strict-CSP clean; self-host via `cdn`); the `builtin`
+  renderer is. The document and docs page are served in every mode by default (a spec of your
+  own API is usually public); `expose: "dev"` restricts them to `denext dev`, `authorize` gates
+  per request.
+- **`@denext/graphql` subscriptions are GraphQL over SSE**, not a WebSocket — every
+  GraphQL client supports it, and it is what lets them ride denext channels without a
+  second socket server. `fromChannel` bypasses the channel's socket-side `authorize`
+  (gate in the resolver). Query depth is capped (default 12, `maxDepth: false` to disable) and,
+  with introspection off, field suggestions are stripped — but there is no query
+  cost/complexity budget yet (a follow-up for stable 2.1.0). The schema resolves once per
+  process: in `denext dev`, an edit to a schema module needs a server restart (Deno's module
+  graph caches it).
 
 ## DevTools (dev-only)
 
@@ -309,6 +322,12 @@ The nuances worth knowing (reported as review notes, never silently changed):
   back/forward buttons (the popstate is undone and re-applied on `proceed()`); one active blocker,
   matching react-router. A full page reload/close is still the browser's own `beforeunload` prompt
   — add one where you need to guard a hard unload.
+
+- **React Router v7 (`@denext/react-router`): server rendering only.** `clientLoader` /
+  `clientAction` / `HydrateFallback` are not run — loaders/actions run on the server;
+  `react-router.config.ts` `ssr: false` (RR's SPA mode) and `prerender` are not applied (use
+  denext's `mode: "spa"`, and denext prerenders static routes itself); route `+types` typegen is
+  type-only, so the app runs without it.
 
 - **Prisma is auto-migrated to the Rust-free Deno client.** An app (Next or Remix)
   that uses Prisma is wired end-to-end: the schema generator becomes the ESM/Deno

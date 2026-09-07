@@ -22,6 +22,9 @@
 // choose to use `@denext/effect` — and forms no part of the zero-npm core runtime or the
 // first-party codec/plugin packages this guard protects. It is therefore excluded from
 // the packages scan (the same opt-in-npm principle as the ORM compat surface).
+//
+// `@denext/graphql` is the same kind of bridge: GraphQL Yoga and `graphql` are npm-only, and
+// a consumer pulls them only by choosing the plugin. Same list, same principle.
 
 import { assert } from "@std/assert";
 import { walk } from "@std/fs";
@@ -31,7 +34,7 @@ const RUNTIME_DIRS = ["jsx", "runtime", "client", "server", "compat", "plugin"] 
 // Workspace members that are intentional npm bridges (see the header note): excluded
 // from the "shipped packages must be zero-npm" scan because depending on npm is their
 // entire purpose. Keep this list tiny and deliberate.
-const NPM_BRIDGE_PACKAGES = new Set(["effect"]);
+const NPM_BRIDGE_PACKAGES = new Set(["effect", "graphql"]);
 
 /** Load a deno.json's import map (empty when the file is missing or has none). */
 async function loadImportMap(url: URL): Promise<Record<string, string>> {

@@ -326,7 +326,7 @@ function decodeUrl(v: unknown): URL {
 /**
  * A canonical string key for a tuple of values: codec-aware (a `Date`, `Map`, `BigInt` key by
  * their wire form) with object keys sorted, so structurally-equal inputs produce equal keys.
- * Used by request dedupe, batching, `useApi`, and the in-process SSR cache.
+ * Used by the typed client's request dedupe and by `useApi`'s entry table.
  *
  * @param parts The values that identify one call (method, pattern, params, query, body, …).
  * @returns A deterministic string.

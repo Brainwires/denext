@@ -205,13 +205,20 @@ should import from **only the first two**:
    the pipeline primitives a **router-class** plugin needs — route matching
    (`matchSegments`, `parsePattern`, `specificity`, `peelLocale`), client-route
    bundling (`bundleRoutes`), the CSS pipeline (`buildAppCss`, `extractRouteCss`),
-   hydration + Fast Refresh (`hydrateRoot`, `registerFamily`, `enableFastRefresh`), and
-   ISR (`PageCache`). **Stable by signature** — the names and shapes are covered by
+   hydration + Fast Refresh (`hydrateRoot`, `registerFamily`, `enableFastRefresh`), ISR
+   (`PageCache`) — and the primitives an **API-class** plugin needs: `apiDefinitionOf`
+   (a route's `defineApi` definition), `tapChannel` (observe a channel's pushes on the
+   server), `verifyOrigin` (the same-origin gate for a plugin's own POST endpoint), and
+   the body caps (`cappedBody`, `readCappedBody`, `bufferedRequest`, `TOO_LARGE`,
+   `STALLED`). **Stable by signature** — the names and shapes are covered by
    semver; _where they live inside `src/` is not_ and may move between minors. This
    facade absorbs that churn, and a surface test (`tests/plugin-kit.test.ts`) guards it.
 3. **Everything else — private.** The rest of `src/router`, `src/build`, `src/server`,
    and any `@denext/denext/server` export **not** re-exported by the kit, is internal
-   and can change in any release. Don't import it.
+   and can change in any release. Don't import it. The one sanctioned exception is the
+   route-manifest surface `scanRoutes` / `RouteManifest` / `ApiRoute` / `Segment` from
+   `@denext/denext/server` — the app-facing types a plugin that _describes_ an app reads
+   (`@denext/openapi` does); those are covered by the public-surface golden.
 
 `@denext/pages-router` — the reference router-class plugin — takes its pipeline
 primitives from `plugin-kit`, which is what keeps the promised set both **complete**
@@ -240,6 +247,13 @@ kit:
   so the contract is **provably sufficient** for it — no core change required to add
   these routers as plugins.
 
+[`@denext/react-router`](./packages/react-router) is the framework-mode router plugin done
+a **third** way: instead of claiming requests, it generates denext route modules from the
+app's `app/routes.ts` and adds them through the **route-synthesizer** seam — so the whole
+App Router pipeline (Flight, streaming, per-segment boundaries, soft nav, ISR, Fast Refresh)
+serves them, and the plugin writes no render path of its own. Proof the synthesizer seam
+scales to a full framework router, not just aliasing.
+
 ## Complete examples
 
 - **[`examples/plugin-aliases`](./examples/plugin-aliases)** — a ~40-line plugin using
@@ -250,3 +264,18 @@ kit:
   fetching, client hydration, soft navigation), and a build step (seam 3) that
   pre-bundles each route's client entry with `@denext/denext/bundle`. Its `mod.ts` is a
   compact model for the request/build seams.
+- **[`@denext/openapi`](./packages/openapi)** — uses all of the non-render seams at once:
+  a **route synthesizer** only to observe each scanned manifest, a **request handler** for
+  `/openapi.json` + `/docs`, a **build step** that writes the document, and a **CLI verb**
+  (`denext openapi emit | diff | lint`). It reads route metadata through the plugin-kit's
+  `apiDefinitionOf` — the model for a plugin that _describes_ an app rather than renders it.
+- **[`@denext/graphql`](./packages/graphql)** — mounts a third-party HTTP handler (GraphQL
+  Yoga) through the **request handler** seam, bridges the app's `createChannel` pushes into
+  GraphQL subscriptions with the plugin-kit's `tapChannel`, writes the SDL as a **build
+  step**, and adds `denext graphql sdl | diff` (**CLI verb**). The model for wrapping an
+  npm server library as a denext plugin.
+- **[`@denext/react-router`](./packages/react-router)** — a full React Router v7 framework
+  router through the **route-synthesizer** seam alone: it reads the app's `app/routes.ts`,
+  generates denext route wrappers under `.denext/react-router/`, and adds them to the
+  manifest — the core App Router renders them, so the plugin ships no render path. The model
+  for adapting a foreign routing convention onto denext's own pipeline.
