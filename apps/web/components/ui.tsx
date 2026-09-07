@@ -24,6 +24,7 @@ export const NAV: {
     items: [
       { slug: "data", label: "Data & caching" },
       { slug: "typed-api", label: "Typed API" },
+      { slug: "openapi", label: "OpenAPI & docs" },
       { slug: "rendering", label: "Rendering strategies" },
       { slug: "server-actions", label: "Server Actions" },
       { slug: "live", label: "Live components" },

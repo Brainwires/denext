@@ -250,3 +250,8 @@ kit:
   fetching, client hydration, soft navigation), and a build step (seam 3) that
   pre-bundles each route's client entry with `@denext/denext/bundle`. Its `mod.ts` is a
   compact model for the request/build seams.
+- **[`@denext/openapi`](./packages/openapi)** — uses all of the non-render seams at once:
+  a **route synthesizer** only to observe each scanned manifest, a **request handler** for
+  `/openapi.json` + `/docs`, a **build step** that writes the document, and a **CLI verb**
+  (`denext openapi emit | diff | lint`). It reads route metadata through the plugin-kit's
+  `apiDefinitionOf` — the model for a plugin that _describes_ an app rather than renders it.

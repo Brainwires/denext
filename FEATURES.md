@@ -345,8 +345,8 @@ canonical migration doc).
 ## Ecosystem packages (first-party JSR)
 
 `@denext/photon`, `@denext/avif`, `@denext/og`, `@denext/pages-router`,
-`@denext/htmx`, `@denext/effect` — published independently, zero-npm. (The cache uses Deno's
-built-in `node:sqlite`.)
+`@denext/htmx`, `@denext/effect`, `@denext/openapi` — published independently, zero-npm.
+(The cache uses Deno's built-in `node:sqlite`.)
 
 ## End-to-end typed API surface
 
@@ -429,8 +429,8 @@ built-in `node:sqlite`.)
   request-handler, build-step, teardown, CLI command) with the public
   `@denext/denext/plugin-kit` primitives (bundling, CSS, matchers, `PageCache`,
   body caps, signed-token helpers). See [PLUGINS.md](./PLUGINS.md) for the
-  authoring guide; consumed by `@denext/pages-router`, `@denext/htmx` and
-  [`examples/plugin-aliases`](./examples/plugin-aliases).
+  authoring guide; consumed by `@denext/pages-router`, `@denext/htmx`,
+  `@denext/openapi` and [`examples/plugin-aliases`](./examples/plugin-aliases).
 - **Lint plugin** (denext-specific rules), `deno fmt`/`deno lint` integration.
 - **Unified CLI** — a real command framework (declarative flags, uniform global
   flags `--cwd/--config/--json/--verbose/--quiet`, per-command `--help`, "did

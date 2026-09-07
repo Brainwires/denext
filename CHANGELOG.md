@@ -8,6 +8,30 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`@denext/openapi` — the self-documenting half of the typed API surface.** The schemas a
+  `defineApi` route declares now describe it too: the new first-party plugin
+  (`packages/openapi`, published as `@denext/openapi`) walks the route manifest, reads each
+  handler's definition through the plugin-kit's `apiDefinitionOf`, and emits an OpenAPI 3.1
+  document — path and query parameters, request body, response, one response per declared
+  error status with the shared `ApiError` envelope and the codes as an enum, the `400`
+  validation response — three ways through the plugin contract alone: `GET /openapi.json`
+  and a docs page at `GET /docs` (request handler; core routes always win), `openapi.json`
+  in the build output (build step), and `denext openapi emit | diff <file> | lint` (command
+  seam) for CI. Schemas become JSON Schema through the Standard JSON Schema interface
+  (`~standard.jsonSchema` — Zod ≥ 4.2, ArkType, Valibot), TypeBox's native JSON Schema, a
+  `toJsonSchema()` method, or a `toJsonSchema` converter option; an opaque validator is
+  emitted as `{}` with an `opaque-schema` lint warning, so the document is always valid and
+  the lint says exactly what to fix. The docs page defaults to a server-rendered,
+  zero-JavaScript reference (strict-CSP clean; its stylesheet is served same-origin), with
+  `ui: "scalar"` / `"swagger"` for a CDN-loaded interactive console. An `authorize` hook
+  hides both endpoints behind the app's ordinary 404. Zero config: add the plugin and an app
+  already using `defineApi` gets both endpoints. `examples/typed-api` wires it (its hand-rolled
+  schema now implements Standard JSON Schema, so every operation is fully described) and the
+  integration test asserts the document over the real prod server. No core change was
+  needed — the plugin-kit surface from rc.1 was sufficient.
+
 ## [2.1.0-rc.1] - 2026-09-06
 
 ### Added

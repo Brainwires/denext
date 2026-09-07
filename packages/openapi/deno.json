@@ -1,0 +1,26 @@
+{
+  "name": "@denext/openapi",
+  "version": "0.1.0",
+  "exports": {
+    ".": "./mod.ts",
+    "./spec": "./spec.ts",
+    "./command": "./command.ts"
+  },
+  "imports": {
+    "@denext/denext": "jsr:@denext/denext@^2.1.0-rc.1",
+    "@std/path": "jsr:@std/path@^1.0.0"
+  },
+  "publish": {
+    "include": [
+      "mod.ts",
+      "spec.ts",
+      "json-schema.ts",
+      "docs-ui.ts",
+      "command.ts",
+      "README.md",
+      "CHANGELOG.md",
+      "LICENSE",
+      "deno.json"
+    ]
+  }
+}

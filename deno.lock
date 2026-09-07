@@ -1407,6 +1407,12 @@
           "jsr:@std/path@1"
         ]
       },
+      "packages/openapi": {
+        "dependencies": [
+          "jsr:@denext/denext@^2.1.0-rc.1",
+          "jsr:@std/path@1"
+        ]
+      },
       "packages/pages-router": {
         "dependencies": [
           "jsr:@denext/denext@^2.1.0-rc.1",

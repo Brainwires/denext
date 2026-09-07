@@ -135,6 +135,12 @@ export function User({ id }: { id: string }) {
 }
 ```
 
+Add the `@denext/openapi` plugin (`plugins: [openapi()]` in `denext.config.ts`) and those same
+definitions serve `GET /openapi.json` (OpenAPI 3.1) + a docs page at `GET /docs`, write
+`openapi.json` at build, and back `denext openapi emit | diff | lint` — zero extra annotation.
+Schemas that implement Standard JSON Schema (Zod ≥ 4.2, ArkType, Valibot) or TypeBox are
+described in full; others are `{}` + a lint warning.
+
 A plain handler still works and is still typed: return `TypedResponse<T>` / take a
 `TypedRequest<B>` from `denext/server`. A plain `route.ts` body is capped at 1 MiB
 (`export const maxBodyBytes = N | false`); `redirect()`/`notFound()` inside one are HTTP

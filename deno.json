@@ -8,7 +8,8 @@
     "./packages/og",
     "./packages/pages-router",
     "./packages/htmx",
-    "./packages/effect"
+    "./packages/effect",
+    "./packages/openapi"
   ],
   "exports": {
     ".": "./mod.ts",

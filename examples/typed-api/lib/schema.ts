@@ -1,25 +1,38 @@
-// A 60-line Standard Schema (https://standardschema.dev) — enough for this demo, zero
+// A ~100-line Standard Schema (https://standardschema.dev) — enough for this demo, zero
 // dependencies. Swap in Zod / Valibot / ArkType / TypeBox at will: `defineApi`,
 // `defineSubscription`, `defineAction`, and `createChannel` accept any Standard Schema, and
 // infer their input/output types through the spec's `types` slot.
+//
+// It also implements the companion Standard JSON Schema interface
+// (https://standardschema.dev/json-schema — `~standard.jsonSchema.input()/.output()`), which
+// is how `@denext/openapi` describes every schema here in /openapi.json without a converter.
 
 import type { StandardIssue, StandardSchemaV1 } from "denext/server";
 
+/** A JSON Schema fragment. */
+type Json = Record<string, unknown>;
+
 /** A schema that also carries its type for inference (`SchemaInput` / `SchemaOutput`). */
 export type Schema<T> = StandardSchemaV1<T> & {
-  "~standard": { types: { input: T; output: T } };
+  "~standard": {
+    types: { input: T; output: T };
+    jsonSchema: { input: () => Json; output: () => Json };
+  };
+  /** Set by `optional()`: the field may be absent (drives `required` in the JSON Schema). */
+  optional?: true;
 };
 
 type Result<T> = { value: T } | { issues: StandardIssue[] };
 type Check<T> = (v: unknown, path: string[]) => Result<T>;
 
-function make<T>(check: Check<T>): Schema<T> {
+function make<T>(check: Check<T>, json: Json): Schema<T> {
   return {
     "~standard": {
       version: 1,
       vendor: "typed-api-example",
       validate: (v) => check(v, []),
       types: undefined as unknown as { input: T; output: T },
+      jsonSchema: { input: () => json, output: () => json },
     },
   };
 }
@@ -30,29 +43,43 @@ const bad = (message: string, path: string[]): Result<never> => ({
 
 /** A non-empty string. */
 export const string = (): Schema<string> =>
-  make((v, path) =>
-    typeof v === "string" && v.trim().length > 0
-      ? { value: v }
-      : bad("must be a non-empty string", path)
+  make(
+    (v, path) =>
+      typeof v === "string" && v.trim().length > 0
+        ? { value: v }
+        : bad("must be a non-empty string", path),
+    { type: "string", minLength: 1 },
   );
 
 /** A boolean. */
 export const boolean = (): Schema<boolean> =>
-  make((v, path) => typeof v === "boolean" ? { value: v } : bad("must be true or false", path));
+  make(
+    (v, path) => typeof v === "boolean" ? { value: v } : bad("must be true or false", path),
+    {
+      type: "boolean",
+    },
+  );
 
 /** One of the listed literals. */
 export const oneOf = <const L extends readonly string[]>(
   ...values: L
 ): Schema<L[number]> =>
-  make((v, path) =>
-    typeof v === "string" && values.includes(v)
-      ? { value: v as L[number] }
-      : bad(`must be one of ${values.join(", ")}`, path)
+  make(
+    (v, path) =>
+      typeof v === "string" && values.includes(v)
+        ? { value: v as L[number] }
+        : bad(`must be one of ${values.join(", ")}`, path),
+    { enum: [...values] },
   );
 
 /** Absent (`undefined`) or valid. */
-export const optional = <T>(inner: Schema<T>): Schema<T | undefined> =>
-  make<T | undefined>((v, path) => v === undefined ? { value: undefined } : run(inner, v, path));
+export const optional = <T>(inner: Schema<T>): Schema<T | undefined> => ({
+  ...make<T | undefined>(
+    (v, path) => v === undefined ? { value: undefined } : run(inner, v, path),
+    inner["~standard"].jsonSchema.input(),
+  ),
+  optional: true,
+});
 
 /** An object with exactly these fields; unknown keys are STRIPPED (a data-leak guard on responses). */
 export const object = <F extends Record<string, Schema<unknown>>>(
@@ -63,6 +90,15 @@ export const object = <F extends Record<string, Schema<unknown>>>(
       return bad("must be an object", path);
     }
     return collect(fields, v as Record<string, unknown>, path) as Result<never>;
+  }, {
+    type: "object",
+    properties: Object.fromEntries(
+      Object.entries(fields).map((
+        [k, f],
+      ) => [k, f["~standard"].jsonSchema.input()]),
+    ),
+    required: Object.keys(fields).filter((k) => !fields[k].optional),
+    additionalProperties: false,
   });
 
 /** Validate each declared field; gather every issue, or build the stripped object. */

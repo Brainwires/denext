@@ -18,48 +18,26 @@
 
 ## 2.1 keystone — a typed, self-documenting API surface
 
-**Where 2.1.0-rc.1 leaves it.** Route handlers are schema-validated in core:
-`defineApi({ params, query, body, response, errors }, handler)` (`denext/server`)
-validates through any Standard Schema before user code runs, `createApi().use()`
-composes typed middleware, `ApiError` / `ApiClientError` type the failure path, the
-generated `.denext/api.ts` infers everything from the route modules' types (no
-`deno doc`), and the client dedupes, batches and dispatches in-process during SSR.
-`apiDefinitionOf(handler)` (`denext/plugin-kit`) exposes a route's definition.
-**Still missing:** a machine-readable description (no OpenAPI), a docs UI, and a
-GraphQL surface. Those are first-party plugins on the settled plugin contract — the
-developer experience people praise in NestJS's `@nestjs/swagger`, reached the
-Deno-idiomatic way.
+**Where `development` stands after 2.1.0-rc.1.** Route handlers are schema-validated in core
+(`defineApi`, `createApi().use()`, `ApiError` / `ApiClientError`, the `typeof import`
+codegen, a client that dedupes, batches and dispatches in-process), and
+`@denext/openapi` turns the same definitions into an OpenAPI 3.1 document, a docs page,
+a build artifact and a `denext openapi` CI verb — through the plugin contract alone.
+**Still missing:** a GraphQL surface. It is a first-party plugin on the settled plugin
+contract — the developer experience people praise in NestJS's `@nestjs/graphql`, reached
+the Deno-idiomatic way.
 
 **Approach (decided — CHANGELOG, 2.1.0-rc.1):** schema-first, not decorator-first —
 one schema per route, colocated with the handler, from which validation, static
 types and the OpenAPI document derive.
 
-### WS1 — `@denext/openapi` (the anchor deliverable)
-
-- **Spec generation.** Walk the route manifest (`src/router/manifest.ts`), read
-  each route's definition through `apiDefinitionOf` (`denext/plugin-kit` — the
-  `summary` / `description` / schemas / `errors` a `defineApi` declares), emit
-  `openapi.json` three ways through the plugin contract (`src/plugin/mod.ts`):
-  `addRequestHandler` serves `/openapi.json` live, `addBuildStep` writes a static
-  spec at `denext build`, `addCommand` adds `denext openapi` (emit / diff / lint the
-  spec in CI). Standard Schema carries no JSON-Schema export of its own: emit from
-  validators that expose one (TypeBox natively; Zod via `z.toJSONSchema`), and fall
-  back to `{}` with a lint warning for opaque ones.
-- **Docs UI.** Serve Swagger UI or Scalar at `/docs` via `addRequestHandler` —
-  core routes always win, so it never shadows an app page.
-- **Reference to follow:** `packages/pages-router` dogfoods the same seams with a
-  whole alternate pipeline; this plugin is far smaller.
-
-**Definition of done:** an app that already uses `defineApi` adds `@denext/openapi`
-and gets a live `/openapi.json` + `/docs` with **zero** config or toolchain change.
-
-### WS2 — `@denext/graphql`
+### WS1 — `@denext/graphql`
 
 - **Server.** `graphql-yoga` is a `(Request) => Response` handler — a one-line
   `/graphql` mount through `addRequestHandler`, GraphiQL included.
 - **Schema.** **Pothos** (code-first, type-safe, **no decorators**) is the
   recommended builder. TypeGraphQL / `@nestjs/graphql` are out: both are
-  decorator-metadata-based and hit the blocker WS1 rejected.
+  decorator-metadata-based — the approach the schema-first decision rejected.
 - **Subscriptions.** GraphQL subscriptions over the Live socket's channels
   (`createChannel` + a `ChannelTransport` for multi-instance delivery), not a
   separate WebSocket server.
@@ -68,16 +46,15 @@ and gets a live `/openapi.json` + `/docs` with **zero** config or toolchain chan
 **Definition of done:** `@denext/graphql` + a Pothos schema serves a working
 `/graphql` endpoint with subscriptions over the Live transport, no core change.
 
-### WS3 — plugin-kit additions (only if needed)
+### WS2 — plugin-kit additions (only if needed)
 
-Both plugins build entirely on the **settled** public contract (`@denext/denext`
-
-- `@denext/denext/plugin-kit`; [PLUGINS.md](./PLUGINS.md) → "Stability — the
-  three tiers"). `apiDefinitionOf` (a route's attached definition) already lives
-  there. If either surfaces another genuinely missing primitive, **add it to
-  `plugin-kit`** as a deliberate, tested semver addition guarded in
-  `tests/plugin-kit.test.ts` — never widen the private `src/router` / `src/build` /
-  `src/server` surface.
+`@denext/openapi` needed nothing beyond the **settled** public contract
+(`@denext/denext` + `@denext/denext/plugin-kit`; [PLUGINS.md](./PLUGINS.md) →
+"Stability — the three tiers"): `apiDefinitionOf`, `scanRoutes`, the five seams. Hold
+`@denext/graphql` to the same bar. If it surfaces a genuinely missing primitive, **add it to
+`plugin-kit`** as a deliberate, tested semver addition guarded in
+`tests/plugin-kit.test.ts` — never widen the private `src/router` / `src/build` /
+`src/server` surface.
 
 ## Build-time deps → first-party JSR/WASM
 
