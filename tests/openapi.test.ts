@@ -66,6 +66,11 @@ const todo = schema<{ id: string }>({
 // A real (empty) app tree so `scanRoutes` — the seam the plugin's synthesizer hangs off —
 // produces the fixture routes; the in-memory loader below supplies their modules.
 const ROOT = await Deno.makeTempDir({ prefix: "denext_openapi_app_" });
+globalThis.addEventListener("unload", () => {
+  try {
+    Deno.removeSync(ROOT, { recursive: true });
+  } catch { /* already gone */ }
+});
 const APP_DIR = join(ROOT, "app");
 for (const dir of ["api/todos", "api/todos/[id]", "api/files/[...path]"]) {
   await Deno.mkdir(join(APP_DIR, dir), { recursive: true });

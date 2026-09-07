@@ -5,6 +5,7 @@ import { assertEquals, assertThrows } from "@std/assert";
 import {
   createChannel,
   inMemoryChannelTransport,
+  resetChannels,
   setChannelTransport,
   tapChannel,
 } from "../src/runtime/channel.ts";
@@ -12,7 +13,7 @@ import {
 type Ev = { at: Date; n: number };
 
 Deno.test("tapChannel: receives decoded payloads for its key only, in seq order; disposer stops it", async () => {
-  setChannelTransport(inMemoryChannelTransport());
+  resetChannels();
   const ch = createChannel<Ev>({ id: "tap:orders", authorize: () => true });
   const other = createChannel<Ev>({ id: "tap:other", authorize: () => true });
   const seen: [Ev, number][] = [];
@@ -31,7 +32,7 @@ Deno.test("tapChannel: receives decoded payloads for its key only, in seq order;
 });
 
 Deno.test("tapChannel: a key-wide revoke is reported, a peer-scoped one is not; follows a transport swap", async () => {
-  setChannelTransport(inMemoryChannelTransport());
+  resetChannels();
   const ch = createChannel<number>({ id: "tap:revoke", authorize: () => true });
   let revoked = 0;
   const got: number[] = [];
@@ -48,7 +49,7 @@ Deno.test("tapChannel: a key-wide revoke is reported, a peer-scoped one is not; 
   await ch.publish("r", 7);
   assertEquals(got, [7]);
   stop();
-  setChannelTransport(inMemoryChannelTransport());
+  resetChannels();
 });
 
 Deno.test("tapChannel: a channel without an id is refused with a guided error", () => {
@@ -61,7 +62,7 @@ Deno.test("tapChannel: a channel without an id is refused with a guided error", 
 });
 
 Deno.test("tapChannel: a throwing consumer is logged, later subscribers still get the event, publish resolves", async () => {
-  setChannelTransport(inMemoryChannelTransport());
+  resetChannels();
   const ch = createChannel<number>({ id: "tap:throws", authorize: () => true });
   const got: number[] = [];
   const stopBad = tapChannel(ch, "k", {
@@ -82,4 +83,19 @@ Deno.test("tapChannel: a throwing consumer is logged, later subscribers still ge
   assertEquals(logged.length, 1, "the throw was logged once");
   stopBad();
   stopGood();
+});
+
+Deno.test("tapChannel: an id no channel registered warns once (a typo would otherwise be silent forever)", () => {
+  resetChannels();
+  const logged: unknown[][] = [];
+  const orig = console.warn;
+  console.warn = (...a: unknown[]) => logged.push(a);
+  try {
+    tapChannel<number>("tap:typo", "k", { onPayload: () => {} })();
+    tapChannel<number>("tap:typo", "k", { onPayload: () => {} })();
+  } finally {
+    console.warn = orig;
+  }
+  assertEquals(logged.length, 1);
+  assertEquals(String(logged[0][0]).includes("no channel is registered"), true);
 });

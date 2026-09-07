@@ -30,9 +30,15 @@ import {
   verifyOrigin,
 } from "@denext/denext/plugin-kit";
 import { join } from "@std/path";
-import { type GraphQLSchema, NoSchemaIntrospectionCustomRule } from "graphql";
-import { createYoga, type YogaInitialContext, type YogaServerOptions } from "graphql-yoga";
-import { createGraphqlCommand, schemaSdl } from "./command.ts";
+import type { FieldNode, GraphQLSchema, IntrospectionQuery, ValidationContext } from "graphql";
+import { getIntrospectionQuery } from "graphql";
+import {
+  createGraphQLError,
+  createYoga,
+  type YogaInitialContext,
+  type YogaServerOptions,
+} from "graphql-yoga";
+import { createGraphqlCommand, sdlFromIntrospection } from "./command.ts";
 
 export { createSchema } from "graphql-yoga";
 export { createGraphqlCommand, diffSdl, schemaSdl } from "./command.ts";
@@ -225,16 +231,42 @@ export function graphql(options: GraphqlOptions): DenextPlugin {
         });
       });
 
+      // The SDL (build step + CLI) comes from an introspection round-trip through a private
+      // Yoga instance — never from printing the app's schema OBJECTS with this package's
+      // `graphql`, which may be a different realm than the one Pothos/Yoga bound to.
+      const getSdl = once(async () => {
+        const probe = createYoga({
+          schema: await getSchema(),
+          graphqlEndpoint: path,
+          graphiql: false,
+          cors: false,
+          maskedErrors: false,
+          logging: false,
+        });
+        const res = await probe.fetch(
+          new Request(`http://denext.internal${path}`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ query: getIntrospectionQuery() }),
+          }),
+        );
+        const body = await res.json() as { data?: IntrospectionQuery; errors?: unknown };
+        if (!body.data) {
+          throw new Error(`denext graphql: introspection failed: ${JSON.stringify(body.errors)}`);
+        }
+        return sdlFromIntrospection(body.data);
+      });
+
       const outFile = options.outFile ?? "schema.graphql";
       if (outFile !== false) {
         ctx.addBuildStep(async ({ outDir }) => {
           const dest = join(outDir, outFile);
           await Deno.mkdir(join(dest, ".."), { recursive: true });
-          await Deno.writeTextFile(dest, schemaSdl(await getSchema()));
+          await Deno.writeTextFile(dest, await getSdl());
         });
       }
 
-      ctx.addCommand(createGraphqlCommand(getSchema));
+      ctx.addCommand(createGraphqlCommand(getSdl));
     },
   };
 }
@@ -266,11 +298,25 @@ async function capBody(request: Request, maxBytes: number): Promise<Request | Re
   return bufferedRequest(request, body);
 }
 
-/** A Yoga (envelop) plugin that refuses introspection queries. */
+/**
+ * A Yoga (envelop) plugin that refuses introspection queries. Written against the AST shape
+ * and Yoga's own `createGraphQLError` — never a value import from `graphql`, so the plugin
+ * cannot introduce a second `graphql` realm next to the app's (Pothos / Yoga share one).
+ */
 function disableIntrospection(): NonNullable<YogaPassthrough["plugins"]>[number] {
+  const rule = (context: ValidationContext) => ({
+    Field(node: FieldNode) {
+      const name = node.name.value;
+      if (name === "__schema" || name === "__type") {
+        context.reportError(
+          createGraphQLError("GraphQL introspection is disabled on this server", { nodes: [node] }),
+        );
+      }
+    },
+  });
   return {
     onValidate({ addValidationRule }: { addValidationRule: (rule: unknown) => void }) {
-      addValidationRule(NoSchemaIntrospectionCustomRule);
+      addValidationRule(rule);
     },
   } as NonNullable<YogaPassthrough["plugins"]>[number];
 }

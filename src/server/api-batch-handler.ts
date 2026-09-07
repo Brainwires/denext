@@ -170,6 +170,23 @@ function resolveItem(raw: unknown, origin: string, seen: Set<number>): ResolvedI
   return { id: it.id as number, m: it.m, p, url };
 }
 
+/**
+ * One gate per app (process): N concurrent batches share `concurrency` slots and at most
+ * `maxItems × 4` waiters, so the endpoint cannot multiply the server's concurrency by the
+ * number of clients — overflow is a per-item 503 `overloaded`, never a lost batch. (A per-batch
+ * gate could never shed: a batch has at most `maxItems` items.)
+ */
+const gates = new WeakMap<object, () => Promise<() => void>>();
+
+function gateFor(app: object, cfg: BatchCaps): () => Promise<() => void> {
+  let gate = gates.get(app);
+  if (!gate) {
+    gate = createGate(cfg.concurrency, cfg.maxItems * 4, "api batch overloaded");
+    gates.set(app, gate);
+  }
+  return gate;
+}
+
 /** Fan the items out under the gate; every item settles to a result (an abort rethrows). */
 async function runItems(
   state: RequestState,
@@ -177,7 +194,7 @@ async function runItems(
   cfg: BatchCaps,
   runSub: SubRequestRunner,
 ): Promise<BatchResult[]> {
-  const acquire = createGate(cfg.concurrency, items.length, "api batch overloaded");
+  const acquire = gateFor(state.app, cfg);
   // One budget for the whole batch: N items × the per-item cap must not be N× the memory.
   const budget = { left: cfg.maxTotalResponseBytes };
   return await Promise.all(items.map(async (item) => {

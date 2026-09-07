@@ -47,6 +47,13 @@ export function batchApp(extra: Record<string, unknown> = {}, middleware?: unkno
     },
     // Counts its runs, so a test can prove an in-process call was served from the cache.
     "count.ts": { GET: () => json({ n: ++counters.count }) },
+    // Slow enough that concurrent batches queue on the shared gate.
+    "slow.ts": {
+      GET: async () => {
+        await new Promise((r) => setTimeout(r, 40));
+        return json({ ok: true });
+      },
+    },
     // Calls ITSELF through the typed client: in-process recursion must terminate (508).
     "self.ts": {
       GET: async () => {

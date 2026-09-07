@@ -19,18 +19,22 @@ const CLI = fromFileUrl(new URL("../../cli.ts", import.meta.url));
 const BUILD_TIMEOUT_MS = 240_000;
 const READY_TIMEOUT_MS = 60_000;
 
+// A POST needs the same-origin proof the plugin requires (a browser sends `Origin` itself).
 const gql = (origin: string, query: string, accept = "application/json") =>
   fetch(origin + "/graphql", {
     method: "POST",
-    headers: { "content-type": "application/json", accept },
+    headers: { "content-type": "application/json", accept, origin },
     body: JSON.stringify({ query }),
   });
 
-/** Read SSE frames until `count` `next` events arrived. */
-async function nextEvents(res: Response, count: number): Promise<unknown[]> {
-  const reader = res.body!.getReader();
+/** Read SSE frames until `count` `next` events arrived (`seed`: bytes already read). */
+async function nextEvents(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  count: number,
+  seed = "",
+): Promise<unknown[]> {
   const decoder = new TextDecoder();
-  let buf = "";
+  let buf = seed;
   const out: unknown[] = [];
   while (out.length < count) {
     const { value, done } = await reader.read();
@@ -79,14 +83,16 @@ Deno.test({
         "text/event-stream",
       );
       assertEquals(sub.status, 200);
-      // Let the subscription attach, then post.
-      await new Promise((r) => setTimeout(r, 300));
+      // Yoga sends a `:` keep-alive as the first chunk once the subscription is attached — wait
+      // for that byte, not a fixed delay.
+      const reader = sub.body!.getReader();
+      const first = await reader.read();
       const posted = await gql(
         server.origin,
         'mutation { post(room: "lobby", text: "hello e2e") { text } }',
       );
       assertEquals(await posted.json(), { data: { post: { text: "hello e2e" } } });
-      assertEquals(await nextEvents(sub, 1), [
+      assertEquals(await nextEvents(reader, 1, new TextDecoder().decode(first.value)), [
         { data: { messages: { text: "hello e2e", room: "lobby" } } },
       ]);
       const after = await gql(server.origin, '{ history(room: "lobby") { text } }');

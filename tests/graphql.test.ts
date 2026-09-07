@@ -362,7 +362,7 @@ const ctx = (positionals: string[], flags: Record<string, string | boolean> = {}
   ({ positionals, flags, global: {}, rest: [] }) as unknown as CommandContext;
 
 Deno.test("denext graphql: sdl (stdout / --out) and diff", async () => {
-  const getSchema = () => Promise.resolve(schema);
+  const getSchema = () => Promise.resolve(schemaSdl(schema));
   const printed = fakeIo();
   await createGraphqlCommand(getSchema, printed.io).run(ctx([]));
   assertStringIncludes(printed.out[0], "type Mutation {");

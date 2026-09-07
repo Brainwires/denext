@@ -25,6 +25,8 @@ export interface ChannelSub {
   pending?: string;
   /** A re-authorization in flight. */
   reauth?: Promise<void>;
+  /** This subscription's entry in the fan-out index (so removal is a Set delete, not a scan). */
+  entry?: { conn: unknown; subId: string };
 }
 
 /** The hub connection surface this module needs. */
@@ -112,17 +114,17 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
     if (!set) byKey.set(key, set = new Set());
     return set;
   };
-  const deindex = (conn: C, subId: string, sub: ChannelSub): void => {
+  const deindex = (sub: ChannelSub): void => {
     const set = index.get(sub.channelId)?.get(sub.key);
     if (!set) return;
-    for (const entry of set) if (entry.conn === conn && entry.subId === subId) set.delete(entry);
+    if (sub.entry) set.delete(sub.entry as { conn: C; subId: string }); // O(1), no scan
     if (set.size === 0) index.get(sub.channelId)!.delete(sub.key);
   };
   const remove = (conn: C, subId: string): void => {
     const sub = conn.channelSubs.get(subId);
     if (!sub) return;
     conn.channelSubs.delete(subId);
-    deindex(conn, subId, sub);
+    deindex(sub);
   };
   const atCap = (conn: C, subId: string): boolean =>
     !conn.channelSubs.has(subId) && conn.channelSubs.size >= deps.limits().maxChannelsPerConnection;
@@ -247,7 +249,9 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
       sub.authExpires = Date.now() + ttlMs(channelId);
       remove(conn, subId); // a re-subscribe under the same id replaces the old one
       conn.channelSubs.set(subId, sub);
-      indexFor(channelId, key).add({ conn, subId });
+      const entry = { conn, subId };
+      sub.entry = entry;
+      indexFor(channelId, key).add(entry);
     },
     unsubscribe: remove,
     drop(conn) {

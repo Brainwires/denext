@@ -11,8 +11,8 @@
  */
 
 import type { CommandContext, CommandSpec } from "@denext/denext/cli/command";
-import type { GraphQLSchema } from "graphql";
-import { lexicographicSortSchema, printSchema } from "graphql";
+import type { GraphQLSchema, IntrospectionQuery } from "graphql";
+import { buildClientSchema, lexicographicSortSchema, printSchema } from "graphql";
 
 // The denext CLI types this entrypoint's public API references (doc completeness).
 export type {
@@ -56,6 +56,17 @@ export function schemaSdl(schema: GraphQLSchema): string {
   return printSchema(lexicographicSortSchema(schema)).trimEnd() + "\n";
 }
 
+/**
+ * The sorted SDL rebuilt from an introspection result. Plain JSON crosses `graphql` realms,
+ * schema OBJECTS do not: an app whose Pothos/Yoga bound their `graphql` peer to one copy while
+ * this package's import resolved another would make `printSchema(appSchema)` throw
+ * "Cannot use GraphQLScalarType from another module or realm". The plugin therefore obtains
+ * the SDL by running the introspection query through Yoga and printing the result here.
+ */
+export function sdlFromIntrospection(data: IntrospectionQuery): string {
+  return schemaSdl(buildClientSchema(data));
+}
+
 /** Lines only in `before` (`- `) and only in `after` (`+ `); empty when the texts are equal. */
 export function diffSdl(before: string, after: string): string[] {
   if (before === after) return [];
@@ -71,11 +82,11 @@ export function diffSdl(before: string, after: string): string[] {
  * Build the `denext graphql` command over a schema getter (the plugin supplies one bound
  * to the project's schema).
  *
- * @param getSchema Resolves the current schema.
+ * @param getSdl Resolves the current schema's sorted SDL.
  * @param io Process I/O (defaults to the real console, filesystem and `Deno.exit`).
  */
 export function createGraphqlCommand(
-  getSchema: () => Promise<GraphQLSchema>,
+  getSdl: () => Promise<string>,
   io: GraphqlCommandIo = defaultIo,
 ): CommandSpec {
   return {
@@ -100,18 +111,18 @@ export function createGraphqlCommand(
         valueName: "<file>",
       },
     ],
-    run: (ctx) => runGraphql(ctx, getSchema, io),
+    run: (ctx) => runGraphql(ctx, getSdl, io),
   };
 }
 
 async function runGraphql(
   ctx: CommandContext,
-  getSchema: () => Promise<GraphQLSchema>,
+  getSdl: () => Promise<string>,
   io: GraphqlCommandIo,
 ): Promise<void> {
   const action = ctx.positionals[0] ?? "sdl";
   if (action === "sdl") {
-    const sdl = schemaSdl(await getSchema());
+    const sdl = await getSdl();
     const out = ctx.flags.out;
     if (typeof out === "string" && out) {
       await io.writeFile(out, sdl);
@@ -122,7 +133,7 @@ async function runGraphql(
   if (action === "diff") {
     const file = ctx.positionals[1];
     if (!file) throw new Error("denext graphql diff needs the committed SDL's path");
-    const changes = diffSdl(await io.readFile(file), schemaSdl(await getSchema()));
+    const changes = diffSdl(await io.readFile(file), await getSdl());
     if (!changes.length) {
       io.log(`graphql: ${file} is up to date`);
       return;

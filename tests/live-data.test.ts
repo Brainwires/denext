@@ -23,7 +23,7 @@ import {
   broadcastChannelTransport,
   createChannel,
   inMemoryChannelTransport,
-  setChannelTransport,
+  resetChannels,
 } from "../src/runtime/channel.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
@@ -1243,7 +1243,7 @@ Deno.test("channel transports: the in-memory default loops back; BroadcastChanne
     await a.publish({ kind: "publish", channelId: "c", key: "cross", seq: 1, instance: "other" });
     assertEquals(await seen, "cross");
   }
-  setChannelTransport(inMemoryChannelTransport()); // restore the default for later tests
+  resetChannels(); // registry + transport back to defaults for later tests
 });
 
 Deno.test("useChannel client: initial → pushed value → a denial marks the sub dead", () => {

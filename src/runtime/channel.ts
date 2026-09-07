@@ -261,6 +261,22 @@ export function setChannelPayloadCap(bytes: number): void {
   payloadCap = bytes;
 }
 
+/**
+ * Forget every registered channel and sequence counter and restore the default transport and
+ * payload cap — for tests, which share one process-wide registry (kept off the public barrels,
+ * like `resetPlugins`).
+ */
+export function resetChannels(): void {
+  channels.clear();
+  seqs.clear();
+  warnedUnknown.clear();
+  payloadCap = 16 * 1024;
+  setChannelTransport(inMemoryChannelTransport());
+}
+
+/** Channel ids a tap warned about (once each). */
+const warnedUnknown = new Set<string>();
+
 async function publish<T>(
   ch: ChannelInternals,
   schema: StandardSchemaV1<T> | undefined,
@@ -392,6 +408,14 @@ export function tapChannel<T>(
   if (!id) {
     throw new Error(
       'tapChannel: the channel has no id — export it from a "use server" module or pass `id`',
+    );
+  }
+  // A tap on an id no channel registered yields nothing forever — a typo, not a subscriber
+  // that has yet to appear; say so once (a programming error, so in production too).
+  if (!channels.has(id) && !warnedUnknown.has(id)) {
+    warnedUnknown.add(id);
+    console.warn(
+      `denext channels: tapChannel(${JSON.stringify(id)}) — no channel is registered under that id`,
     );
   }
   let unsubscribe: (() => void) | null = null;
