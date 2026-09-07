@@ -10,6 +10,15 @@ and this project adheres to
 
 ### Added
 
+- **Cross-instance Live invalidation over `ChannelTransport`.** A `revalidateTag` /
+  `updateTag` now propagates to every instance's Live hub through the configured
+  `ChannelTransport` (the same seam `createChannel` already used), so `<Live>`, `useLive`,
+  `useSubscription`, and `useApi({ tags })` watchers re-push on all instances — not just the
+  one that invalidated. Set `broadcastChannelTransport()` (Deno Deploy isolates / workers) or
+  a custom Redis/NATS transport via `setChannelTransport`; the default in-memory transport
+  loops back to the single instance, so a single-instance deploy is unchanged. Echo is
+  suppressed by originating-instance id. New internal seam: a `"invalidate"` `ChannelEvent`
+  kind + `broadcastInvalidation` / `isForeignEvent` (`src/runtime/channel.ts`).
 - **Per-endpoint OpenAPI security + auto-documenting middleware.** A `defineApi` definition may
   carry a `security` field (`[{ bearerAuth: [] }]` to require a scheme, `[]` to mark it public),
   and the new `documentsSecurity(mw, [{ bearerAuth: [] }])` (from `denext/server`) tags a

@@ -175,13 +175,15 @@ three documented bounds of the opt-in:
 
 ### Typed API & live data (`defineApi`, `useApi`, `defineSubscription`, `createChannel`)
 
-- **Live push is per-instance by default.** A `revalidateTag` fires the hub's
-  invalidation hook in-process, so `<Live>`, `useLive`, `useSubscription` re-pushes and
-  `useApi({ tags })` invalidations reach only the connections on the instance that
-  invalidated; `createChannel` publishes cross instances only through a configured
-  `ChannelTransport` (`broadcastChannelTransport()` for Deno Deploy isolates / workers,
-  or your own two-method Redis/NATS transport via `setChannelTransport`). Publishing tag
-  invalidations over the same transport is the natural follow-up.
+- **Live push is single-instance without a configured transport.** By default the hub
+  runs in-process, so `<Live>`, `useLive`, `useSubscription` re-pushes and `useApi({ tags })`
+  invalidations from a `revalidateTag` reach only that instance's connections. Configure a
+  `ChannelTransport` — `broadcastChannelTransport()` for Deno Deploy isolates / workers, or
+  your own two-method Redis/NATS transport via `setChannelTransport` — and **both**
+  `createChannel` publishes **and** tag invalidations propagate cross-instance (a
+  `revalidateTag` on one instance re-pushes watchers on every instance). The default
+  in-memory transport loops back to the single instance, so nothing changes for a
+  single-instance deploy.
 - **Channels carry no history.** A subscriber gets pushes from the moment it subscribes;
   nothing replays on reconnect (compute a cold-start value during SSR and pass it as
   `initial`). Delivery is at-most-once and latest-wins under back-pressure; `seq` (surfaced by

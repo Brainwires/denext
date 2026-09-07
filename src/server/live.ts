@@ -35,7 +35,9 @@ import { decodeWire, prepareWire, WIRE_ENC } from "../runtime/wire-codec.ts";
 import { getSubscriptionDef, type SubscriptionDef } from "../runtime/server-action.ts";
 import { type ChannelHub, type ChannelSub, createChannelHub } from "./live-channels.ts";
 import {
+  broadcastInvalidation,
   type ChannelTransport,
+  isForeignEvent,
   setChannelPayloadCap,
   watchChannelTransport,
 } from "../runtime/channel.ts";
@@ -229,7 +231,7 @@ export function installLiveHub(opts: {
   policy = opts.config ?? {};
   limits = sanitizeLimits(policy.limits);
   warnedNoPolicy = false;
-  setLiveInvalidateHook(onTagInvalidated);
+  setLiveInvalidateHook(invalidateTags);
   bindChannelTransport();
   setChannelPayloadCap(limits.maxChannelPayloadBytes);
 }
@@ -745,7 +747,18 @@ function broadcastRoom(room: string): void {
   }
 }
 
-/** Cache hook: coalesce invalidated tags, then flush a re-render pass. */
+/**
+ * Cache hook: fan the invalidation out to this instance's connections AND publish it over the
+ * channel transport so every other instance's hub does the same. The inbound side
+ * ({@link bindChannelTransport}) suppresses this instance's own echo, so the local fan-out
+ * here is the single local delivery.
+ */
+function invalidateTags(tags: readonly string[]): void {
+  onTagInvalidated(tags);
+  broadcastInvalidation(tags);
+}
+
+/** Coalesce invalidated tags for the LOCAL connections, then flush a re-render pass. */
 function onTagInvalidated(tags: readonly string[]): void {
   for (const t of tags) pendingTags.add(t);
   if (flushTimer !== null) return;
@@ -1172,7 +1185,15 @@ function bindChannelTransport(): void {
   unbindChannelTransport(); // a re-install must not leak the previous watcher
   const bind = (t: ChannelTransport): void => {
     stopChannelTransport?.();
-    stopChannelTransport = t.subscribe((ev) => channelHub.deliver(ev));
+    stopChannelTransport = t.subscribe((ev) => {
+      // A cross-instance tag invalidation (from broadcastInvalidation) re-enters here; run the
+      // LOCAL fan-out only, and only for FOREIGN events — our own loopback already fanned out.
+      if (ev.kind === "invalidate") {
+        if (isForeignEvent(ev)) onTagInvalidated(ev.tags ?? []);
+        return;
+      }
+      channelHub.deliver(ev);
+    });
   };
   const { current, stop } = watchChannelTransport(bind);
   stopWatchingTransport = stop;

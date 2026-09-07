@@ -21,9 +21,13 @@ import type { StandardSchemaV1 } from "../src/runtime/define-action.ts";
 import { useChannel, useSubscription } from "../src/client/live-typed.ts";
 import {
   broadcastChannelTransport,
+  broadcastInvalidation,
+  type ChannelEvent,
   createChannel,
   inMemoryChannelTransport,
+  isForeignEvent,
   resetChannels,
+  setChannelTransport,
 } from "../src/runtime/channel.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
@@ -1244,6 +1248,57 @@ Deno.test("channel transports: the in-memory default loops back; BroadcastChanne
     assertEquals(await seen, "cross");
   }
   resetChannels(); // registry + transport back to defaults for later tests
+});
+
+Deno.test("broadcastInvalidation: publishes an `invalidate` event on the transport; isForeignEvent gates the echo", () => {
+  const mem = inMemoryChannelTransport();
+  setChannelTransport(mem);
+  const got: ChannelEvent[] = [];
+  const stop = mem.subscribe((ev) => got.push(ev));
+  try {
+    broadcastInvalidation(["orders", "users"]);
+    assertEquals(got.length, 1);
+    assertEquals(got[0].kind, "invalidate");
+    assertEquals(got[0].tags, ["orders", "users"]);
+    // Echo suppression: our own event is not foreign; another instance's is.
+    assertEquals(isForeignEvent(got[0]), false);
+    assertEquals(isForeignEvent({ ...got[0], instance: "another-instance" }), true);
+    // An empty tag set is a no-op — nothing is published.
+    broadcastInvalidation([]);
+    assertEquals(got.length, 1);
+  } finally {
+    stop();
+    resetChannels(); // transport back to the default for later tests
+  }
+});
+
+Deno.test("tag watch hub: a FOREIGN instance's invalidate (over the transport) pushes an `invalidate` to local watchers", async () => {
+  const mem = inMemoryChannelTransport();
+  setChannelTransport(mem); // the hub binds to this transport on install
+  const { server, port } = startHub({ allowAnonymous: true });
+  try {
+    const { ws, frames } = await collect(port, "invalidate", 1, (ws) => {
+      ws.send(JSON.stringify({ type: "tags-subscribe", subId: "t1", tags: ["orders", "users"] }));
+      // Simulate another instance invalidating `orders`: an invalidate event whose `instance`
+      // is not ours arrives over the transport and must fan out to this instance's watchers.
+      setTimeout(() => {
+        void mem.publish({
+          kind: "invalidate",
+          channelId: "",
+          key: "",
+          seq: 0,
+          instance: "other-instance",
+          tags: ["orders"],
+        });
+      }, 50);
+    });
+    assertEquals(frames[0], { type: "invalidate", subId: "t1", tags: ["orders"] });
+    ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+    resetChannels();
+  }
 });
 
 Deno.test("useChannel client: initial → pushed value → a denial marks the sub dead", () => {

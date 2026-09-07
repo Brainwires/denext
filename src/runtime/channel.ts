@@ -84,24 +84,35 @@ export interface ChannelRef<T> {
   readonly __channel?: { payload: T };
 }
 
-/** One transport event: a publish (encoded payload) or a revoke. */
+/** One transport event: a channel `publish`/`revoke`, or a cross-instance cache-tag `invalidate`. */
 export interface ChannelEvent {
-  /** `publish` or `revoke`. */
-  kind: "publish" | "revoke";
-  /** The channel. */
+  /** `publish`, `revoke`, or a cross-instance cache-tag `invalidate`. */
+  kind: "publish" | "revoke" | "invalidate";
+  /** The channel (empty on an `invalidate`, which is not channel-scoped). */
   channelId: string;
-  /** The key. */
+  /** The key (empty on an `invalidate`). */
   key: string;
   /** The wire-encoded payload JSON (`publish`). */
   encoded?: string;
   /** `1` when `encoded` carries codec tags. */
   enc?: 1;
-  /** Per-instance, per-key monotonic sequence (`publish`). */
+  /** Per-instance, per-key monotonic sequence (`publish`; `0` otherwise). */
   seq: number;
   /** The publishing instance's id (frames from one instance are ordered by `seq`). */
   instance: string;
   /** Revoke only this peer's subscriptions (`revoke`). */
   peerId?: string;
+  /** The invalidated cache tags (`invalidate` only). */
+  tags?: readonly string[];
+}
+
+/**
+ * True when `ev` originated on ANOTHER instance (not this process). The Live hub uses it to
+ * suppress the echo of its own `invalidate` events, which the default in-memory transport
+ * loops back to the publisher (and which some cross-instance transports also do).
+ */
+export function isForeignEvent(ev: ChannelEvent): boolean {
+  return ev.instance !== INSTANCE;
 }
 
 /** Carries {@link ChannelEvent}s to every hub that should deliver them (across instances). */
@@ -329,6 +340,27 @@ function revoke(ch: ChannelInternals, key: string, peerId?: string): void {
   const ev: ChannelEvent = { kind: "revoke", channelId: ch.id, key, seq: 0, instance: INSTANCE };
   if (peerId) ev.peerId = peerId;
   void transport.publish(ev);
+}
+
+/**
+ * Publish a cross-instance cache-tag invalidation over the installed transport. Every OTHER
+ * instance's Live hub then re-pushes the `<Live>` / `useLive` / `useSubscription` /
+ * `useApi({ tags })` watchers of these tags — the same fan-out `revalidateTag` already does
+ * in-process, now propagated cluster-wide the way `createChannel` publishes are. The local hub
+ * fans out directly (this is additive), and suppresses the transport's own loopback by
+ * `instance` id ({@link isForeignEvent}); with the default in-memory transport that loopback is
+ * the only delivery and it is a self-skip, so a single-instance app pays nothing observable.
+ */
+export function broadcastInvalidation(tags: readonly string[]): void {
+  if (tags.length === 0) return;
+  void transport.publish({
+    kind: "invalidate",
+    channelId: "",
+    key: "",
+    seq: 0,
+    instance: INSTANCE,
+    tags,
+  });
 }
 
 /**
