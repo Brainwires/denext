@@ -28,8 +28,11 @@ export interface DocsHtmlOptions {
 
 /** Default CDN locations for the interactive renderers. */
 export const DOCS_CDN: Record<Exclude<DocsUi, "builtin">, string> = {
-  scalar: "https://cdn.jsdelivr.net/npm/@scalar/api-reference",
-  swagger: "https://unpkg.com/swagger-ui-dist@5",
+  // Pinned to an exact version: a floating tag would run whatever the CDN serves next on the
+  // app's own origin. Bump deliberately; or self-host and point `cdn` at your copy.
+  scalar:
+    "https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.67.0/dist/browser/standalone.min.js",
+  swagger: "https://unpkg.com/swagger-ui-dist@5.32.15",
 };
 
 const esc = (s: unknown): string => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -51,7 +54,7 @@ export function renderDocsHtml(doc: OpenApiDocument, options: DocsHtmlOptions): 
       `<link rel="stylesheet" href="${base}/swagger-ui.css"></head><body><div id="swagger-ui"></div>` +
       `<script src="${base}/swagger-ui-bundle.js" crossorigin></script>` +
       `<script>window.onload=()=>{window.ui=SwaggerUIBundle({url:${
-        JSON.stringify(options.specUrl)
+        JSON.stringify(options.specUrl).replace(/</g, "\\u003c")
       },dom_id:"#swagger-ui"})}</script></body></html>`;
   }
   const style = options.styleUrl ? `<link rel="stylesheet" href="${esc(options.styleUrl)}">` : "";

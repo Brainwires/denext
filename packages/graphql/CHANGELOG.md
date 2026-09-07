@@ -2,8 +2,9 @@
 
 ## 0.1.0
 
-Initial release. A GraphQL endpoint for a denext app as a plugin (requires denext ≥
-2.1.0-rc.2 for `tapChannel`).
+Initial release. A GraphQL endpoint for a denext app as a plugin. Requires the denext that
+ships `tapChannel` in `@denext/denext/plugin-kit` (the release after 2.1.0-rc.1; the
+`deno.json` pin is bumped with each denext release).
 
 - `graphql({ schema })` plugin — mounts a GraphQL Yoga server at `/graphql` through the
   plugin request-handler seam (core routes always win), GraphiQL on a browser `GET` in dev,

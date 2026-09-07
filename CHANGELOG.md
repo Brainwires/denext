@@ -58,6 +58,81 @@ and this project adheres to
   app with a channel-backed subscription. With this the keystone is complete and its ROADMAP
   section is gone.
 
+### Security
+
+Findings of the post-2.0.5 audit (security + production-readiness + docs; all fixed here):
+
+- **A single unauthenticated Live frame could crash the server.** `data-subscribe` args
+  decoded by the wire codec may hold a BigInt; the input-size probe ran `JSON.stringify` on the
+  DECODED value, outside any try, inside a `void`-called async handler — an unhandled rejection
+  in a process with no global handler. The size and depth gates now run on the raw, still-JSON
+  args before decoding, and every detached message handler (`data-subscribe`,
+  `tags-subscribe`, `channel-subscribe`, presence) is awaited through a logging guard.
+  (`src/server/live.ts`; regression in `tests/live-data.test.ts`.)
+- **`denext patch` could write outside the project.** A patch's `+++ b/<path>` was joined to
+  the project dir with no containment check, and an all-`+` hunk applies to a missing file —
+  a hostile `patches/*.patch` in a cloned repo was an arbitrary-file write at `dev`/`build`/
+  `start` boot. An npm patch may now only touch `node_modules/<its package>/`; a framework
+  patch only a plain relative path under denext. (`src/build/patches.ts`.)
+- **`@denext/graphql` shipped without a CSRF gate, with reflected credentialed CORS and no
+  body cap.** Yoga accepts `application/x-www-form-urlencoded` POSTs (a cross-site `<form>`
+  with the victim's cookies ran mutations) and reflects any `Origin` with
+  `Access-Control-Allow-Credentials`. Non-GET requests now require the same-origin proof every
+  denext RPC applies (`requireSameOrigin`, default on; `allowedOrigins`), CORS is off unless
+  `yoga.cors` is set, bodies are capped (`maxBodyBytes`, 1 MiB), and introspection is
+  dev-only (`introspection`). `verifyOrigin` and `bufferedRequest` join `denext/plugin-kit`
+  for any plugin mounting its own POST endpoint.
+- **Typed client path params could reach another route.** `buildPath` split EVERY param on
+  `/`, so `params: { id: "../../admin/x" }` on `/api/user/[id]` normalized to `/api/admin/x` —
+  in-process during SSR, with the viewer's cookies. A dynamic param is now encoded whole; a
+  catch-all refuses empty, `.` and `..` segments. (`src/runtime/api-client.ts`.)
+- **In-process SSR cache keys varied on every inbound header** (user-agent, x-forwarded-for,
+  accept-*), letting an unauthenticated client mint one durable entry per request. The key
+  now fingerprints identity headers (cookie, authorization) plus the caller's explicit ones.
+- **Batch endpoint memory.** Item responses are read under a STREAMING cap (a chunked body
+  never buffers past it), a shared `apiBatch.maxTotalResponseBytes` (16 MiB) bounds the whole
+  batch, and an explicit `undefined` in `apiBatch` no longer lifts a cap.
+- **Root `<html>`/`<body>` attributes** now pass the same attribute-name chokepoint as every
+  other element (no `on*`, no `<>"'=/` in a name). A channel-subscribe with a malformed key
+  is `denied` like an unknown channel (no id oracle); channel fan-out validates
+  transport-supplied `seq`/payload before splicing them into a frame; a throwing channel
+  subscriber is logged, never propagated into the publisher or later subscribers.
+
+### Fixed
+
+- **Plugin paths under a `basePath`.** The pipeline strips `basePath` before the plugin seam,
+  so `@denext/openapi`, `@denext/graphql` and `@denext/htmx` prefixing it onto their paths
+  answered 404 in a `basePath` app. Plugin paths are app-relative now; the OpenAPI document
+  and docs page still DESCRIBE the public (prefixed) paths.
+- **`apiMaxBodyBytes` is a real `denext.config.ts` key** (validated, plumbed to the server) as
+  the docs claimed; it was reachable only from `createApp()`.
+- **`defineSubscription({ id })`** returned a ref with no `denextActionId` (the tagged wrapper
+  from `registerServerReference` was discarded), so `useSubscription` subscribed under
+  `undefined`.
+- **`useApi({ suspense: true })`** adopted the SSR seed by `useId()` alone, so after a param
+  change it rendered the previous call's data and never fetched; the seed is keyed to its
+  call. An `invalidate()` racing an in-flight fetch can no longer be overwritten by the stale
+  response; an entry whose last hook unmounted mid-fetch is dropped when it settles.
+- **`@denext/openapi`:** an optional catch-all emitted one shared operation under two paths
+  (a required path param without a template variable — invalid 3.1) and silently overwrote a
+  sibling static route; each variant is its own operation, a collision is a `path-collision`
+  warning. Responses gain `bad_request` (when a body is declared), a 204 note, and a `default`
+  `ApiError` response for middleware/framework errors. The document's serialization + ETag
+  are computed once per build; `HEAD /docs` sends no body; the Scalar / Swagger bundles are
+  pinned to exact versions.
+- **Typed client:** a 2xx with a non-JSON body is an `ApiClientError` (`http_error`), not a
+  silent `undefined`.
+- **`revalidatePath`** now drops in-process `"use cache"` results (they carry tags, not paths);
+  `denext dev` clears them on every file change.
+- Live hub: a second `installLiveHub` no longer leaks the previous transport watcher;
+  `uninstallLiveHub` disposes the channel hub's index and coalesce timer; the per-(channel,key)
+  sequence table is bounded. `denext patch delete` reports files it could not revert; a
+  non-OK pristine fetch is an error, never module source (30 s timeout).
+- Docs: the auth-session shape (`session.user.id`, not `session.userId`) in AGENTS.md, the
+  docs site and JSDoc; `getSession()` examples; `useApi` `data` narrowing; the deprecated
+  middleware `redirect` in the routing page; example ports; the two `### Added` headings and
+  the compare link in this file; stale ROADMAP passages.
+
 ## [2.1.0-rc.1] - 2026-09-06
 
 ### Added
@@ -101,8 +176,6 @@ and this project adheres to
   `src/jsx/{flight-scalar,render-shared,render-to-flight,render-to-flight-stream}.ts`,
   `src/client/{flight-client,live-client}.ts`, `src/runtime/{server-action,live-protocol}.ts`,
   `src/server/{action-handler,live}.ts`.
-
-### Added
 
 - **`examples/typed-api`** — the whole typed surface in one small app: `defineApi` routes over
   a hand-rolled Standard Schema, `createApiClient()` / `useApiLive` typed against the generated
@@ -5801,7 +5874,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
 [0.1.2]: https://jsr.io/@denext/denext@0.1.2
 [0.1.1]: https://jsr.io/@denext/denext@0.1.1
 [0.1.0]: https://jsr.io/@denext/denext@0.1.0
-[Unreleased]: https://github.com/Brainwires/denext/compare/v2.0.0-rc.7...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v2.1.0-rc.1...development
 [1.4.0]: https://jsr.io/@denext/denext@1.4.0
 [1.3.0]: https://jsr.io/@denext/denext@1.3.0
 [1.2.0]: https://jsr.io/@denext/denext@1.2.0

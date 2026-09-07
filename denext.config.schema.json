@@ -610,8 +610,16 @@
         "maxItemResponseBytes": {
           "description": "Max bytes of one item's response body carried back (default 4 MiB; over → a 500 item).",
           "type": "number"
+        },
+        "maxTotalResponseBytes": {
+          "description": "Max bytes of ALL items' response bodies together (default 16 MiB; over → the rest are 500 items).",
+          "type": "number"
         }
       }
+    },
+    "apiMaxBodyBytes": {
+      "description": "The request-body cap for route handlers (`route.ts`), in bytes — default 1 MiB. A route raises or lifts its own with `export const maxBodyBytes = N | false`; a `defineApi` endpoint with `maxBodyBytes` in its definition overrides both. Over the cap → 413.",
+      "type": "number"
     },
     "nodeResolve": {
       "description": "denext's tolerant node_modules resolver for the compat (npm-React) build — default ON.",

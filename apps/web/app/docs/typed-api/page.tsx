@@ -51,7 +51,7 @@ export const PATCH = authed.define({
   body: z.object({ title: z.string().min(1) }),
   errors: { not_owner: 403 },
 }, async ({ params, body, ctx, fail }) => {
-  if ((await db.posts.owner(params.id)) !== ctx.session.userId) fail("not_owner");
+  if ((await db.posts.owner(params.id)) !== ctx.session.user.id) fail("not_owner");
   return db.posts.update(params.id, body);
 });`}
       </Code>
@@ -79,7 +79,7 @@ export const PATCH = authed.define({
       <h2>The typed client</h2>
       <Code lang="ts">
         {`import { createApiClient, isApiClientError } from "denext";
-import type {} from "./.denext/api.ts"; // registers the schema — type-only, ships nothing
+import type {} from "./.denext/api.ts"; // path relative to your file; type-only, ships nothing
 
 const api = createApiClient(); // typed against THIS app's routes
 
@@ -127,7 +127,7 @@ export function Post({ id }: { id: string }) {
   const { data, error, pending, refetch } = useApi("/api/posts/[id]", "GET", { params: { id } });
   if (pending) return <p>…</p>;
   if (error) return <p>{error.code === "not_found" ? "Gone" : error.message}</p>;
-  return <h1 onClick={() => void refetch()}>{data.title}</h1>;
+  return <h1 onClick={() => void refetch()}>{data?.title}</h1>;
 }
 
 // Suspense mode: the server runs the call in-process inside <Suspense>, records the value under
@@ -152,7 +152,7 @@ import { defineSubscription } from "denext/server";
 export const orderStatus = defineSubscription({
   input: z.object({ id: z.string() }),          // checked on every subscribe → invalid-input
   tags: ({ id }) => [\`order:\${id}\`],           // server-derived; the client's tags are ignored
-  authorize: async ({ id }) => (await auth())?.userId === (await db.orders.owner(id)),
+  authorize: async ({ id }) => (await auth())?.user.id === (await db.orders.owner(id)),
   resolve: ({ id }) => db.orders.status(id),    // re-pushed on revalidateTag("order:…")
 });
 
@@ -179,7 +179,7 @@ import { createChannel } from "denext/server";
 
 export const orderEvents = createChannel<{ status: string }>({
   schema: z.object({ status: z.string() }),          // validated at the PUBLISHER
-  authorize: async (ctx, key) => key === \`user:\${(await getSession())?.data.userId}\`, // REQUIRED
+  authorize: async (_ctx, key) => key === \`user:\${(await auth())?.user.id}\`, // REQUIRED
 });
 
 // an action, a webhook, a cron, after() — anywhere:

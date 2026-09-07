@@ -124,6 +124,23 @@ Deno.test("api batch: a declared over-cap body is a 413", async () => {
   assertEquals(res.status, 413);
 });
 
+Deno.test("api batch: an aggregate response budget bounds the whole batch; an explicit `undefined` keeps a cap", async () => {
+  // `{"secret":true}` is 15 bytes: the first item fits a 20-byte budget, the second does not.
+  const app = batchApp({ apiBatch: { maxTotalResponseBytes: 20 } });
+  const res = await app(batchRequest([
+    { id: 0, m: "GET", p: "/api/secret" },
+    { id: 1, m: "GET", p: "/api/secret" },
+  ]));
+  const { r } = await res.json();
+  const byId = Object.fromEntries(r.map((x: { id: number }) => [x.id, x]));
+  const over = [byId[0], byId[1]].filter((x) => x.s === 500 && x.t === "response too large");
+  assertEquals(over.length, 1, "exactly one item exceeded the shared budget");
+  // A config that spells a cap out as `undefined` must not lift it (object spread would).
+  const loose = batchApp({ apiBatch: { maxItems: undefined } });
+  const many = Array.from({ length: 21 }, (_, i) => ({ id: i, m: "GET", p: "/api/hello" }));
+  assertEquals((await loose(batchRequest(many))).status, 400);
+});
+
 Deno.test("api batch: `enabled: false` hides the endpoint", async () => {
   const app = batchApp({ apiBatch: { enabled: false } });
   assertEquals((await app(batchRequest([{ id: 0, m: "GET", p: "/api/hello" }]))).status, 404);

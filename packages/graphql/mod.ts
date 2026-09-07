@@ -22,8 +22,15 @@
  */
 
 import type { DenextPlugin, PluginContext } from "@denext/denext/server";
+import {
+  bufferedRequest,
+  readCappedBody,
+  STALLED,
+  TOO_LARGE,
+  verifyOrigin,
+} from "@denext/denext/plugin-kit";
 import { join } from "@std/path";
-import type { GraphQLSchema } from "graphql";
+import { type GraphQLSchema, NoSchemaIntrospectionCustomRule } from "graphql";
 import { createYoga, type YogaInitialContext, type YogaServerOptions } from "graphql-yoga";
 import { createGraphqlCommand, schemaSdl } from "./command.ts";
 
@@ -134,13 +141,30 @@ export type YogaPassthrough = Omit<
 export interface GraphqlOptions {
   /** The schema (Pothos `builder.toSchema()`, `createSchema({ typeDefs, resolvers })`, …). */
   schema: SchemaSource;
-  /** Where the endpoint is mounted (default `/graphql`; prefixed with `basePath`). */
+  /** Where the endpoint is mounted (default `/graphql`, app-relative: `basePath` is already stripped). */
   path?: string;
   /** Serve GraphiQL on a browser `GET` (default: dev only). */
   graphiql?: boolean;
+  /** Answer introspection queries (default: dev only — production hides the type graph). */
+  introspection?: boolean;
+  /** Max request body in bytes (default 1 MiB, like a route handler; over → 413). */
+  maxBodyBytes?: number;
+  /**
+   * Require the same-origin proof denext applies to every state-changing RPC (Server Actions,
+   * the typed-API batch) on non-GET requests: a cross-site `<form>` or fetch is refused with
+   * 403 before Yoga parses it. Default `true`. Turn off only for a public, cookie-free API —
+   * resolvers run in the viewer's session, so a mutation reached cross-site is a CSRF.
+   */
+  requireSameOrigin?: boolean;
+  /** Extra origins (`https://app.example.com`) allowed to call mutations, beyond the request's own host. */
+  allowedOrigins?: string[];
   /** Build the per-request context your resolvers receive (merged with Yoga's). */
   context?: (init: GraphqlContextInit) => object | Promise<object>;
-  /** Further Yoga options: `plugins`, `maskedErrors`, `cors`, `batching`, `logging`, … */
+  /**
+   * Further Yoga options: `plugins`, `maskedErrors`, `cors`, `batching`, `logging`, …
+   * Note `cors` defaults to OFF here (Yoga's own default reflects any `Origin` with
+   * credentials); set `cors: { origin: [...] }` to open the endpoint to named sites.
+   */
   yoga?: YogaPassthrough;
   /** The SDL file `denext build` writes into the output directory (default `schema.graphql`); `false` skips it. */
   outFile?: string | false;
@@ -156,13 +180,23 @@ export function graphql(options: GraphqlOptions): DenextPlugin {
   return {
     name: "@denext/graphql",
     setup(ctx: PluginContext) {
-      const basePath = (ctx.config.basePath ?? "").replace(/\/$/, "");
-      const path = basePath + (options.path ?? "/graphql");
-      const graphiql = options.graphiql ?? ctx.mode === "dev";
+      // The pipeline strips `basePath` before the plugin seam, so the path is app-relative.
+      const path = options.path ?? "/graphql";
+      const dev = ctx.mode === "dev";
+      const graphiql = options.graphiql ?? dev;
+      const introspection = options.introspection ?? dev;
+      const maxBodyBytes = options.maxBodyBytes ?? 1024 * 1024;
+      const sameOrigin = options.requireSameOrigin ?? true;
+      const originOptions = { allowedOrigins: options.allowedOrigins };
       const getSchema = once(() => Promise.resolve(resolveSchema(options.schema)));
       const getYoga = once(async () =>
         createYoga({
+          cors: false, // never reflect an arbitrary Origin with credentials; opt in via `yoga.cors`
           ...options.yoga,
+          plugins: [
+            ...(introspection ? [] : [disableIntrospection()]),
+            ...(options.yoga?.plugins ?? []),
+          ],
           schema: await getSchema(),
           graphqlEndpoint: path,
           graphiql,
@@ -173,12 +207,22 @@ export function graphql(options: GraphqlOptions): DenextPlugin {
 
       ctx.addRequestHandler(async (request) => {
         if (new URL(request.url).pathname !== path) return null;
+        const mutating = request.method !== "GET" && request.method !== "HEAD";
+        if (mutating && sameOrigin && !verifyOrigin(request, originOptions)) {
+          return new Response("forbidden", { status: 403 });
+        }
+        const bounded = mutating ? await capBody(request, maxBodyBytes) : request;
+        if (bounded instanceof Response) return bounded;
         const yoga = await getYoga();
-        const raw: unknown = await yoga.fetch(request);
+        const raw: unknown = await yoga.fetch(bounded);
         // Yoga's Response may come from its own fetch ponyfill; hand the pipeline a native one.
         if (raw instanceof Response) return raw;
         const res = raw as Response;
-        return new Response(res.body, { status: res.status, headers: res.headers });
+        return new Response(res.body, {
+          status: res.status,
+          statusText: res.statusText,
+          headers: res.headers,
+        });
       });
 
       const outFile = options.outFile ?? "schema.graphql";
@@ -199,7 +243,34 @@ function resolveSchema(source: SchemaSource): GraphQLSchema | Promise<GraphQLSch
   return typeof source === "function" ? source() : source;
 }
 
+/** Memoize a successful result; a rejection is NOT kept, so a transient failure retries. */
 function once<T>(fn: () => Promise<T>): () => Promise<T> {
   let p: Promise<T> | null = null;
-  return () => (p ??= fn());
+  return () => {
+    p ??= fn().catch((err) => {
+      p = null;
+      throw err;
+    });
+    return p;
+  };
+}
+
+/** Read the body under the cap (the route-handler cap does not reach a plugin handler). */
+async function capBody(request: Request, maxBytes: number): Promise<Request | Response> {
+  if (!request.body) return request;
+  const declared = Number(request.headers.get("content-length") ?? "0");
+  if (declared > maxBytes) return new Response("payload too large", { status: 413 });
+  const body = await readCappedBody(request, maxBytes);
+  if (body === TOO_LARGE) return new Response("payload too large", { status: 413 });
+  if (body === STALLED) return new Response("request timeout", { status: 408 });
+  return bufferedRequest(request, body);
+}
+
+/** A Yoga (envelop) plugin that refuses introspection queries. */
+function disableIntrospection(): NonNullable<YogaPassthrough["plugins"]>[number] {
+  return {
+    onValidate({ addValidationRule }: { addValidationRule: (rule: unknown) => void }) {
+      addValidationRule(NoSchemaIntrospectionCustomRule);
+    },
+  } as NonNullable<YogaPassthrough["plugins"]>[number];
 }

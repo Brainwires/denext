@@ -103,7 +103,7 @@ export const PATCH = createApi().use(requireSession()).define({
   body: z.object({ name: z.string().min(1) }),
   errors: { not_owner: 403 },
 }, async ({ params, body, ctx, fail }) => {
-  if (ctx.session.userId !== params.id) fail("not_owner");
+  if (ctx.session.user.id !== params.id) fail("not_owner");
   return db.users.update(params.id, body);
 });
 ```
@@ -127,7 +127,7 @@ try {
 import { useApi } from "denext";
 export function User({ id }: { id: string }) {
   const { data, error, pending } = useApi("/api/user/[id]", "GET", { params: { id } });
-  return pending ? <p>…</p> : error ? <p>{error.code}</p> : <p>{data.name}</p>;
+  return pending ? <p>…</p> : error ? <p>{error.code}</p> : <p>{data?.name}</p>;
 }
 ```
 
@@ -154,11 +154,11 @@ import { createChannel, defineSubscription } from "denext/server";
 export const orderStatus = defineSubscription({
   input: z.object({ id: z.string() }), // validated on every subscribe
   tags: ({ id }) => [`order:${id}`], // server-derived; re-pushed on revalidateTag
-  authorize: async ({ id }) => (await auth())?.userId === (await db.orders.owner(id)),
+  authorize: async ({ id }) => (await auth())?.user.id === (await db.orders.owner(id)),
   resolve: ({ id }) => db.orders.status(id),
 });
 export const orderEvents = createChannel<{ status: string }>({
-  authorize: async (ctx, key) => key === `user:${(await getSession())?.data.userId}`, // REQUIRED
+  authorize: async (_ctx, key) => key === `user:${(await auth())?.user.id}`, // REQUIRED
 });
 // anywhere on the server: await orderEvents.publish(`user:${userId}`, { status: "shipped" });
 ```

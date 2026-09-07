@@ -79,7 +79,9 @@ export type OpenApiWarningCode =
   /** A catch-all segment, which OpenAPI can only express as one `/`-joined parameter. */
   | "catch-all-path"
   /** The route module failed to load; the route is skipped. */
-  | "load-failed";
+  | "load-failed"
+  /** Two routes describe the same path + method (an optional catch-all beside a static route); the later one is dropped. */
+  | "path-collision";
 
 /** One lint finding. */
 export interface OpenApiWarning {
@@ -161,14 +163,47 @@ export async function buildOpenApi(options: BuildOpenApiOptions): Promise<OpenAp
     for (const method of METHODS) {
       const handler = mod[method];
       if (typeof handler !== "function") continue;
-      const op = describe(route, method, handler, options, warnings);
-      op.operationId = uniqueId(ids, String(op.operationId));
-      for (const path of pathVariants(route.pattern, options.basePath ?? "")) {
-        (paths[path] ??= {})[method.toLowerCase()] = op;
-      }
+      placeOperations({ route, method, handler, options, warnings, ids, paths });
     }
   }
   return { document: assemble(paths, options), warnings };
+}
+
+interface Placement {
+  route: ApiRoute;
+  method: string;
+  handler: unknown;
+  options: BuildOpenApiOptions;
+  warnings: OpenApiWarning[];
+  ids: Set<string>;
+  paths: OpenApiDocument["paths"];
+}
+
+/**
+ * Describe one handler under every path variant of its route. Each variant gets its OWN
+ * operation: the bare form of an optional catch-all has no `{x}` template, so it must not
+ * declare that path parameter, and needs its own id. A method already described under a path
+ * (a static sibling of an optional catch-all) is kept; the newcomer is dropped with a warning.
+ */
+function placeOperations(p: Placement): void {
+  const variants = pathVariants(p.route.pattern, p.options.basePath ?? "");
+  for (const path of variants) {
+    const bare = variants.length > 1 && !path.endsWith("}");
+    const op = describe(p.route, p.method, p.handler, p.options, p.warnings, bare);
+    op.operationId = uniqueId(p.ids, String(op.operationId) + (bare ? "Root" : ""));
+    const item = p.paths[path] ??= {};
+    const key = p.method.toLowerCase();
+    if (item[key]) {
+      p.warnings.push({
+        code: "path-collision",
+        routePath: p.route.routePath,
+        method: p.method,
+        message: `${path} is already described by another route — this operation is dropped`,
+      });
+      continue;
+    }
+    item[key] = op;
+  }
 }
 
 async function loadRoute(
@@ -256,10 +291,13 @@ function describe(
   handler: unknown,
   options: BuildOpenApiOptions,
   warnings: OpenApiWarning[],
+  bare = false,
 ): OpenApiOperation {
+  // The bare variant of an optional catch-all has no catch-all segment in its template.
+  const pattern = bare ? route.pattern.filter((s) => s.kind !== "optionalCatchAll") : route.pattern;
   const meta = apiDefinitionOf(handler);
   const op: OpenApiOperation = {
-    operationId: operationId(method, route.pattern),
+    operationId: operationId(method, pattern),
     tags: (options.tags ?? defaultTags)(route),
   };
   const warn = (w: Omit<OpenApiWarning, "routePath" | "method">) =>
@@ -274,7 +312,7 @@ function describe(
       code: "undescribed-route",
       message: "plain handler — wrap it in defineApi to describe it",
     });
-    op.parameters = pathParameters(route.pattern, {});
+    op.parameters = pathParameters(pattern, {});
     op.responses = { "200": { description: "OK" } };
     return op;
   }
@@ -290,7 +328,7 @@ function describe(
       (m) => warn({ code: "opaque-schema", part, message: m }),
     );
   op.parameters = [
-    ...pathParameters(route.pattern, def.params ? convert(def.params, "params") : {}),
+    ...pathParameters(pattern, def.params ? convert(def.params, "params") : {}),
     ...queryParameters(def.query ? convert(def.query, "query") : undefined),
   ];
   if (def.body) {
@@ -353,7 +391,7 @@ function responses(def: ApiDefinition, response: JsonSchema | undefined): Record
   const out: Record<string, unknown> = {
     "200": response
       ? { description: "OK", content: { "application/json": { schema: response } } }
-      : { description: "OK" },
+      : { description: "OK (a handler that returns nothing answers 204)" },
   };
   const byStatus = new Map<number, { codes: string[]; messages: string[] }>();
   const add = (status: number, code: string, message?: string) => {
@@ -363,6 +401,7 @@ function responses(def: ApiDefinition, response: JsonSchema | undefined): Record
     byStatus.set(status, entry);
   };
   if (def.params || def.query || def.body) add(400, "validation", "Validation failed");
+  if (def.body) add(400, "bad_request", "Malformed or non-JSON body");
   for (const [code, spec] of Object.entries(def.errors ?? {})) {
     if (typeof spec === "number") add(spec, code);
     else add(spec.status, code, spec.message);
@@ -382,6 +421,12 @@ function responses(def: ApiDefinition, response: JsonSchema | undefined): Record
       },
     };
   }
+  // Everything the dispatch seam and middleware may answer with that the definition cannot
+  // name (401/429 from `requireSession`/`rateLimit`, 413, a redacted 500 `internal`, …).
+  out.default = {
+    description: "Any other error — middleware and framework responses (ApiError envelope)",
+    content: { "application/json": { schema: { $ref: "#/components/schemas/ApiError" } } },
+  };
   return out;
 }
 

@@ -281,6 +281,34 @@ Deno.test({
 
 // ── Runtime: buildPath ─────────────────────────────────────────────────────
 
+Deno.test("buildPath: a dynamic param can never escape its segment; a catch-all refuses `..`", () => {
+  // `[id]` is ONE segment: a `/` or `..` in the value is encoded, not a path change.
+  assertEquals(
+    buildPath("/api/user/[id]", { id: "../../admin/secret" }),
+    "/api/user/..%2F..%2Fadmin%2Fsecret",
+  );
+  assertEquals(
+    buildPath("/api/user/[id]", { id: "1/../../_denext/action" }),
+    "/api/user/1%2F..%2F..%2F_denext%2Faction",
+  );
+  // A catch-all spans segments by design — but never through `.`, `..` or an empty one.
+  assertThrows(
+    () => buildPath("/files/[...path]", { path: "a/../b" }),
+    Error,
+    "invalid catch-all segment",
+  );
+  assertThrows(
+    () => buildPath("/files/[...path]", { path: ["a", "", "b"] }),
+    Error,
+    "invalid catch-all segment",
+  );
+  assertThrows(
+    () => buildPath("/files/[...path]", { path: ["."] }),
+    Error,
+    "invalid catch-all segment",
+  );
+});
+
 Deno.test("buildPath: substitutes params, spans catch-alls, and appends query", () => {
   assertEquals(buildPath("/api/hello"), "/api/hello");
   assertEquals(buildPath("/api/user/[id]", { id: "42" }), "/api/user/42");
@@ -296,6 +324,8 @@ Deno.test("buildPath: substitutes params, spans catch-alls, and appends query", 
   );
   // An optional catch-all substitutes like a catch-all when present.
   assertEquals(buildPath("/docs/[[...slug]]", { slug: "x/y" }), "/docs/x/y");
+  assertEquals(buildPath("/docs/[[...slug]]"), "/docs", "an optional catch-all may be absent");
+  assertEquals(buildPath("/[[...slug]]"), "/");
   // Query params are appended.
   assertEquals(buildPath("/api/hello", undefined, { q: "hi", n: "1" }), "/api/hello?q=hi&n=1");
 });

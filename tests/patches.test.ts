@@ -93,6 +93,43 @@ Deno.test("npm: create records the node_modules edit; apply is idempotent; delet
   }
 });
 
+Deno.test("npm: a patch may only write inside the package it names — traversal and absolute paths are refused", async () => {
+  const { dir, pristine } = await npmProject();
+  const opts = { npmPristine: () => Promise.resolve(pristine), log: () => {} };
+  try {
+    await Deno.mkdir(join(dir, "patches"), { recursive: true });
+    // All-`+` hunks apply to a missing file, so a hostile patch could CREATE any path.
+    const hostile = [
+      "--- a/node_modules/left-pad/../../../pwned.txt",
+      "+++ b/node_modules/left-pad/../../../pwned.txt",
+      "@@ -0,0 +1 @@",
+      "+owned",
+      "",
+    ].join("\n");
+    await Deno.writeTextFile(join(dir, "patches", "left-pad+1.3.0.patch"), hostile);
+    const [entry] = await listPatches(dir);
+    await assertRejects(() => applyNpmPatch(dir, entry, opts), Error, "outside its package");
+    await assertRejects(() => revertNpmPatch(dir, entry), Error, "outside its package");
+    let exists = true;
+    try {
+      await Deno.stat(join(dir, "..", "..", "pwned.txt"));
+    } catch {
+      exists = false;
+    }
+    assertEquals(exists, false, "nothing was written outside the project");
+    // A project file outside node_modules/left-pad is just as off-limits.
+    const sibling = hostile.replaceAll(
+      "node_modules/left-pad/../../../pwned.txt",
+      "app/api/admin/route.ts",
+    );
+    await Deno.writeTextFile(join(dir, "patches", "left-pad+1.3.0.patch"), sibling);
+    const [siblingEntry] = await listPatches(dir);
+    await assertRejects(() => applyNpmPatch(dir, siblingEntry, opts), Error, "outside its package");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("npm: a version mismatch warns; a hunk that no longer fits throws naming it", async () => {
   const { dir, installed, pristine } = await npmProject();
   const warnings: string[] = [];

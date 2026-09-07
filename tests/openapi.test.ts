@@ -185,7 +185,7 @@ Deno.test("buildOpenApi: operations, parameters, body, responses, error enums, e
     { name: "page", in: "query", required: true, schema: { type: "integer" } },
   ]);
   const listRes = list.responses as Record<string, Record<string, unknown>>;
-  assertEquals(Object.keys(listRes), ["200", "400"]);
+  assertEquals(Object.keys(listRes), ["200", "400", "default"]);
   assertEquals(
     (listRes["200"].content as Record<string, { schema: unknown }>)["application/json"].schema,
     { type: "array", items: { type: "object" }, "x-side": "output" },
@@ -204,7 +204,8 @@ Deno.test("buildOpenApi: operations, parameters, body, responses, error enums, e
     },
   });
   const createRes = create.responses as Record<string, Record<string, unknown>>;
-  assertEquals(Object.keys(createRes), ["200", "400", "409", "418"]);
+  assertEquals(Object.keys(createRes), ["200", "400", "409", "418", "default"]);
+  assertEquals(createRes["400"].description, "Validation failed; Malformed or non-JSON body");
   assertEquals(createRes["418"].description, "Short and stout");
   assertEquals(createRes["409"].description, "duplicate");
   assertEquals(
@@ -229,7 +230,7 @@ Deno.test("buildOpenApi: operations, parameters, body, responses, error enums, e
     {},
     "an opaque body schema is emitted as {}",
   );
-  assertEquals(Object.keys(patch.responses as object), ["200", "400", "404"]);
+  assertEquals(Object.keys(patch.responses as object), ["200", "400", "404", "default"]);
 
   // The plain handlers: listed by path + method, string path params; HEAD never appears.
   const del = document.paths["/api/todos/{id}"].delete;
@@ -289,6 +290,57 @@ Deno.test("buildOpenApi: include / tags / converter options, a failing module, d
   );
 });
 
+Deno.test("buildOpenApi: an optional catch-all yields two distinct operations; a colliding route is dropped with a warning", async () => {
+  const mods: Record<string, Record<string, unknown>> = {
+    "/x/docs/route.ts": { GET: defineApi({ summary: "Docs root" }, () => "root") },
+    "/x/docs/[[...slug]]/route.ts": {
+      GET: defineApi({
+        summary: "Docs page",
+        params: schema({
+          type: "object",
+          properties: { slug: { type: "array", items: { type: "string" } } },
+        }),
+      }, () => "page"),
+    },
+  };
+  const { document, warnings } = await buildOpenApi({
+    manifest: {
+      api: [
+        route("/api/docs", "/x/docs/route.ts"),
+        route("/api/docs/[[...slug]]", "/x/docs/[[...slug]]/route.ts"),
+      ],
+    },
+    load: (f) => Promise.resolve(mods[f]),
+  });
+  // The static route keeps `/api/docs`; the catch-all's bare variant collided and was dropped.
+  assertEquals(document.paths["/api/docs"].get.summary, "Docs root");
+  assertEquals(document.paths["/api/docs"].get.parameters, []);
+  assertEquals(warnings.filter((w) => w.code === "path-collision").length, 1);
+  // The templated variant carries the path parameter and its own id.
+  const page = document.paths["/api/docs/{slug}"].get;
+  assertEquals(page.operationId, "getApiDocsBySlug");
+  assertEquals((page.parameters as { name: string }[]).map((p) => p.name), ["slug"]);
+  // Alone, an optional catch-all yields two operations that share nothing by reference.
+  const alone = await buildOpenApi({
+    manifest: { api: [route("/api/docs/[[...slug]]", "/x/docs/[[...slug]]/route.ts")] },
+    load: (f) => Promise.resolve(mods[f]),
+  });
+  const bare = alone.document.paths["/api/docs"].get;
+  const full = alone.document.paths["/api/docs/{slug}"].get;
+  assert(bare !== full, "distinct operation objects");
+  assertEquals(bare.operationId, "getApiDocsRoot");
+  assertEquals(bare.parameters, [], "no `slug` parameter without a {slug} template");
+  assertEquals(full.operationId, "getApiDocsBySlug");
+  // Every defined operation carries a `default` envelope response for undeclared errors.
+  const responses = full.responses as Record<
+    string,
+    { content: Record<string, { schema: unknown }> }
+  >;
+  assertEquals(responses.default.content["application/json"].schema, {
+    $ref: "#/components/schemas/ApiError",
+  });
+});
+
 Deno.test("diffSpecs: added / removed / changed operations and shared schemas", async () => {
   const before = (await buildOpenApi({ manifest, load })).document;
   const after: OpenApiDocument = JSON.parse(JSON.stringify(before));
@@ -325,7 +377,11 @@ Deno.test("renderDocsHtml: builtin is script-free and escaped; scalar/swagger lo
 
   const scalar = renderDocsHtml(document, { ui: "scalar", specUrl: "/openapi.json" });
   assertStringIncludes(scalar, 'data-url="/openapi.json"');
-  assertStringIncludes(scalar, 'src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"');
+  assertStringIncludes(
+    scalar,
+    'src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.67.0/dist/browser/standalone.min.js"',
+    "pinned to an exact version",
+  );
   const swagger = renderDocsHtml(document, { ui: "swagger", specUrl: "/spec", cdn: "/vendor/sw/" });
   assertStringIncludes(swagger, 'src="/vendor/sw/swagger-ui-bundle.js"');
   assertStringIncludes(swagger, 'url:"/spec"');
@@ -403,14 +459,17 @@ Deno.test("openapi plugin: basePath, custom paths, docs off, authorize falls thr
       },
       { basePath: "/app" },
     );
-    assertEquals(await handle(new Request("https://x/spec.json")), null);
-    assertEquals(await handle(new Request("https://x/app/spec.json")), null, "unauthorized → pass");
-    const ok = await handle(new Request("https://x/app/spec.json", { headers: { "x-ok": "1" } }));
+    // The pipeline strips `basePath` before the plugin seam: the handler matches the
+    // app-relative path, while the document and the docs page DESCRIBE the public one.
+    assertEquals(await handle(new Request("https://x/app/spec.json")), null);
+    assertEquals(await handle(new Request("https://x/spec.json")), null, "unauthorized → pass");
+    const ok = await handle(new Request("https://x/spec.json", { headers: { "x-ok": "1" } }));
     assertEquals(ok!.status, 200);
-    const docs = await handle(new Request("https://x/app/reference", { headers: { "x-ok": "1" } }));
+    assertEquals(Object.keys((await ok!.json()).paths)[0], "/app/api/files/{path}");
+    const docs = await handle(new Request("https://x/reference", { headers: { "x-ok": "1" } }));
     assertStringIncludes(await docs!.text(), 'data-url="/app/spec.json"');
     assertEquals(
-      await handle(new Request("https://x/app/reference.css", { headers: { "x-ok": "1" } })),
+      await handle(new Request("https://x/reference.css", { headers: { "x-ok": "1" } })),
       null,
     );
   } finally {

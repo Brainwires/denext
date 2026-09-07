@@ -363,6 +363,20 @@ cache uses Deno's built-in `node:sqlite`.)
   `requireSession()` and `rateLimit()` ship (`src/server/api-middleware.ts`).
   `apiDefinitionOf(handler)` (also in `denext/plugin-kit`) exposes a route's definition
   for an OpenAPI/docs plugin.
+- **`@denext/openapi`** (`packages/openapi`): the same definitions as an OpenAPI 3.1
+  document — `GET /openapi.json` + a zero-JavaScript docs page at `GET /docs` (or Scalar /
+  Swagger UI), `openapi.json` in the build output, `denext openapi emit | diff | lint`.
+  JSON Schema via Standard JSON Schema (Zod ≥ 4.2, ArkType, Valibot), TypeBox, a
+  `toJsonSchema()` method, or a converter; the shared `ApiError` envelope with per-status
+  code enums; an `authorize` gate that falls through to the app's 404.
+- **`@denext/graphql`** (`packages/graphql`): GraphQL Yoga mounted at `/graphql` through
+  the plugin seam (same-origin gate on mutations, CORS off, body cap, introspection and
+  GraphiQL dev-only), `fromChannel(channel, key)` turning a `createChannel` key into a
+  subscription source over `tapChannel` (delivered as GraphQL over SSE, across instances
+  via the app's `ChannelTransport`), `schema.graphql` at build, `denext graphql sdl | diff`.
+- **Plugin-kit primitives for API plugins**: `apiDefinitionOf`, `tapChannel` (server-side
+  observer of a channel's pushes), `verifyOrigin` (the CSRF gate every state-changing
+  denext RPC applies), `bufferedRequest` + the body caps (`src/plugin/kit.ts`).
 - **Typed errors.** `ApiError(status, code, { message?, data?, fieldErrors?, headers? })`
   (`src/server/api-error.ts`) → `{ error: { code, status, message, data?, fieldErrors?,
   digest? } }` + `x-request-id`; the client rebuilds it as `ApiClientError` with `code`

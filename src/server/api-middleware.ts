@@ -1,7 +1,7 @@
 // First-party middleware for `createApi().use(...)`: the two every API needs.
 //
 //   const authed = createApi().use(rateLimit({ max: 60, windowMs: 60_000 })).use(requireSession());
-//   export const GET = authed.define({ … }, ({ ctx }) => ctx.session.userId);
+//   export const GET = authed.define({ … }, ({ ctx }) => ctx.session.user.id);
 //
 // Both run BEFORE validation (see `define-api.ts`), so a rejected caller never reaches a schema.
 
@@ -44,7 +44,7 @@ export interface ApiRateLimitOptions {
   windowMs: number;
   /**
    * The bucket key (default: client IP + method + pathname). Use it to key per user
-   * (`({ ctx }) => ctx.session.userId`) once a session middleware has run.
+   * (`({ ctx }) => ctx.session.user.id`) once a session middleware has run.
    */
   key?: (input: ApiMiddlewareInput<object>) => string;
   /** Where counts live (default: a bounded in-memory store — per process; use a shared store behind replicas). */

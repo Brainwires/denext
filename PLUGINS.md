@@ -205,13 +205,20 @@ should import from **only the first two**:
    the pipeline primitives a **router-class** plugin needs — route matching
    (`matchSegments`, `parsePattern`, `specificity`, `peelLocale`), client-route
    bundling (`bundleRoutes`), the CSS pipeline (`buildAppCss`, `extractRouteCss`),
-   hydration + Fast Refresh (`hydrateRoot`, `registerFamily`, `enableFastRefresh`), and
-   ISR (`PageCache`). **Stable by signature** — the names and shapes are covered by
+   hydration + Fast Refresh (`hydrateRoot`, `registerFamily`, `enableFastRefresh`), ISR
+   (`PageCache`) — and the primitives an **API-class** plugin needs: `apiDefinitionOf`
+   (a route's `defineApi` definition), `tapChannel` (observe a channel's pushes on the
+   server), `verifyOrigin` (the same-origin gate for a plugin's own POST endpoint), and
+   the body caps (`cappedBody`, `readCappedBody`, `bufferedRequest`, `TOO_LARGE`,
+   `STALLED`). **Stable by signature** — the names and shapes are covered by
    semver; _where they live inside `src/` is not_ and may move between minors. This
    facade absorbs that churn, and a surface test (`tests/plugin-kit.test.ts`) guards it.
 3. **Everything else — private.** The rest of `src/router`, `src/build`, `src/server`,
    and any `@denext/denext/server` export **not** re-exported by the kit, is internal
-   and can change in any release. Don't import it.
+   and can change in any release. Don't import it. The one sanctioned exception is the
+   route-manifest surface `scanRoutes` / `RouteManifest` / `ApiRoute` / `Segment` from
+   `@denext/denext/server` — the app-facing types a plugin that _describes_ an app reads
+   (`@denext/openapi` does); those are covered by the public-surface golden.
 
 `@denext/pages-router` — the reference router-class plugin — takes its pipeline
 primitives from `plugin-kit`, which is what keeps the promised set both **complete**

@@ -36,7 +36,8 @@ export default function GraphQL() {
 import { graphql } from "@denext/graphql";
 import { schema } from "./app/graphql/schema.ts";
 
-export default { plugins: [graphql({ schema })] };`}
+// context hands resolvers the request's abort signal (a subscription ends on disconnect).
+export default { plugins: [graphql({ schema, context: ({ signal }) => ({ signal }) })] };`}
       </Code>
       <p>
         The endpoint is a plugin request handler, so a page at <code>/graphql</code>{" "}
@@ -59,7 +60,7 @@ const Message = builder.objectRef<{ text: string }>("Message").implement({
 
 builder.queryType({
   fields: (t) => ({
-    viewer: t.string({ nullable: true, resolve: async () => (await auth())?.userId ?? null }),
+    viewer: t.string({ nullable: true, resolve: async () => (await auth())?.user.id ?? null }),
   }),
 });
 builder.mutationType({
@@ -135,14 +136,20 @@ denext graphql diff schema.graphql        # exit 1 when the schema changed`}
       <h2>Security posture</h2>
       <ul>
         <li>
-          Yoga's defaults apply: errors are masked in production, mutations over <code>GET</code>
-          {" "}
-          are refused, and a <code>POST</code> needs a JSON content type a plain{" "}
-          <code>{"<form>"}</code> cannot send.
+          Yoga's defaults apply on top: errors are masked in production and mutations over{" "}
+          <code>GET</code> are refused. Introspection is off in production unless{" "}
+          <code>introspection: true</code>.
         </li>
         <li>
+          Non-<code>GET</code>{" "}
+          requests need the same same-origin proof denext applies to Server Actions (<code>
+            requireSameOrigin
+          </code>, default on), CORS is off unless you configure{" "}
+          <code>yoga.cors</code>, and the body is capped (<code>maxBodyBytes</code>, default 1 MiB).
           The endpoint runs inside denext's pipeline, so <code>middleware.ts</code>{" "}
-          and the request body cap apply to it too.
+          applies too — but <code>defineApi</code>'s <code>rateLimit</code>{" "}
+          is a route-handler middleware; rate-limit GraphQL in <code>middleware.ts</code>{" "}
+          or a Yoga plugin.
         </li>
         <li>
           GraphiQL is off in production; gate it yourself if you turn it on.

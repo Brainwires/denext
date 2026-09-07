@@ -276,6 +276,7 @@
     "DenextPlugin:interface",
     "I18nConfig:interface",
     "NextCompatServerLoaderOptions:interface",
+    "OriginCheckOptions:interface",
     "PageCache:class",
     "PluginBuildContext:interface",
     "PluginBuildStep:typeAlias",
@@ -295,6 +296,7 @@
     "VNodeType:typeAlias",
     "VProps:interface",
     "apiDefinitionOf:function",
+    "bufferedRequest:function",
     "buildAppCss:function",
     "buildNextCompatModules:function",
     "bundleRoutes:function",
@@ -316,7 +318,8 @@
     "revalidateTag:function",
     "specificity:function",
     "tapChannel:function",
-    "toBase64Url:function"
+    "toBase64Url:function",
+    "verifyOrigin:function"
   ],
   "denext/jsx-runtime": [
     "Fragment:variable",

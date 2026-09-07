@@ -31,6 +31,7 @@ export const CONFIG_KEYS = [
   "streaming",
   "live",
   "apiBatch",
+  "apiMaxBodyBytes",
   "nodeResolve",
   "cacheComponents",
   "experimental",

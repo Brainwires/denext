@@ -312,6 +312,8 @@ export interface ApiBatchConfig {
   concurrency?: number;
   /** Max bytes of one item's response body carried back (default 4 MiB; over → a 500 item). */
   maxItemResponseBytes?: number;
+  /** Max bytes of ALL items' response bodies together (default 16 MiB; over → the rest are 500 items). */
+  maxTotalResponseBytes?: number;
 }
 
 /** Project configuration exported from `denext.config.{ts,js}` (as `default` or named). */
@@ -434,6 +436,12 @@ export interface DenextConfig {
    * concurrency, and per-item response size. See {@link ApiBatchConfig}.
    */
   apiBatch?: ApiBatchConfig;
+  /**
+   * The request-body cap for route handlers (`route.ts`), in bytes — default 1 MiB. A route
+   * raises or lifts its own with `export const maxBodyBytes = N | false`; a `defineApi`
+   * endpoint with `maxBodyBytes` in its definition overrides both. Over the cap → 413.
+   */
+  apiMaxBodyBytes?: number;
   /**
    * denext's tolerant node_modules resolver for the compat (npm-React) build — default ON.
    *

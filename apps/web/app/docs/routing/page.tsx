@@ -91,7 +91,7 @@ export function GET(): TypedResponse<{ id: string; name: string }> {
 
 // anywhere (a component, a test)
 import { createApiClient } from "denext";
-import type {} from "./.denext/api.ts"; // registers the schema (type-only)
+import type {} from "./.denext/api.ts"; // path relative to your file (type-only)
 const api = createApiClient();
 const user = await api("/api/user/[id]", "GET", { params: { id: "1" } }); // typed`}
       </Code>
@@ -130,9 +130,9 @@ export const POST = defineApi({
 <Link href="/blog/hello">Read</Link>;
 
 // middleware.ts — runs before routing
-import { next, redirect } from "denext/server";
+import { next, redirectResponse } from "denext/server";
 export default function middleware(req, ctx) {
-  if (ctx.url.pathname === "/old") return redirect("/new", 308);
+  if (ctx.url.pathname === "/old") return redirectResponse("/new", 308);
   return next();
 }`}
       </Code>

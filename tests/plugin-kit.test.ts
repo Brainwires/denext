@@ -16,6 +16,8 @@ Deno.test("plugin-kit exports the blessed pipeline primitives", () => {
     "PageCache",
     // channel bridge (server-side observer of createChannel pushes)
     "tapChannel",
+    // the CSRF gate for a plugin's own state-changing endpoint
+    "verifyOrigin",
     // build steps
     "bundleRoutes",
     "buildAppCss",
@@ -44,6 +46,7 @@ Deno.test("plugin-kit does not leak an over-broad value surface", () => {
     "STALLED",
     "TOO_LARGE",
     "apiDefinitionOf",
+    "bufferedRequest",
     "buildAppCss",
     "buildNextCompatModules",
     "bundleRoutes",
@@ -66,5 +69,6 @@ Deno.test("plugin-kit does not leak an over-broad value surface", () => {
     "specificity",
     "tapChannel",
     "toBase64Url",
+    "verifyOrigin",
   ]);
 });

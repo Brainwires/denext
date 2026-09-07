@@ -87,7 +87,13 @@ const post = (
 ) =>
   new Request(url, {
     method: "POST",
-    headers: { "content-type": "application/json", ...headers },
+    headers: {
+      "content-type": "application/json",
+      // The same-origin proof `verifyOrigin` wants: an Origin matching the Host.
+      host: new URL(url).host,
+      origin: new URL(url).origin,
+      ...headers,
+    },
     body: JSON.stringify({ query, variables }),
   });
 
@@ -104,9 +110,10 @@ Deno.test("graphql plugin: mounts Yoga at /graphql, passes unrelated paths, hono
     resetPlugins();
   }
   try {
+    // The pipeline strips `basePath` before the plugin seam: the app-relative path matches.
     const handle = await setup({ path: "/gql" }, { basePath: "/app" });
-    assertEquals(await handle(post("https://x/gql", "{ hello }")), null);
-    const res = await handle(post("https://x/app/gql", "{ hello }"));
+    assertEquals(await handle(post("https://x/app/gql", "{ hello }")), null);
+    const res = await handle(post("https://x/gql", "{ hello }"));
     assertEquals(await res!.json(), { data: { hello: "world" } });
   } finally {
     resetPlugins();
@@ -139,6 +146,98 @@ Deno.test("graphql plugin: GraphiQL only in dev by default; the context factory 
       ),
     );
     assertEquals(getMutation!.status, 405);
+  } finally {
+    resetPlugins();
+  }
+});
+
+Deno.test("graphql plugin: a cross-site POST is refused before Yoga parses it (CSRF); GET queries stay open", async () => {
+  try {
+    const handle = await setup();
+    // A cross-origin `<form>` POST: urlencoded, cookies attached, a foreign Origin.
+    const form = await handle(
+      new Request("https://x/graphql", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          host: "x",
+          origin: "https://evil.example",
+        },
+        body: "query=" + encodeURIComponent('mutation { post(room: "r", text: "pwned") }'),
+      }),
+    );
+    assertEquals(form!.status, 403);
+    // No Origin at all (a non-browser client without proof) — also refused for a mutation.
+    const bare = await handle(
+      new Request("https://x/graphql", {
+        method: "POST",
+        headers: { "content-type": "application/json", host: "x" },
+        body: JSON.stringify({ query: "{ hello }" }),
+      }),
+    );
+    assertEquals(bare!.status, 403);
+    // Same-origin proof → served. A GET query needs none.
+    assertEquals((await handle(post("https://x/graphql", "{ hello }")))!.status, 200);
+    const get = await handle(
+      new Request("https://x/graphql?query=" + encodeURIComponent("{ hello }")),
+    );
+    assertEquals(await get!.json(), { data: { hello: "world" } });
+  } finally {
+    resetPlugins();
+  }
+  try {
+    const open = await setup({ requireSameOrigin: false });
+    const res = await open(
+      new Request("https://x/graphql", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ query: "{ hello }" }),
+      }),
+    );
+    assertEquals(res!.status, 200, "an explicitly public API skips the gate");
+  } finally {
+    resetPlugins();
+  }
+});
+
+Deno.test("graphql plugin: CORS is off by default (no reflected credentialed Origin); a body over the cap is 413", async () => {
+  try {
+    const handle = await setup({ maxBodyBytes: 256 });
+    const preflight = await handle(
+      new Request("https://x/graphql", {
+        method: "OPTIONS",
+        headers: {
+          host: "x",
+          origin: "https://evil.example",
+          "access-control-request-method": "POST",
+          "access-control-request-headers": "content-type",
+        },
+      }),
+    );
+    assertEquals(preflight!.headers.get("access-control-allow-origin"), null);
+    assertEquals(preflight!.headers.get("access-control-allow-credentials"), null);
+    const big = await handle(post("https://x/graphql", "{ hello }", { pad: "x".repeat(512) }));
+    assertEquals(big!.status, 413);
+  } finally {
+    resetPlugins();
+  }
+});
+
+Deno.test("graphql plugin: introspection is refused in prod by default and allowed in dev", async () => {
+  const introspect = "{ __schema { queryType { name } } }";
+  try {
+    const prod = await setup();
+    const res = await prod(post("https://x/graphql", introspect));
+    const body = await res!.json();
+    assertEquals(body.data, undefined);
+    assertStringIncludes(JSON.stringify(body.errors), "introspection");
+  } finally {
+    resetPlugins();
+  }
+  try {
+    const dev = await setup({}, {}, "dev");
+    const res = await dev(post("https://x/graphql", introspect));
+    assertEquals((await res!.json()).data.__schema.queryType.name, "Query");
   } finally {
     resetPlugins();
   }

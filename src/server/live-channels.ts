@@ -78,6 +78,8 @@ export interface ChannelHub<C extends ChannelConn> {
   deliver(ev: ChannelEvent): void;
   /** Replay held-back frames once the socket drained (called by the hub's drain recovery). */
   replayPending(conn: C): void;
+  /** Clear every subscription index and pending flush (teardown). */
+  dispose(): void;
 }
 
 /**
@@ -86,6 +88,17 @@ export interface ChannelHub<C extends ChannelConn> {
  * @param deps The hub primitives.
  * @returns The channel operations.
  */
+/** Is `text` (when present) one complete JSON value? */
+function isJsonText(text: string | undefined): boolean {
+  if (text === undefined) return true;
+  try {
+    JSON.parse(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>): ChannelHub<C> {
   /** (channelId → key → subscribers). */
   const index = new Map<string, Map<string, Set<{ conn: C; subId: string }>>>();
@@ -190,6 +203,9 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
   const fanOut = (ev: ChannelEvent): void => {
     const subs = index.get(ev.channelId)?.get(ev.key);
     if (!subs || subs.size === 0) return;
+    // The frame is assembled by interpolation for speed; the transport is trusted by design,
+    // but a malformed event (a non-numeric seq, a non-JSON payload) must not corrupt it.
+    if (!Number.isFinite(ev.seq) || !isJsonText(ev.encoded)) return;
     const tail = `,"seq":${ev.seq},"value":${ev.encoded ?? "null"}${ev.enc ? ',"enc":1' : ""}}`;
     for (const { conn, subId } of [...subs]) {
       const sub = conn.channelSubs.get(subId);
@@ -217,11 +233,10 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
       if (atCap(conn, subId)) {
         return deps.sendError(conn, "limit", "too many subscriptions", { subId });
       }
+      // An unknown channel and a key the channel rejects get the SAME refusal: a distinct
+      // "malformed key" frame would tell an unauthenticated peer which ids exist.
       const ch = getChannel(channelId);
-      if (!ch) return deps.refuse(conn, "deny", "channel", { subId });
-      if (!ch.keyOk(key)) {
-        return deps.sendError(conn, "bad-message", "malformed channel key", { subId });
-      }
+      if (!ch || !ch.keyOk(key)) return deps.refuse(conn, "deny", "channel", { subId });
       const sub: ChannelSub = { channelId, key, authExpires: 0 };
       const decision = await authorizeSub(conn, sub);
       if (decision !== "allow") return deps.refuse(conn, decision, "channel", { subId });
@@ -237,6 +252,12 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
     unsubscribe: remove,
     drop(conn) {
       for (const subId of [...conn.channelSubs.keys()]) remove(conn, subId);
+    },
+    dispose() {
+      if (flushTimer !== null) clearTimeout(flushTimer);
+      flushTimer = null;
+      pendingEvents.clear();
+      index.clear();
     },
     deliver(ev) {
       if (ev.kind === "revoke") return revokeAll(ev);

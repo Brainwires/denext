@@ -147,9 +147,9 @@ export type {
 
 /** Options for {@linkcode openapi}. */
 export interface OpenApiOptions {
-  /** Where the document is served (default `/openapi.json`; prefixed with `basePath`). */
+  /** Where the document is served (default `/openapi.json`, app-relative: `basePath` is already stripped). */
   path?: string;
-  /** Where the docs page is served (default `/docs`); `false` disables it. */
+  /** Where the docs page is served (default `/docs`, app-relative); `false` disables it. */
   docs?: string | false;
   /**
    * The docs renderer: `builtin` (server-rendered, no JavaScript, strict-CSP clean — the
@@ -189,9 +189,11 @@ export function openapi(options: OpenApiOptions = {}): DenextPlugin {
   return {
     name: "@denext/openapi",
     setup(ctx: PluginContext) {
+      // The pipeline strips `basePath` before the plugin seam: match app-relative paths, but
+      // DESCRIBE the public ones (the document's paths carry the prefix a client must send).
       const basePath = (ctx.config.basePath ?? "").replace(/\/$/, "");
-      const specPath = basePath + (options.path ?? "/openapi.json");
-      const docsPath = options.docs === false ? null : basePath + (options.docs ?? "/docs");
+      const specPath = options.path ?? "/openapi.json";
+      const docsPath = options.docs === false ? null : options.docs ?? "/docs";
       const ui = options.ui ?? "builtin";
       const build = specBuilder(ctx, options, basePath);
 
@@ -204,12 +206,12 @@ export function openapi(options: OpenApiOptions = {}): DenextPlugin {
         if (url.pathname === specPath) return specResponse(request, await build());
         if (url.pathname === docsPath) {
           const html = renderDocsHtml((await build()).document, {
-            specUrl: specPath,
+            specUrl: basePath + specPath,
             ui,
             cdn: options.cdn,
-            styleUrl: ui === "builtin" ? docsPath + ".css" : undefined,
+            styleUrl: ui === "builtin" ? basePath + docsPath + ".css" : undefined,
           });
-          return new Response(html, {
+          return new Response(request.method === "HEAD" ? null : html, {
             headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" },
           });
         }
@@ -276,21 +278,35 @@ function specBuilder(
   };
 }
 
+/** The serialized document + its ETag, computed once per build result (a WeakMap: no leak). */
+const serialized = new WeakMap<OpenApiBuild, Promise<{ body: string; etag: string }>>();
+
+function serialize(result: OpenApiBuild): Promise<{ body: string; etag: string }> {
+  let p = serialized.get(result);
+  if (!p) {
+    p = (async () => {
+      const body = JSON.stringify(result.document, null, 2) + "\n";
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body));
+      const hex = [...new Uint8Array(digest).slice(0, 12)]
+        .map((b) => b.toString(16).padStart(2, "0")).join("");
+      return { body, etag: `"${hex}"` };
+    })();
+    serialized.set(result, p);
+  }
+  return p;
+}
+
 async function specResponse(request: Request, result: OpenApiBuild): Promise<Response> {
-  const body = JSON.stringify(result.document, null, 2) + "\n";
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body));
-  const etag = `"${
-    [...new Uint8Array(digest).slice(0, 12)].map((b) => b.toString(16).padStart(2, "0")).join("")
-  }"`;
+  const { body, etag } = await serialize(result);
+  const headers = {
+    "cache-control": "no-cache",
+    etag,
+    "x-denext-openapi-warnings": String(result.warnings.length),
+  };
   if (request.headers.get("if-none-match") === etag) {
-    return new Response(null, { status: 304, headers: { etag } });
+    return new Response(null, { status: 304, headers });
   }
   return new Response(request.method === "HEAD" ? null : body, {
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-cache",
-      etag,
-      "x-denext-openapi-warnings": String(result.warnings.length),
-    },
+    headers: { ...headers, "content-type": "application/json; charset=utf-8" },
   });
 }

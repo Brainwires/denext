@@ -11,6 +11,7 @@ import { makeDom } from "./helpers/dom.ts";
 import { setApiInvalidationSource, useApi } from "../src/client/use-api.ts";
 import { type ApiClient, ApiClientError, type ApiSchema } from "../src/runtime/api-client.ts";
 import { setAdoptedSignalState } from "../src/runtime/signal-state.ts";
+import { stableKey } from "../src/runtime/wire-codec.ts";
 import { Suspense } from "../src/runtime/suspense.ts";
 
 type Any = any;
@@ -160,6 +161,9 @@ Deno.test("useApi: suspense mode adopts the SSR-recorded value and never refetch
     const at = (data as unknown as { at: Date }).at;
     return h("span", null, at instanceof Date ? "date" : String(data));
   }
+  // The seed is keyed to its CALL (`k`): a hook at the same position asking for a different
+  // route/params must not adopt it (the second test below).
+  const k = stableKey(["/api/when", "GET", undefined, undefined, undefined]);
   const recorded: Record<string, unknown> = {};
   const proxy = new Proxy(recorded, {
     has: () => true,
@@ -167,7 +171,7 @@ Deno.test("useApi: suspense mode adopts the SSR-recorded value and never refetch
       _t,
       id,
     ) => (typeof id === "string"
-      ? { v: { at: { $: "D", v: "1970-01-01T00:00:00.000Z" } }, enc: 1 }
+      ? { v: { at: { $: "D", v: "1970-01-01T00:00:00.000Z" } }, enc: 1, k }
       : undefined),
     getOwnPropertyDescriptor: () => ({ configurable: true, enumerable: true, value: undefined }),
   });
@@ -178,6 +182,44 @@ Deno.test("useApi: suspense mode adopts the SSR-recorded value and never refetch
     );
     assertEquals(container.textContent, "date", "hydrated from the recorded value (decoded)");
     assertEquals(calls.length, 0, "no refetch on hydration");
+    root.unmount();
+  } finally {
+    setAdoptedSignalState(null);
+  }
+});
+
+Deno.test("useApi: suspense mode ignores an SSR seed recorded for a DIFFERENT call (same position)", async () => {
+  const { client, calls, pending } = stubClient();
+  function App() {
+    const { data } = useApi(
+      "/api/other" as never,
+      "GET" as never,
+      { params: { id: "2" } } as never,
+      {
+        client,
+        suspense: true,
+      },
+    );
+    return h("span", null, String(data));
+  }
+  // Recorded under every id, but for `/api/when` — the position matches, the call does not.
+  const k = stableKey(["/api/when", "GET", undefined, undefined, undefined]);
+  const proxy = new Proxy({}, {
+    has: () => true,
+    get: (_t, id) => (typeof id === "string" ? { v: "stale", k } : undefined),
+    getOwnPropertyDescriptor: () => ({ configurable: true, enumerable: true, value: undefined }),
+  });
+  setAdoptedSignalState(proxy as Any);
+  try {
+    const { root, container } = mount(
+      h(Suspense, { fallback: h("span", null, "fallback"), children: h(App, null) }),
+    );
+    assertEquals(container.textContent, "fallback", "not adopted: the hook fetches instead");
+    assertEquals(calls.length, 1);
+    pending[0].resolve("fresh");
+    await tick();
+    flushSync();
+    assertEquals(container.textContent, "fresh");
     root.unmount();
   } finally {
     setAdoptedSignalState(null);

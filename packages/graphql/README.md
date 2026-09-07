@@ -11,10 +11,11 @@ no separate WebSocket server), writes the schema SDL at build, and adds a
 import { graphql } from "@denext/graphql";
 import { schema } from "./app/graphql/schema.ts";
 
-export default { plugins: [graphql({ schema })] };
+export default { plugins: [graphql({ schema, context: ({ signal }) => ({ signal }) })] };
 ```
 
-Any `GraphQLSchema` works. [Pothos](https://pothos-graphql.dev) (code-first, fully typed,
+(`context` hands your resolvers the request's abort signal, which a subscription uses to end
+on disconnect.) Any `GraphQLSchema` works. [Pothos](https://pothos-graphql.dev) (code-first, fully typed,
 **no decorators**) is the recommended builder; `createSchema` (re-exported from Yoga)
 covers SDL + resolvers.
 
@@ -43,7 +44,7 @@ plugin's code runs on the server only.
 import SchemaBuilder from "@pothos/core";
 import { fromChannel } from "@denext/graphql";
 import { auth } from "@denext/denext/server";
-import { messages } from "./channels.ts"; // createChannel<{ text: string }>({ authorize })
+import { messages } from "./channels.ts"; // "use server" module: createChannel<{ text: string }>({ authorize })
 
 const builder = new SchemaBuilder<{ Context: { signal: AbortSignal } }>({});
 
@@ -53,7 +54,7 @@ const Message = builder.objectRef<{ text: string }>("Message").implement({
 
 builder.queryType({
   fields: (t) => ({
-    viewer: t.string({ nullable: true, resolve: async () => (await auth())?.userId ?? null }),
+    viewer: t.string({ nullable: true, resolve: async () => (await auth())?.user.id ?? null }),
   }),
 });
 
@@ -126,12 +127,33 @@ file into the output directory.
 
 ## Security notes
 
-- Yoga's defaults apply: errors are masked in production (`maskedErrors`), mutations over
-  `GET` are refused, and a `POST` needs a JSON content type a plain `<form>` cannot send.
-- Gate GraphiQL yourself if you enable it in production (`graphiql: true`); it is off there
-  by default.
-- The endpoint runs inside denext's pipeline, so `middleware.ts`, rate limiting and the
-  request body cap that apply to the rest of the app apply here too.
+- **Same-origin by default.** Every non-`GET` request must carry the same-origin proof denext
+  applies to Server Actions and the typed-API batch (`verifyOrigin`: an `Origin`/`Referer`
+  matching the host, or one in `allowedOrigins`); a cross-site `<form>` or fetch gets a 403
+  before Yoga parses it. `requireSameOrigin: false` turns this off — only for a public,
+  cookie-free API, because resolvers run in the viewer's session.
+- **CORS is off** unless you set `yoga.cors` (Yoga's own default would reflect any `Origin`
+  with credentials).
+- **Bodies are capped** at `maxBodyBytes` (default 1 MiB, like a route handler) → 413.
+- **Introspection is off in production** (`introspection: true` to allow); GraphiQL is dev-only
+  unless `graphiql: true` — gate it yourself then.
+- Yoga's defaults apply on top: errors are masked in production, mutations over `GET` are
+  refused.
+- The endpoint runs inside denext's pipeline, so `middleware.ts` applies to it. What does
+  **not**: `defineApi`'s `rateLimit` middleware and the route-handler body cap are route
+  features — rate-limit GraphQL in `middleware.ts` or with a Yoga plugin (query depth /
+  complexity limits are also a Yoga-plugin concern).
+
+## Package surface
+
+- `@denext/graphql` — `graphql()`, `fromChannel`, `createSchema` (from Yoga), `schemaSdl`,
+  `diffSdl`, `createGraphqlCommand`.
+- `@denext/graphql/subscriptions` — `fromChannel` alone (for a schema module that should not
+  import the plugin).
+- `@denext/graphql/command` — the CLI verb builder.
+
+Requires the denext that ships `tapChannel` in `@denext/denext/plugin-kit` (the release after
+2.1.0-rc.1).
 
 ## License
 

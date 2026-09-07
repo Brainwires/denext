@@ -46,7 +46,10 @@ export interface UseApiOptions {
   tags?: string[];
   /** Suspend (`use()`) instead of returning `pending`; SSR runs the call in-process. */
   suspense?: boolean;
-  /** `false` skips fetching (the result stays idle). Default true. */
+  /**
+   * `false` skips fetching: the result stays idle, which reads as `pending: true` with no
+   * data — gate rendering on your own `enabled` condition, not on `pending`. Default true.
+   */
   enabled?: boolean;
   /** The client to call through (default: a shared `createApiClient()`). */
   client?: ApiClient<ApiSchema>;
@@ -94,6 +97,10 @@ interface Entry {
   refs: number;
   listeners: Set<() => void>;
   snapshot: Snapshot | null;
+  /** The store key (so a fetch that settles after the last hook unmounted can drop the entry). */
+  key: string;
+  /** Set when the last hook unmounted while a fetch was in flight. */
+  orphan: boolean;
 }
 
 interface Snapshot {
@@ -135,6 +142,8 @@ function entryFor(store: Map<string, Entry>, key: string): Entry {
       refs: 0,
       listeners: new Set(),
       snapshot: null,
+      key,
+      orphan: false,
     };
     store.set(key, e);
   }
@@ -152,18 +161,28 @@ function startFetch(e: Entry, run: () => Promise<unknown>): Promise<unknown> {
   if (e.status === "pending" && e.promise) return e.promise;
   e.status = "pending";
   e.snapshot = null;
-  const p = run().then(
+  // Only the LATEST fetch may settle the entry: an `invalidate()` that raced an in-flight
+  // request must not be overwritten by the older (stale) response landing later.
+  const settle = (apply: () => void) => {
+    if (e.promise !== p) return;
+    apply();
+    bump(e);
+    if (e.orphan && e.refs <= 0) storeFor().delete(e.key);
+  };
+  const p: Promise<unknown> = run().then(
     (value) => {
-      e.status = "fulfilled";
-      e.value = value;
-      e.error = undefined;
-      bump(e);
+      settle(() => {
+        e.status = "fulfilled";
+        e.value = value;
+        e.error = undefined;
+      });
       return value;
     },
     (err: unknown) => {
-      e.status = "rejected";
-      e.error = isApiClientError(err) ? err : wrapUnknown(err);
-      bump(e);
+      settle(() => {
+        e.status = "rejected";
+        e.error = isApiClientError(err) ? err : wrapUnknown(err);
+      });
       throw err;
     },
   );
@@ -243,9 +262,12 @@ export function useApi<
   // Ref count: the entry lives while a hook is mounted on it (or a fetch is in flight).
   useEffect(() => {
     entry.refs++;
+    entry.orphan = false;
     return () => {
       entry.refs--;
-      if (entry.refs <= 0 && entry.status !== "pending") store.delete(key);
+      if (entry.refs > 0) return;
+      if (entry.status !== "pending") store.delete(key);
+      else entry.orphan = true; // dropped when the in-flight fetch settles
     };
   }, [entry]);
 
@@ -277,6 +299,7 @@ export function useApi<
   const refetch = () => start().then(() => {}, () => {});
   const invalidate = () => {
     entry.status = "idle";
+    entry.promise = null; // an in-flight response may no longer settle the entry
     if (entry.refs > 0) void start();
   };
 
@@ -299,6 +322,7 @@ export function useApi<
  */
 function suspend(entry: Entry, id: string, start: () => Promise<unknown>): unknown {
   if (entry.status === "idle" && !adoptSeed(entry, id)) void start();
+  if (entry.status === "idle") return use(entry.promise!);
   if (entry.status === "fulfilled") {
     if (isServer()) recordForClient(entry, id);
     return entry.value;
@@ -307,20 +331,25 @@ function suspend(entry: Entry, id: string, start: () => Promise<unknown>): unkno
   return use(entry.promise!);
 }
 
-/** Client first render: adopt the value the server recorded under `id`, if any. */
+/**
+ * Client first render: adopt the value the server recorded under `id` — but only for the SAME
+ * call. `useId()` is position-derived, so after a param change (state, a soft navigation) the
+ * same id would otherwise hand a new entry the previous call's data, and never fetch.
+ */
 function adoptSeed(entry: Entry, id: string): boolean {
   if (isServer()) return false;
   const seeded = adoptedSignal(id);
   if (!seeded) return false;
-  const boxed = seeded.value as { v: unknown; enc?: 1 } | null;
+  const boxed = seeded.value as { v: unknown; enc?: 1; k?: string } | null;
+  if (!boxed || boxed.k !== entry.key) return false;
   entry.status = "fulfilled";
-  entry.value = boxed?.enc === 1 ? decodeWire(boxed.v) : boxed?.v;
+  entry.value = boxed.enc === 1 ? decodeWire(boxed.v) : boxed.v;
   entry.snapshot = null;
   return true;
 }
 
-/** Server: record the fulfilled value under `id` (codec-encoded when needed) for hydration. */
+/** Server: record the fulfilled value under `id` (codec-encoded when needed), keyed to its call. */
 function recordForClient(entry: Entry, id: string): void {
   const p = prepareWire(entry.value);
-  recordSignal(id, p.tagged ? { v: p.value, enc: 1 } : { v: p.value });
+  recordSignal(id, p.tagged ? { v: p.value, enc: 1, k: entry.key } : { v: p.value, k: entry.key });
 }

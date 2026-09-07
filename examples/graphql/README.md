@@ -6,18 +6,18 @@ publishes to `createChannel`, and both the GraphQL `subscription { messages }` (
 page's `useChannel` (Live socket) receive it.
 
 ```sh
-deno task dev          # http://localhost:8000 — GraphiQL at /graphql
+deno task dev          # http://localhost:3000 — GraphiQL at /graphql
 ```
 
 ```sh
 # subscribe (GraphQL over SSE) in one terminal…
-curl -N localhost:8000/graphql -H 'accept: text/event-stream' -H 'content-type: application/json' \
+curl -N localhost:3000/graphql -H 'accept: text/event-stream' -H 'content-type: application/json' \
   -d '{"query":"subscription { messages(room: \"lobby\") { text at } }"}'
 # …and post from another
-curl -s localhost:8000/graphql -H 'content-type: application/json' \
+curl -s localhost:3000/graphql -H 'content-type: application/json' \
   -d '{"query":"mutation { post(room: \"lobby\", text: \"hello\") { text } }"}'
 ```
 
-`denext graphql sdl` prints the schema; `denext build` writes `.denext/schema.graphql`.
+`deno run -A ../../cli.ts graphql sdl .` prints the schema (`denext graphql sdl` with the CLI installed); `deno task build` writes `.denext/schema.graphql`.
 Yoga, `graphql` and Pothos are npm packages the example opts into (`deno.json` imports) —
 denext's own runtime stays zero-npm.

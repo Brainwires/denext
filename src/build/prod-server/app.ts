@@ -142,6 +142,7 @@ export async function createProdApp(
     hsts: paths.config?.hsts,
     publicEnvKeys: info.publicEnvKeys,
     apiBatch: paths.config?.apiBatch,
+    apiMaxBodyBytes: paths.config?.apiMaxBodyBytes,
   });
   if (flightRoutes.size > 0) {
     installLiveHub({ appHandler, originAllowed: sameOrigin, config: resolveLive(paths.config) });

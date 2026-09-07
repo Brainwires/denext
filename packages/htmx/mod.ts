@@ -99,7 +99,8 @@ export { HTMX_RUNTIME_PATH, HTMX_VERSION } from "./constants.ts";
 export interface HtmxOptions {
   /**
    * Override the URL the runtime is served from. Defaults to
-   * {@linkcode HTMX_RUNTIME_PATH} (prefixed with the project's `basePath`).
+   * {@linkcode HTMX_RUNTIME_PATH}. App-relative: the pipeline strips the project's
+   * `basePath` before a plugin sees a request (the browser-facing `<Htmx/>` `src` keeps it).
    */
   path?: string;
 }
@@ -127,8 +128,9 @@ export function htmx(options: HtmxOptions = {}): DenextPlugin {
   return {
     name: "@denext/htmx",
     setup(ctx: PluginContext) {
-      const basePath = ctx.config.basePath ?? "";
-      const servePath = basePath + (options.path ?? HTMX_RUNTIME_PATH);
+      // The pipeline strips `basePath` before the plugin seam: match the app-relative path.
+      // (`<Htmx/>`'s `src` is what the BROWSER requests, so it does carry the prefix.)
+      const servePath = options.path ?? HTMX_RUNTIME_PATH;
       const etag = `"htmx-${HTMX_VERSION}"`;
 
       // Serve the runtime in dev and prod (the core router never matches

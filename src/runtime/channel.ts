@@ -5,7 +5,7 @@
 //   "use server";
 //   export const orderEvents = createChannel<{ status: string }>({
 //     schema: z.object({ status: z.string() }),
-//     authorize: async (ctx, key) => (await getSession(ctx))?.userId === key.split(":")[1],
+//     authorize: async (_ctx, key) => (await auth())?.user.id === key.split(":")[1],
 //   });
 //   // anywhere: an action, a webhook, a cron, after()
 //   await orderEvents.publish(`user:${userId}`, { status: "shipped" });
@@ -132,6 +132,17 @@ const INSTANCE = crypto.randomUUID();
 
 const channels = new Map<string, ChannelInternals>();
 const seqs = new Map<string, number>();
+/** Cap on remembered (channel, key) sequence counters (each is one short string + number). */
+const MAX_SEQ_KEYS = 10_000;
+
+/** Deliver one event to one subscriber; a throwing consumer is logged, never propagated. */
+function deliverTo(fn: (ev: ChannelEvent) => void, ev: ChannelEvent): void {
+  try {
+    fn(ev);
+  } catch (err) {
+    console.error("denext channels: a subscriber threw", err);
+  }
+}
 let payloadCap = 16 * 1024;
 let transport: ChannelTransport = inMemoryChannelTransport();
 
@@ -140,6 +151,7 @@ let transport: ChannelTransport = inMemoryChannelTransport();
  *
  * @param config Schema, key shape, the REQUIRED `authorize`, and the re-auth TTL.
  * @returns The channel (`publish` / `revoke` on the server; an opaque id in the browser).
+ * @throws TypeError when `authorize` is not a function.
  */
 export function createChannel<T>(config: ChannelConfig<T>): Channel<T> {
   if (typeof config.authorize !== "function") {
@@ -272,6 +284,9 @@ async function publish<T>(
   }
   const seqKey = `${ch.id} ${key}`;
   const seq = (seqs.get(seqKey) ?? 0) + 1;
+  // Bounded: a hot key keeps its counter (re-inserted at the tail); the oldest cold key goes.
+  seqs.delete(seqKey);
+  if (seqs.size >= MAX_SEQ_KEYS) seqs.delete(seqs.keys().next().value!);
   seqs.set(seqKey, seq);
   const ev: ChannelEvent = {
     kind: "publish",
@@ -312,7 +327,7 @@ export function inMemoryChannelTransport(): ChannelTransport {
   const subs = new Set<(ev: ChannelEvent) => void>();
   return {
     publish(ev) {
-      for (const fn of subs) fn(ev);
+      for (const fn of subs) deliverTo(fn, ev);
     },
     subscribe(fn) {
       subs.add(fn);
@@ -369,6 +384,7 @@ export interface ChannelTapHandlers<T> {
  * @param key The key to observe (exact match).
  * @param handlers Payload and revoke callbacks.
  * @returns A disposer that stops the tap.
+ * @throws Error when the channel has no id yet (not exported from a `"use server"` module, no `id`).
  */
 export function tapChannel<T>(
   channel: Channel<T> | string,
@@ -391,8 +407,14 @@ export function tapChannel<T>(
         return;
       }
       if (ev.encoded === undefined) return;
-      const parsed = JSON.parse(ev.encoded);
-      handlers.onPayload((ev.enc ? decodeWire(parsed) : parsed) as T, ev.seq);
+      // A malformed event or a throwing consumer is logged and dropped — never propagated
+      // into the transport (which would starve later subscribers and reject the publisher).
+      try {
+        const parsed = JSON.parse(ev.encoded);
+        handlers.onPayload((ev.enc ? decodeWire(parsed) : parsed) as T, ev.seq);
+      } catch (err) {
+        console.error(`denext channels: tap on ${id}/${key} failed`, err);
+      }
     });
   };
   const { current, stop } = watchChannelTransport(bind);

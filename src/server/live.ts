@@ -263,6 +263,7 @@ export function sanitizeLimits(overrides?: LiveLimits): Required<LiveLimits> {
 export function uninstallLiveHub(): void {
   setLiveInvalidateHook(null);
   unbindChannelTransport();
+  channelHub.dispose();
   appHandler = null;
   policy = {};
   limits = DEFAULT_LIMITS;
@@ -551,31 +552,41 @@ function handleClientMessage(conn: Conn, raw: string): void {
     case "subscribe":
       return handleSubscribe(conn, msg);
     case "data-subscribe":
-      void handleDataSubscribe(conn, msg);
+      guarded(handleDataSubscribe(conn, msg));
       return;
     case "data-unsubscribe":
       if (typeof msg.subId === "string") conn.dataSubs.delete(msg.subId);
       return;
     case "tags-subscribe":
-      void handleTagsSubscribe(conn, msg);
+      guarded(handleTagsSubscribe(conn, msg));
       return;
     case "tags-unsubscribe":
       if (typeof msg.subId === "string") conn.tagSubs.delete(msg.subId);
       return;
     case "channel-subscribe":
-      void channelHub.subscribe(conn, msg);
+      guarded(channelHub.subscribe(conn, msg));
       return;
     case "channel-unsubscribe":
       if (typeof msg.subId === "string") channelHub.unsubscribe(conn, msg.subId);
       return;
     case "presence-join":
     case "presence-update":
-      void handlePresence(conn, msg);
+      guarded(handlePresence(conn, msg));
       return;
     case "presence-leave":
       return handlePresenceLeave(conn, msg);
       // "pong" needs no action; the client answering keeps the connection live.
   }
+}
+
+/**
+ * Run an async message handler detached from the socket callback, but never unobserved: a
+ * rejection here would be an unhandled promise rejection, and the prod server installs no
+ * global handler — one bad frame would take the whole process (and every connection) down.
+ * The handlers validate before they trust, so a throw is a bug or a hostile frame; log and drop.
+ */
+function guarded(p: Promise<void>): void {
+  p.catch((err) => console.error("denext live: message handler failed", err));
 }
 
 /**
@@ -623,13 +634,20 @@ async function handleDataSubscribe(
     sendError(conn, "limit", "too many subscriptions", { subId });
     return;
   }
-  const args = decodeSubscribeArgs(msg);
-  if (args === null || depthOf(args, 0) > MAX_INPUT_DEPTH) {
+  // Gate the RAW (still plain-JSON) args before decoding: a decoded value may hold a BigInt,
+  // which `JSON.stringify` cannot serialize (and decoding never adds depth — a tag collapses).
+  const raw = Array.isArray(msg.args) ? msg.args : [];
+  if (depthOf(raw, 0) > MAX_INPUT_DEPTH) {
     sendError(conn, "bad-message", "malformed subscription args", { subId });
     return;
   }
-  if (utf8Bytes(JSON.stringify(args) ?? "") > limits.maxSubscriptionInputBytes) {
+  if (utf8Bytes(JSON.stringify(raw) ?? "") > limits.maxSubscriptionInputBytes) {
     sendError(conn, "limit", "subscription input too large", { subId });
+    return;
+  }
+  const args = decodeSubscribeArgs(msg);
+  if (args === null) {
+    sendError(conn, "bad-message", "malformed subscription args", { subId });
     return;
   }
   const sub = await buildDataSub(conn, subId, msg.actionId, args, msg.tags);
@@ -1151,6 +1169,7 @@ let stopWatchingTransport: (() => void) | null = null;
 
 /** Subscribe the hub to the channel transport (and follow transport swaps). */
 function bindChannelTransport(): void {
+  unbindChannelTransport(); // a re-install must not leak the previous watcher
   const bind = (t: ChannelTransport): void => {
     stopChannelTransport?.();
     stopChannelTransport = t.subscribe((ev) => channelHub.deliver(ev));

@@ -187,17 +187,16 @@ Deno.test("htmx plugin passes through unrelated requests", async () => {
   }
 });
 
-Deno.test("htmx plugin respects basePath", async () => {
+Deno.test("htmx plugin matches the app-relative path under a basePath (the pipeline strips it)", async () => {
   resetPlugins();
   try {
     await applyHtmx({ basePath: "/app" });
     const handle = getPluginRequestHandler()!;
-    assertEquals(
-      await handle(new Request(`https://x${HTMX_RUNTIME_PATH}`)),
-      null,
-    );
-    const res = await handle(new Request(`https://x/app${HTMX_RUNTIME_PATH}`));
+    // The browser requests `/app/_denext/htmx/…`; the pipeline hands the plugin seam the
+    // stripped, app-relative path — so that is what the handler must match.
+    const res = await handle(new Request(`https://x${HTMX_RUNTIME_PATH}`));
     assertEquals(res!.status, 200);
+    assertEquals(await handle(new Request(`https://x/app${HTMX_RUNTIME_PATH}`)), null);
   } finally {
     resetPlugins();
   }

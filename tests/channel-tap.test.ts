@@ -59,3 +59,27 @@ Deno.test("tapChannel: a channel without an id is refused with a guided error", 
     "the channel has no id",
   );
 });
+
+Deno.test("tapChannel: a throwing consumer is logged, later subscribers still get the event, publish resolves", async () => {
+  setChannelTransport(inMemoryChannelTransport());
+  const ch = createChannel<number>({ id: "tap:throws", authorize: () => true });
+  const got: number[] = [];
+  const stopBad = tapChannel(ch, "k", {
+    onPayload: () => {
+      throw new Error("consumer bug");
+    },
+  });
+  const stopGood = tapChannel(ch, "k", { onPayload: (p) => got.push(p) });
+  const logged: unknown[] = [];
+  const orig = console.error;
+  console.error = (...a: unknown[]) => logged.push(a);
+  try {
+    await ch.publish("k", 1); // does not reject
+  } finally {
+    console.error = orig;
+  }
+  assertEquals(got, [1], "the healthy subscriber still received the event");
+  assertEquals(logged.length, 1, "the throw was logged once");
+  stopBad();
+  stopGood();
+});

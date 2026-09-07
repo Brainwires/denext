@@ -6,7 +6,7 @@
 //   export const orderStatus = defineSubscription({
 //     input: z.object({ id: z.string() }),
 //     tags: ({ id }) => [`order:${id}`],                 // server-derived; the client's tags are ignored
-//     authorize: async ({ id }) => (await auth())?.userId === (await db.orders.owner(id)),
+//     authorize: async ({ id }) => (await auth())?.user.id === (await db.orders.owner(id)),
 //     resolve: ({ id }) => db.orders.status(id),          // Out inferred
 //   });
 //
@@ -54,7 +54,11 @@ export interface SubscriptionContext {
 export interface SubscriptionConfig<In, Out> {
   /** An explicit stable id; otherwise the export must live in a `"use server"` module. */
   id?: string;
-  /** Validates the client-supplied input (required unless `In` is `void`). */
+  /**
+   * Validates the client-supplied input. Strongly recommended whenever `In` is not `void`:
+   * without a schema the raw client value reaches `tags`, `authorize` and `resolve`
+   * unvalidated (not enforced at runtime — the type system cannot see it).
+   */
   input?: StandardSchemaV1<In>;
   /** Static tags, or tags derived from the parsed input (`({ id }) => ["order:" + id]`). */
   tags?: readonly string[] | ((input: In) => readonly string[]);
@@ -104,6 +108,9 @@ export function defineSubscription<Out, In = void>(
   if (config.id) {
     registerServerReference(config.id, oneShot);
     registerSubscription(config.id, def);
+    // `registerServerReference` tags a wrapper it returns; the ref handed out here is
+    // `oneShot` itself, so tag it too — `useSubscription` subscribes by this id.
+    Object.defineProperty(oneShot, "denextActionId", { value: config.id, configurable: true });
   }
   return oneShot as unknown as SubscriptionRef<In, Out>;
 }

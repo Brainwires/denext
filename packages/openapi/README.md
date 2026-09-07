@@ -48,7 +48,10 @@ export const POST = defineApi({
 
 - `params` → path parameters (typed from the schema's properties; `[...rest]` is one
   `/`-joined parameter), `query` → one query parameter per property.
-- Any declared schema adds the `400` validation response. Every error response uses the
+- A declared `params`, `query` or `body` schema adds the `400` validation response (a
+  `body` also adds `bad_request` for a malformed one); every operation gets a `default`
+  response for what the definition cannot name (middleware 401/429, 413, a redacted 500).
+  Every error response uses the
   shared `ApiError` envelope schema (`components.schemas.ApiError`) with the status's
   codes as an enum, so a generated client can narrow on `error.code`.
 - A plain handler (no `defineApi`) is still listed by path and method, with a lint
@@ -113,7 +116,7 @@ const { document, warnings } = await buildOpenApi({
 
 | Option         | Default           | What                                                                      |
 | -------------- | ----------------- | ------------------------------------------------------------------------- |
-| `path`         | `/openapi.json`   | Where the document is served (prefixed with `basePath`)                   |
+| `path`         | `/openapi.json`   | Where the document is served (app-relative; `basePath` is stripped first) |
 | `docs`         | `/docs`           | Where the docs page is served; `false` disables it                        |
 | `ui`           | `"builtin"`       | `builtin` \| `scalar` \| `swagger`                                        |
 | `cdn`          | per renderer      | Scalar script URL / Swagger dist base URL                                 |
@@ -122,8 +125,23 @@ const { document, warnings } = await buildOpenApi({
 | `toJsonSchema` | —                 | `(schema, "input" \| "output") => JsonSchema \| undefined`                |
 | `include`      | every API route   | `(route) => boolean`                                                      |
 | `tags`         | segment after api | `(route) => string[]`                                                     |
-| `authorize`    | open              | `(request) => boolean` — `false` hides the endpoints behind the app's 404 |
+| `authorize`    | open              | `(request) => boolean \| Promise<boolean>`; `false` → the app's own 404   |
 | `outFile`      | `openapi.json`    | The build-output file; `false` skips the build step                       |
+
+## Endpoint details
+
+- `GET`/`HEAD /openapi.json`: the document, pretty-printed, with an `ETag` (304 on
+  `If-None-Match`), `cache-control: no-cache`, and an `x-denext-openapi-warnings: N` header
+  (the lint count).
+- `GET /docs` (builtin renderer): the page plus its stylesheet at `<docs>.css`, served
+  same-origin (`max-age=3600`).
+- Operations carry `x-denext-max-body-bytes` when the definition sets `maxBodyBytes`.
+- Lint codes: `opaque-schema`, `undescribed-route`, `missing-summary`, `catch-all-path`,
+  `load-failed`, `path-collision`.
+- Subpaths: `@denext/openapi/spec` (`buildOpenApi`, `diffSpecs`, `toJsonSchema`,
+  `pathVariants`, `API_ERROR_SCHEMA`), `@denext/openapi/command` (`createOpenapiCommand`,
+  `formatWarning`); the root also exports `renderDocsHtml`, `renderSchema`, `DOCS_CSS`,
+  `DOCS_CDN`.
 
 ## Security notes
 
@@ -131,7 +149,9 @@ const { document, warnings } = await buildOpenApi({
   public information — a refused request falls through to the app's ordinary 404, so
   there is no "forbidden" oracle.
 - The builtin renderer escapes everything it prints and contains no script.
-- The plugin reads `apiDefinitionOf` metadata only; it never executes a handler.
+- The plugin reads `apiDefinitionOf` metadata only; it never executes a handler. It does
+  LOAD every route module (`import`), so module top-level code runs — a route that opens a
+  database connection at module scope opens it in `denext openapi emit` too.
 
 ## License
 

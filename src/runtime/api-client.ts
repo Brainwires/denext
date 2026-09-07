@@ -119,7 +119,7 @@ export interface ApiClient<S extends ApiSchema> {
 export interface ApiRequestOptions {
   /** Values for the route pattern's dynamic segments (a catch-all takes a `string[]`). */
   params?: Record<string, string | string[]>;
-  /** A JSON request body (serialized with `JSON.stringify`). */
+  /** A JSON request body (serialized through the wire codec (Date/Map/Set/BigInt/undefined survive; the request carries `x-denext-wire: 1` only when a tag was needed). A function, a symbol, or nesting past 64 levels throws a `TypeError` before any request is made). */
   body?: unknown;
   /** Query-string params appended to the URL (arrays repeat the key; other values stringify). */
   query?: Record<string, unknown>;
@@ -173,9 +173,19 @@ function resolveSignal(
   return caller ? AbortSignal.any([caller, timeout]) : timeout;
 }
 
-/** Encode one param value; a catch-all is a `string[]` (or a `/`-joined string) of segments. */
-function encodeParam(value: string | string[]): string {
+/**
+ * Encode one param value. A dynamic `[x]` is ONE segment: encoded whole, so a `/` (or `..`)
+ * in the value can never reach a different route. A catch-all `[...x]` is a `string[]` (or a
+ * `/`-joined string) of segments; an empty, `.` or `..` segment is refused for the same reason.
+ */
+function encodeParam(value: string | string[], catchAll: boolean): string {
+  if (!catchAll) return encodeURIComponent(Array.isArray(value) ? value.join("/") : value);
   const segments = Array.isArray(value) ? value : value.split("/");
+  for (const seg of segments) {
+    if (seg === "" || seg === "." || seg === "..") {
+      throw new Error(`denext api client: invalid catch-all segment ${JSON.stringify(seg)}`);
+    }
+  }
   return segments.map(encodeURIComponent).join("/");
 }
 
@@ -198,17 +208,25 @@ function queryString(query: Record<string, unknown> | undefined): string {
  * @param params Values for the pattern's dynamic segments.
  * @param query Extra query-string params.
  * @returns The concrete request path (relative; prefix with a base to make it absolute).
+ * @throws Error when a required param is missing, or a catch-all segment is empty, `.` or `..`.
  */
 export function buildPath(
   pattern: string,
   params?: Record<string, string | string[]>,
   query?: Record<string, unknown>,
 ): string {
-  const path = pattern.replace(/\[\[?\.{0,3}([^\]]+)\]?\]/g, (_m, name: string) => {
-    const value = params?.[name];
-    if (value == null) throw new Error(`denext api client: missing param "${name}" for ${pattern}`);
-    return encodeParam(value);
-  });
+  const path = pattern.replace(
+    /\/?\[(\[)?(\.{3})?([^\]]+?)\]?\]/g,
+    (m, optional: string | undefined, dots: string | undefined, name: string) => {
+      const value = params?.[name];
+      const slash = m.startsWith("/") ? "/" : "";
+      if (value == null) {
+        if (optional) return ""; // `[[...x]]` may be absent
+        throw new Error(`denext api client: missing param "${name}" for ${pattern}`);
+      }
+      return slash + encodeParam(value, dots !== undefined);
+    },
+  ) || "/";
   const qs = queryString(query);
   return qs ? `${path}?${qs}` : path;
 }
@@ -321,13 +339,24 @@ async function readErrorEnvelope(res: Response): Promise<ApiErrorEnvelope | unde
   }
 }
 
-/** Parse a successful response: JSON (codec-decoded when flagged), or undefined for no body. */
-async function readResult(res: Response): Promise<unknown> {
+/**
+ * Parse a successful response: JSON (codec-decoded when flagged), or `undefined` for no body.
+ * A 2xx with a NON-JSON body is an error, not a silent `undefined` typed as the response — the
+ * route did not answer what the schema says it does (a rewrite to an HTML page, a proxy).
+ */
+async function readResult(method: HttpMethod, url: string, res: Response): Promise<unknown> {
   if (res.status === 204 || res.headers.get("content-length") === "0") return undefined;
   const ct = res.headers.get("content-type") ?? "";
   if (!ct.includes("application/json")) {
-    await res.body?.cancel();
-    return undefined;
+    const text = await res.text();
+    if (text.length === 0) return undefined;
+    throw new ApiClientError(method, url, res, {
+      error: {
+        code: "http_error",
+        status: res.status,
+        message: `expected a JSON response, got ${ct || "no content-type"}`,
+      },
+    });
   }
   const parsed = await res.json();
   return res.headers.get(WIRE_HEADER) === "1" ? decodeWire(parsed) : parsed;
@@ -397,7 +426,7 @@ function serverDispatch(
 /** Turn a response into the call's result, or throw the typed error (shared with batching). */
 async function settle(method: HttpMethod, url: string, res: Response): Promise<unknown> {
   if (!res.ok) throw new ApiClientError(method, url, res, await readErrorEnvelope(res));
-  return await readResult(res);
+  return await readResult(method, url, res);
 }
 
 // ── Batching ─────────────────────────────────────────────────────────────────

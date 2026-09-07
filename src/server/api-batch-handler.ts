@@ -48,7 +48,23 @@ const DEFAULTS = {
   maxBodyBytes: 1024 * 1024,
   concurrency: 4,
   maxItemResponseBytes: 4 * 1024 * 1024,
+  maxTotalResponseBytes: 16 * 1024 * 1024,
 } as const;
+
+type BatchCaps = { -readonly [K in keyof typeof DEFAULTS]: number };
+
+/**
+ * The effective caps: a key the config leaves `undefined` keeps its default (no object spread —
+ * an explicit `undefined` in the config must not lift a cap).
+ */
+function batchCaps(config: ApiBatchConfig | undefined): BatchCaps {
+  const caps: BatchCaps = { ...DEFAULTS };
+  for (const key of Object.keys(DEFAULTS) as (keyof BatchCaps)[]) {
+    const v = config?.[key];
+    if (typeof v === "number" && Number.isFinite(v) && v >= 1) caps[key] = v;
+  }
+  return caps;
+}
 
 /** Is this the batch POST? (A batch item can never be one: the marker refuses it later.) */
 export function isApiBatchRequest(request: Request, pathname: string): boolean {
@@ -75,7 +91,7 @@ export async function handleApiBatch(
   runSub: SubRequestRunner,
 ): Promise<Response> {
   const { config } = state.app;
-  const cfg = { ...DEFAULTS, ...config.apiBatch };
+  const cfg = batchCaps(config.apiBatch);
   const { request } = state;
   if (config.apiBatch?.enabled === false) return finalize(state, batchError(404, "not found"));
   if (request.headers.get(BATCH_ITEM_HEADER)) {
@@ -158,15 +174,17 @@ function resolveItem(raw: unknown, origin: string, seen: Set<number>): ResolvedI
 async function runItems(
   state: RequestState,
   items: ResolvedItem[],
-  cfg: Required<Omit<ApiBatchConfig, "enabled">>,
+  cfg: BatchCaps,
   runSub: SubRequestRunner,
 ): Promise<BatchResult[]> {
   const acquire = createGate(cfg.concurrency, items.length, "api batch overloaded");
+  // One budget for the whole batch: N items × the per-item cap must not be N× the memory.
+  const budget = { left: cfg.maxTotalResponseBytes };
   return await Promise.all(items.map(async (item) => {
     let release: (() => void) | null = null;
     try {
       release = await acquire();
-      return await runItem(state, item, cfg.maxItemResponseBytes, runSub);
+      return await runItem(state, item, cfg.maxItemResponseBytes, budget, runSub);
     } catch (err) {
       return itemFailure(state, item, err);
     } finally {
@@ -180,6 +198,7 @@ async function runItem(
   state: RequestState,
   item: ResolvedItem,
   maxBytes: number,
+  budget: { left: number },
   runSub: SubRequestRunner,
 ): Promise<BatchResult> {
   const request = synthesizeSubRequest({
@@ -191,13 +210,13 @@ async function runItem(
   });
   const res = await runSub(request, state.ctx);
   for (const sc of res.headers.getSetCookie()) state.ctx.outgoingHeaders.append("set-cookie", sc);
-  const declared = Number(res.headers.get("content-length") ?? "0");
-  if (declared > maxBytes) {
-    await res.body?.cancel();
-    return { id: item.id, s: 500, t: "response too large" };
-  }
-  const text = await res.text();
-  if (text.length > maxBytes) return { id: item.id, s: 500, t: "response too large" };
+  const cap = Math.min(maxBytes, Math.max(0, budget.left));
+  const text = await readResponseText(res, cap);
+  if (text === null) return { id: item.id, s: 500, t: "response too large" };
+  // Items run concurrently: charge the shared budget on completion and let it decide — the
+  // item that overdraws it is the one that is too large, whichever finished first.
+  budget.left -= new TextEncoder().encode(text).byteLength;
+  if (budget.left < 0) return { id: item.id, s: 500, t: "response too large" };
   const h: Record<string, string> = {};
   for (const name of BATCH_RESULT_HEADERS) {
     const v = res.headers.get(name);
@@ -207,6 +226,38 @@ async function runItem(
   if (text.length > 0) result.t = text;
   if (res.headers.get("x-denext-wire") === "1") result.enc = 1;
   return result;
+}
+
+/**
+ * Read a response body under `maxBytes`, STREAMING — the cap is enforced as chunks arrive, so a
+ * chunked (no content-length) or endless body never sits in memory past the cap. `null` = over.
+ */
+async function readResponseText(res: Response, maxBytes: number): Promise<string | null> {
+  const declared = Number(res.headers.get("content-length") ?? "0");
+  if (declared > maxBytes || !res.body) {
+    await res.body?.cancel();
+    return declared > maxBytes ? null : "";
+  }
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    bytes.set(c, offset);
+    offset += c.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
 }
 
 /** An item that threw: an abort fails the whole batch; overload is a 503 item; else a 500 item. */

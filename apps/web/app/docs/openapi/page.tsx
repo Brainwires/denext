@@ -54,8 +54,13 @@ export default {
           from the schema.
         </li>
         <li>
-          Any declared schema adds the <code>400</code>{" "}
-          validation response. Every error response uses the shared <code>ApiError</code>{" "}
+          A declared <code>params</code>, <code>query</code> or <code>body</code> schema adds the
+          {" "}
+          <code>400</code> validation response (a <code>body</code> also adds{" "}
+          <code>bad_request</code> for a malformed one); every operation gets a <code>default</code>
+          {" "}
+          envelope response for what the definition cannot name. Every error response uses the
+          shared <code>ApiError</code>{" "}
           envelope schema (<code>components.schemas.ApiError</code>) with that status's codes as an
           enum, so a generated client can narrow on <code>error.code</code> exactly like{" "}
           <code>ApiClientError</code> does.
@@ -79,6 +84,11 @@ export default {
       </p>
       <ul>
         <li>
+          Your converter, when given:{" "}
+          <code>openapi({"{ toJsonSchema: (schema, side) => … }"})</code>{" "}
+          — consulted before everything below.
+        </li>
+        <li>
           <strong>Zod ≥ 4.2, ArkType ≥ 2.1.28</strong> implement it directly;{" "}
           <strong>Valibot</strong> via <code>toStandardJsonSchema</code> from{" "}
           <code>@valibot/to-json-schema</code>.
@@ -88,10 +98,6 @@ export default {
         </li>
         <li>
           A <code>toJsonSchema()</code> method on the schema (older ArkType).
-        </li>
-        <li>
-          Your converter: <code>openapi({"{ toJsonSchema: (schema, side) => … }"})</code>{" "}
-          — consulted first.
         </li>
       </ul>
       <p>

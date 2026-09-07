@@ -623,7 +623,10 @@ function recordInvalidation(kind: "tag" | "path", value: string): void {
 
 function invalidate(kind: "tag" | "path", value: string): Promise<void> {
   recordInvalidation(kind, value);
+  // In-process ("use cache") results carry tags, not paths: a path invalidation cannot pick
+  // them out, so it drops them all — a cheap, always-correct over-purge.
   if (kind === "tag") purgeLiveByTag(value);
+  else liveResults.clear();
   const raw = kind === "tag"
     ? currentCacheStore.deleteByTag(value)
     : currentCacheStore.deleteByPath(value);

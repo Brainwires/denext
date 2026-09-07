@@ -147,7 +147,7 @@ async function stepOpenApi(ctx: Ctx): Promise<void> {
     required: ["title"],
     additionalProperties: false,
   });
-  assertEquals(Object.keys(create.responses), ["200", "400", "409"]);
+  assertEquals(Object.keys(create.responses), ["200", "400", "409", "default"]);
   assertEquals(doc.paths["/api/todos"].get.parameters, [{
     name: "done",
     in: "query",

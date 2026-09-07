@@ -2,7 +2,7 @@
 // metadata and the hydration bootstrap script.
 
 import { abortedPromise } from "../runtime/abort-promise.ts";
-import { escapeHtml } from "../jsx/render-to-string.ts";
+import { escapeHtml, isValidAttrName } from "../jsx/render-to-string.ts";
 import type {
   IconDescriptor,
   Metadata,
@@ -299,6 +299,8 @@ function documentAttrString(attrs: Record<string, unknown> | undefined, skip: st
     if (skip.includes(name) || value === null || value === undefined || value === false) continue;
     const attr = name === "className" ? "class" : name;
     if (attr === "children" || attr === "style" || attr === "dangerouslySetInnerHTML") continue;
+    // The same name chokepoint every other element gets (no `on*`, no `<>"'=/` in a name).
+    if (!isValidAttrName(attr)) continue;
     out += value === true ? ` ${attr}` : ` ${attr}="${escapeHtml(String(value))}"`;
   }
   return out;

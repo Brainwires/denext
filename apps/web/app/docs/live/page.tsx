@@ -40,7 +40,7 @@ export default function LiveComponents() {
       </p>
       <Code lang="tsx">
         {`import { Live } from "denext/live";
-import { cacheTag, unstable_cache } from "denext/server";
+import { unstable_cache } from "denext/server";
 
 const getOrders = unstable_cache(
   async () => db.orders.recent(),
@@ -243,7 +243,7 @@ import { defineSubscription } from "denext/server";
 export const orderStatus = defineSubscription({
   input: z.object({ id: z.string() }),
   tags: ({ id }) => [\`order:\${id}\`],
-  authorize: async ({ id }) => (await auth())?.userId === (await db.orders.owner(id)),
+  authorize: async ({ id }) => (await auth())?.user.id === (await db.orders.owner(id)),
   resolve: ({ id }) => db.orders.status(id),
 });
 
@@ -265,7 +265,7 @@ const { data, error, status } = useSubscription(orderStatus, { id }, { initial }
 import { createChannel } from "denext/server";
 export const orderEvents = createChannel<{ status: string }>({
   schema: z.object({ status: z.string() }),                              // validated at the publisher
-  authorize: async (ctx, key) => key === \`user:\${(await getSession())?.data.userId}\`, // required
+  authorize: async (_ctx, key) => key === \`user:\${(await auth())?.user.id}\`, // required
 });
 await orderEvents.publish(\`user:\${userId}\`, { status: "shipped" });
 

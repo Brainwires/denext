@@ -296,6 +296,9 @@ function validateSecurity(config: DenextConfig, fail: Fail): void {
   validateCsp(config.csp, fail);
   validateHsts(config.hsts, fail);
   validateApiBatch(config.apiBatch, fail);
+  if (config.apiMaxBodyBytes !== undefined) {
+    num(fail, "apiMaxBodyBytes", config.apiMaxBodyBytes, { int: true, min: 1 });
+  }
 }
 
 /** `apiBatch` caps are finite whole numbers in sane ranges; `enabled` is a boolean. */
@@ -318,6 +321,12 @@ function validateApiBatch(apiBatch: DenextConfig["apiBatch"], fail: Fail): void 
   }
   if (apiBatch.maxItemResponseBytes !== undefined) {
     num(fail, "apiBatch.maxItemResponseBytes", apiBatch.maxItemResponseBytes, {
+      int: true,
+      min: 1,
+    });
+  }
+  if (apiBatch.maxTotalResponseBytes !== undefined) {
+    num(fail, "apiBatch.maxTotalResponseBytes", apiBatch.maxTotalResponseBytes, {
       int: true,
       min: 1,
     });

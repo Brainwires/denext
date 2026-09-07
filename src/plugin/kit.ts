@@ -66,6 +66,8 @@ export type { I18nConfig, RouteParams, Segment } from "../server/mod.ts";
 export { revalidatePath, revalidateTag } from "../server/mod.ts";
 // Bounded request-body reading (size cap + idle timeout), the same guard Server Actions use.
 export { cappedBody, readCappedBody, STALLED, TOO_LARGE } from "../server/mod.ts";
+// Re-wrap a request around the bytes `readCappedBody` produced (keeps method/headers/remote addr).
+export { bufferedRequest } from "../server/body.ts";
 // Route-handler introspection: the definition (schemas, error codes, summary) a `defineApi`
 // endpoint declares — what an OpenAPI / docs plugin walks to describe an app's API.
 export { apiDefinitionOf } from "../server/mod.ts";
@@ -75,6 +77,11 @@ export type { ApiDefinition, ApiRouteMeta } from "../server/mod.ts";
 // second event bus and follows the app's `ChannelTransport` across instances.
 export { tapChannel } from "../server/mod.ts";
 export type { Channel, ChannelTapHandlers } from "../server/mod.ts";
+// The same-origin proof every state-changing denext RPC applies (Server Actions, the typed-API
+// batch). A plugin that mounts its own POST endpoint (GraphQL, webhooks, RPC) must apply it —
+// a cross-site `<form>` reaches a plugin handler with the victim's cookies otherwise.
+export { verifyOrigin } from "../server/origin-check.ts";
+export type { OriginCheckOptions } from "../server/origin-check.ts";
 // Signed-token primitives (HMAC-SHA256 + base64url) for a plugin's own cookies — pass a
 // plugin-specific `domain` so its tokens can never verify as denext's session cookie.
 export { fromBase64Url, hmacSign, hmacVerify, toBase64Url } from "../server/session.ts";

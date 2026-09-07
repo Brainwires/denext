@@ -206,6 +206,18 @@ three documented bounds of the opt-in:
 - **The production Live handshake requires a browser `Origin` header.** A non-browser
   client (Deno's stable `WebSocket`, `curl`) cannot subscribe to the production hub;
   that is the same-origin check working as intended.
+- **`@denext/openapi` describes what a validator can export.** A schema with no JSON
+  Schema (no Standard JSON Schema, not TypeBox, no `toJsonSchema()`, no converter) is
+  emitted as `{}` with an `opaque-schema` lint warning. Middleware-produced responses
+  (`requireSession` 401, `rateLimit` 429) appear only as the operation's `default`
+  response — a definition cannot name them. The `scalar` / `swagger` renderers load a
+  pinned bundle from a CDN (not strict-CSP clean; self-host via `cdn`); the `builtin`
+  renderer is.
+- **`@denext/graphql` subscriptions are GraphQL over SSE**, not a WebSocket — every
+  GraphQL client supports it, and it is what lets them ride denext channels without a
+  second socket server. `fromChannel` bypasses the channel's socket-side `authorize`
+  (gate in the resolver). The schema resolves once per process: in `denext dev`, an
+  edit to a schema module needs a server restart (Deno's module graph caches it).
 
 ## DevTools (dev-only)
 

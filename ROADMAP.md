@@ -9,9 +9,10 @@
 > `development` is **2.1.0-rc.1** (the version line `deno task bump` rewrites).
 > 2.0 — the DX release (unified CLI, universal migration, scaffolding/codegen, an
 > instant dev loop, first-party DevTools, end-to-end typed routes and actions) —
-> shipped from it. **2.1 is the next engineering cycle**: a typed,
-> self-documenting API surface, the last build-time purity items, and the
-> ecosystem router plugins. Everything below targets 2.1 unless marked otherwise.
+> shipped from it. **2.1 is the next engineering cycle.** Its keystone — the typed,
+> self-documenting API surface (`defineApi`, the typed client, `@denext/openapi`,
+> `@denext/graphql`) — has shipped; what remains is the last build-time purity items
+> and the ecosystem router plugins. Everything below targets 2.1 unless marked otherwise.
 > This roadmap is rewritten for the following cycle when 2.1 ships.
 
 ---
@@ -50,8 +51,9 @@ Fast-Refresh, `PageCache`). `@denext/pages-router` dogfoods it and
   streaming SSR) via `plugin-kit` — no core change needed.
 - **`@denext/tanstack-router`** — same two depths (library mode → SPA today;
   TanStack Start-style SSR → `plugin-kit`).
-- A missing primitive goes into `plugin-kit` (WS3 rule), never the private
-  surface.
+- A missing primitive goes into `plugin-kit` (the plugin-kit rule: a deliberate,
+  tested semver addition — as `apiDefinitionOf`, `tapChannel` and `verifyOrigin`
+  were), never the private surface.
 
 ## Upstream watch — `deno bundle --define` (unblocks native-path DCE)
 
@@ -76,23 +78,15 @@ the esbuild/next-compat path; on native builds optional runtime always ships.
 - **Nothing blocks on this** — the bundle wins already shipped; it only raises the
   ceiling for native-path opt-outs.
 
-## Open questions (2.1)
-
-- **Validator baseline.** Ship TypeBox as the blessed default (JSON-Schema-native,
-  so spec emission is near-free) but accept any Standard-Schema validator? Or stay
-  validator-agnostic from day one, as `defineAction` is?
-- **Docs UI vendor.** Swagger UI (familiar) vs Scalar (lighter, nicer default) —
-  and whether the UI assets ship vendored (zero-npm, offline) or are fetched at
-  build.
-
 ## Guardrails (standing)
 
 - **Zero-npm runtime is sacred** — never reintroduce an npm dependency into a
   shipped bundle (CI-enforced by the `no-npm-compat-guard` test). Build-time-only
   WASM/JSR tools are fine. OpenAPI/GraphQL libraries are **opt-in server-side**
   deps resolved through the merged-config re-exec (`src/build/module-config.ts`),
-  the ORM-support precedent; prefer JSR / zero-dep options where they exist — a
-  first-party zero-dep OpenAPI emitter is a stretch goal, not a gate.
+  the ORM-support precedent; prefer JSR / zero-dep options where they exist
+  (`@denext/openapi` is zero-dep; `@denext/graphql` is a declared npm bridge like
+  `@denext/effect`).
 - **Never claim 100% React/Next parity** — compat is the on-ramp, never the
   headline. Do not market the typed API surface as "NestJS on Deno" either.
 - **No decorator-metadata transpile stage.** A proposal for
