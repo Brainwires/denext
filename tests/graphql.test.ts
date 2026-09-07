@@ -36,13 +36,17 @@ let attached = Promise.withResolvers<void>();
 
 const schema = createSchema<{ viewer?: string }>({
   typeDefs: `
-    type Query { hello: String!, viewer: String }
+    type Query { hello: String!, viewer: String, self: Query }
     type Mutation { post(room: String!, text: String!): Boolean! }
     type Message { text: String! }
     type Subscription { messages(room: String!): Message! }
   `,
   resolvers: {
-    Query: { hello: () => "world", viewer: (_r, _a, ctx) => ctx.viewer ?? null },
+    Query: {
+      hello: () => "world",
+      viewer: (_r, _a, ctx) => ctx.viewer ?? null,
+      self: () => ({}),
+    },
     Mutation: {
       post: async (_r, { room, text }: { room: string; text: string }) => {
         await events.publish(room, { text });
@@ -218,6 +222,54 @@ Deno.test("graphql plugin: CORS is off by default (no reflected credentialed Ori
     assertEquals(preflight!.headers.get("access-control-allow-credentials"), null);
     const big = await handle(post("https://x/graphql", "{ hello }", { pad: "x".repeat(512) }));
     assertEquals(big!.status, 413);
+  } finally {
+    resetPlugins();
+  }
+});
+
+Deno.test("graphql plugin: rejects a query nested past the depth cap; the cap is configurable and disable-able", async () => {
+  const nested = "{ self { self { hello } } }"; // depth 2 nesting (the DoS shape)
+  try {
+    const shallow = await setup({ maxDepth: 1 });
+    const res = await shallow(post("https://x/graphql", nested));
+    const body = await res!.json();
+    assertEquals(body.data, undefined);
+    assertStringIncludes(JSON.stringify(body.errors), "nested too deeply");
+    const ok = await (await shallow(post("https://x/graphql", "{ self { hello } }")))!.json();
+    assertEquals(ok.data.self.hello, "world", "a query within the cap still runs");
+  } finally {
+    resetPlugins();
+  }
+  try {
+    const off = await setup({ maxDepth: false });
+    const res = await off(post("https://x/graphql", nested));
+    assertEquals((await res!.json()).errors, undefined, "disabled → no depth check");
+  } finally {
+    resetPlugins();
+  }
+  try {
+    // Default cap (12) admits an ordinary query.
+    const def = await setup();
+    assertEquals((await def(post("https://x/graphql", nested)))!.status, 200);
+  } finally {
+    resetPlugins();
+  }
+});
+
+Deno.test("graphql plugin: with introspection off, a misspelled field gets no schema-reconstructing suggestion", async () => {
+  try {
+    const prod = await setup(); // introspection off in prod
+    const res = await prod(post("https://x/graphql", "{ helo }"));
+    const text = JSON.stringify(await res!.json());
+    assertStringIncludes(text, "Cannot query field");
+    assertEquals(text.includes("Did you mean"), false, 'no `Did you mean "hello"?` leak');
+  } finally {
+    resetPlugins();
+  }
+  try {
+    const dev = await setup({}, {}, "dev"); // dev keeps suggestions (introspection on)
+    const res = await dev(post("https://x/graphql", "{ helo }"));
+    assertStringIncludes(JSON.stringify(await res!.json()), "Did you mean");
   } finally {
     resetPlugins();
   }

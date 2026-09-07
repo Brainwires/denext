@@ -30,7 +30,15 @@ import {
   verifyOrigin,
 } from "@denext/denext/plugin-kit";
 import { join } from "@std/path";
-import type { FieldNode, GraphQLSchema, IntrospectionQuery, ValidationContext } from "graphql";
+import type {
+  FieldNode,
+  FragmentDefinitionNode,
+  GraphQLSchema,
+  IntrospectionQuery,
+  OperationDefinitionNode,
+  SelectionSetNode,
+  ValidationContext,
+} from "graphql";
 import { getIntrospectionQuery } from "graphql";
 import {
   createGraphQLError,
@@ -156,6 +164,13 @@ export interface GraphqlOptions {
   /** Max request body in bytes (default 1 MiB, like a route handler; over → 413). */
   maxBodyBytes?: number;
   /**
+   * Reject a query nested deeper than this many selection levels — a cheap guard against the
+   * DoS where a small deeply-nested query over a cyclic type relation exhausts CPU/memory
+   * (the body cap allows thousands of levels). Default 12; `false` disables it. Raise it for a
+   * schema with legitimately deep trees.
+   */
+  maxDepth?: number | false;
+  /**
    * Require the same-origin proof denext applies to every state-changing RPC (Server Actions,
    * the typed-API batch) on non-GET requests: a cross-site `<form>` or fetch is refused with
    * 403 before Yoga parses it. Default `true`. Turn off only for a public, cookie-free API —
@@ -194,13 +209,15 @@ export function graphql(options: GraphqlOptions): DenextPlugin {
       const maxBodyBytes = options.maxBodyBytes ?? 1024 * 1024;
       const sameOrigin = options.requireSameOrigin ?? true;
       const originOptions = { allowedOrigins: options.allowedOrigins };
+      const maxDepth = options.maxDepth ?? 12;
       const getSchema = once(() => Promise.resolve(resolveSchema(options.schema)));
       const getYoga = once(async () =>
         createYoga({
           cors: false, // never reflect an arbitrary Origin with credentials; opt in via `yoga.cors`
           ...options.yoga,
           plugins: [
-            ...(introspection ? [] : [disableIntrospection()]),
+            ...(maxDepth === false ? [] : [limitDepth(maxDepth)]),
+            ...(introspection ? [] : [disableIntrospection(), blockFieldSuggestions()]),
             ...(options.yoga?.plugins ?? []),
           ],
           schema: await getSchema(),
@@ -317,6 +334,74 @@ function disableIntrospection(): NonNullable<YogaPassthrough["plugins"]>[number]
   return {
     onValidate({ addValidationRule }: { addValidationRule: (rule: unknown) => void }) {
       addValidationRule(rule);
+    },
+  } as NonNullable<YogaPassthrough["plugins"]>[number];
+}
+
+/**
+ * A Yoga (envelop) plugin that rejects a query whose selection nesting exceeds `max`. Counts
+ * depth over the AST (fields, inline fragments, and named fragments followed through the
+ * document) — no value import from `graphql`, so it introduces no second realm.
+ */
+function limitDepth(max: number): NonNullable<YogaPassthrough["plugins"]>[number] {
+  const rule = (context: ValidationContext) => {
+    const fragments = new Map<string, FragmentDefinitionNode>();
+    for (const def of context.getDocument().definitions) {
+      if (def.kind === "FragmentDefinition") fragments.set(def.name.value, def);
+    }
+    let reported = false;
+    const walk = (selectionSet: SelectionSetNode | undefined, depth: number): void => {
+      if (!selectionSet || reported) return;
+      if (depth > max) {
+        reported = true;
+        context.reportError(
+          createGraphQLError(`Query is nested too deeply (max depth ${max})`, {
+            nodes: [selectionSet],
+          }),
+        );
+        return;
+      }
+      for (const sel of selectionSet.selections) {
+        if (sel.kind === "Field") walk(sel.selectionSet, depth + 1);
+        else if (sel.kind === "InlineFragment") walk(sel.selectionSet, depth);
+        else walk(fragments.get(sel.name.value)?.selectionSet, depth);
+      }
+    };
+    return {
+      OperationDefinition(node: OperationDefinitionNode) {
+        walk(node.selectionSet, 0);
+      },
+    };
+  };
+  return {
+    onValidate({ addValidationRule }: { addValidationRule: (rule: unknown) => void }) {
+      addValidationRule(rule);
+    },
+  } as NonNullable<YogaPassthrough["plugins"]>[number];
+}
+
+/**
+ * Strip graphql's "Did you mean …?" field suggestions from validation errors — with
+ * introspection off, they otherwise let a caller reconstruct the schema field by field.
+ */
+function blockFieldSuggestions(): NonNullable<YogaPassthrough["plugins"]>[number] {
+  const strip = (message: string): string =>
+    message.replace(/ ?Did you mean[^?]*\?/g, "").replace(/ ?Did you mean .*$/g, "");
+  return {
+    // envelop's `onValidate` returns an AFTER hook (a function), not an object.
+    onValidate() {
+      return ({ valid, result, setResult }: {
+        valid: boolean;
+        result: readonly { message: string }[];
+        setResult: (errors: unknown[]) => void;
+      }) => {
+        if (valid) return;
+        setResult(
+          result.map((e) =>
+            e.message.includes("Did you mean") ? createGraphQLError(strip(e.message)) : e
+          ),
+        );
+      };
     },
   } as NonNullable<YogaPassthrough["plugins"]>[number];
 }

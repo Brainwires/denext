@@ -83,6 +83,13 @@ and this project adheres to
 
 Findings of the post-2.0.5 audit (security + production-readiness + docs; all fixed here):
 
+- **`@denext/graphql` caps query depth and hides field suggestions.** A small deeply-nested
+  query over a cyclic type relation could exhaust CPU/memory (the 1 MiB body cap allows
+  thousands of levels); a default depth limit (`maxDepth`, 12; `false` to disable) rejects it at
+  validation via an AST rule, and with introspection off the "Did you mean …?" suggestions that
+  reconstruct the schema are stripped. Both are prepended like the introspection-disable rule,
+  with no value import of `graphql`. (A query cost/complexity budget is a stable-2.1.0 follow-up.)
+
 - **A single unauthenticated Live frame could crash the server.** `data-subscribe` args
   decoded by the wire codec may hold a BigInt; the input-size probe ran `JSON.stringify` on the
   DECODED value, outside any try, inside a `void`-called async handler — an unhandled rejection
