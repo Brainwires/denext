@@ -65,10 +65,11 @@ the esbuild/next-compat path; on native builds optional runtime always ships.
   release. Deno issue
   [#35347](https://github.com/denoland/deno/issues/35347) is closed as
   completed (2026-06-19) and awaits a release — a _when_, not an _if_.
-- **What it unblocks** (profiled on the ~52 KB shared runtime): the class
+- **What it unblocks** (profiled on the ~52 KB shared runtime): strip the class
   runtime (~3.1 KB) and the inert-in-prod devtools bridge (~2.2 KB) — ~5 KB raw /
-  ~2 KB gz — plus a **correctness gap**: `classComponents: false` is documented to
-  remove the class runtime but is a silent no-op on the native path today.
+  ~2 KB gz — from native builds that don't use them. A size win only (the
+  next-compat path already DCEs them; `--define` extends the same `classComponents`
+  gate to native), not a bug fix.
 - **Action when it lands.** Add a `denoBundleSupportsDefine()` capability probe
   (extend `probeBundleSupport` in `src/build/bundle.ts`) and pass
   `--define __FLAG__=…`, **reusing the esbuild `classDefine()` map verbatim**
