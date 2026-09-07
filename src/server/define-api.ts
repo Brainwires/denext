@@ -56,6 +56,14 @@ export interface ApiDefinition {
   summary?: string;
   /** Longer description (for generated docs / OpenAPI). */
   description?: string;
+  /**
+   * The OpenAPI security requirement(s) for this endpoint — `[{ bearerAuth: [] }]` to require a
+   * declared scheme, `[]` to mark it explicitly public. Doc-only metadata (like {@link summary}):
+   * `@denext/openapi` reads it to render the lock / "Authorize" button, but it does NOT enforce
+   * anything — apply middleware (`createApi().use(requireSession())`) to actually reject requests.
+   * Takes precedence over the plugin's document-level `security`. See `@denext/openapi`.
+   */
+  security?: Record<string, string[]>[];
   /** Validates the route's dynamic params (`{ id: "7" }`). */
   params?: StandardSchemaV1;
   /** Validates the query string as a record (repeated keys become arrays). */

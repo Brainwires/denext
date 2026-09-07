@@ -90,6 +90,47 @@ openapi({ ui: "scalar", cdn: "/vendor/scalar.js" }); // self-hosted
 Those load from a CDN by default — allow that host in your `csp`, or self-host the
 bundle and point `cdn` at it.
 
+## Authorization (the "Authorize" button)
+
+Declare your schemes once with `securitySchemes`, then say which scheme each operation
+needs. Swagger UI (and Scalar) render an **Authorize** button from the schemes, so a token
+is entered once and sent with every request.
+
+```ts
+// denext.config.ts
+openapi({
+  securitySchemes: { bearerAuth: { type: "http", scheme: "bearer" } },
+});
+```
+
+**Per endpoint (recommended)** — put `security` on the definition, so operations on the
+same path can differ (a public `GET`, a protected `POST`):
+
+```ts
+export const GET = defineApi({ summary: "List", security: [] }, list); //  public
+export const POST = authed.define(
+  { summary: "Create", security: [{ bearerAuth: [] }] }, // requires bearerAuth
+  create,
+);
+```
+
+**Or a document-wide default** — pass `security` to the plugin as an array (applies to
+every operation) or a `(route) => …` function (per route); any per-endpoint `security`
+overrides it:
+
+```ts
+openapi({
+  securitySchemes: { bearerAuth: { type: "http", scheme: "bearer" } },
+  security: (route) => route.routePath === "/api/login" ? [] : [{ bearerAuth: [] }],
+});
+```
+
+`security` is **documentation only** — it draws the lock and tells Swagger which header to
+send. It does **not** enforce anything: apply middleware
+(`createApi().use(requireSession())`, or your own bearer check) to actually reject requests.
+Keep the two in sync, as `examples/openapi` does (`authed.define` enforces; `security`
+documents). Precedence: per-endpoint `security` → document-level `security` → none.
+
 ## CI
 
 ```sh
@@ -114,20 +155,22 @@ const { document, warnings } = await buildOpenApi({
 
 ## Options
 
-| Option         | Default           | What                                                                      |
-| -------------- | ----------------- | ------------------------------------------------------------------------- |
-| `path`         | `/openapi.json`   | Where the document is served (app-relative; `basePath` is stripped first) |
-| `docs`         | `/docs`           | Where the docs page is served; `false` disables it                        |
-| `expose`       | `"always"`        | `"always"` serves in every mode; `"dev"` serves only under `denext dev`   |
-| `ui`           | `"builtin"`       | `builtin` \| `scalar` \| `swagger`                                        |
-| `cdn`          | per renderer      | Scalar script URL / Swagger dist base URL                                 |
-| `info`         | dir name, `0.0.0` | `title`, `version`, `description`                                         |
-| `servers`      | —                 | `servers` entries                                                         |
-| `toJsonSchema` | —                 | `(schema, "input" \| "output") => JsonSchema \| undefined`                |
-| `include`      | every API route   | `(route) => boolean`                                                      |
-| `tags`         | segment after api | `(route) => string[]`                                                     |
-| `authorize`    | open              | `(request) => boolean \| Promise<boolean>`; `false` → the app's own 404   |
-| `outFile`      | `openapi.json`    | The build-output file; `false` skips the build step                       |
+| Option            | Default           | What                                                                      |
+| ----------------- | ----------------- | ------------------------------------------------------------------------- |
+| `path`            | `/openapi.json`   | Where the document is served (app-relative; `basePath` is stripped first) |
+| `docs`            | `/docs`           | Where the docs page is served; `false` disables it                        |
+| `expose`          | `"always"`        | `"always"` serves in every mode; `"dev"` serves only under `denext dev`   |
+| `ui`              | `"builtin"`       | `builtin` \| `scalar` \| `swagger`                                        |
+| `cdn`             | per renderer      | Scalar script URL / Swagger dist base URL                                 |
+| `info`            | dir name, `0.0.0` | `title`, `version`, `description`                                         |
+| `servers`         | —                 | `servers` entries                                                         |
+| `securitySchemes` | —                 | `Record<string, SecurityScheme>` → `components.securitySchemes`           |
+| `security`        | —                 | `SecurityRequirement[]` (doc default) or `(route) => …` (per route)       |
+| `toJsonSchema`    | —                 | `(schema, "input" \| "output") => JsonSchema \| undefined`                |
+| `include`         | every API route   | `(route) => boolean`                                                      |
+| `tags`            | segment after api | `(route) => string[]`                                                     |
+| `authorize`       | open              | `(request) => boolean \| Promise<boolean>`; `false` → the app's own 404   |
+| `outFile`         | `openapi.json`    | The build-output file; `false` skips the build step                       |
 
 ## Endpoint details
 

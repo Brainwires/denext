@@ -34,8 +34,10 @@ import {
   buildOpenApi,
   type OpenApiBuild,
   type OpenApiInfo,
+  type OpenApiSecurityScheme,
   type OpenApiServer,
   type SchemaConverter,
+  type SecurityRequirement,
 } from "./spec.ts";
 
 export { API_ERROR_SCHEMA, buildOpenApi, diffSpecs, pathVariants, toJsonSchema } from "./spec.ts";
@@ -46,6 +48,7 @@ export type {
   OpenApiDocument,
   OpenApiInfo,
   OpenApiOperation,
+  OpenApiSecurityScheme,
   OpenApiServer,
   OpenApiWarning,
   OpenApiWarningCode,
@@ -54,6 +57,7 @@ export type {
   SchemaConverter,
   SchemaSide,
   SchemaSource,
+  SecurityRequirement,
   SpecChange,
 } from "./spec.ts";
 export { DOCS_CDN, DOCS_CSS, renderDocsHtml, renderSchema } from "./docs-ui.ts";
@@ -168,6 +172,21 @@ export interface OpenApiOptions {
   include?: (route: ApiRoute) => boolean;
   /** Tag an operation (default: the first path segment after `/api`). */
   tags?: (route: ApiRoute) => string[];
+  /**
+   * Security schemes the document advertises (→ `components.securitySchemes`). Swagger UI and
+   * Scalar render an "Authorize" button from these, so a token is entered once and sent with
+   * each request. E.g. `{ bearerAuth: { type: "http", scheme: "bearer" } }`.
+   */
+  securitySchemes?: Record<string, OpenApiSecurityScheme>;
+  /**
+   * Which scheme(s) an operation requires. An **array** is a document-wide default; a
+   * **function** is applied per route — return `[{ bearerAuth: [] }]` to require it, `[]` for a
+   * public route (e.g. `/api/login`), or `undefined` to leave it at the document default. This
+   * is DOCUMENTATION only — enforce the token with route middleware (`createApi().use(...)`).
+   */
+  security?:
+    | SecurityRequirement[]
+    | ((route: ApiRoute) => SecurityRequirement[] | undefined);
   /**
    * When the live endpoints are served. `"always"` (default) serves `/openapi.json` and
    * `/docs` in every mode — the zero-config default, since a document describing your own API
@@ -303,6 +322,8 @@ function specBuilder(
       toJsonSchema: options.toJsonSchema,
       include: options.include,
       tags: options.tags,
+      securitySchemes: options.securitySchemes,
+      security: options.security,
     });
     cached = { manifest: m, result };
     return result;

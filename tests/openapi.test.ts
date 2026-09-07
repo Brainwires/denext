@@ -264,6 +264,62 @@ Deno.test("buildOpenApi: operations, parameters, body, responses, error enums, e
   assertEquals(warnings[1].part, "body");
 });
 
+Deno.test("buildOpenApi: security schemes + per-operation and document-wide security", async () => {
+  const bearer = { bearerAuth: { type: "http", scheme: "bearer" } };
+
+  // Function form: applied per route — public for one path, required elsewhere.
+  const fn = await buildOpenApi({
+    manifest,
+    load,
+    securitySchemes: bearer,
+    security: (route) => route.routePath === "/api/todos" ? [] : [{ bearerAuth: [] }],
+  });
+  assertEquals(fn.document.components.securitySchemes, bearer);
+  assertEquals(fn.document.security, undefined, "the function form sets no document default");
+  assertEquals(fn.document.paths["/api/todos"].get.security, [], "public route → no auth");
+  assertEquals(
+    fn.document.paths["/api/todos/{id}"].patch.security,
+    [{ bearerAuth: [] }],
+    "other routes require the scheme",
+  );
+
+  // Array form: a document-wide default, no per-operation security.
+  const arr = await buildOpenApi({
+    manifest,
+    load,
+    securitySchemes: bearer,
+    security: [{ bearerAuth: [] }],
+  });
+  assertEquals(arr.document.security, [{ bearerAuth: [] }]);
+  assertEquals(arr.document.paths["/api/todos"].get.security, undefined);
+
+  // Omitted: no security anywhere (the default).
+  const none = await buildOpenApi({ manifest, load });
+  assertEquals(none.document.components.securitySchemes, undefined);
+  assertEquals(none.document.security, undefined);
+  assertEquals(none.document.paths["/api/todos"].get.security, undefined);
+});
+
+Deno.test("buildOpenApi: a per-endpoint `security` on the definition overrides the resolver", async () => {
+  const bearer = { bearerAuth: { type: "http", scheme: "bearer" } };
+  const secured = { api: [route("/api/mixed")] };
+  // Two operations on ONE path: a public GET and a protected POST, decided per endpoint.
+  const load2 = () =>
+    Promise.resolve({
+      GET: defineApi({ summary: "read", security: [] }, () => ({})),
+      POST: defineApi({ summary: "write", security: [{ bearerAuth: [] }] }, () => ({})),
+    });
+  const { document } = await buildOpenApi({
+    manifest: secured,
+    load: load2,
+    securitySchemes: bearer,
+    // The resolver says "everything requires the token" — the endpoints' own `security` wins.
+    security: () => [{ bearerAuth: [] }],
+  });
+  assertEquals(document.paths["/api/mixed"].get.security, [], "def.security [] → public");
+  assertEquals(document.paths["/api/mixed"].post.security, [{ bearerAuth: [] }]);
+});
+
 Deno.test("buildOpenApi: include / tags / converter options, a failing module, duplicate ids", async () => {
   const { document, warnings } = await buildOpenApi({
     manifest: { api: [...manifest.api, route("/api/broken")] },

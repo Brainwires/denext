@@ -12,15 +12,34 @@ deno task dev          # http://localhost:3000 — Swagger UI at /docs, spec at 
 # the document
 curl -s localhost:3000/openapi.json | jq .info
 
-# list pets, then add one
+# reads are public
 curl -s localhost:3000/api/pets
-curl -s localhost:3000/api/pets -X POST \
+
+# writes need a bearer token — log in first (username "demo", password "denext")
+TOKEN=$(curl -s localhost:3000/api/login -X POST \
+  -H 'content-type: application/json' -d '{"username":"demo","password":"denext"}' | jq -r .token)
+curl -s localhost:3000/api/pets -X POST -H "authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' -d '{"name":"Nimbus","species":"bird"}'
 
-# a schema mismatch is a structured 400 before the handler runs
-curl -s localhost:3000/api/pets -X POST \
+# a schema mismatch is a structured 400 (once past auth)
+curl -s localhost:3000/api/pets -X POST -H "authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' -d '{"name":""}'
 ```
+
+## Login & the Authorize button
+
+The config declares a bearer scheme (`securitySchemes`), so **Swagger UI shows an "Authorize"
+button**. Security is decided **per endpoint** with a `security` field on each definition, so
+operations on the same path differ: `GET /api/pets` and `GET /api/pets/{id}` are public
+(`security: []`), while `POST`/`PATCH`/`DELETE` require the token (`security: [{ bearerAuth: [] }]`).
+
+To use it in `/docs`: expand **`POST /api/login`** → Try it out → send
+`{"username":"demo","password":"denext"}`, copy the `token`, click **Authorize** (top right),
+paste it, and every locked operation now sends `Authorization: Bearer <token>`.
+
+`security` only **documents** the requirement (the lock); it is **enforced** separately by the
+`requireBearer()` middleware in `lib/auth.ts` (`authed.define(...)` runs it before the handler).
+This is a demo store — the credentials and tokens are in-memory, not for production.
 
 ## The docs renderer
 

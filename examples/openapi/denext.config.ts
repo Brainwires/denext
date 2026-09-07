@@ -20,6 +20,17 @@ export default {
       // jsDelivr) are interactive ("try it"); `builtin` (the default) is a server-rendered,
       // zero-JavaScript reference page that needs no CDN. Swap this one line to compare them.
       ui: "swagger",
+      // Declare the bearer-token scheme ONCE here → Swagger UI shows an "Authorize" button. Log
+      // in at POST /api/login (username "demo", password "denext"), paste the returned token into
+      // Authorize, and every protected request carries `Authorization: Bearer <token>`.
+      securitySchemes: {
+        bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "opaque token" },
+      },
+      // WHICH scheme each operation needs is declared per endpoint via `security` on the
+      // definition (see app/api/**/route.ts) — so reads are public and writes are protected on the
+      // same path. You could instead set a project-wide default here, e.g.
+      //   security: (route) => route.routePath === "/api/login" ? [] : [{ bearerAuth: [] }],
+      // which any per-endpoint `security` overrides.
     }),
   ],
   // denext ships NO Content-Security-Policy by default, so the CDN-loaded Swagger/Scalar

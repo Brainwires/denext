@@ -10,11 +10,18 @@ and this project adheres to
 
 ### Added
 
+- **`ApiDefinition.security` — per-endpoint OpenAPI security.** A `defineApi` definition may now
+  carry a `security` field (`[{ bearerAuth: [] }]` to require a scheme, `[]` to mark it public),
+  which `@denext/openapi` reads to draw the lock / "Authorize" button per operation — so a public
+  `GET` and a protected `POST` can sit on one path. Doc-only metadata (like `summary`); it does
+  not enforce anything — apply middleware. Paired with the plugin's new `securitySchemes` /
+  `security` options (see `@denext/openapi`).
 - **`examples/openapi` — a standalone `@denext/openapi` example.** A tiny pet store defined with
   `defineApi` + Zod that serves an OpenAPI 3.1 document at `/openapi.json` and an interactive
-  **Swagger UI** at `/docs` (`ui: "swagger"`), with the Scalar and zero-JS `builtin` renderers a
-  one-line swap. Complements `examples/typed-api`, which shows the default `builtin` docs. Covered
-  by `tests/e2e/openapi.e2e.test.ts`.
+  **Swagger UI** at `/docs` (`ui: "swagger"`), a demo bearer login (`POST /api/login`) wired to
+  the Swagger **Authorize** button with public reads and token-protected writes, and the Scalar
+  and zero-JS `builtin` renderers a one-line swap. Complements `examples/typed-api`, which shows
+  the default `builtin` docs. Covered by `tests/e2e/openapi.e2e.test.ts`.
 - **`examples/react-router` — a standalone `@denext/react-router` example.** A React Router v7
   framework-mode app (root `Layout` + `ErrorBoundary`, `app/routes.ts` config routing with a
   pathless layout and a `teams` prefix, loader data as prop and via `useLoaderData`, a `<Form>`

@@ -1,24 +1,29 @@
 import { defineApi } from "denext/server";
 import { ListQuery, NewPet, Pet, PetList } from "../../../lib/schema.ts";
 import { addPet, listPets } from "../../../lib/store.ts";
+import { authed } from "../../../lib/auth.ts";
 
-// `defineApi`: `query` / `body` / `response` / `errors` are Standard Schemas. The handler gets
-// PARSED, typed input; a schema mismatch is a structured 400 before it runs. `@denext/openapi`
-// reads these definitions to build the document — the summary, the query parameter, the request
-// body, and every response (200 + 400 + the declared error codes) appear in `/openapi.json`.
+// Security is declared PER ENDPOINT on the definition (`security`), so operations on the same
+// path can differ: listing is public, adding requires a bearer token. `security` is DOCUMENTATION
+// (the lock + Authorize button); enforcement is the `authed` middleware — the two are kept in
+// sync here by writing both on the protected operation.
 
+// Public: no token, no lock. `security: []` says "deliberately public" (overrides any default).
 export const GET = defineApi(
   {
     summary: "List pets",
+    security: [],
     query: ListQuery,
     response: PetList,
   },
   ({ query }) => listPets(query.species),
 );
 
-export const POST = defineApi(
+// Protected: `authed.define` enforces the token; `security` documents the requirement.
+export const POST = authed.define(
   {
     summary: "Add a pet",
+    security: [{ bearerAuth: [] }],
     body: NewPet,
     response: Pet,
     errors: { duplicate: 409 },
