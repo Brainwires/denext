@@ -850,7 +850,62 @@ export function startGlobalErrorClient(
     digest?: string;
   };
   const error = Object.assign(new Error(data.message ?? "Error"), { digest: data.digest });
-  hydrateDocument(h(GlobalError, { error, reset: () => location.reload() }));
+  hydrateDocument(h(GlobalError, { error, reset: () => void resetGlobalError() }));
+}
+
+/**
+ * `reset()` for a hydrated global-error page — Next's soft recovery, not a browser reload.
+ * denext's global-error fires on a SERVER render failure (it replaces the whole document), so
+ * there is no client app tree to re-render in place; recovery means re-running the render. This
+ * re-fetches the current route and swaps the document in place: a render that now succeeds
+ * replaces the error UI with the app (no reload flash), and one that still fails renders a fresh
+ * global-error. Any failure (offline, no `DOMParser`) falls back to a hard reload. Exported for
+ * testing.
+ */
+export async function resetGlobalError(): Promise<void> {
+  if (typeof fetch !== "function" || typeof DOMParser === "undefined") return location.reload();
+  let html: string;
+  try {
+    const res = await fetch(location.href, { headers: { "cache-control": "no-cache" } });
+    html = await res.text();
+  } catch {
+    return location.reload();
+  }
+  try {
+    const parsed = new DOMParser().parseFromString(html, "text/html");
+    if (!parsed || !parsed.documentElement) return location.reload();
+    swapDocument(parsed);
+  } catch {
+    location.reload();
+  }
+}
+
+/**
+ * Replace the live document with `parsed`'s tree and re-run its executable scripts (a soft
+ * reload). The incoming document brings its own hydration root + entry, so the retained
+ * global-error root is dropped first — the re-run entry then hydrates fresh rather than
+ * reconciling the app into the old error tree. A module entry is re-imported under a fresh
+ * `?nav` query (ES modules evaluate once per URL, so the same src would not re-run); JSON data
+ * islands are left as-is (inert, already in the swapped-in tree).
+ */
+function swapDocument(parsed: Document): void {
+  retainedRoot = globalWin.__dnxRoot = null;
+  document.replaceChild(document.adoptNode(parsed.documentElement), document.documentElement);
+  document.title = parsed.title || document.title;
+  for (const old of Array.from(document.querySelectorAll("script"))) {
+    const type = old.getAttribute("type");
+    if (type && type !== "module" && !/javascript/i.test(type)) continue; // skip data islands
+    const script = document.createElement("script");
+    for (const attr of Array.from(old.attributes)) script.setAttribute(attr.name, attr.value);
+    const src = old.getAttribute("src");
+    if (src && type === "module") {
+      const u = new URL(src, location.href);
+      u.searchParams.set("nav", String(navCounter++));
+      script.src = u.href;
+    }
+    script.textContent = old.textContent;
+    old.replaceWith(script);
+  }
 }
 
 // ---- Link component + router hooks -----------------------------------------

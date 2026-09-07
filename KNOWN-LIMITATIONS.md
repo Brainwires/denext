@@ -28,13 +28,15 @@ next-compat interop path — denext's own apps are unaffected):
   correctly, just not off-thread. A one-time dev warning fires. Self-host
   Partytown if you need true off-main-thread execution.
 
-- **`global-error.tsx`'s `reset` reloads the route (not a soft in-place re-render).**
-  global-error replaces the root layout and renders its own document, which now hydrates
-  (`denext build` and `denext dev`), so `reset` is a real function and any author
-  interactivity works — like Next. Two bounds remain: `reset` re-runs the render by reloading
-  the current route (an honest retry, since the app tree isn't present to re-render in place),
-  and the **next-compat** interop and **static-export** paths keep global-error
-  server-rendered only (no entry is emitted there, so its `reset` stays inert).
+- **`global-error.tsx` hydration is not wired on the next-compat / static-export paths.**
+  global-error replaces the root layout and renders its own document, which now hydrates on the
+  native `denext build` and `denext dev` paths, so `reset` and any author interactivity work
+  like Next. `reset` recovers **softly** — it re-fetches the current route and swaps the
+  document in place (no browser reload); because denext's global-error fires on a SERVER render
+  failure, that recovery re-runs the render rather than re-rendering an in-place client tree
+  (there is none), falling back to a hard reload only if the re-fetch fails. The **next-compat**
+  interop and **static-export** paths emit no entry, so there global-error stays
+  server-rendered only (its `reset` inert).
 
 - **The Node-stream `react-dom/server` APIs buffer (no `Writable`
   backpressure).** `renderToString` / `renderToStaticMarkup` render the
