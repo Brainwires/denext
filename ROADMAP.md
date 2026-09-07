@@ -43,17 +43,16 @@ shipped bundle and the zero-npm **runtime** claim already holds. Migrate
 The plugin contract is **settled**: a router-class plugin imports from exactly
 two places — `@denext/denext` (app API) and `@denext/denext/plugin-kit` (contract
 seams + pipeline primitives: matchers, `bundleRoutes`, CSS, hydration /
-Fast-Refresh, `PageCache`). `@denext/pages-router` dogfoods it and
+Fast-Refresh, `PageCache`). `@denext/pages-router` and `@denext/react-router` dogfood it (both **shipped**;
+react-router is framework mode via the route-synthesizer seam) and
 `tests/plugin-kit.test.ts` guards it. Remaining build work:
 
-- **`@denext/react-router`** — **shipped** (0.1.0): framework mode (config routing via
-  `app/routes.ts`, loaders/actions, streaming SSR) runs on the plugin via `plugin-kit`, with
-  the app's source untouched; client mode is denext's SPA mode. `denext migrate` wires it.
-- **`@denext/tanstack-router`** — same two depths (library mode → SPA today;
-  TanStack Start-style SSR → `plugin-kit`).
+- **`@denext/tanstack-router`** — the two depths (library mode → SPA today;
+  TanStack Start-style SSR → `plugin-kit`), the same shape `@denext/react-router`
+  proved out.
 - A missing primitive goes into `plugin-kit` (the plugin-kit rule: a deliberate,
-  tested semver addition — as `apiDefinitionOf`, `tapChannel` and `verifyOrigin`
-  were), never the private surface.
+  tested semver addition — as `apiDefinitionOf`, `tapChannel`, `verifyOrigin` and
+  `remixCodegen` were), never the private surface.
 
 ## Upstream watch — `deno bundle --define` (unblocks native-path DCE)
 

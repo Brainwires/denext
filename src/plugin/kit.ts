@@ -128,7 +128,12 @@ export { hydrateRoot } from "../client/mod.ts";
 export { enableFastRefresh, registerFamily } from "../client/refresh-runtime.ts";
 
 // ── Remix / React Router route-module codegen ─────────────────────────────────
-// The swc-based client/data split + the generated denext wrappers `denext migrate --from
-// remix` writes — as a namespace, so a router plugin (`@denext/react-router`) can generate
-// the same wrappers into `.denext/` for an app whose sources stay untouched.
+/**
+ * The Remix route-module codegen `denext migrate --from remix` uses, as a namespace: the
+ * swc-based split of a route module into a `"use client"` component + a server data module
+ * ({@linkcode remixCodegen.analyzeModule analyzeModule}) and the generated denext wrappers
+ * ({@linkcode remixCodegen.pageWrapperSource pageWrapperSource} and siblings). A router
+ * plugin (`@denext/react-router`) uses it to generate the same wrappers into `.denext/` for
+ * an app whose sources stay untouched.
+ */
 export * as remixCodegen from "../build/remix-codegen.ts";

@@ -4,6 +4,8 @@
 
 import { assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { index, layout, prefix, relative, route } from "../packages/react-router/routes.ts";
+import { join } from "@std/path";
+import { generateRoutes } from "../packages/react-router/src/generate.ts";
 import {
   resolveReactRouterConfig,
   resolveRouteConfig,
@@ -178,3 +180,67 @@ Deno.test("resolveRouteConfig awaits an async config and rejects malformed entri
     },
   );
 });
+
+Deno.test("generateRoutes: prunes stale output dirs and errors on a slug collision", async () => {
+  const tmp = await Deno.makeTempDir({ prefix: "rr_gen_" });
+  const app = join(tmp, "app");
+  const out = join(tmp, ".denext", "react-router");
+  await Deno.mkdir(join(app, "routes"), { recursive: true });
+  await Deno.writeTextFile(
+    join(app, "routes", "a.tsx"),
+    `export default function A(){return null;}\n`,
+  );
+  await Deno.writeTextFile(
+    join(app, "routes", "b.tsx"),
+    `export default function B(){return null;}\n`,
+  );
+  try {
+    await generateRoutes({
+      appDir: app,
+      outDir: out,
+      rootFile: null,
+      nodes: buildRouteTree([route("a", "routes/a.tsx"), route("b", "routes/b.tsx")]),
+    });
+    // A pre-existing stale dir from a route that no longer exists.
+    await Deno.mkdir(join(out, "routes__gone"), { recursive: true });
+    await Deno.writeTextFile(join(out, "routes__gone", "page.tsx"), "stale\n");
+    await generateRoutes({
+      appDir: app,
+      outDir: out,
+      rootFile: null,
+      nodes: buildRouteTree([route("a", "routes/a.tsx")]),
+    });
+    assertEquals(await dirExists(join(out, "routes__a")), true);
+    assertEquals(
+      await dirExists(join(out, "routes__b")),
+      false,
+      "the removed route's dir is pruned",
+    );
+    assertEquals(await dirExists(join(out, "routes__gone")), false, "the stale dir is pruned");
+    // A slug collision — two ids that normalize to the same directory (a space vs `_`) — errors.
+    await assertRejects(
+      () =>
+        generateRoutes({
+          appDir: app,
+          outDir: out,
+          rootFile: null,
+          nodes: buildRouteTree([
+            route("p1", "routes/a.tsx", { id: "grp a" }),
+            route("p2", "routes/b.tsx", { id: "grp_a" }),
+          ]),
+        }),
+      Error,
+      "map to the same generated directory",
+    );
+  } finally {
+    await Deno.remove(tmp, { recursive: true });
+  }
+});
+
+async function dirExists(p: string): Promise<boolean> {
+  try {
+    return (await Deno.stat(p)).isDirectory;
+  } catch {
+    return false;
+  }
+}

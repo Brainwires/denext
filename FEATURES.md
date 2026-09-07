@@ -445,9 +445,18 @@ cache uses Deno's built-in `node:sqlite`.)
   request-handler, build-step, teardown, CLI command) with the public
   `@denext/denext/plugin-kit` primitives (bundling, CSS, matchers, `PageCache`,
   body caps, signed-token helpers). See [PLUGINS.md](./PLUGINS.md) for the
-  authoring guide; consumed by `@denext/pages-router`, `@denext/htmx`,
-  `@denext/openapi`, `@denext/graphql` and
+  authoring guide; consumed by `@denext/pages-router`, `@denext/react-router`,
+  `@denext/htmx`, `@denext/openapi`, `@denext/graphql` and
   [`examples/plugin-aliases`](./examples/plugin-aliases).
+- **React Router** (opt-in plugin: `@denext/react-router`) — runs a **React Router v7
+  framework-mode** app (config routing in `app/routes.ts`, `root.tsx`, loaders/actions,
+  `react-router.config.ts`) on denext with the app's source untouched. The plugin reads
+  `app/routes.ts` and generates denext route wrappers through the **route-synthesizer** seam,
+  so Flight, streaming SSR, per-segment error boundaries, soft navigation, ISR and Fast
+  Refresh are denext's own; loaders/actions, `meta`, `links`, `ErrorBoundary`, the root
+  `Layout` export and the `Route.ComponentProps` props contract run on the `denext/remix`
+  runtime. `denext migrate` detects an RR7 app and wires it. See
+  [/docs/react-router](https://denext.dev/docs/react-router).
 - **Lint plugin** (denext-specific rules), `deno fmt`/`deno lint` integration.
 - **Unified CLI** — a real command framework (declarative flags, uniform global
   flags `--cwd/--config/--json/--verbose/--quiet`, per-command `--help`, "did

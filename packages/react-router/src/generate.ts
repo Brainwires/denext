@@ -51,12 +51,48 @@ export async function generateRoutes(
   opts: GenerateOptions,
 ): Promise<Map<string, GeneratedRoute>> {
   const out = new Map<string, GeneratedRoute>();
-  if (opts.rootFile) out.set(ROOT_ID, await generateRoot(opts.rootFile, opts.outDir));
-  for (const node of opts.nodes) {
-    const file = join(opts.appDir, node.file);
-    out.set(node.id, await generateNode(node, file, opts.outDir));
+  // One directory per route (`.denext/react-router/<slug>`); a slug collision would let one
+  // route's module overwrite another's, so it is an error, like a duplicate route id.
+  const dirs = new Map<string, string>();
+  const claim = (id: string) => {
+    const dir = slug(id);
+    const prev = dirs.get(dir);
+    if (prev !== undefined && prev !== id) {
+      throw new Error(
+        `react-router: route ids "${prev}" and "${id}" map to the same generated directory ` +
+          `"${dir}" — give one an explicit \`id\` in app/routes.ts`,
+      );
+    }
+    dirs.set(dir, id);
+    return dir;
+  };
+  if (opts.rootFile) {
+    claim(ROOT_ID);
+    out.set(ROOT_ID, await generateRoot(opts.rootFile, opts.outDir));
   }
+  for (const node of opts.nodes) {
+    claim(node.id);
+    out.set(node.id, await generateNode(node, join(opts.appDir, node.file), opts.outDir));
+  }
+  // Prune output dirs whose route no longer exists (a renamed/deleted route) so `.denext`
+  // doesn't accumulate stale modules across route churn.
+  await pruneStaleDirs(opts.outDir, new Set(dirs.keys()));
   return out;
+}
+
+/** Remove every child directory of `outDir` whose name isn't a current route slug. */
+async function pruneStaleDirs(outDir: string, keep: Set<string>): Promise<void> {
+  let entries: Deno.DirEntry[];
+  try {
+    entries = [...Deno.readDirSync(outDir)];
+  } catch {
+    return; // never generated yet
+  }
+  for (const entry of entries) {
+    if (entry.isDirectory && !keep.has(entry.name)) {
+      await Deno.remove(join(outDir, entry.name), { recursive: true }).catch(() => {});
+    }
+  }
 }
 
 /** `routes/users.$id` → `routes__users.$id` (one flat directory per route). */
