@@ -2,7 +2,7 @@
 
 import { join } from "@std/path";
 import type { PageRoute, RouteManifest } from "../../router/manifest.ts";
-import { FLIGHT_BUNDLE_FILE } from "../build-pipeline/context.ts";
+import { FLIGHT_BUNDLE_FILE, GLOBAL_ERROR_BUNDLE_FILE } from "../build-pipeline/context.ts";
 import { type ProjectPaths, routeId } from "../paths.ts";
 
 export const CLIENT_PREFIX = "/_denext/client/";
@@ -13,6 +13,18 @@ export interface AssetResolvers {
   basePath: string;
   clientEntryFor: (route: PageRoute) => string | undefined;
   styleHrefsFor: (route: PageRoute) => string[] | undefined;
+  /** The `global-error.tsx` hydration bundle URL, when the build emitted one. */
+  globalErrorEntry?: string;
+}
+
+/** Whether `denext build` wrote the global-error hydration bundle. */
+async function hasGlobalErrorBundle(clientDir: string): Promise<boolean> {
+  try {
+    await Deno.stat(join(clientDir, GLOBAL_ERROR_BUNDLE_FILE));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Routes with an extracted stylesheet on disk (written by `denext build`). */
@@ -43,8 +55,12 @@ export async function assetResolvers(
   const assetPrefix = paths.config?.assetPrefix?.replace(/\/$/, "") || basePath;
   const asset = (path: string): string => `${assetPrefix}${path}`;
   const cssRoutes = await cssRoutesOf(clientDir, manifest);
+  const globalErrorEntry = (await hasGlobalErrorBundle(clientDir))
+    ? asset(`${CLIENT_PREFIX}${GLOBAL_ERROR_BUNDLE_FILE}`)
+    : undefined;
   return {
     basePath,
+    globalErrorEntry,
     clientEntryFor: (route) =>
       staticRoutes.has(route.routePath) ? undefined : asset(
         flightRoutes.has(route.routePath)

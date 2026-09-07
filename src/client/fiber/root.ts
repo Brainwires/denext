@@ -1,7 +1,7 @@
 // Public API: createRoot / hydrateRoot / createPortal / flushSync / act, plus the dev
 // Fast Refresh root retention. Wires the render entry points into the scheduler.
 
-import { activeRoots, fiberToRoot } from "./state.ts";
+import { activeRoots, doc, fiberToRoot } from "./state.ts";
 import type { RootHandle } from "./state.ts";
 import { walk } from "./fiber-utils.ts";
 import {
@@ -185,6 +185,23 @@ export function createRoot(container: Element, options?: RootOptions): Root {
 /** Hydrate `vnode` against server-rendered markup already in `container`. */
 export function hydrateRoot(container: Element, vnode: VNode, options?: RootOptions): Root {
   const handle = registerRoot(container, options, true, vnode);
+  renderRoot(handle, SyncLane);
+  return {
+    render: (next) => renderInto(handle, next),
+    unmount: () => unmountRoot(handle),
+  };
+}
+
+/**
+ * Hydrate a `vnode` that renders the WHOLE document (its own `<html>`/`<body>`) against the
+ * live document — for `global-error.tsx`, which replaces the root layout and so has no
+ * `#__denext` container to hydrate a subtree into. The root is the document and the cursor
+ * begins at `<html>` (`document.documentElement`), skipping the leading doctype.
+ */
+export function hydrateDocument(vnode: VNode, options?: RootOptions): Root {
+  const handle = registerRoot(doc as unknown as Element, options, true, vnode);
+  handle.hydrateStart = doc.documentElement;
+  handle.documentRoot = true;
   renderRoot(handle, SyncLane);
   return {
     render: (next) => renderInto(handle, next),

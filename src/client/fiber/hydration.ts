@@ -14,10 +14,17 @@ export let isHydrating = false;
 let hydrationCursor: Cursor | null = null;
 let hydrationStack: (Cursor | null)[] = [];
 
-/** Start adopting `container`'s server DOM (the first hydrateRoot render). */
-export function beginHydration(container: Element): void {
+/**
+ * Start adopting `container`'s server DOM (the first hydrateRoot render). `startNode`, when
+ * given, seeds the cursor at that child instead of the first — used by document-root hydration
+ * to begin at `<html>` and skip the leading doctype/comment nodes.
+ */
+export function beginHydration(container: Node, startNode?: Node | null): void {
   isHydrating = true;
-  hydrationCursor = { parent: container, index: 0 };
+  const index = startNode
+    ? Math.max(Array.prototype.indexOf.call(container.childNodes, startNode), 0)
+    : 0;
+  hydrationCursor = { parent: container, index };
   hydrationStack = [];
 }
 

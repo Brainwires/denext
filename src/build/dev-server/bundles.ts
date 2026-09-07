@@ -3,7 +3,13 @@
 
 import type { PageRoute } from "../../router/manifest.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../../server/middleware.ts";
-import { bundleFlightEntry, type BundleOutput, bundleRoute, entryCode } from "../bundle.ts";
+import {
+  bundleFlightEntry,
+  bundleGlobalError,
+  type BundleOutput,
+  bundleRoute,
+  entryCode,
+} from "../bundle.ts";
 import { buildBoundaryManifest, importFunctionExports, routeEntryFiles } from "../module-graph.ts";
 import { bundleImportMap } from "./assets.ts";
 import { isCompat } from "./compat.ts";
@@ -93,6 +99,23 @@ export async function getFlightBundle(st: DevState): Promise<string> {
   cacheChunks(st, bundle);
   st.flightBundle = entryCode(bundle);
   return st.flightBundle;
+}
+
+/**
+ * The `global-error.tsx` hydration bundle, built on demand (this page only appears when an
+ * uncaught error escaped rendering, so it is bundled fresh per hit — cheap and always current
+ * with the latest edit). Its shared chunks are cached so the entry's basename imports resolve.
+ */
+export async function getGlobalErrorBundle(st: DevState): Promise<string> {
+  const m = await getManifest(st);
+  if (!m.rootGlobalError) return "// no global-error.tsx";
+  const bundle = await bundleGlobalError(m.rootGlobalError, {
+    configPath: st.paths.configPath,
+    importMap: await bundleImportMap(st),
+    dev: true,
+  });
+  cacheChunks(st, bundle);
+  return entryCode(bundle);
 }
 
 /**

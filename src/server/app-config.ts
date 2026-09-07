@@ -41,6 +41,13 @@ export interface AppConfig {
   publicDir?: string;
   /** Per-route browser bundle URL; when it returns a URL, hydration is enabled. */
   clientEntryFor?: (route: PageRoute) => string | undefined;
+  /**
+   * Browser bundle URL for `global-error.tsx` (a single root file, so a plain URL rather than
+   * a per-route resolver). When set, `renderGlobalError` hydrates the global-error document so
+   * its `reset` and any author interactivity work; when unset, global-error is server-rendered
+   * only (its `reset` is inert), the pre-hydration behavior.
+   */
+  globalErrorEntry?: string;
   /** Per-route stylesheet URLs (extracted CSS) linked in the document `<head>`. */
   styleHrefsFor?: (route: PageRoute) => string[] | undefined;
   /**

@@ -5,7 +5,12 @@
 import { h } from "../jsx/jsx-runtime.ts";
 import { timed } from "../runtime/timing.ts";
 import type { VNode } from "../jsx/types.ts";
-import { collapseHeadTags, type HeadCollector, renderToString } from "../jsx/render-to-string.ts";
+import {
+  collapseHeadTags,
+  escapeHtml,
+  type HeadCollector,
+  renderToString,
+} from "../jsx/render-to-string.ts";
 import { renderShell, type ShellRender } from "../jsx/render-to-stream.ts";
 import { renderFontStyles } from "../compat/next/font/registry.ts";
 import { type IslandPayload, renderToHtmlFlight } from "../jsx/render-to-html-flight.ts";
@@ -1326,6 +1331,7 @@ export async function renderGlobalError(
   manifest: RouteManifest,
   load: ModuleLoader,
   error: unknown,
+  globalErrorEntry?: string,
 ): Promise<RenderedPage | null> {
   if (!manifest.rootGlobalError) return null;
   const mod = (await load(manifest.rootGlobalError)) as {
@@ -1336,18 +1342,42 @@ export async function renderGlobalError(
   // internal detail (DB DSNs, stack) to every client; the full error goes to the
   // log, correlatable by digest. In dev the real error is passed for debugging.
   const err = toClientError(error);
-  // Next.js: global-error REPLACES the root layout and renders its own <html>/<body>. It is
-  // server-rendered here (no hydration), so `reset` is a no-op on the server — the rendered
-  // markup gets a full-page reload via a minimal inline handler on `[data-reset]` buttons.
+  // Next.js: global-error REPLACES the root layout and renders its own <html>/<body>. `reset`
+  // is a no-op on the SERVER render (one-shot); the working `reset` (and any author
+  // interactivity) comes from client hydration via `startGlobalErrorClient` when the build
+  // wired a `globalErrorEntry`.
   const body = await renderToString(h(mod.default, { error: err, reset: () => {} }));
-  const html = /<html[\s>]/i.test(body) ? `<!DOCTYPE html>${body}` : body;
+  const ownsDocument = /<html[\s>]/i.test(body);
+  let html = ownsDocument ? `<!DOCTYPE html>${body}` : body;
+  // Hydrate a document-owning global-error: emit the redacted error as a data island the
+  // client rebuilds the same error from (so hydration matches), plus the entry script. Without
+  // an entry, it stays server-rendered only — the pre-hydration behavior.
+  if (ownsDocument && globalErrorEntry) {
+    html = injectGlobalErrorHydration(html, globalErrorEntry, err);
+  }
   return {
     html,
     metadata: { title: "Error" },
     status: 500,
     config: DEFAULT_SEGMENT_CONFIG,
-    ownsDocument: /<html[\s>]/i.test(body),
+    ownsDocument,
   };
+}
+
+/** Insert the `#__denext_ge_data` island + the global-error entry script before `</body>`. */
+function injectGlobalErrorHydration(
+  html: string,
+  entry: string,
+  err: Error & { digest?: string },
+): string {
+  const data = JSON.stringify({ message: err.message, digest: err.digest }).replace(
+    /</g,
+    "\\u003c",
+  );
+  const scripts = `<script id="__denext_ge_data" type="application/json">${data}</script>` +
+    `<script type="module" src="${escapeHtml(entry)}"></script>`;
+  const i = html.lastIndexOf("</body>");
+  return i === -1 ? html + scripts : `${html.slice(0, i)}${scripts}${html.slice(i)}`;
 }
 
 /** Metadata fields where the innermost segment's value simply wins. */

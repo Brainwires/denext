@@ -10,6 +10,9 @@ import type { ProjectPaths } from "../paths.ts";
 /** The file name of the app-wide Flight (RSC) client bundle. */
 export const FLIGHT_BUNDLE_FILE = "flight.js";
 
+/** The file name of the `global-error.tsx` hydration bundle (single root file). */
+export const GLOBAL_ERROR_BUNDLE_FILE = "global-error.js";
+
 export interface BuildResult {
   routes: Array<{ routePath: string; bundle: string }>;
   outDir: string;

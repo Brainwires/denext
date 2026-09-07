@@ -385,6 +385,26 @@ main();
 }
 
 /**
+ * The browser entry for `global-error.tsx`. It replaces the root layout and renders its own
+ * `<html>`/`<body>`, so — unlike a route entry — it hydrates the whole document (not the
+ * `#__denext` container) via `startGlobalErrorClient`, which rebuilds the error from the
+ * server's `#__denext_ge_data` island and supplies a real `reset`. Tiny by design: this page
+ * only ships when an uncaught error escaped rendering.
+ */
+export function generateGlobalErrorEntry(
+  globalErrorFile: string,
+  instrumentationClient: string | null = null,
+): string {
+  return `// denext generated global-error entry — do not edit.
+${
+    clientInstrumentationImport(instrumentationClient)
+  }import { startGlobalErrorClient } from "denext/client-runtime";
+import GlobalError from ${JSON.stringify(toFileUrl(globalErrorFile).href)};
+startGlobalErrorClient(GlobalError);
+`;
+}
+
+/**
  * Generate the browser entry for a Flight route. Unlike {@link generateRouteEntry}
  * (which statically imports the whole page tree), this imports ONLY the app's
  * `"use client"` modules, builds a registry keyed by client-reference id, reads
@@ -1044,6 +1064,17 @@ export function bundleRoute(
 ): Promise<BundleOutput> {
   return bundleSourceFiles(
     generateRouteEntry(route, opts.dev, false, opts.instrumentationClient ?? null),
+    opts,
+  );
+}
+
+/** Bundle the `global-error.tsx` browser entry on its own (the dev server's on-demand path). */
+export function bundleGlobalError(
+  globalErrorFile: string,
+  opts: BundleOptions,
+): Promise<BundleOutput> {
+  return bundleSourceFiles(
+    generateGlobalErrorEntry(globalErrorFile, opts.instrumentationClient ?? null),
     opts,
   );
 }

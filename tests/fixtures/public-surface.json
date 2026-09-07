@@ -974,7 +974,8 @@
     "qrl:function",
     "registerFamily:function",
     "setFlightParser:function",
-    "startClient:function"
+    "startClient:function",
+    "startGlobalErrorClient:function"
   ],
   "denext/lint-plugin": [
     "LintPlugin:interface",

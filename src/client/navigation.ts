@@ -8,7 +8,7 @@
 import { BLUR_ATTR, clearBlur } from "../runtime/image-blur.ts";
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChild, VNodeChildren } from "../jsx/types.ts";
-import { hydrateRoot, type Root } from "./reconciler.ts";
+import { hydrateDocument, hydrateRoot, type Root } from "./reconciler.ts";
 import { revealStreamedHoles } from "./reveal-holes.ts";
 import {
   type Context,
@@ -829,6 +829,28 @@ export function startClient(container: Element, tree: VNode): void {
   // re-render the current route in place. Wired here (not via a static edge from the
   // isomorphic server-action module) so client navigation never enters the server graph.
   setActionRefreshHandler(() => void navigate(location.href, { history: false }));
+}
+
+/**
+ * Hydrate the server-rendered `global-error.tsx` document so it becomes interactive and its
+ * `reset` is a real function (author `onClick`/handlers work too — before this the page shipped
+ * no client JS at all). global-error replaces the root layout and renders its own `<html>`/
+ * `<body>`, so it hydrates at the document root ({@link hydrateDocument}), not the `#__denext`
+ * container. The error is rebuilt from the `#__denext_ge_data` island the server emitted (the
+ * same redacted message/digest it rendered with, so hydration matches). `reset` reloads the
+ * current route — an honest retry that re-runs the server render, which may now succeed; a soft
+ * in-place retry would need the whole app runtime loaded into the error page.
+ */
+export function startGlobalErrorClient(
+  GlobalError: (p: { error: Error; reset: () => void }) => VNode,
+): void {
+  const dataEl = document.getElementById("__denext_ge_data");
+  const data = (dataEl ? JSON.parse(dataEl.textContent || "{}") : {}) as {
+    message?: string;
+    digest?: string;
+  };
+  const error = Object.assign(new Error(data.message ?? "Error"), { digest: data.digest });
+  hydrateDocument(h(GlobalError, { error, reset: () => location.reload() }));
 }
 
 // ---- Link component + router hooks -----------------------------------------

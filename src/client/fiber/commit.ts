@@ -81,7 +81,11 @@ function commitMutation(wipRoot: Fiber): void {
 
 /** 4. Placement: arrange DOM children of the root and any changed host/portal. */
 function commitPlacement(handle: RootHandle, wipRoot: Fiber): void {
-  syncChildren(handle.container, childrenDom(wipRoot));
+  // A document root (global-error hydration) shares the container with the doctype — a node the
+  // reconciler didn't insert — so PLACE its children (never prune foreign siblings) rather than
+  // sync, which would strip the doctype. Every other root exclusively owns its container.
+  if (handle.documentRoot) placePortalChildren(handle.container, childrenDom(wipRoot));
+  else syncChildren(handle.container, childrenDom(wipRoot));
   walk(wipRoot, (f) => {
     if (f.tag === "host" && f.alternate !== null && needsSync(f)) {
       syncChildren(f.stateNode as Element, childrenDom(f));

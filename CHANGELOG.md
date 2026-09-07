@@ -10,6 +10,14 @@ and this project adheres to
 
 ### Added
 
+- **`global-error.tsx` now hydrates — `reset` works and author interactivity is live.**
+  global-error replaces the root layout and renders its own `<html>`/`<body>`; it was
+  previously served as dead HTML (no client JS), so its `reset` prop was inert and no author
+  `onClick`/handlers ran. It now hydrates at the document root (`denext build` and
+  `denext dev`), so `reset` is a real function (it reloads the current route — an honest retry)
+  and interactivity works, matching Next. New reconciler primitive `hydrateDocument` (adopts a
+  document-owning tree in place, preserving the doctype) + `startGlobalErrorClient`. The
+  next-compat and static-export paths keep the pre-hydration server-only behavior.
 - **Cross-instance Live invalidation over `ChannelTransport`.** A `revalidateTag` /
   `updateTag` now propagates to every instance's Live hub through the configured
   `ChannelTransport` (the same seam `createChannel` already used), so `<Live>`, `useLive`,

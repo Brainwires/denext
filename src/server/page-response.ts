@@ -152,7 +152,7 @@ async function recoverPageError(
       }),
     );
   }
-  const ge = await renderGlobalError(pr.manifest, config.load, pageError);
+  const ge = await renderGlobalError(pr.manifest, config.load, pageError, config.globalErrorEntry);
   if (!ge) throw pageError;
   await reportRequestError(config, pageError, pr.state.request, pr.page.route.routePath, {
     routeType: "render",

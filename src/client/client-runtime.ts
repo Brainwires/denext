@@ -9,7 +9,7 @@
  */
 
 // Boot: mount/hydrate the page, install soft navigation, seed the layout-segment hooks.
-export { setFlightParser, startClient } from "./navigation.ts";
+export { setFlightParser, startClient, startGlobalErrorClient } from "./navigation.ts";
 export { type LayoutSegmentInfo, provideLayoutSegments } from "../runtime/layout-segments.ts";
 // Flight hydration: reconstruct a VNode tree from the server's Flight payload.
 export {
