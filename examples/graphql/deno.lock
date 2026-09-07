@@ -1443,7 +1443,14 @@
           "jsr:@std/path@1"
         ]
       },
-      "jsr:@denext/photon@0.3.5": {}
+      "jsr:@denext/photon@0.3.5": {},
+      "jsr:@denext/react-router@0.1.0": {
+        "dependencies": [
+          "jsr:@denext/denext@^2.1.0-rc.1",
+          "jsr:@std/fs@1",
+          "jsr:@std/path@1"
+        ]
+      }
     }
   }
 }
