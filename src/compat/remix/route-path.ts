@@ -44,5 +44,9 @@ export function resolveRoutePath(to: string, routePathname: string): string {
   if (to.startsWith("?") || to.startsWith("#")) return routePathname + to;
   const base = routePathname.endsWith("/") ? routePathname : routePathname + "/";
   const u = new URL(to, "http://denext.local" + base);
-  return u.pathname + u.search + u.hash;
+  // `..` from `/a/b/` resolves to `/a/` — a route pathname has no trailing slash unless `to`
+  // asked for one (`new/`); the root stays `/`.
+  const keepSlash = /\/(?:[?#].*)?$/.test(to);
+  const pathname = !keepSlash && u.pathname.length > 1 ? u.pathname.replace(/\/$/, "") : u.pathname;
+  return pathname + u.search + u.hash;
 }

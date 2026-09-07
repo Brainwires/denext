@@ -130,9 +130,6 @@ next-compat interop path — denext's own apps are unaffected):
   `«r0»` format is CSS-selector-safe without `CSS.escape`, these are not); and
   `defaultProps` on a **function** component is honored as a compat extension (React 19
   removed it) because popular npm libraries still rely on it.
-- **Middleware `matcher` object entries ignore `has`/`missing`.** `{ source, has, missing }`
-  is accepted, but only `source` is evaluated — the middleware runs for every request the
-  path matches (never less often than in Next).
 - **`notFound()` / `forbidden()` / `unauthorized()` thrown during a CLIENT render
   abort the render** instead of swapping in the matching `not-found.tsx` boundary
   (they work as documented on the server and inside Server Actions).

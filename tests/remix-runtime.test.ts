@@ -35,6 +35,7 @@ import {
   replace,
   runActionResponse,
   runLoader,
+  runLoaderOnce,
   runLoaderResponse,
   unstable_createMemoryUploadHandler,
   unstable_parseMultipartFormData,
@@ -56,6 +57,8 @@ import {
 } from "../src/server/request-context.ts";
 import { clearLoadContext, defineLoadContext } from "../src/compat/remix/load-context.ts";
 import { remixPath, remixServerBuild } from "../src/compat/remix/server-build.ts";
+import { resolveRoutePath } from "../src/compat/remix/route-path.ts";
+import { applyDocumentAttrs } from "../src/compat/remix/document.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import { parsePattern } from "../src/router/segments.ts";
 
@@ -888,4 +891,72 @@ Deno.test("remixServerBuild synthesizes a flat Remix ServerBuild from the manife
   // Outside a request (or without a registry): just the root.
   assertEquals(Object.keys((await remixServerBuild()).routes), ["root"]);
   assertEquals(remixPath(parsePattern("docs/[...slug]")), "docs/*");
+});
+
+Deno.test("runLoaderOnce memoizes a THROW too: two readers, one loader run, the same error", async () => {
+  let runs = 0;
+  const loader = () => {
+    runs++;
+    throw new Error("boom-once");
+  };
+  await runWithContext(createRequestContext(new Request("http://localhost/x")), async () => {
+    const a = await runLoaderOnce("routes/x", loader, {}).catch((e: unknown) => e);
+    const b = await runLoaderOnce("routes/x", loader, {}).catch((e: unknown) => e);
+    assertEquals(runs, 1);
+    assert(a instanceof Error && a === b, "the same rejection is re-raised");
+  });
+});
+
+Deno.test("resolveRoutePath: `..` climbs without a trailing slash; an explicit trailing slash is kept; root stays /", () => {
+  assertEquals(resolveRoutePath("..", "/users/kody/notes"), "/users/kody");
+  assertEquals(resolveRoutePath("..", "/users"), "/");
+  assertEquals(resolveRoutePath("../edit?x=1", "/a/b/c"), "/a/b/edit?x=1");
+  assertEquals(resolveRoutePath("new/", "/notes"), "/notes/new/");
+  assertEquals(resolveRoutePath(".", "/a/b"), "/a/b");
+});
+
+Deno.test("remixServerBuild never rejects: a failing manifest yields the root-only build (warned)", async () => {
+  const ctx = createRequestContext(new Request("http://localhost/sitemap.xml"));
+  ctx.routes = {
+    manifest: () => {
+      throw new Error("manifest exploded");
+    },
+    load: () => Promise.reject(new Error("no")),
+  };
+  const warn = console.warn;
+  const warned: string[] = [];
+  console.warn = (...a: unknown[]) => void warned.push(a.map(String).join(" "));
+  try {
+    const build = await runWithContext(ctx, () => remixServerBuild());
+    assertEquals(Object.keys(build.routes), ["root"]);
+    assert(warned.some((w) => w.includes("remixServerBuild failed")));
+  } finally {
+    console.warn = warn;
+  }
+});
+
+Deno.test("applyDocumentAttrs: root attrs go through the attribute-name chokepoint (no on*, no tag breakouts)", () => {
+  const set = new Map<string, string>();
+  const removed: string[] = [];
+  const el = {
+    style: {} as Record<string, string>,
+    setAttribute: (k: string, v: string) => void set.set(k, v),
+    removeAttribute: (k: string) => void removed.push(k),
+  } as unknown as Element;
+  applyDocumentAttrs(el, {
+    lang: "en",
+    className: "dark h-full",
+    style: { colorScheme: "dark" },
+    onload: "alert(1)",
+    'x"><script': "1",
+    hidden: true,
+    "data-old": null,
+  });
+  assertEquals(set.get("lang"), "en");
+  assertEquals(set.get("class"), "dark h-full");
+  assertEquals(set.get("hidden"), "");
+  assertEquals((el as unknown as { style: Record<string, string> }).style.colorScheme, "dark");
+  assertEquals(removed, ["data-old"]);
+  assert(!set.has("onload"), "event-handler attributes never reach the DOM");
+  assert(![...set.keys()].some((k) => k.includes("<")), "a breakout name is dropped");
 });

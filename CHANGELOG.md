@@ -10,6 +10,12 @@ and this project adheres to
 
 ### Added
 
+- **Middleware `matcher` `has`/`missing` conditions are evaluated** (they were accepted and
+  ignored): `{ source, has: [{ type: "header"|"cookie"|"query"|"host", key, value? }], missing }`
+  — every `has` must hold, no `missing` may; `value` absent means presence, a plain value is an
+  exact match, regex syntax (`ops|dev`, `(?<team>\w+)`) is a full-match regex. Evaluated against
+  the request the middleware would see (after an earlier entry's rewrite). `MatcherCondition` and
+  `MatchContext` are exported from `denext/server`.
 - **`@denext/openapi` — the self-documenting half of the typed API surface.** The schemas a
   `defineApi` route declares now describe it too: the new first-party plugin
   (`packages/openapi`, published as `@denext/openapi`) walks the route manifest, reads each
@@ -100,6 +106,22 @@ Findings of the post-2.0.5 audit (security + production-readiness + docs; all fi
 
 ### Fixed
 
+- **Remix migrator/compat: the post-2.0.5 audit's Remix findings.** `denext migrate --from
+  remix` no longer mutates `app/routes/` while walking it (the old tree is listed first, every
+  generated file is written, then colocated modules move and the converted originals are removed
+  and their empty dirs pruned — a route literally named `routes` keeps its generated page); JSX
+  tag and attribute names are no longer treated as identifier references, so `<form action=…>`
+  can't keep `import { action } from "./login.server.ts"` in a client split (a server module in
+  the browser bundle); the generated `load-context.ts` exposes `serverBuild` as a lazy getter
+  (no eagerly created, unawaited O(routes) promise per request) and `remixServerBuild()` never
+  rejects (a failing manifest logs once and yields the root-only build); `runLoaderOnce`
+  memoizes a throwing loader too (one run per request for every reader); the Remix client
+  `DocumentHtml`/`DocumentBody` attribute writer goes through the shared `isValidAttrName`
+  chokepoint; `resolveRoutePath("..")` drops the trailing slash (root stays `/`, an explicit
+  `new/` keeps it); the root document-tag rename skips string/template literals; a
+  `meta`/`links`/`handle`-only module is a route with a passthrough component (not a colocated
+  file); nested plain route folders (`users/$id/route.tsx`) nest as dot segments; the migrator
+  source carries no raw NUL bytes (git no longer sees it as binary).
 - **Plugin paths under a `basePath`.** The pipeline strips `basePath` before the plugin seam,
   so `@denext/openapi`, `@denext/graphql` and `@denext/htmx` prefixing it onto their paths
   answered 404 in a `basePath` app. Plugin paths are app-relative now; the OpenAPI document

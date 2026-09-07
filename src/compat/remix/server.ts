@@ -265,16 +265,11 @@ export async function runLoaderOnce(
   let byId = memo.get(LOADER_MEMO);
   if (!byId) memo.set(LOADER_MEMO, byId = new Map());
   if (byId.has(id)) return byId.get(id);
+  // The pending promise is the memo: a result AND a throw (redirect/404/error) are seen by
+  // every reader of this request — the loader never runs twice, non-idempotent work included.
   const pending = runLoader(loader, params);
   byId.set(id, pending);
-  try {
-    const data = await pending;
-    byId.set(id, data);
-    return data;
-  } catch (err) {
-    byId.delete(id); // a throw (redirect/404) is re-raised by whoever asks next
-    throw err;
-  }
+  return await pending;
 }
 
 /** Run a Remix `loader` and return its unwrapped data (or `undefined` when absent). */

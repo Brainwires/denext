@@ -192,6 +192,8 @@ export {
   unauthorized,
 } from "../runtime/error-boundary.ts";
 export type {
+  MatchContext,
+  MatcherCondition,
   MatcherEntry,
   Middleware,
   MiddlewareConfig,
