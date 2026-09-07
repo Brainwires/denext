@@ -41,11 +41,11 @@ Deno.test({
     assertEquals(body.properties.species.enum, ["cat", "dog", "bird"]);
     // The declared error code is a documented response.
     assert("404" in doc.paths["/api/pets/{id}"].get.responses);
-    // The bearer scheme is advertised → Swagger's "Authorize" button. Security is per endpoint:
-    // reads are public (`[]`), writes require the scheme.
+    // The bearer scheme is advertised → Swagger's "Authorize" button. Security is inferred from
+    // the middleware: reads (no middleware) carry none, writes (the `authed` middleware) require it.
     assertEquals(doc.components.securitySchemes.bearerAuth.scheme, "bearer");
-    assertEquals(doc.paths["/api/login"].post.security, []);
-    assertEquals(doc.paths["/api/pets"].get.security, []);
+    assertEquals(doc.paths["/api/login"].post.security, undefined);
+    assertEquals(doc.paths["/api/pets"].get.security, undefined);
     assertEquals(doc.paths["/api/pets"].post.security, [{ bearerAuth: [] }]);
     assertEquals(doc.paths["/api/pets/{id}"].delete.security, [{ bearerAuth: [] }]);
   });

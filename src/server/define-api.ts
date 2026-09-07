@@ -144,6 +144,61 @@ export type ApiMiddleware<Ctx extends object, Ext extends object = Record<never,
   input: ApiMiddlewareInput<Ctx>,
 ) => Ext | Response | void | Promise<Ext | Response | void>;
 
+/** OpenAPI metadata a middleware contributes to every endpoint it guards (read by `@denext/openapi`). */
+export interface ApiMiddlewareDocs {
+  /**
+   * The OpenAPI security requirement applying this middleware documents — e.g.
+   * `[{ bearerAuth: [] }]`. It is folded into the endpoint's `security` (unless the definition
+   * sets `security` itself), so `createApi().use(<tagged>).define(...)` marks the operation
+   * secured in the document without repeating it.
+   */
+  security?: Record<string, string[]>[];
+}
+
+/** The symbol under which a middleware carries its {@link ApiMiddlewareDocs}. */
+const MIDDLEWARE_DOCS: unique symbol = Symbol.for("denext.api.middlewareDocs") as never;
+
+/**
+ * Tag a middleware so applying it also DOCUMENTS its OpenAPI requirement: an endpoint built with
+ * `createApi().use(documentsSecurity(mw, [{ bearerAuth: [] }])).define(...)` is marked secured in
+ * the generated document with no `security` on the definition — one declaration both enforces
+ * (the middleware) and documents (this tag). A `security` on the definition still overrides it,
+ * and `@denext/openapi` must declare the scheme (`securitySchemes`) for the "Authorize" button.
+ *
+ * @param mw The middleware to tag.
+ * @param security The requirement(s) it documents (`[{ scheme: [] }]`; `[]` documents nothing).
+ * @returns The same middleware, tagged.
+ */
+export function documentsSecurity<M extends ApiMiddleware<object, object>>(
+  mw: M,
+  security: Record<string, string[]>[],
+): M {
+  (mw as unknown as Record<symbol, ApiMiddlewareDocs>)[MIDDLEWARE_DOCS] = { security };
+  return mw;
+}
+
+/**
+ * The security requirement a middleware chain documents (via {@link documentsSecurity}). A chain
+ * is conjunctive (every middleware must pass), while each middleware's array is a disjunction
+ * (alternatives). So the documented requirement is the **cartesian product** — AND distributed
+ * over OR: a `(A | B)` middleware chained with a `C` middleware documents as `[{A,C}, {B,C}]`,
+ * and one tagged middleware is reproduced verbatim. `undefined` when nothing is tagged; an empty
+ * (`[]`) tag documents nothing and is skipped.
+ */
+function middlewareSecurity(
+  chain: readonly ApiMiddleware<object, object>[],
+): Record<string, string[]>[] | undefined {
+  const tagged = chain
+    .map((mw) => (mw as unknown as Record<symbol, ApiMiddlewareDocs>)[MIDDLEWARE_DOCS]?.security)
+    .filter((s): s is Record<string, string[]>[] => Array.isArray(s) && s.length > 0);
+  if (tagged.length === 0) return undefined;
+  let product: Record<string, string[]>[] = [{}];
+  for (const alternatives of tagged) {
+    product = product.flatMap((base) => alternatives.map((req) => ({ ...base, ...req })));
+  }
+  return product;
+}
+
 /** A chain of middleware with a typed accumulated context, ending in `.define()`. */
 export interface ApiBuilder<Ctx extends object> {
   /** Append a middleware; its returned extension joins the context type. */
@@ -214,7 +269,11 @@ function builder<Ctx extends object>(
       return builder([...chain, mw as unknown as ApiMiddleware<object, object>]);
     },
     define(def, handler) {
-      const meta: ApiRouteMeta = { def, middleware: chain };
+      // A tagged middleware documents its OpenAPI requirement; fold it in unless the definition
+      // declares `security` itself (an explicit `security: []` therefore forces "public").
+      const documented = def.security === undefined ? middlewareSecurity(chain) : undefined;
+      const effectiveDef = documented ? { ...def, security: documented } : def;
+      const meta: ApiRouteMeta = { def: effectiveDef, middleware: chain };
       const run: ApiHandler = (request, context) =>
         runDefined(meta, request, context, handler as DefinedHandler);
       Object.defineProperty(run, API_META, { value: meta });

@@ -103,20 +103,35 @@ openapi({
 });
 ```
 
-**Per endpoint (recommended)** — put `security` on the definition, so operations on the
-same path can differ (a public `GET`, a protected `POST`):
+**Let the middleware document it (recommended)** — tag your auth middleware with
+`documentsSecurity`, and every endpoint that applies it is marked secured automatically. One
+declaration both **enforces** (the middleware) and **documents** (the tag); nothing is repeated
+and the two can't drift:
 
 ```ts
-export const GET = defineApi({ summary: "List", security: [] }, list); //  public
-export const POST = authed.define(
-  { summary: "Create", security: [{ bearerAuth: [] }] }, // requires bearerAuth
-  create,
+import { createApi, documentsSecurity } from "@denext/denext/server";
+
+const authed = createApi().use(
+  documentsSecurity(requireBearer(), [{ bearerAuth: [] }]),
 );
+
+export const GET = defineApi({ summary: "List" }, list); //  no middleware → public
+export const POST = authed.define({ summary: "Create" }, create); // enforced AND marked secured
+```
+
+A chain is the cartesian product of its middlewares' requirements (`(A | B)` then `C` documents
+as `[{A,C}, {B,C}]`); an endpoint with no documenting middleware carries no requirement.
+
+**Or put `security` on the definition** — when you want the lock without middleware, or to
+override what the middleware documents (an explicit `security: []` forces "public"):
+
+```ts
+export const GET = defineApi({ summary: "List", security: [] }, list); // explicitly public
+export const POST = authed.define({ summary: "Create", security: [{ bearerAuth: [] }] }, create);
 ```
 
 **Or a document-wide default** — pass `security` to the plugin as an array (applies to
-every operation) or a `(route) => …` function (per route); any per-endpoint `security`
-overrides it:
+every operation) or a `(route) => …` function (per route):
 
 ```ts
 openapi({
@@ -126,10 +141,9 @@ openapi({
 ```
 
 `security` is **documentation only** — it draws the lock and tells Swagger which header to
-send. It does **not** enforce anything: apply middleware
-(`createApi().use(requireSession())`, or your own bearer check) to actually reject requests.
-Keep the two in sync, as `examples/openapi` does (`authed.define` enforces; `security`
-documents). Precedence: per-endpoint `security` → document-level `security` → none.
+send; `documentsSecurity` is likewise a doc tag. Neither enforces anything: the middleware you
+apply is what actually rejects requests. Precedence: per-endpoint `security` →
+middleware-documented (`documentsSecurity`) → document-level `security` → none.
 
 ## CI
 

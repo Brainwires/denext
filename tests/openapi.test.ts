@@ -3,7 +3,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { createApi, defineApi } from "../src/server/mod.ts";
+import { createApi, defineApi, documentsSecurity } from "../src/server/mod.ts";
 import type { StandardSchemaV1 } from "../src/server/mod.ts";
 import { type ApiRoute, scanRoutes } from "../src/router/manifest.ts";
 import { parsePattern } from "../src/router/segments.ts";
@@ -318,6 +318,39 @@ Deno.test("buildOpenApi: a per-endpoint `security` on the definition overrides t
   });
   assertEquals(document.paths["/api/mixed"].get.security, [], "def.security [] → public");
   assertEquals(document.paths["/api/mixed"].post.security, [{ bearerAuth: [] }]);
+});
+
+Deno.test("buildOpenApi: a documenting middleware auto-marks operations secured (Option B)", async () => {
+  const bearer = { bearerAuth: { type: "http", scheme: "bearer" } };
+  const authed = createApi().use(documentsSecurity(() => ({}), [{ bearerAuth: [] }]));
+  const plain = createApi().use(() => ({})); // a middleware that documents nothing
+  const load2 = () =>
+    Promise.resolve({
+      GET: defineApi({ summary: "read" }, () => ({})), //           public (no middleware)
+      POST: authed.define({ summary: "write" }, () => ({})), //     auto-secured by the middleware
+      PATCH: authed.define({ summary: "opt out", security: [] }, () => ({})), // explicit override
+      DELETE: plain.define({ summary: "logged" }, () => ({})), //   middleware, but not a documenting one
+    });
+  const { document } = await buildOpenApi({
+    manifest: { api: [route("/api/x")] },
+    load: load2,
+    securitySchemes: bearer,
+  });
+  const ops = document.paths["/api/x"];
+  assertEquals(ops.get.security, undefined, "no middleware → no security");
+  assertEquals(ops.post.security, [{ bearerAuth: [] }], "documenting middleware → secured");
+  assertEquals(ops.patch.security, [], "def.security overrides the middleware");
+  assertEquals(ops.delete.security, undefined, "a non-documenting middleware adds no security");
+});
+
+Deno.test("documentsSecurity: a chain is the cartesian product of the middlewares' alternatives", async () => {
+  // (A OR B) AND C  →  [{A,C}, {B,C}]
+  const aOrB = documentsSecurity(() => ({}), [{ a: [] }, { b: [] }]);
+  const c = documentsSecurity(() => ({}), [{ c: [] }]);
+  const load2 = () =>
+    Promise.resolve({ GET: createApi().use(aOrB).use(c).define({ summary: "x" }, () => ({})) });
+  const { document } = await buildOpenApi({ manifest: { api: [route("/api/y")] }, load: load2 });
+  assertEquals(document.paths["/api/y"].get.security, [{ a: [], c: [] }, { b: [], c: [] }]);
 });
 
 Deno.test("buildOpenApi: include / tags / converter options, a failing module, duplicate ids", async () => {

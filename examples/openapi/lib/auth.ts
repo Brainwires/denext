@@ -3,7 +3,7 @@
 // rejects any request without a valid `Authorization: Bearer <token>` header. The pet routes are
 // built with `authed` so they require a token; `/api/login` stays public.
 
-import { ApiError, type ApiMiddleware, createApi } from "denext/server";
+import { ApiError, type ApiMiddleware, createApi, documentsSecurity } from "denext/server";
 
 // The one demo account. A real app checks a database + a password hash.
 const DEMO = { username: "demo", password: "denext" };
@@ -26,9 +26,11 @@ function bearerToken(request: Request): string {
   return header.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : "";
 }
 
-/** API middleware: require a valid bearer token or 401. Adds `{ token }` to the handler ctx. */
+// API middleware: require a valid bearer token (401 otherwise) AND document the requirement.
+// `documentsSecurity` tags it with `[{ bearerAuth: [] }]`, so every endpoint built with `authed`
+// is marked secured in the OpenAPI document automatically — no `security` on the definition.
 function requireBearer(): ApiMiddleware<object, { token: string }> {
-  return ({ request }) => {
+  return documentsSecurity(({ request }) => {
     const token = bearerToken(request);
     if (!token || !tokens.has(token)) {
       throw new ApiError(401, "unauthorized", {
@@ -37,7 +39,7 @@ function requireBearer(): ApiMiddleware<object, { token: string }> {
       });
     }
     return { token };
-  };
+  }, [{ bearerAuth: [] }]);
 }
 
 /** Build protected endpoints with `authed.define(def, handler)` — the token is enforced first. */

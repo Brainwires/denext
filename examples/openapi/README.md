@@ -29,16 +29,22 @@ curl -s localhost:3000/api/pets -X POST -H "authorization: Bearer $TOKEN" \
 ## Login & the Authorize button
 
 The config declares a bearer scheme (`securitySchemes`), so **Swagger UI shows an "Authorize"
-button**. Security is decided **per endpoint** with a `security` field on each definition, so
-operations on the same path differ: `GET /api/pets` and `GET /api/pets/{id}` are public
-(`security: []`), while `POST`/`PATCH`/`DELETE` require the token (`security: [{ bearerAuth: [] }]`).
+button**. Which operations need it is decided by **which builder each handler uses** — there is no
+`security` written on any definition:
+
+- `defineApi(...)` → **public** (no lock): the reads `GET /api/pets`, `GET /api/pets/{id}`, and
+  `POST /api/login`.
+- `authed.define(...)` → **protected** (locked): the writes `POST`/`PATCH`/`DELETE`.
+
+`authed` is `createApi().use(requireBearer())`, and `requireBearer()` is tagged with
+`documentsSecurity(…, [{ bearerAuth: [] }])` in `lib/auth.ts`. So applying it does two things at
+once: it **enforces** the token (401 otherwise) and **documents** the requirement (the lock). One
+declaration, no repetition, and the doc can't drift from what's enforced.
 
 To use it in `/docs`: expand **`POST /api/login`** → Try it out → send
 `{"username":"demo","password":"denext"}`, copy the `token`, click **Authorize** (top right),
 paste it, and every locked operation now sends `Authorization: Bearer <token>`.
 
-`security` only **documents** the requirement (the lock); it is **enforced** separately by the
-`requireBearer()` middleware in `lib/auth.ts` (`authed.define(...)` runs it before the handler).
 This is a demo store — the credentials and tokens are in-memory, not for production.
 
 ## The docs renderer

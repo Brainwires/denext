@@ -10,12 +10,16 @@ and this project adheres to
 
 ### Added
 
-- **`ApiDefinition.security` — per-endpoint OpenAPI security.** A `defineApi` definition may now
+- **Per-endpoint OpenAPI security + auto-documenting middleware.** A `defineApi` definition may
   carry a `security` field (`[{ bearerAuth: [] }]` to require a scheme, `[]` to mark it public),
-  which `@denext/openapi` reads to draw the lock / "Authorize" button per operation — so a public
-  `GET` and a protected `POST` can sit on one path. Doc-only metadata (like `summary`); it does
-  not enforce anything — apply middleware. Paired with the plugin's new `securitySchemes` /
-  `security` options (see `@denext/openapi`).
+  and the new `documentsSecurity(mw, [{ bearerAuth: [] }])` (from `denext/server`) tags a
+  middleware so applying it both **enforces** and **documents** the requirement — an endpoint
+  built with `createApi().use(<tagged>).define(...)` is marked secured with nothing on the
+  definition. A chain documents the cartesian product of its middlewares' requirements. All of it
+  is doc-only metadata read by `@denext/openapi` to draw the lock / "Authorize" button (paired
+  with the plugin's `securitySchemes` / `security` options); it never enforces on its own.
+  Precedence: per-endpoint `security` → middleware-documented → document-level → none. New exports:
+  `documentsSecurity`, `ApiMiddlewareDocs`.
 - **`examples/openapi` — a standalone `@denext/openapi` example.** A tiny pet store defined with
   `defineApi` + Zod that serves an OpenAPI 3.1 document at `/openapi.json` and an interactive
   **Swagger UI** at `/docs` (`ui: "swagger"`), a demo bearer login (`POST /api/login`) wired to

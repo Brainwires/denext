@@ -3,27 +3,26 @@ import { ListQuery, NewPet, Pet, PetList } from "../../../lib/schema.ts";
 import { addPet, listPets } from "../../../lib/store.ts";
 import { authed } from "../../../lib/auth.ts";
 
-// Security is declared PER ENDPOINT on the definition (`security`), so operations on the same
-// path can differ: listing is public, adding requires a bearer token. `security` is DOCUMENTATION
-// (the lock + Authorize button); enforcement is the `authed` middleware — the two are kept in
-// sync here by writing both on the protected operation.
+// Security is decided by which builder you use — no `security` on the definitions:
+//   defineApi(...)    → public (no lock)
+//   authed.define(...) → the bearer middleware ENFORCES the token AND documents the requirement
+//                        (via documentsSecurity in lib/auth.ts), so the operation shows the lock.
+// One declaration does both, and operations on the same path can differ.
 
-// Public: no token, no lock. `security: []` says "deliberately public" (overrides any default).
+// Public: listing needs no token.
 export const GET = defineApi(
   {
     summary: "List pets",
-    security: [],
     query: ListQuery,
     response: PetList,
   },
   ({ query }) => listPets(query.species),
 );
 
-// Protected: `authed.define` enforces the token; `security` documents the requirement.
+// Protected: `authed` enforces the token and marks this operation secured in the document.
 export const POST = authed.define(
   {
     summary: "Add a pet",
-    security: [{ bearerAuth: [] }],
     body: NewPet,
     response: Pet,
     errors: { duplicate: 409 },

@@ -70,7 +70,7 @@ export type {
 export type { ApiDispatchOptions } from "./api.ts";
 // Schema-validated route handlers (`defineApi`, the route twin of `defineAction`) and the
 // first-party middleware for `createApi().use(...)`.
-export { apiDefinitionOf, createApi, defineApi } from "./define-api.ts";
+export { apiDefinitionOf, createApi, defineApi, documentsSecurity } from "./define-api.ts";
 export type {
   ApiBuilder,
   ApiDefinition,
@@ -78,6 +78,7 @@ export type {
   ApiHandlerInput,
   ApiHandlerResult,
   ApiMiddleware,
+  ApiMiddlewareDocs,
   ApiMiddlewareInput,
   ApiRouteHandler,
   ApiRouteMeta,
