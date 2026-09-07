@@ -16,46 +16,6 @@
 
 ---
 
-## 2.1 keystone — a typed, self-documenting API surface
-
-**Where `development` stands after 2.1.0-rc.1.** Route handlers are schema-validated in core
-(`defineApi`, `createApi().use()`, `ApiError` / `ApiClientError`, the `typeof import`
-codegen, a client that dedupes, batches and dispatches in-process), and
-`@denext/openapi` turns the same definitions into an OpenAPI 3.1 document, a docs page,
-a build artifact and a `denext openapi` CI verb — through the plugin contract alone.
-**Still missing:** a GraphQL surface. It is a first-party plugin on the settled plugin
-contract — the developer experience people praise in NestJS's `@nestjs/graphql`, reached
-the Deno-idiomatic way.
-
-**Approach (decided — CHANGELOG, 2.1.0-rc.1):** schema-first, not decorator-first —
-one schema per route, colocated with the handler, from which validation, static
-types and the OpenAPI document derive.
-
-### WS1 — `@denext/graphql`
-
-- **Server.** `graphql-yoga` is a `(Request) => Response` handler — a one-line
-  `/graphql` mount through `addRequestHandler`, GraphiQL included.
-- **Schema.** **Pothos** (code-first, type-safe, **no decorators**) is the
-  recommended builder. TypeGraphQL / `@nestjs/graphql` are out: both are
-  decorator-metadata-based — the approach the schema-first decision rejected.
-- **Subscriptions.** GraphQL subscriptions over the Live socket's channels
-  (`createChannel` + a `ChannelTransport` for multi-instance delivery), not a
-  separate WebSocket server.
-- **CLI.** `denext graphql` (`addCommand`) to print the SDL / run codegen in CI.
-
-**Definition of done:** `@denext/graphql` + a Pothos schema serves a working
-`/graphql` endpoint with subscriptions over the Live transport, no core change.
-
-### WS2 — plugin-kit additions (only if needed)
-
-`@denext/openapi` needed nothing beyond the **settled** public contract
-(`@denext/denext` + `@denext/denext/plugin-kit`; [PLUGINS.md](./PLUGINS.md) →
-"Stability — the three tiers"): `apiDefinitionOf`, `scanRoutes`, the five seams. Hold
-`@denext/graphql` to the same bar. If it surfaces a genuinely missing primitive, **add it to
-`plugin-kit`** as a deliberate, tested semver addition guarded in
-`tests/plugin-kit.test.ts` — never widen the private `src/router` / `src/build` /
-`src/server` surface.
-
 ## Build-time deps → first-party JSR/WASM
 
 The one remaining **runtime-purity** item — build-time only, so it never enters a

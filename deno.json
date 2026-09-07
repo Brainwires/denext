@@ -9,7 +9,8 @@
     "./packages/pages-router",
     "./packages/htmx",
     "./packages/effect",
-    "./packages/openapi"
+    "./packages/openapi",
+    "./packages/graphql"
   ],
   "exports": {
     ".": "./mod.ts",

@@ -136,6 +136,9 @@ definitions serve `GET /openapi.json` (OpenAPI 3.1) + a docs page at `GET /docs`
 `openapi.json` at build, and back `denext openapi emit | diff | lint` — zero extra annotation.
 Schemas that implement Standard JSON Schema (Zod ≥ 4.2, ArkType, Valibot) or TypeBox are
 described in full; others are `{}` + a lint warning.
+Need GraphQL? `@denext/graphql` mounts GraphQL Yoga at `/graphql` (any `GraphQLSchema`;
+Pothos recommended, no decorators) and `fromChannel(channel, key)` turns a `createChannel`
+into a subscription source — the same push the Live socket delivers.
 
 A plain handler still works and is still typed: return `TypedResponse<T>` / take a
 `TypedRequest<B>` from `denext/server`. A plain `route.ts` body is capped at 1 MiB

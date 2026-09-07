@@ -40,6 +40,23 @@ and this project adheres to
   `authorize` gates socket subscribers; a tap sees every publish, so its consumer gates its own
   audience. Public-surface golden refreshed. (`src/runtime/channel.ts`, `src/plugin/kit.ts`,
   `tests/channel-tap.test.ts`.)
+- **`@denext/graphql` — a GraphQL endpoint as a plugin, with subscriptions over channels.**
+  The last "2.1 keystone" item (`packages/graphql`, published as `@denext/graphql`):
+  `graphql({ schema })` mounts a GraphQL Yoga server at `/graphql` through the plugin
+  request-handler seam (GraphiQL on a browser `GET` in dev, a `context` factory over the
+  request, Yoga passthrough for `plugins` / `maskedErrors` / `cors` / `batching`), so
+  resolvers run inside denext's request context — `cookies()`, `auth()`, the typed API client
+  all work. `fromChannel(channel, key, { signal, buffer })` turns one key of a `createChannel`
+  into the `AsyncIterable` a `subscribe` resolver returns, over the new `tapChannel` seam:
+  GraphQL subscriptions ride the app's push primitive and its `ChannelTransport` (Yoga
+  delivers them as GraphQL over SSE) — no second pub/sub, no separate WebSocket server. A
+  build step writes the sorted SDL (`schema.graphql`); `denext graphql sdl | diff <file>`
+  covers CI. Schema-first or code-first: any `GraphQLSchema`; Pothos (typed, no decorators) is
+  the recommended builder, `createSchema` is re-exported for SDL + resolvers. Like
+  `@denext/effect` it is a deliberate npm bridge (`graphql-yoga`, `graphql` as peers) a
+  consumer opts into; the runtime-purity guard lists it as such. `examples/graphql` is a Pothos
+  app with a channel-backed subscription. With this the keystone is complete and its ROADMAP
+  section is gone.
 
 ## [2.1.0-rc.1] - 2026-09-06
 

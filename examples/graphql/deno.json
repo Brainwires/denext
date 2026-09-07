@@ -1,0 +1,33 @@
+{
+  "tasks": {
+    "dev": "deno run -A ../../cli.ts dev .",
+    "build": "deno run -A ../../cli.ts build .",
+    "start": "deno run -A ../../cli.ts start ."
+  },
+  "nodeModulesDir": "none",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "denext",
+    "lib": ["deno.window", "dom", "dom.iterable", "dom.asynciterable"]
+  },
+  "imports": {
+    "denext": "../../mod.ts",
+    "denext/jsx-runtime": "../../src/jsx/jsx-runtime.ts",
+    "denext/jsx-dev-runtime": "../../src/jsx/jsx-runtime.ts",
+    "denext/server": "../../src/server/mod.ts",
+    "denext/client": "../../src/client/mod.ts",
+    "denext/live": "../../src/live.ts",
+    "@denext/denext": "../../mod.ts",
+    "@denext/denext/server": "../../src/server/mod.ts",
+    "@denext/denext/plugin-kit": "../../src/plugin/kit.ts",
+    "@denext/denext/cli/command": "../../src/cli/command.ts",
+    "@denext/graphql": "../../packages/graphql/mod.ts",
+    "@std/path": "jsr:@std/path@^1.0.0",
+    "graphql": "npm:graphql@^16.9.0",
+    "graphql-yoga": "npm:graphql-yoga@^5.10.0",
+    "@pothos/core": "npm:@pothos/core@^4.6.0"
+  },
+  "lint": {
+    "plugins": ["../../src/lint/denext-plugin.ts"]
+  }
+}
