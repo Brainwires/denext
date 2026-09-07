@@ -369,6 +369,12 @@ export interface BuildNextCompatFlightOptions {
    * `true` (safe: keep Live) when unset. See {@link generateFlightEntry}.
    */
   usesLive?: boolean;
+  /**
+   * Whether the app uses class components (scan or `classComponents` config). When false,
+   * the generated entry omits `installClassSupport()` and the class runtime is dropped.
+   * Defaults to `false`. See {@link generateFlightEntry}/{@link generateRouteEntry}.
+   */
+  usesClassComponents?: boolean;
 }
 
 /**
@@ -421,6 +427,7 @@ export async function buildNextCompatFlightEntry(
       false,
       options.usesLive ?? true,
       options.instrumentationClient ?? null,
+      options.usesClassComponents ?? false,
     ),
   );
   await bundleNextCompatModules({

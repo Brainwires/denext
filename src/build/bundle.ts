@@ -353,17 +353,19 @@ export function generateRouteEntry(
   dev = false,
   perModule = false,
   instrumentationClient: string | null = null,
+  usesClassComponents = false,
 ): string {
   const slots = routeSlotEntries(route);
   const { refreshImport, refreshReg } = routeRefreshBlock(route, slots, dev, perModule);
+  const { classImport, classInstall } = classSupportBlock(usesClassComponents);
   return `// denext generated route entry — do not edit.
 ${
     clientInstrumentationImport(instrumentationClient)
   }import { startClient, provideLayoutSegments } from "denext/client-runtime";
 import { Suspense, ErrorBoundary } from "denext/client";
 import { h } from "denext/jsx-runtime";
-${refreshImport}${routeEntryImports(route, slots)}
-${refreshReg}
+${classImport}${refreshImport}${routeEntryImports(route, slots)}
+${refreshReg}${classInstall}
 function main() {
   const el = document.getElementById("__denext");
   const dataEl = document.getElementById("__denext_data");
@@ -443,6 +445,36 @@ export async function appImportsLive(rootDir: string, extraFiles: string[] = [])
 }
 
 /**
+ * Whether any source file under `rootDir` uses class components — the build-time signal
+ * that decides if the generated entry installs the class runtime (see
+ * {@linkcode classSupportBlock}). A class component MUST name `Component`/`PureComponent`
+ * (in its import or its `extends`), so a whole-word scan for that token can never
+ * false-DROP the runtime; it may keep it for an app that merely mentions the word (e.g. a
+ * `Component` prop), which is a safe over-approximation. Whole-word (`\b`) so `MyComponent`
+ * / `componentDidMount` don't trip it. `extraFiles` are sibling-package modules the routes
+ * import. Callers OR this with `config.classComponents` to honor an explicit force-on.
+ */
+export async function appUsesClassComponents(
+  rootDir: string,
+  extraFiles: string[] = [],
+): Promise<boolean> {
+  const re = /\b(?:Pure)?Component\b/;
+  for (const file of extraFiles) {
+    if (re.test(await Deno.readTextFile(file).catch(() => ""))) return true;
+  }
+  for await (
+    const entry of walk(rootDir, {
+      exts: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
+      includeDirs: false,
+      skip: [/[/\\]\.denext[/\\]/, /[/\\]node_modules[/\\]/, /[/\\]\.git[/\\]/],
+    })
+  ) {
+    if (re.test(await Deno.readTextFile(entry.path))) return true;
+  }
+  return false;
+}
+
+/**
  * Fast Refresh (dev only) for the Flight entry: register each client island's exports as
  * a family so an edited island preserves state. Two modes:
  *  - bundled: the whole flight entry is re-imported on refresh, so it registers each
@@ -509,6 +541,26 @@ configureLive({
   };
 }
 
+/**
+ * The class-component runtime (mount/update/unmount lifecycle, setState batching, error
+ * boundaries) is installed into the reconciler seam (class-support.ts) ONLY when the app
+ * uses class components — so a function-only bundle never references `installClassSupport`
+ * and `deno bundle` tree-shakes the whole ~3.1 KB runtime out. The reconciler itself never
+ * statically imports it; the emitted `installClassSupport()` here is the sole link. The
+ * decision is build-time: native prod scans the app (`appUsesClassComponents`), compat prod
+ * uses the `classComponents` config (matching its esbuild `define`), and dev installs
+ * unconditionally (unbundled, so free). `false` mirrors today's function-only default.
+ */
+function classSupportBlock(
+  usesClassComponents: boolean,
+): { classImport: string; classInstall: string } {
+  if (!usesClassComponents) return { classImport: "", classInstall: "" };
+  return {
+    classImport: `import { installClassSupport } from "denext/client-runtime";\n`,
+    classInstall: "installClassSupport();\n",
+  };
+}
+
 /** The Flight entry's `main()`: read the island, adopt signal state, hydrate, boot resumability. */
 function flightMain(catchBody: string): string {
   return `async function main() {
@@ -567,6 +619,7 @@ export function generateFlightEntry(
   perModule = false,
   usesLive = true,
   instrumentationClient: string | null = null,
+  usesClassComponents = false,
 ): string {
   const entries = [...boundary.client.entries()];
   // Islands are code-split: one dynamic `import()` per island module, run on demand for the
@@ -579,10 +632,11 @@ export function generateFlightEntry(
     .join("\n");
   const { refreshImport, regFamily, enableRefresh } = flightRefreshBlock(dev, perModule);
   const { clientImport, liveImport, liveRegister, liveConfigure } = flightLiveBlock(usesLive);
+  const { classImport, classInstall } = classSupportBlock(usesClassComponents);
   return `// denext generated Flight entry — do not edit.
 ${clientInstrumentationImport(instrumentationClient)}${clientImport}
-${liveImport}${refreshImport}
-const registry = new Map();
+${liveImport}${classImport}${refreshImport}
+${classInstall}const registry = new Map();
 // Functions AND React's non-callable memo()/forwardRef() element objects — the server tags
 // both as client references (radix exports the latter), so both must resolve here.
 function reg(mod, clientId) {
@@ -653,6 +707,13 @@ export interface BundleOptions {
    */
   usesLive?: boolean;
   /**
+   * Whether the app uses class components (from an {@linkcode appUsesClassComponents} scan,
+   * OR the `classComponents` config). When false, the generated entry omits
+   * `installClassSupport()` so `deno bundle` tree-shakes the ~3.1 KB class runtime out.
+   * Defaults to `false` (function-only) when unset. Dev callers pass `true` (unbundled).
+   */
+  usesClassComponents?: boolean;
+  /**
    * The project's `instrumentation-client.{ts,tsx,js}` (absolute path), imported first by
    * every generated browser entry so it runs before the app's client code. Null/unset: none.
    */
@@ -705,6 +766,7 @@ export async function bundleFlightEntry(
         false,
         opts.usesLive ?? true,
         opts.instrumentationClient ?? null,
+        opts.usesClassComponents ?? false,
       ),
       {
         configPath: opts.configPath,
@@ -1063,7 +1125,13 @@ export function bundleRoute(
   opts: BundleOptions,
 ): Promise<BundleOutput> {
   return bundleSourceFiles(
-    generateRouteEntry(route, opts.dev, false, opts.instrumentationClient ?? null),
+    generateRouteEntry(
+      route,
+      opts.dev,
+      false,
+      opts.instrumentationClient ?? null,
+      opts.usesClassComponents ?? false,
+    ),
     opts,
   );
 }

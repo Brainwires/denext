@@ -7,7 +7,7 @@ import { PROVIDER } from "../../runtime/context.ts";
 import { ERROR_BOUNDARY } from "../../runtime/error-boundary.ts";
 import { TEXT_TYPE } from "../vnode-utils.ts";
 import { componentDisplayName, isComponentType } from "../../runtime/react-brands.ts";
-import { hasErrorLifecycle } from "../../compat/class-component.ts";
+import { getClassSupport } from "./class-support.ts";
 import {
   ChildDeletion,
   ChildrenChanged,
@@ -70,7 +70,8 @@ export function isPlainUnkeyedFragment(v: unknown): v is VNode {
 
 export function isClassBoundary(fiber: Fiber): boolean {
   return __DENEXT_CLASS_COMPONENTS__ && fiber.tag === "component" &&
-    fiber.classInstance != null && hasErrorLifecycle(fiber.vnode.type);
+    fiber.classInstance != null &&
+    (getClassSupport()?.hasErrorLifecycle(fiber.vnode.type) ?? false);
 }
 
 /** Whether `fiber` (a provider fragment) re-provides `contextId`, shadowing it below. */

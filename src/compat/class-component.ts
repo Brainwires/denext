@@ -12,23 +12,16 @@
  * @module
  */
 
+import "../runtime/class-flag.ts";
 import type { Context } from "../runtime/hooks.ts";
 import type { VNode } from "../jsx/types.ts";
+import { getClassScheduleUpdate, setClassSupport } from "../client/fiber/class-support.ts";
 
-// `scheduleUpdate` is a client-only concern (class `setState`/`forceUpdate`
-// re-render). It is injected by the client reconciler at its module init rather
-// than statically imported, so the SSR render path (which imports this module for
-// `renderClassToVNode`) never drags the entire client reconciler graph — and its
-// browser-only scheduler handles — into a server/CLI process. On the server the
-// class runtime only ever renders (no state updates), so the default no-op is safe.
-// deno-lint-ignore no-explicit-any -- the reconciler Instance is a superset type.
-let scheduleUpdate: (inst: any) => void = () => {};
-
-/** Register the client reconciler's `scheduleUpdate` (called at reconciler init). */
-// deno-lint-ignore no-explicit-any -- matches the reconciler's Fiber/Instance type.
-export function setClassScheduleUpdate(fn: (inst: any) => void): void {
-  scheduleUpdate = fn;
-}
+// `scheduleUpdate` (class `setState`/`forceUpdate` re-render) is a client-only concern
+// read through the reconciler seam (class-support.ts) rather than statically imported, so
+// the SSR render path — which imports this module for `renderClassToVNode` — never drags
+// the client reconciler graph and its browser-only scheduler handles into a server/CLI
+// process. On the server the seam's no-op default is safe (the class runtime only renders).
 
 /** Object marker on `Component.prototype` (React parity; Jest-automock safe). */
 const IS_REACT_COMPONENT: Record<never, never> = {};
@@ -100,7 +93,7 @@ export class Component<P = Record<string, unknown>, S = Record<string, unknown>>
     const i = internals(this);
     i.pendingState.push(partial);
     if (callback) i.pendingCallbacks.push(callback);
-    scheduleUpdate(i.inst as Any);
+    getClassScheduleUpdate()(i.inst as Any);
   }
 
   /** Force a re-render, bypassing `shouldComponentUpdate`. */
@@ -108,7 +101,7 @@ export class Component<P = Record<string, unknown>, S = Record<string, unknown>>
     const i = internals(this);
     i.forced = true;
     if (callback) i.pendingCallbacks.push(callback);
-    scheduleUpdate(i.inst as Any);
+    getClassScheduleUpdate()(i.inst as Any);
   }
 
   /** Render the component. Subclasses must override. */
@@ -129,7 +122,7 @@ function internals(c: unknown): ClassInternals {
 }
 
 /** Whether a class defines error-boundary lifecycle. */
-export function hasErrorLifecycle(type: unknown): boolean {
+function hasErrorLifecycle(type: unknown): boolean {
   if (typeof type !== "function") return false;
   return typeof (type as Any).getDerivedStateFromError === "function" ||
     typeof (type as Any).prototype?.componentDidCatch === "function";
@@ -233,7 +226,7 @@ export interface ClassRenderResult {
  * @param inst The reconciler Instance for this component.
  * @returns The vnode to reconcile and whether it bailed.
  */
-export function renderClassInstance(inst: ReconcilerInstance): ClassRenderResult {
+function renderClassInstance(inst: ReconcilerInstance): ClassRenderResult {
   const Ctor = inst.vnode.type as Any;
   let c = inst.classInstance as Any;
   const isMount = c == null;
@@ -304,7 +297,7 @@ function updateEffect(inst: ReconcilerInstance, c: Any, i: ClassInternals): () =
 }
 
 /** Capture `getSnapshotBeforeUpdate` (after render, before DOM mutation). */
-export function captureSnapshot(inst: ReconcilerInstance): void {
+function captureSnapshot(inst: ReconcilerInstance): void {
   const c = inst.classInstance as Any;
   if (c && typeof c.getSnapshotBeforeUpdate === "function") {
     inst.__snapshot = c.getSnapshotBeforeUpdate(inst.__prevProps, inst.__prevState);
@@ -314,7 +307,7 @@ export function captureSnapshot(inst: ReconcilerInstance): void {
 }
 
 /** Run `componentWillUnmount` for a class instance (on unmount). */
-export function unmountClassInstance(inst: ReconcilerInstance): void {
+function unmountClassInstance(inst: ReconcilerInstance): void {
   const c = inst.classInstance as Any;
   if (c && typeof c.componentWillUnmount === "function") c.componentWillUnmount();
 }
@@ -329,7 +322,7 @@ export function unmountClassInstance(inst: ReconcilerInstance): void {
  * @param info The React error info (`{ componentStack }`).
  * @returns Whether the boundary handled the error.
  */
-export function handleClassError(
+function handleClassError(
   inst: ReconcilerInstance,
   error: unknown,
   info: { componentStack?: string },
@@ -344,7 +337,7 @@ export function handleClassError(
     const derived = Ctor.getDerivedStateFromError(error);
     const i = internals(c);
     if (derived != null) i.pendingState.push(derived);
-    scheduleUpdate(i.inst as Any);
+    getClassScheduleUpdate()(i.inst as Any);
     handled = true;
   }
   if (typeof c.componentDidCatch === "function") {
@@ -374,4 +367,26 @@ export function renderClassToVNode(type: unknown, props: unknown, context: unkno
   }
   c.state = state;
   return c.render();
+}
+
+/**
+ * Install the class runtime into the client-reconciler seam (class-support.ts). Emitted
+ * and called by the generated route/Flight entry ONLY when the app uses class components
+ * (or `classComponents` is forced on), so a function-only bundle never references this —
+ * and `deno bundle` then tree-shakes the whole class runtime out. Idempotent.
+ */
+export function installClassSupport(): void {
+  // The flag guard lets the compat esbuild `define` fold this body to a no-op when
+  // `classComponents` is off — the class runtime then becomes unreferenced and drops from
+  // the prebuilt compat runtime chunk (whose entry-point exports don't otherwise
+  // tree-shake). On the native path the flag is the runtime-global `true` and the whole
+  // function tree-shakes anyway when the app doesn't use classes.
+  if (!__DENEXT_CLASS_COMPONENTS__) return;
+  setClassSupport({
+    handleClassError,
+    renderClassInstance,
+    hasErrorLifecycle,
+    captureSnapshot,
+    unmountClassInstance,
+  });
 }

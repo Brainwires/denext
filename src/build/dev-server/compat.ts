@@ -124,7 +124,7 @@ async function buildCompat(st: DevState, m: RouteManifest): Promise<void> {
     clientDir: clientOut,
     entries: clientRoutes.map((r) => ({
       id: routeId(r.routePath),
-      source: generateRouteEntry(r, true, false, st.paths.instrumentationClientPath),
+      source: generateRouteEntry(r, true, false, st.paths.instrumentationClientPath, true),
     })),
   });
   // Compat Flight client bundle (react→denext islands, keyed by client id).

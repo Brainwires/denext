@@ -5,6 +5,7 @@
 //  2. Effects of a sibling that completed *before* a suspension/error unwind were
 //     run at commit even though that content was discarded for the fallback.
 
+import "./helpers/class-runtime.ts";
 import { assert, assertEquals } from "@std/assert";
 import { Component } from "../src/compat/react.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";

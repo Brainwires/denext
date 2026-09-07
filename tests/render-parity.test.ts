@@ -2,6 +2,7 @@
 // three cases that previously only render-to-string handled: arbitrarily-nested
 // children arrays, null element `props`, and class-component `contextType`.
 
+import "./helpers/class-runtime.ts";
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { Component, createContext } from "../src/compat/react.ts";

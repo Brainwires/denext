@@ -5,6 +5,7 @@ import { join } from "@std/path";
 import { runPluginBuildSteps } from "../../plugin/mod.ts";
 import { scanRoutes } from "../../router/manifest.ts";
 import { computeBoundaryRoutes } from "../module-graph.ts";
+import { appUsesClassComponents } from "../bundle.ts";
 import { detectNextCompat } from "../next-compat-detect.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { dirExists, setupPlugins } from "../pipeline-shared.ts";
@@ -64,6 +65,11 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
   if (compat) log("next-compat mode: building react→denext SSR + client bundles");
   const flightRoutes = await computeBoundaryRoutes(paths.appDir, manifest.pages);
   const boundaryRoutes = manifest.pages.filter((p) => flightRoutes.has(p.routePath));
+  // Gate the class-component runtime: install it only when the app uses classes (scan) or
+  // `classComponents` is forced on. Computed here (before native + Flight bundling) so both
+  // route paths see it. On compat this mirrors the esbuild `define` (config-driven Component).
+  const usesClassComponents = paths.config?.classComponents === true ||
+    await appUsesClassComponents(projectDir);
   return {
     projectDir,
     paths,
@@ -81,6 +87,7 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
     clientRoutes: [],
     boundary: null,
     usesLive: false,
+    usesClassComponents,
     compatServerModules: {},
   };
 }

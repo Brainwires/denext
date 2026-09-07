@@ -50,6 +50,7 @@ async function compatFlight(ctx: BuildContext): Promise<void> {
     boundary: ctx.boundary,
     flightFile: FLIGHT_BUNDLE_FILE,
     usesLive: ctx.usesLive,
+    usesClassComponents: ctx.usesClassComponents,
     instrumentationClient: ctx.paths.instrumentationClientPath,
   });
 }
@@ -64,7 +65,13 @@ async function compatClientEntries(ctx: BuildContext): Promise<void> {
     clientDir: ctx.clientDir,
     entries: clientRoutes.map((route) => ({
       id: routeId(route.routePath),
-      source: generateRouteEntry(route, false, false, ctx.paths.instrumentationClientPath),
+      source: generateRouteEntry(
+        route,
+        false,
+        false,
+        ctx.paths.instrumentationClientPath,
+        ctx.usesClassComponents,
+      ),
     })),
   });
   for (const route of clientRoutes) {

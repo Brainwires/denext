@@ -47,6 +47,8 @@ export interface BuildContext {
   boundary: BoundaryManifest | null;
   /** Whether the Flight entry bundles the Live transport. */
   usesLive: boolean;
+  /** Whether the generated entries install the class-component runtime (scan or config). */
+  usesClassComponents: boolean;
   /** next-compat: source module (project-relative) → server bundle (outDir-relative). */
   readonly compatServerModules: Record<string, string>;
 }

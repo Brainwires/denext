@@ -27,7 +27,7 @@ import {
 } from "../vnode-utils.ts";
 import { classComponentsDisabledError, isClassComponent } from "../../compat/class-detect.ts";
 import { resolveComponentType } from "../../runtime/react-brands.ts";
-import { renderClassInstance } from "../../compat/class-component.ts";
+import { getClassSupport } from "./class-support.ts";
 import type { Fiber, HookCell } from "./fiber.ts";
 
 /** Bound on render-phase re-invocations of one component (React's RE_RENDER_LIMIT). */
@@ -162,8 +162,9 @@ function resolveRefreshSwap(inst: Fiber): RefreshResolution {
  * bail keeps the committed child.
  */
 function renderClassFiber(inst: Fiber): VNode {
-  if (!__DENEXT_CLASS_COMPONENTS__) throw classComponentsDisabledError();
-  const { vnode, bailed } = renderClassInstance(inst as never);
+  const cs = getClassSupport();
+  if (!__DENEXT_CLASS_COMPONENTS__ || cs === null) throw classComponentsDisabledError();
+  const { vnode, bailed } = cs.renderClassInstance(inst as never);
   if (bailed) {
     inst.bailed = true;
     return (inst.child?.vnode as VNode) ?? textVNode("");

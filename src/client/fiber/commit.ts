@@ -7,7 +7,7 @@ import { runCommitReport } from "./devtools-seam.ts";
 import { onErrorFor, scheduleEffectError } from "./boundaries.ts";
 import type { ProfilerPhase } from "../../runtime/profiler.ts";
 import { applyProps, detachRef } from "../dom-props.ts";
-import { captureSnapshot, unmountClassInstance } from "../../compat/class-component.ts";
+import { getClassSupport } from "./class-support.ts";
 import { anyProfiler, takeOffscreen } from "./state.ts";
 import {
   childrenDom,
@@ -27,7 +27,7 @@ import {
 function commitBeforeMutation(wipRoot: Fiber): void {
   if (!__DENEXT_CLASS_COMPONENTS__) return;
   walk(wipRoot, (f) => {
-    if ((f.flags & Snapshot) !== 0) captureSnapshot(f as never);
+    if ((f.flags & Snapshot) !== 0) getClassSupport()?.captureSnapshot(f as never);
   });
 }
 
@@ -394,7 +394,9 @@ export function flushPassiveEffects(): void {
  * a boundary within it.
  */
 function runUnmountCleanups(fiber: Fiber): void {
-  if (__DENEXT_CLASS_COMPONENTS__ && fiber.classInstance) unmountClassInstance(fiber as never);
+  if (__DENEXT_CLASS_COMPONENTS__ && fiber.classInstance) {
+    getClassSupport()?.unmountClassInstance(fiber as never);
+  }
   if (!fiber.hooks) return;
   for (const cell of fiber.hooks) {
     if (typeof cell.cleanup !== "function") continue;

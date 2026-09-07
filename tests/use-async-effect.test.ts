@@ -7,6 +7,7 @@
 // aborts (from its own controller and from a caller-supplied `init.signal`)
 // instead of surfacing them as fatal render errors.
 
+import "./helpers/class-runtime.ts";
 import { assert, assertEquals } from "@std/assert";
 import { useAsyncEffect } from "denext";
 import { h } from "denext/jsx-runtime";

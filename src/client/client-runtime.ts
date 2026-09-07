@@ -20,6 +20,10 @@ export {
 } from "./flight-client.ts";
 // Server Actions: the browser dispatch stub emitted for each `"use server"` export.
 export { clientActionStub } from "../runtime/server-action.ts";
+// Class components: the entry emits `installClassSupport()` to wire the class runtime into
+// the reconciler seam ONLY when the app uses classes — so a function-only bundle drops this
+// re-export (and the whole ~3.1 KB class runtime) via tree-shaking.
+export { installClassSupport } from "../compat/class-component.ts";
 // Resumability: the lazily-loaded event-handler reference the qrl transform emits.
 export { capturedScope, type Qrl, qrl } from "../runtime/qrl.ts";
 // Dev Fast Refresh: family registration + state-preserving reconcile (dev entries only).

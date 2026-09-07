@@ -11,7 +11,7 @@ import {
   setBoundaryControllerProvider,
 } from "../../runtime/hooks.ts";
 import { isControlSignal, isRedirect } from "../../runtime/error-boundary.ts";
-import { handleClassError, setClassScheduleUpdate } from "../../compat/class-component.ts";
+import { getClassSupport, setClassScheduleUpdate } from "./class-support.ts";
 import { type Fiber, SyncLane, TransitionLane } from "./fiber.ts";
 import { currentFiber } from "./hooks-dispatcher.ts";
 
@@ -57,7 +57,8 @@ export function resetBoundary(inst: Fiber): void {
 function triggerBoundary(inst: Fiber, error: unknown): void {
   if (isControlSignal(error)) throw error;
   if (__DENEXT_CLASS_COMPONENTS__ && isClassBoundary(inst)) {
-    if (!handleClassError(inst as never, error, componentErrorInfo(inst))) {
+    const cs = getClassSupport();
+    if (!cs || !cs.handleClassError(inst as never, error, componentErrorInfo(inst))) {
       reportUncaught(inst, error); // the class boundary declined → uncaught
       throw error;
     }
