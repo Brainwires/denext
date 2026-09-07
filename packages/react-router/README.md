@@ -43,5 +43,12 @@ props) all work.
 - **Route typegen** (`import type { Route } from "./+types/…"`) is type-only and
   erases at runtime, so the app runs without it; generate the `+types` with React
   Router's own `typegen` if you type-check against them.
+- **`app/routes.ts` must resolve in the app's active config.** The plugin evaluates
+  `app/routes.ts` with a plain dynamic `import()`, so its `@react-router/dev/routes`
+  import (which `denext migrate` aliases in the app's `deno.json`) resolves under the
+  config Deno uses for the run — the app's own `deno.json` for a standalone app. Only
+  when the app is **nested inside another Deno workspace** whose root config wins does
+  that alias need to be present in the active config too; there, import the DSL from
+  `@denext/react-router/routes` directly (what the in-repo example does).
 
 Licensed MIT. Part of the denext project.
