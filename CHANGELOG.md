@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.1.0-rc.2] - 2026-09-07
+
 ### Added
 
 - **`@denext/react-router` (0.1.0): React Router v7 framework mode as a plugin.** Runs an RR7
@@ -5930,6 +5932,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.1.0-rc.2]: https://jsr.io/@denext/denext@2.1.0-rc.2
 [2.1.0-rc.1]: https://jsr.io/@denext/denext@2.1.0-rc.1
 [2.0.7]: https://jsr.io/@denext/denext@2.0.7
 [2.0.6]: https://jsr.io/@denext/denext@2.0.6
