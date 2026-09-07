@@ -1,8 +1,9 @@
 // `useApiLive` — `useApi` with tag invalidations delivered over the Live socket.
 //
 // Importing this (from `denext/live`) is what pulls the Live transport into an app that has no
-// other Live feature; `useApi` itself never imports the socket. Any app that already configures
-// Live gets the same behavior from plain `useApi({ tags })` (configureLive installs the source).
+// other Live feature; `useApi` itself never imports the socket, and the transport never imports
+// the typed client (a `<Live>`-only bundle carries neither). Once any `useApiLive` has rendered,
+// plain `useApi({ tags })` in the same app is wired too (the source is process-wide).
 
 import {
   type ApiEndpointOf,

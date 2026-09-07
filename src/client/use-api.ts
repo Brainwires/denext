@@ -219,7 +219,7 @@ function warnNoTransport(): void {
   warnedNoTransport = true;
   console.warn(
     "denext: useApi({ tags }) needs the Live transport to receive invalidations — use " +
-      '`useApiLive` from "denext/live" (or configure any Live feature). Tags are ignored.',
+      '`useApiLive` from "denext/live" for that call. Tags are ignored.',
   );
 }
 

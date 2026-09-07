@@ -36,6 +36,7 @@ import {
   type StandardSchemaV1,
 } from "./define-action.ts";
 import { decodeWire, prepareWire, WIRE_ENC } from "./wire-codec.ts";
+import { CHANNEL_BRAND, setChannelRegistrar } from "./channel-brand.ts";
 
 /** The subscriber's identity handed to `authorize` (the Live connection context). */
 export interface ChannelContext {
@@ -124,7 +125,9 @@ export interface ChannelInternals {
 }
 
 /** Brand shared across module instances. */
-const CHANNEL_BRAND: unique symbol = Symbol.for("denext.channel") as never;
+// The brand lives in `channel-brand.ts` (side-effect free) so client bundles can recognize a
+// channel without loading this module's server-only state; `isChannel` is re-exported from here.
+export { isChannel } from "./channel-brand.ts";
 const DEFAULT_KEY = /^[A-Za-z0-9_:.\-]{1,128}$/;
 
 /** This process's instance id (orders `seq` within one instance). */
@@ -191,23 +194,13 @@ function keyMatcher(key: ChannelConfig<unknown>["key"]): (k: string) => boolean 
 }
 
 /**
- * Is `value` a server-side channel object?
- *
- * @param value Any export.
- * @returns True for a `createChannel` result.
- */
-export function isChannel(value: unknown): value is Channel<unknown> {
-  return typeof value === "object" && value !== null && CHANNEL_BRAND in value;
-}
-
-/**
  * Register a channel under `id` (called by `createChannel` for an explicit id and by the
  * `"use server"` export tagging). Sets the channel's `denextChannelId`.
  *
  * @param id The stable id.
  * @param channel The channel.
  */
-export function registerChannel(id: string, channel: Channel<unknown>): void {
+function registerChannel(id: string, channel: Channel<unknown>): void {
   const internals = (channel as unknown as { [CHANNEL_BRAND]: ChannelInternals })[CHANNEL_BRAND];
   internals.id = id;
   Object.defineProperty(channel, "denextChannelId", {
@@ -217,6 +210,10 @@ export function registerChannel(id: string, channel: Channel<unknown>): void {
   });
   channels.set(id, internals);
 }
+
+// Let the brand module (what `server-action.ts`'s export tagging imports) reach the registry
+// once this module is loaded — i.e. on the server, always.
+setChannelRegistrar(registerChannel);
 
 /**
  * The registered channel for `id`, if any.
