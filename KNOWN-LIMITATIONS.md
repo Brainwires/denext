@@ -130,9 +130,6 @@ next-compat interop path — denext's own apps are unaffected):
   `«r0»` format is CSS-selector-safe without `CSS.escape`, these are not); and
   `defaultProps` on a **function** component is honored as a compat extension (React 19
   removed it) because popular npm libraries still rely on it.
-- **`notFound()` / `forbidden()` / `unauthorized()` thrown during a CLIENT render
-  abort the render** instead of swapping in the matching `not-found.tsx` boundary
-  (they work as documented on the server and inside Server Actions).
 - **A few React internals are shims.** The introspection hooks `captureOwnerStack()` /
   `cacheSignal()` return `null` and `addTransitionType()` is a no-op (rendering is
   unaffected — only dev tooling that reads them gets nothing).
