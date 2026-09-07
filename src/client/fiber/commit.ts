@@ -3,7 +3,7 @@
 
 import type { RootHandle } from "./state.ts";
 import { collectEffects, collectInsertionEffects, needsSync, walk } from "./fiber-utils.ts";
-import { reportCommit } from "./devtools-bridge.ts";
+import { runCommitReport } from "./devtools-seam.ts";
 import { onErrorFor, scheduleEffectError } from "./boundaries.ts";
 import type { ProfilerPhase } from "../../runtime/profiler.ts";
 import { applyProps, detachRef } from "../dom-props.ts";
@@ -158,7 +158,7 @@ export function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
   // 5b. Profiler onRender.
   if (anyProfiler) fireProfilers(wipRoot);
   // 6. DevTools.
-  reportCommit(handle);
+  runCommitReport(handle);
 }
 
 /**

@@ -11,7 +11,7 @@ import {
   scheduleUpdate,
   setFlushHandlers,
 } from "./scheduler.ts";
-import { reportCommit } from "./devtools-bridge.ts";
+import { runCommitReport } from "./devtools-seam.ts";
 import { commitDeletion, flushPassiveEffects } from "./commit.ts";
 import { beginConcurrentRender, renderRoot, resumeConcurrent } from "./work-loop.ts";
 import { PORTAL, type VNode, type VNodeChild } from "../../jsx/types.ts";
@@ -160,7 +160,7 @@ function unmountRoot(handle: RootHandle): void {
   for (let c = handle.current.child; c !== null; c = c.sibling) commitDeletion(c);
   handle.current.child = null;
   activeRoots.delete(handle);
-  reportCommit(handle);
+  runCommitReport(handle);
 }
 
 /** Mount `vnode` into `container`, creating fresh DOM. */

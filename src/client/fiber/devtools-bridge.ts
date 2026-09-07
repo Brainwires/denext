@@ -8,6 +8,7 @@ import { scheduleUpdate } from "./scheduler.ts";
 import { commitToDevTools, type DevNode, injectDevTools } from "../devtools.ts";
 import { componentDisplayName } from "../../runtime/react-brands.ts";
 import type { Fiber, FiberTag } from "./fiber.ts";
+import type { DevtoolsHooks } from "./devtools-seam.ts";
 
 let devToolsActive: boolean | undefined;
 
@@ -38,7 +39,7 @@ export function setDevIdForFiber(fn: ((fiber: Fiber) => number) | null): void {
 // reported (component type + duration ms + the fiber, for per-commit flamegraph
 // capture). Null in production and when the panel's profiler is off, so the render hot
 // path pays only a single null check.
-export let renderProfiler: ((type: unknown, ms: number, fiber: Fiber) => void) | null = null;
+let renderProfiler: ((type: unknown, ms: number, fiber: Fiber) => void) | null = null;
 
 /** Register (or clear, with `null`) the dev DevTools render profiler. */
 export function setRenderProfiler(
@@ -57,7 +58,7 @@ const fiberOverrides = new WeakMap<Fiber, Record<string, unknown>>();
 // overridden fibers so it flips back to false once the last override is cleared
 // (not stuck true for the rest of the session after any override).
 let overrideCount = 0;
-export let overridesActive = false;
+let overridesActive = false;
 
 /** Pin `fiber`'s prop `key` to `value` and re-render it (dev DevTools). Overrides are
  * shared across both buffers (a fiber and its `alternate`), which the reconciler swaps
@@ -98,7 +99,7 @@ export function devRootFibers(): Fiber[] {
   return out;
 }
 
-export function reportCommit(handle: RootHandle): void {
+function reportCommit(handle: RootHandle): void {
   const obs = commitObserver;
   if (obs !== null) {
     try {
@@ -166,3 +167,19 @@ function fiberToDevNode(fiber: Fiber): DevNode {
   if (override.children === undefined) node.children = fiberChildrenDevNodes(fiber);
   return node;
 }
+
+/**
+ * The hooks object the dev path installs into the reconciler seam via
+ * `setDevtoolsHooks` (./devtools-seam.ts). Bundling this reference in only from the
+ * dev-only install path is what keeps this whole module out of production.
+ * `profiler` is a live getter so the panel toggling recording is reflected each render.
+ */
+export const devtoolsHooksImpl: DevtoolsHooks = {
+  reportCommit,
+  propOverrides(inst) {
+    return overridesActive ? fiberPropOverrides(inst) : undefined;
+  },
+  get profiler() {
+    return renderProfiler;
+  },
+};
