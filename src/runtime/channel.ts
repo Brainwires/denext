@@ -35,7 +35,7 @@ import {
   isStandardSchema,
   type StandardSchemaV1,
 } from "./define-action.ts";
-import { prepareWire, WIRE_ENC } from "./wire-codec.ts";
+import { decodeWire, prepareWire, WIRE_ENC } from "./wire-codec.ts";
 
 /** The subscriber's identity handed to `authorize` (the Live connection context). */
 export interface ChannelContext {
@@ -344,5 +344,62 @@ export function broadcastChannelTransport(name = "denext-channels"): ChannelTran
       local.publish(ev); // this instance
     },
     subscribe: (fn) => local.subscribe(fn),
+  };
+}
+
+/** What {@link tapChannel} reports. */
+export interface ChannelTapHandlers<T> {
+  /** A payload published to the key (decoded; `seq` orders publishes from one instance). */
+  onPayload: (payload: T, seq: number) => void;
+  /** The key was revoked cluster-wide (a peer-scoped revoke is not reported — the tap is no peer). */
+  onRevoke?: () => void;
+}
+
+/**
+ * Observe a channel's publishes on the SERVER: every payload published to `key` on any
+ * instance — through the installed transport, decoded, in `seq` order per instance — until
+ * the returned disposer runs. The seam a plugin uses to bridge channel pushes into another
+ * protocol (a GraphQL subscription in `@denext/graphql`, an SSE stream, a queue) without a
+ * second event bus. Survives `setChannelTransport` (re-binds to the new transport).
+ *
+ * Not authorization: `authorize` gates socket SUBSCRIBERS; a server-side tap sees every
+ * publish to the key, so the consumer gates its own audience.
+ *
+ * @param channel The channel (or its id).
+ * @param key The key to observe (exact match).
+ * @param handlers Payload and revoke callbacks.
+ * @returns A disposer that stops the tap.
+ */
+export function tapChannel<T>(
+  channel: Channel<T> | string,
+  key: string,
+  handlers: ChannelTapHandlers<T>,
+): () => void {
+  const id = typeof channel === "string" ? channel : channel.denextChannelId;
+  if (!id) {
+    throw new Error(
+      'tapChannel: the channel has no id — export it from a "use server" module or pass `id`',
+    );
+  }
+  let unsubscribe: (() => void) | null = null;
+  const bind = (t: ChannelTransport) => {
+    unsubscribe?.();
+    unsubscribe = t.subscribe((ev) => {
+      if (ev.channelId !== id || ev.key !== key) return;
+      if (ev.kind === "revoke") {
+        if (!ev.peerId) handlers.onRevoke?.();
+        return;
+      }
+      if (ev.encoded === undefined) return;
+      const parsed = JSON.parse(ev.encoded);
+      handlers.onPayload((ev.enc ? decodeWire(parsed) : parsed) as T, ev.seq);
+    });
+  };
+  const { current, stop } = watchChannelTransport(bind);
+  bind(current);
+  return () => {
+    stop();
+    unsubscribe?.();
+    unsubscribe = null;
   };
 }

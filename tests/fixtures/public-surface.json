@@ -267,6 +267,8 @@
     "ApiRouteMeta:interface",
     "AppCss:interface",
     "BuildNextCompatModulesOptions:interface",
+    "Channel:interface",
+    "ChannelTapHandlers:interface",
     "CommandContext:interface",
     "CommandSpec:interface",
     "Component:typeAlias",
@@ -313,6 +315,7 @@
     "revalidatePath:function",
     "revalidateTag:function",
     "specificity:function",
+    "tapChannel:function",
     "toBase64Url:function"
   ],
   "denext/jsx-runtime": [
@@ -384,6 +387,7 @@
     "ChannelContext:interface",
     "ChannelEvent:interface",
     "ChannelRef:interface",
+    "ChannelTapHandlers:interface",
     "ChannelTransport:interface",
     "CompiledPattern:interface",
     "Component:typeAlias",
@@ -701,6 +705,7 @@
     "specificity:function",
     "sqliteCacheStore:function",
     "sqliteSessionStore:function",
+    "tapChannel:function",
     "unauthorized:function",
     "unstable_cache:function",
     "updateTag:function",

@@ -14,6 +14,8 @@ Deno.test("plugin-kit exports the blessed pipeline primitives", () => {
     "specificity",
     // ISR
     "PageCache",
+    // channel bridge (server-side observer of createChannel pushes)
+    "tapChannel",
     // build steps
     "bundleRoutes",
     "buildAppCss",
@@ -62,6 +64,7 @@ Deno.test("plugin-kit does not leak an over-broad value surface", () => {
     "revalidatePath",
     "revalidateTag",
     "specificity",
+    "tapChannel",
     "toBase64Url",
   ]);
 });

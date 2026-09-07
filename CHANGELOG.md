@@ -31,6 +31,15 @@ and this project adheres to
   schema now implements Standard JSON Schema, so every operation is fully described) and the
   integration test asserts the document over the real prod server. No core change was
   needed — the plugin-kit surface from rc.1 was sufficient.
+- **`tapChannel(channel, key, { onPayload, onRevoke })`** (`denext/server`, and
+  `denext/plugin-kit` as a deliberate semver addition) — the server-side observer of a
+  `createChannel` push stream: every payload published to a key on any instance, decoded, in
+  `seq` order, following the installed `ChannelTransport` across `setChannelTransport`. The
+  seam a plugin uses to bridge channel pushes into another protocol (GraphQL subscriptions in
+  `@denext/graphql`, an SSE stream, a queue) without a second event bus. Not authorization:
+  `authorize` gates socket subscribers; a tap sees every publish, so its consumer gates its own
+  audience. Public-surface golden refreshed. (`src/runtime/channel.ts`, `src/plugin/kit.ts`,
+  `tests/channel-tap.test.ts`.)
 
 ## [2.1.0-rc.1] - 2026-09-06
 

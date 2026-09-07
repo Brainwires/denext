@@ -70,6 +70,11 @@ export { cappedBody, readCappedBody, STALLED, TOO_LARGE } from "../server/mod.ts
 // endpoint declares — what an OpenAPI / docs plugin walks to describe an app's API.
 export { apiDefinitionOf } from "../server/mod.ts";
 export type { ApiDefinition, ApiRouteMeta } from "../server/mod.ts";
+// Server-side observation of a `createChannel` push stream — what a plugin bridging channel
+// events into another protocol (GraphQL subscriptions, SSE, a queue) consumes, so it needs no
+// second event bus and follows the app's `ChannelTransport` across instances.
+export { tapChannel } from "../server/mod.ts";
+export type { Channel, ChannelTapHandlers } from "../server/mod.ts";
 // Signed-token primitives (HMAC-SHA256 + base64url) for a plugin's own cookies — pass a
 // plugin-specific `domain` so its tokens can never verify as denext's session cookie.
 export { fromBase64Url, hmacSign, hmacVerify, toBase64Url } from "../server/session.ts";

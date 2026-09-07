@@ -102,6 +102,7 @@ export {
   inMemoryChannelTransport,
   isChannel,
   setChannelTransport,
+  tapChannel,
 } from "../runtime/channel.ts";
 export type {
   Channel,
@@ -109,6 +110,7 @@ export type {
   ChannelContext,
   ChannelEvent,
   ChannelRef,
+  ChannelTapHandlers,
   ChannelTransport,
 } from "../runtime/channel.ts";
 export type { ApiRateLimitOptions, RequireSessionOptions } from "./api-middleware.ts";
