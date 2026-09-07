@@ -126,7 +126,11 @@ async function assertSharedRuntimeChunk(clientDir: string): Promise<void> {
  * 62 → 64 KB for 2.1 (measured: 2.1.0-rc.1 shared chunks 61,686 B; the channel-brand split
  * −258 B; `dynamic()`'s Next-shaped loading props — a stateful fallback with `delay`/`timeout`
  * timers, `error` + `retry` — +678 B; the Suspense reveal lanes) with ~1.5 KB of headroom for
- * the rest of the 2.1 cycle.
+ * the rest of the 2.1 cycle. Re-based 64 → 58 KB after the import-gate pass: a function-only
+ * app (examples/hello) no longer ships the React-DevTools bridge (−3.3 KB, dev-only seam) or
+ * the class-component runtime (−2.4 KB, install emitted only when the app uses classes) —
+ * measured 56,558 B, so 58 KB keeps ~1.4 KB of headroom. The gates are asserted directly, not
+ * just by byte budget, in {@link assertGatedRuntimeAbsent}.
  */
 async function assertBundleBudgets(clientDir: string): Promise<void> {
   let sharedTotal = 0;
@@ -135,10 +139,39 @@ async function assertBundleBudgets(clientDir: string): Promise<void> {
       sharedTotal += (await Deno.stat(join(clientDir, e.name))).size;
     }
   }
-  assert(sharedTotal < 64_000, `shared chunks total ${sharedTotal} bytes (budget 64 KB raw)`);
+  assert(sharedTotal < 58_000, `shared chunks total ${sharedTotal} bytes (budget 58 KB raw)`);
   for (const f of ["about.js", "blog___slug_.js"]) {
     const n = (await Deno.stat(join(clientDir, f))).size;
     assert(n < 6_000, `${f} is ${n} bytes (budget 6 KB) — is the runtime inlined again?`);
+  }
+}
+
+/**
+ * The import-gate tripwire: a function-only app's shared runtime chunk must not carry any of
+ * the gated optional subsystems. These string/property markers survive minification (unlike
+ * the mangled function names), so their absence proves the gate held — a stronger check than
+ * the byte budget. If a static import ever re-couples one of these into the reconciler core,
+ * the marker reappears and this trips loudly.
+ */
+async function assertGatedRuntimeAbsent(clientDir: string): Promise<void> {
+  const gated: Array<[string, string]> = [
+    ["componentDidMount", "class-component runtime"], // class lifecycle (Gate A)
+    ["getDerivedStateFromError", "class-component error boundaries"], // (Gate A)
+    ["__REACT_DEVTOOLS_GLOBAL_HOOK__", "React-DevTools bridge"], // (Gate B)
+    ["__denext_ge_data", "global-error client"], // per-route entries never carry it (Gate C)
+  ];
+  let shared = "";
+  for await (const e of Deno.readDir(clientDir)) {
+    if (e.isFile && /^chunk-.*\.js$/.test(e.name)) {
+      shared += await Deno.readTextFile(join(clientDir, e.name));
+    }
+  }
+  for (const [marker, what] of gated) {
+    assert(
+      !shared.includes(marker),
+      `shared chunk contains "${marker}" — the ${what} leaked back into the function-only ` +
+        `runtime (an import-gate regressed)`,
+    );
   }
 }
 
@@ -184,6 +217,7 @@ Deno.test("build smoke: examples/hello emits a client entry, a code-split island
   await assertNoNodeBuiltins(clientDir, files);
   await assertSharedRuntimeChunk(clientDir);
   await assertBundleBudgets(clientDir);
+  await assertGatedRuntimeAbsent(clientDir);
 });
 
 // The probe is memoized per process, so run it in a subprocess with DENO_BIN
