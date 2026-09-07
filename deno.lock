@@ -1615,6 +1615,13 @@
           "jsr:@denext/denext@^2.1.0-rc.1",
           "jsr:@std/path@1"
         ]
+      },
+      "packages/react-router": {
+        "dependencies": [
+          "jsr:@denext/denext@^2.1.0-rc.1",
+          "jsr:@std/fs@1",
+          "jsr:@std/path@1"
+        ]
       }
     }
   }

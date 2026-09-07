@@ -47,9 +47,10 @@ and this project adheres to
   zero-JavaScript reference (strict-CSP clean; its stylesheet is served same-origin), with
   `ui: "scalar"` / `"swagger"` for a CDN-loaded interactive console. An `authorize` hook
   hides both endpoints behind the app's ordinary 404. Zero config: add the plugin and an app
-  already using `defineApi` gets both endpoints. `examples/typed-api` wires it (its hand-rolled
-  schema now implements Standard JSON Schema, so every operation is fully described) and the
-  integration test asserts the document over the real prod server. No core change was
+  already using `defineApi` gets both endpoints, and `expose: "dev"` restricts them to
+  `denext dev` when the API map should not be public. `examples/typed-api` wires it (its
+  hand-rolled schema now implements Standard JSON Schema, so every operation is fully described)
+  and the integration test asserts the document over the real prod server. No core change was
   needed — the plugin-kit surface from rc.1 was sufficient.
 - **`tapChannel(channel, key, { onPayload, onRevoke })`** (`denext/server`, and
   `denext/plugin-kit` as a deliberate semver addition) — the server-side observer of a
@@ -170,6 +171,34 @@ Findings of the post-2.0.5 audit (security + production-readiness + docs; all fi
   `uninstallLiveHub` disposes the channel hub's index and coalesce timer; the per-(channel,key)
   sequence table is bounded. `denext patch delete` reports files it could not revert; a
   non-OK pristine fetch is an error, never module source (30 s timeout).
+- **Dev server / export / SPA (M16).** A `/_denext/client/assets/*` request that races a
+  next-compat rebuild now awaits the in-flight build and serves from the completed generation
+  (it 404'd from a half-written dir for the whole rebuild window); the previous
+  `.denext/dev-compat/<n>` generation is reclaimed. `instrumentation-client` runs first in
+  static-export client entries and the bundled SPA entry (it was wired only for App Router
+  dev/build). The dev route-manifest scan is single-flight (concurrent first hits after a
+  rebuild shared nothing and each re-emitted the typed modules), and a failed `.denext/api.ts` /
+  `routes.ts` write is reported once instead of silently swallowed.
+- **Client bundle hygiene.** The channel brand moved to a side-effect-free
+  `src/runtime/channel-brand.ts`, so `server-action.ts` and the Flight scalar serializer no
+  longer drag `channel.ts` (a module-scope `crypto.randomUUID()` + default transport) into every
+  Flight bundle; and the Live transport no longer imports the typed API client, so a
+  `<Live>`-only app does not ship it. Shared chunks: 61,686 → 61,428 bytes.
+- **`denext patch` (M13).** The unified-diff builder is Myers' linear-space middle-snake
+  recursion (O(N+M) memory; the full-trace version needed hundreds of MB on a 6k-line file and
+  gigabytes on a minified bundle), with common prefix/suffix trimming and a 2 MiB / 50k-line
+  skip guard. The `\ No newline at end of file` marker is kept per line and honored on apply, so
+  a patch that adds or removes the final newline round-trips (it was dropped on parse before);
+  added and deleted files are recorded (`/dev/null` headers), applied and reverted.
+- **Live / batch / GraphQL (M14/M18).** Channel-hub de-index is O(1) (each subscription keeps
+  its index entry — a mass disconnect on a hot key was O(n·k)); `useChannel` surfaces the push
+  `seq`; the typed-API batch gate is one per app so N concurrent batches share its slots and
+  overflow sheds as a per-item 503 instead of multiplying server concurrency by the client count;
+  `resetChannels()` (test-only) makes the channel/graphql/live suites order-independent, and
+  `tapChannel` warns once on an unregistered id. `@denext/graphql` derives its SDL from an
+  introspection round-trip rather than printing the app's schema objects — `printSchema` threw
+  "Cannot use GraphQLScalarType from another module or realm" whenever the app's `graphql` copy
+  differed from the plugin's.
 - Docs: the auth-session shape (`session.user.id`, not `session.userId`) in AGENTS.md, the
   docs site and JSDoc; `getSession()` examples; `useApi` `data` narrowing; the deprecated
   middleware `redirect` in the routing page; example ports; the two `### Added` headings and

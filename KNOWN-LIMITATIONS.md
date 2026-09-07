@@ -187,8 +187,10 @@ three documented bounds of the opt-in:
   invalidations over the same transport is the natural follow-up.
 - **Channels carry no history.** A subscriber gets pushes from the moment it subscribes;
   nothing replays on reconnect (compute a cold-start value during SSR and pass it as
-  `initial`). Delivery is at-most-once and latest-wins under back-pressure; `seq` orders
-  frames from one instance only.
+  `initial`). Delivery is at-most-once and latest-wins under back-pressure; `seq` (surfaced by
+  `useChannel`) orders frames from one instance only. A publisher burst within 16 ms delivers
+  only the last value per key — the hub coalesces publishes, independent of back-pressure — so a
+  channel carries state, not a log; keep a list in a Server Action for chat-style history.
 - **Channel re-authorization is lazy.** A subscriber is re-authorized on traffic once
   `authTtlSeconds` (default 300) has passed, not per push; `channel.revoke(key)` is the
   immediate path.
@@ -206,7 +208,9 @@ three documented bounds of the opt-in:
   (`requireSession` 401, `rateLimit` 429) appear only as the operation's `default`
   response — a definition cannot name them. The `scalar` / `swagger` renderers load a
   pinned bundle from a CDN (not strict-CSP clean; self-host via `cdn`); the `builtin`
-  renderer is.
+  renderer is. The document and docs page are served in every mode by default (a spec of your
+  own API is usually public); `expose: "dev"` restricts them to `denext dev`, `authorize` gates
+  per request.
 - **`@denext/graphql` subscriptions are GraphQL over SSE**, not a WebSocket — every
   GraphQL client supports it, and it is what lets them ride denext channels without a
   second socket server. `fromChannel` bypasses the channel's socket-side `authorize`
