@@ -41,10 +41,12 @@ import {
   referencedIds,
   resourceRouteSource,
   rewriteRemixImports,
+  rewriteSpecifiers,
   rootNeedsClient,
   selectHelperDecls,
   SERVER_EXPORTS,
   serverRootLayoutSource,
+  stripRootDoc,
   usedImports,
 } from "./remix-codegen.ts";
 export { analyzeModule, rewriteRemixImports, selectHelpers } from "./remix-codegen.ts";
@@ -1045,41 +1047,6 @@ function relativeSpecifier(fromDir: string, target: string): string {
   return next.startsWith(".") ? next : `./${next}`;
 }
 
-/** The binding names an import/export-from clause asks for (`default`, `*`, or the named ones). */
-function importedNames(clause: string): string[] {
-  const names: string[] = [];
-  const braces = clause.match(/\{([^}]*)\}/);
-  if (braces) {
-    for (const part of braces[1].split(",")) {
-      const m = part.trim().match(/^(?:type\s+)?([A-Za-z_$][\w$]*)/);
-      if (m) names.push(m[1]);
-    }
-  }
-  const head = clause.replace(/\{[^}]*\}/, "").replace(/\bfrom\s*$/, "")
-    .replace(/^\s*(?:import|export)\s+(?:type\s+)?/, "");
-  if (/\*\s*as\s+/.test(head)) names.push("*");
-  else if (/^[A-Za-z_$][\w$]*\s*(?:,|$)/.test(head.trim())) names.push("default");
-  return names;
-}
-
-/**
- * Rewrite every import/export specifier in `code` through `map(spec, names)` (a `null`
- * result leaves it alone). Covers `import … from`, `export … from`, side-effect imports and
- * dynamic `import()`.
- */
-function rewriteSpecifiers(
-  code: string,
-  map: (spec: string, names: string[]) => string | null,
-): string {
-  return code.replace(
-    /(\b(?:import|export)\b[^;'"]*?\bfrom\s*|\bimport\s*\(?\s*)(["'])([^"'\n]+)\2/g,
-    (whole, lead: string, quote: string, spec: string) => {
-      const next = map(spec, lead.includes("from") ? importedNames(lead) : []);
-      return next === null ? whole : `${lead}${quote}${next}${quote}`;
-    },
-  );
-}
-
 /** Resolve a relative or subpath-aliased specifier against `fromDir`; null for bare specifiers. */
 function resolveSpecifier(spec: string, fromDir: string, where: ImportRemap): string | null {
   if (spec.startsWith("./") || spec.startsWith("../")) return join(fromDir, spec);
@@ -1184,16 +1151,6 @@ async function rewriteRemixImportsInTree(appDir: string): Promise<number> {
     }
   }
   return count;
-}
-
-/**
- * Strip Remix's document components from a root module (denext owns the document). The
- * root's `<Outlet/>` is kept — it maps to the runtime `<Outlet>` and the generated layout
- * boundary threads the nested-route subtree to it via `OutletProvider`, exactly like any
- * other layout.
- */
-function stripRootDoc(src: string): string {
-  return src.replace(/<(Meta|Links|Scripts|ScrollRestoration|LiveReload)\b[^>]*\/>\s*/g, "");
 }
 
 // ── Small path/fs helpers (kept local to avoid widening migrate.ts's surface) ──

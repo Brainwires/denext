@@ -1,0 +1,30 @@
+{
+  "name": "@denext/react-router",
+  "version": "0.1.0",
+  "license": "MIT",
+  "exports": {
+    ".": "./mod.ts",
+    "./routes": "./routes.ts",
+    "./dom": "./dom.ts"
+  },
+  "imports": {
+    "@denext/denext": "jsr:@denext/denext@^2.1.0-rc.1",
+    "@denext/denext/plugin-kit": "jsr:@denext/denext@^2.1.0-rc.1/plugin-kit",
+    "@denext/denext/remix": "jsr:@denext/denext@^2.1.0-rc.1/remix",
+    "@denext/denext/remix/server": "jsr:@denext/denext@^2.1.0-rc.1/remix/server",
+    "@std/path": "jsr:@std/path@^1.0.0",
+    "@std/fs": "jsr:@std/fs@^1.0.0"
+  },
+  "publish": {
+    "include": [
+      "mod.ts",
+      "routes.ts",
+      "dom.ts",
+      "src",
+      "README.md",
+      "CHANGELOG.md",
+      "LICENSE",
+      "deno.json"
+    ]
+  }
+}

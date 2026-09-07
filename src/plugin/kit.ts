@@ -126,3 +126,9 @@ export type { AppCss } from "../build/plugin-css.ts";
 // so dev Fast Refresh reaches plugin routes.
 export { hydrateRoot } from "../client/mod.ts";
 export { enableFastRefresh, registerFamily } from "../client/refresh-runtime.ts";
+
+// ── Remix / React Router route-module codegen ─────────────────────────────────
+// The swc-based client/data split + the generated denext wrappers `denext migrate --from
+// remix` writes — as a namespace, so a router plugin (`@denext/react-router`) can generate
+// the same wrappers into `.denext/` for an app whose sources stay untouched.
+export * as remixCodegen from "../build/remix-codegen.ts";

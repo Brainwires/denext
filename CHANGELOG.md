@@ -10,6 +10,16 @@ and this project adheres to
 
 ### Added
 
+- **`@denext/react-router` (0.1.0): React Router v7 framework mode as a plugin.** Runs an RR7
+  app (config routing in `app/routes.ts`, `root.tsx`, loaders/actions, `react-router.config.ts`)
+  on denext with the app's source untouched: the plugin evaluates `app/routes.ts`, generates
+  denext route wrappers under `.denext/react-router/`, and adds them through the route-synthesizer
+  seam, so Flight/streaming/boundaries/soft-nav/ISR/Fast-Refresh are denext's. Loaders/actions,
+  `meta`, `links`, `ErrorBoundary`, the root `Layout` export and the `Route.ComponentProps` props
+  contract run on the `denext/remix` runtime. `denext migrate` detects an RR7 app and wires
+  `reactRouter()` (aliasing `@react-router/dev/routes` and the `@react-router/*` toolchain); the
+  Remix v2 flat-file transform path is unchanged. The Remix route-module codegen was extracted
+  to `denext/plugin-kit`'s `remixCodegen` namespace so both share it.
 - **Middleware `matcher` `has`/`missing` conditions are evaluated** (they were accepted and
   ignored): `{ source, has: [{ type: "header"|"cookie"|"query"|"host", key, value? }], missing }`
   — every `has` must hold, no `missing` may; `value` absent means presence, a plain value is an

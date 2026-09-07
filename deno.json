@@ -10,7 +10,8 @@
     "./packages/htmx",
     "./packages/effect",
     "./packages/openapi",
-    "./packages/graphql"
+    "./packages/graphql",
+    "./packages/react-router"
   ],
   "exports": {
     ".": "./mod.ts",
@@ -139,6 +140,8 @@
     "denext/build/next-mdx": "./src/build/next-mdx-recover.ts",
     "denext/devtools": "./src/devtools.ts",
     "denext/plugin-kit": "./src/plugin/kit.ts",
+    "denext/remix": "./src/compat/remix/mod.ts",
+    "denext/remix/server": "./src/compat/remix/server.ts",
     "denext/live": "./src/live.ts",
     "denext/lazy": "./src/lazy.ts",
     "denext/testing": "./src/testing/mod.ts",
@@ -187,7 +190,9 @@
     ]
   },
   "lint": {
-    "plugins": ["./src/lint/denext-plugin.ts"],
+    "plugins": [
+      "./src/lint/denext-plugin.ts"
+    ],
     "exclude": [
       ".denext/",
       "examples/*/.denext/",

@@ -316,6 +316,12 @@ The nuances worth knowing (reported as review notes, never silently changed):
   matching react-router. A full page reload/close is still the browser's own `beforeunload` prompt
   — add one where you need to guard a hard unload.
 
+- **React Router v7 (`@denext/react-router`): server rendering only.** `clientLoader` /
+  `clientAction` / `HydrateFallback` are not run — loaders/actions run on the server;
+  `react-router.config.ts` `ssr: false` (RR's SPA mode) and `prerender` are not applied (use
+  denext's `mode: "spa"`, and denext prerenders static routes itself); route `+types` typegen is
+  type-only, so the app runs without it.
+
 - **Prisma is auto-migrated to the Rust-free Deno client.** An app (Next or Remix)
   that uses Prisma is wired end-to-end: the schema generator becomes the ESM/Deno
   `prisma-client` (with `queryCompiler` + `driverAdapters` — no native engine binary),

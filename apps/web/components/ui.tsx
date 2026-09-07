@@ -32,6 +32,7 @@ export const NAV: {
       { slug: "islands", label: "Islands & hydration" },
       { slug: "resumability", label: "Resumability" },
       { slug: "htmx", label: "htmx" },
+      { slug: "react-router", label: "React Router" },
       { slug: "effect", label: "Effect" },
       { slug: "spa", label: "SPA mode" },
       { slug: "middleware", label: "Middleware" },

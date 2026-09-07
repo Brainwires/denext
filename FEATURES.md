@@ -345,7 +345,7 @@ canonical migration doc).
 ## Ecosystem packages (first-party JSR)
 
 `@denext/photon`, `@denext/avif`, `@denext/og`, `@denext/pages-router`,
-`@denext/htmx`, `@denext/effect`, `@denext/openapi`, `@denext/graphql` — published
+`@denext/htmx`, `@denext/effect`, `@denext/openapi`, `@denext/graphql`, `@denext/react-router` — published
 independently. All zero-npm except the two deliberate npm bridges (`@denext/effect` →
 `npm:effect`, `@denext/graphql` → `npm:graphql-yoga`), which a consumer opts into. (The
 cache uses Deno's built-in `node:sqlite`.)

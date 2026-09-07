@@ -7,25 +7,19 @@ import * as kit from "../src/plugin/kit.ts";
 
 Deno.test("plugin-kit exports the blessed pipeline primitives", () => {
   const expected = [
-    // route matching
+    "PageCache",
+    "buildAppCss",
+    "bundleRoutes",
+    "enableFastRefresh",
+    "extractRouteCss",
+    "hydrateRoot",
     "matchSegments",
     "parsePattern",
     "peelLocale",
-    "specificity",
-    // ISR
-    "PageCache",
-    // channel bridge (server-side observer of createChannel pushes)
-    "tapChannel",
-    // the CSRF gate for a plugin's own state-changing endpoint
-    "verifyOrigin",
-    // build steps
-    "bundleRoutes",
-    "buildAppCss",
-    "extractRouteCss",
-    // client hydration + fast refresh
-    "enableFastRefresh",
-    "hydrateRoot",
     "registerFamily",
+    "specificity",
+    "tapChannel",
+    "verifyOrigin",
   ];
   for (const name of expected) {
     assert(name in kit, `plugin-kit must export ${name}`);
@@ -35,6 +29,11 @@ Deno.test("plugin-kit exports the blessed pipeline primitives", () => {
       `${name} should be a function/class`,
     );
   }
+  // The Remix/React-Router route-module codegen ships as ONE namespace (a router plugin's
+  // whole generator toolkit), not as a spread of value exports.
+  assertEquals(typeof kit.remixCodegen, "object");
+  assertEquals(typeof kit.remixCodegen.analyzeModule, "function");
+  assertEquals(typeof kit.remixCodegen.pageWrapperSource, "function");
 });
 
 Deno.test("plugin-kit does not leak an over-broad value surface", () => {
@@ -64,6 +63,7 @@ Deno.test("plugin-kit does not leak an over-broad value surface", () => {
     "peelLocale",
     "readCappedBody",
     "registerFamily",
+    "remixCodegen",
     "revalidatePath",
     "revalidateTag",
     "specificity",

@@ -57,7 +57,7 @@ export function rewriteRemixImports(code: string): string {
 }
 
 /** Server-side route exports that move into the generated data module. */
-export const SERVER_EXPORTS = new Set([
+export const SERVER_EXPORTS: Set<string> = new Set([
   "loader",
   "action",
   "headers",
@@ -749,6 +749,7 @@ export function clientModuleSource(
   dataFile: string,
   role: "page" | "layout",
   root = false,
+  rr7 = false,
 ): string {
   const { clientStmts, userName } = delocalizedClientStatements(parts, root);
   // Include only the helpers the client body references (transitively) — a server-only
@@ -776,6 +777,7 @@ export function clientModuleSource(
     return `"use client";\n${GEN_HEADER}${plain}\n`;
   }
   const runtime = ["RemixRouteProvider"];
+  if (rr7) runtime.push("useActionData", "useMatches");
   if (role === "layout") runtime.push("OutletProvider");
   if (parts.hasErrorBoundary || parts.hasCatchBoundary) runtime.push("RemixErrorProvider");
   for (const tag of ["DocumentBody", "DocumentHead", "DocumentHtml"]) {
@@ -788,7 +790,7 @@ export function clientModuleSource(
     ...bodyStatements,
   ].map((s) => rewriteRemixImports(s).trim()).join("\n\n");
   return `"use client";\n${GEN_HEADER}${body}\n\n${
-    boundarySource(userName, role, root && parts.hasLayoutExport)
+    boundarySource(userName, role, root && parts.hasLayoutExport, rr7)
   }${errorBoundaryExport(parts)}\n`;
 }
 
@@ -845,10 +847,21 @@ function serverTypeImports(parts: ModuleParts, bodyText: string, dataFile: strin
  * The generated default boundary: `RemixRouteProvider` (and, for a layout, `OutletProvider`)
  * around the user component, receiving its loader data as a prop.
  */
-function boundarySource(userName: string, role: "page" | "layout", viaLayout = false): string {
+function boundarySource(
+  userName: string,
+  role: "page" | "layout",
+  viaLayout = false,
+  rr7 = false,
+): string {
   // Remix renders the root's `Layout` export around the page component (and around the
-  // ErrorBoundary): `<Layout><App/></Layout>`.
-  const user = viaLayout ? `<Layout><${userName} /></Layout>` : `<${userName} />`;
+  // ErrorBoundary): `<Layout><App/></Layout>`. React Router v7 also hands the component its
+  // data as PROPS (`Route.ComponentProps`: loaderData, actionData, params, matches).
+  const userProps = rr7
+    ? ` loaderData={props.loaderData} actionData={useActionData()} params={props.params} matches={useMatches()}`
+    : "";
+  const user = viaLayout
+    ? `<Layout><${userName}${userProps} /></Layout>`
+    : `<${userName}${userProps} />`;
   const inner = role === "layout"
     ? `      <OutletProvider outlet={props.children}>\n` +
       `        ${user}\n` +
@@ -1192,4 +1205,51 @@ import { ${runtime} } from "denext/remix/server";
 ${remixRouteExport(id, true)}
 ${methods.join("\n\n")}
 `;
+}
+
+// ── Import specifier rewriting (shared with the migrator re-basing) ───────────
+
+/** The binding names an import/export-from clause asks for (`default`, `*`, or the named ones). */
+export function importedNames(clause: string): string[] {
+  const names: string[] = [];
+  const braces = clause.match(/\{([^}]*)\}/);
+  if (braces) {
+    for (const part of braces[1].split(",")) {
+      const m = part.trim().match(/^(?:type\s+)?([A-Za-z_$][\w$]*)/);
+      if (m) names.push(m[1]);
+    }
+  }
+  const head = clause.replace(/\{[^}]*\}/, "").replace(/\bfrom\s*$/, "")
+    .replace(/^\s*(?:import|export)\s+(?:type\s+)?/, "");
+  if (/\*\s*as\s+/.test(head)) names.push("*");
+  else if (/^[A-Za-z_$][\w$]*\s*(?:,|$)/.test(head.trim())) names.push("default");
+  return names;
+}
+
+/**
+ * Rewrite every import/export specifier in `code` through `map(spec, names)` (a `null`
+ * result leaves it alone). Covers `import … from`, `export … from`, side-effect imports and
+ * dynamic `import()`.
+ */
+export function rewriteSpecifiers(
+  code: string,
+  map: (spec: string, names: string[]) => string | null,
+): string {
+  return code.replace(
+    /(\b(?:import|export)\b[^;'"]*?\bfrom\s*|\bimport\s*\(?\s*)(["'])([^"'\n]+)\2/g,
+    (whole, lead: string, quote: string, spec: string) => {
+      const next = map(spec, lead.includes("from") ? importedNames(lead) : []);
+      return next === null ? whole : `${lead}${quote}${next}${quote}`;
+    },
+  );
+}
+
+/**
+ * Strip Remix's document components from a root module (denext owns the document). The
+ * root's `<Outlet/>` is kept — it maps to the runtime `<Outlet>` and the generated layout
+ * boundary threads the nested-route subtree to it via `OutletProvider`, exactly like any
+ * other layout.
+ */
+export function stripRootDoc(src: string): string {
+  return src.replace(/<(Meta|Links|Scripts|ScrollRestoration|LiveReload)\b[^>]*\/>\s*/g, "");
 }

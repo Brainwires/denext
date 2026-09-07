@@ -247,6 +247,13 @@ kit:
   so the contract is **provably sufficient** for it — no core change required to add
   these routers as plugins.
 
+[`@denext/react-router`](./packages/react-router) is the framework-mode router plugin done
+a **third** way: instead of claiming requests, it generates denext route modules from the
+app's `app/routes.ts` and adds them through the **route-synthesizer** seam — so the whole
+App Router pipeline (Flight, streaming, per-segment boundaries, soft nav, ISR, Fast Refresh)
+serves them, and the plugin writes no render path of its own. Proof the synthesizer seam
+scales to a full framework router, not just aliasing.
+
 ## Complete examples
 
 - **[`examples/plugin-aliases`](./examples/plugin-aliases)** — a ~40-line plugin using
@@ -267,3 +274,8 @@ kit:
   GraphQL subscriptions with the plugin-kit's `tapChannel`, writes the SDL as a **build
   step**, and adds `denext graphql sdl | diff` (**CLI verb**). The model for wrapping an
   npm server library as a denext plugin.
+- **[`@denext/react-router`](./packages/react-router)** — a full React Router v7 framework
+  router through the **route-synthesizer** seam alone: it reads the app's `app/routes.ts`,
+  generates denext route wrappers under `.denext/react-router/`, and adds them to the
+  manifest — the core App Router renders them, so the plugin ships no render path. The model
+  for adapting a foreign routing convention onto denext's own pipeline.

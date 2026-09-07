@@ -46,9 +46,9 @@ seams + pipeline primitives: matchers, `bundleRoutes`, CSS, hydration /
 Fast-Refresh, `PageCache`). `@denext/pages-router` dogfoods it and
 `tests/plugin-kit.test.ts` guards it. Remaining build work:
 
-- **`@denext/react-router`** — **client mode** works today via SPA mode (shell +
-  client entry); the plugin is config sugar. **Framework mode** (loaders +
-  streaming SSR) via `plugin-kit` — no core change needed.
+- **`@denext/react-router`** — **shipped** (0.1.0): framework mode (config routing via
+  `app/routes.ts`, loaders/actions, streaming SSR) runs on the plugin via `plugin-kit`, with
+  the app's source untouched; client mode is denext's SPA mode. `denext migrate` wires it.
 - **`@denext/tanstack-router`** — same two depths (library mode → SPA today;
   TanStack Start-style SSR → `plugin-kit`).
 - A missing primitive goes into `plugin-kit` (the plugin-kit rule: a deliberate,

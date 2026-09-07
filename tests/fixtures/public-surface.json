@@ -314,6 +314,7 @@
     "peelLocale:function",
     "readCappedBody:function",
     "registerFamily:function",
+    "remixCodegen:namespace",
     "revalidatePath:function",
     "revalidateTag:function",
     "specificity:function",
