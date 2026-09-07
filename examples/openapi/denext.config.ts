@@ -12,7 +12,10 @@ export default {
         version: "1.0.0",
         description: "A tiny pet store, defined with `defineApi` + Zod.",
       },
-      servers: [{ url: "http://localhost:3000" }],
+      // No `servers` → Swagger UI sends "Try it out" requests to the page's own origin, so it
+      // works however you open the docs (localhost, 127.0.0.1, a LAN IP, a deployed host). Add
+      // `servers: [{ url: "https://api.example.com" }]` to point a published doc at a real host —
+      // just note that a cross-origin host needs CORS on the API for "Try it out" to reach it.
       // The docs renderer. `swagger` (Swagger UI, from unpkg) and `scalar` (Scalar, from
       // jsDelivr) are interactive ("try it"); `builtin` (the default) is a server-rendered,
       // zero-JavaScript reference page that needs no CDN. Swap this one line to compare them.
