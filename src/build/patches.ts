@@ -30,6 +30,7 @@ import { frameworkRootUrl, minDepAgeArgs, readFrameworkJson } from "./bundle.ts"
 import {
   applyFileDiff,
   createUnifiedDiff,
+  DEV_NULL,
   type FileDiff,
   fileDiffApplies,
   parseUnifiedDiff,
@@ -207,6 +208,43 @@ async function readOr(path: string, fallback: string): Promise<string> {
   }
 }
 
+/** The file's text, or `null` when it does not exist (an empty file is `""`). */
+async function readMaybe(path: string): Promise<string | null> {
+  try {
+    return await Deno.readTextFile(path);
+  } catch {
+    return null;
+  }
+}
+
+/** Files larger than this (either side) are not diffed: a patch is for source, not a bundle. */
+const MAX_DIFF_BYTES = 2 * 1024 * 1024;
+const MAX_DIFF_LINES = 50_000;
+
+/** Whether a file pair is too large to diff; logs the skip when it is. */
+function tooLargeToDiff(
+  rel: string,
+  before: string,
+  after: string,
+  log: (m: string) => void,
+): boolean {
+  const bytes = Math.max(before.length, after.length);
+  const lines = Math.max(countLines(before), countLines(after));
+  if (bytes <= MAX_DIFF_BYTES && lines <= MAX_DIFF_LINES) return false;
+  log(
+    `denext patch: ${rel} is too large to diff (${
+      (bytes / 1024).toFixed(0)
+    } KB, ${lines} lines) — skipped`,
+  );
+  return true;
+}
+
+function countLines(text: string): number {
+  let n = 0;
+  for (let i = text.indexOf("\n"); i !== -1; i = text.indexOf("\n", i + 1)) n++;
+  return n;
+}
+
 /** What {@link createNpmPatch}/{@link createDenextPatch} produced. */
 export interface CreatedPatch {
   /** The `.patch` file written. */
@@ -228,13 +266,22 @@ export async function createNpmPatch(
   const version = await packageVersion(installed);
   const pristine = await (opts.npmPristine ?? npmPristineDir)(pkg, version);
   const root = `node_modules/${pkg}/`;
+  const log = opts.log ?? console.warn;
   const diffs: string[] = [];
   const files: string[] = [];
-  for (const rel of await packageTextFiles(installed)) {
-    const before = await readOr(join(pristine, rel), "");
+  const installedFiles = await packageTextFiles(installed);
+  for (const rel of installedFiles) {
+    const before = await readMaybe(join(pristine, rel));
     const after = await Deno.readTextFile(join(installed, rel));
-    const diff = createUnifiedDiff(before, after, `a/${root}${rel}`, `b/${root}${rel}`);
+    if (tooLargeToDiff(rel, before ?? "", after, log)) continue;
+    // A file the pristine package lacks is a creation: `--- /dev/null`.
+    const oldPath = before === null ? DEV_NULL : `a/${root}${rel}`;
+    const diff = createUnifiedDiff(before ?? "", after, oldPath, `b/${root}${rel}`);
     if (diff === "") continue;
+    diffs.push(diff);
+    files.push(rel);
+  }
+  for (const [rel, diff] of await deletionDiffs(pristine, installedFiles, root, log)) {
     diffs.push(diff);
     files.push(rel);
   }
@@ -243,6 +290,24 @@ export async function createNpmPatch(
   }
   const file = await writePatchFile(projectDir, pkg, version, diffs.join(""));
   return { file, files };
+}
+
+/** Files the pristine package has that the install no longer does: deletions (`+++ /dev/null`). */
+async function deletionDiffs(
+  pristine: string,
+  installedFiles: string[],
+  root: string,
+  log: (m: string) => void,
+): Promise<[string, string][]> {
+  const present = new Set(installedFiles);
+  const out: [string, string][] = [];
+  for (const rel of await packageTextFiles(pristine)) {
+    if (present.has(rel)) continue;
+    const before = await Deno.readTextFile(join(pristine, rel));
+    if (tooLargeToDiff(rel, before, "", log)) continue;
+    out.push([rel, createUnifiedDiff(before, "", `a/${root}${rel}`, DEV_NULL)]);
+  }
+  return out;
 }
 
 async function writePatchFile(
@@ -306,6 +371,10 @@ export async function applyNpmPatch(
   let outcome: ApplyOutcome = "already-applied";
   for (const diff of await readPatch(entry)) {
     const path = npmPatchTarget(projectDir, entry, diff.newPath);
+    if (diff.deleted) {
+      if (await removeIfPresent(path)) outcome = "applied";
+      continue;
+    }
     const text = await readOr(path, "");
     if (fileDiffApplies(text, reverseFileDiff(diff))) continue; // already patched
     await Deno.mkdir(dirname(path), { recursive: true });
@@ -320,13 +389,29 @@ export async function revertNpmPatch(projectDir: string, entry: PatchEntry): Pro
   const left: string[] = [];
   for (const diff of await readPatch(entry)) {
     const path = npmPatchTarget(projectDir, entry, diff.newPath);
-    const text = await readOr(path, "");
     const reverse = reverseFileDiff(diff);
+    if (reverse.deleted) { // the patch CREATED this file: undoing it removes it
+      await removeIfPresent(path);
+      continue;
+    }
+    const text = await readOr(path, ""); // a deleted file reads as "" and is recreated
     if (fileDiffApplies(text, reverse)) {
+      await Deno.mkdir(dirname(path), { recursive: true });
       await Deno.writeTextFile(path, applyFileDiff(text, reverse));
     } else left.push(diff.newPath);
   }
   return left;
+}
+
+/** Remove a file; true when it existed (a missing file is the idempotent no-op). */
+async function removeIfPresent(path: string): Promise<boolean> {
+  try {
+    await Deno.remove(path);
+    return true;
+  } catch (err) {
+    if (err instanceof Deno.errors.NotFound) return false;
+    throw err;
+  }
 }
 
 // ── denext itself ──────────────────────────────────────────────────────────────
@@ -389,10 +474,12 @@ export async function createDenextPatch(
   const diffs: string[] = [];
   const files: string[] = [];
   if (await exists(workDir)) {
+    const log = opts.log ?? console.warn;
     for await (const e of walk(workDir, { includeDirs: false })) {
       const rel = relative(workDir, e.path).replace(/\\/g, "/");
       const before = await pristineFrameworkFile(root, rel);
       const after = await Deno.readTextFile(e.path);
+      if (tooLargeToDiff(rel, before, after, log)) continue;
       const diff = createUnifiedDiff(before, after, `a/denext/${rel}`, `b/denext/${rel}`);
       if (diff === "") continue;
       diffs.push(diff);
@@ -440,6 +527,11 @@ async function materializeDenextPatch(
   const entries = new Map<string, string>();
   const files: string[] = [];
   for (const diff of await readPatch(entry)) {
+    if (diff.created || diff.deleted) {
+      throw new Error(
+        `denext patch: a framework patch can only modify files, not add or delete them (${diff.newPath})`,
+      );
+    }
     const rel = diff.newPath.replace(/^denext\//, "");
     // `rel` is spliced onto the framework root URL and onto the materialized dir: it must be
     // a plain relative path (no `..`, no absolute, no scheme).
