@@ -293,10 +293,18 @@ function beginSuspense(wip: Fiber): Fiber | null {
   // suspend, handleThrow resets its slot to false for the ordering above.
   if (inList && display === "content") st!.ready[wip.listIndex!] = true;
   reconcileChildren(wip, children, wip.host, wip.boundary, wip.inherited);
-  // Leaving Offscreen (revealing content): un-hide the reused primary fibers so
-  // they render, and mark the boundary for the commit pass to restore their DOM.
+  // Leaving Offscreen (revealing content): un-hide the primary fibers so they render, and
+  // mark the boundary for the commit pass to restore their DOM. Each un-hidden fiber gets
+  // this render's lane + a forced render: the hidden pass skipped it without consuming
+  // lanes, but a primary that MOUNTED during the offscreen pass (a new key or type — the
+  // re-suspend replaced the child) has never rendered and carries no lane of its own, so
+  // without this the props-equal bailout would keep its empty committed subtree forever.
   if (!inList && display === "content" && wip.primaryCount != null) {
-    for (let c = wip.child; c !== null; c = c.sibling) c.hidden = false;
+    for (let c = wip.child; c !== null; c = c.sibling) {
+      c.hidden = false;
+      c.lanes |= renderLanes;
+      c.forceRender = true;
+    }
     wip.offscreen = false;
     wip.primaryCount = undefined;
     noteOffscreen(); // so the commit pass restores hiddenEls visibility

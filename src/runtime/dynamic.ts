@@ -12,6 +12,7 @@
 import { h } from "../jsx/jsx-runtime.ts";
 import { type Component, FRAGMENT, type VNode, type VProps } from "../jsx/types.ts";
 import { Suspense, use } from "./suspense.ts";
+import { useEffect, useState } from "./hooks.ts";
 import { isServer } from "./environment.ts";
 import { brand, REACT_LAZY_TYPE } from "./react-brands.ts";
 
@@ -30,29 +31,68 @@ export interface DynamicOptions<P = Record<string, unknown>> {
   ssr?: boolean;
   /** Fallback component shown while the target module loads (receives {@link DynamicLoadingProps}). */
   loading?: Component<DynamicLoadingProps>;
+  /** Milliseconds before the fallback's `pastDelay` turns true (default 200, like Next). */
+  delay?: number;
+  /** Milliseconds before the fallback's `timedOut` turns true (default: never). */
+  timeout?: number;
 }
 
 /** The props `next/dynamic` passes to a `loading` component. */
 export interface DynamicLoadingProps {
-  /** A load error, when the import rejected. */
+  /** A load error, when the import rejected (`retry` re-imports). */
   error?: Error | null;
   /** True while the module is loading. */
   isLoading?: boolean;
-  /** True once the loading delay has elapsed (denext: always true while loading). */
+  /** True once `delay` ms have elapsed (on the server: true). */
   pastDelay?: boolean;
-  /** True when loading timed out (denext: never). */
+  /** True once `timeout` ms have elapsed without the module (never when `timeout` is unset). */
   timedOut?: boolean;
-  /** Retry the import after an error. */
+  /** Re-import the module — after an error or a timeout. */
   retry?: () => void;
 }
 
-const LOADING_PROPS: DynamicLoadingProps = {
+/** What the server renders for `ssr: false` (no timers on the server). */
+const SERVER_LOADING_PROPS: DynamicLoadingProps = {
   error: null,
   isLoading: true,
   pastDelay: true,
   timedOut: false,
   retry: () => {},
 };
+
+/** The loader's settled outcome: the component, or the error it rejected with. */
+type Loaded<P> = { component: Component<P> } | { error: Error };
+
+/**
+ * The fallback while the import is pending: `pastDelay` after `delay` ms, `timedOut` after
+ * `timeout` ms (timers cleared on unmount — i.e. when the module arrives).
+ */
+function LoadingState(
+  props: {
+    Loading: Component<DynamicLoadingProps>;
+    delay: number;
+    timeout?: number;
+    retry: () => void;
+  },
+): VNode {
+  const [pastDelay, setPastDelay] = useState(props.delay <= 0);
+  const [timedOut, setTimedOut] = useState(false);
+  useEffect(() => {
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    if (props.delay > 0) timers.push(setTimeout(() => setPastDelay(true), props.delay));
+    if (props.timeout !== undefined && props.timeout > 0) {
+      timers.push(setTimeout(() => setTimedOut(true), props.timeout));
+    }
+    return () => timers.forEach(clearTimeout);
+  }, [props.delay, props.timeout]);
+  return h(props.Loading, {
+    error: null,
+    isLoading: true,
+    pastDelay,
+    timedOut,
+    retry: props.retry,
+  } as VProps);
+}
 
 /**
  * Lazily load a component. Returns a component you can render immediately; its
@@ -73,34 +113,66 @@ export function dynamic<P = Record<string, unknown>>(
 ): Component<P> {
   const ssr = options.ssr ?? true;
   const Loading = options.loading;
+  const delay = options.delay ?? 200;
 
-  // Cache the import promise so `use()` receives a stable thenable across renders
-  // (a fresh promise every render would suspend forever).
-  let promise: Promise<Component<P>> | null = null;
-  function load(): Promise<Component<P>> {
+  // Cache the import promise so `use()` receives a stable thenable across renders (a fresh
+  // promise every render would suspend forever). It never rejects: a failed import settles
+  // to `{ error }` so the fallback can show it (with `retry`) instead of the nearest error
+  // boundary swallowing the whole subtree.
+  let promise: Promise<Loaded<P>> | null = null;
+  function load(): Promise<Loaded<P>> {
     if (!promise) {
-      promise = Promise.resolve(loader()).then((mod) => {
-        const resolved = (mod as { default?: Component<P> }).default ?? (mod as Component<P>);
-        return resolved;
-      });
+      promise = (async (): Promise<Loaded<P>> => {
+        try {
+          const mod: unknown = await loader();
+          const component = (mod as { default?: Component<P> }).default ?? mod;
+          return { component: component as Component<P> };
+        } catch (err) {
+          return { error: err instanceof Error ? err : new Error(String(err)) };
+        }
+      })();
     }
     return promise;
   }
 
   // Suspends synchronously via use() until the module loads, then renders it.
-  function LazyInner(props: P): VNode {
+  function LazyInner(props: P & { __retry: () => void }): VNode {
+    const { __retry: retry, ...rest } = props;
     // ssr:false — skip loading on the server; the client mounts it after paint.
     if (!ssr && isServer()) {
-      return Loading ? h(Loading, LOADING_PROPS as VProps) : h(FRAGMENT, {});
+      return Loading ? h(Loading, SERVER_LOADING_PROPS as VProps) : h(FRAGMENT, {});
     }
-    const Resolved = use(load());
-    return h(Resolved as Component<unknown>, props as VProps);
+    const loaded = use(load());
+    if ("error" in loaded) {
+      if (!Loading) throw loaded.error; // no fallback to show it in → the error boundary
+      return h(Loading, {
+        error: loaded.error,
+        isLoading: false,
+        pastDelay: true,
+        timedOut: false,
+        retry,
+      } as VProps);
+    }
+    return h(loaded.component as Component<unknown>, rest as VProps);
   }
 
   function DynamicComponent(props: P): VNode {
+    // `retry` forgets the settled import and remounts the lazy child (a new key), so the
+    // next render imports again — after an error, or a timeout the fallback reported.
+    const [attempt, setAttempt] = useState(0);
+    const retry = () => {
+      promise = null;
+      setAttempt((n) => n + 1);
+    };
     return h(Suspense, {
-      fallback: Loading ? h(Loading, LOADING_PROPS as VProps) : undefined,
-      children: h(LazyInner as Component<unknown>, props as VProps),
+      fallback: Loading
+        ? h(LoadingState, { Loading, delay, timeout: options.timeout, retry })
+        : undefined,
+      children: h(LazyInner as Component<unknown>, {
+        ...(props as VProps),
+        __retry: retry,
+        key: attempt,
+      }),
     });
   }
   // Brand so `react-is.isLazy` recognizes a `lazy`/`dynamic` component.

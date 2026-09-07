@@ -122,7 +122,11 @@ async function assertSharedRuntimeChunk(clientDir: string): Promise<void> {
  * budget — the 6 KB per-route entry budget is the real one. Re-based 60 → 62 KB for 2.0.5:
  * React's no-op-state bailout (`HookCell.rendered`/`committed`, `Fiber.forceRender`), the
  * component-naming update-depth error, and the code-split island loader (`flightClientIds`,
- * `registry.ensure`) — each a parity/size win worth more than its ~400 bytes.
+ * `registry.ensure`) — each a parity/size win worth more than its ~400 bytes. Re-based
+ * 62 → 64 KB for 2.1 (measured: 2.1.0-rc.1 shared chunks 61,686 B; the channel-brand split
+ * −258 B; `dynamic()`'s Next-shaped loading props — a stateful fallback with `delay`/`timeout`
+ * timers, `error` + `retry` — +678 B; the Suspense reveal lanes) with ~1.5 KB of headroom for
+ * the rest of the 2.1 cycle.
  */
 async function assertBundleBudgets(clientDir: string): Promise<void> {
   let sharedTotal = 0;
@@ -131,7 +135,7 @@ async function assertBundleBudgets(clientDir: string): Promise<void> {
       sharedTotal += (await Deno.stat(join(clientDir, e.name))).size;
     }
   }
-  assert(sharedTotal < 62_000, `shared chunks total ${sharedTotal} bytes (budget 62 KB raw)`);
+  assert(sharedTotal < 64_000, `shared chunks total ${sharedTotal} bytes (budget 64 KB raw)`);
   for (const f of ["about.js", "blog___slug_.js"]) {
     const n = (await Deno.stat(join(clientDir, f))).size;
     assert(n < 6_000, `${f} is ${n} bytes (budget 6 KB) — is the runtime inlined again?`);

@@ -16,6 +16,10 @@ and this project adheres to
   exact match, regex syntax (`ops|dev`, `(?<team>\w+)`) is a full-match regex. Evaluated against
   the request the middleware would see (after an earlier entry's rewrite). `MatcherCondition` and
   `MatchContext` are exported from `denext/server`.
+- **`dynamic()` loading props are real:** `error` is set when the import rejects (the fallback
+  renders it instead of the nearest error boundary swallowing the subtree), `retry()` re-imports,
+  `pastDelay` turns true after the new `delay` option (default 200 ms, Next's), `timedOut` after
+  the new `timeout` option. `ssr: false` on the server keeps the static props.
 - **`@denext/openapi` — the self-documenting half of the typed API surface.** The schemas a
   `defineApi` route declares now describe it too: the new first-party plugin
   (`packages/openapi`, published as `@denext/openapi`) walks the route manifest, reads each
@@ -106,6 +110,12 @@ Findings of the post-2.0.5 audit (security + production-readiness + docs; all fi
 
 ### Fixed
 
+- **Suspense: a child REPLACED while re-suspending renders once resolved.** A committed
+  boundary whose child swaps to a new key/type and suspends (`<Child key={id}>` under a
+  state change, `dynamic()`'s retry) showed the fallback, then rendered NOTHING when the
+  promise settled: the replacement mounted during the Offscreen pass without rendering and
+  carried no lane, so the reveal's props-equal bailout kept its empty subtree. The reveal now
+  gives every un-hidden primary fiber the render lane + a forced render.
 - **Remix migrator/compat: the post-2.0.5 audit's Remix findings.** `denext migrate --from
   remix` no longer mutates `app/routes/` while walking it (the old tree is listed first, every
   generated file is written, then colocated modules move and the converted originals are removed
