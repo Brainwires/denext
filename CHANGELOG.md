@@ -8,6 +8,14 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`examples/openapi` — a standalone `@denext/openapi` example.** A tiny pet store defined with
+  `defineApi` + Zod that serves an OpenAPI 3.1 document at `/openapi.json` and an interactive
+  **Swagger UI** at `/docs` (`ui: "swagger"`), with the Scalar and zero-JS `builtin` renderers a
+  one-line swap. Complements `examples/typed-api`, which shows the default `builtin` docs. Covered
+  by `tests/e2e/openapi.e2e.test.ts`.
+
 ## [2.1.0-rc.2] - 2026-09-07
 
 ### Added

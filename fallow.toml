@@ -32,6 +32,7 @@ ignoreDependencies = [
   "graphql", # packages/graphql/deno.json + examples/graphql/deno.json: npm:graphql@^16.9.0
   "graphql-yoga", # packages/graphql/deno.json + examples/graphql/deno.json: npm:graphql-yoga@^5.10.0
   "@pothos/core", # examples/graphql/deno.json: npm:@pothos/core@^4.6.0 (the recommended schema builder)
+  "zod", # examples/openapi/deno.json: npm:zod@^4 (defineApi schemas → OpenAPI via Standard JSON Schema)
   "drizzle-orm", # examples/drizzle/deno.json: npm:drizzle-orm@^0.44.7
   "@prisma/adapter-better-sqlite3", # examples/prisma/deno.json: npm:@prisma/adapter-better-sqlite3
   "@capacitor/cli", # examples/native/deno.json: npm:@capacitor/cli@^7
