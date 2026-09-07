@@ -256,6 +256,26 @@ Deno.test("graphql plugin: rejects a query nested past the depth cap; the cap is
   }
 });
 
+Deno.test("graphql plugin: a cyclic fragment is a clean validation error, not a stack overflow", async () => {
+  try {
+    const handle = await setup(); // default depth cap active
+    const res = await handle(
+      post(
+        "https://x/graphql",
+        "query { ...A } fragment A on Query { ...B } fragment B on Query { ...A }",
+      ),
+    );
+    // A clean 200 with validation errors (graphql's NoFragmentCyclesRule) — never a 500 from a
+    // stack overflow in the depth walk.
+    assertEquals(res!.status, 200);
+    const body = await res!.json();
+    assertEquals(body.data, undefined);
+    assertStringIncludes(JSON.stringify(body.errors), "Cannot spread fragment");
+  } finally {
+    resetPlugins();
+  }
+});
+
 Deno.test("graphql plugin: with introspection off, a misspelled field gets no schema-reconstructing suggestion", async () => {
   try {
     const prod = await setup(); // introspection off in prod

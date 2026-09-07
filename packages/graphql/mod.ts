@@ -350,6 +350,12 @@ function limitDepth(max: number): NonNullable<YogaPassthrough["plugins"]>[number
       if (def.kind === "FragmentDefinition") fragments.set(def.name.value, def);
     }
     let reported = false;
+    // Fragment names currently on the walk path — so a cyclic fragment (`A → B → A`) is not
+    // followed into infinite recursion (a stack-overflow DoS). graphql's own
+    // NoFragmentCyclesRule reports the cycle, but this manual walk runs in the same pass and
+    // would overflow first; a diamond (two spreads of one fragment) still resolves, since the
+    // name is only blocked while it is an ancestor.
+    const onPath = new Set<string>();
     const walk = (selectionSet: SelectionSetNode | undefined, depth: number): void => {
       if (!selectionSet || reported) return;
       if (depth > max) {
@@ -364,7 +370,11 @@ function limitDepth(max: number): NonNullable<YogaPassthrough["plugins"]>[number
       for (const sel of selectionSet.selections) {
         if (sel.kind === "Field") walk(sel.selectionSet, depth + 1);
         else if (sel.kind === "InlineFragment") walk(sel.selectionSet, depth);
-        else walk(fragments.get(sel.name.value)?.selectionSet, depth);
+        else if (!onPath.has(sel.name.value)) {
+          onPath.add(sel.name.value);
+          walk(fragments.get(sel.name.value)?.selectionSet, depth);
+          onPath.delete(sel.name.value);
+        }
       }
     };
     return {
