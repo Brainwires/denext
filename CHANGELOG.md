@@ -15,6 +15,12 @@ and this project adheres to
   **Swagger UI** at `/docs` (`ui: "swagger"`), with the Scalar and zero-JS `builtin` renderers a
   one-line swap. Complements `examples/typed-api`, which shows the default `builtin` docs. Covered
   by `tests/e2e/openapi.e2e.test.ts`.
+- **`examples/react-router` — a standalone `@denext/react-router` example.** A React Router v7
+  framework-mode app (root `Layout` + `ErrorBoundary`, `app/routes.ts` config routing with a
+  pathless layout and a `teams` prefix, loader data as prop and via `useLoaderData`, a `<Form>`
+  action, a resource route, and a `418` throw → the route's `ErrorBoundary`) running on denext
+  with the route components importing bare `react-router` unchanged. Covered by
+  `tests/e2e/react-router.e2e.test.ts`.
 
 ## [2.1.0-rc.2] - 2026-09-07
 

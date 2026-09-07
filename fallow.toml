@@ -33,6 +33,7 @@ ignoreDependencies = [
   "graphql-yoga", # packages/graphql/deno.json + examples/graphql/deno.json: npm:graphql-yoga@^5.10.0
   "@pothos/core", # examples/graphql/deno.json: npm:@pothos/core@^4.6.0 (the recommended schema builder)
   "zod", # examples/openapi/deno.json: npm:zod@^4 (defineApi schemas → OpenAPI via Standard JSON Schema)
+  "react-router", # examples/react-router/app/*: bare RR runtime import, mapped to denext/remix in that example's deno.json
   "drizzle-orm", # examples/drizzle/deno.json: npm:drizzle-orm@^0.44.7
   "@prisma/adapter-better-sqlite3", # examples/prisma/deno.json: npm:@prisma/adapter-better-sqlite3
   "@capacitor/cli", # examples/native/deno.json: npm:@capacitor/cli@^7
@@ -101,6 +102,12 @@ entry = [
   "**/app/**/manifest.ts",
   # Pages Router (@denext/pages-router plugin): every file under pages/ is a route.
   "**/pages/**",
+  # React Router v7 framework mode (@denext/react-router plugin): root.tsx, the routes.ts
+  # config, and every module under app/routes/ are loaded by the plugin via config routing,
+  # not by import.
+  "examples/react-router/app/root.tsx",
+  "examples/react-router/app/routes.ts",
+  "examples/react-router/app/routes/**",
   # SPA mode: the entry (and worker) named by `spa.entry` in denext.config.ts.
   "**/src/main.tsx",
   "**/src/worker.ts",
