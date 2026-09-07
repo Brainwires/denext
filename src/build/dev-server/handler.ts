@@ -123,10 +123,18 @@ async function routeCssResponse(st: DevState, url: URL): Promise<Response> {
  * An asset the compat build emitted (`import logo from "./logo.svg"`, `x.css?url`): served
  * from the current generation's client dir under `/_denext/client/assets/`.
  */
-function compatAssetResponse(st: DevState, request: Request, url: URL): Promise<Response> | null {
+async function compatAssetResponse(
+  st: DevState,
+  request: Request,
+  url: URL,
+): Promise<Response | null> {
   const prefix = "/_denext/client/assets/";
-  if (!st.compatClientDir || !url.pathname.startsWith(prefix)) return null;
-  return serveImmutableAsset(
+  if (!url.pathname.startsWith(prefix)) return null;
+  // A rebuild in flight: wait for it, then serve from the generation it completed (the field
+  // is (re)assigned only once a build is complete, so re-read it after the await).
+  if (st.compatBuilding) await st.compatBuilding.catch(() => {});
+  if (!st.compatClientDir) return null;
+  return await serveImmutableAsset(
     st.compatClientDir,
     "/assets/" + url.pathname.slice(prefix.length),
     request,

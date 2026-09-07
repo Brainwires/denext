@@ -76,6 +76,8 @@ export interface DevState {
   /** Generation counter: bumped on any file change to bust module + bundle caches. */
   generation: number;
   manifest: RouteManifest | null;
+  /** The scan in flight (so concurrent first hits after a rebuild share one scan). */
+  manifestInFlight: Promise<RouteManifest> | null;
   /**
    * The manifest the typed-module emit was last kicked off for (so a rescan re-emits once,
    * fire-and-forget, rather than blocking every request with a fresh `deno doc` pass).
@@ -188,6 +190,7 @@ export function createDevState(options: DevServerOptions): DevState {
     allowedDevOrigins: options.allowedDevOrigins ?? [],
     generation: 0,
     manifest: null,
+    manifestInFlight: null,
     lastEmittedManifest: null,
     unbundledOptIn: options.unbundled ?? (Deno.env.get("DENEXT_DEV_UNBUNDLED") !== "0"),
     unbundled: null,

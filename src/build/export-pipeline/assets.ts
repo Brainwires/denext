@@ -101,6 +101,7 @@ export async function bundleExportRoutes(ctx: ExportContext): Promise<void> {
       configPath: ctx.paths.configPath,
       minify: true,
       importMap: ctx.css?.importMap,
+      instrumentationClient: ctx.paths.instrumentationClientPath,
     });
     await writeBundleOutput(ctx.clientOut, bundle, `${routeId(route.routePath)}.js`);
   }
@@ -122,6 +123,7 @@ export async function bundleExportFlight(ctx: ExportContext): Promise<void> {
     configPath: ctx.paths.configPath,
     minify: true,
     importMap: ctx.css?.importMap,
+    instrumentationClient: ctx.paths.instrumentationClientPath,
   });
   await writeBundleOutput(ctx.clientOut, flightBundle, FLIGHT_BUNDLE_FILE);
   // Tag through the (compat-aware) loader so the tagged instances are the ones the page

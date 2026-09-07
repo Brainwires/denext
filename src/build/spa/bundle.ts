@@ -163,7 +163,11 @@ export async function bundleSpaInto(
 ): Promise<{ hasStyles: boolean }> {
   const spa = paths.config!.spa!;
   const css = await spaCss(paths, entryPath, minify);
-  const entrySource = generateSpaEntry(toFileUrl(entryPath).href, dev);
+  const entrySource = generateSpaEntry(
+    toFileUrl(entryPath).href,
+    dev,
+    paths.instrumentationClientPath,
+  );
   const compat = await detectNextCompat(paths);
   // `spa.env` and Vite-style asset imports (`?url`/`?worker`) only apply on the compat
   // (esbuild) path; a denext-native SPA bundles with plain `deno bundle`. Warn rather
