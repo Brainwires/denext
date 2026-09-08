@@ -52,24 +52,38 @@ Deno.test("SuspenseList renders its children", async () => {
   assertEquals(html, "<p>a</p><p>b</p>");
 });
 
-Deno.test("ViewTransition renders its children (transparent passthrough)", async () => {
+Deno.test("ViewTransition is transparent but stamps its config onto the child (survives SSR + Flight)", async () => {
   const { ViewTransition } = await import("../src/compat/react.ts");
   const html = await renderToString(
     h(
       ViewTransition as Any,
-      { name: "hero", enter: "slide-in" }, // animation props accepted + ignored
+      { name: "hero", enter: "slide-in" },
       h("span", null, "content"),
     ) as never,
   );
-  assertEquals(html, "<span>content</span>");
+  // No wrapper element; the child is the child. The config rides a DOM attribute (the only
+  // carrier that survives the Flight boundary), which the client marking runtime reads.
+  assertStringIncludes(html, "<span");
+  assertStringIncludes(html, ">content</span>");
+  assertStringIncludes(html, "data-dnx-vt=");
+  assertStringIncludes(html, "hero");
+  // A wrapper with no single element child is a plain passthrough.
+  assertEquals(await renderToString(h(ViewTransition as Any, null, "x") as never), "x");
 });
 
-Deno.test("Activity renders its children (transparent passthrough)", async () => {
+Deno.test("Activity SSR: visible renders children, hidden renders nothing", async () => {
   const { Activity } = await import("../src/compat/react.ts");
-  const html = await renderToString(
+  // A visible Activity is id-transparent — it renders its children like a Fragment.
+  const visible = await renderToString(
+    h(Activity as Any, { mode: "visible" }, h("span", null, "kept")) as never,
+  );
+  assertEquals(visible, "<span>kept</span>");
+  // A hidden Activity renders nothing server-side: the client pre-renders it offscreen
+  // after hydration, so emitting nothing avoids a mismatch (and a flash of hidden content).
+  const hidden = await renderToString(
     h(Activity as Any, { mode: "hidden" }, h("span", null, "kept")) as never,
   );
-  assertEquals(html, "<span>kept</span>");
+  assertEquals(hidden, "");
 });
 
 Deno.test("new React 19.2 shims: cacheSignal/captureOwnerStack/addTransitionType/optimisticKey", async () => {

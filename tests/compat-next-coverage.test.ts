@@ -1,6 +1,7 @@
 // Coverage for compat surface: next/form (<Form>), next/head (<Head>/defaultHead),
 // compose-refs (composeRefs/useComposedRefs), class-detect, and the react-dom shim.
 
+import "./helpers/class-runtime.ts";
 import { REACT_COMPAT_VERSION } from "../src/compat/react-version.ts";
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "denext/jsx-runtime";

@@ -209,7 +209,7 @@ export function renderRoot(handle: RootHandle, lanes: number): void {
     wipRoot.host = wipRoot;
     setDuringRender(true);
     const hydrate = handle.hydrate;
-    if (hydrate) beginHydration(handle.container);
+    if (hydrate) beginHydration(handle.container, handle.hydrateStart);
     let wip: Fiber | null = wipRoot;
     setWorkInProgress(wip);
     try {

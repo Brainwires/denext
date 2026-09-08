@@ -21,6 +21,8 @@ export const RELOAD_PATH = "/_denext/reload";
 export const ROUTE_BUNDLE_PATH = "/_denext/route.js";
 /** App-wide Flight bundle (client islands + registry). */
 export const FLIGHT_BUNDLE_PATH = "/_denext/flight.js";
+
+export const GLOBAL_ERROR_BUNDLE_PATH = "/_denext/global-error.js";
 /** Per-route extracted stylesheet (`?p=<routePath>`). */
 export const ROUTE_CSS_PATH = "/_denext/route.css";
 /**

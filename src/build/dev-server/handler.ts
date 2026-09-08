@@ -10,7 +10,7 @@ import { imageOptionsFromConfig, optimizeImage } from "../../server/image-optimi
 import { extractRouteCss } from "../css.ts";
 import { routeSourceFiles } from "../bundle.ts";
 import { getCss } from "./assets.ts";
-import { getFlightBundle, getRouteBundle } from "./bundles.ts";
+import { getFlightBundle, getGlobalErrorBundle, getRouteBundle } from "./bundles.ts";
 import {
   devLogResponse,
   devOriginAllowed,
@@ -28,6 +28,7 @@ import {
   DEV_STATE_PATH,
   type DevState,
   FLIGHT_BUNDLE_PATH,
+  GLOBAL_ERROR_BUNDLE_PATH,
   OPEN_IN_EDITOR_PATH,
   RELOAD_PATH,
   ROUTE_BUNDLE_PATH,
@@ -91,6 +92,15 @@ async function flightBundleResponse(st: DevState): Promise<Response> {
     return jsResponse(await getFlightBundle(st));
   } catch (err) {
     return bundleErrorResponse(st, "Flight bundle error", err);
+  }
+}
+
+/** On-demand `global-error.tsx` hydration bundle. */
+async function globalErrorBundleResponse(st: DevState): Promise<Response> {
+  try {
+    return jsResponse(await getGlobalErrorBundle(st));
+  } catch (err) {
+    return bundleErrorResponse(st, "global-error bundle error", err);
   }
 }
 
@@ -228,6 +238,7 @@ export function createDevHandler(st: DevState, appHandler: RequestHandler): Requ
     const unbundled = await unbundledResponse(st, request, url);
     if (unbundled) return unbundled;
     if (url.pathname === FLIGHT_BUNDLE_PATH) return flightBundleResponse(st);
+    if (url.pathname === GLOBAL_ERROR_BUNDLE_PATH) return globalErrorBundleResponse(st);
     // Liveness/readiness probe endpoint (for load balancers / k8s).
     if (url.pathname === "/_denext/health") {
       return new Response("ok", { status: 200, headers: { "content-type": "text/plain" } });

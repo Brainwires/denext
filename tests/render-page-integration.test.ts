@@ -136,6 +136,37 @@ Deno.test("renderGlobalError: renders the global-error component with a 500", as
   assertEquals(page!.metadata.title, "Error");
 });
 
+Deno.test("renderGlobalError: a document-owning global-error injects the hydration island + entry script when given an entry", async () => {
+  const GlobalError = ({ error }: { error: Error }) =>
+    h("html", null, h("body", null, h("div", { class: "ge" }, `err: ${error.message}`)));
+  const load: ModuleLoader = () => Promise.resolve({ default: GlobalError });
+  const entry = "/_denext/client/global-error.js";
+
+  const withEntry = await renderGlobalError(
+    manifest({ rootGlobalError: "app/global-error.tsx" }),
+    load,
+    new Error("kaboom"),
+    entry,
+  );
+  assert(withEntry);
+  assertEquals(withEntry!.ownsDocument, true);
+  assertStringIncludes(withEntry!.html, `id="__denext_ge_data"`);
+  assertStringIncludes(withEntry!.html, `"message"`); // the (possibly redacted) error, for the client
+  assertStringIncludes(withEntry!.html, `src="${entry}"`);
+  // Both scripts land inside the document, before </body>.
+  assert(withEntry!.html.indexOf("__denext_ge_data") < withEntry!.html.lastIndexOf("</body>"));
+
+  // Without an entry: server-rendered only, no hydration script (the pre-hydration behavior).
+  const noEntry = await renderGlobalError(
+    manifest({ rootGlobalError: "app/global-error.tsx" }),
+    load,
+    new Error("kaboom"),
+  );
+  assert(noEntry);
+  assertEquals(noEntry!.html.includes("__denext_ge_data"), false);
+  assertEquals(noEntry!.html.includes("global-error.js"), false);
+});
+
 // ── mergeMetadata / mergeViewport (pure) ───────────────────────────────────────
 
 Deno.test("mergeMetadata: a template applies to descendants' string titles", () => {

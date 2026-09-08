@@ -3,11 +3,11 @@
 
 import type { RootHandle } from "./state.ts";
 import { collectEffects, collectInsertionEffects, needsSync, walk } from "./fiber-utils.ts";
-import { reportCommit } from "./devtools-bridge.ts";
+import { runCommitReport } from "./devtools-seam.ts";
 import { onErrorFor, scheduleEffectError } from "./boundaries.ts";
 import type { ProfilerPhase } from "../../runtime/profiler.ts";
 import { applyProps, detachRef } from "../dom-props.ts";
-import { captureSnapshot, unmountClassInstance } from "../../compat/class-component.ts";
+import { getClassSupport } from "./class-support.ts";
 import { anyProfiler, takeOffscreen } from "./state.ts";
 import {
   childrenDom,
@@ -27,7 +27,7 @@ import {
 function commitBeforeMutation(wipRoot: Fiber): void {
   if (!__DENEXT_CLASS_COMPONENTS__) return;
   walk(wipRoot, (f) => {
-    if ((f.flags & Snapshot) !== 0) captureSnapshot(f as never);
+    if ((f.flags & Snapshot) !== 0) getClassSupport()?.captureSnapshot(f as never);
   });
 }
 
@@ -81,7 +81,11 @@ function commitMutation(wipRoot: Fiber): void {
 
 /** 4. Placement: arrange DOM children of the root and any changed host/portal. */
 function commitPlacement(handle: RootHandle, wipRoot: Fiber): void {
-  syncChildren(handle.container, childrenDom(wipRoot));
+  // A document root (global-error hydration) shares the container with the doctype — a node the
+  // reconciler didn't insert — so PLACE its children (never prune foreign siblings) rather than
+  // sync, which would strip the doctype. Every other root exclusively owns its container.
+  if (handle.documentRoot) placePortalChildren(handle.container, childrenDom(wipRoot));
+  else syncChildren(handle.container, childrenDom(wipRoot));
   walk(wipRoot, (f) => {
     if (f.tag === "host" && f.alternate !== null && needsSync(f)) {
       syncChildren(f.stateNode as Element, childrenDom(f));
@@ -154,7 +158,7 @@ export function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
   // 5b. Profiler onRender.
   if (anyProfiler) fireProfilers(wipRoot);
   // 6. DevTools.
-  reportCommit(handle);
+  runCommitReport(handle);
 }
 
 /**
@@ -226,9 +230,12 @@ function revealOffscreenPrimary(f: Fiber): void {
 }
 
 function applyOffscreenVisibility(f: Fiber): void {
-  if (f.tag !== "suspense") return;
-  const shouldHide = f.offscreen === true && f.showingFallback === true &&
-    f.primaryCount != null;
+  // Both a re-suspended <Suspense> (primary kept mounted behind its fallback) and a hidden
+  // <Activity> hide their primary children the same way. A Suspense hides only while it is
+  // actually showing the fallback; an Activity hides whenever it is offscreen.
+  if (f.tag !== "suspense" && f.tag !== "activity") return;
+  const shouldHide = f.offscreen === true && f.primaryCount != null &&
+    (f.tag !== "suspense" || f.showingFallback === true);
   if (shouldHide && f.hiddenEls == null) hideOffscreenPrimary(f);
   else if (!shouldHide && f.hiddenEls != null) revealOffscreenPrimary(f);
 }
@@ -240,7 +247,7 @@ function applyOffscreenVisibility(f: Fiber): void {
  * fight its lifecycle.
  */
 function forEachOffscreenCell(fiber: Fiber, visit: (fiber: Fiber, cell: HookCell) => void): void {
-  if (fiber.tag === "suspense" && fiber.hiddenEls != null) return;
+  if ((fiber.tag === "suspense" || fiber.tag === "activity") && fiber.hiddenEls != null) return;
   for (let c = fiber.child; c !== null; c = c.sibling) forEachOffscreenCell(c, visit);
   if (fiber.tag !== "component" || !fiber.hooks) return;
   for (const cell of fiber.hooks) visit(fiber, cell);
@@ -390,7 +397,9 @@ export function flushPassiveEffects(): void {
  * a boundary within it.
  */
 function runUnmountCleanups(fiber: Fiber): void {
-  if (__DENEXT_CLASS_COMPONENTS__ && fiber.classInstance) unmountClassInstance(fiber as never);
+  if (__DENEXT_CLASS_COMPONENTS__ && fiber.classInstance) {
+    getClassSupport()?.unmountClassInstance(fiber as never);
+  }
   if (!fiber.hooks) return;
   for (const cell of fiber.hooks) {
     if (typeof cell.cleanup !== "function") continue;

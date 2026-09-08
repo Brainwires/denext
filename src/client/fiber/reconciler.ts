@@ -40,6 +40,6 @@ export {
   setDevIdForFiber,
   setRenderProfiler,
 } from "./devtools-bridge.ts";
-export { act, createPortal, createRoot, flushSync, hydrateRoot } from "./root.ts";
+export { act, createPortal, createRoot, flushSync, hydrateDocument, hydrateRoot } from "./root.ts";
 export type { RootOptions } from "./root.ts";
 export type { Root } from "./root.ts";

@@ -121,6 +121,7 @@ export async function createProdApp(
     publicDir: paths.publicDir,
     clientEntryFor: assets.clientEntryFor,
     styleHrefsFor: assets.styleHrefsFor,
+    globalErrorEntry: assets.globalErrorEntry,
     matchExternal: getPluginRequestHandler(),
     getMiddleware: () => middlewareRunner,
     onRequestError: instrumentation.onRequestError,

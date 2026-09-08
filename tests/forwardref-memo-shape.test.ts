@@ -4,6 +4,7 @@
 // memo(forwardRef(...))) via resolveComponentType. The public return type stays
 // callable so the 1.0 API surface is unchanged; only the runtime value differs.
 
+import "./helpers/class-runtime.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { Component, forwardRef, memo } from "../src/compat/react.ts";

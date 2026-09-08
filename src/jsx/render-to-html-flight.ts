@@ -13,6 +13,7 @@ import { FRAGMENT, type VNode, type VNodeChild, type VNodeChildren } from "./typ
 import { isComponentType } from "../runtime/react-brands.ts";
 import { type Dispatcher, setDispatcher } from "../runtime/hooks.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
+import { ACTIVITY } from "../runtime/react-extras.ts";
 import { ERROR_BOUNDARY } from "../runtime/error-boundary.ts";
 import { beginSignalCollection, endSignalCollection } from "../runtime/signal-state.ts";
 import { type ClientRefInfo, clientRefOf } from "../runtime/client-reference.ts";
@@ -198,6 +199,11 @@ function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
   // resolved inline here, retrying on suspension.
   if ((type as unknown) === SUSPENSE) {
     return resolveInBoundaryScope(ctx.ids, () => renderChildrenDual(props.children, ctx));
+  }
+  // Activity is id-transparent (like a Fragment). Visible → render children; hidden →
+  // render nothing (the client pre-renders it offscreen after hydration — no mismatch).
+  if ((type as unknown) === ACTIVITY) {
+    return renderChildrenDual(props.mode === "hidden" ? undefined : props.children, ctx);
   }
   if ((type as unknown) === ERROR_BOUNDARY) return renderErrorBoundaryDual(props, ctx);
   if (isComponentType(type)) return renderComponentDual(node, type, props, ctx);

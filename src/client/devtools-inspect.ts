@@ -25,6 +25,8 @@ import {
   setDevIdForFiber,
   setRenderProfiler,
 } from "./fiber/reconciler.ts";
+import { devtoolsHooksImpl } from "./fiber/devtools-bridge.ts";
+import { setDevtoolsHooks } from "./fiber/devtools-seam.ts";
 import { setInspectorBridge } from "./devtools.ts";
 import { familyIdOf } from "./refresh-runtime.ts";
 import {
@@ -1092,6 +1094,11 @@ function onCommit(): void {
 function ensureCommitObserver(): void {
   if (commitObserverInstalled) return;
   commitObserverInstalled = true;
+  // Wire the reconciler → DevTools seam so `runCommitReport` reaches `reportCommit`
+  // (which fires this observer AND the React-DevTools bridge). Installing it here — not
+  // only in `installInspector` — covers direct `subscribe`/`startProfiling`/
+  // `enableRenderReasons` callers (e.g. tests) that never mount the full inspector.
+  setDevtoolsHooks(devtoolsHooksImpl);
   setCommitObserver(onCommit);
 }
 
@@ -1375,6 +1382,10 @@ export function installInspector(): DenextDevtoolsApi | null {
   // edit wrappers re-walk the tree first so the RD-supplied id resolves against a current
   // id→fiber map (the ids themselves are stable across walks).
   setDevIdForFiber(idFor);
+  // Install the reconciler → DevTools seam: from here the reconciler's prod modules can
+  // reach the bridge (per-commit report, prop overrides, render profiler). Only the dev
+  // path imports this, so production tree-shakes the bridge out entirely.
+  setDevtoolsHooks(devtoolsHooksImpl);
   setInspectorBridge({
     setHookState: (id, i, v) => {
       getInspectorTree();

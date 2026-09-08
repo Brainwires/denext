@@ -37,7 +37,7 @@ export interface SuspenseListState {
   snapshot: boolean[];
 }
 
-/** Fiber tags — the recursive reconciler's 7 kinds plus the synthetic root. */
+/** Fiber tags — the recursive reconciler's 8 kinds plus the synthetic root. */
 export type FiberTag =
   | "root"
   | "host"
@@ -46,6 +46,7 @@ export type FiberTag =
   | "fragment"
   | "portal"
   | "suspense"
+  | "activity"
   | "errorboundary";
 
 /**

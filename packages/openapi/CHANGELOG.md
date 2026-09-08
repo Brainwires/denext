@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.0
+
+- **Security schemes → the Swagger "Authorize" button.** New `securitySchemes` option emits
+  `components.securitySchemes`, and `security` sets the requirement — as a document-wide array,
+  a `(route) => …` function, a `security` field on a `defineApi` definition, or (recommended) a
+  middleware tagged with denext's `documentsSecurity`, so applying the auth middleware both
+  enforces and documents the requirement with nothing on the definition. Operations on one path
+  can differ (a public `GET`, a protected `POST`). Precedence: per-endpoint → middleware-documented
+  → document-level → none. Documentation only; enforce the token with middleware. New exported
+  types `OpenApiSecurityScheme` and `SecurityRequirement`.
+
 ## 0.1.0
 
 Initial release. An OpenAPI 3.1 document and a docs page for a denext app, derived from

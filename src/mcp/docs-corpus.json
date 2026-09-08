@@ -15,7 +15,7 @@
       "title": "Activity",
       "module": "denext",
       "url": "/docs/api/denext/Activity",
-      "text": "Activity Activity(props: object): VNode React.Activity (experimental; formerly unstable_Offscreen) — wraps a subtree whose rendering can be deprioritized or hidden (mode=\"hidden\"). denext has no offscreen scheduler, so it renders as a transparent passthrough of its children (the mode prop is accepted and ignored). Lets apps that adopt the API build and render.",
+      "text": "Activity Activity(props: object): VNode React.Activity (experimental; formerly unstable_Offscreen) — wraps a subtree whose rendering can be deprioritized or hidden. mode=\"hidden\" keeps the subtree mounted but removed from the layout (display:none !important), tears down its effects, and preserves its state (useState/useRef cells) so mode=\"visible\" restores the SAME instances instantly; a subtree that MOUNTS hidden is pre-rendered at transition priority so it never blocks the initial paint. The offscreen scheduler is import-gated: it is installed into the reconciler only when the app uses Activity (a build-time scan), so a bundle that never renders one pays nothing. Without it installed (or with mode=\"visible\"), the wrapper is a transparent passthrough of its children.",
       "denextOnly": false
     },
     {
@@ -2157,7 +2157,7 @@
       "title": "VERSION",
       "module": "denext",
       "url": "/docs/api/denext/VERSION",
-      "text": "VERSION VERSION: 2.1.0-rc.2 The denext framework version.",
+      "text": "VERSION VERSION: 2.1.0-rc.3 The denext framework version.",
       "denextOnly": true
     },
     {
@@ -2166,7 +2166,7 @@
       "title": "ViewTransition",
       "module": "denext",
       "url": "/docs/api/denext/ViewTransition",
-      "text": "ViewTransition ViewTransition(props: object): VNode React.ViewTransition (experimental) — the client-driven view-transition wrapper. denext renders it as a transparent passthrough of its children (SSR + hydration safe). **Route-level** view transitions DO apply: a Flight soft-navigation commits inside document.startViewTransition where the browser supports it, so the route swap cross-fades (see withViewTransition in src/client/navigation.ts). The component's per-element props (name, enter, exit, update) are not yet honored — that needs this wrapper to emit real view-transition-name DOM markers — and the isomorphic/HTML nav paths (async reconcile) don't animate yet either.",
+      "text": "ViewTransition ViewTransition(props: object): VNode React.ViewTransition (experimental) — the client-driven view-transition wrapper. It is transparent (no DOM node of its own) and carries its config by stamping the DNX_VT_ATTR attribute onto its **single host child** (a DOM attribute survives server rendering AND the Flight boundary, unlike a VNode marker). Around a soft navigation the import-gated marking runtime finds these elements and applies real view-transition-name (and view-transition-class from enter/exit/update/share), so a name shared across routes morphs one element into the other. **Route-level** transitions apply regardless: a soft navigation commits inside document.startViewTransition where the browser supports it (see withViewTransition in src/client/navigation.ts). Without the gated runtime, or for a wrapper whose child isn't a single element (nothing to mark), it is a plain passthrough.",
       "denextOnly": false
     },
     {
@@ -2428,6 +2428,15 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/ApiMiddleware",
       "text": "ApiMiddleware type ApiMiddleware<Ctx, Ext> = (input: ApiMiddlewareInput<Ctx>) => Ext | Response | void | Promise<Ext | Response | void> A \"before\" middleware: return an object to extend the context (typed), a Response to short-circuit, or nothing. Throw (unauthorized(), an ApiError) to fail.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/ApiMiddlewareDocs",
+      "kind": "interface",
+      "title": "ApiMiddlewareDocs",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ApiMiddlewareDocs",
+      "text": "ApiMiddlewareDocs interface ApiMiddlewareDocs OpenAPI metadata a middleware contributes to every endpoint it guards (read by @denext/openapi).",
       "denextOnly": true
     },
     {
@@ -2805,7 +2814,7 @@
       "title": "ChannelEvent",
       "module": "denext/server",
       "url": "/docs/api/denext-server/ChannelEvent",
-      "text": "ChannelEvent interface ChannelEvent One transport event: a publish (encoded payload) or a revoke.",
+      "text": "ChannelEvent interface ChannelEvent One transport event: a channel publish/revoke, or a cross-instance cache-tag invalidate.",
       "denextOnly": true
     },
     {
@@ -3103,6 +3112,15 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/DocumentOptions",
       "text": "DocumentOptions interface DocumentOptions Inputs to renderDocument for assembling the full HTML page.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/documentsSecurity",
+      "kind": "function",
+      "title": "documentsSecurity",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/documentsSecurity",
+      "text": "documentsSecurity documentsSecurity<M>(mw: M, security: Record<string, string[]>[]): M Tag a middleware so applying it also DOCUMENTS its OpenAPI requirement: an endpoint built with createApi().use(documentsSecurity(mw, [{ bearerAuth: [] }])).define(...) is marked secured in the generated document with no security on the definition — one declaration both enforces (the middleware) and documents (this tag). A security on the definition still overrides it, and @denext/openapi must declare the scheme (securitySchemes) for the \"Authorize\" button. The middleware to tag. The requirement(s) it documents ([{ scheme: [] }]; [] documents nothing). The same middleware, tagged.",
       "denextOnly": true
     },
     {

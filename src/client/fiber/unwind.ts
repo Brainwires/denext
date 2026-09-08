@@ -12,7 +12,7 @@ import { retrySuspendedTransition, retrySuspense } from "./boundaries.ts";
 
 import { isThenable } from "../../runtime/suspense.ts";
 import { isControlSignal, isRedirect } from "../../runtime/error-boundary.ts";
-import { handleClassError } from "../../compat/class-component.ts";
+import { getClassSupport } from "./class-support.ts";
 import { type Fiber, NoLane, TransitionLane } from "./fiber.ts";
 import { concurrentWipRoot, renderLanes } from "./scheduler.ts";
 import { dropHydrationCursor, isHydrating } from "./hydration.ts";
@@ -109,7 +109,8 @@ function handleRenderError(sourceFiber: Fiber, thrown: unknown): Fiber {
     throw thrown;
   }
   if (isClassBoundary(boundary)) {
-    if (!handleClassError(boundary as never, thrown, componentErrorInfo(boundary))) {
+    const cs = getClassSupport();
+    if (!cs || !cs.handleClassError(boundary as never, thrown, componentErrorInfo(boundary))) {
       reportUncaught(sourceFiber, thrown); // the class boundary declined → uncaught
       throw thrown;
     }

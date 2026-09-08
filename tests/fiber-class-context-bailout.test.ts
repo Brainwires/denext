@@ -6,6 +6,7 @@
 // provider value change was silently dropped when a memoized non-consumer ancestor sat
 // between the provider and the class. Regression for that.
 
+import "./helpers/class-runtime.ts";
 import { assertEquals } from "@std/assert";
 import { Component, createContext, memo } from "../src/compat/react.ts";
 import { useState } from "../mod.ts";

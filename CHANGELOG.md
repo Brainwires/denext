@@ -8,6 +8,83 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.1.0-rc.3] - 2026-09-08
+
+### Added
+
+- **`ViewTransition` honors per-element transitions across navigations (import-gated).**
+  `React.ViewTransition` was a passthrough that only rode the route-level cross-fade; it now
+  stamps real `view-transition-name` on its host child around a soft navigation — on the
+  OUTGOING tree before `startViewTransition` (so the browser's old-state capture sees it) and
+  the INCOMING tree after the commit — so a shared `name` morphs between routes, then clears
+  when the transition finishes. `enter`/`exit`/`update`/`share` become `view-transition-class`
+  on the old vs. new side (per-type maps resolve against the active transition types), and
+  `addTransitionType` is now wired: it buffers types that drive `startViewTransition({ types })`.
+  The isomorphic and full-HTML nav paths now animate too — they await the re-injected route
+  entry so the DOM swap lands inside the transition (previously only the Flight path animated).
+  `<ViewTransition>` is transparent (no DOM node of its own): it carries its config on a DOM
+  attribute (`data-dnx-vt`) stamped onto its single host child, which is the only carrier that
+  survives BOTH server rendering and the Flight boundary — a symbol-keyed VNode marker is
+  dropped in Flight and server components aren't re-run on the client, so it would never reach
+  the browser tree. The marking runtime is **import-gated** — installed only when a build scan
+  sees `<ViewTransition>` — so an app that never renders one bundles none of it. Residual vs React:
+  only navigation commits are wrapped (a same-page reorder isn't animated); see
+  [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
+- **`Activity` does real offscreen scheduling (import-gated).** `React.Activity` was a
+  passthrough shim; it now schedules its subtree for real. `mode="hidden"` keeps the subtree
+  mounted but removed from layout (`display:none !important`), tears down its effects, and
+  preserves its state cells, so flipping back to `mode="visible"` restores the SAME instances
+  instantly (no remount); a subtree that mounts hidden is pre-rendered at transition priority
+  so it never blocks the initial paint. It reuses the exact offscreen commit machinery
+  `<Suspense>` already ships (hide/disconnect on hide, restore/reconnect on reveal). Server
+  rendering: a visible `Activity` renders its children; a hidden one renders nothing (the
+  client pre-renders it offscreen after hydration, avoiding a mismatch and a flash). The
+  offscreen runtime is **import-gated** — installed into the reconciler only when a build scan
+  sees `<Activity>` — so an app that never renders one bundles none of it (the shared client
+  chunk is unchanged). One residual gap vs React: a subtree that MOUNTS hidden runs its effects
+  once (React defers them); see [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
+- **`global-error.tsx` now hydrates — `reset` works and author interactivity is live.**
+  global-error replaces the root layout and renders its own `<html>`/`<body>`; it was
+  previously served as dead HTML (no client JS), so its `reset` prop was inert and no author
+  `onClick`/handlers ran. It now hydrates at the document root (`denext build` and
+  `denext dev`), so `reset` is a real function and interactivity works, matching Next. `reset`
+  recovers softly — it re-fetches the current route and swaps the document in place (no browser
+  reload; a hard reload is the fallback) — rather than reloading. New reconciler primitive
+  `hydrateDocument` (adopts a document-owning tree in place, preserving the doctype) +
+  `startGlobalErrorClient`. The next-compat and static-export paths keep the pre-hydration
+  server-only behavior.
+- **Cross-instance Live invalidation over `ChannelTransport`.** A `revalidateTag` /
+  `updateTag` now propagates to every instance's Live hub through the configured
+  `ChannelTransport` (the same seam `createChannel` already used), so `<Live>`, `useLive`,
+  `useSubscription`, and `useApi({ tags })` watchers re-push on all instances — not just the
+  one that invalidated. Set `broadcastChannelTransport()` (Deno Deploy isolates / workers) or
+  a custom Redis/NATS transport via `setChannelTransport`; the default in-memory transport
+  loops back to the single instance, so a single-instance deploy is unchanged. Echo is
+  suppressed by originating-instance id. New internal seam: a `"invalidate"` `ChannelEvent`
+  kind + `broadcastInvalidation` / `isForeignEvent` (`src/runtime/channel.ts`).
+- **Per-endpoint OpenAPI security + auto-documenting middleware.** A `defineApi` definition may
+  carry a `security` field (`[{ bearerAuth: [] }]` to require a scheme, `[]` to mark it public),
+  and the new `documentsSecurity(mw, [{ bearerAuth: [] }])` (from `denext/server`) tags a
+  middleware so applying it both **enforces** and **documents** the requirement — an endpoint
+  built with `createApi().use(<tagged>).define(...)` is marked secured with nothing on the
+  definition. A chain documents the cartesian product of its middlewares' requirements. All of it
+  is doc-only metadata read by `@denext/openapi` to draw the lock / "Authorize" button (paired
+  with the plugin's `securitySchemes` / `security` options); it never enforces on its own.
+  Precedence: per-endpoint `security` → middleware-documented → document-level → none. New exports:
+  `documentsSecurity`, `ApiMiddlewareDocs`.
+- **`examples/openapi` — a standalone `@denext/openapi` example.** A tiny pet store defined with
+  `defineApi` + Zod that serves an OpenAPI 3.1 document at `/openapi.json` and an interactive
+  **Swagger UI** at `/docs` (`ui: "swagger"`), a demo bearer login (`POST /api/login`) wired to
+  the Swagger **Authorize** button with public reads and token-protected writes, and the Scalar
+  and zero-JS `builtin` renderers a one-line swap. Complements `examples/typed-api`, which shows
+  the default `builtin` docs. Covered by `tests/e2e/openapi.e2e.test.ts`.
+- **`examples/react-router` — a standalone `@denext/react-router` example.** A React Router v7
+  framework-mode app (root `Layout` + `ErrorBoundary`, `app/routes.ts` config routing with a
+  pathless layout and a `teams` prefix, loader data as prop and via `useLoaderData`, a `<Form>`
+  action, a resource route, and a `418` throw → the route's `ErrorBoundary`) running on denext
+  with the route components importing bare `react-router` unchanged. Covered by
+  `tests/e2e/react-router.e2e.test.ts`.
+
 ## [2.1.0-rc.2] - 2026-09-07
 
 ### Added
@@ -5932,6 +6009,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.1.0-rc.3]: https://jsr.io/@denext/denext@2.1.0-rc.3
 [2.1.0-rc.2]: https://jsr.io/@denext/denext@2.1.0-rc.2
 [2.1.0-rc.1]: https://jsr.io/@denext/denext@2.1.0-rc.1
 [2.0.7]: https://jsr.io/@denext/denext@2.0.7

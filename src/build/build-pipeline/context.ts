@@ -10,6 +10,9 @@ import type { ProjectPaths } from "../paths.ts";
 /** The file name of the app-wide Flight (RSC) client bundle. */
 export const FLIGHT_BUNDLE_FILE = "flight.js";
 
+/** The file name of the `global-error.tsx` hydration bundle (single root file). */
+export const GLOBAL_ERROR_BUNDLE_FILE = "global-error.js";
+
 export interface BuildResult {
   routes: Array<{ routePath: string; bundle: string }>;
   outDir: string;
@@ -44,6 +47,12 @@ export interface BuildContext {
   boundary: BoundaryManifest | null;
   /** Whether the Flight entry bundles the Live transport. */
   usesLive: boolean;
+  /** Whether the generated entries install the class-component runtime (scan or config). */
+  usesClassComponents: boolean;
+  /** Whether the generated entries install the Activity offscreen scheduler (scan). */
+  usesActivity: boolean;
+  /** Whether the generated entries install the ViewTransition marking runtime (scan). */
+  usesViewTransition: boolean;
   /** next-compat: source module (project-relative) → server bundle (outDir-relative). */
   readonly compatServerModules: Record<string, string>;
 }

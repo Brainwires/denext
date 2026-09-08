@@ -3,7 +3,7 @@
 // the StrictMode double render.
 
 import { devHydrationActive } from "./fiber-utils.ts";
-import { fiberPropOverrides, overridesActive, renderProfiler } from "./devtools-bridge.ts";
+import { devtoolsHooks } from "./devtools-seam.ts";
 import {
   clientDispatcher,
   currentFiber,
@@ -27,7 +27,7 @@ import {
 } from "../vnode-utils.ts";
 import { classComponentsDisabledError, isClassComponent } from "../../compat/class-detect.ts";
 import { resolveComponentType } from "../../runtime/react-brands.ts";
-import { renderClassInstance } from "../../compat/class-component.ts";
+import { getClassSupport } from "./class-support.ts";
 import type { Fiber, HookCell } from "./fiber.ts";
 
 /** Bound on render-phase re-invocations of one component (React's RE_RENDER_LIMIT). */
@@ -162,8 +162,9 @@ function resolveRefreshSwap(inst: Fiber): RefreshResolution {
  * bail keeps the committed child.
  */
 function renderClassFiber(inst: Fiber): VNode {
-  if (!__DENEXT_CLASS_COMPONENTS__) throw classComponentsDisabledError();
-  const { vnode, bailed } = renderClassInstance(inst as never);
+  const cs = getClassSupport();
+  if (!__DENEXT_CLASS_COMPONENTS__ || cs === null) throw classComponentsDisabledError();
+  const { vnode, bailed } = cs.renderClassInstance(inst as never);
   if (bailed) {
     inst.bailed = true;
     return (inst.child?.vnode as VNode) ?? textVNode("");
@@ -211,8 +212,9 @@ function prepareRenderProps(inst: Fiber): unknown {
     const { [ID_PATH_PROP]: _drop, ...rest } = props as Record<string, unknown>;
     props = rest;
   }
-  if (overridesActive) {
-    const ov = fiberPropOverrides(inst);
+  const dh = devtoolsHooks;
+  if (dh) {
+    const ov = dh.propOverrides(inst);
     if (ov) props = { ...(props as Record<string, unknown>), ...ov };
   }
   if (inst.idScope === undefined) {
@@ -281,7 +283,8 @@ function finishComponentRender(
     inst.actualDuration = d;
     inst.selfBaseDuration = d;
   }
-  if (renderProfiler !== null) renderProfiler(inst.vnode.type, performance.now() - profT0, inst);
+  const prof = devtoolsHooks?.profiler;
+  if (prof) prof(inst.vnode.type, performance.now() - profT0, inst);
 }
 
 export function renderComponent(inst: Fiber): VNode {
@@ -302,7 +305,7 @@ export function renderComponent(inst: Fiber): VNode {
   const t0 = inst.underProfiler === true ? performance.now() : 0;
   // Dev-only DevTools profiler: time every component render while recording (null
   // otherwise, so the hot path is one null check).
-  const profT0 = renderProfiler !== null ? performance.now() : 0;
+  const profT0 = devtoolsHooks?.profiler ? performance.now() : 0;
   const prevDispatcher = setDispatcher(clientDispatcher);
   try {
     // The flag is the FIRST operand on purpose: with class components compiled out, the

@@ -3,7 +3,27 @@
 // Client-safe: the request context is reached through the bridge global the server installs.
 
 import { Fragment, h } from "../jsx/jsx-runtime.ts";
-import type { VNode, VNodeChildren } from "../jsx/types.ts";
+import type { VNode, VNodeChildren, VProps } from "../jsx/types.ts";
+
+/**
+ * Marker used as the `type` of an {@link Activity} VNode so the reconciler recognizes it
+ * (mirrors `SUSPENSE` in `src/runtime/suspense.ts`). An Activity fiber deprioritizes /
+ * hides its subtree; the offscreen logic itself is import-gated (installed into the
+ * reconciler seam only when the app uses `Activity`, so a bundle that never renders one
+ * ships none of it). Recognizing the marker is always cheap; without the gated runtime an
+ * Activity fiber is a transparent passthrough of its children (the historical shim).
+ */
+export const ACTIVITY: symbol = Symbol.for("denext.activity");
+
+/**
+ * DOM attribute a `<ViewTransition>` stamps onto its host child, carrying its config as JSON.
+ * A DOM attribute (not a fiber/VNode marker) is what survives BOTH server rendering and the
+ * Flight boundary: a Fragment's props are dropped in Flight, and server components aren't
+ * re-run on the client, so a symbol-keyed VNode marker never reaches the browser tree — but a
+ * host element's attributes do. The client marking runtime finds these elements by this
+ * attribute and stamps `view-transition-name` / `view-transition-class` around a transition.
+ */
+export const DNX_VT_ATTR = "data-dnx-vt";
 
 /**
  * The current request context (an opaque per-request object), used to make
@@ -22,30 +42,86 @@ function currentRequestContext(): object | undefined {
   }
 }
 
+/** A `<ViewTransition>`'s honored config, JSON-encoded into {@link DNX_VT_ATTR} on its host child. */
+export interface ViewTransitionMarker {
+  /** Pairs an outgoing and incoming element by this `view-transition-name` (shared-element morph). */
+  name?: string;
+  /** `view-transition-class` applied when the element ENTERS (present in the new state only). */
+  enter?: string | Record<string, string>;
+  /** `view-transition-class` applied when the element EXITS (present in the old state only). */
+  exit?: string | Record<string, string>;
+  /** `view-transition-class` applied when the element persists across the transition (morph). */
+  update?: string | Record<string, string>;
+  /** `view-transition-class` applied to a shared (name-paired) element. */
+  share?: string | Record<string, string>;
+}
+
+/** The single VNode element child of a `<ViewTransition>`, or null (text / none / many). */
+function singleElementChild(children: VNodeChildren): VNode | null {
+  const one = Array.isArray(children) ? (children.length === 1 ? children[0] : null) : children;
+  return one != null && typeof one === "object" && "type" in (one as object) ? one as VNode : null;
+}
+
 /**
- * `React.ViewTransition` (experimental) — the client-driven view-transition wrapper.
- * denext renders it as a transparent passthrough of its children (SSR + hydration safe).
- * **Route-level** view transitions DO apply: a Flight soft-navigation commits inside
- * `document.startViewTransition` where the browser supports it, so the route swap
- * cross-fades (see `withViewTransition` in `src/client/navigation.ts`). The component's
- * per-element props (`name`, `enter`, `exit`, `update`) are not yet honored — that needs
- * this wrapper to emit real `view-transition-name` DOM markers — and the isomorphic/HTML
- * nav paths (async reconcile) don't animate yet either.
+ * `React.ViewTransition` (experimental) — the client-driven view-transition wrapper. It is
+ * transparent (no DOM node of its own) and carries its config by stamping the {@link DNX_VT_ATTR}
+ * attribute onto its **single host child** (a DOM attribute survives server rendering AND the
+ * Flight boundary, unlike a VNode marker). Around a soft navigation the import-gated marking
+ * runtime finds these elements and applies real `view-transition-name` (and
+ * `view-transition-class` from `enter`/`exit`/`update`/`share`), so a `name` shared across
+ * routes morphs one element into the other. **Route-level** transitions apply regardless: a soft
+ * navigation commits inside `document.startViewTransition` where the browser supports it (see
+ * `withViewTransition` in `src/client/navigation.ts`). Without the gated runtime, or for a
+ * wrapper whose child isn't a single element (nothing to mark), it is a plain passthrough.
  */
-export function ViewTransition(props: { children?: VNodeChildren }): VNode {
-  return h(Fragment, null, props?.children);
+export function ViewTransition(
+  props: {
+    name?: string;
+    enter?: string | Record<string, string>;
+    exit?: string | Record<string, string>;
+    update?: string | Record<string, string>;
+    share?: string | Record<string, string>;
+    children?: VNodeChildren;
+  },
+): VNode {
+  const marker: ViewTransitionMarker = {};
+  if (props?.name != null) marker.name = props.name;
+  if (props?.enter != null) marker.enter = props.enter;
+  if (props?.exit != null) marker.exit = props.exit;
+  if (props?.update != null) marker.update = props.update;
+  if (props?.share != null) marker.share = props.share;
+  const child = singleElementChild(props?.children ?? null);
+  // Nothing to pair (no name/class) or no single element to stamp → transparent passthrough.
+  if (child === null || Object.keys(marker).length === 0) {
+    return h(Fragment, null, props?.children);
+  }
+  // Clone the child, adding the config attribute. On a host element it lands in the DOM (and
+  // the Flight payload); on a component child the author must forward it — like React, whose
+  // ViewTransition also requires a single element child. Spread the child so its element brand
+  // (`$$typeof`) and any other fields survive — a rebuilt `{ type, key, props }` would make
+  // `isValidElement`/`react-is` misclassify the wrapped child.
+  return { ...child, props: { ...(child.props ?? {}), [DNX_VT_ATTR]: JSON.stringify(marker) } };
 }
 
 /**
  * `React.Activity` (experimental; formerly `unstable_Offscreen`) — wraps a subtree whose
- * rendering can be deprioritized or hidden (`mode="hidden"`). denext has no offscreen
- * scheduler, so it renders as a transparent passthrough of its children (the `mode` prop is
- * accepted and ignored). Lets apps that adopt the API build and render.
+ * rendering can be deprioritized or hidden. `mode="hidden"` keeps the subtree mounted but
+ * removed from the layout (`display:none !important`), tears down its effects, and preserves its state
+ * (`useState`/`useRef` cells) so `mode="visible"` restores the SAME instances instantly; a
+ * subtree that MOUNTS hidden is pre-rendered at transition priority so it never blocks the
+ * initial paint. The offscreen scheduler is import-gated: it is installed into the
+ * reconciler only when the app uses `Activity` (a build-time scan), so a bundle that never
+ * renders one pays nothing. Without it installed (or with `mode="visible"`), the wrapper is
+ * a transparent passthrough of its children.
  */
 export function Activity(
   props: { mode?: "visible" | "hidden"; children?: VNodeChildren },
 ): VNode {
-  return h(Fragment, null, props?.children);
+  return {
+    type: ACTIVITY as unknown as string,
+    props: (props ?? {}) as unknown as VProps,
+    key: null,
+  };
 }
 
 /**

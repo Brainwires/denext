@@ -16,6 +16,7 @@ import {
 } from "../runtime/hooks.ts";
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
+import { ACTIVITY } from "../runtime/react-extras.ts";
 import {
   boundaryFallbackError,
   boundaryLetsThrough,
@@ -653,6 +654,11 @@ function renderVNodeInto(node: VNode, ctx: RenderCtx): void | Promise<void> {
   // Portal: its children target a live client DOM node — React's server renderers throw.
   if ((type as unknown) === PORTAL) {
     throw new Error("Portals are not currently supported by the server renderer.");
+  }
+  if ((type as unknown) === ACTIVITY) {
+    // Id-transparent like a Fragment: a visible Activity renders its children; a hidden one
+    // renders nothing (the client pre-renders it offscreen after hydration — no mismatch).
+    return renderChildrenInto(props.mode === "hidden" ? undefined : props.children, ctx);
   }
   if ((type as unknown) === SUSPENSE) return appendResult(renderSuspenseToStr(props, ctx), ctx);
   if ((type as unknown) === ERROR_BOUNDARY) {

@@ -12,6 +12,7 @@ import { resetBoundary } from "./boundaries.ts";
 import { renderComponent } from "./render-component.ts";
 import { cloneChildFibers, reconcileChildren } from "./reconcile-children.ts";
 import { propagateContextChange } from "./context-propagation.ts";
+import { getActivitySupport } from "./activity-support.ts";
 
 import type { VNode, VNodeChildren } from "../../jsx/types.ts";
 import { enterScope, rootScope } from "../../jsx/tree-id.ts";
@@ -228,6 +229,24 @@ function applySuspenseListPolicy(
   st.count = i;
 }
 
+// Reveal an offscreen boundary's preserved children (a <Suspense> leaving Offscreen, or an
+// <Activity> going hidden → visible): un-hide each top-level child and give it this render's
+// lane + a forced render so it renders live again — a child that MOUNTED while hidden carries
+// no lane of its own, so without this the props-equal bailout would keep its empty committed
+// subtree forever. Clear the boundary's offscreen bookkeeping and note it so the commit pass
+// restores the hidden DOM + reconnects torn-down effects. Shared by beginSuspense and the
+// gated Activity runtime (activity-runtime.ts).
+export function revealOffscreenChildren(wip: Fiber): void {
+  for (let c = wip.child; c !== null; c = c.sibling) {
+    c.hidden = false;
+    c.lanes |= renderLanes;
+    c.forceRender = true;
+  }
+  wip.offscreen = false;
+  wip.primaryCount = undefined;
+  noteOffscreen();
+}
+
 // Offscreen re-suspend of an already-revealed boundary: reconcile [primary…, fallback…]
 // as one child list — the primary vnodes match the committed primary fibers (reused →
 // state kept), the fallback mounts fresh — then hide the primary portion so it isn't
@@ -300,15 +319,27 @@ function beginSuspense(wip: Fiber): Fiber | null {
   // re-suspend replaced the child) has never rendered and carries no lane of its own, so
   // without this the props-equal bailout would keep its empty committed subtree forever.
   if (!inList && display === "content" && wip.primaryCount != null) {
-    for (let c = wip.child; c !== null; c = c.sibling) {
-      c.hidden = false;
-      c.lanes |= renderLanes;
-      c.forceRender = true;
-    }
-    wip.offscreen = false;
-    wip.primaryCount = undefined;
-    noteOffscreen(); // so the commit pass restores hiddenEls visibility
+    revealOffscreenChildren(wip); // so the commit pass restores hiddenEls visibility
   }
+  return wip.child;
+}
+
+// An "activity" fiber (`<Activity mode>`): with the offscreen runtime installed, hand off to
+// it (hide/reveal the subtree, preserving state); without it (ungated, or `mode="visible"`
+// with nothing to reveal) render children as a transparent passthrough — the historical
+// shim. The runtime is import-gated through the seam, so a bundle that never renders an
+// Activity keeps neither the offscreen begin logic nor this dependency. Split out of
+// {@linkcode beginWork}.
+function beginActivity(wip: Fiber): Fiber | null {
+  const support = getActivitySupport();
+  if (support) return support.begin(wip);
+  reconcileChildren(
+    wip,
+    (wip.vnode.props?.children ?? null) as VNodeChildren,
+    wip.host,
+    wip.boundary,
+    wip.inherited,
+  );
   return wip.child;
 }
 
@@ -414,6 +445,9 @@ export function beginWork(wip: Fiber): Fiber | null {
 
     case "suspense":
       return beginSuspense(wip);
+
+    case "activity":
+      return beginActivity(wip);
 
     case "errorboundary":
       return beginErrorBoundary(wip);

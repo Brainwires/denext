@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { bundleRoute, generateRouteEntry } from "../src/build/bundle.ts";
+import { bundleRoute, generateGlobalErrorEntry, generateRouteEntry } from "../src/build/bundle.ts";
 import { routeId } from "../src/build/paths.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { PageRoute } from "../src/router/manifest.ts";
@@ -39,6 +39,15 @@ Deno.test("generateRouteEntry imports page + layouts and hydrates", () => {
   const l0 = entry.indexOf("h(Layout0,");
   assertEquals(l1 < l0 && l1 !== -1, true);
   assertStringIncludes(entry, "startClient(el, tree)");
+});
+
+Deno.test("generateGlobalErrorEntry imports the component + hydrates the document", () => {
+  const entry = generateGlobalErrorEntry("/app/global-error.tsx");
+  assertStringIncludes(entry, "startGlobalErrorClient");
+  assertStringIncludes(entry, 'from "denext/client-runtime"');
+  assertStringIncludes(entry, "import GlobalError from");
+  assertStringIncludes(entry, "global-error.tsx");
+  assertStringIncludes(entry, "startGlobalErrorClient(GlobalError)");
 });
 
 Deno.test("generateRouteEntry works with no layouts", () => {

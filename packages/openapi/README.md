@@ -90,6 +90,61 @@ openapi({ ui: "scalar", cdn: "/vendor/scalar.js" }); // self-hosted
 Those load from a CDN by default — allow that host in your `csp`, or self-host the
 bundle and point `cdn` at it.
 
+## Authorization (the "Authorize" button)
+
+Declare your schemes once with `securitySchemes`, then say which scheme each operation
+needs. Swagger UI (and Scalar) render an **Authorize** button from the schemes, so a token
+is entered once and sent with every request.
+
+```ts
+// denext.config.ts
+openapi({
+  securitySchemes: { bearerAuth: { type: "http", scheme: "bearer" } },
+});
+```
+
+**Let the middleware document it (recommended)** — tag your auth middleware with
+`documentsSecurity`, and every endpoint that applies it is marked secured automatically. One
+declaration both **enforces** (the middleware) and **documents** (the tag); nothing is repeated
+and the two can't drift:
+
+```ts
+import { createApi, documentsSecurity } from "@denext/denext/server";
+
+const authed = createApi().use(
+  documentsSecurity(requireBearer(), [{ bearerAuth: [] }]),
+);
+
+export const GET = defineApi({ summary: "List" }, list); //  no middleware → public
+export const POST = authed.define({ summary: "Create" }, create); // enforced AND marked secured
+```
+
+A chain is the cartesian product of its middlewares' requirements (`(A | B)` then `C` documents
+as `[{A,C}, {B,C}]`); an endpoint with no documenting middleware carries no requirement.
+
+**Or put `security` on the definition** — when you want the lock without middleware, or to
+override what the middleware documents (an explicit `security: []` forces "public"):
+
+```ts
+export const GET = defineApi({ summary: "List", security: [] }, list); // explicitly public
+export const POST = authed.define({ summary: "Create", security: [{ bearerAuth: [] }] }, create);
+```
+
+**Or a document-wide default** — pass `security` to the plugin as an array (applies to
+every operation) or a `(route) => …` function (per route):
+
+```ts
+openapi({
+  securitySchemes: { bearerAuth: { type: "http", scheme: "bearer" } },
+  security: (route) => route.routePath === "/api/login" ? [] : [{ bearerAuth: [] }],
+});
+```
+
+`security` is **documentation only** — it draws the lock and tells Swagger which header to
+send; `documentsSecurity` is likewise a doc tag. Neither enforces anything: the middleware you
+apply is what actually rejects requests. Precedence: per-endpoint `security` →
+middleware-documented (`documentsSecurity`) → document-level `security` → none.
+
 ## CI
 
 ```sh
@@ -114,20 +169,22 @@ const { document, warnings } = await buildOpenApi({
 
 ## Options
 
-| Option         | Default           | What                                                                      |
-| -------------- | ----------------- | ------------------------------------------------------------------------- |
-| `path`         | `/openapi.json`   | Where the document is served (app-relative; `basePath` is stripped first) |
-| `docs`         | `/docs`           | Where the docs page is served; `false` disables it                        |
-| `expose`       | `"always"`        | `"always"` serves in every mode; `"dev"` serves only under `denext dev`   |
-| `ui`           | `"builtin"`       | `builtin` \| `scalar` \| `swagger`                                        |
-| `cdn`          | per renderer      | Scalar script URL / Swagger dist base URL                                 |
-| `info`         | dir name, `0.0.0` | `title`, `version`, `description`                                         |
-| `servers`      | —                 | `servers` entries                                                         |
-| `toJsonSchema` | —                 | `(schema, "input" \| "output") => JsonSchema \| undefined`                |
-| `include`      | every API route   | `(route) => boolean`                                                      |
-| `tags`         | segment after api | `(route) => string[]`                                                     |
-| `authorize`    | open              | `(request) => boolean \| Promise<boolean>`; `false` → the app's own 404   |
-| `outFile`      | `openapi.json`    | The build-output file; `false` skips the build step                       |
+| Option            | Default           | What                                                                      |
+| ----------------- | ----------------- | ------------------------------------------------------------------------- |
+| `path`            | `/openapi.json`   | Where the document is served (app-relative; `basePath` is stripped first) |
+| `docs`            | `/docs`           | Where the docs page is served; `false` disables it                        |
+| `expose`          | `"always"`        | `"always"` serves in every mode; `"dev"` serves only under `denext dev`   |
+| `ui`              | `"builtin"`       | `builtin` \| `scalar` \| `swagger`                                        |
+| `cdn`             | per renderer      | Scalar script URL / Swagger dist base URL                                 |
+| `info`            | dir name, `0.0.0` | `title`, `version`, `description`                                         |
+| `servers`         | —                 | `servers` entries                                                         |
+| `securitySchemes` | —                 | `Record<string, OpenApiSecurityScheme>` → `components.securitySchemes`    |
+| `security`        | —                 | `SecurityRequirement[]` (doc default) or `(route) => …` (per route)       |
+| `toJsonSchema`    | —                 | `(schema, "input" \| "output") => JsonSchema \| undefined`                |
+| `include`         | every API route   | `(route) => boolean`                                                      |
+| `tags`            | segment after api | `(route) => string[]`                                                     |
+| `authorize`       | open              | `(request) => boolean \| Promise<boolean>`; `false` → the app's own 404   |
+| `outFile`         | `openapi.json`    | The build-output file; `false` skips the build step                       |
 
 ## Endpoint details
 

@@ -54,6 +54,22 @@ export interface OpenApiServer {
 /** One operation (`paths./x.get`). Kept loose: the OpenAPI operation object. */
 export type OpenApiOperation = Record<string, unknown>;
 
+/**
+ * An OpenAPI [security scheme object](https://spec.openapis.org/oas/v3.1.0#security-scheme-object)
+ * — e.g. `{ type: "http", scheme: "bearer" }` or `{ type: "apiKey", in: "header", name: "X-Api-Key" }`.
+ * Declared under {@link OpenApiOptions.securitySchemes}; Swagger UI / Scalar render an
+ * "Authorize" button from these so a token is entered once and sent with each request.
+ * Kept loose (the scheme object varies by `type`).
+ */
+export type OpenApiSecurityScheme = Record<string, unknown>;
+
+/**
+ * A [security requirement](https://spec.openapis.org/oas/v3.1.0#security-requirement-object):
+ * scheme name → the scopes it needs (usually `[]` for bearer/apiKey). `[{ bearerAuth: [] }]`
+ * means "this operation needs the `bearerAuth` scheme"; an empty array `[]` means "no auth".
+ */
+export type SecurityRequirement = Record<string, string[]>;
+
 /** The generated document. */
 export interface OpenApiDocument {
   /** The spec version. */
@@ -64,8 +80,13 @@ export interface OpenApiDocument {
   servers?: OpenApiServer[];
   /** Every path, sorted, each holding its lower-cased methods. */
   paths: Record<string, Record<string, OpenApiOperation>>;
-  /** Shared schemas — the `ApiError` envelope every error response references. */
-  components: { schemas: Record<string, JsonSchema> };
+  /** A document-wide default security requirement (an operation's own `security` overrides it). */
+  security?: SecurityRequirement[];
+  /** Shared schemas — the `ApiError` envelope every error response references — and security schemes. */
+  components: {
+    schemas: Record<string, JsonSchema>;
+    securitySchemes?: Record<string, OpenApiSecurityScheme>;
+  };
 }
 
 /** What the lint pass flags. */
@@ -118,6 +139,20 @@ export interface BuildOpenApiOptions {
   include?: (route: ApiRoute) => boolean;
   /** Tag an operation (default: the first path segment after `/api`, else `"default"`). */
   tags?: (route: ApiRoute) => string[];
+  /**
+   * The security schemes the document advertises (→ `components.securitySchemes`, and Swagger
+   * UI's "Authorize" button). E.g. `{ bearerAuth: { type: "http", scheme: "bearer" } }`.
+   */
+  securitySchemes?: Record<string, OpenApiSecurityScheme>;
+  /**
+   * Which scheme(s) an operation requires. An **array** is a document-wide default (`doc.security`);
+   * a **function** is applied per route (return `[{ bearerAuth: [] }]` to require it, `[]` for a
+   * public route like `/api/login`, or `undefined` to leave the operation at the document default).
+   * Declaring `security` here is DOCUMENTATION — enforce the token with route middleware.
+   */
+  security?:
+    | SecurityRequirement[]
+    | ((route: ApiRoute) => SecurityRequirement[] | undefined);
 }
 
 /** What {@linkcode buildOpenApi} returns. */
@@ -235,6 +270,10 @@ function assemble(paths: OpenApiDocument["paths"], options: BuildOpenApiOptions)
     components: { schemas: { ApiError: API_ERROR_SCHEMA } },
   };
   if (options.servers?.length) doc.servers = options.servers;
+  if (options.securitySchemes && Object.keys(options.securitySchemes).length) {
+    doc.components.securitySchemes = options.securitySchemes;
+  }
+  if (Array.isArray(options.security)) doc.security = options.security;
   return doc;
 }
 
@@ -285,6 +324,33 @@ function defaultTags(route: ApiRoute): string[] {
 
 // ── Operations ───────────────────────────────────────────────────────────────
 
+/**
+ * An operation's security requirement, by precedence: the endpoint's own `security` (per method,
+ * co-located) wins; else the plugin's per-route `security` function; else `undefined` (the
+ * document-level default in {@link assemble} applies). An array `options.security` is the
+ * document default and is not consulted here.
+ */
+function securityFor(
+  perEndpoint: SecurityRequirement[] | undefined,
+  route: ApiRoute,
+  option: BuildOpenApiOptions["security"],
+): SecurityRequirement[] | undefined {
+  if (perEndpoint) return perEndpoint;
+  return typeof option === "function" ? option(route) : undefined;
+}
+
+/** Warn once per catch-all segment: OpenAPI can only express it as one `/`-joined parameter. */
+function warnCatchAll(
+  pattern: Segment[],
+  warn: (w: Omit<OpenApiWarning, "routePath" | "method">) => void,
+): void {
+  for (const seg of pattern) {
+    if (seg.kind === "catchAll" || seg.kind === "optionalCatchAll") {
+      warn({ code: "catch-all-path", message: `[...${seg.value}] is one "/"-joined parameter` });
+    }
+  }
+}
+
 function describe(
   route: ApiRoute,
   method: string,
@@ -300,13 +366,11 @@ function describe(
     operationId: operationId(method, pattern),
     tags: (options.tags ?? defaultTags)(route),
   };
+  const security = securityFor(meta?.def.security, route, options.security);
+  if (security) op.security = security;
   const warn = (w: Omit<OpenApiWarning, "routePath" | "method">) =>
     warnings.push({ ...w, routePath: route.routePath, method });
-  for (const seg of route.pattern) {
-    if (seg.kind === "catchAll" || seg.kind === "optionalCatchAll") {
-      warn({ code: "catch-all-path", message: `[...${seg.value}] is one "/"-joined parameter` });
-    }
-  }
+  warnCatchAll(route.pattern, warn);
   if (!meta) {
     warn({
       code: "undescribed-route",

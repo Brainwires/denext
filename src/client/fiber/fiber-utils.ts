@@ -3,11 +3,12 @@
 
 import { FRAGMENT, PORTAL, type VNode } from "../../jsx/types.ts";
 import { SUSPENSE } from "../../runtime/suspense.ts";
+import { ACTIVITY } from "../../runtime/react-extras.ts";
 import { PROVIDER } from "../../runtime/context.ts";
 import { ERROR_BOUNDARY } from "../../runtime/error-boundary.ts";
 import { TEXT_TYPE } from "../vnode-utils.ts";
 import { componentDisplayName, isComponentType } from "../../runtime/react-brands.ts";
-import { hasErrorLifecycle } from "../../compat/class-component.ts";
+import { getClassSupport } from "./class-support.ts";
 import {
   ChildDeletion,
   ChildrenChanged,
@@ -26,6 +27,7 @@ function tagOf(vnode: VNode): FiberTag {
   const t = vnode.type as unknown;
   if (t === TEXT_TYPE) return "text";
   if (t === SUSPENSE) return "suspense";
+  if (t === ACTIVITY) return "activity";
   if (t === ERROR_BOUNDARY) return "errorboundary";
   if (t === FRAGMENT) return "fragment";
   if (t === PORTAL) return "portal";
@@ -70,7 +72,8 @@ export function isPlainUnkeyedFragment(v: unknown): v is VNode {
 
 export function isClassBoundary(fiber: Fiber): boolean {
   return __DENEXT_CLASS_COMPONENTS__ && fiber.tag === "component" &&
-    fiber.classInstance != null && hasErrorLifecycle(fiber.vnode.type);
+    fiber.classInstance != null &&
+    (getClassSupport()?.hasErrorLifecycle(fiber.vnode.type) ?? false);
 }
 
 /** Whether `fiber` (a provider fragment) re-provides `contextId`, shadowing it below. */

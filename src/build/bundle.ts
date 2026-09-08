@@ -353,17 +353,23 @@ export function generateRouteEntry(
   dev = false,
   perModule = false,
   instrumentationClient: string | null = null,
+  usesClassComponents = false,
+  usesActivity = false,
+  usesViewTransition = false,
 ): string {
   const slots = routeSlotEntries(route);
   const { refreshImport, refreshReg } = routeRefreshBlock(route, slots, dev, perModule);
+  const { classImport, classInstall } = classSupportBlock(usesClassComponents);
+  const { activityImport, activityInstall } = activitySupportBlock(usesActivity);
+  const { vtImport, vtInstall } = viewTransitionSupportBlock(usesViewTransition);
   return `// denext generated route entry — do not edit.
 ${
     clientInstrumentationImport(instrumentationClient)
   }import { startClient, provideLayoutSegments } from "denext/client-runtime";
 import { Suspense, ErrorBoundary } from "denext/client";
 import { h } from "denext/jsx-runtime";
-${refreshImport}${routeEntryImports(route, slots)}
-${refreshReg}
+${classImport}${activityImport}${vtImport}${refreshImport}${routeEntryImports(route, slots)}
+${refreshReg}${classInstall}${activityInstall}${vtInstall}
 function main() {
   const el = document.getElementById("__denext");
   const dataEl = document.getElementById("__denext_data");
@@ -385,6 +391,26 @@ main();
 }
 
 /**
+ * The browser entry for `global-error.tsx`. It replaces the root layout and renders its own
+ * `<html>`/`<body>`, so — unlike a route entry — it hydrates the whole document (not the
+ * `#__denext` container) via `startGlobalErrorClient`, which rebuilds the error from the
+ * server's `#__denext_ge_data` island and supplies a real `reset`. Tiny by design: this page
+ * only ships when an uncaught error escaped rendering.
+ */
+export function generateGlobalErrorEntry(
+  globalErrorFile: string,
+  instrumentationClient: string | null = null,
+): string {
+  return `// denext generated global-error entry — do not edit.
+${
+    clientInstrumentationImport(instrumentationClient)
+  }import { startGlobalErrorClient } from "denext/client-runtime";
+import GlobalError from ${JSON.stringify(toFileUrl(globalErrorFile).href)};
+startGlobalErrorClient(GlobalError);
+`;
+}
+
+/**
  * Generate the browser entry for a Flight route. Unlike {@link generateRouteEntry}
  * (which statically imports the whole page tree), this imports ONLY the app's
  * `"use client"` modules, builds a registry keyed by client-reference id, reads
@@ -396,19 +422,21 @@ main();
  * @returns The generated entry module source.
  */
 /**
- * Whether any source file under `rootDir` imports `denext/live` — the build-time
- * signal that decides if the Flight entry bundles the Live WebSocket transport
- * (see {@linkcode generateFlightEntry}'s `usesLive`). A deliberate
- * over-approximation: it keeps Live whenever the specifier appears anywhere (the
- * substring also matches the full `@denext/denext/live` JSR form), and only drops
- * it when the app never mentions live at all — so it can never false-drop a live
- * feature. Early-returns on the first match; skips `.denext`/`node_modules`/`.git`.
- * `extraFiles` are modules outside `rootDir` (sibling workspace packages the routes
- * import) that must be checked too.
+ * Whether any source file under `rootDir` (or in `extraFiles` — sibling-package modules
+ * the routes import) satisfies `test` when its text is read. The shared machinery behind
+ * the build-time feature scans ({@linkcode appImportsLive}, {@linkcode appUsesClassComponents},
+ * {@linkcode appUsesActivity}): each is a deliberate over-approximation that keeps a runtime
+ * whenever its token appears and only drops it when the app never mentions it — so a scan can
+ * never false-DROP a feature. Early-returns on the first match; skips `.denext`/
+ * `node_modules`/`.git`. A file that can't be read counts as no match.
  */
-export async function appImportsLive(rootDir: string, extraFiles: string[] = []): Promise<boolean> {
+async function scanAppSources(
+  rootDir: string,
+  test: (content: string) => boolean,
+  extraFiles: string[] = [],
+): Promise<boolean> {
   for (const file of extraFiles) {
-    if ((await Deno.readTextFile(file).catch(() => "")).includes("denext/live")) return true;
+    if (test(await Deno.readTextFile(file).catch(() => ""))) return true;
   }
   for await (
     const entry of walk(rootDir, {
@@ -417,9 +445,57 @@ export async function appImportsLive(rootDir: string, extraFiles: string[] = [])
       skip: [/[/\\]\.denext[/\\]/, /[/\\]node_modules[/\\]/, /[/\\]\.git[/\\]/],
     })
   ) {
-    if ((await Deno.readTextFile(entry.path)).includes("denext/live")) return true;
+    if (test(await Deno.readTextFile(entry.path))) return true;
   }
   return false;
+}
+
+/**
+ * Whether any source file under `rootDir` imports `denext/live` — the build-time signal
+ * that decides if the Flight entry bundles the Live WebSocket transport (see
+ * {@linkcode generateFlightEntry}'s `usesLive`). The substring also matches the full
+ * `@denext/denext/live` JSR form. `extraFiles` are sibling-package modules the routes import.
+ */
+export function appImportsLive(rootDir: string, extraFiles: string[] = []): Promise<boolean> {
+  return scanAppSources(rootDir, (c) => c.includes("denext/live"), extraFiles);
+}
+
+/**
+ * Whether any source file under `rootDir` uses class components — the build-time signal
+ * that decides if the generated entry installs the class runtime (see
+ * {@linkcode classSupportBlock}). A class component MUST name `Component`/`PureComponent`
+ * (in its import or its `extends`); whole-word (`\b`) so `MyComponent` / `componentDidMount`
+ * don't trip it. Callers OR this with `config.classComponents` to honor an explicit force-on.
+ */
+export function appUsesClassComponents(
+  rootDir: string,
+  extraFiles: string[] = [],
+): Promise<boolean> {
+  return scanAppSources(rootDir, (c) => /\b(?:Pure)?Component\b/.test(c), extraFiles);
+}
+
+/**
+ * Whether any source file under `rootDir` uses `<Activity>` — the build-time signal that
+ * decides if the generated entry installs the offscreen scheduler (see
+ * {@linkcode activitySupportBlock}). An app can't render one without naming `Activity` (its
+ * import, `React.Activity`, or `<Activity>`); whole-word (`\b`) so `ActivityIndicator` /
+ * `myActivity` don't trip it.
+ */
+export function appUsesActivity(rootDir: string, extraFiles: string[] = []): Promise<boolean> {
+  return scanAppSources(rootDir, (c) => /\bActivity\b/.test(c), extraFiles);
+}
+
+/**
+ * Whether any source file under `rootDir` uses `<ViewTransition>` — the build-time signal that
+ * decides if the generated entry installs the per-element marking runtime (see
+ * {@linkcode viewTransitionSupportBlock}). An app can't render one without naming
+ * `ViewTransition`; whole-word (`\b`) so a longer identifier doesn't trip it.
+ */
+export function appUsesViewTransition(
+  rootDir: string,
+  extraFiles: string[] = [],
+): Promise<boolean> {
+  return scanAppSources(rootDir, (c) => /\bViewTransition\b/.test(c), extraFiles);
 }
 
 /**
@@ -489,6 +565,63 @@ configureLive({
   };
 }
 
+/**
+ * The class-component runtime (mount/update/unmount lifecycle, setState batching, error
+ * boundaries) is installed into the reconciler seam (class-support.ts) ONLY when the app
+ * uses class components — so a function-only bundle never references `installClassSupport`
+ * and `deno bundle` tree-shakes the whole ~3.1 KB runtime out. The reconciler itself never
+ * statically imports it; the emitted `installClassSupport()` here is the sole link. The
+ * decision is build-time: native prod scans the app (`appUsesClassComponents`), compat prod
+ * uses the `classComponents` config (matching its esbuild `define`), and dev installs
+ * unconditionally (unbundled, so free). `false` mirrors today's function-only default.
+ */
+function classSupportBlock(
+  usesClassComponents: boolean,
+): { classImport: string; classInstall: string } {
+  if (!usesClassComponents) return { classImport: "", classInstall: "" };
+  return {
+    classImport: `import { installClassSupport } from "denext/client-runtime";\n`,
+    classInstall: "installClassSupport();\n",
+  };
+}
+
+/**
+ * The `Activity` offscreen scheduler (hide/reveal a subtree, preserving its state, tearing
+ * down its effects) is installed into the reconciler seam (activity-support.ts) ONLY when
+ * the app uses `<Activity>` — so an app that never renders one never references
+ * `installActivitySupport` and `deno bundle` tree-shakes the whole offscreen runtime out.
+ * The reconciler itself never statically imports it; the emitted `installActivitySupport()`
+ * here is the sole link. Native prod scans the app ({@linkcode appUsesActivity}); dev
+ * installs unconditionally (unbundled, so free). `false` mirrors the default.
+ */
+function activitySupportBlock(
+  usesActivity: boolean,
+): { activityImport: string; activityInstall: string } {
+  if (!usesActivity) return { activityImport: "", activityInstall: "" };
+  return {
+    activityImport: `import { installActivitySupport } from "denext/client-runtime";\n`,
+    activityInstall: "installActivitySupport();\n",
+  };
+}
+
+/**
+ * The `<ViewTransition>` per-element marking runtime is installed into the reconciler seam
+ * (view-transition-support.ts) ONLY when the app uses `<ViewTransition>` — so an app that
+ * never renders one never references `installViewTransitionSupport` and `deno bundle`
+ * tree-shakes the marking runtime out. The navigation runtime never statically imports it;
+ * the emitted `installViewTransitionSupport()` here is the sole link. Native prod scans the
+ * app ({@linkcode appUsesViewTransition}); dev installs unconditionally (unbundled, free).
+ */
+function viewTransitionSupportBlock(
+  usesViewTransition: boolean,
+): { vtImport: string; vtInstall: string } {
+  if (!usesViewTransition) return { vtImport: "", vtInstall: "" };
+  return {
+    vtImport: `import { installViewTransitionSupport } from "denext/client-runtime";\n`,
+    vtInstall: "installViewTransitionSupport();\n",
+  };
+}
+
 /** The Flight entry's `main()`: read the island, adopt signal state, hydrate, boot resumability. */
 function flightMain(catchBody: string): string {
   return `async function main() {
@@ -547,6 +680,9 @@ export function generateFlightEntry(
   perModule = false,
   usesLive = true,
   instrumentationClient: string | null = null,
+  usesClassComponents = false,
+  usesActivity = false,
+  usesViewTransition = false,
 ): string {
   const entries = [...boundary.client.entries()];
   // Islands are code-split: one dynamic `import()` per island module, run on demand for the
@@ -559,10 +695,13 @@ export function generateFlightEntry(
     .join("\n");
   const { refreshImport, regFamily, enableRefresh } = flightRefreshBlock(dev, perModule);
   const { clientImport, liveImport, liveRegister, liveConfigure } = flightLiveBlock(usesLive);
+  const { classImport, classInstall } = classSupportBlock(usesClassComponents);
+  const { activityImport, activityInstall } = activitySupportBlock(usesActivity);
+  const { vtImport, vtInstall } = viewTransitionSupportBlock(usesViewTransition);
   return `// denext generated Flight entry — do not edit.
 ${clientInstrumentationImport(instrumentationClient)}${clientImport}
-${liveImport}${refreshImport}
-const registry = new Map();
+${liveImport}${classImport}${activityImport}${vtImport}${refreshImport}
+${classInstall}${activityInstall}${vtInstall}const registry = new Map();
 // Functions AND React's non-callable memo()/forwardRef() element objects — the server tags
 // both as client references (radix exports the latter), so both must resolve here.
 function reg(mod, clientId) {
@@ -633,6 +772,25 @@ export interface BundleOptions {
    */
   usesLive?: boolean;
   /**
+   * Whether the app uses class components (from an {@linkcode appUsesClassComponents} scan,
+   * OR the `classComponents` config). When false, the generated entry omits
+   * `installClassSupport()` so `deno bundle` tree-shakes the ~3.1 KB class runtime out.
+   * Defaults to `false` (function-only) when unset. Dev callers pass `true` (unbundled).
+   */
+  usesClassComponents?: boolean;
+  /**
+   * Whether the app uses `<Activity>` (from an {@linkcode appUsesActivity} scan). When false,
+   * the generated entry omits `installActivitySupport()` so `deno bundle` tree-shakes the
+   * offscreen scheduler out. Defaults to `false` when unset; dev callers pass `true`.
+   */
+  usesActivity?: boolean;
+  /**
+   * Whether the app uses `<ViewTransition>` (from an {@linkcode appUsesViewTransition} scan).
+   * When false, the generated entry omits `installViewTransitionSupport()` so `deno bundle`
+   * tree-shakes the per-element marking runtime out. Defaults to `false`; dev passes `true`.
+   */
+  usesViewTransition?: boolean;
+  /**
    * The project's `instrumentation-client.{ts,tsx,js}` (absolute path), imported first by
    * every generated browser entry so it runs before the app's client code. Null/unset: none.
    */
@@ -685,6 +843,9 @@ export async function bundleFlightEntry(
         false,
         opts.usesLive ?? true,
         opts.instrumentationClient ?? null,
+        opts.usesClassComponents ?? false,
+        opts.usesActivity ?? false,
+        opts.usesViewTransition ?? false,
       ),
       {
         configPath: opts.configPath,
@@ -1043,7 +1204,26 @@ export function bundleRoute(
   opts: BundleOptions,
 ): Promise<BundleOutput> {
   return bundleSourceFiles(
-    generateRouteEntry(route, opts.dev, false, opts.instrumentationClient ?? null),
+    generateRouteEntry(
+      route,
+      opts.dev,
+      false,
+      opts.instrumentationClient ?? null,
+      opts.usesClassComponents ?? false,
+      opts.usesActivity ?? false,
+      opts.usesViewTransition ?? false,
+    ),
+    opts,
+  );
+}
+
+/** Bundle the `global-error.tsx` browser entry on its own (the dev server's on-demand path). */
+export function bundleGlobalError(
+  globalErrorFile: string,
+  opts: BundleOptions,
+): Promise<BundleOutput> {
+  return bundleSourceFiles(
+    generateGlobalErrorEntry(globalErrorFile, opts.instrumentationClient ?? null),
     opts,
   );
 }

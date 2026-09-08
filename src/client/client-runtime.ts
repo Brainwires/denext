@@ -9,7 +9,7 @@
  */
 
 // Boot: mount/hydrate the page, install soft navigation, seed the layout-segment hooks.
-export { setFlightParser, startClient } from "./navigation.ts";
+export { setFlightParser, startClient, startGlobalErrorClient } from "./navigation.ts";
 export { type LayoutSegmentInfo, provideLayoutSegments } from "../runtime/layout-segments.ts";
 // Flight hydration: reconstruct a VNode tree from the server's Flight payload.
 export {
@@ -20,6 +20,18 @@ export {
 } from "./flight-client.ts";
 // Server Actions: the browser dispatch stub emitted for each `"use server"` export.
 export { clientActionStub } from "../runtime/server-action.ts";
+// Class components: the entry emits `installClassSupport()` to wire the class runtime into
+// the reconciler seam ONLY when the app uses classes — so a function-only bundle drops this
+// re-export (and the whole ~3.1 KB class runtime) via tree-shaking.
+export { installClassSupport } from "../compat/class-component.ts";
+// Activity: the entry emits `installActivitySupport()` to wire the offscreen scheduler into
+// the reconciler seam ONLY when the app uses `<Activity>` — so an app that never renders one
+// drops this re-export (and the whole offscreen begin logic) via tree-shaking.
+export { installActivitySupport } from "./fiber/activity-runtime.ts";
+// ViewTransition: the entry emits `installViewTransitionSupport()` to wire the per-element
+// marking runtime into the reconciler seam ONLY when the app uses `<ViewTransition>` — so an
+// app that never renders one drops this re-export (and the marking logic) via tree-shaking.
+export { installViewTransitionSupport } from "./fiber/view-transition-runtime.ts";
 // Resumability: the lazily-loaded event-handler reference the qrl transform emits.
 export { capturedScope, type Qrl, qrl } from "../runtime/qrl.ts";
 // Dev Fast Refresh: family registration + state-preserving reconcile (dev entries only).

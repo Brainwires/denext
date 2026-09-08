@@ -332,7 +332,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 ### `denext`
 
 - `type ActionResult<Out> = object | object` — The result an action returns: ok carries the typed handler output, else an error.
-- `Activity(props: object): VNode` — React.Activity (experimental; formerly unstable_Offscreen) — wraps a subtree whose rendering can be deprioritized or hidden (mode="hidden"). denext has no offscreen scheduler, so it renders as a transparent passthrough of its children (the mode prop is accepted and ignored). Lets apps that adopt the API build and render.
+- `Activity(props: object): VNode` — React.Activity (experimental; formerly unstable_Offscreen) — wraps a subtree whose rendering can be deprioritized or hidden. mode="hidden" keeps the subtree mounted but removed from the layout (display:none !important), tears down its effects, and preserves its state (useState/useRef cells) so mode="visible" restores the SAME instances instantly; a subtree that MOUNTS hidden is pre-rendered at transition priority so it never blocks the initial paint. The offscreen scheduler is import-gated: it is installed into the reconciler only when the app uses Activity (a build-time scan), so a bundle that never renders one pays nothing. Without it installed (or with mode="visible"), the wrapper is a transparent passthrough of its children.
 - `type AnchorProps = Omit<Record<string, unknown>, href | children>` — The anchor attributes a Link forwards (everything an <a> takes except href).
 - `interface ApiClient<S>` — A typed callable over an app's ApiSchema.
 - `class ApiClientError<Code>` — A failed typed API call: the HTTP status plus, when the server answered with denext's JSON error envelope ({ error: { code, status, message, data?, fieldErrors?, digest? } } — an ApiError, a validation failure, a control signal, or a redacted 500), the envelope's fields. code narrows to the endpoint's declared codes (ErrorsOf<E>); a non-envelope failure (a plain text 500, an HTML error page) has code: "http_error".
@@ -570,8 +570,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface UseWakeLockOptions` — Options for useWakeLock.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type (a returned Response carries no body type).
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 2.1.0-rc.2` — The denext framework version.
-- `ViewTransition(props: object): VNode` — React.ViewTransition (experimental) — the client-driven view-transition wrapper. denext renders it as a transparent passthrough of its children (SSR + hydration safe). **Route-level** view transitions DO apply: a Flight soft-navigation commits inside document.startViewTransition where the browser supports it, so the route swap cross-fades (see withViewTransition in src/client/navigation.ts). The component's per-element props (name, enter, exit, update) are not yet honored — that needs this wrapper to emit real view-transition-name DOM markers — and the isomorphic/HTML nav paths (async reconcile) don't animate yet either.
+- `VERSION: 2.1.0-rc.3` — The denext framework version.
+- `ViewTransition(props: object): VNode` — React.ViewTransition (experimental) — the client-driven view-transition wrapper. It is transparent (no DOM node of its own) and carries its config by stamping the DNX_VT_ATTR attribute onto its **single host child** (a DOM attribute survives server rendering AND the Flight boundary, unlike a VNode marker). Around a soft navigation the import-gated marking runtime finds these elements and applies real view-transition-name (and view-transition-class from enter/exit/update/share), so a name shared across routes morphs one element into the other. **Route-level** transitions apply regardless: a soft navigation commits inside document.startViewTransition where the browser supports it (see withViewTransition in src/client/navigation.ts). Without the gated runtime, or for a wrapper whose child isn't a single element (nothing to mark), it is a plain passthrough.
 - `interface VNode` — A single virtual DOM node.
 - `type VNodeChild = VNode | string | number | bigint | boolean | null | undefined` — Anything that can appear as a child in JSX.
 - `type VNodeChildren = VNodeChild | VNodeChild[]` — One child or an array of children, as accepted by JSX.
@@ -604,6 +604,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type ApiHandlerResult<D> = conditional` — What a handler may return: a value matching def.response (or anything), or a Response.
 - `interface ApiMatch` — An API route matched against a pathname, with its extracted params.
 - `type ApiMiddleware<Ctx, Ext> = (input: ApiMiddlewareInput<Ctx>) => Ext | Response | void | Promise<Ext | Response | void>` — A "before" middleware: return an object to extend the context (typed), a Response to short-circuit, or nothing. Throw (unauthorized(), an ApiError) to fail.
+- `interface ApiMiddlewareDocs` — OpenAPI metadata a middleware contributes to every endpoint it guards (read by @denext/openapi).
 - `interface ApiMiddlewareInput<Ctx>` — What a middleware receives.
 - `type ApiModule = Partial<Record<HttpMethod, ApiHandler>>` — Shape of an API route module: one exported fn per supported method.
 - `interface ApiRateLimitOptions` — Options for rateLimit.
@@ -645,7 +646,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface Channel<T>` — A channel on the server.
 - `interface ChannelConfig<T>` — The definition passed to createChannel.
 - `interface ChannelContext` — The subscriber's identity handed to authorize (the Live connection context).
-- `interface ChannelEvent` — One transport event: a publish (encoded payload) or a revoke.
+- `interface ChannelEvent` — One transport event: a channel publish/revoke, or a cross-instance cache-tag invalidate.
 - `interface ChannelRef<T>` — A channel as the browser sees it: the id (and the phantom type).
 - `interface ChannelTapHandlers<T>` — What tapChannel reports.
 - `interface ChannelTransport` — Carries ChannelEvents to every hub that should deliver them (across instances).
@@ -679,6 +680,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `detectLocale(request: Request, i18n: I18nConfig): string` — Pick the best supported locale for a request from the NEXT_LOCALE cookie (highest priority) then the Accept-Language header, falling back to the default locale. Matches on both exact tags and the primary subtag (fr-CA matches a supported fr).
 - `type Directive = client | server | null` — Which boundary a module declares, or null when it declares none.
 - `interface DocumentOptions` — Inputs to renderDocument for assembling the full HTML page.
+- `documentsSecurity<M>(mw: M, security: Record<string, string[]>[]): M` — Tag a middleware so applying it also DOCUMENTS its OpenAPI requirement: an endpoint built with createApi().use(documentsSecurity(mw, [{ bearerAuth: [] }])).define(...) is marked secured in the generated document with no security on the definition — one declaration both enforces (the middleware) and documents (this tag). A security on the definition still overrides it, and @denext/openapi must declare the scheme (securitySchemes) for the "Authorize" button.
 - `draftMode(): AwaitableDraftMode` — Read and control draft (preview) mode for the current request. Backed by an httpOnly cookie holding a **server-minted random token** — a forged cookie value cannot enable draft mode. Still gate enable() behind your own authorization in a route handler (defense in depth); only that authorized call mints a valid token.
 - `interface DraftMode` — Draft (preview) mode state and controls, returned by draftMode.
 - `interface DraftTokenStore` — Backing store for server-minted draft tokens. Draft mode is "on" only when the request cookie holds a token this server issued via enable(); a forged or guessed value is not in the store, so it cannot turn draft mode on.

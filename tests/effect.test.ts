@@ -1,3 +1,4 @@
+import "./helpers/class-runtime.ts";
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { Context, Effect, Layer } from "effect";
 import {

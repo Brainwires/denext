@@ -13,6 +13,7 @@ import { type Dispatcher, setDispatcher } from "../runtime/hooks.ts";
 import { createSSRDispatcher, type ProviderScope } from "./render-to-string.ts";
 import { isComponentType } from "../runtime/react-brands.ts";
 import { SUSPENSE } from "../runtime/suspense.ts";
+import { ACTIVITY } from "../runtime/react-extras.ts";
 import { ERROR_BOUNDARY } from "../runtime/error-boundary.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
 import { rootScope, scopePrefix } from "./tree-id.ts";
@@ -230,6 +231,11 @@ async function flightVNode(node: VNode, ctx: FlightCtx): Promise<FlightNode> {
   // resolved inline here, retrying on suspension.
   if ((type as unknown) === SUSPENSE) {
     return resolveInBoundaryScope(ctx.ids, () => flightChildren(props.children, ctx));
+  }
+  // Activity is id-transparent (like a Fragment). Visible → render children; hidden →
+  // render nothing (the client pre-renders it offscreen after hydration — no mismatch).
+  if ((type as unknown) === ACTIVITY) {
+    return flightChildren(props.mode === "hidden" ? undefined : props.children, ctx);
   }
   if ((type as unknown) === ERROR_BOUNDARY) return flightErrorBoundary(props, ctx);
   if (isComponentType(type)) return flightComponent(type, props, ctx);

@@ -3,6 +3,7 @@
 // shouldComponentUpdate / PureComponent bailout, lifecycle ordering, forceUpdate,
 // and SSR.
 
+import "./helpers/class-runtime.ts";
 import { assert, assertEquals } from "@std/assert";
 import { Component, createContext, PureComponent } from "../src/compat/react.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";

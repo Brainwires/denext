@@ -38,6 +38,14 @@ internal design choice with no observable difference lives in
 - **A `redirect()` thrown during a CLIENT render is a full document load**
   (`location.assign`), not a soft navigation — the render is abandoned, the browser
   loads the target. On the server it is the usual 307.
+- **`notFound()` / `forbidden()` / `unauthorized()` are Server-side signals.** Next
+  documents them for Server Components, Server Functions, and Route Handlers, and denext
+  supports exactly those (plus Server Actions) — the matching `not-found.tsx` /
+  `forbidden.tsx` / `unauthorized.tsx` boundary renders with its 404/403/401. Per Next's
+  own contract each "throws … and terminates rendering of the route segment," so one
+  thrown during a CLIENT render terminates that render (the control signal bubbles past
+  `<ErrorBoundary>`) rather than swapping in the boundary — matching the documented
+  behavior, a deliberate difference from real Next's undocumented client-boundary catch.
 - **`defineAction` handler errors are redacted in production** (`error: "Internal
   Server Error"` + a `digest` that correlates with the server log), exactly like a
   render error handed to `error.tsx`; `ActionValidationError` messages and field

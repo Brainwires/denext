@@ -7,6 +7,7 @@ import {
   appImportsLive,
   bundleFlightEntry,
   bundleRoutes,
+  generateGlobalErrorEntry,
   generateRouteEntry,
   routeSourceFiles,
   writeBundleOutput,
@@ -15,7 +16,10 @@ import { extractRouteCss, primeCssGraph } from "../css.ts";
 import { routeNeedsHydration } from "../hydration.ts";
 import { routeId } from "../paths.ts";
 import { appBoundaryManifest } from "../pipeline-shared.ts";
-import { type BuildContext, FLIGHT_BUNDLE_FILE, log } from "./context.ts";
+import { type BuildContext, FLIGHT_BUNDLE_FILE, GLOBAL_ERROR_BUNDLE_FILE, log } from "./context.ts";
+
+/** Bundle key for the global-error entry — namespaced so it can't collide with any routeId. */
+const GLOBAL_ERROR_KEY = "__denext_global_error__";
 
 /** Extract, write, and record every route's stylesheet (flight or not). */
 export async function emitRouteCss(ctx: BuildContext): Promise<void> {
@@ -54,15 +58,40 @@ export async function partitionRoutes(ctx: BuildContext): Promise<void> {
  */
 export async function bundleNativeRoutes(ctx: BuildContext): Promise<void> {
   const { clientRoutes, clientDir, paths } = ctx;
-  if (ctx.compat || clientRoutes.length === 0) return;
-  log(`bundling ${clientRoutes.length} route(s) -> client/ (shared runtime chunk)`);
-  const out = await bundleRoutes(
-    clientRoutes.map((route) => ({
-      key: routeId(route.routePath),
-      source: generateRouteEntry(route, false, false, paths.instrumentationClientPath),
-    })),
-    { configPath: paths.configPath, minify: true, importMap: ctx.cssImportMap },
+  if (ctx.compat) return;
+  // global-error.tsx gets its own entry (it hydrates the whole document); bundle it in the
+  // SAME pass so it shares the hoisted client-runtime chunk. It can exist with no interactive
+  // routes, so the pass runs when either is present.
+  const globalError = ctx.manifest.rootGlobalError;
+  if (clientRoutes.length === 0 && !globalError) return;
+  log(
+    `bundling ${clientRoutes.length} route(s)${
+      globalError ? " + global-error" : ""
+    } -> client/ (shared runtime chunk)`,
   );
+  const entries = clientRoutes.map((route) => ({
+    key: routeId(route.routePath),
+    source: generateRouteEntry(
+      route,
+      false,
+      false,
+      paths.instrumentationClientPath,
+      ctx.usesClassComponents,
+      ctx.usesActivity,
+      ctx.usesViewTransition,
+    ),
+  }));
+  if (globalError) {
+    entries.push({
+      key: GLOBAL_ERROR_KEY,
+      source: generateGlobalErrorEntry(globalError, paths.instrumentationClientPath),
+    });
+  }
+  const out = await bundleRoutes(entries, {
+    configPath: paths.configPath,
+    minify: true,
+    importMap: ctx.cssImportMap,
+  });
   // Write shared + island chunks under their own (content-hashed) basenames; identical
   // chunks across routes collapse to one file.
   const entryBases = new Set(out.entries.values());
@@ -76,6 +105,12 @@ export async function bundleNativeRoutes(ctx: BuildContext): Promise<void> {
     const file = `${id}.js`;
     await Deno.writeTextFile(join(clientDir, file), out.files.get(out.entries.get(id)!)!);
     ctx.routes.push({ routePath: route.routePath, bundle: file });
+  }
+  if (globalError) {
+    await Deno.writeTextFile(
+      join(clientDir, GLOBAL_ERROR_BUNDLE_FILE),
+      out.files.get(out.entries.get(GLOBAL_ERROR_KEY)!)!,
+    );
   }
 }
 
@@ -122,6 +157,9 @@ export async function bundleNativeFlight(ctx: BuildContext): Promise<void> {
     minify: true,
     importMap: ctx.cssImportMap,
     usesLive: ctx.usesLive,
+    usesClassComponents: ctx.usesClassComponents,
+    usesActivity: ctx.usesActivity,
+    usesViewTransition: ctx.usesViewTransition,
     instrumentationClient: ctx.paths.instrumentationClientPath,
   });
   await writeBundleOutput(ctx.clientDir, flightBundle, FLIGHT_BUNDLE_FILE);

@@ -1,6 +1,6 @@
 {
   "name": "@denext/openapi",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "exports": {
     ".": "./mod.ts",
@@ -8,7 +8,7 @@
     "./command": "./command.ts"
   },
   "imports": {
-    "@denext/denext": "jsr:@denext/denext@^2.1.0-rc.2",
+    "@denext/denext": "jsr:@denext/denext@^2.1.0-rc.3",
     "@std/path": "jsr:@std/path@^1.0.0"
   },
   "publish": {

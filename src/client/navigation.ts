@@ -8,7 +8,8 @@
 import { BLUR_ATTR, clearBlur } from "../runtime/image-blur.ts";
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChild, VNodeChildren } from "../jsx/types.ts";
-import { hydrateRoot, type Root } from "./reconciler.ts";
+import { hydrateDocument, hydrateRoot, type Root } from "./reconciler.ts";
+import { getViewTransitionSupport, takeTransitionTypes } from "./fiber/view-transition-support.ts";
 import { revealStreamedHoles } from "./reveal-holes.ts";
 import {
   type Context,
@@ -387,28 +388,53 @@ export async function navigate(
 /** The same-origin soft-navigation body. */
 /**
  * Run a soft-nav DOM commit inside a View Transition when the browser supports it
- * (Chromium today), so the route swap cross-fades; where unsupported it runs
- * synchronously exactly as before. Feature-detected — no effect and no cost where the
- * API is absent, and the browser honors `prefers-reduced-motion` itself. Only the Flight
- * path is wrapped today: its reconcile is synchronous, so the transition captures the
- * real before/after. The isomorphic/HTML paths reconcile via a re-injected bundle
- * (asynchronously), so honoring transitions there — and per-element
- * `view-transition-name` — is a follow-on. Exported for testing.
+ * (Chromium today), so the route swap cross-fades; where unsupported it runs exactly as
+ * before. Feature-detected — no effect and no cost where the API is absent, and the browser
+ * honors `prefers-reduced-motion` itself.
+ *
+ * When the app uses `<ViewTransition>`, the marking runtime (import-gated, via the seam)
+ * stamps `view-transition-name` on the wrapper's host child on BOTH sides of the swap — the
+ * OUTGOING tree before `startViewTransition` (so the browser's old-state capture sees it) and
+ * the INCOMING tree inside the callback after the commit — so a shared `name` morphs between
+ * routes, then clears when the transition finishes. Buffered `addTransitionType` types drive
+ * `startViewTransition({ types })`. The `commit` may be async (the isomorphic/HTML paths await
+ * a re-injected entry before the DOM settles); all its DOM work happens inside the callback,
+ * so the transition captures the real before/after. Exported for testing.
  */
 export function withViewTransition(commit: () => void): void {
   const doc = document as Document & {
     startViewTransition?: (
-      cb: () => void,
+      cb: (() => void | Promise<void>) | { update: () => void | Promise<void>; types?: string[] },
     ) => { ready?: Promise<void>; finished?: Promise<void> } | undefined;
   };
-  if (typeof doc.startViewTransition === "function") {
-    // A skipped/aborted transition (another one started, tab hidden) is not an error:
-    // `ready` rejects with an InvalidStateError and `finished` may too. `updateCallbackDone`
-    // is left alone so a throwing `commit` still surfaces.
-    const transition = doc.startViewTransition(commit);
-    transition?.ready?.catch(() => {});
-    transition?.finished?.catch(() => {});
-  } else commit();
+  if (typeof doc.startViewTransition !== "function") {
+    void commit();
+    return;
+  }
+  const vt = getViewTransitionSupport();
+  const types = takeTransitionTypes();
+  // Stamp the outgoing hosts BEFORE startViewTransition so the old-state capture includes their
+  // names (the capture happens after this synchronous task, before the callback runs). `begin`
+  // scopes this transition's stamped elements + types, so overlapping navigations don't clash.
+  const tx = vt ? vt.begin(types) : null;
+  const update = async () => {
+    await commit();
+    tx?.markIncoming(); // new hosts, before the browser's new-state capture
+  };
+  // A skipped/aborted transition (another started, tab hidden) is not an error: `ready`
+  // rejects with InvalidStateError and `finished` may too. The `{ update, types }` object
+  // form is only understood where transition types exist; fall back to the callback form.
+  let transition: { ready?: Promise<void>; finished?: Promise<void> } | undefined;
+  try {
+    transition = types.length > 0
+      ? doc.startViewTransition({ update, types })
+      : doc.startViewTransition(update);
+  } catch {
+    transition = doc.startViewTransition(update);
+  }
+  transition?.ready?.catch(() => {});
+  const done = () => tx?.clear();
+  (transition?.finished ?? Promise.resolve()).then(done, done);
 }
 
 /** The prefetched render for `url`, else a fresh fetch; null when the fetch failed. */
@@ -440,16 +466,20 @@ function applyHtmlNav(body: string, url: URL, href: string, options: NavigateOpt
     location.href = href;
     return;
   }
-  updateHistory(url, options); // so the bundle sees the correct URL
-  syncTitle(parsed);
-  syncScript(parsed, "__denext_data");
-  // Flight island: sync it too so a soft-nav to a Flight route hydrates from the new
-  // payload (and a nav to an isomorphic route clears a stale one).
-  syncScript(parsed, "__denext_flight");
-  swapRootHtml(container, newRoot);
-  emit();
-  scrollToTop(options);
-  runParsedEntry(parsed, url);
+  updateHistory(url, options); // so the bundle sees the correct URL (non-visual — outside the transition)
+  // Everything that changes the visible DOM runs inside the view transition, and we await the
+  // re-injected entry so the reconcile lands before the browser's new-state capture.
+  withViewTransition(async () => {
+    syncTitle(parsed);
+    syncScript(parsed, "__denext_data");
+    // Flight island: sync it too so a soft-nav to a Flight route hydrates from the new
+    // payload (and a nav to an isomorphic route clears a stale one).
+    syncScript(parsed, "__denext_flight");
+    swapRootHtml(container, newRoot);
+    emit();
+    scrollToTop(options);
+    await runParsedEntry(parsed, url);
+  });
 }
 
 /** Adopt the new document's `<title>` (when it has one). */
@@ -469,9 +499,10 @@ function scrollToTop(options: NavigateOptions): void {
 }
 
 /** Re-run the new document's route entry module (its hydration bundle), if it has one. */
-function runParsedEntry(parsed: Document, url: URL): void {
+function runParsedEntry(parsed: Document, url: URL): Promise<void> {
   const moduleScript = parsed.querySelector<HTMLScriptElement>('script[type="module"][src]');
-  if (moduleScript) injectRouteEntry(moduleScript.getAttribute("src")!, url);
+  if (moduleScript) return injectRouteEntry(moduleScript.getAttribute("src")!, url);
+  return Promise.resolve();
 }
 
 async function navigateSameOrigin(
@@ -523,18 +554,34 @@ function updateHistory(url: URL, options: NavigateOptions): void {
 /**
  * Re-inject a route's client entry module (cache-busted per nav so it re-evaluates),
  * which re-runs the route → `startClient` → `retainedRoot.render` reconciles in place.
- * The injected `<script>` removes itself after running so they don't pile up.
+ * The injected `<script>` removes itself after running so they don't pile up. Resolves when
+ * the module has evaluated (its synchronous `main()` has rendered) — so a caller can run the
+ * DOM swap inside a view transition and await the reconcile before the new-state capture.
  */
-function injectRouteEntry(entrySrc: string, url: URL): void {
-  const src = new URL(entrySrc, url.href);
-  src.searchParams.set("nav", String(navCounter++));
-  const script = document.createElement("script");
-  script.type = "module";
-  script.src = src.href;
-  const cleanup = () => script.remove();
-  script.addEventListener("load", cleanup, { once: true });
-  script.addEventListener("error", cleanup, { once: true });
-  document.body.appendChild(script);
+function injectRouteEntry(entrySrc: string, url: URL): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const src = new URL(entrySrc, url.href);
+    src.searchParams.set("nav", String(navCounter++));
+    const script = document.createElement("script");
+    script.type = "module";
+    script.src = src.href;
+    let settled = false;
+    // Resolve on load/error, but also on a timeout: this promise is awaited INSIDE a view
+    // transition's update callback, so a stalled entry chunk (or a nested dynamic import whose
+    // failure never surfaces as the script's `error`) would otherwise hang the reconcile until
+    // the browser's own ~4 s transition timeout. Cap it so the commit lands promptly.
+    const cleanup = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      script.remove();
+      resolve();
+    };
+    const timer = setTimeout(cleanup, 4000);
+    script.addEventListener("load", cleanup, { once: true });
+    script.addEventListener("error", cleanup, { once: true });
+    document.body.appendChild(script);
+  });
 }
 
 /**
@@ -552,13 +599,15 @@ function applyIsoNav(body: string, url: URL, href: string, options: NavigateOpti
     location.href = href; // malformed payload: hard navigate rather than get stuck
     return;
   }
-  updateHistory(url, options);
-  if (payload.title != null) document.title = payload.title;
-  writeDataIsland(payload.data);
-  swapRouteStyles(payload.styles);
-  emit();
-  scrollToTop(options);
-  injectRouteEntry(payload.entry, url);
+  updateHistory(url, options); // non-visual — outside the transition
+  withViewTransition(async () => {
+    if (payload.title != null) document.title = payload.title;
+    writeDataIsland(payload.data);
+    swapRouteStyles(payload.styles);
+    emit();
+    scrollToTop(options);
+    await injectRouteEntry(payload.entry, url); // resolves once the re-run entry has reconciled
+  });
 }
 
 /**
@@ -829,6 +878,87 @@ export function startClient(container: Element, tree: VNode): void {
   // re-render the current route in place. Wired here (not via a static edge from the
   // isomorphic server-action module) so client navigation never enters the server graph.
   setActionRefreshHandler(() => void navigate(location.href, { history: false }));
+}
+
+/**
+ * Hydrate the server-rendered `global-error.tsx` document so it becomes interactive and its
+ * `reset` is a real function (author `onClick`/handlers work too — before this the page shipped
+ * no client JS at all). global-error replaces the root layout and renders its own `<html>`/
+ * `<body>`, so it hydrates at the document root ({@link hydrateDocument}), not the `#__denext`
+ * container. The error is rebuilt from the `#__denext_ge_data` island the server emitted (the
+ * same redacted message/digest it rendered with, so hydration matches). `reset` reloads the
+ * current route — an honest retry that re-runs the server render, which may now succeed; a soft
+ * in-place retry would need the whole app runtime loaded into the error page.
+ */
+export function startGlobalErrorClient(
+  GlobalError: (p: { error: Error; reset: () => void }) => VNode,
+): void {
+  const dataEl = document.getElementById("__denext_ge_data");
+  // The page is already server-rendered and visible; a corrupt data island must not throw here
+  // (that would abort hydration and leave `reset` dead) — fall back to a generic error.
+  let data: { message?: string; digest?: string } = {};
+  try {
+    if (dataEl) data = JSON.parse(dataEl.textContent || "{}");
+  } catch {
+    data = {};
+  }
+  const error = Object.assign(new Error(data.message ?? "Error"), { digest: data.digest });
+  hydrateDocument(h(GlobalError, { error, reset: () => void resetGlobalError() }));
+}
+
+/**
+ * `reset()` for a hydrated global-error page — Next's soft recovery, not a browser reload.
+ * denext's global-error fires on a SERVER render failure (it replaces the whole document), so
+ * there is no client app tree to re-render in place; recovery means re-running the render. This
+ * re-fetches the current route and swaps the document in place: a render that now succeeds
+ * replaces the error UI with the app (no reload flash), and one that still fails renders a fresh
+ * global-error. Any failure (offline, no `DOMParser`) falls back to a hard reload. Exported for
+ * testing.
+ */
+export async function resetGlobalError(): Promise<void> {
+  if (typeof fetch !== "function" || typeof DOMParser === "undefined") return location.reload();
+  let html: string;
+  try {
+    const res = await fetch(location.href, { headers: { "cache-control": "no-cache" } });
+    html = await res.text();
+  } catch {
+    return location.reload();
+  }
+  try {
+    const parsed = new DOMParser().parseFromString(html, "text/html");
+    if (!parsed || !parsed.documentElement) return location.reload();
+    swapDocument(parsed);
+  } catch {
+    location.reload();
+  }
+}
+
+/**
+ * Replace the live document with `parsed`'s tree and re-run its executable scripts (a soft
+ * reload). The incoming document brings its own hydration root + entry, so the retained
+ * global-error root is dropped first — the re-run entry then hydrates fresh rather than
+ * reconciling the app into the old error tree. A module entry is re-imported under a fresh
+ * `?nav` query (ES modules evaluate once per URL, so the same src would not re-run); JSON data
+ * islands are left as-is (inert, already in the swapped-in tree).
+ */
+function swapDocument(parsed: Document): void {
+  retainedRoot = globalWin.__dnxRoot = null;
+  document.replaceChild(document.adoptNode(parsed.documentElement), document.documentElement);
+  document.title = parsed.title || document.title;
+  for (const old of Array.from(document.querySelectorAll("script"))) {
+    const type = old.getAttribute("type");
+    if (type && type !== "module" && !/javascript/i.test(type)) continue; // skip data islands
+    const script = document.createElement("script");
+    for (const attr of Array.from(old.attributes)) script.setAttribute(attr.name, attr.value);
+    const src = old.getAttribute("src");
+    if (src && type === "module") {
+      const u = new URL(src, location.href);
+      u.searchParams.set("nav", String(navCounter++));
+      script.src = u.href;
+    }
+    script.textContent = old.textContent;
+    old.replaceWith(script);
+  }
 }
 
 // ---- Link component + router hooks -----------------------------------------

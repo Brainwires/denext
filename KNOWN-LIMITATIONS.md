@@ -28,10 +28,26 @@ next-compat interop path — denext's own apps are unaffected):
   correctly, just not off-thread. A one-time dev warning fires. Self-host
   Partytown if you need true off-main-thread execution.
 
-- **`global-error.tsx` is server-rendered only.** It renders its own document, but
-  its `reset` prop is a no-op (there is no client hydration of the global-error
-  tree); a reset button should navigate or reload. Next hydrates it as a client
-  component.
+- **`global-error.tsx` hydration is not wired on the next-compat / static-export paths.**
+  global-error replaces the root layout and renders its own document, which now hydrates on the
+  native `denext build` and `denext dev` paths, so `reset` and any author interactivity work
+  like Next. `reset` recovers **softly** — it re-fetches the current route and swaps the
+  document in place (no browser reload); because denext's global-error fires on a SERVER render
+  failure, that recovery re-runs the render rather than re-rendering an in-place client tree
+  (there is none), falling back to a hard reload only if the re-fetch fails. The **next-compat**
+  interop and **static-export** paths emit no entry, so there global-error stays
+  server-rendered only (its `reset` inert).
+
+- **The class-component runtime is installed only when a build scan sees a class in your
+  app source.** To keep it out of function-only bundles, `denext build` scans your app
+  source for `Component`/`PureComponent` and installs the ~3 KB class runtime only when it
+  appears (a class component must name it). An app whose class components live **only in a
+  dependency** the scan doesn't read — an npm package, or a sibling workspace package — with
+  the word never appearing in the app's own source, gets a function-only bundle, so rendering
+  that class throws `classComponentsDisabledError` in the **production build** (it works in
+  `denext dev`, which installs the runtime unconditionally). Set `classComponents: true` in
+  `denext.config.ts` to force it in. Compat (next-compat) apps already drive this off the
+  same config flag.
 
 - **The Node-stream `react-dom/server` APIs buffer (no `Writable`
   backpressure).** `renderToString` / `renderToStaticMarkup` render the
@@ -130,12 +146,10 @@ next-compat interop path — denext's own apps are unaffected):
   `«r0»` format is CSS-selector-safe without `CSS.escape`, these are not); and
   `defaultProps` on a **function** component is honored as a compat extension (React 19
   removed it) because popular npm libraries still rely on it.
-- **`notFound()` / `forbidden()` / `unauthorized()` thrown during a CLIENT render
-  abort the render** instead of swapping in the matching `not-found.tsx` boundary
-  (they work as documented on the server and inside Server Actions).
 - **A few React internals are shims.** The introspection hooks `captureOwnerStack()` /
-  `cacheSignal()` return `null` and `addTransitionType()` is a no-op (rendering is
-  unaffected — only dev tooling that reads them gets nothing).
+  `cacheSignal()` return `null` (rendering is unaffected — only dev tooling that reads them
+  gets nothing). `addTransitionType()` is fully wired — it drives `startViewTransition({ types })`
+  and `<ViewTransition>`'s per-type `enter`/`exit`/`update`/`share` class maps.
 
 ## denext-original features — bounded scope
 
@@ -178,13 +192,15 @@ three documented bounds of the opt-in:
 
 ### Typed API & live data (`defineApi`, `useApi`, `defineSubscription`, `createChannel`)
 
-- **Live push is per-instance by default.** A `revalidateTag` fires the hub's
-  invalidation hook in-process, so `<Live>`, `useLive`, `useSubscription` re-pushes and
-  `useApi({ tags })` invalidations reach only the connections on the instance that
-  invalidated; `createChannel` publishes cross instances only through a configured
-  `ChannelTransport` (`broadcastChannelTransport()` for Deno Deploy isolates / workers,
-  or your own two-method Redis/NATS transport via `setChannelTransport`). Publishing tag
-  invalidations over the same transport is the natural follow-up.
+- **Live push is single-instance without a configured transport.** By default the hub
+  runs in-process, so `<Live>`, `useLive`, `useSubscription` re-pushes and `useApi({ tags })`
+  invalidations from a `revalidateTag` reach only that instance's connections. Configure a
+  `ChannelTransport` — `broadcastChannelTransport()` for Deno Deploy isolates / workers, or
+  your own two-method Redis/NATS transport via `setChannelTransport` — and **both**
+  `createChannel` publishes **and** tag invalidations propagate cross-instance (a
+  `revalidateTag` on one instance re-pushes watchers on every instance). The default
+  in-memory transport loops back to the single instance, so nothing changes for a
+  single-instance deploy.
 - **Channels carry no history.** A subscriber gets pushes from the moment it subscribes;
   nothing replays on reconnect (compute a cold-start value during SSR and pass it as
   `initial`). Delivery is at-most-once and latest-wins under back-pressure; `seq` (surfaced by
@@ -247,15 +263,26 @@ Implemented for compatibility but tracking still-unstable upstream surfaces, so
 they may change: `unstable_cache` (still `unstable_` in Next 16),
 `unstable_batchedUpdates` (a no-op — see [ARCHITECTURE.md](./ARCHITECTURE.md)),
 `useMemoCache`/`c` (React Compiler runtime — the compiler hit 1.0 stable; this
-is an internal helper). **`ViewTransition` applies route-level transitions**: a
-Flight soft-navigation commits inside `document.startViewTransition` where the
-browser supports it, so the route swap cross-fades; the component's per-element
-props (`name`/`enter`/`exit`) are not yet honored (that needs real
-`view-transition-name` DOM markers), and the isomorphic/HTML nav paths (async
-reconcile) don't animate yet. **`Activity` is still a passthrough shim** — it
-renders its children and ignores `mode`; real offscreen scheduling (deferred
-pre-render, hidden-subtree state preservation) is a **not-yet-built** reconciler
-feature, not a non-goal. **React `taint*` is implemented**:
+is an internal helper). **`ViewTransition` honors per-element transitions across
+navigations**: on every soft-nav path (Flight, isomorphic, and full-HTML — the
+iso/HTML paths now await their re-injected entry so the DOM swap happens inside the
+transition), the wrapper stamps real `view-transition-name` on its host child on both
+sides of the swap, so a shared `name` morphs between routes; `enter`/`exit`/`update`/
+`share` become `view-transition-class` (per-type maps resolve against
+`addTransitionType`, which also drives `startViewTransition({ types })`), and the
+route-level cross-fade still applies where the browser supports it. Residual vs React:
+only **navigation** commits are wrapped in a transition — a same-page state change that
+adds/removes/reorders a `<ViewTransition>` (React's list-reorder case) is not animated —
+each `name` must be unique among the elements live at once (two sharing a name make the
+browser skip the transition, as in React / the View Transitions API), and the animation
+itself needs a browser that supports the View Transitions API (it is a no-op elsewhere). **`Activity` does real offscreen scheduling** —
+`mode="hidden"` keeps the subtree mounted-but-hidden (`display:none !important`), preserves its
+state, and tears down its effects, so `mode="visible"` restores the same instances; a
+subtree that mounts hidden is pre-rendered at transition priority. One residual gap vs
+React: a subtree that MOUNTS hidden runs its effects once during that pre-render (and
+keeps them connected while hidden) — React defers a hidden subtree's effects entirely;
+denext only tears effects down on a visible→hidden transition, not a hidden mount.
+**React `taint*` is implemented**:
 `experimental_taintObjectReference` / `experimental_taintUniqueValue` mark a value
 that must never cross the server→client boundary, enforced in the Flight serializer
 (it throws rather than serialize a tainted object or secret string). Defense-in-depth,

@@ -25,7 +25,7 @@ import { clientEntryFor, getMiddleware, styleHrefsFor } from "./bundles.ts";
 import { devOriginAllowed } from "./dev-endpoints.ts";
 import { getManifest } from "./manifest.ts";
 import { broadcastError } from "./reload.ts";
-import { DEV_RELOAD_JS_PATH, type DevState } from "./state.ts";
+import { DEV_RELOAD_JS_PATH, type DevState, GLOBAL_ERROR_BUNDLE_PATH } from "./state.ts";
 
 /**
  * Config redirect/rewrite/header rules, resolved once (async; createApp compiles them
@@ -96,6 +96,9 @@ export function createDevApp(st: DevState): RequestHandler {
     publicDir: paths.publicDir,
     clientEntryFor: (route) => clientEntryFor(st, route),
     styleHrefsFor: (route) => styleHrefsFor(st, route),
+    // A constant URL; the handler serves it on demand and renderGlobalError only references it
+    // when a global-error.tsx exists (else it returns null before touching the entry).
+    globalErrorEntry: GLOBAL_ERROR_BUNDLE_PATH,
     getMiddleware: () => getMiddleware(st),
     // Plugins register lazily on the first getManifest (after createApp), so resolve the
     // combined handler per request. Only wired when plugins exist.

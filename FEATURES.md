@@ -97,6 +97,12 @@ security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
 - `Suspense`, `SuspenseList`, `ErrorBoundary`, `startTransition`, `memo`,
   `createContext`, `forwardRef`, `createPortal`, `lazy`, `Profiler`,
   `StrictMode`.
+- **`Activity`** — real offscreen scheduling: `mode="hidden"` keeps a subtree
+  mounted-but-hidden (state preserved, effects torn down), `mode="visible"`
+  restores the same instances; import-gated, so apps that don't use it pay nothing.
+- **`ViewTransition`** — per-element view transitions across navigations: a shared
+  `name` morphs an element between routes, `enter`/`exit`/`update`/`share` +
+  `addTransitionType` select the animation, on every soft-nav path; import-gated.
 - **Auto-memo compiler** (React-Compiler-style automatic memoization) ⚑.
 - **First-party `AsyncContext`** (TC39-shaped `Variable` + `Snapshot`) — the
   primitive no browser has shipped, implemented in userland. Synchronous scoping
@@ -190,7 +196,10 @@ rework (the enhancement rationale + mechanism is in **Part 2 §4**):
   (`src/runtime/channel.ts`) + `publish(key, payload)` from anywhere on the server pushes
   to every authorized `useChannel(ref, key)` subscriber — required `authorize`, lazy TTL
   re-auth + `revoke`, latest-wins under back-pressure, a `ChannelTransport` for
-  multi-instance delivery (`src/server/live-channels.ts`).
+  multi-instance delivery (`src/server/live-channels.ts`) — which also carries
+  `revalidateTag`/`updateTag` invalidations cross-instance, so a tag invalidated on one
+  instance re-pushes `<Live>` / `useLive` / `useSubscription` / `useApi({ tags })` watchers
+  on every instance.
 - **Live Server Components** — `<Live tags={[...]}>` (from
   `@denext/denext/live`): the server re-renders **just that boundary**, under
   the viewer's own session, and **pushes** it over a WebSocket when any of its

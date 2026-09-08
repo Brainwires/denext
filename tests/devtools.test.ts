@@ -11,6 +11,8 @@ import {
   setInspectorBridge,
 } from "../src/client/devtools.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
+import { devtoolsHooksImpl } from "../src/client/fiber/devtools-bridge.ts";
+import { setDevtoolsHooks } from "../src/client/fiber/devtools-seam.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { useState } from "../src/runtime/hooks.ts";
 import { makeDom } from "./helpers/dom.ts";
@@ -203,29 +205,41 @@ Deno.test("commitToDevTools no-ops before injection", () => {
 
 Deno.test("the reconciler reports commits to DevTools end-to-end", () => {
   withMockHook(({ commits }) => {
-    const { doc, container } = makeDom();
-    setDocument(doc as Any);
-    function Counter(): Any {
-      const [n, setN] = useState(0);
-      return h("button", { onClick: () => setN(n + 1) }, String(n));
+    // The dev boot path (installDevtools → installInspector) wires the reconciler →
+    // bridge seam; production drops it. Install it here to exercise the end-to-end path.
+    setDevtoolsHooks(devtoolsHooksImpl);
+    try {
+      endToEnd(commits);
+    } finally {
+      setDevtoolsHooks(null);
     }
-    const root = createRoot(container as Any);
-    root.render(h(Counter, null));
-
-    // Initial mount reported a tree: HostRoot → Counter → button → "0".
-    assert(commits.length >= 1, "a commit should be reported on mount");
-    const counter = commits.at(-1).current.child;
-    assertEquals(counter.type.name, "Counter");
-    assertEquals(counter.child.type, "button");
-    assertEquals(counter.child.child.memoizedProps, "0");
-
-    // A state update flushes a new commit reflecting the new text.
-    (container.childNodes[0] as Any).dispatch("click");
-    flushSync();
-    assertEquals(commits.at(-1).current.child.child.child.memoizedProps, "1");
-    root.unmount();
   });
 });
+
+function Counter(): Any {
+  const [n, setN] = useState(0);
+  return h("button", { onClick: () => setN(n + 1) }, String(n));
+}
+
+function endToEnd(commits: Any[]): void {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  const root = createRoot(container as Any);
+  root.render(h(Counter, null));
+
+  // Initial mount reported a tree: HostRoot → Counter → button → "0".
+  assert(commits.length >= 1, "a commit should be reported on mount");
+  const counter = commits.at(-1).current.child;
+  assertEquals(counter.type.name, "Counter");
+  assertEquals(counter.child.type, "button");
+  assertEquals(counter.child.child.memoizedProps, "0");
+
+  // A state update flushes a new commit reflecting the new text.
+  (container.childNodes[0] as Any).dispatch("click");
+  flushSync();
+  assertEquals(commits.at(-1).current.child.child.child.memoizedProps, "1");
+  root.unmount();
+}
 
 Deno.test("a throwing DevTools hook never propagates to the caller", () => {
   const g = globalThis as Any;

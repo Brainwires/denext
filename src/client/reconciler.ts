@@ -12,6 +12,7 @@ export {
   createPortal,
   createRoot,
   flushSync,
+  hydrateDocument,
   hydrateRoot,
   type Root,
   type RootOptions,

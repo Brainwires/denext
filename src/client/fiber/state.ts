@@ -25,6 +25,13 @@ export interface RootHandle {
   pendingLanes: number;
   /** True for the first render of a hydrateRoot (adopt server DOM). */
   hydrate: boolean;
+  /** Document-root hydration: the child to begin the cursor at (skips the doctype). */
+  hydrateStart?: Node | null;
+  /**
+   * True when the container is the document itself (global-error hydration). The root's
+   * children are then PLACED, not synced, so foreign top-level nodes (the doctype) survive.
+   */
+  documentRoot?: boolean;
   /** RootOptions error callbacks (React 19 parity), or undefined. */
   onCaughtError?: RootErrorCallback;
   onUncaughtError?: RootErrorCallback;
