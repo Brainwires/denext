@@ -148,6 +148,10 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
       deps.armRecover(conn);
       return;
     }
+    // No await between this check and `sendFrame`'s own `bufferedAmount` check, so the two
+    // reads see the same buffer — a frame that clears this branch is never shed by `sendFrame`
+    // (which drops `channel` frames). `fanOut` re-enters `sendTo` per subscriber, so a send that
+    // pushes the buffer over the limit back-pressures the NEXT sub here, not silently downstream.
     deps.sendFrame(conn, text, msg);
   };
 

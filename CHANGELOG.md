@@ -56,9 +56,23 @@ and this project adheres to
   tasks pays nothing. New `denext/server` exports: `defineTask`, `runTask`, `registerTask`,
   `getTask`, `taskNames`, `isTask` (+ `Task`/`TaskDefinition`/`TaskContext` types); new
   `scheduledTasks` config key; new `denext task` CLI verb.
+- **`live.limits.maxPeersPerRoom` (default 1000).** A presence room's membership was otherwise
+  bounded only by `maxConnections`, and `broadcastRoom` re-encodes O(N) bytes to N peers on every
+  join/update/leave — an unbounded room is O(N²) fan-out fleet-wide. A join past the cap is now
+  refused with a `limit` error; an existing member's state update is never refused.
 
 ### Fixed
 
+- **A `createChannel` exported from a `"use server"` module can now be imported by a client
+  component (`useChannel`).** The client-boundary export scan only kept function exports, so a
+  channel (a plain object) was dropped from the generated client stub and the Flight bundle failed
+  with "No matching export". Channel exports are now included in the stub (carrying the channel id),
+  matching the documented `useChannel(channel, key)` pattern.
+- **`client:visible` islands: hydration starts just before the island scrolls into view, and a
+  nested `display:contents` root still hydrates.** The IntersectionObserver now uses a `200px`
+  `rootMargin` (no flash of inert content), and the observed element is resolved by walking past
+  _nested_ `display:contents` wrappers to the first boxed descendant (one such wrapper was handled
+  before; a deeper nest was not).
 - **Live tag watches (`useApi({ tags })`): a refused watch is no longer silent.** A `denied` error
   frame for a tag watch was routed to neither the channel nor data subscription tables, so the watch
   simply stopped live-updating with no signal. `subscribeLiveTags` now takes an optional `onError`,

@@ -568,6 +568,13 @@ export interface LiveLimits {
   maxSubscriptionsPerConnection?: number;
   /** Max presence rooms per connection (default 32). */
   maxRoomsPerConnection?: number;
+  /**
+   * Max peers in one presence room (default 1000). A room's membership is otherwise bounded
+   * only by `maxConnections`, and `broadcastRoom` re-encodes O(N) bytes to N peers on every
+   * join/update/leave, so an unbounded room is O(N²) fan-out fleet-wide — a join past the cap
+   * is refused with `limit`.
+   */
+  maxPeersPerRoom?: number;
   /** Max `<Live>` boundaries watched per connection (default 256). */
   maxBoundaries?: number;
   /** Max inbound message size in bytes (default 65536). */

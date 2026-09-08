@@ -188,15 +188,19 @@ export function dispatchInteraction(target: Element | null): boolean {
 /**
  * Resolve an element that actually has a layout box for IntersectionObserver. A
  * `display:contents` element (the island wrapper) generates no box, so observing it
- * never intersects — use its first element child (the island's rendered root) when so.
+ * never intersects. Walk down the first-child chain past any *nested* `display:contents`
+ * wrappers until a boxed element is found (so a `client:visible` island whose root is
+ * itself `display:contents` still hydrates); fall back to `el` if the subtree is boxless.
  */
 function boxTarget(el: Element): Element {
   try {
     const g = globalThis as unknown as {
       getComputedStyle?: (e: Element) => { display?: string };
     };
-    if (g.getComputedStyle?.(el)?.display === "contents") {
-      return el.firstElementChild ?? el;
+    const isContents = (e: Element): boolean => g.getComputedStyle?.(e)?.display === "contents";
+    if (!isContents(el)) return el;
+    for (let cur = el.firstElementChild; cur; cur = cur.firstElementChild) {
+      if (!isContents(cur)) return cur;
     }
   } catch {
     // getComputedStyle can throw for a detached element — fall back to `el`.
@@ -217,12 +221,15 @@ function defaultScheduler(): LazyScheduler {
       const g = globalThis as unknown as {
         IntersectionObserver?: new (
           cb: (entries: Array<{ isIntersecting: boolean }>) => void,
+          opts?: { rootMargin?: string },
         ) => { observe(el: Element): void; disconnect(): void };
       };
       if (typeof g.IntersectionObserver !== "function") {
         cb(); // no observer available (SSR/old runtime): hydrate now to stay correct
         return () => {};
       }
+      // A margin so hydration starts just before the island scrolls into view — the
+      // work finishes by the time it's actually on-screen (no flash of inert content).
       const obs = new g.IntersectionObserver((entries) => {
         for (const e of entries) {
           if (e.isIntersecting) {
@@ -230,7 +237,7 @@ function defaultScheduler(): LazyScheduler {
             break;
           }
         }
-      });
+      }, { rootMargin: "200px" });
       // The island wrapper is `display:contents`, which has no layout box — an
       // IntersectionObserver on it never reports intersection. Observe the first
       // real child (the island's SSR root) instead; fall back to `el` if it has none.

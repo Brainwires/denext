@@ -2,7 +2,7 @@
 // names + hooks/state + context, edit state live through the hook's own setter,
 // notify on commit, and stay a no-op in production. Uses the in-memory DOM harness.
 
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertStrictEquals } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import {
@@ -38,11 +38,13 @@ import {
   getValueAt,
   type InspectNode,
   installInspector,
+  logValueAt,
   setHookState,
   setPropOverride,
   setRefValue,
   startProfiling,
   stopProfiling,
+  storeAsGlobal,
   subscribe,
   subscribeBoundaries,
 } from "../src/client/devtools-inspect.ts";
@@ -457,6 +459,56 @@ Deno.test("inspector: getValueAt reads nested prop/state values one level deep",
 
     // A path that no longer resolves returns null (not a throw).
     assertEquals(getValueAt(node.id, { kind: "prop", key: "data" }, ["nope", "deep"]), null);
+  });
+});
+
+Deno.test("inspector: logValueAt console.logs the live value; storeAsGlobal stashes it on $d", () => {
+  withDev(true, () => {
+    function Thing(props: { data: { nested: { x: string } } }): VNode {
+      const [obj] = useState({ items: [10, 20] });
+      return h("div", { "data-n": String(obj.items.length + props.data.nested.x.length) });
+    }
+    const live = { nested: { x: "hi" } };
+    const { doc, container } = makeDom();
+    setDocument(asDoc(doc));
+    createRoot(asEl(container)).render(h(Thing, { data: live }));
+    flushSync();
+    const node = find(getInspectorTree(), "Thing")!;
+
+    // logValueAt: the REAL object reaches console.log (not the panel's serialized preview).
+    const logged: unknown[] = [];
+    const origLog = console.log;
+    console.log = (...a: unknown[]) => logged.push(a[a.length - 1]);
+    try {
+      assertEquals(logValueAt(node.id, { kind: "prop", key: "data" }, ["nested"]), true);
+      assertStrictEquals(logged.at(-1), live.nested, "logs the live object, by identity");
+      assertEquals(logValueAt(node.id, { kind: "prop", key: "data" }, ["nope", "deep"]), false);
+    } finally {
+      console.log = origLog;
+    }
+
+    // storeAsGlobal: the same live value lands on globalThis.$d.
+    const gg = globalThis as Record<string, unknown>;
+    const prev = gg.$d;
+    try {
+      assertEquals(storeAsGlobal(node.id, { kind: "prop", key: "data" }, ["nested"]), "$d");
+      const storedProp: unknown = gg.$d;
+      assertStrictEquals(storedProp, live.nested, "$d holds the live value, by identity");
+      const stateIdx = node.hooks.find((hk) => hk.kind === "state")!.index;
+      assertEquals(storeAsGlobal(node.id, { kind: "hook", index: stateIdx }, ["items"]), "$d");
+      const storedState: unknown = gg.$d;
+      assertEquals(storedState, [10, 20]);
+      assertEquals(storeAsGlobal(node.id, { kind: "prop", key: "data" }, ["nope", "deep"]), null);
+    } finally {
+      gg.$d = prev;
+    }
+  });
+});
+
+Deno.test("inspector: logValueAt/storeAsGlobal are no-ops in production", () => {
+  withDev(undefined, () => {
+    assertEquals(logValueAt(1, { kind: "prop", key: "x" }, []), false);
+    assertEquals(storeAsGlobal(1, { kind: "prop", key: "x" }, []), null);
   });
 });
 

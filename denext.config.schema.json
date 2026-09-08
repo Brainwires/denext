@@ -550,6 +550,10 @@
               "description": "Max presence rooms per connection (default 32).",
               "type": "number"
             },
+            "maxPeersPerRoom": {
+              "description": "Max peers in one presence room (default 1000). A room's membership is otherwise bounded only by `maxConnections`, and `broadcastRoom` re-encodes O(N) bytes to N peers on every join/update/leave, so an unbounded room is O(N²) fan-out fleet-wide — a join past the cap is refused with `limit`.",
+              "type": "number"
+            },
             "maxBoundaries": {
               "description": "Max `<Live>` boundaries watched per connection (default 256).",
               "type": "number"

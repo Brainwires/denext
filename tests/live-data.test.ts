@@ -287,6 +287,56 @@ Deno.test("usePresence hub: peers see each other; a leave rebroadcasts", async (
   }
 });
 
+Deno.test("usePresence hub: a room enforces maxPeersPerRoom (a join past the cap is refused)", async () => {
+  const { server, port } = startHub({ allowAnonymous: true, limits: { maxPeersPerRoom: 2 } });
+  const clients: WebSocket[] = [];
+  const openClient = async (): Promise<{ ws: WebSocket; frames: Any[] }> => {
+    const ws = new WebSocket(`ws://localhost:${port}/_denext/live`);
+    const frames: Any[] = [];
+    ws.onmessage = (ev) => frames.push(JSON.parse(ev.data as string));
+    await new Promise((resolve) => (ws.onopen = () => resolve(null)));
+    clients.push(ws);
+    return { ws, frames };
+  };
+  try {
+    const a = await openClient();
+    a.ws.send(JSON.stringify({ type: "presence-join", room: "doc1", state: { n: "A" } }));
+    const b = await openClient();
+    b.ws.send(JSON.stringify({ type: "presence-join", room: "doc1", state: { n: "B" } }));
+    await waitFor(
+      () => b.frames.some((f) => f.type === "presence-state" && f.peers.length === 2),
+      "the room fills to 2 peers",
+    );
+
+    // A 3rd peer is over the cap: refused with `limit`, and never added to the room.
+    const c = await openClient();
+    c.ws.send(JSON.stringify({ type: "presence-join", room: "doc1", state: { n: "C" } }));
+    await waitFor(
+      () => c.frames.some((f) => f.type === "error" && f.code === "limit"),
+      "the over-cap join is refused",
+    );
+    const err = c.frames.find((f) => f.type === "error" && f.code === "limit");
+    assertEquals(err.room, "doc1");
+    assert(!c.frames.some((f) => f.type === "presence-state"), "C never joined the room");
+    // The room stays at 2 — C's refusal didn't rebroadcast a 3-peer membership.
+    assert(!b.frames.some((f) => f.type === "presence-state" && f.peers.length > 2));
+
+    // An existing member's state UPDATE is not refused by the peer cap.
+    a.ws.send(JSON.stringify({ type: "presence-update", room: "doc1", state: { n: "A2" } }));
+    await waitFor(
+      () =>
+        b.frames.some((f) =>
+          f.type === "presence-state" && f.peers.some((p: Any) => p.state?.n === "A2")
+        ),
+      "an existing peer's update still broadcasts",
+    );
+  } finally {
+    for (const ws of clients) ws.close();
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
 // ---- Authorization model + resource caps -----------------------------------
 
 Deno.test("hub authz: no policy configured → a `no-policy` error (dev and prod alike)", async () => {

@@ -12,6 +12,7 @@
 
 import { fromFileUrl, join, relative, resolve, SEPARATOR, toFileUrl } from "@std/path";
 import { type Directive, readDirective } from "./directives.ts";
+import { isChannel } from "../runtime/channel-brand.ts";
 import { denoExecutable, frameworkRoot, minDepAgeArgs } from "./bundle.ts";
 
 /** A discovered boundary module: its file URL and (optionally) its export names. */
@@ -315,16 +316,19 @@ export interface BoundaryManifestOptions {
 /**
  * Default {@link BoundaryManifestOptions.exportsOf}: import a module and return
  * the names of its function exports (the ones that can be client components or
- * server references). Suitable for build-time boundary construction.
+ * server references), plus any `createChannel` export — a channel is a plain object,
+ * not a function, but the client stub must still carry its id so `useChannel` can
+ * import it from a `"use server"` module.
  *
  * @param filePath Absolute path to the module.
  */
 export async function importFunctionExports(filePath: string): Promise<string[]> {
   try {
     const mod = await import(toFileUrl(filePath).href);
-    return Object.keys(mod).filter((k) =>
-      typeof (mod as Record<string, unknown>)[k] === "function"
-    );
+    return Object.keys(mod).filter((k) => {
+      const v = (mod as Record<string, unknown>)[k];
+      return typeof v === "function" || isChannel(v);
+    });
   } catch {
     // The module (or a dependency) throws at module-eval, so we can't read its exports
     // by executing it. This happens with npm packages whose CJS default-import interop

@@ -141,6 +141,7 @@ const DEFAULT_LIMITS: Required<LiveLimits> = {
   maxConnections: 10_000,
   maxSubscriptionsPerConnection: 64,
   maxRoomsPerConnection: 32,
+  maxPeersPerRoom: 1000,
   maxBoundaries: 256,
   maxMessageBytes: 64 * 1024,
   maxSubscriptionInputBytes: 16 * 1024,
@@ -684,11 +685,10 @@ async function handlePresence(
 ): Promise<void> {
   if (typeof msg.room !== "string") return;
   const room = msg.room;
-  // Per-connection room cap (joining a NEW room when already at the cap is refused).
-  if (atRoomCap(conn, room)) {
-    sendError(conn, "limit", "too many rooms", { room });
-    return;
-  }
+  // Cap checks run twice: once here, and again after the await (concurrent joins can all
+  // pass the pre-await check). A NEW membership past either cap is refused; a state update
+  // by an existing member is not.
+  if (refuseRoomJoin(conn, room)) return;
   let decision: AuthDecision = "deny";
   try {
     decision = await authorizeRoom(conn, room);
@@ -700,10 +700,7 @@ async function handlePresence(
     return;
   }
   if (!connections.has(conn)) return; // disconnected while authorizing
-  if (atRoomCap(conn, room)) { // re-check: concurrent joins all passed the pre-await check
-    sendError(conn, "limit", "too many rooms", { room });
-    return;
-  }
+  if (refuseRoomJoin(conn, room)) return; // re-check after the await, same reason
   // `state` is peer-supplied and only ever rebroadcast (never executed); the
   // authorization above is what gates who may publish into this room.
   conn.presenceRooms.set(room, msg.state);
@@ -723,6 +720,23 @@ function atDataSubCap(conn: Conn, subId: string): boolean {
 function atRoomCap(conn: Conn, room: string): boolean {
   return !conn.presenceRooms.has(room) &&
     conn.presenceRooms.size >= limits.maxRoomsPerConnection;
+}
+
+/** A NEW membership in `room` would push it past its per-room peer cap (existing members exempt). */
+function atRoomPeerCap(conn: Conn, room: string): boolean {
+  return !conn.presenceRooms.has(room) &&
+    (rooms.get(room)?.size ?? 0) >= limits.maxPeersPerRoom;
+}
+
+/** Send a `limit` refusal for a room join that's over the per-connection or per-room cap. */
+function refuseRoomJoin(conn: Conn, room: string): boolean {
+  const reason = atRoomCap(conn, room)
+    ? "too many rooms"
+    : atRoomPeerCap(conn, room)
+    ? "room is full"
+    : null;
+  if (reason) sendError(conn, "limit", reason, { room });
+  return reason != null;
 }
 
 /**
