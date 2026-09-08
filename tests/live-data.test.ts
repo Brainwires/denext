@@ -679,6 +679,54 @@ Deno.test("back-pressure: a shed presence-state is self-superseding — no recov
   assertEquals(conn.recoverTimer ?? null, null, "no recovery poll for presence");
 });
 
+Deno.test("back-pressure: a shed tag invalidate is re-signalled to the watch on drain", () => {
+  const { makeConn, send, drainRecover, MAX_BUFFERED } = __backpressureTestSeam;
+  const sock = new FakeWS("ws://localhost/_denext/live");
+  sock.readyState = FakeWS.OPEN;
+  const conn = makeConn(sock as unknown as WebSocket);
+  conn.tagSubs.set("w1", ["orders", "users"]);
+
+  sock.bufferedAmount = MAX_BUFFERED + 1; // back-pressured
+  send(conn, { type: "invalidate", subId: "w1", tags: ["orders"] });
+  send(conn, { type: "invalidate", subId: "w1", tags: ["users"] }); // unions with the first
+  assertEquals(sock.sent.length, 0, "both invalidates are shed while back-pressured");
+  assertEquals([...(conn.recoverTags?.get("w1") ?? [])].sort(), ["orders", "users"]);
+  assert(conn.recoverTimer != null, "a recovery poll is armed");
+
+  clearTimeout(conn.recoverTimer!);
+  conn.recoverTimer = null;
+  sock.bufferedAmount = 0; // drained
+  drainRecover(conn);
+
+  assertEquals(conn.recoverTags, undefined, "intent cleared after replay");
+  assertEquals(sock.sent.length, 1, "one coalesced invalidate re-signals the watch");
+  const frame = JSON.parse(sock.sent[0]);
+  assertEquals(frame.type, "invalidate");
+  assertEquals(frame.subId, "w1");
+  assertEquals([...frame.tags].sort(), ["orders", "users"]);
+});
+
+Deno.test("back-pressure: a shed invalidate for a since-dropped watch is not re-signalled", () => {
+  const { makeConn, send, drainRecover, MAX_BUFFERED } = __backpressureTestSeam;
+  const sock = new FakeWS("ws://localhost/_denext/live");
+  sock.readyState = FakeWS.OPEN;
+  const conn = makeConn(sock as unknown as WebSocket);
+  conn.tagSubs.set("w1", ["orders"]);
+
+  sock.bufferedAmount = MAX_BUFFERED + 1;
+  send(conn, { type: "invalidate", subId: "w1", tags: ["orders"] });
+  assert(conn.recoverTags?.has("w1"), "recovery armed for the watch");
+
+  conn.tagSubs.delete("w1"); // the client unsubscribed before the drain
+  clearTimeout(conn.recoverTimer!);
+  conn.recoverTimer = null;
+  sock.bufferedAmount = 0;
+  drainRecover(conn);
+
+  assertEquals(sock.sent.length, 0, "nothing re-signalled for a watch that no longer exists");
+  assertEquals(conn.recoverTags, undefined, "intent still cleared");
+});
+
 Deno.test("useLive hub: re-authorizes on recompute — a revoked canSubscribe stops pushes", async () => {
   // canSubscribe runs at subscribe time; a mid-session revocation must also stop the
   // recompute pushes, or a long-lived socket keeps receiving updates after access is lost.

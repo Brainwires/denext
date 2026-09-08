@@ -12,7 +12,12 @@
 import { assert, assertEquals, assertStrictEquals } from "@std/assert";
 import { h } from "denext/jsx-runtime";
 import { render } from "denext/testing";
-import { configureLive, joinPresence, subscribeLiveData } from "../src/client/live-client.ts";
+import {
+  configureLive,
+  joinPresence,
+  subscribeLiveData,
+  subscribeLiveTags,
+} from "../src/client/live-client.ts";
 import { registerLiveBoundary } from "../src/runtime/live-registry.ts";
 import {
   configureLive as configureLiveFromEntry,
@@ -308,4 +313,45 @@ Deno.test("useLiveOptimistic seeds from the live value (via useOptimistic)", asy
   assertEquals(typeof snapshot?.[1], "function");
   assert(screen.html().includes("7"));
   await screen.unmount();
+});
+
+// ---- tag-watch refusals (regression) ----------------------------------------
+
+Deno.test("subscribeLiveTags: a server error frame reaches onError (and never fully silent otherwise)", () => {
+  const restore = stubLiveGlobals();
+  try {
+    // With an onError handler: a `denied` refusal is delivered structurally.
+    const errs: string[] = [];
+    const unsub = subscribeLiveTags(["secret:ledger"], () => {}, (info) => errs.push(info.code));
+    const ws = FakeWebSocket.last!;
+    ws.fireOpen();
+    const sub = ws.frames().find((f) => f.type === "tags-subscribe");
+    assert(sub, "tags-subscribe is sent on connect");
+    const subId = sub!.subId as string;
+    ws.emit({ type: "error", subId, code: "denied", reason: "not allowed" });
+    assertEquals(errs, ["denied"], "the refusal reached onError");
+    unsub();
+
+    // Without an onError handler: it must not be swallowed — a subId-bearing warn fires.
+    const origWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...a: unknown[]) => warnings.push(a.join(" "));
+    try {
+      const unsub2 = subscribeLiveTags(["secret:ledger"], () => {});
+      const ws2 = FakeWebSocket.last!;
+      ws2.fireOpen();
+      const sub2 = ws2.frames().find((f) => f.type === "tags-subscribe");
+      const subId2 = sub2!.subId as string;
+      ws2.emit({ type: "error", subId: subId2, code: "denied", reason: "not allowed" });
+      assert(
+        warnings.some((w) => w.includes(subId2) && w.includes("not allowed")),
+        "a handler-less tag-watch refusal is warned (with its subId), not silent",
+      );
+      unsub2();
+    } finally {
+      console.warn = origWarn;
+    }
+  } finally {
+    restore();
+  }
 });

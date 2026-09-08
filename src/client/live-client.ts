@@ -73,6 +73,8 @@ interface PresenceRoom {
 interface TagSub {
   tags: string[];
   onInvalidate: () => void;
+  /** Called if the server refuses or drops the tag watch (`denied`, `limit`, `no-policy`, …). */
+  onError?: (info: LiveErrorInfo) => void;
 }
 
 interface ChannelSubClient {
@@ -171,10 +173,15 @@ export function subscribeChannel(
  *
  * @param tags The cache tags to watch.
  * @param onInvalidate Called with no arguments when one of them is invalidated.
+ * @param onError Called if the server refuses or drops the watch (else a refusal is `console.warn`ed).
  */
-export function subscribeLiveTags(tags: string[], onInvalidate: () => void): () => void {
+export function subscribeLiveTags(
+  tags: string[],
+  onInvalidate: () => void,
+  onError?: (info: LiveErrorInfo) => void,
+): () => void {
   const subId = `t${++subCounter}`;
-  tagSubs.set(subId, { tags, onInvalidate });
+  tagSubs.set(subId, { tags, onInvalidate, onError });
   ensureSocket();
   sendFrame({ type: "tags-subscribe", subId, tags });
   return () => {
@@ -390,6 +397,14 @@ function deliverError(msg: LiveErrorInfo & { subId?: string }): void {
   if (channel) {
     if (TERMINAL_CODES.has(msg.code) || msg.code === "denied") channel.dead = true;
     channel.onError(msg);
+    return;
+  }
+  const tag = tagSubs.get(msg.subId);
+  if (tag) {
+    // A refused tag watch (e.g. `denied`) simply stops live-updating; surface it so it's
+    // never fully silent — via the caller's handler, else a subId-bearing warning.
+    if (tag.onError) tag.onError(msg);
+    else console.warn(`${text} (tag watch ${msg.subId})`);
     return;
   }
   const sub = dataSubs.get(msg.subId);

@@ -1030,7 +1030,11 @@ const STRUCTURAL_PROPS = new Set([
  */
 function handlerMark(rawName: string, handler: unknown, resumable: boolean): string | null {
   if (isQrl(handler)) {
-    const noMount = !(resumable && handler.denextCapture);
+    // A capturing qrl ALWAYS hydrates-and-replays (bare `evt`): dispatching `evt:id` would
+    // run its segment with no live scope and throw in `capturedScope()`. This holds even on a
+    // non-resumable route (where the eager handler already ran) — a `:id` mark there would
+    // double-fire and warn. A captureless qrl dispatches by id (`evt:id`) with no mount.
+    const noMount = !handler.denextCapture;
     return domEventType(rawName) + (noMount ? ":" + handler.denextQrlId : "");
   }
   if (resumable && typeof handler === "function") return domEventType(rawName);

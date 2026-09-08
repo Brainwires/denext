@@ -122,6 +122,8 @@ interface Conn {
    */
   recoverBoundaries?: boolean;
   recoverSubs?: Set<string>;
+  /** Tag watches whose `invalidate` was shed → the union of tags to re-signal on drain. */
+  recoverTags?: Map<string, Set<string>>;
   recoverTimer?: ReturnType<typeof setTimeout> | null;
 }
 
@@ -1110,15 +1112,20 @@ function sendFrame(conn: Conn, text: string, msg: LiveServerMessage): void {
 /**
  * A frame was dropped because the socket was back-pressured. Record what to replay once
  * it drains. Only *stateful* frames need recovery: a `patch` leaves a `<Live>` boundary
- * stale (a single `refresh` catches every boundary up), and a `data` leaves a `useLive`
- * sub stale (re-running its fetcher pushes the latest value). `presence-state` is
- * self-superseding — the next broadcast carries the full room — and `refresh`/`error`/
- * `ping`/`pong` recover on their own, so those are left to drop.
+ * stale (a single `refresh` catches every boundary up), a `data` leaves a `useLive` sub
+ * stale (re-running its fetcher pushes the latest value), and an `invalidate` leaves a
+ * `useApi({ tags })` watch that never learns to refetch (the union of shed tags is
+ * re-signalled). `presence-state` is self-superseding — the next broadcast carries the
+ * full room — and `refresh`/`error`/`ping`/`pong` recover on their own, so those drop.
  */
 function noteShed(conn: Conn, msg: LiveServerMessage): void {
   if (msg.type === "patch") conn.recoverBoundaries = true;
   else if (msg.type === "data") (conn.recoverSubs ??= new Set()).add(msg.subId);
-  else return;
+  else if (msg.type === "invalidate") {
+    const tags = (conn.recoverTags ??= new Map()).get(msg.subId) ?? new Set<string>();
+    for (const t of msg.tags) tags.add(t);
+    conn.recoverTags.set(msg.subId, tags);
+  } else return;
   if (conn.recoverTimer == null) {
     conn.recoverTimer = setTimeout(() => drainRecover(conn), RECOVER_POLL_MS);
   }
@@ -1136,6 +1143,7 @@ function drainRecover(conn: Conn): void {
   if (s.readyState !== WebSocket.OPEN) {
     conn.recoverBoundaries = false;
     conn.recoverSubs = undefined;
+    conn.recoverTags = undefined;
     return;
   }
   if (s.bufferedAmount > MAX_BUFFERED) {
@@ -1152,6 +1160,14 @@ function drainRecover(conn: Conn): void {
     for (const subId of subs) {
       const sub = conn.dataSubs.get(subId);
       if (sub) void recomputeData(conn, subId, sub); // re-push the sub's latest value
+    }
+  }
+  const tags = conn.recoverTags;
+  if (tags) {
+    conn.recoverTags = undefined;
+    for (const [subId, set] of tags) {
+      // Re-signal only watches that still exist (a drop between shed and drain wins).
+      if (conn.tagSubs.has(subId)) send(conn, { type: "invalidate", subId, tags: [...set] });
     }
   }
   channelHub.replayPending(conn); // channel frames: the LAST held value per sub, no recompute

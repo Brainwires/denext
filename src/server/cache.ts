@@ -864,7 +864,7 @@ function reviveStaleUseCache(
 ): void {
   reviveInBackground(key, async () => {
     const { entry } = await runCachedBody(run, staticTags, profile);
-    await currentCacheStore.setData(key, entry);
+    await storeUseCacheEntry(key, entry);
   });
 }
 
@@ -962,6 +962,23 @@ export function __useCache<A extends unknown[], R>(
 const liveResults = new Map<string, DataEntry>();
 const LIVE_RESULTS_MAX = 500;
 
+/**
+ * Route a fresh `"use cache"` entry to its correct store: the durable data store when the
+ * value survives JSON, else the in-process {@link liveResults} map (with `LIVE_RESULTS_MAX`
+ * eviction). Both the leader ({@link computeUseCache}) and the SWR background refresh
+ * ({@link reviveStaleUseCache}) go through here, so a stale non-serializable component tree
+ * revives into `liveResults` — not lossily `JSON.stringify`d into the durable store, which
+ * would leave `lookupLive` returning the old past-`staleAt` entry and re-recomputing forever.
+ */
+async function storeUseCacheEntry(key: string, entry: DataEntry): Promise<void> {
+  if (isJsonSafe(entry.value)) {
+    await storeData(key, entry);
+  } else {
+    if (liveResults.size >= LIVE_RESULTS_MAX) liveResults.delete(liveResults.keys().next().value!);
+    liveResults.set(key, entry);
+  }
+}
+
 /** The `"use cache"` leader: run the body in its cache scope and store the entry. */
 async function computeUseCache<R>(
   key: string,
@@ -970,12 +987,7 @@ async function computeUseCache<R>(
   profile: string | CacheLifeProfile | undefined,
 ): Promise<DataEntry> {
   const { entry } = await runCachedBody(run, staticTags, profile);
-  if (isJsonSafe(entry.value)) {
-    await storeData(key, entry);
-  } else {
-    if (liveResults.size >= LIVE_RESULTS_MAX) liveResults.delete(liveResults.keys().next().value!);
-    liveResults.set(key, entry);
-  }
+  await storeUseCacheEntry(key, entry);
   return entry;
 }
 

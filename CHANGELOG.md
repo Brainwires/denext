@@ -57,6 +57,30 @@ and this project adheres to
   `getTask`, `taskNames`, `isTask` (+ `Task`/`TaskDefinition`/`TaskContext` types); new
   `scheduledTasks` config key; new `denext task` CLI verb.
 
+### Fixed
+
+- **Live tag watches (`useApi({ tags })`): a refused watch is no longer silent.** A `denied` error
+  frame for a tag watch was routed to neither the channel nor data subscription tables, so the watch
+  simply stopped live-updating with no signal. `subscribeLiveTags` now takes an optional `onError`,
+  and an unhandled tag-watch refusal is `console.warn`ed with its sub id — never fully swallowed.
+- **Live: a tag `invalidate` shed under back-pressure is now replayed on drain.** The back-pressure
+  recovery path recorded shed `patch` and `data` frames but dropped a shed `invalidate`, so a
+  `useApi({ tags })` watcher could miss a refetch with no reconnect to catch it up. Shed invalidates
+  are now coalesced per sub and re-signalled once the socket drains (skipping watches dropped in the
+  meantime).
+- **`use cache`: a stale component (non-serializable) result now revives back into the in-process
+  live store, not the durable store.** The stale-while-revalidate background refresh always wrote the
+  recomputed entry durably, even for a cached component's element tree (which must live in-process —
+  a durable write is a lossy `JSON.stringify`). The in-process live entry, checked first, kept its
+  frozen-in-the-past `staleAt`, so every later request served the stale tree and re-queued the
+  recompute — a value that revalidated forever. The store-routing decision is now shared by the
+  leader and the revive path.
+- **Resumability: a capturing `qrl` on a non-resumable route no longer double-fires.** Such a handler
+  was stamped `evt:id`, so the delegated dispatcher ran its segment without live captures and threw
+  in `capturedScope()` (a redundant second fire after the eager handler). A capturing qrl now always
+  hydrates-and-replays (bare `evt`) regardless of resumable mode. Narrow — only a hand-authored
+  `qrl(fn, id, [captures])`; the transform never emits this.
+
 ## [2.1.0-rc.3] - 2026-09-08
 
 ### Added
