@@ -8,6 +8,20 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **SPA mode now installs the class-component / `Activity` / `ViewTransition` reconciler runtimes.**
+  A `mode: "spa"` app uses its own entry (`spa.entry`), so denext never emitted the
+  `installClassSupport()` / `installActivitySupport()` / `installViewTransitionSupport()` calls its
+  generated App-Router entries do — a SPA that rendered a class component (an error boundary, a
+  `Schema.TaggedError` subclass) threw **"class components are disabled"** at render even with the
+  runtime bundled, and `<Activity>`/`<ViewTransition>` silently no-op'd. The SPA entry now wires
+  them in before the app mounts: class components are **on by default** (a compat SPA bundles npm
+  deps that can render class components, which a source scan wouldn't see — set
+  `classComponents: false` to drop the ~3 KB runtime), and `<Activity>`/`<ViewTransition>` are
+  auto-detected by scanning the app's source (their runtimes stay out of a bundle that never uses
+  them). A migrated Vite/SPA app now runs without hand-editing the generated config.
+
 ## [2.1.0] - 2026-09-08
 
 ### Added

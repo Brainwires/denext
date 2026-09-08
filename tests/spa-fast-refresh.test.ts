@@ -72,10 +72,45 @@ Deno.test("refreshFooter: emits an aliased import + one registration per compone
 
 // ---- the generated dev entry ------------------------------------------------
 
-Deno.test("generateSpaEntry: prod is a bare side-effect import (no refresh runtime)", () => {
+Deno.test("generateSpaEntry: prod imports the app + installs the class runtime (no refresh runtime)", () => {
   const src = generateSpaEntry("file:///app/src/main.tsx");
   assertStringIncludes(src, 'import "file:///app/src/main.tsx";');
   assert(!src.includes("enableFastRefresh"), "prod entry ships no refresh runtime");
+  // Class components are default-on for SPA, so the entry wires the class runtime into the
+  // reconciler seam before the app mounts — a class component (error boundary, Schema class)
+  // would otherwise throw "class components are disabled" at render.
+  assertStringIncludes(src, 'import { installClassSupport } from "denext/client-runtime";');
+  assertStringIncludes(src, "installClassSupport();");
+  // The install must precede the app import so the seam is active when createRoot runs.
+  assert(
+    src.indexOf("installClassSupport();") < src.indexOf('import "file:///app/src/main.tsx";'),
+    "class support installs before the app entry",
+  );
+});
+
+Deno.test("generateSpaEntry: classComponents:false omits the class runtime (tree-shakeable)", () => {
+  const src = generateSpaEntry("file:///app/src/main.tsx", false, null, { classComponents: false });
+  assert(!src.includes("installClassSupport"), "no reference ⇒ the ~3 KB class runtime is dropped");
+  assert(!src.includes("installActivitySupport"), "Activity off by default");
+  assert(!src.includes("installViewTransitionSupport"), "ViewTransition off by default");
+  assertStringIncludes(src, 'import "file:///app/src/main.tsx";');
+});
+
+Deno.test("generateSpaEntry: installs Activity + ViewTransition runtimes when the app uses them", () => {
+  const src = generateSpaEntry("file:///app/src/main.tsx", false, null, {
+    activity: true,
+    viewTransition: true,
+  });
+  assertStringIncludes(src, "installActivitySupport();");
+  assertStringIncludes(src, "installViewTransitionSupport();");
+  // class defaults on even when only activity/viewTransition are named.
+  assertStringIncludes(src, "installClassSupport();");
+  // Every seam install precedes the app import.
+  assert(
+    src.indexOf("installViewTransitionSupport();") <
+      src.indexOf('import "file:///app/src/main.tsx";'),
+    "seam installs precede the app entry",
+  );
 });
 
 Deno.test("generateSpaEntry(dev): installs Fast Refresh before the app mounts", () => {

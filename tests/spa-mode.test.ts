@@ -14,8 +14,15 @@ Deno.test("generateSpaEntry imports instrumentation-client FIRST when the projec
     "/proj/instrumentation-client.ts",
   );
   const lines = prod.split("\n");
+  // instrumentation-client is the very FIRST import (line 1), before the class-runtime wiring
+  // and the app entry.
   assertEquals(lines[1], 'import "file:///proj/instrumentation-client.ts";', "before the entry");
-  assertEquals(lines[2], 'import "file:///app/src/main.tsx";');
+  assert(
+    prod.indexOf('import "file:///proj/instrumentation-client.ts";') <
+      prod.indexOf('import "file:///app/src/main.tsx";'),
+    "instrumentation precedes the app entry",
+  );
+  assertStringIncludes(prod, 'import "file:///app/src/main.tsx";');
   const dev = generateSpaEntry("file:///app/src/main.tsx", true, "/proj/instrumentation-client.ts");
   assertEquals(dev.split("\n")[1], 'import "file:///proj/instrumentation-client.ts";');
   assertStringIncludes(dev, "enableFastRefresh();");

@@ -43,21 +43,65 @@ export function generateSpaEntry(
   entryUrl: string,
   dev = false,
   instrumentationClient: string | null = null,
+  support: SpaEntrySupport = {},
 ): string {
   // `instrumentation-client` runs FIRST, before the app's entry (Next's semantics) — the
   // same prelude the App Router entries get.
   const prelude = instrumentationClient
     ? `import ${JSON.stringify(toFileUrl(instrumentationClient).href)};\n`
     : "";
+  // Wire the reconciler-seam runtimes (class components, Activity offscreen scheduler,
+  // ViewTransition marking) into place BEFORE the app mounts — the App Router entries emit the
+  // same installs (see `classSupportBlock`/`activitySupportBlock`/`viewTransitionSupportBlock`
+  // in bundle.ts). Each is gated so an app that doesn't use the feature emits no reference and
+  // `deno bundle`/esbuild tree-shakes that runtime out. Without the class install, a SPA that
+  // renders any class component (an error boundary, a `Schema.TaggedError` subclass) throws
+  // "class components are disabled" at render; likewise `<Activity>`/`<ViewTransition>` would
+  // silently no-op.
+  const install = supportInstall(support);
   if (!dev) {
-    return `// denext generated SPA entry — do not edit.\n${prelude}import ${
+    return `// denext generated SPA entry — do not edit.\n${prelude}${install}import ${
       JSON.stringify(entryUrl)
     };\n`;
   }
-  return `// denext generated SPA entry (dev) — do not edit.\n${prelude}` +
+  return `// denext generated SPA entry (dev) — do not edit.\n${prelude}${install}` +
     `import { enableFastRefresh } from "denext/client-runtime";\n` +
     `enableFastRefresh();\n` +
     `await import(${JSON.stringify(entryUrl)});\n`;
+}
+
+/** Which reconciler-seam runtimes the SPA entry should install (class defaults on for SPA). */
+export interface SpaEntrySupport {
+  /** Install the class-component runtime (default true for SPA — error boundaries are common). */
+  classComponents?: boolean;
+  /** Install the `<Activity>` offscreen scheduler (set when the app uses it). */
+  activity?: boolean;
+  /** Install the per-element `<ViewTransition>` runtime (set when the app uses it). */
+  viewTransition?: boolean;
+}
+
+/** The `import`+`install()` lines for each seam runtime the entry needs. */
+function supportInstall(support: SpaEntrySupport): string {
+  const lines: string[] = [];
+  if (support.classComponents ?? true) {
+    lines.push(
+      `import { installClassSupport } from "denext/client-runtime";`,
+      `installClassSupport();`,
+    );
+  }
+  if (support.activity) {
+    lines.push(
+      `import { installActivitySupport } from "denext/client-runtime";`,
+      `installActivitySupport();`,
+    );
+  }
+  if (support.viewTransition) {
+    lines.push(
+      `import { installViewTransitionSupport } from "denext/client-runtime";`,
+      `installViewTransitionSupport();`,
+    );
+  }
+  return lines.length ? lines.join("\n") + "\n" : "";
 }
 
 /**
