@@ -37,7 +37,7 @@ export function supportsRoute(route: PageRoute): boolean {
 export function serveEntry(st: UnbundledState, route: PageRoute): Promise<string> {
   return transformGeneratedEntry(
     st,
-    generateRouteEntry(route, true, true, st.opts.instrumentationClient ?? null, true),
+    generateRouteEntry(route, true, true, st.opts.instrumentationClient ?? null, true, true),
     `entry:${route.routePath}`,
   );
 }
@@ -59,7 +59,15 @@ export async function serveFlightEntry(
   await ensureClientDeps(st);
   return transformGeneratedEntry(
     st,
-    generateFlightEntry(boundary, true, true, true, st.opts.instrumentationClient ?? null, true),
+    generateFlightEntry(
+      boundary,
+      true,
+      true,
+      true,
+      st.opts.instrumentationClient ?? null,
+      true,
+      true,
+    ),
     "entry:flight",
   );
 }

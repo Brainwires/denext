@@ -9,6 +9,7 @@ import { invokeWithRenderPhase } from "./render-phase.ts";
 import "../runtime/class-flag.ts";
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
+import { ACTIVITY } from "../runtime/react-extras.ts";
 import {
   boundaryFallbackError,
   boundaryLetsThrough,
@@ -502,6 +503,15 @@ async function flightOnlyVNode(
     return resolveInBoundaryScope(
       w.ids,
       () => flightOnlyChildren(props.children as VNodeChildren, w, scopes),
+    );
+  }
+  // Activity is id-transparent (like a Fragment). Visible → render children; hidden →
+  // render nothing (the client pre-renders it offscreen after hydration — no mismatch).
+  if ((type as unknown) === ACTIVITY) {
+    return flightOnlyChildren(
+      (props.mode === "hidden" ? undefined : props.children) as VNodeChildren,
+      w,
+      scopes,
     );
   }
   if ((type as unknown) === ERROR_BOUNDARY) {

@@ -64,12 +64,19 @@ Deno.test("ViewTransition renders its children (transparent passthrough)", async
   assertEquals(html, "<span>content</span>");
 });
 
-Deno.test("Activity renders its children (transparent passthrough)", async () => {
+Deno.test("Activity SSR: visible renders children, hidden renders nothing", async () => {
   const { Activity } = await import("../src/compat/react.ts");
-  const html = await renderToString(
+  // A visible Activity is id-transparent — it renders its children like a Fragment.
+  const visible = await renderToString(
+    h(Activity as Any, { mode: "visible" }, h("span", null, "kept")) as never,
+  );
+  assertEquals(visible, "<span>kept</span>");
+  // A hidden Activity renders nothing server-side: the client pre-renders it offscreen
+  // after hydration, so emitting nothing avoids a mismatch (and a flash of hidden content).
+  const hidden = await renderToString(
     h(Activity as Any, { mode: "hidden" }, h("span", null, "kept")) as never,
   );
-  assertEquals(html, "<span>kept</span>");
+  assertEquals(hidden, "");
 });
 
 Deno.test("new React 19.2 shims: cacheSignal/captureOwnerStack/addTransitionType/optimisticKey", async () => {

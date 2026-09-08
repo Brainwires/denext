@@ -3,7 +3,17 @@
 // Client-safe: the request context is reached through the bridge global the server installs.
 
 import { Fragment, h } from "../jsx/jsx-runtime.ts";
-import type { VNode, VNodeChildren } from "../jsx/types.ts";
+import type { VNode, VNodeChildren, VProps } from "../jsx/types.ts";
+
+/**
+ * Marker used as the `type` of an {@link Activity} VNode so the reconciler recognizes it
+ * (mirrors `SUSPENSE` in `src/runtime/suspense.ts`). An Activity fiber deprioritizes /
+ * hides its subtree; the offscreen logic itself is import-gated (installed into the
+ * reconciler seam only when the app uses `Activity`, so a bundle that never renders one
+ * ships none of it). Recognizing the marker is always cheap; without the gated runtime an
+ * Activity fiber is a transparent passthrough of its children (the historical shim).
+ */
+export const ACTIVITY: symbol = Symbol.for("denext.activity");
 
 /**
  * The current request context (an opaque per-request object), used to make
@@ -38,14 +48,23 @@ export function ViewTransition(props: { children?: VNodeChildren }): VNode {
 
 /**
  * `React.Activity` (experimental; formerly `unstable_Offscreen`) — wraps a subtree whose
- * rendering can be deprioritized or hidden (`mode="hidden"`). denext has no offscreen
- * scheduler, so it renders as a transparent passthrough of its children (the `mode` prop is
- * accepted and ignored). Lets apps that adopt the API build and render.
+ * rendering can be deprioritized or hidden. `mode="hidden"` keeps the subtree mounted but
+ * removed from the layout (`display:none`), tears down its effects, and preserves its state
+ * (`useState`/`useRef` cells) so `mode="visible"` restores the SAME instances instantly; a
+ * subtree that MOUNTS hidden is pre-rendered at transition priority so it never blocks the
+ * initial paint. The offscreen scheduler is import-gated: it is installed into the
+ * reconciler only when the app uses `Activity` (a build-time scan), so a bundle that never
+ * renders one pays nothing. Without it installed (or with `mode="visible"`), the wrapper is
+ * a transparent passthrough of its children.
  */
 export function Activity(
   props: { mode?: "visible" | "hidden"; children?: VNodeChildren },
 ): VNode {
-  return h(Fragment, null, props?.children);
+  return {
+    type: ACTIVITY as unknown as string,
+    props: (props ?? {}) as unknown as VProps,
+    key: null,
+  };
 }
 
 /**

@@ -230,9 +230,12 @@ function revealOffscreenPrimary(f: Fiber): void {
 }
 
 function applyOffscreenVisibility(f: Fiber): void {
-  if (f.tag !== "suspense") return;
-  const shouldHide = f.offscreen === true && f.showingFallback === true &&
-    f.primaryCount != null;
+  // Both a re-suspended <Suspense> (primary kept mounted behind its fallback) and a hidden
+  // <Activity> hide their primary children the same way. A Suspense hides only while it is
+  // actually showing the fallback; an Activity hides whenever it is offscreen.
+  if (f.tag !== "suspense" && f.tag !== "activity") return;
+  const shouldHide = f.offscreen === true && f.primaryCount != null &&
+    (f.tag !== "suspense" || f.showingFallback === true);
   if (shouldHide && f.hiddenEls == null) hideOffscreenPrimary(f);
   else if (!shouldHide && f.hiddenEls != null) revealOffscreenPrimary(f);
 }
@@ -244,7 +247,7 @@ function applyOffscreenVisibility(f: Fiber): void {
  * fight its lifecycle.
  */
 function forEachOffscreenCell(fiber: Fiber, visit: (fiber: Fiber, cell: HookCell) => void): void {
-  if (fiber.tag === "suspense" && fiber.hiddenEls != null) return;
+  if ((fiber.tag === "suspense" || fiber.tag === "activity") && fiber.hiddenEls != null) return;
   for (let c = fiber.child; c !== null; c = c.sibling) forEachOffscreenCell(c, visit);
   if (fiber.tag !== "component" || !fiber.hooks) return;
   for (const cell of fiber.hooks) visit(fiber, cell);

@@ -77,6 +77,7 @@ export async function bundleNativeRoutes(ctx: BuildContext): Promise<void> {
       false,
       paths.instrumentationClientPath,
       ctx.usesClassComponents,
+      ctx.usesActivity,
     ),
   }));
   if (globalError) {
@@ -156,6 +157,7 @@ export async function bundleNativeFlight(ctx: BuildContext): Promise<void> {
     importMap: ctx.cssImportMap,
     usesLive: ctx.usesLive,
     usesClassComponents: ctx.usesClassComponents,
+    usesActivity: ctx.usesActivity,
     instrumentationClient: ctx.paths.instrumentationClientPath,
   });
   await writeBundleOutput(ctx.clientDir, flightBundle, FLIGHT_BUNDLE_FILE);

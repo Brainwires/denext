@@ -968,6 +968,7 @@
     "enablePerModuleRefresh:function",
     "ensureFlightModules:function",
     "flightClientIds:function",
+    "installActivitySupport:function",
     "installClassSupport:function",
     "parseFlight:function",
     "performModuleRefresh:function",

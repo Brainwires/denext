@@ -9,6 +9,7 @@
 import { FRAGMENT, PORTAL, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
 import { type Dispatcher, setDispatcher } from "../runtime/hooks.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
+import { ACTIVITY } from "../runtime/react-extras.ts";
 import { boundaryLetsThrough, ERROR_BOUNDARY } from "../runtime/error-boundary.ts";
 import { isComponentType } from "../runtime/react-brands.ts";
 import { type ClientRefInfo, clientRefOf } from "../runtime/client-reference.ts";
@@ -133,6 +134,17 @@ export abstract class VNodeRenderer<T> {
       throw new Error("Portals are not currently supported by the server renderer.");
     }
     if ((type as unknown) === SUSPENSE) return this.renderSuspense(props, scopes, head);
+    if ((type as unknown) === ACTIVITY) {
+      // Activity is id-transparent (like a Fragment). A visible one server-renders its
+      // children; a HIDDEN one renders nothing — the client pre-renders it offscreen after
+      // hydration, so emitting nothing here avoids a hydration mismatch (and the flash of
+      // hidden content that a wrapper-less server render would otherwise show).
+      return this.renderChildren(
+        props.mode === "hidden" ? undefined : props.children,
+        scopes,
+        head,
+      );
+    }
     if (type === FRAGMENT) {
       return this.renderChildren(props.children, scopesWithProvider(scopes, props), head);
     }

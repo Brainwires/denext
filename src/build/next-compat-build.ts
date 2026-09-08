@@ -375,6 +375,11 @@ export interface BuildNextCompatFlightOptions {
    * Defaults to `false`. See {@link generateFlightEntry}/{@link generateRouteEntry}.
    */
   usesClassComponents?: boolean;
+  /**
+   * Whether the app uses `<Activity>` (build scan). When false, the generated entry omits
+   * `installActivitySupport()` and the offscreen scheduler is dropped. Defaults to `false`.
+   */
+  usesActivity?: boolean;
 }
 
 /**
@@ -428,6 +433,7 @@ export async function buildNextCompatFlightEntry(
       options.usesLive ?? true,
       options.instrumentationClient ?? null,
       options.usesClassComponents ?? false,
+      options.usesActivity ?? false,
     ),
   );
   await bundleNextCompatModules({

@@ -24,6 +24,10 @@ export { clientActionStub } from "../runtime/server-action.ts";
 // the reconciler seam ONLY when the app uses classes — so a function-only bundle drops this
 // re-export (and the whole ~3.1 KB class runtime) via tree-shaking.
 export { installClassSupport } from "../compat/class-component.ts";
+// Activity: the entry emits `installActivitySupport()` to wire the offscreen scheduler into
+// the reconciler seam ONLY when the app uses `<Activity>` — so an app that never renders one
+// drops this re-export (and the whole offscreen begin logic) via tree-shaking.
+export { installActivitySupport } from "./fiber/activity-runtime.ts";
 // Resumability: the lazily-loaded event-handler reference the qrl transform emits.
 export { capturedScope, type Qrl, qrl } from "../runtime/qrl.ts";
 // Dev Fast Refresh: family registration + state-preserving reconcile (dev entries only).

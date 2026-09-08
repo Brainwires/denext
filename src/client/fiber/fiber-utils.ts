@@ -3,6 +3,7 @@
 
 import { FRAGMENT, PORTAL, type VNode } from "../../jsx/types.ts";
 import { SUSPENSE } from "../../runtime/suspense.ts";
+import { ACTIVITY } from "../../runtime/react-extras.ts";
 import { PROVIDER } from "../../runtime/context.ts";
 import { ERROR_BOUNDARY } from "../../runtime/error-boundary.ts";
 import { TEXT_TYPE } from "../vnode-utils.ts";
@@ -26,6 +27,7 @@ function tagOf(vnode: VNode): FiberTag {
   const t = vnode.type as unknown;
   if (t === TEXT_TYPE) return "text";
   if (t === SUSPENSE) return "suspense";
+  if (t === ACTIVITY) return "activity";
   if (t === ERROR_BOUNDARY) return "errorboundary";
   if (t === FRAGMENT) return "fragment";
   if (t === PORTAL) return "portal";

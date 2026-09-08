@@ -5,7 +5,7 @@ import { join } from "@std/path";
 import { runPluginBuildSteps } from "../../plugin/mod.ts";
 import { scanRoutes } from "../../router/manifest.ts";
 import { computeBoundaryRoutes } from "../module-graph.ts";
-import { appUsesClassComponents } from "../bundle.ts";
+import { appUsesActivity, appUsesClassComponents } from "../bundle.ts";
 import { detectNextCompat } from "../next-compat-detect.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { dirExists, setupPlugins } from "../pipeline-shared.ts";
@@ -70,6 +70,10 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
   // route paths see it. On compat this mirrors the esbuild `define` (config-driven Component).
   const usesClassComponents = paths.config?.classComponents === true ||
     await appUsesClassComponents(projectDir);
+  // Gate the Activity offscreen scheduler: install it only when the app renders `<Activity>`
+  // (a build scan). Computed here (like usesClassComponents) so native + Flight route paths
+  // both see it. An app can't use Activity without naming it, so the scan can't false-drop.
+  const usesActivity = await appUsesActivity(projectDir);
   return {
     projectDir,
     paths,
@@ -88,6 +92,7 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
     boundary: null,
     usesLive: false,
     usesClassComponents,
+    usesActivity,
     compatServerModules: {},
   };
 }

@@ -256,10 +256,14 @@ Flight soft-navigation commits inside `document.startViewTransition` where the
 browser supports it, so the route swap cross-fades; the component's per-element
 props (`name`/`enter`/`exit`) are not yet honored (that needs real
 `view-transition-name` DOM markers), and the isomorphic/HTML nav paths (async
-reconcile) don't animate yet. **`Activity` is still a passthrough shim** — it
-renders its children and ignores `mode`; real offscreen scheduling (deferred
-pre-render, hidden-subtree state preservation) is a **not-yet-built** reconciler
-feature, not a non-goal. **React `taint*` is implemented**:
+reconcile) don't animate yet. **`Activity` does real offscreen scheduling** —
+`mode="hidden"` keeps the subtree mounted-but-hidden (`display:none`), preserves its
+state, and tears down its effects, so `mode="visible"` restores the same instances; a
+subtree that mounts hidden is pre-rendered at transition priority. One residual gap vs
+React: a subtree that MOUNTS hidden runs its effects once during that pre-render (and
+keeps them connected while hidden) — React defers a hidden subtree's effects entirely;
+denext only tears effects down on a visible→hidden transition, not a hidden mount.
+**React `taint*` is implemented**:
 `experimental_taintObjectReference` / `experimental_taintUniqueValue` mark a value
 that must never cross the server→client boundary, enforced in the Flight serializer
 (it throws rather than serialize a tainted object or secret string). Defense-in-depth,

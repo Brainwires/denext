@@ -97,6 +97,9 @@ security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
 - `Suspense`, `SuspenseList`, `ErrorBoundary`, `startTransition`, `memo`,
   `createContext`, `forwardRef`, `createPortal`, `lazy`, `Profiler`,
   `StrictMode`.
+- **`Activity`** — real offscreen scheduling: `mode="hidden"` keeps a subtree
+  mounted-but-hidden (state preserved, effects torn down), `mode="visible"`
+  restores the same instances; import-gated, so apps that don't use it pay nothing.
 - **Auto-memo compiler** (React-Compiler-style automatic memoization) ⚑.
 - **First-party `AsyncContext`** (TC39-shaped `Variable` + `Snapshot`) — the
   primitive no browser has shipped, implemented in userland. Synchronous scoping

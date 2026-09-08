@@ -49,6 +49,8 @@ export interface BuildContext {
   usesLive: boolean;
   /** Whether the generated entries install the class-component runtime (scan or config). */
   usesClassComponents: boolean;
+  /** Whether the generated entries install the Activity offscreen scheduler (scan). */
+  usesActivity: boolean;
   /** next-compat: source module (project-relative) → server bundle (outDir-relative). */
   readonly compatServerModules: Record<string, string>;
 }

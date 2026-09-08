@@ -10,6 +10,19 @@ and this project adheres to
 
 ### Added
 
+- **`Activity` does real offscreen scheduling (import-gated).** `React.Activity` was a
+  passthrough shim; it now schedules its subtree for real. `mode="hidden"` keeps the subtree
+  mounted but removed from layout (`display:none !important`), tears down its effects, and
+  preserves its state cells, so flipping back to `mode="visible"` restores the SAME instances
+  instantly (no remount); a subtree that mounts hidden is pre-rendered at transition priority
+  so it never blocks the initial paint. It reuses the exact offscreen commit machinery
+  `<Suspense>` already ships (hide/disconnect on hide, restore/reconnect on reveal). Server
+  rendering: a visible `Activity` renders its children; a hidden one renders nothing (the
+  client pre-renders it offscreen after hydration, avoiding a mismatch and a flash). The
+  offscreen runtime is **import-gated** — installed into the reconciler only when a build scan
+  sees `<Activity>` — so an app that never renders one bundles none of it (the shared client
+  chunk is unchanged). One residual gap vs React: a subtree that MOUNTS hidden runs its effects
+  once (React defers them); see [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
 - **`global-error.tsx` now hydrates — `reset` works and author interactivity is live.**
   global-error replaces the root layout and renders its own `<html>`/`<body>`; it was
   previously served as dead HTML (no client JS), so its `reset` prop was inert and no author
