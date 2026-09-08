@@ -3,7 +3,12 @@
 
 import { join, toFileUrl } from "@std/path";
 import { nodeResolveEnabled, type SpaConfig } from "../../server/config.ts";
-import { bundleSourceFiles, writeBundleOutput } from "../bundle.ts";
+import {
+  appUsesActivity,
+  appUsesViewTransition,
+  bundleSourceFiles,
+  writeBundleOutput,
+} from "../bundle.ts";
 import { type AppCss, buildAppCss, extractRouteCss } from "../css.ts";
 import { buildNextCompatClientEntries } from "../next-compat-build.ts";
 import { detectNextCompat } from "../next-compat-detect.ts";
@@ -163,10 +168,20 @@ export async function bundleSpaInto(
 ): Promise<{ hasStyles: boolean }> {
   const spa = paths.config!.spa!;
   const css = await spaCss(paths, entryPath, minify);
+  // Auto-detect which reconciler-seam runtimes the entry must install. Class components default
+  // ON for SPA (an explicit `classComponents:false` opts out) — a compat SPA bundles npm deps
+  // that can render class components, which a source scan wouldn't see. `<Activity>`/
+  // `<ViewTransition>` are denext-only APIs the app itself must name, so a source scan detects
+  // them precisely (and keeps their runtimes out of a bundle that never uses them).
+  const [activity, viewTransition] = await Promise.all([
+    appUsesActivity(paths.projectDir, [entryPath]),
+    appUsesViewTransition(paths.projectDir, [entryPath]),
+  ]);
   const entrySource = generateSpaEntry(
     toFileUrl(entryPath).href,
     dev,
     paths.instrumentationClientPath,
+    { classComponents: paths.config?.classComponents ?? true, activity, viewTransition },
   );
   const compat = await detectNextCompat(paths);
   // `spa.env` and Vite-style asset imports (`?url`/`?worker`) only apply on the compat

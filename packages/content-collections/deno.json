@@ -9,7 +9,7 @@
     "./command": "./command.ts"
   },
   "imports": {
-    "@denext/denext": "jsr:@denext/denext@^2.1.0",
+    "@denext/denext": "jsr:@denext/denext@^2.1.1",
     "@std/front-matter": "jsr:@std/front-matter@^1.0.0",
     "@std/fs": "jsr:@std/fs@^1.0.0",
     "@std/path": "jsr:@std/path@^1.0.0",

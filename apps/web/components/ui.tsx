@@ -23,11 +23,13 @@ export const NAV: {
     group: "Build with it",
     items: [
       { slug: "data", label: "Data & caching" },
+      { slug: "content-collections", label: "Content collections" },
       { slug: "typed-api", label: "Typed API" },
       { slug: "openapi", label: "OpenAPI & docs" },
       { slug: "graphql", label: "GraphQL" },
       { slug: "rendering", label: "Rendering strategies" },
       { slug: "server-actions", label: "Server Actions" },
+      { slug: "tasks", label: "Scheduled tasks" },
       { slug: "live", label: "Live components" },
       { slug: "islands", label: "Islands & hydration" },
       { slug: "resumability", label: "Resumability" },
