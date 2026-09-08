@@ -133,10 +133,21 @@ Deno.test("withViewTransition drives the marking around startViewTransition and 
   }
 });
 
-Deno.test("SSR renders a ViewTransition's children (id-transparent)", async () => {
+Deno.test("SSR stamps the config attribute on the child (survives SSR + Flight), no wrapper", async () => {
   const { renderToStringSync } = await import("../src/jsx/render-to-string.ts");
+  // The config rides a DOM attribute on the child element — the only carrier that survives
+  // server rendering AND the Flight boundary (a VNode/Fragment marker would be dropped). No
+  // wrapper element is added; the child stays the child.
   const html = renderToStringSync(
-    h(ViewTransition, { name: "hero" }, h("span", null, "content")),
+    h(ViewTransition, { name: "hero" }, h("span", { id: "x" }, "content")),
   );
-  assertEquals(html, "<span>content</span>");
+  assertStringIncludes(html, "content");
+  assertStringIncludes(html, "<span");
+  assertStringIncludes(html, "data-dnx-vt=");
+  assertStringIncludes(html, "hero"); // the JSON-encoded name is present in the attribute
+  // A wrapper with no single element child (or no name/class) is a transparent passthrough.
+  assertEquals(
+    renderToStringSync(h(ViewTransition, null, "just text")),
+    "just text",
+  );
 });

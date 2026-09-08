@@ -5,17 +5,17 @@
 // out — the same lever the class-component, Activity and Live runtimes use. The navigation
 // runtime imports only the seam, never this file.
 //
-// A `<ViewTransition>` renders as a Fragment carrying its config under the VIEW_TRANSITION
-// symbol (a marker Fragment, like a context Provider / SuspenseList carrier — it keeps its
-// own fiber). Around a view transition the navigation runtime calls markOutgoing() BEFORE
-// `startViewTransition` (so the browser's old-state capture sees the names) and markIncoming()
-// inside the transition callback after the DOM commit (so the new-state capture sees them),
-// then clear() when the transition finishes. Names are stamped onto the wrapper's first host
-// child; a `name` shared across the old and new trees pairs the two for a morph, and
-// `enter`/`exit`/`update`/`share` become `view-transition-class` on the old vs. new side.
+// A `<ViewTransition>` stamps its config as the DNX_VT_ATTR attribute on its host child (see
+// react-extras.ts) — a DOM attribute, so it survives server rendering AND the Flight boundary
+// (a VNode/Fragment marker would not: server components aren't re-run on the client and a
+// Fragment's props are dropped in Flight). Around a transition the navigation runtime calls
+// markOutgoing() BEFORE `startViewTransition` (so the browser's old-state capture sees the
+// names) and markIncoming() inside the callback after the DOM commit (so the new-state
+// capture sees them), then clear() when the transition finishes. Names are applied to the
+// marked elements found in each root's live DOM; a `name` present on both sides pairs them for
+// a morph, and `enter`/`exit`/`update`/`share` become `view-transition-class` on old vs. new.
 
-import { collectDom, type Fiber } from "./fiber.ts";
-import { VIEW_TRANSITION, type ViewTransitionMarker } from "../../runtime/react-extras.ts";
+import { DNX_VT_ATTR, type ViewTransitionMarker } from "../../runtime/react-extras.ts";
 import { activeRoots } from "./state.ts";
 import { getActiveTransitionTypes, setViewTransitionSupport } from "./view-transition-support.ts";
 
@@ -24,19 +24,24 @@ import { getActiveTransitionTypes, setViewTransitionSupport } from "./view-trans
 // from its original rather than compounding.
 let marked = new Map<Element, string | null>();
 
-/** The wrapper's first host descendant — the element the name/class is stamped on. */
-function firstHostEl(fiber: Fiber): Element | null {
-  const out: (Element | Text)[] = [];
-  collectDom(fiber, out);
-  for (const n of out) if (n.nodeType === 1) return n as Element;
-  return null;
+/** Collect every marked element under `root` (inclusive), DFS via element children — portable across the real DOM and the test DOM shim (no querySelectorAll dependency). */
+function collectMarked(root: Element, out: Element[]): void {
+  if (typeof root.getAttribute === "function" && root.getAttribute(DNX_VT_ATTR) != null) {
+    out.push(root);
+  }
+  const kids = root.children;
+  for (let i = 0; i < kids.length; i++) collectMarked(kids[i] as Element, out);
 }
 
-/** The `<ViewTransition>` config on a marker Fragment fiber, or undefined for any other fiber. */
-function markerOf(fiber: Fiber): ViewTransitionMarker | undefined {
-  if (fiber.tag !== "fragment") return undefined;
-  const props = fiber.vnode.props as Record<string, unknown> | null;
-  return props?.[VIEW_TRANSITION as unknown as string] as ViewTransitionMarker | undefined;
+/** Parse a marked element's {@link DNX_VT_ATTR} config, or null when absent/malformed. */
+function markerOf(el: Element): ViewTransitionMarker | null {
+  const raw = el.getAttribute(DNX_VT_ATTR);
+  if (raw == null) return null;
+  try {
+    return JSON.parse(raw) as ViewTransitionMarker;
+  } catch {
+    return null;
+  }
 }
 
 /** Resolve a `view-transition-class` value: a plain string, or a type→class map keyed by the active transition types. */
@@ -50,10 +55,14 @@ function resolveClass(
   return val.default;
 }
 
-/** Join defined class names into one `view-transition-class` value (undefined when none). */
+/** Join distinct class names into one `view-transition-class` value (undefined when none). */
 function joinClasses(...parts: (string | undefined)[]): string | undefined {
-  const kept = parts.filter((p): p is string => !!p);
-  return kept.length ? kept.join(" ") : undefined;
+  const seen = new Set<string>();
+  for (const p of parts) {
+    if (!p) continue;
+    for (const c of p.split(/\s+/)) if (c) seen.add(c);
+  }
+  return seen.size ? [...seen].join(" ") : undefined;
 }
 
 /** Stamp `view-transition-name` (+ class) onto `el`, rebuilding from its ORIGINAL inline style. */
@@ -68,27 +77,26 @@ function stamp(el: Element, name: string | undefined, cls: string | undefined): 
   else el.setAttribute("style", s);
 }
 
-/** Visit every `<ViewTransition>` wrapper with a host child, across all active roots' current trees. */
-function eachWrapper(visit: (marker: ViewTransitionMarker, el: Element) => void): void {
-  const walk = (fiber: Fiber): void => {
-    const m = markerOf(fiber);
-    if (m) {
-      const el = firstHostEl(fiber);
-      if (el) visit(m, el);
+/** Visit every marked element across all active roots' live DOM. */
+function eachMarked(visit: (marker: ViewTransitionMarker, el: Element) => void): void {
+  for (const handle of activeRoots) {
+    const out: Element[] = [];
+    collectMarked(handle.container, out);
+    for (const el of out) {
+      const m = markerOf(el);
+      if (m) visit(m, el);
     }
-    for (let c = fiber.child; c !== null; c = c.sibling) walk(c);
-  };
-  for (const handle of activeRoots) walk(handle.current);
+  }
 }
 
 /**
- * Stamp the CURRENT (outgoing) tree's wrappers — called BEFORE `startViewTransition`, so the
- * browser's old-state capture includes the names. The old side carries `exit`/`update`/`share`
- * classes (`::view-transition-old(name)` targets them).
+ * Stamp the CURRENT (outgoing) DOM's marked elements — called BEFORE `startViewTransition`, so
+ * the browser's old-state capture includes the names. The old side carries `exit`/`update`/
+ * `share` classes (`::view-transition-old(name)` targets them).
  */
 function markOutgoing(): void {
   const types = getActiveTransitionTypes();
-  eachWrapper((m, el) => {
+  eachMarked((m, el) => {
     stamp(
       el,
       m.name,
@@ -102,14 +110,14 @@ function markOutgoing(): void {
 }
 
 /**
- * Stamp the now-current (incoming) tree's wrappers — called INSIDE the transition callback
- * after the DOM commit, so the new-state capture includes the names. The new side carries
+ * Stamp the now-current (incoming) DOM's marked elements — called INSIDE the transition
+ * callback after the commit, so the new-state capture includes the names. The new side carries
  * `enter`/`update`/`share` classes (`::view-transition-new(name)` targets them). A reused
  * element (a morph in place) is re-stamped from its original, so the incoming class wins.
  */
 function markIncoming(): void {
   const types = getActiveTransitionTypes();
-  eachWrapper((m, el) => {
+  eachMarked((m, el) => {
     stamp(
       el,
       m.name,

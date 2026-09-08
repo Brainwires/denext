@@ -52,16 +52,23 @@ Deno.test("SuspenseList renders its children", async () => {
   assertEquals(html, "<p>a</p><p>b</p>");
 });
 
-Deno.test("ViewTransition renders its children (transparent passthrough)", async () => {
+Deno.test("ViewTransition is transparent but stamps its config onto the child (survives SSR + Flight)", async () => {
   const { ViewTransition } = await import("../src/compat/react.ts");
   const html = await renderToString(
     h(
       ViewTransition as Any,
-      { name: "hero", enter: "slide-in" }, // animation props accepted + ignored
+      { name: "hero", enter: "slide-in" },
       h("span", null, "content"),
     ) as never,
   );
-  assertEquals(html, "<span>content</span>");
+  // No wrapper element; the child is the child. The config rides a DOM attribute (the only
+  // carrier that survives the Flight boundary), which the client marking runtime reads.
+  assertStringIncludes(html, "<span");
+  assertStringIncludes(html, ">content</span>");
+  assertStringIncludes(html, "data-dnx-vt=");
+  assertStringIncludes(html, "hero");
+  // A wrapper with no single element child is a plain passthrough.
+  assertEquals(await renderToString(h(ViewTransition as Any, null, "x") as never), "x");
 });
 
 Deno.test("Activity SSR: visible renders children, hidden renders nothing", async () => {

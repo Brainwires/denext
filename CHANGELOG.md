@@ -20,9 +20,12 @@ and this project adheres to
   `addTransitionType` is now wired: it buffers types that drive `startViewTransition({ types })`.
   The isomorphic and full-HTML nav paths now animate too — they await the re-injected route
   entry so the DOM swap lands inside the transition (previously only the Flight path animated).
-  `<ViewTransition>` renders as a marker Fragment (id-transparent), so SSR/hydration are
-  unchanged. The marking runtime is **import-gated** — installed only when a build scan sees
-  `<ViewTransition>` — so an app that never renders one bundles none of it. Residual vs React:
+  `<ViewTransition>` is transparent (no DOM node of its own): it carries its config on a DOM
+  attribute (`data-dnx-vt`) stamped onto its single host child, which is the only carrier that
+  survives BOTH server rendering and the Flight boundary — a symbol-keyed VNode marker is
+  dropped in Flight and server components aren't re-run on the client, so it would never reach
+  the browser tree. The marking runtime is **import-gated** — installed only when a build scan
+  sees `<ViewTransition>` — so an app that never renders one bundles none of it. Residual vs React:
   only navigation commits are wrapped (a same-page reorder isn't animated); see
   [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
 - **`Activity` does real offscreen scheduling (import-gated).** `React.Activity` was a
