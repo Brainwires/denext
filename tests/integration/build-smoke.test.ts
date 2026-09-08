@@ -130,7 +130,11 @@ async function assertSharedRuntimeChunk(clientDir: string): Promise<void> {
  * app (examples/hello) no longer ships the React-DevTools bridge (−3.3 KB, dev-only seam) or
  * the class-component runtime (−2.4 KB, install emitted only when the app uses classes) —
  * measured 56,558 B, so 58 KB keeps ~1.4 KB of headroom. The gates are asserted directly, not
- * just by byte budget, in {@link assertGatedRuntimeAbsent}.
+ * just by byte budget, in {@link assertGatedRuntimeAbsent}. Re-based 58 → 59 KB at the end of the
+ * 2.1 cycle: the cycle's client-surface additions (type-safe routing's `useParams`/
+ * `useSearchParams` + href param-encoding, the Live `subscribed` status, island box-target/
+ * rootMargin, `ViewTransition`/`Activity`, global-error hydration, and soft-nav rejection
+ * surfacing) measured 58,164 B — ~0.8 KB of headroom.
  */
 async function assertBundleBudgets(clientDir: string): Promise<void> {
   let sharedTotal = 0;
@@ -139,7 +143,7 @@ async function assertBundleBudgets(clientDir: string): Promise<void> {
       sharedTotal += (await Deno.stat(join(clientDir, e.name))).size;
     }
   }
-  assert(sharedTotal < 58_000, `shared chunks total ${sharedTotal} bytes (budget 58 KB raw)`);
+  assert(sharedTotal < 59_000, `shared chunks total ${sharedTotal} bytes (budget 59 KB raw)`);
   for (const f of ["about.js", "blog___slug_.js"]) {
     const n = (await Deno.stat(join(clientDir, f))).size;
     assert(n < 6_000, `${f} is ${n} bytes (budget 6 KB) — is the runtime inlined again?`);

@@ -1,6 +1,6 @@
 /**
  * `@denext/content-collections/runtime` — the server-only query API. Import the generated
- * `.denext/content.d.ts` once (it registers your `content.config.ts` type) and `getCollection` /
+ * `.denext/content.ts` once (it registers your `content.config.ts` type) and `getCollection` /
  * `getEntry` are typed to your collections and their schemas.
  *
  * ```tsx
@@ -108,7 +108,9 @@ export async function getCollection<K extends CollectionKey>(
 ): Promise<CollectionEntry<K>[]> {
   const store = await loadStore();
   const list = (store[name] ?? []) as CollectionEntry<K>[];
-  return filter ? list.filter(filter) : list;
+  // Return a fresh array so a caller's in-place `sort`/`reverse`/`pop` can't corrupt the shared
+  // in-process cache for later requests in this isolate (`filter` already produces a new array).
+  return filter ? list.filter(filter) : list.slice();
 }
 
 /**

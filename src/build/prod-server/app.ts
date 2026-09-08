@@ -110,7 +110,8 @@ export async function createProdApp(
   setNextRuntimeEnv();
   const instrumentation = await loadInstrumentation(paths.instrumentationPath);
   await runRegister(instrumentation);
-  // Discover tasks/ and register cron schedules (Deno.cron on Deploy, else a userland tick).
+  // Discover tasks/ and register cron schedules (Deno.cron on Deploy, else a userland tick). The
+  // scheduler lives for the server process (created once here); the disposer is not retained.
   await bootScheduledTasks(paths.projectDir, paths.config ?? undefined);
   const rules = await resolveConfigRules(paths.config);
   await resolveDefaultCacheStore(

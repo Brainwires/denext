@@ -231,7 +231,8 @@ Open the connection once at module scope; do writes in Server Actions.
 **A scheduled / background task (cron):** put it in `tasks/<name>.ts`; schedule it in
 `denext.config.ts` (`scheduledTasks`) or per-task; run it on demand with `runTask(name)`
 or `denext task <name>`. Uses `Deno.cron` where available (Deno Deploy), else a userland
-tick — no npm cron dependency.
+tick — no npm cron dependency. **Cron expressions are evaluated in UTC** (matching `Deno.cron`),
+and a schedule never fires on startup nor overlaps a still-running instance of the same task.
 
 ```ts
 // tasks/cleanup.ts

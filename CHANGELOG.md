@@ -51,9 +51,11 @@ and this project adheres to
   discovers `tasks/**` and registers schedules at boot (dev + prod). Scheduling uses the
   platform's managed **`Deno.cron`** when the runtime exposes it (Deno Deploy, or a self-host
   started with `--unstable-cron`) and a dependency-free minute-tick scheduler (a tiny 5-field
-  Vixie-cron matcher) otherwise. A malformed cron in `defineTask` throws early; an unknown task
-  name or bad schedule is skipped at boot with an error, never fatally. An app that defines no
-  tasks pays nothing. New `denext/server` exports: `defineTask`, `runTask`, `registerTask`,
+  Vixie-cron matcher) otherwise. Cron expressions are evaluated in **UTC** on both paths (matching
+  `Deno.cron`), and — like `Deno.cron` — a schedule never fires on startup and never overlaps a
+  still-running instance of the same task. A malformed cron in `defineTask` throws early; an
+  unknown task name or bad schedule is skipped at boot with an error, never fatally. An app that
+  defines no tasks pays nothing. New `denext/server` exports: `defineTask`, `runTask`, `registerTask`,
   `getTask`, `taskNames`, `isTask` (+ `Task`/`TaskDefinition`/`TaskContext` types); new
   `scheduledTasks` config key; new `denext task` CLI verb.
 - **`live.limits.maxPeersPerRoom` (default 1000).** A presence room's membership was otherwise

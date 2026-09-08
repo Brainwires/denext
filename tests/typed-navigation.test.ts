@@ -138,6 +138,27 @@ Deno.test("formatHref joins a catch-all param with slashes", () => {
   );
 });
 
+Deno.test("formatHref percent-encodes params so a value can't smuggle a path/query", () => {
+  // A single dynamic segment: `/`, `?`, `#`, space in the value must be encoded, not literal.
+  assertEquals(
+    formatHref(
+      { pathname: "/u/[id]", params: { id: "a/b?x=1#y z" } } as unknown as Parameters<
+        typeof formatHref
+      >[0],
+    ),
+    "/u/a%2Fb%3Fx%3D1%23y%20z",
+  );
+  // Catch-all: each element encoded, the `/` separators preserved.
+  assertEquals(
+    formatHref(
+      { pathname: "/tag/[...tags]", params: { tags: ["a b", "c/d"] } } as unknown as Parameters<
+        typeof formatHref
+      >[0],
+    ),
+    "/tag/a%20b/c%2Fd",
+  );
+});
+
 Deno.test("formatHref passes a plain string through and still handles a loose object", () => {
   assertEquals(formatHref("/about?x=1"), "/about?x=1");
   assertEquals(

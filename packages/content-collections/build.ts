@@ -81,6 +81,75 @@ function issuePath(issue: StandardIssue): string {
     .join(".");
 }
 
+/** A built entry as stored in `content-data.json`. */
+type StoreEntry = { id: string; data: unknown; body?: string };
+
+/** A collection's schema validator, if any (the Standard Schema surface `buildContent` uses). */
+type CollectionSchema = { readonly "~standard": { validate: (v: unknown) => unknown } };
+
+/** Validate one raw entry against the collection schema → a store entry, or a diagnostic. */
+async function validateEntry(
+  collection: string,
+  entry: { id: string; data: unknown; body?: string; filePath?: string; error?: string },
+  schema: CollectionSchema | undefined,
+): Promise<{ entry: StoreEntry } | { diagnostic: ContentDiagnostic }> {
+  const { id, filePath } = entry;
+  // The loader flagged this file as unparseable (bad YAML/JSON) — drop it, report it.
+  if (entry.error) return { diagnostic: { collection, id, filePath, messages: [entry.error] } };
+  let data: unknown = entry.data;
+  if (schema) {
+    const result = await schema["~standard"].validate(entry.data) as
+      | { issues?: readonly StandardIssue[] }
+      | { value: unknown };
+    if ("issues" in result && result.issues) {
+      return {
+        diagnostic: {
+          collection,
+          id,
+          filePath,
+          messages: result.issues.map((i) => `${issuePath(i)}: ${i.message}`),
+        },
+      };
+    }
+    data = (result as { value: unknown }).value;
+  }
+  return { entry: { id, data, ...(entry.body !== undefined ? { body: entry.body } : {}) } };
+}
+
+/** Load + validate one collection into its (sorted) store entries plus any diagnostics. */
+async function buildCollection(
+  name: string,
+  collection: ContentConfig["collections"][string],
+  ctx: ContentBuildContext,
+): Promise<{ entries: StoreEntry[]; diagnostics: ContentDiagnostic[] }> {
+  const diagnostics: ContentDiagnostic[] = [];
+  let raw;
+  try {
+    raw = await collection.loader.load({ projectRoot: ctx.projectRoot });
+  } catch (err) {
+    // A loader that throws wholesale (not per-file) must not abort every OTHER collection's
+    // build — report it and continue with an empty collection.
+    diagnostics.push({
+      collection: name,
+      id: "",
+      messages: [`loader failed: ${err instanceof Error ? err.message : String(err)}`],
+    });
+    return { entries: [], diagnostics };
+  }
+  const entries: StoreEntry[] = [];
+  for (const entry of raw) {
+    const result = await validateEntry(
+      name,
+      entry,
+      collection.schema as CollectionSchema | undefined,
+    );
+    if ("diagnostic" in result) diagnostics.push(result.diagnostic);
+    else entries.push(result.entry);
+  }
+  entries.sort((a, b) => a.id.localeCompare(b.id));
+  return { entries, diagnostics };
+}
+
 /**
  * Run the content build: validate every entry, write `content-data.json` + `content.ts`. Invalid
  * entries are dropped and reported in `diagnostics` (never throws for bad content — the `denext
@@ -92,37 +161,15 @@ export async function buildContent(ctx: ContentBuildContext): Promise<ContentBui
   if (!found) return { counts: {}, diagnostics: [], ok: true, configured: false };
   const { config, configPath } = found;
 
-  const store: Record<string, Array<{ id: string; data: unknown; body?: string }>> = {};
+  const store: Record<string, StoreEntry[]> = {};
   const diagnostics: ContentDiagnostic[] = [];
   const counts: Record<string, number> = {};
 
   for (const [name, collection] of Object.entries(config.collections)) {
-    const raw = await collection.loader.load({ projectRoot: ctx.projectRoot });
-    const entries: Array<{ id: string; data: unknown; body?: string }> = [];
-    for (const entry of raw) {
-      let data: unknown = entry.data;
-      if (collection.schema) {
-        const result = await collection.schema["~standard"].validate(entry.data);
-        if ("issues" in result && result.issues) {
-          diagnostics.push({
-            collection: name,
-            id: entry.id,
-            filePath: entry.filePath,
-            messages: result.issues.map((i) => `${issuePath(i)}: ${i.message}`),
-          });
-          continue;
-        }
-        data = result.value;
-      }
-      entries.push({
-        id: entry.id,
-        data,
-        ...(entry.body !== undefined ? { body: entry.body } : {}),
-      });
-    }
-    entries.sort((a, b) => a.id.localeCompare(b.id));
-    store[name] = entries;
-    counts[name] = entries.length;
+    const built = await buildCollection(name, collection, ctx);
+    store[name] = built.entries;
+    counts[name] = built.entries.length;
+    diagnostics.push(...built.diagnostics);
   }
 
   await Deno.mkdir(ctx.outDir, { recursive: true }).catch(() => {});

@@ -40,6 +40,12 @@ export interface RawEntry {
   body?: string;
   /** Absolute source path (for build diagnostics). */
   filePath?: string;
+  /**
+   * Set by a loader when this file could not be PARSED (malformed YAML/JSON). `buildContent`
+   * turns it into a diagnostic and drops the entry, rather than the whole build failing — so one
+   * bad file never empties every collection.
+   */
+  error?: string;
 }
 
 /** Context passed to a {@linkcode Loader.load}. */
@@ -134,10 +140,21 @@ export function glob(options: GlobOptions): Loader {
       for await (const item of walk(root, { includeDirs: false })) {
         const rel = relative(baseDir, item.path).replaceAll("\\", "/");
         if (!regexps.some((re) => re.test(rel))) continue;
-        const text = await Deno.readTextFile(item.path);
-        const { data, body } = parseFile(item.path, text);
         const id = rel.replace(/\.[^./]+$/, "");
-        entries.push({ id, data, body, filePath: item.path });
+        // A malformed file (bad YAML/JSON frontmatter) must not abort the whole build: record
+        // it as a per-file error the caller turns into a diagnostic, and keep going.
+        try {
+          const text = await Deno.readTextFile(item.path);
+          const { data, body } = parseFile(item.path, text);
+          entries.push({ id, data, body, filePath: item.path });
+        } catch (err) {
+          entries.push({
+            id,
+            data: {},
+            filePath: item.path,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
       }
       return entries;
     },

@@ -1,9 +1,10 @@
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { cronError, cronMatches, parseCron } from "../src/runtime/cron.ts";
 
-// A fixed local date: 2026-03-04 is a Wednesday (getDay()===3); 09:05 local.
+// A fixed UTC date (cronMatches evaluates in UTC): 2026-03-04 is a Wednesday
+// (getUTCDay()===3); 09:05 UTC.
 const at = (m: number, h: number, dom: number, mon: number, y = 2026) =>
-  new Date(y, mon - 1, dom, h, m, 0, 0);
+  new Date(Date.UTC(y, mon - 1, dom, h, m, 0, 0));
 
 Deno.test("cron: * * * * * matches every minute", () => {
   assert(cronMatches("* * * * *", at(5, 9, 4, 3)));
@@ -27,7 +28,7 @@ Deno.test("cron: step, range, and list fields", () => {
 });
 
 Deno.test("cron: day-of-week 7 normalizes to Sunday", () => {
-  const sunday = new Date(2026, 2, 1, 0, 0); // 2026-03-01 is a Sunday
+  const sunday = new Date(Date.UTC(2026, 2, 1, 0, 0)); // 2026-03-01 is a Sunday (UTC)
   assert(cronMatches("0 0 * * 7", sunday));
   assert(cronMatches("0 0 * * 0", sunday));
 });
@@ -38,7 +39,7 @@ Deno.test("cron: Vixie OR semantics when both dom and dow are restricted", () =>
   // The 15th (a Sunday) → matches on the dom side.
   assert(cronMatches("0 0 15 * 1", at(0, 0, 15, 3)));
   // A Monday that isn't the 15th → matches on the dow side (2026-03-02 is Monday).
-  assert(cronMatches("0 0 15 * 1", new Date(2026, 2, 2, 0, 0)));
+  assert(cronMatches("0 0 15 * 1", new Date(Date.UTC(2026, 2, 2, 0, 0))));
 });
 
 Deno.test("cron: dom AND dow when only one is restricted", () => {

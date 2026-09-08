@@ -105,19 +105,20 @@ export function cronError(expr: string): string | null {
 }
 
 /**
- * Whether `expr` fires at `date` (to minute granularity, in LOCAL time — matching
- * `Deno.cron`, which also uses the process's local time). Vixie semantics: when BOTH
- * day-of-month and day-of-week are restricted, the expression matches if EITHER does.
+ * Whether `expr` fires at `date` (to minute granularity, in UTC — matching `Deno.cron`,
+ * which schedules in UTC; the userland fallback must agree so a schedule fires at the same
+ * wall-clock instant on every platform). Vixie semantics: when BOTH day-of-month and
+ * day-of-week are restricted, the expression matches if EITHER does.
  */
 export function cronMatches(expr: CronExpr | string, date: Date = new Date()): boolean {
   const c = typeof expr === "string" ? parseCron(expr) : expr;
-  const domMatch = c.dom.has(date.getDate());
-  const dowMatch = c.dow.has(date.getDay());
+  const domMatch = c.dom.has(date.getUTCDate());
+  const dowMatch = c.dow.has(date.getUTCDay());
   const dayMatch = c.domAndDowRestricted ? domMatch || dowMatch : domMatch && dowMatch;
   return (
-    c.minute.has(date.getMinutes()) &&
-    c.hour.has(date.getHours()) &&
-    c.month.has(date.getMonth() + 1) &&
+    c.minute.has(date.getUTCMinutes()) &&
+    c.hour.has(date.getUTCHours()) &&
+    c.month.has(date.getUTCMonth() + 1) &&
     dayMatch
   );
 }

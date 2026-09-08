@@ -1,4 +1,4 @@
-# denext — Roadmap (2.1)
+# denext — Roadmap (2.2)
 
 > Status: internal engineering tracker. **This file lists only work that still
 > needs doing.** Completed work lives in [FEATURES.md](./FEATURES.md) and
@@ -6,14 +6,13 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the mission + its superiority
 > pillars in [MISSION.md](./MISSION.md).
 >
-> `development` is **2.1.0-rc.3** (the version line `deno task bump` rewrites).
-> 2.0 — the DX release (unified CLI, universal migration, scaffolding/codegen, an
-> instant dev loop, first-party DevTools, end-to-end typed routes and actions) —
-> shipped from it. **2.1 is the next engineering cycle.** Its keystone — the typed,
-> self-documenting API surface (`defineApi`, the typed client, `@denext/openapi`,
-> `@denext/graphql`) — has shipped; what remains is the last build-time purity items
-> and the ecosystem router plugins. Everything below targets 2.1 unless marked otherwise.
-> This roadmap is rewritten for the following cycle when 2.1 ships.
+> `development` is **2.1.0** (the version line `deno task bump` rewrites). 2.1 — the
+> typed, self-documenting API surface (`defineApi`, the typed client,
+> `@denext/openapi`, `@denext/graphql`), plus scheduled tasks + cron, type-safe
+> routing, and `@denext/content-collections` — shipped from it. **2.2 is the next
+> engineering cycle.** What remains is the last build-time-purity items and the
+> ecosystem router plugins. Everything below targets 2.2 unless marked otherwise.
+> This roadmap is rewritten for the following cycle when 2.2 ships.
 
 ---
 
@@ -31,7 +30,7 @@ shipped bundle and the zero-npm **runtime** claim already holds. Migrate
   marshalling, no npm.
 - `lightningcss` / `swc` are already WASM builds with a single import site each
   (`src/build/css.ts`, `src/build/swc-ast.ts`) — a surgical repoint to
-  `@denext/*` packages, **2.1**. `esbuild` (native-backed, large API surface,
+  `@denext/*` packages, **2.2**. `esbuild` (native-backed, large API surface,
   used by the next-compat build and the unbundled dev loop) is deferred furthest
   — see "Later" below.
 - **Standing discipline:** track each vendored codec's upstream CVEs, rebuild
@@ -97,10 +96,10 @@ the esbuild/next-compat path; on native builds optional runtime always ships.
 
 ## Candidate features (from the framework-gap survey)
 
-Vetted gaps vs Next/Nuxt/Astro/SvelteKit/TanStack. Two picks from this survey have **shipped**:
+Vetted gaps vs Next/Nuxt/Astro/SvelteKit/TanStack. Three picks from this survey have **shipped**:
 scheduled tasks + cron (`tasks/` + `defineTask`, `scheduledTasks`, `Deno.cron` with a userland
-fallback, `denext task`) and **type-safe routing** (typed `{ pathname, params }`, `useParams<P>`,
-schema-validated `useSearchParams`, typed `redirect`) and the **`@denext/content-collections`**
+fallback, `denext task`), **type-safe routing** (typed `{ pathname, params }`, `useParams<P>`,
+schema-validated `useSearchParams`, typed `redirect`), and the **`@denext/content-collections`**
 package (typed/validated/queryable MD/MDX/YAML/JSON content layer). See CHANGELOG/FEATURES. The
 rest are kept here so they aren't lost; not yet scheduled.
 
@@ -111,7 +110,7 @@ rest are kept here so they aren't lost; not yet scheduled.
   for Workers/Vercel. Highest ecosystem value, largest effort, one real Deno-fit tension
   (Workers runs workerd, not Deno). Builds on the existing plugin `addBuildStep` seam.
 
-## Later (not committed to 2.1)
+## Later (not committed to 2.2)
 
 - Generated clients for **non-denext consumers** from the OpenAPI/GraphQL
   documents (other languages, other frontends) — denext apps already get typed

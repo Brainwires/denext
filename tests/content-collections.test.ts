@@ -108,6 +108,29 @@ Deno.test("buildContent validates entries, drops invalid ones, and writes the st
   }
 });
 
+Deno.test("buildContent: a malformed file is a per-file diagnostic, not a whole-build failure", async () => {
+  const dir = await makeProject();
+  try {
+    // A file with broken YAML frontmatter — `extractYaml` THROWS on this. It must not abort the
+    // build (which would empty every collection); the valid entries still build.
+    await Deno.writeTextFile(
+      join(dir, "content", "blog", "broken.md"),
+      `---\ntitle: : not valid yaml : x\n  bad indent\n---\nbody\n`,
+    );
+    const outDir = join(dir, ".denext");
+    const report = await buildContent({ projectRoot: dir, outDir });
+    // hello + nested/deep still build; broken.md and bad.md are reported, not fatal.
+    assertEquals(report.counts.blog, 2, "valid entries still build despite the malformed file");
+    const broken = report.diagnostics.find((d) => d.id === "broken");
+    assert(broken, "the malformed file is reported as a diagnostic");
+    assert(broken.filePath, "the diagnostic names the file");
+    const store = JSON.parse(await Deno.readTextFile(join(outDir, "content-data.json")));
+    assertEquals(store.blog.length, 2, "the store is written (not empty)");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("discoverContentConfig returns null when the app has no content.config.ts", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext-nocontent-" });
   try {
@@ -143,6 +166,14 @@ Deno.test("runtime getCollection / getEntry read the built store, typed as Colle
 
     // A missing entry is undefined.
     assertEquals(await getEntry("blog", "nope"), undefined);
+
+    // getCollection returns a FRESH array: mutating it must not corrupt the shared cache.
+    const first = await getCollection("blog");
+    first.reverse();
+    first.push({} as (typeof first)[number]);
+    const second = await getCollection("blog");
+    assertEquals(second.length, 2, "a later read is unaffected by the caller's mutation");
+    assertEquals(second.map((e) => e.id), ["hello", "nested/deep"], "original order preserved");
   } finally {
     setContentStorePath(null);
     clearContentCache();

@@ -58,21 +58,28 @@ Deno.test("collectSchedules merges config + per-task schedules and dedupes", () 
   ]);
 });
 
-Deno.test("scheduleTasks uses Deno.cron when available and passes the schedule string through", () => {
+Deno.test("scheduleTasks uses Deno.cron when available and passes the schedule string through", async () => {
   reset();
-  registerTask("job", defineTask({ handler: () => {} }));
-  const calls: Array<{ name: string; schedule: string }> = [];
+  let ran = 0;
+  registerTask("job", defineTask({ handler: () => ++ran }));
+  const calls: Array<{ name: string; schedule: string; handler: () => unknown }> = [];
   const denoAny = Deno as { cron?: unknown };
   const had = "cron" in denoAny;
   const prev = denoAny.cron;
-  denoAny.cron = (name: string, schedule: string, _h: () => unknown) => {
-    calls.push({ name, schedule });
+  denoAny.cron = (name: string, schedule: string, handler: () => unknown) => {
+    calls.push({ name, schedule, handler });
   };
   try {
     const dispose = scheduleTasks([{ cron: "*/5 * * * *", task: "job" }]);
     assertEquals(calls.length, 1);
     assertEquals(calls[0].schedule, "*/5 * * * *");
     assert(calls[0].name.includes("job"));
+    // The handler must RETURN the run promise (so Deno keeps the isolate alive and serializes
+    // runs) — a fire-and-forget void handler would let Deno Deploy freeze mid-task.
+    const result = calls[0].handler();
+    assert(typeof (result as Promise<unknown>)?.then === "function", "handler returns a promise");
+    await result;
+    assertEquals(ran, 1, "the returned promise resolves once the task ran");
     dispose();
   } finally {
     if (had) denoAny.cron = prev;

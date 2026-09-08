@@ -407,10 +407,17 @@ export function withViewTransition(commit: () => void): void {
   const doc = document as Document & {
     startViewTransition?: (
       cb: (() => void | Promise<void>) | { update: () => void | Promise<void>; types?: string[] },
-    ) => { ready?: Promise<void>; finished?: Promise<void> } | undefined;
+    ) =>
+      | { ready?: Promise<void>; finished?: Promise<void>; updateCallbackDone?: Promise<void> }
+      | undefined;
   };
   if (typeof doc.startViewTransition !== "function") {
-    void commit();
+    // `commit` is often an async callback (typed `() => void` via void-bivalence); without a
+    // transition to carry its rejection, surface a DOM-swap failure instead of letting it become
+    // an unhandled promise rejection (a nav that "hangs").
+    Promise.resolve((commit as () => unknown)()).catch((err) =>
+      console.error("denext: soft navigation failed", err)
+    );
     return;
   }
   const vt = getViewTransitionSupport();
@@ -426,7 +433,9 @@ export function withViewTransition(commit: () => void): void {
   // A skipped/aborted transition (another started, tab hidden) is not an error: `ready`
   // rejects with InvalidStateError and `finished` may too. The `{ update, types }` object
   // form is only understood where transition types exist; fall back to the callback form.
-  let transition: { ready?: Promise<void>; finished?: Promise<void> } | undefined;
+  let transition:
+    | { ready?: Promise<void>; finished?: Promise<void>; updateCallbackDone?: Promise<void> }
+    | undefined;
   try {
     transition = types.length > 0
       ? doc.startViewTransition({ update, types })
@@ -434,7 +443,12 @@ export function withViewTransition(commit: () => void): void {
   } catch {
     transition = doc.startViewTransition(update);
   }
-  transition?.ready?.catch(() => {});
+  transition?.ready?.catch(() => {}); // a skipped/aborted transition is not an error
+  // `updateCallbackDone` rejects ONLY when `commit` itself threw (distinct from an abort, which
+  // rejects `ready`/`finished`) — surface that real DOM-swap failure instead of swallowing it.
+  transition?.updateCallbackDone?.catch((err) =>
+    console.error("denext: soft navigation failed", err)
+  );
   const done = () => tx?.clear();
   (transition?.finished ?? Promise.resolve()).then(done, done);
 }
