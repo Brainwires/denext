@@ -98,6 +98,7 @@ function beginComponent(wip: Fiber, hasOwnUpdate: boolean): Fiber | null {
   // `.contexts` with their derived map; components never expose via it.)
   wip.contexts = wip.inherited;
   const rendered = renderComponent(wip);
+  wip.didRender = true; // this fiber re-ran its render → its hook baselines need promotion at commit
   if (__DENEXT_CLASS_COMPONENTS__ && wip.bailed) {
     // shouldComponentUpdate/PureComponent bailed. Like the function bailout,
     // still descend into children that have their own pending work, so a

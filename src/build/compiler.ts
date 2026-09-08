@@ -491,6 +491,7 @@ function absolutizeDynamicImports(ctx: Ctx, body: Node[], moduleUrl: string, edi
 export async function transformModule(
   source: string,
   moduleUrl: string,
+  opts: { absolutize?: boolean } = {},
 ): Promise<{ code: string; changed: boolean }> {
   const identity = { code: source, changed: false };
   const parsed = await parseModule(source);
@@ -504,9 +505,13 @@ export async function transformModule(
     if (fn && memoizeComponent(ctx, fn, moduleNames, edits)) memoized = true;
   }
   if (!memoized) return identity;
-  // The transformed module lives in a temp dir, so relative specifiers must be absolute.
-  absolutizeSpecifiers(ctx, body, moduleUrl, edits);
-  absolutizeDynamicImports(ctx, body, moduleUrl, edits);
+  // `compileModules` writes the transformed module to a temp dir, so relative specifiers must
+  // become absolute. An in-place esbuild `onLoad` (the SPA path) keeps the module's original
+  // path as the resolve base, so it opts out (`absolutize: false`) and leaves imports as-is.
+  if (opts.absolutize ?? true) {
+    absolutizeSpecifiers(ctx, body, moduleUrl, edits);
+    absolutizeDynamicImports(ctx, body, moduleUrl, edits);
+  }
   // Inject the runtime import after any leading directive prologue.
   const importAt = prologueEnd(ctx, body);
   edits.push({

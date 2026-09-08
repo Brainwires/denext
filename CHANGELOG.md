@@ -8,6 +8,25 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **SPA mode runs the auto-memo compiler.** `experimental.reactCompiler` now applies denext's
+  auto-memo compiler to a `mode: "spa"` (compat) production build — before, it ran only on the
+  App-Router pipeline, so a Vite app migrated with React Compiler lost _all_ auto-memoization and
+  re-rendered far more than it did on Vite. `denext migrate` now detects `reactCompilerPreset` /
+  `babel-plugin-react-compiler` in a Vite config and enables it automatically, so a migrated app
+  keeps its memoization with no hand-editing. The compiler is correctness-over-coverage (a module
+  it can't prove is emitted unchanged), so it never miscompiles; dev keeps the untransformed fast
+  rebuild + Fast Refresh.
+
+### Fixed
+
+- **The per-commit hook-baseline promotion is now O(rendered hooks), not O(all hooks in the tree).**
+  The no-op-state-bailout bookkeeping walked _every_ hook cell in the committed tree on _every_
+  commit; it now promotes baselines only on fibers that actually re-rendered this pass (a bailed
+  fiber's cells are already at their committed value). Removes a per-commit tax that grew with app
+  size.
+
 ## [2.1.1] - 2026-09-08
 
 ### Fixed

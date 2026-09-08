@@ -111,9 +111,15 @@ function clearCommittedFlags(wipRoot: Fiber): void {
     f.subtreeFlags = NoFlags;
     f.deletions = null;
     // Promote each stateful hook's rendered value to "committed" — the baseline the no-op
-    // state bailout (begin-work) compares a pending update against.
-    if (f.hooks) {
-      for (const cell of f.hooks) if ("rendered" in cell) cell.committed = cell.rendered;
+    // state bailout (begin-work) compares a pending update against. Only fibers that actually
+    // rendered this pass need it: a bailed fiber's hook cells are unchanged, so `committed`
+    // already equals `rendered`. Skipping them keeps this per-commit walk O(rendered hooks)
+    // instead of O(all hooks in the tree), which matters for a large mostly-bailed tree.
+    if (f.didRender) {
+      if (f.hooks) {
+        for (const cell of f.hooks) if ("rendered" in cell) cell.committed = cell.rendered;
+      }
+      f.didRender = false;
     }
   });
 }

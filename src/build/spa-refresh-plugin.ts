@@ -23,6 +23,7 @@
 import type * as esbuild from "esbuild";
 import { toFileUrl } from "@std/path";
 import { type Node, swcParse } from "./swc-ast.ts";
+import { firstPartyTsxPlugin } from "./spa-onload.ts";
 
 /** A PascalCase identifier is the React/JSX signal for a component (vs a hook/helper). */
 function isComponentName(name: string | undefined): name is string {
@@ -94,41 +95,13 @@ export function refreshFooter(sourceUrl: string, names: string[]): string {
  *   deps under `node_modules`, and the generated `.entries` wrappers, are skipped).
  */
 export function spaRefreshPlugin(projectDir: string): esbuild.Plugin {
-  return {
-    name: "denext-spa-fast-refresh",
-    setup(build) {
-      build.onLoad({ filter: /\.(tsx|jsx)$/ }, async (args) => {
-        // Only the app's own first-party source: skip npm deps and the generated
-        // SPA entry wrapper (`.entries/index.tsx`), which has no components and
-        // whose `import "file://…main.tsx"` already pulls the real modules in.
-        if (
-          args.path.includes("/node_modules/") ||
-          args.path.includes("/.entries/") ||
-          !args.path.startsWith(projectDir)
-        ) {
-          return null; // let the deno-loader load it unchanged
-        }
-        let source: string;
-        try {
-          source = await Deno.readTextFile(args.path);
-        } catch {
-          return null; // unreadable → defer to the loader (which reports the error)
-        }
-        // Parse-and-instrument is best-effort: any parse failure leaves the module
-        // exactly as written (it still bundles; those components just remount on edit).
-        try {
-          const parse = await swcParse();
-          const ast = await parse(source);
-          const names = collectComponentNames(ast);
-          if (names.length === 0) return { contents: source, loader: "tsx" };
-          return {
-            contents: source + refreshFooter(toFileUrl(args.path).href, names),
-            loader: "tsx",
-          };
-        } catch {
-          return { contents: source, loader: "tsx" };
-        }
-      });
-    },
-  };
+  return firstPartyTsxPlugin("denext-spa-fast-refresh", projectDir, async (source, path) => {
+    // Parse-and-instrument is best-effort: a parse failure (caught by the shared wrapper)
+    // leaves the module as written — those components simply remount on edit.
+    const parse = await swcParse();
+    const ast = await parse(source);
+    const names = collectComponentNames(ast);
+    if (names.length === 0) return null; // nothing component-shaped → leave unchanged
+    return source + refreshFooter(toFileUrl(path).href, names);
+  });
 }
