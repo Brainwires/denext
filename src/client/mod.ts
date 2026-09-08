@@ -157,6 +157,8 @@ export {
   Link,
   navigate,
   prefetch,
+  ReadonlyURLSearchParams,
+  SearchParamsValidationError,
   useLocale,
   useParams,
   usePathname,
@@ -168,9 +170,15 @@ export {
 } from "./navigation.ts";
 export type {
   AnchorProps,
+  Href,
   HrefInput,
   LinkProps,
+  QueryInput,
+  RegisteredParams,
+  RegisteredRoutes,
   Router,
   RouterNavigateOptions,
+  SearchOutput,
+  TypedUrlObject,
   UrlObject,
 } from "./navigation.ts";

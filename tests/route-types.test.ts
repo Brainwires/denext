@@ -122,3 +122,10 @@ Deno.test("route-types: the generated module compiles and its types are usable",
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("route-types: the augmentation registers the params map (object-form nav / typed useParams)", () => {
+  const out = generateRouteTypes(manifest([page("/"), page("/blog/[slug]")]));
+  assertStringIncludes(out, "interface RegisteredRoutes {");
+  assertStringIncludes(out, "routes: Routes;");
+  assertStringIncludes(out, "params: RouteParams;");
+});

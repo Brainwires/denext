@@ -68,7 +68,14 @@ security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
   `` `${string}` ``), `ApiRoutes`, `RouteParams`, and `ParamsOf<R>`. Importing
   the file registers the routes (via `RegisteredRoutes`), so **`<Link href>` /
   `router.push` / `router.replace` only accept real paths** —
-  backward-compatible (`Href` is `string` until you opt in). —
+  backward-compatible (`Href` is `string` until you opt in). Once wired, the
+  **object form is checked too**: `router.push({ pathname: "/blog/[slug]",
+  params: { slug } })` requires a params object matching the route (denext fills
+  the pattern), **`useParams<"/blog/[slug]">()`** is typed to `{ slug: string }`,
+  and **`redirect()`** autocompletes your routes. Read + validate the query with
+  a Standard Schema: **`useSearchParams(z.object({ page: z.coerce.number() }))`**
+  returns the parsed, typed value and throws a `SearchParamsValidationError`
+  (caught by the nearest `error.tsx`) on bad input. —
   `src/build/route-types.ts`, `src/client/navigation.ts`.
 - **SPA mode** (`mode: "spa"`) — an alternative to the App Router for a
   **client-only** app ("React but not Next"): no `app/` directory and no

@@ -10,6 +10,19 @@ and this project adheres to
 
 ### Added
 
+- **Type-safe routing beyond the path string.** With `.denext/routes.ts` imported, the object
+  form of an href is now checked against the route: `router.push({ pathname: "/blog/[slug]",
+  params: { slug } })` / `<Link href={{ … }} />` require a `params` object matching the route's
+  dynamic segments (denext fills the pattern to build the URL); a dynamic route with wrong,
+  missing, or extra params — or an unknown `pathname` — is a compile error, while the plain string
+  form and the loose object form (before you opt in) keep working. **`useParams<"/blog/[slug]">()`**
+  is typed to that route's params (`{ slug: string }`), and **`redirect()` / `permanentRedirect()`**
+  autocomplete this app's routes while still accepting any string. New: **`useSearchParams(schema)`**
+  — pass a Standard Schema (Zod/Valibot/ArkType/…) to get the URL query parsed and typed
+  (`const { page } = useSearchParams(z.object({ page: z.coerce.number().default(1) }))`); invalid
+  input throws a `SearchParamsValidationError` the nearest `error.tsx` catches. New exports on
+  `denext`/`denext/client`: `SearchParamsValidationError`, and the `RegisteredParams` /
+  `TypedUrlObject` types.
 - **Scheduled / background tasks + cron.** Define a task in `tasks/<name>.ts`
   (`export default defineTask({ handler })`) and run it on a cron schedule — a `scheduledTasks`
   map in `denext.config.ts` (`{ "0 3 * * *": "cleanup" }`) or a per-task `schedule` — and/or on

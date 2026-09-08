@@ -138,6 +138,7 @@ export {
   navigate,
   prefetch,
   ReadonlyURLSearchParams,
+  SearchParamsValidationError,
   subscribeNavigating,
   useLinkStatus,
   useLocale,
@@ -157,9 +158,13 @@ export type {
   LinkProps,
   LinkStatus,
   NavigateOptions,
+  QueryInput,
+  RegisteredParams,
   RegisteredRoutes,
   Router,
   RouterNavigateOptions,
+  SearchOutput,
+  TypedUrlObject,
   UrlObject,
 } from "./src/client/navigation.ts";
 
