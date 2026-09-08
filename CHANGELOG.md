@@ -10,6 +10,12 @@ and this project adheres to
 
 ### Added
 
+- **Channel subscriptions are acknowledged (`channel-ready`).** When a `createChannel`
+  subscription is registered (after `authorize` passes and it's indexed), the hub now sends a
+  one-time `channel-ready` frame for that `subId`. A channel has no initial value to imply
+  registration the way a data subscription's first frame does, so this is the signal that a
+  subsequent `publish` will reach the subscriber — clients and tests can await it instead of
+  guessing with a delay. Existing clients ignore the frame; `useChannel` is unchanged.
 - **`@denext/content-collections` (new first-party package).** A typed, validated, queryable
   content layer (MD/MDX/YAML/JSON) — Astro Content Layer / Nuxt Content for denext. Declare
   collections in `content.config.ts` with a Standard Schema + a loader (`glob` for local files, or

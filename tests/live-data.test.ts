@@ -1078,34 +1078,84 @@ function channelSubscribe(ws: WebSocket, subId: string, channelId: string, key: 
   ws.send(JSON.stringify({ type: "channel-subscribe", subId, channelId, key }));
 }
 
+/**
+ * Open a socket, subscribe to a channel key, and expose a `ready` promise (resolved by the
+ * server's `channel-ready` ack — the deterministic "subscription is live" signal) plus a `frame`
+ * promise for the first `channel` payload. Waiting on `ready` before publishing removes the timing
+ * race that a fixed delay had under parallel load.
+ */
+function channelSub(port: number, subId: string, channelId: string, key: string): {
+  ws: WebSocket;
+  ready: Promise<void>;
+  frame: Promise<Any>;
+} {
+  const ws = new WebSocket(`ws://localhost:${port}/_denext/live`);
+  let onReady!: () => void;
+  let onFrame!: (m: Any) => void;
+  let onErr!: (e: Error) => void;
+  const ready = new Promise<void>((res, rej) => {
+    onReady = res;
+    onErr = rej;
+  });
+  const frame = new Promise<Any>((res) => (onFrame = res));
+  const timer = setTimeout(() => onErr(new Error(`timeout waiting on ${subId}`)), 3000);
+  ws.onopen = () => channelSubscribe(ws, subId, channelId, key);
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data as string);
+    if (msg.subId !== subId) return;
+    if (msg.type === "channel-ready") onReady();
+    else if (msg.type === "channel") {
+      clearTimeout(timer);
+      onFrame(msg);
+    }
+  };
+  ws.onerror = () => onErr(new Error("socket error"));
+  return { ws, ready, frame };
+}
+
 Deno.test("channel hub: an authorized subscriber receives publishes (codec-encoded), fanned out to every connection", async () => {
   const ch = createChannel<{ at: Date; n: number }>({ id: "ch#orders", authorize: () => true });
   const { server, port } = startHub({});
   try {
-    const a = collect(
-      port,
-      "channel",
-      1,
-      (ws) => channelSubscribe(ws, "a1", "ch#orders", "user:1"),
-    );
-    const b = collect(
-      port,
-      "channel",
-      1,
-      (ws) => channelSubscribe(ws, "b1", "ch#orders", "user:1"),
-    );
-    // Give both subscribes a moment to register, then publish once.
-    setTimeout(() => void ch.publish("user:1", { at: new Date(0), n: 1 }), 80);
-    const [ra, rb] = await Promise.all([a, b]);
-    for (const [frames, subId] of [[ra.frames, "a1"], [rb.frames, "b1"]] as const) {
-      assertEquals(frames[0].type, "channel");
-      assertEquals(frames[0].subId, subId);
-      assertEquals(frames[0].seq, 1);
-      assertEquals(frames[0].enc, 1);
-      assertEquals(frames[0].value, { at: { $: "D", v: "1970-01-01T00:00:00.000Z" }, n: 1 });
+    const a = channelSub(port, "a1", "ch#orders", "user:1");
+    const b = channelSub(port, "b1", "ch#orders", "user:1");
+    // Deterministic: publish only once BOTH subscriptions are acked live (no fixed-delay race).
+    await Promise.all([a.ready, b.ready]);
+    await ch.publish("user:1", { at: new Date(0), n: 1 });
+    const [fa, fb] = await Promise.all([a.frame, b.frame]);
+    for (const [frame, subId] of [[fa, "a1"], [fb, "b1"]] as const) {
+      assertEquals(frame.type, "channel");
+      assertEquals(frame.subId, subId);
+      assertEquals(frame.seq, 1);
+      assertEquals(frame.enc, 1);
+      assertEquals(frame.value, { at: { $: "D", v: "1970-01-01T00:00:00.000Z" }, n: 1 });
     }
-    ra.ws.close();
-    rb.ws.close();
+    a.ws.close();
+    b.ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
+Deno.test("channel hub: a successful subscribe is acked with `channel-ready`; a denied one is not", async () => {
+  createChannel<number>({ id: "ch#acktest", authorize: (_ctx, key) => key === "ok" });
+  const { server, port } = startHub({});
+  try {
+    // An authorized subscribe gets a channel-ready ack (before any publish).
+    const ok = channelSub(port, "s1", "ch#acktest", "ok");
+    await ok.ready; // resolves only on the ack — a fixed timeout would fail if it never came
+    ok.ws.close();
+
+    // A denied subscribe gets `denied`, never `channel-ready`.
+    const { ws, frames } = await collect(
+      port,
+      "error",
+      1,
+      (w) => channelSubscribe(w, "s2", "ch#acktest", "nope"),
+    );
+    assertEquals([frames[0].code, frames[0].subId], ["denied", "s2"]);
+    ws.close();
   } finally {
     uninstallLiveHub();
     await server.shutdown();
@@ -1133,16 +1183,29 @@ Deno.test("channel hub: unknown channel → denied, bad key → denied too (no i
 Deno.test("channel hub: revoke ends a key's subscriptions with `denied`; nothing more is delivered", async () => {
   const ch = createChannel<number>({ id: "ch#revocable", authorize: () => true });
   const { server, port } = startHub({});
+  const ws = new WebSocket(`ws://localhost:${port}/_denext/live`);
   try {
-    const { ws, frames } = await collect(port, "error", 1, (ws) => {
-      channelSubscribe(ws, "r1", "ch#revocable", "room:9");
-      setTimeout(() => ch.revoke("room:9"), 60);
-      setTimeout(() => void ch.publish("room:9", 1), 120); // after the revoke: no subscriber
+    // Deterministic: revoke only once the subscription is acked live, then publish after — so the
+    // `denied` frame is caused by the revoke, not by a publish that raced subscription registration.
+    const denied = await new Promise<Any>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("timeout waiting for denied")), 3000);
+      ws.onopen = () => channelSubscribe(ws, "r1", "ch#revocable", "room:9");
+      ws.onmessage = (ev) => {
+        const m = JSON.parse(ev.data as string);
+        if (m.subId !== "r1") return;
+        if (m.type === "channel-ready") {
+          ch.revoke("room:9");
+          void ch.publish("room:9", 1); // after the revoke: no subscriber, so no `channel` frame
+        } else if (m.type === "error") {
+          clearTimeout(timer);
+          resolve(m);
+        }
+      };
+      ws.onerror = () => reject(new Error("socket error"));
     });
-    assertEquals([frames[0].code, frames[0].subId], ["denied", "r1"]);
-    await new Promise((r) => setTimeout(r, 150));
-    ws.close();
+    assertEquals([denied.code, denied.subId], ["denied", "r1"]);
   } finally {
+    ws.close();
     uninstallLiveHub();
     await server.shutdown();
   }
@@ -1151,25 +1214,39 @@ Deno.test("channel hub: revoke ends a key's subscriptions with `denied`; nothing
 Deno.test("channel hub: a publisher burst coalesces into one frame carrying the LAST value", async () => {
   const ch = createChannel<number>({ id: "ch#burst", authorize: () => true });
   const { server, port } = startHub({});
+  const ws = new WebSocket(`ws://localhost:${port}/_denext/live`);
   try {
     const seen: Any[] = [];
-    const { ws } = await collect(port, "channel", 1, (ws) => {
-      ws.addEventListener("message", (ev) => {
-        const m = JSON.parse((ev as MessageEvent).data as string);
-        if (m.type === "channel") seen.push(m);
-      });
-      channelSubscribe(ws, "s", "ch#burst", "k");
-      setTimeout(() => {
-        void ch.publish("k", 1);
-        void ch.publish("k", 2);
-        void ch.publish("k", 3);
-      }, 60);
+    // Deterministic: fire the burst only once the subscription is acked live (the three publishes
+    // are synchronous, so they always land in one coalesce window regardless of scheduling).
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error("timeout waiting for a channel frame")),
+        3000,
+      );
+      ws.onopen = () => channelSubscribe(ws, "s", "ch#burst", "k");
+      ws.onmessage = (ev) => {
+        const m = JSON.parse(ev.data as string);
+        if (m.subId !== "s") return;
+        if (m.type === "channel-ready") {
+          void ch.publish("k", 1);
+          void ch.publish("k", 2);
+          void ch.publish("k", 3);
+        } else if (m.type === "channel") {
+          seen.push(m);
+          if (seen.length === 1) {
+            clearTimeout(timer);
+            resolve();
+          }
+        }
+      };
+      ws.onerror = () => reject(new Error("socket error"));
     });
-    await new Promise((r) => setTimeout(r, 80));
+    await new Promise((r) => setTimeout(r, 80)); // allow any (incorrect) second frame to arrive
     assertEquals(seen.length, 1, "three publishes within the coalesce window → one frame");
     assertEquals(seen[0].value, 3);
-    ws.close();
   } finally {
+    ws.close();
     uninstallLiveHub();
     await server.shutdown();
   }

@@ -252,6 +252,12 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
       const entry = { conn, subId };
       sub.entry = entry;
       indexFor(channelId, key).add(entry);
+      // Acknowledge the now-live subscription. Unlike a data subscription (whose first `data`
+      // frame implies registration), a channel has no initial value, so this is the client's only
+      // signal that a subsequent publish will reach it — sent as a control frame, not a per-sub
+      // stateful one (no back-pressure queuing or auth-TTL replay).
+      const ready: LiveServerMessage = { type: "channel-ready", subId };
+      deps.sendFrame(conn, JSON.stringify(ready), ready);
     },
     unsubscribe: remove,
     drop(conn) {

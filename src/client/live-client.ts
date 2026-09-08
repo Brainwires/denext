@@ -327,6 +327,10 @@ function handleServerMessage(raw: string): void {
     case "invalidate":
       tagSubs.get(msg.subId)?.onInvalidate();
       break;
+    case "channel-ready":
+      // A subscription-registered ack. `useChannel` treats a subscription as live optimistically,
+      // so nothing to do here yet; handled explicitly so the ack is a recognized frame, not dropped.
+      break;
     case "channel":
       deliverChannel(msg);
       break;
