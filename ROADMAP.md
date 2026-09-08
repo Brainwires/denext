@@ -95,6 +95,31 @@ the esbuild/next-compat path; on native builds optional runtime always ships.
 - **Out of scope:** React Native / native rendering — Capacitor/WebView stays the
   mobile story; a true RN target is a separate future frontier.
 
+## Candidate features (post-cron, from the framework-gap survey)
+
+Vetted gaps vs Next/Nuxt/Astro/SvelteKit/TanStack, sequenced after the scheduled-tasks +
+cron work (in progress). Kept here so they aren't lost; not yet scheduled.
+
+- **Type-safe content collections / content layer.** A `content.config.ts` that declares
+  collections with a Standard Schema and a **loader** (local MD/MDX/YAML/JSON, or a remote
+  source), yielding a **typed, queryable, build-validated** store (autocompletion, generated
+  types) plus render helpers. This is the backbone of the docs/blog/marketing segment
+  (Astro Content Layer, Nuxt Content 3) that denext only touches via `@next/mdx` migrator
+  recovery today. **Fit: excellent** — reuses `node:sqlite` (already the cache backend) for
+  large sets and the Standard Schema plumbing `defineApi` already has. Effort: M.
+- **Type-safe routing — typed links, params, validated search params.** Generate a typed
+  route tree so `<Link href>`, route params, and **schema-validated `useSearchParams`** are
+  compile-time-checked (TanStack Router / SvelteKit typed routes). The on-brand extension of
+  denext's typed-API codegen (`.denext/api.ts`, Standard Schemas) from route handlers to
+  **page navigation** — links are still Next-style strings today. Effort: M–L; reuses the
+  existing codegen + Standard Schema infra.
+- **Deploy adapter API + presets** (the larger, separate bet — Nitro / Next 16 Adapters):
+  a typed build manifest (routes, prerenders, assets, cache rules) + a pluggable adapter
+  seam with first-party presets. Achievable targets for a Deno-native framework: **static
+  export, Deno Deploy, Node (deno node-compat), Docker**, with a documented third-party seam
+  for Workers/Vercel. Highest ecosystem value, largest effort, one real Deno-fit tension
+  (Workers runs workerd, not Deno). Builds on the existing plugin `addBuildStep` seam.
+
 ## Later (not committed to 2.1)
 
 - Generated clients for **non-denext consumers** from the OpenAPI/GraphQL
