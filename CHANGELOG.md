@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-09-08
+
 ### Fixed
 
 - **SPA mode now installs the class-component / `Activity` / `ViewTransition` reconciler runtimes.**
@@ -6091,6 +6093,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.1.1]: https://jsr.io/@denext/denext@2.1.1
 [2.1.0]: https://jsr.io/@denext/denext@2.1.0
 [2.1.0-rc.3]: https://jsr.io/@denext/denext@2.1.0-rc.3
 [2.1.0-rc.2]: https://jsr.io/@denext/denext@2.1.0-rc.2

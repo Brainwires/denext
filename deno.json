@@ -1,6 +1,6 @@
 {
   "name": "@denext/denext",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "license": "MIT",
   "workspace": [
     "./packages/photon",
