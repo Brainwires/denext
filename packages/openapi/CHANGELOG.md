@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - **Security schemes → the Swagger "Authorize" button.** New `securitySchemes` option emits
   `components.securitySchemes`, and `security` sets the requirement — as a document-wide array,
