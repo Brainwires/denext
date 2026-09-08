@@ -10,6 +10,7 @@ import { act, render } from "../src/testing/mod.ts";
 import {
   startTransition,
   useActionState,
+  useLayoutEffect,
   useOptimistic,
   useState,
   useSyncExternalStore,
@@ -110,6 +111,34 @@ Deno.test("forwardRef: the render fn receives props WITHOUT ref, and ref as the 
   await render(h(Input as never, { id: "x", ref } as never));
   assertEquals(sawRefInProps, false);
   assertEquals(gotRef, ref);
+});
+
+Deno.test("a mount host's callback ref fires at COMMIT (node placed), not during render", async () => {
+  // React attaches refs in the commit phase, after the node is in the DOM. denext used to fire
+  // a fresh mount's ref during `completeWork` (render), which breaks libraries that guard
+  // against render-phase ref/handler calls (Base UI's "Cannot call an event handler while
+  // rendering"). The ref must see a PLACED node, and fire before layout effects.
+  let parentAtRef: unknown = "unset";
+  let refOrder = -1;
+  let layoutOrder = -1;
+  let clock = 0;
+  function C() {
+    useLayoutEffect(() => {
+      layoutOrder = ++clock;
+    }, []);
+    return h("div", {
+      // deno-lint-ignore no-explicit-any
+      ref: (el: any) => {
+        if (el) {
+          parentAtRef = el.parentNode;
+          refOrder = ++clock;
+        }
+      },
+    });
+  }
+  await render(h(C, null));
+  assert(parentAtRef != null, "the ref saw a placed node (commit), not an off-DOM node (render)");
+  assert(refOrder !== -1 && refOrder < layoutOrder, "the ref attaches before layout effects run");
 });
 
 Deno.test("use(): a React-tagged fulfilled thenable does not re-suspend", () => {

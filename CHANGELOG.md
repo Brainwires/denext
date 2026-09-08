@@ -8,6 +8,18 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.1.3] - 2026-09-08
+
+### Fixed
+
+- **A fresh host's `ref` now attaches at commit, not during render** — matching React
+  (`commitAttachRef`). denext fired a mounting element's callback ref inside `completeWork` (the
+  render phase), which threw in libraries that guard against render-phase ref/handler calls —
+  notably **Base UI** (`@base-ui/react`): _"Cannot call an event handler while rendering."_ In a
+  migrated app that error surfaced as a "Something went wrong" flash. The ref now fires in the
+  commit phase after the node is placed and before layout effects run (an update's ref already
+  rode its commit-phase `applyProps`).
+
 ## [2.1.2] - 2026-09-08
 
 ### Added
@@ -6114,6 +6126,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.1.3]: https://jsr.io/@denext/denext@2.1.3
 [2.1.2]: https://jsr.io/@denext/denext@2.1.2
 [2.1.1]: https://jsr.io/@denext/denext@2.1.1
 [2.1.0]: https://jsr.io/@denext/denext@2.1.0
