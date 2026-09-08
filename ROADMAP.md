@@ -110,6 +110,3 @@ the esbuild/next-compat path; on native builds optional runtime always ships.
 - **`next/font` metric-matched fallback face** (`adjustFontFallback`:
   `size-adjust`/`ascent-override` on a local fallback to cut CLS) — needs a
   bundled font-metrics database; a guessed table would mis-size the fallback.
-- **Real `Activity` offscreen scheduling** (deferred pre-render, hidden-subtree
-  state preservation) and `ViewTransition` per-element `name`/`enter`/`exit`
-  markers — today both are documented passthroughs.
