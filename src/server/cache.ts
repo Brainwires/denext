@@ -1373,8 +1373,9 @@ export interface CachedPage {
   /**
    * Cache Components / PPR: when set, `body` is a static *shell* document whose
    * dynamic holes (these ids) must be re-rendered per request and spliced in
-   * before serving (see `spliceShellHoles`). Absent ⇒ an ordinary fully-rendered
-   * page served verbatim.
+   * before serving (see `resumeShellHoles`, which fills each streamed
+   * `<template data-dnx-r>` hole). Absent ⇒ an ordinary fully-rendered page
+   * served verbatim.
    */
   holeIds?: string[];
   /**

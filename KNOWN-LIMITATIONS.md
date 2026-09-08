@@ -172,7 +172,7 @@ A stable, **opt-in** feature: enable it with top-level `cacheComponents: true`
 in `denext.config.ts` (the pre-2.0 `experimental.cacheComponents` still works
 and dev-warns to move). Off, `use cache` is inert and the render path is
 byte-for-byte unchanged. Caching is a choice, not a default — these are the
-three documented bounds of the opt-in:
+four documented bounds of the opt-in:
 
 - **Reading request data inside `use cache` throws** — `cookies()`/`headers()`/
   `connection()` are request-specific; read them outside and pass the value in.
@@ -189,6 +189,12 @@ three documented bounds of the opt-in:
   other requests — and **dev additionally warns** and names the dropped param. A
   with-holes PPR shell can escape the read into a per-request hole, so it relies
   on that boundary rather than the store refusal.
+- **The `use cache` transform is correctness-over-coverage** — it rewrites a
+  top-level function declaration or `const` arrow, but leaves forms it can't
+  rewrite while preserving their binding/export semantics **untouched** (an
+  object/class method, a name-referenced `export default function`). A directive
+  on one of those is inert, not an error; hoist the body into a cached top-level
+  function if you need it cached.
 
 ### Typed API & live data (`defineApi`, `useApi`, `defineSubscription`, `createChannel`)
 
@@ -282,6 +288,9 @@ subtree that mounts hidden is pre-rendered at transition priority. One residual 
 React: a subtree that MOUNTS hidden runs its effects once during that pre-render (and
 keeps them connected while hidden) — React defers a hidden subtree's effects entirely;
 denext only tears effects down on a visible→hidden transition, not a hidden mount.
+A second residual: a hidden `<Activity>` subtree is **not server-rendered** — it emits no
+SSR HTML and is client-mounted-hidden on hydration (so its state/effects behave as above),
+rather than being pre-rendered into the streamed document the way React can.
 **React `taint*` is implemented**:
 `experimental_taintObjectReference` / `experimental_taintUniqueValue` mark a value
 that must never cross the server→client boundary, enforced in the Flight serializer
