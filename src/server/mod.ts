@@ -292,6 +292,10 @@ export type {
   RouteRegistry,
 } from "./request-context.ts";
 export type { RenderScope } from "../runtime/render-scope.ts";
+// Scheduled/background tasks: define one in `tasks/<name>.ts`, schedule it via `scheduledTasks`
+// in denext.config.ts or a per-task `schedule`, and/or run it on demand (`runTask` / `denext task`).
+export { defineTask, getTask, isTask, registerTask, runTask, taskNames } from "./tasks.ts";
+export type { Task, TaskContext, TaskDefinition } from "./tasks.ts";
 
 // Signed-cookie sessions (auth primitive).
 export { getSession } from "./session.ts";

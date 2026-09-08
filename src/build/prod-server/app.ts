@@ -18,6 +18,7 @@ import {
   runRegister,
   setNextRuntimeEnv,
 } from "../../server/instrumentation.ts";
+import { bootScheduledTasks } from "../../server/task-loader.ts";
 import { installLiveHub } from "../../server/live.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../../server/middleware.ts";
 import { defaultLoader } from "../../server/mod.ts";
@@ -109,6 +110,8 @@ export async function createProdApp(
   setNextRuntimeEnv();
   const instrumentation = await loadInstrumentation(paths.instrumentationPath);
   await runRegister(instrumentation);
+  // Discover tasks/ and register cron schedules (Deno.cron on Deploy, else a userland tick).
+  await bootScheduledTasks(paths.projectDir, paths.config ?? undefined);
   const rules = await resolveConfigRules(paths.config);
   await resolveDefaultCacheStore(
     paths.config?.cache?.path

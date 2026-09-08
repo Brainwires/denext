@@ -228,6 +228,25 @@ export const listNotes = () => db.prepare("SELECT * FROM notes").all();
 
 Open the connection once at module scope; do writes in Server Actions.
 
+**A scheduled / background task (cron):** put it in `tasks/<name>.ts`; schedule it in
+`denext.config.ts` (`scheduledTasks`) or per-task; run it on demand with `runTask(name)`
+or `denext task <name>`. Uses `Deno.cron` where available (Deno Deploy), else a userland
+tick — no npm cron dependency.
+
+```ts
+// tasks/cleanup.ts
+import { defineTask } from "denext/server";
+export default defineTask({
+  description: "purge expired sessions",
+  schedule: "0 3 * * *", // optional; or list it in config.scheduledTasks
+  handler: async ({ payload }) => {
+    await db.exec("DELETE FROM sessions WHERE expires_at < now()");
+  },
+});
+// denext.config.ts → scheduledTasks: { "0 0 * * 1": ["digest", "warm-cache"] }
+// anywhere on the server: import { runTask } from "denext/server"; await runTask("cleanup");
+```
+
 **Testing an app (no browser, JS-disabled path):**
 
 ```ts

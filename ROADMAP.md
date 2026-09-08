@@ -95,10 +95,12 @@ the esbuild/next-compat path; on native builds optional runtime always ships.
 - **Out of scope:** React Native / native rendering — Capacitor/WebView stays the
   mobile story; a true RN target is a separate future frontier.
 
-## Candidate features (post-cron, from the framework-gap survey)
+## Candidate features (from the framework-gap survey)
 
-Vetted gaps vs Next/Nuxt/Astro/SvelteKit/TanStack, sequenced after the scheduled-tasks +
-cron work (in progress). Kept here so they aren't lost; not yet scheduled.
+Vetted gaps vs Next/Nuxt/Astro/SvelteKit/TanStack. (Scheduled tasks + cron — the first pick
+from this survey — has **shipped**: `tasks/` + `defineTask`, `scheduledTasks`, `Deno.cron`
+with a userland fallback, and `denext task`; see CHANGELOG/FEATURES.) Kept here so the rest
+aren't lost; not yet scheduled.
 
 - **Type-safe content collections / content layer.** A `content.config.ts` that declares
   collections with a Standard Schema and a **loader** (local MD/MDX/YAML/JSON, or a remote

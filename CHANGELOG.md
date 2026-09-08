@@ -8,6 +8,22 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Scheduled / background tasks + cron.** Define a task in `tasks/<name>.ts`
+  (`export default defineTask({ handler })`) and run it on a cron schedule — a `scheduledTasks`
+  map in `denext.config.ts` (`{ "0 3 * * *": "cleanup" }`) or a per-task `schedule` — and/or on
+  demand: `runTask(name, payload)` from app code (both exported from `denext/server`), or
+  `denext task <name> [--payload '<json>']` / `denext task --list` from the CLI. The server
+  discovers `tasks/**` and registers schedules at boot (dev + prod). Scheduling uses the
+  platform's managed **`Deno.cron`** when the runtime exposes it (Deno Deploy, or a self-host
+  started with `--unstable-cron`) and a dependency-free minute-tick scheduler (a tiny 5-field
+  Vixie-cron matcher) otherwise. A malformed cron in `defineTask` throws early; an unknown task
+  name or bad schedule is skipped at boot with an error, never fatally. An app that defines no
+  tasks pays nothing. New `denext/server` exports: `defineTask`, `runTask`, `registerTask`,
+  `getTask`, `taskNames`, `isTask` (+ `Task`/`TaskDefinition`/`TaskContext` types); new
+  `scheduledTasks` config key; new `denext task` CLI verb.
+
 ## [2.1.0-rc.3] - 2026-09-08
 
 ### Added

@@ -172,6 +172,12 @@ security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
 - **Instrumentation** (`instrumentation.ts`, `instrumentation-client.ts`): `register()` + `onRequestError()`
   with Next-shaped context (`routerKind`, `routePath`, `routeType`,
   `renderSource`, `revalidateReason`).
+- **Scheduled / background tasks** (`tasks/<name>.ts` → `defineTask({ handler })`):
+  run on a cron schedule (`scheduledTasks` in `denext.config.ts`, or a per-task
+  `schedule`) and/or on demand (`runTask(name)` from app code, `denext task <name>`
+  from the CLI). Scheduling uses the platform's managed **`Deno.cron`** when available
+  (Deno Deploy, or `--unstable-cron`) and a dependency-free minute-tick scheduler
+  otherwise. Zero cost when the app defines none.
 - **`denext patch`** — patch-package for denext: record an edit to an npm package (or to
   denext's own sources, installed from JSR) as `patches/<name>+<version>.patch` and re-apply
   it at every `dev`/`build`/`start`; a denext patch overrides single framework files through

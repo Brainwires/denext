@@ -21,6 +21,7 @@ import {
   runRegister,
   setNextRuntimeEnv,
 } from "../../server/instrumentation.ts";
+import { bootScheduledTasks } from "../../server/task-loader.ts";
 import { clientEntryFor, getMiddleware, styleHrefsFor } from "./bundles.ts";
 import { devOriginAllowed } from "./dev-endpoints.ts";
 import { getManifest } from "./manifest.ts";
@@ -53,6 +54,9 @@ function startInstrumentation(st: DevState): void {
   void (async () => {
     st.instrumentation = await loadInstrumentation(st.paths.instrumentationPath);
     await runRegister(st.instrumentation);
+    // Discover tasks/ and register cron schedules (dev uses the userland tick unless the dev
+    // server was started with --unstable-cron).
+    await bootScheduledTasks(st.paths.projectDir, st.paths.config ?? undefined);
   })();
 }
 

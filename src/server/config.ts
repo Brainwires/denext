@@ -347,6 +347,17 @@ export interface DenextConfig {
   /** Declarative response headers, evaluated once at startup. */
   headers?: () => HeaderRule[] | Promise<HeaderRule[]>;
   /**
+   * Cron schedules for background tasks: a map of a 5-field cron expression to the task name(s)
+   * to run on it (a task is `tasks/<name>.ts` exporting `defineTask(...)`). Registered at server
+   * startup via `Deno.cron` when the runtime exposes it (Deno Deploy, or `--unstable-cron`) and a
+   * dependency-free minute-tick scheduler otherwise. A task may also declare its own `schedule`.
+   *
+   * ```ts
+   * scheduledTasks: { "0 3 * * *": "cleanup", "0 0 * * 1": ["digest", "warm-cache"] }
+   * ```
+   */
+  scheduledTasks?: Record<string, string | string[]>;
+  /**
    * Image-optimization config. Remote sources are refused by default (local-only,
    * SSRF-safe); allowlist hosts here to enable optimizing remote images.
    */
