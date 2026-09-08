@@ -11,7 +11,8 @@
     "./packages/effect",
     "./packages/openapi",
     "./packages/graphql",
-    "./packages/react-router"
+    "./packages/react-router",
+    "./packages/content-collections"
   ],
   "exports": {
     ".": "./mod.ts",

@@ -383,3 +383,11 @@ A few capabilities aren't built yet (none affects the zero-npm runtime):
   a local fallback to cut CLS) needs a bundled font-metrics database to compute
   exact overrides; a guessed table would mis-size the fallback, so it's deferred
   until real metrics are bundled.
+
+- **`@denext/content-collections`: no built-in Markdown/MDX renderer yet.** Collections are a
+  typed, validated, queryable **data** layer: an entry's `body` is the raw MD/MDX source, which
+  you render with your own MDX setup (`@denext/denext/build/next-compat` `compileMdxSource`) or a
+  Markdown renderer. A first-party render helper is planned. Two v1 notes: the built store is read
+  from `<cwd>/.denext/content-data.json`, so run the app from its project root (as `deno task
+  dev`/`start` do); and unquoted YAML frontmatter dates parse as `Date` (quote them, or use a date
+  schema).

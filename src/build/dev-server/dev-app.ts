@@ -4,7 +4,7 @@
 
 import { join } from "@std/path";
 import { createApp, type RequestHandler } from "../../server/app.ts";
-import { getPluginRequestHandler } from "../../plugin/mod.ts";
+import { applyPlugins, getPluginRequestHandler, runPluginPrepareSteps } from "../../plugin/mod.ts";
 import { resolveDefaultCacheStore } from "../../server/cache.ts";
 import { installLiveHub } from "../../server/live.ts";
 import {
@@ -57,6 +57,24 @@ function startInstrumentation(st: DevState): void {
     // Discover tasks/ and register cron schedules (dev uses the userland tick unless the dev
     // server was started with --unstable-cron).
     await bootScheduledTasks(st.paths.projectDir, st.paths.config ?? undefined);
+    // Plugin prepare steps (codegen the app imports — e.g. content-collections types + store):
+    // set plugins up once (idempotent; the first getManifest is a no-op then) and run them so the
+    // generated inputs exist before the first request. A no-op when no plugin registered one.
+    if (st.paths.config?.plugins?.length) {
+      await applyPlugins({
+        projectRoot: st.paths.projectDir,
+        appDir: st.paths.appDir,
+        config: st.paths.config ?? {},
+        mode: "dev",
+        load: st.load,
+      });
+      await runPluginPrepareSteps({
+        projectRoot: st.paths.projectDir,
+        appDir: st.paths.appDir,
+        outDir: st.paths.outDir,
+        config: st.paths.config ?? {},
+      });
+    }
   })();
 }
 

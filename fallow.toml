@@ -91,6 +91,9 @@ entry = [
   # More file conventions denext loads by PATH, not import: the project config, the
   # request middleware, the instrumentation hook, and the App Router metadata files.
   "**/denext.config.ts",
+  # content.config.ts (@denext/content-collections plugin): loaded by dynamic import (path-based),
+  # not by a static import, like denext.config.ts.
+  "**/content.config.ts",
   "**/middleware.ts",
   "**/instrumentation.ts",
   "**/app/**/opengraph-image.tsx",

@@ -143,8 +143,10 @@ export type {
   PluginBuildStep,
   PluginContext,
   PluginMode,
+  PluginPrepareStep,
   PluginRequestHandler,
   PluginTeardown,
+  PrepareStepOptions,
 } from "../plugin/mod.ts";
 export type { Directive } from "../build/directives.ts";
 export type { ApiMatch, MatchOptions, PageMatch } from "../router/match.ts";

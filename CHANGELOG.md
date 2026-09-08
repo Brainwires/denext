@@ -10,6 +10,17 @@ and this project adheres to
 
 ### Added
 
+- **`@denext/content-collections` (new first-party package).** A typed, validated, queryable
+  content layer (MD/MDX/YAML/JSON) — Astro Content Layer / Nuxt Content for denext. Declare
+  collections in `content.config.ts` with a Standard Schema + a loader (`glob` for local files, or
+  any `load(ctx)` for remote sources); `getCollection` / `getEntry` are typed to your schemas. The
+  store + types regenerate live in `denext dev` and at `denext build`. New `denext content build |
+  list | validate` verb (`validate` exits 1 on a schema failure — a CI gate).
+- **New plugin seam: `ctx.addPrepareStep(fn, { watch })`.** A prepare step generates inputs the app
+  imports (types, a data artifact) — run at `denext build` AND `denext dev` startup, and re-run in
+  dev when a file under its `watch` globs changes. This is what keeps a plugin's codegen live in dev
+  (build steps run only at build). New exports on `denext/server` + `denext/plugin-kit`:
+  `PluginPrepareStep`, `PrepareStepOptions`.
 - **Type-safe routing beyond the path string.** With `.denext/routes.ts` imported, the object
   form of an href is now checked against the route: `router.push({ pathname: "/blog/[slug]",
   params: { slug } })` / `<Link href={{ … }} />` require a `params` object matching the route's

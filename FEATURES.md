@@ -396,6 +396,13 @@ cache uses Deno's built-in `node:sqlite`.)
   GraphiQL dev-only), `fromChannel(channel, key)` turning a `createChannel` key into a
   subscription source over `tapChannel` (delivered as GraphQL over SSE, across instances
   via the app's `ChannelTransport`), `schema.graphql` at build, `denext graphql sdl | diff`.
+- **`@denext/content-collections`** (`packages/content-collections`): a typed, validated,
+  queryable content layer (MD/MDX/YAML/JSON) — Astro Content Layer / Nuxt Content for denext.
+  `content.config.ts` declares collections with a Standard Schema + a loader (`glob` for local
+  files, or any `load(ctx)` function for remote sources); the plugin validates every entry and
+  generates types so **`getCollection` / `getEntry` are fully typed**, regenerated **live in
+  `denext dev`** and at `denext build` through the plugin **prepare-step** seam. `denext content
+  build | list | validate` (`validate` is a CI gate).
 - **Plugin-kit primitives for API plugins**: `apiDefinitionOf`, `tapChannel` (server-side
   observer of a channel's pushes), `verifyOrigin` (the CSRF gate every state-changing
   denext RPC applies), `bufferedRequest` + the body caps (`src/plugin/kit.ts`).

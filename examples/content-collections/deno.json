@@ -1,0 +1,36 @@
+{
+  "tasks": {
+    "dev": "deno run -A ../../cli.ts dev .",
+    "build": "deno run -A ../../cli.ts build .",
+    "start": "deno run -A ../../cli.ts start ."
+  },
+  "nodeModulesDir": "none",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "denext",
+    "lib": ["deno.window", "dom", "dom.iterable", "dom.asynciterable"]
+  },
+  "imports": {
+    "denext": "../../mod.ts",
+    "denext/jsx-runtime": "../../src/jsx/jsx-runtime.ts",
+    "denext/jsx-dev-runtime": "../../src/jsx/jsx-runtime.ts",
+    "denext/server": "../../src/server/mod.ts",
+    "denext/client": "../../src/client/mod.ts",
+    "@denext/denext": "../../mod.ts",
+    "@denext/denext/server": "../../src/server/mod.ts",
+    "@denext/denext/plugin-kit": "../../src/plugin/kit.ts",
+    "@denext/denext/cli/command": "../../src/cli/command.ts",
+    "@denext/content-collections": "../../packages/content-collections/mod.ts",
+    "@denext/content-collections/config": "../../packages/content-collections/config.ts",
+    "@denext/content-collections/runtime": "../../packages/content-collections/runtime.ts",
+    "@denext/content-collections/command": "../../packages/content-collections/command.ts",
+    "@std/front-matter": "jsr:@std/front-matter@^1.0.0",
+    "@std/fs": "jsr:@std/fs@^1.0.0",
+    "@std/path": "jsr:@std/path@^1.0.0",
+    "@std/yaml": "jsr:@std/yaml@^1.0.0",
+    "zod": "npm:zod@^4"
+  },
+  "lint": {
+    "plugins": ["../../src/lint/denext-plugin.ts"]
+  }
+}
