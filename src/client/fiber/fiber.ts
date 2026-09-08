@@ -174,6 +174,13 @@ export interface Fiber {
   /** Set when a state setter scheduled this fiber — the only updates the no-op bailout
    * may judge; a lane retained for other reasons (a suspended child's retry) always renders. */
   stateUpdate?: boolean;
+  /**
+   * Set true when this fiber actually re-ran its render this pass (not bailed). Lets the
+   * commit's `clearCommittedFlags` promote hook `committed` baselines only on fibers that
+   * rendered — a bailed fiber's hook cells are unchanged, so promoting them is a no-op. Reset
+   * per pass (in `createWorkInProgress`, and after promotion in the commit walk).
+   */
+  didRender?: boolean;
   insertionEffects?: CommitEffect[];
   pendingEffects?: CommitEffect[];
   passiveEffects?: CommitEffect[];
@@ -337,6 +344,7 @@ export function createWorkInProgress(current: Fiber, pendingVNode: VNode | null)
   wip.childLanes = current.childLanes;
   carryOver(wip, current);
   wip.bailed = false;
+  wip.didRender = false;
   return wip;
 }
 

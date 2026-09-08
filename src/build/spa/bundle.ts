@@ -2,7 +2,8 @@
 // react→denext rewrite) and extract its stylesheet. Shared by build, export and dev.
 
 import { join, toFileUrl } from "@std/path";
-import { nodeResolveEnabled, type SpaConfig } from "../../server/config.ts";
+import type * as esbuild from "esbuild";
+import { nodeResolveEnabled, reactCompilerEnabled, type SpaConfig } from "../../server/config.ts";
 import {
   appUsesActivity,
   appUsesViewTransition,
@@ -14,6 +15,7 @@ import { buildNextCompatClientEntries } from "../next-compat-build.ts";
 import { detectNextCompat } from "../next-compat-detect.ts";
 import { stopNextCompat } from "../next-compat.ts";
 import type { ProjectPaths } from "../paths.ts";
+import { spaCompilerPlugin } from "../spa-compiler-plugin.ts";
 import { spaRefreshPlugin } from "../spa-refresh-plugin.ts";
 import { tailwindPaths } from "../tailwind.ts";
 import { CLIENT_PREFIX, ENTRY_FILE, generateSpaEntry, STYLE_FILE } from "./shared.ts";
@@ -133,7 +135,7 @@ async function bundleCompatSpa(
     // Redirect stylesheet imports to their shims — covers `.scss` in sibling workspace
     // packages the esbuild default resolver would otherwise choke on.
     cssImportMap: css?.importMap,
-    extraPlugins: spaDevPlugins(paths.projectDir, dev),
+    extraPlugins: spaBundlePlugins(paths.projectDir, dev, paths.config),
   });
   // Tear the esbuild service down only for a one-shot build/export. In dev this runs on
   // every rebuild, so stopping it would force a cold re-init each keystroke (and could
@@ -142,14 +144,21 @@ async function bundleCompatSpa(
 }
 
 /**
- * Dev only: instrument each app module with Fast Refresh family registrations (front-runs
- * the deno-loader's onLoad). Omitted in prod → nothing extra ships.
+ * The extra esbuild onLoad plugins for a SPA bundle: in DEV, Fast Refresh family
+ * registrations (front-runs the deno-loader); in PROD, the auto-memo compiler when the app
+ * enabled it (`experimental.reactCompiler` — `denext migrate` turns it on for a React-Compiler
+ * Vite app). Both transform only first-party app source; both are omitted otherwise so nothing
+ * extra runs. (Dev keeps the untransformed fast-rebuild + Fast Refresh; the compiler is a prod
+ * optimization.)
  */
-function spaDevPlugins(
+function spaBundlePlugins(
   projectDir: string,
   dev: boolean,
-): ReturnType<typeof spaRefreshPlugin>[] | undefined {
-  return dev ? [spaRefreshPlugin(projectDir)] : undefined;
+  config: ProjectPaths["config"],
+): esbuild.Plugin[] | undefined {
+  if (dev) return [spaRefreshPlugin(projectDir)];
+  if (reactCompilerEnabled(config)) return [spaCompilerPlugin(projectDir)];
+  return undefined;
 }
 
 /**

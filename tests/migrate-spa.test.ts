@@ -204,3 +204,36 @@ async function exists(p: string): Promise<boolean> {
     return false;
   }
 }
+
+Deno.test("migrate SPA: React Compiler in the Vite config enables denext's auto-memo compiler", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_spa_rc_" });
+  try {
+    await writeViteApp(dir);
+    // A Vite app that runs React Compiler (auto-memoization) via @vitejs/plugin-react.
+    await Deno.writeTextFile(
+      join(dir, "vite.config.ts"),
+      `import react, { reactCompilerPreset } from "@vitejs/plugin-react";\n` +
+        `export default { plugins: [react({ babel: { presets: [reactCompilerPreset()] } })] };\n`,
+    );
+    await migrateProject(dir, {});
+    const config = await Deno.readTextFile(join(dir, "denext.config.ts"));
+    assert(
+      config.includes("experimental: { reactCompiler: true }"),
+      "a React-Compiler Vite app enables denext's auto-memo compiler",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("migrate SPA: no React Compiler → no experimental block", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_spa_norc_" });
+  try {
+    await writeViteApp(dir); // its vite.config has no react-compiler reference
+    await migrateProject(dir, {});
+    const config = await Deno.readTextFile(join(dir, "denext.config.ts"));
+    assert(!config.includes("reactCompiler"), "no compiler detected ⇒ no experimental block");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

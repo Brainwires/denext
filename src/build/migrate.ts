@@ -1562,6 +1562,7 @@ function spaConfigSource(o: {
   tailwind: boolean;
   proxy?: { prefixes: string[]; target: string };
   desktop?: boolean;
+  reactCompiler?: boolean;
 }): string {
   const needsPkg = o.envKeys.includes("APP_VERSION");
   const envLines = o.envKeys
@@ -1584,6 +1585,9 @@ function spaConfigSource(o: {
     `export default {\n` +
     `  mode: "spa",\n` +
     `  compatibilityMode: true,\n` +
+    // The Vite app ran React Compiler (auto-memoization); enable denext's own auto-memo
+    // compiler so the migrated SPA keeps that memoization (else components re-render far more).
+    (o.reactCompiler ? `  experimental: { reactCompiler: true },\n` : "") +
     tailwindBlock +
     `  spa: {\n` +
     `    entry: ${JSON.stringify(o.entry)},\n` +
@@ -2033,13 +2037,33 @@ async function spaSourceFacts(
   envKeys: string[];
   tailwind: boolean;
   proxy: { prefixes: string[]; target: string } | undefined;
+  reactCompiler: boolean;
 }> {
   const { entry, title } = source === "cra" ? await readCraIndex(dir) : await readIndexHtml(dir);
   const envKeys = await spaEnvKeys(dir, source);
   const tailwind = ("@tailwindcss/vite" in deps || "tailwindcss" in deps) &&
     await exists(join(dir, "src", "index.css"));
   const proxy = await spaProxy(dir, options, source);
-  return { entry, title, envKeys, tailwind, proxy };
+  const reactCompiler = await spaUsesReactCompiler(dir, source);
+  return { entry, title, envKeys, tailwind, proxy, reactCompiler };
+}
+
+/**
+ * Whether the Vite app runs React Compiler (auto-memoization) — the `reactCompilerPreset`
+ * (from `@vitejs/plugin-react`) or `babel-plugin-react-compiler`, referenced in a
+ * `vite.config.*`. If so, migrate enables denext's own auto-memo compiler
+ * (`experimental.reactCompiler`), so the migrated SPA keeps the pervasive memoization the app
+ * relied on — without it, components that were auto-memoized re-render on every parent render.
+ */
+async function spaUsesReactCompiler(dir: string, source: SpaSource): Promise<boolean> {
+  if (source !== "vite") return false;
+  for (const name of ["vite.config.ts", "vite.config.js", "vite.config.mts", "vite.config.mjs"]) {
+    try {
+      const src = await Deno.readTextFile(join(dir, name));
+      if (/react-compiler|reactCompilerPreset|babel-plugin-react-compiler/.test(src)) return true;
+    } catch { /* not present — try the next candidate */ }
+  }
+  return false;
 }
 
 /** Generate denext SPA config files (deno.json + denext.config.ts [+ desktop.ts]). */
@@ -2065,7 +2089,7 @@ async function migrateSpaProject(
   // with "auto" they are pinned as `npm:name@version` like the Next path.
   const classified = classifyDeps(deps, imports, { pin: !manual });
 
-  const { entry, title, envKeys, tailwind, proxy } = await spaSourceFacts(
+  const { entry, title, envKeys, tailwind, proxy, reactCompiler } = await spaSourceFacts(
     dir,
     deps,
     options,
@@ -2073,7 +2097,7 @@ async function migrateSpaProject(
   );
 
   const nodeModulesDir = manual ? "manual" : "auto";
-  const facts = { entry, title, envKeys, tailwind, proxy };
+  const facts = { entry, title, envKeys, tailwind, proxy, reactCompiler };
   const files = await writeSpaProjectFiles(
     dir,
     facts,

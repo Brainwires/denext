@@ -45,6 +45,22 @@ export function C({ id }) {
   assertStringIncludes(code, "<span>{n}</span>");
 });
 
+Deno.test("transformModule: absolutize:false keeps relative imports (in-place SPA onLoad)", async () => {
+  const src = `import { Child } from "./child.tsx";
+export function C({ id }) { return <div><Child v={id} /></div>; }
+`;
+  // Default (compileModules → temp dir): relative specifiers are rewritten absolute.
+  const abs = await transformModule(src, "file:///proj/app/C.tsx");
+  assert(abs.changed);
+  assert(!abs.code.includes('"./child.tsx"'), "default absolutizes the relative import");
+  // In-place onLoad (SPA plugin): the module keeps its own path as the resolve base, so the
+  // relative import stays exactly as written — only the memoization is applied.
+  const inPlace = await transformModule(src, "file:///proj/app/C.tsx", { absolutize: false });
+  assert(inPlace.changed);
+  assertStringIncludes(inPlace.code, 'from "./child.tsx"');
+  assertStringIncludes(inPlace.code, "_dnxUseMemoCache(");
+});
+
 Deno.test("transform places edits correctly despite leading comments and multi-byte chars", async () => {
   // swc reports byte offsets against a base that skips leading comments; these
   // trip a naive implementation. The cache decl must land right after the `{`, and
