@@ -1398,6 +1398,10 @@ Deno.test("useChannel client: initial → pushed value → a denial marks the su
     ws.open();
     const sent = JSON.parse(ws.sent.find((s) => s.includes("channel-subscribe"))!);
     assertEquals([sent.channelId, sent.key], ["ch#orders", "user:1"]);
+    // The registration ack moves idle → subscribed (still the initial value; no push yet).
+    ws.deliver({ type: "channel-ready", subId: sent.subId });
+    flushSync();
+    assertEquals(container.textContent, "0/subscribed/-");
     ws.deliver({ type: "channel", subId: sent.subId, seq: 1, value: 42 });
     flushSync();
     assertEquals(container.textContent, "42/live/-");

@@ -81,6 +81,8 @@ interface ChannelSubClient {
   dead?: boolean;
   onValue: (value: unknown, seq: number) => void;
   onError: (info: LiveErrorInfo) => void;
+  /** Called once when the server acks the subscription is registered (`channel-ready`). */
+  onReady?: () => void;
 }
 
 const boundaries = new Map<string, Boundary>();
@@ -150,9 +152,10 @@ export function subscribeChannel(
   key: string,
   onValue: (value: unknown, seq: number) => void,
   onError: (info: LiveErrorInfo) => void,
+  onReady?: () => void,
 ): () => void {
   const subId = `c${++subCounter}`;
-  channelSubs.set(subId, { channelId, key, onValue, onError });
+  channelSubs.set(subId, { channelId, key, onValue, onError, onReady });
   ensureSocket();
   sendFrame({ type: "channel-subscribe", subId, channelId, key });
   return () => {
@@ -328,8 +331,9 @@ function handleServerMessage(raw: string): void {
       tagSubs.get(msg.subId)?.onInvalidate();
       break;
     case "channel-ready":
-      // A subscription-registered ack. `useChannel` treats a subscription as live optimistically,
-      // so nothing to do here yet; handled explicitly so the ack is a recognized frame, not dropped.
+      // A subscription-registered ack — surface it so `useChannel` can move `idle → subscribed`
+      // (a channel has no initial value, so this is the only pre-first-push "live now" signal).
+      channelSubs.get(msg.subId)?.onReady?.();
       break;
     case "channel":
       deliverChannel(msg);
