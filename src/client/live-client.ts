@@ -73,6 +73,8 @@ interface PresenceRoom {
 interface TagSub {
   tags: string[];
   onInvalidate: () => void;
+  /** Called if the server refuses or drops the tag watch (`denied`, `limit`, `no-policy`, …). */
+  onError?: (info: LiveErrorInfo) => void;
 }
 
 interface ChannelSubClient {
@@ -81,6 +83,8 @@ interface ChannelSubClient {
   dead?: boolean;
   onValue: (value: unknown, seq: number) => void;
   onError: (info: LiveErrorInfo) => void;
+  /** Called once when the server acks the subscription is registered (`channel-ready`). */
+  onReady?: () => void;
 }
 
 const boundaries = new Map<string, Boundary>();
@@ -150,9 +154,10 @@ export function subscribeChannel(
   key: string,
   onValue: (value: unknown, seq: number) => void,
   onError: (info: LiveErrorInfo) => void,
+  onReady?: () => void,
 ): () => void {
   const subId = `c${++subCounter}`;
-  channelSubs.set(subId, { channelId, key, onValue, onError });
+  channelSubs.set(subId, { channelId, key, onValue, onError, onReady });
   ensureSocket();
   sendFrame({ type: "channel-subscribe", subId, channelId, key });
   return () => {
@@ -168,10 +173,15 @@ export function subscribeChannel(
  *
  * @param tags The cache tags to watch.
  * @param onInvalidate Called with no arguments when one of them is invalidated.
+ * @param onError Called if the server refuses or drops the watch (else a refusal is `console.warn`ed).
  */
-export function subscribeLiveTags(tags: string[], onInvalidate: () => void): () => void {
+export function subscribeLiveTags(
+  tags: string[],
+  onInvalidate: () => void,
+  onError?: (info: LiveErrorInfo) => void,
+): () => void {
   const subId = `t${++subCounter}`;
-  tagSubs.set(subId, { tags, onInvalidate });
+  tagSubs.set(subId, { tags, onInvalidate, onError });
   ensureSocket();
   sendFrame({ type: "tags-subscribe", subId, tags });
   return () => {
@@ -327,6 +337,11 @@ function handleServerMessage(raw: string): void {
     case "invalidate":
       tagSubs.get(msg.subId)?.onInvalidate();
       break;
+    case "channel-ready":
+      // A subscription-registered ack — surface it so `useChannel` can move `idle → subscribed`
+      // (a channel has no initial value, so this is the only pre-first-push "live now" signal).
+      channelSubs.get(msg.subId)?.onReady?.();
+      break;
     case "channel":
       deliverChannel(msg);
       break;
@@ -382,6 +397,14 @@ function deliverError(msg: LiveErrorInfo & { subId?: string }): void {
   if (channel) {
     if (TERMINAL_CODES.has(msg.code) || msg.code === "denied") channel.dead = true;
     channel.onError(msg);
+    return;
+  }
+  const tag = tagSubs.get(msg.subId);
+  if (tag) {
+    // A refused tag watch (e.g. `denied`) simply stops live-updating; surface it so it's
+    // never fully silent — via the caller's handler, else a subId-bearing warning.
+    if (tag.onError) tag.onError(msg);
+    else console.warn(`${text} (tag watch ${msg.subId})`);
     return;
   }
   const sub = dataSubs.get(msg.subId);

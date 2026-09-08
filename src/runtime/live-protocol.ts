@@ -179,6 +179,18 @@ export interface LiveChannelUnsubscribe {
   subId: string;
 }
 
+/**
+ * Server → client: a channel subscription is now registered (sent once, right after `authorize`
+ * passes and the subscription is indexed). Channels have no initial value to imply registration the
+ * way a data subscription's first `data` frame does, so this is the signal that a subsequent publish
+ * will reach this subscriber — clients (and tests) can await it before relying on delivery.
+ */
+export interface LiveChannelReady {
+  type: "channel-ready";
+  /** The subscription that is now live. */
+  subId: string;
+}
+
 /** Server → client: one published payload. */
 export interface LiveChannel {
   type: "channel";
@@ -257,6 +269,7 @@ export type LiveServerMessage =
   | LivePing
   | LiveData
   | LiveInvalidate
+  | LiveChannelReady
   | LiveChannel
   | LivePresenceState
   | LiveError;

@@ -1,6 +1,6 @@
 {
   "name": "@denext/denext",
-  "version": "2.1.0-rc.3",
+  "version": "2.1.0",
   "license": "MIT",
   "workspace": [
     "./packages/photon",
@@ -11,7 +11,8 @@
     "./packages/effect",
     "./packages/openapi",
     "./packages/graphql",
-    "./packages/react-router"
+    "./packages/react-router",
+    "./packages/content-collections"
   ],
   "exports": {
     ".": "./mod.ts",

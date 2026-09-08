@@ -1,7 +1,7 @@
 // Island-level lazy hydration: the four strategies and the delegated interaction
 // dispatch. Scheduling primitives are injected so idle/visible fire deterministically.
 
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertStrictEquals } from "@std/assert";
 import {
   dispatchInteraction,
   type LazyScheduler,
@@ -160,4 +160,57 @@ Deno.test("dispatchInteraction ignores targets outside any interaction island", 
   const stray = child(other);
   assertEquals(dispatchInteraction(stray), false);
   assertEquals(dispatchInteraction(null), false);
+});
+
+// ---- default scheduler: IntersectionObserver box-target + rootMargin ---------
+
+Deno.test("default visible scheduler observes past nested display:contents, with a rootMargin", () => {
+  resetLazyIslands();
+  const g = globalThis as Any;
+  const origGCS = g.getComputedStyle;
+  const origIO = g.IntersectionObserver;
+
+  // A nested-`display:contents` island: wrapper → inner wrapper → the real boxed root.
+  const leaf: Any = { __display: "block", firstElementChild: null };
+  const inner: Any = { __display: "contents", firstElementChild: leaf };
+  const container: Any = { __display: "contents", firstElementChild: inner };
+
+  let observed: Any = null;
+  let opts: Any = null;
+  let disconnected = false;
+  let fire: ((entries: Array<{ isIntersecting: boolean }>) => void) | null = null;
+
+  g.getComputedStyle = (e: Any) => ({ display: e.__display });
+  g.IntersectionObserver = class {
+    constructor(cb: (entries: Array<{ isIntersecting: boolean }>) => void, o?: Any) {
+      fire = cb;
+      opts = o;
+    }
+    observe(el: Any) {
+      observed = el;
+    }
+    disconnect() {
+      disconnected = true;
+    }
+  };
+  try {
+    setLazyScheduler(); // install the real default scheduler
+    let hydrated = 0;
+    registerLazyIsland({ container, strategy: "visible", hydrate: () => hydrated++ });
+
+    assertEquals(opts?.rootMargin, "200px", "a rootMargin pre-triggers before on-screen");
+    assertStrictEquals(observed, leaf, "walked past both contents wrappers to the boxed root");
+
+    fire!([{ isIntersecting: false }]);
+    assertEquals(hydrated, 0, "no hydration until it actually intersects");
+    fire!([{ isIntersecting: true }]);
+    assertEquals(hydrated, 1, "hydrates on intersection");
+    assert(disconnected, "observer disconnects after hydrating");
+  } finally {
+    if (origGCS === undefined) delete g.getComputedStyle;
+    else g.getComputedStyle = origGCS;
+    if (origIO === undefined) delete g.IntersectionObserver;
+    else g.IntersectionObserver = origIO;
+    setLazyScheduler();
+  }
 });

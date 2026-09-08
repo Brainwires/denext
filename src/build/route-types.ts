@@ -72,11 +72,13 @@ export function generateRouteTypes(manifest: RouteManifest): string {
   // Wire the routes into denext so Link / router.push enforce them — but only when the
   // app actually has routes (a `routes: never` augmentation would make every href fail).
   const augmentation = routeUnion === "never" ? "" : `
-// Enforce these routes on \`Link\` / \`router.push\` / \`router.replace\`. Import this file
-// anywhere in your app (e.g. \`import "./.denext/routes.ts";\`) for it to take effect.
+// Enforce these routes on \`Link\` / \`router.push\` / \`router.replace\`, and make the object
+// form (\`{ pathname, params }\`), \`useParams\`, and typed \`redirect\` resolve against this app's
+// routes. Import this file anywhere in your app (e.g. \`import "./.denext/routes.ts";\`) to take effect.
 declare module "denext" {
   interface RegisteredRoutes {
     routes: Routes;
+    params: RouteParams;
   }
 }
 `;

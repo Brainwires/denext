@@ -68,7 +68,14 @@ security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
   `` `${string}` ``), `ApiRoutes`, `RouteParams`, and `ParamsOf<R>`. Importing
   the file registers the routes (via `RegisteredRoutes`), so **`<Link href>` /
   `router.push` / `router.replace` only accept real paths** —
-  backward-compatible (`Href` is `string` until you opt in). —
+  backward-compatible (`Href` is `string` until you opt in). Once wired, the
+  **object form is checked too**: `router.push({ pathname: "/blog/[slug]",
+  params: { slug } })` requires a params object matching the route (denext fills
+  the pattern), **`useParams<"/blog/[slug]">()`** is typed to `{ slug: string }`,
+  and **`redirect()`** autocompletes your routes. Read + validate the query with
+  a Standard Schema: **`useSearchParams(z.object({ page: z.coerce.number() }))`**
+  returns the parsed, typed value and throws a `SearchParamsValidationError`
+  (caught by the nearest `error.tsx`) on bad input. —
   `src/build/route-types.ts`, `src/client/navigation.ts`.
 - **SPA mode** (`mode: "spa"`) — an alternative to the App Router for a
   **client-only** app ("React but not Next"): no `app/` directory and no
@@ -172,6 +179,12 @@ security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
 - **Instrumentation** (`instrumentation.ts`, `instrumentation-client.ts`): `register()` + `onRequestError()`
   with Next-shaped context (`routerKind`, `routePath`, `routeType`,
   `renderSource`, `revalidateReason`).
+- **Scheduled / background tasks** (`tasks/<name>.ts` → `defineTask({ handler })`):
+  run on a cron schedule (`scheduledTasks` in `denext.config.ts`, or a per-task
+  `schedule`) and/or on demand (`runTask(name)` from app code, `denext task <name>`
+  from the CLI). Scheduling uses the platform's managed **`Deno.cron`** when available
+  (Deno Deploy, or `--unstable-cron`) and a dependency-free minute-tick scheduler
+  otherwise. Zero cost when the app defines none.
 - **`denext patch`** — patch-package for denext: record an edit to an npm package (or to
   denext's own sources, installed from JSR) as `patches/<name>+<version>.patch` and re-apply
   it at every `dev`/`build`/`start`; a denext patch overrides single framework files through
@@ -383,6 +396,13 @@ cache uses Deno's built-in `node:sqlite`.)
   GraphiQL dev-only), `fromChannel(channel, key)` turning a `createChannel` key into a
   subscription source over `tapChannel` (delivered as GraphQL over SSE, across instances
   via the app's `ChannelTransport`), `schema.graphql` at build, `denext graphql sdl | diff`.
+- **`@denext/content-collections`** (`packages/content-collections`): a typed, validated,
+  queryable content layer (MD/MDX/YAML/JSON) — Astro Content Layer / Nuxt Content for denext.
+  `content.config.ts` declares collections with a Standard Schema + a loader (`glob` for local
+  files, or any `load(ctx)` function for remote sources); the plugin validates every entry and
+  generates types so **`getCollection` / `getEntry` are fully typed**, regenerated **live in
+  `denext dev`** and at `denext build` through the plugin **prepare-step** seam. `denext content
+  build | list | validate` (`validate` is a CI gate).
 - **Plugin-kit primitives for API plugins**: `apiDefinitionOf`, `tapChannel` (server-side
   observer of a channel's pushes), `verifyOrigin` (the CSRF gate every state-changing
   denext RPC applies), `bufferedRequest` + the body caps (`src/plugin/kit.ts`).

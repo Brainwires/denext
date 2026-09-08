@@ -312,3 +312,41 @@ Deno.test("B3: a live component result is dropped by revalidateTag and by expiry
     assertEquals((await f()).n, 2, "recomputed after the tag was invalidated");
   });
 });
+
+Deno.test("B3: a stale non-serializable result revives into the live store, not durably (no stuck recompute)", async () => {
+  // Regression: `reviveStaleUseCache` used to always `setData` durably, even for a
+  // component-tree value that belongs in the in-process `liveResults` map. The stale
+  // live entry (its `staleAt` frozen in the past) was never replaced, so `lookupLive`
+  // (checked before the durable store) kept serving it and re-triggering the background
+  // recompute on every request — a value that revalidated forever.
+  const { clearLiveCacheResults } = await import("../src/server/cache.ts");
+  setCacheStore(inMemoryCacheStore());
+  clearLiveCacheResults();
+  const Comp = () => null;
+  let n = 0;
+  const f = __useCache("m#revive-live", () => {
+    // First compute is born stale; the revalidated value has a long fresh window.
+    const revalidate = n === 0 ? 0 : 3600;
+    cacheLife({ revalidate, expire: 3600 });
+    return Promise.resolve({ type: Comp, n: ++n });
+  });
+  const drain = (ctx: ReturnType<typeof createRequestContext>) =>
+    Promise.all(ctx.deferred.map((d) => d()));
+
+  const ctx1 = createRequestContext(new Request("http://x/"));
+  await runWithContext(ctx1, async () => {
+    assertEquals((await f()).n, 1, "first request computes the (immediately stale) tree");
+    assertEquals((await f()).n, 1, "same request serves the stale value while a revive is queued");
+  });
+  await drain(ctx1); // run the background revalidation → n becomes 2
+
+  const ctx2 = createRequestContext(new Request("http://x/"));
+  await runWithContext(ctx2, async () => {
+    // With the fix, the revived (fresh) tree is now the live entry: a plain hit, no
+    // further recompute. With the bug, the live entry was still the original stale n=1,
+    // so this served 1 and queued yet another revive.
+    assertEquals((await f()).n, 2, "the revived fresh tree replaced the stale live entry");
+    assertEquals((await f()).n, 2, "and it stays a fresh hit — not re-revalidated");
+    assertEquals(ctx2.deferred.length, 0, "no new revive was queued for a fresh live entry");
+  });
+});

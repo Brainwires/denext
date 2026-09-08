@@ -38,8 +38,12 @@ export interface SubscriptionState<Out> {
   data: Out | undefined;
   /** The latest failure, if any. */
   error: LiveSubscriptionError | undefined;
-  /** `idle` until the first push, `live` while delivering, `error` after a failure. */
-  status: "idle" | "live" | "error";
+  /**
+   * `idle` before the subscription is confirmed; `subscribed` once the server acks it but before any
+   * value (channels only — a data subscription's first value arrives with the ack, so it goes
+   * straight to `live`); `live` while delivering values; `error` after a failure.
+   */
+  status: "idle" | "subscribed" | "live" | "error";
   /** A channel push's per-instance sequence number (orders frames from one instance). */
   seq?: number;
 }
@@ -143,6 +147,9 @@ export function useChannel<T>(
           error: toSubscriptionError(info.reason ?? info.code, info),
           status: "error",
         })),
+      // Registered but no value yet: reflect `subscribed`, without clobbering a value or error that
+      // arrived first (a publish can beat the ack).
+      () => setState((s) => (s.status === "idle" ? { ...s, status: "subscribed" } : s)),
     );
     // deno-lint-ignore no-explicit-any
   }, [id, key, enabled] as any);

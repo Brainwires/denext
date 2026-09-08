@@ -41,8 +41,10 @@ export type {
   PluginBuildStep,
   PluginContext,
   PluginMode,
+  PluginPrepareStep,
   PluginRequestHandler,
   PluginTeardown,
+  PrepareStepOptions,
   RouteSynthesizer,
 } from "../server/mod.ts";
 // For the `addCommand` seam (contribute a `denext <verb>`).

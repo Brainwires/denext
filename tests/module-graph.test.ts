@@ -261,6 +261,29 @@ Deno.test("importFunctionExports returns runtime function exports when the modul
   }
 });
 
+Deno.test("importFunctionExports includes a createChannel export (a non-function server ref)", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_ife_ch_" });
+  try {
+    const file = join(dir, "channels.ts");
+    // A channel is a plain object carrying the well-known channel brand (Symbol.for), not a
+    // function — but the client stub must still list it so `useChannel` can import it from a
+    // "use server" module. A plain non-function export must stay excluded.
+    await Deno.writeTextFile(
+      file,
+      `const BRAND = Symbol.for("denext.channel");\n` +
+        `export const room = { denextChannelId: "", publish() {}, revoke() {}, [BRAND]: {} };\n` +
+        `export const other = 42;\n` +
+        `export function act() {}\n`,
+    );
+    const names = await importFunctionExports(file);
+    assert(names.includes("room"), "the channel export is included despite not being a function");
+    assert(names.includes("act"), "function exports still included");
+    assert(!names.includes("other"), "an ordinary non-function export is still excluded");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("exportListNames parses an `export { … }` list body", () => {
   assertEquals(exportListNames(" a, b as c, default as X, "), ["a", "c", "X"]);
   // Type-only entries and malformed names are not runtime exports.

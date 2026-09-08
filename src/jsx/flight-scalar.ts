@@ -72,6 +72,9 @@ export function serializeScalar(value: unknown): ScalarResult {
  */
 function serializeRef(value: unknown): ScalarResult | null {
   if (isServerAction(value)) return { kind: "value", value: { $: "a", i: value.denextActionId } };
+  // Only the id crosses: a Flight-serialized qrl is captureless by contract (its captures,
+  // if any, travel via hydrate-and-replay, not the wire), so the client resolves it by id
+  // and dispatches it scopeless — see `handlerMark` in render-to-string.ts.
   if (isQrl(value)) return { kind: "value", value: { $: "e", i: value.denextQrlId } };
   if (!isChannel(value)) return null;
   if (!value.denextChannelId) {

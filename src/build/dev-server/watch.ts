@@ -4,6 +4,8 @@
 
 import { resetModuleGraphCache } from "../module-graph.ts";
 import { clearLiveCacheResults } from "../../server/cache.ts";
+import { getPluginPrepareWatchDirs, runMatchingPrepareSteps } from "../../plugin/mod.ts";
+import type { PluginBuildContext } from "../../plugin/mod.ts";
 import { basename, join } from "@std/path";
 import { typeCheck } from "./dev-endpoints.ts";
 import { getUnbundled } from "./manifest.ts";
@@ -88,9 +90,26 @@ function configFilesOf(st: DevState): Set<string> {
   return files;
 }
 
+/** The PluginBuildContext a prepare re-run gets in dev (mirrors the build-time context). */
+function prepareContext(st: DevState): PluginBuildContext {
+  return {
+    projectRoot: st.paths.projectDir,
+    appDir: st.paths.appDir,
+    outDir: st.paths.outDir,
+    config: st.paths.config ?? {},
+  };
+}
+
 /** The existing paths to watch (Deno.watchFs throws NotFound for a missing one). */
 function watchedPaths(st: DevState, configFiles: Set<string>): string[] {
-  const candidates = [st.paths.appDir, st.paths.publicDir, ...configFiles];
+  const candidates = [
+    st.paths.appDir,
+    st.paths.publicDir,
+    ...configFiles,
+    // Directories a plugin prepare step watches (e.g. a content-collections `content/` tree +
+    // `content.config.ts`) so editing content regenerates its types/store live.
+    ...getPluginPrepareWatchDirs(st.paths.projectDir),
+  ];
   if (st.paths.middlewarePath) candidates.push(st.paths.middlewarePath);
   return candidates.filter((p) => {
     try {
@@ -144,7 +163,11 @@ export async function watch(st: DevState): Promise<void> {
       debounce = setTimeout(() => {
         const changedPaths = changed;
         changed = [];
-        handleChangeSet(st, configBasenames, changedPaths);
+        // Regenerate any plugin prepare outputs whose watch globs matched FIRST (awaited), so the
+        // reload the change set triggers serves freshly generated types/store — then apply the set.
+        void runMatchingPrepareSteps(prepareContext(st), changedPaths)
+          .catch(() => false)
+          .finally(() => handleChangeSet(st, configBasenames, changedPaths));
       }, 60);
     }
   } catch { /* watcher closed on shutdown */ }

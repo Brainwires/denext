@@ -8,6 +8,8 @@
 import { BLUR_ATTR, clearBlur } from "../runtime/image-blur.ts";
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChild, VNodeChildren } from "../jsx/types.ts";
+import { fillPattern, parsePattern, type RouteParams } from "../router/segments.ts";
+import type { StandardSchemaV1 } from "../runtime/define-action.ts";
 import { hydrateDocument, hydrateRoot, type Root } from "./reconciler.ts";
 import { getViewTransitionSupport, takeTransitionTypes } from "./fiber/view-transition-support.ts";
 import { revealStreamedHoles } from "./reveal-holes.ts";
@@ -405,10 +407,17 @@ export function withViewTransition(commit: () => void): void {
   const doc = document as Document & {
     startViewTransition?: (
       cb: (() => void | Promise<void>) | { update: () => void | Promise<void>; types?: string[] },
-    ) => { ready?: Promise<void>; finished?: Promise<void> } | undefined;
+    ) =>
+      | { ready?: Promise<void>; finished?: Promise<void>; updateCallbackDone?: Promise<void> }
+      | undefined;
   };
   if (typeof doc.startViewTransition !== "function") {
-    void commit();
+    // `commit` is often an async callback (typed `() => void` via void-bivalence); without a
+    // transition to carry its rejection, surface a DOM-swap failure instead of letting it become
+    // an unhandled promise rejection (a nav that "hangs").
+    Promise.resolve((commit as () => unknown)()).catch((err) =>
+      console.error("denext: soft navigation failed", err)
+    );
     return;
   }
   const vt = getViewTransitionSupport();
@@ -424,7 +433,9 @@ export function withViewTransition(commit: () => void): void {
   // A skipped/aborted transition (another started, tab hidden) is not an error: `ready`
   // rejects with InvalidStateError and `finished` may too. The `{ update, types }` object
   // form is only understood where transition types exist; fall back to the callback form.
-  let transition: { ready?: Promise<void>; finished?: Promise<void> } | undefined;
+  let transition:
+    | { ready?: Promise<void>; finished?: Promise<void>; updateCallbackDone?: Promise<void> }
+    | undefined;
   try {
     transition = types.length > 0
       ? doc.startViewTransition({ update, types })
@@ -432,7 +443,12 @@ export function withViewTransition(commit: () => void): void {
   } catch {
     transition = doc.startViewTransition(update);
   }
-  transition?.ready?.catch(() => {});
+  transition?.ready?.catch(() => {}); // a skipped/aborted transition is not an error
+  // `updateCallbackDone` rejects ONLY when `commit` itself threw (distinct from an abort, which
+  // rejects `ready`/`finished`) — surface that real DOM-swap failure instead of swallowing it.
+  transition?.updateCallbackDone?.catch((err) =>
+    console.error("denext: soft navigation failed", err)
+  );
   const done = () => tx?.clear();
   (transition?.finished ?? Promise.resolve()).then(done, done);
 }
@@ -985,25 +1001,60 @@ export interface RegisteredRoutes {}
 export type Href = RegisteredRoutes extends { routes: infer R extends string } ? R
   : string;
 
+/**
+ * The per-route params map when typed-routes is wired (from `.denext/routes.ts`), else a loose
+ * fallback. Each key is a route pattern (`/blog/[slug]`) → its params object (`{ slug: string }`).
+ */
+export type RegisteredParams = RegisteredRoutes extends { params: infer P } ? P
+  : Record<string, Record<string, string | string[]>>;
+
+/** An href's query: a record (nullish values are dropped) or a pre-built query string. */
+export type QueryInput = Record<string, string | number | boolean | null | undefined> | string;
+
 /** Next.js `UrlObject` — the object form `Link`/`useRouter` accept as an href. */
 export interface UrlObject {
   /** The path (`/blog/[slug]` resolved). */
   pathname?: string;
   /** Query as a record (nullish values are dropped) or a pre-built string. */
-  query?: Record<string, string | number | boolean | null | undefined> | string;
+  query?: QueryInput;
   /** Fragment, with or without the leading `#`. */
   hash?: string;
   /** Pre-built query string (wins over `query`), with or without the leading `?`. */
   search?: string;
 }
 
-/** A string href, or the object form. */
-export type HrefInput = Href | UrlObject;
+/**
+ * The typed object form of an href: a route pattern as `pathname` plus the `params` object it
+ * requires (checked against this app's routes when `.denext/routes.ts` is imported). A route with
+ * no dynamic segments takes no `params`. Unresolved dynamic segments are filled from `params`, so
+ * `{ pathname: "/blog/[slug]", params: { slug } }` navigates to `/blog/<slug>`.
+ */
+export type TypedUrlObject = {
+  [P in keyof RegisteredParams & string]:
+    & { pathname: P; query?: QueryInput; hash?: string; search?: string }
+    & (keyof RegisteredParams[P] extends never ? { params?: Record<never, never> }
+      : { params: RegisteredParams[P] });
+}[keyof RegisteredParams & string];
 
-/** Format a {@linkcode UrlObject} (or pass a string through). */
+/**
+ * A string href, or the object form. Once `.denext/routes.ts` is imported the object form is the
+ * strict {@link TypedUrlObject} (a real route pattern + its required `params`); before that it is the
+ * loose {@link UrlObject}, so navigation stays permissive until an app opts into typed routes.
+ */
+export type HrefInput =
+  | Href
+  | (RegisteredRoutes extends { params: unknown } ? TypedUrlObject : UrlObject);
+
+/** Fill a route-pattern pathname (`/blog/[slug]`, `/t/[...tags]`, `/d/[[...p]]`) from a params object. */
+function fillPathname(pathname: string, params: Record<string, string | string[]>): string {
+  return fillPattern(parsePattern(pathname), params as RouteParams);
+}
+
+/** Format a {@linkcode UrlObject}/{@linkcode TypedUrlObject} (or pass a string through). */
 export function formatHref(href: HrefInput): string {
   if (typeof href === "string") return href;
-  let out = href.pathname ?? "";
+  const params = (href as { params?: Record<string, string | string[]> }).params;
+  let out = params && href.pathname ? fillPathname(href.pathname, params) : href.pathname ?? "";
   if (href.search) out += href.search.startsWith("?") ? href.search : `?${href.search}`;
   else if (href.query) {
     const q = typeof href.query === "string" ? href.query : new URLSearchParams(
@@ -1233,17 +1284,81 @@ export class ReadonlyURLSearchParams extends URLSearchParams {
   }
 }
 
+/** What a Standard Schema produces from the query string — its validated output type. */
+export type SearchOutput<S> = S extends StandardSchemaV1<infer O> ? O : never;
+
 /**
- * Reactive current search params — a {@link ReadonlyURLSearchParams}, memoized per
- * query string so `useEffect(…, [searchParams])` re-runs only when the query changes.
+ * Thrown by `useSearchParams(schema)` when the URL query fails the schema. It is a normal error,
+ * so the nearest `error.tsx` boundary catches it (matching the server's `defineApi` validation).
  */
-export function useSearchParams(): ReadonlyURLSearchParams {
+export class SearchParamsValidationError extends Error {
+  /** Per-field messages, keyed by the query parameter name. */
+  readonly fieldErrors: Readonly<Record<string, string>>;
+  /** Create the error from per-field messages (query parameter name → message). */
+  constructor(fieldErrors: Record<string, string>) {
+    super(`Invalid search params: ${Object.keys(fieldErrors).join(", ") || "validation failed"}`);
+    this.name = "SearchParamsValidationError";
+    this.fieldErrors = fieldErrors;
+  }
+}
+
+/** The raw record a Standard Schema validates: repeat keys become arrays (like server query parsing). */
+function searchRecord(params: URLSearchParams): Record<string, string | string[]> {
+  const raw: Record<string, string | string[]> = {};
+  for (const key of new Set(params.keys())) {
+    const all = params.getAll(key);
+    raw[key] = all.length > 1 ? all : all[0];
+  }
+  return raw;
+}
+
+/** Validate the current query against a Standard Schema (synchronously — a hook can't await). */
+function validateSearch<O>(schema: StandardSchemaV1<O>, params: URLSearchParams): O {
+  const result = schema["~standard"].validate(searchRecord(params));
+  if (result instanceof Promise) {
+    throw new Error(
+      "useSearchParams(schema): the schema validates asynchronously, which a hook cannot await. " +
+        "Use a synchronous schema (no async refinements).",
+    );
+  }
+  if (result.issues) {
+    const fieldErrors: Record<string, string> = {};
+    for (const issue of result.issues) {
+      const first = issue.path?.[0];
+      const k = typeof first === "object" && first !== null
+        ? String(first.key)
+        : String(first ?? "");
+      if (k && !(k in fieldErrors)) fieldErrors[k] = issue.message;
+    }
+    throw new SearchParamsValidationError(fieldErrors);
+  }
+  return result.value;
+}
+
+/**
+ * Reactive current search params — a {@link ReadonlyURLSearchParams}, memoized per query string so
+ * `useEffect(…, [searchParams])` re-runs only when the query changes.
+ *
+ * Pass a **Standard Schema** (Zod/Valibot/ArkType/…) to get the query typed and validated instead:
+ * `const { page } = useSearchParams(z.object({ page: z.coerce.number().default(1) }))`. Invalid input
+ * throws a {@link SearchParamsValidationError} the nearest `error.tsx` catches. Hoist the schema to a
+ * module constant so it keeps a stable identity across renders.
+ */
+export function useSearchParams(): ReadonlyURLSearchParams;
+/** Validated overload: parse the query with a Standard Schema and return its typed output. */
+export function useSearchParams<S extends StandardSchemaV1>(schema: S): SearchOutput<S>;
+export function useSearchParams(
+  schema?: StandardSchemaV1,
+): ReadonlyURLSearchParams | unknown {
   const [search, setSearch] = useState(getLocationState().search);
   useEffect(
     () => subscribeLocation(() => setSearch(getLocationState().search)),
     [],
   );
-  return useMemo(() => new ReadonlyURLSearchParams(search), [search]);
+  return useMemo(() => {
+    const params = new ReadonlyURLSearchParams(search);
+    return schema ? validateSearch(schema, params) : params;
+  }, [search, schema]);
 }
 
 /** Read the server-embedded hydration data (params, messages, etc.). */
@@ -1268,15 +1383,20 @@ function readLocale(): string {
 }
 
 /**
- * The current route's dynamic params (reactive). Reads the params the server
- * resolved for this page from the hydration payload; updates on soft navigation.
+ * The current route's dynamic params (reactive). Reads the params the server resolved for this page
+ * from the hydration payload; updates on soft navigation.
+ *
+ * Pass a route pattern as the type argument to type the result against this app's routes (requires
+ * `.denext/routes.ts` imported): `useParams<"/blog/[slug]">()` is `{ slug: string }`.
  */
-export function useParams(): Record<string, string | string[]> {
+export function useParams<
+  P extends keyof RegisteredParams = never,
+>(): [P] extends [never] ? Record<string, string | string[]> : RegisteredParams[P] {
   const [params, setParams] = useState<Record<string, string | string[]>>(
     () => readData().params ?? {},
   );
   useEffect(() => subscribeLocation(() => setParams(readData().params ?? {})), []);
-  return params;
+  return params as [P] extends [never] ? Record<string, string | string[]> : RegisteredParams[P];
 }
 
 /**

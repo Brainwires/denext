@@ -19,6 +19,7 @@ name: Publish to JSR
 #   git tag openapi-v0.1.0    && git push origin openapi-v0.1.0      # @denext/openapi
 #   git tag graphql-v0.1.0    && git push origin graphql-v0.1.0      # @denext/graphql
 #   git tag react-router-v0.1.0 && git push origin react-router-v0.1.0  # @denext/react-router
+#   git tag content-collections-v0.1.0 && git push origin content-collections-v0.1.0  # @denext/content-collections
 #   (likewise avif-v* / og-v* / sqlite-v*)
 #
 # Bump the version in that package's deno.json before tagging — JSR rejects
@@ -39,6 +40,7 @@ on:
       - "openapi-v*" # @denext/openapi
       - "graphql-v*" # @denext/graphql
       - "react-router-v*" # @denext/react-router
+      - "content-collections-v*" # @denext/content-collections
 
 permissions:
   contents: read
@@ -79,6 +81,7 @@ jobs:
             openapi-v*)      cfg=packages/openapi/deno.json ;;
             graphql-v*)      cfg=packages/graphql/deno.json ;;
             react-router-v*) cfg=packages/react-router/deno.json ;;
+            content-collections-v*) cfg=packages/content-collections/deno.json ;;
             v*)              cfg=deno.json ;;
             *) echo "::error::unrecognized tag '$GITHUB_REF_NAME'"; exit 1 ;;
           esac

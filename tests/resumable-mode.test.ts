@@ -104,6 +104,17 @@ Deno.test("resumable mode: a capture-carrying qrl is marked evt (hydrate), not e
   assert(free.html.includes(`data-dnx-h="click:free#click"`), free.html);
 });
 
+Deno.test("non-resumable: a capturing qrl is still marked evt (no id) — no scopeless dispatch", async () => {
+  // Regression: a hand-authored capturing qrl on a NON-resumable route used to be stamped
+  // `evt:id`; the delegated dispatcher then ran its segment without live captures and threw
+  // in `capturedScope()` (a redundant second fire after the eager handler). A capturing qrl
+  // must hydrate-and-replay (bare `evt`) regardless of resumable mode.
+  const withCapture = qrl(() => Promise.resolve(() => {}), "cap#click", [{ value: 0 }]);
+  const cap = await renderToHtmlFlight(h("button", { onClick: withCapture }, "a"));
+  assert(cap.html.includes(`data-dnx-h="click"`), cap.html);
+  assert(!cap.html.includes("cap#click"), "no id ⇒ no scopeless dispatch: " + cap.html);
+});
+
 Deno.test("without resumable mode, plain handlers are NOT stamped and islands stay eager", async () => {
   const { html, islands } = await renderToHtmlFlight(h("main", null, h(Counter, {})));
   assert(!html.includes("data-dnx-h"), html);

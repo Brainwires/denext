@@ -210,7 +210,16 @@ export function fillPattern(pattern: Segment[], params: RouteParams): string {
   const parts: string[] = [];
   for (const seg of pattern) {
     if (seg.kind === "static") parts.push(seg.value);
-    else if (params[seg.value]) parts.push(paramPath(params[seg.value]));
+    else if (params[seg.value]) parts.push(encodeParam(params[seg.value]));
   }
   return "/" + parts.join("/");
+}
+
+/**
+ * Percent-encode a param value for the URL path — each single segment fully (so a `/`, `?`, or
+ * `#` in a param can't smuggle a new path segment or query), and each catch-all element
+ * individually while keeping the `/` separators. Matches how Next's `Link` interpolates params.
+ */
+function encodeParam(value: string | string[]): string {
+  return Array.isArray(value) ? value.map(encodeURIComponent).join("/") : encodeURIComponent(value);
 }

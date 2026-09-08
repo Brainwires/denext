@@ -2,7 +2,7 @@
 
 import { copy, ensureDir, walk } from "@std/fs";
 import { join } from "@std/path";
-import { runPluginBuildSteps } from "../../plugin/mod.ts";
+import { runPluginBuildSteps, runPluginPrepareSteps } from "../../plugin/mod.ts";
 import { scanRoutes } from "../../router/manifest.ts";
 import { resolveCacheComponents } from "../../server/config.ts";
 import { defaultLoader } from "../../server/mod.ts";
@@ -43,6 +43,12 @@ async function exportPagesRouter(
   options: StaticExportOptions,
 ): Promise<StaticExportResult> {
   await setupPlugins(paths, "export");
+  await runPluginPrepareSteps({
+    projectRoot: paths.projectDir,
+    appDir: paths.appDir,
+    outDir: paths.outDir,
+    config: paths.config ?? {},
+  });
   await runPluginBuildSteps({
     projectRoot: paths.projectDir,
     appDir: paths.appDir,
@@ -94,6 +100,12 @@ export async function prepareExport(
   options: StaticExportOptions,
 ): Promise<ExportContext> {
   await setupPlugins(paths, "export");
+  await runPluginPrepareSteps({
+    projectRoot: paths.projectDir,
+    appDir: paths.appDir,
+    outDir: paths.outDir,
+    config: paths.config ?? {},
+  });
   const manifest = await scanRoutes(paths.appDir);
   // Render into a STAGING dir next to the target; `finishExport` swaps it into place. The
   // previous export stays intact (and servable) until the new one is complete — a failed

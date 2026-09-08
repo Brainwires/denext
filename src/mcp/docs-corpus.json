@@ -753,7 +753,7 @@
       "title": "HrefInput",
       "module": "denext",
       "url": "/docs/api/denext/HrefInput",
-      "text": "HrefInput type HrefInput = Href | UrlObject A string href, or the object form.",
+      "text": "HrefInput type HrefInput = Href | parenthesized A string href, or the object form. Once .denext/routes.ts is imported the object form is the strict TypedUrlObject (a real route pattern + its required params); before that it is the loose UrlObject, so navigation stays permissive until an app opts into typed routes.",
       "denextOnly": true
     },
     {
@@ -1113,7 +1113,7 @@
       "title": "permanentRedirect",
       "module": "denext",
       "url": "/docs/api/denext/permanentRedirect",
-      "text": "permanentRedirect permanentRedirect(url: string, type?: RedirectType): never Throw to issue a permanent (308) redirect to url. The destination. Optional RedirectType for client soft-nav history behavior.",
+      "text": "permanentRedirect permanentRedirect(url: Href | parenthesized, type?: RedirectType): never Throw to issue a permanent (308) redirect to url. The destination. Optional RedirectType for client soft-nav history behavior.",
       "denextOnly": false
     },
     {
@@ -1225,6 +1225,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext/QueryInput",
+      "kind": "typeAlias",
+      "title": "QueryInput",
+      "module": "denext",
+      "url": "/docs/api/denext/QueryInput",
+      "text": "QueryInput type QueryInput = Record<string, string | number | boolean | null | undefined> | string An href's query: a record (nullish values are dropped) or a pre-built query string.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/ReactElement",
       "kind": "typeAlias",
       "title": "ReactElement",
@@ -1257,7 +1266,7 @@
       "title": "redirect",
       "module": "denext",
       "url": "/docs/api/denext/redirect",
-      "text": "redirect redirect(url: string, typeOrStatus?: RedirectType | number): never Throw to redirect to url from a component or action. Next's 2nd argument is a RedirectType (push/replace) controlling client soft-nav history; denext additionally accepts a numeric HTTP status (its own long-standing extension). A temporary redirect defaults to 307. The destination. A RedirectType (soft-nav behavior) or an HTTP status number.",
+      "text": "redirect redirect(url: Href | parenthesized, typeOrStatus?: RedirectType | number): never Throw to redirect to url from a component or action. Next's 2nd argument is a RedirectType (push/replace) controlling client soft-nav history; denext additionally accepts a numeric HTTP status (its own long-standing extension). A temporary redirect defaults to 307. The destination. A RedirectType (soft-nav behavior) or an HTTP status number.",
       "denextOnly": false
     },
     {
@@ -1321,6 +1330,15 @@
       "module": "denext",
       "url": "/docs/api/denext/RegisteredApi",
       "text": "RegisteredApi interface RegisteredApi Augmentation target for the generated .denext/api.ts: declare module \"denext\" { interface RegisteredApi { schema: ApiSchema } } makes createApiClient() typed with no type argument.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/RegisteredParams",
+      "kind": "typeAlias",
+      "title": "RegisteredParams",
+      "module": "denext",
+      "url": "/docs/api/denext/RegisteredParams",
+      "text": "RegisteredParams type RegisteredParams = conditional The per-route params map when typed-routes is wired (from .denext/routes.ts), else a loose fallback. Each key is a route pattern (/blog/[slug]) → its params object ({ slug: string }).",
       "denextOnly": true
     },
     {
@@ -1447,6 +1465,24 @@
       "module": "denext",
       "url": "/docs/api/denext/ScriptStrategy",
       "text": "ScriptStrategy type ScriptStrategy = beforeInteractive | afterInteractive | lazyOnload | worker When a Script runs relative to page parsing/interactivity.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/SearchOutput",
+      "kind": "typeAlias",
+      "title": "SearchOutput",
+      "module": "denext",
+      "url": "/docs/api/denext/SearchOutput",
+      "text": "SearchOutput type SearchOutput<S> = conditional What a Standard Schema produces from the query string — its validated output type.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/SearchParamsValidationError",
+      "kind": "class",
+      "title": "SearchParamsValidationError",
+      "module": "denext",
+      "url": "/docs/api/denext/SearchParamsValidationError",
+      "text": "SearchParamsValidationError class SearchParamsValidationError Thrown by useSearchParams(schema) when the URL query fails the schema. It is a normal error, so the nearest error.tsx boundary catches it (matching the server's defineApi validation).",
       "denextOnly": true
     },
     {
@@ -1711,6 +1747,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext/TypedUrlObject",
+      "kind": "typeAlias",
+      "title": "TypedUrlObject",
+      "module": "denext",
+      "url": "/docs/api/denext/TypedUrlObject",
+      "text": "TypedUrlObject type TypedUrlObject = indexedAccess The typed object form of an href: a route pattern as pathname plus the params object it requires (checked against this app's routes when .denext/routes.ts is imported). A route with no dynamic segments takes no params. Unresolved dynamic segments are filled from params, so { pathname: \"/blog/[slug]\", params: { slug } } navigates to /blog/<slug>.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/unauthorized",
       "kind": "function",
       "title": "unauthorized",
@@ -1959,7 +2004,7 @@
       "title": "useParams",
       "module": "denext",
       "url": "/docs/api/denext/useParams",
-      "text": "useParams useParams(): Record<string, string | string[]> The current route's dynamic params (reactive). Reads the params the server resolved for this page from the hydration payload; updates on soft navigation.",
+      "text": "useParams useParams<P>(): conditional The current route's dynamic params (reactive). Reads the params the server resolved for this page from the hydration payload; updates on soft navigation. Pass a route pattern as the type argument to type the result against this app's routes (requires .denext/routes.ts imported): useParams<\"/blog/[slug]\">() is { slug: string }.",
       "denextOnly": false
     },
     {
@@ -2022,7 +2067,7 @@
       "title": "useSearchParams",
       "module": "denext",
       "url": "/docs/api/denext/useSearchParams",
-      "text": "useSearchParams useSearchParams(): ReadonlyURLSearchParams Reactive current search params — a ReadonlyURLSearchParams, memoized per query string so useEffect(…, [searchParams]) re-runs only when the query changes.",
+      "text": "useSearchParams useSearchParams(): ReadonlyURLSearchParams Reactive current search params — a ReadonlyURLSearchParams, memoized per query string so useEffect(…, [searchParams]) re-runs only when the query changes. Pass a **Standard Schema** (Zod/Valibot/ArkType/…) to get the query typed and validated instead: const { page } = useSearchParams(z.object({ page: z.coerce.number().default(1) })). Invalid input throws a SearchParamsValidationError the nearest error.tsx catches. Hoist the schema to a module constant so it keeps a stable identity across renders.",
       "denextOnly": false
     },
     {
@@ -2157,7 +2202,7 @@
       "title": "VERSION",
       "module": "denext",
       "url": "/docs/api/denext/VERSION",
-      "text": "VERSION VERSION: 2.1.0-rc.3 The denext framework version.",
+      "text": "VERSION VERSION: 2.1.0 The denext framework version.",
       "denextOnly": true
     },
     {
@@ -3061,6 +3106,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/defineTask",
+      "kind": "function",
+      "title": "defineTask",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/defineTask",
+      "text": "defineTask defineTask<R>(def: TaskDefinition<R>): Task<R> Define a scheduled/background task. Validates any declared schedule up front (throws on a malformed cron expression). Place the result as the default export of a tasks/<name>.ts file, or register it programmatically with registerTask.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/denextAuth",
       "kind": "function",
       "title": "denextAuth",
@@ -3373,6 +3427,15 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/getSession",
       "text": "getSession getSession<T>(options: SessionOptions): Promise<Session<T>> Read (and manage) the current request's session. The returned object exposes the verified data, plus set()/clear(). Signing secret(s) + cookie settings.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/getTask",
+      "kind": "function",
+      "title": "getTask",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/getTask",
+      "text": "getTask getTask(name: string): Task | undefined The registered task for name, or undefined.",
       "denextOnly": true
     },
     {
@@ -3769,6 +3832,15 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/isServerAction",
       "text": "isServerAction isServerAction(value: unknown): value is ServerActionRef True if value is a ServerActionRef.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/isTask",
+      "kind": "function",
+      "title": "isTask",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/isTask",
+      "text": "isTask isTask(value: unknown): value is Task True if value came from defineTask.",
       "denextOnly": true
     },
     {
@@ -4317,7 +4389,7 @@
       "title": "permanentRedirect",
       "module": "denext/server",
       "url": "/docs/api/denext-server/permanentRedirect",
-      "text": "permanentRedirect permanentRedirect(url: string, type?: RedirectType): never Throw to issue a permanent (308) redirect to url. The destination. Optional RedirectType for client soft-nav history behavior.",
+      "text": "permanentRedirect permanentRedirect(url: Href | parenthesized, type?: RedirectType): never Throw to issue a permanent (308) redirect to url. The destination. Optional RedirectType for client soft-nav history behavior.",
       "denextOnly": false
     },
     {
@@ -4357,6 +4429,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/PluginPrepareStep",
+      "kind": "typeAlias",
+      "title": "PluginPrepareStep",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/PluginPrepareStep",
+      "text": "PluginPrepareStep type PluginPrepareStep = (context: PluginBuildContext) => void | Promise<void> A step that prepares generated inputs (typed accessors, a data artifact) BEFORE the app is bundled or served — the seam a plugin uses to generate code the app then imports. Unlike a PluginBuildStep (which runs only at denext build), a prepare step runs in **both** lifecycles: once at denext build and once at denext dev startup, and again during dev whenever a file under its PrepareStepOptions.watch globs changes — so its generated output stays live as you edit. Same PluginBuildContext as a build step.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/PluginRequestHandler",
       "kind": "typeAlias",
       "title": "PluginRequestHandler",
@@ -4372,6 +4453,15 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/PluginTeardown",
       "text": "PluginTeardown type PluginTeardown = () => void | Promise<void> A disposer that releases resources a plugin opened in DenextPlugin.setup (watchers, connections, timers). Registered with PluginContext.addTeardown and run — most-recently-registered first — when the server drains.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/PrepareStepOptions",
+      "kind": "interface",
+      "title": "PrepareStepOptions",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/PrepareStepOptions",
+      "text": "PrepareStepOptions interface PrepareStepOptions Options for PluginContext.addPrepareStep.",
       "denextOnly": true
     },
     {
@@ -4534,6 +4624,15 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/RegisterFn",
       "text": "RegisterFn type RegisterFn = () => void | Promise<void> The register export: run once at server startup.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/registerTask",
+      "kind": "function",
+      "title": "registerTask",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/registerTask",
+      "text": "registerTask registerTask(name: string, task: Task): void Register (or replace) a task by name — used by the tasks/ loader and by app code.",
       "denextOnly": true
     },
     {
@@ -4930,6 +5029,15 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/RouteSynthesizer",
       "text": "RouteSynthesizer type RouteSynthesizer = (manifest: RouteManifest) => void | Promise<void> A hook run over the scanned manifest before it is returned. May add, remove, or adjust routes — the extension point behind synthesized/derived routes. May be async (e.g. a plugin scanning its own route tree off disk).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/runTask",
+      "kind": "function",
+      "title": "runTask",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/runTask",
+      "text": "runTask runTask(name: string, payload?: unknown, opts?: object): Promise<unknown> Run a task by name and return its handler's result. Throws if no such task is registered. Callable from app code (a route handler, an action) to trigger work on demand.",
       "denextOnly": true
     },
     {
@@ -5470,6 +5578,42 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/tapChannel",
       "text": "tapChannel tapChannel<T>(channel: Channel<T> | string, key: string, handlers: ChannelTapHandlers<T>): () => void Observe a channel's publishes on the SERVER: every payload published to key on any instance — through the installed transport, decoded, in seq order per instance — until the returned disposer runs. The seam a plugin uses to bridge channel pushes into another protocol (a GraphQL subscription in @denext/graphql, an SSE stream, a queue) without a second event bus. Survives setChannelTransport (re-binds to the new transport). Not authorization: authorize gates socket SUBSCRIBERS; a server-side tap sees every publish to the key, so the consumer gates its own audience. The channel (or its id). The key to observe (exact match). Payload and revoke callbacks. A disposer that stops the tap.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/Task",
+      "kind": "interface",
+      "title": "Task",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/Task",
+      "text": "Task interface Task<R> A task descriptor. Returned by defineTask; the shape a tasks/ file default-exports.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/TaskContext",
+      "kind": "interface",
+      "title": "TaskContext",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/TaskContext",
+      "text": "TaskContext interface TaskContext Context passed to a task's handler.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/TaskDefinition",
+      "kind": "interface",
+      "title": "TaskDefinition",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/TaskDefinition",
+      "text": "TaskDefinition interface TaskDefinition<R> A task definition passed to defineTask.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/taskNames",
+      "kind": "function",
+      "title": "taskNames",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/taskNames",
+      "text": "taskNames taskNames(): string[] Every registered task name, sorted.",
       "denextOnly": true
     },
     {
@@ -6085,12 +6229,21 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-client/Href",
+      "kind": "typeAlias",
+      "title": "Href",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/Href",
+      "text": "Href type Href = conditional A navigable path: the app's registered routes when typed-routes is wired, else string.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-client/HrefInput",
       "kind": "typeAlias",
       "title": "HrefInput",
       "module": "denext/client",
       "url": "/docs/api/denext-client/HrefInput",
-      "text": "HrefInput type HrefInput = Href | UrlObject A string href, or the object form.",
+      "text": "HrefInput type HrefInput = Href | parenthesized A string href, or the object form. Once .denext/routes.ts is imported the object form is the strict TypedUrlObject (a real route pattern + its required params); before that it is the loose UrlObject, so navigation stays permissive until an app opts into typed routes.",
       "denextOnly": true
     },
     {
@@ -6382,12 +6535,48 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-client/QueryInput",
+      "kind": "typeAlias",
+      "title": "QueryInput",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/QueryInput",
+      "text": "QueryInput type QueryInput = Record<string, string | number | boolean | null | undefined> | string An href's query: a record (nullish values are dropped) or a pre-built query string.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/ReadonlyURLSearchParams",
+      "kind": "class",
+      "title": "ReadonlyURLSearchParams",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/ReadonlyURLSearchParams",
+      "text": "ReadonlyURLSearchParams class ReadonlyURLSearchParams Next's ReadonlyURLSearchParams — the read-only view of the URL query that useSearchParams() returns. It is a real URLSearchParams for reads/iteration, but its mutating methods throw (you cannot change the URL by mutating this object; navigate instead).",
+      "denextOnly": false
+    },
+    {
       "id": "api:denext-client/RegisteredApi",
       "kind": "interface",
       "title": "RegisteredApi",
       "module": "denext/client",
       "url": "/docs/api/denext-client/RegisteredApi",
       "text": "RegisteredApi interface RegisteredApi Augmentation target for the generated .denext/api.ts: declare module \"denext\" { interface RegisteredApi { schema: ApiSchema } } makes createApiClient() typed with no type argument.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/RegisteredParams",
+      "kind": "typeAlias",
+      "title": "RegisteredParams",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/RegisteredParams",
+      "text": "RegisteredParams type RegisteredParams = conditional The per-route params map when typed-routes is wired (from .denext/routes.ts), else a loose fallback. Each key is a route pattern (/blog/[slug]) → its params object ({ slug: string }).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/RegisteredRoutes",
+      "kind": "interface",
+      "title": "RegisteredRoutes",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/RegisteredRoutes",
+      "text": "RegisteredRoutes interface RegisteredRoutes Typed-routes registry (augmentation seam). denext build/dev emit .denext/routes.ts, which augments this interface with routes: Routes; import that file anywhere in your app and Link / Router.push narrow to real paths. Empty by default ⇒ Href is string (no enforcement until you opt in).",
       "denextOnly": true
     },
     {
@@ -6469,6 +6658,24 @@
       "module": "denext/client",
       "url": "/docs/api/denext-client/RouterNavigateOptions",
       "text": "RouterNavigateOptions interface RouterNavigateOptions Options for Router.push / Router.replace (Next.js NavigateOptions).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/SearchOutput",
+      "kind": "typeAlias",
+      "title": "SearchOutput",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/SearchOutput",
+      "text": "SearchOutput type SearchOutput<S> = conditional What a Standard Schema produces from the query string — its validated output type.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/SearchParamsValidationError",
+      "kind": "class",
+      "title": "SearchParamsValidationError",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/SearchParamsValidationError",
+      "text": "SearchParamsValidationError class SearchParamsValidationError Thrown by useSearchParams(schema) when the URL query fails the schema. It is a normal error, so the nearest error.tsx boundary catches it (matching the server's defineApi validation).",
       "denextOnly": true
     },
     {
@@ -6568,6 +6775,15 @@
       "module": "denext/client",
       "url": "/docs/api/denext-client/TypedQuery",
       "text": "TypedQuery type TypedQuery<Q> = conditional A schema-typed query, required; an uninformative (any/unknown) schema stays free-form.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/TypedUrlObject",
+      "kind": "typeAlias",
+      "title": "TypedUrlObject",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/TypedUrlObject",
+      "text": "TypedUrlObject type TypedUrlObject = indexedAccess The typed object form of an href: a route pattern as pathname plus the params object it requires (checked against this app's routes when .denext/routes.ts is imported). A route with no dynamic segments takes no params. Unresolved dynamic segments are filled from params, so { pathname: \"/blog/[slug]\", params: { slug } } navigates to /blog/<slug>.",
       "denextOnly": true
     },
     {
@@ -6774,7 +6990,7 @@
       "title": "useParams",
       "module": "denext/client",
       "url": "/docs/api/denext-client/useParams",
-      "text": "useParams useParams(): Record<string, string | string[]> The current route's dynamic params (reactive). Reads the params the server resolved for this page from the hydration payload; updates on soft navigation.",
+      "text": "useParams useParams<P>(): conditional The current route's dynamic params (reactive). Reads the params the server resolved for this page from the hydration payload; updates on soft navigation. Pass a route pattern as the type argument to type the result against this app's routes (requires .denext/routes.ts imported): useParams<\"/blog/[slug]\">() is { slug: string }.",
       "denextOnly": false
     },
     {
@@ -6819,7 +7035,7 @@
       "title": "useSearchParams",
       "module": "denext/client",
       "url": "/docs/api/denext-client/useSearchParams",
-      "text": "useSearchParams useSearchParams(): ReadonlyURLSearchParams Reactive current search params — a ReadonlyURLSearchParams, memoized per query string so useEffect(…, [searchParams]) re-runs only when the query changes.",
+      "text": "useSearchParams useSearchParams(): ReadonlyURLSearchParams Reactive current search params — a ReadonlyURLSearchParams, memoized per query string so useEffect(…, [searchParams]) re-runs only when the query changes. Pass a **Standard Schema** (Zod/Valibot/ArkType/…) to get the query typed and validated instead: const { page } = useSearchParams(z.object({ page: z.coerce.number().default(1) })). Invalid input throws a SearchParamsValidationError the nearest error.tsx catches. Hoist the schema to a module constant so it keeps a stable identity across renders.",
       "denextOnly": false
     },
     {
@@ -7755,7 +7971,7 @@
       "title": "subscribeChannel",
       "module": "denext/live",
       "url": "/docs/api/denext-live/subscribeChannel",
-      "text": "subscribeChannel subscribeChannel(channelId: string, key: string, onValue: (value: unknown, seq: number) => void, onError: (info: LiveErrorInfo) => void): () => void Receive a createChannel channel's pushes for key. Backs useChannel. Returns an unsubscribe. A refusal (denied / no-policy / …) arrives through onError and marks the subscription dead so a reconnect does not re-send it. The channel's stable id (ref.denextChannelId, or the \"use server\" stub's id). The key within the channel. Called with each pushed payload and the publisher's seq. Called with a structured refusal.",
+      "text": "subscribeChannel subscribeChannel(channelId: string, key: string, onValue: (value: unknown, seq: number) => void, onError: (info: LiveErrorInfo) => void, onReady?: () => void): () => void Receive a createChannel channel's pushes for key. Backs useChannel. Returns an unsubscribe. A refusal (denied / no-policy / …) arrives through onError and marks the subscription dead so a reconnect does not re-send it. The channel's stable id (ref.denextChannelId, or the \"use server\" stub's id). The key within the channel. Called with each pushed payload and the publisher's seq. Called with a structured refusal.",
       "denextOnly": true
     },
     {
@@ -7764,7 +7980,7 @@
       "title": "subscribeLiveTags",
       "module": "denext/live",
       "url": "/docs/api/denext-live/subscribeLiveTags",
-      "text": "subscribeLiveTags subscribeLiveTags(tags: string[], onInvalidate: () => void): () => void Be told when any of tags is invalidated on the server (revalidateTag); backs useApi({ tags }). Returns an unsubscribe. The cache tags to watch. Called with no arguments when one of them is invalidated.",
+      "text": "subscribeLiveTags subscribeLiveTags(tags: string[], onInvalidate: () => void, onError?: (info: LiveErrorInfo) => void): () => void Be told when any of tags is invalidated on the server (revalidateTag); backs useApi({ tags }). Returns an unsubscribe. The cache tags to watch. Called with no arguments when one of them is invalidated. Called if the server refuses or drops the watch (else a refusal is console.warned).",
       "denextOnly": true
     },
     {
@@ -8034,7 +8250,7 @@
       "title": "Common tasks",
       "module": "guide",
       "url": "https://github.com/Brainwires/denext/blob/main/AGENTS.md#common-tasks",
-      "text": "## Common tasks **A page with data (Server Component):** ``tsx // app/page.tsx export default async function Home() { const posts = await getPosts(); return <ul>{posts.map((p) => <li key={p.id}>{p.title}</li>)}</ul>; } ` **An interactive component:** `tsx // app/counter.tsx \"use client\"; import { useState } from \"denext\"; export function Counter() { const [n, setN] = useState(0); return <button type=\"button\" onClick={() => setN(n + 1)}>Clicked {n}</button>; } ` **A route handler (API):** `ts // app/api/hello/route.ts export function GET(_req: Request): Response { return Response.json({ ok: true }); } ` **A validated route handler + calling it with end-to-end types (no tRPC):** defineApi takes Standard Schemas (Zod/Valibot/ArkType/TypeBox/hand-rolled) for params / query / body / response plus the errors it may fail with; the handler gets parsed, typed input and a schema mismatch is a structured 400 before it runs. denext dev/build generate .denext/api.ts from the route modules' TYPES and register it, so createApiClient() and useApi type-check every call — path, method, params, query, body, response, error codes. `ts // app/api/user/[id]/route.ts import { createApi, defineApi, requireSession } from \"denext/server\"; import { z } from \"zod\"; export const GET = defineApi({ params: z.object({ id: z.string() }), response: z.object({ id: z.string(), name: z.string() }), // strips undeclared keys, in prod too errors: { not_found: 404 }, }, async ({ params, fail }) => (await db.users.get(params.id)) ?? fail(\"not_found\")); export const PATCH = createApi().use(requireSession()).define({ params: z.object({ id: z.string() }), body: z.object({ name: z.string().min(1) }), errors: { not_owner: 403 }, }, async ({ params, body, ctx, fail }) => { if (ctx.session.user.id !== params.id) fail(\"not_owner\"); return db.users.update(params.id, body); }); ` `ts // anywhere (server component, client component, or a test) import { createApiClient, isApiClientError } from \"denext\"; import type {} from \"./.denext/api.ts\"; // registers the schema (type-only; nothing ships) const api = createApiClient(); // typed against THIS app's routes const user = await api(\"/api/user/[id]\", \"GET\", { params: { id: \"1\" } }); // user is typed try { await api(\"/api/user/[id]\", \"PATCH\", { params: { id: \"1\" }, body: { name: \"\" } }); } catch (err) { if (isApiClientError(err) && err.code === \"not_owner\") { /* narrowed to the declared codes */ } } ` `tsx // a client component — the hook; GETs in one tick ride ONE batched request \"use client\"; import { useApi } from \"denext\"; export function User({ id }: { id: string }) { const { data, error, pending } = useApi(\"/api/user/[id]\", \"GET\", { params: { id } }); return pending ? <p>…</p> : error ? <p>{error.code}</p> : <p>{data?.name}</p>; } ` Add the @denext/openapi plugin (plugins: [openapi()] in denext.config.ts) and those same definitions serve GET /openapi.json (OpenAPI 3.1) + a docs page at GET /docs, write openapi.json at build, and back denext openapi emit | diff | lint — zero extra annotation. Schemas that implement Standard JSON Schema (Zod ≥ 4.2, ArkType, Valibot) or TypeBox are described in full; others are {} + a lint warning. Need GraphQL? @denext/graphql mounts GraphQL Yoga at /graphql (any GraphQLSchema; Pothos recommended, no decorators) and fromChannel(channel, key) turns a createChannel into a subscription source — the same push the Live socket delivers. A plain handler still works and is still typed: return TypedResponse<T> / take a TypedRequest<B> from denext/server. A plain route.ts body is capped at 1 MiB (export const maxBodyBytes = N | false); redirect()/notFound() inside one are HTTP responses; a thrown ApiError(status, code, { data }) is a typed JSON error envelope. **Typed live data (validated subscription + server push):** `ts // app/live.ts \"use server\"; import { createChannel, defineSubscription } from \"denext/server\"; export const orderStatus = defineSubscription({ input: z.object({ id: z.string() }), // validated on every subscribe tags: ({ id }) => [order:${id}], // server-derived; re-pushed on revalidateTag authorize: async ({ id }) => (await auth())?.user.id === (await db.orders.owner(id)), resolve: ({ id }) => db.orders.status(id), }); export const orderEvents = createChannel<{ status: string }>({ authorize: async (_ctx, key) => key === user:${(await auth())?.user.id}, // REQUIRED }); // anywhere on the server: await orderEvents.publish(user:${userId}, { status: \"shipped\" }); ` `tsx \"use client\"; import { useChannel, useSubscription } from \"denext/live\"; import { orderEvents, orderStatus } from \"./live.ts\"; const { data } = useSubscription(orderStatus, { id }, { initial }); const { data: event } = useChannel(orderEvents, user:${userId}); ` **A typed Server Action (the mutation side, also type-checked):** defineAction validates FormData into a typed input (a parser, or a Zod/Valibot/any Standard Schema) and its Out flows into useActionState. `ts // app/actions.ts \"use server\"; import { ActionValidationError, defineAction } from \"denext/server\"; export const createPost = defineAction({ input: (f) => ({ title: String(f.title ?? \"\").trim() }), // typed input: { title: string } handler: async ({ title }) => { if (!title) throw new ActionValidationError(\"bad\", { title: \"Title is required\" }); return { id: await db.posts.insert({ title }) }; // Out inferred: { id: string } }, }); ` `tsx // app/new-post.tsx \"use client\"; import { idleActionState, useActionState } from \"denext\"; import { createPost } from \"./actions.ts\"; export function NewPost() { const [state, action] = useActionState(createPost, idleActionState<{ id: string }>()); return ( <form action={action}> <input name=\"title\" /> {!state.ok && state.fieldErrors?.title} {/* typed */} {state.ok && created ${state.data.id}} {/* typed */} </form> ); } ` **Reading cookies / a session (auth):** `ts import { cookies, getSession } from \"denext/server\"; // cookies are Secure + httpOnly + SameSite=Lax by DEFAULT; pass { httpOnly: false } to opt out. const session = await getSession<{ userId: string }>({ secret: Deno.env.get(\"SESSION_SECRET\")!, }); if (!session.data) redirect(\"/login\"); await session.set({ userId: user.id }); // sign in ` **A database (zero-npm, server-only module):** `ts // lib/db.ts — Deno's built-in SQLite; no install. See DATABASE.md for KV/Postgres. import { DatabaseSync } from \"node:sqlite\"; const db = new DatabaseSync(Deno.env.get(\"DB_PATH\") ?? \"app.db\"); export const listNotes = () => db.prepare(\"SELECT * FROM notes\").all(); ` Open the connection once at module scope; do writes in Server Actions. **Testing an app (no browser, JS-disabled path):** `ts import { createTestApp, createTestClient } from \"denext/testing\"; const client = createTestClient(await createTestApp(\"./\")); const res = await client.submit( client.form((await client.get(\"/login\")).text), { email, password, }, ); // res.status, client.cookies — a cookie jar persists the session across requests. ` **Testing a component (hooks/effects/events, no browser):** `ts import { fireEvent, render } from \"denext/testing\"; import { h } from \"denext/jsx-runtime\"; const screen = await render(h(Counter, null)); // async — await it await screen.fireEvent.click(screen.getByRole(\"button\")); // getByRole/getByText/getByLabelText/getByTestId; fireEvent.change wires to onChange. ` **Conformance-probing every route (CI gate):** `ts import { formatReport, probeApp } from \"denext/testing\"; const report = await probeApp(\"./\"); // renders every route, asserts valid HTML docs if (!report.ok) throw new Error(formatReport(report)); // or run denext doctor ` **Config:** denext.config.ts exports { ... } (redirects, rewrites, headers, i18n, images, cacheComponents, streaming, live, plugins, experimental, tailwind, csp, compatibilityMode; mode: \"spa\" + spa: { entry, … } for SPA mode). Not next.config.js. **Writing a plugin:** a DenextPlugin ({ name, setup(ctx) } from denext/plugin-kit, the semver-stable toolkit) hooks five seams — addRouteSynthesizer (add/adjust routes), addRequestHandler (claim unmatched requests), addBuildStep (emit assets), addTeardown (dispose on drain), and addCommand (contribute a CLI verb). Declare it as plugins: [myPlugin()]. See [PLUGINS.md](./PLUGINS.md) and [examples/plugin-aliases`](./examples/plugin-aliases).",
+      "text": "## Common tasks **A page with data (Server Component):** ``tsx // app/page.tsx export default async function Home() { const posts = await getPosts(); return <ul>{posts.map((p) => <li key={p.id}>{p.title}</li>)}</ul>; } ` **An interactive component:** `tsx // app/counter.tsx \"use client\"; import { useState } from \"denext\"; export function Counter() { const [n, setN] = useState(0); return <button type=\"button\" onClick={() => setN(n + 1)}>Clicked {n}</button>; } ` **A route handler (API):** `ts // app/api/hello/route.ts export function GET(_req: Request): Response { return Response.json({ ok: true }); } ` **A validated route handler + calling it with end-to-end types (no tRPC):** defineApi takes Standard Schemas (Zod/Valibot/ArkType/TypeBox/hand-rolled) for params / query / body / response plus the errors it may fail with; the handler gets parsed, typed input and a schema mismatch is a structured 400 before it runs. denext dev/build generate .denext/api.ts from the route modules' TYPES and register it, so createApiClient() and useApi type-check every call — path, method, params, query, body, response, error codes. `ts // app/api/user/[id]/route.ts import { createApi, defineApi, requireSession } from \"denext/server\"; import { z } from \"zod\"; export const GET = defineApi({ params: z.object({ id: z.string() }), response: z.object({ id: z.string(), name: z.string() }), // strips undeclared keys, in prod too errors: { not_found: 404 }, }, async ({ params, fail }) => (await db.users.get(params.id)) ?? fail(\"not_found\")); export const PATCH = createApi().use(requireSession()).define({ params: z.object({ id: z.string() }), body: z.object({ name: z.string().min(1) }), errors: { not_owner: 403 }, }, async ({ params, body, ctx, fail }) => { if (ctx.session.user.id !== params.id) fail(\"not_owner\"); return db.users.update(params.id, body); }); ` `ts // anywhere (server component, client component, or a test) import { createApiClient, isApiClientError } from \"denext\"; import type {} from \"./.denext/api.ts\"; // registers the schema (type-only; nothing ships) const api = createApiClient(); // typed against THIS app's routes const user = await api(\"/api/user/[id]\", \"GET\", { params: { id: \"1\" } }); // user is typed try { await api(\"/api/user/[id]\", \"PATCH\", { params: { id: \"1\" }, body: { name: \"\" } }); } catch (err) { if (isApiClientError(err) && err.code === \"not_owner\") { /* narrowed to the declared codes */ } } ` `tsx // a client component — the hook; GETs in one tick ride ONE batched request \"use client\"; import { useApi } from \"denext\"; export function User({ id }: { id: string }) { const { data, error, pending } = useApi(\"/api/user/[id]\", \"GET\", { params: { id } }); return pending ? <p>…</p> : error ? <p>{error.code}</p> : <p>{data?.name}</p>; } ` Add the @denext/openapi plugin (plugins: [openapi()] in denext.config.ts) and those same definitions serve GET /openapi.json (OpenAPI 3.1) + a docs page at GET /docs, write openapi.json at build, and back denext openapi emit | diff | lint — zero extra annotation. Schemas that implement Standard JSON Schema (Zod ≥ 4.2, ArkType, Valibot) or TypeBox are described in full; others are {} + a lint warning. Need GraphQL? @denext/graphql mounts GraphQL Yoga at /graphql (any GraphQLSchema; Pothos recommended, no decorators) and fromChannel(channel, key) turns a createChannel into a subscription source — the same push the Live socket delivers. A plain handler still works and is still typed: return TypedResponse<T> / take a TypedRequest<B> from denext/server. A plain route.ts body is capped at 1 MiB (export const maxBodyBytes = N | false); redirect()/notFound() inside one are HTTP responses; a thrown ApiError(status, code, { data }) is a typed JSON error envelope. **Typed live data (validated subscription + server push):** `ts // app/live.ts \"use server\"; import { createChannel, defineSubscription } from \"denext/server\"; export const orderStatus = defineSubscription({ input: z.object({ id: z.string() }), // validated on every subscribe tags: ({ id }) => [order:${id}], // server-derived; re-pushed on revalidateTag authorize: async ({ id }) => (await auth())?.user.id === (await db.orders.owner(id)), resolve: ({ id }) => db.orders.status(id), }); export const orderEvents = createChannel<{ status: string }>({ authorize: async (_ctx, key) => key === user:${(await auth())?.user.id}, // REQUIRED }); // anywhere on the server: await orderEvents.publish(user:${userId}, { status: \"shipped\" }); ` `tsx \"use client\"; import { useChannel, useSubscription } from \"denext/live\"; import { orderEvents, orderStatus } from \"./live.ts\"; const { data } = useSubscription(orderStatus, { id }, { initial }); const { data: event } = useChannel(orderEvents, user:${userId}); ` **A typed Server Action (the mutation side, also type-checked):** defineAction validates FormData into a typed input (a parser, or a Zod/Valibot/any Standard Schema) and its Out flows into useActionState. `ts // app/actions.ts \"use server\"; import { ActionValidationError, defineAction } from \"denext/server\"; export const createPost = defineAction({ input: (f) => ({ title: String(f.title ?? \"\").trim() }), // typed input: { title: string } handler: async ({ title }) => { if (!title) throw new ActionValidationError(\"bad\", { title: \"Title is required\" }); return { id: await db.posts.insert({ title }) }; // Out inferred: { id: string } }, }); ` `tsx // app/new-post.tsx \"use client\"; import { idleActionState, useActionState } from \"denext\"; import { createPost } from \"./actions.ts\"; export function NewPost() { const [state, action] = useActionState(createPost, idleActionState<{ id: string }>()); return ( <form action={action}> <input name=\"title\" /> {!state.ok && state.fieldErrors?.title} {/* typed */} {state.ok && created ${state.data.id}} {/* typed */} </form> ); } ` **Reading cookies / a session (auth):** `ts import { cookies, getSession } from \"denext/server\"; // cookies are Secure + httpOnly + SameSite=Lax by DEFAULT; pass { httpOnly: false } to opt out. const session = await getSession<{ userId: string }>({ secret: Deno.env.get(\"SESSION_SECRET\")!, }); if (!session.data) redirect(\"/login\"); await session.set({ userId: user.id }); // sign in ` **A database (zero-npm, server-only module):** `ts // lib/db.ts — Deno's built-in SQLite; no install. See DATABASE.md for KV/Postgres. import { DatabaseSync } from \"node:sqlite\"; const db = new DatabaseSync(Deno.env.get(\"DB_PATH\") ?? \"app.db\"); export const listNotes = () => db.prepare(\"SELECT * FROM notes\").all(); ` Open the connection once at module scope; do writes in Server Actions. **A scheduled / background task (cron):** put it in tasks/<name>.ts; schedule it in denext.config.ts (scheduledTasks) or per-task; run it on demand with runTask(name) or denext task <name>. Uses Deno.cron where available (Deno Deploy), else a userland tick — no npm cron dependency. **Cron expressions are evaluated in UTC** (matching Deno.cron), and a schedule never fires on startup nor overlaps a still-running instance of the same task. `ts // tasks/cleanup.ts import { defineTask } from \"denext/server\"; export default defineTask({ description: \"purge expired sessions\", schedule: \"0 3 * * *\", // optional; or list it in config.scheduledTasks handler: async ({ payload }) => { await db.exec(\"DELETE FROM sessions WHERE expires_at < now()\"); }, }); // denext.config.ts → scheduledTasks: { \"0 0 * * 1\": [\"digest\", \"warm-cache\"] } // anywhere on the server: import { runTask } from \"denext/server\"; await runTask(\"cleanup\"); ` **A content collection (typed MD/MDX/YAML/JSON — the @denext/content-collections plugin):** add plugins: [contentCollections()] to denext.config.ts, declare collections in content.config.ts with a Standard Schema + a loader, then query them typed from a Server Component. The plugin validates entries and generates types — live in denext dev, and at denext build. `ts // content.config.ts import { defineCollection, defineContentConfig, glob } from \"@denext/content-collections/config\"; import { z } from \"zod\"; export default defineContentConfig({ collections: { blog: defineCollection({ loader: glob({ pattern: \"**/*.md\", base: \"content/blog\" }), schema: z.object({ title: z.string(), date: z.string(), draft: z.boolean().default(false) }), }), }, }); ` `tsx // app/page.tsx — server-only query, typed to the schema import \"../.denext/content.ts\"; // registers the collection types (generated) import { getCollection } from \"@denext/content-collections/runtime\"; export default async function Blog() { const posts = await getCollection(\"blog\", (p) => !p.data.draft); // p.data is typed return <ul>{posts.map((p) => <li key={p.id}>{p.data.title}</li>)}</ul>; } // CLI: denext content build | list | validate (validate exits 1 on a schema failure — a CI gate). ` **Testing an app (no browser, JS-disabled path):** `ts import { createTestApp, createTestClient } from \"denext/testing\"; const client = createTestClient(await createTestApp(\"./\")); const res = await client.submit( client.form((await client.get(\"/login\")).text), { email, password, }, ); // res.status, client.cookies — a cookie jar persists the session across requests. ` **Testing a component (hooks/effects/events, no browser):** `ts import { fireEvent, render } from \"denext/testing\"; import { h } from \"denext/jsx-runtime\"; const screen = await render(h(Counter, null)); // async — await it await screen.fireEvent.click(screen.getByRole(\"button\")); // getByRole/getByText/getByLabelText/getByTestId; fireEvent.change wires to onChange. ` **Conformance-probing every route (CI gate):** `ts import { formatReport, probeApp } from \"denext/testing\"; const report = await probeApp(\"./\"); // renders every route, asserts valid HTML docs if (!report.ok) throw new Error(formatReport(report)); // or run denext doctor ` **Config:** denext.config.ts exports { ... } (redirects, rewrites, headers, i18n, images, cacheComponents, streaming, live, plugins, experimental, tailwind, csp, compatibilityMode; mode: \"spa\" + spa: { entry, … } for SPA mode). Not next.config.js. **Writing a plugin:** a DenextPlugin ({ name, setup(ctx) } from denext/plugin-kit, the semver-stable toolkit) hooks six seams — addRouteSynthesizer (add/adjust routes), addRequestHandler (claim unmatched requests), addBuildStep (emit assets), addPrepareStep (codegen the app imports — runs at build AND dev startup, and re-runs on watch-glob changes in dev), addTeardown (dispose on drain), and addCommand (contribute a CLI verb). Declare it as plugins: [myPlugin()]. See [PLUGINS.md](./PLUGINS.md) and [examples/plugin-aliases`](./examples/plugin-aliases).",
       "denextOnly": false
     },
     {

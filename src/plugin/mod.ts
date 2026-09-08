@@ -18,6 +18,7 @@ import type { ModuleLoader } from "../server/types.ts";
 import type { RouteSynthesizer } from "../router/manifest.ts";
 import { registerRouteSynthesizer } from "../router/manifest.ts";
 import type { CommandSpec } from "../cli/command.ts";
+import { globToRegExp, isAbsolute, join } from "@std/path";
 
 /** Where denext is running when a plugin's {@linkcode DenextPlugin.setup} fires. */
 export type PluginMode = "dev" | "build" | "prod" | "export";
@@ -34,6 +35,25 @@ export type PluginRequestHandler = (
 
 /** A build-time step that emits the plugin's client bundles/assets into `outDir`. */
 export type PluginBuildStep = (context: PluginBuildContext) => void | Promise<void>;
+
+/**
+ * A step that prepares generated inputs (typed accessors, a data artifact) BEFORE the app is
+ * bundled or served — the seam a plugin uses to generate code the app then imports. Unlike a
+ * {@linkcode PluginBuildStep} (which runs only at `denext build`), a prepare step runs in **both**
+ * lifecycles: once at `denext build` and once at `denext dev` startup, and again during dev whenever
+ * a file under its {@linkcode PrepareStepOptions.watch} globs changes — so its generated output stays
+ * live as you edit. Same {@linkcode PluginBuildContext} as a build step.
+ */
+export type PluginPrepareStep = (context: PluginBuildContext) => void | Promise<void>;
+
+/** Options for {@linkcode PluginContext.addPrepareStep}. */
+export interface PrepareStepOptions {
+  /**
+   * Glob patterns (relative to `projectRoot`, or absolute) whose changes re-run this step under
+   * `denext dev`. Omit to run only at startup/build (no dev re-run on file changes).
+   */
+  readonly watch?: readonly string[];
+}
 
 /**
  * A disposer that releases resources a plugin opened in {@linkcode DenextPlugin.setup}
@@ -73,6 +93,12 @@ export interface PluginContext {
   /** Contribute a build-time step (run during `denext build`). */
   addBuildStep(step: PluginBuildStep): void;
   /**
+   * Contribute a prepare step that generates inputs the app imports — run at `denext build` AND at
+   * `denext dev` startup, plus on every change under its `watch` globs during dev (so generated types
+   * and data stay live as you edit). Use this (not {@linkcode addBuildStep}) for codegen.
+   */
+  addPrepareStep(step: PluginPrepareStep, opts?: PrepareStepOptions): void;
+  /**
    * Contribute a first-class CLI verb (a {@linkcode CommandSpec}), so a plugin can
    * extend `denext <command>` — not only the request/route/build seams. The command
    * is discovered when the CLI encounters an unknown verb in a project whose config
@@ -107,6 +133,8 @@ export interface DenextPlugin {
 // repeated scans a dev server performs.
 const requestHandlers: PluginRequestHandler[] = [];
 const buildSteps: PluginBuildStep[] = [];
+/** Prepare steps with their watch globs (see {@linkcode PluginContext.addPrepareStep}). */
+const prepareSteps: Array<{ step: PluginPrepareStep; watch: readonly string[] }> = [];
 const pluginCommands: CommandSpec[] = [];
 const teardowns: PluginTeardown[] = [];
 // Disposers that unregister the route synthesizers this layer added, so
@@ -151,6 +179,7 @@ export async function applyPlugins(base: ApplyPluginsBase): Promise<void> {
       addRouteSynthesizer: (fn) => synthDisposers.push(registerRouteSynthesizer(fn)),
       addRequestHandler: (handler) => requestHandlers.push(handler),
       addBuildStep: (step) => buildSteps.push(step),
+      addPrepareStep: (step, opts) => prepareSteps.push({ step, watch: opts?.watch ?? [] }),
       addCommand: (command) => pluginCommands.push(command),
       addTeardown: (teardown) => teardowns.push(teardown),
     };
@@ -181,6 +210,82 @@ export async function runPluginBuildSteps(context: PluginBuildContext): Promise<
   for (const step of buildSteps) await step(context);
 }
 
+/**
+ * Run every plugin-registered prepare step in registration order — called once at `denext build` and
+ * once at `denext dev` startup. A step that throws is caught and logged so one plugin's codegen
+ * failure can't abort the build or the dev boot.
+ */
+export async function runPluginPrepareSteps(context: PluginBuildContext): Promise<void> {
+  for (const { step } of prepareSteps) {
+    try {
+      await step(context);
+    } catch (error) {
+      console.error(`denext: a plugin prepare step failed:`, error);
+    }
+  }
+}
+
+/** Resolve a watch glob (relative to `projectRoot`, or absolute) to an absolute glob. */
+function resolveGlob(projectRoot: string, glob: string): string {
+  return isAbsolute(glob) ? glob : join(projectRoot, glob);
+}
+
+/**
+ * The literal prefix a glob watches: every segment up to its first wildcard. `content/**` → the
+ * `content` dir; a wildcard-free glob is a single path (a file), which `Deno.watchFs` watches fine.
+ */
+function globBaseDir(absGlob: string): string {
+  const base: string[] = [];
+  for (const s of absGlob.split("/")) {
+    if (/[*?[\]{}]/.test(s)) break;
+    base.push(s);
+  }
+  return base.join("/") || "/";
+}
+
+/**
+ * The existing directories the dev watcher must observe for prepare-step `watch` globs — each glob's
+ * literal prefix dir, de-duplicated. Non-existent dirs are dropped (the caller also filters).
+ */
+export function getPluginPrepareWatchDirs(projectRoot: string): string[] {
+  const dirs = new Set<string>();
+  for (const { watch } of prepareSteps) {
+    for (const g of watch) {
+      const base = globBaseDir(resolveGlob(projectRoot, g));
+      // A dir base ends without a wildcard; if the glob had no wildcard at all it points at a file,
+      // so watch its parent directory instead.
+      dirs.add(base);
+    }
+  }
+  return [...dirs];
+}
+
+/**
+ * Re-run each prepare step whose `watch` globs match one of `changedPaths` (absolute). Returns true
+ * if any step ran — the dev server uses that to trigger a reload after regeneration. A step with no
+ * `watch` globs never re-runs here (it only ran at startup).
+ */
+export async function runMatchingPrepareSteps(
+  context: PluginBuildContext,
+  changedPaths: readonly string[],
+): Promise<boolean> {
+  let ran = false;
+  for (const { step, watch } of prepareSteps) {
+    if (watch.length === 0) continue;
+    const patterns = watch.map((g) =>
+      globToRegExp(resolveGlob(context.projectRoot, g), { globstar: true })
+    );
+    if (!changedPaths.some((p) => patterns.some((re) => re.test(p)))) continue;
+    ran = true;
+    try {
+      await step(context);
+    } catch (error) {
+      console.error(`denext: a plugin prepare step failed:`, error);
+    }
+  }
+  return ran;
+}
+
 /** Every plugin-contributed CLI command (for the CLI to merge into its registry). */
 export function getPluginCommands(): readonly CommandSpec[] {
   return pluginCommands;
@@ -206,6 +311,7 @@ export async function runPluginTeardown(): Promise<void> {
 export function resetPlugins(): void {
   requestHandlers.length = 0;
   buildSteps.length = 0;
+  prepareSteps.length = 0;
   pluginCommands.length = 0;
   teardowns.length = 0;
   for (const dispose of synthDisposers) dispose();

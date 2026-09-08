@@ -1,0 +1,144 @@
+{
+  "version": "5",
+  "specifiers": {
+    "jsr:@std/collections@^1.1.3": "1.3.0",
+    "jsr:@std/front-matter@1": "1.0.9",
+    "jsr:@std/fs@1": "1.0.24",
+    "jsr:@std/http@1": "1.1.3",
+    "jsr:@std/internal@^1.0.14": "1.0.14",
+    "jsr:@std/path@1": "1.1.6",
+    "jsr:@std/path@^1.1.5": "1.1.6",
+    "jsr:@std/toml@^1.0.3": "1.0.11",
+    "jsr:@std/yaml@1": "1.2.0",
+    "jsr:@std/yaml@^1.0.5": "1.2.0",
+    "npm:zod@4": "4.5.4"
+  },
+  "jsr": {
+    "@std/collections@1.3.0": {
+      "integrity": "eb36b43d784477ea0b476483ac034a14bdd182aff921c812ecf662a1fcef9498"
+    },
+    "@std/front-matter@1.0.9": {
+      "integrity": "ee6201d06674cbef137dda2252f62477450b48249e7d8d9ab57a30f85ff6f051",
+      "dependencies": [
+        "jsr:@std/toml",
+        "jsr:@std/yaml@^1.0.5"
+      ]
+    },
+    "@std/fs@1.0.24": {
+      "integrity": "f3061b45b81673a2bece689da041df32d174be064c89eb6397fb5718d3fb7877",
+      "dependencies": [
+        "jsr:@std/internal",
+        "jsr:@std/path@^1.1.5"
+      ]
+    },
+    "@std/http@1.1.3": {
+      "integrity": "73a98e05ff58aa18bea562d286172e6c815b1eddd4fcab194beda19e3683b88c"
+    },
+    "@std/internal@1.0.14": {
+      "integrity": "291516b3d4c35024d6ffbc0a9df5bf4c64116e05b50012cf846710152d2ffdf7"
+    },
+    "@std/path@1.1.6": {
+      "integrity": "c68485c2a4dfbb5ae3cc74fae4e8c4e5d874cf8a8ed12927917235c758b46cbe",
+      "dependencies": [
+        "jsr:@std/internal"
+      ]
+    },
+    "@std/toml@1.0.11": {
+      "integrity": "e084988b872ca4bad6aedfb7350f6eeed0e8ba88e9ee5e1590621c5b5bb8f715",
+      "dependencies": [
+        "jsr:@std/collections"
+      ]
+    },
+    "@std/yaml@1.2.0": {
+      "integrity": "20beb41e4983ba3437dbefac62b14061ab058e8a187596f19d28ff9035f6e6cf"
+    }
+  },
+  "npm": {
+    "zod@4.5.4": {
+      "integrity": "sha512-sC95tT5iHHH9gtpj6A81kh+NEaRAUFN+qlUPDUbRfOMvNf5QCBqsb3WgvnpVtK5Y+4UfA6KqufotuTvMGiTlsA=="
+    }
+  },
+  "workspace": {
+    "dependencies": [
+      "jsr:@std/front-matter@1",
+      "jsr:@std/fs@1",
+      "jsr:@std/path@1",
+      "jsr:@std/yaml@1",
+      "npm:zod@4"
+    ],
+    "links": {
+      "jsr:@denext/avif@0.1.1": {},
+      "jsr:@denext/content-collections@0.1.0": {
+        "dependencies": [
+          "jsr:@denext/denext@^2.1.0-rc.3",
+          "jsr:@std/front-matter@1",
+          "jsr:@std/fs@1",
+          "jsr:@std/path@1",
+          "jsr:@std/yaml@1"
+        ]
+      },
+      "jsr:@denext/denext@2.1.0-rc.3": {
+        "dependencies": [
+          "jsr:@astral/astral@~0.5.3",
+          "jsr:@luca/esbuild-deno-loader@0.11",
+          "jsr:@std/assert@1",
+          "jsr:@std/async@1",
+          "jsr:@std/encoding@1",
+          "jsr:@std/fs@1",
+          "jsr:@std/http@1",
+          "jsr:@std/jsonc@1",
+          "jsr:@std/media-types@1",
+          "jsr:@std/path@1",
+          "npm:@mdx-js/mdx@3",
+          "npm:@swc/wasm-web@^1.13.5",
+          "npm:effect@^3.22.0",
+          "npm:esbuild@0.24",
+          "npm:lightningcss-wasm@^1.33.0",
+          "npm:sass@^1.80.0",
+          "npm:ws@8"
+        ]
+      },
+      "jsr:@denext/effect@0.1.0": {
+        "dependencies": [
+          "jsr:@denext/denext@^2.1.0-rc.3",
+          "npm:effect@^3.22.0"
+        ]
+      },
+      "jsr:@denext/graphql@0.1.0": {
+        "dependencies": [
+          "jsr:@denext/denext@^2.1.0-rc.3",
+          "jsr:@std/path@1",
+          "npm:graphql-yoga@^5.10.0",
+          "npm:graphql@^16.9.0"
+        ]
+      },
+      "jsr:@denext/htmx@2.0.11": {
+        "dependencies": [
+          "jsr:@denext/denext@^2.1.0-rc.3",
+          "jsr:@std/path@1"
+        ]
+      },
+      "jsr:@denext/og@0.1.0": {},
+      "jsr:@denext/openapi@0.2.0": {
+        "dependencies": [
+          "jsr:@denext/denext@^2.1.0-rc.3",
+          "jsr:@std/path@1"
+        ]
+      },
+      "jsr:@denext/pages-router@0.10.0": {
+        "dependencies": [
+          "jsr:@denext/denext@^2.1.0-rc.3",
+          "jsr:@std/path@1"
+        ]
+      },
+      "jsr:@denext/photon@0.3.5": {},
+      "jsr:@denext/react-router@0.1.0": {
+        "dependencies": [
+          "jsr:@denext/denext@^2.1.0-rc.3",
+          "jsr:@std/fs@1",
+          "jsr:@std/path@1"
+        ]
+      }
+    }
+  }
+}

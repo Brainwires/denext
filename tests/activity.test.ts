@@ -96,6 +96,22 @@ Deno.test("a subtree that mounts hidden is pre-rendered into the DOM, hidden", a
   assert(hidden(el!), "mount-hidden content is display:none");
 });
 
+Deno.test("mount-hidden runs the effect once (the documented residual vs React)", async () => {
+  // The residual documented in KNOWN-LIMITATIONS: a subtree that MOUNTS hidden runs its
+  // effects once during the pre-render and keeps them connected while hidden — React would
+  // defer them entirely. denext only tears effects down on a visible→hidden transition.
+  const log: string[] = [];
+  function Inner() {
+    useEffect(() => {
+      log.push("setup");
+      return () => log.push("cleanup");
+    }, []);
+    return h("span", null, "x");
+  }
+  await render(h(Activity, { mode: "hidden", children: h(Inner, {}) }));
+  assertEquals(log, ["setup"], "a hidden mount runs setup once and stays connected (no cleanup)");
+});
+
 Deno.test("SSR renders a visible Activity's children, and nothing for a hidden one", () => {
   const visible = renderToStringSync(
     h(Activity, { mode: "visible", children: h("span", null, "shown") }),

@@ -228,6 +228,56 @@ export const listNotes = () => db.prepare("SELECT * FROM notes").all();
 
 Open the connection once at module scope; do writes in Server Actions.
 
+**A scheduled / background task (cron):** put it in `tasks/<name>.ts`; schedule it in
+`denext.config.ts` (`scheduledTasks`) or per-task; run it on demand with `runTask(name)`
+or `denext task <name>`. Uses `Deno.cron` where available (Deno Deploy), else a userland
+tick — no npm cron dependency. **Cron expressions are evaluated in UTC** (matching `Deno.cron`),
+and a schedule never fires on startup nor overlaps a still-running instance of the same task.
+
+```ts
+// tasks/cleanup.ts
+import { defineTask } from "denext/server";
+export default defineTask({
+  description: "purge expired sessions",
+  schedule: "0 3 * * *", // optional; or list it in config.scheduledTasks
+  handler: async ({ payload }) => {
+    await db.exec("DELETE FROM sessions WHERE expires_at < now()");
+  },
+});
+// denext.config.ts → scheduledTasks: { "0 0 * * 1": ["digest", "warm-cache"] }
+// anywhere on the server: import { runTask } from "denext/server"; await runTask("cleanup");
+```
+
+**A content collection (typed MD/MDX/YAML/JSON — the `@denext/content-collections` plugin):** add
+`plugins: [contentCollections()]` to `denext.config.ts`, declare collections in `content.config.ts`
+with a Standard Schema + a loader, then query them typed from a Server Component. The plugin
+validates entries and generates types — live in `denext dev`, and at `denext build`.
+
+```ts
+// content.config.ts
+import { defineCollection, defineContentConfig, glob } from "@denext/content-collections/config";
+import { z } from "zod";
+export default defineContentConfig({
+  collections: {
+    blog: defineCollection({
+      loader: glob({ pattern: "**/*.md", base: "content/blog" }),
+      schema: z.object({ title: z.string(), date: z.string(), draft: z.boolean().default(false) }),
+    }),
+  },
+});
+```
+
+```tsx
+// app/page.tsx — server-only query, typed to the schema
+import "../.denext/content.ts"; // registers the collection types (generated)
+import { getCollection } from "@denext/content-collections/runtime";
+export default async function Blog() {
+  const posts = await getCollection("blog", (p) => !p.data.draft); // p.data is typed
+  return <ul>{posts.map((p) => <li key={p.id}>{p.data.title}</li>)}</ul>;
+}
+// CLI: `denext content build | list | validate` (validate exits 1 on a schema failure — a CI gate).
+```
+
 **Testing an app (no browser, JS-disabled path):**
 
 ```ts
@@ -267,10 +317,11 @@ i18n, images, `cacheComponents`, `streaming`, `live`, `plugins`, `experimental`,
 `mode: "spa"` + `spa: { entry, … }` for SPA mode). Not `next.config.js`.
 
 **Writing a plugin:** a `DenextPlugin` (`{ name, setup(ctx) }` from
-`denext/plugin-kit`, the semver-stable toolkit) hooks five seams — `addRouteSynthesizer` (add/adjust routes),
+`denext/plugin-kit`, the semver-stable toolkit) hooks six seams — `addRouteSynthesizer` (add/adjust routes),
 `addRequestHandler` (claim unmatched requests), `addBuildStep` (emit assets),
-`addTeardown` (dispose on drain), and `addCommand` (contribute a CLI verb). Declare
-it as `plugins: [myPlugin()]`. See
+`addPrepareStep` (codegen the app imports — runs at build AND dev startup, and re-runs on
+`watch`-glob changes in dev), `addTeardown` (dispose on drain), and `addCommand` (contribute a
+CLI verb). Declare it as `plugins: [myPlugin()]`. See
 [PLUGINS.md](./PLUGINS.md) and
 [`examples/plugin-aliases`](./examples/plugin-aliases).
 

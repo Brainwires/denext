@@ -8,6 +8,9 @@
 import { isPostpone } from "./postpone.ts";
 import { isThenable } from "./suspense.ts";
 import type { Component, VNode, VNodeChildren } from "../jsx/types.ts";
+// Type-only (erased at build): lets `redirect`/`permanentRedirect` autocomplete this app's routes
+// when `.denext/routes.ts` is imported, while still accepting any string (external URLs).
+import type { Href } from "../client/navigation.ts";
 
 /** Re-exported so the public error-boundary API surface stays documentable. */
 export type { Component, VNode, VNodeChildren } from "../jsx/types.ts";
@@ -237,7 +240,10 @@ export class RedirectError extends Error {
  * @param url The destination.
  * @param typeOrStatus A {@link RedirectType} (soft-nav behavior) or an HTTP status number.
  */
-export function redirect(url: string, typeOrStatus?: RedirectType | number): never {
+export function redirect(
+  url: Href | (string & Record<never, never>),
+  typeOrStatus?: RedirectType | number,
+): never {
   if (typeof typeOrStatus === "number") throw new RedirectError(url, typeOrStatus);
   throw new RedirectError(url, 307, typeOrStatus);
 }
@@ -248,7 +254,10 @@ export function redirect(url: string, typeOrStatus?: RedirectType | number): nev
  * @param url The destination.
  * @param type Optional {@link RedirectType} for client soft-nav history behavior.
  */
-export function permanentRedirect(url: string, type?: RedirectType): never {
+export function permanentRedirect(
+  url: Href | (string & Record<never, never>),
+  type?: RedirectType,
+): never {
   throw new RedirectError(url, 308, type);
 }
 

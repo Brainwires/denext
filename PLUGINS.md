@@ -50,7 +50,7 @@ export function myPlugin(): DenextPlugin {
       // ctx.config         — the resolved DenextConfig
       // ctx.mode           — "dev" | "build" | "prod" | "export"
       // ctx.load           — load a module by absolute file path
-      // ...plus the five seams below.
+      // ...plus the six seams below.
     },
   };
 }
@@ -118,6 +118,28 @@ ctx.addBuildStep(async ({ outDir, projectRoot, config }) => {
   await emitMyClientBundles(outDir);
 });
 ```
+
+### Seam 3b — prepare steps (codegen, dev **and** build)
+
+`ctx.addPrepareStep(fn, { watch })` registers a step that generates inputs the app then
+imports — types, a data artifact. Unlike a build step (which runs only at `denext build`),
+a prepare step runs in **both** lifecycles: once at `denext build` and once at `denext dev`
+startup, and again in dev whenever a file under its `watch` globs changes — so its generated
+output stays live as you edit. Same `PluginBuildContext` as a build step. This is the seam
+`@denext/content-collections` uses to keep its typed store in sync with your content files.
+
+```ts
+ctx.addPrepareStep(
+  async ({ projectRoot, outDir }) => {
+    await writeGeneratedTypes(projectRoot, outDir); // regenerated on every matching change in dev
+  },
+  { watch: ["content.config.ts", "content/**"] }, // dirs derived from these are watched
+);
+```
+
+A step whose globs match a dev change is re-run before the reload, so the reloaded page sees
+the fresh output. A step with no `watch` globs runs only at startup/build. A throwing step is
+logged, never fatal.
 
 ### Seam 4 — teardown
 

@@ -2,7 +2,7 @@
 
 import { ensureDir } from "@std/fs";
 import { join } from "@std/path";
-import { runPluginBuildSteps } from "../../plugin/mod.ts";
+import { runPluginBuildSteps, runPluginPrepareSteps } from "../../plugin/mod.ts";
 import { scanRoutes } from "../../router/manifest.ts";
 import { computeBoundaryRoutes } from "../module-graph.ts";
 import { appUsesActivity, appUsesClassComponents, appUsesViewTransition } from "../bundle.ts";
@@ -15,6 +15,16 @@ import { type BuildContext, type BuildResult, log } from "./context.ts";
 /** Plugin build steps (e.g. a Pages Router bundling its own client entries). */
 export function pluginBuildSteps(paths: ProjectPaths): Promise<void> {
   return runPluginBuildSteps({
+    projectRoot: paths.projectDir,
+    appDir: paths.appDir,
+    outDir: paths.outDir,
+    config: paths.config ?? {},
+  });
+}
+
+/** Plugin prepare steps (codegen the app imports, e.g. a content-collections store + types). */
+function pluginPrepareSteps(paths: ProjectPaths): Promise<void> {
+  return runPluginPrepareSteps({
     projectRoot: paths.projectDir,
     appDir: paths.appDir,
     outDir: paths.outDir,
@@ -36,6 +46,7 @@ export async function buildWithoutAppRouter(paths: ProjectPaths): Promise<BuildR
   if (await dirExists(paths.appDir)) return null;
   await ensureDir(paths.outDir);
   await setupPlugins(paths, "build");
+  await pluginPrepareSteps(paths);
   await pluginBuildSteps(paths);
   return { routes: [], outDir: paths.outDir };
 }
@@ -52,6 +63,7 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
     await Deno.remove(join(paths.outDir, `cache.db${suffix}`)).catch(() => {});
   }
   await setupPlugins(paths, "build");
+  await pluginPrepareSteps(paths);
   const manifest = await scanRoutes(paths.appDir);
   const finalClientDir = join(paths.outDir, "client");
   const clientDir = join(paths.outDir, ".client.staging");

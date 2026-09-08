@@ -1,11 +1,23 @@
 # Live data & presence (secured)
 
-A runnable demo of the two **gated** Live hooks over a single WebSocket:
+A runnable demo of the four **gated** Live hooks over a single WebSocket:
 
 - **`useLive`** — a server value (`getCount`) streamed to every client and
   re-pushed whenever the `count` cache tag is invalidated (the `bump` action
   does that).
 - **`usePresence`** — who's on the page (the `lobby` room).
+- **`useChannel`** — server-pushed events from a `createChannel`
+  (`announcements`): `publish(key, payload)` fans out to every authorized
+  subscriber, at-most-once, latest-wins, no history.
+- **`useSubscription`** — a typed, validated live query built with
+  `defineSubscription` (`announcementCount`): it re-runs its server resolver on
+  every invalidation of a server-derived tag. See
+  [`app/notifications.ts`](./app/notifications.ts) (the channel + subscription +
+  the `sendAnnouncement` mutation that drives both) and
+  [`app/notifications.tsx`](./app/notifications.tsx) (the client hooks). A
+  channel authorizes with its own required `authorize(ctx, key)`; a
+  `defineSubscription` is live-readable by definition (with its own optional
+  row-level `authorize`), so neither needs a `canSubscribe` policy.
 
 ## The security model this example demonstrates
 
