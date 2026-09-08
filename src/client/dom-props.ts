@@ -112,6 +112,7 @@ export function applyProps(
   oldProps: Record<string, unknown>,
   newProps: Record<string, unknown>,
   onError: ErrorRouter,
+  attachRef = true,
 ): void {
   // Remove props gone or changed.
   for (const name of Object.keys(oldProps)) {
@@ -119,9 +120,10 @@ export function applyProps(
     removeProp(el, state, name, oldProps[name]);
   }
   // Refs: attach/detach with React-19 semantics (support cleanup-returning callback refs;
-  // detach the old ref when it changes). Handled outside the loop so the previous and
-  // next ref can be compared.
-  updateRef(state, oldProps.ref, newProps.ref, el);
+  // detach the old ref when it changes). Handled outside the loop so the previous and next
+  // ref can be compared. A fresh MOUNT skips this (`attachRef: false`) and defers the ref to
+  // the commit phase (see `RefAttach`) — a ref callback must not fire during `completeWork`.
+  if (attachRef) updateRef(state, oldProps.ref, newProps.ref, el);
   for (const [name, value] of Object.entries(newProps)) {
     if (isReconcilerProp(name)) continue;
     setProp(el, state, name, value, oldProps[name], onError);
@@ -192,7 +194,7 @@ function setFormAction(
  * calling the ref with `null`); object refs get `.current` set/cleared. No-ops
  * when the ref is unchanged, so the same ref stays attached across re-renders.
  */
-function updateRef(state: HostState, oldRef: unknown, newRef: unknown, el: Element): void {
+export function updateRef(state: HostState, oldRef: unknown, newRef: unknown, el: Element): void {
   if (Object.is(oldRef, newRef)) return;
   detachRef(state);
   if (newRef == null) return;

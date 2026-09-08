@@ -6,7 +6,7 @@ import { collectEffects, collectInsertionEffects, needsSync, walk } from "./fibe
 import { runCommitReport } from "./devtools-seam.ts";
 import { onErrorFor, scheduleEffectError } from "./boundaries.ts";
 import type { ProfilerPhase } from "../../runtime/profiler.ts";
-import { applyProps, detachRef } from "../dom-props.ts";
+import { applyProps, detachRef, updateRef } from "../dom-props.ts";
 import { getClassSupport } from "./class-support.ts";
 import { anyProfiler, takeOffscreen } from "./state.ts";
 import {
@@ -18,6 +18,7 @@ import {
   NoFlags,
   NoLane,
   placePortalChildren,
+  RefAttach,
   Snapshot,
   syncChildren,
   Update,
@@ -107,6 +108,13 @@ function commitPlacement(handle: RootHandle, wipRoot: Fiber): void {
  */
 function clearCommittedFlags(wipRoot: Fiber): void {
   walk(wipRoot, (f) => {
+    // A fresh mount's deferred ref attaches HERE — after commitPlacement put the node in the
+    // DOM, before layout effects run — never in `completeWork` (render). Firing a ref callback
+    // during render breaks libraries that guard against it (Base UI's "Cannot call an event
+    // handler while rendering"). An update's ref rode its commit-phase `applyProps`.
+    if ((f.flags & RefAttach) !== 0) {
+      updateRef(f, undefined, f.vnode.props?.ref, f.stateNode as Element);
+    }
     f.flags = NoFlags;
     f.subtreeFlags = NoFlags;
     f.deletions = null;

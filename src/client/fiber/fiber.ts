@@ -121,6 +121,14 @@ export const ChildDeletion = 4;
 export const Snapshot = 8;
 /** This fiber's child list changed membership or order (host must re-sync). */
 export const ChildrenChanged = 16;
+/**
+ * A freshly-mounted host with a `ref` prop whose ref must be attached at COMMIT (after the
+ * node is placed), not in `completeWork`. React attaches refs in the commit phase; firing a
+ * ref callback during render breaks libraries that guard against it (e.g. Base UI's
+ * "Cannot call an event handler while rendering"). An UPDATE's ref rides its commit-phase
+ * `applyProps` instead.
+ */
+export const RefAttach = 32;
 
 // ---- Priority lanes --------------------------------------------------------
 

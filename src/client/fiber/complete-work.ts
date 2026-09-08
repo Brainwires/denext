@@ -14,6 +14,7 @@ import {
   childrenDom,
   type Fiber,
   Placement,
+  RefAttach,
   Snapshot,
   syncChildren,
   Update,
@@ -41,9 +42,13 @@ function completeHost(wip: Fiber): void {
     wip.flags |= Update;
     return;
   }
-  // Fresh mount (or a hydration-adopted node): build off-DOM.
+  // Fresh mount (or a hydration-adopted node): build off-DOM. Apply every prop EXCEPT the ref
+  // — a ref callback must fire at commit (after the node is placed), never during this render
+  // phase — and flag the fiber so the commit attaches it (see `RefAttach`).
   if (wip.stateNode == null) wip.stateNode = createHostInstance(wip);
-  applyProps(wip.stateNode as Element, wip, {}, wip.vnode.props ?? {}, onErrorFor(wip));
+  const props = wip.vnode.props ?? {};
+  applyProps(wip.stateNode as Element, wip, {}, props, onErrorFor(wip), false);
+  if (props.ref != null) wip.flags |= RefAttach;
   // A foreign host (a lazy island's wrapper) is adopted but its subtree is left
   // untouched, so a separate per-island hydrateRoot can own that DOM.
   if (wip.vnode.props?.[FOREIGN_PROP] !== true) {
