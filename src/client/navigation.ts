@@ -9,6 +9,11 @@ import { BLUR_ATTR, clearBlur } from "../runtime/image-blur.ts";
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChild, VNodeChildren } from "../jsx/types.ts";
 import { hydrateDocument, hydrateRoot, type Root } from "./reconciler.ts";
+import {
+  getViewTransitionSupport,
+  setActiveTransitionTypes,
+  takeTransitionTypes,
+} from "./fiber/view-transition-support.ts";
 import { revealStreamedHoles } from "./reveal-holes.ts";
 import {
   type Context,
@@ -387,28 +392,53 @@ export async function navigate(
 /** The same-origin soft-navigation body. */
 /**
  * Run a soft-nav DOM commit inside a View Transition when the browser supports it
- * (Chromium today), so the route swap cross-fades; where unsupported it runs
- * synchronously exactly as before. Feature-detected — no effect and no cost where the
- * API is absent, and the browser honors `prefers-reduced-motion` itself. Only the Flight
- * path is wrapped today: its reconcile is synchronous, so the transition captures the
- * real before/after. The isomorphic/HTML paths reconcile via a re-injected bundle
- * (asynchronously), so honoring transitions there — and per-element
- * `view-transition-name` — is a follow-on. Exported for testing.
+ * (Chromium today), so the route swap cross-fades; where unsupported it runs exactly as
+ * before. Feature-detected — no effect and no cost where the API is absent, and the browser
+ * honors `prefers-reduced-motion` itself.
+ *
+ * When the app uses `<ViewTransition>`, the marking runtime (import-gated, via the seam)
+ * stamps `view-transition-name` on the wrapper's host child on BOTH sides of the swap — the
+ * OUTGOING tree before `startViewTransition` (so the browser's old-state capture sees it) and
+ * the INCOMING tree inside the callback after the commit — so a shared `name` morphs between
+ * routes, then clears when the transition finishes. Buffered `addTransitionType` types drive
+ * `startViewTransition({ types })`. The `commit` may be async (the isomorphic/HTML paths await
+ * a re-injected entry before the DOM settles); all its DOM work happens inside the callback,
+ * so the transition captures the real before/after. Exported for testing.
  */
 export function withViewTransition(commit: () => void): void {
   const doc = document as Document & {
     startViewTransition?: (
-      cb: () => void,
+      cb: (() => void | Promise<void>) | { update: () => void | Promise<void>; types?: string[] },
     ) => { ready?: Promise<void>; finished?: Promise<void> } | undefined;
   };
-  if (typeof doc.startViewTransition === "function") {
-    // A skipped/aborted transition (another one started, tab hidden) is not an error:
-    // `ready` rejects with an InvalidStateError and `finished` may too. `updateCallbackDone`
-    // is left alone so a throwing `commit` still surfaces.
-    const transition = doc.startViewTransition(commit);
-    transition?.ready?.catch(() => {});
-    transition?.finished?.catch(() => {});
-  } else commit();
+  if (typeof doc.startViewTransition !== "function") {
+    void commit();
+    return;
+  }
+  const vt = getViewTransitionSupport();
+  const types = takeTransitionTypes();
+  setActiveTransitionTypes(types);
+  // Stamp the outgoing hosts BEFORE startViewTransition so the old-state capture includes
+  // their names (the capture happens after this synchronous task, before the callback runs).
+  vt?.markOutgoing();
+  const update = async () => {
+    await commit();
+    vt?.markIncoming(); // new hosts, before the browser's new-state capture
+  };
+  // A skipped/aborted transition (another started, tab hidden) is not an error: `ready`
+  // rejects with InvalidStateError and `finished` may too. The `{ update, types }` object
+  // form is only understood where transition types exist; fall back to the callback form.
+  let transition: { ready?: Promise<void>; finished?: Promise<void> } | undefined;
+  try {
+    transition = types.length > 0
+      ? doc.startViewTransition({ update, types })
+      : doc.startViewTransition(update);
+  } catch {
+    transition = doc.startViewTransition(update);
+  }
+  transition?.ready?.catch(() => {});
+  const done = () => vt?.clear();
+  (transition?.finished ?? Promise.resolve()).then(done, done);
 }
 
 /** The prefetched render for `url`, else a fresh fetch; null when the fetch failed. */
@@ -440,16 +470,20 @@ function applyHtmlNav(body: string, url: URL, href: string, options: NavigateOpt
     location.href = href;
     return;
   }
-  updateHistory(url, options); // so the bundle sees the correct URL
-  syncTitle(parsed);
-  syncScript(parsed, "__denext_data");
-  // Flight island: sync it too so a soft-nav to a Flight route hydrates from the new
-  // payload (and a nav to an isomorphic route clears a stale one).
-  syncScript(parsed, "__denext_flight");
-  swapRootHtml(container, newRoot);
-  emit();
-  scrollToTop(options);
-  runParsedEntry(parsed, url);
+  updateHistory(url, options); // so the bundle sees the correct URL (non-visual — outside the transition)
+  // Everything that changes the visible DOM runs inside the view transition, and we await the
+  // re-injected entry so the reconcile lands before the browser's new-state capture.
+  withViewTransition(async () => {
+    syncTitle(parsed);
+    syncScript(parsed, "__denext_data");
+    // Flight island: sync it too so a soft-nav to a Flight route hydrates from the new
+    // payload (and a nav to an isomorphic route clears a stale one).
+    syncScript(parsed, "__denext_flight");
+    swapRootHtml(container, newRoot);
+    emit();
+    scrollToTop(options);
+    await runParsedEntry(parsed, url);
+  });
 }
 
 /** Adopt the new document's `<title>` (when it has one). */
@@ -469,9 +503,10 @@ function scrollToTop(options: NavigateOptions): void {
 }
 
 /** Re-run the new document's route entry module (its hydration bundle), if it has one. */
-function runParsedEntry(parsed: Document, url: URL): void {
+function runParsedEntry(parsed: Document, url: URL): Promise<void> {
   const moduleScript = parsed.querySelector<HTMLScriptElement>('script[type="module"][src]');
-  if (moduleScript) injectRouteEntry(moduleScript.getAttribute("src")!, url);
+  if (moduleScript) return injectRouteEntry(moduleScript.getAttribute("src")!, url);
+  return Promise.resolve();
 }
 
 async function navigateSameOrigin(
@@ -523,18 +558,25 @@ function updateHistory(url: URL, options: NavigateOptions): void {
 /**
  * Re-inject a route's client entry module (cache-busted per nav so it re-evaluates),
  * which re-runs the route → `startClient` → `retainedRoot.render` reconciles in place.
- * The injected `<script>` removes itself after running so they don't pile up.
+ * The injected `<script>` removes itself after running so they don't pile up. Resolves when
+ * the module has evaluated (its synchronous `main()` has rendered) — so a caller can run the
+ * DOM swap inside a view transition and await the reconcile before the new-state capture.
  */
-function injectRouteEntry(entrySrc: string, url: URL): void {
-  const src = new URL(entrySrc, url.href);
-  src.searchParams.set("nav", String(navCounter++));
-  const script = document.createElement("script");
-  script.type = "module";
-  script.src = src.href;
-  const cleanup = () => script.remove();
-  script.addEventListener("load", cleanup, { once: true });
-  script.addEventListener("error", cleanup, { once: true });
-  document.body.appendChild(script);
+function injectRouteEntry(entrySrc: string, url: URL): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const src = new URL(entrySrc, url.href);
+    src.searchParams.set("nav", String(navCounter++));
+    const script = document.createElement("script");
+    script.type = "module";
+    script.src = src.href;
+    const cleanup = () => {
+      script.remove();
+      resolve();
+    };
+    script.addEventListener("load", cleanup, { once: true });
+    script.addEventListener("error", cleanup, { once: true });
+    document.body.appendChild(script);
+  });
 }
 
 /**
@@ -552,13 +594,15 @@ function applyIsoNav(body: string, url: URL, href: string, options: NavigateOpti
     location.href = href; // malformed payload: hard navigate rather than get stuck
     return;
   }
-  updateHistory(url, options);
-  if (payload.title != null) document.title = payload.title;
-  writeDataIsland(payload.data);
-  swapRouteStyles(payload.styles);
-  emit();
-  scrollToTop(options);
-  injectRouteEntry(payload.entry, url);
+  updateHistory(url, options); // non-visual — outside the transition
+  withViewTransition(async () => {
+    if (payload.title != null) document.title = payload.title;
+    writeDataIsland(payload.data);
+    swapRouteStyles(payload.styles);
+    emit();
+    scrollToTop(options);
+    await injectRouteEntry(payload.entry, url); // resolves once the re-run entry has reconciled
+  });
 }
 
 /**

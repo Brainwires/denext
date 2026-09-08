@@ -10,6 +10,21 @@ and this project adheres to
 
 ### Added
 
+- **`ViewTransition` honors per-element transitions across navigations (import-gated).**
+  `React.ViewTransition` was a passthrough that only rode the route-level cross-fade; it now
+  stamps real `view-transition-name` on its host child around a soft navigation — on the
+  OUTGOING tree before `startViewTransition` (so the browser's old-state capture sees it) and
+  the INCOMING tree after the commit — so a shared `name` morphs between routes, then clears
+  when the transition finishes. `enter`/`exit`/`update`/`share` become `view-transition-class`
+  on the old vs. new side (per-type maps resolve against the active transition types), and
+  `addTransitionType` is now wired: it buffers types that drive `startViewTransition({ types })`.
+  The isomorphic and full-HTML nav paths now animate too — they await the re-injected route
+  entry so the DOM swap lands inside the transition (previously only the Flight path animated).
+  `<ViewTransition>` renders as a marker Fragment (id-transparent), so SSR/hydration are
+  unchanged. The marking runtime is **import-gated** — installed only when a build scan sees
+  `<ViewTransition>` — so an app that never renders one bundles none of it. Residual vs React:
+  only navigation commits are wrapped (a same-page reorder isn't animated); see
+  [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
 - **`Activity` does real offscreen scheduling (import-gated).** `React.Activity` was a
   passthrough shim; it now schedules its subtree for real. `mode="hidden"` keeps the subtree
   mounted but removed from layout (`display:none !important`), tears down its effects, and

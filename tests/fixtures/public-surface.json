@@ -970,6 +970,7 @@
     "flightClientIds:function",
     "installActivitySupport:function",
     "installClassSupport:function",
+    "installViewTransitionSupport:function",
     "parseFlight:function",
     "performModuleRefresh:function",
     "provideLayoutSegments:function",

@@ -251,12 +251,18 @@ Implemented for compatibility but tracking still-unstable upstream surfaces, so
 they may change: `unstable_cache` (still `unstable_` in Next 16),
 `unstable_batchedUpdates` (a no-op — see [ARCHITECTURE.md](./ARCHITECTURE.md)),
 `useMemoCache`/`c` (React Compiler runtime — the compiler hit 1.0 stable; this
-is an internal helper). **`ViewTransition` applies route-level transitions**: a
-Flight soft-navigation commits inside `document.startViewTransition` where the
-browser supports it, so the route swap cross-fades; the component's per-element
-props (`name`/`enter`/`exit`) are not yet honored (that needs real
-`view-transition-name` DOM markers), and the isomorphic/HTML nav paths (async
-reconcile) don't animate yet. **`Activity` does real offscreen scheduling** —
+is an internal helper). **`ViewTransition` honors per-element transitions across
+navigations**: on every soft-nav path (Flight, isomorphic, and full-HTML — the
+iso/HTML paths now await their re-injected entry so the DOM swap happens inside the
+transition), the wrapper stamps real `view-transition-name` on its host child on both
+sides of the swap, so a shared `name` morphs between routes; `enter`/`exit`/`update`/
+`share` become `view-transition-class` (per-type maps resolve against
+`addTransitionType`, which also drives `startViewTransition({ types })`), and the
+route-level cross-fade still applies where the browser supports it. Residual vs React:
+only **navigation** commits are wrapped in a transition — a same-page state change that
+adds/removes/reorders a `<ViewTransition>` (React's list-reorder case) is not animated —
+and the animation itself needs a browser that supports the View Transitions API (it is a
+no-op elsewhere). **`Activity` does real offscreen scheduling** —
 `mode="hidden"` keeps the subtree mounted-but-hidden (`display:none`), preserves its
 state, and tears down its effects, so `mode="visible"` restores the same instances; a
 subtree that mounts hidden is pre-rendered at transition priority. One residual gap vs

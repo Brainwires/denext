@@ -5,7 +5,7 @@ import { join } from "@std/path";
 import { runPluginBuildSteps } from "../../plugin/mod.ts";
 import { scanRoutes } from "../../router/manifest.ts";
 import { computeBoundaryRoutes } from "../module-graph.ts";
-import { appUsesActivity, appUsesClassComponents } from "../bundle.ts";
+import { appUsesActivity, appUsesClassComponents, appUsesViewTransition } from "../bundle.ts";
 import { detectNextCompat } from "../next-compat-detect.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { dirExists, setupPlugins } from "../pipeline-shared.ts";
@@ -74,6 +74,9 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
   // (a build scan). Computed here (like usesClassComponents) so native + Flight route paths
   // both see it. An app can't use Activity without naming it, so the scan can't false-drop.
   const usesActivity = await appUsesActivity(projectDir);
+  // Gate the ViewTransition marking runtime, same as Activity — install it only when the app
+  // renders `<ViewTransition>` (a build scan).
+  const usesViewTransition = await appUsesViewTransition(projectDir);
   return {
     projectDir,
     paths,
@@ -93,6 +96,7 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
     usesLive: false,
     usesClassComponents,
     usesActivity,
+    usesViewTransition,
     compatServerModules: {},
   };
 }

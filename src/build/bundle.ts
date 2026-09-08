@@ -355,19 +355,21 @@ export function generateRouteEntry(
   instrumentationClient: string | null = null,
   usesClassComponents = false,
   usesActivity = false,
+  usesViewTransition = false,
 ): string {
   const slots = routeSlotEntries(route);
   const { refreshImport, refreshReg } = routeRefreshBlock(route, slots, dev, perModule);
   const { classImport, classInstall } = classSupportBlock(usesClassComponents);
   const { activityImport, activityInstall } = activitySupportBlock(usesActivity);
+  const { vtImport, vtInstall } = viewTransitionSupportBlock(usesViewTransition);
   return `// denext generated route entry — do not edit.
 ${
     clientInstrumentationImport(instrumentationClient)
   }import { startClient, provideLayoutSegments } from "denext/client-runtime";
 import { Suspense, ErrorBoundary } from "denext/client";
 import { h } from "denext/jsx-runtime";
-${classImport}${activityImport}${refreshImport}${routeEntryImports(route, slots)}
-${refreshReg}${classInstall}${activityInstall}
+${classImport}${activityImport}${vtImport}${refreshImport}${routeEntryImports(route, slots)}
+${refreshReg}${classInstall}${activityInstall}${vtInstall}
 function main() {
   const el = document.getElementById("__denext");
   const dataEl = document.getElementById("__denext_data");
@@ -484,6 +486,19 @@ export function appUsesActivity(rootDir: string, extraFiles: string[] = []): Pro
 }
 
 /**
+ * Whether any source file under `rootDir` uses `<ViewTransition>` — the build-time signal that
+ * decides if the generated entry installs the per-element marking runtime (see
+ * {@linkcode viewTransitionSupportBlock}). An app can't render one without naming
+ * `ViewTransition`; whole-word (`\b`) so a longer identifier doesn't trip it.
+ */
+export function appUsesViewTransition(
+  rootDir: string,
+  extraFiles: string[] = [],
+): Promise<boolean> {
+  return scanAppSources(rootDir, (c) => /\bViewTransition\b/.test(c), extraFiles);
+}
+
+/**
  * Fast Refresh (dev only) for the Flight entry: register each client island's exports as
  * a family so an edited island preserves state. Two modes:
  *  - bundled: the whole flight entry is re-imported on refresh, so it registers each
@@ -589,6 +604,24 @@ function activitySupportBlock(
   };
 }
 
+/**
+ * The `<ViewTransition>` per-element marking runtime is installed into the reconciler seam
+ * (view-transition-support.ts) ONLY when the app uses `<ViewTransition>` — so an app that
+ * never renders one never references `installViewTransitionSupport` and `deno bundle`
+ * tree-shakes the marking runtime out. The navigation runtime never statically imports it;
+ * the emitted `installViewTransitionSupport()` here is the sole link. Native prod scans the
+ * app ({@linkcode appUsesViewTransition}); dev installs unconditionally (unbundled, free).
+ */
+function viewTransitionSupportBlock(
+  usesViewTransition: boolean,
+): { vtImport: string; vtInstall: string } {
+  if (!usesViewTransition) return { vtImport: "", vtInstall: "" };
+  return {
+    vtImport: `import { installViewTransitionSupport } from "denext/client-runtime";\n`,
+    vtInstall: "installViewTransitionSupport();\n",
+  };
+}
+
 /** The Flight entry's `main()`: read the island, adopt signal state, hydrate, boot resumability. */
 function flightMain(catchBody: string): string {
   return `async function main() {
@@ -649,6 +682,7 @@ export function generateFlightEntry(
   instrumentationClient: string | null = null,
   usesClassComponents = false,
   usesActivity = false,
+  usesViewTransition = false,
 ): string {
   const entries = [...boundary.client.entries()];
   // Islands are code-split: one dynamic `import()` per island module, run on demand for the
@@ -663,10 +697,11 @@ export function generateFlightEntry(
   const { clientImport, liveImport, liveRegister, liveConfigure } = flightLiveBlock(usesLive);
   const { classImport, classInstall } = classSupportBlock(usesClassComponents);
   const { activityImport, activityInstall } = activitySupportBlock(usesActivity);
+  const { vtImport, vtInstall } = viewTransitionSupportBlock(usesViewTransition);
   return `// denext generated Flight entry — do not edit.
 ${clientInstrumentationImport(instrumentationClient)}${clientImport}
-${liveImport}${classImport}${activityImport}${refreshImport}
-${classInstall}${activityInstall}const registry = new Map();
+${liveImport}${classImport}${activityImport}${vtImport}${refreshImport}
+${classInstall}${activityInstall}${vtInstall}const registry = new Map();
 // Functions AND React's non-callable memo()/forwardRef() element objects — the server tags
 // both as client references (radix exports the latter), so both must resolve here.
 function reg(mod, clientId) {
@@ -750,6 +785,12 @@ export interface BundleOptions {
    */
   usesActivity?: boolean;
   /**
+   * Whether the app uses `<ViewTransition>` (from an {@linkcode appUsesViewTransition} scan).
+   * When false, the generated entry omits `installViewTransitionSupport()` so `deno bundle`
+   * tree-shakes the per-element marking runtime out. Defaults to `false`; dev passes `true`.
+   */
+  usesViewTransition?: boolean;
+  /**
    * The project's `instrumentation-client.{ts,tsx,js}` (absolute path), imported first by
    * every generated browser entry so it runs before the app's client code. Null/unset: none.
    */
@@ -804,6 +845,7 @@ export async function bundleFlightEntry(
         opts.instrumentationClient ?? null,
         opts.usesClassComponents ?? false,
         opts.usesActivity ?? false,
+        opts.usesViewTransition ?? false,
       ),
       {
         configPath: opts.configPath,
@@ -1169,6 +1211,7 @@ export function bundleRoute(
       opts.instrumentationClient ?? null,
       opts.usesClassComponents ?? false,
       opts.usesActivity ?? false,
+      opts.usesViewTransition ?? false,
     ),
     opts,
   );

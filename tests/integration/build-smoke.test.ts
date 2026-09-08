@@ -159,6 +159,7 @@ async function assertGatedRuntimeAbsent(clientDir: string): Promise<void> {
     ["getDerivedStateFromError", "class-component error boundaries"], // (Gate A)
     ["__REACT_DEVTOOLS_GLOBAL_HOOK__", "React-DevTools bridge"], // (Gate B)
     ["__denext_ge_data", "global-error client"], // per-route entries never carry it (Gate C)
+    ["view-transition-name:", "ViewTransition marking runtime"], // (WS3 gate)
   ];
   let shared = "";
   for await (const e of Deno.readDir(clientDir)) {

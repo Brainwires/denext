@@ -380,6 +380,11 @@ export interface BuildNextCompatFlightOptions {
    * `installActivitySupport()` and the offscreen scheduler is dropped. Defaults to `false`.
    */
   usesActivity?: boolean;
+  /**
+   * Whether the app uses `<ViewTransition>` (build scan). When false, the generated entry omits
+   * `installViewTransitionSupport()` and the marking runtime is dropped. Defaults to `false`.
+   */
+  usesViewTransition?: boolean;
 }
 
 /**
@@ -434,6 +439,7 @@ export async function buildNextCompatFlightEntry(
       options.instrumentationClient ?? null,
       options.usesClassComponents ?? false,
       options.usesActivity ?? false,
+      options.usesViewTransition ?? false,
     ),
   );
   await bundleNextCompatModules({

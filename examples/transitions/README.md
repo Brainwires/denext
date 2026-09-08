@@ -26,3 +26,58 @@ Open <http://localhost:3002> and type quickly in the filter box.
 > keeps moving while a huge grid re-renders, plus a started/committed counter),
 > see `examples/concurrency`. Full model:
 > [`README-NEXT-MIGRATION.md` §10](../../README-NEXT-MIGRATION.md).
+
+## Shared-element view transitions (`<ViewTransition>`)
+
+denext also honors `React.ViewTransition` for **route** transitions. Wrap an element
+in a `<ViewTransition name="...">` on both the source and destination routes with the
+same `name`, and a soft navigation morphs one into the other (where the browser
+supports the View Transitions API — a no-op otherwise):
+
+```tsx
+import { Link, ViewTransition } from "denext";
+
+// app/gallery/page.tsx
+export default function Gallery() {
+  return (
+    <ul>
+      {photos.map((p) => (
+        <li key={p.id}>
+          <Link href={`/gallery/${p.id}`}>
+            <ViewTransition name={`photo-${p.id}`} enter="zoom" exit="zoom">
+              <img src={p.thumb} alt={p.title} />
+            </ViewTransition>
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// app/gallery/[id]/page.tsx — the SAME name pairs the thumbnail with the hero
+export default async function Photo({ params }: { params: { id: string } }) {
+  const p = await getPhoto(params.id);
+  return (
+    <ViewTransition name={`photo-${p.id}`}>
+      <img src={p.full} alt={p.title} />
+    </ViewTransition>
+  );
+}
+```
+
+```css
+/* The class from enter/exit becomes a view-transition-class on the pseudo-elements. */
+::view-transition-old(.zoom),
+::view-transition-new(.zoom) {
+  animation-duration: 300ms;
+}
+```
+
+- The wrapper stamps `view-transition-name` on its host child around the swap — before
+  `startViewTransition` on the outgoing element, after the commit on the incoming one —
+  then clears it when the transition finishes.
+- `addTransitionType("nav-forward")` feeds `startViewTransition({ types })`, and an
+  `enter={{ "nav-forward": "slide-left", default: "fade" }}` map resolves against it.
+- It works on every soft-nav path (Flight, isomorphic, full-HTML). Only **navigation**
+  commits are wrapped — a same-page state toggle is not animated (see
+  [KNOWN-LIMITATIONS.md](../../KNOWN-LIMITATIONS.md)).

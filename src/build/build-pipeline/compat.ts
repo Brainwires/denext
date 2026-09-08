@@ -52,6 +52,7 @@ async function compatFlight(ctx: BuildContext): Promise<void> {
     usesLive: ctx.usesLive,
     usesClassComponents: ctx.usesClassComponents,
     usesActivity: ctx.usesActivity,
+    usesViewTransition: ctx.usesViewTransition,
     instrumentationClient: ctx.paths.instrumentationClientPath,
   });
 }
@@ -73,6 +74,7 @@ async function compatClientEntries(ctx: BuildContext): Promise<void> {
         ctx.paths.instrumentationClientPath,
         ctx.usesClassComponents,
         ctx.usesActivity,
+        ctx.usesViewTransition,
       ),
     })),
   });

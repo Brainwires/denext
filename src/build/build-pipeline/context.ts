@@ -51,6 +51,8 @@ export interface BuildContext {
   usesClassComponents: boolean;
   /** Whether the generated entries install the Activity offscreen scheduler (scan). */
   usesActivity: boolean;
+  /** Whether the generated entries install the ViewTransition marking runtime (scan). */
+  usesViewTransition: boolean;
   /** next-compat: source module (project-relative) → server bundle (outDir-relative). */
   readonly compatServerModules: Record<string, string>;
 }

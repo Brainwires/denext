@@ -33,17 +33,58 @@ function currentRequestContext(): object | undefined {
 }
 
 /**
- * `React.ViewTransition` (experimental) — the client-driven view-transition wrapper.
- * denext renders it as a transparent passthrough of its children (SSR + hydration safe).
- * **Route-level** view transitions DO apply: a Flight soft-navigation commits inside
- * `document.startViewTransition` where the browser supports it, so the route swap
- * cross-fades (see `withViewTransition` in `src/client/navigation.ts`). The component's
- * per-element props (`name`, `enter`, `exit`, `update`) are not yet honored — that needs
- * this wrapper to emit real `view-transition-name` DOM markers — and the isomorphic/HTML
- * nav paths (async reconcile) don't animate yet either.
+ * Prop key carrying a `<ViewTransition>`'s config to the reconciler. A symbol so it can't
+ * collide with an author prop and so the wrapper's Fragment is treated as a marker
+ * (non-plain) Fragment — it keeps its own fiber (like a context Provider / SuspenseList
+ * carrier) rather than being unwrapped, so the view-transition marking walk can find it and
+ * stamp `view-transition-name` on its host child. The payload is `ViewTransitionMarker`.
  */
-export function ViewTransition(props: { children?: VNodeChildren }): VNode {
-  return h(Fragment, null, props?.children);
+export const VIEW_TRANSITION: symbol = Symbol.for("denext.viewTransition");
+
+/** A `<ViewTransition>`'s honored config, stashed under {@link VIEW_TRANSITION} on its Fragment. */
+export interface ViewTransitionMarker {
+  /** Pairs an outgoing and incoming element by this `view-transition-name` (shared-element morph). */
+  name?: string;
+  /** `view-transition-class` applied when the element ENTERS (present in the new state only). */
+  enter?: string | Record<string, string>;
+  /** `view-transition-class` applied when the element EXITS (present in the old state only). */
+  exit?: string | Record<string, string>;
+  /** `view-transition-class` applied when the element persists across the transition (morph). */
+  update?: string | Record<string, string>;
+  /** `view-transition-class` applied to a shared (name-paired) element. */
+  share?: string | Record<string, string>;
+}
+
+/**
+ * `React.ViewTransition` (experimental) — the client-driven view-transition wrapper. It
+ * renders as a transparent passthrough of its children (SSR + hydration safe) carrying its
+ * config as a Fragment marker; the client marking walk stamps real `view-transition-name`
+ * (and `view-transition-class`) DOM markers on its host child around a transition, so a
+ * `name`-paired element morphs between routes and `enter`/`exit`/`update`/`share` select the
+ * animation. **Route-level** transitions apply too: a soft navigation commits inside
+ * `document.startViewTransition` where the browser supports it (see `withViewTransition` in
+ * `src/client/navigation.ts`). The offscreen marking is import-gated (installed only when the
+ * app uses `ViewTransition`); without it, the wrapper is a plain passthrough and only the
+ * route-level cross-fade applies.
+ */
+export function ViewTransition(
+  props: {
+    name?: string;
+    enter?: string | Record<string, string>;
+    exit?: string | Record<string, string>;
+    update?: string | Record<string, string>;
+    share?: string | Record<string, string>;
+    children?: VNodeChildren;
+  },
+): VNode {
+  const marker: ViewTransitionMarker = {
+    name: props?.name,
+    enter: props?.enter,
+    exit: props?.exit,
+    update: props?.update,
+    share: props?.share,
+  };
+  return h(Fragment, { [VIEW_TRANSITION as unknown as string]: marker }, props?.children);
 }
 
 /**

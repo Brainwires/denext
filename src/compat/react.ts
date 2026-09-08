@@ -56,6 +56,7 @@ import {
   useTransition,
 } from "../../mod.ts";
 import { act } from "../client/mod.ts";
+import { addTransitionType as addTransitionTypeImpl } from "../client/fiber/view-transition-support.ts";
 import { lazy as lazyImpl } from "../runtime/dynamic.ts";
 import { StrictMode } from "../runtime/strict-mode.ts";
 import {
@@ -165,14 +166,16 @@ export function captureOwnerStack(): string | null {
 }
 
 /**
- * `React.addTransitionType` — tag the in-flight transition with a named type (a hint for
- * view transitions / instrumentation). denext has no transition-type registry, so this is
- * a no-op that accepts the type for signature parity.
+ * `React.addTransitionType` — tag the in-flight transition with a named type. denext buffers
+ * the types (see `view-transition-support.ts`); the navigation runtime drains them into
+ * `document.startViewTransition({ types })` and `<ViewTransition>`'s `enter`/`exit`/`update`/
+ * `share` type→class maps resolve against them, so `:active-view-transition-type(name)` and a
+ * per-type class both work. Off the client (SSR) the buffer is simply never consumed.
  *
  * @param type The transition type name.
  */
-export function addTransitionType(_type: string): void {
-  // no-op — denext does not track transition types.
+export function addTransitionType(type: string): void {
+  addTransitionTypeImpl(type);
 }
 
 /**

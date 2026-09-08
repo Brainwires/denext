@@ -100,6 +100,9 @@ security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
 - **`Activity`** — real offscreen scheduling: `mode="hidden"` keeps a subtree
   mounted-but-hidden (state preserved, effects torn down), `mode="visible"`
   restores the same instances; import-gated, so apps that don't use it pay nothing.
+- **`ViewTransition`** — per-element view transitions across navigations: a shared
+  `name` morphs an element between routes, `enter`/`exit`/`update`/`share` +
+  `addTransitionType` select the animation, on every soft-nav path; import-gated.
 - **Auto-memo compiler** (React-Compiler-style automatic memoization) ⚑.
 - **First-party `AsyncContext`** (TC39-shaped `Variable` + `Snapshot`) — the
   primitive no browser has shipped, implemented in userland. Synchronous scoping

@@ -28,6 +28,10 @@ export { installClassSupport } from "../compat/class-component.ts";
 // the reconciler seam ONLY when the app uses `<Activity>` — so an app that never renders one
 // drops this re-export (and the whole offscreen begin logic) via tree-shaking.
 export { installActivitySupport } from "./fiber/activity-runtime.ts";
+// ViewTransition: the entry emits `installViewTransitionSupport()` to wire the per-element
+// marking runtime into the reconciler seam ONLY when the app uses `<ViewTransition>` — so an
+// app that never renders one drops this re-export (and the marking logic) via tree-shaking.
+export { installViewTransitionSupport } from "./fiber/view-transition-runtime.ts";
 // Resumability: the lazily-loaded event-handler reference the qrl transform emits.
 export { capturedScope, type Qrl, qrl } from "../runtime/qrl.ts";
 // Dev Fast Refresh: family registration + state-preserving reconcile (dev entries only).

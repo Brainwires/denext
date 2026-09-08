@@ -78,6 +78,7 @@ export async function bundleNativeRoutes(ctx: BuildContext): Promise<void> {
       paths.instrumentationClientPath,
       ctx.usesClassComponents,
       ctx.usesActivity,
+      ctx.usesViewTransition,
     ),
   }));
   if (globalError) {
@@ -158,6 +159,7 @@ export async function bundleNativeFlight(ctx: BuildContext): Promise<void> {
     usesLive: ctx.usesLive,
     usesClassComponents: ctx.usesClassComponents,
     usesActivity: ctx.usesActivity,
+    usesViewTransition: ctx.usesViewTransition,
     instrumentationClient: ctx.paths.instrumentationClientPath,
   });
   await writeBundleOutput(ctx.clientDir, flightBundle, FLIGHT_BUNDLE_FILE);
