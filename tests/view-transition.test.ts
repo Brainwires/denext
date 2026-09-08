@@ -22,7 +22,7 @@ function style(el: { getAttribute(n: string): string | null }): string {
   return el.getAttribute("style") ?? "";
 }
 
-Deno.test("markOutgoing/markIncoming stamp view-transition-name on the host child, clear restores", async () => {
+Deno.test("begin() stamps outgoing names, markIncoming stamps the incoming side, clear restores", async () => {
   const screen = await render(
     h("div", null, h(ViewTransition, { name: "hero" }, h("span", { "data-testid": "a" }, "x"))),
   );
@@ -30,11 +30,11 @@ Deno.test("markOutgoing/markIncoming stamp view-transition-name on the host chil
   const vt = getViewTransitionSupport()!;
   assert(vt, "the marking runtime is installed");
 
-  vt.markOutgoing();
+  const tx = vt.begin([]); // stamps the outgoing hosts now
   assertStringIncludes(style(el), "view-transition-name:hero", "outgoing host is named");
-  vt.markIncoming();
+  tx.markIncoming();
   assertStringIncludes(style(el), "view-transition-name:hero", "incoming host is named");
-  vt.clear();
+  tx.clear();
   assert(!style(el).includes("view-transition-name"), "clear restores the original style");
 });
 
@@ -49,16 +49,16 @@ Deno.test("exit classes on the outgoing side, enter classes on the incoming side
   const el = screen.getByTestId("b");
   const vt = getViewTransitionSupport()!;
 
-  vt.markOutgoing();
+  const tx = vt.begin([]);
   assertStringIncludes(style(el), "view-transition-class:fx-exit", "old side carries exit");
-  vt.markIncoming(); // re-stamped from the original, so the incoming class replaces the outgoing
+  tx.markIncoming(); // re-stamped from the original, so the incoming class replaces the outgoing
   assertStringIncludes(style(el), "view-transition-class:fx-enter", "new side carries enter");
   assert(!style(el).includes("fx-exit"), "the outgoing class does not linger on the new side");
-  vt.clear();
+  tx.clear();
   assert(!style(el).includes("view-transition-class"), "clear restores the original style");
 });
 
-Deno.test("markOutgoing preserves the element's own inline style", async () => {
+Deno.test("begin() preserves the element's own inline style", async () => {
   const screen = await render(
     h(
       ViewTransition,
@@ -68,12 +68,41 @@ Deno.test("markOutgoing preserves the element's own inline style", async () => {
   );
   const el = screen.getByTestId("c");
   const vt = getViewTransitionSupport()!;
-  vt.markOutgoing();
+  const tx = vt.begin([]);
   assertStringIncludes(style(el), "color:red", "author style survives");
   assertStringIncludes(style(el), "view-transition-name:kept");
-  vt.clear();
+  tx.clear();
   assertStringIncludes(style(el), "color:red", "author style is restored");
   assert(!style(el).includes("view-transition-name"));
+});
+
+Deno.test("an unsafe name/class is dropped, never injected into the style attribute (CSS-injection guard)", async () => {
+  const screen = await render(
+    h("div", null, [
+      h(
+        ViewTransition,
+        { name: "x;position:fixed;inset:0", enter: "ok-enter" },
+        h("span", { "data-testid": "bad" }, "1"),
+      ),
+      h(
+        ViewTransition,
+        { name: "safe-1", enter: "evil;background:url(//x)" },
+        h("span", { "data-testid": "good" }, "2"),
+      ),
+    ]),
+  );
+  const vt = getViewTransitionSupport()!;
+  const tx = vt.begin([]);
+  const bad = screen.getByTestId("bad");
+  const good = screen.getByTestId("good");
+  // The injected name is not a valid CSS ident → dropped entirely (no position:fixed leaks in).
+  assert(!style(bad).includes("position:fixed"), "no CSS declaration injection via name");
+  assert(!style(bad).includes("view-transition-name"), "an unsafe name is not stamped at all");
+  // The valid name IS stamped; the unsafe class token is dropped.
+  tx.markIncoming();
+  assertStringIncludes(style(good), "view-transition-name:safe-1", "a valid name is stamped");
+  assert(!style(good).includes("background:url"), "no CSS declaration injection via class");
+  tx.clear();
 });
 
 Deno.test("withViewTransition drives the marking around startViewTransition and passes addTransitionType types", async () => {

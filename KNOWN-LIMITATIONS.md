@@ -38,6 +38,17 @@ next-compat interop path — denext's own apps are unaffected):
   interop and **static-export** paths emit no entry, so there global-error stays
   server-rendered only (its `reset` inert).
 
+- **The class-component runtime is installed only when a build scan sees a class in your
+  app source.** To keep it out of function-only bundles, `denext build` scans your app
+  source for `Component`/`PureComponent` and installs the ~3 KB class runtime only when it
+  appears (a class component must name it). An app whose class components live **only in a
+  dependency** the scan doesn't read — an npm package, or a sibling workspace package — with
+  the word never appearing in the app's own source, gets a function-only bundle, so rendering
+  that class throws `classComponentsDisabledError` in the **production build** (it works in
+  `denext dev`, which installs the runtime unconditionally). Set `classComponents: true` in
+  `denext.config.ts` to force it in. Compat (next-compat) apps already drive this off the
+  same config flag.
+
 - **The Node-stream `react-dom/server` APIs buffer (no `Writable`
   backpressure).** `renderToString` / `renderToStaticMarkup` render the
   **synchronously-renderable** subset (a `<Suspense>` whose children suspend
@@ -136,8 +147,9 @@ next-compat interop path — denext's own apps are unaffected):
   `defaultProps` on a **function** component is honored as a compat extension (React 19
   removed it) because popular npm libraries still rely on it.
 - **A few React internals are shims.** The introspection hooks `captureOwnerStack()` /
-  `cacheSignal()` return `null` and `addTransitionType()` is a no-op (rendering is
-  unaffected — only dev tooling that reads them gets nothing).
+  `cacheSignal()` return `null` (rendering is unaffected — only dev tooling that reads them
+  gets nothing). `addTransitionType()` is fully wired — it drives `startViewTransition({ types })`
+  and `<ViewTransition>`'s per-type `enter`/`exit`/`update`/`share` class maps.
 
 ## denext-original features — bounded scope
 
@@ -261,9 +273,10 @@ sides of the swap, so a shared `name` morphs between routes; `enter`/`exit`/`upd
 route-level cross-fade still applies where the browser supports it. Residual vs React:
 only **navigation** commits are wrapped in a transition — a same-page state change that
 adds/removes/reorders a `<ViewTransition>` (React's list-reorder case) is not animated —
-and the animation itself needs a browser that supports the View Transitions API (it is a
-no-op elsewhere). **`Activity` does real offscreen scheduling** —
-`mode="hidden"` keeps the subtree mounted-but-hidden (`display:none`), preserves its
+each `name` must be unique among the elements live at once (two sharing a name make the
+browser skip the transition, as in React / the View Transitions API), and the animation
+itself needs a browser that supports the View Transitions API (it is a no-op elsewhere). **`Activity` does real offscreen scheduling** —
+`mode="hidden"` keeps the subtree mounted-but-hidden (`display:none !important`), preserves its
 state, and tears down its effects, so `mode="visible"` restores the same instances; a
 subtree that mounts hidden is pre-rendered at transition priority. One residual gap vs
 React: a subtree that MOUNTS hidden runs its effects once during that pre-render (and

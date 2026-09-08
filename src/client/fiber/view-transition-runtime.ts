@@ -8,21 +8,28 @@
 // A `<ViewTransition>` stamps its config as the DNX_VT_ATTR attribute on its host child (see
 // react-extras.ts) — a DOM attribute, so it survives server rendering AND the Flight boundary
 // (a VNode/Fragment marker would not: server components aren't re-run on the client and a
-// Fragment's props are dropped in Flight). Around a transition the navigation runtime calls
-// markOutgoing() BEFORE `startViewTransition` (so the browser's old-state capture sees the
-// names) and markIncoming() inside the callback after the DOM commit (so the new-state
-// capture sees them), then clear() when the transition finishes. Names are applied to the
-// marked elements found in each root's live DOM; a `name` present on both sides pairs them for
-// a morph, and `enter`/`exit`/`update`/`share` become `view-transition-class` on old vs. new.
+// Fragment's props are dropped in Flight). Each transition is a `begin(types)` call that stamps
+// the outgoing hosts NOW (before `startViewTransition`, so the old-state capture sees the names)
+// and returns a handle whose markIncoming()/clear() operate only on THIS transition's elements —
+// so overlapping navigations never wipe each other's stamps. A `name` present on both sides pairs
+// the elements for a morph; `enter`/`exit`/`update`/`share` become `view-transition-class` on the
+// old vs. new side.
 
 import { DNX_VT_ATTR, type ViewTransitionMarker } from "../../runtime/react-extras.ts";
 import { activeRoots } from "./state.ts";
-import { getActiveTransitionTypes, setViewTransitionSupport } from "./view-transition-support.ts";
+import { type ActiveViewTransition, setViewTransitionSupport } from "./view-transition-support.ts";
 
-// Every element this transition stamped → its ORIGINAL inline `style` (first sight wins), so
-// clear() restores exactly, and a reused element stamped both outgoing and incoming rebuilds
-// from its original rather than compounding.
-let marked = new Map<Element, string | null>();
+// A `view-transition-name` / `view-transition-class` value is a CSS custom-ident. Only stamp
+// values that ARE one, so a value bound to untrusted data (a shared-element name keyed by an id
+// or title) can't inject extra CSS declarations into the element's inline style via an embedded
+// `;`/`:`/`}`/quote (e.g. `x;position:fixed;inset:0;z-index:9999`). Non-conforming names/classes
+// are dropped rather than stamped. (React sidesteps this by going through CSSOM, whose setter
+// rejects invalid values; denext validates because it writes the style attribute as a string so
+// the marking is observable in the no-CSSOM test DOM.)
+const CSS_IDENT = /^-?[A-Za-z_][\w-]*$/;
+function ident(value: string | undefined): string | undefined {
+  return value != null && CSS_IDENT.test(value) ? value : undefined;
+}
 
 /** Collect every marked element under `root` (inclusive), DFS via element children — portable across the real DOM and the test DOM shim (no querySelectorAll dependency). */
 function collectMarked(root: Element, out: Element[]): void {
@@ -55,18 +62,26 @@ function resolveClass(
   return val.default;
 }
 
-/** Join distinct class names into one `view-transition-class` value (undefined when none). */
+/** Join distinct, VALID class idents into one `view-transition-class` value (undefined when none). */
 function joinClasses(...parts: (string | undefined)[]): string | undefined {
   const seen = new Set<string>();
   for (const p of parts) {
     if (!p) continue;
-    for (const c of p.split(/\s+/)) if (c) seen.add(c);
+    for (const c of p.split(/\s+/)) {
+      const safe = ident(c);
+      if (safe) seen.add(safe);
+    }
   }
   return seen.size ? [...seen].join(" ") : undefined;
 }
 
-/** Stamp `view-transition-name` (+ class) onto `el`, rebuilding from its ORIGINAL inline style. */
-function stamp(el: Element, name: string | undefined, cls: string | undefined): void {
+/** Stamp `view-transition-name` (+ class) onto `el`, rebuilding from its ORIGINAL inline style (recorded in `marked`, first sight wins so a reused element restores cleanly). */
+function stamp(
+  marked: Map<Element, string | null>,
+  el: Element,
+  name: string | undefined,
+  cls: string | undefined,
+): void {
   if (!marked.has(el)) marked.set(el, el.getAttribute("style"));
   const original = marked.get(el) ?? null;
   let s = original?.trim() ?? "";
@@ -90,16 +105,18 @@ function eachMarked(visit: (marker: ViewTransitionMarker, el: Element) => void):
 }
 
 /**
- * Stamp the CURRENT (outgoing) DOM's marked elements — called BEFORE `startViewTransition`, so
- * the browser's old-state capture includes the names. The old side carries `exit`/`update`/
- * `share` classes (`::view-transition-old(name)` targets them).
+ * Begin one transition: stamp the CURRENT (outgoing) DOM's marked elements — the old side carries
+ * `exit`/`update`/`share` classes (`::view-transition-old(name)`) — and return a handle that owns
+ * this transition's stamped elements. `types` is fixed here for the whole transition, so an
+ * overlapping nav can't change how this one's class maps resolve.
  */
-function markOutgoing(): void {
-  const types = getActiveTransitionTypes();
+function begin(types: readonly string[]): ActiveViewTransition {
+  const marked = new Map<Element, string | null>();
   eachMarked((m, el) => {
     stamp(
+      marked,
       el,
-      m.name,
+      ident(m.name),
       joinClasses(
         resolveClass(m.exit, types),
         resolveClass(m.update, types),
@@ -107,36 +124,31 @@ function markOutgoing(): void {
       ),
     );
   });
-}
-
-/**
- * Stamp the now-current (incoming) DOM's marked elements — called INSIDE the transition
- * callback after the commit, so the new-state capture includes the names. The new side carries
- * `enter`/`update`/`share` classes (`::view-transition-new(name)` targets them). A reused
- * element (a morph in place) is re-stamped from its original, so the incoming class wins.
- */
-function markIncoming(): void {
-  const types = getActiveTransitionTypes();
-  eachMarked((m, el) => {
-    stamp(
-      el,
-      m.name,
-      joinClasses(
-        resolveClass(m.enter, types),
-        resolveClass(m.update, types),
-        resolveClass(m.share, types),
-      ),
-    );
-  });
-}
-
-/** Restore every stamped element's original inline style — called when the transition finishes. */
-function clear(): void {
-  for (const [el, original] of marked) {
-    if (original == null) el.removeAttribute("style");
-    else el.setAttribute("style", original);
-  }
-  marked = new Map();
+  return {
+    // The new side carries `enter`/`update`/`share` classes (`::view-transition-new(name)`). A
+    // reused element (a morph in place) is re-stamped from its original, so the incoming class wins.
+    markIncoming() {
+      eachMarked((m, el) => {
+        stamp(
+          marked,
+          el,
+          ident(m.name),
+          joinClasses(
+            resolveClass(m.enter, types),
+            resolveClass(m.update, types),
+            resolveClass(m.share, types),
+          ),
+        );
+      });
+    },
+    clear() {
+      for (const [el, original] of marked) {
+        if (original == null) el.removeAttribute("style");
+        else el.setAttribute("style", original);
+      }
+      marked.clear();
+    },
+  };
 }
 
 /**
@@ -145,5 +157,5 @@ function clear(): void {
  * dev server and tests install it directly. Idempotent.
  */
 export function installViewTransitionSupport(): void {
-  setViewTransitionSupport({ markOutgoing, markIncoming, clear });
+  setViewTransitionSupport({ begin });
 }

@@ -7,14 +7,27 @@
 // use. Without it installed, a `<ViewTransition>` is a transparent passthrough and only the
 // route-level cross-fade (navigation.ts always wraps the commit in startViewTransition) applies.
 
+/**
+ * One in-flight view transition's marking handle. Scoped per transition (not module-global) so
+ * overlapping navigations — a second nav starting while a first is mid-flight — don't share one
+ * set of stamped elements: each `begin()` owns its own, so one transition's `clear()` can't wipe
+ * another's names (which would silently break the second's shared-element morph).
+ */
+export interface ActiveViewTransition {
+  /** Stamp the now-current (incoming) hosts, inside the transition callback after the commit. */
+  markIncoming(): void;
+  /** Remove every stamp THIS transition applied (called when the transition finishes). */
+  clear(): void;
+}
+
 /** The per-element view-transition marking the navigation runtime drives. */
 export interface ViewTransitionSupport {
-  /** Stamp `view-transition-name` (+ classes) on the CURRENT (outgoing) hosts, before capture. */
-  markOutgoing(): void;
-  /** Stamp them on the now-current (incoming) hosts, inside the transition callback post-commit. */
-  markIncoming(): void;
-  /** Remove every stamp this transition applied (called when the transition finishes). */
-  clear(): void;
+  /**
+   * Stamp the CURRENT (outgoing) hosts now (before `startViewTransition`, so the old-state
+   * capture sees the names) with `types` fixed for this transition, and return a handle whose
+   * `markIncoming`/`clear` operate only on this transition's own elements.
+   */
+  begin(types: readonly string[]): ActiveViewTransition;
 }
 
 let support: ViewTransitionSupport | null = null;
@@ -40,25 +53,13 @@ export function addTransitionType(type: string): void {
   if (!pendingTypes.includes(type)) pendingTypes.push(type);
 }
 
-/** Drain the buffered transition types (the navigation runtime calls this per transition). */
+/**
+ * Drain the buffered transition types (the navigation runtime calls this once per transition and
+ * passes the result to {@link ViewTransitionSupport.begin}, which fixes them for that transition).
+ */
 export function takeTransitionTypes(): string[] {
   if (pendingTypes.length === 0) return pendingTypes;
   const t = pendingTypes;
   pendingTypes = [];
   return t;
-}
-
-// The types active for the transition currently being set up — navigation drains
-// pendingTypes and records them here so the marking runtime (a separate gated module) can
-// resolve per-type `enter`/`exit`/`update`/`share` class maps against them.
-let activeTypes: readonly string[] = [];
-
-/** Record the types for the in-flight transition (navigation sets this per transition). */
-export function setActiveTransitionTypes(types: readonly string[]): void {
-  activeTypes = types;
-}
-
-/** The in-flight transition's types (the marking runtime resolves class maps against these). */
-export function getActiveTransitionTypes(): readonly string[] {
-  return activeTypes;
 }

@@ -9,11 +9,7 @@ import { BLUR_ATTR, clearBlur } from "../runtime/image-blur.ts";
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChild, VNodeChildren } from "../jsx/types.ts";
 import { hydrateDocument, hydrateRoot, type Root } from "./reconciler.ts";
-import {
-  getViewTransitionSupport,
-  setActiveTransitionTypes,
-  takeTransitionTypes,
-} from "./fiber/view-transition-support.ts";
+import { getViewTransitionSupport, takeTransitionTypes } from "./fiber/view-transition-support.ts";
 import { revealStreamedHoles } from "./reveal-holes.ts";
 import {
   type Context,
@@ -417,13 +413,13 @@ export function withViewTransition(commit: () => void): void {
   }
   const vt = getViewTransitionSupport();
   const types = takeTransitionTypes();
-  setActiveTransitionTypes(types);
-  // Stamp the outgoing hosts BEFORE startViewTransition so the old-state capture includes
-  // their names (the capture happens after this synchronous task, before the callback runs).
-  vt?.markOutgoing();
+  // Stamp the outgoing hosts BEFORE startViewTransition so the old-state capture includes their
+  // names (the capture happens after this synchronous task, before the callback runs). `begin`
+  // scopes this transition's stamped elements + types, so overlapping navigations don't clash.
+  const tx = vt ? vt.begin(types) : null;
   const update = async () => {
     await commit();
-    vt?.markIncoming(); // new hosts, before the browser's new-state capture
+    tx?.markIncoming(); // new hosts, before the browser's new-state capture
   };
   // A skipped/aborted transition (another started, tab hidden) is not an error: `ready`
   // rejects with InvalidStateError and `finished` may too. The `{ update, types }` object
@@ -437,7 +433,7 @@ export function withViewTransition(commit: () => void): void {
     transition = doc.startViewTransition(update);
   }
   transition?.ready?.catch(() => {});
-  const done = () => vt?.clear();
+  const done = () => tx?.clear();
   (transition?.finished ?? Promise.resolve()).then(done, done);
 }
 
@@ -569,10 +565,19 @@ function injectRouteEntry(entrySrc: string, url: URL): Promise<void> {
     const script = document.createElement("script");
     script.type = "module";
     script.src = src.href;
+    let settled = false;
+    // Resolve on load/error, but also on a timeout: this promise is awaited INSIDE a view
+    // transition's update callback, so a stalled entry chunk (or a nested dynamic import whose
+    // failure never surfaces as the script's `error`) would otherwise hang the reconcile until
+    // the browser's own ~4 s transition timeout. Cap it so the commit lands promptly.
     const cleanup = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       script.remove();
       resolve();
     };
+    const timer = setTimeout(cleanup, 4000);
     script.addEventListener("load", cleanup, { once: true });
     script.addEventListener("error", cleanup, { once: true });
     document.body.appendChild(script);
@@ -889,10 +894,14 @@ export function startGlobalErrorClient(
   GlobalError: (p: { error: Error; reset: () => void }) => VNode,
 ): void {
   const dataEl = document.getElementById("__denext_ge_data");
-  const data = (dataEl ? JSON.parse(dataEl.textContent || "{}") : {}) as {
-    message?: string;
-    digest?: string;
-  };
+  // The page is already server-rendered and visible; a corrupt data island must not throw here
+  // (that would abort hydration and leave `reset` dead) — fall back to a generic error.
+  let data: { message?: string; digest?: string } = {};
+  try {
+    if (dataEl) data = JSON.parse(dataEl.textContent || "{}");
+  } catch {
+    data = {};
+  }
   const error = Object.assign(new Error(data.message ?? "Error"), { digest: data.digest });
   hydrateDocument(h(GlobalError, { error, reset: () => void resetGlobalError() }));
 }

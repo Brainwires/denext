@@ -97,18 +97,16 @@ export function ViewTransition(
   }
   // Clone the child, adding the config attribute. On a host element it lands in the DOM (and
   // the Flight payload); on a component child the author must forward it — like React, whose
-  // ViewTransition also requires a single element child.
-  return {
-    type: child.type,
-    key: child.key,
-    props: { ...(child.props ?? {}), [DNX_VT_ATTR]: JSON.stringify(marker) },
-  } as VNode;
+  // ViewTransition also requires a single element child. Spread the child so its element brand
+  // (`$$typeof`) and any other fields survive — a rebuilt `{ type, key, props }` would make
+  // `isValidElement`/`react-is` misclassify the wrapped child.
+  return { ...child, props: { ...(child.props ?? {}), [DNX_VT_ATTR]: JSON.stringify(marker) } };
 }
 
 /**
  * `React.Activity` (experimental; formerly `unstable_Offscreen`) — wraps a subtree whose
  * rendering can be deprioritized or hidden. `mode="hidden"` keeps the subtree mounted but
- * removed from the layout (`display:none`), tears down its effects, and preserves its state
+ * removed from the layout (`display:none !important`), tears down its effects, and preserves its state
  * (`useState`/`useRef` cells) so `mode="visible"` restores the SAME instances instantly; a
  * subtree that MOUNTS hidden is pre-rendered at transition priority so it never blocks the
  * initial paint. The offscreen scheduler is import-gated: it is installed into the

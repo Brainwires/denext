@@ -178,7 +178,7 @@ const { document, warnings } = await buildOpenApi({
 | `cdn`             | per renderer      | Scalar script URL / Swagger dist base URL                                 |
 | `info`            | dir name, `0.0.0` | `title`, `version`, `description`                                         |
 | `servers`         | —                 | `servers` entries                                                         |
-| `securitySchemes` | —                 | `Record<string, SecurityScheme>` → `components.securitySchemes`           |
+| `securitySchemes` | —                 | `Record<string, OpenApiSecurityScheme>` → `components.securitySchemes`    |
 | `security`        | —                 | `SecurityRequirement[]` (doc default) or `(route) => …` (per route)       |
 | `toJsonSchema`    | —                 | `(schema, "input" \| "output") => JsonSchema \| undefined`                |
 | `include`         | every API route   | `(route) => boolean`                                                      |
