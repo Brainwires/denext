@@ -5,7 +5,7 @@
 // Both return the same { origin, close } shape used by the browser harness.
 
 import { build } from "../../src/build/build.ts";
-import { startProdServer } from "../../src/build/prod-server.ts";
+import { serveEphemeral } from "../../src/build/prod-server.ts";
 
 export interface RunningServer {
   origin: string;
@@ -46,25 +46,7 @@ export async function serveDenext(
   opts: { reuseBuild?: boolean } = {},
 ): Promise<RunningServer> {
   if (!opts.reuseBuild) await build(appDir);
-  const controller = new AbortController();
-  const { promise, resolve } = Promise.withResolvers<
-    { hostname: string; port: number }
-  >();
-  const server = await startProdServer({
-    projectDir: appDir,
-    port: 0,
-    hostname: "127.0.0.1",
-    signal: controller.signal,
-    onListen: (info) => resolve(info),
-  });
-  const { hostname, port } = await promise;
-  return {
-    origin: `http://${hostname}:${port}`,
-    close: async () => {
-      controller.abort();
-      await server.finished;
-    },
-  };
+  return serveEphemeral(appDir);
 }
 
 /** Serve a pre-built Next.js app via `next start` on a free port. */

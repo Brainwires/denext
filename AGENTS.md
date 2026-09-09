@@ -359,7 +359,10 @@ denext ships tooling so agents get it right the first time:
   browser console, completed requests, and HMR — so you can see what actually happened at
   runtime), `denext_render` (render a route or component server-side, no browser, and get
   the HTML/error — SEE what your edit produces), `denext_route_map` (the full render
-  tree at a path: layouts, boundaries, server/client split), `denext_search_docs` (BM25
+  tree at a path: layouts, boundaries, server/client split), `denext_profile` (build
+  unminified, serve, and profile a route in headless Chromium — CPU self-time by
+  function + heap growth + a leak check; pass `interact` to profile a re-render, `budget`
+  to gate a regression), `denext_search_docs` (BM25
   over the denext docs), and the codebase tools `denext_index_codebase` /
   `denext_query_codebase` / `denext_find_definition` / `denext_find_references`.
   `denext mcp --disable rag,docs` hides tool groups or individual tools to trim an

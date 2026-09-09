@@ -8,6 +8,36 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.1.6] - 2026-09-09
+
+### Added
+
+- **`denext profile` — a first-party CPU + heap profiler (CLI + `denext_profile` MCP tool).**
+  Builds the app **unminified** (readable function names in the profile), serves it on an
+  ephemeral port, drives headless Chromium via the CDP `Profiler` + `HeapProfiler` domains,
+  and reports where time goes — **CPU self-time by function** — plus **heap growth and a
+  leak check**. Two modes: the default profiles **startup** (initial load + hydration +
+  first render — the reconciler/hydration work); `--interact <file>` (JS evaluated in the
+  page each iteration, e.g. a re-render burst) profiles an **interaction** with a valid
+  post-load leak baseline. `--budget <file>` gates a regression (a breach exits non-zero,
+  CI-usable) and `--write-budget <file>` snapshots the current run as a baseline. The same
+  engine backs the `denext_profile` MCP tool, so coding agents can profile too (Chromium is
+  pulled in lazily, so the MCP server's other tools stay browser-free).
+
+### Changed
+
+- **Flags-guided commit phase (reconciler): the per-commit passes now prune clean subtrees.**
+  Each commit ran ~9 full-tree DFS traversals plus two effect collectors, none guided by
+  the `subtreeFlags` the reconciler already bubbles — so a commit on a large mostly-idle
+  tree paid O(all fibers) per pass even when almost nothing changed (the effect collectors
+  alone walked the whole tree every commit to discover it had no effects). The
+  before-mutation, deletion, mutation, and placement walks now descend only into subtrees
+  whose flag actually bubbled, and a new coarse `HasEffect` fiber bit (set wherever a fiber
+  queues an effect, incl. a `useSyncExternalStore` subscription) lets the insertion- and
+  layout-effect collectors skip effect-free subtrees. On a 3000-node tree with a single
+  updating leaf this cut per-commit time by ~40%. Behavior is unchanged — the flags that
+  gate each pass are exactly the ones `bubbleFlags` propagates.
+
 ## [2.1.5] - 2026-09-09
 
 ### Added
@@ -6202,6 +6232,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.1.6]: https://jsr.io/@denext/denext@2.1.6
 [2.1.5]: https://jsr.io/@denext/denext@2.1.5
 [2.1.4]: https://jsr.io/@denext/denext@2.1.4
 [2.1.3]: https://jsr.io/@denext/denext@2.1.3

@@ -30,6 +30,7 @@ Deno.test("registry exposes every first-party verb", () => {
     "migrate",
     "patch",
     "plugin",
+    "profile",
     "remove",
     "start",
     "task",

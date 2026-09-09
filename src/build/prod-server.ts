@@ -146,3 +146,36 @@ export async function startProdServer(options: ProdServerOptions): Promise<Deno.
     throw err;
   }
 }
+
+/** A running server started on an ephemeral port. */
+export interface EphemeralServer {
+  /** The `http://host:port` origin it is listening on. */
+  origin: string;
+  /** Abort the server and wait for it to finish draining. */
+  close: () => Promise<void>;
+}
+
+/**
+ * Start the production server for `projectDir` on an ephemeral port (`port: 0`) bound to
+ * loopback, resolving once it is listening on the real port (never assume 3000). The
+ * shared engine behind the E2E harness's `buildAndServe` and the profiler's serve step.
+ */
+export async function serveEphemeral(projectDir: string): Promise<EphemeralServer> {
+  const controller = new AbortController();
+  const { promise, resolve } = Promise.withResolvers<{ hostname: string; port: number }>();
+  const server = await startProdServer({
+    projectDir,
+    port: 0,
+    hostname: "127.0.0.1",
+    signal: controller.signal,
+    onListen: (info) => resolve(info),
+  });
+  const { hostname, port } = await promise;
+  return {
+    origin: `http://${hostname}:${port}`,
+    close: async () => {
+      controller.abort();
+      await server.finished;
+    },
+  };
+}
