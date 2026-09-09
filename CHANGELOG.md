@@ -8,6 +8,20 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- **Flags-guided commit phase (reconciler): the per-commit passes now prune clean subtrees.**
+  Each commit ran ~9 full-tree DFS traversals plus two effect collectors, none guided by
+  the `subtreeFlags` the reconciler already bubbles — so a commit on a large mostly-idle
+  tree paid O(all fibers) per pass even when almost nothing changed (the effect collectors
+  alone walked the whole tree every commit to discover it had no effects). The
+  before-mutation, deletion, mutation, and placement walks now descend only into subtrees
+  whose flag actually bubbled, and a new coarse `HasEffect` fiber bit (set wherever a fiber
+  queues an effect, incl. a `useSyncExternalStore` subscription) lets the insertion- and
+  layout-effect collectors skip effect-free subtrees. On a 3000-node tree with a single
+  updating leaf this cut per-commit time by ~40%. Behavior is unchanged — the flags that
+  gate each pass are exactly the ones `bubbleFlags` propagates.
+
 ### Added
 
 - **`denext profile` — a first-party CPU + heap profiler (CLI + `denext_profile` MCP tool).**

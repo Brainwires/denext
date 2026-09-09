@@ -2,7 +2,13 @@
 // deletion, Offscreen visibility, profilers and the passive-effect queue.
 
 import type { RootHandle } from "./state.ts";
-import { collectEffects, collectInsertionEffects, needsSync, walk } from "./fiber-utils.ts";
+import {
+  collectEffects,
+  collectInsertionEffects,
+  needsSync,
+  walk,
+  walkFlagged,
+} from "./fiber-utils.ts";
 import { runCommitReport } from "./devtools-seam.ts";
 import { onErrorFor, scheduleEffectError } from "./boundaries.ts";
 import type { ProfilerPhase } from "../../runtime/profiler.ts";
@@ -10,6 +16,8 @@ import { applyProps, detachRef, updateRef } from "../dom-props.ts";
 import { getClassSupport } from "./class-support.ts";
 import { anyProfiler, takeOffscreen } from "./state.ts";
 import {
+  ChildDeletion,
+  ChildrenChanged,
   childrenDom,
   collectDom,
   type CommitEffect,
@@ -17,6 +25,7 @@ import {
   type HookCell,
   NoFlags,
   NoLane,
+  Placement,
   placePortalChildren,
   RefAttach,
   Snapshot,
@@ -27,7 +36,7 @@ import {
 /** 1. Before mutation: class getSnapshotBeforeUpdate. */
 function commitBeforeMutation(wipRoot: Fiber): void {
   if (!__DENEXT_CLASS_COMPONENTS__) return;
-  walk(wipRoot, (f) => {
+  walkFlagged(wipRoot, Snapshot, (f) => {
     if ((f.flags & Snapshot) !== 0) getClassSupport()?.captureSnapshot(f as never);
   });
 }
@@ -40,7 +49,7 @@ function commitBeforeMutation(wipRoot: Fiber): void {
  *     CSS-in-JS library removes the old <style> before inserting the replacement).
  */
 function commitDeletions(wipRoot: Fiber): void {
-  walk(wipRoot, (f) => {
+  walkFlagged(wipRoot, ChildDeletion, (f) => {
     if (f.deletions) { for (const d of f.deletions) commitDeletion(d); }
   });
 }
@@ -64,7 +73,7 @@ function commitInsertionEffects(wipRoot: Fiber): void {
 
 /** 2. Mutation: host/text property updates. */
 function commitMutation(wipRoot: Fiber): void {
-  walk(wipRoot, (f) => {
+  walkFlagged(wipRoot, Update, (f) => {
     if ((f.flags & Update) === 0) return;
     if (f.tag === "host") {
       applyProps(
@@ -87,7 +96,7 @@ function commitPlacement(handle: RootHandle, wipRoot: Fiber): void {
   // sync, which would strip the doctype. Every other root exclusively owns its container.
   if (handle.documentRoot) placePortalChildren(handle.container, childrenDom(wipRoot));
   else syncChildren(handle.container, childrenDom(wipRoot));
-  walk(wipRoot, (f) => {
+  walkFlagged(wipRoot, Placement | ChildDeletion | ChildrenChanged, (f) => {
     if (f.tag === "host" && f.alternate !== null && needsSync(f)) {
       syncChildren(f.stateNode as Element, childrenDom(f));
     } else if (f.tag === "portal" && needsSync(f)) {
@@ -140,9 +149,7 @@ function clearCommittedFlags(wipRoot: Fiber): void {
  *    parents), which excludes any fiber discarded by a suspense/error unwind — its
  *    effects must not run for content never placed.
  */
-function commitLayoutEffects(wipRoot: Fiber): void {
-  const effects: Fiber[] = [];
-  collectEffects(wipRoot, effects);
+function commitLayoutEffects(effects: Fiber[]): void {
   runCommitEffects(effects, (f) => {
     const es = f.pendingEffects;
     f.pendingEffects = [];
@@ -163,12 +170,17 @@ export function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
   // 3. Atomic swap: the work-in-progress tree becomes current.
   handle.current = wipRoot;
   commitPlacement(handle, wipRoot);
+  // Collect the layout/passive effect fibers NOW, while the HasEffect flags are still live —
+  // clearCommittedFlags (next) zeroes them, but the layout/passive phase runs after it. The
+  // collected list is just fiber references; running the effects later is unaffected.
+  const layoutFibers: Fiber[] = [];
+  collectEffects(wipRoot, layoutFibers);
   clearCommittedFlags(wipRoot);
   // 4c. Offscreen visibility: hide the primary portion of a boundary that re-suspended
   //     urgently (display:none, kept mounted so its state survives), and restore it on
   //     reveal. Skipped entirely unless a boundary changed Offscreen state this commit.
   if (takeOffscreen()) walk(wipRoot, applyOffscreenVisibility);
-  commitLayoutEffects(wipRoot);
+  commitLayoutEffects(layoutFibers);
   // 5b. Profiler onRender.
   if (anyProfiler) fireProfilers(wipRoot);
   // 6. DevTools.

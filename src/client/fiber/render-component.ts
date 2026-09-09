@@ -28,7 +28,7 @@ import {
 import { classComponentsDisabledError, isClassComponent } from "../../compat/class-detect.ts";
 import { resolveComponentType } from "../../runtime/react-brands.ts";
 import { getClassSupport } from "./class-support.ts";
-import type { Fiber, HookCell } from "./fiber.ts";
+import { type Fiber, HasEffect, type HookCell } from "./fiber.ts";
 
 /** Bound on render-phase re-invocations of one component (React's RE_RENDER_LIMIT). */
 const MAX_RENDER_PHASE_PASSES = 25;
@@ -168,6 +168,17 @@ function renderClassFiber(inst: Fiber): VNode {
   if (bailed) {
     inst.bailed = true;
     return (inst.child?.vnode as VNode) ?? textVNode("");
+  }
+  // Class lifecycle callbacks (componentDidMount / componentDidUpdate) are queued onto the
+  // fiber's effect arrays by the class-support bridge, NOT through scheduleEffect — so set
+  // the HasEffect bit here too, or the flags-guided commit collectors would prune the class
+  // fiber and its lifecycle would never fire. Set at render time so bubbleFlags carries it.
+  if (
+    (inst.pendingEffects && inst.pendingEffects.length > 0) ||
+    (inst.passiveEffects && inst.passiveEffects.length > 0) ||
+    (inst.insertionEffects && inst.insertionEffects.length > 0)
+  ) {
+    inst.flags |= HasEffect;
   }
   return (vnode as VNode) ?? textVNode("");
 }

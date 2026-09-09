@@ -13,7 +13,14 @@ import {
   type Dispatcher,
   MEMO_CACHE_SENTINEL,
 } from "../../runtime/hooks.ts";
-import { type CommitEffect, type Fiber, type HookCell, NoLane, TransitionLane } from "./fiber.ts";
+import {
+  type CommitEffect,
+  type Fiber,
+  HasEffect,
+  type HookCell,
+  NoLane,
+  TransitionLane,
+} from "./fiber.ts";
 import { isHydrating } from "./hydration.ts";
 
 /** The component fiber currently rendering (backs the hook dispatcher). */
@@ -141,6 +148,9 @@ function scheduleEffect(
     if (typeof cell.cleanup === "function") cell.cleanup();
   };
   queue.push(entry);
+  // Mark the fiber as effect-bearing so the commit-phase collectors can prune to it
+  // (bubbleFlags propagates this into ancestors' subtreeFlags at completeWork).
+  inst.flags |= HasEffect;
 }
 
 /**
@@ -332,6 +342,8 @@ export const clientDispatcher: Dispatcher = {
       inst.passiveEffects!.push(
         storeSubscriptionEffect(cell, subscribe, () => snapshotChanged(cell, getSnapshot)),
       );
+      // This push bypasses scheduleEffect, so flag the effect-bearing fiber here too.
+      inst.flags |= HasEffect;
     }
     return value;
   },

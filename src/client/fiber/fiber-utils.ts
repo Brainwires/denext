@@ -15,6 +15,7 @@ import {
   createFiber,
   type Fiber,
   type FiberTag,
+  HasEffect,
   NoLane,
   Placement,
 } from "./fiber.ts";
@@ -195,19 +196,37 @@ export function suspenseListDisplay(member: Fiber): "content" | "fallback" | "hi
   return gated();
 }
 
-/** Collect component fibers with queued insertion effects, children before parents. */
+/**
+ * Collect component fibers with queued insertion effects, children before parents.
+ * Descends only into subtrees that carry an effect (`subtreeFlags & HasEffect`), so a
+ * clean subtree is skipped instead of fully walked — the `HasEffect` bit is set on any
+ * fiber that queued an effect this render (see the hooks dispatcher) and bubbled by
+ * `bubbleFlags`. Must run BEFORE `clearCommittedFlags` zeroes the flags (it does — this
+ * is the pre-mutation insertion pass). The `insertionEffects` length check still filters
+ * the coarse bit down to insertion effects specifically.
+ */
 export function collectInsertionEffects(fiber: Fiber, out: Fiber[]): void {
   if (fiber.hidden === true) return; // Offscreen-hidden subtree: effects are gated.
-  for (let c = fiber.child; c !== null; c = c.sibling) collectInsertionEffects(c, out);
-  if (fiber.tag !== "component") return;
+  if ((fiber.subtreeFlags & HasEffect) !== 0) {
+    for (let c = fiber.child; c !== null; c = c.sibling) collectInsertionEffects(c, out);
+  }
+  if (fiber.tag !== "component" || (fiber.flags & HasEffect) === 0) return;
   if (fiber.insertionEffects && fiber.insertionEffects.length > 0) out.push(fiber);
 }
 
-/** Collect component fibers with pending effects, children before parents. */
+/**
+ * Collect component fibers with pending (layout) or passive effects, children before
+ * parents. Same `HasEffect` pruning as {@link collectInsertionEffects}. NOTE: this must
+ * be run while the flags are still live — `commitRoot` collects the list BEFORE
+ * `clearCommittedFlags`, then runs the effects after — because the layout/passive phase
+ * itself happens after the flag reset.
+ */
 export function collectEffects(fiber: Fiber, out: Fiber[]): void {
   if (fiber.hidden === true) return; // Offscreen-hidden subtree: effects are gated.
-  for (let c = fiber.child; c !== null; c = c.sibling) collectEffects(c, out);
-  if (fiber.tag !== "component") return;
+  if ((fiber.subtreeFlags & HasEffect) !== 0) {
+    for (let c = fiber.child; c !== null; c = c.sibling) collectEffects(c, out);
+  }
+  if (fiber.tag !== "component" || (fiber.flags & HasEffect) === 0) return;
   if (
     (fiber.pendingEffects && fiber.pendingEffects.length > 0) ||
     (fiber.passiveEffects && fiber.passiveEffects.length > 0)
@@ -224,4 +243,19 @@ export function needsSync(fiber: Fiber): boolean {
 export function walk(fiber: Fiber, visit: (f: Fiber) => void): void {
   visit(fiber);
   for (let c = fiber.child; c !== null; c = c.sibling) walk(c, visit);
+}
+
+/**
+ * Flags-guided pre-order DFS (React's commit walk): visit `fiber`, then descend only into
+ * subtrees that still carry `mask` in their own or their subtree's flags — pruning clean
+ * subtrees a commit phase has no work in. `mask` must be a set of flags that `bubbleFlags`
+ * propagates into `subtreeFlags` (Placement/Update/ChildDeletion/ChildrenChanged/Snapshot/
+ * RefAttach/HasEffect all do). The visitor keeps its own precise per-fiber guard, so a
+ * visit on a fiber that merely lies on the path to a flagged descendant is a cheap no-op.
+ * Only valid before `clearCommittedFlags` zeroes the flags for the commit.
+ */
+export function walkFlagged(fiber: Fiber, mask: number, visit: (f: Fiber) => void): void {
+  visit(fiber);
+  if (((fiber.flags | fiber.subtreeFlags) & mask) === 0) return;
+  for (let c = fiber.child; c !== null; c = c.sibling) walkFlagged(c, mask, visit);
 }

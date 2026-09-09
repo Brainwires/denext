@@ -129,6 +129,14 @@ export const ChildrenChanged = 16;
  * `applyProps` instead.
  */
 export const RefAttach = 32;
+/**
+ * This component fiber queued at least one effect this render (insertion / layout /
+ * passive, incl. a `useSyncExternalStore` subscription). Coarse on purpose — the precise
+ * per-kind filter is the effect arrays themselves; this bit only lets the commit-phase
+ * effect collectors PRUNE clean subtrees (descend only where `subtreeFlags & HasEffect`)
+ * instead of walking the whole tree to find that a subtree has no effects.
+ */
+export const HasEffect = 64;
 
 // ---- Priority lanes --------------------------------------------------------
 
