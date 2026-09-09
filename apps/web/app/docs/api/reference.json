@@ -3217,7 +3217,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 2.1.3",
+          "signature": "VERSION: 2.1.4",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],

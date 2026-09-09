@@ -508,12 +508,26 @@ export async function render(rawProps) {
 }
 
 /** Generate the client hydration entry for a page (same layout-wrapped tree). */
-function clientEntry(filePath: string, mountId: string, layouts: string[]): string {
+function clientEntry(
+  filePath: string,
+  mountId: string,
+  layouts: string[],
+  classComponents?: boolean,
+): string {
   const { imports, tree } = composition(filePath, layouts);
+  // The client reconciler's class-component runtime is gated behind an import seam
+  // (`installClassSupport`) so a function-only app tree-shakes it out. When this page
+  // opts into class components, emit the install call so the runtime is pulled into the
+  // hydration bundle (the SSR path needs no seam — `renderToString` handles classes
+  // directly). Mirrors `classSupportBlock` in bundle.ts / `generateSpaEntry`.
+  const classImport = classComponents
+    ? `import { installClassSupport } from "denext/client-runtime";\n`
+    : "";
+  const classInstall = classComponents ? "installClassSupport();\n" : "";
   return `${imports}
 import { h } from "denext/jsx-runtime";
 import { hydrateRoot } from "denext/client";
-const el = document.getElementById(${JSON.stringify(mountId)});
+${classImport}${classInstall}const el = document.getElementById(${JSON.stringify(mountId)});
 const props = (globalThis.__DENEXT_PROPS__ ?? {});
 if (el) hydrateRoot(el, ${tree});
 `;
@@ -553,7 +567,10 @@ export function buildNextCompatPages(
       const clientEntryPath = join(tmp, `${id}.client.tsx`);
       const layouts = page.layouts ?? [];
       await Deno.writeTextFile(serverEntryPath, serverEntry(page.filePath, layouts));
-      await Deno.writeTextFile(clientEntryPath, clientEntry(page.filePath, MOUNT_ID, layouts));
+      await Deno.writeTextFile(
+        clientEntryPath,
+        clientEntry(page.filePath, MOUNT_ID, layouts, options.classComponents),
+      );
 
       const serverBundle = join(outRoot, `${id}.server.js`);
       const clientBundle = join(outRoot, `${id}.client.js`);

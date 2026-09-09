@@ -95,9 +95,11 @@ export function useActionState<State, Payload = FormData>(
     const done = new Promise<void>((r) => (settle = r));
     // The action runs inside a transition (React does the same): its state updates are
     // transition-lane, and a `useOptimistic` value applied alongside reverts when the
-    // action settles rather than on the next tick.
+    // action settles rather than on the next tick. RETURN the promise so the scheduler
+    // tracks this as an ASYNC transition — otherwise it settles on the next microtask and
+    // a `useOptimistic` overlay applied inside the action is reverted before it can paint.
     startTransition(() => {
-      Promise.resolve(latest.current.action(latest.current.state, payload))
+      return Promise.resolve(latest.current.action(latest.current.state, payload))
         .then((next) => setState(() => next))
         .catch((err) => {
           // React rethrows an action's error into the nearest error boundary: surface it from

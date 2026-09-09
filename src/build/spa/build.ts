@@ -5,6 +5,7 @@ import { join } from "@std/path";
 import { prepareDesktopIcon } from "../desktop-icon.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { bundleSpaInto } from "./bundle.ts";
+import { prodMinify } from "../minify.ts";
 import {
   assertEntryExists,
   CLIENT_PREFIX,
@@ -22,7 +23,7 @@ async function bundleAndShell(
   clientDir: string,
   shellDir: string,
 ): Promise<void> {
-  const { hasStyles } = await bundleSpaInto(paths, entryPath, clientDir, true);
+  const { hasStyles } = await bundleSpaInto(paths, entryPath, clientDir, prodMinify());
   const html = await spaShellHtml({
     spa: paths.config!.spa!,
     scriptSrc: `${CLIENT_PREFIX}${ENTRY_FILE}`,

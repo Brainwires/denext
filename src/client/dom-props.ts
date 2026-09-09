@@ -436,7 +436,7 @@ function serializeStyleObject(style: Record<string, unknown>): string {
   let css = "";
   for (const [prop, value] of Object.entries(style)) {
     if (value == null || value === false) continue;
-    css += `${styleProp(prop)}:${value};`;
+    css += `${styleProp(prop)}:${styleValue(prop, value)};`;
   }
   return css;
 }
@@ -449,6 +449,76 @@ function serializeStyleObject(style: Record<string, unknown>): string {
 function styleProp(prop: string): string {
   if (prop.startsWith("--")) return prop;
   return prop.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
+}
+
+/**
+ * Style properties that take a unitless number — a raw number is NOT given a `px`
+ * suffix. Mirrors react-dom's `isUnitlessNumber`, including the vendor-prefixed
+ * variants react generates. Everything else with a non-zero numeric value gets `px`.
+ */
+const UNITLESS_STYLE = new Set<string>([
+  "animationIterationCount",
+  "aspectRatio",
+  "borderImageOutset",
+  "borderImageSlice",
+  "borderImageWidth",
+  "boxFlex",
+  "boxFlexGroup",
+  "boxOrdinalGroup",
+  "columnCount",
+  "columns",
+  "flex",
+  "flexGrow",
+  "flexPositive",
+  "flexShrink",
+  "flexNegative",
+  "flexOrder",
+  "gridArea",
+  "gridRow",
+  "gridRowEnd",
+  "gridRowSpan",
+  "gridRowStart",
+  "gridColumn",
+  "gridColumnEnd",
+  "gridColumnSpan",
+  "gridColumnStart",
+  "fontWeight",
+  "lineClamp",
+  "lineHeight",
+  "opacity",
+  "order",
+  "orphans",
+  "scale",
+  "tabSize",
+  "widows",
+  "zIndex",
+  "zoom",
+  "fillOpacity",
+  "floodOpacity",
+  "stopOpacity",
+  "strokeDasharray",
+  "strokeDashoffset",
+  "strokeMiterlimit",
+  "strokeOpacity",
+  "strokeWidth",
+  "WebkitLineClamp", // the one vendor-prefixed unitless prop common in practice
+]);
+
+/**
+ * A style value as CSS text. react-dom appends `px` to a **non-zero numeric** value
+ * unless the property is unitless (`opacity`, `zIndex`, `flex`, `lineHeight`, grid
+ * spans, …) or a custom property (`--foo`) — so `{ top: 410 }` becomes `top: 410px`,
+ * not the invalid `top: 410` (which the browser silently drops). Matches
+ * react-dom's `dangerousStyleValue`.
+ */
+function styleValue(prop: string, value: unknown): string {
+  if (
+    typeof value === "number" && value !== 0 &&
+    !prop.startsWith("--") && !UNITLESS_STYLE.has(prop)
+  ) {
+    return `${value}px`;
+  }
+  return String(value);
 }
 
 /**
@@ -504,6 +574,6 @@ function applyChangedStyle(
     if (oldStyle && oldStyle[prop] === value) continue;
     const name = styleProp(prop);
     if (value == null || value === false || value === "") style.removeProperty(name);
-    else style.setProperty(name, String(value));
+    else style.setProperty(name, styleValue(prop, value));
   }
 }

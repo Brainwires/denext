@@ -140,10 +140,10 @@ function scheduleIsland(
   const island = islandOf(wrapper, islands);
   if (!island) return;
   const mountFresh = eager || island.strategy === "only";
-  const hydrate = () => {
-    void hydrateIsland(wrapper, island.flight, reg, mountFresh);
-  };
-  if (eager) return hydrate();
+  // Return the hydration promise (don't `void` it) so an interaction resume can await the
+  // handler being attached before replaying the event (see dispatchInteraction/resumeEvent).
+  const hydrate = () => hydrateIsland(wrapper, island.flight, reg, mountFresh);
+  if (eager) return void hydrate();
   registerLazyIsland({
     container: wrapper,
     strategy: island.strategy as HydrationStrategy,

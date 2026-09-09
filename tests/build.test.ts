@@ -147,3 +147,17 @@ Deno.test("generateRouteEntry imports instrumentation-client FIRST when the proj
   assertStringIncludes(lines[2], "denext/client-runtime");
   assert(!generateRouteEntry(route).includes("instrumentation-client"), "none by default");
 });
+
+Deno.test("prodMinify: production builds minify unless DENEXT_NO_MINIFY is set", async () => {
+  const { prodMinify } = await import("../src/build/minify.ts");
+  const prev = Deno.env.get("DENEXT_NO_MINIFY");
+  try {
+    Deno.env.delete("DENEXT_NO_MINIFY");
+    assertEquals(prodMinify(), true, "minify on by default");
+    Deno.env.set("DENEXT_NO_MINIFY", "1");
+    assertEquals(prodMinify(), false, "DENEXT_NO_MINIFY=1 disables minify");
+  } finally {
+    if (prev === undefined) Deno.env.delete("DENEXT_NO_MINIFY");
+    else Deno.env.set("DENEXT_NO_MINIFY", prev);
+  }
+});

@@ -2,6 +2,7 @@
 // qrl handler extraction, AsyncContext instrumentation), merged into the bundler import map.
 
 import { reactCompilerEnabled } from "../../server/config.ts";
+import { prodMinify } from "../minify.ts";
 import { compileAsyncContextModules } from "../async-context-transform.ts";
 import { collectComponentSources, compileModules } from "../compiler.ts";
 import { type AppCss, buildAppCss } from "../css.ts";
@@ -20,7 +21,7 @@ export function buildCss(ctx: BuildContext): Promise<AppCss | null> {
     projectDir,
     configPath: paths.configPath,
     outDir: paths.outDir,
-    minify: true,
+    minify: prodMinify(),
     // Every route's page/layout files are the app's import roots; crawling them finds
     // stylesheets in sibling workspace packages (outside `projectDir`) the walk misses.
     entryFiles: [...new Set(manifest.pages.flatMap(routeEntryFiles))],

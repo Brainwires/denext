@@ -9,23 +9,13 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import type { Page } from "@astral/astral";
-import { buildAndServe, collectConsoleLogs, launchBrowser, type RunningServer } from "./harness.ts";
-
-/**
- * Poll a boolean `expr` in the page until it's truthy, or `ms` elapses. astral's
- * `waitForFunction` has a fixed, short internal timeout that a heavily-loaded build/CI
- * host can exceed for a soft-nav → Flight re-boot → island-resume sequence; this gives an
- * explicit, generous budget so a slow machine doesn't flake (it still fails fast on a real
- * hang).
- */
-async function pollFor(page: Page, expr: string, ms = 45000): Promise<void> {
-  const deadline = Date.now() + ms;
-  for (;;) {
-    if (await page.evaluate(`!!(${expr})`)) return;
-    if (Date.now() > deadline) throw new Error(`pollFor timed out after ${ms}ms: ${expr}`);
-    await new Promise((r) => setTimeout(r, 100));
-  }
-}
+import {
+  buildAndServe,
+  collectConsoleLogs,
+  launchBrowser,
+  pollFor,
+  type RunningServer,
+} from "./harness.ts";
 
 const EXAMPLE = new URL("../../examples/resumability", import.meta.url).pathname;
 

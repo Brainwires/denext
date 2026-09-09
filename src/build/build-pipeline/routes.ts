@@ -2,6 +2,7 @@
 // the native (non-compat) route + Flight client bundles.
 
 import { join } from "@std/path";
+import { prodMinify } from "../minify.ts";
 import { crawlLocalModules, routeEntryFiles } from "../module-graph.ts";
 import {
   appImportsLive,
@@ -89,7 +90,7 @@ export async function bundleNativeRoutes(ctx: BuildContext): Promise<void> {
   }
   const out = await bundleRoutes(entries, {
     configPath: paths.configPath,
-    minify: true,
+    minify: prodMinify(),
     importMap: ctx.cssImportMap,
   });
   // Write shared + island chunks under their own (content-hashed) basenames; identical
@@ -154,7 +155,7 @@ export async function bundleNativeFlight(ctx: BuildContext): Promise<void> {
   log(`bundling Flight islands -> client/${FLIGHT_BUNDLE_FILE}`);
   const flightBundle = await bundleFlightEntry(ctx.boundary!, {
     configPath: ctx.paths.configPath,
-    minify: true,
+    minify: prodMinify(),
     importMap: ctx.cssImportMap,
     usesLive: ctx.usesLive,
     usesClassComponents: ctx.usesClassComponents,

@@ -181,6 +181,13 @@ export interface DevState {
 
   /** The dev module loader (wired by `startDevServer` once the manifest getter exists). */
   load: ModuleLoader;
+
+  /**
+   * A query-less twin of {@link load} used only to tag `"use client"` boundaries, so the
+   * tagged module instance is the same (query-less) one a page transitively imports at
+   * render — see {@link baseLoaderFor}'s `bust` flag. Same compat routing as `load`.
+   */
+  tagLoad: ModuleLoader;
 }
 
 /** Fresh per-server state. */
@@ -229,5 +236,7 @@ export function createDevState(options: DevServerOptions): DevState {
     devEvents: new DevEventLog(),
     typeCheckToken: 0,
     load: () => Promise.reject(new Error("denext: dev loader used before startDevServer wired it")),
+    tagLoad: () =>
+      Promise.reject(new Error("denext: dev tag loader used before startDevServer wired it")),
   };
 }

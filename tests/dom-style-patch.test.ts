@@ -70,3 +70,42 @@ Deno.test("patchStyle hyphenates camelCase and passes custom props through", () 
   assertEquals(el.style.getPropertyValue("--my-var"), "9px");
   assert(el.getAttribute("style")!.includes("max-height:5px"));
 });
+
+Deno.test("applyProps appends px to non-zero numeric style values (react-dom parity)", () => {
+  // Regression: a client re-render passing raw numbers (e.g. LegendList's `top: <number>`
+  // for absolutely-positioned virtualized rows) must become `top: 410px`, not the invalid
+  // unitless `top: 410` the browser silently drops (which collapsed every row onto one line).
+  const { doc } = makeDom();
+  const el = doc.createElement("div") as Any;
+  applyProps(el, {}, {}, {
+    style: {
+      position: "absolute",
+      top: 410, // number → px
+      width: 200, // number → px
+      marginTop: 12, // number → px
+      left: 0, // zero stays unitless
+      opacity: 0.5, // unitless property → no px
+      zIndex: 3, // unitless property → no px
+      lineHeight: 1.5, // unitless property → no px
+      "--gap": 8, // custom property → no px
+    },
+  }, noop);
+  assertEquals(el.style.getPropertyValue("top"), "410px");
+  assertEquals(el.style.getPropertyValue("width"), "200px");
+  assertEquals(el.style.getPropertyValue("margin-top"), "12px");
+  assertEquals(el.style.getPropertyValue("left"), "0", "zero is unitless");
+  assertEquals(el.style.getPropertyValue("opacity"), "0.5", "opacity is unitless");
+  assertEquals(el.style.getPropertyValue("z-index"), "3", "z-index is unitless");
+  assertEquals(el.style.getPropertyValue("line-height"), "1.5", "line-height is unitless");
+  assertEquals(el.style.getPropertyValue("--gap"), "8", "custom properties keep the raw value");
+
+  // A numeric value updated on re-render is re-applied with px (the LegendList reposition).
+  applyProps(
+    el,
+    {},
+    { style: { position: "absolute", top: 410 } },
+    { style: { position: "absolute", top: 42 } },
+    noop,
+  );
+  assertEquals(el.style.getPropertyValue("top"), "42px", "updated numeric top re-applies with px");
+});

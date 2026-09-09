@@ -158,3 +158,35 @@ Deno.test("server: createPortal and a store without getServerSnapshot throw like
   }
   await assertRejects(() => renderToString(h(Store, null)), Error, "Missing getServerSnapshot");
 });
+
+Deno.test("useOptimistic inside a useActionState action holds the optimistic value until the async action settles", async () => {
+  // Regression: useActionState's dispatch must RETURN the action promise to startTransition
+  // so the transition is tracked as ASYNC. Before the fix it settled on the next microtask,
+  // reverting a useOptimistic overlay applied inside the action before it could render — so
+  // the optimistic value never showed while the action was in flight.
+  let releaseAction!: () => void;
+  const gate = new Promise<void>((r) => (releaseAction = r));
+  function Form() {
+    const [committed, setCommitted] = useState("base");
+    const [shown, addOptimistic] = useOptimistic(committed);
+    const [, dispatch] = useActionState<string>(async () => {
+      addOptimistic("optimistic");
+      await gate;
+      setCommitted("committed");
+      return "committed";
+    }, "idle");
+    return h("button", { onClick: () => dispatch(undefined as never) }, shown);
+  }
+  const screen = await render(h(Form, null));
+  await screen.fireEvent.click(screen.getByRole("button"));
+  await new Promise((r) => setTimeout(r, 10));
+  await act(() => {});
+  // While the action is pending the optimistic value is shown (was "base" before the fix).
+  assertStringIncludes(screen.container.innerHTML, "optimistic");
+
+  releaseAction();
+  await new Promise((r) => setTimeout(r, 10));
+  await act(() => {});
+  // Once it settles, the overlay reconciles to the committed state.
+  assertStringIncludes(screen.container.innerHTML, "committed");
+});

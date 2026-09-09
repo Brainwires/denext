@@ -3,6 +3,7 @@
 // discovery and font collection over a project.
 
 import { fromFileUrl, join } from "@std/path";
+import { prodMinify } from "./minify.ts";
 import { resolveCacheComponents } from "../server/config.ts";
 import { collectedFontEntries, resetFonts } from "../compat/next/font/registry.ts";
 import { applyPlugins } from "../plugin/mod.ts";
@@ -88,7 +89,7 @@ export function compatBuildOptions(
     projectDir,
     configPath: paths.configPath,
     outDir: paths.outDir,
-    minify: true as const,
+    minify: prodMinify(),
     classComponents: paths.config?.classComponents ?? true,
     resolveAllNodeModules: nodeResolveEnabled(paths.config),
     mdxOptions: paths.config?.mdx,

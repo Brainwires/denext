@@ -68,7 +68,11 @@ Deno.test("client:load hydrates immediately on register", () => {
   resetLazyIslands();
   const { container } = makeDom();
   let hydrated = 0;
-  registerLazyIsland({ container: container as Any, strategy: "load", hydrate: () => hydrated++ });
+  registerLazyIsland({
+    container: container as Any,
+    strategy: "load",
+    hydrate: () => void hydrated++,
+  });
   assertEquals(hydrated, 1);
 });
 
@@ -78,7 +82,11 @@ Deno.test("client:idle hydrates only when idle fires", () => {
   setLazyScheduler(ctl.sched);
   const { container } = makeDom();
   let hydrated = 0;
-  registerLazyIsland({ container: container as Any, strategy: "idle", hydrate: () => hydrated++ });
+  registerLazyIsland({
+    container: container as Any,
+    strategy: "idle",
+    hydrate: () => void hydrated++,
+  });
   assertEquals(hydrated, 0);
   ctl.fireIdle();
   assertEquals(hydrated, 1);
@@ -96,7 +104,7 @@ Deno.test("client:visible hydrates on intersection and disconnects the observer"
   registerLazyIsland({
     container: container as Any,
     strategy: "visible",
-    hydrate: () => hydrated++,
+    hydrate: () => void hydrated++,
   });
   assertEquals(hydrated, 0);
   ctl.fireVisible();
@@ -115,7 +123,7 @@ Deno.test("client:media hydrates when the query matches and passes the query thr
     container: container as Any,
     strategy: "media",
     param: "(min-width:800px)",
-    hydrate: () => hydrated++,
+    hydrate: () => void hydrated++,
   });
   assertEquals(hydrated, 0);
   assertEquals(ctl.mediaQuery, "(min-width:800px)");
@@ -129,7 +137,11 @@ Deno.test("client:only hydrates immediately on register (client-only mount)", ()
   resetLazyIslands();
   const { container } = makeDom();
   let hydrated = 0;
-  registerLazyIsland({ container: container as Any, strategy: "only", hydrate: () => hydrated++ });
+  registerLazyIsland({
+    container: container as Any,
+    strategy: "only",
+    hydrate: () => void hydrated++,
+  });
   assertEquals(hydrated, 1);
 });
 
@@ -141,14 +153,14 @@ Deno.test("client:interaction hydrates on a delegated event inside the island", 
   registerLazyIsland({
     container: container as Any,
     strategy: "interaction",
-    hydrate: () => hydrated++,
+    hydrate: () => void hydrated++,
   });
   assertEquals(hydrated, 0);
   // An interaction on a descendant resolves up to the island container.
   assert(dispatchInteraction(inner), "expected a descendant interaction to hydrate");
   assertEquals(hydrated, 1);
   // Idempotent: a second interaction does nothing (real listeners now own it).
-  assertEquals(dispatchInteraction(inner), false);
+  assert(!dispatchInteraction(inner), "a second interaction does not re-hydrate");
   assertEquals(hydrated, 1);
 });
 
@@ -158,8 +170,8 @@ Deno.test("dispatchInteraction ignores targets outside any interaction island", 
   registerLazyIsland({ container: container as Any, strategy: "interaction", hydrate: () => {} });
   const { container: other } = makeDom();
   const stray = child(other);
-  assertEquals(dispatchInteraction(stray), false);
-  assertEquals(dispatchInteraction(null), false);
+  assert(!dispatchInteraction(stray));
+  assert(!dispatchInteraction(null));
 });
 
 // ---- default scheduler: IntersectionObserver box-target + rootMargin ---------
@@ -196,7 +208,7 @@ Deno.test("default visible scheduler observes past nested display:contents, with
   try {
     setLazyScheduler(); // install the real default scheduler
     let hydrated = 0;
-    registerLazyIsland({ container, strategy: "visible", hydrate: () => hydrated++ });
+    registerLazyIsland({ container, strategy: "visible", hydrate: () => void hydrated++ });
 
     assertEquals(opts?.rootMargin, "200px", "a rootMargin pre-triggers before on-screen");
     assertStrictEquals(observed, leaf, "walked past both contents wrappers to the boxed root");

@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "denext",
+    "lib": ["deno.window", "dom", "dom.iterable", "dom.asynciterable"]
+  },
+  "imports": {
+    "denext": "../../../../mod.ts",
+    "denext/jsx-runtime": "../../../../src/jsx/jsx-runtime.ts",
+    "denext/jsx-dev-runtime": "../../../../src/jsx/jsx-runtime.ts",
+    "denext/server": "../../../../src/server/mod.ts",
+    "denext/client": "../../../../src/client/mod.ts",
+    "denext/live": "../../../../src/live.ts"
+  }
+}

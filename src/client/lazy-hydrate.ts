@@ -29,14 +29,21 @@ export interface LazyIsland {
   strategy: HydrationStrategy;
   /** Strategy parameter — the media query for a `media` island. */
   param?: string;
-  /** Idempotent: performs the scoped hydrate of this island over `container`. */
-  hydrate: () => void;
+  /**
+   * Idempotent: performs the scoped hydrate of this island over `container`. May be async
+   * (a code-split island imports its chunk first) — the returned promise settles when the
+   * island is live, so an interaction resume can replay the event only after its handler is
+   * attached (see {@link dispatchInteraction}).
+   */
+  hydrate: () => void | Promise<void>;
 }
 
 interface Registered extends LazyIsland {
   done: boolean;
   /** Strategy-specific listener/observer cleanup, run once when hydration fires. */
   teardown?: () => void;
+  /** The in-flight (or settled) hydration promise, so a resume can await handler attach. */
+  hydrating?: Promise<void>;
 }
 
 const islands = new Set<Registered>();
@@ -65,6 +72,25 @@ export function setLazyScheduler(s: LazyScheduler = defaultScheduler()): void {
 export function resetLazyIslands(): void {
   for (const r of islands) r.teardown?.();
   islands.clear();
+  resuming.length = 0;
+}
+
+/**
+ * Islands whose interaction resume is in flight (hydration pending). A browser `click`
+ * arrives as a sequence — `pointerdown` triggers the resume, then `focusin`/`click`
+ * follow — so events after the trigger must be buffered against the SAME hydration and
+ * replayed once the handler is attached, or the intent-carrying `click` is dropped.
+ */
+const resuming: { container: Element; promise: Promise<void> }[] = [];
+
+/**
+ * If `target` sits in an island whose interaction resume is still in flight, the hydration
+ * promise to replay this event against; else null. Lets a follow-up event (the `click`
+ * after the `pointerdown` that triggered the resume) replay to the just-attached handler.
+ */
+export function pendingResumeFor(target: Element | null): Promise<void> | null {
+  for (const r of resuming) if (containsOrEquals(r.container, target)) return r.promise;
+  return null;
 }
 
 /** A dev-mode record of one island hydrating (see {@link getIslandTimeline}). */
@@ -109,13 +135,14 @@ function recordIslandHydration(r: Registered): void {
   }
 }
 
-function runHydrate(r: Registered): void {
-  if (r.done) return; // idempotent: a strategy may fire more than once
+function runHydrate(r: Registered): void | Promise<void> {
+  if (r.done) return r.hydrating; // idempotent: a strategy may fire more than once
   r.done = true;
   r.teardown?.();
   islands.delete(r);
-  r.hydrate();
+  r.hydrating = Promise.resolve(r.hydrate());
   recordIslandHydration(r);
+  return r.hydrating;
 }
 
 /**
@@ -174,15 +201,26 @@ function containsOrEquals(container: Element, target: Element | null): boolean {
  * island (walking ancestors) and hydrate it. Returns true if an island hydrated.
  * Called by the delegated resumability dispatcher (`installQrlDispatch`).
  */
-export function dispatchInteraction(target: Element | null): boolean {
+export function dispatchInteraction(target: Element | null): Promise<void> | null {
   for (const r of islands) {
     if (r.strategy !== "interaction") continue;
     if (containsOrEquals(r.container, target)) {
-      runHydrate(r);
-      return true;
+      // Return the hydration promise (always a promise: runHydrate wraps a sync hydrate in
+      // Promise.resolve) so the caller replays the interaction only after the handler is
+      // attached — hydration is async when the island's chunk must be imported. Track it as
+      // `resuming` (until it settles) so the follow-up events of the same gesture buffer
+      // against this promise via {@link pendingResumeFor} instead of being dropped.
+      const promise = Promise.resolve(runHydrate(r));
+      const entry = { container: r.container, promise };
+      resuming.push(entry);
+      void promise.finally(() => {
+        const i = resuming.indexOf(entry);
+        if (i !== -1) resuming.splice(i, 1);
+      });
+      return promise;
     }
   }
-  return false;
+  return null;
 }
 
 /**

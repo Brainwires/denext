@@ -8,6 +8,61 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.1.4] - 2026-09-09
+
+### Added
+
+- **`DENEXT_NO_MINIFY=1` emits readable (unminified) production bundles** — a build-time
+  escape hatch for `denext build` / `export` / `desktop` when you need to read a real error
+  message or stack trace off a built artifact (minified frames mangle component and hook
+  names; this is how the Base UI render-phase-ref crash was diagnosed). It does not turn on
+  source maps, so an unminified build still ships no `.map` and no original source. Build-time
+  only — it never affects a deployed server at request time. Minification is not a security
+  control, so leaving it off costs only bundle size; keep it off for shipping builds.
+
+### Fixed
+
+- **Numeric inline `style` values now get a `px` unit on the client (react-dom parity).**
+  The client style patcher wrote raw numbers — `style={{ top: 410 }}` became the invalid
+  unitless `top: 410`, which the browser silently drops. React DOM appends `px` to any
+  non-zero numeric style value except a set of unitless properties (`opacity`, `zIndex`,
+  `flex`, `lineHeight`, grid spans, …); denext now matches. This broke libraries that pass
+  numeric styles — notably virtualized lists (`@legendapp/list`/LegendList) that position
+  absolutely with `top: <number>`: every row collapsed onto `top: 0` (all messages on one
+  line). The SSR serializer already handled this; only the client path did not.
+- **`useOptimistic` now shows the optimistic value while a `useActionState` action is in
+  flight.** `useActionState`'s dispatch ran the action inside `startTransition` but did not
+  return the action's promise, so the scheduler treated it as a synchronous transition and
+  settled it on the next microtask — reverting a `useOptimistic` overlay applied inside the
+  action before it could paint (the optimistic row never appeared; only the committed row did
+  once the server responded). Dispatch now returns the promise so the transition is tracked
+  as async and the overlay holds until the action settles. (`useOptimistic` driven directly
+  from `startTransition` was already correct.)
+- **Resumable islands no longer drop the first click on a slow/loaded host.** A browser
+  click arrives as `pointerdown → focusin → click`; the `pointerdown` resumed the island,
+  but island hydration is async (it imports the island's chunk before `hydrateRoot`), and
+  the replay of the interaction ran synchronously — so the intent-carrying `click` fired
+  against a not-yet-attached handler and was silently lost (the island resumed, but the
+  counter stayed at 0). The dispatcher now buffers every event of the gesture against the
+  in-flight hydration and replays them once the handler is attached. Worked when hydration
+  won the race (fast/warm), flaked when it didn't.
+- **Flight islands are interactive again under the unbundled dev loop.** A `"use client"`
+  island on a Flight route rendered through `denext dev` was serialized as plain host nodes
+  (no client reference), so it hydrated to inert markup — clicks did nothing. Cause: the dev
+  loader cache-busts every module with a `?g=<generation>` query, but a page's static
+  `import "./island.tsx"` resolves query-less, so the instance the renderer used was a
+  different object than the one `tagClientModules` tagged — its `CLIENT_REF` never applied.
+  The dev server now tags `"use client"` boundaries through a query-less twin loader
+  (`tagLoad`), restoring ES-module-singleton identity. Native routes, prod, and compat were
+  unaffected.
+- **`buildNextCompatPages` now emits the class-runtime install seam in its client entry.**
+  Since the class runtime was gated behind an `installClassSupport()` import seam, the
+  simplified compat page builder generated a hydration entry that never called it — so a
+  `classComponents: true` build produced a client bundle with the class runtime
+  tree-shaken out (class components would not hydrate). The real App Router pipeline was
+  unaffected (it wires the seam in `build-pipeline/prepare.ts`); this only reached the
+  standalone `buildNextCompatPages` helper.
+
 ## [2.1.3] - 2026-09-08
 
 ### Fixed
@@ -6126,6 +6181,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.1.4]: https://jsr.io/@denext/denext@2.1.4
 [2.1.3]: https://jsr.io/@denext/denext@2.1.3
 [2.1.2]: https://jsr.io/@denext/denext@2.1.2
 [2.1.1]: https://jsr.io/@denext/denext@2.1.1
