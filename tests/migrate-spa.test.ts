@@ -237,3 +237,47 @@ Deno.test("migrate SPA: no React Compiler → no experimental block", async () =
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("migrate SPA: carries index.html boot content (#root splash + head script) into spa.head/spa.loading", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_spa_boot_" });
+  try {
+    await Deno.writeTextFile(
+      join(dir, "package.json"),
+      JSON.stringify({
+        dependencies: { react: "^19.0.0", "react-dom": "^19.0.0", vite: "^5.0.0" },
+      }),
+    );
+    await Deno.writeTextFile(join(dir, "vite.config.ts"), `export default {};\n`);
+    await Deno.mkdir(join(dir, "src"), { recursive: true });
+    await Deno.writeTextFile(join(dir, "src", "main.tsx"), `console.log("app");\n`);
+    // A Vite index.html with a theme pre-paint script in <head> and a splash inside #root.
+    await Deno.writeTextFile(
+      join(dir, "index.html"),
+      `<!doctype html><html><head>` +
+        `<meta charset="utf-8" /><meta name="viewport" content="width=device-width" />` +
+        `<title>My App</title>` +
+        `<meta name="theme-color" content="#0a0a0a" />` +
+        `<script>document.documentElement.style.background = "#0a0a0a";</script>` +
+        `</head><body>` +
+        `<div id="root"><div id="boot-shell"><img src="/logo.png" alt="App" /></div></div>` +
+        `<script type="module" src="/src/main.tsx"></script>` +
+        `</body></html>`,
+    );
+    await migrateProject(dir, {});
+    const config = await Deno.readTextFile(join(dir, "denext.config.ts"));
+    // The #root splash is carried to spa.loading (painted before the bundle loads).
+    assert(config.includes("loading:"), "spa.loading emitted");
+    assert(config.includes("boot-shell"), "the splash markup is carried");
+    // The theme pre-paint script + theme-color meta are carried to spa.head; the entry
+    // module script, charset/viewport, and title are NOT (the shell emits those itself).
+    assert(config.includes("head:"), "spa.head emitted");
+    assert(config.includes("theme-color"), "head meta carried");
+    assert(config.includes("documentElement.style.background"), "pre-paint script carried");
+    assert(
+      !config.includes('/src/main.tsx\\"></script>'),
+      "entry module script not carried into head",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});

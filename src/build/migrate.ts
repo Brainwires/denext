@@ -1473,24 +1473,69 @@ function pnpUnsupported(dir: string): Error {
   );
 }
 
-/** Entry module + title from `index.html` (`<script type=module src>` / `<title>`). */
+/**
+ * Entry module + title from `index.html`, PLUS the boot content a Vite/CRA app puts there:
+ * the `#root` inner markup (a splash/spinner shown before the bundle loads) → `spa.loading`,
+ * and the `<head>` content minus charset/viewport/title/the entry `<script>` (a theme
+ * pre-paint script, boot styles, theme-color/manifest/icon links) → `spa.head`. Carrying
+ * these keeps the migrated SPA's instant first paint instead of a blank screen.
+ */
 async function readIndexHtml(
   dir: string,
-): Promise<{ entry: string; title: string }> {
+): Promise<{ entry: string; title: string; head?: string; loading?: string }> {
   const html = await Deno.readTextFile(join(dir, "index.html")).catch(() => null);
-  let entry = "./src/main.tsx";
-  let title = "app";
-  if (html) {
-    const m = html.match(/<script[^>]*type=["']module["'][^>]*src=["']([^"']+)["']/i) ??
-      html.match(/<script[^>]*src=["']([^"']+)["'][^>]*type=["']module["']/i);
-    if (m) {
-      const src = m[1];
-      entry = src.startsWith("/") ? "." + src : src.startsWith(".") ? src : "./" + src;
-    }
-    const t = html.match(/<title>([^<]*)<\/title>/i);
-    if (t && t[1].trim()) title = t[1].trim();
-  }
+  if (!html) return { entry: "./src/main.tsx", title: "app" };
+  return {
+    ...parseEntryAndTitle(html),
+    head: extractBootHead(html) || undefined,
+    loading: extractRootInner(html) || undefined,
+  };
+}
+
+/** The entry module (`<script type=module src>`, normalized to `./…`) + `<title>`. */
+function parseEntryAndTitle(html: string): { entry: string; title: string } {
+  const m = html.match(/<script[^>]*type=["']module["'][^>]*src=["']([^"']+)["']/i) ??
+    html.match(/<script[^>]*src=["']([^"']+)["'][^>]*type=["']module["']/i);
+  const src = m?.[1];
+  const entry = !src
+    ? "./src/main.tsx"
+    : src.startsWith("/")
+    ? "." + src
+    : src.startsWith(".")
+    ? src
+    : "./" + src;
+  const t = html.match(/<title>([^<]*)<\/title>/i);
+  const title = t && t[1].trim() ? t[1].trim() : "app";
   return { entry, title };
+}
+
+/** Inner HTML of `<div id="root">…</div>` (balanced-div scan) — the app's boot splash. */
+function extractRootInner(html: string): string {
+  const open = /<div\b[^>]*\bid=["']root["'][^>]*>/i.exec(html);
+  if (!open) return "";
+  const start = open.index + open[0].length;
+  const tag = /<(\/?)div\b[^>]*>/gi;
+  tag.lastIndex = start;
+  let depth = 1;
+  let m: RegExpExecArray | null;
+  while ((m = tag.exec(html)) !== null) {
+    depth += m[1] ? -1 : 1;
+    if (depth === 0) return html.slice(start, m.index).trim();
+  }
+  return "";
+}
+
+/** `<head>` inner minus the parts denext's shell emits itself (charset/viewport/title/entry). */
+function extractBootHead(html: string): string {
+  const hm = /<head\b[^>]*>([\s\S]*?)<\/head>/i.exec(html);
+  if (!hm) return "";
+  return hm[1]
+    .replace(/<meta\b[^>]*charset[^>]*>/gi, "")
+    .replace(/<meta\b[^>]*name=["']viewport["'][^>]*>/gi, "")
+    .replace(/<title>[\s\S]*?<\/title>/gi, "")
+    .replace(/<script\b[^>]*type=["']module["'][^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 /** `import.meta.env.*` names used across vite.config + `src/` — the seed for `spa.env`. */
@@ -1563,6 +1608,8 @@ function spaConfigSource(o: {
   proxy?: { prefixes: string[]; target: string };
   desktop?: boolean;
   reactCompiler?: boolean;
+  head?: string;
+  loading?: string;
 }): string {
   const needsPkg = o.envKeys.includes("APP_VERSION");
   const envLines = o.envKeys
@@ -1592,6 +1639,10 @@ function spaConfigSource(o: {
     `  spa: {\n` +
     `    entry: ${JSON.stringify(o.entry)},\n` +
     `    title: ${JSON.stringify(o.title)},\n` +
+    // Boot content carried from the source index.html so the migrated SPA paints instantly
+    // (themed background + splash) instead of a blank screen while the bundle loads.
+    (o.head ? `    head: ${JSON.stringify(o.head)},\n` : "") +
+    (o.loading ? `    loading: ${JSON.stringify(o.loading)},\n` : "") +
     (envLines ? `    env: {\n${envLines}\n    },\n` : "") +
     proxyBlock +
     // Show the desktop-icon override so it's discoverable (commented → auto-detection
@@ -2038,14 +2089,19 @@ async function spaSourceFacts(
   tailwind: boolean;
   proxy: { prefixes: string[]; target: string } | undefined;
   reactCompiler: boolean;
+  head?: string;
+  loading?: string;
 }> {
-  const { entry, title } = source === "cra" ? await readCraIndex(dir) : await readIndexHtml(dir);
+  const idx = source === "cra" ? await readCraIndex(dir) : await readIndexHtml(dir);
+  const { entry, title } = idx;
+  const head = (idx as { head?: string }).head;
+  const loading = (idx as { loading?: string }).loading;
   const envKeys = await spaEnvKeys(dir, source);
   const tailwind = ("@tailwindcss/vite" in deps || "tailwindcss" in deps) &&
     await exists(join(dir, "src", "index.css"));
   const proxy = await spaProxy(dir, options, source);
   const reactCompiler = await spaUsesReactCompiler(dir, source);
-  return { entry, title, envKeys, tailwind, proxy, reactCompiler };
+  return { entry, title, envKeys, tailwind, proxy, reactCompiler, head, loading };
 }
 
 /**
@@ -2089,15 +2145,16 @@ async function migrateSpaProject(
   // with "auto" they are pinned as `npm:name@version` like the Next path.
   const classified = classifyDeps(deps, imports, { pin: !manual });
 
-  const { entry, title, envKeys, tailwind, proxy, reactCompiler } = await spaSourceFacts(
-    dir,
-    deps,
-    options,
-    source,
-  );
+  const { entry, title, envKeys, tailwind, proxy, reactCompiler, head, loading } =
+    await spaSourceFacts(
+      dir,
+      deps,
+      options,
+      source,
+    );
 
   const nodeModulesDir = manual ? "manual" : "auto";
-  const facts = { entry, title, envKeys, tailwind, proxy, reactCompiler };
+  const facts = { entry, title, envKeys, tailwind, proxy, reactCompiler, head, loading };
   const files = await writeSpaProjectFiles(
     dir,
     facts,

@@ -8,6 +8,27 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.1.5] - 2026-09-09
+
+### Added
+
+- **SPA shell emits `modulepreload` for the entry's static chunk graph (Vite parity).** The
+  generated shell only had the entry `<script>`, so the browser discovered the runtime
+  chunks only after downloading and parsing it — a serial waterfall. The build now walks the
+  entry's transitive **static** imports (dynamic `import(…)` excluded, so route/feature/big
+  lazy chunks aren't over-preloaded) and emits `<link rel="modulepreload">` for each, so the
+  runtime fetches in parallel with the entry and first render starts sooner.
+- **SPA boot placeholder (`spa.loading`) + `denext migrate` carries the source `index.html`'s
+  boot content.** The generated SPA shell only had a blank `<div id="root">`, so a
+  client-rendered app showed a white screen until its (often large) bundle downloaded,
+  parsed, and rendered. `spa.loading` injects raw HTML inside `#root` — a themed background
+  (paired with a pre-paint script in `spa.head`), a logo splash, or a spinner — that paints
+  immediately and is replaced on the app's first render, the role a Vite/CRA `index.html`
+  fills. `denext migrate --from vite` (and the generic-SPA path) now carry the source
+  `index.html`'s `#root` markup into `spa.loading` and its `<head>` scripts/styles/meta/links
+  (minus charset/viewport/title/the entry script) into `spa.head` — so a migrated app keeps
+  its instant first paint instead of regressing to a blank screen.
+
 ## [2.1.4] - 2026-09-09
 
 ### Added
@@ -6181,6 +6202,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.1.5]: https://jsr.io/@denext/denext@2.1.5
 [2.1.4]: https://jsr.io/@denext/denext@2.1.4
 [2.1.3]: https://jsr.io/@denext/denext@2.1.3
 [2.1.2]: https://jsr.io/@denext/denext@2.1.2

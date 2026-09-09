@@ -19,4 +19,9 @@ export { buildSpa, exportSpa } from "./spa/build.ts";
 export { pnpmCatalogPackages } from "./spa/bundle.ts";
 export { startSpaDevServer } from "./spa/dev-server.ts";
 export { startSpaProdServer } from "./spa/prod-server.ts";
-export { classifySpaChange, generateSpaEntry, spaShellHtml } from "./spa/shared.ts";
+export {
+  classifySpaChange,
+  collectSpaPreloads,
+  generateSpaEntry,
+  spaShellHtml,
+} from "./spa/shared.ts";

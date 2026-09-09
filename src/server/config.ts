@@ -223,6 +223,16 @@ export interface SpaConfig {
   title?: string;
   /** Extra raw HTML injected into the shell `<head>` (meta tags, preconnect links, …). */
   head?: string;
+  /**
+   * Raw HTML rendered INSIDE the mount element (`#${rootId}`) in the generated shell — the
+   * boot placeholder shown before the client bundle loads and renders. The framework does
+   * not touch it; the app's first render (createRoot/hydrateRoot) replaces `#root`'s
+   * children, clearing it. Use it to paint instantly instead of a blank page: a themed
+   * background (pair with a pre-paint script in {@link head}), a logo splash, or a spinner —
+   * the same role a Vite/CRA `index.html` fills with markup inside `<div id="root">…</div>`.
+   * `denext migrate --from vite` carries the source `index.html`'s `#root` content here.
+   */
+  loading?: string;
   /** `<html lang>` value for the generated shell. Default `"en"`. */
   lang?: string;
   /**
