@@ -430,12 +430,12 @@ Deno.test("dispatchInteraction hydrates the nearest `interaction` island (ancest
     registerLazyIsland(fakeIsland("interaction", container, () => hydrated++));
 
     // A target deep inside the island resolves up the parentNode chain.
-    assertEquals(dispatchInteraction(grandchild as unknown as Element), true);
+    assert(dispatchInteraction(grandchild as unknown as Element));
     assertEquals(hydrated, 1);
 
     // Already hydrated / unrelated targets do not match.
-    assertEquals(dispatchInteraction(grandchild as unknown as Element), false);
-    assertEquals(dispatchInteraction({ parentNode: null } as unknown as Element), false);
+    assert(!dispatchInteraction(grandchild as unknown as Element));
+    assert(!dispatchInteraction({ parentNode: null } as unknown as Element));
   } finally {
     resetLazyIslands();
   }
@@ -455,7 +455,7 @@ Deno.test("resetLazyIslands tears down pending islands and drops them", () => {
     resetLazyIslands();
     // The visible island's teardown ran, and the interaction island is gone.
     assertEquals(tornDown, 1);
-    assertEquals(dispatchInteraction({ parentNode: null } as unknown as Element), false);
+    assert(!dispatchInteraction({ parentNode: null } as unknown as Element));
   } finally {
     resetLazyIslands();
     setLazyScheduler();

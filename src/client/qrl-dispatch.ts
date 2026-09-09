@@ -12,7 +12,7 @@
 // only the touched island.
 
 import { DNX_H_ATTR, getQrlLoader } from "../runtime/qrl.ts";
-import { dispatchInteraction, INTERACTION_EVENTS } from "./lazy-hydrate.ts";
+import { dispatchInteraction, INTERACTION_EVENTS, pendingResumeFor } from "./lazy-hydrate.ts";
 
 /**
  * Parse a `data-dnx-h` value into `{ eventType → qrlId }`. An entry may be
@@ -116,8 +116,15 @@ export type ResumeResult = "qrl" | "resumed" | "none";
  */
 export function resumeEvent(target: unknown, eventType: string, event: unknown): ResumeResult {
   if (dispatchQrl(target, eventType, event)) return "qrl";
-  if (dispatchInteraction(target as Element | null)) {
-    replayEvent(event as Event);
+  // Resume the island on the FIRST event of a gesture; buffer every following event of the
+  // same gesture against the SAME in-flight hydration (`pendingResumeFor`). A browser click
+  // arrives as pointerdown → focusin → click: pointerdown triggers the resume, and the
+  // click — the event that carries the intent — must be replayed to the handler attached by
+  // that resume. Replaying only AFTER hydration settles avoids racing (and dropping) it.
+  const resume = dispatchInteraction(target as Element | null) ??
+    pendingResumeFor(target as Element | null);
+  if (resume) {
+    void resume.then(() => replayEvent(event as Event));
     return "resumed";
   }
   return "none";

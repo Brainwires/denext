@@ -10,6 +10,14 @@ and this project adheres to
 
 ### Fixed
 
+- **Resumable islands no longer drop the first click on a slow/loaded host.** A browser
+  click arrives as `pointerdown → focusin → click`; the `pointerdown` resumed the island,
+  but island hydration is async (it imports the island's chunk before `hydrateRoot`), and
+  the replay of the interaction ran synchronously — so the intent-carrying `click` fired
+  against a not-yet-attached handler and was silently lost (the island resumed, but the
+  counter stayed at 0). The dispatcher now buffers every event of the gesture against the
+  in-flight hydration and replays them once the handler is attached. Worked when hydration
+  won the race (fast/warm), flaked when it didn't.
 - **Flight islands are interactive again under the unbundled dev loop.** A `"use client"`
   island on a Flight route rendered through `denext dev` was serialized as plain host nodes
   (no client reference), so it hydrated to inert markup — clicks did nothing. Cause: the dev
