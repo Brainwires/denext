@@ -10,6 +10,13 @@ and this project adheres to
 
 ### Added
 
+- **SPA shell emits `modulepreload` for the entry's static chunk graph (Vite parity).** The
+  generated shell only had the entry `<script>`, so the browser discovered the runtime
+  chunks only after downloading and parsing it — a serial waterfall. The build now walks the
+  entry's transitive **static** imports (dynamic `import(…)` excluded, so route/feature/big
+  lazy chunks aren't over-preloaded) and emits `<link rel="modulepreload">` for each, so the
+  runtime fetches in parallel with the entry and first render starts sooner.
+
 - **SPA boot placeholder (`spa.loading`) + `denext migrate` carries the source `index.html`'s
   boot content.** The generated SPA shell only had a blank `<div id="root">`, so a
   client-rendered app showed a white screen until its (often large) bundle downloaded,

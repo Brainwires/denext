@@ -3,6 +3,7 @@
 // covered by tests/e2e/spa.e2e.test.ts (opt-in).
 
 import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
+import { join } from "@std/path";
 import { generateSpaEntry, pnpmCatalogPackages, spaShellHtml } from "../src/build/spa.ts";
 import { validateDenextConfig } from "../src/build/paths.ts";
 import type { DenextConfig } from "../src/server/config.ts";
@@ -188,4 +189,29 @@ Deno.test("spaShellHtml: renders spa.loading inside #root (boot placeholder) + h
 Deno.test("spaShellHtml: no spa.loading leaves #root empty (default)", async () => {
   const html = await spaShellHtml({ spa: { entry: "./src/main.tsx" }, scriptSrc: "/x.js" });
   assertStringIncludes(html, '<div id="root"></div>');
+});
+
+Deno.test("collectSpaPreloads: transitive STATIC import graph only (dynamic imports excluded)", async () => {
+  const { collectSpaPreloads } = await import("../src/build/spa.ts");
+  const dir = await Deno.makeTempDir({ prefix: "denext_preload_" });
+  try {
+    // index → chunk-a (static) → chunk-b (static); index also dynamically imports main (excluded).
+    await Deno.writeTextFile(
+      join(dir, "index.js"),
+      `import{x}from"/_denext/client/chunk-a.js";import"/_denext/client/chunk-a.js";` +
+        `const m=()=>import("/_denext/client/main.js");m();`,
+    );
+    await Deno.writeTextFile(
+      join(dir, "chunk-a.js"),
+      `export{y}from"/_denext/client/chunk-b.js";`,
+    );
+    await Deno.writeTextFile(join(dir, "chunk-b.js"), `export const y=1;`);
+    await Deno.writeTextFile(join(dir, "main.js"), `console.log("app");`);
+    const pre = await collectSpaPreloads(dir, "index.js");
+    assertEquals(pre.sort(), ["chunk-a.js", "chunk-b.js"], "static graph, deduped, no main");
+    assert(!pre.includes("main.js"), "dynamic import is NOT preloaded");
+    assert(!pre.includes("index.js"), "the entry itself is not listed");
+  } finally {
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
 });

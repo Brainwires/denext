@@ -9,6 +9,7 @@ import { prodMinify } from "../minify.ts";
 import {
   assertEntryExists,
   CLIENT_PREFIX,
+  collectSpaPreloads,
   ENTRY_FILE,
   SHELL_FILE,
   spaEntryPath,
@@ -24,10 +25,15 @@ async function bundleAndShell(
   shellDir: string,
 ): Promise<void> {
   const { hasStyles } = await bundleSpaInto(paths, entryPath, clientDir, prodMinify());
+  // Preload the entry's static chunk graph so the browser fetches the runtime in parallel
+  // with the entry (Vite parity) rather than discovering it after downloading + parsing.
+  const preload = (await collectSpaPreloads(clientDir, ENTRY_FILE))
+    .map((name) => `${CLIENT_PREFIX}${name}`);
   const html = await spaShellHtml({
     spa: paths.config!.spa!,
     scriptSrc: `${CLIENT_PREFIX}${ENTRY_FILE}`,
     styleHref: hasStyles ? `${CLIENT_PREFIX}${STYLE_FILE}` : undefined,
+    preload,
   });
   await Deno.writeTextFile(join(shellDir, SHELL_FILE), html);
 }

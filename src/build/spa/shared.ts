@@ -1,7 +1,7 @@
 // SPA mode: the pieces every SPA path (build, export, prod, dev) shares — URL/file
 // constants, the generated entry, the HTML shell, and the config/entry resolution.
 
-import { resolve, toFileUrl } from "@std/path";
+import { join, resolve, toFileUrl } from "@std/path";
 import type { SpaConfig } from "../../server/config.ts";
 import { computeCsp } from "../../server/csp.ts";
 import type { ProjectPaths } from "../paths.ts";
@@ -164,6 +164,45 @@ async function cspMetaTag(spa: SpaConfig, head: string): Promise<string> {
 }
 
 /** Generate the HTML shell that boots the SPA bundle. */
+/**
+ * The client chunk URLs the entry STATICALLY imports (transitively) — for `modulepreload`.
+ * Reading `index.js` and following only static `import ... "…"` / `export ... from "…"`
+ * specifiers (never dynamic `import(…)`) mirrors Vite's entry-graph preload: the browser
+ * fetches the runtime chunks in parallel with the entry instead of discovering them after
+ * it downloads and parses. Dynamic imports (route/feature chunks, the app's own big lazy
+ * `main`) are intentionally left out — preloading those would waste bandwidth on code a
+ * given load may never reach.
+ */
+export async function collectSpaPreloads(clientDir: string, entryFile: string): Promise<string[]> {
+  const seen = new Set<string>();
+  const queued = new Set<string>();
+  const queue = [entryFile];
+  const out: string[] = [];
+  // Static ESM imports/re-exports; the negative lookahead drops dynamic `import(`.
+  const importRe = /\b(?:import|export)\b(?!\s*\()(?:[^"'();]*?\bfrom\b\s*)?["']([^"']+)["']/g;
+  while (queue.length > 0) {
+    const file = queue.shift()!;
+    if (seen.has(file)) continue;
+    seen.add(file);
+    let src: string;
+    try {
+      src = await Deno.readTextFile(join(clientDir, file));
+    } catch {
+      continue; // a specifier that isn't an emitted local file (bare/npm) — skip
+    }
+    for (const m of src.matchAll(importRe)) {
+      const spec = m[1];
+      if (!spec.startsWith(CLIENT_PREFIX)) continue; // only our emitted client chunks
+      const name = spec.slice(CLIENT_PREFIX.length);
+      if (name === entryFile || seen.has(name) || queued.has(name)) continue;
+      queued.add(name);
+      out.push(name);
+      queue.push(name);
+    }
+  }
+  return out;
+}
+
 export async function spaShellHtml(opts: {
   spa: SpaConfig;
   /** URL of the client entry bundle (e.g. `/_denext/client/index.js`). */
@@ -172,6 +211,8 @@ export async function spaShellHtml(opts: {
   styleHref?: string;
   /** URL of the dev-reload module (dev only). */
   devScriptSrc?: string;
+  /** Client chunk URLs to `<link rel="modulepreload">` (the entry's static graph). */
+  preload?: string[];
 }): Promise<string> {
   const { spa } = opts;
   const lang = spa.lang ?? "en";
@@ -180,6 +221,9 @@ export async function spaShellHtml(opts: {
   const style = opts.styleHref
     ? `\n    <link rel="stylesheet" href="${escapeHtml(opts.styleHref)}" />`
     : "";
+  const preload = (opts.preload ?? [])
+    .map((href) => `\n    <link rel="modulepreload" href="${escapeHtml(href)}" />`)
+    .join("");
   if (spa.head) warnRawSpaHeadOnce();
   const head = spa.head ? `\n    ${spa.head}` : "";
   // Boot placeholder rendered inside #root; the app's first render replaces it.
@@ -193,7 +237,7 @@ export async function spaShellHtml(opts: {
   <head>
     <meta charset="utf-8" />${cspMeta}
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>${escapeHtml(title)}</title>${style}${head}
+    <title>${escapeHtml(title)}</title>${style}${preload}${head}
   </head>
   <body>
     <div id="${escapeHtml(rootId)}">${loading}</div>
