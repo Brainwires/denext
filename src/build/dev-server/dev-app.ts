@@ -142,6 +142,7 @@ export function createDevApp(st: DevState): RequestHandler {
     headerRules: rules.headers,
     flight: true,
     appDir: paths.appDir,
+    tagLoad: st.tagLoad,
     flightRoutes: st.flightRoutes,
     flightClients: st.flightClients,
     flightServers: st.flightServers,

@@ -10,6 +10,15 @@ and this project adheres to
 
 ### Fixed
 
+- **Flight islands are interactive again under the unbundled dev loop.** A `"use client"`
+  island on a Flight route rendered through `denext dev` was serialized as plain host nodes
+  (no client reference), so it hydrated to inert markup — clicks did nothing. Cause: the dev
+  loader cache-busts every module with a `?g=<generation>` query, but a page's static
+  `import "./island.tsx"` resolves query-less, so the instance the renderer used was a
+  different object than the one `tagClientModules` tagged — its `CLIENT_REF` never applied.
+  The dev server now tags `"use client"` boundaries through a query-less twin loader
+  (`tagLoad`), restoring ES-module-singleton identity. Native routes, prod, and compat were
+  unaffected.
 - **`buildNextCompatPages` now emits the class-runtime install seam in its client entry.**
   Since the class runtime was gated behind an `installClassSupport()` import seam, the
   simplified compat page builder generated a hydration entry that never called it — so a

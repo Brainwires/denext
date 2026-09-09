@@ -37,6 +37,14 @@ export interface AppConfig {
   getManifest: () => RouteManifest | Promise<RouteManifest>;
   /** Load a route/layout/api module by file path. */
   load: ModuleLoader;
+  /**
+   * Optional loader used ONLY to tag `"use client"` boundaries as client references,
+   * when it must differ from {@link load} to preserve ES-module-singleton identity with
+   * the modules a page transitively imports at render (the dev loader adds a per-generation
+   * cache-bust query to {@link load} that relative imports don't carry). Defaults to
+   * {@link load}; prod/export leave it unset.
+   */
+  tagLoad?: ModuleLoader;
   /** Directory of static assets served at the URL root. */
   publicDir?: string;
   /** Per-route browser bundle URL; when it returns a URL, hydration is enabled. */

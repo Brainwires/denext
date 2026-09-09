@@ -114,6 +114,9 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
 
   const st = createDevState(options);
   st.load = createDevLoader(st, () => getManifest(st), () => isCompat(st));
+  // A query-less twin used only to tag `"use client"` boundaries, so the tagged module
+  // instance matches the (query-less) one a page transitively imports at render.
+  st.tagLoad = createDevLoader(st, () => getManifest(st), () => isCompat(st), { bust: false });
   const appHandler = createDevApp(st);
   // Watch app + public dirs and invalidate on change (closes cleanly on shutdown).
   void watch(st);

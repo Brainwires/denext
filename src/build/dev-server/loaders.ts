@@ -7,11 +7,20 @@ import type { RouteManifest } from "../../router/manifest.ts";
 import { createUseCacheLoader } from "../use-cache-loader.ts";
 import type { DevState } from "./state.ts";
 
-/** Dev module loader: cache-bust via the generation query so edits reload. */
-export function baseLoaderFor(st: DevState): ModuleLoader {
+/**
+ * Dev module loader: cache-bust via the generation query so edits reload.
+ *
+ * `bust: false` drops the `?g=` query — used for TAGGING `"use client"` boundaries.
+ * A page loaded as `page.tsx?g=N` resolves its static `import "./island.tsx"`
+ * query-less (Deno drops the referrer's query on relative resolution), so the RENDERED
+ * island is the query-less module instance. Tagging must hit that same instance — a
+ * queried `island.tsx?g=N` is a different object and its `CLIENT_REF` tag never reaches
+ * the rendered one, so the island serializes as plain host nodes (no island to hydrate).
+ */
+export function baseLoaderFor(st: DevState, bust = true): ModuleLoader {
   return (filePath) => {
     const href = filePath.startsWith("file:") ? filePath : toFileUrl(filePath).href;
-    return import(`${href}?g=${st.generation}`);
+    return import(bust ? `${href}?g=${st.generation}` : href);
   };
 }
 
@@ -26,8 +35,9 @@ export function createDevLoader(
   st: DevState,
   getManifest: () => Promise<RouteManifest>,
   isCompat: () => Promise<boolean>,
+  opts: { bust?: boolean } = {},
 ): ModuleLoader {
-  const base = baseLoaderFor(st);
+  const base = baseLoaderFor(st, opts.bust ?? true);
   return async (filePath) => {
     if (await isCompat()) {
       await getManifest();
