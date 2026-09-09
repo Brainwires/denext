@@ -278,6 +278,24 @@ export default async function Blog() {
 // CLI: `denext content build | list | validate` (validate exits 1 on a schema failure — a CI gate).
 ```
 
+**A compile-time feature flag (dead-code-eliminated):** `feature("KEY")` from `denext/feature`
+folds to a boolean literal at build time for any KEY in `experimental.features`, so both bundlers
+drop the untaken branch (and anything only it imports) — denext's `feature()` (cf. Bun's
+`bun:bundle`). Keep the argument a string literal; a key not listed reads `false`.
+
+```tsx
+import { feature } from "denext/feature";
+export function Checkout() {
+  return feature("NEW_CHECKOUT") ? <NewCheckout /> : <LegacyCheckout />;
+}
+// denext.config.ts → experimental: { features: { NEW_CHECKOUT: false } }
+```
+
+**Inspect / shrink the client bundle:** `denext analyze` breaks the bundle down by chunk + role;
+`denext analyze --md` writes a markdown report (per-module on the esbuild path) to pipe into CI.
+Imports of one export from a `"sideEffects": false` dep (lucide-react, Radix) are tree-shaken
+automatically on the esbuild path.
+
 **Testing an app (no browser, JS-disabled path):**
 
 ```ts

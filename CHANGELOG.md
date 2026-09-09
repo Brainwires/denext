@@ -8,6 +8,35 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Compile-time feature flags — `feature("KEY")` from `denext/feature`.** Each call whose
+  KEY is listed in `experimental.features` (`denext.config.ts`) is folded to the literal
+  `true`/`false` at build time, so **both** bundlers dead-code-eliminate the untaken branch —
+  the gated code, and anything only it imports, costs **zero bytes** when the flag is off
+  (denext's take on Bun 1.4's `feature()` from `bun:bundle`). The fold runs on every path
+  (native App Router, compat/SPA esbuild, and dev), and server rendering reads the same
+  seeded map; a key not listed reads `false`, and a non-literal argument reads the runtime
+  value.
+- **`denext analyze --md` — a markdown bundle report.** Prints a per-chunk size table (chunk,
+  role, raw, gzip, %) plus per-role subtotals to stdout (pipe to a file — a CI artifact),
+  symmetric with `--json`. On the esbuild (compat/SPA) path it also breaks each chunk down by
+  the modules that dominate it (which dependency is fat), via esbuild's metafile; the native
+  `deno bundle` path stays chunk-level.
+- Docs: a **Profiling** page (the `denext profile` CLI) and a **Bundling & feature flags**
+  page (`denext analyze`/`--md`, `denext/feature`, and sideEffects tree-shaking).
+
+### Changed
+
+- **Tree-shake unused barrel exports from `"sideEffects": false` dependencies (esbuild path).**
+  denext's own node_modules resolver handed esbuild a bare path, so the tree-shaker had to
+  assume every module had side effects and kept unused barrel re-exports (importing one
+  `lucide-react`/`@radix-ui` export dragged in the whole package). The resolver now marks
+  modules of a `"sideEffects": false` package, and the production build sets `treeShaking`
+  explicitly, so esbuild drops the unused re-exports. Only the boolean form is honored (the
+  array form is treated conservatively as side-effectful); the native `deno bundle` path is
+  unaffected.
+
 ## [2.1.6] - 2026-09-09
 
 ### Added
