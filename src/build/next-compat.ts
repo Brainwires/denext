@@ -1778,7 +1778,10 @@ export async function bundleNextCompatModules(
       extraPlugins: undefined,
     });
   const deno = options.platform === "deno";
-  await esbuild.build({
+  // `denext analyze --md` sets DENEXT_ANALYZE=1: capture esbuild's metafile for the CLIENT
+  // (browser) bundle so the markdown report can attribute each chunk to its top modules.
+  const analyze = !deno && Deno.env.get("DENEXT_ANALYZE") === "1";
+  const result = await esbuild.build({
     entryPoints: options.entryPoints,
     outdir: options.outdir,
     bundle: true,
@@ -1790,6 +1793,7 @@ export async function bundleNextCompatModules(
     // combined with the resolver's per-package `sideEffects: false`, this drops unused barrel
     // re-exports from `"sideEffects": false` deps.
     treeShaking: true,
+    metafile: analyze,
     jsx: "automatic",
     jsxImportSource: "react",
     absWorkingDir: options.absWorkingDir,
@@ -1824,6 +1828,28 @@ export async function bundleNextCompatModules(
       : {}),
     plugins: await compatPlugins(options, workerBuild),
   });
+  if (analyze && result.metafile) await writeAnalyzeMeta(options.outdir, result.metafile);
+}
+
+/**
+ * Merge this browser bundle's esbuild metafile into `<outDir>/analyze-meta.json` (the client
+ * bundle and the Flight bundle each emit one), for `denext analyze --md`. `denext analyze`
+ * removes the file before the build, so a run only accumulates that build's outputs.
+ */
+async function writeAnalyzeMeta(
+  outdir: string,
+  metafile: { inputs: Record<string, unknown>; outputs: Record<string, unknown> },
+): Promise<void> {
+  const path = join(dirname(outdir), "analyze-meta.json");
+  let merged = metafile;
+  try {
+    const prev = JSON.parse(await Deno.readTextFile(path));
+    merged = {
+      inputs: { ...prev.inputs, ...metafile.inputs },
+      outputs: { ...prev.outputs, ...metafile.outputs },
+    };
+  } catch { /* first browser bundle of this run → no prior file */ }
+  await Deno.writeTextFile(path, JSON.stringify(merged));
 }
 
 /**
