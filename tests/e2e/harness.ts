@@ -298,6 +298,61 @@ export function assertNoConsoleErrors(consoleErrors: string[]): void {
   );
 }
 
+/**
+ * Poll `expr` (a JS expression evaluated in the page) until it is truthy, or throw after
+ * `ms`. CI-generous polling — prefer this over `page.waitForFunction` for multi-step
+ * real-time sequences (Live socket round-trips, cross-tab convergence) whose timing varies
+ * under load; `waitForFunction`'s short fixed timeout flakes there.
+ */
+export async function pollFor(page: Page, expr: string, ms = 45000): Promise<void> {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    if (await page.evaluate(`!!(${expr})`)) return;
+    if (Date.now() > deadline) throw new Error(`pollFor timed out after ${ms}ms: ${expr}`);
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
+/** Assert `expr` becomes truthy on EVERY page (cross-client convergence over one socket). */
+export function waitForAll(pages: Page[], expr: string, ms = 45000): Promise<void[]> {
+  return Promise.all(pages.map((p) => pollFor(p, expr, ms)));
+}
+
+/** A set of tabs opened on one origin, plus a shared console-error sink and teardown. */
+export interface Clients {
+  /** The opened pages, in order. */
+  pages: Page[];
+  /** Console `error` texts collected across ALL pages (attached before navigation). */
+  errors: string[];
+  /** Close every page (idempotent; ignores already-closed pages). */
+  closeAll: () => Promise<void>;
+}
+
+/**
+ * Open `n` tabs on the same `url` — each console-error-collected (listener attached BEFORE
+ * `goto`, so post-load messages are caught) and navigated. Generalizes the two-tab pattern
+ * the typed-api e2e hand-rolls, for any multi-client test (presence, cross-tab sync).
+ */
+export async function openClients(browser: Browser, url: string, n: number): Promise<Clients> {
+  const errors: string[] = [];
+  const pages: Page[] = [];
+  for (let i = 0; i < n; i++) {
+    const page = await browser.newPage();
+    onConsole(page, (type, text) => {
+      if (type === "error") errors.push(text);
+    });
+    await page.goto(url);
+    pages.push(page);
+  }
+  return {
+    pages,
+    errors,
+    closeAll: async () => {
+      for (const p of pages) await p.close().catch(() => {});
+    },
+  };
+}
+
 /** Click the page's first `<button>` (a counter) and expect it to read "Clicked 1 time". */
 export async function clickCounterAndExpectOne(page: Page): Promise<void> {
   const button = await page.$("button");
