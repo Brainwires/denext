@@ -1610,7 +1610,7 @@
     "members": {
       "packages/content-collections": {
         "dependencies": [
-          "jsr:@denext/denext@^2.1.3",
+          "jsr:@denext/denext@^2.1.4",
           "jsr:@std/front-matter@1",
           "jsr:@std/fs@1",
           "jsr:@std/path@1",
@@ -1619,13 +1619,13 @@
       },
       "packages/effect": {
         "dependencies": [
-          "jsr:@denext/denext@^2.1.3",
+          "jsr:@denext/denext@^2.1.4",
           "npm:effect@^3.22.0"
         ]
       },
       "packages/graphql": {
         "dependencies": [
-          "jsr:@denext/denext@^2.1.3",
+          "jsr:@denext/denext@^2.1.4",
           "jsr:@std/path@1",
           "npm:graphql-yoga@^5.10.0",
           "npm:graphql@^16.9.0"
@@ -1633,25 +1633,25 @@
       },
       "packages/htmx": {
         "dependencies": [
-          "jsr:@denext/denext@^2.1.3",
+          "jsr:@denext/denext@^2.1.4",
           "jsr:@std/path@1"
         ]
       },
       "packages/openapi": {
         "dependencies": [
-          "jsr:@denext/denext@^2.1.3",
+          "jsr:@denext/denext@^2.1.4",
           "jsr:@std/path@1"
         ]
       },
       "packages/pages-router": {
         "dependencies": [
-          "jsr:@denext/denext@^2.1.3",
+          "jsr:@denext/denext@^2.1.4",
           "jsr:@std/path@1"
         ]
       },
       "packages/react-router": {
         "dependencies": [
-          "jsr:@denext/denext@^2.1.3",
+          "jsr:@denext/denext@^2.1.4",
           "jsr:@std/fs@1",
           "jsr:@std/path@1"
         ]
