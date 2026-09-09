@@ -970,6 +970,9 @@
   "denext/lazy": [
     "bootResumability:function"
   ],
+  "denext/feature": [
+    "feature:function"
+  ],
   "denext/compiler-runtime": [
     "AsyncScope:interface",
     "Bindings:typeAlias",

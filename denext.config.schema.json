@@ -655,6 +655,9 @@
           "description": "Scope async `startTransition` by transition IDENTITY instead of a time window. Enables a build-time transform that makes denext's first-party AsyncContext survive `await` (src/build/async-context-transform.ts), so a post-`await` update is attributed to its transition while an unrelated urgent update in the pending window keeps its priority. Off by default: it instruments every `await` in client code (a small per-await cost) and the default time-window behavior is unchanged. Removes the async-`startTransition` gap in KNOWN-LIMITATIONS when on.",
           "type": "boolean"
         },
+        "features": {
+          "description": "Compile-time feature flags. Each `feature(\"KEY\")` call (from `denext/feature`) whose KEY is a key here is folded to the literal boolean at build time, so both bundlers dead-code eliminate the untaken branch — gated code, and anything only it imports, costs zero bytes when off. A key not listed reads `false`. The same map is seeded for server rendering and unbundled runs. Experimental while the fold's coverage widens (native App Router + SPA get DCE; the compat App Router path reads the seeded value without DCE)."
+        },
         "nodeResolve": {
           "type": "boolean"
         }

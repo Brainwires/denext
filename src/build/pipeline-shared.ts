@@ -8,7 +8,7 @@ import { resolveCacheComponents } from "../server/config.ts";
 import { collectedFontEntries, resetFonts } from "../compat/next/font/registry.ts";
 import { applyPlugins } from "../plugin/mod.ts";
 import type { ApiRoute, PageRoute } from "../router/manifest.ts";
-import { nodeResolveEnabled } from "../server/config.ts";
+import { featureFlags, nodeResolveEnabled } from "../server/config.ts";
 import { defaultLoader } from "../server/mod.ts";
 import type { ModuleLoader } from "../server/types.ts";
 import { routeServerModules } from "./bundle.ts";
@@ -91,6 +91,10 @@ export function compatBuildOptions(
     outDir: paths.outDir,
     minify: prodMinify(),
     classComponents: paths.config?.classComponents ?? true,
+    // Seed the `denext/feature` shim for the compat esbuild bundles (server + client): any
+    // `feature()` call not folded (non-literal arg / unset key) reads this map. The native
+    // App Router client path folds via the redirect map instead (build-pipeline/transforms.ts).
+    define: { __DENEXT_FEATURES__: JSON.stringify(featureFlags(paths.config)) },
     resolveAllNodeModules: nodeResolveEnabled(paths.config),
     mdxOptions: paths.config?.mdx,
     useCache: resolveCacheComponents(paths.config),

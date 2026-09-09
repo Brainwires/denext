@@ -49,5 +49,6 @@ export const EXPERIMENTAL_KEYS = [
   "reactCompiler",
   "compiler",
   "asyncContext",
+  "features",
   "nodeResolve",
 ] as const;

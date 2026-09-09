@@ -1,43 +1,79 @@
-// SPA-mode auto-memo compiler: a per-module esbuild transform.
+// SPA-mode source transforms: a per-module esbuild transform chaining the auto-memo compiler
+// and the feature-flag fold.
 //
-// The App Router runs denext's auto-memo compiler (`compiler.ts`) over the app's
-// component modules as a build-pipeline transform (see `build-pipeline/transforms.ts`,
-// gated on `experimental.reactCompiler`), rewriting each component to cache its own
-// output so the reconciler can bail out of unchanged subtrees. A SPA has no such
-// pipeline — its app source is bundled straight through esbuild (the compat path) — so
-// without this plugin a migrated app that relied on React Compiler for pervasive
-// auto-memoization loses ALL of it and re-renders far more than it did on Vite.
+// The App Router runs these as build-pipeline transforms over the app's component modules
+// (see `build-pipeline/transforms.ts` — auto-memo gated on `experimental.reactCompiler`, the
+// feature fold on `experimental.features`). A SPA has no such pipeline — its app source is
+// bundled straight through esbuild (the compat path) — so without this plugin a migrated app
+// loses that transformation. This plugin closes the gap.
 //
-// This plugin closes that gap. On the esbuild `onLoad` for each app `.tsx`/`.jsx`
-// source it runs the same `transformModule` the App Router uses (with `absolutize:
-// false` — an in-place onLoad keeps the module's own path as the resolve base, so its
-// relative imports stay as-is). It is added only to a PRODUCTION SPA build (dev keeps
-// Fast Refresh and a fast, untransformed rebuild) and only when the compiler is enabled
-// (`experimental.reactCompiler`; `denext migrate` turns it on when it detects React
-// Compiler in a Vite config). Correctness-first: the compiler bails to identity on
-// anything it can't prove, and any parse/transform failure here leaves the module
+// esbuild takes the FIRST `onLoad` result for a path, so the two transforms cannot be separate
+// plugins — they are chained inside one `onLoad`, applied in order (auto-memo, then fold) with
+// each fed the previous output. Only a PRODUCTION SPA build is transformed (dev keeps Fast
+// Refresh and a fast, untransformed rebuild). Correctness-first: each transform bails to
+// identity on anything it can't prove, and any parse/transform failure leaves the module
 // exactly as written — never miscompiled.
 
 import type * as esbuild from "esbuild";
 import { toFileUrl } from "@std/path";
+import { featureFlags, reactCompilerEnabled } from "../server/config.ts";
+import type { ProjectPaths } from "./paths.ts";
 import { transformModule } from "./compiler.ts";
+import { transformFeatures } from "./feature-transform.ts";
 import { firstPartyTsxPlugin } from "./spa-onload.ts";
 
+/** A per-module source transform: `(source, absPath) → new source | null` (null = unchanged). */
+type SourceTransform = (source: string, path: string) => Promise<string | null>;
+
 /**
- * An esbuild plugin that applies denext's auto-memo compiler to the app's own component
- * modules as they load. Add it to a production compat-SPA bundle when the auto-memo
- * compiler is enabled.
- *
- * @param projectDir Absolute project root — only first-party source under it is transformed.
+ * The auto-memo compiler as a per-module transform. `absolutize: false` — the in-place onLoad
+ * keeps the module's own path as the resolve base, so its relative imports stay as-is; only the
+ * memoization is applied. A module the compiler can't prove is returned unchanged (`null`).
  */
-export function spaCompilerPlugin(projectDir: string): esbuild.Plugin {
-  return firstPartyTsxPlugin("denext-spa-auto-memo", projectDir, async (source, path) => {
-    // `absolutize: false` — the in-place onLoad keeps the module's own path as the resolve
-    // base, so its relative imports stay as-is; only the memoization is applied. A module the
-    // compiler can't prove is returned unchanged (`null`).
+function autoMemoTransform(): SourceTransform {
+  return async (source, path) => {
     const { code, changed } = await transformModule(source, toFileUrl(path).href, {
       absolutize: false,
     });
     return changed ? code : null;
+  };
+}
+
+/** The feature-flag fold as a per-module transform (in place — no relocation, so no absolutize). */
+function featureFoldTransform(features: Record<string, boolean>): SourceTransform {
+  return async (source) => {
+    const { code, changed } = await transformFeatures(source, features);
+    return changed ? code : null;
+  };
+}
+
+/**
+ * An esbuild plugin applying denext's enabled SPA source transforms (auto-memo compiler and/or
+ * feature-flag fold) to the app's own first-party component modules as they load. Returns
+ * `undefined` when neither is enabled, so nothing extra runs.
+ *
+ * @param projectDir Absolute project root — only first-party source under it is transformed.
+ * @param config The resolved denext config (gates each transform).
+ */
+export function spaSourceTransformPlugin(
+  projectDir: string,
+  config: ProjectPaths["config"],
+): esbuild.Plugin | undefined {
+  const transforms: SourceTransform[] = [];
+  if (reactCompilerEnabled(config)) transforms.push(autoMemoTransform());
+  const features = featureFlags(config);
+  if (Object.keys(features).length > 0) transforms.push(featureFoldTransform(features));
+  if (transforms.length === 0) return undefined;
+  return firstPartyTsxPlugin("denext-spa-transforms", projectDir, async (source, path) => {
+    let out = source;
+    let any = false;
+    for (const t of transforms) {
+      const next = await t(out, path);
+      if (next != null) {
+        out = next;
+        any = true;
+      }
+    }
+    return any ? out : null;
   });
 }

@@ -92,6 +92,12 @@ export async function resolveProject(projectDir: string): Promise<ProjectPaths> 
   ]);
 
   const config = await loadDenextConfig(projectDir);
+  // Seed the feature-flag map for SERVER rendering and unbundled runs: the client bundle folds
+  // `feature("KEY")` calls to literals, but the server evaluates the original source, so its
+  // `feature()` reads this seeded map (see denext/feature). resolveProject runs in the build,
+  // dev, and prod-server processes, so this one seed covers SSR in every mode.
+  (globalThis as { __DENEXT_FEATURES__?: Record<string, boolean> }).__DENEXT_FEATURES__ =
+    config?.experimental?.features ?? {};
 
   return {
     projectDir,

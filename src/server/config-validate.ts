@@ -376,7 +376,25 @@ function validateI18n(i18n: unknown, fail: Fail): void {
 }
 
 /** Nested fields whose absence would crash at request time rather than at boot. */
+/**
+ * `experimental.features` must be a flat map of booleans — the fold replaces a `feature("KEY")`
+ * call with the literal, so a non-boolean value would emit invalid code (and a nested object is
+ * always a mistake). Absent keeps every flag off.
+ */
+function validateFeatures(features: unknown, fail: Fail): void {
+  if (features === undefined) return;
+  if (typeof features !== "object" || features === null || Array.isArray(features)) {
+    fail("experimental.features", "must be an object mapping flag names to booleans");
+  }
+  for (const [key, value] of Object.entries(features as Record<string, unknown>)) {
+    if (typeof value !== "boolean") {
+      fail(`experimental.features.${key}`, "must be a boolean");
+    }
+  }
+}
+
 function validateNestedRequired(config: DenextConfig, fail: Fail): void {
+  validateFeatures(config.experimental?.features, fail);
   validateTailwind(config.tailwind, fail);
   validateI18n(config.i18n, fail);
 }
