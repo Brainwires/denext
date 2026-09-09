@@ -157,6 +157,54 @@
       ]
     },
     {
+      "name": "denext_profile",
+      "description": "Build the app unminified, serve it, and profile a route in headless Chromium — CPU self-time by function + heap growth + a leak check. Use it to find WHERE runtime time goes and whether an interaction leaks. Pass `interact` (JS run in the page each iteration) to profile a re-render/interaction, and `budget` to gate a regression. Launches Chromium; slower than the browser-free tools.",
+      "params": [
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: .)",
+          "required": false
+        },
+        {
+          "name": "route",
+          "type": "string",
+          "description": "Route to profile (default \"/\").",
+          "required": false
+        },
+        {
+          "name": "interact",
+          "type": "string",
+          "description": "JavaScript evaluated in the page each iteration (e.g. globalThis.__burst(200)).",
+          "required": false
+        },
+        {
+          "name": "iterations",
+          "type": "number",
+          "description": "Repeat the interaction N times (default 1).",
+          "required": false
+        },
+        {
+          "name": "sampling",
+          "type": "number",
+          "description": "CPU sampling interval in µs (default 100).",
+          "required": false
+        },
+        {
+          "name": "minify",
+          "type": "boolean",
+          "description": "Profile a minified build (default: unminified).",
+          "required": false
+        },
+        {
+          "name": "budget",
+          "type": "object",
+          "description": "Optional budget: { maxHeapGrowthBytes?, maxLeakedBytes?, hotFns?: [{name, maxSelfPct}] }. A breach sets isError.",
+          "required": false
+        }
+      ]
+    },
+    {
       "name": "denext_search_docs",
       "description": "Search the denext docs — the API reference + the authoring guide — by keyword and get the top matching symbols/sections with links and snippets. Use it to find the right denext API or rule before writing code, instead of guessing Next.js.",
       "params": [

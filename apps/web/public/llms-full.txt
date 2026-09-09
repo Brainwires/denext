@@ -363,7 +363,10 @@ denext ships tooling so agents get it right the first time:
   browser console, completed requests, and HMR — so you can see what actually happened at
   runtime), `denext_render` (render a route or component server-side, no browser, and get
   the HTML/error — SEE what your edit produces), `denext_route_map` (the full render
-  tree at a path: layouts, boundaries, server/client split), `denext_search_docs` (BM25
+  tree at a path: layouts, boundaries, server/client split), `denext_profile` (build
+  unminified, serve, and profile a route in headless Chromium — CPU self-time by
+  function + heap growth + a leak check; pass `interact` to profile a re-render, `budget`
+  to gate a regression), `denext_search_docs` (BM25
   over the denext docs), and the codebase tools `denext_index_codebase` /
   `denext_query_codebase` / `denext_find_definition` / `denext_find_references`.
   `denext mcp --disable rag,docs` hides tool groups or individual tools to trim an
@@ -626,7 +629,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface UseWakeLockOptions` — Options for useWakeLock.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type (a returned Response carries no body type).
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 2.1.5` — The denext framework version.
+- `VERSION: 2.1.6` — The denext framework version.
 - `ViewTransition(props: object): VNode` — React.ViewTransition (experimental) — the client-driven view-transition wrapper. It is transparent (no DOM node of its own) and carries its config by stamping the DNX_VT_ATTR attribute onto its **single host child** (a DOM attribute survives server rendering AND the Flight boundary, unlike a VNode marker). Around a soft navigation the import-gated marking runtime finds these elements and applies real view-transition-name (and view-transition-class from enter/exit/update/share), so a name shared across routes morphs one element into the other. **Route-level** transitions apply regardless: a soft navigation commits inside document.startViewTransition where the browser supports it (see withViewTransition in src/client/navigation.ts). Without the gated runtime, or for a wrapper whose child isn't a single element (nothing to mark), it is a plain passthrough.
 - `interface VNode` — A single virtual DOM node.
 - `type VNodeChild = VNode | string | number | bigint | boolean | null | undefined` — Anything that can appear as a child in JSX.

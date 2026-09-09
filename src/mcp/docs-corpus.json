@@ -2202,7 +2202,7 @@
       "title": "VERSION",
       "module": "denext",
       "url": "/docs/api/denext/VERSION",
-      "text": "VERSION VERSION: 2.1.5 The denext framework version.",
+      "text": "VERSION VERSION: 2.1.6 The denext framework version.",
       "denextOnly": true
     },
     {
@@ -8268,7 +8268,7 @@
       "title": "Tooling for AI agents (MCP + llms.txt)",
       "module": "guide",
       "url": "https://github.com/Brainwires/denext/blob/main/AGENTS.md#tooling-for-ai-agents-mcp-llms-txt",
-      "text": "## Tooling for AI agents (MCP + llms.txt) denext ships tooling so agents get it right the first time: - **MCP server** — deno run -A jsr:@denext/denext/cli mcp (or denext mcp). It speaks MCP over stdio; configure it as an MCP server in your client. Tools: denext_check_snippet (lint a code string for Next-isms before you write it), denext_import_map (map a Next/React import to denext), denext_generate (scaffold), denext_doctor, denext_codemod, denext_list_routes (an app's pages + API routes), denext_dev_logs (the RUNNING dev server's recent events — server errors, server + browser console, completed requests, and HMR — so you can see what actually happened at runtime), denext_render (render a route or component server-side, no browser, and get the HTML/error — SEE what your edit produces), denext_route_map (the full render tree at a path: layouts, boundaries, server/client split), denext_search_docs (BM25 over the denext docs), and the codebase tools denext_index_codebase / denext_query_codebase / denext_find_definition / denext_find_references. denext mcp --disable rag,docs hides tool groups or individual tools to trim an agent's context. Resources: denext://guide, denext://import-map. - **llms.txt** — [denext.dev/llms.txt](https://denext.dev/llms.txt) (concise) and [llms-full.txt](https://denext.dev/llms-full.txt) (this guide + an API summary). ---",
+      "text": "## Tooling for AI agents (MCP + llms.txt) denext ships tooling so agents get it right the first time: - **MCP server** — deno run -A jsr:@denext/denext/cli mcp (or denext mcp). It speaks MCP over stdio; configure it as an MCP server in your client. Tools: denext_check_snippet (lint a code string for Next-isms before you write it), denext_import_map (map a Next/React import to denext), denext_generate (scaffold), denext_doctor, denext_codemod, denext_list_routes (an app's pages + API routes), denext_dev_logs (the RUNNING dev server's recent events — server errors, server + browser console, completed requests, and HMR — so you can see what actually happened at runtime), denext_render (render a route or component server-side, no browser, and get the HTML/error — SEE what your edit produces), denext_route_map (the full render tree at a path: layouts, boundaries, server/client split), denext_profile (build unminified, serve, and profile a route in headless Chromium — CPU self-time by function + heap growth + a leak check; pass interact to profile a re-render, budget to gate a regression), denext_search_docs (BM25 over the denext docs), and the codebase tools denext_index_codebase / denext_query_codebase / denext_find_definition / denext_find_references. denext mcp --disable rag,docs hides tool groups or individual tools to trim an agent's context. Resources: denext://guide, denext://import-map. - **llms.txt** — [denext.dev/llms.txt](https://denext.dev/llms.txt) (concise) and [llms-full.txt](https://denext.dev/llms-full.txt) (this guide + an API summary). ---",
       "denextOnly": false
     }
   ]
