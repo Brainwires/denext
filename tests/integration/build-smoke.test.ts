@@ -134,7 +134,9 @@ async function assertSharedRuntimeChunk(clientDir: string): Promise<void> {
  * 2.1 cycle: the cycle's client-surface additions (type-safe routing's `useParams`/
  * `useSearchParams` + href param-encoding, the Live `subscribed` status, island box-target/
  * rootMargin, `ViewTransition`/`Activity`, global-error hydration, and soft-nav rejection
- * surfacing) measured 58,164 B — ~0.8 KB of headroom.
+ * surfacing) measured 58,164 B — ~0.8 KB of headroom. Re-based 59 → 60 KB for the react-dom
+ * numeric-style `px` parity fix (a raw number in an inline `style` now gets a `px` unit unless
+ * the property is unitless — the react-dom UNITLESS set + `styleValue`): measured 59,079 B.
  */
 async function assertBundleBudgets(clientDir: string): Promise<void> {
   let sharedTotal = 0;
@@ -143,7 +145,7 @@ async function assertBundleBudgets(clientDir: string): Promise<void> {
       sharedTotal += (await Deno.stat(join(clientDir, e.name))).size;
     }
   }
-  assert(sharedTotal < 59_000, `shared chunks total ${sharedTotal} bytes (budget 59 KB raw)`);
+  assert(sharedTotal < 60_000, `shared chunks total ${sharedTotal} bytes (budget 60 KB raw)`);
   for (const f of ["about.js", "blog___slug_.js"]) {
     const n = (await Deno.stat(join(clientDir, f))).size;
     assert(n < 6_000, `${f} is ${n} bytes (budget 6 KB) — is the runtime inlined again?`);

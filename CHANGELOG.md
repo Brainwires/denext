@@ -10,6 +10,14 @@ and this project adheres to
 
 ### Fixed
 
+- **Numeric inline `style` values now get a `px` unit on the client (react-dom parity).**
+  The client style patcher wrote raw numbers — `style={{ top: 410 }}` became the invalid
+  unitless `top: 410`, which the browser silently drops. React DOM appends `px` to any
+  non-zero numeric style value except a set of unitless properties (`opacity`, `zIndex`,
+  `flex`, `lineHeight`, grid spans, …); denext now matches. This broke libraries that pass
+  numeric styles — notably virtualized lists (`@legendapp/list`/LegendList) that position
+  absolutely with `top: <number>`: every row collapsed onto `top: 0` (all messages on one
+  line). The SSR serializer already handled this; only the client path did not.
 - **`useOptimistic` now shows the optimistic value while a `useActionState` action is in
   flight.** `useActionState`'s dispatch ran the action inside `startTransition` but did not
   return the action's promise, so the scheduler treated it as a synchronous transition and
