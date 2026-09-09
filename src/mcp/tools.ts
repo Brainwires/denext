@@ -14,6 +14,8 @@ import { scanRoutes } from "../router/manifest.ts";
 import type { DevEvent } from "../build/dev-events.ts";
 import { fetchDevState } from "./dev-client.ts";
 import { renderComponent, renderRoute, routeMap } from "./inspect.ts";
+import { profileApp } from "../profile/core.ts";
+import type { Budget } from "../profile/budget.ts";
 import { checkSnippet, type Diagnostic } from "./check.ts";
 import { IMPORT_RULES, lookupImport } from "./next-denext-map.ts";
 import { formatHits, searchDocs } from "./rag/search.ts";
@@ -87,6 +89,30 @@ function projectDir(raw: unknown): string {
     throw new Error(`dir must be inside the project denext mcp was started in (${toolRoot})`);
   }
   return abs;
+}
+
+/**
+ * Build, serve, and profile a route in headless Chromium (CPU self-time + heap growth +
+ * leak check), returning the structured result as JSON. A failed budget flags `isError`.
+ * astral/Chromium is pulled in lazily by `profileApp`, so importing this module doesn't.
+ */
+async function profileReport(
+  dir: string,
+  args: Record<string, unknown>,
+): Promise<{ text: string; isError?: boolean }> {
+  const budget = (args.budget && typeof args.budget === "object")
+    ? args.budget as Budget
+    : undefined;
+  const result = await profileApp(dir, {
+    route: str(args.route) || "/",
+    interact: str(args.interact) || undefined,
+    iterations: typeof args.iterations === "number" ? args.iterations : undefined,
+    samplingMicros: typeof args.sampling === "number" ? args.sampling : undefined,
+    minify: args.minify === true,
+    budget,
+  });
+  const isError = result.budget ? !result.budget.passed : false;
+  return { text: JSON.stringify(result, null, 2), isError };
 }
 
 /** Format the doctor checks for a directory into a text report + error flag. */
@@ -334,6 +360,37 @@ export const TOOLS: readonly Tool[] = [
     run: async (args) => ({ text: await routeMap(projectDir(args.dir), str(args.path)) }),
   },
   {
+    name: "denext_profile",
+    description:
+      "Build the app unminified, serve it, and profile a route in headless Chromium — CPU " +
+      "self-time by function + heap growth + a leak check. Use it to find WHERE runtime time " +
+      "goes and whether an interaction leaks. Pass `interact` (JS run in the page each " +
+      "iteration) to profile a re-render/interaction, and `budget` to gate a regression. " +
+      "Launches Chromium; slower than the browser-free tools.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        dir: { type: "string", description: "Project directory (default: .)" },
+        route: { type: "string", description: 'Route to profile (default "/").' },
+        interact: {
+          type: "string",
+          description:
+            "JavaScript evaluated in the page each iteration (e.g. globalThis.__burst(200)).",
+        },
+        iterations: { type: "number", description: "Repeat the interaction N times (default 1)." },
+        sampling: { type: "number", description: "CPU sampling interval in µs (default 100)." },
+        minify: { type: "boolean", description: "Profile a minified build (default: unminified)." },
+        budget: {
+          type: "object",
+          description:
+            "Optional budget: { maxHeapGrowthBytes?, maxLeakedBytes?, hotFns?: [{name, maxSelfPct}] }. " +
+            "A breach sets isError.",
+        },
+      },
+    },
+    run: (args) => profileReport(projectDir(args.dir), args),
+  },
+  {
     name: "denext_search_docs",
     description:
       "Search the denext docs — the API reference + the authoring guide — by keyword and get " +
@@ -455,6 +512,8 @@ export const TOOL_GROUPS: Readonly<Record<string, readonly string[]>> = {
   project: ["denext_doctor", "denext_codemod", "denext_list_routes"],
   /** Browser-free render/inspection of what a route or component produces. */
   inspect: ["denext_render", "denext_route_map"],
+  /** Headless-Chromium performance profiling (CPU self-time + heap/leak). */
+  profile: ["denext_profile"],
   /** The running dev server's live event log. */
   dev: ["denext_dev_logs"],
   /** denext's own docs search (API reference + authoring guide). */

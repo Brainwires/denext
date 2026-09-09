@@ -8,6 +8,20 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`denext profile` — a first-party CPU + heap profiler (CLI + `denext_profile` MCP tool).**
+  Builds the app **unminified** (readable function names in the profile), serves it on an
+  ephemeral port, drives headless Chromium via the CDP `Profiler` + `HeapProfiler` domains,
+  and reports where time goes — **CPU self-time by function** — plus **heap growth and a
+  leak check**. Two modes: the default profiles **startup** (initial load + hydration +
+  first render — the reconciler/hydration work); `--interact <file>` (JS evaluated in the
+  page each iteration, e.g. a re-render burst) profiles an **interaction** with a valid
+  post-load leak baseline. `--budget <file>` gates a regression (a breach exits non-zero,
+  CI-usable) and `--write-budget <file>` snapshots the current run as a baseline. The same
+  engine backs the `denext_profile` MCP tool, so coding agents can profile too (Chromium is
+  pulled in lazily, so the MCP server's other tools stay browser-free).
+
 ## [2.1.5] - 2026-09-09
 
 ### Added

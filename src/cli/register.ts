@@ -14,6 +14,7 @@ import { doctorCommand, infoCommand } from "./commands/doctor.ts";
 import { addCommand, removeCommand, updateCommand } from "./commands/deps.ts";
 import { auditCommand } from "./commands/audit.ts";
 import { analyzeCommand } from "./commands/analyze.ts";
+import { profileCommand } from "./commands/profile.ts";
 import { desktopCommand } from "./commands/desktop.ts";
 import { deployCommand } from "./commands/deploy.ts";
 import { pluginCommand } from "./commands/plugin.ts";
@@ -44,6 +45,7 @@ export function buildRegistry(): CommandRegistry {
   reg.register(infoCommand);
   reg.register(auditCommand);
   reg.register(analyzeCommand);
+  reg.register(profileCommand);
   // Migration + scaffolding.
   reg.register(migrateCommand);
   reg.register(codemodCommand);
