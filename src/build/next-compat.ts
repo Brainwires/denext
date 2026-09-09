@@ -1379,6 +1379,54 @@ async function selfPackageDir(fromDir: string, name: string): Promise<string | n
  *   is a strict superset of Deno's: it returns `null` for anything it can't place, so the
  *   deno-loader still gets its shot — the plugin only ever resolves MORE, never less.
  */
+/** owner-dir → whether its package.json declares `"sideEffects": false`. */
+const sideEffectFreePkg = new Map<string, boolean>();
+/** file-dir → the owning package dir (nearest ancestor with a package.json), or null. */
+const ownerPkgDir = new Map<string, string | null>();
+
+/** The nearest ancestor directory of `file` that contains a package.json (Node's owner). */
+async function ownerPackageDir(file: string): Promise<string | null> {
+  const startDir = dirname(file);
+  const cached = ownerPkgDir.get(startDir);
+  if (cached !== undefined) return cached;
+  let dir = startDir;
+  for (;;) {
+    try {
+      await Deno.lstat(join(dir, "package.json"));
+      ownerPkgDir.set(startDir, dir);
+      return dir;
+    } catch { /* keep walking up */ }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  ownerPkgDir.set(startDir, null);
+  return null;
+}
+
+/**
+ * Whether the package owning `file` declares `"sideEffects": false` — so esbuild may drop
+ * unused named re-exports from its barrel `index` files (a `lucide-react`/`@radix-ui` import
+ * of one export no longer drags in the whole package). denext resolves node_modules itself
+ * and hands esbuild a bare `{ path }`, so without this the tree-shaker must assume every
+ * module has side effects and keeps them. Only the boolean `false` form is honored; the array
+ * form (`["*.css"]`) is treated conservatively as "has side effects" (never wrongly dropped).
+ * Cached per package dir (the field is constant for a build).
+ */
+async function resolvedIsSideEffectFree(file: string): Promise<boolean> {
+  const dir = await ownerPackageDir(file);
+  if (!dir) return false;
+  const cached = sideEffectFreePkg.get(dir);
+  if (cached !== undefined) return cached;
+  let free = false;
+  try {
+    const pkg = JSON.parse(await Deno.readTextFile(join(dir, "package.json")));
+    free = pkg.sideEffects === false;
+  } catch { /* unreadable/invalid → assume side effects */ }
+  sideEffectFreePkg.set(dir, free);
+  return free;
+}
+
 export function catalogResolverPlugin(
   projectDir: string,
   packages: Set<string> | "all",
@@ -1407,7 +1455,13 @@ export function catalogResolverPlugin(
           ? projectDir
           : dirname(args.importer);
         const resolved = await resolveNodeFrom(fromDir, args.path, conditions);
-        return resolved ? { path: resolved } : null;
+        if (!resolved) return null;
+        // Mark modules of a `"sideEffects": false` package so esbuild can tree-shake unused
+        // barrel re-exports (denext's own resolver otherwise hands esbuild a bare path, which
+        // it must treat as side-effectful).
+        return (await resolvedIsSideEffectFree(resolved))
+          ? { path: resolved, sideEffects: false }
+          : { path: resolved };
       });
     },
   };
@@ -1732,6 +1786,10 @@ export async function bundleNextCompatModules(
     format: "esm",
     platform: deno ? "node" : "browser",
     minify: options.minify ?? false,
+    // Explicit (esbuild defaults this on for bundle+esm, but make the intent load-bearing):
+    // combined with the resolver's per-package `sideEffects: false`, this drops unused barrel
+    // re-exports from `"sideEffects": false` deps.
+    treeShaking: true,
     jsx: "automatic",
     jsxImportSource: "react",
     absWorkingDir: options.absWorkingDir,
