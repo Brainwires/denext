@@ -182,6 +182,8 @@ export async function spaShellHtml(opts: {
     : "";
   if (spa.head) warnRawSpaHeadOnce();
   const head = spa.head ? `\n    ${spa.head}` : "";
+  // Boot placeholder rendered inside #root; the app's first render replaces it.
+  const loading = spa.loading ?? "";
   const devScript = opts.devScriptSrc
     ? `\n    <script src="${escapeHtml(opts.devScriptSrc)}"></script>`
     : "";
@@ -194,7 +196,7 @@ export async function spaShellHtml(opts: {
     <title>${escapeHtml(title)}</title>${style}${head}
   </head>
   <body>
-    <div id="${escapeHtml(rootId)}"></div>
+    <div id="${escapeHtml(rootId)}">${loading}</div>
     <script type="module" src="${escapeHtml(opts.scriptSrc)}"></script>${devScript}
   </body>
 </html>

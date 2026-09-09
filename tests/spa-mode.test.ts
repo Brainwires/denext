@@ -165,3 +165,27 @@ Deno.test("pnpmCatalogPackages: empty for a missing or invalid package.json", as
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("spaShellHtml: renders spa.loading inside #root (boot placeholder) + head, cleared on mount", async () => {
+  const html = await spaShellHtml({
+    spa: {
+      entry: "./src/main.tsx",
+      head: `<script>document.documentElement.style.background="#0a0a0a"</script>`,
+      loading: `<div id="boot-shell">splash</div>`,
+    },
+    scriptSrc: "/_denext/client/index.js",
+  });
+  // The boot placeholder is INSIDE the mount element so it paints before the bundle runs.
+  assertStringIncludes(html, '<div id="root"><div id="boot-shell">splash</div></div>');
+  // The pre-paint script is in <head> (runs before the module entry).
+  assertStringIncludes(
+    html,
+    `<script>document.documentElement.style.background="#0a0a0a"</script>`,
+  );
+  assert(html.indexOf("<head>") < html.indexOf("background"), "pre-paint script is in <head>");
+});
+
+Deno.test("spaShellHtml: no spa.loading leaves #root empty (default)", async () => {
+  const html = await spaShellHtml({ spa: { entry: "./src/main.tsx" }, scriptSrc: "/x.js" });
+  assertStringIncludes(html, '<div id="root"></div>');
+});

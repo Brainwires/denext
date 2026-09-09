@@ -8,6 +8,19 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **SPA boot placeholder (`spa.loading`) + `denext migrate` carries the source `index.html`'s
+  boot content.** The generated SPA shell only had a blank `<div id="root">`, so a
+  client-rendered app showed a white screen until its (often large) bundle downloaded,
+  parsed, and rendered. `spa.loading` injects raw HTML inside `#root` — a themed background
+  (paired with a pre-paint script in `spa.head`), a logo splash, or a spinner — that paints
+  immediately and is replaced on the app's first render, the role a Vite/CRA `index.html`
+  fills. `denext migrate --from vite` (and the generic-SPA path) now carry the source
+  `index.html`'s `#root` markup into `spa.loading` and its `<head>` scripts/styles/meta/links
+  (minus charset/viewport/title/the entry script) into `spa.head` — so a migrated app keeps
+  its instant first paint instead of regressing to a blank screen.
+
 ## [2.1.4] - 2026-09-09
 
 ### Added
