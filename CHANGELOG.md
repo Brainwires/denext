@@ -8,6 +8,16 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **`buildNextCompatPages` now emits the class-runtime install seam in its client entry.**
+  Since the class runtime was gated behind an `installClassSupport()` import seam, the
+  simplified compat page builder generated a hydration entry that never called it — so a
+  `classComponents: true` build produced a client bundle with the class runtime
+  tree-shaken out (class components would not hydrate). The real App Router pipeline was
+  unaffected (it wires the seam in `build-pipeline/prepare.ts`); this only reached the
+  standalone `buildNextCompatPages` helper.
+
 ### Added
 
 - **`DENEXT_NO_MINIFY=1` emits readable (unminified) production bundles** — a build-time
