@@ -8,6 +8,16 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`DENEXT_NO_MINIFY=1` emits readable (unminified) production bundles** — a build-time
+  escape hatch for `denext build` / `export` / `desktop` when you need to read a real error
+  message or stack trace off a built artifact (minified frames mangle component and hook
+  names; this is how the Base UI render-phase-ref crash was diagnosed). It does not turn on
+  source maps, so an unminified build still ships no `.map` and no original source. Build-time
+  only — it never affects a deployed server at request time. Minification is not a security
+  control, so leaving it off costs only bundle size; keep it off for shipping builds.
+
 ## [2.1.3] - 2026-09-08
 
 ### Fixed

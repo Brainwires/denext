@@ -2,6 +2,7 @@
 // next-compat SSR bundles, the route + Flight client bundles, and self-hosted fonts.
 
 import { join } from "@std/path";
+import { prodMinify } from "../minify.ts";
 import { setSelfHostedFonts } from "../../compat/next/font/registry.ts";
 import { tagClientModules } from "../../runtime/client-reference.ts";
 import { tagServerModules } from "../../runtime/server-action.ts";
@@ -46,7 +47,7 @@ export async function emitExportCss(ctx: ExportContext): Promise<void> {
     projectDir: ctx.projectDir,
     configPath: paths.configPath,
     outDir: paths.outDir,
-    minify: true,
+    minify: prodMinify(),
     // Route entry sources are the import roots; crawling them finds stylesheets in
     // sibling workspace packages (outside `projectDir`) the walk can't reach.
     entryFiles: [...new Set(manifest.pages.flatMap(routeEntryFiles))],
@@ -99,7 +100,7 @@ export async function bundleExportRoutes(ctx: ExportContext): Promise<void> {
     if (ctx.flightRoutes.has(route.routePath) || ctx.staticRoutes.has(route.routePath)) continue;
     const bundle = await bundleRoute(route, {
       configPath: ctx.paths.configPath,
-      minify: true,
+      minify: prodMinify(),
       importMap: ctx.css?.importMap,
       instrumentationClient: ctx.paths.instrumentationClientPath,
     });
@@ -121,7 +122,7 @@ export async function bundleExportFlight(ctx: ExportContext): Promise<void> {
   const boundary = await boundaryManifest(ctx);
   const flightBundle = await bundleFlightEntry(boundary, {
     configPath: ctx.paths.configPath,
-    minify: true,
+    minify: prodMinify(),
     importMap: ctx.css?.importMap,
     instrumentationClient: ctx.paths.instrumentationClientPath,
   });
