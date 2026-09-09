@@ -318,6 +318,28 @@ export function waitForAll(pages: Page[], expr: string, ms = 45000): Promise<voi
   return Promise.all(pages.map((p) => pollFor(p, expr, ms)));
 }
 
+/**
+ * Emulate a network condition on `page` via CDP (Astral's raw celestial bindings). A
+ * `latencyMs` adds a minimum request→response delay — long enough to observe transient
+ * in-flight UI (an optimistic row, a `useFormStatus` pending button) that a fast localhost
+ * round-trip would otherwise blow past; `offline: true` cuts the connection (Live-reconnect
+ * tests). Call with no options (or `{}`) to restore normal conditions.
+ */
+export async function emulateNetwork(
+  page: Page,
+  opts: { latencyMs?: number; offline?: boolean } = {},
+): Promise<void> {
+  // deno-lint-ignore no-explicit-any
+  const net = (page.unsafelyGetCelestialBindings() as any).Network;
+  await net.enable({});
+  await net.emulateNetworkConditions({
+    offline: opts.offline ?? false,
+    latency: opts.latencyMs ?? 0,
+    downloadThroughput: -1,
+    uploadThroughput: -1,
+  });
+}
+
 /** A set of tabs opened on one origin, plus a shared console-error sink and teardown. */
 export interface Clients {
   /** The opened pages, in order. */

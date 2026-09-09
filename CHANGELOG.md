@@ -10,6 +10,14 @@ and this project adheres to
 
 ### Fixed
 
+- **`useOptimistic` now shows the optimistic value while a `useActionState` action is in
+  flight.** `useActionState`'s dispatch ran the action inside `startTransition` but did not
+  return the action's promise, so the scheduler treated it as a synchronous transition and
+  settled it on the next microtask — reverting a `useOptimistic` overlay applied inside the
+  action before it could paint (the optimistic row never appeared; only the committed row did
+  once the server responded). Dispatch now returns the promise so the transition is tracked
+  as async and the overlay holds until the action settles. (`useOptimistic` driven directly
+  from `startTransition` was already correct.)
 - **Resumable islands no longer drop the first click on a slow/loaded host.** A browser
   click arrives as `pointerdown → focusin → click`; the `pointerdown` resumed the island,
   but island hydration is async (it imports the island's chunk before `hydrateRoot`), and
