@@ -352,7 +352,10 @@ CLI verb). Declare it as `plugins: [myPlugin()]`. See
 - **Cache Components / PPR** are a stable **opt-in**: `cacheComponents: true`
   (top-level) in `denext.config.ts`. Not `experimental.cacheComponents` — that
   legacy key still works but dev-warns.
-- **Zero runtime npm**: the framework itself pulls no npm; your app may still
+- **Zero runtime npm**: nothing the framework ships to the runtime pulls npm
+  (CI-enforced). The build-time toolchain still uses a few npm tools — `esbuild`
+  (core) plus opt-in `sass` / `@mdx-js/mdx` / `ws`; the CSS + swc-AST tooling is
+  the first-party `@denext/lightningcss` / `@denext/swc` wasm. Your app may still
   use `npm:`/`jsr:` libraries.
 - Run checks with `deno task check` (fmt `--check` + lint + tests; type-checking
   happens transitively via `deno test`, there's no separate type-check step).

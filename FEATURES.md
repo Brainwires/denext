@@ -468,8 +468,9 @@ cache uses Deno's built-in `node:sqlite`.)
 
 ## Build, tooling & CLI
 
-- Build via **`deno bundle`** (no npm toolchain) with **code splitting** (shared
-  runtime chunk), the CSS pipeline, and per-route client entries.
+- Build via **`deno bundle`** on the native path (`esbuild` on the next-compat /
+  SPA-compat path) with **code splitting** (shared runtime chunk), the CSS
+  pipeline, and per-route client entries.
 - **Plugin contract** (`DenextPlugin`: the five seams — route-synthesizer,
   request-handler, build-step, teardown, CLI command) with the public
   `@denext/denext/plugin-kit` primitives (bundling, CSS, matchers, `PageCache`,
@@ -525,8 +526,9 @@ cache uses Deno's built-in `node:sqlite`.)
 
 The framework's **runtime carries no npm dependencies** — CI-enforced across
 `src/{jsx,runtime,client,server,compat,plugin}`
-(`tests/no-npm-compat-guard.test.ts`). Build-time tooling
-(esbuild/swc/lightningcss) never reaches the shipped runtime.
+(`tests/no-npm-compat-guard.test.ts`). Build-time tooling — `esbuild` (npm) plus
+the first-party `@denext/swc` + `@denext/lightningcss` wasm — never reaches the
+shipped runtime.
 
 ---
 
@@ -871,8 +873,10 @@ default").
 - **Zero runtime npm dependencies** **[default — CI-enforced]** — the served
   runtime rides only Deno built-ins, `@std/*`, `Intl.*`, and `node:sqlite`. A
   guard fails on any `npm:` specifier in compat modules. `deno.json`'s remaining
-  `npm:` deps (lightningcss, swc, esbuild) are build/dev-time only and never
-  enter a shipped bundle; the image/og codecs are now first-party JSR packages
+  `npm:` deps — `esbuild` (core) plus the opt-in `sass` / `@mdx-js/mdx` / `ws` —
+  are build/dev-time only and never enter a shipped bundle (the CSS + swc-AST
+  tooling is now the first-party `@denext/lightningcss` / `@denext/swc` wasm, not
+  npm); the image/og codecs are now first-party JSR packages
   (`@denext/photon`/`@denext/avif`/`@denext/og`), not npm peers, and the cache
   uses Deno's built-in `node:sqlite`. — `tests/no-npm-compat-guard.test.ts:9`;
   `src/build/next-compat.ts:17-20`.
@@ -967,7 +971,7 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
 
 - **Build-time auto-memoization** (`experimental: { reactCompiler: true }`)
   comparable in spirit to the React Compiler, running in-process via
-  `@swc/wasm-web` with no transpile hook of its own; feeds the client bundle
+  `@denext/swc` with no transpile hook of its own; feeds the client bundle
   through the existing import-map seam; provably SSR-safe. —
   `src/build/
   compiler.ts:1-18`; runtime `src/runtime/compiler-runtime.ts:37`.

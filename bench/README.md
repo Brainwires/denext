@@ -7,7 +7,7 @@ _equivalent_ workloads on both frameworks, and reports the ratio between them.
 
 The latest results live in [`REPORT.md`](./REPORT.md).
 
-> **denext itself has zero npm dependencies.** Everything under `bench/` that is
+> **denext itself has zero runtime npm dependencies.** Everything under `bench/` that is
 > not denext — React, Next.js, their `node_modules`, and any `.next` build — is
 > benchmark-only tooling, git-ignored, and never published (see `deno.json`'s
 > `publish.exclude`). Installing it here does not add a dependency to denext.

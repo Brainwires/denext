@@ -1,4 +1,4 @@
-# denext — Roadmap (2.2)
+# denext — Roadmap (2.4)
 
 > Status: internal engineering tracker. **This file lists only work that still
 > needs doing.** Completed work lives in [FEATURES.md](./FEATURES.md) and
@@ -9,30 +9,28 @@
 > `development` is **2.3.0** (the version line `deno task bump` rewrites). 2.1 — the
 > typed, self-documenting API surface (`defineApi`, the typed client,
 > `@denext/openapi`, `@denext/graphql`), plus scheduled tasks + cron, type-safe
-> routing, and `@denext/content-collections` — shipped from it. **2.2 is the next
+> routing, and `@denext/content-collections` — shipped from it. **2.4 is the next
 > engineering cycle.** What remains is the last build-time-purity items and the
-> ecosystem router plugins. Everything below targets 2.2 unless marked otherwise.
-> This roadmap is rewritten for the following cycle when 2.2 ships.
+> ecosystem router plugins. Everything below targets 2.4 unless marked otherwise.
+> This roadmap is rewritten for the following cycle when 2.4 ships.
 
 ---
 
 ## Build-time deps → first-party JSR/WASM
 
-The one remaining **runtime-purity** item — build-time only, so it never enters a
-shipped bundle and the zero-npm **runtime** claim already holds. Migrate
-`lightningcss` / `swc` / `esbuild` off npm via the Deno-native binder path:
+Reducing the build-time npm surface (build-time only, so the zero-npm **runtime**
+claim already holds regardless). **`lightningcss` and `swc` are done** — replaced
+by first-party `@denext/lightningcss` + `@denext/swc` (JSR, built via `wasmbuild`
+from the core crates; see CHANGELOG). What remains npm at build time: **`esbuild`**
+(the item below) plus the opt-in `sass` / `@mdx-js/mdx` / `ws`.
 
-- **Rust codecs** → [`denoland/wasmbuild`](https://github.com/denoland/wasmbuild)
-  (`wasm-bindgen` glue, the `@denext/photon` recipe). **C codecs** → a
-  WASI/Component-Model component +
+- **`esbuild` off npm** — native-backed, large API surface, used by the
+  next-compat build and the unbundled dev loop; deferred furthest (see "Later").
+  The Deno-native binder path is proven: **Rust codecs** →
+  [`denoland/wasmbuild`](https://github.com/denoland/wasmbuild) (`wasm-bindgen`
+  glue, the `@denext/photon` / `@denext/lightningcss` / `@denext/swc` recipe);
+  **C codecs** → a WASI/Component-Model component +
   [`jco transpile`](https://bytecodealliance.github.io/jco/transpiling.html).
-  Deno imports `.wasm` directly, so the glue stays thin; no hand-written
-  marshalling, no npm.
-- `lightningcss` / `swc` are already WASM builds with a single import site each
-  (`src/build/css.ts`, `src/build/swc-ast.ts`) — a surgical repoint to
-  `@denext/*` packages, **2.2**. `esbuild` (native-backed, large API surface,
-  used by the next-compat build and the unbundled dev loop) is deferred furthest
-  — see "Later" below.
 - **Standing discipline:** track each vendored codec's upstream CVEs, rebuild
   SHA-256-pinned (like the Tailwind binary), and regenerate its
   `THIRD-PARTY-LICENSES.md` before re-publishing — Pillar 2 in maintenance form.
@@ -110,12 +108,13 @@ rest are kept here so they aren't lost; not yet scheduled.
   for Workers/Vercel. Highest ecosystem value, largest effort, one real Deno-fit tension
   (Workers runs workerd, not Deno). Builds on the existing plugin `addBuildStep` seam.
 
-## Later (not committed to 2.2)
+## Later (not committed to 2.4)
 
 - Generated clients for **non-denext consumers** from the OpenAPI/GraphQL
   documents (other languages, other frontends) — denext apps already get typed
   calls to their own routes from `createApiClient`.
-- `esbuild` off npm (above), once the two WASM repoints have shipped.
+- `esbuild` off npm (above) — the last build-time npm codec (the `lightningcss` /
+  `swc` repoints have shipped).
 - **Node-stream `Writable` backpressure** for `renderToPipeableStream` /
   `renderToStaticNodeStream` (they buffer today — the first entry in
   [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md)): make the core renderer

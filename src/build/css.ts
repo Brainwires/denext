@@ -119,7 +119,7 @@ export async function transformCss(
 ): Promise<CssTransform> {
   const { transform } = await lightning();
   // @denext/lightningcss types `transform` as `any` (wasm-bindgen-generated); the
-  // slice we consume is stable, so we declare it here (matches lightningcss-wasm's shape).
+  // slice we consume is stable, so we declare it here (its transform result shape).
   const result = transform({
     filename,
     code: new TextEncoder().encode(source),

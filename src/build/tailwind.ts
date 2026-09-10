@@ -2,7 +2,7 @@
 // *standalone* binary (a self-contained executable, no npm) and run it to compile
 // the project's Tailwind input into a plain CSS file that denext's own CSS
 // pipeline then consumes. This keeps the zero-runtime-npm-dependency rule (the
-// binary is a build-time tool, like the lightningcss wasm) while giving projects
+// binary is a build-time tool, like the @denext/lightningcss wasm) while giving projects
 // first-class Tailwind support.
 
 import { join, resolve } from "@std/path";

@@ -214,19 +214,19 @@ Deno.test("pinNpmToLock: pins to the highest locked version in range; unlocked d
       "esbuild@0.25.3": {},
       "esbuild@0.25.9": {},
       "esbuild@0.26.0": {},
-      "@swc/wasm-web@1.7.0": {},
-      "@swc/wasm-web@1.8.2": {},
+      "@mdx-js/mdx@3.0.0": {},
+      "@mdx-js/mdx@3.1.0": {},
     },
   };
   const npm = {
     esbuild: "npm:esbuild@^0.25.0",
-    "@swc/wasm-web": "npm:@swc/wasm-web@^1.7.0",
+    "@mdx-js/mdx": "npm:@mdx-js/mdx@^3.0.0",
     sass: "npm:sass@^1.80.0",
     bare: "npm:bare",
   };
   assertEquals(pinNpmToLock(npm, lock), {
     esbuild: "npm:esbuild@0.25.9",
-    "@swc/wasm-web": "npm:@swc/wasm-web@1.8.2",
+    "@mdx-js/mdx": "npm:@mdx-js/mdx@3.1.0",
     sass: "npm:sass@^1.80.0",
     bare: "npm:bare",
   });

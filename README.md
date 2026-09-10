@@ -87,9 +87,9 @@ deno run -A cli.ts dev examples/hello   # → http://localhost:3000
 
 Fair question — Deno can already run genuine Next.js through its npm compat. The
 reason to reach for denext is the one thing that setup can't give you: **a
-zero-npm dependency tree.** Real-Next-on-Deno still drags the full npm graph;
-denext's own-React reimplementation is the only reason the "nothing from npm"
-claim holds. That's the wedge, and it buys three concrete things:
+zero-npm runtime dependency tree.** Real-Next-on-Deno still drags the full npm
+graph into what it ships; denext's own-React reimplementation is the only reason
+the "nothing from npm at runtime" claim holds. That's the wedge, and it buys three concrete things:
 
 - **A supply chain you can audit.** Zero runtime npm dependencies, enforced in
   CI — so the "transitive dependency" advisories that fill `npm audit` on a

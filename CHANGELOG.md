@@ -10,12 +10,14 @@ and this project adheres to
 
 ### Changed
 
-- **The build pipeline is now zero-npm too.** The last two npm build-time deps —
-  `lightningcss-wasm` and `@swc/wasm-web` — are replaced by first-party JSR/wasm
-  packages `@denext/lightningcss` and `@denext/swc` (built via `wasmbuild`,
-  verified equivalent to the npm builds). The zero-npm **runtime** was already
-  guaranteed; this extends it to the build. `esbuild` remains the one npm
-  build-time dep (deferred; see ROADMAP).
+- **Fewer npm build-time deps: `lightningcss` and `swc` are now first-party.** The
+  build pipeline's `lightningcss-wasm` and `@swc/wasm-web` npm deps are replaced by
+  first-party JSR/wasm packages `@denext/lightningcss` and `@denext/swc` (built via
+  `wasmbuild`, verified equivalent to the npm builds). The zero-npm **runtime** was
+  already guaranteed and is unchanged; this only shrinks the **build-time** npm
+  surface — the build is not npm-free: `esbuild` (core) plus the opt-in `sass` /
+  `@mdx-js/mdx` / `ws` remain npm build-time deps (`esbuild` off-npm is deferred;
+  see ROADMAP).
 
 ### Removed
 
