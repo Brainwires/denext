@@ -7,7 +7,7 @@
  * @module
  */
 
-import { useCallback, useRef, useState } from "../runtime/hooks.ts";
+import { useCallback, useEffect, useRef, useState } from "../runtime/hooks.ts";
 
 /** The result of {@linkcode useCopyToClipboard}. */
 export interface UseClipboardResult {
@@ -51,6 +51,11 @@ export function useCopyToClipboard(resetAfterMs = 2000): UseClipboardResult {
   const [error, setError] = useState<Error | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isSupported = writeTextApi() !== undefined;
+
+  // Clear a pending "reset copied" timer on unmount (don't setState on a gone component).
+  useEffect(() => () => {
+    if (timerRef.current !== null) clearTimeout(timerRef.current);
+  }, []);
 
   const copy = useCallback(async (text: string): Promise<boolean> => {
     const writeText = writeTextApi();

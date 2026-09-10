@@ -1,9 +1,12 @@
 /**
  * `useLocalStorage` / `useSessionStorage` — persist state in Web Storage with a
  * `useState`-like API: JSON serialization, cross-tab sync (localStorage fires a
- * `storage` event in other documents), and SSR safety. On the server, or where
- * storage is disabled (some privacy modes throw on access), the hooks return
- * the initial value and writes are silent no-ops.
+ * `storage` event in other documents), and SSR + hydration safety. The first
+ * render always returns `initialValue` — matching the server — and the persisted
+ * value is adopted in a post-mount effect, so hydration never mismatches (at the
+ * cost of one extra render when a value was stored). On the server, or where
+ * storage is disabled (some privacy modes throw on access), the hooks stay at the
+ * initial value and writes are silent no-ops.
  *
  * @module
  */
@@ -48,9 +51,15 @@ function parseStored<T>(raw: string | null, initial: T): T {
 
 /** Shared implementation for both storage areas. */
 function useStorage<T>(kind: StorageKind, key: string, initialValue: T): UseStorageResult<T> {
-  const [value, setValue] = useState<T>(() =>
-    parseStored(storageArea(kind)?.getItem(key) ?? null, initialValue)
-  );
+  // Start from `initialValue` on every first render — the SAME value the server rendered — so
+  // hydration never mismatches; the persisted value (if any) is adopted in the mount effect
+  // below. That means one extra render (initial → stored) when a value was persisted.
+  const [value, setValue] = useState<T>(initialValue);
+
+  useEffect(() => {
+    const stored = storageArea(kind)?.getItem(key) ?? null;
+    if (stored !== null) setValue(parseStored(stored, initialValue));
+  }, [kind, key]);
 
   const set = useCallback<SetStoredValue<T>>((next) => {
     setValue((previous) => {

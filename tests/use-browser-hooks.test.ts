@@ -200,6 +200,26 @@ Deno.test("useLocalStorage: reads, writes, removes, and syncs cross-tab", () => 
   }
 });
 
+Deno.test("useLocalStorage: first render is the initial value (hydration-safe), then adopts stored", () => {
+  // A value persisted before mount must NOT appear on the first render (that would diverge from
+  // the server's initialValue and mismatch hydration); it's adopted in the mount effect.
+  g.localStorage.setItem("pre", JSON.stringify("stored"));
+  const seen: string[] = [];
+  const ref: { s?: UseStorageResult<string> } = {};
+  const { root } = mount(function Probe() {
+    ref.s = useLocalStorage("pre", "initial");
+    seen.push(ref.s[0]);
+    return null;
+  });
+  try {
+    assertEquals(seen[0], "initial", "first render matches the server value");
+    assertEquals(ref.s![0], "stored", "the stored value is adopted after mount");
+  } finally {
+    root.unmount();
+    g.localStorage.removeItem("pre");
+  }
+});
+
 Deno.test("useSessionStorage: persists JSON round-trip", () => {
   const ref: { s?: UseStorageResult<{ n: number }> } = {};
   const { root } = mount(function Probe() {
@@ -354,6 +374,18 @@ Deno.test("useCopyToClipboard: writes text, flips copied, then resets", async ()
   } finally {
     root.unmount();
   }
+});
+
+Deno.test("useCopyToClipboard: a pending reset timer is cleared on unmount (no leak)", async () => {
+  clipboardThrows = false;
+  const ref: { c?: UseClipboardResult } = {};
+  const { root } = mount(function Probe() {
+    ref.c = useCopyToClipboard(10_000); // long reset window; must be cleared on unmount
+    return null;
+  });
+  await ref.c!.copy("x"); // schedules the reset timer
+  flushSync();
+  root.unmount(); // if the timer isn't cleared here, Deno's op sanitizer fails the test
 });
 
 Deno.test("useCopyToClipboard: surfaces a write failure", async () => {

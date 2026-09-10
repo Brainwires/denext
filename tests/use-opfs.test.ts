@@ -290,3 +290,19 @@ Deno.test("useFile: reads text and creates on write when missing", async () => {
 
   unmount();
 });
+
+Deno.test("useFile: write() creates + reads a missing file even with the default create:false", async () => {
+  reset();
+  const ref: { r?: ReturnType<typeof useFile> } = {};
+  const unmount = mount(function Probe() {
+    ref.r = useFile("draft.txt"); // default create:false → missing → no handle, NotFound error
+    return h("i", null, "x");
+  });
+  await flush();
+  assertEquals(ref.r!.data, null, "a missing file has no data yet");
+  await ref.r!.write("hello");
+  await flush();
+  assertEquals(ref.r!.data, "hello", "write adopts the new handle and data updates");
+  assertEquals(ref.r!.error, null, "the stale not-found error is cleared by the successful read");
+  unmount();
+});

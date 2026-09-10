@@ -275,14 +275,24 @@ async function readFileAs(handle: FileSystemFileHandle, as: FileAs): Promise<unk
   return as === "json" ? JSON.parse(text) : text;
 }
 
-/** The writable file handle for {@linkcode useFile}'s `write` (creating along the path). */
+/**
+ * The writable target for {@linkcode useFile}'s `write` (creating along the path). Returns the
+ * handle plus its parent/name when resolved from a path, so `write` can adopt the freshly
+ * created handle (and know its parent for a later `remove`); a bare handle has no parent.
+ */
 async function writableTarget(
   path: string | null,
   givenHandle: FileSystemFileHandle | null,
-): Promise<FileSystemFileHandle> {
-  if (path == null) return givenHandle!;
-  const { handle } = await resolveFile(await navigator.storage.getDirectory(), path, true);
-  return handle;
+): Promise<
+  { handle: FileSystemFileHandle; parent: FileSystemDirectoryHandle | null; name: string | null }
+> {
+  if (path == null) return { handle: givenHandle!, parent: null, name: null };
+  const { handle, parent, name } = await resolveFile(
+    await navigator.storage.getDirectory(),
+    path,
+    true,
+  );
+  return { handle, parent, name };
 }
 
 /** The parent + name needed to remove {@linkcode useFile}'s target, or `null` if unknown. */
@@ -396,9 +406,15 @@ export function useFile(
   const write = useCallback(async (contents: FileSystemWriteChunkType) => {
     try {
       const target = await writableTarget(path, givenHandle);
-      const writable = await target.createWritable();
+      const writable = await target.handle.createWritable();
       await writable.write(contents);
       await writable.close();
+      // Adopt the (possibly just-created) handle so a write to a not-yet-existent file starts
+      // reading it — with default `create:false` the resolve effect never produced a handle.
+      if (target.parent && target.name) {
+        parentRef.current = { parent: target.parent, name: target.name };
+      }
+      setHandle(target.handle);
       refresh();
     } catch (err) {
       setError(toError(err));
@@ -413,9 +429,11 @@ export function useFile(
     }
     try {
       await meta.parent.removeEntry(meta.name);
-      // The file is gone — clear the contents, but do NOT re-read a dead handle.
+      // The file is gone — clear the contents and detach the handle, so the observer/read don't
+      // fire on a now-dead handle and resurrect a spurious NotFound error.
       setData(null);
       setError(null);
+      setHandle(null);
     } catch (err) {
       setError(toError(err));
       throw err;
