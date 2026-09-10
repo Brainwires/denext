@@ -240,6 +240,12 @@ Deno.test({
 
   try {
     await t.step("GET / serves the built shell (no-cache)", () => stepProdShell(origin));
+    await t.step("client chunks are precompressed (.gz siblings)", async () => {
+      // buildSpa precompresses the client dir like the App Router build, so the prod server
+      // serves gzip at zero per-request CPU and `denext analyze` can report gzip sizes.
+      const stat = await Deno.stat(join(paths.outDir, "client", "index.js.gz"));
+      assert(stat.isFile, "index.js.gz precompressed sibling should exist");
+    });
     await t.step("client assets are cache-controlled", () => stepProdImmutableAssets(origin));
     await t.step(
       "a deep URL returns the shell (history fallback)",

@@ -28,6 +28,11 @@ and this project adheres to
 
 ### Changed
 
+- **SPA builds now precompress their client chunks (gzip `.gz` siblings).** The SPA build
+  emitted none, so the prod server had to compress on every request (or serve identity) and
+  `denext analyze` couldn't report over-the-wire sizes for a SPA bundle. It now runs the same
+  precompression step as the App Router build, so the server serves gzip at zero per-request
+  CPU and the analyze report shows gzip sizes.
 - **Tree-shake unused barrel exports from `"sideEffects": false` dependencies (esbuild path).**
   denext's own node_modules resolver handed esbuild a bare path, so the tree-shaker had to
   assume every module had side effects and kept unused barrel re-exports (importing one
