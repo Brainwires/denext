@@ -1,9 +1,9 @@
-// Shared swc (@swc/wasm-web) AST primitives for denext's build-time source
+// Shared swc (@denext/swc) AST primitives for denext's build-time source
 // transforms (the auto-memo compiler and the `"use cache"` rewrite).
 //
 // denext owns no transpile hook — `deno bundle` runs swc internally — so a
 // build-time pass that needs to *rewrite* user source parses it with the vendored
-// `@swc/wasm-web` and splices edits back in **byte space** (swc spans are UTF-8
+// `@denext/swc` and splices edits back in **byte space** (swc spans are UTF-8
 // byte offsets, which differ from JS string indices whenever the source has
 // multi-byte characters). These helpers are the shared substrate: parse once,
 // walk the AST, and apply non-overlapping byte-offset edits.
@@ -17,14 +17,14 @@ export type Node = any;
 let swcReady: Promise<(src: string) => Promise<Node>> | null = null;
 
 /**
- * Initialize `@swc/wasm-web` once (process-wide) and return a bound `parse` that
+ * Initialize `@denext/swc` once (process-wide) and return a bound `parse` that
  * accepts TSX source. The wasm module is loaded and initialized lazily on first
  * use and the resulting parser is memoized.
  */
 export function swcParse(): Promise<(src: string) => Promise<Node>> {
   if (!swcReady) {
     swcReady = (async () => {
-      const mod = await import("@swc/wasm-web");
+      const mod = await import("@denext/swc");
       await mod.default(); // initialize the wasm module
       return (src: string) =>
         mod.parse(src, { syntax: "typescript", tsx: true, target: "es2022" }) as Promise<Node>;

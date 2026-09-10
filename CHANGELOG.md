@@ -8,6 +8,15 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- **The build pipeline is now zero-npm too.** The last two npm build-time deps —
+  `lightningcss-wasm` and `@swc/wasm-web` — are replaced by first-party JSR/wasm
+  packages `@denext/lightningcss` and `@denext/swc` (built via `wasmbuild`,
+  verified equivalent to the npm builds). The zero-npm **runtime** was already
+  guaranteed; this extends it to the build. `esbuild` remains the one npm
+  build-time dep (deferred; see ROADMAP).
+
 ### Removed
 
 - **BREAKING: removed the `denext deploy` command.** It only ever wrapped
