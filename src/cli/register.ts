@@ -16,7 +16,6 @@ import { auditCommand } from "./commands/audit.ts";
 import { analyzeCommand } from "./commands/analyze.ts";
 import { profileCommand } from "./commands/profile.ts";
 import { desktopCommand } from "./commands/desktop.ts";
-import { deployCommand } from "./commands/deploy.ts";
 import { pluginCommand } from "./commands/plugin.ts";
 import { patchCommand } from "./commands/patch.ts";
 import { mcpCommand } from "./commands/mcp.ts";
@@ -52,9 +51,8 @@ export function buildRegistry(): CommandRegistry {
   reg.register(createCommand);
   reg.register(initCommand);
   reg.register(generateCommand);
-  // Desktop packaging + deploy.
+  // Desktop packaging.
   reg.register(desktopCommand);
-  reg.register(deployCommand);
   reg.register(pluginCommand);
   reg.register(patchCommand);
   // AI-agent tooling (MCP server over stdio).

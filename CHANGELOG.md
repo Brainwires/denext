@@ -8,6 +8,16 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Removed
+
+- **BREAKING: removed the `denext deploy` command.** It only ever wrapped
+  `deployctl` for a single host (Deno Deploy) and could not know a project's real
+  deployment setup (registry, host, secrets, DNS), so it added nothing over
+  invoking the underlying tool directly. Deploy with `deployctl` (Deno Deploy) or
+  your host's own tooling — the Deno Deploy, Docker, and systemd recipes in
+  [DEPLOYMENT.md](./DEPLOYMENT.md) are unchanged. `denext generate docker` still
+  scaffolds a Dockerfile.
+
 ## [2.3.0] - 2026-09-10
 
 ### Added
