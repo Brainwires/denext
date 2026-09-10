@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-09-10
+
 ### Added
 
 - **Compile-time feature flags — `feature("KEY")` from `denext/feature`.** Each call whose
@@ -6268,6 +6270,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.2.0]: https://jsr.io/@denext/denext@2.2.0
 [2.1.6]: https://jsr.io/@denext/denext@2.1.6
 [2.1.5]: https://jsr.io/@denext/denext@2.1.5
 [2.1.4]: https://jsr.io/@denext/denext@2.1.4
