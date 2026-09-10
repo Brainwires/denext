@@ -8,6 +8,22 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **OPFS React hooks over the File System Observer API.** New client hooks for the Origin
+  Private File System that stay _live_: **`useFileSystemObserver(target, callback, options?)`**
+  is the generic primitive over `FileSystemObserver` (works with any `FileSystemHandle`, not
+  only OPFS); **`useOPFSRoot()`** resolves the root directory handle; **`useDirectory(pathOrHandle,
+  { recursive? })`** lists a directory's entries and re-reads them when the observer reports a
+  change; **`useFile(pathOrHandle, { as, create })`** reads a file as text/JSON/`ArrayBuffer`,
+  auto-refreshes on change, and returns `write` and `remove`. A path (`"notes/todo.json"`) is
+  resolved under the OPFS root; a handle is used directly (a picked File System Access directory
+  works too). All are client-only and a graceful no-op during SSR or where the API is
+  unavailable (`isSupported` reports which; `FileSystemObserver` is still experimental). New
+  exports on `denext`: the hooks plus `fileSystemObserverSupported`, `FileSystemChangeRecord`,
+  `FileSystemChangeType`, `FileSystemObserverObserveOptions`, `DirectoryEntry`, and the hooks'
+  result/option types.
+
 ## [2.2.0] - 2026-09-10
 
 ### Added
