@@ -3,7 +3,7 @@
 
 import { join, toFileUrl } from "@std/path";
 import type * as esbuild from "esbuild";
-import { nodeResolveEnabled, reactCompilerEnabled, type SpaConfig } from "../../server/config.ts";
+import { featureFlags, nodeResolveEnabled, type SpaConfig } from "../../server/config.ts";
 import {
   appUsesActivity,
   appUsesViewTransition,
@@ -15,7 +15,7 @@ import { buildNextCompatClientEntries } from "../next-compat-build.ts";
 import { detectNextCompat } from "../next-compat-detect.ts";
 import { stopNextCompat } from "../next-compat.ts";
 import type { ProjectPaths } from "../paths.ts";
-import { spaCompilerPlugin } from "../spa-compiler-plugin.ts";
+import { spaSourceTransformPlugin } from "../spa-compiler-plugin.ts";
 import { spaRefreshPlugin } from "../spa-refresh-plugin.ts";
 import { tailwindPaths } from "../tailwind.ts";
 import { CLIENT_PREFIX, ENTRY_FILE, generateSpaEntry, STYLE_FILE } from "./shared.ts";
@@ -120,7 +120,12 @@ async function bundleCompatSpa(
     entries: [{ id: "index", source: entrySource }],
     minify,
     classComponents: config.classComponents ?? true,
-    define: spaDefines(spa, dev),
+    // Vite `import.meta.env` values, plus the feature-flag map seeding the `denext/feature`
+    // shim for any `feature()` call the onLoad fold leaves (non-literal arg, unset key).
+    define: {
+      ...spaDefines(spa, dev),
+      __DENEXT_FEATURES__: JSON.stringify(featureFlags(paths.config)),
+    },
     // Vite-style asset imports (?url/?worker/.wasm/…) → files under clientDir, URLs
     // prefixed with the path the SPA servers already serve them at.
     assets: { publicPath: CLIENT_PREFIX },
@@ -145,11 +150,11 @@ async function bundleCompatSpa(
 
 /**
  * The extra esbuild onLoad plugins for a SPA bundle: in DEV, Fast Refresh family
- * registrations (front-runs the deno-loader); in PROD, the auto-memo compiler when the app
- * enabled it (`experimental.reactCompiler` — `denext migrate` turns it on for a React-Compiler
- * Vite app). Both transform only first-party app source; both are omitted otherwise so nothing
- * extra runs. (Dev keeps the untransformed fast-rebuild + Fast Refresh; the compiler is a prod
- * optimization.)
+ * registrations (front-runs the deno-loader); in PROD, the source transforms the app enabled —
+ * the auto-memo compiler (`experimental.reactCompiler`) and/or the feature-flag fold
+ * (`experimental.features`), chained in one plugin. All transform only first-party app source
+ * and are omitted otherwise so nothing extra runs. (Dev keeps the untransformed fast-rebuild +
+ * Fast Refresh; these are prod optimizations.)
  */
 function spaBundlePlugins(
   projectDir: string,
@@ -157,8 +162,8 @@ function spaBundlePlugins(
   config: ProjectPaths["config"],
 ): esbuild.Plugin[] | undefined {
   if (dev) return [spaRefreshPlugin(projectDir)];
-  if (reactCompilerEnabled(config)) return [spaCompilerPlugin(projectDir)];
-  return undefined;
+  const plugin = spaSourceTransformPlugin(projectDir, config);
+  return plugin ? [plugin] : undefined;
 }
 
 /**

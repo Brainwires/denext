@@ -93,6 +93,12 @@ export interface UnbundledDevOptions {
   compat?: boolean;
   /** Class-component runtime flag, threaded into the react→denext runtime prebuild. */
   classComponents?: boolean;
+  /**
+   * Compile-time feature flags (`experimental.features`). Folded into each first-party module
+   * in dev too, so `feature("KEY")` behaves the same in dev as in a build (dev doesn't need
+   * the DCE, only the value parity). Empty/absent → nothing folded.
+   */
+  features?: Record<string, boolean>;
   /** The project's `instrumentation-client` module (absolute path), imported first by every entry. */
   instrumentationClient?: string | null;
   /**

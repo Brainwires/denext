@@ -2,6 +2,7 @@
 // the native (non-compat) route + Flight client bundles.
 
 import { join } from "@std/path";
+import { featureFlags } from "../../server/config.ts";
 import { prodMinify } from "../minify.ts";
 import { crawlLocalModules, routeEntryFiles } from "../module-graph.ts";
 import {
@@ -161,6 +162,9 @@ export async function bundleNativeFlight(ctx: BuildContext): Promise<void> {
     usesClassComponents: ctx.usesClassComponents,
     usesActivity: ctx.usesActivity,
     usesViewTransition: ctx.usesViewTransition,
+    // Seed the feature-flag map on the native client (no esbuild `define` here), so an
+    // un-folded feature() call agrees with the seeded server render.
+    features: featureFlags(ctx.paths.config),
     instrumentationClient: ctx.paths.instrumentationClientPath,
   });
   await writeBundleOutput(ctx.clientDir, flightBundle, FLIGHT_BUNDLE_FILE);

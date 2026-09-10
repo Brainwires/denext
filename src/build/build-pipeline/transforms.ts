@@ -1,9 +1,10 @@
 // Production build, stage 1: app CSS + the client-module transforms (auto-memo compiler,
 // qrl handler extraction, AsyncContext instrumentation), merged into the bundler import map.
 
-import { reactCompilerEnabled } from "../../server/config.ts";
+import { featureFlags, reactCompilerEnabled } from "../../server/config.ts";
 import { prodMinify } from "../minify.ts";
 import { compileAsyncContextModules } from "../async-context-transform.ts";
+import { compileFeatureModules } from "../feature-transform.ts";
 import { collectComponentSources, compileModules } from "../compiler.ts";
 import { type AppCss, buildAppCss } from "../css.ts";
 import { routeEntryFiles } from "../module-graph.ts";
@@ -82,5 +83,16 @@ export async function clientTransforms(ctx: BuildContext): Promise<Record<string
     asyncContextMap = await compileAsyncContextModules(await sources(), { outDir });
   }
   warnClobbered(asyncContextMap, compilerMap, qrlMap);
-  return { ...compilerMap, ...qrlMap, ...asyncContextMap };
+  const merged = { ...compilerMap, ...qrlMap, ...asyncContextMap };
+  // Feature-flag fold runs LAST, over each module's already-transformed source (so it never
+  // clobbers auto-memo/qrl/async-context), replacing `feature("KEY")` with the configured
+  // literal so `deno bundle` dead-code-eliminates the untaken branch.
+  const features = featureFlags(paths.config);
+  if (Object.keys(features).length > 0) {
+    const featureMap = await compileFeatureModules(await sources(), merged, { outDir, features });
+    const folded = Object.keys(featureMap).length;
+    if (folded > 0) log(`features: folded feature() flags in ${folded} module(s)`);
+    Object.assign(merged, featureMap);
+  }
+  return merged;
 }

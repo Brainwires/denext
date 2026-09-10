@@ -1,6 +1,8 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import {
   bundleAnalysisLines,
+  type BundleMetafile,
+  bundleReportMarkdown,
   bundleRoleLines,
   bundleSummaryLines,
   classifyChunk,
@@ -79,4 +81,44 @@ Deno.test("bundleRoleLines: isolates the shared-runtime subtotal (the budget tar
 
 Deno.test("bundleRoleLines: a 0-JS app has no role section", () => {
   assertEquals(bundleRoleLines([]), []);
+});
+
+Deno.test("bundleReportMarkdown: chunk table + role section (no metafile)", () => {
+  const md = bundleReportMarkdown([
+    { name: "chunk-abc.js", bytes: 40000, gzip: 14000 },
+    { name: "island-x.js", bytes: 8000, gzip: 3000 },
+  ]).join("\n");
+  assertStringIncludes(md, "# Bundle report");
+  assertStringIncludes(md, "| Chunk | Role | Raw | Gzip | % |");
+  assertStringIncludes(md, "`chunk-abc.js`");
+  assertStringIncludes(md, "shared runtime");
+  assertStringIncludes(md, "## By role");
+  // No metafile → no per-module section.
+  assert(!md.includes("Top modules per chunk"));
+});
+
+Deno.test("bundleReportMarkdown: per-module breakdown when a metafile is given", () => {
+  const metafile: BundleMetafile = {
+    outputs: {
+      ".denext/client/chunk-abc.js": {
+        inputs: {
+          "app/node_modules/lucide-react/dist/esm/x.js": { bytesInOutput: 18000 },
+          "app/page.tsx": { bytesInOutput: 400 },
+        },
+      },
+    },
+  };
+  const md = bundleReportMarkdown([{ name: "chunk-abc.js", bytes: 40000, gzip: 14000 }], metafile)
+    .join("\n");
+  assertStringIncludes(md, "## Top modules per chunk");
+  assertStringIncludes(md, "### `chunk-abc.js`");
+  // node_modules prefix trimmed to a readable label, biggest module first.
+  assertStringIncludes(md, "`lucide-react/dist/esm/x.js`");
+  const iconAt = md.indexOf("lucide-react");
+  const pageAt = md.indexOf("page.tsx");
+  assert(iconAt >= 0 && iconAt < pageAt, "modules are ordered by bytes, largest first");
+});
+
+Deno.test("bundleReportMarkdown: 0-JS app", () => {
+  assertStringIncludes(bundleReportMarkdown([]).join("\n"), "ships **0 KB**");
 });

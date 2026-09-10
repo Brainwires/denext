@@ -6,6 +6,7 @@ import { prepareDesktopIcon } from "../desktop-icon.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { bundleSpaInto } from "./bundle.ts";
 import { prodMinify } from "../minify.ts";
+import { precompressDir } from "../precompress.ts";
 import {
   assertEntryExists,
   CLIENT_PREFIX,
@@ -25,6 +26,11 @@ async function bundleAndShell(
   shellDir: string,
 ): Promise<void> {
   const { hasStyles } = await bundleSpaInto(paths, entryPath, clientDir, prodMinify());
+  // Precompress the client chunks (gzip `.gz` siblings) exactly like the App Router build's
+  // finalize step, so the prod server serves them with zero per-request CPU — and so
+  // `denext analyze` can report over-the-wire (gzip) sizes for a SPA bundle.
+  const gzCount = await precompressDir(clientDir);
+  if (gzCount > 0) console.log(`  precompressed ${gzCount} client asset(s) -> .gz`);
   // Preload the entry's static chunk graph so the browser fetches the runtime in parallel
   // with the entry (Vite parity) rather than discovering it after downloading + parsing.
   const preload = (await collectSpaPreloads(clientDir, ENTRY_FILE))

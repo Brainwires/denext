@@ -8,6 +8,44 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-09-10
+
+### Added
+
+- **Compile-time feature flags — `feature("KEY")` from `denext/feature`.** Each call whose
+  KEY is listed in `experimental.features` (`denext.config.ts`) is folded to the literal
+  `true`/`false` at build time, so **both** bundlers dead-code-eliminate the untaken branch —
+  the gated code, and anything only it imports, costs **zero bytes** when the flag is off
+  (denext's take on Bun 1.4's `feature()` from `bun:bundle`). `feature()` always returns the
+  configured value (server and client both seeded), and dead-code elimination applies where
+  the call is folded: the native App Router (component modules), the SPA bundle, and dev — on
+  the compat drop-in App Router path the flag is read at runtime without DCE. A key not listed
+  reads `false`; a non-literal argument is read at runtime. Note: flag names/states are
+  embedded in the client bundle (like `NEXT_PUBLIC_*`).
+- **`denext analyze --md` — a markdown bundle report.** Prints a per-chunk size table (chunk,
+  role, raw, gzip, %) plus per-role subtotals to stdout (pipe to a file — a CI artifact),
+  symmetric with `--json`. On the esbuild (compat/SPA) path it also breaks each chunk down by
+  the modules that dominate it (which dependency is fat), via esbuild's metafile; the native
+  `deno bundle` path stays chunk-level.
+- Docs: a **Profiling** page (the `denext profile` CLI) and a **Bundling & feature flags**
+  page (`denext analyze`/`--md`, `denext/feature`, and sideEffects tree-shaking).
+
+### Changed
+
+- **SPA builds now precompress their client chunks (gzip `.gz` siblings).** The SPA build
+  emitted none, so the prod server had to compress on every request (or serve identity) and
+  `denext analyze` couldn't report over-the-wire sizes for a SPA bundle. It now runs the same
+  precompression step as the App Router build, so the server serves gzip at zero per-request
+  CPU and the analyze report shows gzip sizes.
+- **Tree-shake unused barrel exports from `"sideEffects": false` dependencies (esbuild path).**
+  denext's own node_modules resolver handed esbuild a bare path, so the tree-shaker had to
+  assume every module had side effects and kept unused barrel re-exports (importing one
+  `lucide-react`/`@radix-ui` export dragged in the whole package). The resolver now marks
+  modules of a `"sideEffects": false` package, and the production build sets `treeShaking`
+  explicitly, so esbuild drops the unused re-exports. Only the boolean form is honored (the
+  array form is treated conservatively as side-effectful); the native `deno bundle` path is
+  unaffected.
+
 ## [2.1.6] - 2026-09-09
 
 ### Added
@@ -6232,6 +6270,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.2.0]: https://jsr.io/@denext/denext@2.2.0
 [2.1.6]: https://jsr.io/@denext/denext@2.1.6
 [2.1.5]: https://jsr.io/@denext/denext@2.1.5
 [2.1.4]: https://jsr.io/@denext/denext@2.1.4

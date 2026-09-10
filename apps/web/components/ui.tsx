@@ -55,6 +55,8 @@ export const NAV: {
     group: "Ship it",
     items: [
       { slug: "devtools", label: "DevTools" },
+      { slug: "profile", label: "Profiling" },
+      { slug: "bundling", label: "Bundling & flags" },
       { slug: "testing", label: "Testing" },
       { slug: "deploy", label: "Deployment" },
       { slug: "desktop", label: "Desktop apps (macOS)" },

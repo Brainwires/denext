@@ -697,6 +697,16 @@ export interface ExperimentalConfig {
    */
   asyncContext?: boolean;
   /**
+   * Compile-time feature flags. `feature("KEY")` (from `denext/feature`) always returns the
+   * configured value — the server and every client bundle are seeded with this map — and a call
+   * with a string-literal KEY is additionally folded to a literal where the build can, so the
+   * bundler dead-code-eliminates the untaken branch (gated code costs zero bytes when off). A key
+   * not listed reads `false`. Experimental while the fold's coverage widens: DCE covers the native
+   * App Router's component (`.tsx`/`.jsx`) modules, the SPA bundle, and dev; the compat drop-in App
+   * Router path and non-component modules on the native path read the seeded value without DCE.
+   */
+  features?: Record<string, boolean>;
+  /**
    * @deprecated Moved to the top-level `nodeResolve` in 2.0 — it is load-bearing for every
    * compat migration, not an incomplete feature. Honored as an alias through 2.x.
    */
@@ -715,6 +725,15 @@ export function nodeResolveEnabled(config: DenextConfig | null | undefined): boo
 /** The effective auto-memo compiler flag: `experimental.reactCompiler`, or the legacy `compiler`. */
 export function reactCompilerEnabled(config: DenextConfig | null | undefined): boolean {
   return (config?.experimental?.reactCompiler ?? config?.experimental?.compiler) === true;
+}
+
+/**
+ * The configured compile-time feature flags (`experimental.features`), or an empty map. The
+ * build folds `feature("KEY")` calls to these values (see src/build/feature-transform.ts) and
+ * seeds the same map for server rendering (`resolveProject`) and the esbuild compat `define`.
+ */
+export function featureFlags(config: DenextConfig | null | undefined): Record<string, boolean> {
+  return config?.experimental?.features ?? {};
 }
 
 /**

@@ -245,18 +245,23 @@ function hashedModuleFileName(url: string): string {
  * Run `transform` over each source file, writing the changed modules into `dir` and
  * returning an import-map of `original file URL → transformed file URL`. Unreadable or
  * failing modules are left untouched (omitted); so are unchanged ones.
+ *
+ * `readPath` maps a file to the path actually read (default: the file itself) — a caller that
+ * composes over an earlier pass's output points it at the already-transformed file while the
+ * map stays keyed by the ORIGINAL file's URL (also the `url` handed to `transform`).
  */
 export async function writeTransformedModules(
   files: string[],
   dir: string,
   transform: (source: string, url: string) => Promise<{ code: string; changed: boolean }>,
+  readPath: (file: string) => string = (f) => f,
 ): Promise<Record<string, string>> {
   await ensureDir(dir);
   const map: Record<string, string> = {};
   for (const file of files) {
     let source: string;
     try {
-      source = await Deno.readTextFile(file);
+      source = await Deno.readTextFile(readPath(file));
     } catch {
       continue;
     }

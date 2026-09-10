@@ -4,6 +4,7 @@
 import * as esbuild from "esbuild";
 import { dirname, fromFileUrl, toFileUrl } from "@std/path";
 import { collectComponentNames, refreshFooter } from "../spa-refresh-plugin.ts";
+import { transformFeatures } from "../feature-transform.ts";
 import { swcParse } from "../swc-ast.ts";
 import { resolveFirstParty, rewriteSpecifier } from "./resolve.ts";
 import {
@@ -90,7 +91,16 @@ function moduleRewritePlugin(
       // other import is externalized — so this fires once.
       build.onLoad({ filter: /.*/ }, async (args) => {
         if (args.path !== abs) return null;
-        const src = await Deno.readTextFile(abs);
+        let src = await Deno.readTextFile(abs);
+        // Fold `feature("KEY")` calls so dev matches a build (values, not DCE). Only when the
+        // app configured `experimental.features`; a throwing fold leaves the source as written.
+        const features = st.opts.features;
+        if (features && Object.keys(features).length > 0) {
+          try {
+            const folded = await transformFeatures(src, features);
+            if (folded.changed) src = folded.code;
+          } catch { /* best-effort — bundle the module as written */ }
+        }
         return { contents: src + footer, loader: loaderFor(abs), resolveDir: dirname(abs) };
       });
       build.onResolve({ filter: /.*/ }, async (args) => {

@@ -45,6 +45,111 @@ function chunkMetric(c: BundleChunk): number {
   return c.gzip ?? c.bytes;
 }
 
+/** Raw + gzip totals for a chunk set, plus the ranking total (gzip when any, else raw). */
+function chunkTotals(chunks: BundleChunk[]): { raw: number; gz: number; ranked: number } {
+  const raw = chunks.reduce((s, c) => s + c.bytes, 0);
+  const gz = chunks.reduce((s, c) => s + (c.gzip ?? 0), 0);
+  return { raw, gz, ranked: gz > 0 ? gz : raw };
+}
+
+/**
+ * The slice of an esbuild metafile the markdown report reads: per-output `inputs` with the
+ * bytes each contributes, so a chunk can be attributed to the modules that dominate it.
+ * Only present on the esbuild (compat/SPA) path — the native `deno bundle` path emits none.
+ */
+export interface BundleMetafile {
+  outputs: Record<string, { inputs?: Record<string, { bytesInOutput: number }> }>;
+}
+
+/** The metafile `outputs` entry whose file basename matches `chunkName`, or undefined. */
+function outputForChunk(
+  metafile: BundleMetafile,
+  chunkName: string,
+): { inputs?: Record<string, { bytesInOutput: number }> } | undefined {
+  for (const [path, out] of Object.entries(metafile.outputs)) {
+    if (path.split("/").pop() === chunkName) return out;
+  }
+  return undefined;
+}
+
+/** A readable label for a bundled input path (drop everything up to the last `node_modules/`). */
+function inputLabel(path: string): string {
+  const i = path.lastIndexOf("node_modules/");
+  return i >= 0 ? path.slice(i + "node_modules/".length) : path;
+}
+
+/** The top `n` modules (by bytes contributed) of one chunk, as `label — size` lines. */
+function topModules(
+  out: { inputs?: Record<string, { bytesInOutput: number }> },
+  n: number,
+): string[] {
+  return Object.entries(out.inputs ?? {})
+    .sort((a, b) => b[1].bytesInOutput - a[1].bytesInOutput)
+    .slice(0, n)
+    .map(([path, m]) => `- \`${inputLabel(path)}\` — ${kb(m.bytesInOutput)}`);
+}
+
+/**
+ * A markdown bundle report for `denext analyze --md` (Bun 1.4's `--metafile-md`): a per-chunk
+ * size table + per-role subtotals (both bundler paths), and — when an esbuild `metafile` is
+ * given (the compat/SPA path) — a per-chunk breakdown of the modules that dominate each chunk.
+ *
+ * @param chunks The emitted client chunks and their sizes.
+ * @param metafile The esbuild metafile, when captured (esbuild path only).
+ * @returns Markdown lines.
+ */
+export function bundleReportMarkdown(chunks: BundleChunk[], metafile?: BundleMetafile): string[] {
+  if (chunks.length === 0) {
+    return ["# Bundle report", "", "This app ships **0 KB** of client JavaScript. 🎉"];
+  }
+  const { raw, gz, ranked } = chunkTotals(chunks);
+  const sorted = [...chunks].sort((a, b) => chunkMetric(b) - chunkMetric(a));
+  const lines = [
+    "# Bundle report",
+    "",
+    `**Client JS:** ${kb(raw)} raw${gz > 0 ? ` · ${kb(gz)} gz` : ""} across ` +
+    `${chunks.length} chunk${chunks.length === 1 ? "" : "s"}`,
+    "",
+    ...mdChunkTable(sorted, ranked),
+  ];
+  const roleLines = bundleRoleLines(chunks);
+  // Reuse the terminal role subtotals verbatim, inside a fenced block (already aligned).
+  if (roleLines.length > 0) lines.push("", "## By role", "", "```", ...roleLines, "```");
+  if (metafile) lines.push(...mdTopModules(sorted, metafile));
+  return lines;
+}
+
+/** The per-chunk markdown table (chunks pre-sorted largest-first; `ranked` is the % basis). */
+function mdChunkTable(sorted: BundleChunk[], ranked: number): string[] {
+  const lines = [
+    "## Chunks",
+    "",
+    "| Chunk | Role | Raw | Gzip | % |",
+    "| --- | --- | --: | --: | --: |",
+  ];
+  for (const c of sorted) {
+    const share = ranked > 0 ? (chunkMetric(c) / ranked) * 100 : 0;
+    const gz = c.gzip !== undefined ? kb(c.gzip) : "—";
+    const role = ROLE_LABEL[classifyChunk(c.name)];
+    lines.push(`| \`${c.name}\` | ${role} | ${kb(c.bytes)} | ${gz} | ${share.toFixed(1)}% |`);
+  }
+  return lines;
+}
+
+/** The per-chunk "top modules" markdown sections, or empty when no chunk maps to metafile inputs. */
+function mdTopModules(sorted: BundleChunk[], metafile: BundleMetafile): string[] {
+  const lines = ["", "## Top modules per chunk", ""];
+  let any = false;
+  for (const c of sorted) {
+    const out = outputForChunk(metafile, c.name);
+    const mods = out ? topModules(out, 8) : [];
+    if (mods.length === 0) continue;
+    lines.push(`### \`${c.name}\``, "", ...mods, "");
+    any = true;
+  }
+  return any ? lines : [];
+}
+
 /**
  * The role a client chunk plays, inferred from its emitted name. `chunk-*` is the
  * shared runtime (the code-split common graph every interactive route imports —
@@ -104,9 +209,7 @@ export function bundleAnalysisLines(chunks: BundleChunk[], barWidth = 24): strin
   if (chunks.length === 0) {
     return ["No client chunks — this app ships 0 KB of JavaScript. 🎉"];
   }
-  const totalRaw = chunks.reduce((s, c) => s + c.bytes, 0);
-  const totalGz = chunks.reduce((s, c) => s + (c.gzip ?? 0), 0);
-  const total = totalGz > 0 ? totalGz : totalRaw;
+  const { raw: totalRaw, gz: totalGz, ranked: total } = chunkTotals(chunks);
   const sorted = [...chunks].sort((a, b) => chunkMetric(b) - chunkMetric(a));
   const max = chunkMetric(sorted[0]) || 1;
   const nameW = Math.min(44, Math.max(...sorted.map((c) => c.name.length)));
