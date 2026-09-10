@@ -697,12 +697,13 @@ export interface ExperimentalConfig {
    */
   asyncContext?: boolean;
   /**
-   * Compile-time feature flags. Each `feature("KEY")` call (from `denext/feature`) whose KEY
-   * is a key here is folded to the literal boolean at build time, so both bundlers dead-code
-   * eliminate the untaken branch — gated code, and anything only it imports, costs zero bytes
-   * when off. A key not listed reads `false`. The same map is seeded for server rendering and
-   * unbundled runs. Experimental while the fold's coverage widens (native App Router + SPA get
-   * DCE; the compat App Router path reads the seeded value without DCE).
+   * Compile-time feature flags. `feature("KEY")` (from `denext/feature`) always returns the
+   * configured value — the server and every client bundle are seeded with this map — and a call
+   * with a string-literal KEY is additionally folded to a literal where the build can, so the
+   * bundler dead-code-eliminates the untaken branch (gated code costs zero bytes when off). A key
+   * not listed reads `false`. Experimental while the fold's coverage widens: DCE covers the native
+   * App Router's component (`.tsx`/`.jsx`) modules, the SPA bundle, and dev; the compat drop-in App
+   * Router path and non-component modules on the native path read the seeded value without DCE.
    */
   features?: Record<string, boolean>;
   /**

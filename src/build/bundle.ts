@@ -622,6 +622,21 @@ function viewTransitionSupportBlock(
   };
 }
 
+/**
+ * Seed the `denext/feature` flag map on the CLIENT for the native App Router path. The
+ * compat/SPA esbuild paths inline `__DENEXT_FEATURES__` via `define`, but `deno bundle` has
+ * no `define`, and the fold only reaches component (`.tsx`/`.jsx`) modules — so a `feature()`
+ * call in a plain `.ts` util (or via a namespace import) would otherwise read the empty
+ * `globalThis` default and disagree with the (seeded) server render. Seeding here makes the
+ * fold a pure DCE optimization: any un-folded call still returns the configured value. Emitted
+ * at the top of the entry, before any island module executes. Empty map → nothing emitted (the
+ * runtime default `{}` already reads every flag as `false`).
+ */
+function featureSeedBlock(features: Record<string, boolean>): string {
+  if (Object.keys(features).length === 0) return "";
+  return `globalThis.__DENEXT_FEATURES__ = ${JSON.stringify(features)};\n`;
+}
+
 /** The Flight entry's `main()`: read the island, adopt signal state, hydrate, boot resumability. */
 function flightMain(catchBody: string): string {
   return `async function main() {
@@ -683,6 +698,7 @@ export function generateFlightEntry(
   usesClassComponents = false,
   usesActivity = false,
   usesViewTransition = false,
+  features: Record<string, boolean> = {},
 ): string {
   const entries = [...boundary.client.entries()];
   // Islands are code-split: one dynamic `import()` per island module, run on demand for the
@@ -701,7 +717,9 @@ export function generateFlightEntry(
   return `// denext generated Flight entry — do not edit.
 ${clientInstrumentationImport(instrumentationClient)}${clientImport}
 ${liveImport}${classImport}${activityImport}${vtImport}${refreshImport}
-${classInstall}${activityInstall}${vtInstall}const registry = new Map();
+${
+    featureSeedBlock(features)
+  }${classInstall}${activityInstall}${vtInstall}const registry = new Map();
 // Functions AND React's non-callable memo()/forwardRef() element objects — the server tags
 // both as client references (radix exports the latter), so both must resolve here.
 function reg(mod, clientId) {
@@ -791,6 +809,13 @@ export interface BundleOptions {
    */
   usesViewTransition?: boolean;
   /**
+   * Compile-time feature flags (`experimental.features`) to seed on the CLIENT for the native
+   * `deno bundle` path (which has no esbuild `define`). Baked into the flight entry so an
+   * un-folded `feature()` call reads the configured value instead of the empty default. Only
+   * the native flight bundler passes this; compat/SPA seed via `define` instead. Defaults `{}`.
+   */
+  features?: Record<string, boolean>;
+  /**
    * The project's `instrumentation-client.{ts,tsx,js}` (absolute path), imported first by
    * every generated browser entry so it runs before the app's client code. Null/unset: none.
    */
@@ -846,6 +871,7 @@ export async function bundleFlightEntry(
         opts.usesClassComponents ?? false,
         opts.usesActivity ?? false,
         opts.usesViewTransition ?? false,
+        opts.features ?? {},
       ),
       {
         configPath: opts.configPath,

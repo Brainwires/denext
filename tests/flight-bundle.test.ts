@@ -81,6 +81,25 @@ Deno.test("flight entry: usesLive=true keeps the Live import + transport wiring"
   assertStringIncludes(src, "navigate");
 });
 
+// The native flight entry seeds the feature-flag map on the client (no esbuild `define` on the
+// `deno bundle` path), so an un-folded feature() call agrees with the seeded server render.
+Deno.test("flight entry: seeds __DENEXT_FEATURES__ when features are configured, else omits it", () => {
+  const withFlags = generateFlightEntry(
+    emptyBoundary(),
+    false,
+    false,
+    false,
+    null,
+    false,
+    false,
+    false,
+    { NEW_UI: true, OLD: false },
+  );
+  assertStringIncludes(withFlags, `globalThis.__DENEXT_FEATURES__ = {"NEW_UI":true,"OLD":false};`);
+  // No features → no seed line (the runtime default {} already reads every flag as false).
+  assert(!generateFlightEntry(emptyBoundary()).includes("__DENEXT_FEATURES__"));
+});
+
 // memo()/forwardRef() exports are non-callable objects; the server tags them as client refs, so
 // the generated entry must register them too or the reference has nothing to hydrate against.
 Deno.test("flight entry: registers memo/forwardRef element objects as well as functions", () => {

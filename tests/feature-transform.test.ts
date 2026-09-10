@@ -44,6 +44,15 @@ Deno.test("ignores a same-named call not bound to denext/feature", async () => {
   assertEquals(changed, false);
 });
 
+Deno.test("does NOT fold a call shadowed by a local param of the same name", async () => {
+  // `feature` is imported, but the inner `pick(feature)` param shadows it — that call is not
+  // the helper and must be left alone.
+  const src = `${IMPORT}export function pick(feature: (k: string) => boolean) {\n` +
+    `  return feature("X");\n}\n`;
+  const { changed } = await transformFeatures(src, { X: true });
+  assertEquals(changed, false);
+});
+
 Deno.test("ignores a non-literal argument", async () => {
   const src = `${IMPORT}export const v = (k: string) => feature(k);\n`;
   const { changed } = await transformFeatures(src, { X: true });

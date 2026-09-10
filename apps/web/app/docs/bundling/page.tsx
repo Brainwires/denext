@@ -75,19 +75,28 @@ export default {
 } satisfies import("denext/server").DenextConfig;`}
       </Code>
       <p>
-        The fold runs on <strong>every path</strong>{" "}
-        — the native App Router bundle, the compat/SPA esbuild bundle, and the dev server — so what
-        you see in dev matches the build. A key not listed in <code>experimental.features</code>
-        {" "}
-        reads <code>false</code>; a call with a non-literal argument (<code>
+        <code>feature()</code> <strong>always returns the configured value</strong>{" "}
+        — on the server and in the browser — so dev, SSR, and the client agree. Where the build can
+        prove the value (a string-literal key), it folds the call to a literal so the untaken branch
+        is{" "}
+        <strong>dead-code eliminated</strong>: the native App Router (component modules), the SPA
+        bundle, and dev. On the <strong>compat (drop-in) App Router</strong>{" "}
+        path the flag is read at runtime instead, so the branch is <em>not</em>{" "}
+        eliminated there. A key not listed reads <code>false</code>; a non-literal argument (<code>
           feature(name)
-        </code>) can't be folded and reads the seeded value at runtime. Server rendering reads the
-        same map.
+        </code>) is always read at runtime.
       </p>
       <Callout kind="note">
         Only a <code>feature("STRING_LITERAL")</code>{" "}
         call is folded (and dead-code-eliminated). That's the point: keep the argument a literal so
         the bundler can prove which branch to drop.
+      </Callout>
+      <Callout kind="warn">
+        Flag <strong>names and their on/off states are embedded in the client bundle</strong> (like
+        {" "}
+        <code>NEXT_PUBLIC_*</code> env vars) — the gated <em>code</em>{" "}
+        is dead-code eliminated when a flag is off, but the flag key itself is visible. Don't encode
+        secrets or confidential roadmap names in flag keys.
       </Callout>
 
       <h2>Tree-shaking sideEffects:false deps</h2>

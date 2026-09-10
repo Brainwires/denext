@@ -279,9 +279,11 @@ export default async function Blog() {
 ```
 
 **A compile-time feature flag (dead-code-eliminated):** `feature("KEY")` from `denext/feature`
-folds to a boolean literal at build time for any KEY in `experimental.features`, so both bundlers
-drop the untaken branch (and anything only it imports) — denext's `feature()` (cf. Bun's
-`bun:bundle`). Keep the argument a string literal; a key not listed reads `false`.
+folds to a boolean literal at build time for any KEY in `experimental.features` — denext's
+`feature()` (cf. Bun's `bun:bundle`). `feature()` always returns the configured value; the untaken
+branch is dead-code eliminated where it folds (native App Router component modules, SPA, dev), and
+read at runtime on the compat drop-in App Router path. Keep the argument a string literal; a key
+not listed reads `false`. Flag names/states are embedded in the client bundle (don't encode secrets).
 
 ```tsx
 import { feature } from "denext/feature";

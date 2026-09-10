@@ -14,10 +14,12 @@ and this project adheres to
   KEY is listed in `experimental.features` (`denext.config.ts`) is folded to the literal
   `true`/`false` at build time, so **both** bundlers dead-code-eliminate the untaken branch —
   the gated code, and anything only it imports, costs **zero bytes** when the flag is off
-  (denext's take on Bun 1.4's `feature()` from `bun:bundle`). The fold runs on every path
-  (native App Router, compat/SPA esbuild, and dev), and server rendering reads the same
-  seeded map; a key not listed reads `false`, and a non-literal argument reads the runtime
-  value.
+  (denext's take on Bun 1.4's `feature()` from `bun:bundle`). `feature()` always returns the
+  configured value (server and client both seeded), and dead-code elimination applies where
+  the call is folded: the native App Router (component modules), the SPA bundle, and dev — on
+  the compat drop-in App Router path the flag is read at runtime without DCE. A key not listed
+  reads `false`; a non-literal argument is read at runtime. Note: flag names/states are
+  embedded in the client bundle (like `NEXT_PUBLIC_*`).
 - **`denext analyze --md` — a markdown bundle report.** Prints a per-chunk size table (chunk,
   role, raw, gzip, %) plus per-role subtotals to stdout (pipe to a file — a CI artifact),
   symmetric with `--json`. On the esbuild (compat/SPA) path it also breaks each chunk down by

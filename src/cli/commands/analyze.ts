@@ -68,12 +68,19 @@ export const analyzeCommand: CommandSpec = {
     // Under --md, keep stdout clean for `> report.md`: route the build's progress logs to
     // stderr, so only the markdown report lands on stdout.
     const origLog = console.log;
+    const priorAnalyzeEnv = Deno.env.get("DENEXT_ANALYZE");
     if (md) console.log = (...args: unknown[]) => console.error(...args);
     let outDir: string;
     try {
       ({ outDir } = await build(dir));
     } finally {
-      if (md) console.log = origLog;
+      if (md) {
+        console.log = origLog;
+        // Restore the env so a programmatic caller running build() again in-process doesn't
+        // keep capturing metafiles (the metafile capture is gated on DENEXT_ANALYZE).
+        if (priorAnalyzeEnv === undefined) Deno.env.delete("DENEXT_ANALYZE");
+        else Deno.env.set("DENEXT_ANALYZE", priorAnalyzeEnv);
+      }
     }
     const chunks = await readClientChunks(join(outDir, "client"));
     if (md) {

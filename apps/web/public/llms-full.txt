@@ -21,11 +21,10 @@ emit correct denext instead of Next.js.
    `imports` map. Run it with `deno task dev` / `deno task build` /
    `deno task start`. Migrating a Next app? `denext migrate` does it in one pass
    — writes the `deno.json` alias map so `next/*`+`react` resolve to denext with
-   your source unchanged (add `--codemod` to rewrite imports to native
-   `denext`). A **`pages/` (Pages Router) app** is migrated too: migrate wires
-   the `@denext/pages-router` plugin (`denext.config.ts` + `deno.json`) and
-   rewrites `next/router`/`next/head`/`next/link` to the plugin's compat
-   modules.
+   your source unchanged (add `--codemod` to rewrite imports to native `denext`). A **`pages/` (Pages
+   Router) app** is migrated too: migrate wires the `@denext/pages-router`
+   plugin (`denext.config.ts` + `deno.json`) and rewrites
+   `next/router`/`next/head`/`next/link` to the plugin's compat modules.
 3. **File conventions are the same as Next App Router:** `app/page.tsx`,
    `app/layout.tsx`, `app/loading.tsx`, `app/error.tsx`, `app/not-found.tsx`,
    `app/api/x/route.ts`, `app/blog/[slug]/page.tsx`, `middleware.ts`. Server
@@ -87,27 +86,22 @@ export function GET(_req: Request): Response {
 }
 ```
 
-**A validated route handler + calling it with end-to-end types (no tRPC):**
-`defineApi` takes Standard Schemas (Zod/Valibot/ArkType/TypeBox/hand-rolled) for
-`params` / `query` / `body` / `response` plus the `errors` it may fail with; the
-handler gets parsed, typed input and a schema mismatch is a structured 400
-before it runs. `denext dev`/`build` generate `.denext/api.ts` from the route
-modules' TYPES and register it, so `createApiClient()` and `useApi` type-check
-every call — path, method, params, query, body, response, error codes.
+**A validated route handler + calling it with end-to-end types (no tRPC):** `defineApi`
+takes Standard Schemas (Zod/Valibot/ArkType/TypeBox/hand-rolled) for `params` / `query` /
+`body` / `response` plus the `errors` it may fail with; the handler gets parsed, typed input
+and a schema mismatch is a structured 400 before it runs. `denext dev`/`build` generate
+`.denext/api.ts` from the route modules' TYPES and register it, so `createApiClient()` and
+`useApi` type-check every call — path, method, params, query, body, response, error codes.
 
 ```ts
 // app/api/user/[id]/route.ts
 import { createApi, defineApi, requireSession } from "denext/server";
 import { z } from "zod";
-export const GET = defineApi(
-  {
-    params: z.object({ id: z.string() }),
-    response: z.object({ id: z.string(), name: z.string() }), // strips undeclared keys, in prod too
-    errors: { not_found: 404 },
-  },
-  async ({ params, fail }) =>
-    (await db.users.get(params.id)) ?? fail("not_found"),
-);
+export const GET = defineApi({
+  params: z.object({ id: z.string() }),
+  response: z.object({ id: z.string(), name: z.string() }), // strips undeclared keys, in prod too
+  errors: { not_found: 404 },
+}, async ({ params, fail }) => (await db.users.get(params.id)) ?? fail("not_found"));
 export const PATCH = createApi().use(requireSession()).define({
   params: z.object({ id: z.string() }),
   body: z.object({ name: z.string().min(1) }),
@@ -125,14 +119,9 @@ import type {} from "./.denext/api.ts"; // registers the schema (type-only; noth
 const api = createApiClient(); // typed against THIS app's routes
 const user = await api("/api/user/[id]", "GET", { params: { id: "1" } }); // user is typed
 try {
-  await api("/api/user/[id]", "PATCH", {
-    params: { id: "1" },
-    body: { name: "" },
-  });
+  await api("/api/user/[id]", "PATCH", { params: { id: "1" }, body: { name: "" } });
 } catch (err) {
-  if (
-    isApiClientError(err) && err.code === "not_owner"
-  ) { /* narrowed to the declared codes */ }
+  if (isApiClientError(err) && err.code === "not_owner") { /* narrowed to the declared codes */ }
 }
 ```
 
@@ -141,29 +130,24 @@ try {
 "use client";
 import { useApi } from "denext";
 export function User({ id }: { id: string }) {
-  const { data, error, pending } = useApi("/api/user/[id]", "GET", {
-    params: { id },
-  });
+  const { data, error, pending } = useApi("/api/user/[id]", "GET", { params: { id } });
   return pending ? <p>…</p> : error ? <p>{error.code}</p> : <p>{data?.name}</p>;
 }
 ```
 
-Add the `@denext/openapi` plugin (`plugins: [openapi()]` in `denext.config.ts`)
-and those same definitions serve `GET /openapi.json` (OpenAPI 3.1) + a docs page
-at `GET /docs`, write `openapi.json` at build, and back
-`denext openapi emit | diff | lint` — zero extra annotation. Schemas that
-implement Standard JSON Schema (Zod ≥ 4.2, ArkType, Valibot) or TypeBox are
-described in full; others are `{}` + a lint warning. Need GraphQL?
-`@denext/graphql` mounts GraphQL Yoga at `/graphql` (any `GraphQLSchema`; Pothos
-recommended, no decorators) and `fromChannel(channel, key)` turns a
-`createChannel` into a subscription source — the same push the Live socket
-delivers.
+Add the `@denext/openapi` plugin (`plugins: [openapi()]` in `denext.config.ts`) and those same
+definitions serve `GET /openapi.json` (OpenAPI 3.1) + a docs page at `GET /docs`, write
+`openapi.json` at build, and back `denext openapi emit | diff | lint` — zero extra annotation.
+Schemas that implement Standard JSON Schema (Zod ≥ 4.2, ArkType, Valibot) or TypeBox are
+described in full; others are `{}` + a lint warning.
+Need GraphQL? `@denext/graphql` mounts GraphQL Yoga at `/graphql` (any `GraphQLSchema`;
+Pothos recommended, no decorators) and `fromChannel(channel, key)` turns a `createChannel`
+into a subscription source — the same push the Live socket delivers.
 
-A plain handler still works and is still typed: return `TypedResponse<T>` / take
-a `TypedRequest<B>` from `denext/server`. A plain `route.ts` body is capped at 1
-MiB (`export const maxBodyBytes = N | false`); `redirect()`/`notFound()` inside
-one are HTTP responses; a thrown `ApiError(status, code, { data })` is a typed
-JSON error envelope.
+A plain handler still works and is still typed: return `TypedResponse<T>` / take a
+`TypedRequest<B>` from `denext/server`. A plain `route.ts` body is capped at 1 MiB
+(`export const maxBodyBytes = N | false`); `redirect()`/`notFound()` inside one are HTTP
+responses; a thrown `ApiError(status, code, { data })` is a typed JSON error envelope.
 
 **Typed live data (validated subscription + server push):**
 
@@ -174,8 +158,7 @@ import { createChannel, defineSubscription } from "denext/server";
 export const orderStatus = defineSubscription({
   input: z.object({ id: z.string() }), // validated on every subscribe
   tags: ({ id }) => [`order:${id}`], // server-derived; re-pushed on revalidateTag
-  authorize: async ({ id }) =>
-    (await auth())?.user.id === (await db.orders.owner(id)),
+  authorize: async ({ id }) => (await auth())?.user.id === (await db.orders.owner(id)),
   resolve: ({ id }) => db.orders.status(id),
 });
 export const orderEvents = createChannel<{ status: string }>({
@@ -192,9 +175,9 @@ const { data } = useSubscription(orderStatus, { id }, { initial });
 const { data: event } = useChannel(orderEvents, `user:${userId}`);
 ```
 
-**A typed Server Action (the mutation side, also type-checked):** `defineAction`
-validates `FormData` into a typed input (a parser, or a Zod/Valibot/any Standard
-Schema) and its `Out` flows into `useActionState`.
+**A typed Server Action (the mutation side, also type-checked):** `defineAction` validates
+`FormData` into a typed input (a parser, or a Zod/Valibot/any Standard Schema) and its `Out`
+flows into `useActionState`.
 
 ```ts
 // app/actions.ts
@@ -203,9 +186,7 @@ import { ActionValidationError, defineAction } from "denext/server";
 export const createPost = defineAction({
   input: (f) => ({ title: String(f.title ?? "").trim() }), // typed input: { title: string }
   handler: async ({ title }) => {
-    if (!title) {
-      throw new ActionValidationError("bad", { title: "Title is required" });
-    }
+    if (!title) throw new ActionValidationError("bad", { title: "Title is required" });
     return { id: await db.posts.insert({ title }) }; // Out inferred: { id: string }
   },
 });
@@ -217,10 +198,7 @@ export const createPost = defineAction({
 import { idleActionState, useActionState } from "denext";
 import { createPost } from "./actions.ts";
 export function NewPost() {
-  const [state, action] = useActionState(
-    createPost,
-    idleActionState<{ id: string }>(),
-  );
+  const [state, action] = useActionState(createPost, idleActionState<{ id: string }>());
   return (
     <form action={action}>
       <input name="title" />
@@ -254,12 +232,11 @@ export const listNotes = () => db.prepare("SELECT * FROM notes").all();
 
 Open the connection once at module scope; do writes in Server Actions.
 
-**A scheduled / background task (cron):** put it in `tasks/<name>.ts`; schedule
-it in `denext.config.ts` (`scheduledTasks`) or per-task; run it on demand with
-`runTask(name)` or `denext task <name>`. Uses `Deno.cron` where available (Deno
-Deploy), else a userland tick — no npm cron dependency. **Cron expressions are
-evaluated in UTC** (matching `Deno.cron`), and a schedule never fires on startup
-nor overlaps a still-running instance of the same task.
+**A scheduled / background task (cron):** put it in `tasks/<name>.ts`; schedule it in
+`denext.config.ts` (`scheduledTasks`) or per-task; run it on demand with `runTask(name)`
+or `denext task <name>`. Uses `Deno.cron` where available (Deno Deploy), else a userland
+tick — no npm cron dependency. **Cron expressions are evaluated in UTC** (matching `Deno.cron`),
+and a schedule never fires on startup nor overlaps a still-running instance of the same task.
 
 ```ts
 // tasks/cleanup.ts
@@ -275,30 +252,20 @@ export default defineTask({
 // anywhere on the server: import { runTask } from "denext/server"; await runTask("cleanup");
 ```
 
-**A content collection (typed MD/MDX/YAML/JSON — the
-`@denext/content-collections` plugin):** add `plugins: [contentCollections()]`
-to `denext.config.ts`, declare collections in `content.config.ts` with a
-Standard Schema + a loader, then query them typed from a Server Component. The
-plugin validates entries and generates types — live in `denext dev`, and at
-`denext build`.
+**A content collection (typed MD/MDX/YAML/JSON — the `@denext/content-collections` plugin):** add
+`plugins: [contentCollections()]` to `denext.config.ts`, declare collections in `content.config.ts`
+with a Standard Schema + a loader, then query them typed from a Server Component. The plugin
+validates entries and generates types — live in `denext dev`, and at `denext build`.
 
 ```ts
 // content.config.ts
-import {
-  defineCollection,
-  defineContentConfig,
-  glob,
-} from "@denext/content-collections/config";
+import { defineCollection, defineContentConfig, glob } from "@denext/content-collections/config";
 import { z } from "zod";
 export default defineContentConfig({
   collections: {
     blog: defineCollection({
       loader: glob({ pattern: "**/*.md", base: "content/blog" }),
-      schema: z.object({
-        title: z.string(),
-        date: z.string(),
-        draft: z.boolean().default(false),
-      }),
+      schema: z.object({ title: z.string(), date: z.string(), draft: z.boolean().default(false) }),
     }),
   },
 });
@@ -315,11 +282,12 @@ export default async function Blog() {
 // CLI: `denext content build | list | validate` (validate exits 1 on a schema failure — a CI gate).
 ```
 
-**A compile-time feature flag (dead-code-eliminated):** `feature("KEY")` from
-`denext/feature` folds to a boolean literal at build time for any KEY listed in
-`experimental.features`, so both bundlers drop the untaken branch (and anything
-only it imports) — denext's `feature()` (cf. Bun's `bun:bundle`). Keep the
-argument a string literal; a key not listed reads `false`.
+**A compile-time feature flag (dead-code-eliminated):** `feature("KEY")` from `denext/feature`
+folds to a boolean literal at build time for any KEY in `experimental.features` — denext's
+`feature()` (cf. Bun's `bun:bundle`). `feature()` always returns the configured value; the untaken
+branch is dead-code eliminated where it folds (native App Router component modules, SPA, dev), and
+read at runtime on the compat drop-in App Router path. Keep the argument a string literal; a key
+not listed reads `false`. Flag names/states are embedded in the client bundle (don't encode secrets).
 
 ```tsx
 import { feature } from "denext/feature";
@@ -329,11 +297,10 @@ export function Checkout() {
 // denext.config.ts → experimental: { features: { NEW_CHECKOUT: false } }
 ```
 
-**Inspect / shrink the client bundle:** `denext analyze` breaks the bundle down
-by chunk + role; `denext analyze --md` writes a markdown report (per-module on
-the esbuild path) to pipe into CI. Imports of one export from a
-`"sideEffects": false` dep (lucide-react, Radix) are tree-shaken automatically
-on the esbuild path.
+**Inspect / shrink the client bundle:** `denext analyze` breaks the bundle down by chunk + role;
+`denext analyze --md` writes a markdown report (per-module on the esbuild path) to pipe into CI.
+Imports of one export from a `"sideEffects": false` dep (lucide-react, Radix) are tree-shaken
+automatically on the esbuild path.
 
 **Testing an app (no browser, JS-disabled path):**
 
@@ -370,16 +337,16 @@ if (!report.ok) throw new Error(formatReport(report)); // or run `denext doctor`
 
 **Config:** `denext.config.ts` exports `{ ... }` (redirects, rewrites, headers,
 i18n, images, `cacheComponents`, `streaming`, `live`, `plugins`, `experimental`,
-`tailwind`, `csp`, `compatibilityMode`; `mode: "spa"` + `spa: { entry, … }` for
-SPA mode). Not `next.config.js`.
+`tailwind`, `csp`, `compatibilityMode`;
+`mode: "spa"` + `spa: { entry, … }` for SPA mode). Not `next.config.js`.
 
 **Writing a plugin:** a `DenextPlugin` (`{ name, setup(ctx) }` from
-`denext/plugin-kit`, the semver-stable toolkit) hooks six seams —
-`addRouteSynthesizer` (add/adjust routes), `addRequestHandler` (claim unmatched
-requests), `addBuildStep` (emit assets), `addPrepareStep` (codegen the app
-imports — runs at build AND dev startup, and re-runs on `watch`-glob changes in
-dev), `addTeardown` (dispose on drain), and `addCommand` (contribute a CLI
-verb). Declare it as `plugins: [myPlugin()]`. See [PLUGINS.md](./PLUGINS.md) and
+`denext/plugin-kit`, the semver-stable toolkit) hooks six seams — `addRouteSynthesizer` (add/adjust routes),
+`addRequestHandler` (claim unmatched requests), `addBuildStep` (emit assets),
+`addPrepareStep` (codegen the app imports — runs at build AND dev startup, and re-runs on
+`watch`-glob changes in dev), `addTeardown` (dispose on drain), and `addCommand` (contribute a
+CLI verb). Declare it as `plugins: [myPlugin()]`. See
+[PLUGINS.md](./PLUGINS.md) and
 [`examples/plugin-aliases`](./examples/plugin-aliases).
 
 ## What's different to keep in mind
@@ -407,27 +374,25 @@ the map above — that is almost always correct denext.
 
 denext ships tooling so agents get it right the first time:
 
-- **MCP server** — `deno run -A jsr:@denext/denext/cli mcp` (or `denext mcp`).
-  It speaks MCP over stdio; configure it as an MCP server in your client. Tools:
+- **MCP server** — `deno run -A jsr:@denext/denext/cli mcp` (or `denext mcp`). It speaks
+  MCP over stdio; configure it as an MCP server in your client. Tools:
   `denext_check_snippet` (lint a code string for Next-isms before you write it),
-  `denext_import_map` (map a Next/React import to denext), `denext_generate`
-  (scaffold), `denext_doctor`, `denext_codemod`, `denext_list_routes` (an app's
-  pages + API routes), `denext_dev_logs` (the RUNNING dev server's recent events
-  — server errors, server + browser console, completed requests, and HMR — so
-  you can see what actually happened at runtime), `denext_render` (render a
-  route or component server-side, no browser, and get the HTML/error — SEE what
-  your edit produces), `denext_route_map` (the full render tree at a path:
-  layouts, boundaries, server/client split), `denext_profile` (build unminified,
-  serve, and profile a route in headless Chromium — CPU self-time by function +
-  heap growth + a leak check; pass `interact` to profile a re-render, `budget`
-  to gate a regression), `denext_search_docs` (BM25 over the denext docs), and
-  the codebase tools `denext_index_codebase` / `denext_query_codebase` /
-  `denext_find_definition` / `denext_find_references`.
-  `denext mcp --disable rag,docs` hides tool groups or individual tools to trim
-  an agent's context. Resources: `denext://guide`, `denext://import-map`.
-- **`llms.txt`** — [denext.dev/llms.txt](https://denext.dev/llms.txt) (concise)
-  and [llms-full.txt](https://denext.dev/llms-full.txt) (this guide + an API
-  summary).
+  `denext_import_map` (map a Next/React import to denext), `denext_generate` (scaffold),
+  `denext_doctor`, `denext_codemod`, `denext_list_routes` (an app's pages + API routes),
+  `denext_dev_logs` (the RUNNING dev server's recent events — server errors, server +
+  browser console, completed requests, and HMR — so you can see what actually happened at
+  runtime), `denext_render` (render a route or component server-side, no browser, and get
+  the HTML/error — SEE what your edit produces), `denext_route_map` (the full render
+  tree at a path: layouts, boundaries, server/client split), `denext_profile` (build
+  unminified, serve, and profile a route in headless Chromium — CPU self-time by
+  function + heap growth + a leak check; pass `interact` to profile a re-render, `budget`
+  to gate a regression), `denext_search_docs` (BM25
+  over the denext docs), and the codebase tools `denext_index_codebase` /
+  `denext_query_codebase` / `denext_find_definition` / `denext_find_references`.
+  `denext mcp --disable rag,docs` hides tool groups or individual tools to trim an
+  agent's context. Resources: `denext://guide`, `denext://import-map`.
+- **`llms.txt`** — [denext.dev/llms.txt](https://denext.dev/llms.txt) (concise) and
+  [llms-full.txt](https://denext.dev/llms-full.txt) (this guide + an API summary).
 
 ---
 

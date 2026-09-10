@@ -18,6 +18,7 @@ import { fromFileUrl, join, toFileUrl } from "@std/path";
 import {
   absolutizeSpecifiers,
   applyEdits,
+  collectPatternNames,
   type Edit,
   endOf,
   type Node,
@@ -50,6 +51,29 @@ function featureBindings(body: Node[]): Set<string> {
     }
   }
   return names;
+}
+
+/**
+ * Names re-bound anywhere in the module by a param, variable, function, class, or catch clause.
+ * A top-level redeclaration of an import is a syntax error, so any binding found here is an INNER
+ * shadow — a `feature` param, say — whose calls must NOT be folded (they aren't the import). The
+ * walk is not scope-precise, so a name shadowed in one scope is dropped from folding everywhere in
+ * the module (conservative — the un-folded call reads the seeded value, which is correct).
+ */
+function shadowedNames(body: Node[], importNames: Set<string>): Set<string> {
+  const bound = new Set<string>();
+  const note = (pat: Node | undefined) => pat && collectPatternNames(pat, bound);
+  for (const item of body) {
+    walkAst(item, (n) => {
+      if (Array.isArray(n.params)) { for (const p of n.params) note(p.pat ?? p); }
+      if (n.type === "VariableDeclarator") note(n.id);
+      if (n.type === "CatchClause") note(n.param);
+      if (
+        (n.type === "FunctionDeclaration" || n.type === "ClassDeclaration") && n.identifier
+      ) bound.add(n.identifier.value);
+    });
+  }
+  return new Set([...importNames].filter((name) => bound.has(name)));
 }
 
 /** The single string-literal key of a `feature("KEY")` call bound to a known name, else null. */
@@ -86,6 +110,10 @@ export async function transformFeatures(
   if (!parsed) return identity;
   const { ctx, body } = parsed;
   const names = featureBindings(body);
+  if (names.size === 0) return identity;
+  // Drop any import name re-bound by an inner scope (a `feature` param) so we never fold a call
+  // that isn't the imported helper.
+  for (const shadowed of shadowedNames(body, names)) names.delete(shadowed);
   if (names.size === 0) return identity;
   const edits: Edit[] = [];
   for (const item of body) {

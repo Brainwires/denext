@@ -11,11 +11,13 @@
  * }
  * ```
  *
- * At build time each `feature("KEY")` call whose KEY is listed in
- * `experimental.features` (`denext.config.ts`) is replaced with the literal `true` or
- * `false`, so **both** bundlers (esbuild on the compat/SPA paths, `deno bundle` on the
- * native App Router path) dead-code-eliminate the untaken branch — the gated code, and
- * anything only it imports, costs zero bytes when the flag is off.
+ * `feature()` always returns the configured value — the server and every client bundle are
+ * seeded with `experimental.features`. At build time a `feature("KEY")` call with a
+ * string-literal KEY is additionally FOLDED to `true`/`false` where the build can, so the
+ * bundler dead-code-eliminates the untaken branch (the gated code, and anything only it
+ * imports, costs zero bytes when off): the native App Router's component modules, the SPA
+ * bundle, and dev. On the compat (drop-in) App Router path the call is read at runtime with
+ * no DCE (it is seeded, so still correct).
  *
  * A call the fold can't resolve statically (a non-literal argument, or a key not listed
  * in config) stays a runtime call and returns the seeded value — `false` for any key not

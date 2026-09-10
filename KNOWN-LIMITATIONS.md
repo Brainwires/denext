@@ -380,6 +380,19 @@ The nuances worth knowing (reported as review notes, never silently changed):
     adapter add (the empty and object-literal forms are wired automatically). Non-SQLite
     datasources need their own Prisma driver adapter instead of better-sqlite3.
 
+### Compile-time feature flags (`feature()`)
+
+- **DCE covers some paths, not all — but the value is always correct.** `feature("KEY")`
+  (`denext/feature`) always returns the configured value: the server and every client bundle are
+  seeded with `experimental.features`. **Dead-code elimination** of the untaken branch happens
+  only where the build folds the call: the native App Router's **component (`.tsx`/`.jsx`)**
+  modules, the whole SPA bundle, and dev. On the **compat (drop-in) App Router** path, and for
+  **non-component (`.ts`) modules on the native path**, `feature()` reads the seeded value at
+  runtime and the branch is **not** eliminated (correct, but no byte savings). Only a
+  string-literal argument is foldable; `feature(name)` is always a runtime read. Flag names and
+  their on/off states are embedded in the client bundle (like `NEXT_PUBLIC_*` env vars) — don't
+  encode secrets in flag keys.
+
 ## Not yet available
 
 A few capabilities aren't built yet (none affects the zero-npm runtime):
