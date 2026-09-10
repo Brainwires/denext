@@ -1,0 +1,32 @@
+[package]
+# Independent semver, started matching the wrapped `swc` crate (76.0.0) — the same
+# compiler @swc/wasm-web builds from. See README for the versioning rule.
+name = "denext-swc"
+version = "76.0.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Deno/JSR wasm build of the swc parse/print/transform bindings denext's build pipeline uses"
+repository = "https://github.com/Brainwires/denext"
+
+[lib]
+crate-type = ["cdylib"]
+
+# Mirrors swc's own `bindings/binding_core_wasm` — the crate @swc/wasm-web is built
+# from — so the JS API (parse/parseSync/…) is the same, just rebuilt for Deno.
+[dependencies]
+swc_core = { version = "=76.0.0", features = [
+  "ecma_ast_serde",
+  "ecma_codegen",
+  "binding_macro_wasm",
+  "ecma_transforms",
+  "ecma_visit",
+  "ecma_helpers_inline",
+] }
+# Pinned to the version wasmbuild (0.23.0) bundles; swc_core's transitive
+# wasm-bindgen req is `^0.2`, so this forces the whole graph to 0.2.108.
+wasm-bindgen = { version = "=0.2.108", features = ["enable-interning"] }
+serde = { version = "1", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+anyhow = "1"
+getrandom = { version = "0.3", features = ["wasm_js"] }
+tracing = { version = "0.1", features = ["max_level_off"] }

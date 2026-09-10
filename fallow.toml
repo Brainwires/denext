@@ -152,6 +152,8 @@ ignorePatterns = [
   # Regenerated from the Rust/C sources; never hand-edited, so its findings are not actionable.
   "packages/photon/lib/*.js",
   "packages/avif/lib/*.js",
+  "packages/lightningcss/lib/*.js",
+  "packages/swc/lib/*.js",
   # Fixture trees the migrate tests READ AS TEXT (never imported), so reachability can't see
   # them; CONTRIBUTING.md documents this as the place to exclude such fixtures.
   "tests/fixtures/**",
