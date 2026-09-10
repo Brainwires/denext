@@ -256,6 +256,39 @@ Deno.test("graphql plugin: rejects a query nested past the depth cap; the cap is
   }
 });
 
+Deno.test("graphql plugin: rejects a query over the cost budget; multiplier + disable work", async () => {
+  // A schema with a paginated list field, so the cost multiplier has something to bite on.
+  const costSchema = createSchema({
+    typeDefs: `type Query { nodes(first: Int): [Node!]! } type Node { id: String! }`,
+    resolvers: { Query: { nodes: () => [] as { id: string }[] } },
+  });
+  const expensive = "{ nodes(first: 50) { id } }"; // cost = 1 + 50 * 1 = 51
+  try {
+    // Budget of 10: the multiplicative fan-out (51) is refused before any resolver runs.
+    const capped = await setup({ schema: costSchema, maxCost: 10 });
+    const body = await (await capped(post("https://x/graphql", expensive)))!.json();
+    assertEquals(body.data, undefined);
+    assertStringIncludes(JSON.stringify(body.errors), "too expensive");
+    // A small page is within budget.
+    const ok = await (await capped(post("https://x/graphql", "{ nodes(first: 5) { id } }")))!
+      .json();
+    assertEquals(ok.data.nodes, [], "a query within the budget still runs");
+  } finally {
+    resetPlugins();
+  }
+  try {
+    // Off by default: the same expensive query runs.
+    const off = await setup({ schema: costSchema });
+    assertEquals((await off(post("https://x/graphql", expensive)))!.status, 200);
+    assertEquals(
+      (await (await off(post("https://x/graphql", expensive)))!.json()).errors,
+      undefined,
+    );
+  } finally {
+    resetPlugins();
+  }
+});
+
 Deno.test("graphql plugin: a cyclic fragment is a clean validation error, not a stack overflow", async () => {
   try {
     const handle = await setup(); // default depth cap active

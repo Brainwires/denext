@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **Query cost budget (`maxCost`).** An opt-in complexity guard against the _multiplicative_
+  DoS a depth limit misses — `users(first: 1000) { posts(first: 1000) { … } }` is shallow but
+  fans out to a million resolver calls. Cost is estimated over the AST (no schema access, no
+  resolver run, no second `graphql` realm): each field costs `1` and a field carrying a
+  pagination argument (`first`/`last`/`limit`) multiplies its subtree cost by that integer. Off
+  by default (`maxDepth` stays the on-by-default guard); set `maxCost: 1000` to enable, and tune
+  the field weight / multiplier args via `costOptions`. A size passed as a variable uses the
+  default multiplier, since variable values aren't known at validation time. New exported type
+  `CostOptions`.
+
 ## 0.1.0
 
 Initial release. A GraphQL endpoint for a denext app as a plugin. Requires the denext that
