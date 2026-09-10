@@ -33,6 +33,13 @@ and this project adheres to
   status + connection hints), **`useDebouncedValue`**, and **`useCopyToClipboard`**. All are
   client-only and degrade gracefully during SSR / where the API is unavailable.
 
+- **`denext generate` covers the rest of the App Router surface.** New scaffold kinds
+  beyond page/route/layout/component/api/action: **`loading`**, **`error`** (a Client
+  Component with `{ error, reset }`), and **`not-found`** boundaries (nested under a path,
+  or the root when no path is given), plus **`middleware`** (a `middleware.ts` beside `app/`)
+  and **`task`** (a `tasks/<name>.ts` using `defineTask`). Existing files are never
+  overwritten.
+
 ## [2.2.0] - 2026-09-10
 
 ### Added

@@ -131,6 +131,63 @@ Deno.test("never overwrites an existing file", async () => {
   }
 });
 
+Deno.test("loading/error/not-found land under app/ (root when no path given)", async () => {
+  const dir = await project();
+  try {
+    // Nested boundary under a segment.
+    assertEquals((await generateArtifact(dir, "loading", "dashboard")).written, [
+      join(dir, "app/dashboard/loading.tsx"),
+    ]);
+    assert(
+      (await Deno.readTextFile(join(dir, "app/dashboard/loading.tsx"))).includes(
+        "function Loading()",
+      ),
+    );
+    // error.tsx is a Client Component with { error, reset }.
+    assertEquals((await generateArtifact(dir, "error", "dashboard")).written, [
+      join(dir, "app/dashboard/error.tsx"),
+    ]);
+    const err = await Deno.readTextFile(join(dir, "app/dashboard/error.tsx"));
+    assert(err.includes('"use client"') && err.includes("reset"), err);
+    // Root not-found (no path).
+    assertEquals((await generateArtifact(dir, "not-found", "")).written, [
+      join(dir, "app/not-found.tsx"),
+    ]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("middleware lands beside app/; task lands under tasks/", async () => {
+  const rootDir = await project();
+  try {
+    assertEquals((await generateArtifact(rootDir, "middleware", "")).written, [
+      join(rootDir, "middleware.ts"),
+    ]);
+    const mw = await Deno.readTextFile(join(rootDir, "middleware.ts"));
+    assert(mw.includes("export function middleware(") && mw.includes("config"), mw);
+
+    assertEquals((await generateArtifact(rootDir, "task", "cleanup")).written, [
+      join(rootDir, "tasks/cleanup.ts"),
+    ]);
+    const task = await Deno.readTextFile(join(rootDir, "tasks/cleanup.ts"));
+    assert(task.includes("defineTask(") && task.includes("denext task cleanup"), task);
+  } finally {
+    await Deno.remove(rootDir, { recursive: true });
+  }
+});
+
+Deno.test("middleware follows the src/app layout (src/middleware.ts)", async () => {
+  const dir = await project(true);
+  try {
+    assertEquals((await generateArtifact(dir, "middleware", "")).written, [
+      join(dir, "src/middleware.ts"),
+    ]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 // ---- docker generator ------------------------------------------------------
 
 Deno.test("generate docker writes root Dockerfile + compose + .dockerignore (server default)", async () => {
