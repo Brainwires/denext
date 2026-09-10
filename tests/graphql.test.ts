@@ -289,6 +289,55 @@ Deno.test("graphql plugin: rejects a query over the cost budget; multiplier + di
   }
 });
 
+Deno.test("graphql plugin: maxCost counts a variable page size (no literal-only bypass)", async () => {
+  const costSchema = createSchema({
+    typeDefs: `type Query { nodes(first: Int): [Node!]! } type Node { id: String! }`,
+    resolvers: { Query: { nodes: () => [] as { id: string }[] } },
+  });
+  // `first` as a VARIABLE — a literal-only AST estimate scores this ~1 and lets it through;
+  // the cost check runs at execute time with the real variable value, so it's counted.
+  const q = "query($n:Int!){ nodes(first:$n){ id } }";
+  try {
+    const capped = await setup({ schema: costSchema, maxCost: 10 });
+    const body = await (await capped(post("https://x/graphql", q, { n: 50 })))!.json();
+    assertEquals(body.data, undefined, "a large variable page size is refused");
+    assertStringIncludes(JSON.stringify(body.errors), "too expensive");
+    const ok = await (await capped(post("https://x/graphql", q, { n: 5 })))!.json();
+    assertEquals(ok.data.nodes, [], "a small variable page size is within budget");
+  } finally {
+    resetPlugins();
+  }
+});
+
+Deno.test("graphql plugin: a fragment bomb is analyzed in linear time (memoized walks)", async () => {
+  // f0..fN, each spreading the previous twice at the same level: 2^(N+1) expanded fields but
+  // O(N) to analyze once fragment depth/cost are memoized. Without memoization both the
+  // (default-on) depth walk and the cost walk are exponential and hang the event loop.
+  const N = 20;
+  let frags = "fragment f0 on Query { hello viewer }\n";
+  for (let i = 1; i <= N; i++) frags += `fragment f${i} on Query { ...f${i - 1} ...f${i - 1} }\n`;
+  const bomb = `query { ...f${N} }\n${frags}`;
+  try {
+    // Default guards (maxDepth 12 on, maxCost off): the depth walk must terminate. The query
+    // is depth 1 and its duplicate selections merge, so it executes.
+    const def = await setup();
+    const res = await def(post("https://x/graphql", bomb));
+    assertEquals(res!.status, 200);
+    assertEquals((await res!.json()).data.hello, "world");
+  } finally {
+    resetPlugins();
+  }
+  try {
+    // With a cost budget the (correctly huge) cost is computed linearly and refused.
+    const capped = await setup({ maxCost: 1000 });
+    const body = await (await capped(post("https://x/graphql", bomb)))!.json();
+    assertEquals(body.data, undefined);
+    assertStringIncludes(JSON.stringify(body.errors), "too expensive");
+  } finally {
+    resetPlugins();
+  }
+});
+
 Deno.test("graphql plugin: a cyclic fragment is a clean validation error, not a stack overflow", async () => {
   try {
     const handle = await setup(); // default depth cap active

@@ -8,9 +8,13 @@
   resolver run, no second `graphql` realm): each field costs `1` and a field carrying a
   pagination argument (`first`/`last`/`limit`) multiplies its subtree cost by that integer. Off
   by default (`maxDepth` stays the on-by-default guard); set `maxCost: 1000` to enable, and tune
-  the field weight / multiplier args via `costOptions`. A size passed as a variable uses the
-  default multiplier, since variable values aren't known at validation time. New exported type
-  `CostOptions`.
+  the field weight / multiplier args via `costOptions`. New exported type `CostOptions`. The
+  check runs at **execute** time, so a page size passed as a variable (`first: $n`) is counted
+  at its real value — a variable can't evade the budget. With Yoga `batching` on, the budget is
+  per operation (an N-operation batch may cost up to N×).
+- **Both the depth and cost walks now memoize per fragment.** A "fragment bomb" (many non-cyclic
+  spreads of the same fragment) is analyzed in linear time instead of exponential — this hardens
+  the default-on `maxDepth` guard, not only the new `maxCost`.
 
 ## 0.1.0
 

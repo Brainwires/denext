@@ -109,14 +109,17 @@ server-side subscription sees every publish to the key. Check the viewer in the 
 
 ## Options
 
-| Option     | Default          | What                                                                  |
-| ---------- | ---------------- | --------------------------------------------------------------------- |
-| `schema`   | required         | A `GraphQLSchema`, or a factory resolved once on first use            |
-| `path`     | `/graphql`       | Mount point (prefixed with `basePath`)                                |
-| `graphiql` | dev only         | Serve GraphiQL on a browser `GET`                                     |
-| `context`  | `{}`             | `({ request, signal }) => object` — your resolvers' context           |
-| `yoga`     | —                | Passthrough: `plugins`, `maskedErrors`, `cors`, `batching`, `logging` |
-| `outFile`  | `schema.graphql` | The SDL `denext build` writes into the output dir; `false` skips it   |
+| Option        | Default          | What                                                                               |
+| ------------- | ---------------- | ---------------------------------------------------------------------------------- |
+| `schema`      | required         | A `GraphQLSchema`, or a factory resolved once on first use                         |
+| `path`        | `/graphql`       | Mount point (prefixed with `basePath`)                                             |
+| `graphiql`    | dev only         | Serve GraphiQL on a browser `GET`                                                  |
+| `context`     | `{}`             | `({ request, signal }) => object` — your resolvers' context                        |
+| `maxDepth`    | `12`             | Reject a query nested deeper than this; `false` disables it                        |
+| `maxCost`     | `false` (off)    | Reject a query over this estimated cost (the multiplicative-fan-out guard); opt-in |
+| `costOptions` | —                | Tune `maxCost`: `fieldCost`, `listMultiplierArgs`, `defaultMultiplier`             |
+| `yoga`        | —                | Passthrough: `plugins`, `maskedErrors`, `cors`, `batching`, `logging`              |
+| `outFile`     | `schema.graphql` | The SDL `denext build` writes into the output dir; `false` skips it                |
 
 ## CI
 
@@ -144,8 +147,12 @@ file into the output directory.
   refused.
 - The endpoint runs inside denext's pipeline, so `middleware.ts` applies to it. What does
   **not**: `defineApi`'s `rateLimit` middleware and the route-handler body cap are route
-  features — rate-limit GraphQL in `middleware.ts` or with a Yoga plugin (query depth /
-  complexity limits are also a Yoga-plugin concern).
+  features — rate-limit GraphQL in `middleware.ts` or with a Yoga plugin.
+- **Query depth and cost are built in.** `maxDepth` (default 12) is on out of the box; `maxCost`
+  is an opt-in cost budget for the multiplicative fan-out a depth limit misses. Both are
+  estimated in linear time (fragment costs memoized) and `maxCost` reads the request's real
+  variable values, so `first: $n` can't smuggle a large page past it. Enable `maxCost` for a
+  public API; a schema-level max page size remains good practice.
 
 ## Package surface
 

@@ -239,11 +239,12 @@ four documented bounds of the opt-in:
   (gate in the resolver). Query depth is capped (default 12, `maxDepth: false` to disable) and,
   with introspection off, field suggestions are stripped. A query **cost budget** (`maxCost`,
   opt-in — the guard against the _multiplicative_ fan-out a depth limit misses, e.g.
-  `users(first: 1000) { posts(first: 1000) }`) is available too, off by default; cost is
-  estimated over the AST (each field costs 1, a pagination arg multiplies its subtree), so a
-  size passed as a **variable** uses the default multiplier rather than its runtime value. The
-  schema resolves once per process: in `denext dev`, an edit to a schema module needs a server
-  restart (Deno's module graph caches it).
+  `users(first: 1000) { posts(first: 1000) }`) is available too, off by default; it runs at
+  execute time so a page size passed as a variable is counted at its real value, and both the
+  cost and depth walks memoize per fragment (a "fragment bomb" is analyzed in linear time). With
+  Yoga `batching` on, the budget is enforced per operation, so an N-operation batch can cost up
+  to N×. The schema resolves once per process: in `denext dev`, an edit to a schema module needs
+  a server restart (Deno's module graph caches it).
 
 ## DevTools (dev-only)
 
