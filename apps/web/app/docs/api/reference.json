@@ -522,6 +522,18 @@
           "denextOnly": true
         },
         {
+          "name": "DirectoryEntry",
+          "slug": "DirectoryEntry",
+          "kind": "interface",
+          "signature": "interface DirectoryEntry",
+          "doc": "One entry of a directory listing.",
+          "docFull": "One entry of a directory listing.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "Dispatch",
           "slug": "Dispatch",
           "kind": "typeAlias",
@@ -719,6 +731,78 @@
           "signature": "type FC<P> = FunctionComponent<P>",
           "doc": "Alias for FunctionComponent.",
           "docFull": "Alias for {@link FunctionComponent}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FileAs",
+          "slug": "FileAs",
+          "kind": "typeAlias",
+          "signature": "type FileAs = text | arrayBuffer | json",
+          "doc": "How useFile decodes the file's contents.",
+          "docFull": "How {@linkcode useFile} decodes the file's contents.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FileSystemChangeRecord",
+          "slug": "FileSystemChangeRecord",
+          "kind": "interface",
+          "signature": "interface FileSystemChangeRecord",
+          "doc": "A single change reported by the observer.",
+          "docFull": "A single change reported by the observer.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FileSystemChangeType",
+          "slug": "FileSystemChangeType",
+          "kind": "typeAlias",
+          "signature": "type FileSystemChangeType = appeared | disappeared | errored | modified | moved | unknown",
+          "doc": "The kind of change reported for a handle. Mirrors the spec's FileSystemChangeType: \"appeared\" (created/moved-in), \"disappeared\" (removed/moved-out), \"modified\" (contents changed), \"moved\" (renamed or moved within an observed tree — see FileSystemChangeRecord.relativePathMovedFrom), \"errored\" (observation failed; the record's paths may be empty), and \"unknown\" (the platform coalesced or dropped detail and a full re-read is advised).",
+          "docFull": "The kind of change reported for a handle. Mirrors the spec's\n`FileSystemChangeType`: `\"appeared\"` (created/moved-in), `\"disappeared\"`\n(removed/moved-out), `\"modified\"` (contents changed), `\"moved\"` (renamed or\nmoved within an observed tree — see {@linkcode FileSystemChangeRecord.relativePathMovedFrom}),\n`\"errored\"` (observation failed; the record's paths may be empty), and\n`\"unknown\"` (the platform coalesced or dropped detail and a full re-read is\nadvised).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FileSystemObserverCallback",
+          "slug": "FileSystemObserverCallback",
+          "kind": "typeAlias",
+          "signature": "type FileSystemObserverCallback = (records: FileSystemChangeRecord[]) => void",
+          "doc": "The change callback invoked with the batch of records for an observed handle.",
+          "docFull": "The change callback invoked with the batch of records for an observed handle.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FileSystemObserverObserveOptions",
+          "slug": "FileSystemObserverObserveOptions",
+          "kind": "interface",
+          "signature": "interface FileSystemObserverObserveOptions",
+          "doc": "Options for observing a handle.",
+          "docFull": "Options for observing a handle.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "fileSystemObserverSupported",
+          "slug": "fileSystemObserverSupported",
+          "kind": "function",
+          "signature": "fileSystemObserverSupported(): boolean",
+          "doc": "Whether the File System Observer API is available in this environment.",
+          "docFull": "Whether the File System Observer API is available in this environment.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -1590,6 +1674,18 @@
           "denextOnly": true
         },
         {
+          "name": "NetworkState",
+          "slug": "NetworkState",
+          "kind": "interface",
+          "signature": "interface NetworkState",
+          "doc": "Network status, with connection hints when the browser provides them.",
+          "docFull": "Network status, with connection hints when the browser provides them.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "notFound",
           "slug": "notFound",
           "kind": "function",
@@ -2261,6 +2357,18 @@
           "denextOnly": true
         },
         {
+          "name": "SetStoredValue",
+          "slug": "SetStoredValue",
+          "kind": "typeAlias",
+          "signature": "type SetStoredValue<T> = (value: T | parenthesized) => void",
+          "doc": "A useState-style setter that also accepts an updater function.",
+          "docFull": "A `useState`-style setter that also accepts an updater function.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "Signal",
           "slug": "Signal",
           "kind": "interface",
@@ -2702,6 +2810,45 @@
           "denextOnly": false
         },
         {
+          "name": "useClickOutside",
+          "slug": "useClickOutside",
+          "kind": "function",
+          "signature": "useClickOutside<T>(ref: RefObject<T | null>, handler: (event: Event) => void, events?: typeOperator): void",
+          "doc": "Call handler when a pointer/touch event lands outside the referenced element — the \"click away to dismiss\" pattern for menus, popovers, and dialogs. Listens in the capture phase so it runs before inner handlers. No-op during SSR.",
+          "docFull": "Call `handler` when a pointer/touch event lands outside the referenced\nelement — the \"click away to dismiss\" pattern for menus, popovers, and\ndialogs. Listens in the capture phase so it runs before inner handlers.\nNo-op during SSR.",
+          "params": [
+            {
+              "name": "ref",
+              "doc": "A ref to the element whose inside is \"safe\"."
+            },
+            {
+              "name": "handler",
+              "doc": "Called with the originating event when the interaction is outside ref.current."
+            },
+            {
+              "name": "events",
+              "doc": "The event names that count as an outside interaction (default [\"mousedown\", \"touchstart\"])."
+            }
+          ],
+          "returns": "",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { useClickOutside } from \"denext\";\nconst ref = useRef<HTMLDivElement>(null);\nuseClickOutside(ref, () => setOpen(false));\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "UseClipboardResult",
+          "slug": "UseClipboardResult",
+          "kind": "interface",
+          "signature": "interface UseClipboardResult",
+          "doc": "The result of useCopyToClipboard.",
+          "docFull": "The result of {@linkcode useCopyToClipboard}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "useContext",
           "slug": "useContext",
           "kind": "function",
@@ -2712,6 +2859,48 @@
           "returns": "",
           "examples": [],
           "denextOnly": false
+        },
+        {
+          "name": "useCopyToClipboard",
+          "slug": "useCopyToClipboard",
+          "kind": "function",
+          "signature": "useCopyToClipboard(resetAfterMs?: number): UseClipboardResult",
+          "doc": "Copy text to the clipboard, exposing a transient copied flag for feedback.",
+          "docFull": "Copy text to the clipboard, exposing a transient `copied` flag for feedback.",
+          "params": [
+            {
+              "name": "resetAfterMs",
+              "doc": "How long copied stays true after a successful copy, in milliseconds (default 2000; 0 keeps it until the next copy)."
+            }
+          ],
+          "returns": ".",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { useCopyToClipboard } from \"denext\";\n\nexport function CopyButton({ text }: { text: string }) {\n  const { copied, copy, isSupported } = useCopyToClipboard();\n  return <button disabled={!isSupported} onClick={() => copy(text)}>{copied ? \"Copied!\" : \"Copy\"}</button>;\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "useDebouncedValue",
+          "slug": "useDebouncedValue",
+          "kind": "function",
+          "signature": "useDebouncedValue<T>(value: T, delayMs: number): T",
+          "doc": "Return a debounced copy of value. Each change restarts a delayMs timer; the returned value updates only once the input stops changing for that long.",
+          "docFull": "Return a debounced copy of `value`. Each change restarts a `delayMs` timer;\nthe returned value updates only once the input stops changing for that long.",
+          "params": [
+            {
+              "name": "value",
+              "doc": "The rapidly-changing source value."
+            },
+            {
+              "name": "delayMs",
+              "doc": "The quiet period, in milliseconds, before the value settles."
+            }
+          ],
+          "returns": "The debounced value.",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { useDebouncedValue } from \"denext\";\n\nexport function Search() {\n  const [query, setQuery] = useState(\"\");\n  const debounced = useDebouncedValue(query, 300);\n  useEffect(() => { if (debounced) search(debounced); }, [debounced]);\n  return <input value={query} onChange={(e) => setQuery(e.target.value)} />;\n}\n```"
+          ],
+          "denextOnly": true
         },
         {
           "name": "useDebugValue",
@@ -2756,6 +2945,51 @@
           "denextOnly": false
         },
         {
+          "name": "useDirectory",
+          "slug": "useDirectory",
+          "kind": "function",
+          "signature": "useDirectory(pathOrHandle: string | FileSystemDirectoryHandle, options?: UseDirectoryOptions): UseDirectoryResult",
+          "doc": "List a directory's entries and keep the listing live: it re-reads whenever the File System Observer reports a change (when that API is available).",
+          "docFull": "List a directory's entries and keep the listing live: it re-reads whenever the\nFile System Observer reports a change (when that API is available).",
+          "params": [
+            {
+              "name": "pathOrHandle",
+              "doc": "A path under the OPFS root (\"photos/2026\") or a FileSystemDirectoryHandle to read directly."
+            },
+            {
+              "name": "options",
+              "doc": "{ recursive } to also refresh on deep changes."
+            }
+          ],
+          "returns": "{ entries, isSupported, loading, error, refresh }.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "UseDirectoryOptions",
+          "slug": "UseDirectoryOptions",
+          "kind": "interface",
+          "signature": "interface UseDirectoryOptions",
+          "doc": "Options for useDirectory.",
+          "docFull": "Options for {@linkcode useDirectory}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "UseDirectoryResult",
+          "slug": "UseDirectoryResult",
+          "kind": "interface",
+          "signature": "interface UseDirectoryResult",
+          "doc": "The result of useDirectory.",
+          "docFull": "The result of {@linkcode useDirectory}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "useEffect",
           "slug": "useEffect",
           "kind": "function",
@@ -2791,6 +3025,127 @@
           "signature": "useErrorBoundary(): ErrorBoundaryController",
           "doc": "Access the nearest enclosing error boundary imperatively. Returns a ErrorBoundaryController whose captureError(e) shows that boundary's fallback (handy for async errors a boundary cannot catch during render) and whose reset() retries its children. Inert during server rendering.",
           "docFull": "Access the nearest enclosing error boundary imperatively. Returns a\n{@link ErrorBoundaryController} whose `captureError(e)` shows that boundary's\nfallback (handy for async errors a boundary cannot catch during render) and\nwhose `reset()` retries its children. Inert during server rendering.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "useEventListener",
+          "slug": "useEventListener",
+          "kind": "function",
+          "signature": "useEventListener<K>(type: K, handler: (event: indexedAccess) => void, options?: UseEventListenerOptions): void",
+          "doc": "Attach a DOM event listener for the lifetime of the component. The handler is held in a ref, so passing a fresh closure each render never re-subscribes and never goes stale.",
+          "docFull": "Attach a DOM event listener for the lifetime of the component. The handler is\nheld in a ref, so passing a fresh closure each render never re-subscribes and\nnever goes stale.",
+          "params": [
+            {
+              "name": "type",
+              "doc": "The event name (typed against WindowEventMap, e.g. \"resize\", \"keydown\")."
+            },
+            {
+              "name": "handler",
+              "doc": "Called with the event; always the latest closure."
+            },
+            {
+              "name": "options",
+              "doc": "UseEventListenerOptions — target (default window), capture, passive, once."
+            }
+          ],
+          "returns": "",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { useEventListener } from \"denext\";\nuseEventListener(\"keydown\", (e) => { if (e.key === \"Escape\") close(); });\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "UseEventListenerOptions",
+          "slug": "UseEventListenerOptions",
+          "kind": "interface",
+          "signature": "interface UseEventListenerOptions",
+          "doc": "Options for useEventListener.",
+          "docFull": "Options for {@linkcode useEventListener}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "useFile",
+          "slug": "useFile",
+          "kind": "function",
+          "signature": "useFile(pathOrHandle: string | FileSystemFileHandle, options?: object): UseFileResult<string>",
+          "doc": "Read a file's contents and keep them live: they re-read whenever the File System Observer reports a change. Also returns write and remove.",
+          "docFull": "Read a file's contents and keep them live: they re-read whenever the File\nSystem Observer reports a change. Also returns `write` and `remove`.",
+          "params": [
+            {
+              "name": "pathOrHandle",
+              "doc": "A path under the OPFS root (\"notes/todo.json\") or a FileSystemFileHandle to read directly (remove then needs a path)."
+            },
+            {
+              "name": "options",
+              "doc": "{ as, create } — decode mode and whether to create on write."
+            }
+          ],
+          "returns": "{ data, isSupported, loading, error, write, remove, refresh }.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "UseFileOptions",
+          "slug": "UseFileOptions",
+          "kind": "interface",
+          "signature": "interface UseFileOptions",
+          "doc": "Options for useFile.",
+          "docFull": "Options for {@linkcode useFile}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "UseFileResult",
+          "slug": "UseFileResult",
+          "kind": "interface",
+          "signature": "interface UseFileResult<T>",
+          "doc": "The result of useFile. T is the decoded data type.",
+          "docFull": "The result of {@linkcode useFile}. `T` is the decoded `data` type.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "useFileSystemObserver",
+          "slug": "useFileSystemObserver",
+          "kind": "function",
+          "signature": "useFileSystemObserver(target: FileSystemHandle | typeOperator | null | undefined, callback: FileSystemObserverCallback, options?: FileSystemObserverObserveOptions): UseFileSystemObserverResult",
+          "doc": "Subscribe to file-system changes on one or more handles.",
+          "docFull": "Subscribe to file-system changes on one or more handles.",
+          "params": [
+            {
+              "name": "target",
+              "doc": "The handle (or handles) to observe. null/undefined observes nothing (the hook stays inert, so a handle that resolves asynchronously can be passed straight through). Pass a **stable** reference — an inline array literal changes identity every render and re-subscribes; memoize it or pass a single handle."
+            },
+            {
+              "name": "callback",
+              "doc": "Invoked with each batch of FileSystemChangeRecords. Held in a ref, so a new closure each render does not re-subscribe."
+            },
+            {
+              "name": "options",
+              "doc": "{ recursive } to observe a directory's whole subtree."
+            }
+          ],
+          "returns": "{ isSupported, error, disconnect }.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "UseFileSystemObserverResult",
+          "slug": "UseFileSystemObserverResult",
+          "kind": "interface",
+          "signature": "interface UseFileSystemObserverResult",
+          "doc": "The result of useFileSystemObserver.",
+          "docFull": "The result of {@linkcode useFileSystemObserver}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -2866,6 +3221,49 @@
           "denextOnly": false
         },
         {
+          "name": "useIntersectionObserver",
+          "slug": "useIntersectionObserver",
+          "kind": "function",
+          "signature": "useIntersectionObserver<T>(options?: UseIntersectionObserverOptions): UseIntersectionObserverResult<T>",
+          "doc": "Observe an element's intersection with the viewport (or a root). Attach the returned ref to the element; entry/isIntersecting update as it crosses the configured threshold.",
+          "docFull": "Observe an element's intersection with the viewport (or a `root`). Attach the\nreturned `ref` to the element; `entry`/`isIntersecting` update as it crosses\nthe configured `threshold`.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "UseIntersectionObserverOptions."
+            }
+          ],
+          "returns": ".",
+          "examples": [
+            "Reveal on scroll:\n```tsx\n\"use client\";\nimport { useIntersectionObserver } from \"denext\";\n\nexport function Reveal({ children }) {\n  const { ref, isIntersecting } = useIntersectionObserver({ once: true });\n  return <div ref={ref} data-shown={isIntersecting}>{children}</div>;\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "UseIntersectionObserverOptions",
+          "slug": "UseIntersectionObserverOptions",
+          "kind": "interface",
+          "signature": "interface UseIntersectionObserverOptions",
+          "doc": "Options for useIntersectionObserver (a superset of IntersectionObserverInit).",
+          "docFull": "Options for {@linkcode useIntersectionObserver} (a superset of `IntersectionObserverInit`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "UseIntersectionObserverResult",
+          "slug": "UseIntersectionObserverResult",
+          "kind": "interface",
+          "signature": "interface UseIntersectionObserverResult<T>",
+          "doc": "The result of useIntersectionObserver.",
+          "docFull": "The result of {@linkcode useIntersectionObserver}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "useLayoutEffect",
           "slug": "useLayoutEffect",
           "kind": "function",
@@ -2902,6 +3300,52 @@
           "denextOnly": false
         },
         {
+          "name": "useLocalStorage",
+          "slug": "useLocalStorage",
+          "kind": "function",
+          "signature": "useLocalStorage<T>(key: string, initialValue: T): UseStorageResult<T>",
+          "doc": "Persist state in localStorage, keyed by key, with a useState-style API. Values are JSON-serialized; updates propagate across tabs. SSR-safe.",
+          "docFull": "Persist state in `localStorage`, keyed by `key`, with a `useState`-style API.\nValues are JSON-serialized; updates propagate across tabs. SSR-safe.",
+          "params": [
+            {
+              "name": "key",
+              "doc": "The storage key."
+            },
+            {
+              "name": "initialValue",
+              "doc": "The value used when nothing is stored (and during SSR)."
+            }
+          ],
+          "returns": "[value, setValue, remove] — UseStorageResult.",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { useLocalStorage } from \"denext\";\n\nexport function ThemeToggle() {\n  const [theme, setTheme, reset] = useLocalStorage(\"theme\", \"system\");\n  return <button onClick={() => setTheme((t) => t === \"dark\" ? \"light\" : \"dark\")}>{theme}</button>;\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "useMediaQuery",
+          "slug": "useMediaQuery",
+          "kind": "function",
+          "signature": "useMediaQuery(query: string, serverFallback?: boolean): boolean",
+          "doc": "Subscribe to a CSS media query. Re-renders whenever the match state flips.",
+          "docFull": "Subscribe to a CSS media query. Re-renders whenever the match state flips.",
+          "params": [
+            {
+              "name": "query",
+              "doc": "A media query string, e.g. \"(min-width: 768px)\" or \"(prefers-color-scheme: dark)\"."
+            },
+            {
+              "name": "serverFallback",
+              "doc": "The value returned during SSR and where matchMedia is unavailable (default false)."
+            }
+          ],
+          "returns": "true while the query currently matches, else false.",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { useMediaQuery } from \"denext\";\n\nexport function Layout() {\n  const isWide = useMediaQuery(\"(min-width: 768px)\");\n  return isWide ? <TwoColumn /> : <Stacked />;\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "useMemo",
           "slug": "useMemo",
           "kind": "function",
@@ -2912,6 +3356,44 @@
           "returns": "",
           "examples": [],
           "denextOnly": false
+        },
+        {
+          "name": "useNetworkState",
+          "slug": "useNetworkState",
+          "kind": "function",
+          "signature": "useNetworkState(): NetworkState",
+          "doc": "Track online/offline status and connection quality, re-rendering on change.",
+          "docFull": "Track online/offline status and connection quality, re-rendering on change.",
+          "params": [],
+          "returns": ".",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { useNetworkState } from \"denext\";\nconst { online, effectiveType } = useNetworkState();\nreturn online ? <Sync /> : <OfflineBanner />;\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "useOPFSRoot",
+          "slug": "useOPFSRoot",
+          "kind": "function",
+          "signature": "useOPFSRoot(): UseOPFSRootResult",
+          "doc": "Acquire the OPFS root directory handle (navigator.storage.getDirectory()).",
+          "docFull": "Acquire the OPFS root directory handle (`navigator.storage.getDirectory()`).",
+          "params": [],
+          "returns": "{ root, isSupported, error } — root is null until it resolves.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "UseOPFSRootResult",
+          "slug": "UseOPFSRootResult",
+          "kind": "interface",
+          "signature": "interface UseOPFSRootResult",
+          "doc": "The result of useOPFSRoot.",
+          "docFull": "The result of {@linkcode useOPFSRoot}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "useOptimistic",
@@ -3077,6 +3559,27 @@
           "denextOnly": true
         },
         {
+          "name": "useSessionStorage",
+          "slug": "useSessionStorage",
+          "kind": "function",
+          "signature": "useSessionStorage<T>(key: string, initialValue: T): UseStorageResult<T>",
+          "doc": "Persist state in sessionStorage (cleared when the tab closes), keyed by key, with a useState-style API. Values are JSON-serialized. SSR-safe.",
+          "docFull": "Persist state in `sessionStorage` (cleared when the tab closes), keyed by\n`key`, with a `useState`-style API. Values are JSON-serialized. SSR-safe.",
+          "params": [
+            {
+              "name": "key",
+              "doc": "The storage key."
+            },
+            {
+              "name": "initialValue",
+              "doc": "The value used when nothing is stored (and during SSR)."
+            }
+          ],
+          "returns": "[value, setValue, remove] — UseStorageResult.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "useSignal",
           "slug": "useSignal",
           "kind": "function",
@@ -3104,6 +3607,18 @@
           "returns": "",
           "examples": [],
           "denextOnly": false
+        },
+        {
+          "name": "UseStorageResult",
+          "slug": "UseStorageResult",
+          "kind": "typeAlias",
+          "signature": "type UseStorageResult<T> = tuple",
+          "doc": "The tuple returned by useLocalStorage / useSessionStorage: [value, setValue, remove].",
+          "docFull": "The tuple returned by {@linkcode useLocalStorage} / {@linkcode useSessionStorage}:\n`[value, setValue, remove]`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "useStore",
@@ -3190,6 +3705,20 @@
           "denextOnly": true
         },
         {
+          "name": "useWindowSize",
+          "slug": "useWindowSize",
+          "kind": "function",
+          "signature": "useWindowSize(): WindowSize",
+          "doc": "Track the viewport size, re-rendering on resize.",
+          "docFull": "Track the viewport size, re-rendering on `resize`.",
+          "params": [],
+          "returns": "— { width, height }.",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { useWindowSize } from \"denext\";\nconst { width } = useWindowSize();\nreturn <span>{width === 0 ? \"…\" : `${width}px`}</span>;\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "ValueResult",
           "slug": "ValueResult",
           "kind": "typeAlias",
@@ -3217,7 +3746,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 2.2.0",
+          "signature": "VERSION: 2.3.0",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -3304,6 +3833,18 @@
           "signature": "interface WebLockOptions",
           "doc": "Options for withWebLock.",
           "docFull": "Options for {@linkcode withWebLock}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WindowSize",
+          "slug": "WindowSize",
+          "kind": "interface",
+          "signature": "interface WindowSize",
+          "doc": "The viewport dimensions in CSS pixels.",
+          "docFull": "The viewport dimensions in CSS pixels.",
           "params": [],
           "returns": "",
           "examples": [],

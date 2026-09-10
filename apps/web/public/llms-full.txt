@@ -443,6 +443,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface CSSProperties` — Inline style object (permissive).
 - `denextImageLoader(options: unknown): string` — The default ImageLoader: points at denext's /_denext/image endpoint, which resizes + re-encodes (webp/avif) the source image. Used automatically unless an image is unoptimized; also available to pass explicitly.
 - `type DependencyList = typeOperator` — A useEffect/useMemo dependency array.
+- `interface DirectoryEntry` — One entry of a directory listing.
 - `type Dispatch<A> = (value: A) => void` — useState/useReducer dispatcher.
 - `dynamic<P>(loader: DynamicLoader<P>, options?: DynamicOptions<P>): Component<P>` — Lazily load a component. Returns a component you can render immediately; its target module is imported on first render (as its own bundle chunk) and shown once resolved, with loading displayed meanwhile.
 - `type DynamicLoader<P> = parenthesized | parenthesized` — A loader returning a module (whose default is the component) or the component.
@@ -459,6 +460,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type ErrorsOf<E> = conditional` — The error codes a call to one endpoint may fail with.
 - `escapeHtml(value: string): string` — Escape &, <, >, ", and ' so a string is safe as HTML text or attribute content.
 - `type FC<P> = FunctionComponent<P>` — Alias for FunctionComponent.
+- `type FileAs = text | arrayBuffer | json` — How useFile decodes the file's contents.
+- `interface FileSystemChangeRecord` — A single change reported by the observer.
+- `type FileSystemChangeType = appeared | disappeared | errored | modified | moved | unknown` — The kind of change reported for a handle. Mirrors the spec's FileSystemChangeType: "appeared" (created/moved-in), "disappeared" (removed/moved-out), "modified" (contents changed), "moved" (renamed or moved within an observed tree — see FileSystemChangeRecord.relativePathMovedFrom), "errored" (observation failed; the record's paths may be empty), and "unknown" (the platform coalesced or dropped detail and a full re-read is advised).
+- `type FileSystemObserverCallback = (records: FileSystemChangeRecord[]) => void` — The change callback invoked with the batch of records for an observed handle.
+- `interface FileSystemObserverObserveOptions` — Options for observing a handle.
+- `fileSystemObserverSupported(): boolean` — Whether the File System Observer API is available in this environment.
 - `FontFace(props: object): VNode` — Render a font's @font-face CSS into a <style> tag.
 - `interface FontResult` — The result of localFont: a style object plus its @font-face CSS.
 - `interface FontSource` — A single font source file (with optional weight/style for the face).
@@ -526,6 +533,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface MutableRefObject<T>` — A mutable ref cell.
 - `navigate(href: string, options?: NavigateOptions): Promise<void>` — Perform a soft navigation to href: fetch the target page, swap its markup into the hydration root, update history and <head>, and re-hydrate. Falls back to a full-page navigation on cross-origin URLs or network failure.
 - `interface NavigateOptions` — Options controlling a soft (client-side) navigation.
+- `interface NetworkState` — Network status, with connection hints when the browser provides them.
 - `notFound(): never` — Throw to render the nearest not-found UI with a 404 status.
 - `class NotFoundError` — Error thrown by notFound to trigger the nearest not-found UI (HTTP 404).
 - `permanentRedirect(url: Href | parenthesized, type?: RedirectType): never` — Throw to issue a permanent (308) redirect to url.
@@ -578,6 +586,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SessionUser` — The signed-in user exposed to the client (non-sensitive fields only).
 - `setApiInvalidationSource(source: ApiInvalidationSource | null): void` — Install the transport that delivers tag invalidations to useApi({ tags }) (the Live client does this in configureLive / useApiLive).
 - `type SetStateAction<S> = S | parenthesized` — The updater passed to a state setter (a value or a function of the previous).
+- `type SetStoredValue<T> = (value: T | parenthesized) => void` — A useState-style setter that also accepts an updater function.
 - `interface Signal<T>` — A reactive box holding a single serializable value.
 - `signIn(provider: string, options?: SignInOptions): Promise<unknown>` — Start sign-in. For an OAuth/OIDC provider this navigates to the provider; for a Credentials provider (pass credentials) it POSTs and resolves with the result.
 - `interface SignInOptions` — Options for signIn.
@@ -611,21 +620,43 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface UseApiResult<T, E>` — What useApi returns.
 - `useAsyncEffect(effect: Effect, deps: DependencyList): void` — Runs an async effect and re-runs it whenever dependencies change.
 - `useCallback<T>(fn: T, deps?: DependencyList): T` — Return a memoized version of fn that only changes when deps change.
+- `useClickOutside<T>(ref: RefObject<T | null>, handler: (event: Event) => void, events?: typeOperator): void` — Call handler when a pointer/touch event lands outside the referenced element — the "click away to dismiss" pattern for menus, popovers, and dialogs. Listens in the capture phase so it runs before inner handlers. No-op during SSR.
+- `interface UseClipboardResult` — The result of useCopyToClipboard.
 - `useContext<T>(context: Context<T>): T` — Read the current value of context from the nearest enclosing provider.
+- `useCopyToClipboard(resetAfterMs?: number): UseClipboardResult` — Copy text to the clipboard, exposing a transient copied flag for feedback.
+- `useDebouncedValue<T>(value: T, delayMs: number): T` — Return a debounced copy of value. Each change restarts a delayMs timer; the returned value updates only once the input stops changing for that long.
 - `useDebugValue<T>(_value: T, _format?: (value: T) => unknown): void` — Label a custom hook's value for React DevTools. A no-op at runtime (React itself only invokes it when DevTools is attached), provided for API compatibility.
 - `useDeferredValue<T>(value: T, initialValue?: T): T` — Return a deferred copy of value that lags behind during rapid updates, letting urgent renders finish first. On the client this is a true **render-phase** deferral (React-accurate): during an urgent render the hook returns the previous value and schedules a low-priority transition to catch up, so the deferred update is time-sliced and interruptible and the value never trails by an extra commit. The optional initialValue (React 19) is returned on the first render, with a transition scheduled to reach value. On the server (no lane scheduler) it returns initialValue ?? value.
+- `useDirectory(pathOrHandle: string | FileSystemDirectoryHandle, options?: UseDirectoryOptions): UseDirectoryResult` — List a directory's entries and keep the listing live: it re-reads whenever the File System Observer reports a change (when that API is available).
+- `interface UseDirectoryOptions` — Options for useDirectory.
+- `interface UseDirectoryResult` — The result of useDirectory.
 - `useEffect(effect: () => EffectCleanup, deps?: DependencyList): void` — Run a side effect after render, re-running whenever deps change.
 - `useEffectEvent<A, R>(handler: (...args: A) => R): (...args: A) => R` — Return a **stable** callback that always sees the latest props/state — React 19.2's useEffectEvent. Use it for the "event" part of an Effect that should not itself be a dependency (so the Effect doesn't re-run when the handler's closure changes). Do not call the returned function during render.
 - `useErrorBoundary(): ErrorBoundaryController` — Access the nearest enclosing error boundary imperatively. Returns a ErrorBoundaryController whose captureError(e) shows that boundary's fallback (handy for async errors a boundary cannot catch during render) and whose reset() retries its children. Inert during server rendering.
+- `useEventListener<K>(type: K, handler: (event: indexedAccess) => void, options?: UseEventListenerOptions): void` — Attach a DOM event listener for the lifetime of the component. The handler is held in a ref, so passing a fresh closure each render never re-subscribes and never goes stale.
+- `interface UseEventListenerOptions` — Options for useEventListener.
+- `useFile(pathOrHandle: string | FileSystemFileHandle, options?: object): UseFileResult<string>` — Read a file's contents and keep them live: they re-read whenever the File System Observer reports a change. Also returns write and remove.
+- `interface UseFileOptions` — Options for useFile.
+- `interface UseFileResult<T>` — The result of useFile. T is the decoded data type.
+- `useFileSystemObserver(target: FileSystemHandle | typeOperator | null | undefined, callback: FileSystemObserverCallback, options?: FileSystemObserverObserveOptions): UseFileSystemObserverResult` — Subscribe to file-system changes on one or more handles.
+- `interface UseFileSystemObserverResult` — The result of useFileSystemObserver.
 - `useFormState<State, Payload>(action: (state: State, payload: Payload) => State | Promise<State>, initialState: State, permalink?: string): tuple` — Alias of useActionState — React renamed useFormState (react-dom) to useActionState (react). Kept so code that still imports the old name resolves.
 - `useFormStatus(): FormStatus` — Read whether the **nearest enclosing** <form action={fn}>'s action is in flight (React 19 useFormStatus). Scoped per form — two concurrent forms report independent status. Returns { pending: false } outside a form and during server rendering.
 - `useId(): string` — Return a unique, stable id string. The value is deterministic across the server render and client hydration (ids are assigned in render order), so it is safe to use for id/htmlFor/aria-* attributes without a mismatch.
 - `useImperativeHandle<T>(ref: Ref<T>, create: () => T, deps?: DependencyList): void` — Customize the value exposed on a parent's ref for the current component. create builds the imperative handle; it re-runs when deps change.
 - `useInsertionEffect(effect: () => EffectCleanup, deps?: DependencyList): void` — Run effect synchronously at commit in its own pre-mutation phase — before any DOM mutation and before layout effects — intended for CSS-in-JS libraries (emotion, styled-components) and animation libraries (motion) to inject styles before the DOM is read. It must NOT read layout or use refs. A no-op during server rendering.
+- `useIntersectionObserver<T>(options?: UseIntersectionObserverOptions): UseIntersectionObserverResult<T>` — Observe an element's intersection with the viewport (or a root). Attach the returned ref to the element; entry/isIntersecting update as it crosses the configured threshold.
+- `interface UseIntersectionObserverOptions` — Options for useIntersectionObserver (a superset of IntersectionObserverInit).
+- `interface UseIntersectionObserverResult<T>` — The result of useIntersectionObserver.
 - `useLayoutEffect(effect: () => EffectCleanup, deps?: DependencyList): void` — Like useEffect, but on the client it runs synchronously after the DOM is mutated and before the browser paints — use it for layout reads/writes that must happen before the user sees the frame. A no-op during server rendering.
 - `useLinkStatus(): LinkStatus` — useLinkStatus (Next.js) — reactive pending state for the enclosing <Link>, for rendering inline loading indicators. Scoped to the nearest <Link>: pending is true from that link's click until its navigation settles. Outside any <Link> it is always false (matching Next.js).
 - `useLocale(): string` — The active locale (reactive) for apps using i18n routing. Reads the locale the server resolved for this page from the hydration payload and re-reads it on soft navigation. Server components should read params.locale directly.
+- `useLocalStorage<T>(key: string, initialValue: T): UseStorageResult<T>` — Persist state in localStorage, keyed by key, with a useState-style API. Values are JSON-serialized; updates propagate across tabs. SSR-safe.
+- `useMediaQuery(query: string, serverFallback?: boolean): boolean` — Subscribe to a CSS media query. Re-renders whenever the match state flips.
 - `useMemo<T>(factory: () => T, deps?: DependencyList): T` — Memoize factory's result, recomputing only when deps change.
+- `useNetworkState(): NetworkState` — Track online/offline status and connection quality, re-rendering on change.
+- `useOPFSRoot(): UseOPFSRootResult` — Acquire the OPFS root directory handle (navigator.storage.getDirectory()).
+- `interface UseOPFSRootResult` — The result of useOPFSRoot.
 - `useOptimistic<S, A>(state: S, updateFn?: (current: S, action: A) => S): tuple` — Show an optimistic value while an async update is in flight. Returns [optimisticState, addOptimistic]; call addOptimistic(action) to apply an optimistic change over the current state. The optimistic value resets to state when state itself changes AND when the transition/action it was applied in settles (React semantics — a failed action reverts too). addOptimistic keeps one identity.
 - `useParams<P>(): conditional` — The current route's dynamic params (reactive). Reads the params the server resolved for this page from the hydration payload; updates on soft navigation.
 - `usePathname(): string` — Reactive current pathname; re-renders the component on navigation.
@@ -639,17 +670,20 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useSelectedLayoutSegments(_parallelRoutesKey?: string): string[]` — The active route path segments **below the calling layout's level** (reactive), matching Next.js. A layout at /a sees ["b","c"] for /a/b/c; the root layout sees all segments. The depth comes from the nearest LayoutSegmentContext provider (injected around each layout by the server renderer and the client route entry); outside any layout it is 0, so all segments are returned. Updates on soft navigation.
 - `useServerInsertedHTML(callback: () => VNodeChildren): void` — Register a callback whose returned markup is inserted into the server-rendered <head>. No-op on the client. Matches Next's useServerInsertedHTML from next/navigation.
 - `useSession(): ClientSession` — Read the current ClientSession. Must be under a SessionProvider.
+- `useSessionStorage<T>(key: string, initialValue: T): UseStorageResult<T>` — Persist state in sessionStorage (cleared when the tab closes), keyed by key, with a useState-style API. Values are JSON-serialized. SSR-safe.
 - `useSignal<T>(initial: T): Signal<T>` — A component-local reactive value. Read signal.value to use it, assign signal.value = next to update it (re-rendering the owning component). Unlike useState, the same Signal object is stable across renders — pass it to a child without re-subscribing the parent.
 - `useState<S>(): tuple` — Declare local component state with no initial value (S | undefined).
+- `type UseStorageResult<T> = tuple` — The tuple returned by useLocalStorage / useSessionStorage: [value, setValue, remove].
 - `useStore<T>(initial: T): T` — A component-local reactive object. Assigning a top-level property re-renders the owning component; reading is transparent. Shallow — nested-object mutations do not notify (assign a new nested object instead).
 - `useSyncExternalStore<T>(subscribe: (onChange: () => void) => () => void, getSnapshot: () => T, getServerSnapshot?: () => T): T` — Subscribe to an external (non-React) store and re-render when it changes. subscribe registers a change listener and returns an unsubscribe function; getSnapshot reads the current value; getServerSnapshot (optional) provides the value used during server rendering.
 - `useTransition(): tuple` — Return [isPending, startTransition]. isPending stays true from the moment the transition starts until its low-priority updates have been flushed — so a pending indicator can paint (and the browser can handle input) before the transition's work runs. For an async callback it is held until the returned promise settles and the resulting flush lands. Falls back to a synchronous run when no client scheduler is installed.
 - `useTranslations(): TranslateFn` — Access a translation function t(key, vars?) for the active locale (reactive). Looks up key in the locale's catalog and interpolates {var} placeholders; a missing key returns the key itself. The catalog comes from the render-time provider during SSR and from the hydration payload on the client, re-read on soft navigation (so switching locales updates the strings).
 - `useWakeLock(options?: UseWakeLockOptions): WakeLockControls` — Keep the screen awake via the Screen Wake Lock API, as a hook. Call WakeLockControls.request request to add this instance's claim and WakeLockControls.release release to drop it; the claim is also dropped automatically on unmount. Because the screen is device-global, the lock is refcounted: it stays on while any instance has a claim, and WakeLockControls.count count/WakeLockControls.active active report the shared state to every instance. WakeLockControls.releaseAll releaseAll drops every claim at once.
 - `interface UseWakeLockOptions` — Options for useWakeLock.
+- `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type (a returned Response carries no body type).
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 2.2.0` — The denext framework version.
+- `VERSION: 2.3.0` — The denext framework version.
 - `ViewTransition(props: object): VNode` — React.ViewTransition (experimental) — the client-driven view-transition wrapper. It is transparent (no DOM node of its own) and carries its config by stamping the DNX_VT_ATTR attribute onto its **single host child** (a DOM attribute survives server rendering AND the Flight boundary, unlike a VNode marker). Around a soft navigation the import-gated marking runtime finds these elements and applies real view-transition-name (and view-transition-class from enter/exit/update/share), so a name shared across routes morphs one element into the other. **Route-level** transitions apply regardless: a soft navigation commits inside document.startViewTransition where the browser supports it (see withViewTransition in src/client/navigation.ts). Without the gated runtime, or for a wrapper whose child isn't a single element (nothing to mark), it is a plain passthrough.
 - `interface VNode` — A single virtual DOM node.
 - `type VNodeChild = VNode | string | number | bigint | boolean | null | undefined` — Anything that can appear as a child in JSX.
@@ -657,6 +691,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface VProps` — Props passed to a virtual node. children is normalized separately.
 - `interface WakeLockControls` — The controls returned by useWakeLock.
 - `interface WebLockOptions` — Options for withWebLock.
+- `interface WindowSize` — The viewport dimensions in CSS pixels.
 - `withWebLock<T>(name: string, fn: () => T | Promise<T>, options?: WebLockOptions): Promise<T | undefined>` — Run fn while holding a same-origin lock named name, coordinating across every tab, iframe, and worker of the origin (the Web Locks API). Only one holder runs an exclusive lock at a time; the lock is released automatically when fn settles — or when the holding context is destroyed — so a crashed tab can never deadlock the others.
 
 ### `denext/server`

@@ -731,8 +731,15 @@ const NEXT_DROP_KEYS = new Set(Object.keys(NEXT_DROP_GUIDANCE));
  * function can't be serialized; its result can, and denext's config takes the same shape),
  * lists dropped keys, and prints one JSON line. `import(Deno.args[0])`.
  */
-/** Max time to spend evaluating an app's next.config before falling back to hand-port. */
-const NEXT_EVAL_TIMEOUT_MS = 15_000;
+/**
+ * Max time to spend evaluating an app's next.config before falling back to hand-port. Read at USE
+ * time (not module load) and env-tunable (`DENEXT_NEXT_EVAL_TIMEOUT_MS`) so a CPU-starved run —
+ * e.g. the migrate fixture test under the parallel gate — doesn't hit the abort and silently drop
+ * to the raw port (which yields a different, golden-mismatching config); production keeps 15 s.
+ */
+function nextEvalTimeoutMs(): number {
+  return Number(Deno.env.get("DENEXT_NEXT_EVAL_TIMEOUT_MS")) || 15_000;
+}
 
 const NEXT_EVAL_PROGRAM = `
 const PASS = ${JSON.stringify(NEXT_PASSTHROUGH_KEYS)};
@@ -813,7 +820,7 @@ async function evalNextConfig(
   base: NextConfigTranslation,
 ): Promise<NextConfigTranslation> {
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), NEXT_EVAL_TIMEOUT_MS);
+  const timer = setTimeout(() => ctl.abort(), nextEvalTimeoutMs());
   try {
     // Least privilege: the config is the app's own code but it is run on the migrating
     // machine — it may read its project + env (what a real `next build` sees), not write,

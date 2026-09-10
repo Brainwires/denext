@@ -31,6 +31,7 @@ import {
 } from "@denext/denext/plugin-kit";
 import { join } from "@std/path";
 import type {
+  DocumentNode,
   FieldNode,
   FragmentDefinitionNode,
   GraphQLSchema,
@@ -38,6 +39,7 @@ import type {
   OperationDefinitionNode,
   SelectionSetNode,
   ValidationContext,
+  VariableDefinitionNode,
 } from "graphql";
 import { getIntrospectionQuery } from "graphql";
 import {
@@ -151,6 +153,16 @@ export type YogaPassthrough = Omit<
   "schema" | "graphqlEndpoint" | "graphiql" | "context"
 >;
 
+/** Tuning for the query-cost estimate (see {@linkcode GraphqlOptions.maxCost}). */
+export interface CostOptions {
+  /** Cost charged for each field selected (default `1`). */
+  fieldCost?: number;
+  /** Argument names whose integer value multiplies a field's subtree cost (default `["first", "last", "limit"]`). */
+  listMultiplierArgs?: string[];
+  /** Multiplier used for a pagination field when its size is a variable or absent (default `1`). */
+  defaultMultiplier?: number;
+}
+
 /** Options for {@linkcode graphql}. */
 export interface GraphqlOptions {
   /** The schema (Pothos `builder.toSchema()`, `createSchema({ typeDefs, resolvers })`, …). */
@@ -170,6 +182,21 @@ export interface GraphqlOptions {
    * schema with legitimately deep trees.
    */
   maxDepth?: number | false;
+  /**
+   * Reject a query whose estimated **cost** exceeds this budget — the guard against the
+   * *multiplicative* DoS a depth limit misses: `users(first: 1000) { posts(first: 1000) { … } }`
+   * is shallow but fans out to a million resolver calls. Cost is estimated over the AST (no
+   * schema or resolver run): each field costs {@linkcode CostOptions.fieldCost} (default 1), and
+   * a field carrying a pagination argument (`first`/`last`/`limit` by default) multiplies its
+   * children's cost by that integer. Default `false` (off — `maxDepth` stays the on-by-default
+   * guard); set a number (a budget of ~1000 suits most apps) to enable it. The check runs at
+   * execute time, so a page size passed as a **variable** (`first: $n`) is counted at its
+   * **actual** value — a variable can't smuggle a large page past the budget. With Yoga
+   * `batching` enabled the budget is per-operation, so an N-operation batch may cost up to N×.
+   */
+  maxCost?: number | false;
+  /** Tune the {@linkcode GraphqlOptions.maxCost} estimate (field weight, which args multiply). */
+  costOptions?: CostOptions;
   /**
    * Require the same-origin proof denext applies to every state-changing RPC (Server Actions,
    * the typed-API batch) on non-GET requests: a cross-site `<form>` or fetch is refused with
@@ -210,6 +237,7 @@ export function graphql(options: GraphqlOptions): DenextPlugin {
       const sameOrigin = options.requireSameOrigin ?? true;
       const originOptions = { allowedOrigins: options.allowedOrigins };
       const maxDepth = options.maxDepth ?? 12;
+      const maxCost = options.maxCost ?? false;
       const getSchema = once(() => Promise.resolve(resolveSchema(options.schema)));
       const getYoga = once(async () =>
         createYoga({
@@ -217,6 +245,7 @@ export function graphql(options: GraphqlOptions): DenextPlugin {
           ...options.yoga,
           plugins: [
             ...(maxDepth === false ? [] : [limitDepth(maxDepth)]),
+            ...(maxCost === false ? [] : [limitCost(maxCost, options.costOptions)]),
             ...(introspection ? [] : [disableIntrospection(), blockFieldSuggestions()]),
             ...(options.yoga?.plugins ?? []),
           ],
@@ -338,54 +367,284 @@ function disableIntrospection(): NonNullable<YogaPassthrough["plugins"]>[number]
   } as NonNullable<YogaPassthrough["plugins"]>[number];
 }
 
+/** Index a document's fragment definitions by name, for the traversals below. */
+function collectFragments(document: DocumentNode): Map<string, FragmentDefinitionNode> {
+  const fragments = new Map<string, FragmentDefinitionNode>();
+  for (const def of document.definitions) {
+    if (def.kind === "FragmentDefinition") fragments.set(def.name.value, def);
+  }
+  return fragments;
+}
+
+/** The operation `document` would execute for `operationName` (the sole one when unnamed). */
+function resolveOperation(
+  document: DocumentNode,
+  operationName: string | null | undefined,
+): OperationDefinitionNode | undefined {
+  const ops = document.definitions.filter(
+    (d): d is OperationDefinitionNode => d.kind === "OperationDefinition",
+  );
+  if (operationName) return ops.find((o) => o.name?.value === operationName);
+  // No name: valid only when there's exactly one operation; otherwise graphql errors first.
+  return ops.length === 1 ? ops[0] : undefined;
+}
+
+/** A positive integer from an AST `IntValue` string, or `undefined`. */
+function positiveInt(raw: string): number | undefined {
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
 /**
- * A Yoga (envelop) plugin that rejects a query whose selection nesting exceeds `max`. Counts
- * depth over the AST (fields, inline fragments, and named fragments followed through the
- * document) — no value import from `graphql`, so it introduces no second realm.
+ * The multiplier a field applies to its subtree cost: `1` when it carries no pagination
+ * argument (no fan-out), the concrete integer when the page size is a literal, the request's
+ * actual variable value when it's `first: $n` (so a variable can't smuggle a huge page past
+ * the budget), the variable's AST default when the request omits it, and `defaultMultiplier`
+ * only when a pagination arg is present but its value is genuinely unknowable.
+ */
+/** Multiplier for a `first: $var` page size: the request's value, else the AST default, else `defaultMultiplier`. */
+function variableMultiplier(
+  name: string,
+  varDefs: Map<string, VariableDefinitionNode>,
+  vars: Record<string, unknown>,
+  defaultMultiplier: number,
+): number {
+  const runtime = vars[name];
+  if (typeof runtime === "number" && Number.isFinite(runtime) && runtime > 0) {
+    return Math.floor(runtime);
+  }
+  const dflt = varDefs.get(name)?.defaultValue;
+  if (dflt?.kind === "IntValue") return positiveInt(dflt.value) ?? defaultMultiplier;
+  return defaultMultiplier;
+}
+
+function argMultiplier(
+  field: FieldNode,
+  argNames: ReadonlySet<string>,
+  varDefs: Map<string, VariableDefinitionNode>,
+  vars: Record<string, unknown>,
+  defaultMultiplier: number,
+): number {
+  for (const arg of field.arguments ?? []) {
+    if (!argNames.has(arg.name.value)) continue;
+    const v = arg.value;
+    if (v.kind === "IntValue") return positiveInt(v.value) ?? defaultMultiplier;
+    if (v.kind === "Variable") {
+      return variableMultiplier(v.name.value, varDefs, vars, defaultMultiplier);
+    }
+    return defaultMultiplier; // pagination arg present but some other value kind
+  }
+  return 1; // no pagination argument → this field does not fan out
+}
+
+/**
+ * Estimated cost of the operation `document`/`operationName` would run, given the request's
+ * `variableValues`. Each field costs `fieldCost`; a field with a pagination argument multiplies
+ * its subtree by the (variable-resolved) page size. Fragment costs are **memoized by name**
+ * (a fragment's cost is self-contained), so a document that spreads a fragment along many
+ * non-cyclic paths — a "fragment bomb" — is estimated in linear time rather than exponential.
+ * Cyclic fragments (rejected earlier by graphql's own rule) can't recurse forever: a name on
+ * the current path contributes `0`.
+ */
+function estimateOperationCost(
+  document: DocumentNode,
+  operationName: string | null | undefined,
+  variableValues: Record<string, unknown> | null | undefined,
+  fieldCost: number,
+  argNames: ReadonlySet<string>,
+  defaultMultiplier: number,
+): number {
+  const operation = resolveOperation(document, operationName);
+  if (!operation) return 0; // ambiguous / none — let graphql surface the error
+  const varDefs = new Map<string, VariableDefinitionNode>();
+  for (const vd of operation.variableDefinitions ?? []) varDefs.set(vd.variable.name.value, vd);
+  return selectionCost(operation.selectionSet, {
+    fieldCost,
+    argNames,
+    varDefs,
+    vars: variableValues ?? {},
+    defaultMultiplier,
+    fragments: collectFragments(document),
+    cache: new Map(),
+    onPath: new Set(),
+  });
+}
+
+/**
+ * Memoize a per-fragment numeric fold: return the cached value, `0` for a name already on the
+ * walk path (a cycle — rejected elsewhere by graphql's `NoFragmentCyclesRule`), else compute
+ * it with `compute`, cache it, and return it. Shared by the cost and depth walks so a fragment
+ * reached along many non-cyclic paths is folded once (linear, not exponential).
+ */
+function memoFragment(
+  name: string,
+  fragments: Map<string, FragmentDefinitionNode>,
+  cache: Map<string, number>,
+  onPath: Set<string>,
+  compute: (selectionSet: SelectionSetNode) => number,
+): number {
+  const cached = cache.get(name);
+  if (cached !== undefined) return cached;
+  if (onPath.has(name)) return 0;
+  const frag = fragments.get(name);
+  if (!frag) return 0;
+  onPath.add(name);
+  const value = compute(frag.selectionSet);
+  onPath.delete(name);
+  cache.set(name, value);
+  return value;
+}
+
+/** State threaded through {@linkcode selectionCost}. */
+interface CostContext {
+  fieldCost: number;
+  argNames: ReadonlySet<string>;
+  varDefs: Map<string, VariableDefinitionNode>;
+  vars: Record<string, unknown>;
+  defaultMultiplier: number;
+  fragments: Map<string, FragmentDefinitionNode>;
+  cache: Map<string, number>;
+  onPath: Set<string>;
+}
+
+/** Cost of a selection set: each field `fieldCost`, a paginated field's subtree × its page size. */
+function selectionCost(selectionSet: SelectionSetNode, ctx: CostContext): number {
+  let total = 0;
+  for (const sel of selectionSet.selections) {
+    if (sel.kind === "Field") {
+      total += ctx.fieldCost;
+      if (sel.selectionSet) {
+        const m = argMultiplier(sel, ctx.argNames, ctx.varDefs, ctx.vars, ctx.defaultMultiplier);
+        total += m * selectionCost(sel.selectionSet, ctx);
+      }
+    } else if (sel.kind === "InlineFragment") {
+      if (sel.selectionSet) total += selectionCost(sel.selectionSet, ctx);
+    } else {
+      total += memoFragment(
+        sel.name.value,
+        ctx.fragments,
+        ctx.cache,
+        ctx.onPath,
+        (ss) => selectionCost(ss, ctx),
+      );
+    }
+  }
+  return total;
+}
+
+/** The max field-selection nesting a selection set reaches, following fragments (memoized). */
+function selectionDepth(
+  selectionSet: SelectionSetNode,
+  fragments: Map<string, FragmentDefinitionNode>,
+  cache: Map<string, number>,
+  onPath: Set<string>,
+): number {
+  let deepest = 0;
+  for (const sel of selectionSet.selections) {
+    let d = 0;
+    if (sel.kind === "Field") {
+      d = sel.selectionSet ? 1 + selectionDepth(sel.selectionSet, fragments, cache, onPath) : 0;
+    } else if (sel.kind === "InlineFragment") {
+      d = sel.selectionSet ? selectionDepth(sel.selectionSet, fragments, cache, onPath) : 0;
+    } else {
+      d = memoFragment(
+        sel.name.value,
+        fragments,
+        cache,
+        onPath,
+        (ss) => selectionDepth(ss, fragments, cache, onPath),
+      );
+    }
+    if (d > deepest) deepest = d;
+  }
+  return deepest;
+}
+
+/**
+ * A Yoga (envelop) plugin that rejects a query whose selection nesting exceeds `max`. Depth is
+ * measured over the AST (fields, inline fragments, and named fragments followed through the
+ * document), with **per-fragment memoization** so a fragment reachable by many non-cyclic
+ * paths is measured once — a linear-size document can't force an exponential walk. No value
+ * import from `graphql`, so it introduces no second realm.
  */
 function limitDepth(max: number): NonNullable<YogaPassthrough["plugins"]>[number] {
   const rule = (context: ValidationContext) => {
-    const fragments = new Map<string, FragmentDefinitionNode>();
-    for (const def of context.getDocument().definitions) {
-      if (def.kind === "FragmentDefinition") fragments.set(def.name.value, def);
-    }
-    let reported = false;
-    // Fragment names currently on the walk path — so a cyclic fragment (`A → B → A`) is not
-    // followed into infinite recursion (a stack-overflow DoS). graphql's own
-    // NoFragmentCyclesRule reports the cycle, but this manual walk runs in the same pass and
-    // would overflow first; a diamond (two spreads of one fragment) still resolves, since the
-    // name is only blocked while it is an ancestor.
+    const fragments = collectFragments(context.getDocument());
+    const cache = new Map<string, number>();
     const onPath = new Set<string>();
-    const walk = (selectionSet: SelectionSetNode | undefined, depth: number): void => {
-      if (!selectionSet || reported) return;
-      if (depth > max) {
-        reported = true;
-        context.reportError(
-          createGraphQLError(`Query is nested too deeply (max depth ${max})`, {
-            nodes: [selectionSet],
-          }),
-        );
-        return;
-      }
-      for (const sel of selectionSet.selections) {
-        if (sel.kind === "Field") walk(sel.selectionSet, depth + 1);
-        else if (sel.kind === "InlineFragment") walk(sel.selectionSet, depth);
-        else if (!onPath.has(sel.name.value)) {
-          onPath.add(sel.name.value);
-          walk(fragments.get(sel.name.value)?.selectionSet, depth);
-          onPath.delete(sel.name.value);
-        }
-      }
-    };
     return {
       OperationDefinition(node: OperationDefinitionNode) {
-        walk(node.selectionSet, 0);
+        if (selectionDepth(node.selectionSet, fragments, cache, onPath) > max) {
+          context.reportError(
+            createGraphQLError(`Query is nested too deeply (max depth ${max})`, {
+              nodes: [node.selectionSet],
+            }),
+          );
+        }
       },
     };
   };
   return {
     onValidate({ addValidationRule }: { addValidationRule: (rule: unknown) => void }) {
       addValidationRule(rule);
+    },
+  } as NonNullable<YogaPassthrough["plugins"]>[number];
+}
+
+/** Args an execute/subscribe hook exposes that {@linkcode limitCost} reads. */
+interface CostCheckArgs {
+  document: DocumentNode;
+  operationName?: string | null;
+  variableValues?: Record<string, unknown> | null;
+}
+
+/**
+ * A Yoga (envelop) plugin that refuses a query whose estimated cost exceeds `max`. It runs at
+ * the **execute/subscribe** phase (not validation) so it sees the request's real
+ * `variableValues` — a page size passed as `first: $n` is counted at its actual value, closing
+ * the bypass a literal-only AST check would leave open. Cost is summed over the AST (no schema,
+ * no resolver run, no second `graphql` realm) with memoized fragment costs, so it is linear in
+ * document size. See {@linkcode estimateOperationCost}.
+ */
+function limitCost(
+  max: number,
+  opts: CostOptions = {},
+): NonNullable<YogaPassthrough["plugins"]>[number] {
+  const fieldCost = opts.fieldCost ?? 1;
+  const argNames = new Set(opts.listMultiplierArgs ?? ["first", "last", "limit"]);
+  const defaultMultiplier = opts.defaultMultiplier ?? 1;
+  const check = (
+    args: CostCheckArgs,
+    stop: (result: { errors: unknown[] }) => void,
+  ): void => {
+    const total = estimateOperationCost(
+      args.document,
+      args.operationName,
+      args.variableValues,
+      fieldCost,
+      argNames,
+      defaultMultiplier,
+    );
+    if (total > max) {
+      stop({ errors: [createGraphQLError(`Query is too expensive (cost ${total}, max ${max})`)] });
+    }
+  };
+  return {
+    onExecute(
+      { args, setResultAndStopExecution }: {
+        args: CostCheckArgs;
+        setResultAndStopExecution: (result: { errors: unknown[] }) => void;
+      },
+    ) {
+      check(args, setResultAndStopExecution);
+    },
+    onSubscribe(
+      { args, setResultAndStopExecution }: {
+        args: CostCheckArgs;
+        setResultAndStopExecution: (result: { errors: unknown[] }) => void;
+      },
+    ) {
+      check(args, setResultAndStopExecution);
     },
   } as NonNullable<YogaPassthrough["plugins"]>[number];
 }

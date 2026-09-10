@@ -119,27 +119,42 @@ Deno.test("hub pushes a boundary patch when a subscribed tag is invalidated", as
   );
   const { port } = server.addr as Deno.NetAddr;
 
+  // Env-tunable deadline so a CPU-starved parallel run doesn't trip a hardcoded cap.
+  const patchTimeoutMs = Number(Deno.env.get("DENEXT_TEST_WS_TIMEOUT_MS")) || 15_000;
   const patch = await new Promise<Any>((resolve, reject) => {
     const ws = new WebSocket(`ws://localhost:${port}/_denext/live`);
-    const timer = setTimeout(() => reject(new Error("no patch received")), 3000);
+    // A boundary subscribe gets no initial ack (the patch only comes after invalidation), so a
+    // fixed delay races the subscribe registration: if revalidateTag fires first, the patch is
+    // never queued. Poll revalidateTag (idempotent) until the patch lands — deterministic under load.
+    let poll: ReturnType<typeof setInterval> | undefined;
+    const stop = () => {
+      clearTimeout(deadline);
+      if (poll !== undefined) clearInterval(poll);
+    };
+    const deadline = setTimeout(() => {
+      stop();
+      reject(new Error("no patch received"));
+    }, patchTimeoutMs);
     ws.onopen = () => {
       ws.send(JSON.stringify({
         type: "subscribe",
         url: "/orders",
         boundaries: [{ id: boundaryId, tags: ["orders"] }],
       }));
-      // Give the subscribe a tick to register, then invalidate the tag server-side.
-      setTimeout(() => void revalidateTag("orders"), 50);
+      poll = setInterval(() => void revalidateTag("orders"), 100);
     };
     ws.onmessage = (ev) => {
       const msg = JSON.parse(ev.data as string);
       if (msg.type === "patch") {
-        clearTimeout(timer);
+        stop();
         ws.close();
         resolve(msg);
       }
     };
-    ws.onerror = () => reject(new Error("socket error"));
+    ws.onerror = () => {
+      stop();
+      reject(new Error("socket error"));
+    };
   });
 
   assertEquals(patch.boundaryId, boundaryId);

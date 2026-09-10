@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.0
+
+- **Query cost budget (`maxCost`).** An opt-in complexity guard against the _multiplicative_
+  DoS a depth limit misses — `users(first: 1000) { posts(first: 1000) { … } }` is shallow but
+  fans out to a million resolver calls. Cost is estimated over the AST (no schema access, no
+  resolver run, no second `graphql` realm): each field costs `1` and a field carrying a
+  pagination argument (`first`/`last`/`limit`) multiplies its subtree cost by that integer. Off
+  by default (`maxDepth` stays the on-by-default guard); set `maxCost: 1000` to enable, and tune
+  the field weight / multiplier args via `costOptions`. New exported type `CostOptions`. The
+  check runs at **execute** time, so a page size passed as a variable (`first: $n`) is counted
+  at its real value — a variable can't evade the budget. With Yoga `batching` on, the budget is
+  per operation (an N-operation batch may cost up to N×).
+- **Both the depth and cost walks now memoize per fragment.** A "fragment bomb" (many non-cyclic
+  spreads of the same fragment) is analyzed in linear time instead of exponential — this hardens
+  the default-on `maxDepth` guard, not only the new `maxCost`.
+
 ## 0.1.0
 
 Initial release. A GraphQL endpoint for a denext app as a plugin. Requires the denext that

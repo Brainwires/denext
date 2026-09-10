@@ -29,6 +29,11 @@ Deno.test("migrate reproduces the examples/effect golden config files exactly", 
   const tmp = await Deno.makeTempDir({ prefix: "denext_effect_fixture_" });
   // Work on a COPY under `app/` so the committed fixture is never mutated.
   const dir = join(tmp, "app");
+  // Give the next.config eval subprocess a generous deadline: under the parallel gate it can be
+  // CPU-starved past the 15 s default, silently fall back to the raw port, and produce a config
+  // that mismatches the golden. Correctness, not slowness — restore the prior value after.
+  const priorEvalTimeout = Deno.env.get("DENEXT_NEXT_EVAL_TIMEOUT_MS");
+  Deno.env.set("DENEXT_NEXT_EVAL_TIMEOUT_MS", "120000");
   try {
     await copy(FIXTURE, dir);
 
@@ -68,6 +73,8 @@ Deno.test("migrate reproduces the examples/effect golden config files exactly", 
       );
     }
   } finally {
+    if (priorEvalTimeout === undefined) Deno.env.delete("DENEXT_NEXT_EVAL_TIMEOUT_MS");
+    else Deno.env.set("DENEXT_NEXT_EVAL_TIMEOUT_MS", priorEvalTimeout);
     await Deno.remove(tmp, { recursive: true });
   }
 });

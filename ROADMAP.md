@@ -6,7 +6,7 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the mission + its superiority
 > pillars in [MISSION.md](./MISSION.md).
 >
-> `development` is **2.2.0** (the version line `deno task bump` rewrites). 2.1 — the
+> `development` is **2.3.0** (the version line `deno task bump` rewrites). 2.1 — the
 > typed, self-documenting API surface (`defineApi`, the typed client,
 > `@denext/openapi`, `@denext/graphql`), plus scheduled tasks + cron, type-safe
 > routing, and `@denext/content-collections` — shipped from it. **2.2 is the next

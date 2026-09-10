@@ -492,7 +492,8 @@ cache uses Deno's built-in `node:sqlite`.)
   you mean" suggestions, `denext completions bash|zsh|fish`, and
   plugin-contributed verbs). Verbs: `create`/`init`
   (`--template default|minimal`), `generate`
-  (routes/components/layouts/api/actions/**test**/**docker**), `dev`, `build`,
+  (routes/components/layouts/**loading**/**error**/**not-found**/api/actions/**middleware**/**task**/test/docker),
+  `dev`, `build`,
   `export` (static), `start`, `test`/`lint`/`fmt`/`check` (over `deno`; `test`
   passes `--watch`/`--coverage` through), `analyze` (build + a per-chunk client
   bundle-size breakdown), `add`/`remove`/`update`, `plugin add`/`remove`/`list`
@@ -944,6 +945,23 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
 - **`tryCatch`** — a tuple/result-returning `try`/`catch` (`{ data, error }`)
   that keeps the success value in scope without a widened `let`; works over sync
   values and promises. — `src/utils/try-catch.ts`.
+- **Everyday browser-API hooks React/Next don't ship** — SSR-inert and
+  feature-detected: `useMediaQuery` (`src/utils/use-media-query.ts`),
+  `useLocalStorage` / `useSessionStorage` (`useState`-style Web Storage with JSON
+  - cross-tab sync, hydration-safe — `src/utils/use-storage.ts`),
+    `useEventListener` / `useClickOutside` (declarative DOM listeners, no stale
+    closures — `src/utils/use-dom-events.ts`), `useIntersectionObserver`
+    (`src/utils/use-intersection-observer.ts`), `useWindowSize`
+    (`src/utils/use-window-size.ts`), `useNetworkState`
+    (`src/utils/use-network-state.ts`), `useDebouncedValue`
+    (`src/utils/use-debounced-value.ts`), and `useCopyToClipboard`
+    (`src/utils/use-clipboard.ts`).
+- **OPFS + File System Observer hooks** — read, write, and _live-observe_ the
+  Origin Private File System: `useFileSystemObserver` (the generic change
+  primitive over any `FileSystemHandle` —
+  `src/utils/use-file-system-observer.ts`), `useOPFSRoot`, `useDirectory`, and
+  `useFile` (text/JSON/bytes, `write`/`remove`, auto-refreshed on change —
+  `src/utils/use-opfs.ts`). Client-only, graceful no-op where unsupported.
 
 ### 3.4 Auto-memo compiler (Deno-native)
 

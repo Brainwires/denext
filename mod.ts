@@ -324,6 +324,50 @@ export { useAsyncEffect } from "./src/utils/use-async-effect.ts";
 export { tryCatch } from "./src/utils/try-catch.ts";
 export type { ErrorResult, SuccessResult, TryCatchResult } from "./src/utils/try-catch.ts";
 
+// OPFS + File System Observer hooks (denext-specific): live directory/file reads
+// over the Origin Private File System, plus the generic change-observer primitive.
+export {
+  fileSystemObserverSupported,
+  useFileSystemObserver,
+} from "./src/utils/use-file-system-observer.ts";
+export type {
+  FileSystemChangeRecord,
+  FileSystemChangeType,
+  FileSystemObserverCallback,
+  FileSystemObserverObserveOptions,
+  UseFileSystemObserverResult,
+} from "./src/utils/use-file-system-observer.ts";
+export { useDirectory, useFile, useOPFSRoot } from "./src/utils/use-opfs.ts";
+export type {
+  DirectoryEntry,
+  FileAs,
+  UseDirectoryOptions,
+  UseDirectoryResult,
+  UseFileOptions,
+  UseFileResult,
+  UseOPFSRootResult,
+} from "./src/utils/use-opfs.ts";
+
+// Extra client utility hooks (denext-specific): SSR-inert, feature-detected
+// wrappers over common browser APIs React/Next don't ship a hook for.
+export { useMediaQuery } from "./src/utils/use-media-query.ts";
+export { useLocalStorage, useSessionStorage } from "./src/utils/use-storage.ts";
+export type { SetStoredValue, UseStorageResult } from "./src/utils/use-storage.ts";
+export { useClickOutside, useEventListener } from "./src/utils/use-dom-events.ts";
+export type { UseEventListenerOptions } from "./src/utils/use-dom-events.ts";
+export { useIntersectionObserver } from "./src/utils/use-intersection-observer.ts";
+export type {
+  UseIntersectionObserverOptions,
+  UseIntersectionObserverResult,
+} from "./src/utils/use-intersection-observer.ts";
+export { useWindowSize } from "./src/utils/use-window-size.ts";
+export type { WindowSize } from "./src/utils/use-window-size.ts";
+export { useNetworkState } from "./src/utils/use-network-state.ts";
+export type { NetworkState } from "./src/utils/use-network-state.ts";
+export { useDebouncedValue } from "./src/utils/use-debounced-value.ts";
+export { useCopyToClipboard } from "./src/utils/use-clipboard.ts";
+export type { UseClipboardResult } from "./src/utils/use-clipboard.ts";
+
 export { useActionState, useFormState, useFormStatus } from "./src/runtime/actions.ts";
 export type { FormStatus } from "./src/runtime/actions.ts";
 // Typed Server Actions — the client-safe result type + idle-state helper (pair with
@@ -373,4 +417,4 @@ export type {
 export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "./src/runtime/public-env.ts";
 
 /** The denext framework version. */
-export const VERSION = "2.2.0";
+export const VERSION = "2.3.0";

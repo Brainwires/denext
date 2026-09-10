@@ -13,9 +13,14 @@ export type GenerateKind =
   | "page"
   | "route"
   | "layout"
+  | "loading"
+  | "error"
+  | "not-found"
   | "component"
   | "api"
   | "action"
+  | "middleware"
+  | "task"
   | "test"
   | "docker";
 
@@ -82,6 +87,89 @@ function apiSource(): string {
   return `export function GET(_request: Request): Response {
   return Response.json({ ok: true });
 }
+`;
+}
+
+function loadingSource(): string {
+  return `export default function Loading() {
+  return (
+    <div role="status" aria-live="polite">
+      Loading…
+    </div>
+  );
+}
+`;
+}
+
+function errorSource(): string {
+  // error boundaries are Client Components and receive { error, reset } (Next parity).
+  // Named RouteError to avoid shadowing the global \`Error\` used in the annotation.
+  return `"use client";
+
+export default function RouteError(
+  { error, reset }: { error: Error & { digest?: string }; reset: () => void },
+) {
+  return (
+    <section role="alert">
+      <h2>Something went wrong</h2>
+      <p>{error.message}</p>
+      <button type="button" onClick={() => reset()}>Try again</button>
+    </section>
+  );
+}
+`;
+}
+
+function notFoundSource(): string {
+  return `export default function NotFound() {
+  return (
+    <section>
+      <h2>Not found</h2>
+      <p>The page you were looking for doesn't exist.</p>
+    </section>
+  );
+}
+`;
+}
+
+function middlewareSource(): string {
+  return `import { redirectResponse } from "denext/server";
+
+/**
+ * Runs before matched routes. Return a \`Response\` to short-circuit (redirect or
+ * rewrite), or \`null\` to continue to the route.
+ */
+export function middleware(request: Request): Response | null {
+  const url = new URL(request.url);
+  // Example — gate an area behind auth:
+  //   if (url.pathname.startsWith("/admin") && !hasSession(request)) {
+  //     return redirectResponse("/login", 307);
+  //   }
+  void url;
+  void redirectResponse;
+  return null;
+}
+
+export const config = {
+  // Which paths the middleware runs on (omit \`config\` to run on all routes).
+  matcher: ["/((?!_next|favicon.ico).*)"],
+};
+`;
+}
+
+function taskSource(name: string): string {
+  const desc = pascal(name) || "Task";
+  return `import { defineTask } from "denext/server";
+
+export default defineTask({
+  description: ${JSON.stringify(desc)},
+  // schedule: "0 3 * * *", // optional cron (evaluated in UTC); or list it in
+  // denext.config.ts \`scheduledTasks\`.
+  handler: async ({ payload }) => {
+    void payload;
+    // Do the work here. Run it with \`denext task ${name}\` or runTask("${name}").
+  },
+});
 `;
 }
 
@@ -354,8 +442,21 @@ function artifactTarget(
       return { path: safeJoin(appDir, segment, "page.tsx"), content: pageSource(name) };
     case "layout":
       return { path: safeJoin(appDir, segment, "layout.tsx"), content: layoutSource(name) };
+    case "loading":
+      return { path: safeJoin(appDir, segment, "loading.tsx"), content: loadingSource() };
+    case "error":
+      return { path: safeJoin(appDir, segment, "error.tsx"), content: errorSource() };
+    case "not-found":
+      return { path: safeJoin(appDir, segment, "not-found.tsx"), content: notFoundSource() };
     case "api":
       return { path: safeJoin(appDir, segment, "route.ts"), content: apiSource() };
+    case "middleware":
+      // Sits beside `app/` — at `src/` when the app lives in `src/app`, else project root.
+      return { path: safeJoin(srcBase, "middleware.ts"), content: middlewareSource() };
+    case "task": {
+      const base = segment.replace(/\.ts$/, "") || "task";
+      return { path: safeJoin(projectDir, "tasks", base + ".ts"), content: taskSource(name) };
+    }
     case "component":
       return {
         path: safeJoin(srcBase, "components", pascal(name) + ".tsx"),

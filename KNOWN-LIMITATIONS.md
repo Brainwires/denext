@@ -237,10 +237,14 @@ four documented bounds of the opt-in:
   GraphQL client supports it, and it is what lets them ride denext channels without a
   second socket server. `fromChannel` bypasses the channel's socket-side `authorize`
   (gate in the resolver). Query depth is capped (default 12, `maxDepth: false` to disable) and,
-  with introspection off, field suggestions are stripped — but there is no query
-  cost/complexity budget yet (a follow-up for stable 2.1.0). The schema resolves once per
-  process: in `denext dev`, an edit to a schema module needs a server restart (Deno's module
-  graph caches it).
+  with introspection off, field suggestions are stripped. A query **cost budget** (`maxCost`,
+  opt-in — the guard against the _multiplicative_ fan-out a depth limit misses, e.g.
+  `users(first: 1000) { posts(first: 1000) }`) is available too, off by default; it runs at
+  execute time so a page size passed as a variable is counted at its real value, and both the
+  cost and depth walks memoize per fragment (a "fragment bomb" is analyzed in linear time). With
+  Yoga `batching` on, the budget is enforced per operation, so an N-operation batch can cost up
+  to N×. The schema resolves once per process: in `denext dev`, an edit to a schema module needs
+  a server restart (Deno's module graph caches it).
 
 ## DevTools (dev-only)
 
