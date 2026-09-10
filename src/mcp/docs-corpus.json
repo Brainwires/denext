@@ -343,6 +343,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext/DirectoryEntry",
+      "kind": "interface",
+      "title": "DirectoryEntry",
+      "module": "denext",
+      "url": "/docs/api/denext/DirectoryEntry",
+      "text": "DirectoryEntry interface DirectoryEntry One entry of a directory listing.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/Dispatch",
       "kind": "typeAlias",
       "title": "Dispatch",
@@ -484,6 +493,60 @@
       "module": "denext",
       "url": "/docs/api/denext/FC",
       "text": "FC type FC<P> = FunctionComponent<P> Alias for FunctionComponent.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/FileAs",
+      "kind": "typeAlias",
+      "title": "FileAs",
+      "module": "denext",
+      "url": "/docs/api/denext/FileAs",
+      "text": "FileAs type FileAs = text | arrayBuffer | json How useFile decodes the file's contents.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/FileSystemChangeRecord",
+      "kind": "interface",
+      "title": "FileSystemChangeRecord",
+      "module": "denext",
+      "url": "/docs/api/denext/FileSystemChangeRecord",
+      "text": "FileSystemChangeRecord interface FileSystemChangeRecord A single change reported by the observer.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/FileSystemChangeType",
+      "kind": "typeAlias",
+      "title": "FileSystemChangeType",
+      "module": "denext",
+      "url": "/docs/api/denext/FileSystemChangeType",
+      "text": "FileSystemChangeType type FileSystemChangeType = appeared | disappeared | errored | modified | moved | unknown The kind of change reported for a handle. Mirrors the spec's FileSystemChangeType: \"appeared\" (created/moved-in), \"disappeared\" (removed/moved-out), \"modified\" (contents changed), \"moved\" (renamed or moved within an observed tree — see FileSystemChangeRecord.relativePathMovedFrom), \"errored\" (observation failed; the record's paths may be empty), and \"unknown\" (the platform coalesced or dropped detail and a full re-read is advised).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/FileSystemObserverCallback",
+      "kind": "typeAlias",
+      "title": "FileSystemObserverCallback",
+      "module": "denext",
+      "url": "/docs/api/denext/FileSystemObserverCallback",
+      "text": "FileSystemObserverCallback type FileSystemObserverCallback = (records: FileSystemChangeRecord[]) => void The change callback invoked with the batch of records for an observed handle.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/FileSystemObserverObserveOptions",
+      "kind": "interface",
+      "title": "FileSystemObserverObserveOptions",
+      "module": "denext",
+      "url": "/docs/api/denext/FileSystemObserverObserveOptions",
+      "text": "FileSystemObserverObserveOptions interface FileSystemObserverObserveOptions Options for observing a handle.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/fileSystemObserverSupported",
+      "kind": "function",
+      "title": "fileSystemObserverSupported",
+      "module": "denext",
+      "url": "/docs/api/denext/fileSystemObserverSupported",
+      "text": "fileSystemObserverSupported fileSystemObserverSupported(): boolean Whether the File System Observer API is available in this environment.",
       "denextOnly": true
     },
     {
@@ -1090,6 +1153,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext/NetworkState",
+      "kind": "interface",
+      "title": "NetworkState",
+      "module": "denext",
+      "url": "/docs/api/denext/NetworkState",
+      "text": "NetworkState interface NetworkState Network status, with connection hints when the browser provides them.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/notFound",
       "kind": "function",
       "title": "notFound",
@@ -1558,6 +1630,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext/SetStoredValue",
+      "kind": "typeAlias",
+      "title": "SetStoredValue",
+      "module": "denext",
+      "url": "/docs/api/denext/SetStoredValue",
+      "text": "SetStoredValue type SetStoredValue<T> = (value: T | parenthesized) => void A useState-style setter that also accepts an updater function.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/Signal",
       "kind": "interface",
       "title": "Signal",
@@ -1855,6 +1936,24 @@
       "denextOnly": false
     },
     {
+      "id": "api:denext/useClickOutside",
+      "kind": "function",
+      "title": "useClickOutside",
+      "module": "denext",
+      "url": "/docs/api/denext/useClickOutside",
+      "text": "useClickOutside useClickOutside<T>(ref: RefObject<T | null>, handler: (event: Event) => void, events?: typeOperator): void Call handler when a pointer/touch event lands outside the referenced element — the \"click away to dismiss\" pattern for menus, popovers, and dialogs. Listens in the capture phase so it runs before inner handlers. No-op during SSR. A ref to the element whose inside is \"safe\". Called with the originating event when the interaction is outside ref.current. The event names that count as an outside interaction (default [\"mousedown\", \"touchstart\"]).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/UseClipboardResult",
+      "kind": "interface",
+      "title": "UseClipboardResult",
+      "module": "denext",
+      "url": "/docs/api/denext/UseClipboardResult",
+      "text": "UseClipboardResult interface UseClipboardResult The result of useCopyToClipboard.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/useContext",
       "kind": "function",
       "title": "useContext",
@@ -1862,6 +1961,24 @@
       "url": "/docs/api/denext/useContext",
       "text": "useContext useContext<T>(context: Context<T>): T Read the current value of context from the nearest enclosing provider.",
       "denextOnly": false
+    },
+    {
+      "id": "api:denext/useCopyToClipboard",
+      "kind": "function",
+      "title": "useCopyToClipboard",
+      "module": "denext",
+      "url": "/docs/api/denext/useCopyToClipboard",
+      "text": "useCopyToClipboard useCopyToClipboard(resetAfterMs?: number): UseClipboardResult Copy text to the clipboard, exposing a transient copied flag for feedback. How long copied stays true after a successful copy, in milliseconds (default 2000; 0 keeps it until the next copy). .",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/useDebouncedValue",
+      "kind": "function",
+      "title": "useDebouncedValue",
+      "module": "denext",
+      "url": "/docs/api/denext/useDebouncedValue",
+      "text": "useDebouncedValue useDebouncedValue<T>(value: T, delayMs: number): T Return a debounced copy of value. Each change restarts a delayMs timer; the returned value updates only once the input stops changing for that long. The rapidly-changing source value. The quiet period, in milliseconds, before the value settles. The debounced value.",
+      "denextOnly": true
     },
     {
       "id": "api:denext/useDebugValue",
@@ -1880,6 +1997,33 @@
       "url": "/docs/api/denext/useDeferredValue",
       "text": "useDeferredValue useDeferredValue<T>(value: T, initialValue?: T): T Return a deferred copy of value that lags behind during rapid updates, letting urgent renders finish first. On the client this is a true **render-phase** deferral (React-accurate): during an urgent render the hook returns the previous value and schedules a low-priority transition to catch up, so the deferred update is time-sliced and interruptible and the value never trails by an extra commit. The optional initialValue (React 19) is returned on the first render, with a transition scheduled to reach value. On the server (no lane scheduler) it returns initialValue ?? value. The value to defer. Optional value to show on the first render before deferral.",
       "denextOnly": false
+    },
+    {
+      "id": "api:denext/useDirectory",
+      "kind": "function",
+      "title": "useDirectory",
+      "module": "denext",
+      "url": "/docs/api/denext/useDirectory",
+      "text": "useDirectory useDirectory(pathOrHandle: string | FileSystemDirectoryHandle, options?: UseDirectoryOptions): UseDirectoryResult List a directory's entries and keep the listing live: it re-reads whenever the File System Observer reports a change (when that API is available). A path under the OPFS root (\"photos/2026\") or a FileSystemDirectoryHandle to read directly. { recursive } to also refresh on deep changes. { entries, isSupported, loading, error, refresh }.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/UseDirectoryOptions",
+      "kind": "interface",
+      "title": "UseDirectoryOptions",
+      "module": "denext",
+      "url": "/docs/api/denext/UseDirectoryOptions",
+      "text": "UseDirectoryOptions interface UseDirectoryOptions Options for useDirectory.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/UseDirectoryResult",
+      "kind": "interface",
+      "title": "UseDirectoryResult",
+      "module": "denext",
+      "url": "/docs/api/denext/UseDirectoryResult",
+      "text": "UseDirectoryResult interface UseDirectoryResult The result of useDirectory.",
+      "denextOnly": true
     },
     {
       "id": "api:denext/useEffect",
@@ -1906,6 +2050,69 @@
       "module": "denext",
       "url": "/docs/api/denext/useErrorBoundary",
       "text": "useErrorBoundary useErrorBoundary(): ErrorBoundaryController Access the nearest enclosing error boundary imperatively. Returns a ErrorBoundaryController whose captureError(e) shows that boundary's fallback (handy for async errors a boundary cannot catch during render) and whose reset() retries its children. Inert during server rendering.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/useEventListener",
+      "kind": "function",
+      "title": "useEventListener",
+      "module": "denext",
+      "url": "/docs/api/denext/useEventListener",
+      "text": "useEventListener useEventListener<K>(type: K, handler: (event: indexedAccess) => void, options?: UseEventListenerOptions): void Attach a DOM event listener for the lifetime of the component. The handler is held in a ref, so passing a fresh closure each render never re-subscribes and never goes stale. The event name (typed against WindowEventMap, e.g. \"resize\", \"keydown\"). Called with the event; always the latest closure. UseEventListenerOptions — target (default window), capture, passive, once.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/UseEventListenerOptions",
+      "kind": "interface",
+      "title": "UseEventListenerOptions",
+      "module": "denext",
+      "url": "/docs/api/denext/UseEventListenerOptions",
+      "text": "UseEventListenerOptions interface UseEventListenerOptions Options for useEventListener.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/useFile",
+      "kind": "function",
+      "title": "useFile",
+      "module": "denext",
+      "url": "/docs/api/denext/useFile",
+      "text": "useFile useFile(pathOrHandle: string | FileSystemFileHandle, options?: object): UseFileResult<string> Read a file's contents and keep them live: they re-read whenever the File System Observer reports a change. Also returns write and remove. A path under the OPFS root (\"notes/todo.json\") or a FileSystemFileHandle to read directly (remove then needs a path). { as, create } — decode mode and whether to create on write. { data, isSupported, loading, error, write, remove, refresh }.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/UseFileOptions",
+      "kind": "interface",
+      "title": "UseFileOptions",
+      "module": "denext",
+      "url": "/docs/api/denext/UseFileOptions",
+      "text": "UseFileOptions interface UseFileOptions Options for useFile.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/UseFileResult",
+      "kind": "interface",
+      "title": "UseFileResult",
+      "module": "denext",
+      "url": "/docs/api/denext/UseFileResult",
+      "text": "UseFileResult interface UseFileResult<T> The result of useFile. T is the decoded data type.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/useFileSystemObserver",
+      "kind": "function",
+      "title": "useFileSystemObserver",
+      "module": "denext",
+      "url": "/docs/api/denext/useFileSystemObserver",
+      "text": "useFileSystemObserver useFileSystemObserver(target: FileSystemHandle | typeOperator | null | undefined, callback: FileSystemObserverCallback, options?: FileSystemObserverObserveOptions): UseFileSystemObserverResult Subscribe to file-system changes on one or more handles. The handle (or handles) to observe. null/undefined observes nothing (the hook stays inert, so a handle that resolves asynchronously can be passed straight through). Pass a **stable** reference — an inline array literal changes identity every render and re-subscribes; memoize it or pass a single handle. Invoked with each batch of FileSystemChangeRecords. Held in a ref, so a new closure each render does not re-subscribe. { recursive } to observe a directory's whole subtree. { isSupported, error, disconnect }.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/UseFileSystemObserverResult",
+      "kind": "interface",
+      "title": "UseFileSystemObserverResult",
+      "module": "denext",
+      "url": "/docs/api/denext/UseFileSystemObserverResult",
+      "text": "UseFileSystemObserverResult interface UseFileSystemObserverResult The result of useFileSystemObserver.",
       "denextOnly": true
     },
     {
@@ -1954,6 +2161,33 @@
       "denextOnly": false
     },
     {
+      "id": "api:denext/useIntersectionObserver",
+      "kind": "function",
+      "title": "useIntersectionObserver",
+      "module": "denext",
+      "url": "/docs/api/denext/useIntersectionObserver",
+      "text": "useIntersectionObserver useIntersectionObserver<T>(options?: UseIntersectionObserverOptions): UseIntersectionObserverResult<T> Observe an element's intersection with the viewport (or a root). Attach the returned ref to the element; entry/isIntersecting update as it crosses the configured threshold. UseIntersectionObserverOptions. .",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/UseIntersectionObserverOptions",
+      "kind": "interface",
+      "title": "UseIntersectionObserverOptions",
+      "module": "denext",
+      "url": "/docs/api/denext/UseIntersectionObserverOptions",
+      "text": "UseIntersectionObserverOptions interface UseIntersectionObserverOptions Options for useIntersectionObserver (a superset of IntersectionObserverInit).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/UseIntersectionObserverResult",
+      "kind": "interface",
+      "title": "UseIntersectionObserverResult",
+      "module": "denext",
+      "url": "/docs/api/denext/UseIntersectionObserverResult",
+      "text": "UseIntersectionObserverResult interface UseIntersectionObserverResult<T> The result of useIntersectionObserver.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/useLayoutEffect",
       "kind": "function",
       "title": "useLayoutEffect",
@@ -1981,6 +2215,24 @@
       "denextOnly": false
     },
     {
+      "id": "api:denext/useLocalStorage",
+      "kind": "function",
+      "title": "useLocalStorage",
+      "module": "denext",
+      "url": "/docs/api/denext/useLocalStorage",
+      "text": "useLocalStorage useLocalStorage<T>(key: string, initialValue: T): UseStorageResult<T> Persist state in localStorage, keyed by key, with a useState-style API. Values are JSON-serialized; updates propagate across tabs. SSR-safe. The storage key. The value used when nothing is stored (and during SSR). [value, setValue, remove] — UseStorageResult.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/useMediaQuery",
+      "kind": "function",
+      "title": "useMediaQuery",
+      "module": "denext",
+      "url": "/docs/api/denext/useMediaQuery",
+      "text": "useMediaQuery useMediaQuery(query: string, serverFallback?: boolean): boolean Subscribe to a CSS media query. Re-renders whenever the match state flips. A media query string, e.g. \"(min-width: 768px)\" or \"(prefers-color-scheme: dark)\". The value returned during SSR and where matchMedia is unavailable (default false). true while the query currently matches, else false.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/useMemo",
       "kind": "function",
       "title": "useMemo",
@@ -1988,6 +2240,33 @@
       "url": "/docs/api/denext/useMemo",
       "text": "useMemo useMemo<T>(factory: () => T, deps?: DependencyList): T Memoize factory's result, recomputing only when deps change.",
       "denextOnly": false
+    },
+    {
+      "id": "api:denext/useNetworkState",
+      "kind": "function",
+      "title": "useNetworkState",
+      "module": "denext",
+      "url": "/docs/api/denext/useNetworkState",
+      "text": "useNetworkState useNetworkState(): NetworkState Track online/offline status and connection quality, re-rendering on change. .",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/useOPFSRoot",
+      "kind": "function",
+      "title": "useOPFSRoot",
+      "module": "denext",
+      "url": "/docs/api/denext/useOPFSRoot",
+      "text": "useOPFSRoot useOPFSRoot(): UseOPFSRootResult Acquire the OPFS root directory handle (navigator.storage.getDirectory()). { root, isSupported, error } — root is null until it resolves.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/UseOPFSRootResult",
+      "kind": "interface",
+      "title": "UseOPFSRootResult",
+      "module": "denext",
+      "url": "/docs/api/denext/UseOPFSRootResult",
+      "text": "UseOPFSRootResult interface UseOPFSRootResult The result of useOPFSRoot.",
+      "denextOnly": true
     },
     {
       "id": "api:denext/useOptimistic",
@@ -2107,6 +2386,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext/useSessionStorage",
+      "kind": "function",
+      "title": "useSessionStorage",
+      "module": "denext",
+      "url": "/docs/api/denext/useSessionStorage",
+      "text": "useSessionStorage useSessionStorage<T>(key: string, initialValue: T): UseStorageResult<T> Persist state in sessionStorage (cleared when the tab closes), keyed by key, with a useState-style API. Values are JSON-serialized. SSR-safe. The storage key. The value used when nothing is stored (and during SSR). [value, setValue, remove] — UseStorageResult.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/useSignal",
       "kind": "function",
       "title": "useSignal",
@@ -2123,6 +2411,15 @@
       "url": "/docs/api/denext/useState",
       "text": "useState useState<S>(): tuple Declare local component state with no initial value (S | undefined).",
       "denextOnly": false
+    },
+    {
+      "id": "api:denext/UseStorageResult",
+      "kind": "typeAlias",
+      "title": "UseStorageResult",
+      "module": "denext",
+      "url": "/docs/api/denext/UseStorageResult",
+      "text": "UseStorageResult type UseStorageResult<T> = tuple The tuple returned by useLocalStorage / useSessionStorage: [value, setValue, remove].",
+      "denextOnly": true
     },
     {
       "id": "api:denext/useStore",
@@ -2179,6 +2476,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext/useWindowSize",
+      "kind": "function",
+      "title": "useWindowSize",
+      "module": "denext",
+      "url": "/docs/api/denext/useWindowSize",
+      "text": "useWindowSize useWindowSize(): WindowSize Track the viewport size, re-rendering on resize. — { width, height }.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/ValueResult",
       "kind": "typeAlias",
       "title": "ValueResult",
@@ -2202,7 +2508,7 @@
       "title": "VERSION",
       "module": "denext",
       "url": "/docs/api/denext/VERSION",
-      "text": "VERSION VERSION: 2.2.0 The denext framework version.",
+      "text": "VERSION VERSION: 2.3.0 The denext framework version.",
       "denextOnly": true
     },
     {
@@ -2266,6 +2572,15 @@
       "module": "denext",
       "url": "/docs/api/denext/WebLockOptions",
       "text": "WebLockOptions interface WebLockOptions Options for withWebLock.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/WindowSize",
+      "kind": "interface",
+      "title": "WindowSize",
+      "module": "denext",
+      "url": "/docs/api/denext/WindowSize",
+      "text": "WindowSize interface WindowSize The viewport dimensions in CSS pixels.",
       "denextOnly": true
     },
     {

@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-09-10
+
 ### Added
 
 - **OPFS React hooks over the File System Observer API.** New client hooks for the Origin
@@ -23,7 +25,6 @@ and this project adheres to
   exports on `denext`: the hooks plus `fileSystemObserverSupported`, `FileSystemChangeRecord`,
   `FileSystemChangeType`, `FileSystemObserverObserveOptions`, `DirectoryEntry`, and the hooks'
   result/option types.
-
 - **Extra client utility hooks.** A curated set of SSR-inert, feature-detected hooks over
   common browser APIs React/Next ship no hook for: **`useMediaQuery`** (subscribe to a CSS
   media query), **`useLocalStorage`** / **`useSessionStorage`** (`useState`-style Web Storage
@@ -32,7 +33,6 @@ and this project adheres to
   (a callback ref + intersection state), **`useWindowSize`**, **`useNetworkState`** (online
   status + connection hints), **`useDebouncedValue`**, and **`useCopyToClipboard`**. All are
   client-only and degrade gracefully during SSR / where the API is unavailable.
-
 - **`denext generate` covers the rest of the App Router surface.** New scaffold kinds
   beyond page/route/layout/component/api/action: **`loading`**, **`error`** (a Client
   Component with `{ error, reset }`), and **`not-found`** boundaries (nested under a path,
@@ -6302,6 +6302,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.3.0]: https://jsr.io/@denext/denext@2.3.0
 [2.2.0]: https://jsr.io/@denext/denext@2.2.0
 [2.1.6]: https://jsr.io/@denext/denext@2.1.6
 [2.1.5]: https://jsr.io/@denext/denext@2.1.5
