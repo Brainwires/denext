@@ -24,6 +24,15 @@ and this project adheres to
   `FileSystemChangeType`, `FileSystemObserverObserveOptions`, `DirectoryEntry`, and the hooks'
   result/option types.
 
+- **Extra client utility hooks.** A curated set of SSR-inert, feature-detected hooks over
+  common browser APIs React/Next ship no hook for: **`useMediaQuery`** (subscribe to a CSS
+  media query), **`useLocalStorage`** / **`useSessionStorage`** (`useState`-style Web Storage
+  with JSON + cross-tab sync), **`useEventListener`** and **`useClickOutside`** (declarative
+  DOM listeners with correct cleanup and no stale closures), **`useIntersectionObserver`**
+  (a callback ref + intersection state), **`useWindowSize`**, **`useNetworkState`** (online
+  status + connection hints), **`useDebouncedValue`**, and **`useCopyToClipboard`**. All are
+  client-only and degrade gracefully during SSR / where the API is unavailable.
+
 ## [2.2.0] - 2026-09-10
 
 ### Added
