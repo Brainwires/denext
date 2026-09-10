@@ -56,23 +56,35 @@ function startHub(
   return { server, port: (server.addr as Deno.NetAddr).port };
 }
 
-/** Open a client socket and collect frames of `type` until `count`, then resolve. */
+// Generous, env-tunable WS deadline: these waits are condition-based (resolve when `count`
+// frames arrive), so a higher cap only tolerates scheduler latency under a CPU-starved parallel
+// run — it never changes what a passing test proves. A hardcoded 3 s tripped under load.
+const WS_TIMEOUT_MS = Number(Deno.env.get("DENEXT_TEST_WS_TIMEOUT_MS")) || 15_000;
+
+/**
+ * Open a client socket and collect frames of `type` until `count`, then resolve. `onFrame` (when
+ * given) is invoked for EVERY inbound message — a test uses it to act once the initial push proves
+ * the subscription is registered (a deterministic trigger, instead of a fixed delay that races
+ * the subscribe registration under load).
+ */
 function collect(
   port: number,
   type: string,
   count: number,
   onOpen: (ws: WebSocket) => void,
+  onFrame?: (msg: Any, ws: WebSocket) => void,
 ): Promise<{ ws: WebSocket; frames: Any[] }> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`ws://localhost:${port}/_denext/live`);
     const frames: Any[] = [];
     const timer = setTimeout(
       () => reject(new Error(`timeout waiting for ${count} ${type} frames`)),
-      3000,
+      WS_TIMEOUT_MS,
     );
     ws.onopen = () => onOpen(ws);
     ws.onmessage = (ev) => {
       const msg = JSON.parse(ev.data as string);
+      onFrame?.(msg, ws);
       if (msg.type === type) {
         frames.push(msg);
         if (frames.length >= count) {
@@ -98,8 +110,10 @@ Deno.test("useLive hub: pushes the initial value, then recomputes on tag invalid
         args: [],
         tags: ["ctr"],
       }));
-      // After the initial push, invalidate the tag to force a recompute.
-      setTimeout(() => void revalidateTag("ctr"), 50);
+    }, (msg) => {
+      // The initial push (value 1) proves the subscription registered — invalidate then, so the
+      // recompute has a watcher. Deterministic; no fixed delay to lose under parallel load.
+      if (msg.type === "data" && msg.value === 1) void revalidateTag("ctr");
     });
     assertEquals(frames[0], { type: "data", subId: "s1", value: 1 });
     assertEquals(frames[1], { type: "data", subId: "s1", value: 2 });
@@ -133,10 +147,13 @@ Deno.test("useLive hub: a canSubscribe that throws on recompute degrades gracefu
         args: [],
         tags: ["g"],
       }));
-      setTimeout(() => {
+    }, (msg) => {
+      // Once the initial push (a "data" frame) confirms the sub is registered, poison the
+      // re-auth and invalidate → the recompute throws. Deterministic; no fixed delay to race.
+      if (msg.type === "data" && !poisoned) {
         poisoned = true;
         void revalidateTag("g");
-      }, 50);
+      }
     });
     // Graceful degrade instead of a process crash: a structured `failed` frame, sub dropped
     // (the initial push happened first — the recompute after `revalidateTag` is what threw).
