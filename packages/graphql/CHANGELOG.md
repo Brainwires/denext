@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - **Query cost budget (`maxCost`).** An opt-in complexity guard against the _multiplicative_
   DoS a depth limit misses — `users(first: 1000) { posts(first: 1000) { … } }` is shallow but
