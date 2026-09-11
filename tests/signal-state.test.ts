@@ -47,8 +47,8 @@ Deno.test("the client adopts the transported value instead of the initializer", 
     const n = useSignal(0); // would be 0 without adoption
     return h("span", null, `n:${n.value}`);
   }
-  // The signal's id is the component's first useId — ":d0_0:" (root slot 0).
-  setAdoptedSignalState({ ":d0_0:": 42 });
+  // The signal's id is the component's first useId — "_d0_0_" (root slot 0).
+  setAdoptedSignalState({ "_d0_0_": 42 });
   const root = createRoot(container as Any);
   root.render(h(Counter as Any, null));
   flushSync();
@@ -64,18 +64,18 @@ Deno.test("renderBodyScripts emits #__denext_state when signal state is present"
     hydration: { params: {}, searchParams: "", pathname: "/" },
     clientEntry: "/entry.js",
     flight: { $: "h", t: "main", p: {}, c: [] },
-    signalState: { ":d0_0:": 7 },
+    signalState: { "_d0_0_": 7 },
   });
   assert(scripts.includes('id="__denext_state"'));
-  assert(scripts.includes('":d0_0:":7'));
+  assert(scripts.includes('"_d0_0_":7'));
 });
 
 Deno.test("adoptSignalState drops prototype-polluting keys and adopts the rest", () => {
   // A crafted #__denext_state must not pollute Object.prototype on adoption.
-  const raw = JSON.parse('{"__proto__":{"polluted":1},"constructor":2,":d0_0:":42}');
+  const raw = JSON.parse('{"__proto__":{"polluted":1},"constructor":2,"_d0_0_":42}');
   adoptSignalState(raw);
   assertEquals(({} as Record<string, unknown>).polluted, undefined, "no prototype pollution");
-  assertEquals(adoptedSignal(":d0_0:")?.value, 42, "safe keys are still adopted");
+  assertEquals(adoptedSignal("_d0_0_")?.value, 42, "safe keys are still adopted");
   assertEquals(adoptedSignal("__proto__"), null);
   setAdoptedSignalState(null);
 });

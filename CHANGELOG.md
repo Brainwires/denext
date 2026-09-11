@@ -10,6 +10,13 @@ and this project adheres to
 
 ### Changed
 
+- **`useId` ids are CSS-selector-safe.** `useId()` now emits `_d{path}_{n}_` (e.g. `_d0-2-1_0_`)
+  instead of `:d0.2.1_0:`. The new shape uses React 19.2's `_r_0_` character class — a valid
+  CSS identifier, XML 1.0 name and `view-transition-name` — so libraries that do
+  `querySelector("#" + id)` (Radix, Base UI, Headless UI) work without `CSS.escape`. The
+  position-derived semantics are unchanged (see KNOWN-DIFFERENCES). Visible only to code that
+  pinned the literal old format, e.g. a snapshot test.
+
 - **Fewer npm build-time deps: `lightningcss` and `swc` are now first-party.** The
   build pipeline's `lightningcss-wasm` and `@swc/wasm-web` npm deps are replaced by
   first-party JSR/wasm packages `@denext/lightningcss` and `@denext/swc` (built via

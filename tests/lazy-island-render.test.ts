@@ -28,7 +28,7 @@ Deno.test("a client:visible island is carved into a foreign island wrapper", asy
     `<${ISLAND_TAG} ${ISLAND_MARKER_ATTR} data-dnx-id="0" data-dnx-strategy="visible"`,
   );
   assertStringIncludes(html, "display:contents");
-  assertStringIncludes(html, `<button class="c">:d0_0:</button>`);
+  assertStringIncludes(html, `<button class="c">_d0_0_</button>`);
 
   // Page Flight: the island is a foreign host with no children.
   const kids = (flight as any).c;

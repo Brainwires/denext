@@ -142,10 +142,9 @@ next-compat interop path — denext's own apps are unaffected):
   map, `"true"`/`"false"` for enumerated and `aria-*`/`data-*` attributes, and CSS custom
   properties match React. Still different: an element with both `dangerouslySetInnerHTML`
   and children renders the HTML (React throws); `key` is visible on `props` of an
-  authored element (React strips it); `useId` emits `:d0_0:`-style ids (React 19.1's
-  `«r0»` format is CSS-selector-safe without `CSS.escape`, these are not); and
-  `defaultProps` on a **function** component is honored as a compat extension (React 19
-  removed it) because popular npm libraries still rely on it.
+  authored element (React strips it); and `defaultProps` on a **function** component is
+  honored as a compat extension (React 19 removed it) because popular npm libraries still
+  rely on it.
 - **A few React internals are shims.** The introspection hooks `captureOwnerStack()` /
   `cacheSignal()` return `null` (rendering is unaffected — only dev tooling that reads them
   gets nothing). `addTransitionType()` is fully wired — it drives `startViewTransition({ types })`

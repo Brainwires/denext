@@ -30,10 +30,10 @@ function Field(): VNode {
 
 Deno.test("useId derives ids from tree position during SSR", async () => {
   // Two sibling components under a (transparent) host div: root slots 0 and 1,
-  // each with one useId (local 0) -> :d0_0: and :d1_0:.
+  // each with one useId (local 0) -> _d0_0_ and _d1_0_.
   const html = await renderToString(h("div", null, h(Field, null), h(Field, null)));
-  assertStringIncludes(html, ":d0_0:");
-  assertStringIncludes(html, ":d1_0:");
+  assertStringIncludes(html, "_d0_0_");
+  assertStringIncludes(html, "_d1_0_");
 });
 
 Deno.test("useId matches between server render and client mount", async () => {
@@ -49,9 +49,9 @@ Deno.test("useId matches between server render and client mount", async () => {
   createRoot(asEl(container)).render(tree());
 
   // The client derives the SAME path-based ids from its tree walk.
-  assertStringIncludes(ssr, '<span id=":d0_0:">:d0_0:</span>');
-  assertStringIncludes(container.innerHTML, '<span id=":d0_0:">:d0_0:</span>');
-  assertStringIncludes(container.innerHTML, '<span id=":d1_0:">:d1_0:</span>');
+  assertStringIncludes(ssr, '<span id="_d0_0_">_d0_0_</span>');
+  assertStringIncludes(container.innerHTML, '<span id="_d0_0_">_d0_0_</span>');
+  assertStringIncludes(container.innerHTML, '<span id="_d1_0_">_d1_0_</span>');
 });
 
 Deno.test("useId stays stable across a client re-render", () => {
@@ -70,7 +70,7 @@ Deno.test("useId stays stable across a client re-render", () => {
   root.render(tree());
   flushSync();
   assertEquals(container.innerHTML, first);
-  assertStringIncludes(first, ":d0_0:");
+  assertStringIncludes(first, "_d0_0_");
 });
 
 // ---- identifierPrefix (multi-root useId disambiguation) --------------------
@@ -78,11 +78,11 @@ Deno.test("useId stays stable across a client re-render", () => {
 Deno.test("identifierPrefix seeds the server useId scope", async () => {
   const tree = h("div", null, h(Field, null), h(Field, null));
   const html = await renderToString(tree, { idPrefix: "app" });
-  assertStringIncludes(html, ":dapp.0_0:");
-  assertStringIncludes(html, ":dapp.1_0:");
+  assertStringIncludes(html, "_dapp-0_0_");
+  assertStringIncludes(html, "_dapp-1_0_");
   // Default (no prefix) is byte-identical to before.
   const plain = await renderToString(h("div", null, h(Field, null), h(Field, null)));
-  assertStringIncludes(plain, ":d0_0:");
+  assertStringIncludes(plain, "_d0_0_");
 });
 
 Deno.test("compat renderToString threads identifierPrefix", async () => {
@@ -90,7 +90,7 @@ Deno.test("compat renderToString threads identifierPrefix", async () => {
     "../src/compat/react-dom-server.ts"
   );
   const html = reactRenderToString(h("div", null, h(Field, null)), { identifierPrefix: "x" });
-  assertStringIncludes(html, ":dx.0_0:");
+  assertStringIncludes(html, "_dx-0_0_");
 });
 
 Deno.test("two client roots with distinct identifierPrefix produce non-colliding ids", () => {
@@ -104,10 +104,10 @@ Deno.test("two client roots with distinct identifierPrefix produce non-colliding
   createRoot(asEl(a.container), { identifierPrefix: "a" }).render(h(Widget, null));
   setDocument(asDoc(b.doc));
   createRoot(asEl(b.container), { identifierPrefix: "b" }).render(h(Widget, null));
-  assertStringIncludes(a.container.innerHTML, ":da.0_0:");
-  assertStringIncludes(b.container.innerHTML, ":db.0_0:");
-  // Without prefixes both roots would emit :d0_0: — the prefixes keep them disjoint.
-  assertEquals(a.container.innerHTML.includes(":db.0_0:"), false);
+  assertStringIncludes(a.container.innerHTML, "_da-0_0_");
+  assertStringIncludes(b.container.innerHTML, "_db-0_0_");
+  // Without prefixes both roots would emit _d0_0_ — the prefixes keep them disjoint.
+  assertEquals(a.container.innerHTML.includes("_db-0_0_"), false);
 });
 
 Deno.test("hydrateRoot identifierPrefix aligns with the matching server render", async () => {
@@ -117,15 +117,15 @@ Deno.test("hydrateRoot identifierPrefix aligns with the matching server render",
   }
   const tree = () => h("div", null, h(Widget, null), h(Widget, null));
   const ssr = await renderToString(tree(), { idPrefix: "z" });
-  assertStringIncludes(ssr, '<span id=":dz.0_0:">:dz.0_0:</span>');
+  assertStringIncludes(ssr, '<span id="_dz-0_0_">_dz-0_0_</span>');
 
   const { doc, container } = makeDom();
   container.innerHTML = ssr;
   setDocument(asDoc(doc));
   hydrateRoot(asEl(container), tree(), { identifierPrefix: "z" });
   // Same prefix on both sides -> the client derives the same prefixed ids (no mismatch).
-  assertStringIncludes(container.innerHTML, ":dz.0_0:");
-  assertStringIncludes(container.innerHTML, ":dz.1_0:");
+  assertStringIncludes(container.innerHTML, "_dz-0_0_");
+  assertStringIncludes(container.innerHTML, "_dz-1_0_");
 });
 
 // ---- useSyncExternalStore --------------------------------------------------

@@ -47,13 +47,13 @@ Deno.test("sliceBoundary finds a nested boundary's children by id", () => {
 });
 
 Deno.test("sliceBoundary returns null for an absent boundary", () => {
-  const tree: FlightNode = liveNode("0.1", ["x"]);
+  const tree: FlightNode = liveNode("0-1", ["x"]);
   assertEquals(sliceBoundary(tree, "9.9"), null);
 });
 
 Deno.test("sliceBoundary ignores a non-Live client node with a matching id path", () => {
-  const notLive: FlightNode = { $: "c", i: "c_app#Widget", p: { [ID_PATH_PROP]: "0.1" }, c: ["x"] };
-  assertEquals(sliceBoundary(notLive, "0.1"), null);
+  const notLive: FlightNode = { $: "c", i: "c_app#Widget", p: { [ID_PATH_PROP]: "0-1" }, c: ["x"] };
+  assertEquals(sliceBoundary(notLive, "0-1"), null);
 });
 
 // ---- boundaryId parity -----------------------------------------------------
@@ -71,7 +71,7 @@ Deno.test("<Live> emits an island whose id path is the boundary id the client de
   const idPath = (found.p as Record<string, unknown>)[ID_PATH_PROP] as string;
   assertEquals(typeof idPath, "string");
   // The client derives the same id from a useId() seeded at that prefix.
-  assertEquals(prefixFromId(`:d${idPath}_0:`), idPath);
+  assertEquals(prefixFromId(`_d${idPath}_0_`), idPath);
 });
 
 function firstLiveNode(node: FlightNode): { p: unknown; c: FlightNode[] } | null {
@@ -95,7 +95,7 @@ function childNodes(node: FlightNode & object): FlightNode[] {
 // ---- WebSocket hub end-to-end ----------------------------------------------
 
 Deno.test("hub pushes a boundary patch when a subscribed tag is invalidated", async () => {
-  const boundaryId = "0.1";
+  const boundaryId = "0-1";
   // A fake app handler returning a Flight payload with the boundary's fresh content.
   let sawNavHeader = false;
   const appHandler = (req: Request): Promise<Response> => {
