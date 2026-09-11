@@ -1005,6 +1005,9 @@
   "denext/lazy": [
     "bootResumability:function"
   ],
+  "denext/class-runtime": [
+    "installClassSupport:function"
+  ],
   "denext/feature": [
     "feature:function"
   ],

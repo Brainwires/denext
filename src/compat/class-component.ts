@@ -1,21 +1,25 @@
 /**
- * React class-component runtime for denext, gated behind `classComponents` (see
- * {@link "../runtime/class-flag.ts"}). Everything class-specific lives here so the
- * build gate has a single import to include/exclude — a function-only project
- * never pulls this module.
- *
- * Full semantics: `setState`/`forceUpdate` (batched via the reconciler's existing
- * scheduler), `getDerivedStateFromProps`, `shouldComponentUpdate`,
- * `PureComponent`, mount/update/unmount lifecycle, `getSnapshotBeforeUpdate`,
- * `getDerivedStateFromError`/`componentDidCatch`, and legacy `contextType`.
+ * React class-component runtime for denext — the reconciler-side half. The `Component` /
+ * `PureComponent` base classes live in {@link "./class-base.ts"} (eager: a module `extends`
+ * them at evaluation time); everything a class needs only when it RENDERS on the client —
+ * mount/update/unmount lifecycle, `setState` batching, `getDerivedStateFromProps`,
+ * `shouldComponentUpdate`/`PureComponent` bailout, `getSnapshotBeforeUpdate`,
+ * `getDerivedStateFromError`/`componentDidCatch`, legacy `contextType` — lives here, so the
+ * generated browser entry can load it on demand as the `denext/class-runtime` chunk (see
+ * {@link "../class-runtime.ts"}) and a function-only app never ships it. The SSR renderers
+ * import `renderClassToVNode` from here directly (the server has no bundle-size gate).
  *
  * @module
  */
 
 import "../runtime/class-flag.ts";
 import type { Context } from "../runtime/hooks.ts";
-import type { VNode } from "../jsx/types.ts";
 import { getClassScheduleUpdate, setClassSupport } from "../client/fiber/class-support.ts";
+import { type ClassInternals, internals, type ReconcilerInstance } from "./class-base.ts";
+
+// The instance type is re-exported so the reconciler seam (class-support.ts) keeps resolving
+// it from here; the base classes themselves are imported from class-base.ts directly.
+export { type ReconcilerInstance } from "./class-base.ts";
 
 // `scheduleUpdate` (class `setState`/`forceUpdate` re-render) is a client-only concern
 // read through the reconciler seam (class-support.ts) rather than statically imported, so
@@ -23,103 +27,8 @@ import { getClassScheduleUpdate, setClassSupport } from "../client/fiber/class-s
 // the client reconciler graph and its browser-only scheduler handles into a server/CLI
 // process. On the server the seam's no-op default is safe (the class runtime only renders).
 
-/** Object marker on `Component.prototype` (React parity; Jest-automock safe). */
-const IS_REACT_COMPONENT: Record<never, never> = {};
-
-/** denext-internal per-instance state, stashed non-enumerably on a class instance. */
-interface ClassInternals {
-  /** The reconciler Instance that owns this class instance. */
-  inst: ReconcilerInstance;
-  /** Queued `setState` partials (objects or updater fns), applied in order. */
-  pendingState: Array<unknown>;
-  /** Queued `setState`/`forceUpdate` callbacks, run after commit. */
-  pendingCallbacks: Array<() => void>;
-  /** `forceUpdate` bypasses `shouldComponentUpdate` for the next render. */
-  forced: boolean;
-  /** Whether `componentDidMount` has run. */
-  mounted: boolean;
-}
-
-/**
- * The subset of the reconciler `Instance` the class runtime touches. Exported so the
- * class helpers below have a public parameter type; callers pass their real
- * `Instance` (a superset).
- */
-export interface ReconcilerInstance {
-  /** The element being rendered (its `type` is the class constructor). */
-  vnode: VNode;
-  /** Context values visible to this instance, keyed by context id. */
-  contexts: Map<symbol, unknown>;
-  /** Post-commit effects the reconciler drains (mount/update lifecycle is queued here). */
-  pendingEffects?: Array<() => void>;
-  /** The user's class instance, created on mount. */
-  classInstance?: unknown;
-  /** The `getSnapshotBeforeUpdate` return value, captured before DOM mutation. */
-  __snapshot?: unknown;
-  /** Props from before the current render (for `componentDidUpdate`). */
-  __prevProps?: unknown;
-  /** State from before the current render (for `componentDidUpdate`). */
-  __prevState?: unknown;
-}
-
 // deno-lint-ignore no-explicit-any -- user components have heterogeneous prop/state shapes.
 type Any = any;
-
-/** React `Component` base class. */
-export class Component<P = Record<string, unknown>, S = Record<string, unknown>> {
-  /** The component's props. */
-  props: P;
-  /** The component's state. */
-  state: S;
-  /** Legacy `contextType` value. */
-  context: unknown;
-  /** Legacy string refs. */
-  refs: Record<string, unknown> = {};
-
-  /**
-   * Create the component. React passes props and (legacy) context.
-   *
-   * @param props Initial props.
-   * @param context Legacy context value (from `contextType`).
-   */
-  constructor(props: P, context?: unknown) {
-    this.props = props;
-    this.context = context;
-    this.state = undefined as unknown as S;
-  }
-
-  /** Schedule a state update (merged/queued, batched into one re-render). */
-  setState(partial: Partial<S> | ((s: S, p: P) => Partial<S>), callback?: () => void): void {
-    const i = internals(this);
-    i.pendingState.push(partial);
-    if (callback) i.pendingCallbacks.push(callback);
-    getClassScheduleUpdate()(i.inst as Any);
-  }
-
-  /** Force a re-render, bypassing `shouldComponentUpdate`. */
-  forceUpdate(callback?: () => void): void {
-    const i = internals(this);
-    i.forced = true;
-    if (callback) i.pendingCallbacks.push(callback);
-    getClassScheduleUpdate()(i.inst as Any);
-  }
-
-  /** Render the component. Subclasses must override. */
-  render(): unknown {
-    throw new Error("denext: class component is missing a render() method");
-  }
-}
-(Component.prototype as Any).isReactComponent = IS_REACT_COMPONENT;
-
-/** React `PureComponent` — default `shouldComponentUpdate` is a shallow compare. */
-export class PureComponent<P = Record<string, unknown>, S = Record<string, unknown>>
-  extends Component<P, S> {}
-(PureComponent.prototype as Any).isPureReactComponent = true;
-
-/** Read the denext internals off a class instance. */
-function internals(c: unknown): ClassInternals {
-  return (c as { __denext: ClassInternals }).__denext;
-}
 
 /** Whether a class defines error-boundary lifecycle. */
 function hasErrorLifecycle(type: unknown): boolean {

@@ -991,6 +991,9 @@ async function prepareConfig(tmpDir: string, opts: BundleOptions): Promise<strin
     // Same discipline for `denext/lazy`: the generated entry dynamically imports it
     // only when a page has client:* islands, so non-lazy apps bundle none of it.
     "denext/lazy": frameworkFileUrl("src/lazy.ts"),
+    // And for `denext/class-runtime`: the generated entry loads the class-component
+    // runtime on demand (a page that renders a class), so function-only apps bundle none.
+    "denext/class-runtime": frameworkFileUrl("src/class-runtime.ts"),
     // The GENERATED entries import their boot/HMR plumbing from `denext/client-runtime`
     // and the dev inspector from `denext/devtools`; an app's own import map need not
     // (and usually does not) list those subpaths, so resolve them against the framework.

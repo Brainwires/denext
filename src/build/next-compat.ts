@@ -142,6 +142,9 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     // Deferred island hydration bootstrap — the generated Flight entry dynamically
     // imports it from `denext/lazy` only when a page has client:* islands.
     "lazy": u("src/lazy.ts"),
+    // The on-demand class-component runtime — the generated entry dynamically imports it
+    // from `denext/class-runtime` when a page renders a class component.
+    "class-runtime": u("src/class-runtime.ts"),
     // The generated entries' boot/HMR plumbing and the dev inspector — imported from
     // `denext/client-runtime` / `denext/devtools`; prebuilt into the same shared graph.
     "client-runtime": u("src/client/client-runtime.ts"),
@@ -477,6 +480,7 @@ const DENEXT_RUNTIME_FILES: Record<string, string> = {
   "denext/client": "client.js",
   "denext/live": "live.js",
   "denext/lazy": "lazy.js",
+  "denext/class-runtime": "class-runtime.js",
   "denext/client-runtime": "client-runtime.js",
   "denext/devtools": "devtools.js",
   "denext/jsx-runtime": "jsx-runtime.js",
