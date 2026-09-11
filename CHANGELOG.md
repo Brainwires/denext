@@ -20,6 +20,12 @@ and this project adheres to
 
 ### Fixed
 
+- **Soft navigation from a hydrated page to a static (0-JS) page left the old page on screen.**
+  The client router keeps the reconciler root across soft navs and expects the incoming page's
+  entry to re-render it in place — but a static target ships no entry, so its markup was never
+  swapped in and only the URL changed (every link on denext.dev's `/search` page, and any app
+  mixing interactive and static routes). The HTML nav path now drops the retained root and swaps
+  the markup when the incoming document has no client entry.
 - **`routeNeedsHydration` for an app inside the framework checkout.** The static/interactive
   classifier (behind `probeApp`, `denext doctor` and the build's "N routes ship no client JS"
   count) excluded every module under the framework ROOT from its interactivity scan, so an app

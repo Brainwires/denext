@@ -483,6 +483,7 @@ function applyHtmlNav(body: string, url: URL, href: string, options: NavigateOpt
     return;
   }
   updateHistory(url, options); // so the bundle sees the correct URL (non-visual — outside the transition)
+  const entrySrc = parsedEntrySrc(parsed);
   // Everything that changes the visible DOM runs inside the view transition, and we await the
   // re-injected entry so the reconcile lands before the browser's new-state capture.
   withViewTransition(async () => {
@@ -491,11 +492,33 @@ function applyHtmlNav(body: string, url: URL, href: string, options: NavigateOpt
     // Flight island: sync it too so a soft-nav to a Flight route hydrates from the new
     // payload (and a nav to an isomorphic route clears a stale one).
     syncScript(parsed, "__denext_flight");
+    // A retained root only reconciles in place when the incoming page re-runs a client
+    // entry (→ `startClient` → `root.render`). A STATIC target ships no entry, so nothing
+    // would ever render it: drop the root (its tree unmounts) and swap the markup in, or the
+    // URL would change while the old page stayed on screen.
+    if (retainedRoot && !entrySrc) discardRetainedRoot();
     swapRootHtml(container, newRoot);
     emit();
     scrollToTop(options);
-    await runParsedEntry(parsed, url);
+    if (entrySrc) await injectRouteEntry(entrySrc, url);
   });
+}
+
+/** Unmount and forget the retained root (the next `startClient` hydrates fresh). */
+function discardRetainedRoot(): void {
+  const root = retainedRoot ?? globalWin.__dnxRoot;
+  retainedRoot = globalWin.__dnxRoot = null;
+  try {
+    root?.unmount();
+  } catch { /* a torn-down tree is the goal either way */ }
+}
+
+/** The incoming document's route entry module (its hydration bundle), if it has one. */
+function parsedEntrySrc(parsed: Document): string | null {
+  return parsed.querySelector<HTMLScriptElement>('script[type="module"][src]')?.getAttribute(
+    "src",
+  ) ??
+    null;
 }
 
 /** Adopt the new document's `<title>` (when it has one). */
@@ -512,13 +535,6 @@ function swapRootHtml(container: Element, newRoot: Element): void {
 /** Scroll to the top of the new page unless the navigation opted out. */
 function scrollToTop(options: NavigateOptions): void {
   if (options.scroll !== false) globalThis.scrollTo?.(0, 0);
-}
-
-/** Re-run the new document's route entry module (its hydration bundle), if it has one. */
-function runParsedEntry(parsed: Document, url: URL): Promise<void> {
-  const moduleScript = parsed.querySelector<HTMLScriptElement>('script[type="module"][src]');
-  if (moduleScript) return injectRouteEntry(moduleScript.getAttribute("src")!, url);
-  return Promise.resolve();
 }
 
 async function navigateSameOrigin(

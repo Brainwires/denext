@@ -454,3 +454,63 @@ Deno.test("soft-nav fetch echoes the data island's slot state in x-denext-slot-s
     g.fetch = save.fetch;
   }
 });
+
+Deno.test("HTML soft-nav from a hydrated page to a STATIC page (no client entry) swaps the markup and drops the retained root", async () => {
+  // The denext.dev case: /search is the one hydrated route; every docs page ships no entry.
+  // A retained root only re-renders when the incoming page re-runs an entry, so a static
+  // target must fall back to the markup swap — otherwise only the URL changes.
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  (doc as Any).body = (doc as Any).createElement("body");
+  (doc as Any).title = "Search";
+  (container as Any).id = "__denext";
+  doc.register("__denext", container);
+
+  const g = globalThis as Any;
+  const save = installNavGlobals(doc);
+  const saveParser = g.DOMParser;
+  // The static target document: a root with new markup, no <title>, no module entry.
+  const incomingRoot = { innerHTML: "<p>static</p>" };
+  g.DOMParser = class {
+    parseFromString() {
+      return {
+        getElementById: (id: string) => (id === "__denext" ? incomingRoot : null),
+        querySelector: () => null,
+      };
+    }
+  };
+  g.fetch = (() =>
+    Promise.resolve({
+      ok: true,
+      status: 200,
+      headers: { get: () => null }, // plain HTML: neither x-denext-flight nor x-denext-iso
+      text: () => Promise.resolve("<html></html>"),
+    } as unknown as Response)) as typeof fetch;
+
+  try {
+    const div = (doc as Any).createElement("div");
+    div.appendChild((doc as Any).createTextNode("A"));
+    container.appendChild(div);
+    startClient(container as Any, h("div", null, "A"));
+    flushSync();
+    assert(g.__dnxRoot, "hydration retained a root");
+
+    await navigate("/docs/routing");
+    flushSync();
+
+    assertEquals(container.innerHTML, "<p>static</p>", "the static page's markup was swapped in");
+    assertEquals(g.__dnxRoot, null, "the retained root was dropped (next entry hydrates fresh)");
+  } finally {
+    if (save.loc === undefined) delete g.location;
+    else g.location = save.loc;
+    if (save.hist === undefined) delete g.history;
+    else g.history = save.hist;
+    if (save.doc === undefined) delete g.document;
+    else g.document = save.doc;
+    if (save.nav === undefined) delete g.__denextNav;
+    else g.__denextNav = save.nav;
+    g.fetch = save.fetch;
+    if (saveParser === undefined) delete g.DOMParser;
+    else g.DOMParser = saveParser;
+  }
+});
