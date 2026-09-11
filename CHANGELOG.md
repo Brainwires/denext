@@ -26,6 +26,9 @@ and this project adheres to
   swapped in and only the URL changed (every link on denext.dev's `/search` page, and any app
   mixing interactive and static routes). The HTML nav path now drops the retained root and swaps
   the markup when the incoming document has no client entry.
+- **Soft navigation ignored the URL fragment.** A soft nav to `/page#section` scrolled to the
+  top after the swap; it now scrolls to the element the fragment names (as a hard load does),
+  on the HTML, isomorphic and Flight nav paths alike.
 - **`routeNeedsHydration` for an app inside the framework checkout.** The static/interactive
   classifier (behind `probeApp`, `denext doctor` and the build's "N routes ship no client JS"
   count) excluded every module under the framework ROOT from its interactivity scan, so an app

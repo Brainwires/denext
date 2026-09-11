@@ -499,7 +499,7 @@ function applyHtmlNav(body: string, url: URL, href: string, options: NavigateOpt
     if (retainedRoot && !entrySrc) discardRetainedRoot();
     swapRootHtml(container, newRoot);
     emit();
-    scrollToTop(options);
+    scrollAfterNav(url, options);
     if (entrySrc) await injectRouteEntry(entrySrc, url);
   });
 }
@@ -532,9 +532,25 @@ function swapRootHtml(container: Element, newRoot: Element): void {
   if (!retainedRoot) container.innerHTML = newRoot.innerHTML;
 }
 
-/** Scroll to the top of the new page unless the navigation opted out. */
-function scrollToTop(options: NavigateOptions): void {
-  if (options.scroll !== false) globalThis.scrollTo?.(0, 0);
+/**
+ * Scroll for the new page unless the navigation opted out: to the element the URL's
+ * `#fragment` names (what a hard load does), else to the top.
+ */
+function scrollAfterNav(url: URL, options: NavigateOptions): void {
+  if (options.scroll === false) return;
+  const hash = url.hash.slice(1);
+  if (hash) {
+    let id = hash;
+    try {
+      id = decodeURIComponent(hash);
+    } catch { /* keep the raw fragment */ }
+    const target = document.getElementById(id);
+    if (target) {
+      target.scrollIntoView?.();
+      return;
+    }
+  }
+  globalThis.scrollTo?.(0, 0);
 }
 
 async function navigateSameOrigin(
@@ -637,7 +653,7 @@ function applyIsoNav(body: string, url: URL, href: string, options: NavigateOpti
     writeDataIsland(payload.data);
     swapRouteStyles(payload.styles);
     emit();
-    scrollToTop(options);
+    scrollAfterNav(url, options);
     await injectRouteEntry(payload.entry, url); // resolves once the re-run entry has reconciled
   });
 }
@@ -708,7 +724,7 @@ function commitFlightNav(
   writeDataIsland(payload.data);
 
   emit();
-  scrollToTop(options);
+  scrollAfterNav(url, options);
 
   try {
     retainedRoot!.render(tree);

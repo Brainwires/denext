@@ -495,11 +495,27 @@ Deno.test("HTML soft-nav from a hydrated page to a STATIC page (no client entry)
     flushSync();
     assert(g.__dnxRoot, "hydration retained a root");
 
-    await navigate("/docs/routing");
-    flushSync();
+    // The target's heading, as the swapped-in page would carry it; the nav must scroll to it
+    // (a hard load honours the fragment — a soft nav must not scroll to the top instead).
+    let scrolledInto = 0;
+    let scrolledTop = 0;
+    const heading = (doc as Any).createElement("h2");
+    heading.scrollIntoView = () => scrolledInto++;
+    doc.register("component-testing", heading);
+    const saveScrollTo = g.scrollTo;
+    g.scrollTo = () => scrolledTop++;
+    try {
+      await navigate("/docs/routing#component-testing");
+      flushSync();
+    } finally {
+      if (saveScrollTo === undefined) delete g.scrollTo;
+      else g.scrollTo = saveScrollTo;
+    }
 
     assertEquals(container.innerHTML, "<p>static</p>", "the static page's markup was swapped in");
     assertEquals(g.__dnxRoot, null, "the retained root was dropped (next entry hydrates fresh)");
+    assertEquals(scrolledInto, 1, "scrolled to the #fragment's element");
+    assertEquals(scrolledTop, 0, "did not scroll to the top instead");
   } finally {
     if (save.loc === undefined) delete g.location;
     else g.location = save.loc;
