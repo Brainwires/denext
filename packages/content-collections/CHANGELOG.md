@@ -1,5 +1,14 @@
 # @denext/content-collections
 
+## [Unreleased]
+
+### Added
+
+- **Reference-style links** in the Markdown renderer: `[label]: url` definitions (anywhere in
+  the document, optional `<…>` and title, first definition wins) resolve `[text][label]`,
+  `[label][]` and the shortcut `[label]`; an undefined label stays literal text and a
+  script-scheme definition renders as plain text, like inline links.
+
 ## [0.2.0] - 2026-09-10
 
 ### Added

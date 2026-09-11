@@ -104,3 +104,33 @@ Deno.test("renderDoc: end to end frontmatter + body", () => {
   assertStringIncludes(html, `<h2 id="head">Head</h2>`);
   assertStringIncludes(html, "<p>Body text.</p>");
 });
+
+Deno.test("renderMarkdown: reference-style links resolve from `[label]: url` definitions", () => {
+  const html = renderMarkdown(
+    [
+      "## [2.4.1] - 2026-09-11",
+      "",
+      "See [the docs][docs], [Keep a Changelog][] and [undefined thing].",
+      "",
+      "[2.4.1]: https://jsr.io/@denext/denext@2.4.1",
+      "[docs]: /docs/routing",
+      '[Keep a Changelog]: https://keepachangelog.com/en/1.1.0/ "title"',
+      "[evil]: javascript:alert(1)",
+      "",
+      "Nope: [evil].",
+    ].join("\n"),
+  );
+  // The definition lines render nothing; the heading's shortcut link resolves.
+  assertEquals((html.match(/\]: /g) ?? []).length, 0, "definitions are consumed");
+  assertStringIncludes(
+    html,
+    '<h2 id="241---2026-09-11"><a href="https://jsr.io/@denext/denext@2.4.1"',
+  );
+  assertStringIncludes(html, '<a href="/docs/routing">the docs</a>');
+  assertStringIncludes(html, '<a href="https://keepachangelog.com/en/1.1.0/"');
+  assertStringIncludes(html, ">Keep a Changelog</a>");
+  // An undefined label stays literal; a script-URL definition renders its label as text.
+  assertStringIncludes(html, "[undefined thing]");
+  assertStringIncludes(html, "Nope: evil.");
+  assert(!html.includes("javascript:"), "no script URL reaches the output");
+});

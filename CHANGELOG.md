@@ -8,6 +8,21 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Changelog on the docs site.** `/docs/changelog` (Reference → Changelog) renders this file
+  through the docs shell at export time, newest release first, with the version headings
+  linking to their JSR release and the "On this page" rail listing the versions; search
+  indexes every version. The shared first-party Markdown renderer
+  (`@denext/content-collections/markdown`) gained reference-style links to render it.
+
+### Changed
+
+- **`probeApp` / `denext doctor` crash marker.** The "no-crash-marker" check flagged any
+  document containing the words "Internal Server Error" — prose on a page about error
+  handling (or a rendered changelog) failed conformance. It now matches only the framework's
+  actual 500 fallback, whose whole body is that bare text; the raw-stack-frame test is unchanged.
+
 ## [2.4.1] - 2026-09-11
 
 ### Added
