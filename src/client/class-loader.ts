@@ -8,20 +8,21 @@
 // (native `deno bundle`, the compat prebuilt runtime, the unbundled dev loop) with no import
 // map involvement.
 
-let pending: Promise<void> | undefined;
+let mod: Promise<typeof import("../class-runtime.ts")> | undefined;
 
 /**
- * Load and install the class-component runtime (the `denext/class-runtime` chunk) once.
- * Idempotent and coalescing: concurrent callers share one in-flight load; a failed load is
+ * Load and install the class-component runtime (the `denext/class-runtime` chunk).
+ * The module import is coalesced and memoized (one fetch, however many callers race); the
+ * install runs on every call — it is idempotent and cheap, and it keeps the reconciler seam
+ * (the truth) in sync even if it was cleared after an earlier load. A failed import is
  * forgotten so the next call retries.
  *
  * @returns Resolves once `installClassSupport()` has run.
  */
 export function loadClassRuntime(): Promise<void> {
-  return pending ??= import("../class-runtime.ts")
-    .then((m) => m.installClassSupport())
-    .catch((err) => {
-      pending = undefined;
-      throw err;
-    });
+  mod ??= import("../class-runtime.ts").catch((err) => {
+    mod = undefined;
+    throw err;
+  });
+  return mod.then((m) => m.installClassSupport());
 }

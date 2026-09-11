@@ -137,6 +137,11 @@ async function assertSharedRuntimeChunk(clientDir: string): Promise<void> {
  * surfacing) measured 58,164 B — ~0.8 KB of headroom. Re-based 59 → 60 KB for the react-dom
  * numeric-style `px` parity fix (a raw number in an inline `style` now gets a `px` unit unless
  * the property is unitless — the react-dom UNITLESS set + `styleValue`): measured 59,079 B.
+ * Re-based 60 → 61 KB for the on-demand class runtime (2.4): the shared graph gains the
+ * `loadClassRuntime` loader, the render-scope class marker, and the reconciler's throw-site
+ * load (`awaitClassRuntime`) — measured 60,196 B (+0.7 KB) — while the class runtime itself
+ * (2.5 KB) now ships as a `class-runtime-*` chunk a function-only page never fetches, and an
+ * app whose scan tripped on the word `Component` no longer carries it in this total at all.
  */
 async function assertBundleBudgets(clientDir: string): Promise<void> {
   let sharedTotal = 0;
@@ -145,7 +150,7 @@ async function assertBundleBudgets(clientDir: string): Promise<void> {
       sharedTotal += (await Deno.stat(join(clientDir, e.name))).size;
     }
   }
-  assert(sharedTotal < 60_000, `shared chunks total ${sharedTotal} bytes (budget 60 KB raw)`);
+  assert(sharedTotal < 61_000, `shared chunks total ${sharedTotal} bytes (budget 61 KB raw)`);
   for (const f of ["about.js", "blog___slug_.js"]) {
     const n = (await Deno.stat(join(clientDir, f))).size;
     assert(n < 6_000, `${f} is ${n} bytes (budget 6 KB) — is the runtime inlined again?`);
