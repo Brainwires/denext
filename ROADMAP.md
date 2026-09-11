@@ -121,6 +121,3 @@ rest are kept here so they aren't lost; not yet scheduled.
   pull-gated and resolve the `await allReady`-then-read deadlock the current
   eager drain avoids. An SSR-hot-path change with real regression risk and a
   narrow payoff; `renderToReadableStream` is the primary path.
-- **`next/font` metric-matched fallback face** (`adjustFontFallback`:
-  `size-adjust`/`ascent-override` on a local fallback to cut CLS) — needs a
-  bundled font-metrics database; a guessed table would mis-size the fallback.

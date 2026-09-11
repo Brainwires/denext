@@ -10,6 +10,17 @@ and this project adheres to
 
 ### Added
 
+- **`next/font/google` emits Next's metric-matched fallback face (`adjustFontFallback`).**
+  Every Google font now also declares `"<Family> Fallback"` — a local Arial (or Times New
+  Roman for serif families) re-proportioned with `size-adjust`, `ascent-override`,
+  `descent-override` and `line-gap-override` — and puts it first in the fallback stack, so
+  text laid out before the web font arrives occupies the same space (the font-swap layout
+  shift, CLS, that `adjustFontFallback` exists to remove). The numbers come from a generated
+  table of real metrics (`scripts/gen-font-metrics.ts`, Capsize's set — the one Next ships),
+  and the math is Next's, so a migrated app gets identical overrides. On by default as in Next;
+  `adjustFontFallback: false` keeps the plain stack. `localFont` accepts the option for type
+  parity but emits no face (denext does not parse font files; see KNOWN-LIMITATIONS).
+  Closes the "metric-matched fallback" roadmap item.
 - **`denext doctor --report`** — one markdown health report a human or CI can act on: the
   pass/fail checks, **every route's** conformance result (status, static/interactive, failing
   checks — the data the `route conformance` line used to collapse), and the last build's
@@ -38,7 +49,10 @@ and this project adheres to
   the generated browser entry loads **before hydrating** whenever the server-rendered
   document carries the new `#__denext_classes` marker (stamped by any render that produced a
   class component; a cached PPR shell re-seeds it on a hit). Function-only pages never fetch
-  it. The build scan is now a preload hint — when it sees a class (or `classComponents:
+  it. A class that first appears client-side on a page that server-rendered none (a soft
+  navigation onto a class page, a `client:only` island) makes the reconciler load the chunk
+  itself and re-render — suspending to the nearest `<Suspense>`, or keeping the subtree empty
+  for one round trip without one (see KNOWN-DIFFERENCES) — instead of throwing. The build scan is now a preload hint — when it sees a class (or `classComponents:
   true`) the entry imports the chunk statically and skips the round trip — and it also reads
   sibling workspace packages (so do the `<Activity>`/`<ViewTransition>` scans).
   `classComponents: false` still keeps the runtime out entirely. The same fix covers

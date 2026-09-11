@@ -294,7 +294,8 @@ rework (the enhancement rationale + mechanism is in **Part 2 §4**):
   the LCP fetch early.
 - Codecs as first-party zero-npm JSR packages: **`@denext/photon`**
   (resize/WebP), **`@denext/avif`** (AVIF).
-- **`next/font`** (local + Google; Google self-hosting opt-in).
+- **`next/font`** (local + Google; Google self-hosted at build, with Next's metric-matched
+  fallback face — `adjustFontFallback` — from a bundled real-metrics table).
 - **`next/og`** dynamic OG images via **`@denext/og`** (satori + resvg + yoga) —
   inline `style` + Tailwind (`tw`), **async components**, and an `offline: true`
   switch that renders with zero network egress (errors instead of fetching a
@@ -1041,6 +1042,14 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
   (no runtime Google request); the rewrite core is a pure, testable function
   with content-hashed filenames. — `src/compat/next/font/google.ts:142`,
   `:~165`, `:91`; `src/runtime/font-google.ts:64`.
+- **Metric-matched fallback face (`adjustFontFallback`, on by default)** — every
+  Google font also declares `"<Family> Fallback"`: a local Arial / Times New Roman
+  re-proportioned with `size-adjust` + `ascent`/`descent`/`line-gap-override` from a
+  generated table of real metrics (Capsize's set, the one Next ships; regenerate with
+  `deno task gen:font-metrics`), using Next's own math — so text laid out before the
+  web font arrives takes the same space (no font-swap CLS) and a migrated app gets
+  identical overrides. — `src/compat/next/font/fallback.ts`,
+  `src/compat/next/font/font-metrics.ts`, `scripts/gen-font-metrics.ts`.
 
 ### 3.9 SEO — automatic where Next is manual **[default]**
 

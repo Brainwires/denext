@@ -3,7 +3,8 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import localFont from "../src/compat/next/font/local.ts";
-import { googleFontUrl, Inter, Open_Sans } from "../src/compat/next/font/google.ts";
+import { googleFontUrl, Inter, Merriweather, Open_Sans } from "../src/compat/next/font/google.ts";
+import { fallbackOverrides } from "../src/compat/next/font/fallback.ts";
 import { rewriteGoogleFontFaceCss } from "../src/compat/next/font/google-fetch.ts";
 import {
   collectedFontFaces,
@@ -254,4 +255,58 @@ Deno.test("staticExport self-hosts next/font/google — no runtime Google <link>
     globalThis.fetch = origFetch;
     await Deno.remove(dir, { recursive: true }).catch(() => {});
   }
+});
+
+// ---- adjustFontFallback: the metric-matched fallback face ---------------------------------
+
+Deno.test("a Google font emits a metric-matched fallback face (Next's overrides) by default", () => {
+  resetFonts();
+  const inter = Inter({ weight: "400" });
+  const css = collectedFontFaces().join("\n");
+  // The overrides Next computes for Inter from the same Capsize metrics.
+  assertStringIncludes(
+    css,
+    `@font-face{font-family:'Inter Fallback';src:local("Arial");ascent-override:90.44%;` +
+      `descent-override:22.52%;line-gap-override:0.00%;size-adjust:107.12%;}`,
+  );
+  // The fallback face comes right after the web font, before the generic family.
+  assertEquals(inter.style.fontFamily, "'Inter', 'Inter Fallback', sans-serif");
+  assertStringIncludes(css, "font-family:'Inter', 'Inter Fallback', sans-serif;");
+});
+
+Deno.test("a serif family falls back on Times New Roman; adjustFontFallback:false opts out", () => {
+  resetFonts();
+  const merri = Merriweather({ weight: "400" });
+  assertStringIncludes(
+    collectedFontFaces().join("\n"),
+    `'Merriweather Fallback';src:local("Times New Roman")`,
+  );
+  assertStringIncludes(merri.style.fontFamily, "'Merriweather Fallback'");
+  resetFonts();
+  const plain = Inter({ weight: "400", adjustFontFallback: false });
+  assertEquals(plain.style.fontFamily, "'Inter', sans-serif");
+  assert(!collectedFontFaces().join("\n").includes("Fallback"), "no fallback face when opted out");
+});
+
+Deno.test("the caller's own fallback stack follows the metric-matched face", () => {
+  resetFonts();
+  const f = Inter({ fallback: ["system-ui", "Helvetica"] });
+  assertEquals(f.style.fontFamily, "'Inter', 'Inter Fallback', system-ui, Helvetica");
+});
+
+Deno.test("fallbackOverrides: unknown family → null; a face can be forced", () => {
+  assertEquals(fallbackOverrides("No Such Family"), null);
+  const forced = fallbackOverrides("Inter", "Times New Roman");
+  assertEquals(forced?.fallbackFont, "Times New Roman");
+  assert(
+    forced && forced.sizeAdjust !== fallbackOverrides("Inter")?.sizeAdjust,
+    "a different face → different scale",
+  );
+});
+
+Deno.test("localFont accepts Next's adjustFontFallback option (type-level parity, no face emitted)", () => {
+  resetFonts();
+  const f = localFont({ src: "/fonts/X.woff2", adjustFontFallback: "Arial" });
+  assert(f.className.startsWith("__font_"));
+  assert(!collectedFontFaces().join("\n").includes("Fallback"), "no metrics for a local file");
 });

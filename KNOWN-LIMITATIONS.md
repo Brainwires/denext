@@ -379,14 +379,12 @@ The nuances worth knowing (reported as review notes, never silently changed):
 
 A few capabilities aren't built yet (none affects the zero-npm runtime):
 
-- **`next/font`: metric-matched fallback face.** `next/font` self-hosts Google
-  fonts at build for **both** the prod server (`deno task start`) and the static
-  export (`deno task export`) — no runtime Google request either way — and honors
-  `subsets`/`preload`. One piece is not yet done: the **metric-matched fallback
-  `@font-face`** (Next's `adjustFontFallback` — `size-adjust`/`ascent-override` on
-  a local fallback to cut CLS) needs a bundled font-metrics database to compute
-  exact overrides; a guessed table would mis-size the fallback, so it's deferred
-  until real metrics are bundled.
+- **`next/font/local`: no metric-matched fallback face.** Google fonts get Next's
+  `adjustFontFallback` fallback face from a bundled metrics table (the same Capsize set Next
+  ships, so the overrides are identical). A **local** font's metrics live in its file, which
+  denext does not parse, so `localFont({ adjustFontFallback: "Arial" })` type-checks and
+  keeps a stable class name but emits no fallback face — the stack falls straight through
+  to your `fallback` list.
 
 - **`@denext/content-collections`: no built-in Markdown/MDX renderer.** Collections are a
   typed, validated, queryable **data** layer: an entry's `body` is the raw MD/MDX source, which

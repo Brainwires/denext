@@ -91,6 +91,7 @@
     "example:game": "deno run -A --config deno.json examples/game/serve.ts",
     "gen:config-schema": "deno run -A scripts/gen-config-schema.ts",
     "gen:google-fonts": "deno run -A scripts/gen-google-fonts.ts",
+    "gen:font-metrics": "deno run -A scripts/gen-font-metrics.ts",
     "surface:refresh": "deno run -A scripts/public-surface.ts",
     "licenses:photon": "deno run -A scripts/gen-third-party-licenses.ts photon && deno fmt packages/photon/THIRD-PARTY-LICENSES.md",
     "licenses:lightningcss": "deno run -A scripts/gen-third-party-licenses.ts lightningcss && deno fmt packages/lightningcss/THIRD-PARTY-LICENSES.md",
