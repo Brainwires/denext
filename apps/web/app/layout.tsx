@@ -1,5 +1,6 @@
 import type { LayoutProps } from "denext/server";
 import { VERSION } from "denext";
+import { SiteSearch } from "../components/search.tsx";
 
 /**
  * The denext version these docs describe — derived from the framework's own `VERSION`
@@ -62,10 +63,11 @@ export default function RootLayout({ children }: LayoutProps) {
           </a>
           <a href="https://jsr.io/@denext" rel="noopener">JSR</a>
         </nav>
+        <SiteSearch />
       </header>
       <main>{children}</main>
       <footer class="sitefoot">
-        denext v{DOCS_VERSION} · built with denext · static-exported · this page ships{" "}
+        denext v{DOCS_VERSION} · built with denext · static-exported · every docs page ships{" "}
         <strong>0 KB</strong> of JavaScript ·{" "}
         <a href="https://jsr.io/@denext" rel="noopener">JSR</a> ·{" "}
         <a href="https://github.com/Brainwires/denext" rel="noopener">GitHub</a>

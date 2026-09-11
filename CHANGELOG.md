@@ -8,6 +8,30 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Docs site search (denext.dev).** A search box in the header — always visible on wide
+  viewports; on narrow ones a magnifier button that takes over the header while the field is
+  focused (Google-docs style) — and a `/search` results page. The header box is a plain HTML
+  form, so every docs page still ships 0 KB of JavaScript; `/search` is the site's one
+  interactive route: a `"use client"` island that fetches a build-time index
+  (`apps/web/scripts/search-index.ts`, one entry per guide section + per API symbol, built
+  from the exported HTML by `deno task docs:build`) and ranks it in the browser.
+
+### Fixed
+
+- **`routeNeedsHydration` for an app inside the framework checkout.** The static/interactive
+  classifier (behind `probeApp`, `denext doctor` and the build's "N routes ship no client JS"
+  count) excluded every module under the framework ROOT from its interactivity scan, so an app
+  living in the repo (`apps/web`, `examples/*`) had only its route files scanned and a
+  `"use client"` island imported from elsewhere was reported as static. It now excludes only
+  the framework's own source (`src/`, `packages/`, the root barrels), like the class /
+  Activity / ViewTransition build scans.
+- **Docs site on phones.** Two later stylesheet rules (the `.docs.has-toc` three-column grid
+  and the base `.nav-toggle { display: none }`) out-ranked the `max-width` media queries, so
+  narrow viewports kept the multi-column grid and lost the "Menu" toggle; the header wrapped
+  too.
+
 ## [2.4.0] - 2026-09-11
 
 ### Breaking

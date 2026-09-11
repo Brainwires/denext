@@ -4,6 +4,7 @@
     "build": "deno run -A ../../cli.ts build .",
     "start": "deno run -A ../../cli.ts start .",
     "export": "deno run -A ../../cli.ts export .",
+    "search-index": "deno run -A scripts/search-index.ts",
     "seo": "deno run -A scripts/seo.ts",
     "og": "deno run -A scripts/gen-og.tsx"
   },

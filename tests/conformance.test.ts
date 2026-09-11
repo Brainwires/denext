@@ -9,14 +9,17 @@ import { formatReport, probeApp } from "denext/testing";
 const DOCS = new URL("../apps/web", import.meta.url).pathname;
 const NOTES = new URL("../examples/notes", import.meta.url).pathname;
 
-Deno.test("conformance: apps/web (denext.dev) renders every route as static 0-JS HTML", async () => {
+Deno.test("conformance: apps/web (denext.dev) renders every docs route as static 0-JS HTML", async () => {
   const report = await probeApp(DOCS);
 
   assert(report.ok, "docs must conform:\n" + formatReport(report));
   assertEquals(report.failed, 0);
   assert(report.total >= 8, `expected the doc pages + landing, got ${report.total}`);
-  // The docs site is the "0 KB JS" showcase — EVERY route must be static.
-  assertEquals(report.static, report.total, "every docs route must be static");
+  // The docs site is the "0 KB JS" showcase — every route is static except /search, the
+  // one interactive route (its results island is what ranks the index in the browser).
+  const search = report.routes.find((r) => r.path === "/search");
+  assert(search?.rendered && search.interactive, "/search is the one interactive route");
+  assertEquals(report.static, report.total - 1, "every docs route but /search must be static");
   assertEquals(report.skipped, 0, "no docs route should be skipped");
   // The landing page is present and rendered a full document.
   const home = report.routes.find((r) => r.path === "/");

@@ -13,8 +13,8 @@
 // bundle; a false "static" would ship a broken, non-interactive page.
 
 import type { PageRoute } from "../router/manifest.ts";
-import { crawlLocalModules } from "./module-graph.ts";
-import { frameworkRoot, routeSourceFiles } from "./bundle.ts";
+import { crawlLocalModules, isFrameworkSource } from "./module-graph.ts";
+import { routeSourceFiles } from "./bundle.ts";
 
 /**
  * Source tokens that require the client runtime. Note `useMemo`/`useCallback`/
@@ -280,10 +280,11 @@ export async function routeNeedsHydration(
     if (opts.crawl) {
       graph = await opts.crawl(roots);
     } else {
-      const fw = frameworkRoot();
-      // Exclude framework internals: they DEFINE the hooks, so scanning them would
-      // flag every route. We only care about the app's own interactivity.
-      graph = await crawlLocalModules(roots, { exclude: (p) => p.startsWith(fw) });
+      // Exclude framework internals (`src/`, `packages/`, the root barrels): they DEFINE
+      // the hooks, so scanning them would flag every route. Only the framework SOURCE is
+      // excluded, not everything under the repo root — an app that lives inside the
+      // framework checkout (apps/web, examples/*) still has its own modules scanned.
+      graph = await crawlLocalModules(roots, { exclude: isFrameworkSource });
     }
   } catch {
     return true; // couldn't determine the graph → hydrate to be safe

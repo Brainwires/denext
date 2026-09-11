@@ -68,6 +68,7 @@ code {
 }
 
 .brand {
+  white-space: nowrap;
   font-weight: 700;
   color: var(--fg);
   font-size: 17px;
@@ -100,6 +101,7 @@ code {
 
 .topnav a {
   color: var(--muted);
+  white-space: nowrap;
 }
 
 .topnav a:hover {
@@ -418,8 +420,9 @@ main {
 }
 
 /* Below the 3-column breakpoint the right-rail TOC doesn't fit — fall back to 2 columns. */
+/* (`.site` raises specificity above the 3-column `.docs.has-toc` rule declared later.) */
 @media (max-width: 1000px) {
-  .docs.has-toc {
+  .site .docs.has-toc {
     grid-template-columns: 220px 1fr;
     max-width: 1120px;
   }
@@ -429,8 +432,8 @@ main {
 }
 
 @media (max-width: 780px) {
-  .docs,
-  .docs.has-toc {
+  .site .docs,
+  .site .docs.has-toc {
     grid-template-columns: 1fr;
     gap: 0;
     max-width: 760px;
@@ -441,15 +444,16 @@ main {
     overflow: visible;
     padding: 14px 0 0;
   }
-  /* 0-JS mobile menu: show the toggle, hide the groups until the checkbox is checked. */
-  .nav-toggle {
+  /* 0-JS mobile menu: show the toggle, hide the groups until the checkbox is checked.
+     (`.site` again out-ranks the base `.nav-toggle { display: none }` declared later.) */
+  .site .nav-toggle {
     display: inline-flex;
   }
-  .navgroups {
+  .site .navgroups {
     display: none;
     margin-top: 12px;
   }
-  .nav-check:checked ~ .navgroups {
+  .site .nav-check:checked ~ .navgroups {
     display: block;
   }
   .toc {
@@ -890,4 +894,252 @@ button:focus-visible,
 .nav-check:focus-visible ~ .nav-toggle {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* ---------- Site search (header form; 0 JS on every docs page) ---------- */
+.search {
+  display: flex;
+  align-items: center;
+  position: relative;
+  margin-left: 8px;
+}
+.search-icon {
+  position: absolute;
+  left: 10px;
+  display: inline-flex;
+  color: var(--muted);
+  pointer-events: none;
+}
+.search-input {
+  width: 220px;
+  padding: 7px 34px 7px 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--fg);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.4;
+  outline: none;
+  transition: width 0.15s ease, border-color 0.15s ease;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.search-input::-webkit-search-decoration,
+.search-input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+.search-input::placeholder {
+  color: var(--muted);
+}
+.search-input:focus {
+  border-color: var(--accent);
+  width: 280px;
+}
+.search-clear {
+  position: absolute;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.search-clear:hover {
+  color: var(--fg);
+  background: var(--chip);
+}
+/* The ✕ only shows once there is something to clear. */
+.search-input:placeholder-shown ~ .search-clear {
+  display: none;
+}
+/* The magnifier BUTTON is the narrow-viewport affordance only. */
+.search-open {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.search-open:hover {
+  color: var(--fg);
+}
+
+@media (max-width: 780px) {
+  .topbar {
+    gap: 14px;
+    padding: 12px 16px;
+  }
+  .topnav {
+    gap: 14px;
+  }
+  .search {
+    margin-left: 0;
+  }
+  .search-input {
+    width: 150px;
+  }
+  .search-input:focus {
+    width: 180px;
+  }
+}
+
+/* Narrow viewports, when the browser can react to focus from the header (`:has`):
+   collapse the form to the magnifier button; focusing the input (the button is its
+   <label>) takes over the whole header until the search is submitted or cancelled. */
+@supports selector(:has(a)) {
+  @media (max-width: 560px) {
+    .search-open {
+      display: inline-flex;
+    }
+    .search {
+      margin-left: auto;
+    }
+    .topbar:not(:has(.search-input:focus)) .search-icon,
+    .topbar:not(:has(.search-input:focus)) .search-clear {
+      display: none;
+    }
+    .topbar:not(:has(.search-input:focus)) .search-input {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .topbar:has(.search-input:focus) .brand,
+    .topbar:has(.search-input:focus) .ver,
+    .topbar:has(.search-input:focus) .topnav,
+    .topbar:has(.search-input:focus) .search-open {
+      display: none;
+    }
+    .topbar:has(.search-input:focus) .search {
+      flex: 1;
+    }
+    .topbar:has(.search-input:focus) .search-input,
+    .topbar:has(.search-input:focus) .search-input:focus {
+      width: 100%;
+    }
+    .topbar:has(.search-input:focus) .search-clear {
+      display: inline-flex;
+    }
+  }
+}
+@media (max-width: 560px) {
+  .topbar {
+    gap: 10px;
+  }
+  .ver {
+    display: none; /* the version badge is the first thing to go on a phone */
+  }
+  .topnav {
+    gap: 10px;
+    font-size: 14px;
+  }
+}
+
+/* ---------- /search — the results page (the one interactive route) ---------- */
+.searchpage {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 40px 28px 60px;
+}
+.searchpage h1 {
+  margin: 0 0 18px;
+  font-size: 28px;
+}
+.searchpage .search-input {
+  width: 100%;
+  font-size: 16px;
+  padding: 11px 40px 11px 40px;
+}
+.searchpage .search-input:focus {
+  width: 100%;
+}
+.searchpage .search {
+  margin: 0 0 14px;
+}
+.search-status {
+  color: var(--muted);
+  font-size: 13.5px;
+  margin: 0 0 18px;
+}
+.search-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.search-results li {
+  border-top: 1px solid var(--line);
+}
+.search-results li:last-child {
+  border-bottom: 1px solid var(--line);
+}
+.search-hit {
+  display: block;
+  padding: 12px 10px;
+  border-radius: 8px;
+  color: inherit;
+}
+.search-hit:hover,
+.search-hit:focus-visible {
+  background: var(--panel);
+  text-decoration: none;
+}
+.search-hit-page {
+  display: block;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.search-hit-title {
+  display: block;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 15.5px;
+  margin: 1px 0 3px;
+}
+.search-hit-kind {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  vertical-align: 2px;
+}
+.search-hit-snippet {
+  display: block;
+  color: var(--prose);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.search-hit mark {
+  background: rgba(122, 162, 255, 0.22);
+  color: var(--fg);
+  border-radius: 3px;
+  padding: 0 1px;
+}
+.search-tips {
+  color: var(--muted);
+  font-size: 13.5px;
+}
+.search-tips kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0 5px;
 }

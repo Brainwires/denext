@@ -287,6 +287,7 @@ function serializeSitemap(pages: PageInfo[]): string {
   const today = new Date().toISOString().slice(0, 10);
   const urls = pages
     .map((p) => p.url)
+    .filter((u) => u !== `${ORIGIN}/search`) // the results page is noindex
     .sort()
     .map((u) => {
       const priority = u === `${ORIGIN}/` ? "1.0" : u.includes("/docs/api/") ? "0.6" : "0.8";
