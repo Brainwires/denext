@@ -315,6 +315,7 @@
     "DenextConfig:interface",
     "DenextPlugin:interface",
     "I18nConfig:interface",
+    "MdxBuildOptions:interface",
     "NextCompatServerLoaderOptions:interface",
     "OriginCheckOptions:interface",
     "PageCache:class",
@@ -344,6 +345,7 @@
     "bundleRoutes:function",
     "cappedBody:function",
     "compareSpecificity:function",
+    "compileMdxSource:function",
     "createNextCompatServerLoader:function",
     "enableFastRefresh:function",
     "extractRouteCss:function",
@@ -1005,6 +1007,9 @@
   "denext/lazy": [
     "bootResumability:function"
   ],
+  "denext/class-runtime": [
+    "installClassSupport:function"
+  ],
   "denext/feature": [
     "feature:function"
   ],
@@ -1033,8 +1038,8 @@
     "ensureFlightModules:function",
     "flightClientIds:function",
     "installActivitySupport:function",
-    "installClassSupport:function",
     "installViewTransitionSupport:function",
+    "loadClassRuntime:function",
     "parseFlight:function",
     "performModuleRefresh:function",
     "provideLayoutSegments:function",
@@ -1775,6 +1780,7 @@
   ],
   "denext/bundle": [
     "BundleOptions:interface",
+    "ClassRuntimeMode:typeAlias",
     "MultiBundleOutput:interface",
     "bundleRoutes:function"
   ],

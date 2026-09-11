@@ -19,11 +19,14 @@
 // into a shared, position-derived id with no global coordination.
 //
 // Encoding: a component's path is its parent scope's prefix plus its slot index,
-// joined by ".". `useId()` appends "_" and a per-component local index, so two
-// `useId()` calls in one component differ, and a component's own ids never collide
-// with a child's path (the "." vs "_" separators keep the namespaces disjoint).
-// A root render's prefix is "" (its direct children are "0", "1", …); an island
-// hydrated on its own is seeded with its full path as the prefix instead.
+// joined by "-". `useId()` wraps it as `_d{path}_{local}_` — a per-component local
+// index after "_", so two `useId()` calls in one component differ, and a component's
+// own ids never collide with a child's path (the "-" vs "_" separators keep the
+// namespaces disjoint). The character class is React 19.2's (`_r_0_`): a valid CSS
+// identifier, XML 1.0 name and `view-transition-name`, so `"#" + id` works in a
+// selector without `CSS.escape`. A root render's prefix is "" (its direct children
+// are "0", "1", …); an island hydrated on its own is seeded with its full path as
+// the prefix instead.
 
 /**
  * A component's id scope: its position in the component tree plus the per-render
@@ -67,34 +70,39 @@ export function enterScope(parent: IdScope): IdScope {
   return { parent, slot: parent.count++, count: 0, local: 0 };
 }
 
-/** This scope's path prefix (built once, then cached): `parentPrefix "." slot`. */
+/** This scope's path prefix (built once, then cached): `parentPrefix "-" slot`. */
 export function scopePrefix(scope: IdScope): string {
   if (scope.prefix !== undefined) return scope.prefix;
   const parentPrefix = scopePrefix(scope.parent!);
   return (scope.prefix = parentPrefix === ""
     ? String(scope.slot)
-    : parentPrefix + "." + scope.slot);
-}
-
-/** The next `useId()` value for a component currently rendering in `scope`. */
-export function nextId(scope: IdScope): string {
-  return `:d${scopePrefix(scope)}_${scope.local++}:`;
+    : parentPrefix + "-" + scope.slot);
 }
 
 /**
- * Recover the tree-path prefix from a {@link nextId} value (`:d{prefix}_{local}:`).
+ * The next `useId()` value for a component currently rendering in `scope`:
+ * `_d{prefix}_{local}_`. Selector-safe by construction (see the module header), unless
+ * a user-supplied `identifierPrefix` introduces characters that aren't — the same
+ * caveat React has.
+ */
+export function nextId(scope: IdScope): string {
+  return `_d${scopePrefix(scope)}_${scope.local++}_`;
+}
+
+/** The shape {@link nextId} produces; group 1 is the prefix, group 2 the local index. */
+const ID_SHAPE = /^_d(.*)_(\d+)_$/;
+
+/**
+ * Recover the tree-path prefix from a {@link nextId} value (`_d{prefix}_{local}_`).
  * A component's first `useId()` therefore yields its own scope prefix — the stable,
  * server/client-agreed identity a Live boundary uses to address itself, without a
  * dedicated dispatcher primitive.
  *
  * @param id A value produced by {@link nextId} / `useId()`.
- * @returns The embedded scope prefix (e.g. `"0.2.1"`), or `""` if unparseable.
+ * @returns The embedded scope prefix (e.g. `"0-2-1"`), or `""` if unparseable.
  */
 export function prefixFromId(id: string): string {
-  if (!id.startsWith(":d") || !id.endsWith(":")) return "";
-  const body = id.slice(2, -1); // drop leading ":d" and trailing ":"
-  const u = body.lastIndexOf("_");
-  return u === -1 ? body : body.slice(0, u);
+  return ID_SHAPE.exec(id)?.[1] ?? "";
 }
 
 /**

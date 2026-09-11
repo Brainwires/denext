@@ -28,6 +28,9 @@ import {
 import { classComponentsDisabledError, isClassComponent } from "../../compat/class-detect.ts";
 import { resolveComponentType } from "../../runtime/react-brands.ts";
 import { getClassSupport } from "./class-support.ts";
+import { loadClassRuntime } from "../class-loader.ts";
+import { findSuspense } from "./fiber-utils.ts";
+import { scheduleUpdate } from "./scheduler.ts";
 import { type Fiber, HasEffect, type HookCell } from "./fiber.ts";
 
 /** Bound on render-phase re-invocations of one component (React's RE_RENDER_LIMIT). */
@@ -154,6 +157,37 @@ function resolveRefreshSwap(inst: Fiber): RefreshResolution {
   return { rawType, refreshSwap, oldKinds };
 }
 
+/** Set once the on-demand class runtime failed to load: surface the guided error, don't retry forever. */
+let classRuntimeUnavailable = false;
+
+/**
+ * A class component reached the reconciler before the on-demand class runtime was installed:
+ * it was not server-rendered on this page, so the entry had no `#__denext_classes` marker to
+ * preload on — a soft navigation onto a class page, a `client:only` island. Start the load
+ * (coalesced in class-loader.ts) and re-render this fiber when it lands. Inside a Suspense
+ * boundary the load suspends like any thenable (fallback, then retry); with no boundary above,
+ * the fiber keeps its committed child for this pass — nothing, on a first mount — and is
+ * scheduled again, so the cost is at most one round trip of blank subtree. Only a load
+ * failure surfaces the guided "class components are disabled" error.
+ */
+function awaitClassRuntime(inst: Fiber): VNode {
+  const load = loadClassRuntime();
+  const failed = (err: unknown) => {
+    classRuntimeUnavailable = true;
+    console.error("denext: the class-component runtime failed to load:", err);
+  };
+  if (findSuspense(inst)) {
+    load.catch(failed);
+    throw load;
+  }
+  load.then(() => scheduleUpdate(inst), (err) => {
+    failed(err);
+    scheduleUpdate(inst); // re-render into the guided error (an error boundary can catch it)
+  });
+  inst.bailed = true;
+  return (inst.child?.vnode as VNode) ?? textVNode("");
+}
+
 /**
  * Render a bare class component (raw type is a class) through the class runtime, which
  * reads `inst.vnode.type` as the constructor. (Per-module HMR does not substitute class
@@ -163,7 +197,10 @@ function resolveRefreshSwap(inst: Fiber): RefreshResolution {
  */
 function renderClassFiber(inst: Fiber): VNode {
   const cs = getClassSupport();
-  if (!__DENEXT_CLASS_COMPONENTS__ || cs === null) throw classComponentsDisabledError();
+  if (!__DENEXT_CLASS_COMPONENTS__ || classRuntimeUnavailable) {
+    throw classComponentsDisabledError();
+  }
+  if (cs === null) return awaitClassRuntime(inst);
   const { vnode, bailed } = cs.renderClassInstance(inst as never);
   if (bailed) {
     inst.bailed = true;

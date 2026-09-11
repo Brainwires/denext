@@ -1,6 +1,8 @@
 // Build bundle-size report (2.0 Pillar VI, observability): make the "0 KB by default /
 // small bundles" story visible on every build.
 
+import { join } from "@std/path";
+
 /** A built client chunk and its byte size. */
 export interface BundleChunk {
   name: string;
@@ -8,6 +10,30 @@ export interface BundleChunk {
   bytes: number;
   /** Gzipped size (the `.gz` sibling), when precompression ran. */
   gzip?: number;
+}
+
+/**
+ * Read the emitted `.js` chunks and their `.gz` sizes from a client output dir (the
+ * `.denext/client` a production build wrote) — the shared source for `denext analyze`
+ * and `denext doctor --report`. A missing dir reads as no chunks (a fully static app).
+ *
+ * @param clientDir The build's client output directory.
+ * @returns One entry per emitted chunk, in directory order.
+ */
+export async function readClientChunks(clientDir: string): Promise<BundleChunk[]> {
+  const chunks: BundleChunk[] = [];
+  try {
+    for await (const e of Deno.readDir(clientDir)) {
+      if (!e.isFile || !e.name.endsWith(".js")) continue;
+      const bytes = (await Deno.stat(join(clientDir, e.name))).size;
+      let gzip: number | undefined;
+      try {
+        gzip = (await Deno.stat(join(clientDir, e.name + ".gz"))).size;
+      } catch { /* below the precompress floor — no .gz sibling */ }
+      chunks.push({ name: e.name, bytes, gzip });
+    }
+  } catch { /* no client dir → fully static (0 KB JS) */ }
+  return chunks;
 }
 
 const kb = (n: number): string => `${(n / 1024).toFixed(1)} KB`;
@@ -156,12 +182,18 @@ function mdTopModules(sorted: BundleChunk[], metafile: BundleMetafile): string[]
  * the piece the bundle-size budgets track); `island-*` is a lazily-hydrated island
  * chunk; everything else (route/flight entries) is an app entry.
  */
-export type ChunkRole = "shared" | "island" | "entry";
+export type ChunkRole = "shared" | "island" | "on-demand" | "entry";
 
-/** Classify a chunk by its content-hashed name prefix. */
+/**
+ * Classify a chunk by its content-hashed name prefix. `lazy-*` (deferred island hydration)
+ * and `class-runtime-*` (the class-component runtime) are the framework's on-demand chunks:
+ * fetched only by a page that needs them, so they count against neither the shared runtime
+ * nor the route entries.
+ */
 export function classifyChunk(name: string): ChunkRole {
   if (name.startsWith("chunk-")) return "shared";
   if (name.startsWith("island-")) return "island";
+  if (name.startsWith("lazy-") || name.startsWith("class-runtime-")) return "on-demand";
   return "entry";
 }
 
@@ -169,6 +201,7 @@ const ROLE_LABEL: Record<ChunkRole, string> = {
   shared: "shared runtime",
   entry: "route entries",
   island: "islands",
+  "on-demand": "on-demand runtime",
 };
 
 /**
@@ -182,7 +215,7 @@ const ROLE_LABEL: Record<ChunkRole, string> = {
  */
 export function bundleRoleLines(chunks: BundleChunk[]): string[] {
   if (chunks.length === 0) return [];
-  const order: ChunkRole[] = ["shared", "entry", "island"];
+  const order: ChunkRole[] = ["shared", "entry", "island", "on-demand"];
   const lines = ["By role:"];
   for (const role of order) {
     const group = chunks.filter((c) => classifyChunk(c.name) === role);

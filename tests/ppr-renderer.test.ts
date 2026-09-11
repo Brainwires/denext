@@ -95,7 +95,7 @@ Deno.test("C3: useId in a hole matches the full-render id at the same tree posit
   // content in place — the id it computes at this position is what the client, which
   // hydrates the merged document, will also compute.
   const full = await runWithContext(req("alice"), () => renderToString(tree));
-  const refId = full.match(/id="(:d[^"]+:)"/)?.[1];
+  const refId = full.match(/id="(_d[^"]+_)"/)?.[1];
   assert(refId, "reference render should contain an input id");
 
   // PPR: the boundary postpones (a hole); resume renders its content in isolation.

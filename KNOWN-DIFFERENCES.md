@@ -28,6 +28,25 @@ internal design choice with no observable difference lives in
   synchronous flush collapses the deferred pass, so a test sees the final value at
   once rather than the stale one first. Real event-path rendering defers as React
   does.
+- **The class-component runtime loads on demand.** React ships its class support in the
+  core; denext ships it as a separate chunk (`denext/class-runtime`) that a page fetches only
+  when it needs it. A server-rendered class is preloaded before hydration (the document
+  carries a marker), and an app whose own sources name `Component` gets a static import — so
+  in both common cases nothing is observable. The one visible case: a class that first
+  appears **client-side only**, on a page that server-rendered none (a soft navigation onto a
+  class page from a class-free one, a `client:only` island) and with no `<Suspense>` above
+  it, renders an empty subtree for one round trip while the chunk loads, then renders
+  normally; inside a Suspense boundary it shows the fallback instead. Deliberate — it is
+  what keeps a function-only app from paying for class support — and `classComponents:
+  true` in `denext.config.ts` opts out by always importing the runtime statically.
+- **`useId` values encode the component's tree position, not a counter.** denext emits
+  `_d{path}_{n}_` (e.g. `_d0-2-1_0_`) where React 19.2 emits `_r_{n}_`. Both use the same
+  character class — a valid CSS identifier, XML 1.0 name and `view-transition-name`, so
+  `querySelector("#" + id)` needs no `CSS.escape` — but the values differ, so a snapshot
+  test that pins React's literal ids will not match. Deliberate: a position-derived id is
+  what lets a streamed PPR hole or an independently-hydrated island reproduce the server's
+  ids without a shared global counter. A user-supplied `identifierPrefix` is concatenated
+  verbatim, as in React, so keep it selector-safe too.
 
 - **The root `denext` barrel exports React's function-component surface, not its
   class one.** `Component`, `PureComponent`, `version`, `act` and `useMemoCache`

@@ -44,6 +44,14 @@ export interface LocalFontOptions {
   fallback?: string[];
   /** Whether to preload (advisory; recorded only). */
   preload?: boolean;
+  /**
+   * Next's metric-matched fallback for a local font (`"Arial"` / `"Times New Roman"`, or
+   * `false`). Accepted so a migrated `localFont({...})` call type-checks and keeps a stable
+   * class name; denext does not read the font file, so it has no metrics to compute the
+   * overrides from and emits no fallback face for a local font (Google fonts get one from the
+   * bundled metrics table — see `adjustFontFallback` on `GoogleFontOptions`).
+   */
+  adjustFontFallback?: false | "Arial" | "Times New Roman";
 }
 
 /** Guess a `format(...)` from a font file extension. */

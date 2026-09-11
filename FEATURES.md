@@ -294,7 +294,8 @@ rework (the enhancement rationale + mechanism is in **Part 2 §4**):
   the LCP fetch early.
 - Codecs as first-party zero-npm JSR packages: **`@denext/photon`**
   (resize/WebP), **`@denext/avif`** (AVIF).
-- **`next/font`** (local + Google; Google self-hosting opt-in).
+- **`next/font`** (local + Google; Google self-hosted at build, with Next's metric-matched
+  fallback face — `adjustFontFallback` — from a bundled real-metrics table).
 - **`next/og`** dynamic OG images via **`@denext/og`** (satori + resvg + yoga) —
   inline `style` + Tailwind (`tw`), **async components**, and an `offline: true`
   switch that renders with zero network egress (errors instead of fetching a
@@ -402,7 +403,11 @@ cache uses Deno's built-in `node:sqlite`.)
   files, or any `load(ctx)` function for remote sources); the plugin validates every entry and
   generates types so **`getCollection` / `getEntry` are fully typed**, regenerated **live in
   `denext dev`** and at `denext build` through the plugin **prepare-step** seam. `denext content
-  build | list | validate` (`validate` is a CI gate).
+  build | list | validate` (`validate` is a CI gate). **Renders too:** `renderContent(entry)` /
+  `<Content entry />` — `.md` through the package's first-party zero-dependency Markdown
+  renderer at request time, `.mdx` through a component module compiled at build (denext's
+  build-time `@mdx-js/mdx`, the `compileMdxSource` plugin-kit seam); nothing MDX-related at
+  request time.
 - **Plugin-kit primitives for API plugins**: `apiDefinitionOf`, `tapChannel` (server-side
   observer of a channel's pushes), `verifyOrigin` (the CSRF gate every state-changing
   denext RPC applies), `bufferedRequest` + the body caps (`src/plugin/kit.ts`).
@@ -468,8 +473,9 @@ cache uses Deno's built-in `node:sqlite`.)
 
 ## Build, tooling & CLI
 
-- Build via **`deno bundle`** (no npm toolchain) with **code splitting** (shared
-  runtime chunk), the CSS pipeline, and per-route client entries.
+- Build via **`deno bundle`** on the native path (`esbuild` on the next-compat /
+  SPA-compat path) with **code splitting** (shared runtime chunk), the CSS
+  pipeline, and per-route client entries.
 - **Plugin contract** (`DenextPlugin`: the five seams — route-synthesizer,
   request-handler, build-step, teardown, CLI command) with the public
   `@denext/denext/plugin-kit` primitives (bundling, CSS, matchers, `PageCache`,
@@ -499,10 +505,13 @@ cache uses Deno's built-in `node:sqlite`.)
   bundle-size breakdown), `add`/`remove`/`update`, `plugin add`/`remove`/`list`
   (installs/uninstalls a plugin dep **and** wires/unwires it in
   `denext.config.ts`; `list` shows what's wired), `doctor`/`info` (`doctor`
-  supersedes `probe`, kept as an alias; `doctor` also validates `denext.config`),
-  `audit` (dependency inventory + zero-npm proof + CycloneDX SBOM), `deploy`
-  (pluggable adapters, Deno Deploy), `desktop run|build|package`, `migrate`,
-  `codemod`, `mcp` (the agent server below), `version`.
+  supersedes `probe`, kept as an alias; `doctor` also validates `denext.config`;
+  **`doctor --report`** prints one markdown health report — the checks, every
+  route's conformance result, and the last build's client bundle by chunk and
+  role, read from `.denext/client` without building — and `--json` emits the same
+  data structurally), `audit` (dependency inventory + zero-npm proof + CycloneDX
+  SBOM), `desktop run|build|package`, `migrate`, `codemod`, `mcp` (the agent
+  server below), `version`.
 - **Tooling for AI agents** — a first-party **MCP server** (`denext mcp`, stdio
   JSON-RPC) whose tools lint a snippet for Next-isms, map a Next/React import,
   scaffold, run `doctor`/`codemod`, list an app's routes, read a RUNNING dev
@@ -525,8 +534,9 @@ cache uses Deno's built-in `node:sqlite`.)
 
 The framework's **runtime carries no npm dependencies** — CI-enforced across
 `src/{jsx,runtime,client,server,compat,plugin}`
-(`tests/no-npm-compat-guard.test.ts`). Build-time tooling
-(esbuild/swc/lightningcss) never reaches the shipped runtime.
+(`tests/no-npm-compat-guard.test.ts`). Build-time tooling — `esbuild` (npm) plus
+the first-party `@denext/swc` + `@denext/lightningcss` wasm — never reaches the
+shipped runtime.
 
 ---
 
@@ -871,8 +881,10 @@ default").
 - **Zero runtime npm dependencies** **[default — CI-enforced]** — the served
   runtime rides only Deno built-ins, `@std/*`, `Intl.*`, and `node:sqlite`. A
   guard fails on any `npm:` specifier in compat modules. `deno.json`'s remaining
-  `npm:` deps (lightningcss, swc, esbuild) are build/dev-time only and never
-  enter a shipped bundle; the image/og codecs are now first-party JSR packages
+  `npm:` deps — `esbuild` (core) plus the opt-in `sass` / `@mdx-js/mdx` / `ws` —
+  are build/dev-time only and never enter a shipped bundle (the CSS + swc-AST
+  tooling is now the first-party `@denext/lightningcss` / `@denext/swc` wasm, not
+  npm); the image/og codecs are now first-party JSR packages
   (`@denext/photon`/`@denext/avif`/`@denext/og`), not npm peers, and the cache
   uses Deno's built-in `node:sqlite`. — `tests/no-npm-compat-guard.test.ts:9`;
   `src/build/next-compat.ts:17-20`.
@@ -897,15 +909,24 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
   `stream`, …) deliberately _not_ stubbed, so real needs fail loudly. —
   `next-compat.ts:191, 238, 269`.
 
-### 3.2 Zero-cost class-component build gate
+### 3.2 On-demand class-component runtime
 
-- **`classComponents` DCE gate** — the entire class runtime is behind a
-  bare-identifier flag esbuild folds to a literal, so a function-only app pays
-  **zero bytes**; a class used with the flag off gets a _guided_ error, not the
-  opaque native one. — `src/runtime/class-flag.ts:1, 24`;
-  `src/compat/react.ts:228, 239-245`; detector
-  `src/compat/class-detect.ts:30, 42`; gated runtime
-  `src/compat/class-component.ts:1`; define `src/build/next-compat.ts:74`.
+- **The class runtime is a code-split chunk loaded only when a class renders.** The
+  `Component`/`PureComponent` base classes stay in the `react` alias (a module `extends`
+  them at evaluation time); the reconciler-side runtime (lifecycle, setState batching,
+  class error boundaries) is the `denext/class-runtime` chunk. The server stamps a
+  `#__denext_classes` marker on any document whose render produced a class component, and
+  the generated browser entry loads the chunk **before hydrating** when the marker is
+  present — so a class that lives only in an npm or workspace dependency the app never
+  names works in production with no config, and a function-only page never fetches it. A
+  build scan of the app's own sources (plus sibling workspace packages) turns the load into
+  a static import when it can (no round trip); `classComponents: true` forces that,
+  `classComponents: false` keeps the runtime out entirely (zero bytes on the esbuild path,
+  where the flag is a `define`, and a guided error for a class used anyway). —
+  `src/compat/class-base.ts`, `src/compat/class-component.ts`, `src/class-runtime.ts`;
+  entry modes `src/build/bundle.ts` (`ClassRuntimeMode`); marker
+  `src/runtime/render-scope.ts`, `src/server/document.ts`; detector
+  `src/compat/class-detect.ts`.
 
 ### 3.3 denext-only hooks & isomorphic utilities
 
@@ -967,7 +988,7 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
 
 - **Build-time auto-memoization** (`experimental: { reactCompiler: true }`)
   comparable in spirit to the React Compiler, running in-process via
-  `@swc/wasm-web` with no transpile hook of its own; feeds the client bundle
+  `@denext/swc` with no transpile hook of its own; feeds the client bundle
   through the existing import-map seam; provably SSR-safe. —
   `src/build/
   compiler.ts:1-18`; runtime `src/runtime/compiler-runtime.ts:37`.
@@ -1025,6 +1046,14 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
   (no runtime Google request); the rewrite core is a pure, testable function
   with content-hashed filenames. — `src/compat/next/font/google.ts:142`,
   `:~165`, `:91`; `src/runtime/font-google.ts:64`.
+- **Metric-matched fallback face (`adjustFontFallback`, on by default)** — every
+  Google font also declares `"<Family> Fallback"`: a local Arial / Times New Roman
+  re-proportioned with `size-adjust` + `ascent`/`descent`/`line-gap-override` from a
+  generated table of real metrics (Capsize's set, the one Next ships; regenerate with
+  `deno task gen:font-metrics`), using Next's own math — so text laid out before the
+  web font arrives takes the same space (no font-swap CLS) and a migrated app gets
+  identical overrides. — `src/compat/next/font/fallback.ts`,
+  `src/compat/next/font/font-metrics.ts`, `scripts/gen-font-metrics.ts`.
 
 ### 3.9 SEO — automatic where Next is manual **[default]**
 

@@ -213,8 +213,8 @@ export async function acquireFwdepsInstall(
 }
 
 /**
- * Materialize the framework's own npm build deps (esbuild, sass, lightningcss-wasm,
- * `@swc/wasm-web`, `@mdx-js/mdx`, ws) into `<outDir>/node_modules`. Returns `true`
+ * Materialize the framework's own npm build deps (esbuild, sass, `@mdx-js/mdx`,
+ * ws) into `<outDir>/node_modules`. Returns `true`
  * once they are in place.
  *
  * Needed only when the re-exec runs under `nodeModulesDir: "manual"` (a converted

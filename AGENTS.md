@@ -275,6 +275,8 @@ export default async function Blog() {
   const posts = await getCollection("blog", (p) => !p.data.draft); // p.data is typed
   return <ul>{posts.map((p) => <li key={p.id}>{p.data.title}</li>)}</ul>;
 }
+// Render an entry's body: `<Content entry={post} />` (or `await renderContent(post)`) from the
+// same module — `.md` through the first-party renderer, `.mdx` through a module compiled at build.
 // CLI: `denext content build | list | validate` (validate exits 1 on a schema failure — a CI gate).
 ```
 
@@ -352,7 +354,10 @@ CLI verb). Declare it as `plugins: [myPlugin()]`. See
 - **Cache Components / PPR** are a stable **opt-in**: `cacheComponents: true`
   (top-level) in `denext.config.ts`. Not `experimental.cacheComponents` — that
   legacy key still works but dev-warns.
-- **Zero runtime npm**: the framework itself pulls no npm; your app may still
+- **Zero runtime npm**: nothing the framework ships to the runtime pulls npm
+  (CI-enforced). The build-time toolchain still uses a few npm tools — `esbuild`
+  (core) plus opt-in `sass` / `@mdx-js/mdx` / `ws`; the CSS + swc-AST tooling is
+  the first-party `@denext/lightningcss` / `@denext/swc` wasm. Your app may still
   use `npm:`/`jsr:` libraries.
 - Run checks with `deno task check` (fmt `--check` + lint + tests; type-checking
   happens transitively via `deno test`, there's no separate type-check step).

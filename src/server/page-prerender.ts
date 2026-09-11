@@ -21,6 +21,7 @@ import {
   shellFromPrerender,
 } from "./page-document.ts";
 import { mayCacheRender, pageCacheEntry } from "./page-cache-flow.ts";
+import { classRendered } from "../runtime/render-scope.ts";
 
 type Prerendered = PrerenderedPage | PrerenderedFlightPage;
 
@@ -74,6 +75,9 @@ async function serveShellWithHoles(
       routeCsp: pre.config.csp,
       headExtras: pre.headExtras,
       inTreeTitle: pre.inTreeTitle,
+      // The shell rendered a class → a later cache hit must re-seed the marker (peek, not
+      // take: this request's own document assembly still consumes the flag).
+      classRuntime: classRendered() || undefined,
       ...flightShellFields(pre, pr.useFlight),
     }),
   );

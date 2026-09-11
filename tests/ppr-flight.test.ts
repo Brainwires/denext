@@ -226,7 +226,7 @@ Deno.test("4b: useId inside a hole reproduces the in-place id (aligned across pa
   const tree = h("div", null, h(Static, null), boundary(h(DynId, null), "loading"));
   // Reference: a full (non-PPR) Flight render resolves the content in place.
   const full = await runWithContext(req("alice"), () => renderToHtmlFlight(tree));
-  const refId = full.html.match(/id="(:d[^"]+:)"/)?.[1];
+  const refId = full.html.match(/id="(_d[^"]+_)"/)?.[1];
   assert(refId, "reference render should contain an input id");
 
   const pre = await prerender(tree, "alice");

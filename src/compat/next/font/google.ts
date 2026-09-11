@@ -13,6 +13,7 @@
  */
 
 import { addFontFace, addStylesheet, fontClassName, type FontResult } from "./registry.ts";
+import { fallbackFontFace } from "./fallback.ts";
 
 export type { FontResult } from "./registry.ts";
 
@@ -32,6 +33,14 @@ export interface GoogleFontOptions {
   fallback?: string[];
   /** Preload the self-hosted font files (emits `<link rel=preload>` in `<head>`). */
   preload?: boolean;
+  /**
+   * Emit a metric-matched fallback `@font-face` (`"<Family> Fallback"`: a local Arial or Times
+   * New Roman re-proportioned with `size-adjust` + `ascent`/`descent`/`line-gap-override` from
+   * the font's real metrics) and put it first in the fallback stack, so text renders at the web
+   * font's size while it loads — the font-swap layout-shift (CLS) fix. Default `true`, as in
+   * Next; `false` keeps the plain stack.
+   */
+  adjustFontFallback?: boolean;
 }
 
 /** Build the `fonts.googleapis.com/css2` URL for a family + options. */
@@ -68,7 +77,15 @@ export function googleFont(family: string, options: GoogleFontOptions = {}): Fon
     preload: options.preload,
   });
   const signature = `${family}:${JSON.stringify(options)}`;
-  const stack = [`'${family}'`, ...(options.fallback ?? ["sans-serif"])].join(", ");
+  // The metric-matched fallback face comes right after the web font in the stack, before the
+  // caller's own fallbacks / the generic family (Next's order).
+  const adjusted = options.adjustFontFallback === false ? null : fallbackFontFace(family);
+  if (adjusted) addFontFace(adjusted.css);
+  const stack = [
+    `'${family}'`,
+    ...(adjusted ? [`'${adjusted.family}'`] : []),
+    ...(options.fallback ?? ["sans-serif"]),
+  ].join(", ");
   const className = fontClassName(family, signature);
   addFontFace(`.${className}{font-family:${stack};}`);
 

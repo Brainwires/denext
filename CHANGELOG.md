@@ -8,6 +8,104 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-09-11
+
+### Breaking
+
+- **BREAKING: removed the `denext deploy` command.** It only ever wrapped
+  `deployctl` for a single host (Deno Deploy) and could not know a project's real
+  deployment setup (registry, host, secrets, DNS), so it added nothing over
+  invoking the underlying tool directly. Deploy with `deployctl` (Deno Deploy) or
+  your host's own tooling — the Deno Deploy, Docker, and systemd recipes in
+  [DEPLOYMENT.md](./DEPLOYMENT.md) are unchanged. `denext generate docker` still
+  scaffolds a Dockerfile.
+
+### Added
+
+- **`@denext/content-collections` 0.2.0 renders content: `renderContent(entry)` / `<Content
+  entry />`.** `.md` entries render through the package's first-party, zero-dependency Markdown
+  renderer at request time; `.mdx` entries are compiled at build (and at dev startup / on
+  change) into component modules through denext's build-time `@mdx-js/mdx`, exposed to plugins
+  as the new `compileMdxSource` plugin-kit export (`jsxImportSource` option added). Entries
+  carry `format`. The example blog renders MD and MDX with no third-party wiring; the
+  KNOWN-LIMITATIONS "no built-in renderer" bullet is gone. The docs site's Markdown renderer
+  moved into the package (hardened: link targets attribute-escaped, script-bearing schemes
+  dropped) and is re-exported from `apps/web/lib/markdown.ts`.
+- **`next/font/google` emits Next's metric-matched fallback face (`adjustFontFallback`).**
+  Every Google font now also declares `"<Family> Fallback"` — a local Arial (or Times New
+  Roman for serif families) re-proportioned with `size-adjust`, `ascent-override`,
+  `descent-override` and `line-gap-override` — and puts it first in the fallback stack, so
+  text laid out before the web font arrives occupies the same space (the font-swap layout
+  shift, CLS, that `adjustFontFallback` exists to remove). The numbers come from a generated
+  table of real metrics (`scripts/gen-font-metrics.ts`, Capsize's set — the one Next ships),
+  and the math is Next's, so a migrated app gets identical overrides. On by default as in Next;
+  `adjustFontFallback: false` keeps the plain stack. `localFont` accepts the option for type
+  parity but emits no face (denext does not parse font files; see KNOWN-LIMITATIONS).
+  Closes the "metric-matched fallback" roadmap item.
+- **`denext doctor --report`** — one markdown health report a human or CI can act on: the
+  pass/fail checks, **every route's** conformance result (status, static/interactive, failing
+  checks — the data the `route conformance` line used to collapse), and the last build's
+  client bundle by chunk and role (read from `.denext/client`; it never builds, and says so
+  when there is no build output). `--json` emits the same data structurally (`--json` alone
+  now emits the check list). The `denext_doctor` MCP tool takes `report: true` for the same
+  markdown. Profiling stays in `denext profile` (it needs a headless Chromium).
+
+### Changed
+
+- **Every first-party package's published entrypoint is fully documented, and the repo's
+  `doc-lint` gate now covers all of them.** `@denext/swc` 76.0.1 exports documented, typed
+  wrappers (`ParseOptions` / `Options` / `JsMinifyOptions` → `Program` / `Output`) instead
+  of the wasmbuild-generated declarations, which carry no JSDoc; `@denext/photon` 0.3.6
+  gets docs on the `free()` / `[Symbol.dispose]()` / `SamplingFilter` members wasm-bindgen
+  emits undocumented (new `deno task docs:wasm`, re-run after `wasmbuild`); `@denext/avif`
+  0.1.2, `@denext/og` 0.1.1 and `@denext/react-router` 0.1.1 document every interface property. Fixes the JSR "has docs
+  for most symbols" score on those packages. No behavior change.
+- **`useId` ids are CSS-selector-safe.** `useId()` now emits `_d{path}_{n}_` (e.g. `_d0-2-1_0_`)
+  instead of `:d0.2.1_0:`. The new shape uses React 19.2's `_r_0_` character class — a valid
+  CSS identifier, XML 1.0 name and `view-transition-name` — so libraries that do
+  `querySelector("#" + id)` (Radix, Base UI, Headless UI) work without `CSS.escape`. The
+  position-derived semantics are unchanged (see KNOWN-DIFFERENCES). Visible only to code that
+  pinned the literal old format, e.g. a snapshot test.
+
+### Fixed
+
+- **A class component that lives only in a dependency no longer crashes the production
+  build.** `denext build` used to install the class-component runtime only when a token scan
+  of the app's own sources saw `Component`/`PureComponent`; a class hidden in an npm package
+  or a sibling workspace package (Base UI's error boundary, `react-error-boundary`) shipped a
+  function-only bundle and threw `classComponentsDisabledError` at hydration — silently, and
+  only in production. The runtime is now a code-split chunk (`denext/class-runtime`) that
+  the generated browser entry loads **before hydrating** whenever the server-rendered
+  document carries the new `#__denext_classes` marker (stamped by any render that produced a
+  class component; a cached PPR shell re-seeds it on a hit). Function-only pages never fetch
+  it. A class that first appears client-side on a page that server-rendered none (a soft
+  navigation onto a class page, a `client:only` island) makes the reconciler load the chunk
+  itself and re-render — suspending to the nearest `<Suspense>`, or keeping the subtree empty
+  for one round trip without one (see KNOWN-DIFFERENCES) — instead of throwing. The build scan is now a preload hint — when it sees a class (or `classComponents:
+  true`) the entry imports the chunk statically and skips the round trip — and it also reads
+  sibling workspace packages (so do the `<Activity>`/`<ViewTransition>` scans).
+  `classComponents: false` still keeps the runtime out entirely. The same fix covers
+  `denext export` and the bundled dev fallback, which never installed the runtime.
+  Removes the KNOWN-LIMITATIONS bullet. Surface: `denext/class-runtime` is a new entrypoint
+  (for generated code, like `denext/lazy`), `denext/bundle` exports the `ClassRuntimeMode`
+  type, and `denext/client-runtime` exports `loadClassRuntime` instead of re-exporting
+  `installClassSupport`. `denext analyze` / `doctor --report` classify `lazy-*` and
+  `class-runtime-*` chunks under a new "on-demand runtime" role.
+- **`React.cache` matches React outside a request.** A `cache()`-wrapped function called on
+  the server with no request context (a scheduled task, a script, module init) used to fall
+  back to a persistent per-function memo, so a result could survive across logical calls
+  where React recomputes. It now calls straight through — React's "no dispatcher" behavior.
+  Request-scoped SSR memoization is unchanged; in the browser the bounded per-function memo
+  is kept (React memoizes per render pool there). The KNOWN-LIMITATIONS bullet is gone.
+- **Fewer npm build-time deps: `lightningcss` and `swc` are now first-party.** The
+  build pipeline's `lightningcss-wasm` and `@swc/wasm-web` npm deps are replaced by
+  first-party JSR/wasm packages `@denext/lightningcss` and `@denext/swc` (built via
+  `wasmbuild`, verified equivalent to the npm builds). The zero-npm **runtime** was
+  already guaranteed and is unchanged; this only shrinks the **build-time** npm
+  surface — the build is not npm-free: `esbuild` (core) plus the opt-in `sass` /
+  `@mdx-js/mdx` / `ws` remain npm build-time deps (`esbuild` off-npm is deferred;
+  see ROADMAP).
+
 ## [2.3.0] - 2026-09-10
 
 ### Added
@@ -6302,6 +6400,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.4.0]: https://jsr.io/@denext/denext@2.4.0
 [2.3.0]: https://jsr.io/@denext/denext@2.3.0
 [2.2.0]: https://jsr.io/@denext/denext@2.2.0
 [2.1.6]: https://jsr.io/@denext/denext@2.1.6

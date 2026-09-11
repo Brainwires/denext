@@ -3,6 +3,11 @@
 All notable changes to this package are documented here. It follows its own
 semver, independent of `@denext/denext`.
 
+## [0.1.1]
+
+- No code change. `RouteOptions.id` / `caseSensitive` are documented (JSR's "has docs for
+  most symbols" score); the package entrypoints are now part of the repo's `doc-lint` gate.
+
 ## [0.1.0]
 
 - Initial release: run a **React Router v7 framework-mode** app (config routing via

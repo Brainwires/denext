@@ -142,6 +142,9 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     // Deferred island hydration bootstrap — the generated Flight entry dynamically
     // imports it from `denext/lazy` only when a page has client:* islands.
     "lazy": u("src/lazy.ts"),
+    // The on-demand class-component runtime — the generated entry dynamically imports it
+    // from `denext/class-runtime` when a page renders a class component.
+    "class-runtime": u("src/class-runtime.ts"),
     // The generated entries' boot/HMR plumbing and the dev inspector — imported from
     // `denext/client-runtime` / `denext/devtools`; prebuilt into the same shared graph.
     "client-runtime": u("src/client/client-runtime.ts"),
@@ -477,6 +480,7 @@ const DENEXT_RUNTIME_FILES: Record<string, string> = {
   "denext/client": "client.js",
   "denext/live": "live.js",
   "denext/lazy": "lazy.js",
+  "denext/class-runtime": "class-runtime.js",
   "denext/client-runtime": "client-runtime.js",
   "denext/devtools": "devtools.js",
   "denext/jsx-runtime": "jsx-runtime.js",
@@ -1071,6 +1075,12 @@ export interface MdxBuildOptions {
   remarkRehypeOptions?: Record<string, unknown>;
   /** MDX `providerImportSource` (module exporting `useMDXComponents`), if used. */
   providerImportSource?: string;
+  /**
+   * The automatic-runtime import source the compiled module imports `jsx` from. Default
+   * `"react"` (the compat build aliases it to denext); a native app's content compiles with
+   * `"denext"` so the emitted module needs no alias.
+   */
+  jsxImportSource?: string;
 }
 
 /**
@@ -1091,7 +1101,7 @@ export async function compileMdxSource(
   const compiled = await compile(
     { path, value: source },
     {
-      jsxImportSource: "react",
+      jsxImportSource: opts?.jsxImportSource ?? "react",
       remarkPlugins: pluggable(opts?.remarkPlugins),
       rehypePlugins: pluggable(opts?.rehypePlugins),
       recmaPlugins: pluggable(opts?.recmaPlugins),

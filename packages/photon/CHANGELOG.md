@@ -4,6 +4,13 @@
 [README](./README.md#versioning)). Each entry records the photon-rs version
 wrapped.
 
+## 0.3.6 — wraps photon-rs 0.3.3
+
+- No code change. The generated `lib/denext_photon.d.ts` gains JSDoc on the members
+  wasm-bindgen emits undocumented (`free()`, `[Symbol.dispose]()`, the `SamplingFilter`
+  enum and its members), added by `deno task docs:wasm` after `wasmbuild`. Fixes JSR's
+  "has docs for most symbols" score.
+
 ## 0.3.5 — wraps photon-rs 0.3.3
 
 - No code change. Ships `THIRD-PARTY-LICENSES.md` — the inventory of every Rust

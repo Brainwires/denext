@@ -25,11 +25,14 @@ import {
   withEsbuild,
 } from "./next-compat.ts";
 import {
+  type ClassRuntimeMode,
   frameworkFileUrl,
   frameworkRootUrl,
   generateFlightEntry,
   generateServerStub,
 } from "./bundle.ts";
+// Public so `BuildNextCompatFlightOptions.classRuntime` documents against a reachable type.
+export type { ClassRuntimeMode } from "./bundle.ts";
 import type { BoundaryManifest } from "./module-graph.ts";
 // Re-exported so plugins (e.g. @denext/pages-router) can route their own SSR module
 // loading through the compat bundles — running npm-React page modules on denext's single
@@ -370,11 +373,11 @@ export interface BuildNextCompatFlightOptions {
    */
   usesLive?: boolean;
   /**
-   * Whether the app uses class components (scan or `classComponents` config). When false,
-   * the generated entry omits `installClassSupport()` and the class runtime is dropped.
-   * Defaults to `false`. See {@link generateFlightEntry}/{@link generateRouteEntry}.
+   * How the generated Flight entry gets the class-component runtime (see
+   * {@link ClassRuntimeMode}). Defaults to `"lazy"` (loaded on demand when the document says a
+   * class rendered). See {@link generateFlightEntry}.
    */
-  usesClassComponents?: boolean;
+  classRuntime?: ClassRuntimeMode;
   /**
    * Whether the app uses `<Activity>` (build scan). When false, the generated entry omits
    * `installActivitySupport()` and the offscreen scheduler is dropped. Defaults to `false`.
@@ -437,7 +440,7 @@ export async function buildNextCompatFlightEntry(
       false,
       options.usesLive ?? true,
       options.instrumentationClient ?? null,
-      options.usesClassComponents ?? false,
+      options.classRuntime ?? "lazy",
       options.usesActivity ?? false,
       options.usesViewTransition ?? false,
     ),
@@ -521,7 +524,7 @@ function clientEntry(
   // hydration bundle (the SSR path needs no seam — `renderToString` handles classes
   // directly). Mirrors `classSupportBlock` in bundle.ts / `generateSpaEntry`.
   const classImport = classComponents
-    ? `import { installClassSupport } from "denext/client-runtime";\n`
+    ? `import { installClassSupport } from "denext/class-runtime";\n`
     : "";
   const classInstall = classComponents ? "installClassSupport();\n" : "";
   return `${imports}

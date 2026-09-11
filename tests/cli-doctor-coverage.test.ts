@@ -67,6 +67,83 @@ Deno.test("doctor reports all checks passing for a conforming app", async () => 
   assert(exit.calls.length === 0, "no exit on a clean doctor run");
 });
 
+Deno.test("doctor --report prints a markdown health report with every section", async () => {
+  const cap = capture();
+  const exit = stubExit();
+  try {
+    await doctorCommand.run(makeCtx({ positionals: [DOCS], flags: { report: true } }));
+  } finally {
+    exit.restore();
+    cap.restore();
+  }
+  const md = cap.logs.join("\n");
+  assertStringIncludes(md, "# denext doctor — ");
+  assertStringIncludes(md, "**Verdict:** all checks passed");
+  assertStringIncludes(md, "## Checks");
+  assertStringIncludes(md, "**route conformance**");
+  assertStringIncludes(md, "## Routes");
+  assertStringIncludes(md, "| Route | Path | Status | Kind | Result |");
+  assertStringIncludes(md, "static (0 KB JS)");
+  assertStringIncludes(md, "## Client bundle");
+  // The docs app has no `.denext/client` build output here → the degrade line, not a build.
+  assert(
+    md.includes("_Not built — run `denext build`") || md.includes("### Chunks"),
+    "bundle section is either the not-built hint or the chunk table",
+  );
+  assertStringIncludes(md, "denext profile");
+  assert(exit.calls.length === 0, "a clean report never exits non-zero");
+});
+
+Deno.test("doctor --report --json emits the structured report; --json alone emits the checks", async () => {
+  const full = capture();
+  try {
+    await doctorCommand.run(
+      makeCtx({ positionals: [DOCS], flags: { report: true }, global: { json: true } }),
+    );
+  } finally {
+    full.restore();
+  }
+  const report = JSON.parse(full.logs.join("\n"));
+  assert(Array.isArray(report.checks), "checks array");
+  assert(report.checks.some((c: { name: string }) => c.name === "route conformance"));
+  assert(typeof report.routes.total === "number", "the full per-route report is included");
+  assert(Array.isArray(report.routes.routes));
+  assert("bundle" in report, "bundle is present (null when not built)");
+  assert(report.bundle === null || Array.isArray(report.bundle));
+
+  const checksOnly = capture();
+  try {
+    await doctorCommand.run(makeCtx({ positionals: [DOCS], global: { json: true } }));
+  } finally {
+    checksOnly.restore();
+  }
+  const checks = JSON.parse(checksOnly.logs.join("\n"));
+  assert(Array.isArray(checks) && checks.length > 0, "--json without --report is the check list");
+  assert("critical" in checks[0]);
+});
+
+Deno.test("doctor --report on a project with no app dir explains the un-probed sections and exits 1", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_doctor_noapp_" });
+  await Deno.writeTextFile(join(dir, "deno.json"), "{}");
+  const cap = capture();
+  const exit = stubExit();
+  try {
+    await doctorCommand.run(makeCtx({ positionals: [dir], flags: { report: true } }));
+  } catch (e) {
+    assertStringIncludes(String(e), "__exit__1");
+  } finally {
+    exit.restore();
+    cap.restore();
+    await Deno.remove(dir, { recursive: true });
+  }
+  const md = cap.logs.join("\n");
+  assertStringIncludes(md, "**Verdict:** problems found");
+  assertStringIncludes(md, "✖ **app directory**");
+  assertStringIncludes(md, "_Not probed — SPA mode, a missing app directory");
+  assertStringIncludes(md, "_Not built — run `denext build`");
+  assert(exit.calls.includes(1), "a failing critical check still exits non-zero under --report");
+});
+
 Deno.test("doctor reports a config-load failure as a failed critical check", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_doctor_bad_" });
   // A denext.config.ts that throws on import → resolveProject rejects → doctor turns it

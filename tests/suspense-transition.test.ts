@@ -18,6 +18,22 @@ type Any = any;
 
 const tick = () => new Promise((r) => setTimeout(r, 5));
 
+/**
+ * Wait until `container` renders `expected`, then assert it. A transition commit is a
+ * `setTimeout(0)` flush followed by a time-sliced concurrent render, so a fixed sleep races
+ * it under CI/parallel load; polling (bounded) makes the outcome deterministic while a real
+ * regression still fails — with the same diff — once the deadline passes.
+ */
+async function expectHtml(
+  container: { innerHTML: string },
+  expected: string,
+  message: string,
+): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (container.innerHTML !== expected && Date.now() < deadline) await tick();
+  assertEquals(container.innerHTML, expected, message);
+}
+
 /** Per-key data sources. "a" is already resolved; "b" stays pending until we let it. */
 type Pending = {
   resolveB: (v: string) => void;
@@ -134,18 +150,16 @@ Deno.test("Suspense: a transition re-suspend keeps the old content (no fallback 
   // Transition to "b" (still pending): keep showing A, and isPending is true —
   // NOT the fallback.
   startFn(() => reader.setId("b"));
-  await tick();
-  assertEquals(
-    container.innerHTML,
+  await expectHtml(
+    container,
     "<div><i>P</i><span>A</span></div>",
     "transition re-suspend keeps old content A and shows isPending (no fallback)",
   );
 
   // Resolve "b": the pending transition retries and commits B; isPending clears.
   await settleB(p);
-  await tick();
-  assertEquals(
-    container.innerHTML,
+  await expectHtml(
+    container,
     "<div><i>-</i><span>B</span></div>",
     "the settled transition reveals B and clears isPending",
   );

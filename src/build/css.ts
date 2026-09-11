@@ -91,12 +91,12 @@ async function compileSass(file: string): Promise<string> {
   return result.css;
 }
 
-// lightningcss-wasm must be initialized once before `transform` is callable.
-let lightningReady: Promise<typeof import("lightningcss-wasm")> | null = null;
-function lightning(): Promise<typeof import("lightningcss-wasm")> {
+// @denext/lightningcss must be initialized once before `transform` is callable.
+let lightningReady: Promise<typeof import("@denext/lightningcss")> | null = null;
+function lightning(): Promise<typeof import("@denext/lightningcss")> {
   if (!lightningReady) {
     lightningReady = (async () => {
-      const mod = await import("lightningcss-wasm");
+      const mod = await import("@denext/lightningcss");
       await mod.default();
       return mod;
     })();
@@ -118,12 +118,17 @@ export async function transformCss(
   opts: { cssModules?: boolean; minify?: boolean } = {},
 ): Promise<CssTransform> {
   const { transform } = await lightning();
+  // @denext/lightningcss types `transform` as `any` (wasm-bindgen-generated); the
+  // slice we consume is stable, so we declare it here (its transform result shape).
   const result = transform({
     filename,
     code: new TextEncoder().encode(source),
     cssModules: opts.cssModules ?? false,
     minify: opts.minify ?? false,
-  });
+  }) as {
+    code: Uint8Array;
+    exports?: Record<string, { name: string; composes?: ReadonlyArray<{ name: string }> }>;
+  };
   const exports: Record<string, string> = {};
   if (result.exports) {
     for (const [local, info] of Object.entries(result.exports)) {

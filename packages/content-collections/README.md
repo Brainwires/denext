@@ -58,8 +58,28 @@ export default async function Blog() {
 }
 ```
 
-`getCollection(name, filter?)` and `getEntry(name, id)` return `{ id, slug, data, body }` typed to
-each collection's schema. Call them from Server Components, route handlers, or build code.
+`getCollection(name, filter?)` and `getEntry(name, id)` return `{ id, slug, data, body, format }`
+typed to each collection's schema. Call them from Server Components, route handlers, or build code.
+
+## Render
+
+```tsx
+import { Content, getEntry } from "@denext/content-collections/runtime";
+
+export default async function Post({ params }: { params: { slug: string } }) {
+  const post = await getEntry("blog", params.slug);
+  if (!post) notFound();
+  return (
+    <article>
+      <h1>{post.data.title}</h1>
+      <Content entry={post} /> {/* .md → first-party renderer; .mdx → module compiled at build */}
+    </article>
+  );
+}
+```
+
+`renderContent(entry, { components })` is the function form; `components` reaches an MDX
+document (`{ h1: Heading, Callout }`).
 
 ## CLI
 
@@ -71,8 +91,16 @@ each collection's schema. Call them from Server Components, route handlers, or b
 
 - **Store:** the built store is `.denext/content-data.json`, read at request time from
   `<cwd>/.denext`. Run your app from the project root (as `deno task dev` / `start` do).
-- **Rendering:** `body` is the raw MD/MDX source; render it with your MDX setup or a Markdown
-  renderer. A first-party render helper is planned.
+- **Rendering:** `body` is the raw MD/MDX source (render it yourself if you like), and the
+  runtime renders it for you: `await renderContent(entry)` or `<Content entry={entry} />`
+  (server-only). A `.md` entry renders through the package's first-party, zero-dependency
+  Markdown renderer at request time (`@denext/content-collections/markdown` — headings with ids,
+  lists, fenced code, blockquotes / `> [!NOTE]` callouts, links, emphasis; raw HTML is escaped,
+  `javascript:`/`data:` links are dropped). A `.mdx` entry is compiled **at build** (and at dev
+  startup / on change) into a component module under `.denext/content/<collection>/<id>.js`
+  with denext's build-time `@mdx-js/mdx` — nothing MDX-related runs at request time — and
+  `renderContent(entry, { components })` passes `components` to the document. `format` on each
+  entry says which (`"md"` / `"mdx"`; absent for data collections, which have nothing to render).
 - **YAML dates:** unquoted `date: 2026-09-01` parses as a `Date`, not a string — quote it, or use a
   date schema.
 

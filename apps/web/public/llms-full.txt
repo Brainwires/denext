@@ -279,6 +279,8 @@ export default async function Blog() {
   const posts = await getCollection("blog", (p) => !p.data.draft); // p.data is typed
   return <ul>{posts.map((p) => <li key={p.id}>{p.data.title}</li>)}</ul>;
 }
+// Render an entry's body: `<Content entry={post} />` (or `await renderContent(post)`) from the
+// same module — `.md` through the first-party renderer, `.mdx` through a module compiled at build.
 // CLI: `denext content build | list | validate` (validate exits 1 on a schema failure — a CI gate).
 ```
 
@@ -356,7 +358,10 @@ CLI verb). Declare it as `plugins: [myPlugin()]`. See
 - **Cache Components / PPR** are a stable **opt-in**: `cacheComponents: true`
   (top-level) in `denext.config.ts`. Not `experimental.cacheComponents` — that
   legacy key still works but dev-warns.
-- **Zero runtime npm**: the framework itself pulls no npm; your app may still
+- **Zero runtime npm**: nothing the framework ships to the runtime pulls npm
+  (CI-enforced). The build-time toolchain still uses a few npm tools — `esbuild`
+  (core) plus opt-in `sass` / `@mdx-js/mdx` / `ws`; the CSS + swc-AST tooling is
+  the first-party `@denext/lightningcss` / `@denext/swc` wasm. Your app may still
   use `npm:`/`jsr:` libraries.
 - Run checks with `deno task check` (fmt `--check` + lint + tests; type-checking
   happens transitively via `deno test`, there's no separate type-check step).
@@ -683,7 +688,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type (a returned Response carries no body type).
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 2.3.0` — The denext framework version.
+- `VERSION: 2.4.0` — The denext framework version.
 - `ViewTransition(props: object): VNode` — React.ViewTransition (experimental) — the client-driven view-transition wrapper. It is transparent (no DOM node of its own) and carries its config by stamping the DNX_VT_ATTR attribute onto its **single host child** (a DOM attribute survives server rendering AND the Flight boundary, unlike a VNode marker). Around a soft navigation the import-gated marking runtime finds these elements and applies real view-transition-name (and view-transition-class from enter/exit/update/share), so a name shared across routes morphs one element into the other. **Route-level** transitions apply regardless: a soft navigation commits inside document.startViewTransition where the browser supports it (see withViewTransition in src/client/navigation.ts). Without the gated runtime, or for a wrapper whose child isn't a single element (nothing to mark), it is a plain passthrough.
 - `interface VNode` — A single virtual DOM node.
 - `type VNodeChild = VNode | string | number | bigint | boolean | null | undefined` — Anything that can appear as a child in JSX.

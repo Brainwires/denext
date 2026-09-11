@@ -20,10 +20,11 @@ export {
 } from "./flight-client.ts";
 // Server Actions: the browser dispatch stub emitted for each `"use server"` export.
 export { clientActionStub } from "../runtime/server-action.ts";
-// Class components: the entry emits `installClassSupport()` to wire the class runtime into
-// the reconciler seam ONLY when the app uses classes — so a function-only bundle drops this
-// re-export (and the whole ~3.1 KB class runtime) via tree-shaking.
-export { installClassSupport } from "../compat/class-component.ts";
+// Class components: `installClassSupport` lives in its own entrypoint, `denext/class-runtime`
+// (a code-split chunk). The entry imports it statically when the build scan saw a class, and
+// otherwise calls `loadClassRuntime()` — the single dynamic-import site — when the document
+// says the server rendered a class. The install itself is deliberately NOT re-exported here.
+export { loadClassRuntime } from "./class-loader.ts";
 // Activity: the entry emits `installActivitySupport()` to wire the offscreen scheduler into
 // the reconciler seam ONLY when the app uses `<Activity>` — so an app that never renders one
 // drops this re-export (and the whole offscreen begin logic) via tree-shaking.

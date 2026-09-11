@@ -7,7 +7,8 @@
  * @module
  */
 
-import { join, toFileUrl } from "@std/path";
+import { dirname, join, toFileUrl } from "@std/path";
+import { compileMdxSource } from "@denext/denext/plugin-kit";
 import type { ContentConfig, StandardIssue } from "./config.ts";
 import { generateContentTypes } from "./codegen.ts";
 
@@ -81,8 +82,63 @@ function issuePath(issue: StandardIssue): string {
     .join(".");
 }
 
-/** A built entry as stored in `content-data.json`. */
-type StoreEntry = { id: string; data: unknown; body?: string };
+/**
+ * A built entry as stored in `content-data.json`. `format` says how `renderContent` renders the
+ * body: `"md"` through the first-party Markdown renderer at request time, `"mdx"` through the
+ * component module precompiled to `.denext/content/<collection>/<id>.js` (whose `v` — a hash of
+ * the source — cache-busts the module import when the entry changes in dev).
+ */
+type StoreEntry = { id: string; data: unknown; body?: string; format?: "md" | "mdx"; v?: string };
+
+/** The entry's render format from its source extension (absent for data / other text). */
+function formatOf(filePath: string | undefined): "md" | "mdx" | undefined {
+  if (!filePath) return undefined;
+  if (/\.mdx$/i.test(filePath)) return "mdx";
+  if (/\.md$/i.test(filePath)) return "md";
+  return undefined;
+}
+
+/** A short stable hash of a string (djb2, base36) — the MDX module's cache-busting version. */
+function hashOf(text: string): string {
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) h = ((h * 33) ^ text.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
+
+/**
+ * Precompile one `.mdx` entry to a component module under `outDir/content/<collection>/`. The
+ * compile runs at build (and at `denext dev` startup / on change) through denext's build-time
+ * `@mdx-js/mdx` — nothing MDX-related ships to the runtime, which only imports the emitted
+ * module. A compile failure is a per-entry diagnostic (the entry is dropped), never fatal.
+ */
+async function compileMdxEntry(
+  collection: string,
+  entry: { id: string; body: string; filePath?: string },
+  ctx: ContentBuildContext,
+): Promise<{ v: string } | { diagnostic: ContentDiagnostic }> {
+  try {
+    const js = await compileMdxSource(entry.filePath ?? `${entry.id}.mdx`, entry.body, {
+      jsxImportSource: "denext",
+    });
+    const target = join(ctx.outDir, "content", collection, `${entry.id}.js`);
+    await Deno.mkdir(dirname(target), { recursive: true });
+    await Deno.writeTextFile(target, js);
+    return { v: hashOf(entry.body) };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const hint = /Cannot find module|not a dependency|@mdx-js/.test(message)
+      ? " (MDX compiles with the build-time `npm:@mdx-js/mdx` — add it to your import map)"
+      : "";
+    return {
+      diagnostic: {
+        collection,
+        id: entry.id,
+        filePath: entry.filePath,
+        messages: [`mdx compile failed: ${message}${hint}`],
+      },
+    };
+  }
+}
 
 /** A collection's schema validator, if any (the Standard Schema surface `buildContent` uses). */
 type CollectionSchema = { readonly "~standard": { validate: (v: unknown) => unknown } };
@@ -113,7 +169,15 @@ async function validateEntry(
     }
     data = (result as { value: unknown }).value;
   }
-  return { entry: { id, data, ...(entry.body !== undefined ? { body: entry.body } : {}) } };
+  const format = formatOf(filePath);
+  return {
+    entry: {
+      id,
+      data,
+      ...(entry.body !== undefined ? { body: entry.body } : {}),
+      ...(format ? { format } : {}),
+    },
+  };
 }
 
 /** Load + validate one collection into its (sorted) store entries plus any diagnostics. */
@@ -136,6 +200,8 @@ async function buildCollection(
     });
     return { entries: [], diagnostics };
   }
+  // Compiled MDX modules are regenerated from scratch so a removed entry leaves no stale module.
+  await Deno.remove(join(ctx.outDir, "content", name), { recursive: true }).catch(() => {});
   const entries: StoreEntry[] = [];
   for (const entry of raw) {
     const result = await validateEntry(
@@ -143,8 +209,24 @@ async function buildCollection(
       entry,
       collection.schema as CollectionSchema | undefined,
     );
-    if ("diagnostic" in result) diagnostics.push(result.diagnostic);
-    else entries.push(result.entry);
+    if ("diagnostic" in result) {
+      diagnostics.push(result.diagnostic);
+      continue;
+    }
+    const built = result.entry;
+    if (built.format === "mdx" && built.body !== undefined) {
+      const compiled = await compileMdxEntry(
+        name,
+        { id: built.id, body: built.body, filePath: entry.filePath },
+        ctx,
+      );
+      if ("diagnostic" in compiled) {
+        diagnostics.push(compiled.diagnostic);
+        continue;
+      }
+      built.v = compiled.v;
+    }
+    entries.push(built);
   }
   entries.sort((a, b) => a.id.localeCompare(b.id));
   return { entries, diagnostics };

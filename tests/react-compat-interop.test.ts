@@ -216,41 +216,79 @@ Deno.test("react-dom/test-utils: exposes act", async () => {
   assert(ran);
 });
 
-Deno.test("React.cache: memoizes by argument identity (primitive + object args)", () => {
-  let calls = 0;
-  const fn = cache((a: number, b: { k: string }) => {
-    calls++;
-    return `${a}:${b.k}`;
+/**
+ * Run `fn` as the client bundle would see it (a `document` global present) or as
+ * server code outside a request (no `document`), restoring whatever was there.
+ */
+function withDocument<T>(present: boolean, fn: () => T): T {
+  const g = globalThis as { document?: unknown };
+  const had = "document" in g;
+  const saved = g.document;
+  if (present) g.document = saved ?? {};
+  else delete g.document;
+  try {
+    return fn();
+  } finally {
+    if (had) g.document = saved;
+    else delete g.document;
+  }
+}
+
+Deno.test("React.cache: in the browser, memoizes by argument identity (primitive + object args)", () => {
+  withDocument(true, () => {
+    let calls = 0;
+    const fn = cache((a: number, b: { k: string }) => {
+      calls++;
+      return `${a}:${b.k}`;
+    });
+    const obj = { k: "x" };
+    assertEquals(fn(1, obj), "1:x");
+    assertEquals(fn(1, obj), "1:x");
+    assertEquals(calls, 1, "same args → one call");
+    fn(2, obj);
+    assertEquals(calls, 2, "different primitive arg → recompute");
+    fn(1, { k: "x" });
+    assertEquals(calls, 3, "different object identity → recompute (ref-keyed)");
   });
-  const obj = { k: "x" };
-  assertEquals(fn(1, obj), "1:x");
-  assertEquals(fn(1, obj), "1:x");
-  assertEquals(calls, 1, "same args → one call");
-  fn(2, obj);
-  assertEquals(calls, 2, "different primitive arg → recompute");
-  fn(1, { k: "x" });
-  assertEquals(calls, 3, "different object identity → recompute (ref-keyed)");
   assert(typeof (React as Any).cache === "function", "exposed on the default namespace");
 });
 
-Deno.test("React.cache: off-request persistent memo bounds distinct primitive args", () => {
-  // No request context here, so cache() uses its persistent fallback — which must be
+Deno.test("React.cache: in the browser, the persistent memo bounds distinct primitive args", () => {
+  // No request context, but a browser → the persistent per-function memo, which must be
   // bounded (CACHE_MAX_PER_NODE = 1024) so distinct primitive args can't leak.
-  const CAP = 1024;
-  let calls = 0;
-  const fn = cache((n: number) => {
-    calls++;
-    return n;
+  withDocument(true, () => {
+    const CAP = 1024;
+    let calls = 0;
+    const fn = cache((n: number) => {
+      calls++;
+      return n;
+    });
+    // Fill past the cap (0..CAP inclusive = CAP+1 distinct args), evicting the oldest (0).
+    for (let i = 0; i <= CAP; i++) fn(i);
+    assertEquals(calls, CAP + 1, "each distinct arg computed once");
+    // The most-recent arg is still cached (no recompute)...
+    fn(CAP);
+    assertEquals(calls, CAP + 1, "recent arg stays cached");
+    // ...but the oldest (0) was evicted, so it recomputes.
+    fn(0);
+    assertEquals(calls, CAP + 2, "evicted oldest arg recomputes (bounded memo)");
   });
-  // Fill past the cap (0..CAP inclusive = CAP+1 distinct args), evicting the oldest (0).
-  for (let i = 0; i <= CAP; i++) fn(i);
-  assertEquals(calls, CAP + 1, "each distinct arg computed once");
-  // The most-recent arg is still cached (no recompute)...
-  fn(CAP);
-  assertEquals(calls, CAP + 1, "recent arg stays cached");
-  // ...but the oldest (0) was evicted, so it recomputes.
-  fn(0);
-  assertEquals(calls, CAP + 2, "evicted oldest arg recomputes (bounded memo)");
+});
+
+Deno.test("React.cache: on the server outside a request, it is not memoized (React parity)", () => {
+  // React's cache() with no dispatcher active calls the function straight through — a
+  // scheduled task or script must never see a result persisted from an earlier call.
+  withDocument(false, () => {
+    let calls = 0;
+    const obj = { k: "x" };
+    const fn = cache((a: number, b: { k: string }) => {
+      calls++;
+      return `${a}:${b.k}:${calls}`;
+    });
+    assertEquals(fn(1, obj), "1:x:1");
+    assertEquals(fn(1, obj), "1:x:2", "same args recompute — nothing persists off-request");
+    assertEquals(calls, 2);
+  });
 });
 
 Deno.test("react-dom: exposes the React 19 form hooks", () => {

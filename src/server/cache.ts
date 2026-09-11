@@ -1394,6 +1394,12 @@ export interface CachedPage {
   /** PPR only: an in-tree `<title>` from the shell (wins over `generateMetadata`). */
   inTreeTitle?: string;
   /**
+   * PPR only: the shell render produced a class component. A cache hit re-seeds the
+   * request's render scope with it so the rebuilt document carries the `#__denext_classes`
+   * marker and the browser entry loads the class runtime before hydrating.
+   */
+  classRuntime?: boolean;
+  /**
    * Flight PPR only: the request-independent shell Flight tree (dynamic holes as
    * `{$:"$",r:id}` placeholders). A per-request resume fills these holes with its
    * Flight subtrees; its presence marks a Flight ("use client") PPR shell (served via

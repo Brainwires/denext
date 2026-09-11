@@ -13,6 +13,7 @@ import { dynamic } from "../src/runtime/dynamic.ts";
 import { composeRefs } from "../src/compat/refs.ts";
 import { createSlot, createSlottable, Slot, Slottable } from "../src/compat/slot.ts";
 import { Activity, cache, ViewTransition } from "../mod.ts";
+import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { useFormStatus } from "../src/runtime/actions.ts";
 import { render } from "../src/testing/mod.ts";
 import { makeDom } from "./helpers/dom.ts";
@@ -110,9 +111,12 @@ Deno.test("a bigint child renders as text (SSR)", async () => {
 Deno.test("root barrel: cache / Activity / ViewTransition are available from `denext`", async () => {
   let calls = 0;
   const memo = cache((n: number) => (calls++, n * 2));
-  assertEquals(memo(2), 4);
-  assertEquals(memo(2), 4);
-  assertEquals(calls, 1, "memoized");
+  // Memoization is request-scoped on the server (React parity), so exercise it inside one.
+  await runWithContext(createRequestContext(new Request("http://x/")), () => {
+    assertEquals(memo(2), 4);
+    assertEquals(memo(2), 4);
+    assertEquals(calls, 1, "memoized within the request");
+  });
   const html = await renderToString(
     h(Activity, { mode: "visible" }, h(ViewTransition, null, h("b", null, "x"))),
   );

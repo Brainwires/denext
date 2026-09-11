@@ -4,6 +4,11 @@
 libavif/`@jsquash/avif` codec it vendors (see [README](./README.md#versioning)).
 Each entry records the upstream version wrapped.
 
+## 0.1.2
+
+- No code change. Every `AvifImageData` / `AvifEncodeOptions` property is documented
+  (JSR's "has docs for most symbols" score).
+
 ## 0.1.1 — wraps `@jsquash/avif@2.1.1` (libavif, single-threaded encoder)
 
 - No code change. Ships `THIRD-PARTY-LICENSES.md` — the components compiled into

@@ -17,8 +17,6 @@ ignoreDependencies = [
   "@std/http", # deno.json: jsr:@std/http@^1.0.0 — std HTTP (file-server, etc.)
   "@std/fs", # deno.json: jsr:@std/fs@^1.0.0
   "@std/encoding", # deno.json: jsr:@std/encoding@^1.0.0
-  "@swc/wasm-web", # deno.json: npm:@swc/wasm-web@^1.13.5 — the swc AST transforms
-  "lightningcss-wasm", # deno.json: npm:lightningcss-wasm@^1.33.0 — CSS minifier
   "sass", # deno.json: npm:sass@^1.80.0 — optional .scss support
   "ws", # deno.json: npm:ws@^8 — dev proxy WebSocket relay
   # Workspace packages and examples import the published framework by its JSR name
@@ -152,9 +150,14 @@ ignorePatterns = [
   # Regenerated from the Rust/C sources; never hand-edited, so its findings are not actionable.
   "packages/photon/lib/*.js",
   "packages/avif/lib/*.js",
+  "packages/lightningcss/lib/*.js",
+  "packages/swc/lib/*.js",
   # Fixture trees the migrate tests READ AS TEXT (never imported), so reachability can't see
   # them; CONTRIBUTING.md documents this as the place to exclude such fixtures.
   "tests/fixtures/**",
+  # Content-collection entries: `.mdx` documents the @denext/content-collections plugin compiles
+  # at build (never imported as modules by the app), so the graph can't reach them.
+  "examples/*/content/**/*.mdx",
 ]
 
 # Loaded with `await import("./dev-proxy.ts")` only when `spa.proxy` is configured (it pulls

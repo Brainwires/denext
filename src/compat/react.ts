@@ -76,10 +76,7 @@ import {
 // `__DENEXT_CLASS_COMPONENTS__` reads below resolve in dev/test (folds out of builds).
 import "../runtime/class-flag.ts";
 
-import {
-  Component as RealComponent,
-  PureComponent as RealPureComponent,
-} from "./class-component.ts";
+import { Component as RealComponent, PureComponent as RealPureComponent } from "./class-base.ts";
 
 // The runtime class bases behind the `Component` / `PureComponent` value exports
 // (see below). Re-exported under explicit aliases so those consts' `typeof`
@@ -88,7 +85,7 @@ import {
 export type {
   Component as ClassComponent,
   PureComponent as PureClassComponent,
-} from "./class-component.ts";
+} from "./class-base.ts";
 
 export {
   act,

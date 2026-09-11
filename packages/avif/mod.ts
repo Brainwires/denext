@@ -35,7 +35,9 @@ import moduleFactory from "./lib/avif_enc.js";
 export interface AvifImageData {
   /** Row-major RGBA bytes, length `width * height * 4`. */
   data: Uint8ClampedArray | Uint8Array;
+  /** Width in pixels. */
   width: number;
+  /** Height in pixels. */
   height: number;
 }
 
@@ -50,19 +52,27 @@ export interface AvifEncodeOptions {
   quality?: number;
   /** Alpha-plane quality, or -1 to reuse `quality`. Default -1. */
   qualityAlpha?: number;
+  /** AV1 denoising strength, 0 (off) – 50. Default 0. */
   denoiseLevel?: number;
+  /** log2 of the tile columns (0 = one column). Default 0. */
   tileColsLog2?: number;
+  /** log2 of the tile rows (0 = one row). Default 0. */
   tileRowsLog2?: number;
   /** Encoder effort 0 (slowest/best) – 10 (fastest). Default 6. */
   speed?: number;
+  /** Chroma subsampling: 0 = 4:4:4, 1 = 4:2:0 (default), 2 = 4:2:2, 3 = 4:0:0. */
   subsample?: number;
+  /** Adjust chroma quantization relative to luma. Default false. */
   chromaDeltaQ?: boolean;
+  /** Loop-filter sharpness 0–7. Default 0. */
   sharpness?: number;
   /** 0 = auto, 1 = psnr, 2 = ssim. Default 0. */
   tune?: number;
+  /** Sharper RGB → YUV conversion (slower). Default false. */
   enableSharpYUV?: boolean;
   /** 8, 10, or 12. Default 8 (RGBA `Uint8`). */
   bitDepth?: number;
+  /** Lossless encoding (ignores `quality`). Default false. */
   lossless?: boolean;
 }
 

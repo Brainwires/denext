@@ -16,6 +16,12 @@ export interface RenderScope {
   signals: Record<string, unknown> | null;
   /** The active `useServerInsertedHTML` sink (`null`/`undefined` when none). */
   insertSink: ((cb: () => VNodeChildren) => void) | null | undefined;
+  /**
+   * Whether this render produced a class component (see {@link markClassRendered}). The
+   * document assembler turns it into the `#__denext_classes` marker that tells the
+   * generated browser entry to load the class runtime before hydrating.
+   */
+  usedClasses?: boolean;
 }
 
 // The out-of-request fallback is keyed on globalThis so an inlined next-compat runtime copy
@@ -35,4 +41,39 @@ export function renderScope(): RenderScope {
   const ctx = (globalThis as ContextBridge).__denextCurrentRequestContext?.();
   if (!ctx) return fallback;
   return ctx.renderScope ??= { signals: null, insertSink: null };
+}
+
+/**
+ * The id of the JSON island that marks a document as having rendered a class component.
+ * The generated browser entries (`src/build/bundle.ts`) probe `document.getElementById`
+ * for this id and load `denext/class-runtime` before hydrating when it is present.
+ */
+export const CLASS_MARKER_ID = "__denext_classes";
+
+/**
+ * Record that the current server render produced a class component. Called by the
+ * renderers' class branch; read by the document assembler ({@link takeClassRendered}) so
+ * the page carries the `#__denext_classes` marker and the browser entry loads the class
+ * runtime BEFORE hydration — the class runtime is a code-split chunk a function-only
+ * page never fetches.
+ */
+export function markClassRendered(): void {
+  renderScope().usedClasses = true;
+}
+
+/** Whether the current render has produced a class component so far (no reset). */
+export function classRendered(): boolean {
+  return renderScope().usedClasses === true;
+}
+
+/**
+ * Whether the current render produced a class component, resetting the flag — one
+ * document assembly consumes one render's answer (the out-of-request fallback scope is
+ * shared across sequential renders, e.g. a static export, so it must not leak forward).
+ */
+export function takeClassRendered(): boolean {
+  const scope = renderScope();
+  const used = scope.usedClasses === true;
+  scope.usedClasses = false;
+  return used;
 }

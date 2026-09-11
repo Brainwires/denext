@@ -30,7 +30,7 @@ export const DNX_VT_ATTR = "data-dnx-vt";
  * {@linkcode cache} request-scoped during SSR. Read via a global installed by
  * denext's server runtime rather than a static import, so this client-safe shim
  * never pulls `node:async_hooks` into the browser/compat runtime bundle. Off the
- * server (client bundle) the global is absent → `undefined` → persistent memo.
+ * server (client bundle) the global is absent → `undefined`.
  */
 function currentRequestContext(): object | undefined {
   try {
@@ -125,10 +125,20 @@ export function Activity(
 }
 
 /**
- * Max distinct primitive keys held at one node of the off-request persistent
+ * Max distinct primitive keys held at one node of the client-side persistent
  * {@link cache} memo before the oldest is evicted (bounds unbounded growth).
  */
 const CACHE_MAX_PER_NODE = 1024;
+
+/**
+ * Whether this code runs in a browser (the client bundle). On the server the only
+ * memo scope React recognizes is the current request, so with no request context a
+ * server-side `cache()` call is not memoized at all — matching React's "no
+ * dispatcher" branch. Evaluated per call (not at module load) so a test can stub it.
+ */
+function inBrowser(): boolean {
+  return typeof document !== "undefined";
+}
 
 /**
  * `React.cache` — memoize a function by its arguments.
@@ -141,15 +151,18 @@ const CACHE_MAX_PER_NODE = 1024;
  * libraries importing `cache` from `react` resolve and dedupe correctly without
  * dragging server-only APIs into the client bundle.
  *
- * **Lifetime:** during SSR the memo is **request-scoped** (keyed on the current
- * request context, so one request's result is never served to another — matching
- * React and avoiding a cross-request data leak), and the per-request root is
- * garbage-collected with the request. Off-request (a client bundle, or server code
- * outside a request) it falls back to a persistent per-function memo; there, distinct
- * **primitive** args are bounded per node ({@link CACHE_MAX_PER_NODE}, evicting the
- * oldest) so they can't grow without limit (object args use a WeakMap and are freed
- * with the arg). Request-scoped roots stay uncapped (freed with the request, matching
- * React). A throwing `fn` is not cached (it re-runs next call).
+ * **Lifetime (React's semantics):** during SSR the memo is **request-scoped** (keyed
+ * on the current request context, so one request's result is never served to
+ * another — matching React and avoiding a cross-request data leak), and the
+ * per-request root is garbage-collected with the request. **Server code outside a
+ * request** (a scheduled task, a script, module init) is **not memoized** — `fn` runs
+ * on every call, exactly as React's `cache()` does with no dispatcher active — so a
+ * result can never persist across logical calls. **In the browser** (the client
+ * bundle, where React memoizes per render pool) it is a persistent per-function memo
+ * whose distinct **primitive** args are bounded per node ({@link CACHE_MAX_PER_NODE},
+ * evicting the oldest) so they can't grow without limit (object args use a WeakMap
+ * and are freed with the arg). Request-scoped roots stay uncapped (freed with the
+ * request, matching React). A throwing `fn` is not cached (it re-runs next call).
  *
  * @param fn The function to memoize.
  * @returns A memoized function returning the cached result for equal arguments.
@@ -164,14 +177,16 @@ export function cache<A extends unknown[], R>(fn: (...args: A) => R): (...args: 
     primitives?: Map<unknown, Node>;
   }
   const newNode = (): Node => ({ hasValue: false, value: undefined as unknown as R });
-  // Off-request fallback root (client bundle / non-request server code).
+  // Browser (client bundle) root: a persistent per-function memo.
   const persistentRoot = newNode();
   const isPersistent = (root: Node): boolean => root === persistentRoot;
   // Per-request roots, so an SSR render's memo cannot leak into another request.
   const perRequestRoots = new WeakMap<object, Node>();
-  const rootFor = (): Node => {
+  // The memo root for this call, or null when React wouldn't memoize at all: server
+  // code with no request context (no dispatcher → React calls `fn` straight through).
+  const rootFor = (): Node | null => {
     const ctx = currentRequestContext();
-    if (!ctx) return persistentRoot;
+    if (!ctx) return inBrowser() ? persistentRoot : null;
     let r = perRequestRoots.get(ctx);
     if (!r) perRequestRoots.set(ctx, r = newNode());
     return r;
@@ -202,6 +217,7 @@ export function cache<A extends unknown[], R>(fn: (...args: A) => R): (...args: 
 
   return (...args: A): R => {
     const root = rootFor();
+    if (root === null) return fn(...args);
     const persistent = isPersistent(root);
     let node = root;
     for (const arg of args) node = childFor(node, arg, persistent);

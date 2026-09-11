@@ -56,13 +56,11 @@
     "jsr:@zip-js/zip-js@^2.7.52": "2.8.34",
     "npm:@cf-wasm/photon@0.4.0": "0.4.0",
     "npm:@mdx-js/mdx@3": "3.1.1",
-    "npm:@swc/wasm-web@^1.13.5": "1.15.47",
     "npm:effect@*": "3.22.1",
     "npm:effect@^3.22.0": "3.22.1",
     "npm:esbuild@0.24": "0.24.2",
     "npm:graphql-yoga@^5.10.0": "5.22.0_graphql@16.14.2",
     "npm:graphql@^16.9.0": "16.14.2",
-    "npm:lightningcss-wasm@^1.33.0": "1.33.0",
     "npm:sass@^1.80.0": "1.102.0",
     "npm:typescript@5": "5.9.3",
     "npm:ws@8": "8.21.3"
@@ -605,9 +603,6 @@
     "@standard-schema/spec@1.1.0": {
       "integrity": "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="
     },
-    "@swc/wasm-web@1.15.47": {
-      "integrity": "sha512-CoScH7RXEmrVgSP3Y9mrjirZYpWwhBWQ3Ltee2rpf059s7BT7nTJQ3MzPKFgbFFuZvDMLkfZu2v4L1WwJ+q12g=="
-    },
     "@types/debug@4.1.13": {
       "integrity": "sha512-KSVgmQmzMwPlmtljOomayoR89W4FynCAi3E8PPs7vmDVPe84hT+vGPKkJfThkmXs0x0jAaa9U8uW8bbfyS2fWw==",
       "dependencies": [
@@ -982,9 +977,6 @@
     },
     "is-plain-obj@4.1.0": {
       "integrity": "sha512-+Pgi+vMuUNkJyExiMBt5IlFoMyKnr5zhJ4Uspz58WOhBF5QoIZkFyNHIbBAtHwzVAgk5RtndVNsDRN61/mmDqg=="
-    },
-    "lightningcss-wasm@1.33.0": {
-      "integrity": "sha512-OLAtqEyInBSVWjPrTjpLzcZUMUHO0q+2PFBXKr86nxZOu0P38givj/ZMtRaZ0d38pMTb9wQx+LtaLtHclv+sEA=="
     },
     "longest-streak@3.1.0": {
       "integrity": "sha512-9Ri+o0JYgehTaVBBDoMqIl8GXtbWg711O3srftcHhZ0dqnETqLaoIK0x17fUw9rFSlK/0NlsKe0Ahhyl5pXE2g=="
@@ -1590,6 +1582,8 @@
   "workspace": {
     "dependencies": [
       "jsr:@astral/astral@~0.5.3",
+      "jsr:@denext/lightningcss@^1.0.0-rc.72",
+      "jsr:@denext/swc@76",
       "jsr:@luca/esbuild-deno-loader@0.11",
       "jsr:@std/assert@1",
       "jsr:@std/async@1",
@@ -1600,17 +1594,15 @@
       "jsr:@std/media-types@1",
       "jsr:@std/path@1",
       "npm:@mdx-js/mdx@3",
-      "npm:@swc/wasm-web@^1.13.5",
       "npm:effect@^3.22.0",
       "npm:esbuild@0.24",
-      "npm:lightningcss-wasm@^1.33.0",
       "npm:sass@^1.80.0",
       "npm:ws@8"
     ],
     "members": {
       "packages/content-collections": {
         "dependencies": [
-          "jsr:@denext/denext@^2.3.0",
+          "jsr:@denext/denext@^2.4.0",
           "jsr:@std/front-matter@1",
           "jsr:@std/fs@1",
           "jsr:@std/path@1",
@@ -1619,13 +1611,13 @@
       },
       "packages/effect": {
         "dependencies": [
-          "jsr:@denext/denext@^2.3.0",
+          "jsr:@denext/denext@^2.4.0",
           "npm:effect@^3.22.0"
         ]
       },
       "packages/graphql": {
         "dependencies": [
-          "jsr:@denext/denext@^2.3.0",
+          "jsr:@denext/denext@^2.4.0",
           "jsr:@std/path@1",
           "npm:graphql-yoga@^5.10.0",
           "npm:graphql@^16.9.0"
@@ -1633,25 +1625,25 @@
       },
       "packages/htmx": {
         "dependencies": [
-          "jsr:@denext/denext@^2.3.0",
+          "jsr:@denext/denext@^2.4.0",
           "jsr:@std/path@1"
         ]
       },
       "packages/openapi": {
         "dependencies": [
-          "jsr:@denext/denext@^2.3.0",
+          "jsr:@denext/denext@^2.4.0",
           "jsr:@std/path@1"
         ]
       },
       "packages/pages-router": {
         "dependencies": [
-          "jsr:@denext/denext@^2.3.0",
+          "jsr:@denext/denext@^2.4.0",
           "jsr:@std/path@1"
         ]
       },
       "packages/react-router": {
         "dependencies": [
-          "jsr:@denext/denext@^2.3.0",
+          "jsr:@denext/denext@^2.4.0",
           "jsr:@std/fs@1",
           "jsr:@std/path@1"
         ]

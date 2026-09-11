@@ -9,28 +9,11 @@ import { projectDir } from "../shared.ts";
 import { build } from "../../build/build.ts";
 import {
   bundleAnalysisLines,
-  type BundleChunk,
   type BundleMetafile,
   bundleReportMarkdown,
   bundleRoleLines,
+  readClientChunks,
 } from "../../build/bundle-report.ts";
-
-/** Read the emitted `.js` chunks and their `.gz` sizes from a client output dir. */
-async function readClientChunks(clientDir: string): Promise<BundleChunk[]> {
-  const chunks: BundleChunk[] = [];
-  try {
-    for await (const e of Deno.readDir(clientDir)) {
-      if (!e.isFile || !e.name.endsWith(".js")) continue;
-      const bytes = (await Deno.stat(join(clientDir, e.name))).size;
-      let gzip: number | undefined;
-      try {
-        gzip = (await Deno.stat(join(clientDir, e.name + ".gz"))).size;
-      } catch { /* below the precompress floor — no .gz sibling */ }
-      chunks.push({ name: e.name, bytes, gzip });
-    }
-  } catch { /* no client dir → fully static (0 KB JS) */ }
-  return chunks;
-}
 
 /** Read the esbuild metafile `denext analyze --md` asked the build to emit, if any. */
 async function readAnalyzeMeta(outDir: string): Promise<BundleMetafile | undefined> {

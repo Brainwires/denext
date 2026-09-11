@@ -1,0 +1,3 @@
+# Rust build cache — never committed. The publishable artifact is lib/ (the
+# wasmbuild-generated .wasm + JS glue), which IS committed.
+/target

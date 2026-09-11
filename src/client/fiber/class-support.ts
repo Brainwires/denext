@@ -1,15 +1,19 @@
 // Client-reconciler seam for the React class-component runtime. The reconciler calls
 // class support THROUGH this null-default slot so its prod-shipped modules never
-// statically import src/compat/class-component.ts (~3.1 KB). The generated route/Flight
-// entry installs the real support (installClassSupport) ONLY when the app uses class
-// components, so `deno bundle` tree-shakes the class runtime out of a function-only app
-// entirely — the same lever the DevTools-bridge and Live seams use.
+// statically import src/compat/class-component.ts (the reconciler half, ~2.5 KB). That
+// module ships as the on-demand `denext/class-runtime` chunk: the generated route/Flight
+// entry installs it statically when the build scan saw a class in the app's own sources,
+// and otherwise loads it (`loadClassRuntime`, class-loader.ts) before hydrating when the
+// server-rendered document carries the `#__denext_classes` marker — so a function-only
+// page never fetches it, the same lever the DevTools-bridge and Live seams use.
 //
-// A top-level self-install in class-component.ts is impossible: react.ts statically
-// imports it (for the `Component` base), so a module-load side effect would make it
-// un-shakeable and defeat the gate. Hence the install is entry-emitted instead.
+// A top-level self-install in class-component.ts is impossible: the `Component` base the
+// `react` alias imports lives in class-base.ts precisely so nothing in the main graph
+// references the runtime module. Hence the install is entry-emitted (or lazily loaded).
 
-import type { ClassRenderResult, ReconcilerInstance } from "../../compat/class-component.ts";
+// Types only — and from the EAGER base module: a type edge to class-component.ts would make the
+// bundler treat the on-demand runtime as shared by the main graph and hoist it out of its chunk.
+import type { ClassRenderResult, ReconcilerInstance } from "../../compat/class-base.ts";
 
 /** The class-runtime functions the client reconciler calls. Supplied by class-component.ts. */
 export interface ClassSupport {

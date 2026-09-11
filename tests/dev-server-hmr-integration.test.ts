@@ -111,7 +111,16 @@ async function stepServerModuleEdit({ tap, apiFile }: Ctx): Promise<void> {
 }
 
 async function stepRerenders({ origin }: Ctx): Promise<void> {
-  const html = await (await fetch(origin + "/")).text();
+  // The `reload` frame is pushed when the edit is DETECTED; the dev server may still be
+  // re-scanning routes / invalidating the module graph, so a single immediate fetch can see
+  // the previous render (or a transient error page) under load. Poll, bounded.
+  const deadline = Date.now() + 10_000;
+  let html = "";
+  while (Date.now() < deadline) {
+    html = await (await fetch(origin + "/")).text();
+    if (html.includes("Hello again denext")) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
   assertStringIncludes(html, "Hello again denext");
 }
 

@@ -1808,7 +1808,7 @@ function spaTasks(
 ): Record<string, string> {
   // The CLI PROCESS always runs with `--node-modules-dir=none`, whatever the app's mode:
   // Deno resolves a REMOTE module's npm imports (the JSR-installed CLI's own `esbuild`,
-  // `lightningcss-wasm`, …) against the nearest config — the app's — and an app
+  // `sass`, …) against the nearest config — the app's — and an app
   // `node_modules` carries only the app's deps, so the CLI failed at load ("Could not find a
   // matching package for 'npm:esbuild'"). `none` resolves the CLI's deps from Deno's global
   // cache; the build child the CLI re-execs runs under the merged config (`--config`, which

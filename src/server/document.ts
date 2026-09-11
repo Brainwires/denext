@@ -17,6 +17,7 @@ import type { FlightNode } from "../jsx/render-to-flight.ts";
 import { type IslandPayload, serializeFlight } from "../jsx/render-to-html-flight.ts";
 import type { Messages } from "../runtime/i18n-messages.ts";
 import { PUBLIC_ENV_ID } from "../runtime/public-env.ts";
+import { CLASS_MARKER_ID, takeClassRendered } from "../runtime/render-scope.ts";
 import { getImageRuntimeConfig, IMAGE_CONFIG_ID, imageConfigNeedsEmbed } from "../runtime/image.ts";
 import type { PendingHole, ShellRender } from "../jsx/render-to-stream.ts";
 import { takeSettled } from "../jsx/renderer-base.ts";
@@ -250,6 +251,12 @@ function hydrationScripts(opts: DocumentOptions, clientEntry: string): string {
   if (opts.signalState && Object.keys(opts.signalState).length > 0) {
     scripts += jsonIsland("__denext_state", opts.signalState);
   }
+  // The render produced a class component: the marker tells the generated browser entry to
+  // load the on-demand class runtime (`denext/class-runtime`) BEFORE hydrating, so a class
+  // that lives only in a dependency the build scan never read still hydrates in production.
+  // Read from the render scope (per request; a cached PPR shell re-seeds it on a hit), so
+  // every document path — buffered, streamed, PPR, export — carries it without threading.
+  if (takeClassRendered()) scripts += jsonIsland(CLASS_MARKER_ID, 1);
   return scripts + `<script type="module" src="${escapeHtml(clientEntry)}"></script>`;
 }
 

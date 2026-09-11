@@ -4,8 +4,13 @@ import { ensureDir } from "@std/fs";
 import { join } from "@std/path";
 import { runPluginBuildSteps, runPluginPrepareSteps } from "../../plugin/mod.ts";
 import { scanRoutes } from "../../router/manifest.ts";
-import { computeBoundaryRoutes } from "../module-graph.ts";
-import { appUsesActivity, appUsesClassComponents, appUsesViewTransition } from "../bundle.ts";
+import { computeBoundaryRoutes, localModulesOutside } from "../module-graph.ts";
+import {
+  appUsesActivity,
+  appUsesClassComponents,
+  appUsesViewTransition,
+  type ClassRuntimeMode,
+} from "../bundle.ts";
 import { detectNextCompat } from "../next-compat-detect.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { dirExists, setupPlugins } from "../pipeline-shared.ts";
@@ -77,18 +82,29 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
   if (compat) log("next-compat mode: building react→denext SSR + client bundles");
   const flightRoutes = await computeBoundaryRoutes(paths.appDir, manifest.pages);
   const boundaryRoutes = manifest.pages.filter((p) => flightRoutes.has(p.routePath));
-  // Gate the class-component runtime: install it only when the app uses classes (scan) or
-  // `classComponents` is forced on. Computed here (before native + Flight bundling) so both
-  // route paths see it. On compat this mirrors the esbuild `define` (config-driven Component).
-  const usesClassComponents = paths.config?.classComponents === true ||
-    await appUsesClassComponents(projectDir);
+  // The build-time feature scans also read the local modules the routes import from OUTSIDE
+  // the project (a sibling workspace package), so a class component / `<Activity>` /
+  // `<ViewTransition>` defined there counts as used. npm packages are not scanned (their
+  // sources are opaque to a token scan) — the class runtime covers them by loading on demand.
+  const outside = await localModulesOutside(projectDir, manifest.pages);
+  // The class-component runtime is a code-split chunk the generated entry loads on demand
+  // when the server-rendered document says a class rendered ("lazy" — the default, and what
+  // makes a class hidden in a dependency work in production). The scan is a preload hint:
+  // when the app's own sources name a class (or `classComponents: true`), install it eagerly
+  // and skip the round trip. `classComponents: false` keeps it out entirely ("off").
+  // Computed here (before native + Flight bundling) so both route paths see it.
+  const classRuntime: ClassRuntimeMode = paths.config?.classComponents === false
+    ? "off"
+    : paths.config?.classComponents === true || await appUsesClassComponents(projectDir, outside)
+    ? "eager"
+    : "lazy";
   // Gate the Activity offscreen scheduler: install it only when the app renders `<Activity>`
-  // (a build scan). Computed here (like usesClassComponents) so native + Flight route paths
-  // both see it. An app can't use Activity without naming it, so the scan can't false-drop.
-  const usesActivity = await appUsesActivity(projectDir);
+  // (a build scan). Computed here (like classRuntime) so native + Flight route paths both
+  // see it. An app can't use Activity without naming it, so the scan can't false-drop.
+  const usesActivity = await appUsesActivity(projectDir, outside);
   // Gate the ViewTransition marking runtime, same as Activity — install it only when the app
   // renders `<ViewTransition>` (a build scan).
-  const usesViewTransition = await appUsesViewTransition(projectDir);
+  const usesViewTransition = await appUsesViewTransition(projectDir, outside);
   return {
     projectDir,
     paths,
@@ -106,7 +122,7 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
     clientRoutes: [],
     boundary: null,
     usesLive: false,
-    usesClassComponents,
+    classRuntime,
     usesActivity,
     usesViewTransition,
     compatServerModules: {},

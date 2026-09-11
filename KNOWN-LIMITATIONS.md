@@ -38,17 +38,6 @@ next-compat interop path — denext's own apps are unaffected):
   interop and **static-export** paths emit no entry, so there global-error stays
   server-rendered only (its `reset` inert).
 
-- **The class-component runtime is installed only when a build scan sees a class in your
-  app source.** To keep it out of function-only bundles, `denext build` scans your app
-  source for `Component`/`PureComponent` and installs the ~3 KB class runtime only when it
-  appears (a class component must name it). An app whose class components live **only in a
-  dependency** the scan doesn't read — an npm package, or a sibling workspace package — with
-  the word never appearing in the app's own source, gets a function-only bundle, so rendering
-  that class throws `classComponentsDisabledError` in the **production build** (it works in
-  `denext dev`, which installs the runtime unconditionally). Set `classComponents: true` in
-  `denext.config.ts` to force it in. Compat (next-compat) apps already drive this off the
-  same config flag.
-
 - **The Node-stream `react-dom/server` APIs buffer (no `Writable`
   backpressure).** `renderToString` / `renderToStaticMarkup` render the
   **synchronously-renderable** subset (a `<Suspense>` whose children suspend
@@ -112,16 +101,6 @@ next-compat interop path — denext's own apps are unaffected):
   the frame captured at the first `.next()`), except those using `yield*`
   delegation, which are left un-instrumented — as is top-level `await`. Dev
   warns on a transition pending >10s either way.
-- **`React.cache` is request-scoped during SSR, but persists off-request.** React's
-  `cache()` is strictly per-request. denext matches that during a server render (the
-  memo lives on the request context and is discarded with it), but a `cache()`-wrapped
-  function called **outside** a request — in the client bundle, or in non-request server
-  code — falls back to a **persistent per-function memo** with LRU eviction after 1024
-  distinct primitive-key combinations. Two consequences off-request: a result can persist
-  across logical calls where React would recompute, and a hot function with >1024 distinct
-  primitive args silently evicts and recomputes. Inside a request (the intended use) the
-  behavior is exact; treat `cache()` as request-scoped and don't rely on it for cross-call
-  memoization off-request.
 - **`next-intl` ICU formatting is a common-subset re-implementation.** Native `next-intl`
   uses the full `intl-messageformat`; denext hand-parses the common subset (plurals,
   select, number/date/time with the usual skeletons). An **unknown number/date skeleton
@@ -142,10 +121,9 @@ next-compat interop path — denext's own apps are unaffected):
   map, `"true"`/`"false"` for enumerated and `aria-*`/`data-*` attributes, and CSS custom
   properties match React. Still different: an element with both `dangerouslySetInnerHTML`
   and children renders the HTML (React throws); `key` is visible on `props` of an
-  authored element (React strips it); `useId` emits `:d0_0:`-style ids (React 19.1's
-  `«r0»` format is CSS-selector-safe without `CSS.escape`, these are not); and
-  `defaultProps` on a **function** component is honored as a compat extension (React 19
-  removed it) because popular npm libraries still rely on it.
+  authored element (React strips it); and `defaultProps` on a **function** component is
+  honored as a compat extension (React 19 removed it) because popular npm libraries still
+  rely on it.
 - **A few React internals are shims.** The introspection hooks `captureOwnerStack()` /
   `cacheSignal()` return `null` (rendering is unaffected — only dev tooling that reads them
   gets nothing). `addTransitionType()` is fully wired — it drives `startViewTransition({ types })`
@@ -401,19 +379,9 @@ The nuances worth knowing (reported as review notes, never silently changed):
 
 A few capabilities aren't built yet (none affects the zero-npm runtime):
 
-- **`next/font`: metric-matched fallback face.** `next/font` self-hosts Google
-  fonts at build for **both** the prod server (`deno task start`) and the static
-  export (`deno task export`) — no runtime Google request either way — and honors
-  `subsets`/`preload`. One piece is not yet done: the **metric-matched fallback
-  `@font-face`** (Next's `adjustFontFallback` — `size-adjust`/`ascent-override` on
-  a local fallback to cut CLS) needs a bundled font-metrics database to compute
-  exact overrides; a guessed table would mis-size the fallback, so it's deferred
-  until real metrics are bundled.
-
-- **`@denext/content-collections`: no built-in Markdown/MDX renderer.** Collections are a
-  typed, validated, queryable **data** layer: an entry's `body` is the raw MD/MDX source, which
-  you render with your own MDX setup or a Markdown renderer of your choice (the framework ships no
-  first-party render helper for it). Two v1 notes: the built store is read from
-  `<cwd>/.denext/content-data.json`, so run the app from its project root (as `deno task
-  dev`/`start` do); and unquoted YAML frontmatter dates parse as `Date` (quote them, or use a date
-  schema).
+- **`next/font/local`: no metric-matched fallback face.** Google fonts get Next's
+  `adjustFontFallback` fallback face from a bundled metrics table (the same Capsize set Next
+  ships, so the overrides are identical). A **local** font's metrics live in its file, which
+  denext does not parse, so `localFont({ adjustFontFallback: "Arial" })` type-checks and
+  keeps a stable class name but emits no fallback face — the stack falls straight through
+  to your `fallback` list.

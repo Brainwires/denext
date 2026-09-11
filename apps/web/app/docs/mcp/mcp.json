@@ -50,12 +50,18 @@
     },
     {
       "name": "denext_doctor",
-      "description": "Run denext's project health check (config, app dir, route conformance) on a directory.",
+      "description": "Run denext's project health check (config, app dir, route conformance) on a directory. Pass report: true for the full markdown health report — every route's conformance result and the last build's client bundle by chunk and role (no build is run).",
       "params": [
         {
           "name": "dir",
           "type": "string",
           "description": "Project directory (default: .)",
+          "required": false
+        },
+        {
+          "name": "report",
+          "type": "boolean",
+          "description": "Return the full markdown health report instead of the check list",
           "required": false
         }
       ]

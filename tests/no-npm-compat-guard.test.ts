@@ -11,8 +11,8 @@
 // codecs and plugins — resolving each against THAT package's own deno.json import
 // map, so a package can't reintroduce an npm dependency the root guard wouldn't see.
 //
-// Out of scope: `src/build` (build-time tooling — esbuild/swc/lightningcss — never
-// ships in the runtime). The image/og/sqlite codecs are denext's own first-party JSR
+// Out of scope: `src/build` (build-time tooling — esbuild plus the first-party
+// @denext/swc / @denext/lightningcss wasm — never ships in the runtime). The image/og/sqlite codecs are denext's own first-party JSR
 // packages, lazily imported at call time — they resolve to JSR, not npm, so allowed.
 // `node:*` built-ins are Deno built-ins and allowed.
 //

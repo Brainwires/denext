@@ -10,17 +10,18 @@ hurt. "Superior" is concrete, and it's the whole job:
 1. **A smaller, auditable, zero-npm runtime.** Two wins in one architecture. It
    ships **less JavaScript** — its own small React-compatible core instead of the
    full framework, ~7× smaller output, **0 KB JS on a static route**, and
-   single-binary-capable builds — _and_ it carries **no npm tree** (deps from JSR +
-   WASM, web standards all the way down), so the whole thing is auditable end to
-   end. Smaller bundles are the felt-pain plug; the zero-npm supply-chain story is
+   single-binary-capable builds — _and_ what it ships carries **no npm tree** (deps
+   from JSR + WASM, web standards all the way down), so the whole thing is auditable
+   end to end. Smaller bundles are the felt-pain plug; the zero-npm supply-chain story is
    the claim neither real-Next-on-Deno nor Fresh can make — and 2025's npm attacks
    made it urgent, not just tidy. **First-party Rust→WASM is on-brand, not an
    exception.** denext's own codecs — `@denext/photon`, `@denext/avif`, `@denext/og` —
    ship as JSR packages built from source _we_ own and audit; they are **not** npm
    dependencies, and owning the Rust source and the `.wasm` we vendor makes the stack
    _more_ auditable, not less. (Where the runtime already gives us a real engine — e.g.
-   Deno's built-in `node:sqlite` — we use it directly.) Zero-npm means no opaque npm tree
-   — it never meant "no compiled code."
+   Deno's built-in `node:sqlite` — we use it directly.) Zero-npm is about the **runtime**:
+   no opaque npm tree in what ships — it never meant "no compiled code," nor that the
+   build-time toolchain (still `esbuild` + a few opt-in npm tools) is npm-free.
 2. **Secure by default — off Next's framework-CVE treadmill.** Next ships a steady
    stream of framework-level CVEs — middleware auth-bypass (CVE-2025-29927), SSRF
    via image optimization, cache poisoning, DoS. denext closes those classes **by

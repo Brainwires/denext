@@ -500,17 +500,20 @@ export interface DenextConfig {
   /** Experimental, opt-in features (default off). */
   experimental?: ExperimentalConfig;
   /**
-   * Enable React class components (`class X extends React.Component`) in the
-   * **next-compat build** (`buildNextCompatPages`, used to run real npm React
-   * libraries). There the flag is compiled in as an esbuild `define`, so with it off
-   * the entire class runtime (lifecycle, setState batching, error boundaries) is
-   * dead-code-eliminated — a next-compat app that doesn't use classes pays zero bytes
-   * for them, and a class used with the flag off throws a guided error.
+   * How the client bundle gets the React class-component runtime (`class X extends
+   * React.Component`: lifecycle, setState batching, class error boundaries). It is a
+   * code-split chunk (`denext/class-runtime`), so the default needs no configuration:
    *
-   * Note: the standard `denext build`/`dev` pipeline uses `deno bundle`, which has no
-   * build-time `define`, so it cannot DCE the gate — there the (small) class runtime
-   * is always included and enabled. This flag is therefore only meaningful for the
-   * next-compat build; it defaults off.
+   * - **unset** (default): loaded **on demand**. `denext build` scans your app's own sources
+   *   (and sibling workspace packages) for `Component`/`PureComponent` and, when it finds
+   *   one, installs the runtime eagerly; otherwise the generated entry fetches the chunk
+   *   only for a page whose server render produced a class component — so a class that
+   *   lives in an npm dependency you never name still works in production, and a
+   *   function-only page never downloads it.
+   * - **`true`**: always install it eagerly (skips the scan and the on-demand round trip).
+   * - **`false`**: never ship it. In the next-compat (esbuild) build the flag is a `define`,
+   *   so the entire runtime is dead-code-eliminated — zero bytes — and a class used anyway
+   *   throws a guided error.
    */
   classComponents?: boolean;
   /**

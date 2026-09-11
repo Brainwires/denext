@@ -1,7 +1,9 @@
 // @denext/content-collections: the glob loader + frontmatter parsing, the build (validation,
 // store, generated types), and the server-only runtime query API. A temp project whose
 // content.config.ts imports the package by absolute file URL (so no import map / no zod needed).
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import { h } from "../src/jsx/jsx-runtime.ts";
+import { renderToString } from "../src/jsx/render-to-string.ts";
 import { join, toFileUrl } from "@std/path";
 import { glob } from "../packages/content-collections/config.ts";
 import { buildContent, discoverContentConfig } from "../packages/content-collections/build.ts";
@@ -11,8 +13,10 @@ import type { CommandContext } from "../src/cli/command.ts";
 import type { PluginBuildContext, PluginContext } from "../src/plugin/mod.ts";
 import {
   clearContentCache,
+  Content,
   getCollection,
   getEntry,
+  renderContent,
   setContentStorePath,
 } from "../packages/content-collections/runtime.ts";
 
@@ -41,6 +45,11 @@ async function makeProject(): Promise<string> {
     });
   // Invalid: `title` missing.
   await Deno.writeTextFile(join(blog, "bad.md"), `---\nsubtitle: oops\n---\nno title\n`);
+  // An MDX entry: compiled at build into a component module (expressions run in the document).
+  await Deno.writeTextFile(
+    join(blog, "mdx-post.mdx"),
+    `---\ntitle: MDX\ndraft: false\n---\nexport const answer = 6 * 7;\n\n# Answer\n\nThe answer is **{answer}**.\n`,
+  );
   // A content.config.ts that uses a hand-rolled Standard Schema requiring a string `title`.
   await Deno.writeTextFile(
     join(dir, "content.config.ts"),
@@ -56,7 +65,7 @@ const schema = {
   },
 };
 export default defineContentConfig({
-  collections: { blog: defineCollection({ loader: glob({ pattern: "**/*.md", base: "content/blog" }), schema }) },
+  collections: { blog: defineCollection({ loader: glob({ pattern: "**/*.{md,mdx}", base: "content/blog" }), schema }) },
 });
 `,
   );
@@ -88,16 +97,24 @@ Deno.test("buildContent validates entries, drops invalid ones, and writes the st
     const outDir = join(dir, ".denext");
     const report = await buildContent({ projectRoot: dir, outDir });
     assertEquals(report.configured, true);
-    // hello + nested/deep are valid; bad.md fails (no title).
-    assertEquals(report.counts.blog, 2);
+    // hello + nested/deep + mdx-post are valid; bad.md fails (no title).
+    assertEquals(report.counts.blog, 3);
     assertEquals(report.ok, false);
     assertEquals(report.diagnostics.length, 1);
     assertEquals(report.diagnostics[0].id, "bad");
     assertStringIncludes(report.diagnostics[0].messages[0], "title");
 
     const store = JSON.parse(await Deno.readTextFile(join(outDir, "content-data.json")));
-    assertEquals(store.blog.length, 2);
+    assertEquals(store.blog.length, 3);
     assert(store.blog.every((e: { data: { title: string } }) => typeof e.data.title === "string"));
+    // Each Markdown entry records its render format; the MDX one is precompiled to a module.
+    const byId = Object.fromEntries(store.blog.map((e: { id: string }) => [e.id, e]));
+    assertEquals(byId.hello.format, "md");
+    assertEquals(byId["mdx-post"].format, "mdx");
+    assert(typeof byId["mdx-post"].v === "string", "the MDX entry carries a cache-busting hash");
+    const compiled = await Deno.readTextFile(join(outDir, "content", "blog", "mdx-post.js"));
+    assertStringIncludes(compiled, "denext/jsx-runtime", "compiled for denext's automatic runtime");
+    assertStringIncludes(compiled, "export default");
 
     const types = await Deno.readTextFile(join(outDir, "content.ts"));
     assertStringIncludes(types, `import type * as cfg from "../content.config.ts";`);
@@ -119,13 +136,13 @@ Deno.test("buildContent: a malformed file is a per-file diagnostic, not a whole-
     );
     const outDir = join(dir, ".denext");
     const report = await buildContent({ projectRoot: dir, outDir });
-    // hello + nested/deep still build; broken.md and bad.md are reported, not fatal.
-    assertEquals(report.counts.blog, 2, "valid entries still build despite the malformed file");
+    // hello + nested/deep + mdx-post still build; broken.md and bad.md are reported, not fatal.
+    assertEquals(report.counts.blog, 3, "valid entries still build despite the malformed file");
     const broken = report.diagnostics.find((d) => d.id === "broken");
     assert(broken, "the malformed file is reported as a diagnostic");
     assert(broken.filePath, "the diagnostic names the file");
     const store = JSON.parse(await Deno.readTextFile(join(outDir, "content-data.json")));
-    assertEquals(store.blog.length, 2, "the store is written (not empty)");
+    assertEquals(store.blog.length, 3, "the store is written (not empty)");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -152,7 +169,7 @@ Deno.test("runtime getCollection / getEntry read the built store, typed as Colle
     clearContentCache();
 
     const all = await getCollection("blog");
-    assertEquals(all.length, 2);
+    assertEquals(all.length, 3);
     // Each entry carries id, slug (= id), data, and body.
     const hello = await getEntry("blog", "hello");
     assert(hello);
@@ -162,7 +179,7 @@ Deno.test("runtime getCollection / getEntry read the built store, typed as Colle
 
     // A filter narrows the result.
     const published = await getCollection("blog", (e) => e.data.draft !== true);
-    assertEquals(published.map((e) => e.id), ["hello"]);
+    assertEquals(published.map((e) => e.id), ["hello", "mdx-post"]);
 
     // A missing entry is undefined.
     assertEquals(await getEntry("blog", "nope"), undefined);
@@ -172,8 +189,12 @@ Deno.test("runtime getCollection / getEntry read the built store, typed as Colle
     first.reverse();
     first.push({} as (typeof first)[number]);
     const second = await getCollection("blog");
-    assertEquals(second.length, 2, "a later read is unaffected by the caller's mutation");
-    assertEquals(second.map((e) => e.id), ["hello", "nested/deep"], "original order preserved");
+    assertEquals(second.length, 3, "a later read is unaffected by the caller's mutation");
+    assertEquals(
+      second.map((e) => e.id),
+      ["hello", "mdx-post", "nested/deep"],
+      "original order preserved",
+    );
   } finally {
     setContentStorePath(null);
     clearContentCache();
@@ -214,7 +235,7 @@ Deno.test("denext content: build prints counts, list prints ids, validate exits 
     // build — prints the per-collection count and the diagnostic for bad.md.
     const b = captureIo();
     await createContentCommand(b.io).run(cmdCtx(dir, "build"));
-    assert(b.out.some((l) => l.includes("blog: 2")));
+    assert(b.out.some((l) => l.includes("blog: 3")));
     assert(b.err.some((l) => l.includes("bad")));
 
     // list — prints each collection and its ids.
@@ -260,8 +281,50 @@ Deno.test("contentCollections plugin registers a prepare step + command; the ste
     const outDir = join(dir, ".denext");
     await prepare!({ projectRoot: dir, appDir: dir, outDir, config: {} });
     const store = JSON.parse(await Deno.readTextFile(join(outDir, "content-data.json")));
-    assertEquals(store.blog.length, 2);
+    assertEquals(store.blog.length, 3);
   } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("renderContent / <Content>: .md through the first-party renderer, .mdx through the compiled module", async () => {
+  const dir = await makeProject();
+  try {
+    const outDir = join(dir, ".denext");
+    await buildContent({ projectRoot: dir, outDir });
+    setContentStorePath(join(outDir, "content-data.json"));
+    clearContentCache();
+
+    const hello = (await getEntry("blog", "hello"))!;
+    assertEquals(hello.format, "md");
+    const mdHtml = await renderToString(await renderContent(hello));
+    assertStringIncludes(mdHtml, `<h1 id="hi">Hi</h1>`);
+    assertStringIncludes(mdHtml, "<p>body text</p>");
+
+    const mdx = (await getEntry("blog", "mdx-post"))!;
+    assertEquals(mdx.format, "mdx");
+    const mdxHtml = await renderToString(h(Content, { entry: mdx }));
+    assertStringIncludes(mdxHtml, "<h1>Answer</h1>");
+    assertStringIncludes(
+      mdxHtml,
+      "The answer is <strong>42</strong>",
+      "expressions ran at compile",
+    );
+
+    // MDX `components` reach the document (a custom h1).
+    const H1 = (p: { children?: unknown }) => h("h2", { class: "custom" }, p.children as never);
+    const custom = await renderToString(await renderContent(mdx, { components: { h1: H1 } }));
+    assertStringIncludes(custom, `<h2 class="custom">Answer</h2>`);
+
+    // A data-only entry has nothing to render.
+    await assertRejects(
+      () => renderContent({ id: "x", slug: "x", data: {} } as never),
+      Error,
+      "no Markdown/MDX body",
+    );
+  } finally {
+    setContentStorePath(null);
+    clearContentCache();
     await Deno.remove(dir, { recursive: true });
   }
 });

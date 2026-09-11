@@ -519,6 +519,51 @@ export interface RouteEntrySource {
  * @param r The route whose entry modules to collect.
  * @returns Absolute file paths of the route's boundary crawl roots.
  */
+/**
+ * Local modules the routes reach that live OUTSIDE `projectDir` (a sibling workspace
+ * package), so a build-time source scan ({@linkcode appUsesClassComponents},
+ * {@linkcode appImportsLive}, …) sees code the app imports from there — a class component
+ * or `<Live>` defined in a sibling package must count as "used". Empty when the graph can't
+ * be crawled (the scan then covers the project directory alone).
+ *
+ * @param projectDir The app's project directory (modules under it are excluded).
+ * @param routes The route manifest's pages (their entry files seed the crawl).
+ * @returns Absolute file paths of the reachable local modules outside `projectDir`.
+ */
+export async function localModulesOutside(
+  projectDir: string,
+  routes: RouteEntrySource[],
+): Promise<string[]> {
+  const entries = [...new Set(routes.flatMap(routeEntryFiles))];
+  try {
+    const local = await crawlLocalModules(entries);
+    const root = projectDir.endsWith("/") ? projectDir : projectDir + "/";
+    return local.filter((f) => !f.startsWith(root) && !isFrameworkSource(f));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Whether a local module path is denext's own source (`src/`, `packages/`, the root
+ * barrels) rather than app or sibling-package code. An app that maps `denext` to a local
+ * checkout (this repo's examples, a linked framework) reaches the framework's modules as
+ * `file://` — and those name `Component`, `Activity`, `ViewTransition` everywhere, so
+ * scanning them would turn every build-time feature hint on for every app. A framework
+ * loaded from JSR is `https://` and never reaches the crawl's local list.
+ *
+ * @param path An absolute local module path from the crawl.
+ * @returns `true` for a module under the framework's `src/` or `packages/`, or a root barrel.
+ */
+export function isFrameworkSource(path: string): boolean {
+  const fw = frameworkRoot();
+  if (!fw.startsWith("/")) return false; // a remote framework root has no local modules
+  const root = fw.endsWith("/") ? fw : fw + "/";
+  if (!path.startsWith(root)) return false;
+  const rel = path.slice(root.length);
+  return rel.startsWith("src/") || rel.startsWith("packages/") || !rel.includes("/");
+}
+
 export function routeEntryFiles(r: RouteEntrySource): string[] {
   const entries = [r.filePath, ...r.layoutChain, ...r.templateChain];
   for (const boundary of [r.loading, r.error, r.notFound, r.forbidden, r.unauthorized]) {

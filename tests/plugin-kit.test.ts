@@ -51,6 +51,7 @@ Deno.test("plugin-kit does not leak an over-broad value surface", () => {
     "bundleRoutes",
     "cappedBody",
     "compareSpecificity",
+    "compileMdxSource",
     "createNextCompatServerLoader",
     "enableFastRefresh",
     "extractRouteCss",

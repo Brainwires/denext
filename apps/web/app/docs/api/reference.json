@@ -235,7 +235,7 @@
           "kind": "function",
           "signature": "cache<A, R>(fn: (...args: A) => R): (...args: A) => R",
           "doc": "React.cache — memoize a function by its arguments.",
-          "docFull": "`React.cache` — memoize a function by its arguments.\n\nReact's server `cache()` scopes results to a single request via async context;\ndenext already provides that request-scoped variant in `src/server/cache.ts`\n(which pulls `node:async_hooks`). This is the **client-safe** surface exposed on\nthe `react` package: a plain persistent memo keyed by argument identity, using a\nnested Map/WeakMap tree (object args keyed by reference, primitives by value) so\nlibraries importing `cache` from `react` resolve and dedupe correctly without\ndragging server-only APIs into the client bundle.\n\n**Lifetime:** during SSR the memo is **request-scoped** (keyed on the current\nrequest context, so one request's result is never served to another — matching\nReact and avoiding a cross-request data leak), and the per-request root is\ngarbage-collected with the request. Off-request (a client bundle, or server code\noutside a request) it falls back to a persistent per-function memo; there, distinct\n**primitive** args are bounded per node ({@link CACHE_MAX_PER_NODE}, evicting the\noldest) so they can't grow without limit (object args use a WeakMap and are freed\nwith the arg). Request-scoped roots stay uncapped (freed with the request, matching\nReact). A throwing `fn` is not cached (it re-runs next call).",
+          "docFull": "`React.cache` — memoize a function by its arguments.\n\nReact's server `cache()` scopes results to a single request via async context;\ndenext already provides that request-scoped variant in `src/server/cache.ts`\n(which pulls `node:async_hooks`). This is the **client-safe** surface exposed on\nthe `react` package: a plain persistent memo keyed by argument identity, using a\nnested Map/WeakMap tree (object args keyed by reference, primitives by value) so\nlibraries importing `cache` from `react` resolve and dedupe correctly without\ndragging server-only APIs into the client bundle.\n\n**Lifetime (React's semantics):** during SSR the memo is **request-scoped** (keyed\non the current request context, so one request's result is never served to\nanother — matching React and avoiding a cross-request data leak), and the\nper-request root is garbage-collected with the request. **Server code outside a\nrequest** (a scheduled task, a script, module init) is **not memoized** — `fn` runs\non every call, exactly as React's `cache()` does with no dispatcher active — so a\nresult can never persist across logical calls. **In the browser** (the client\nbundle, where React memoizes per render pool) it is a persistent per-function memo\nwhose distinct **primitive** args are bounded per node ({@link CACHE_MAX_PER_NODE},\nevicting the oldest) so they can't grow without limit (object args use a WeakMap\nand are freed with the arg). Request-scoped roots stay uncapped (freed with the\nrequest, matching React). A throwing `fn` is not cached (it re-runs next call).",
           "params": [
             {
               "name": "fn",
@@ -3746,7 +3746,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 2.3.0",
+          "signature": "VERSION: 2.4.0",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
