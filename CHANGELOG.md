@@ -40,6 +40,14 @@ and this project adheres to
 
 ### Changed
 
+- **Every first-party package's published entrypoint is fully documented, and the repo's
+  `doc-lint` gate now covers all of them.** `@denext/swc` 76.0.1 exports documented, typed
+  wrappers (`ParseOptions` / `Options` / `JsMinifyOptions` → `Program` / `Output`) instead
+  of the wasmbuild-generated declarations, which carry no JSDoc; `@denext/photon` 0.3.6
+  gets docs on the `free()` / `[Symbol.dispose]()` / `SamplingFilter` members wasm-bindgen
+  emits undocumented (new `deno task docs:wasm`, re-run after `wasmbuild`); `@denext/avif`
+  0.1.2, `@denext/og` 0.1.1 and `@denext/react-router` 0.1.1 document every interface property. Fixes the JSR "has docs
+  for most symbols" score on those packages. No behavior change.
 - **`useId` ids are CSS-selector-safe.** `useId()` now emits `_d{path}_{n}_` (e.g. `_d0-2-1_0_`)
   instead of `:d0.2.1_0:`. The new shape uses React 19.2's `_r_0_` character class — a valid
   CSS identifier, XML 1.0 name and `view-transition-name` — so libraries that do

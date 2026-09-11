@@ -56,7 +56,9 @@ import {
 
 /** A satori element: a host tag with `props.style`/`props.children`. */
 export interface SatoriElement {
+  /** The host tag (`"div"`, `"img"`, …). */
   type: string;
+  /** Its props: `style` (flexbox + inline CSS subset) and `children`. */
   props: Record<string, unknown>;
 }
 
@@ -67,7 +69,9 @@ export type FontWeight = 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900;
 
 /** Options for {@linkcode CustomFont}. */
 export interface CustomFontOptions {
+  /** The weight this file provides (default 400). */
   weight?: FontWeight;
+  /** The style this file provides (default `"normal"`). */
   style?: FontStyle;
   /** Restrict this font to a language, e.g. `"ja-JP"`. */
   lang?: string;
@@ -77,7 +81,9 @@ export interface CustomFontOptions {
 export interface GoogleFontOptions {
   /** `font-family` name satori matches against (defaults to the family). */
   name?: string;
+  /** The weight to fetch (default 400). */
   weight?: FontWeight | number;
+  /** The style to fetch (default `"normal"`). */
   style?: FontStyle;
   /** Google Fonts subset, e.g. `"latin"`, `"cyrillic"`. */
   subset?: string;
@@ -87,9 +93,13 @@ export interface GoogleFontOptions {
 
 /** A loaded font satori can use (from {@linkcode CustomFont}/{@linkcode GoogleFont}). */
 export interface OgFont {
+  /** The `font-family` name satori matches against. */
   name: string;
+  /** The face's style. */
   style: FontStyle;
+  /** The face's weight. */
   weight: FontWeight;
+  /** The font bytes (resolved lazily; a Google font fetches here). */
   readonly data: Promise<ArrayBuffer | Uint8Array>;
 }
 

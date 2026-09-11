@@ -43,7 +43,7 @@ export type CollectionKey = keyof RegisteredConfig["collections"] & string;
  * The validated `data` type of a schema (its Standard Schema output). A collection with no schema
  * (output `unknown`) becomes a loose, indexable `Record<string, unknown>` rather than `unknown`.
  */
-type SchemaOut<S> = S extends StandardSchemaV1<infer O>
+export type SchemaOut<S> = S extends StandardSchemaV1<infer O>
   ? ([unknown] extends [O] ? Record<string, unknown> : O)
   : Record<string, unknown>;
 
@@ -166,7 +166,8 @@ export interface RenderContentOptions {
   readonly components?: Record<string, unknown>;
 }
 
-type Rendered = ReturnType<typeof h>;
+/** What {@linkcode renderContent} resolves to: a denext element (the `h()` return type). */
+export type RenderedContent = ReturnType<typeof h>;
 
 /** The collection an entry came from: found by identity in the loaded store. */
 async function collectionOf(entry: CollectionEntry): Promise<string> {
@@ -210,7 +211,7 @@ async function mdxComponent(
 export async function renderContent(
   entry: CollectionEntry,
   options: RenderContentOptions = {},
-): Promise<Rendered> {
+): Promise<RenderedContent> {
   if (entry.format === "mdx") {
     const MDXContent = await mdxComponent(entry);
     return h(MDXContent as never, { components: options.components ?? {} });
@@ -239,6 +240,6 @@ export interface ContentProps extends RenderContentOptions {
  * return <article><h1>{post.data.title}</h1><Content entry={post} /></article>;
  * ```
  */
-export function Content({ entry, components }: ContentProps): Promise<Rendered> {
+export function Content({ entry, components }: ContentProps): Promise<RenderedContent> {
   return renderContent(entry, { components });
 }

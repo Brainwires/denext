@@ -27,7 +27,9 @@ export type RouteConfig = RouteConfigEntry[] | Promise<RouteConfigEntry[]>;
 
 /** The per-entry options `route()`/`index()`/`layout()` accept. */
 export interface RouteOptions {
+  /** An explicit route id (defaults to the file path without extension). */
   id?: string;
+  /** Match the path case-sensitively (default false). */
   caseSensitive?: boolean;
 }
 

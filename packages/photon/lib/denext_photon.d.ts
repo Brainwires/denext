@@ -7,7 +7,9 @@
  * For use when communicating between JS and WASM, and also natively.
  */
 export class PhotonImage {
+  /** Release the wasm memory behind this object. Call it when done (or use `using`); a freed object must not be used again. */
   free(): void;
+  /** `using` support: the same as `free()`, run automatically at the end of the block. */
   [Symbol.dispose](): void;
   /**
    * Convert the PhotonImage to base64.
@@ -75,7 +77,9 @@ export class PhotonImage {
  * RGB color type.
  */
 export class Rgb {
+  /** Release the wasm memory behind this object. Call it when done (or use `using`); a freed object must not be used again. */
   free(): void;
+  /** `using` support: the same as `free()`, run automatically at the end of the block. */
   [Symbol.dispose](): void;
   /**
    * Get the Blue value.
@@ -111,7 +115,9 @@ export class Rgb {
  * RGBA color type.
  */
 export class Rgba {
+  /** Release the wasm memory behind this object. Call it when done (or use `using`); a freed object must not be used again. */
   free(): void;
+  /** `using` support: the same as `free()`, run automatically at the end of the block. */
   [Symbol.dispose](): void;
   /**
    * Get the alpha value for this color.
@@ -151,11 +157,17 @@ export class Rgba {
   set_red(r: number): void;
 }
 
+/** The resampling filter `resize` uses — a speed / quality trade-off, cheapest first. */
 export enum SamplingFilter {
+  /** Nearest-neighbour: fastest, blocky (pixel art). */
   Nearest = 1,
+  /** Linear (triangle) interpolation: fast, slightly soft. */
   Triangle = 2,
+  /** Catmull-Rom cubic: a good general-purpose default. */
   CatmullRom = 3,
+  /** Gaussian: smooth, blurs fine detail. */
   Gaussian = 4,
+  /** Lanczos (a=3): sharpest, slowest — the usual choice for photos. */
   Lanczos3 = 5,
 }
 

@@ -260,7 +260,14 @@ deployed.
   `src/{jsx,runtime,client,server,compat,plugin}` may import npm — CI enforces
   this (`tests/no-npm-compat-guard.test.ts`).
 - **Docs on public API:** exported symbols on the public entry points need JSDoc
-  (`deno task doc-lint`).
+  (`deno task doc-lint`) — the framework's entries AND every first-party package's
+  published entrypoints (JSR scores "has docs for most symbols" per package; a raw
+  re-export of a wasmbuild-generated function has none, so wrap it in a documented
+  function instead). After regenerating a wasm package with `wasmbuild`, run
+  `deno task docs:wasm` to re-add docs to the generated `free()` / `[Symbol.dispose]()`
+  / `enum` members wasm-bindgen emits undocumented. `@denext/effect` and `@denext/graphql` are
+  not in the gate: their public types are `npm:effect`'s / `npm:graphql`'s, which
+  `deno doc --lint` reads as private.
 - **Commits:** stage per file (never `git add -A`); keep the working tree
   buildable.
 

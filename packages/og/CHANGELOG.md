@@ -5,6 +5,11 @@ satori/resvg/`@cf-wasm/og` stack it vendors (see
 [README](./README.md#versioning)). Each entry records the upstream versions
 bundled.
 
+## 0.1.1
+
+- No code change. Every property of the option / font interfaces is documented
+  (JSR's "has docs for most symbols" score).
+
 ## 0.1.0 — vendors `@cf-wasm/og@0.5.0` (satori@0.29.0 · resvg-wasm@2.4.1 · Noto Sans v27)
 
 - Initial release: a Deno-native `ImageResponse` that renders JSX-shaped satori
