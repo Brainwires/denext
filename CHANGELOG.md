@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.4.1] - 2026-09-11
+
 ### Added
 
 - **Docs site search (denext.dev).** A search box in the header — always visible on wide
@@ -6433,6 +6435,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.4.1]: https://jsr.io/@denext/denext@2.4.1
 [2.4.0]: https://jsr.io/@denext/denext@2.4.0
 [2.3.0]: https://jsr.io/@denext/denext@2.3.0
 [2.2.0]: https://jsr.io/@denext/denext@2.2.0
