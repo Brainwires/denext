@@ -500,10 +500,13 @@ cache uses Deno's built-in `node:sqlite`.)
   bundle-size breakdown), `add`/`remove`/`update`, `plugin add`/`remove`/`list`
   (installs/uninstalls a plugin dep **and** wires/unwires it in
   `denext.config.ts`; `list` shows what's wired), `doctor`/`info` (`doctor`
-  supersedes `probe`, kept as an alias; `doctor` also validates `denext.config`),
-  `audit` (dependency inventory + zero-npm proof + CycloneDX SBOM), `deploy`
-  (pluggable adapters, Deno Deploy), `desktop run|build|package`, `migrate`,
-  `codemod`, `mcp` (the agent server below), `version`.
+  supersedes `probe`, kept as an alias; `doctor` also validates `denext.config`;
+  **`doctor --report`** prints one markdown health report — the checks, every
+  route's conformance result, and the last build's client bundle by chunk and
+  role, read from `.denext/client` without building — and `--json` emits the same
+  data structurally), `audit` (dependency inventory + zero-npm proof + CycloneDX
+  SBOM), `desktop run|build|package`, `migrate`, `codemod`, `mcp` (the agent
+  server below), `version`.
 - **Tooling for AI agents** — a first-party **MCP server** (`denext mcp`, stdio
   JSON-RPC) whose tools lint a snippet for Next-isms, map a Next/React import,
   scaffold, run `doctor`/`codemod`, list an app's routes, read a RUNNING dev

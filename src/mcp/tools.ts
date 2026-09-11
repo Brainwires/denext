@@ -7,7 +7,7 @@
 
 import { isAbsolute, relative, resolve } from "@std/path";
 import { generateArtifact, type GenerateKind } from "../build/generate.ts";
-import { collectDoctorChecks } from "../cli/commands/doctor.ts";
+import { collectDoctorReport, doctorReportMarkdown } from "../cli/commands/doctor.ts";
 import { runCodemod } from "../build/codemod.ts";
 import { resolveProject } from "../build/paths.ts";
 import { scanRoutes } from "../router/manifest.ts";
@@ -115,11 +115,18 @@ async function profileReport(
   return { text: JSON.stringify(result, null, 2), isError };
 }
 
-/** Format the doctor checks for a directory into a text report + error flag. */
-async function doctorReport(dir: string): Promise<{ text: string; isError?: boolean }> {
-  const checks = await collectDoctorChecks(dir);
-  const lines = checks.map((c) => `${c.ok ? "✔" : "✖"} ${c.name}: ${c.detail}`);
-  const failed = checks.some((c) => c.critical && !c.ok);
+/**
+ * Format the doctor checks for a directory into a text report + error flag; with
+ * `report`, the full markdown health report (`denext doctor --report`) instead.
+ */
+async function doctorReport(
+  dir: string,
+  report: boolean,
+): Promise<{ text: string; isError?: boolean }> {
+  const r = await collectDoctorReport(dir);
+  const failed = r.checks.some((c) => c.critical && !c.ok);
+  if (report) return { text: doctorReportMarkdown(r).join("\n"), isError: failed };
+  const lines = r.checks.map((c) => `${c.ok ? "✔" : "✖"} ${c.name}: ${c.detail}`);
   const summary = failed ? "Problems found." : "All checks passed.";
   return { text: `denext doctor ▸ ${dir}\n${lines.join("\n")}\n\n${summary}`, isError: failed };
 }
@@ -256,12 +263,20 @@ export const TOOLS: readonly Tool[] = [
   {
     name: "denext_doctor",
     description:
-      "Run denext's project health check (config, app dir, route conformance) on a directory.",
+      "Run denext's project health check (config, app dir, route conformance) on a directory. " +
+      "Pass report: true for the full markdown health report — every route's conformance " +
+      "result and the last build's client bundle by chunk and role (no build is run).",
     inputSchema: {
       type: "object",
-      properties: { dir: { type: "string", description: "Project directory (default: .)" } },
+      properties: {
+        dir: { type: "string", description: "Project directory (default: .)" },
+        report: {
+          type: "boolean",
+          description: "Return the full markdown health report instead of the check list",
+        },
+      },
     },
-    run: (args) => doctorReport(projectDir(args.dir)),
+    run: (args) => doctorReport(projectDir(args.dir), args.report === true),
   },
   {
     name: "denext_codemod",

@@ -1,6 +1,8 @@
 // Build bundle-size report (2.0 Pillar VI, observability): make the "0 KB by default /
 // small bundles" story visible on every build.
 
+import { join } from "@std/path";
+
 /** A built client chunk and its byte size. */
 export interface BundleChunk {
   name: string;
@@ -8,6 +10,30 @@ export interface BundleChunk {
   bytes: number;
   /** Gzipped size (the `.gz` sibling), when precompression ran. */
   gzip?: number;
+}
+
+/**
+ * Read the emitted `.js` chunks and their `.gz` sizes from a client output dir (the
+ * `.denext/client` a production build wrote) — the shared source for `denext analyze`
+ * and `denext doctor --report`. A missing dir reads as no chunks (a fully static app).
+ *
+ * @param clientDir The build's client output directory.
+ * @returns One entry per emitted chunk, in directory order.
+ */
+export async function readClientChunks(clientDir: string): Promise<BundleChunk[]> {
+  const chunks: BundleChunk[] = [];
+  try {
+    for await (const e of Deno.readDir(clientDir)) {
+      if (!e.isFile || !e.name.endsWith(".js")) continue;
+      const bytes = (await Deno.stat(join(clientDir, e.name))).size;
+      let gzip: number | undefined;
+      try {
+        gzip = (await Deno.stat(join(clientDir, e.name + ".gz"))).size;
+      } catch { /* below the precompress floor — no .gz sibling */ }
+      chunks.push({ name: e.name, bytes, gzip });
+    }
+  } catch { /* no client dir → fully static (0 KB JS) */ }
+  return chunks;
 }
 
 const kb = (n: number): string => `${(n / 1024).toFixed(1)} KB`;

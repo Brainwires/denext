@@ -179,6 +179,22 @@ Deno.test("runTool: doctor reports a missing app directory as a failure", async 
   }
 });
 
+Deno.test("runTool: doctor with report: true returns the markdown health report", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-mcp-doctor-report-" });
+  try {
+    const res = await runTool("denext_doctor", { dir, report: true });
+    assertEquals(res.isError, true, "the missing app dir is still a critical failure");
+    const md = res.content[0].text;
+    assertStringIncludes(md, "# denext doctor — ");
+    assertStringIncludes(md, "## Checks");
+    assertStringIncludes(md, "✖ **app directory**");
+    assertStringIncludes(md, "## Routes");
+    assertStringIncludes(md, "## Client bundle");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 async function exists(path: string): Promise<boolean> {
   try {
     await Deno.stat(path);

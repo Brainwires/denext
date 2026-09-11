@@ -8,6 +8,16 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`denext doctor --report`** — one markdown health report a human or CI can act on: the
+  pass/fail checks, **every route's** conformance result (status, static/interactive, failing
+  checks — the data the `route conformance` line used to collapse), and the last build's
+  client bundle by chunk and role (read from `.denext/client`; it never builds, and says so
+  when there is no build output). `--json` emits the same data structurally (`--json` alone
+  now emits the check list). The `denext_doctor` MCP tool takes `report: true` for the same
+  markdown. Profiling stays in `denext profile` (it needs a headless Chromium).
+
 ### Changed
 
 - **`useId` ids are CSS-selector-safe.** `useId()` now emits `_d{path}_{n}_` (e.g. `_d0-2-1_0_`)
