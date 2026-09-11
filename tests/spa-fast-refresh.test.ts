@@ -79,7 +79,7 @@ Deno.test("generateSpaEntry: prod imports the app + installs the class runtime (
   // Class components are default-on for SPA, so the entry wires the class runtime into the
   // reconciler seam before the app mounts — a class component (error boundary, Schema class)
   // would otherwise throw "class components are disabled" at render.
-  assertStringIncludes(src, 'import { installClassSupport } from "denext/client-runtime";');
+  assertStringIncludes(src, 'import { installClassSupport } from "denext/class-runtime";');
   assertStringIncludes(src, "installClassSupport();");
   // The install must precede the app import so the seam is active when createRoot runs.
   assert(

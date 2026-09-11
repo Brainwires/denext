@@ -29,6 +29,25 @@ and this project adheres to
 
 ### Fixed
 
+- **A class component that lives only in a dependency no longer crashes the production
+  build.** `denext build` used to install the class-component runtime only when a token scan
+  of the app's own sources saw `Component`/`PureComponent`; a class hidden in an npm package
+  or a sibling workspace package (Base UI's error boundary, `react-error-boundary`) shipped a
+  function-only bundle and threw `classComponentsDisabledError` at hydration — silently, and
+  only in production. The runtime is now a code-split chunk (`denext/class-runtime`) that
+  the generated browser entry loads **before hydrating** whenever the server-rendered
+  document carries the new `#__denext_classes` marker (stamped by any render that produced a
+  class component; a cached PPR shell re-seeds it on a hit). Function-only pages never fetch
+  it. The build scan is now a preload hint — when it sees a class (or `classComponents:
+  true`) the entry imports the chunk statically and skips the round trip — and it also reads
+  sibling workspace packages (so do the `<Activity>`/`<ViewTransition>` scans).
+  `classComponents: false` still keeps the runtime out entirely. The same fix covers
+  `denext export` and the bundled dev fallback, which never installed the runtime.
+  Removes the KNOWN-LIMITATIONS bullet. Surface: `denext/class-runtime` is a new entrypoint
+  (for generated code, like `denext/lazy`), `denext/bundle` exports the `ClassRuntimeMode`
+  type, and `denext/client-runtime` exports `loadClassRuntime` instead of re-exporting
+  `installClassSupport`. `denext analyze` / `doctor --report` classify `lazy-*` and
+  `class-runtime-*` chunks under a new "on-demand runtime" role.
 - **`React.cache` matches React outside a request.** A `cache()`-wrapped function called on
   the server with no request context (a scheduled task, a script, module init) used to fall
   back to a persistent per-function memo, so a result could survive across logical calls

@@ -56,6 +56,14 @@ export interface ReconcilerInstance {
   __prevState?: unknown;
 }
 
+/** The result of the reconciler-side `renderClassInstance`: the vnode to reconcile + a bail flag. */
+export interface ClassRenderResult {
+  /** The rendered vnode, or null when bailed. */
+  vnode: unknown;
+  /** True when `shouldComponentUpdate`/Pure bailed — reuse the prior subtree. */
+  bailed: boolean;
+}
+
 // deno-lint-ignore no-explicit-any -- user components have heterogeneous prop/state shapes.
 type Any = any;
 
@@ -113,4 +121,57 @@ export class PureComponent<P = Record<string, unknown>, S = Record<string, unkno
 /** Read the denext internals off a class instance. */
 export function internals(c: unknown): ClassInternals {
   return (c as { __denext: ClassInternals }).__denext;
+}
+
+/**
+ * Construct a class instance and attach denext internals.
+ *
+ * @param Ctor The class-component constructor.
+ * @param props Initial props.
+ * @param context Legacy `contextType` value, if any.
+ * @param inst The owning reconciler Instance (or null for SSR).
+ * @returns The constructed class instance (with `__denext` internals).
+ */
+export function instantiateClass(
+  Ctor: unknown,
+  props: unknown,
+  context: unknown,
+  inst: unknown,
+): object {
+  const c = new (Ctor as Any)(props, context);
+  Object.defineProperty(c, "__denext", {
+    value: {
+      inst,
+      pendingState: [],
+      pendingCallbacks: [],
+      forced: false,
+      mounted: false,
+    } as ClassInternals,
+    enumerable: false,
+    writable: true,
+  });
+  if (c.state === undefined || c.state === null) c.state = {};
+  return c;
+}
+
+/**
+ * Server-render a class component to a vnode: instantiate, apply
+ * `getDerivedStateFromProps`, call `render()`. No lifecycle effects (React server
+ * behavior).
+ *
+ * @param type The class component.
+ * @param props The props.
+ * @param context Legacy context value, if resolvable.
+ * @returns The rendered vnode.
+ */
+export function renderClassToVNode(type: unknown, props: unknown, context: unknown): unknown {
+  const c = instantiateClass(type, props, context, null) as Any;
+  let state = c.state;
+  const g = (type as Any).getDerivedStateFromProps;
+  if (typeof g === "function") {
+    const d = g(props, state);
+    if (d != null) state = { ...state, ...d };
+  }
+  c.state = state;
+  return c.render();
 }

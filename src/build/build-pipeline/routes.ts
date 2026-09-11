@@ -4,7 +4,7 @@
 import { join } from "@std/path";
 import { featureFlags } from "../../server/config.ts";
 import { prodMinify } from "../minify.ts";
-import { crawlLocalModules, routeEntryFiles } from "../module-graph.ts";
+import { localModulesOutside } from "../module-graph.ts";
 import {
   appImportsLive,
   bundleFlightEntry,
@@ -78,7 +78,7 @@ export async function bundleNativeRoutes(ctx: BuildContext): Promise<void> {
       false,
       false,
       paths.instrumentationClientPath,
-      ctx.usesClassComponents,
+      ctx.classRuntime,
       ctx.usesActivity,
       ctx.usesViewTransition,
     ),
@@ -127,23 +127,10 @@ export async function bundleNativeRoutes(ctx: BuildContext): Promise<void> {
 export async function computeBoundary(ctx: BuildContext): Promise<void> {
   if (!ctx.hasFlight) return;
   ctx.boundary = await appBoundaryManifest(ctx.paths.appDir, ctx.manifest.pages);
-  ctx.usesLive = await appImportsLive(ctx.projectDir, await modulesOutsideProject(ctx));
-}
-
-/**
- * Local modules the routes reach that live OUTSIDE `projectDir` (a sibling workspace
- * package), so the Live scan sees a `<Live>` component imported from there. Empty when
- * the graph can't be crawled (the scan then covers the project directory alone).
- */
-async function modulesOutsideProject(ctx: BuildContext): Promise<string[]> {
-  const entries = [...new Set(ctx.manifest.pages.flatMap(routeEntryFiles))];
-  try {
-    const local = await crawlLocalModules(entries);
-    const root = ctx.projectDir.endsWith("/") ? ctx.projectDir : ctx.projectDir + "/";
-    return local.filter((f) => !f.startsWith(root));
-  } catch {
-    return [];
-  }
+  ctx.usesLive = await appImportsLive(
+    ctx.projectDir,
+    await localModulesOutside(ctx.projectDir, ctx.manifest.pages),
+  );
 }
 
 /**
@@ -159,7 +146,7 @@ export async function bundleNativeFlight(ctx: BuildContext): Promise<void> {
     minify: prodMinify(),
     importMap: ctx.cssImportMap,
     usesLive: ctx.usesLive,
-    usesClassComponents: ctx.usesClassComponents,
+    classRuntime: ctx.classRuntime,
     usesActivity: ctx.usesActivity,
     usesViewTransition: ctx.usesViewTransition,
     // Seed the feature-flag map on the native client (no esbuild `define` here), so an

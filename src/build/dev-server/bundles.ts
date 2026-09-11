@@ -95,6 +95,7 @@ export async function getFlightBundle(st: DevState): Promise<string> {
     configPath: st.paths.configPath,
     importMap: await bundleImportMap(st),
     dev: true, // emit Fast Refresh registration for client islands
+    classRuntime: "eager", // dev installs the class runtime unconditionally
   });
   cacheChunks(st, bundle);
   st.flightBundle = entryCode(bundle);

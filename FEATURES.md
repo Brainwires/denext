@@ -904,15 +904,24 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
   `stream`, …) deliberately _not_ stubbed, so real needs fail loudly. —
   `next-compat.ts:191, 238, 269`.
 
-### 3.2 Zero-cost class-component build gate
+### 3.2 On-demand class-component runtime
 
-- **`classComponents` DCE gate** — the entire class runtime is behind a
-  bare-identifier flag esbuild folds to a literal, so a function-only app pays
-  **zero bytes**; a class used with the flag off gets a _guided_ error, not the
-  opaque native one. — `src/runtime/class-flag.ts:1, 24`;
-  `src/compat/react.ts:228, 239-245`; detector
-  `src/compat/class-detect.ts:30, 42`; gated runtime
-  `src/compat/class-component.ts:1`; define `src/build/next-compat.ts:74`.
+- **The class runtime is a code-split chunk loaded only when a class renders.** The
+  `Component`/`PureComponent` base classes stay in the `react` alias (a module `extends`
+  them at evaluation time); the reconciler-side runtime (lifecycle, setState batching,
+  class error boundaries) is the `denext/class-runtime` chunk. The server stamps a
+  `#__denext_classes` marker on any document whose render produced a class component, and
+  the generated browser entry loads the chunk **before hydrating** when the marker is
+  present — so a class that lives only in an npm or workspace dependency the app never
+  names works in production with no config, and a function-only page never fetches it. A
+  build scan of the app's own sources (plus sibling workspace packages) turns the load into
+  a static import when it can (no round trip); `classComponents: true` forces that,
+  `classComponents: false` keeps the runtime out entirely (zero bytes on the esbuild path,
+  where the flag is a `define`, and a guided error for a class used anyway). —
+  `src/compat/class-base.ts`, `src/compat/class-component.ts`, `src/class-runtime.ts`;
+  entry modes `src/build/bundle.ts` (`ClassRuntimeMode`); marker
+  `src/runtime/render-scope.ts`, `src/server/document.ts`; detector
+  `src/compat/class-detect.ts`.
 
 ### 3.3 denext-only hooks & isomorphic utilities
 

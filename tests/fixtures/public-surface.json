@@ -1036,8 +1036,8 @@
     "ensureFlightModules:function",
     "flightClientIds:function",
     "installActivitySupport:function",
-    "installClassSupport:function",
     "installViewTransitionSupport:function",
+    "loadClassRuntime:function",
     "parseFlight:function",
     "performModuleRefresh:function",
     "provideLayoutSegments:function",
@@ -1778,6 +1778,7 @@
   ],
   "denext/bundle": [
     "BundleOptions:interface",
+    "ClassRuntimeMode:typeAlias",
     "MultiBundleOutput:interface",
     "bundleRoutes:function"
   ],

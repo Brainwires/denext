@@ -4,6 +4,7 @@
 
 import type { RouteManifest } from "../router/manifest.ts";
 import type { PageMatch } from "../router/match.ts";
+import { markClassRendered } from "../runtime/render-scope.ts";
 import type { Metadata, ModuleLoader } from "./types.ts";
 import type { Messages } from "../runtime/i18n-messages.ts";
 import type { PeeledLocale } from "./i18n.ts";
@@ -183,6 +184,9 @@ export interface PprShell {
 
 /** The shell an ISR cache entry with holes carries. */
 export function shellFromCache(hit: CachedPage): PprShell {
+  // The cached shell rendered a class component: re-seed this request's render scope so the
+  // rebuilt document carries the `#__denext_classes` marker (see `hydrationScripts`).
+  if (hit.classRuntime) markClassRendered();
   return {
     body: hit.body,
     holeIds: hit.holeIds ?? [],

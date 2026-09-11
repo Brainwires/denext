@@ -129,7 +129,7 @@ async function buildCompat(st: DevState, m: RouteManifest): Promise<void> {
         true,
         false,
         st.paths.instrumentationClientPath,
-        true,
+        "eager",
         true,
         true,
       ),

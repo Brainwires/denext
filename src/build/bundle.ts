@@ -353,13 +353,13 @@ export function generateRouteEntry(
   dev = false,
   perModule = false,
   instrumentationClient: string | null = null,
-  usesClassComponents = false,
+  classRuntime: ClassRuntimeMode = "lazy",
   usesActivity = false,
   usesViewTransition = false,
 ): string {
   const slots = routeSlotEntries(route);
   const { refreshImport, refreshReg } = routeRefreshBlock(route, slots, dev, perModule);
-  const { classImport, classInstall } = classSupportBlock(usesClassComponents);
+  const { classImport, classInstall, classBoot } = classSupportBlock(classRuntime);
   const { activityImport, activityInstall } = activitySupportBlock(usesActivity);
   const { vtImport, vtInstall } = viewTransitionSupportBlock(usesViewTransition);
   return `// denext generated route entry — do not edit.
@@ -370,7 +370,7 @@ import { Suspense, ErrorBoundary } from "denext/client";
 import { h } from "denext/jsx-runtime";
 ${classImport}${activityImport}${vtImport}${refreshImport}${routeEntryImports(route, slots)}
 ${refreshReg}${classInstall}${activityInstall}${vtInstall}
-function main() {
+async function main() {
   const el = document.getElementById("__denext");
   const dataEl = document.getElementById("__denext_data");
   if (!el) return;
@@ -379,7 +379,7 @@ function main() {
     : { params: {}, searchParams: "" };
   const sp = new URLSearchParams(data.searchParams || "");
   ${routeEntryTree(route, slots)}
-  try {
+${classBoot}  try {
     startClient(el, tree);
   } catch (err) {
     ${hydrationCatch(dev, "denext: skipping hydration for this route:")}
@@ -461,11 +461,14 @@ export function appImportsLive(rootDir: string, extraFiles: string[] = []): Prom
 }
 
 /**
- * Whether any source file under `rootDir` uses class components — the build-time signal
- * that decides if the generated entry installs the class runtime (see
- * {@linkcode classSupportBlock}). A class component MUST name `Component`/`PureComponent`
- * (in its import or its `extends`); whole-word (`\b`) so `MyComponent` / `componentDidMount`
- * don't trip it. Callers OR this with `config.classComponents` to honor an explicit force-on.
+ * Whether any source file under `rootDir` (or in `extraFiles`, e.g. sibling workspace
+ * modules) uses class components — the build-time PRELOAD HINT that makes the generated
+ * entry install the class runtime eagerly instead of on demand (see
+ * {@linkcode classSupportBlock}: a miss is not a crash, the runtime still loads lazily when
+ * a page's server render produced a class). A class component in these sources MUST name
+ * `Component`/`PureComponent` (in its import or its `extends`); whole-word (`\b`) so
+ * `MyComponent` / `componentDidMount` don't trip it. npm packages are not scanned — the word
+ * appears in nearly every React package, so the hint would be always-on for no gain.
  */
 export function appUsesClassComponents(
   rootDir: string,
@@ -566,23 +569,54 @@ configureLive({
 }
 
 /**
- * The class-component runtime (mount/update/unmount lifecycle, setState batching, error
- * boundaries) is installed into the reconciler seam (class-support.ts) ONLY when the app
- * uses class components — so a function-only bundle never references `installClassSupport`
- * and `deno bundle` tree-shakes the whole ~3.1 KB runtime out. The reconciler itself never
- * statically imports it; the emitted `installClassSupport()` here is the sole link. The
- * decision is build-time: native prod scans the app (`appUsesClassComponents`), compat prod
- * uses the `classComponents` config (matching its esbuild `define`), and dev installs
- * unconditionally (unbundled, so free). `false` mirrors today's function-only default.
+ * How a generated browser entry gets the class-component runtime (the on-demand
+ * `denext/class-runtime` chunk: mount/update/unmount lifecycle, setState batching, class
+ * error boundaries), installed into the reconciler seam (class-support.ts):
+ *
+ * - `"lazy"` (the default): the entry loads the chunk before hydrating ONLY when the
+ *   document carries the `#__denext_classes` marker — the server stamps it when a render
+ *   produced a class component — so a class that lives only in a dependency the build scan
+ *   never read still hydrates in production, and a function-only page never fetches it.
+ * - `"eager"`: a static import + install — the build scan saw a class in the app's own
+ *   sources (or `classComponents: true`), so skip the extra round trip; also dev, which
+ *   installs unconditionally (unbundled, so free).
+ * - `"off"`: nothing (`classComponents: false`); a class throws the guided error and the
+ *   runtime costs zero bytes.
+ */
+export type ClassRuntimeMode = "eager" | "lazy" | "off";
+
+/**
+ * The entry-level pieces for a {@linkcode ClassRuntimeMode}: a static import + install
+ * (eager), or an awaited marker-gated dynamic import placed before the first render (lazy —
+ * the runtime must be in place before hydration starts, because whether a class fiber is an
+ * error boundary is decided on the way down). The reconciler itself never statically imports
+ * the runtime; the emitted install here is the sole link, so `deno bundle`/esbuild keep it
+ * out of the entry (and, for `"lazy"`, in its own chunk).
  */
 function classSupportBlock(
-  usesClassComponents: boolean,
-): { classImport: string; classInstall: string } {
-  if (!usesClassComponents) return { classImport: "", classInstall: "" };
-  return {
-    classImport: `import { installClassSupport } from "denext/client-runtime";\n`,
-    classInstall: "installClassSupport();\n",
-  };
+  mode: ClassRuntimeMode,
+): { classImport: string; classInstall: string; classBoot: string } {
+  if (mode === "eager") {
+    return {
+      classImport: `import { installClassSupport } from "denext/class-runtime";\n`,
+      classInstall: "installClassSupport();\n",
+      classBoot: "",
+    };
+  }
+  if (mode === "lazy") {
+    // The dynamic import lives in the runtime (class-loader.ts), not in the entry: one
+    // importer means one chunk named after the module (`class-runtime-<hash>.js`), not an
+    // anonymous `chunk-*` shared by every route entry.
+    return {
+      classImport: `import { loadClassRuntime } from "denext/client-runtime";\n`,
+      classInstall: "",
+      classBoot:
+        `  // The server rendered a class component: load the class runtime BEFORE hydrating.
+  if (document.getElementById("__denext_classes")) await loadClassRuntime();
+`,
+    };
+  }
+  return { classImport: "", classInstall: "", classBoot: "" };
 }
 
 /**
@@ -638,7 +672,7 @@ function featureSeedBlock(features: Record<string, boolean>): string {
 }
 
 /** The Flight entry's `main()`: read the island, adopt signal state, hydrate, boot resumability. */
-function flightMain(catchBody: string): string {
+function flightMain(catchBody: string, classBoot: string): string {
   return `async function main() {
   const el = document.getElementById("__denext");
   const flightEl = document.getElementById("__denext_flight");
@@ -669,7 +703,7 @@ function flightMain(catchBody: string): string {
       globalThis.__denextSignalState = clean || undefined;
     } catch { /* ignore malformed state */ }
   }
-  await registry.ensure(flight); // this page's islands (code-split chunks)
+${classBoot}  await registry.ensure(flight); // this page's islands (code-split chunks)
   const tree = parseFlight(flight, registry);
   try {
     startClient(el, tree);
@@ -695,7 +729,7 @@ export function generateFlightEntry(
   perModule = false,
   usesLive = true,
   instrumentationClient: string | null = null,
-  usesClassComponents = false,
+  classRuntime: ClassRuntimeMode = "lazy",
   usesActivity = false,
   usesViewTransition = false,
   features: Record<string, boolean> = {},
@@ -711,7 +745,7 @@ export function generateFlightEntry(
     .join("\n");
   const { refreshImport, regFamily, enableRefresh } = flightRefreshBlock(dev, perModule);
   const { clientImport, liveImport, liveRegister, liveConfigure } = flightLiveBlock(usesLive);
-  const { classImport, classInstall } = classSupportBlock(usesClassComponents);
+  const { classImport, classInstall, classBoot } = classSupportBlock(classRuntime);
   const { activityImport, activityInstall } = activitySupportBlock(usesActivity);
   const { vtImport, vtInstall } = viewTransitionSupportBlock(usesViewTransition);
   return `// denext generated Flight entry — do not edit.
@@ -758,7 +792,7 @@ ${enableRefresh}${liveRegister}
 setFlightParser((flight) => registry.ensure(flight).then(() => parseFlight(flight, registry)));
 
 ${liveConfigure}
-${flightMain(hydrationCatch(dev, "denext: flight hydration failed:"))}
+${flightMain(hydrationCatch(dev, "denext: flight hydration failed:"), classBoot)}
 main();
 `;
 }
@@ -790,12 +824,11 @@ export interface BundleOptions {
    */
   usesLive?: boolean;
   /**
-   * Whether the app uses class components (from an {@linkcode appUsesClassComponents} scan,
-   * OR the `classComponents` config). When false, the generated entry omits
-   * `installClassSupport()` so `deno bundle` tree-shakes the ~3.1 KB class runtime out.
-   * Defaults to `false` (function-only) when unset. Dev callers pass `true` (unbundled).
+   * How the generated entry gets the class-component runtime — see
+   * {@linkcode ClassRuntimeMode}. Defaults to `"lazy"` (load on demand when the document
+   * says a class rendered). Dev callers pass `"eager"` (unbundled, installs unconditionally).
    */
-  usesClassComponents?: boolean;
+  classRuntime?: ClassRuntimeMode;
   /**
    * Whether the app uses `<Activity>` (from an {@linkcode appUsesActivity} scan). When false,
    * the generated entry omits `installActivitySupport()` so `deno bundle` tree-shakes the
@@ -868,7 +901,7 @@ export async function bundleFlightEntry(
         false,
         opts.usesLive ?? true,
         opts.instrumentationClient ?? null,
-        opts.usesClassComponents ?? false,
+        opts.classRuntime ?? "lazy",
         opts.usesActivity ?? false,
         opts.usesViewTransition ?? false,
         opts.features ?? {},
@@ -1238,7 +1271,7 @@ export function bundleRoute(
       opts.dev,
       false,
       opts.instrumentationClient ?? null,
-      opts.usesClassComponents ?? false,
+      opts.classRuntime ?? "lazy",
       opts.usesActivity ?? false,
       opts.usesViewTransition ?? false,
     ),

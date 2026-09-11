@@ -27,7 +27,8 @@ import { actionEndpoint, isServerAction } from "../runtime/server-action.ts";
 import { DNX_H_ATTR, isQrl } from "../runtime/qrl.ts";
 import "../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
-import { renderClassToVNode } from "../compat/class-component.ts";
+import { renderClassToVNode } from "../compat/class-base.ts";
+import { markClassRendered } from "../runtime/render-scope.ts";
 import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
 import { enterScope, type IdHolder, type IdScope, nextId, rootScope } from "./tree-id.ts";
 export type { IdHolder } from "./tree-id.ts";
@@ -859,6 +860,7 @@ function renderComponentInto(type: unknown, props: Props, ctx: RenderCtx): void 
 function invokeSync(type: unknown, props: Props, ctx: RenderCtx): VNodeChild | Promise<VNodeChild> {
   if (isClassComponent(type)) {
     if (__DENEXT_CLASS_COMPONENTS__) {
+      markClassRendered(); // the document tells the browser entry to load the class runtime
       return renderClassToVNode(type, props, resolveContextType(type, ctx.scopes)) as VNodeChild;
     }
     throw classComponentsDisabledError();

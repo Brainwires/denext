@@ -37,7 +37,15 @@ export function supportsRoute(route: PageRoute): boolean {
 export function serveEntry(st: UnbundledState, route: PageRoute): Promise<string> {
   return transformGeneratedEntry(
     st,
-    generateRouteEntry(route, true, true, st.opts.instrumentationClient ?? null, true, true, true),
+    generateRouteEntry(
+      route,
+      true,
+      true,
+      st.opts.instrumentationClient ?? null,
+      "eager",
+      true,
+      true,
+    ),
     `entry:${route.routePath}`,
   );
 }
@@ -65,7 +73,7 @@ export async function serveFlightEntry(
       true,
       true,
       st.opts.instrumentationClient ?? null,
-      true,
+      "eager",
       true,
       true,
     ),

@@ -5,6 +5,7 @@
 import type { PageRoute, RouteManifest } from "../../router/manifest.ts";
 import type { AppCss } from "../css.ts";
 import type { BoundaryManifest } from "../module-graph.ts";
+import type { ClassRuntimeMode } from "../bundle.ts";
 import type { ProjectPaths } from "../paths.ts";
 
 /** The file name of the app-wide Flight (RSC) client bundle. */
@@ -47,8 +48,12 @@ export interface BuildContext {
   boundary: BoundaryManifest | null;
   /** Whether the Flight entry bundles the Live transport. */
   usesLive: boolean;
-  /** Whether the generated entries install the class-component runtime (scan or config). */
-  usesClassComponents: boolean;
+  /**
+   * How the generated entries get the class-component runtime: `"eager"` when the build scan
+   * saw a class (or `classComponents: true`), `"off"` for `classComponents: false`, else
+   * `"lazy"` (loaded on demand when the server-rendered document says a class rendered).
+   */
+  classRuntime: ClassRuntimeMode;
   /** Whether the generated entries install the Activity offscreen scheduler (scan). */
   usesActivity: boolean;
   /** Whether the generated entries install the ViewTransition marking runtime (scan). */

@@ -38,17 +38,6 @@ next-compat interop path — denext's own apps are unaffected):
   interop and **static-export** paths emit no entry, so there global-error stays
   server-rendered only (its `reset` inert).
 
-- **The class-component runtime is installed only when a build scan sees a class in your
-  app source.** To keep it out of function-only bundles, `denext build` scans your app
-  source for `Component`/`PureComponent` and installs the ~3 KB class runtime only when it
-  appears (a class component must name it). An app whose class components live **only in a
-  dependency** the scan doesn't read — an npm package, or a sibling workspace package — with
-  the word never appearing in the app's own source, gets a function-only bundle, so rendering
-  that class throws `classComponentsDisabledError` in the **production build** (it works in
-  `denext dev`, which installs the runtime unconditionally). Set `classComponents: true` in
-  `denext.config.ts` to force it in. Compat (next-compat) apps already drive this off the
-  same config flag.
-
 - **The Node-stream `react-dom/server` APIs buffer (no `Writable`
   backpressure).** `renderToString` / `renderToStaticMarkup` render the
   **synchronously-renderable** subset (a `<Suspense>` whose children suspend

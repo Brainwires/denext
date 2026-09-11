@@ -17,6 +17,7 @@ import {
   type HeadCollector,
 } from "./render-to-string.ts";
 import { beginSignalCollection, endSignalCollection } from "../runtime/signal-state.ts";
+import { CLASS_MARKER_ID, takeClassRendered } from "../runtime/render-scope.ts";
 import type { ClientRefInfo } from "../runtime/client-reference.ts";
 import { serializeFlight } from "./render-to-html-flight.ts";
 import { deferErrorMarker, serializeScalar } from "./flight-scalar.ts";
@@ -546,6 +547,11 @@ export function flightTailScripts(tail: FlightStreamTail): string {
     out += `<script id="__denext_state" type="application/json">${
       JSON.stringify(tail.signalState).replace(/</g, "\\u003c")
     }</script>`;
+  }
+  // The render produced a class component → the browser entry loads the class runtime
+  // before hydrating (the same marker the document assembler emits).
+  if (takeClassRendered()) {
+    out += `<script id="${CLASS_MARKER_ID}" type="application/json">1</script>`;
   }
   return out;
 }

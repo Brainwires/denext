@@ -22,7 +22,8 @@ import { isServerAction } from "../runtime/server-action.ts";
 import { DNX_H_ATTR } from "../runtime/qrl.ts";
 import { type HydrationStrategy, parseStrategy } from "../runtime/lazy-directive.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
-import { renderClassToVNode } from "../compat/class-component.ts";
+import { renderClassToVNode } from "../compat/class-base.ts";
+import { markClassRendered } from "../runtime/render-scope.ts";
 import {
   type HeadCollector,
   headDedupKey,
@@ -206,6 +207,7 @@ export function invokeServerComponent(
 ): VNodeChild | Promise<VNodeChild> {
   if (isClassComponent(type)) {
     if (__DENEXT_CLASS_COMPONENTS__) {
+      markClassRendered(); // the document tells the browser entry to load the class runtime
       return renderClassToVNode(type, props, resolveContextType(type, scopes)) as VNodeChild;
     }
     throw classComponentsDisabledError();

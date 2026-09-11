@@ -85,7 +85,7 @@ function supportInstall(support: SpaEntrySupport): string {
   const lines: string[] = [];
   if (support.classComponents ?? true) {
     lines.push(
-      `import { installClassSupport } from "denext/client-runtime";`,
+      `import { installClassSupport } from "denext/class-runtime";`,
       `installClassSupport();`,
     );
   }

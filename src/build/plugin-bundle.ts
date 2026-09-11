@@ -31,4 +31,4 @@
  */
 
 export { bundleRoutes } from "./bundle.ts";
-export type { BundleOptions, MultiBundleOutput } from "./bundle.ts";
+export type { BundleOptions, ClassRuntimeMode, MultiBundleOutput } from "./bundle.ts";
