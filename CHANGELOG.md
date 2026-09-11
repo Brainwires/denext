@@ -8,6 +8,18 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-09-11
+
+### Breaking
+
+- **BREAKING: removed the `denext deploy` command.** It only ever wrapped
+  `deployctl` for a single host (Deno Deploy) and could not know a project's real
+  deployment setup (registry, host, secrets, DNS), so it added nothing over
+  invoking the underlying tool directly. Deploy with `deployctl` (Deno Deploy) or
+  your host's own tooling — the Deno Deploy, Docker, and systemd recipes in
+  [DEPLOYMENT.md](./DEPLOYMENT.md) are unchanged. `denext generate docker` still
+  scaffolds a Dockerfile.
+
 ### Added
 
 - **`@denext/content-collections` 0.2.0 renders content: `renderContent(entry)` / `<Content
@@ -85,7 +97,6 @@ and this project adheres to
   where React recomputes. It now calls straight through — React's "no dispatcher" behavior.
   Request-scoped SSR memoization is unchanged; in the browser the bounded per-function memo
   is kept (React memoizes per render pool there). The KNOWN-LIMITATIONS bullet is gone.
-
 - **Fewer npm build-time deps: `lightningcss` and `swc` are now first-party.** The
   build pipeline's `lightningcss-wasm` and `@swc/wasm-web` npm deps are replaced by
   first-party JSR/wasm packages `@denext/lightningcss` and `@denext/swc` (built via
@@ -94,16 +105,6 @@ and this project adheres to
   surface — the build is not npm-free: `esbuild` (core) plus the opt-in `sass` /
   `@mdx-js/mdx` / `ws` remain npm build-time deps (`esbuild` off-npm is deferred;
   see ROADMAP).
-
-### Removed
-
-- **BREAKING: removed the `denext deploy` command.** It only ever wrapped
-  `deployctl` for a single host (Deno Deploy) and could not know a project's real
-  deployment setup (registry, host, secrets, DNS), so it added nothing over
-  invoking the underlying tool directly. Deploy with `deployctl` (Deno Deploy) or
-  your host's own tooling — the Deno Deploy, Docker, and systemd recipes in
-  [DEPLOYMENT.md](./DEPLOYMENT.md) are unchanged. `denext generate docker` still
-  scaffolds a Dockerfile.
 
 ## [2.3.0] - 2026-09-10
 
@@ -6399,6 +6400,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.4.0]: https://jsr.io/@denext/denext@2.4.0
 [2.3.0]: https://jsr.io/@denext/denext@2.3.0
 [2.2.0]: https://jsr.io/@denext/denext@2.2.0
 [2.1.6]: https://jsr.io/@denext/denext@2.1.6
