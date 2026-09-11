@@ -275,6 +275,8 @@ export default async function Blog() {
   const posts = await getCollection("blog", (p) => !p.data.draft); // p.data is typed
   return <ul>{posts.map((p) => <li key={p.id}>{p.data.title}</li>)}</ul>;
 }
+// Render an entry's body: `<Content entry={post} />` (or `await renderContent(post)`) from the
+// same module — `.md` through the first-party renderer, `.mdx` through a module compiled at build.
 // CLI: `denext content build | list | validate` (validate exits 1 on a schema failure — a CI gate).
 ```
 

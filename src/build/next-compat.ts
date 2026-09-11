@@ -1075,6 +1075,12 @@ export interface MdxBuildOptions {
   remarkRehypeOptions?: Record<string, unknown>;
   /** MDX `providerImportSource` (module exporting `useMDXComponents`), if used. */
   providerImportSource?: string;
+  /**
+   * The automatic-runtime import source the compiled module imports `jsx` from. Default
+   * `"react"` (the compat build aliases it to denext); a native app's content compiles with
+   * `"denext"` so the emitted module needs no alias.
+   */
+  jsxImportSource?: string;
 }
 
 /**
@@ -1095,7 +1101,7 @@ export async function compileMdxSource(
   const compiled = await compile(
     { path, value: source },
     {
-      jsxImportSource: "react",
+      jsxImportSource: opts?.jsxImportSource ?? "react",
       remarkPlugins: pluggable(opts?.remarkPlugins),
       rehypePlugins: pluggable(opts?.rehypePlugins),
       recmaPlugins: pluggable(opts?.recmaPlugins),

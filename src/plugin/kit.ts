@@ -109,6 +109,13 @@ export type {
   NextCompatServerLoaderOptions,
 } from "../build/next-compat-public.ts";
 
+// ── MDX compile (build step) ───────────────────────────────────────────────
+// Compile one MDX/Markdown source to a component-module string with the framework's
+// (build-time, opt-in npm) `@mdx-js/mdx` — what `@denext/content-collections` precompiles
+// `.mdx` entries with. Pass `jsxImportSource: "denext"` for a native app.
+export { compileMdxSource } from "../build/next-compat.ts";
+export type { MdxBuildOptions } from "../build/next-compat.ts";
+
 // ── Incremental static regeneration ────────────────────────────────────────
 // The page cache backing `getStaticProps`-style revalidation.
 export { PageCache } from "../server/mod.ts";

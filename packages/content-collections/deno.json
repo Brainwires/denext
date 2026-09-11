@@ -1,11 +1,12 @@
 {
   "name": "@denext/content-collections",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "exports": {
     ".": "./mod.ts",
     "./config": "./config.ts",
     "./runtime": "./runtime.ts",
+    "./markdown": "./markdown.ts",
     "./command": "./command.ts"
   },
   "imports": {
@@ -22,6 +23,7 @@
       "build.ts",
       "codegen.ts",
       "runtime.ts",
+      "markdown.ts",
       "command.ts",
       "README.md",
       "CHANGELOG.md",

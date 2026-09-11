@@ -155,6 +155,9 @@ ignorePatterns = [
   # Fixture trees the migrate tests READ AS TEXT (never imported), so reachability can't see
   # them; CONTRIBUTING.md documents this as the place to exclude such fixtures.
   "tests/fixtures/**",
+  # Content-collection entries: `.mdx` documents the @denext/content-collections plugin compiles
+  # at build (never imported as modules by the app), so the graph can't reach them.
+  "examples/*/content/**/*.mdx",
 ]
 
 # Loaded with `await import("./dev-proxy.ts")` only when `spa.proxy` is configured (it pulls

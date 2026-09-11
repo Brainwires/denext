@@ -10,6 +10,15 @@ and this project adheres to
 
 ### Added
 
+- **`@denext/content-collections` 0.2.0 renders content: `renderContent(entry)` / `<Content
+  entry />`.** `.md` entries render through the package's first-party, zero-dependency Markdown
+  renderer at request time; `.mdx` entries are compiled at build (and at dev startup / on
+  change) into component modules through denext's build-time `@mdx-js/mdx`, exposed to plugins
+  as the new `compileMdxSource` plugin-kit export (`jsxImportSource` option added). Entries
+  carry `format`. The example blog renders MD and MDX with no third-party wiring; the
+  KNOWN-LIMITATIONS "no built-in renderer" bullet is gone. The docs site's Markdown renderer
+  moved into the package (hardened: link targets attribute-escaped, script-bearing schemes
+  dropped) and is re-exported from `apps/web/lib/markdown.ts`.
 - **`next/font/google` emits Next's metric-matched fallback face (`adjustFontFallback`).**
   Every Google font now also declares `"<Family> Fallback"` — a local Arial (or Times New
   Roman for serif families) re-proportioned with `size-adjust`, `ascent-override`,

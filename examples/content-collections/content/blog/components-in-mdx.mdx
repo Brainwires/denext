@@ -1,0 +1,15 @@
+---
+title: Components in MDX
+date: "2026-09-10"
+draft: false
+---
+
+# Components in MDX
+
+This post is an `.mdx` entry. The plugin compiles it **at build** into a component module
+(`.denext/content/blog/components-in-mdx.js`), and `<Content entry={post} />` renders it — no
+MDX tooling runs at request time.
+
+export const answer = 6 * 7;
+
+The answer, computed in the document itself, is **{answer}**.

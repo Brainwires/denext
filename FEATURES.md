@@ -403,7 +403,11 @@ cache uses Deno's built-in `node:sqlite`.)
   files, or any `load(ctx)` function for remote sources); the plugin validates every entry and
   generates types so **`getCollection` / `getEntry` are fully typed**, regenerated **live in
   `denext dev`** and at `denext build` through the plugin **prepare-step** seam. `denext content
-  build | list | validate` (`validate` is a CI gate).
+  build | list | validate` (`validate` is a CI gate). **Renders too:** `renderContent(entry)` /
+  `<Content entry />` — `.md` through the package's first-party zero-dependency Markdown
+  renderer at request time, `.mdx` through a component module compiled at build (denext's
+  build-time `@mdx-js/mdx`, the `compileMdxSource` plugin-kit seam); nothing MDX-related at
+  request time.
 - **Plugin-kit primitives for API plugins**: `apiDefinitionOf`, `tapChannel` (server-side
   observer of a channel's pushes), `verifyOrigin` (the CSRF gate every state-changing
   denext RPC applies), `bufferedRequest` + the body caps (`src/plugin/kit.ts`).

@@ -385,11 +385,3 @@ A few capabilities aren't built yet (none affects the zero-npm runtime):
   denext does not parse, so `localFont({ adjustFontFallback: "Arial" })` type-checks and
   keeps a stable class name but emits no fallback face — the stack falls straight through
   to your `fallback` list.
-
-- **`@denext/content-collections`: no built-in Markdown/MDX renderer.** Collections are a
-  typed, validated, queryable **data** layer: an entry's `body` is the raw MD/MDX source, which
-  you render with your own MDX setup or a Markdown renderer of your choice (the framework ships no
-  first-party render helper for it). Two v1 notes: the built store is read from
-  `<cwd>/.denext/content-data.json`, so run the app from its project root (as `deno task
-  dev`/`start` do); and unquoted YAML frontmatter dates parse as `Date` (quote them, or use a date
-  schema).
