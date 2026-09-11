@@ -368,7 +368,9 @@ Deno.test("React.cache is request-scoped during SSR (no cross-request leak)", as
   assertEquals(a1, "user-1");
   assertEquals(a2, "user-1"); // memoized within the request
   assertEquals(b1, "user-2"); // request 2 does NOT see request 1's cached value
-  // Off-request: falls back to a persistent memo (still deduped).
+  // Server code outside a request is not memoized (React's no-dispatcher behavior): this
+  // test file installs no `document` global, so cache() sees a server environment.
   const off = cache(() => `off-${++calls}`);
-  assertEquals(off(), off());
+  assertEquals(off(), "off-3");
+  assertEquals(off(), "off-4", "recomputes — nothing persists off-request on the server");
 });

@@ -112,16 +112,6 @@ next-compat interop path — denext's own apps are unaffected):
   the frame captured at the first `.next()`), except those using `yield*`
   delegation, which are left un-instrumented — as is top-level `await`. Dev
   warns on a transition pending >10s either way.
-- **`React.cache` is request-scoped during SSR, but persists off-request.** React's
-  `cache()` is strictly per-request. denext matches that during a server render (the
-  memo lives on the request context and is discarded with it), but a `cache()`-wrapped
-  function called **outside** a request — in the client bundle, or in non-request server
-  code — falls back to a **persistent per-function memo** with LRU eviction after 1024
-  distinct primitive-key combinations. Two consequences off-request: a result can persist
-  across logical calls where React would recompute, and a hot function with >1024 distinct
-  primitive args silently evicts and recomputes. Inside a request (the intended use) the
-  behavior is exact; treat `cache()` as request-scoped and don't rely on it for cross-call
-  memoization off-request.
 - **`next-intl` ICU formatting is a common-subset re-implementation.** Native `next-intl`
   uses the full `intl-messageformat`; denext hand-parses the common subset (plurals,
   select, number/date/time with the usual skeletons). An **unknown number/date skeleton

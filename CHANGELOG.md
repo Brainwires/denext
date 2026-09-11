@@ -17,6 +17,15 @@ and this project adheres to
   position-derived semantics are unchanged (see KNOWN-DIFFERENCES). Visible only to code that
   pinned the literal old format, e.g. a snapshot test.
 
+### Fixed
+
+- **`React.cache` matches React outside a request.** A `cache()`-wrapped function called on
+  the server with no request context (a scheduled task, a script, module init) used to fall
+  back to a persistent per-function memo, so a result could survive across logical calls
+  where React recomputes. It now calls straight through — React's "no dispatcher" behavior.
+  Request-scoped SSR memoization is unchanged; in the browser the bounded per-function memo
+  is kept (React memoizes per render pool there). The KNOWN-LIMITATIONS bullet is gone.
+
 - **Fewer npm build-time deps: `lightningcss` and `swc` are now first-party.** The
   build pipeline's `lightningcss-wasm` and `@swc/wasm-web` npm deps are replaced by
   first-party JSR/wasm packages `@denext/lightningcss` and `@denext/swc` (built via

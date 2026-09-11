@@ -46,9 +46,11 @@ not a limitation.
 ## `React.cache` is request-scoped during SSR
 
 A `cache()`d function's result is keyed to the current request, so one request's value
-is never served to another — request isolation, matching React's own model. Off-request
-(or on the client) it's a persistent per-function memo. This is **correctness**, not a
-reduced capability.
+is never served to another — request isolation, matching React's own model. Server code
+outside a request is not memoized at all (React's "no dispatcher" behavior), so a stale
+result can never survive across logical calls; in the browser it's a bounded per-function
+memo (React memoizes per render pool there). This is **correctness**, not a reduced
+capability.
 
 ## Automatic batching (so `unstable_batchedUpdates` is a no-op)
 
