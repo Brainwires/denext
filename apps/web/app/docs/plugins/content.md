@@ -1,9 +1,13 @@
-# Writing a denext plugin
+---
+title: Writing a plugin
+slug: plugins
+lead: Features that do not belong in core ship as plugins — separate JSR packages that extend denext through a narrow, semver-stable contract, wired into six seams.
+---
 
 denext features that don't belong in core ship as **plugins** — separate JSR packages
 that extend denext through a narrow, semver-stable contract. The reference plugin is
-[`@denext/pages-router`](./packages/pages-router), a full Next.js Pages Router; the
-smallest worked example is [`examples/plugin-aliases`](./examples/plugin-aliases).
+[`@denext/pages-router`](https://github.com/Brainwires/denext/tree/main/packages/pages-router), a full Next.js Pages Router; the
+smallest worked example is [`examples/plugin-aliases`](https://github.com/Brainwires/denext/tree/main/examples/plugin-aliases).
 
 A plugin is a `DenextPlugin`: a `name` plus a `setup(ctx)` that wires into denext's
 seams. Add it to your project config:
@@ -86,7 +90,7 @@ ctx.addRouteSynthesizer(async (manifest) => {
 
 Use this when your routes render through denext's **normal** App Router path — the
 lightest case is to clone an existing route under a new path (see
-[`examples/plugin-aliases`](./examples/plugin-aliases), which aliases `/home` to `/`).
+[`examples/plugin-aliases`](https://github.com/Brainwires/denext/tree/main/examples/plugin-aliases), which aliases `/home` to `/`).
 
 ### Seam 2 — claim requests (a distinct render path)
 
@@ -257,7 +261,7 @@ kit:
 
 - **Client-router mode** (a library router mounted in the browser): the app is a
   single denext route (or the SPA shell) that hydrates the router client-side. This
-  needs **nothing from `plugin-kit`** — denext's [SPA mode](./FEATURES.md) already
+  needs **nothing from `plugin-kit`** — denext's [SPA mode](/docs/spa) already
   serves a shell + a client entry bundle. React Router / TanStack Router in library
   mode run on denext today (`examples/tanstack-router` is a stock file-based TanStack
   Router app in SPA mode); a plugin here is mostly config sugar + the client-entry
@@ -270,7 +274,7 @@ kit:
   so the contract is **provably sufficient** for it — no core change required to add
   these routers as plugins.
 
-[`@denext/react-router`](./packages/react-router) is the framework-mode router plugin done
+[`@denext/react-router`](https://github.com/Brainwires/denext/tree/main/packages/react-router) is the framework-mode router plugin done
 a **third** way: instead of claiming requests, it generates denext route modules from the
 app's `app/routes.ts` and adds them through the **route-synthesizer** seam — so the whole
 App Router pipeline (Flight, streaming, per-segment boundaries, soft nav, ISR, Fast Refresh)
@@ -279,25 +283,25 @@ scales to a full framework router, not just aliasing.
 
 ## Complete examples
 
-- **[`examples/plugin-aliases`](./examples/plugin-aliases)** — a ~40-line plugin using
+- **[`examples/plugin-aliases`](https://github.com/Brainwires/denext/tree/main/examples/plugin-aliases)** — a ~40-line plugin using
   the **route-synthesizer** + **teardown** seams (path aliases). The smallest end-to-end
   model to copy.
-- **[`@denext/pages-router`](./packages/pages-router)** — detects a `pages/` tree,
+- **[`@denext/pages-router`](https://github.com/Brainwires/denext/tree/main/packages/pages-router)** — detects a `pages/` tree,
   registers a request handler (seam 2) that runs the Pages Router pipeline (SSR, data
   fetching, client hydration, soft navigation), and a build step (seam 3) that
   pre-bundles each route's client entry with `@denext/denext/bundle`. Its `mod.ts` is a
   compact model for the request/build seams.
-- **[`@denext/openapi`](./packages/openapi)** — uses all of the non-render seams at once:
+- **[`@denext/openapi`](https://github.com/Brainwires/denext/tree/main/packages/openapi)** — uses all of the non-render seams at once:
   a **route synthesizer** only to observe each scanned manifest, a **request handler** for
   `/openapi.json` + `/docs`, a **build step** that writes the document, and a **CLI verb**
   (`denext openapi emit | diff | lint | types`). It reads route metadata through the plugin-kit's
   `apiDefinitionOf` — the model for a plugin that _describes_ an app rather than renders it.
-- **[`@denext/graphql`](./packages/graphql)** — mounts a third-party HTTP handler (GraphQL
+- **[`@denext/graphql`](https://github.com/Brainwires/denext/tree/main/packages/graphql)** — mounts a third-party HTTP handler (GraphQL
   Yoga) through the **request handler** seam, bridges the app's `createChannel` pushes into
   GraphQL subscriptions with the plugin-kit's `tapChannel`, writes the SDL as a **build
   step**, and adds `denext graphql sdl | diff` (**CLI verb**). The model for wrapping an
   npm server library as a denext plugin.
-- **[`@denext/react-router`](./packages/react-router)** — a full React Router v7 framework
+- **[`@denext/react-router`](https://github.com/Brainwires/denext/tree/main/packages/react-router)** — a full React Router v7 framework
   router through the **route-synthesizer** seam alone: it reads the app's `app/routes.ts`,
   generates denext route wrappers under `.denext/react-router/`, and adds them to the
   manifest — the core App Router renders them, so the plugin ships no render path. The model

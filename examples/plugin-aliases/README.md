@@ -2,8 +2,8 @@
 
 A ~40-line denext **plugin** — the smallest real one, and the first to use the
 **route-synthesizer** seam (`@denext/pages-router` uses the request-handler +
-build-step seams). See [PLUGINS.md](../../PLUGINS.md) for the full authoring
-guide.
+build-step seams). See the
+[plugin authoring guide](https://denext.dev/docs/plugins).
 
 `aliasesPlugin({ "/home": "/", "/about-us": "/about" })` makes each alias path
 render the **same page** as its target — no file moved or duplicated. It works

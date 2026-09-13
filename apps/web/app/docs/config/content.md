@@ -195,7 +195,7 @@ denext plugin add @denext/htmx      # adds the dep and edits denext.config.ts
 denext plugin list                  # show what's wired
 ```
 
-See [Writing a plugin](https://github.com/Brainwires/denext/blob/main/PLUGINS.md).
+See [Writing a plugin](/docs/plugins).
 
 ## Streaming & Live
 
