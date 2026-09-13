@@ -140,7 +140,7 @@ rest are kept here so they aren't lost; not yet scheduled.
   for Workers/Vercel. Highest ecosystem value, largest effort, one real Deno-fit tension
   (Workers runs workerd, not Deno). Builds on the existing plugin `addBuildStep` seam.
 
-## Later (not committed to 2.4)
+## Later (unscheduled)
 
 - Generated clients for **non-denext consumers** in **other languages** from the
   OpenAPI/GraphQL documents. TypeScript consumers are served: `denext openapi types`

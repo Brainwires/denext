@@ -1014,7 +1014,9 @@ const SPA_TAILWIND_INPUT_CANDIDATES = [
   "src/tailwind.css",
 ];
 
-const TAILWIND_DIRECTIVE = /@import\s+["']tailwindcss|@tailwind\s+(base|utilities|components)/;
+// The whole-framework import or a v3 directive — not `@import "tailwindcss/theme"` (a
+// component stylesheet's reference import) and not `tailwindcss-animate`.
+const TAILWIND_DIRECTIVE = /@import\s+["']tailwindcss["']|@tailwind\s+(base|utilities|components)/;
 
 /**
  * The SPA's Tailwind input stylesheet (`./`-relative), or `null`. Vite templates disagree on
@@ -1577,9 +1579,14 @@ async function readIndexHtml(
  */
 async function mountElementId(dir: string, entry: string, html: string): Promise<string> {
   const source = await Deno.readTextFile(join(dir, entry)).catch(() => "");
+  // The lookup passed to `createRoot`/`hydrateRoot`/`render` first — an entry that removes a
+  // `#splash` before mounting `#app` has two lookups and only the mount one counts — then any
+  // lookup at all.
+  const lookup =
+    /(?:getElementById\(\s*["']([^"']+)["']|querySelector\(\s*["']#([A-Za-z_][\w-]*)["'])\s*\)/;
   const fromEntry = source.match(
-    /getElementById\(\s*["']([^"']+)["']\s*\)|querySelector\(\s*["']#([A-Za-z_][\w-]*)["']\s*\)/,
-  );
+    new RegExp(`(?:createRoot|hydrateRoot|render)\\(\\s*(?:document\\.)?${lookup.source}`),
+  ) ?? source.match(lookup);
   if (fromEntry) return fromEntry[1] ?? fromEntry[2];
   const body = /<body\b[^>]*>([\s\S]*)<\/body>/i.exec(html)?.[1] ?? html;
   return /<div\b[^>]*\bid=["']([^"']+)["']/i.exec(body)?.[1] ?? "root";

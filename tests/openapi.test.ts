@@ -801,7 +801,7 @@ Deno.test("emitTypes: JSON Schema constructs → TypeScript", () => {
       required: ["id"],
       additionalProperties: { type: "number" },
     }),
-    '{ /** The id *\\/ end */ id: string; "kebab-key"?: boolean; [key: string]: number; }',
+    '{ /** The id *\\/ end */ id: string; "kebab-key"?: boolean; } & Record<string, number>',
   );
   assertEquals(responseType({ type: "object" }), "Record<string, unknown>");
   assertEquals(
@@ -926,6 +926,75 @@ Deno.test("emitTypes: a document from another producer (no x-denext-* extensions
     out,
     '  "/v1/items/[id]": {\n    DELETE: {\n      params: {\n        id: string;\n      };\n      errors: "gone";',
   );
+});
+
+Deno.test("emitTypes: params stay strings, catchall objects intersect, nullable items parenthesise", () => {
+  const doc = {
+    openapi: "3.1.0",
+    info: { title: "t", version: "1" },
+    paths: {
+      "/api/x/{id}": {
+        get: {
+          "x-denext-path": "/api/x/[id]",
+          parameters: [
+            { name: "id", in: "path", required: true, schema: { type: "number" } },
+          ],
+          responses: {
+            "200": {
+              description: "ok",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      a: { type: "string" },
+                      list: {
+                        type: "array",
+                        items: { type: ["object", "null"], properties: { b: { type: "string" } } },
+                      },
+                    },
+                    additionalProperties: { type: "number" },
+                  },
+                },
+              },
+            },
+          },
+        },
+        trace: { responses: { "200": { description: "never in ApiSchema" } } },
+      },
+    },
+  } as unknown as Parameters<typeof emitTypes>[0];
+  const out = emitTypes(doc);
+  // `ApiEndpoint.params` admits only string | string[] — a coerced number schema lives in `paths`.
+  assert(/params: \{\s*id: string;\s*\}/.test(out), `params are strings:\n${out}`);
+  assertStringIncludes(out, "} & Record<string, number>"); // not an index signature beside members
+  assert(!/\| null\[\]/.test(out), "a nullable item type is parenthesised before []");
+  assertStringIncludes(out, "| null)[]");
+  assert(!/^\s*TRACE:/m.test(out), "TRACE is not an HttpMethod");
+  assertStringIncludes(out, "trace: {"); // but it is still in `paths`
+});
+
+Deno.test("emitTypes: a hostile info/description cannot break out of the header comment", () => {
+  const doc = {
+    openapi: "3.1.0",
+    info: {
+      title: "T\u2028export const pwnTitle = 1;//",
+      version: "1.0\nexport const pwnVersion = 1;\n//",
+    },
+    paths: {
+      "/api/x/{id}": {
+        get: {
+          parameters: [{ name: "id", in: "path", required: true, description: 5, schema: {} }],
+          responses: { "200": { description: "ok" } },
+        },
+      },
+    },
+  } as unknown as Parameters<typeof emitTypes>[0];
+  const out = emitTypes(doc);
+  assert(!/^export const pwn/m.test(out), "document strings stay inside the header comment");
+  const header = out.split("\n\n")[0].split("\n");
+  assert(header.every((l) => l.startsWith("//")), `header is comment-only:\n${header.join("\n")}`);
+  assertStringIncludes(out, "export interface paths");
 });
 
 Deno.test("emitTypes: the ApiSchema types createApiClient from another module (deno check)", async () => {

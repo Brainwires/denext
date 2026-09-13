@@ -137,7 +137,7 @@ export function User({ id }: { id: string }) {
 
 Add the `@denext/openapi` plugin (`plugins: [openapi()]` in `denext.config.ts`) and those same
 definitions serve `GET /openapi.json` (OpenAPI 3.1) + a docs page at `GET /docs`, write
-`openapi.json` at build, and back `denext openapi emit | diff | lint` — zero extra annotation.
+`openapi.json` at build, and back `denext openapi emit | diff | lint | types` — zero extra annotation.
 Schemas that implement Standard JSON Schema (Zod ≥ 4.2, ArkType, Valibot) or TypeBox are
 described in full; others are `{}` + a lint warning.
 Need GraphQL? `@denext/graphql` mounts GraphQL Yoga at `/graphql` (any `GraphQLSchema`;

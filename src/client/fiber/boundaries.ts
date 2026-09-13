@@ -77,7 +77,13 @@ function triggerBoundary(inst: Fiber, error: unknown): void {
     return;
   }
   reportCaught(inst, error);
+  // Both buffers (see `resetBoundary`): the fiber that routed here was captured at render or
+  // commit time — an event handler's `onErrorFor`, an effect, `useErrorBoundary()` — and after
+  // an ancestor re-render its `.return` chain ends at the boundary's ALTERNATE; `carryOver`
+  // would then copy `undefined` from the current buffer over a one-sided write and the error
+  // vanished: reported, no fallback, DOM unchanged.
   inst.__error = error;
+  if (inst.alternate) inst.alternate.__error = error;
   scheduleUpdate(inst);
   // Event-handler / async errors are caught outside render; commit the fallback
   // synchronously so the DOM reflects it immediately (React can't do this).

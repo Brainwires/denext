@@ -101,6 +101,10 @@ async function maybeReexecForCss(dir: string, minify: boolean): Promise<boolean>
   // backup is kept) and restore the committed deno.json once the build child exits, so
   // `deno task build/export` leaves the app's config byte-identical.
   if (css.appConfigRedirects) {
+    // A previous run killed mid-build (SIGKILL, power loss) skipped its restore and left the
+    // redirects — and its backup — behind; put the committed config back before injecting
+    // again, or the stale entries would be captured as the "original".
+    await restoreAppConfig(paths.configPath, paths.outDir);
     await injectAppConfigRedirects(paths.configPath, paths.outDir, css.appConfigRedirects);
   }
   return await reexecWithConfig(

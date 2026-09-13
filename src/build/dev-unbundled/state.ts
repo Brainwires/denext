@@ -32,6 +32,9 @@ export const DEP_ENTRYPOINTS: Record<string, string> = {
   "denext_class-runtime": "src/class-runtime.ts",
   "denext_client-runtime": "src/client/client-runtime.ts",
   "denext_devtools": "src/devtools.ts",
+  // `feature()` calls are folded at build, but the IMPORT stays in the module (and nothing is
+  // folded without `experimental.features`), so a "use client" file importing it needs the dep.
+  "denext_feature": "src/feature.ts",
 };
 
 /** denext runtime specifiers → their prebuilt runtime file (compat client graph). */
@@ -44,6 +47,7 @@ export const DENEXT_RUNTIME_FILE: Record<string, string> = {
   "denext/class-runtime": "class-runtime.js",
   "denext/client-runtime": "client-runtime.js",
   "denext/devtools": "devtools.js",
+  "denext/feature": "feature.js",
 };
 
 /** The URL slug for a bare `denext`/`denext/x` specifier (matches DEP_ENTRYPOINTS keys). */

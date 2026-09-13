@@ -134,3 +134,31 @@ Deno.test("renderMarkdown: reference-style links resolve from `[label]: url` def
   assertStringIncludes(html, "Nope: evil.");
   assert(!html.includes("javascript:"), "no script URL reaches the output");
 });
+
+Deno.test("renderMarkdown: digit runs in text survive code-span extraction", () => {
+  // The code-span placeholder used to be ` N `, so any ` 1 ` in prose was swallowed (and the
+  // wrong span restored when spans were present): rendering CHANGELOG.md produced 120 `undefined`s.
+  assertEquals(
+    renderMarkdown("I have 1 apple and `x` 2 pears and `y`"),
+    "<p>I have 1 apple and <code>x</code> 2 pears and <code>y</code></p>",
+  );
+  assertEquals(renderMarkdown("ships 0 KB of JS"), "<p>ships 0 KB of JS</p>");
+});
+
+Deno.test("renderMarkdown: a code span cannot be smuggled into a link href", () => {
+  // A destination with whitespace is not a link (CommonMark) — and it was the way a placeholder
+  // got restored INSIDE the attribute after escaping, re-injecting a raw quote.
+  const html = renderMarkdown(
+    '`" onmouseover="alert(1)` [a](x 0 y) and [b](x `c` y) and [ok](/ok)',
+  );
+  assert(!/<a [^>]*onmouseover/.test(html), "no attribute breakout");
+  assert(!html.includes('href="x'), "whitespace destinations are not links");
+  assertStringIncludes(html, '<a href="/ok">ok</a>');
+  assertStringIncludes(html, '<code>" onmouseover="alert(1)</code> a and b and'); // text, not markup
+});
+
+Deno.test("renderMarkdown: a `[label]: url` line inside a fence is code, not a definition", () => {
+  const html = renderMarkdown("```\n[a]: /ok\ncode line\n```\n\n[a]");
+  assertStringIncludes(html, "<code>[a]: /ok\ncode line</code>");
+  assertStringIncludes(html, "<p>[a]</p>");
+});

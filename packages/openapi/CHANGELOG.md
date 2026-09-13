@@ -2,6 +2,14 @@
 
 ## 0.3.0
 
+- Pre-release hardening of `emitTypes` (found by the 2.4.2 audit): `ApiSchema.params` are always
+  `string`/`string[]` (the client's constraint; a coerced `z.number()` param made the whole file
+  fail `createApiClient<ApiSchema>`), members + `additionalProperties` emit an intersection
+  instead of a TS2411 index signature, a nullable item type is parenthesised before `[]`, `TRACE`
+  is not keyed in `ApiSchema`, a document without `paths` or with a non-string `description` does
+  not throw, and `info.title`/`info.version` cannot end the header comment (line terminators,
+  incl. U+2028, are folded).
+
 - **`denext openapi types [--out <file>]` + `emitTypes(document)`** (`@denext/openapi/types`).
   TypeScript for a consumer OUTSIDE the app — a separate frontend, a script — as one `.ts` with
   no imports: openapi-typescript-style `paths`/`components` interfaces, and denext's `ApiSchema`

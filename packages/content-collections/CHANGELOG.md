@@ -1,6 +1,6 @@
 # @denext/content-collections
 
-## [Unreleased]
+## [0.3.0] - 2026-09-13
 
 ### Added
 
@@ -8,6 +8,16 @@
   the document, optional `<…>` and title, first definition wins) resolve `[text][label]`,
   `[label][]` and the shortcut `[label]`; an undefined label stays literal text and a
   script-scheme definition renders as plain text, like inline links.
+
+### Fixed
+
+- **Code-span placeholder collided with prose.** Spans were parked behind a `N` (space, digits,
+  space) marker and restored over the whole output, so any digit run set off by spaces in a
+  paragraph (`I have 1 apple`) was replaced by the wrong span or by `undefined`, and a span
+  written inside a link destination (`[a](x`c`y)`) was restored INSIDE the `href` after
+  escaping — an attribute breakout. The placeholder is NUL-delimited (NUL is stripped from the
+  source first), a destination containing whitespace is not a link (as in CommonMark), and a
+  `[label]: url` line inside a fenced block is code, not a definition.
 
 ## [0.2.0] - 2026-09-10
 

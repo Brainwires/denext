@@ -31,6 +31,11 @@ const SCRIPT_URL = /^\s*(?:javascript|vbscript|livescript|data):/i;
 
 /** A link's `href`, attribute-escaped — or `null` when its scheme could run script. */
 function safeHref(raw: string): string | null {
+  // A destination with whitespace is not a link in CommonMark — and it is also how a code-span
+  // placeholder (see `renderInline`) could be smuggled into the attribute and restored there
+  // as raw markup after escaping. Refuse both.
+  // deno-lint-ignore no-control-regex -- the NUL placeholder delimiter
+  if (/[\s\u0000]/.test(raw)) return null;
   // The inline pass already HTML-escaped `raw`; undo that before the scheme test so an
   // `&#106;avascript:` style entity can't hide the scheme, then re-escape for the attribute.
   const decoded = raw.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
@@ -61,13 +66,15 @@ function renderLink(label: string, href: string): string {
 }
 
 // Inline: operate on already-escaped text. Code spans are pulled out first so
-// their contents aren't re-interpreted as emphasis/links, then restored.
+// their contents aren't re-interpreted as emphasis/links, then restored. The placeholder is
+// NUL-delimited: `renderMarkdown` strips NUL from the source, so it cannot collide with text
+// (a bare ` 1 ` placeholder once swallowed every digit run in a paragraph).
 function renderInline(text: string, refs: LinkRefs): string {
   const escaped = escapeHtml(text);
   const codes: string[] = [];
   let out = escaped.replace(/`([^`]+)`/g, (_m, code) => {
     codes.push(`<code>${code}</code>`);
-    return ` ${codes.length - 1} `;
+    return `\u0000${codes.length - 1}\u0000`;
   });
 
   out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m, label, href) => renderLink(label, href));
@@ -84,7 +91,8 @@ function renderInline(text: string, refs: LinkRefs): string {
   out = out.replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>");
   out = out.replace(/(^|[^\w])_([^_]+)_(?=[^\w]|$)/g, "$1<em>$2</em>");
 
-  return out.replace(/ (\d+) /g, (_m, i) => codes[Number(i)]);
+  // deno-lint-ignore no-control-regex -- the NUL placeholder above
+  return out.replace(/\u0000(\d+)\u0000/g, (_m, i) => codes[Number(i)]);
 }
 
 const CALLOUT_KINDS: Record<string, "note" | "warn"> = {
@@ -196,14 +204,19 @@ function parseParagraph(lines: string[], i: number, refs: LinkRefs): Block {
 
 /**
  * Pull the reference-link definitions (`[label]: url`, one per line, anywhere in the
- * document) out of `lines`: they render nothing themselves and resolve `[text][label]` /
- * `[label]` in the inline pass. The first definition of a label wins (CommonMark).
+ * document outside fenced code) out of `lines`: they render nothing themselves and resolve
+ * `[text][label]` / `[label]` in the inline pass. The first definition of a label wins
+ * (CommonMark).
  */
 function collectLinkRefs(lines: string[]): { lines: string[]; refs: LinkRefs } {
   const refs: LinkRefs = new Map();
   const kept: string[] = [];
+  let inFence = false;
   for (const line of lines) {
-    const def = line.match(/^\s{0,3}\[([^\]]+)\]:\s*<?(\S+?)>?(?:\s+(?:"[^"]*"|'[^']*'))?\s*$/);
+    if (/^```/.test(line)) inFence = !inFence;
+    const def = inFence
+      ? null
+      : line.match(/^\s{0,3}\[([^\]]+)\]:\s*<?(\S+?)>?(?:\s+(?:"[^"]*"|'[^']*'))?\s*$/);
     if (def) {
       const key = def[1].toLowerCase();
       if (!refs.has(key)) refs.set(key, def[2]);
@@ -221,7 +234,9 @@ function collectLinkRefs(lines: string[]): { lines: string[]; refs: LinkRefs } {
  * @returns HTML: one block element per Markdown block, joined by newlines.
  */
 export function renderMarkdown(body: string): string {
-  const { lines, refs } = collectLinkRefs(body.replace(/\r\n/g, "\n").split("\n"));
+  // deno-lint-ignore no-control-regex -- NUL delimits the code-span placeholder
+  const source = body.replace(/\r\n/g, "\n").replace(/\u0000/g, "");
+  const { lines, refs } = collectLinkRefs(source.split("\n"));
   const out: string[] = [];
   let i = 0;
 

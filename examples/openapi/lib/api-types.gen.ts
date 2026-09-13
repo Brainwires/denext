@@ -7,7 +7,7 @@
 //   const api = createApiClient<ApiSchema>({ base: "https://api.example.com" });
 //
 // Wire format: plain JSON, except a value holding a Date, Map, Set, BigInt, URL, undefined,
-// NaN or -0, which arrives `$`-tagged ({"$":"D","v":"…"}) with the response header
+// NaN, ±Infinity or -0, which arrives `$`-tagged ({"$":"D","v":"…"}) with the response header
 // `x-denext-wire: 1`. `createApiClient` decodes those; a plain fetch must do so itself.
 
 export interface paths {

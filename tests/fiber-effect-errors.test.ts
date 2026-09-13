@@ -98,6 +98,40 @@ Deno.test("unmount runs child cleanups before parent cleanups (CLI-L2, React ord
   assertEquals(order, ["child", "parent"], "child unmounts before its parent");
 });
 
+Deno.test("an event-handler error still reaches the boundary after an ancestor re-rendered", () => {
+  // The handler's fiber was captured at commit time; after an unrelated ancestor update the
+  // boundary's buffers have swapped and the fiber's `.return` chain ends at the ALTERNATE. A
+  // `__error` written to that buffer alone was overwritten by `carryOver` on the next render:
+  // the error was reported, no fallback appeared, the DOM stayed as it was.
+  const { doc, container } = makeDom();
+  setDocument(asDoc(doc));
+
+  let bump: ((x: unknown) => void) | null = null;
+  function Clicky(): VNode {
+    return h("button", {
+      onClick: () => {
+        throw new Error("click boom");
+      },
+    }, "go");
+  }
+  function Parent(): VNode {
+    const [, setTick] = useState<unknown>(undefined);
+    bump = setTick;
+    return h("div", null, h(ErrorBoundary, { fallback: Fallback, children: h(Clicky, null) }));
+  }
+  const root = createRoot(asEl(container));
+  root.render(h(Parent, null));
+  assertEquals(container.innerHTML, "<div><button>go</button></div>");
+
+  bump!({}); // swap the boundary's buffers
+  flushSync();
+  const button = container.childNodes[0].childNodes[0] as FakeElement;
+  button.dispatch("click");
+  flushSync();
+  assertEquals(container.innerHTML, "<div><p>fallback: click boom</p></div>");
+  root.unmount();
+});
+
 Deno.test("a boundary's reset() still works after an ancestor re-rendered while it showed the fallback", () => {
   // `__error` is carried onto each new work-in-progress buffer from the committed one. An
   // ancestor re-render after the catch swaps the boundary's buffers, so a reset that only

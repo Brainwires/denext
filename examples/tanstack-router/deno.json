@@ -28,8 +28,7 @@
     "react-dom": "../../src/compat/react-dom.ts",
     "react-dom/client": "../../src/compat/react-dom-client.ts",
     "react/jsx-runtime": "../../src/jsx/jsx-runtime.ts",
-    "react/jsx-dev-runtime": "../../src/jsx/jsx-runtime.ts",
-    "file:///Users/nightness/Source/Brainwires/denext/examples/tanstack-router/src/styles.css": "file:///Users/nightness/Source/Brainwires/denext/examples/tanstack-router/.denext/css-shims/css_0.js"
+    "react/jsx-dev-runtime": "../../src/jsx/jsx-runtime.ts"
   },
   "lint": {
     "plugins": [

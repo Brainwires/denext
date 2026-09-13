@@ -3,10 +3,11 @@
 // through the real CLI, and render-assert a handful of routes. One test file per bed
 // (`<bed>.test.ts`) describes the app as data ({@linkcode Bed}) and calls {@linkcode runBed}.
 //
-// Skip vs. fail: a clone or dependency install that fails for NETWORK reasons skips the bed
-// (warn + return, the `tests/e2e/drizzle.e2e.test.ts` idiom — the nightly runner may be
-// offline or npm may be down); everything after the install is a real failure, because that
-// is where a denext regression shows up. `denext doctor` runs last as an informational
+// Skip vs. fail: a clone, dependency install or post-migrate setup command (`afterMigrate`:
+// Prisma engines, a seed) that fails for NETWORK reasons skips the bed (warn + return, the
+// `tests/e2e/drizzle.e2e.test.ts` idiom — the nightly runner may be offline or npm may be
+// down); `denext migrate`, the build, serving and the route assertions are real failures,
+// because that is where a denext regression shows up. `denext doctor` runs last as an informational
 // report (printed, not asserted) until its route expectations are tunable per bed.
 //
 // Run: `deno task test:migration-bed` (NETWORK-REQUIRED; the `migration-beds` job in
@@ -82,7 +83,9 @@ const DOCTOR_TIMEOUT_MS = 300_000;
 
 /** Output that means "the network, not denext" — the bed skips instead of failing. */
 const NETWORK_FAILURE =
-  /ENOTFOUND|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|Could not resolve host|unable to access|registry\.npmjs\.org|network|fetch failed|ERR_PNPM_META_FETCH_FAIL|ERR_PNPM_FETCH/i;
+  // Specific transport errors only — a bare /network/ once matched a real setup failure whose
+  // output merely mentioned the word, turning a regression into a silent skip.
+  /ENOTFOUND|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|Could not resolve host|unable to access|registry\.npmjs\.org|TypeError: fetch failed|error sending request for url|ERR_PNPM_META_FETCH_FAIL|ERR_PNPM_FETCH/i;
 
 /**
  * Run a command in `cwd`, bounded by `timeoutMs`. Never throws — reports instead. The

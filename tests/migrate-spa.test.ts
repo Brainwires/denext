@@ -413,3 +413,39 @@ Deno.test("migrate SPA: Vite-only plugins are dropped, the router runtime + code
     await Deno.remove(dir, { recursive: true }).catch(() => {});
   }
 });
+
+Deno.test("migrate SPA: the mount id is the lookup passed to createRoot, not the first lookup in the entry", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_spa_mount2_" });
+  try {
+    await writeTanStackApp(dir);
+    await Deno.writeTextFile(
+      join(dir, "src", "main.tsx"),
+      `import { createRoot } from 'react-dom/client'\n` +
+        `document.getElementById('splash')?.remove()\n` +
+        `createRoot(document.getElementById('app')!).render(<p>hi</p>)\n`,
+    );
+    const r = await migrateProject(dir, {});
+    assertEquals(r.spa?.rootId, "app");
+  } finally {
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});
+
+Deno.test('migrate SPA: `@import "tailwindcss/theme"` in a component stylesheet is not the Tailwind input', async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_spa_twtheme_" });
+  try {
+    await writeTanStackApp(dir);
+    await Deno.remove(join(dir, "src", "styles.css"));
+    await Deno.mkdir(join(dir, "src", "components"));
+    await Deno.writeTextFile(
+      join(dir, "src", "components", "button.css"),
+      `@import "tailwindcss/theme" theme(reference);\n.btn { @apply px-2; }\n`,
+    );
+    assertEquals(await findSpaTailwindInput(dir), null);
+    // A non-candidate name, so this exercises the `src/**/*.css` scan (not the name list).
+    await Deno.writeTextFile(join(dir, "src", "tw-entry.css"), `@import "tailwindcss";\n`);
+    assertEquals(await findSpaTailwindInput(dir), "./src/tw-entry.css");
+  } finally {
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});

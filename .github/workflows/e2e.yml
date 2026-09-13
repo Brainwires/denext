@@ -59,12 +59,15 @@ jobs:
   # `denext migrate` against this checkout, build, serve, and render-assert routes. Every
   # real-app migration so far found bugs by hand; this is that walk, nightly. A separate job
   # so a bed flake never masks a core e2e failure and each gets its own timeout. A clone or
-  # dependency install that fails for network reasons SKIPS the bed; anything after it fails.
+  # dependency install or post-migrate setup command that fails for network reasons SKIPS the
+  # bed; `denext migrate`, the build, serving and the route assertions FAIL the job.
   # Add a bed: a new `tests/migration-bed/<app>.test.ts` describing the app as data and
   # calling `runBed` (see _bed.ts); bump a pin deliberately and say why in the commit.
   migration-beds:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Above one bed's summed step deadlines (~55 min for a full stall) so the harness's own
+    # `[killed after …]` diagnostics print instead of the runner cutting the job first.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v5
         with:

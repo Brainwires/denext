@@ -32,7 +32,7 @@
     ],
     "links": {
       "jsr:@denext/avif@0.1.2": {},
-      "jsr:@denext/content-collections@0.2.0": {
+      "jsr:@denext/content-collections@0.3.0": {
         "dependencies": [
           "jsr:@denext/denext@^2.4.1",
           "jsr:@std/front-matter@1",

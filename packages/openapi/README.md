@@ -29,7 +29,7 @@ and `denext build` writes `openapi.json` into the output directory.
 denext plugin add @denext/openapi
 ```
 
-Or by hand: add `"@denext/openapi": "jsr:@denext/openapi@^0.1.0"` to `deno.json`'s
+Or by hand: add `"@denext/openapi": "jsr:@denext/openapi@^0.3.0"` to `deno.json`'s
 `imports` and the plugin to `denext.config.ts` as above.
 
 ## What gets described
@@ -176,12 +176,12 @@ const pet = await api("/api/pets/[id]", "GET", { params: { id: "1" } }); // type
 try {
   await api("/api/pets", "POST", { body: { name: "", species: "cat" } });
 } catch (err) {
-  if (isApiClientError(err) && err.code === "not_found") { /* narrowed to the declared codes */ }
+  if (isApiClientError(err) && err.code === "duplicate") { /* narrowed to the declared codes */ }
 }
 ```
 
 Types only — no fetch wrapper is generated, deliberately: a plain `fetch` consumer sees plain
-JSON except for values holding a Date, Map, Set, BigInt, URL, `undefined`, NaN or -0, which
+JSON except for values holding a Date, Map, Set, BigInt, URL, `undefined`, NaN, ±Infinity or -0, which
 arrive `$`-tagged with an `x-denext-wire: 1` header; `createApiClient` decodes those (and
 dedupes and batches), so it IS the client. An opaque schema (`{}`, see Lint codes) becomes
 `unknown`; a recursive `$defs` reference is cut to `unknown` at the cycle. The document stamps

@@ -34,8 +34,9 @@ deno task hooks:install   # install the pre-commit hook (once per clone)
   Chromium. The **migration beds** (`tests/migration-bed/`) clone SHA-pinned
   real-world apps, run `denext migrate` against your checkout, build, serve and
   render-assert routes — one `<app>.test.ts` per bed describing the app as data
-  and calling `runBed` (see `_bed.ts`). A clone or install that fails for network
-  reasons skips the bed; anything after it is a real failure. Bump a bed's SHA
+  and calling `runBed` (see `_bed.ts`). A clone, dependency install or post-migrate setup
+  command that fails for network reasons skips the bed; `denext migrate`, the build, serving
+  and the route assertions are real failures. Bump a bed's SHA
   deliberately and say why in the commit (the pin comment names what the newer
   upstream needs).
 
