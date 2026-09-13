@@ -1,0 +1,387 @@
+{
+  "examples": [
+    {
+      "name": "actions",
+      "title": "actions — denext Server Actions",
+      "blurb": "A guestbook demonstrating Server Actions (\"use server\") two ways.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/actions",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "animation",
+      "title": "denext × motion + react-spring",
+      "blurb": "Two real npm animation libraries — motion (motion.dev) and @react-spring/web — co-existing in one project, both running on denext's single React.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/animation",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "auth",
+      "title": "examples/auth — a runnable denextAuth app",
+      "blurb": "The production shape of denext's first-party auth in one small app:",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/auth",
+      "tags": [
+        "plugin:denextAuth",
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "cache-components",
+      "title": "Cache Components (use cache + PPR)",
+      "blurb": "A minimal demo of Next.js 16 Cache Components on denext, a stable opt-in enabled by top-level cacheComponents: true in denext.config.ts (the legacy experimental: { cacheComponents: true } still works…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/cache-components",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "caching",
+      "title": "caching — denext data cache & ISR",
+      "blurb": "Demonstrates denext's Next.js-compatible caching primitives, none of which had an example before.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/caching",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "concurrency",
+      "title": "denext × concurrent rendering",
+      "blurb": "A runnable demo of denext's fiber concurrency — the things the earlier cooperative scheduler could not do: time-slicing and mid-flight interruption.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/concurrency",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "content-collections",
+      "title": "Content collections",
+      "blurb": "@denext/content-collections in one app: a small blog whose posts are typed Markdown and MDX files on disk.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/content-collections",
+      "tags": [
+        "plugin:contentCollections",
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "drizzle",
+      "title": "Drizzle ORM on denext",
+      "blurb": "Typed SQL with Drizzle ORM over Deno's built-in node:sqlite — no native addon, no query engine.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/drizzle",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "effect",
+      "title": "denext migrate — Effect (Next app) fixture",
+      "blurb": "An actual Next.js App Router app that depends on Effect, used as the golden fixture for denext migrate's Effect support.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/effect",
+      "tags": [
+        "compat",
+        "plugin:effect",
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "effect-runtime",
+      "title": "denext + Effect — runnable bridge demo",
+      "blurb": "A minimal, runnable native-denext App Router app that runs Effect inside a Server Component via @denext/effect, showing:",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/effect-runtime",
+      "tags": [
+        "plugin:effect",
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "fonts",
+      "title": "fonts — self-hosted Google fonts (next/font/google)",
+      "blurb": "A one-page app that loads a Google font through the next/font/google compat module and self-hosts it at build time — no runtime request to Google.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/fonts",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "game",
+      "title": "denext × Three.js — \"Rivet Rumble\"",
+      "blurb": "A small 3D game built on Three.js (WebGL — plain JavaScript, not WASM) running on denext, bundled through the same next-compat esbuild path that handles motion / recharts.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/game",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "graphql",
+      "title": "examples/graphql",
+      "blurb": "@denext/graphql in one app: a Pothos (code-first, no decorators) schema served by GraphQL Yoga at /graphql, with a subscription that rides a denext channel — a post mutation publishes to…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/graphql",
+      "tags": [
+        "plugin:graphql",
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "hello",
+      "title": "hello — the denext starter tour",
+      "blurb": "The smallest end-to-end denext app, and the one the docs and benchmarks lean on.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/hello",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "htmx",
+      "title": "denext + htmx example",
+      "blurb": "An htmx app on denext via @denext/htmx. The home page uses only hx-* attributes, so denext classifies it static and ships 0 KB of denext client JS — htmx (served from this origin by the plugin) does…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/htmx",
+      "tags": [
+        "plugin:htmx",
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "image",
+      "title": "image — denext image optimization",
+      "blurb": "Demonstrates the <Image> component (next/image ergonomics) driving denext's built-in image optimizer at /_denext/image, plus a dynamic Open Graph image.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/image",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "instrumentation",
+      "title": "Instrumentation on denext",
+      "blurb": "A Next.js-style instrumentation.ts at the project root. denext auto-discovers it and, in both dev and start:",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/instrumentation",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "islands",
+      "title": "Islands demo — the six client:* hydration directives",
+      "blurb": "Each card on the page is the same \"use client\" component, carved out with a different directive.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/islands",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "live",
+      "title": "Live data & presence (secured)",
+      "blurb": "A runnable demo of the four gated Live hooks over a single WebSocket:",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/live",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "native",
+      "title": "denext native example — desktop + mobile",
+      "blurb": "One denext app packaged three ways: the web, a native desktop app via deno desktop, and iOS / Android via Capacitor. All three serve the same static export (deno task export → out/).",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/native",
+      "tags": [
+        "desktop",
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "next-compat",
+      "title": "next-compat example — real npm React libraries on denext",
+      "blurb": "This app renders the actual @radix-ui/react-collapsible npm package on denext's own React — server-rendered, then hydrated.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/next-compat",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "next-compat-feasibility",
+      "title": "denext conversion feasibility — dependency validation",
+      "blurb": "Two probes that answer one question for a real Next.js app: would its dependency tree run on denext? They validate dependencies only — they do not convert the app.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/next-compat-feasibility",
+      "tags": [],
+      "hasReadme": true
+    },
+    {
+      "name": "next-compat-recharts",
+      "title": "next-compat: real recharts on denext (class components)",
+      "blurb": "This example runs the actual recharts npm package — a charting library built on React class components — on denext's single React, server-rendered to SVG and hydrated on the client.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/next-compat-recharts",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "notes",
+      "title": "examples/notes — a real, small denext app",
+      "blurb": "A notes app that answers \"is this a toy?\" in one read. It uses the pieces a real app needs, and every flow works with JavaScript disabled:",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/notes",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "openapi",
+      "title": "examples/openapi",
+      "blurb": "@denext/openapi in one app: a tiny pet store defined with defineApi + Zod, which the plugin turns — with no extra annotation — into an OpenAPI 3.1 document at /openapi.json, an interactive Swagger UI…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/openapi",
+      "tags": [
+        "plugin:openapi",
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "pages-router",
+      "title": "pages-router — the @denext/pages-router plugin",
+      "blurb": "The reference app for the legacy Pages Router, which ships as an opt-in plugin (@denext/pages-router) rather than in the core. It also shows the Pages Router coexisting with the App Router in one app.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/pages-router",
+      "tags": [
+        "plugin:pagesRouter",
+        "pages-router",
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "plugin-aliases",
+      "title": "denext plugin example: path aliases",
+      "blurb": "A ~40-line denext plugin — the smallest real one, and the first to use the route-synthesizer seam (@denext/pages-router uses the request-handler + build-step seams). See the plugin authoring guide.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/plugin-aliases",
+      "tags": [
+        "plugin:aliasesPlugin",
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "postgres-load",
+      "title": "denext × Postgres under load",
+      "blurb": "The database guide says of networked databases: \"these drivers are not part of denext's CI — validate your driver + pooling under your load.\" This example is that validation, made runnable.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/postgres-load",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "prisma",
+      "title": "Prisma ORM on denext",
+      "blurb": "The app is a tiny notes list: a Server Component awaits the Prisma query and renders the rows, and a native <form> posts a Server Action that inserts through the same Prisma client — no client…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/prisma",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "react-router",
+      "title": "examples/react-router",
+      "blurb": "A React Router v7 framework-mode app running on denext through @denext/react-router, with the route components left unmodified — they still import { Outlet, Form, useLoaderData } from \"react-router\".",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/react-router",
+      "tags": [
+        "plugin:reactRouter",
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "resumability",
+      "title": "Resumability demo",
+      "blurb": "A route rendered with export const resumable = true: interactive with no up-front hydration. Islands resume on demand — click one counter and only that island hydrates.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/resumability",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "spa",
+      "title": "SPA example (mode: \"spa\")",
+      "blurb": "A client-only React SPA on denext — \"React but not Next.\" There is no app/ directory: denext bundles a single entry (src/main.tsx), wraps it in an HTML shell, and serves that shell for every…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/spa",
+      "tags": [
+        "spa"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "streaming",
+      "title": "streaming — denext Suspense & streaming SSR",
+      "blurb": "Demonstrates asynchronous rendering three ways: async Server Components inside Suspense, a loading.tsx route fallback, and true out-of-order streaming SSR.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/streaming",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "tailwind",
+      "title": "denext + Tailwind example",
+      "blurb": "A minimal denext app styled with Tailwind CSS v4 — no npm, no PostCSS config.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/tailwind",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "tanstack-router",
+      "title": "TanStack Router on denext (library mode)",
+      "blurb": "A stock file-based TanStack Router app running in denext SPA mode — no plugin, no server rendering.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/tanstack-router",
+      "tags": [
+        "spa",
+        "compat"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "transitions",
+      "title": "denext × useTransition",
+      "blurb": "A runnable demo of denext's fiber concurrency on the classic typeahead.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/transitions",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
+      "name": "typed-api",
+      "title": "Typed API, end to end — no tRPC",
+      "blurb": "Everything the typed-API surface ships, in one small app:",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/typed-api",
+      "tags": [
+        "plugin:openapi",
+        "app-router"
+      ],
+      "hasReadme": true
+    }
+  ]
+}

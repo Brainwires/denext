@@ -1,0 +1,753 @@
+{
+  "globalFlags": [
+    {
+      "name": "cwd",
+      "type": "string",
+      "valueName": "<path>",
+      "description": "Run as if from this directory"
+    },
+    {
+      "name": "config",
+      "type": "string",
+      "valueName": "<path>",
+      "description": "Explicit config file path"
+    },
+    {
+      "name": "json",
+      "type": "boolean",
+      "description": "Machine-readable output where supported"
+    },
+    {
+      "name": "verbose",
+      "type": "boolean",
+      "description": "Extra diagnostic output"
+    },
+    {
+      "name": "quiet",
+      "type": "boolean",
+      "description": "Suppress non-essential output"
+    }
+  ],
+  "commands": [
+    {
+      "name": "add",
+      "summary": "Add a dependency (deno add)",
+      "usage": "denext add <packages> [-- <deno args>]",
+      "description": "  denext add jsr:@std/assert\n  denext add npm:zod",
+      "flags": [],
+      "positionals": [
+        {
+          "name": "packages",
+          "required": true,
+          "variadic": false,
+          "description": "Packages to add"
+        }
+      ]
+    },
+    {
+      "name": "analyze",
+      "summary": "Build, then break down client bundle sizes by chunk",
+      "usage": "denext analyze [dir] [options]",
+      "flags": [
+        {
+          "name": "md",
+          "type": "boolean",
+          "description": "Print a markdown bundle report (per-module breakdown on the esbuild path); pipe to a file"
+        }
+      ],
+      "positionals": [
+        {
+          "name": "dir",
+          "required": false,
+          "variadic": false,
+          "description": "Project directory (default: .)"
+        }
+      ]
+    },
+    {
+      "name": "audit",
+      "summary": "Audit dependencies + prove the runtime is zero-npm",
+      "usage": "denext audit [dir] [options]",
+      "flags": [
+        {
+          "name": "sbom",
+          "type": "boolean",
+          "description": "Emit a CycloneDX SBOM (JSON)"
+        },
+        {
+          "name": "strict",
+          "type": "boolean",
+          "description": "Exit non-zero if runtime source imports npm"
+        }
+      ],
+      "positionals": [
+        {
+          "name": "dir",
+          "required": false,
+          "variadic": false,
+          "description": "Project directory (default: .)"
+        }
+      ]
+    },
+    {
+      "name": "build",
+      "summary": "Build for production",
+      "usage": "denext build [dir]",
+      "flags": [],
+      "positionals": [
+        {
+          "name": "dir",
+          "required": false,
+          "variadic": false,
+          "description": "Project directory (default: .)"
+        }
+      ]
+    },
+    {
+      "name": "check",
+      "summary": "Type-check the app (deno check)",
+      "usage": "denext check [paths] [-- <deno args>]",
+      "flags": [],
+      "positionals": [
+        {
+          "name": "paths",
+          "required": false,
+          "variadic": false,
+          "description": "Entry files to check"
+        }
+      ]
+    },
+    {
+      "name": "codemod",
+      "summary": "(advanced) Rewrite next/*+react imports to native denext",
+      "usage": "denext codemod [dir] [options]",
+      "flags": [
+        {
+          "name": "write",
+          "type": "boolean",
+          "description": "Apply without prompting (CI)"
+        }
+      ],
+      "positionals": [
+        {
+          "name": "dir",
+          "required": false,
+          "variadic": false,
+          "description": "App directory (default: .)"
+        }
+      ]
+    },
+    {
+      "name": "completions",
+      "summary": "Print a shell completion script (bash|zsh|fish)",
+      "usage": "denext completions <shell>",
+      "flags": [],
+      "positionals": [
+        {
+          "name": "shell",
+          "required": true,
+          "variadic": false,
+          "description": "bash | zsh | fish"
+        }
+      ]
+    },
+    {
+      "name": "create",
+      "summary": "Scaffold a new app",
+      "usage": "denext create <dir> [options]",
+      "flags": [
+        {
+          "name": "tailwind",
+          "type": "boolean",
+          "description": "Tailwind CSS"
+        },
+        {
+          "name": "src-dir",
+          "type": "boolean",
+          "description": "src/ directory layout"
+        },
+        {
+          "name": "compiler",
+          "type": "boolean",
+          "description": "Auto-memo compiler (experimental)"
+        },
+        {
+          "name": "desktop",
+          "type": "boolean",
+          "description": "Native desktop app (deno desktop)"
+        },
+        {
+          "name": "capacitor",
+          "type": "boolean",
+          "description": "iOS / Android (Capacitor)"
+        },
+        {
+          "name": "compatibility",
+          "type": "boolean",
+          "description": "React + Next import aliases"
+        },
+        {
+          "name": "template",
+          "type": "string",
+          "valueName": "<name>",
+          "description": "Starter template (default | minimal; default: default)"
+        },
+        {
+          "name": "yes",
+          "alias": "y",
+          "type": "boolean",
+          "description": "Skip prompts, use flags/defaults"
+        }
+      ],
+      "positionals": [
+        {
+          "name": "dir",
+          "required": true,
+          "variadic": false,
+          "description": "New app directory"
+        }
+      ]
+    },
+    {
+      "name": "desktop",
+      "summary": "Build/run/package the app as a native desktop app",
+      "usage": "denext desktop [action] [dir] [options]",
+      "description": "  denext desktop run                     Export + open in a deno desktop window\n  denext desktop build                   Export the SPA to out/\n  denext desktop package                 Build a distributable bundle (host OS: macOS or Linux)\n  denext desktop package --target-os linux   Cross-build the Linux bundle from any OS",
+      "flags": [
+        {
+          "name": "entry",
+          "type": "string",
+          "valueName": "<file>",
+          "description": "Desktop entry (default: desktop.ts)"
+        },
+        {
+          "name": "target-os",
+          "type": "string",
+          "valueName": "<os>",
+          "description": "package for: macos | linux (default: the host OS; cross-builds where supported)"
+        }
+      ],
+      "positionals": [
+        {
+          "name": "action",
+          "required": false,
+          "variadic": false,
+          "description": "run | build | package (default: run)"
+        },
+        {
+          "name": "dir",
+          "required": false,
+          "variadic": false,
+          "description": "Project directory (default: .)"
+        }
+      ]
+    },
+    {
+      "name": "dev",
+      "summary": "Start the dev server",
+      "usage": "denext dev [dir] [options]",
+      "description": "Without --port, an open port is auto-selected starting at 3000.\nWith --port, that exact port is required and the server errors if it is taken.",
+      "flags": [
+        {
+          "name": "port",
+          "alias": "p",
+          "type": "number",
+          "valueName": "<port>",
+          "description": "Port (default: 3000)"
+        },
+        {
+          "name": "host",
+          "altNames": [
+            "hostname"
+          ],
+          "type": "string",
+          "valueName": "<host>",
+          "description": "Hostname"
+        }
+      ],
+      "positionals": [
+        {
+          "name": "dir",
+          "required": false,
+          "variadic": false,
+          "description": "Project directory (default: .)"
+        }
+      ]
+    },
+    {
+      "name": "doctor",
+      "aliases": [
+        "probe"
+      ],
+      "summary": "Diagnose the project (supersedes probe)",
+      "usage": "denext doctor [dir] [options]",
+      "flags": [
+        {
+          "name": "report",
+          "type": "boolean",
+          "description": "Print a markdown health report (checks, every route's conformance, the last build's client bundle by chunk); with --json, the same data as JSON"
+        }
+      ],
+      "positionals": [
+        {
+          "name": "dir",
+          "required": false,
+          "variadic": false,
+          "description": "Project directory (default: .)"
+        }
+      ]
+    },
+    {
+      "name": "export",
+      "summary": "Static export (SSG) to out/",
+      "usage": "denext export [dir]",
+      "flags": [],
+      "positionals": [
+        {
+          "name": "dir",
+          "required": false,
+          "variadic": false,
+          "description": "Project directory (default: .)"
+        }
+      ]
+    },
+    {
+      "name": "fmt",
+      "summary": "Format the app (deno fmt)",
+      "usage": "denext fmt [paths] [-- <deno args>]",
+      "description": "Forwards to `deno fmt`. Pass `--check` to verify without writing.",
+      "flags": [],
+      "positionals": [
+        {
+          "name": "paths",
+          "required": false,
+          "variadic": false,
+          "description": "Files/dirs to format (default: project)"
+        }
+      ]
+    },
+    {
+      "name": "generate",
+      "aliases": [
+        "g"
+      ],
+      "summary": "Scaffold a route, boundary, component, api, action, middleware, or task into an app",
+      "usage": "denext generate <kind> [name] [dir]",
+      "description": "  denext generate page dashboard/settings\n  denext generate layout dashboard\n  denext generate loading dashboard # app/dashboard/loading.tsx (root if no path)\n  denext generate error dashboard   # app/dashboard/error.tsx (Client Component)\n  denext generate not-found         # app/not-found.tsx\n  denext generate component UserCard\n  denext generate api users\n  denext generate action createPost\n  denext generate middleware        # middleware.ts (beside app/)\n  denext generate task cleanup      # tasks/cleanup.ts (defineTask)\n  denext generate test UserCard     # tests/UserCard.test.tsx (denext/testing)\n  denext generate docker            # Dockerfile + docker-compose.yml + .dockerignore\n  denext generate docker spa        # force the static/SPA image (else auto-detected)",
+      "flags": [],
+      "positionals": [
+        {
+          "name": "kind",
+          "required": true,
+          "variadic": false,
+          "description": "page | route | layout | loading | error | not-found | component | api | action | middleware | task | test | docker"
+        },
+        {
+          "name": "name",
+          "required": false,
+          "variadic": false,
+          "description": "Route/component/action name (docker: optional server|spa)"
+        },
+        {
+          "name": "dir",
+          "required": false,
+          "variadic": false,
+          "description": "Project directory (default: .)"
+        }
+      ]
+    },
+    {
+      "name": "info",
+      "summary": "Print environment + project facts",
+      "usage": "denext info [dir]",
+      "flags": [],
+      "positionals": [
+        {
+          "name": "dir",
+          "required": false,
+          "variadic": false,
+          "description": "Project directory (default: .)"
+        }
+      ]
+    },
+    {
+      "name": "init",
+      "summary": "Scaffold into the current directory",
+      "usage": "denext init [dir] [options]",
+      "flags": [
+        {
+          "name": "tailwind",
+          "type": "boolean",
+          "description": "Tailwind CSS"
+        },
+        {
+          "name": "src-dir",
+          "type": "boolean",
+          "description": "src/ directory layout"
+        },
+        {
+          "name": "compiler",
+          "type": "boolean",
+          "description": "Auto-memo compiler (experimental)"
+        },
+        {
+          "name": "desktop",
+          "type": "boolean",
+          "description": "Native desktop app (deno desktop)"
+        },
+        {
+          "name": "capacitor",
+          "type": "boolean",
+          "description": "iOS / Android (Capacitor)"
+        },
+        {
+          "name": "compatibility",
+          "type": "boolean",
+          "description": "React + Next import aliases"
+        },
+        {
+          "name": "template",
+          "type": "string",
+          "valueName": "<name>",
+          "description": "Starter template (default | minimal; default: default)"
+        },
+        {
+          "name": "yes",
+          "alias": "y",
+          "type": "boolean",
+          "description": "Skip prompts, use flags/defaults"
+        }
+      ],
+      "positionals": [
+        {
+          "name": "dir",
+          "required": false,
+          "variadic": false,
+          "description": "Existing directory (default: .)"
+        }
+      ]
+    },
+    {
+      "name": "lint",
+      "summary": "Lint the app (deno lint)",
+      "usage": "denext lint [paths] [-- <deno args>]",
+      "flags": [],
+      "positionals": [
+        {
+          "name": "paths",
+          "required": false,
+          "variadic": false,
+          "description": "Files/dirs to lint (default: project)"
+        }
+      ]
+    },
+    {
+      "name": "mcp",
+      "summary": "Run the denext MCP server (stdio) so agents/IDEs can call denext's tooling",
+      "usage": "denext mcp [options]",
+      "description": "  denext mcp                     # speak MCP over stdio (configure as an MCP server)\n  denext mcp --disable rag,docs # expose fewer tools to trim the client's context\n\n  Tools: denext_check_snippet, denext_import_map, denext_generate, denext_doctor,\n  denext_codemod, denext_list_routes, denext_dev_logs, denext_render, denext_route_map,\n  denext_search_docs, denext_index_codebase, denext_query_codebase, denext_find_definition,\n  denext_find_references. Resources: denext://guide, denext://import-map.\n\n  --disable takes a comma-separated list of groups (authoring, project, inspect, profile, dev, docs, rag) and/or tool\n  names (with or without the denext_ prefix), e.g. --disable rag,docs or --disable render.",
+      "flags": [
+        {
+          "name": "disable",
+          "type": "string",
+          "valueName": "<groups|tools>",
+          "description": "Comma-separated groups (authoring, project, inspect, profile, dev, docs, rag) and/or tool names to hide"
+        }
+      ],
+      "positionals": []
+    },
+    {
+      "name": "migrate",
+      "summary": "Migrate a Next.js, Remix, Vite, CRA, or React app (config files)",
+      "usage": "denext migrate [dir] [options]",
+      "flags": [
+        {
+          "name": "from",
+          "type": "string",
+          "valueName": "<framework>",
+          "description": "Force source: next | remix | vite | cra | generic"
+        },
+        {
+          "name": "desktop",
+          "type": "boolean",
+          "description": "Also scaffold a desktop entry"
+        },
+        {
+          "name": "backend",
+          "type": "string",
+          "valueName": "<url>",
+          "description": "Backend URL for SPA proxy"
+        },
+        {
+          "name": "proxy",
+          "type": "string",
+          "valueName": "<paths>",
+          "description": "Comma-separated proxy prefixes"
+        },
+        {
+          "name": "codemod",
+          "type": "boolean",
+          "description": "Also rewrite source imports to native denext"
+        },
+        {
+          "name": "yes",
+          "alias": "y",
+          "type": "boolean",
+          "description": "Apply the codemod without prompting"
+        },
+        {
+          "name": "denext-local-path",
+          "type": "string",
+          "valueName": "<path>",
+          "description": "Point the generated config at a LOCAL denext checkout (file://) instead of JSR — for testing an unreleased/dev denext against a real app"
+        }
+      ],
+      "positionals": [
+        {
+          "name": "dir",
+          "required": false,
+          "variadic": false,
+          "description": "App directory to migrate (default: .)"
+        }
+      ]
+    },
+    {
+      "name": "patch",
+      "summary": "Patch npm packages — or denext itself (patches/*.patch)",
+      "usage": "denext patch <action> [name] [file] [dir]",
+      "description": "  denext patch create <package|denext> [dir]\n  denext patch list [dir]\n  denext patch delete <name|index> [dir]\n  denext patch apply [dir]\n  denext patch edit <package|denext> <file> [dir]\n\n  create  diff the package's installed files (node_modules/<pkg>) — or denext's working\n          copies (patches/.work/denext/) — against pristine → patches/<name>+<version>.patch\n          (added and deleted files are recorded; a file over 2 MiB / 50k lines is skipped)\n  list    the patches, indexed\n  delete  remove a patch and undo it (npm files reverted, denext mapping dropped)\n  apply   apply every patch now (dev/build/start/export do this at boot)\n  edit    for denext: copy a framework file to patches/.work/denext/ to edit;\n          for a package: print the installed file's path\n\n  denext patch edit denext src/server/document.ts\n  denext patch create denext\n  denext patch create left-pad\n  denext patch delete 2",
+      "flags": [],
+      "positionals": [
+        {
+          "name": "action",
+          "required": true,
+          "variadic": false,
+          "description": "create | list | delete | apply | edit"
+        },
+        {
+          "name": "name",
+          "required": false,
+          "variadic": false,
+          "description": "Package name, `denext`, or (delete) a list index"
+        },
+        {
+          "name": "file",
+          "required": false,
+          "variadic": false,
+          "description": "(edit) path inside the package"
+        },
+        {
+          "name": "dir",
+          "required": false,
+          "variadic": false,
+          "description": "Project directory (default: .)"
+        }
+      ]
+    },
+    {
+      "name": "plugin",
+      "summary": "Manage denext plugins (add, remove, list)",
+      "usage": "denext plugin <action> [pkg] [dir] [options]",
+      "description": "  denext plugin add <pkg> [dir]\n  denext plugin remove <pkg> [dir]\n  denext plugin list [dir]\n\n  add     adds the dependency (deno add) and wires the plugin into denext.config.ts\n  remove  unwires the plugin from denext.config.ts and drops the dependency\n  list    show the plugins wired into denext.config.ts\n\n  denext plugin add @denext/htmx\n  denext plugin remove @denext/htmx\n  denext plugin list\n  denext plugin add my-plugin --export configureMyPlugin",
+      "flags": [
+        {
+          "name": "export",
+          "type": "string",
+          "valueName": "<name>",
+          "description": "Factory export name (default: camelCased package name)"
+        },
+        {
+          "name": "no-call",
+          "type": "boolean",
+          "description": "Plugin is a ready value, not a factory — omit ()"
+        }
+      ],
+      "positionals": [
+        {
+          "name": "action",
+          "required": true,
+          "variadic": false,
+          "description": "add | remove | list"
+        },
+        {
+          "name": "pkg",
+          "required": false,
+          "variadic": false,
+          "description": "Plugin package for add/remove (e.g. @denext/htmx)"
+        },
+        {
+          "name": "dir",
+          "required": false,
+          "variadic": false,
+          "description": "Project directory (default: .)"
+        }
+      ]
+    },
+    {
+      "name": "profile",
+      "summary": "Profile CPU self-time + heap for a route (with an optional budget gate)",
+      "usage": "denext profile [dir] [options]",
+      "flags": [
+        {
+          "name": "route",
+          "type": "string",
+          "valueName": "<path>",
+          "default": "/",
+          "description": "Route to profile"
+        },
+        {
+          "name": "interact",
+          "type": "string",
+          "valueName": "<file>",
+          "description": "JS file evaluated in the page to exercise it each iteration"
+        },
+        {
+          "name": "iterations",
+          "type": "number",
+          "default": 1,
+          "description": "Repeat the interaction N times"
+        },
+        {
+          "name": "sampling",
+          "type": "number",
+          "default": 100,
+          "description": "CPU sampling interval (µs)"
+        },
+        {
+          "name": "top",
+          "type": "number",
+          "default": 20,
+          "description": "Max self-time rows to show"
+        },
+        {
+          "name": "budget",
+          "type": "string",
+          "valueName": "<file>",
+          "description": "Fail (exit 1) if the run exceeds this recorded budget"
+        },
+        {
+          "name": "write-budget",
+          "type": "string",
+          "valueName": "<file>",
+          "description": "Write the current run as a baseline budget file"
+        },
+        {
+          "name": "minify",
+          "type": "boolean",
+          "description": "Profile a minified build (default: unminified)"
+        }
+      ],
+      "positionals": [
+        {
+          "name": "dir",
+          "required": false,
+          "variadic": false,
+          "description": "Project directory (default: .)"
+        }
+      ]
+    },
+    {
+      "name": "remove",
+      "summary": "Remove a dependency (deno remove)",
+      "usage": "denext remove <packages> [-- <deno args>]",
+      "flags": [],
+      "positionals": [
+        {
+          "name": "packages",
+          "required": true,
+          "variadic": false,
+          "description": "Packages to remove"
+        }
+      ]
+    },
+    {
+      "name": "start",
+      "summary": "Serve a production build",
+      "usage": "denext start [dir] [options]",
+      "flags": [
+        {
+          "name": "port",
+          "alias": "p",
+          "type": "number",
+          "valueName": "<port>",
+          "description": "Port (default: 3000)"
+        },
+        {
+          "name": "host",
+          "altNames": [
+            "hostname"
+          ],
+          "type": "string",
+          "valueName": "<host>",
+          "description": "Hostname"
+        }
+      ],
+      "positionals": [
+        {
+          "name": "dir",
+          "required": false,
+          "variadic": false,
+          "description": "Project directory (default: .)"
+        }
+      ]
+    },
+    {
+      "name": "task",
+      "summary": "Run a background task by name, or list them (--list)",
+      "usage": "denext task [name] [options]",
+      "description": "denext task <name> [--payload '<json>']\ndenext task --list",
+      "flags": [
+        {
+          "name": "list",
+          "alias": "l",
+          "type": "boolean",
+          "description": "List the app's tasks and exit"
+        },
+        {
+          "name": "payload",
+          "type": "string",
+          "valueName": "<json>",
+          "description": "JSON passed to the task's ctx.payload"
+        }
+      ],
+      "positionals": [
+        {
+          "name": "name",
+          "required": false,
+          "variadic": false,
+          "description": "Task name (its path under tasks/, e.g. cleanup)"
+        }
+      ]
+    },
+    {
+      "name": "test",
+      "summary": "Run the app's tests (deno test)",
+      "usage": "denext test [paths] [-- <deno args>]",
+      "description": "Forwards to `deno test -A`. Extra args/paths pass through:\n  denext test                  Run every test\n  denext test --watch          Re-run on change (deno test --watch)\n  denext test --coverage=cov   Collect coverage, then `deno coverage cov`\n  denext test --filter Auth    Forward deno test flags\n  denext test routes/          Restrict to a path",
+      "flags": [],
+      "positionals": [
+        {
+          "name": "paths",
+          "required": false,
+          "variadic": false,
+          "description": "Test files/dirs (default: all)"
+        }
+      ]
+    },
+    {
+      "name": "update",
+      "summary": "Update dependencies to latest (deno outdated --update)",
+      "usage": "denext update [packages] [-- <deno args>]",
+      "description": "Forwards to `deno outdated --update`. Pass package names to scope it,\nor `--latest` to cross semver ranges.",
+      "flags": [],
+      "positionals": [
+        {
+          "name": "packages",
+          "required": false,
+          "variadic": false,
+          "description": "Packages to update (default: all)"
+        }
+      ]
+    }
+  ]
+}
