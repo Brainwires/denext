@@ -27,6 +27,9 @@ export const DEP_ENTRYPOINTS: Record<string, string> = {
   "denext_jsx-runtime": "src/jsx/jsx-runtime.ts",
   "denext_live": "src/live.ts",
   "denext_lazy": "src/lazy.ts",
+  // Loaded on demand by the client (`class-loader.ts`) when a class component first renders; a
+  // missing entry here 404s the whole module graph and the page never hydrates.
+  "denext_class-runtime": "src/class-runtime.ts",
   "denext_client-runtime": "src/client/client-runtime.ts",
   "denext_devtools": "src/devtools.ts",
 };
@@ -38,6 +41,7 @@ export const DENEXT_RUNTIME_FILE: Record<string, string> = {
   "denext/jsx-dev-runtime": "jsx-runtime.js",
   "denext/live": "live.js",
   "denext/lazy": "lazy.js",
+  "denext/class-runtime": "class-runtime.js",
   "denext/client-runtime": "client-runtime.js",
   "denext/devtools": "devtools.js",
 };

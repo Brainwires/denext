@@ -82,3 +82,23 @@ Deno.test("onChange: boundary updates, a structural reload, and an unknown-only 
   assertEquals(onChange(st, ["/proj/app/B.tsx"]).reload, true);
   assertEquals(onChange(st, ["/proj/app/nope.tsx"]).unknownOnly, true);
 });
+
+Deno.test("unbundled @dep inventory: every denext specifier the client can import is pre-bundled", async () => {
+  const { DENEXT_RUNTIME_FILE, DEP_ENTRYPOINTS, depSlug } = await import(
+    "../src/build/dev-unbundled/state.ts"
+  );
+  // The native @dep set and the compat runtime-file map describe the same specifiers; a
+  // subpath present in one but not the other 404s in that dev mode. `denext/class-runtime`
+  // (loaded on demand by class-loader.ts) was missing from both — the unbundled dev pages
+  // never hydrated, silently (a failed module fetch is not a console error).
+  for (const spec of Object.keys(DENEXT_RUNTIME_FILE)) {
+    const slug = depSlug(spec === "denext/jsx-dev-runtime" ? "denext/jsx-runtime" : spec);
+    assert(slug in DEP_ENTRYPOINTS, `${spec} has no native @dep entry (${slug})`);
+  }
+  assertEquals(DEP_ENTRYPOINTS["denext_class-runtime"], "src/class-runtime.ts");
+  assertEquals(DENEXT_RUNTIME_FILE["denext/class-runtime"], "class-runtime.js");
+  // Every entry points at a real framework file.
+  for (const rel of Object.values(DEP_ENTRYPOINTS)) {
+    await Deno.stat(new URL("../" + rel, import.meta.url));
+  }
+});

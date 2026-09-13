@@ -29,6 +29,12 @@ and this project adheres to
 
 ### Fixed
 
+- **Unbundled dev pages did not hydrate (`denext dev`, the default per-module HMR loop).** The
+  on-demand class runtime (`denext/class-runtime`, 2.4.0) was never added to the dev server's
+  pre-bundled `@dep` set, so the client's import of it answered 404, the whole module graph
+  failed to load, and every page stayed server HTML — silently, since a failed module fetch is
+  not a console error. Both the native `@dep` map and the compat runtime-file map now carry it,
+  and a unit test keeps the two in step with each other.
 - **A Suspense boundary that suspended on mount could show its fallback forever.** If an
   ancestor re-rendered while the promise was pending (a parent `setState` from a layout
   effect — TanStack Router's `Transitioner` does exactly this on mount), the boundary's fiber
