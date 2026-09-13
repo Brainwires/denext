@@ -1,16 +1,20 @@
-# denext — Architecture (how it differs underneath the surface)
+---
+title: Architecture
+slug: architecture
+lead: How denext differs underneath the React surface — its own reconciler, an async-only SSR renderer, the concurrency model, soft navigation, request-scoped cache, and Pages-Router-as-a-plugin; deliberate design choices, invisible to correct API usage.
+---
 
 denext's promise is the **React/Next.js surface**: imports resolve, public APIs
 exist, and they behave correctly for correct usage. _Underneath_ that surface,
 denext is its own engine — its own fiber reconciler, an async-only SSR renderer,
 its own Flight boundary and cache. That is not incidental; it is **where the wins
 come from** (~7× smaller output, 0 KB JS on a static route, resumability, live
-components — see [MISSION.md](./MISSION.md)).
+components — see [MISSION.md](https://github.com/Brainwires/denext/blob/main/MISSION.md)).
 
 These internal differences are **deliberate design choices, invisible to correct
 API usage**. They are catalogued here so they aren't mistaken for limitations. A
 genuine surface gap — an API that's missing, throws, or behaves observably wrong —
-lives in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md), and each is cross-linked
+lives in [KNOWN-LIMITATIONS.md](/docs/limitations), and each is cross-linked
 below where one exists.
 
 ## Its own reconciler + an async-only SSR renderer
@@ -27,7 +31,70 @@ smaller bundles and first-class streaming.
   does); a component that genuinely awaits throws a guided error. The **Node-stream** APIs
   (`renderToPipeableStream`/`renderToStaticNodeStream`) are a thin adapter over the Web
   renderer and buffer rather than apply `Writable` backpressure — denext targets the Web
-  stream. Tracked in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
+  stream. Tracked in [KNOWN-LIMITATIONS.md](/docs/limitations).
+
+## Concurrency: fiber-based, time-sliced, and interruptible
+
+denext renders on a **fiber architecture**. The client reconciler builds the
+next tree as resumable units of work over a double-buffered fiber tree and
+commits it atomically. This section is precise about what that gives you.
+
+### Two lanes
+
+- **Sync (default) lane** — urgent updates (`setState` outside a transition, the
+  initial `render()`/`hydrateRoot()`, `flushSync`, `act`) render **and commit to
+  completion synchronously**. Nothing about the timing your code observes has
+  changed.
+- **Transition lane** — updates inside `startTransition`/`useTransition`, and
+  `useDeferredValue`, render on the **concurrent path** below.
+
+### What the transition lane does
+
+1. **Resumable work loop.** Rendering proceeds as discrete units of work over
+   the fiber tree (`child`/`sibling`/`return`), so it can pause and resume at
+   any node.
+2. **Time-slicing.** The loop checks a ~5 ms frame budget between units and
+   **yields via `MessageChannel`**, continuing on the next slice — so a heavy
+   transition never blocks paint or input. `isPending` paints immediately and
+   clears when the transition commits.
+3. **Interrupt-and-restart.** A sync update that arrives while a transition is
+   in flight **abandons** the transition's in-progress work, commits the urgent
+   update immediately, and **restarts** the transition from the
+   freshly-committed state (`useId` counters are snapshot/restored so the
+   restart is deterministic).
+4. **Double-buffering / atomic commit.** The next tree is built **off-DOM**
+   (`current` + `workInProgress` buffers); an interrupted or discarded
+   transition never shows partial DOM. The work-in-progress tree becomes
+   `current` in a single swap at commit.
+5. **Render / commit phase split.** `beginWork`/`completeWork` build the tree
+   with no live-DOM mutation; a separate commit phase does deletions, prop
+   updates, placement, the atomic swap, then effects — so a render can be
+   dropped or restarted safely.
+
+`useDeferredValue` trails the urgent render and coalesces rapid changes;
+`useOptimistic` applies an optimistic value until the real update lands.
+
+### Effect phases
+
+Effects are split exactly as React splits them:
+
+- **Layout phase (synchronous, before paint):** `useLayoutEffect`,
+  `useInsertionEffect`, and class `componentDidMount`/`componentDidUpdate` run
+  synchronously during commit, so DOM measurements and style injection see the
+  committed tree with no flicker.
+- **Passive phase (scheduled, after paint):** `useEffect` and
+  `useSyncExternalStore` subscriptions run on a task scheduled after the commit.
+  They are flushed before the next render and inside `flushSync`/`act`, so
+  ordering is deterministic. (In tests, assert a `useEffect` side effect only
+  after a `flushSync()` or `await act(...)` — the same requirement as React.)
+
+### Concurrent rendering
+
+denext implements React's concurrent-rendering model: a resumable fiber
+work loop, time-slicing, priority lanes with interrupt-and-restart,
+double-buffering with atomic commit, and the render/commit + layout/passive
+phase split. The sync (default) lane still renders and commits synchronously, so
+`render()`/`hydrateRoot()`/`flushSync()`/`act()` remain synchronous.
 
 ## Soft navigation: two mechanisms, one correct behavior
 
@@ -43,6 +110,13 @@ on the route:
 Navigation is correct either way; the Flight path is simply faster. Give a route a
 client/server boundary to opt it onto the registry path. This is a performance gradient,
 not a limitation.
+
+The **dev server bundles each route independently and lazily** for fast rebuilds,
+whereas `denext build` runs a single code-split pass that hoists the client runtime into
+one shared chunk. A production page therefore shares exactly one runtime instance across
+route entries; the dev server does not guarantee that. The production build is the source
+of truth for runtime-singleton behavior, so verify a release against `denext build`
+output, not only the dev server.
 
 ## `React.cache` is request-scoped during SSR
 
@@ -71,8 +145,8 @@ denext's built-in router is the **App Router**. The **full** Next.js Pages Route
 `getServerSideProps`/`getStaticProps`/`getStaticPaths`/`getInitialProps`,
 `_app`/`_document`, `pages/api/*`, and `useRouter` with events, shallow routing,
 `<Link>` prefetch, and i18n locale routing — ships as opt-in
-[`@denext/pages-router`](./packages/pages-router). Same surface; a leaner core that
-doesn't carry two routers for the apps that use one. See [PLUGINS.md](./PLUGINS.md).
+[`@denext/pages-router`](https://github.com/Brainwires/denext/tree/main/packages/pages-router). Same surface; a leaner core that
+doesn't carry two routers for the apps that use one. See [PLUGINS.md](/docs/plugins).
 
 ## next-compat build choices
 
@@ -84,7 +158,7 @@ React at bundle time. A few deliberate build defaults on that path:
   check` validates _your_ `.tsx`, not npm libraries' bundled `.d.ts` against denext's
   React type shim. Residual library type edges are type-only, never runtime.
 - **`classComponents`** — on every build path the class runtime is an on-demand chunk
-  (see [KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md)); the next-compat build additionally
+  (see [KNOWN-DIFFERENCES.md](/docs/differences)); the next-compat build additionally
   folds the flag through an esbuild `define`, so `classComponents: false` also strips the
   reconciler's class guards from that bundle. `true` imports the runtime statically.
 - **Run `denext build`/`dev` from the project directory** — the client/server boundary
@@ -126,16 +200,16 @@ deno task parity:drift     # report upstream surface drift (non-blocking)
 ```
 
 A genuine surface gap the tool accepts (a waiver) is an intentional non-implementation,
-catalogued alongside the others in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
+catalogued alongside the others in [KNOWN-LIMITATIONS.md](/docs/limitations).
 
 ## Islands, resumability, live components
 
 These are **capabilities React/Next don't have**, made possible by owning the
 reconciler and Flight boundary: per-component lazy hydration (`client:*` directives),
 resumability (interactive with no up-front hydration), and live server components
-(server push over WebSocket). They're covered in [FEATURES.md](./FEATURES.md); their
+(server push over WebSocket). They're covered in [FEATURES.md](/docs/features); their
 current _bounded scope_ (as still-growing, denext-original features) is the one honest
-place they touch [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
+place they touch [KNOWN-LIMITATIONS.md](/docs/limitations).
 
 ### qrl handler extraction: captures are supplied live at hydration
 
@@ -172,6 +246,6 @@ pure context bookkeeping), so SSR/hydration stay aligned.
 
 ---
 
-**See also:** [MISSION.md](./MISSION.md) (why these choices win) ·
-[FEATURES.md](./FEATURES.md) (what's shipped) ·
-[KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) (genuine surface gaps).
+**See also:** [MISSION.md](https://github.com/Brainwires/denext/blob/main/MISSION.md) (why these choices win) ·
+[FEATURES.md](/docs/features) (what's shipped) ·
+[KNOWN-LIMITATIONS.md](/docs/limitations) (genuine surface gaps).
