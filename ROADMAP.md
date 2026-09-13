@@ -44,9 +44,14 @@ Fast-Refresh, `PageCache`). `@denext/pages-router` and `@denext/react-router` do
 react-router is framework mode via the route-synthesizer seam) and
 `tests/plugin-kit.test.ts` guards it. Remaining build work:
 
-- **`@denext/tanstack-router`** — the two depths (library mode → SPA today;
-  TanStack Start-style SSR → `plugin-kit`), the same shape `@denext/react-router`
-  proved out.
+- **TanStack Router, Start depth** — library mode is served: a stock file-based
+  TanStack Router app runs in SPA mode with no plugin (`examples/tanstack-router`,
+  the shape `denext migrate` writes), so no `@denext/tanstack-router` package at
+  that depth (a package wrapping zero seams would be API surface with no payoff).
+  What remains is TanStack Start-style SSR through `plugin-kit`, the same shape
+  `@denext/react-router` proved out; its named unknown is the route tree, which
+  TanStack generates with its Vite plugin (`routeTree.gen.ts`) — out-of-band
+  `tsr generate` covers library mode, a Start plugin must own the generation.
 - A missing primitive goes into `plugin-kit` (the plugin-kit rule: a deliberate,
   tested semver addition — as `apiDefinitionOf`, `tapChannel`, `verifyOrigin` and
   `remixCodegen` were), never the private surface.

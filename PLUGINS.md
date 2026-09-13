@@ -259,7 +259,8 @@ kit:
   single denext route (or the SPA shell) that hydrates the router client-side. This
   needs **nothing from `plugin-kit`** — denext's [SPA mode](./FEATURES.md) already
   serves a shell + a client entry bundle. React Router / TanStack Router in library
-  mode run on denext today; a plugin here is mostly config sugar + the client-entry
+  mode run on denext today (`examples/tanstack-router` is a stock file-based TanStack
+  Router app in SPA mode); a plugin here is mostly config sugar + the client-entry
   convention.
 - **Framework / SSR-data mode** (server loaders, streaming SSR, hydration — React
   Router framework mode, TanStack Start): the plugin claims requests

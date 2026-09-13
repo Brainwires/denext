@@ -178,7 +178,8 @@ const u = new URL("./asset.bin", import.meta.url); // emitted + rewritten`}
         <li>
           <strong>Route codegen</strong> (e.g. TanStack Router): run it out-of-band —{" "}
           <code>tsr generate</code> in a <code>prebuild</code> step, <code>tsr watch</code>{" "}
-          alongside <code>denext dev</code>.
+          alongside <code>denext dev</code>. <code>examples/tanstack-router</code>{" "}
+          in the repo is a stock file-based TanStack Router app wired this way.
         </li>
       </ul>
 

@@ -10,11 +10,37 @@ and this project adheres to
 
 ### Added
 
+- **`examples/tanstack-router`.** A stock file-based TanStack Router app running in SPA mode
+  with no plugin (library mode: the router in the browser, denext bundling the entry and
+  serving the shell for every URL), in exactly the shape `denext migrate` writes for a Vite +
+  TanStack Router project — `spa.rootId: "app"`, `nodeModulesDir: "manual"`, the route tree
+  generated out-of-band by the TanStack Router CLI (`deno task routes`). An opt-in e2e drives
+  it in Chromium (render, same-document `<Link>` navigation, deep URL, not-found).
 - **Changelog on the docs site.** `/docs/changelog` (Reference → Changelog) renders this file
   through the docs shell at export time, newest release first, with the version headings
   linking to their JSR release and the "On this page" rail listing the versions; search
   indexes every version. The shared first-party Markdown renderer
   (`@denext/content-collections/markdown`) gained reference-style links to render it.
+
+### Fixed
+
+- **A Suspense boundary that suspended on mount could show its fallback forever.** If an
+  ancestor re-rendered while the promise was pending (a parent `setState` from a layout
+  effect — TanStack Router's `Transitioner` does exactly this on mount), the boundary's fiber
+  buffers swapped and the retry cleared `showingFallback` on the stale buffer only; the next
+  render copied `true` back from the committed one. A migrated TanStack Router app rendered a
+  blank page with no error. The retry now clears both buffers; `ErrorBoundary`'s `reset()` had
+  the same one-sided clear of the caught error and is fixed the same way.
+- **`denext migrate` (Vite SPA): the mount element and the Tailwind stylesheet.** The
+  generated shell always mounted `#root` while the entry rendered into whatever `index.html`
+  declared (`#app` in TanStack's scaffold) — `createRoot(null)`, a blank page; migrate now
+  reads the id from the entry's `getElementById`/`querySelector` (else the first `<div id>`
+  in `<body>`) and writes `spa.rootId` when it is not `root`. Tailwind was detected only when
+  the stylesheet was `src/index.css`; the known Vite/CRA names (`styles.css`, `App.css`, …)
+  and then every `.css` under `src/` are scanned for the Tailwind directive, and the config's
+  `tailwind.input`/`.gitignore` point at the file found. `@tailwindcss/vite`,
+  `@tanstack/router-plugin` and `@tanstack/devtools-vite` (Vite plugins with no role under
+  denext) are dropped from the report instead of passed through.
 
 ### Changed
 

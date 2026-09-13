@@ -6,6 +6,7 @@ import { createResource, Suspense, use } from "../src/runtime/suspense.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { type FakeDocument, type FakeElement, makeDom } from "./helpers/dom.ts";
 import type { VNode } from "../src/jsx/types.ts";
+import { useLayoutEffect, useState, useSyncExternalStore } from "../src/runtime/hooks.ts";
 
 // deno-lint-ignore no-explicit-any
 const asDoc = (d: FakeDocument): any => d;
@@ -158,4 +159,56 @@ Deno.test("a throwing streamed boundary is skipped, not fatal (document complete
   // The document still completed (tail present) — the failure did not truncate it.
   assertStringIncludes(html, "<!--end-->");
   assert(errs.some((a) => String(a).includes("failed to resolve")), "the failure was logged");
+});
+
+Deno.test("a boundary that suspended on mount still reveals after its parent re-rendered in the pending window", async () => {
+  // TanStack Router's shape: RouterProvider mounts <Matches>, whose child subtree suspends
+  // (a lazy chunk), and a sibling's layout effect immediately calls a parent setState and
+  // updates the store the suspended subtree reads. The parent re-render swaps the boundary's
+  // fiber buffers while the promise is pending; the retry must clear `showingFallback` on
+  // the committed buffer too, or the fallback stays up forever (a blank app).
+  const { doc, container } = makeDom();
+  setDocument(asDoc(doc));
+
+  let resolve: (v: string) => void = () => {};
+  const p = new Promise<string>((r) => (resolve = r));
+  let storeValue = 0;
+  const listeners = new Set<() => void>();
+  const subscribe = (cb: () => void) => {
+    listeners.add(cb);
+    return () => listeners.delete(cb);
+  };
+
+  function Leaf(): VNode {
+    return h("b", null, use(p));
+  }
+  function Inner(): VNode {
+    const v = useSyncExternalStore(subscribe, () => storeValue);
+    return h("output", null, String(v), h(Leaf, null));
+  }
+  function Sibling({ bump }: { bump: (x: unknown) => void }): VNode {
+    useLayoutEffect(() => {
+      bump({}); // a parent setState while the boundary is showing its fallback
+      storeValue = 1; // and a store change the (uncommitted) consumer has not subscribed to yet
+      for (const cb of listeners) cb();
+    }, []);
+    return h("span", null);
+  }
+  function Parent(): VNode {
+    const [, bump] = useState<unknown>(undefined);
+    return h(
+      "div",
+      null,
+      h(Sibling, { bump }),
+      h(Suspense, { fallback: h("i", null, "wait"), children: h(Inner, null) }),
+    );
+  }
+  createRoot(asEl(container)).render(h(Parent, null));
+  assertEquals(container.innerHTML, "<div><span></span><i>wait</i></div>");
+
+  resolve("leaf");
+  await p;
+  await Promise.resolve();
+  flushSync();
+  assertEquals(container.innerHTML, "<div><span></span><output>1<b>leaf</b></output></div>");
 });

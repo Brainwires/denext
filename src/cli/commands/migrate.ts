@@ -100,7 +100,10 @@ function reportSpa(r: MigrateResult, desktop: boolean): void {
   console.log(
     `    spa.env keys (${s.envKeys.length}): ${s.envKeys.join(", ") || "—"}`,
   );
-  console.log(`    tailwind: ${s.tailwind ? "detected" : "not detected"}`);
+  console.log(
+    `    tailwind: ${s.tailwindInput ? `detected (${s.tailwindInput})` : "not detected"}` +
+      (s.rootId ? ` · mount #${s.rootId}` : ""),
+  );
   if (!desktop) return;
   const proxyNote = s.proxy
     ? `proxy ${s.proxy.prefixes.join(",")} → ${s.proxy.target}`

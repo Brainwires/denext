@@ -186,6 +186,7 @@
     "exclude": [
       ".denext/",
       "examples/*/.denext/",
+      "examples/tanstack-router/src/routeTree.gen.ts",
       "apps/*/.denext/",
       "apps/*/out/",
       "dist/",
@@ -205,6 +206,7 @@
     "exclude": [
       ".denext/",
       "examples/*/.denext/",
+      "examples/tanstack-router/src/routeTree.gen.ts",
       "apps/*/.denext/",
       "apps/*/out/",
       "dist/",

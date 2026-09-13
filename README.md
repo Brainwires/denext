@@ -206,7 +206,9 @@ ledger in [FEATURES.md](./FEATURES.md).
   (TanStack, etc.) and data layer; you still get the Deno-native bundler, the
   CSS pipeline, live reload, and single-binary `deno desktop` packaging. The
   on-ramp for hosting an existing Vite-style React SPA on denext's small,
-  zero-npm runtime. See [`examples/spa`](./examples/spa).
+  zero-npm runtime. See [`examples/spa`](./examples/spa) and
+  [`examples/tanstack-router`](./examples/tanstack-router) (a file-based TanStack
+  Router app, as `denext migrate` shapes it).
 - **Typed API, end to end** — `defineApi({ params, query, body, response, errors },
   handler)` validates a route handler through any Standard Schema (Zod, Valibot,
   ArkType, TypeBox, hand-rolled) before your code runs; the generated

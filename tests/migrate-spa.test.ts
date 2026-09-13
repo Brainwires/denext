@@ -5,7 +5,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
-import { migrateProject } from "../src/build/migrate.ts";
+import { findSpaTailwindInput, migrateProject } from "../src/build/migrate.ts";
 
 async function writeViteApp(dir: string, opts: { pnpm?: boolean } = {}): Promise<void> {
   await Deno.writeTextFile(
@@ -277,6 +277,138 @@ Deno.test("migrate SPA: carries index.html boot content (#root splash + head scr
       !config.includes('/src/main.tsx\\"></script>'),
       "entry module script not carried into head",
     );
+  } finally {
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});
+
+/** A TanStack-Router-style Vite scaffold: `#app` mount, `src/styles.css` Tailwind, Vite plugins. */
+async function writeTanStackApp(dir: string): Promise<void> {
+  await Deno.writeTextFile(
+    join(dir, "package.json"),
+    JSON.stringify({
+      name: "tsr-app",
+      dependencies: {
+        react: "^19.2.0",
+        "react-dom": "^19.2.0",
+        "@tanstack/react-router": "^1.170.0",
+        "@tailwindcss/vite": "^4.1.0",
+        tailwindcss: "^4.1.0",
+      },
+      devDependencies: {
+        "@tanstack/router-plugin": "^1.168.0",
+        "@tanstack/devtools-vite": "^0.3.0",
+        "@tanstack/router-cli": "^1.167.0",
+        "@vitejs/plugin-react": "^6.0.0",
+        vite: "^8.0.0",
+      },
+    }),
+  );
+  await Deno.writeTextFile(join(dir, "vite.config.ts"), `export default {};\n`);
+  await Deno.writeTextFile(
+    join(dir, "index.html"),
+    `<!doctype html><html><head><title>tsr-app</title></head><body>` +
+      `<div id="app"></div><script type="module" src="/src/main.tsx"></script></body></html>`,
+  );
+  await Deno.mkdir(join(dir, "src"), { recursive: true });
+  await Deno.writeTextFile(
+    join(dir, "src", "main.tsx"),
+    `import ReactDOM from 'react-dom/client'\n` +
+      `const rootElement = document.getElementById('app')!\n` +
+      `ReactDOM.createRoot(rootElement).render(<p>hi</p>)\n`,
+  );
+  await Deno.writeTextFile(
+    join(dir, "src", "styles.css"),
+    `@import url("https://fonts.googleapis.com/css2?family=Manrope");\n@import "tailwindcss";\n`,
+  );
+}
+
+Deno.test("migrate SPA: the mount element id comes from the entry module (`#app`, not the shell's `#root`)", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_spa_mount_" });
+  try {
+    await writeTanStackApp(dir);
+    const r = await migrateProject(dir, {});
+    const config = await Deno.readTextFile(join(dir, "denext.config.ts"));
+    // A shell mounting `#root` for an app that renders into `#app` is a blank page.
+    assert(config.includes('rootId: "app"'), `spa.rootId emitted:\n${config}`);
+    assertEquals(r.spa?.rootId, "app");
+  } finally {
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});
+
+Deno.test("migrate SPA: `#root` (the shell default) needs no rootId; the body's first <div id> is the fallback", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_spa_mount_default_" });
+  try {
+    await writeTanStackApp(dir);
+    // No getElementById in the entry → fall back to the first <div id> in <body>.
+    await Deno.writeTextFile(join(dir, "src", "main.tsx"), `console.log("boot");\n`);
+    let r = await migrateProject(dir, {});
+    assertEquals(r.spa?.rootId, "app", "first <div id> in <body> wins without an entry hint");
+
+    await Deno.remove(join(dir, "denext.config.ts"));
+    await Deno.writeTextFile(
+      join(dir, "index.html"),
+      `<!doctype html><html><body><div id="root"></div>` +
+        `<script type="module" src="/src/main.tsx"></script></body></html>`,
+    );
+    r = await migrateProject(dir, {});
+    assertEquals(r.spa?.rootId, undefined, "the default mount id is not configured");
+    assert(!(await Deno.readTextFile(join(dir, "denext.config.ts"))).includes("rootId"));
+  } finally {
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});
+
+Deno.test("migrate SPA: Tailwind is found in `src/styles.css` (not only `src/index.css`) and the .gen.css is ignored", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_spa_tw_" });
+  try {
+    await writeTanStackApp(dir);
+    const r = await migrateProject(dir, {});
+    assertEquals(r.spa?.tailwind, true);
+    assertEquals(r.spa?.tailwindInput, "./src/styles.css");
+    const config = await Deno.readTextFile(join(dir, "denext.config.ts"));
+    assert(
+      config.includes('tailwind: { input: "./src/styles.css", output: "./src/styles.gen.css" }'),
+      config,
+    );
+    const gitignore = await Deno.readTextFile(join(dir, ".gitignore"));
+    assert(gitignore.includes("src/styles.gen.css"), gitignore);
+  } finally {
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});
+
+Deno.test("findSpaTailwindInput: falls back to scanning src/**/*.css; a Tailwind dep with no stylesheet is null", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_spa_tw_scan_" });
+  try {
+    await writeTanStackApp(dir);
+    await Deno.remove(join(dir, "src", "styles.css"));
+    await Deno.mkdir(join(dir, "src", "theme", "base"), { recursive: true });
+    await Deno.writeTextFile(join(dir, "src", "theme", "reset.css"), `* { margin: 0 }\n`);
+    await Deno.writeTextFile(join(dir, "src", "theme", "base", "tw.css"), `@tailwind base;\n`);
+    assertEquals(await findSpaTailwindInput(dir), "./src/theme/base/tw.css");
+    await Deno.remove(join(dir, "src", "theme", "base", "tw.css"));
+    assertEquals(await findSpaTailwindInput(dir), null);
+    const r = await migrateProject(dir, {});
+    assertEquals(r.spa?.tailwind, false, "a Tailwind dep alone configures nothing");
+  } finally {
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});
+
+Deno.test("migrate SPA: Vite-only plugins are dropped, the router runtime + codegen CLI pass through", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_spa_tsr_deps_" });
+  try {
+    await writeTanStackApp(dir);
+    const r = await migrateProject(dir, {});
+    for (const d of ["@tanstack/router-plugin", "@tanstack/devtools-vite", "@tailwindcss/vite"]) {
+      assert(r.dropped.includes(d), `${d} is a Vite plugin denext replaces: ${r.dropped}`);
+      assert(!(d in JSON.parse(await Deno.readTextFile(join(dir, "deno.json"))).imports));
+    }
+    for (const d of ["@tanstack/react-router", "@tanstack/router-cli"]) {
+      assert(r.passthrough.includes(d), `${d} still runs: ${r.passthrough}`);
+    }
   } finally {
     await Deno.remove(dir, { recursive: true }).catch(() => {});
   }

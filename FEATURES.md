@@ -92,7 +92,9 @@ security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
   provides compile-time `import.meta.env` (the Vite `define` analogue). A
   denext-native SPA keeps the fast plain-`deno bundle` path. Opt-in `spa.csp`
   emits a strict Content-Security-Policy (`<meta>`) into the shell. Mutually
-  exclusive with the App Router per project. See `examples/spa`.
+  exclusive with the App Router per project. See `examples/spa`, and
+  `examples/tanstack-router` for a stock file-based TanStack Router app in this
+  mode (library mode: the router runs in the browser, no plugin needed).
 
 ## React runtime (own React 19-compatible implementation)
 

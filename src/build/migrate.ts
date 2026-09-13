@@ -96,6 +96,12 @@ const SOFT_DROP = new Set([
   "vite",
   "@vitejs/plugin-react",
   "@vitejs/plugin-react-swc",
+  // Vite plugins with no role under denext: Tailwind runs through denext's own pipeline;
+  // TanStack's route codegen is run out-of-band (`tsr generate`), its devtools Vite plugin
+  // has no dev server to hook. (`@tanstack/router-cli` stays: the app still runs it.)
+  "@tailwindcss/vite",
+  "@tanstack/router-plugin",
+  "@tanstack/devtools-vite",
 ]);
 
 /** How a run's dependencies were bucketed (for the CLI summary + the import-map pins). */
@@ -259,6 +265,10 @@ export interface SpaMigrateInfo {
   title: string;
   envKeys: string[];
   tailwind: boolean;
+  /** The Tailwind input stylesheet the config points at (`./`-relative), when detected. */
+  tailwindInput?: string;
+  /** The mount element id written to `spa.rootId` — only when the app does not render into `#root`. */
+  rootId?: string;
   proxy?: { prefixes: string[]; target: string };
   /** `denext.config.ts` was written (false when one already existed). */
   configWritten: boolean;
@@ -973,19 +983,74 @@ const TAILWIND_INPUT_CANDIDATES = [
  * path for the `tailwind` config block. `null` when the app has no such file (a Tailwind dep
  * alone — e.g. only `prettier-plugin-tailwindcss` — configures nothing). Exported for testing.
  */
-export async function findTailwindInput(dir: string): Promise<string | null> {
-  for (const rel of TAILWIND_INPUT_CANDIDATES) {
+export async function findTailwindInput(
+  dir: string,
+  candidates: readonly string[] = TAILWIND_INPUT_CANDIDATES,
+): Promise<string | null> {
+  for (const rel of candidates) {
     let css: string;
     try {
       css = await Deno.readTextFile(join(dir, rel));
     } catch {
       continue;
     }
-    if (/@import\s+["']tailwindcss|@tailwind\s+(base|utilities|components)/.test(css)) {
-      return "./" + rel;
-    }
+    if (TAILWIND_DIRECTIVE.test(css)) return "./" + rel;
   }
   return null;
+}
+
+/** Where Vite/CRA templates put the stylesheet that imports Tailwind, most common first. */
+const SPA_TAILWIND_INPUT_CANDIDATES = [
+  "src/index.css",
+  "src/styles.css",
+  "src/App.css",
+  "src/app.css",
+  "src/main.css",
+  "src/global.css",
+  "src/globals.css",
+  "src/styles/index.css",
+  "src/styles/globals.css",
+  "src/styles/global.css",
+  "src/tailwind.css",
+];
+
+const TAILWIND_DIRECTIVE = /@import\s+["']tailwindcss|@tailwind\s+(base|utilities|components)/;
+
+/**
+ * The SPA's Tailwind input stylesheet (`./`-relative), or `null`. Vite templates disagree on
+ * the name (`index.css`, `styles.css`, `App.css`, …), so after the known candidates every
+ * `.css` under `src/` (three levels deep) is scanned for the Tailwind directive — a wrong
+ * guess here ships the raw `@import "tailwindcss"` and the migrated app renders unstyled.
+ * Exported for testing.
+ */
+export async function findSpaTailwindInput(dir: string): Promise<string | null> {
+  const known = await findTailwindInput(dir, SPA_TAILWIND_INPUT_CANDIDATES);
+  if (known) return known;
+  for (const rel of await cssFilesUnder(join(dir, "src"), "src", 3)) {
+    const css = await Deno.readTextFile(join(dir, rel)).catch(() => "");
+    if (TAILWIND_DIRECTIVE.test(css)) return "./" + rel;
+  }
+  return null;
+}
+
+/** `.css` files under `abs` (reported as `rel`-prefixed paths), sorted, at most `depth` deep. */
+async function cssFilesUnder(abs: string, rel: string, depth: number): Promise<string[]> {
+  if (depth < 0) return [];
+  const files: string[] = [];
+  const dirs: string[] = [];
+  try {
+    for await (const e of Deno.readDir(abs)) {
+      if (e.isFile && e.name.endsWith(".css")) files.push(`${rel}/${e.name}`);
+      else if (e.isDirectory && e.name !== "node_modules") dirs.push(e.name);
+    }
+  } catch {
+    return [];
+  }
+  files.sort();
+  for (const d of dirs.sort()) {
+    files.push(...await cssFilesUnder(join(abs, d), `${rel}/${d}`, depth - 1));
+  }
+  return files;
 }
 
 /**
@@ -1489,14 +1554,35 @@ function pnpUnsupported(dir: string): Error {
  */
 async function readIndexHtml(
   dir: string,
-): Promise<{ entry: string; title: string; head?: string; loading?: string }> {
+): Promise<{ entry: string; title: string; head?: string; loading?: string; rootId?: string }> {
   const html = await Deno.readTextFile(join(dir, "index.html")).catch(() => null);
   if (!html) return { entry: "./src/main.tsx", title: "app" };
+  const { entry, title } = parseEntryAndTitle(html);
+  const rootId = await mountElementId(dir, entry, html);
   return {
-    ...parseEntryAndTitle(html),
+    entry,
+    title,
     head: extractBootHead(html) || undefined,
-    loading: extractRootInner(html) || undefined,
+    loading: extractRootInner(html, rootId) || undefined,
+    // The shell's default mount element is `#root`; only a different id needs configuring.
+    rootId: rootId === "root" ? undefined : rootId,
   };
+}
+
+/**
+ * The element the app renders into. Vite templates disagree (`#root`, `#app`); the entry
+ * module is authoritative (`document.getElementById("app")`), else the first `<div id>` in
+ * `<body>`, else `root`. A shell that mounts `#root` for an app rendering into `#app` is a
+ * blank page with no error — `createRoot(null)` throws before the first paint.
+ */
+async function mountElementId(dir: string, entry: string, html: string): Promise<string> {
+  const source = await Deno.readTextFile(join(dir, entry)).catch(() => "");
+  const fromEntry = source.match(
+    /getElementById\(\s*["']([^"']+)["']\s*\)|querySelector\(\s*["']#([A-Za-z_][\w-]*)["']\s*\)/,
+  );
+  if (fromEntry) return fromEntry[1] ?? fromEntry[2];
+  const body = /<body\b[^>]*>([\s\S]*)<\/body>/i.exec(html)?.[1] ?? html;
+  return /<div\b[^>]*\bid=["']([^"']+)["']/i.exec(body)?.[1] ?? "root";
 }
 
 /** The entry module (`<script type=module src>`, normalized to `./…`) + `<title>`. */
@@ -1516,9 +1602,10 @@ function parseEntryAndTitle(html: string): { entry: string; title: string } {
   return { entry, title };
 }
 
-/** Inner HTML of `<div id="root">…</div>` (balanced-div scan) — the app's boot splash. */
-function extractRootInner(html: string): string {
-  const open = /<div\b[^>]*\bid=["']root["'][^>]*>/i.exec(html);
+/** Inner HTML of the mount `<div id="…">…</div>` (balanced-div scan) — the app's boot splash. */
+function extractRootInner(html: string, rootId = "root"): string {
+  const id = rootId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const open = new RegExp(`<div\\b[^>]*\\bid=["']${id}["'][^>]*>`, "i").exec(html);
   if (!open) return "";
   const start = open.index + open[0].length;
   const tag = /<(\/?)div\b[^>]*>/gi;
@@ -1611,12 +1698,15 @@ function spaConfigSource(o: {
   entry: string;
   title: string;
   envKeys: string[];
-  tailwind: boolean;
+  /** The Tailwind input stylesheet (`./`-relative), or null when the app has none. */
+  tailwind: string | null;
   proxy?: { prefixes: string[]; target: string };
   desktop?: boolean;
   reactCompiler?: boolean;
   head?: string;
   loading?: string;
+  /** The mount element id when it is not the shell's default `root`. */
+  rootId?: string;
 }): string {
   const needsPkg = o.envKeys.includes("APP_VERSION");
   const envLines = o.envKeys
@@ -1625,7 +1715,9 @@ function spaConfigSource(o: {
     ) => (k === "APP_VERSION" ? `      APP_VERSION: pkg.version,` : `      ${k}: "",`))
     .join("\n");
   const tailwindBlock = o.tailwind
-    ? `  tailwind: { input: "./src/index.css", output: "./src/index.gen.css" },\n`
+    ? `  tailwind: { input: ${JSON.stringify(o.tailwind)}, output: ${
+      JSON.stringify(tailwindOutputFor(o.tailwind))
+    } },\n`
     : "";
   const proxyBlock = o.proxy
     ? `    proxy: {\n      prefixes: [${
@@ -1646,6 +1738,7 @@ function spaConfigSource(o: {
     `  spa: {\n` +
     `    entry: ${JSON.stringify(o.entry)},\n` +
     `    title: ${JSON.stringify(o.title)},\n` +
+    (o.rootId ? `    rootId: ${JSON.stringify(o.rootId)},\n` : "") +
     // Boot content carried from the source index.html so the migrated SPA paints instantly
     // (themed background + splash) instead of a blank screen while the bundle loads.
     (o.head ? `    head: ${JSON.stringify(o.head)},\n` : "") +
@@ -1660,6 +1753,11 @@ function spaConfigSource(o: {
       : "") +
     `  },\n` +
     `} satisfies DenextConfig;\n`;
+}
+
+/** The generated stylesheet beside a Tailwind input: `./src/styles.css` → `./src/styles.gen.css`. */
+function tailwindOutputFor(input: string): string {
+  return input.replace(/\.css$/, ".gen.css");
 }
 
 /**
@@ -2059,7 +2157,7 @@ function spaDenoJson(
 async function finishSpaProjectFiles(
   dir: string,
   denoJson: Record<string, unknown>,
-  tailwind: boolean,
+  tailwind: string | null,
   desktop: boolean,
   written: string[],
 ): Promise<boolean> {
@@ -2069,7 +2167,7 @@ async function finishSpaProjectFiles(
     [
       ".denext/",
       "out/",
-      ...(tailwind ? ["src/index.gen.css"] : []),
+      ...(tailwind ? [tailwindOutputFor(tailwind).replace(/^\.\//, "")] : []),
       ...(desktop ? ["desktop-icon.png"] : []),
     ],
     written,
@@ -2093,22 +2191,23 @@ async function spaSourceFacts(
   entry: string;
   title: string;
   envKeys: string[];
-  tailwind: boolean;
+  tailwind: string | null;
   proxy: { prefixes: string[]; target: string } | undefined;
   reactCompiler: boolean;
   head?: string;
   loading?: string;
+  rootId?: string;
 }> {
   const idx = source === "cra" ? await readCraIndex(dir) : await readIndexHtml(dir);
   const { entry, title } = idx;
-  const head = (idx as { head?: string }).head;
-  const loading = (idx as { loading?: string }).loading;
+  const { head, loading, rootId } = idx as { head?: string; loading?: string; rootId?: string };
   const envKeys = await spaEnvKeys(dir, source);
-  const tailwind = ("@tailwindcss/vite" in deps || "tailwindcss" in deps) &&
-    await exists(join(dir, "src", "index.css"));
+  const tailwind = ("@tailwindcss/vite" in deps || "tailwindcss" in deps)
+    ? await findSpaTailwindInput(dir)
+    : null;
   const proxy = await spaProxy(dir, options, source);
   const reactCompiler = await spaUsesReactCompiler(dir, source);
-  return { entry, title, envKeys, tailwind, proxy, reactCompiler, head, loading };
+  return { entry, title, envKeys, tailwind, proxy, reactCompiler, head, loading, rootId };
 }
 
 /**
@@ -2152,16 +2251,9 @@ async function migrateSpaProject(
   // with "auto" they are pinned as `npm:name@version` like the Next path.
   const classified = classifyDeps(deps, imports, { pin: !manual });
 
-  const { entry, title, envKeys, tailwind, proxy, reactCompiler, head, loading } =
-    await spaSourceFacts(
-      dir,
-      deps,
-      options,
-      source,
-    );
+  const facts = await spaSourceFacts(dir, deps, options, source);
 
   const nodeModulesDir = manual ? "manual" : "auto";
-  const facts = { entry, title, envKeys, tailwind, proxy, reactCompiler, head, loading };
   const files = await writeSpaProjectFiles(
     dir,
     facts,
@@ -2172,6 +2264,8 @@ async function migrateSpaProject(
   );
   return spaMigrateResult(source, files.written, classified, files.denoJsonExists, {
     ...facts,
+    tailwind: facts.tailwind !== null,
+    tailwindInput: facts.tailwind ?? undefined,
     configWritten: files.configWritten,
     desktopWritten: files.desktopWritten,
     desktopIcon: files.desktopIcon,
