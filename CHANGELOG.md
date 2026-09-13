@@ -16,6 +16,22 @@ and this project adheres to
   policy (supported versions, private reporting, scope). `SECURITY.md` stays as a short
   pointer so GitHub's Security tab and existing links keep working. The parity guardrail is
   reworded: the surface is pursued to the limit; only the _claim_ of 100% is off the table.
+- **Docs consistency pass over every root Markdown file.** Stale claims corrected against
+  the code: the class runtime is an on-demand chunk on every path (README, ARCHITECTURE,
+  README-NEXT-MIGRATION and FEATURES still said the native path always shipped it and that
+  `classComponents` was compat-only); PPR shells carry the streaming CSP (DEPLOYMENT said
+  they didn't); the Node-stream render APIs exist and buffer (ARCHITECTURE said they can't
+  exist); the size factor is ~7× everywhere (ARCHITECTURE said 8–9×); the Pages Router's
+  `router.events` / shallow routing / prefetch / i18n are shipped, not gaps; the plugin
+  contract has six seams; the wire codec's tagged set is listed in full. Placement per the
+  doc taxonomy: the legacy-context non-goal moved from KNOWN-DIFFERENCES to
+  KNOWN-LIMITATIONS; KNOWN-LIMITATIONS' Remix section keeps only the edges (the feature
+  description lives in README-REMIX-MIGRATION), its ViewTransition/Activity/taint entries
+  keep only the residual gaps, the `feature()` and `denext doctor` entries sit under
+  denext-original features; ROADMAP, MISSION and README no longer name a finished release
+  cycle; CONTRIBUTING's release table lists every published package and says a member's
+  changelog is rolled by hand. Links that said "divergences → KNOWN-LIMITATIONS" now point at
+  KNOWN-DIFFERENCES.
 
 ## [2.4.2] - 2026-09-13
 

@@ -127,9 +127,9 @@ only the new route's own code (~0.6 KB gzip on the example), not another copy of
 the runtime. No legacy weight by default, either: denext is
 **function-components-first**, and the Pages Router ships as an optional plugin
 (`@denext/pages-router`), so none of it is in the core bundle unless you opt in.
-(Class components are supported for running real npm React libraries via the
-[next-compat build](#react--nextjs-compatibility), opt-in through
-`classComponents` and dead-code-eliminated there when unused.)
+(Class components work too: the class runtime is an on-demand chunk a page fetches only
+when it renders one, so a function-only app never pays for it; `classComponents` in
+`denext.config.ts` forces it always-on or off.)
 
 And a page with **no interactivity at all** — no hooks, no event handlers, no
 `dynamic()` island — ships **zero JavaScript**. denext detects static routes at
@@ -462,9 +462,10 @@ guard now enforces that across the entire runtime (not just the compat layer).
 components** are supported — full lifecycle, `setState` batching,
 `getDerivedStateFromProps`, `shouldComponentUpdate`/`PureComponent`,
 `getSnapshotBeforeUpdate`, error boundaries, and legacy `contextType` — so real
-npm libraries built on classes (e.g. recharts) run. The class runtime is always
-on in the standard build; the next-compat build gates it behind
-`classComponents` for zero-cost dead-code elimination when unused. The compat
+npm libraries built on classes (e.g. recharts) run. The class runtime is an
+on-demand chunk on every build path (see
+[KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md)); `classComponents: true` imports it
+statically, `false` keeps it out and makes a class a guided error. The compat
 modules match React/Next **behavior and shapes**, and denext now has its own
 fiber reconciler (time-sliced, interruptible concurrent rendering), but it is
 not React internally — anything reaching for `react-reconciler`,
@@ -1034,7 +1035,7 @@ What's still **your responsibility** at the app/edge layer:
 - **`dangerouslySetInnerHTML` and `metadata.head` emit raw HTML** — never pass
   unsanitized user/CMS content to them.
 - **Redirecting to a user-controlled target? Validate it first.** Config-driven
-  `redirects()` and the middleware `redirect()` helper both normalize their
+  `redirects()` and the middleware `redirectResponse()` helper both normalize their
   location through `safeRedirectLocation` (a `//host` or `/\host` prefix can't
   escape your origin). But an **explicit absolute URL is passed through
   verbatim** (that's intended — you asked to leave the origin), so
@@ -1079,15 +1080,14 @@ router available as an optional first-party plugin (`@denext/pages-router`). Its
 client reconciler is **fiber-based**: transition-lane renders are time-sliced,
 interruptible, and committed atomically; effects are split into a synchronous
 layout phase and a scheduled passive phase; and the sync lane stays synchronous
-(see the migration guide's §10). Class components are supported for running real
-npm React libraries through the next-compat build (opt-in via
-`classComponents`), not in the default function-component runtime. Client-side
-navigation is a soft nav that reconciles the new route in place on the retained
-reconciler root (no full-page reload): a **Flight** route (one with a
-`"use client"`/`"use server"` boundary) transfers just its RSC/Flight payload
-and re-runs no route bundle, while an isomorphic (non-Flight) route still
-re-fetches the full HTML document and re-runs its route bundle — see
-[KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
+(see the migration guide's §10). Class components are supported everywhere
+through an on-demand runtime chunk (`classComponents` forces it on or off).
+Client-side navigation is a soft nav that reconciles the new route in place on
+the retained reconciler root (no full-page reload): a **Flight** route (one with
+a `"use client"`/`"use server"` boundary) transfers just its RSC/Flight payload
+and re-runs no route bundle, while an isomorphic (non-Flight) route answers with
+a compact JSON payload and re-injects its entry (re-running the route module) —
+the two mechanisms are in [ARCHITECTURE.md](./ARCHITECTURE.md).
 
 The **dev server bundles each route independently and lazily** for fast
 rebuilds, whereas `denext build` runs a single code-split pass that hoists the
@@ -1129,8 +1129,7 @@ Each doc owns one job, so the same fact lives in exactly one canonical place:
   (`SECURITY.md` is the conventional pointer to it).
 - [CONTRIBUTING.md](./CONTRIBUTING.md) — the check/lint gate, conventions, and
   the JSR release flow.
-- [ROADMAP.md](./ROADMAP.md) — what still needs doing (the rest of the 2.1 cycle:
-  build-time WASM codecs, router plugins).
+- [ROADMAP.md](./ROADMAP.md) — what still needs doing.
 - [CHANGELOG.md](./CHANGELOG.md) — release history.
 
 ## License

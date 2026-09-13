@@ -178,15 +178,21 @@ versioned packages under `packages/*`. **Each publishes on its own tag prefix**
 `deno publish --config <that package's deno.json>`, scoping the publish to
 exactly that package.
 
-| Package                | Tag prefix        | Version lives in                  |
-| ---------------------- | ----------------- | --------------------------------- |
-| `@denext/denext`       | `v*`              | `deno.json` **and** `mod.ts`      |
-| `@denext/pages-router` | `pages-router-v*` | `packages/pages-router/deno.json` |
-| `@denext/photon`       | `photon-v*`       | `packages/photon/deno.json`       |
-| `@denext/avif`         | `avif-v*`         | `packages/avif/deno.json`         |
-| `@denext/og`           | `og-v*`           | `packages/og/deno.json`           |
-| `@denext/htmx`         | `htmx-v*`         | `packages/htmx/deno.json`         |
-| `@denext/effect`       | `effect-v*`       | `packages/effect/deno.json`       |
+| Package                       | Tag prefix               | Version lives in                         |
+| ----------------------------- | ------------------------ | ---------------------------------------- |
+| `@denext/denext`              | `v*`                     | `deno.json` **and** `mod.ts`             |
+| `@denext/pages-router`        | `pages-router-v*`        | `packages/pages-router/deno.json`        |
+| `@denext/photon`              | `photon-v*`              | `packages/photon/deno.json`              |
+| `@denext/avif`                | `avif-v*`                | `packages/avif/deno.json`                |
+| `@denext/og`                  | `og-v*`                  | `packages/og/deno.json`                  |
+| `@denext/htmx`                | `htmx-v*`                | `packages/htmx/deno.json`                |
+| `@denext/effect`              | `effect-v*`              | `packages/effect/deno.json`              |
+| `@denext/openapi`             | `openapi-v*`             | `packages/openapi/deno.json`             |
+| `@denext/graphql`             | `graphql-v*`             | `packages/graphql/deno.json`             |
+| `@denext/react-router`        | `react-router-v*`        | `packages/react-router/deno.json`        |
+| `@denext/content-collections` | `content-collections-v*` | `packages/content-collections/deno.json` |
+| `@denext/lightningcss`        | `lightningcss-v*`        | `packages/lightningcss/deno.json`        |
+| `@denext/swc`                 | `swc-v*`                 | `packages/swc/deno.json`                 |
 
 A release is: **`deno task release <version>`** on `development`, then the
 `development → main` merge. The script does the bump, the changelog roll, the
@@ -215,9 +221,7 @@ will publish. `publish.yml` is on `main` with `permissions: id-token: write`.
    the diff, then commits, tags `vX.Y.Z` and pushes — the tag triggers the
    publish.
 3. **Before running it for a stable major/minor**, hand-edit the prose the bump
-   does not: `ROADMAP.md`'s "waiting on the cut" paragraph and its
-   `## X.Y.Z — cut the release` section (delete it), and any `README.md` stage
-   language.
+   does not: `ROADMAP.md`'s status paragraph and any `README.md` stage language.
 4. **Watch the publish and verify it went live:**
    `gh run watch "$(gh run list --workflow=publish.yml --limit 1 --json databaseId -q '.[0].databaseId')" --exit-status`,
    then `deno eval --min-dep-age=0 "console.log((await import('jsr:@denext/denext@X.Y.Z')).VERSION)"`.
@@ -233,12 +237,14 @@ the changelog.
 
 ### Releasing a workspace package
 
-For a codec (`@denext/photon`/`avif`/`og`), `@denext/htmx`, `@denext/effect` or
-`@denext/pages-router` — publish only that package, on its own tag:
+For any `packages/*` member (a codec, `@denext/htmx`, `@denext/openapi`, …) — publish
+only that package, on its own tag:
 
 1. On `development`, bump the version in **that package's** `deno.json`
-   (members have no `mod.ts` VERSION constant — only the root does). Update its
-   own `CHANGELOG.md` if it has one.
+   (members have no `mod.ts` VERSION constant — only the root does) and roll its own
+   `CHANGELOG.md` by hand — the root release script bumps each member's `denext` peer
+   pin but never touches a member's version or changelog. When a member's pin moved,
+   push its tag only after the root publish shows as JSR latest.
 2. Verify: `deno task check` and
    `deno publish --dry-run --config packages/<pkg>/deno.json`.
 3. Commit and push, then tag with the package's prefix (triggers the publish):

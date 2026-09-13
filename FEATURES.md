@@ -12,7 +12,8 @@ This file has **two parts**:
   an honest **[default] / [opt-in] / [capability]** label.
 
 Part 1 answers "can I do X?"; Part 2 answers "why is this better, and where's
-the code?" For behavioral divergences from Next.js see
+the code?" For deliberate behavioral differences from React/Next see
+[KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md), for surface gaps
 [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); for the threat-by-threat
 security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
 
@@ -120,7 +121,8 @@ security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
   **identity** (a post-`await` update stays a transition; an unrelated urgent
   update in the pending window keeps its priority) instead of the default time
   window.
-- Class components (`Component`/`PureComponent`) in the next-compat build.
+- Class components (`Component`/`PureComponent`) on every path, through an on-demand
+  runtime chunk (Part 2 §3.2).
 
 ## Data, caching & ISR
 
@@ -331,11 +333,9 @@ Full Next.js Pages Router parity as a plugin (`plugins: [pagesRouter()]`):
 - `getServerSideProps`, `getStaticProps` with **build-time SSG** + `revalidate`
   **ISR**, and `getStaticPaths`.
 - `next/head`, CSS / CSS Modules / Tailwind, `pages/api/*` (`(req, res)`).
-- `useRouter`, `Link`, **client hydration + code-split soft navigation**, dev
+- `useRouter` (with `router.events`, shallow routing), `Link` (with prefetch),
+  **client hydration + code-split soft navigation**, i18n locale routing, dev
   Fast Refresh.
-
-The parity gaps (`router.events`, shallow routing, `<Link>` prefetch, i18n
-locale routing) are tracked in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
 
 ## Next.js drop-in (next-compat)
 
@@ -422,9 +422,9 @@ cache uses Deno's built-in `node:sqlite`.)
   route's unknown throw is a redacted JSON 500 (`internal` + digest).
 - **Typed route handlers without a schema.** Return `TypedResponse<T>` (and accept a
   `TypedRequest<B>`) from `denext/server` and the generated `.denext/api.ts` still types
-  the call; `json()` additionally carries Date / Map / Set / BigInt through the wire
-  codec (`src/runtime/wire-codec.ts`) — a plain-JSON body stays byte-identical to
-  `Response.json()`.
+  the call; `json()` additionally carries Date / Map / Set / BigInt / URL / `undefined` /
+  NaN / ±Infinity / -0 through the wire codec (`src/runtime/wire-codec.ts`) — a plain-JSON
+  body stays byte-identical to `Response.json()`.
 - **The generated schema infers, it does not spawn.** `.denext/api.ts` imports each route
   module's TYPE (`ModuleEndpoints<typeof Route, Params>`, `src/runtime/api-infer.ts`) —
   no `deno doc`, zero I/O, non-exported local types preserved, catch-alls `string[]`,
@@ -478,8 +478,8 @@ cache uses Deno's built-in `node:sqlite`.)
 - Build via **`deno bundle`** on the native path (`esbuild` on the next-compat /
   SPA-compat path) with **code splitting** (shared runtime chunk), the CSS
   pipeline, and per-route client entries.
-- **Plugin contract** (`DenextPlugin`: the five seams — route-synthesizer,
-  request-handler, build-step, teardown, CLI command) with the public
+- **Plugin contract** (`DenextPlugin`: the six seams — route-synthesizer,
+  request-handler, build-step, prepare-step, teardown, CLI command) with the public
   `@denext/denext/plugin-kit` primitives (bundling, CSS, matchers, `PageCache`,
   body caps, signed-token helpers). See [PLUGINS.md](./PLUGINS.md) for the
   authoring guide; consumed by `@denext/pages-router`, `@denext/react-router`,
@@ -548,8 +548,9 @@ Things denext does **better** than the React + Next.js baseline it replaces —
 cleaner, smaller, or more secure. This is the ledger of every genuine
 enhancement (not parity feature), with the mechanism (`file:line`) and an honest
 **default vs. opt-in** label. Parity features (useState, Suspense, App Router
-layouts, `<Image>`, Server Actions, …) live in Part 1, not here. Gaps and
-divergences are tracked in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
+layouts, `<Image>`, Server Actions, …) live in Part 1, not here. Gaps are tracked in
+[KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) and deliberate divergences in
+[KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md).
 
 Legend: **[default]** on out of the box · **[opt-in]** requires a
 flag/config/build path · **[capability]** implemented and exported but not on
@@ -1155,5 +1156,6 @@ experimental), Part 2 for a genuine advantage over React/Next (mechanism
 `file:line`
 
 - a **[default]/[opt-in]/[capability]** label). Keep the honesty caveats — the
-  goal is an accurate ledger, not marketing. Gaps and divergences belong in
-  [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md), not here.
+  goal is an accurate ledger, not marketing. Gaps belong in
+  [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) and deliberate divergences in
+  [KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md), not here.

@@ -4,7 +4,7 @@ denext's promise is the **React/Next.js surface**: imports resolve, public APIs
 exist, and they behave correctly for correct usage. _Underneath_ that surface,
 denext is its own engine — its own fiber reconciler, an async-only SSR renderer,
 its own Flight boundary and cache. That is not incidental; it is **where the wins
-come from** (8–9× smaller output, 0 KB JS on a static route, resumability, live
+come from** (~7× smaller output, 0 KB JS on a static route, resumability, live
 components — see [MISSION.md](./MISSION.md)).
 
 These internal differences are **deliberate design choices, invisible to correct
@@ -24,9 +24,10 @@ smaller bundles and first-class streaming.
   behave as documented.
 - _One surface consequence:_ `renderToString`/`renderToStaticMarkup` render the
   **synchronously-renderable** subset over the same walker (Suspense → fallback, as React
-  does); a component that genuinely awaits throws a guided error. Only the **Node-stream**
-  APIs (`renderToPipeableStream`/`renderToStaticNodeStream`) can't exist here — denext
-  targets the Web stream. Tracked in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
+  does); a component that genuinely awaits throws a guided error. The **Node-stream** APIs
+  (`renderToPipeableStream`/`renderToStaticNodeStream`) are a thin adapter over the Web
+  renderer and buffer rather than apply `Writable` backpressure — denext targets the Web
+  stream. Tracked in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
 
 ## Soft navigation: two mechanisms, one correct behavior
 
@@ -82,10 +83,10 @@ React at bundle time. A few deliberate build defaults on that path:
 - **`skipLibCheck: true`** — `denext migrate` sets it (as Next.js/CRA do), so `deno
   check` validates _your_ `.tsx`, not npm libraries' bundled `.d.ts` against denext's
   React type shim. Residual library type edges are type-only, never runtime.
-- **Class-runtime dead-code-elimination** — class components are gated behind a
-  compile-time `classComponents` flag in the next-compat build, so a function-only
-  project ships **zero** bytes of the class runtime. Turn it on and classes work; the
-  standard `deno bundle` path always includes the (small) runtime.
+- **`classComponents`** — on every build path the class runtime is an on-demand chunk
+  (see [KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md)); the next-compat build additionally
+  folds the flag through an esbuild `define`, so `classComponents: false` also strips the
+  reconciler's class guards from that bundle. `true` imports the runtime statically.
 - **Run `denext build`/`dev` from the project directory** — the client/server boundary
   crawl resolves `@/…` path aliases from the app's `deno.json` on the cwd.
 

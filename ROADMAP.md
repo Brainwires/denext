@@ -1,4 +1,4 @@
-# denext — Roadmap (2.4)
+# denext — Roadmap
 
 > Status: internal engineering tracker. **This file lists only work that still
 > needs doing.** Completed work lives in [FEATURES.md](./FEATURES.md) and
@@ -7,13 +7,12 @@
 > pillars in [MISSION.md](./MISSION.md); the standing engineering guardrails and the
 > security policy in [POLICIES.md](./POLICIES.md).
 >
-> `development` is **2.4.2** (the version line `deno task bump` rewrites). 2.1 — the
-> typed, self-documenting API surface (`defineApi`, the typed client,
-> `@denext/openapi`, `@denext/graphql`), plus scheduled tasks + cron, type-safe
-> routing, and `@denext/content-collections` — shipped from it. **2.4 is the next
-> engineering cycle.** What remains is the last build-time-purity items and the
-> ecosystem router plugins. Everything below targets 2.4 unless marked otherwise.
-> This roadmap is rewritten for the following cycle when 2.4 ships.
+> `development` is **2.4.2** (the version line `deno task bump` rewrites). The 2.4 line
+> has shipped — the first-party build-time codecs on JSR, `denext openapi types`, the
+> TanStack Router example, the migration-bed nightly. What remains is the last
+> build-time-purity item, the TanStack Start depth of the router plugins, and the
+> unscheduled candidates below. Items target the next minor unless marked otherwise;
+> this file is rewritten each cycle.
 
 ---
 
@@ -59,10 +58,10 @@ react-router is framework mode via the route-synthesizer seam) and
 
 ## Upstream watch — `deno bundle` hooks (the last npm build tool)
 
-**Standing watch item, not keystone work.** One dependency and one missing size win share
+**Standing watch item, not keystone work.** One dependency and one small polish item share
 a single cause: `deno bundle` — esbuild under the hood — exposes none of esbuild's plugin
 surface. Until it does, denext keeps `npm:esbuild` at build time and the native path
-ships a little optional runtime it cannot strip. Neither touches the zero-npm **runtime**
+cannot fold a few runtime guards to literals. Neither touches the zero-npm **runtime**
 guardrail; both are build-time.
 
 - **Why `esbuild` is still here.** The next-compat and SPA-compat builds (apps that bring
@@ -117,12 +116,9 @@ guardrail; both are build-time.
 
 ## Candidate features (from the framework-gap survey)
 
-Vetted gaps vs Next/Nuxt/Astro/SvelteKit/TanStack. Three picks from this survey have **shipped**:
-scheduled tasks + cron (`tasks/` + `defineTask`, `scheduledTasks`, `Deno.cron` with a userland
-fallback, `denext task`), **type-safe routing** (typed `{ pathname, params }`, `useParams<P>`,
-schema-validated `useSearchParams`, typed `redirect`), and the **`@denext/content-collections`**
-package (typed/validated/queryable MD/MDX/YAML/JSON content layer). See CHANGELOG/FEATURES. The
-rest are kept here so they aren't lost; not yet scheduled.
+Vetted gaps vs Next/Nuxt/Astro/SvelteKit/TanStack (the three picks that shipped — scheduled
+tasks, type-safe routing, `@denext/content-collections` — are in CHANGELOG/FEATURES). The rest
+are kept here so they aren't lost; not yet scheduled.
 
 - **Deploy adapter API + presets** (the larger, separate bet — Nitro / Next 16 Adapters):
   a typed build manifest (routes, prerenders, assets, cache rules) + a pluggable adapter
@@ -137,8 +133,6 @@ rest are kept here so they aren't lost; not yet scheduled.
   OpenAPI/GraphQL documents. TypeScript consumers are served: `denext openapi types`
   emits an import-free `ApiSchema` that `createApiClient<ApiSchema>({ base })` from
   JSR types from any project, so no fetch wrapper is generated for TS.
-- `esbuild` off npm — blocked on Deno, not on us; see _Upstream watch_ above for
-  the exact hooks we are waiting for and the wasm fallback we are deliberately not taking.
 - **Node-stream `Writable` backpressure** for `renderToPipeableStream` /
   `renderToStaticNodeStream` (they buffer today — the first entry in
   [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md)): make the core renderer

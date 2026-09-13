@@ -6,8 +6,8 @@ ids, opinionated hardening headers, config validation). A few operational
 responsibilities are **yours** to configure at the edge/platform — they are
 deliberately not baked into the framework so denext stays a thin, fast core.
 This document lists them. See [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md)
-for the threat-by-threat security posture and [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md)
-for behavioral divergences.
+for the threat-by-threat security posture and [KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md)
+for the safe defaults that deliberately differ from Next's.
 
 ## 0. Deploy recipes
 
@@ -149,15 +149,14 @@ For fixed, trusted URLs plain `fetch` is fine.
 ## 5. CSP is applied to page responses, not Flight/API/static
 
 denext computes a strict Content-Security-Policy for HTML page responses,
-**buffered and streamed** alike (a streamed page carries the same hash-based
-policy; see §CSP below). **Flight/RSC**
-responses, and **streamed Cache Components / PPR** responses (a cached shell with
-per-request dynamic holes) do not carry a framework-generated CSP — the full
-document isn't known when the first bytes flush. If you rely on CSP for those
-responses, **set it at the edge** (reverse proxy / CDN) with a nonce- or hash-based
-policy you control, or use buffered rendering for the routes that need a framework
-CSP. (A streamed PPR response is already `private, no-store`, so an intermediary
-never shares it.)
+**buffered and streamed** alike — a streamed page and a Cache Components / PPR shell
+with per-request holes carry the same hash-based policy, because the swap runtime is
+a hashed constant and the head's inline styles are hashed before the first byte
+flushes (see the streaming note below). **Flight/RSC** payload responses are not
+HTML documents and carry no framework-generated CSP; neither do API-route or static
+responses. If you want a policy on those, **set it at the edge** (reverse proxy /
+CDN). (A streamed PPR response is `private, no-store`, so an intermediary never
+shares it.)
 
 The framework CSP keeps `script-src 'self'` and never hashes arbitrary inline
 `<script>` output (so injected script can't self-authorize a hash) — denext emits
@@ -183,9 +182,6 @@ export const csp = { scriptSrc: ["https://plausible.io"] }; // strict + this rou
 // export const csp = "off";   // disable CSP for just this route (e.g. an embed)
 // export const csp = "strict"; // force strict here even when the global default is "off"
 ```
-
-Neither API-route nor static-HTML responses carry a framework CSP either — the
-same "set it at the edge" guidance applies.
 
 **Incremental streaming (`streaming`).** **On by default.** A route with a pending
 `<Suspense>` boundary flushes its shell first and streams each boundary as it
