@@ -44,6 +44,12 @@ and this project adheres to
 
 ### Changed
 
+- **Migration-bed nightly.** A second job in the nightly e2e workflow (`migration-beds`,
+  `deno task test:migration-bed`, `tests/migration-bed/`) clones SHA-pinned real-world apps,
+  runs `denext migrate` against the checkout, builds, serves and render-asserts routes — the
+  walk every real-app migration so far did by hand. First bed: `vercel/next-app-router-playground`
+  (App Router, `cacheComponents`, parallel and intercepting routes, MDX). A clone or install
+  that fails for network reasons skips the bed; anything after it fails the job.
 - **`probeApp` / `denext doctor` crash marker.** The "no-crash-marker" check flagged any
   document containing the words "Internal Server Error" — prose on a page about error
   handling (or a rendered changelog) failed conformance. It now matches only the framework's

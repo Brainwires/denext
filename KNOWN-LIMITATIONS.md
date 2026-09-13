@@ -250,6 +250,10 @@ for the common case).
 Implemented for compatibility but tracking still-unstable upstream surfaces, so
 they may change: `unstable_cache` (still `unstable_` in Next 16),
 `unstable_batchedUpdates` (a no-op — see [ARCHITECTURE.md](./ARCHITECTURE.md)),
+**not provided:** Next 16.4 canary's navigation-stage APIs (`unstable_navigation` /
+`unstable_prefetch` from `next/cache`, the "prefetch stage" experiment) — an app importing
+them fails the compat build with "No matching export", which is why the
+`next-app-router-playground` migration bed is pinned before the commit that adopted them;
 `useMemoCache`/`c` (React Compiler runtime — the compiler hit 1.0 stable; this
 is an internal helper). **`ViewTransition` honors per-element transitions across
 navigations**: on every soft-nav path (Flight, isomorphic, and full-HTML — the
