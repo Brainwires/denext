@@ -146,7 +146,7 @@ denext's built-in router is the **App Router**. The **full** Next.js Pages Route
 `_app`/`_document`, `pages/api/*`, and `useRouter` with events, shallow routing,
 `<Link>` prefetch, and i18n locale routing — ships as opt-in
 [`@denext/pages-router`](https://github.com/Brainwires/denext/tree/main/packages/pages-router). Same surface; a leaner core that
-doesn't carry two routers for the apps that use one. See [PLUGINS.md](/docs/plugins).
+doesn't carry two routers for the apps that use one. See [the plugin guide](/docs/plugins).
 
 ## next-compat build choices
 

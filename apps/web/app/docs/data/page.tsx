@@ -23,6 +23,13 @@ export default function Data() {
   return <List products={products} />;
 }`}
       </Code>
+      <Callout kind="note">
+        A page component receives <code>{"{"} params, searchParams {"}"}</code>, not the raw{" "}
+        <code>Request</code>. Read per-request data with <code>cookies()</code> /{" "}
+        <code>headers()</code> from <code>denext/server</code>{" "}
+        — both mark the render dynamic, so a personalized page is never served from the ISR cache.
+        Route handlers get the <code>Request</code> directly.
+      </Callout>
       <p>
         Fetches are uncached by default (Next 15/16 semantics) and opt into caching via{" "}
         <code>next: {"{"} revalidate, tags {"}"}</code> or{" "}

@@ -244,6 +244,13 @@ See `examples/next-compat` (real Radix) and `examples/next-compat-recharts`
 (real recharts, class components) for runnable end-to-end demos (SSR +
 hydration).
 
+Radix's `asChild` resolves through denext's own `Slot`/`Slottable`
+(`@denext/denext/slot`) and `composeRefs` (`@denext/denext/compose-refs`): props
+merge onto a single child element — className joins, event handlers compose,
+refs merge — with no wrapper element. `react-is` classifies denext elements
+(`isForwardRef`, `isMemo`, `typeOf`, …), and with the React DevTools integration
+the ecosystem and your tools see denext as React.
+
 ### `classComponents`
 
 Some libraries (recharts v2, older component libs) use React **class
@@ -324,6 +331,10 @@ Loading proves module init; still smoke-test any SDK that opens raw sockets
   unless you set your own. See [Known differences](/docs/differences).
 - **Legacy provider context** (`childContextTypes`/`getChildContext`) is not
   supported; `contextType` is. See [Known limitations](/docs/limitations).
+- **Type-checking a compat app isn't clean.** `deno check` still reports
+  cross-library `@types/react` conflicts, because npm libraries ship their own
+  React types — runtime rendering is unaffected (`skipLibCheck` is set by
+  `denext migrate`).
 
 ---
 

@@ -45,6 +45,11 @@ Router from `app/` (or `src/app/`) with sensible defaults.
   `localePrefix` is `"as-needed"` (default — the default locale is served
   unprefixed) or `"always"` (every locale is prefixed, including the default).
   Locale prefixes are parsed off the path and exposed to your routes.
+- **`src/` directory** — not a config key, a layout denext detects. If a
+  `src/app` directory exists, denext looks for `app/`, `middleware` and
+  `instrumentation` under `src/` (Next.js parity); `public/`, the config files
+  and `.denext` stay at the project root. `denext create --src-dir` scaffolds
+  it.
 
 ```ts
 export default {

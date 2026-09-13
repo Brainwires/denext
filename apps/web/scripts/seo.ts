@@ -56,7 +56,6 @@ async function* walkHtml(dir: string): AsyncGenerator<string> {
 // the page title + lead, which we DO want).
 const SKIP_TAGS = new Set([
   "NAV",
-  "ASIDE",
   "SCRIPT",
   "STYLE",
   "SVG",
@@ -200,6 +199,36 @@ function table(el: Element): string {
   return lines.join("\n");
 }
 
+// Callout bodies are usually a run of inline nodes (`<Callout>` renders its children with no
+// wrapping `<p>`), so those are flowed as ONE line rather than one block per child.
+const BLOCK_TAGS = new Set([
+  "P",
+  "UL",
+  "OL",
+  "PRE",
+  "TABLE",
+  "DL",
+  "BLOCKQUOTE",
+  "DIV",
+  "HR",
+]);
+
+/**
+ * A callout `<aside class="callout note|warn">` → a GitHub-style alert blockquote
+ * (`> [!NOTE]` / `> [!WARNING]`). Any other `<aside>` (the shell's "On this page" rail)
+ * stays skipped — see `isCallout`.
+ */
+function callout(el: Element): string {
+  const kind = el.classList?.contains("warn") ? "WARNING" : "NOTE";
+  const hasBlocks = childNodes(el).some((c) => isEl(c) && BLOCK_TAGS.has(tag(c)));
+  const text = hasBlocks ? blocks(el).join("\n\n") : collapseWs(inline(el)).trim();
+  const body = text.split("\n").map((l) => `> ${l}`.trimEnd());
+  return [`> [!${kind}]`, ...body].join("\n");
+}
+
+/** Does this `<aside>` carry a callout class (vs. the TOC rail, which we skip)? */
+const isCallout = (el: Element) => el.classList?.contains("callout") ?? false;
+
 /** Block-level markdown for a container's children, as separate blocks. */
 function blocks(node: Node): string[] {
   const out: string[] = [];
@@ -212,6 +241,10 @@ function blocks(node: Node): string[] {
     if (!isEl(c)) continue;
     const t = tag(c);
     if (SKIP_TAGS.has(t)) continue;
+    if (t === "ASIDE") {
+      if (isCallout(c)) out.push(callout(c));
+      continue; // the docs shell's "On this page" rail is not content
+    }
     if (/^H[1-6]$/.test(t)) {
       out.push("#".repeat(Number(t[1])) + " " + inline(c).trim());
     } else if (t === "P") {

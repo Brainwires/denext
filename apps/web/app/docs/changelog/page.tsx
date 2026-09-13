@@ -2,7 +2,7 @@
 // first-party Markdown renderer content collections use, so the site needs no extra tooling.
 // One page, newest release first; the "On this page" rail lists the versions.
 import { DocsShell } from "../../../components/ui.tsx";
-import { renderMarkdown } from "../../../lib/markdown.ts";
+import { renderMarkdown, rewriteDocLinks } from "../../../lib/markdown.ts";
 import { tocFromHtml } from "../../../lib/toc.ts";
 
 export const metadata = {
@@ -16,7 +16,9 @@ export default async function Changelog() {
   const src = await Deno.readTextFile(CHANGELOG);
   // The file's own H1 + intro paragraph become the shell's title + lead.
   const body = src.replace(/^# Changelog\s*\n/, "");
-  const html = renderMarkdown(body);
+  // Old entries link root files relatively (`./KNOWN-LIMITATIONS.md`); rewrite them to the docs
+  // route that renders the file, or the GitHub blob URL, exactly as MarkdownDoc does.
+  const html = rewriteDocLinks(renderMarkdown(body), "CHANGELOG.md");
   return (
     <DocsShell
       active="changelog"
