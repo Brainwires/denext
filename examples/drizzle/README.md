@@ -41,7 +41,7 @@ this example installs the compat _as_ the `better-sqlite3` package:
   `file:` dependency) and maps `drizzle-orm` for the app's own imports.
 
 So there's still zero native code: the "package" is just a re-export of the
-`node:sqlite`-backed compat. See [`DATABASE.md`](../../DATABASE.md) for the
+`node:sqlite`-backed compat. See [the database guide](https://denext.dev/docs/database) for the
 Postgres and Prisma variants.
 
 ## Files

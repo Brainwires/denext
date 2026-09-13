@@ -39,7 +39,7 @@ pieces bridge that:
    `patch/better-sqlite3/index.mjs` before installing.
 
 The result is still zero native code — just Deno's built-in `node:sqlite` behind
-the Prisma API. See [`DATABASE.md`](../../DATABASE.md) for the full write-up and
+the Prisma API. See [the database guide](https://denext.dev/docs/database) for the full write-up and
 the Drizzle / Postgres variants.
 
 ## Files

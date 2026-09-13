@@ -1,5 +1,5 @@
 // The data layer, backed by **Postgres** through a Deno-native, zero-npm driver
-// (`jsr:@db/postgres`). The whole point of this example is the thing DATABASE.md
+// (`jsr:@db/postgres`). The whole point of this example is the thing https://denext.dev/docs/database
 // tells you to validate yourself: a *networked* database, a *bounded connection
 // pool*, and how both behave when concurrent requests exceed the pool size.
 //

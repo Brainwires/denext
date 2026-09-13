@@ -1,4 +1,8 @@
-# Databases with denext
+---
+title: Databases
+slug: database
+lead: Any database that runs on Deno runs on denext — node:sqlite and Deno KV are built in and zero-npm, and Drizzle and Prisma are verified recipes.
+---
 
 denext is "just Deno," so **any database that runs on Deno runs on denext** —
 you open a connection in a server-only module and use it from Server Components
@@ -50,7 +54,7 @@ export default function Page() {
 
 Run with read/write permission (`deno task dev` already uses `-A`). Writes
 belong in Server Actions (`"use server"`), so forms work with no client JS. See
-[`examples/notes`](./examples/notes) for a complete app (auth + CRUD + ISR)
+[`examples/notes`](https://github.com/Brainwires/denext/tree/main/examples/notes) for a complete app (auth + CRUD + ISR)
 built this way. `node:sqlite` is a **single-process** database — ideal for one
 container or VM; for multiple instances, use Postgres or Deno KV.
 
@@ -81,7 +85,7 @@ export const getUsers = () => sql`SELECT id, email FROM users`;
 
 Keep the pool a module singleton. These drivers are **not part of denext's CI**
 — they're standard Deno usage, but validate your driver + pooling under your
-load. [`examples/postgres-load`](./examples/postgres-load) does exactly that: a
+load. [`examples/postgres-load`](https://github.com/Brainwires/denext/tree/main/examples/postgres-load) does exactly that: a
 real Postgres pool (`jsr:@db/postgres`, zero npm) driven by a load harness that
 fires thousands of concurrent requests and reports throughput + latency
 percentiles — demonstrating that with a bounded pool, concurrency above the pool
@@ -92,7 +96,7 @@ size **queues** for a free connection instead of exhausting the database.
 ## ORMs
 
 Both ORMs below run over denext's
-[`better-sqlite3` compat](./src/compat/better-sqlite3.ts) — a drop-in for the
+[`better-sqlite3` compat](https://github.com/Brainwires/denext/blob/main/src/compat/better-sqlite3.ts) — a drop-in for the
 `better-sqlite3` API backed by Deno's built-in `node:sqlite`, so there is **no
 native addon** to compile and **no query engine** to download. The catch is
 resolution: each ORM does an npm-package-**internal** `import "better-sqlite3"`,
@@ -127,7 +131,7 @@ export { Database, default } from "../../path/to/denext/src/compat/better-sqlite
 With `"nodeModulesDir": "manual"` in `deno.json` and `deno install`, Drizzle's
 `drizzle-orm/better-sqlite3` driver talks to the compat unchanged. A complete
 app — Server-Component reads + a Server-Action write, no client JS — is in
-[`examples/drizzle`](./examples/drizzle), covered end to end by
+[`examples/drizzle`](https://github.com/Brainwires/denext/tree/main/examples/drizzle), covered end to end by
 `tests/e2e/drizzle.e2e.test.ts`. Drizzle's `postgres`/`mysql2` drivers work as
 plain Deno usage (networked-driver caveat above).
 
@@ -203,7 +207,7 @@ The `links` package's `package.json` `version` must satisfy the adapter's
 `^12.6.0` for `7.x`. The **same** compat serves both majors; only the declared
 version differs. A complete app wired up this way — Server-Component read +
 Server-Action write, plus a `scripts/setup.ts` that runs the whole bundle →
-install → generate → push flow — is in [`examples/prisma`](./examples/prisma),
+install → generate → push flow — is in [`examples/prisma`](https://github.com/Brainwires/denext/tree/main/examples/prisma),
 with an opt-in end-to-end test (`tests/e2e/prisma.e2e.test.ts`). This path is
 verified working (`create`/`findMany`/`update`/`count` all round-trip); the
 compat surface Prisma drives — `bind()`, `reader`, `columns()`, `safeIntegers()`

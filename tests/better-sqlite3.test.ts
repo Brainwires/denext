@@ -42,7 +42,7 @@ Deno.test("iterate() yields rows", () => {
 });
 
 // The surface Prisma's better-sqlite3 driver adapter drives: prepare(sql).bind(args)
-// then reader/columns()/raw().all()/run() — see the DATABASE.md "Prisma" recipe.
+// then reader/columns()/raw().all()/run() — see the "Prisma" recipe at https://denext.dev/docs/database.
 Deno.test("bind() pre-binds params; reader/columns() describe the result", () => {
   const db = seeded();
   db.prepare("INSERT INTO users(name, age) VALUES(?, ?)").bind(["Ada", 36]).run();

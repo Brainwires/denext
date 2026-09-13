@@ -1,6 +1,6 @@
 # denext × Postgres under load
 
-DATABASE.md says of networked databases: _"these drivers are not part of
+The [database guide](https://denext.dev/docs/database) says of networked databases: _"these drivers are not part of
 denext's CI — validate your driver + pooling under your load."_ This example
 **is** that validation, made runnable. It's a denext app backed by a real
 **Postgres** connection pool (`jsr:@db/postgres`, zero npm), plus a load harness
@@ -52,7 +52,7 @@ CONCURRENCY=100 REQUESTS=5000 deno task load
   connections at `POOL_SIZE`; the extra 490 virtual users wait in
   `pool.connect()`.
 - **Add a denext concurrency ceiling.** Pair this with `maxConcurrency` on the
-  prod server (see `examples/concurrency` and DEPLOYMENT.md) to add HTTP-level
+  prod server (see `examples/concurrency` and the [deployment guide](https://denext.dev/docs/deploy)) to add HTTP-level
   backpressure in front of the pool.
 
 ## How it's built
@@ -78,4 +78,4 @@ required**. The Postgres integration is what you run here, with a real database.
 - `deno task db:down` stops Postgres and deletes its volume.
 - This is the multi-instance counterpart to [`examples/notes`](../notes) (which
   uses zero-npm `node:sqlite` for the single-process case). See
-  [DATABASE.md](../../DATABASE.md) for the full decision guide.
+  [the database guide](https://denext.dev/docs/database) for the full decision guide.
