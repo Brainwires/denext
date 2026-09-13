@@ -2,13 +2,19 @@
   "tasks": {
     "dev": "deno run -A ../../cli.ts dev .",
     "build": "deno run -A ../../cli.ts build .",
-    "start": "deno run -A ../../cli.ts start ."
+    "start": "deno run -A ../../cli.ts start .",
+    "openapi:types": "deno run -A ../../cli.ts openapi types --out lib/api-types.gen.ts"
   },
   "nodeModulesDir": "none",
   "compilerOptions": {
     "jsx": "react-jsx",
     "jsxImportSource": "denext",
-    "lib": ["deno.window", "dom", "dom.iterable", "dom.asynciterable"]
+    "lib": [
+      "deno.window",
+      "dom",
+      "dom.iterable",
+      "dom.asynciterable"
+    ]
   },
   "imports": {
     "denext": "../../mod.ts",
@@ -26,6 +32,8 @@
     "zod": "npm:zod@^4"
   },
   "lint": {
-    "plugins": ["../../src/lint/denext-plugin.ts"]
+    "plugins": [
+      "../../src/lint/denext-plugin.ts"
+    ]
   }
 }

@@ -204,8 +204,10 @@ function checkDocument(html: string): ProbeCheck[] {
   });
 
   // A well-formed render never leaks the framework's 500 fallback body or a raw
-  // stack frame into the HTML.
-  const crashy = /Internal Server Error/.test(html) ||
+  // stack frame into the HTML. The fallback is the bare text "Internal Server Error"
+  // (the WHOLE response) — the phrase inside a rendered document is prose (a changelog,
+  // a docs page about error handling), not a crash.
+  const crashy = /^\s*Internal Server Error\s*$/.test(html) ||
     /\bat\s+[\w.$]+\s+\(\S+:\d+:\d+\)/.test(html);
   checks.push({
     name: "no-crash-marker",

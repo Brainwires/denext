@@ -20,6 +20,7 @@ import {
   buildOpenApi,
   createOpenapiCommand,
   diffSpecs,
+  emitTypes,
   openapi,
   type OpenApiDocument,
   pathVariants,
@@ -200,6 +201,13 @@ Deno.test("buildOpenApi: operations, parameters, body, responses, error enums, e
   assertEquals(create.operationId, "postApiTodos");
   assertEquals(create.description, "Adds one.");
   assertEquals(create["x-denext-max-body-bytes"], 4096);
+  assertEquals(create["x-denext-path"], "/api/todos");
+  assertEquals(create["x-denext-errors"], {
+    validation: 400,
+    bad_request: 400,
+    duplicate: 409,
+    teapot: 418,
+  });
   assertEquals(create.requestBody, {
     required: true,
     content: {
@@ -711,6 +719,15 @@ Deno.test("denext openapi: emit (stdout / --out), lint (--strict), diff", async 
   assertEquals(changed.out[0], "added   GET /api/todos");
   assertEquals(changed.exit(), 1);
 
+  const types = fakeIo();
+  await createOpenapiCommand(build, types.io).run(ctx(["types"]));
+  assertStringIncludes(types.out.join("\n"), "export type ApiSchema = {");
+  assertStringIncludes(types.err[0], "1 opaque schema(s) emitted as `unknown`");
+  const typesOut = fakeIo();
+  await createOpenapiCommand(build, typesOut.io).run(ctx(["types"], { out: "api.ts" }));
+  assertEquals(typesOut.out[0], "Wrote api.ts (5 operations)");
+  assertStringIncludes(typesOut.files["api.ts"], "export interface paths {");
+
   let threw = "";
   try {
     await createOpenapiCommand(build, fakeIo().io).run(ctx(["bogus"]));
@@ -718,4 +735,307 @@ Deno.test("denext openapi: emit (stdout / --out), lint (--strict), diff", async 
     threw = (e as Error).message;
   }
   assertEquals(threw, "unknown openapi action: bogus");
+});
+
+// ── TypeScript emitter ───────────────────────────────────────────────────────
+
+/** A document holding one operation whose 200 response is `schema`. */
+const docWith = (schema: Record<string, unknown>) => ({
+  openapi: "3.1.0" as const,
+  info: { title: "T", version: "1" },
+  paths: {
+    "/x": {
+      get: { responses: { "200": { content: { "application/json": { schema } } } } },
+    },
+  },
+  components: { schemas: {} },
+});
+
+/** The `response:` line(s) of the single endpoint in `docWith(schema)`'s ApiSchema. */
+function responseType(schema: Record<string, unknown>): string {
+  const out = emitTypes(docWith(schema), { paths: false });
+  const m = /response: ([\s\S]*?);\n {4}\};/.exec(out);
+  assert(m, out);
+  return m[1].replace(/\s+/g, " ");
+}
+
+Deno.test("emitTypes: JSON Schema constructs → TypeScript", () => {
+  assertEquals(responseType({ type: "string" }), "string");
+  assertEquals(responseType({ type: "integer" }), "number");
+  assertEquals(responseType({ type: ["string", "null"] }), "string | null");
+  assertEquals(responseType({ type: "string", nullable: true }), "string | null");
+  assertEquals(responseType({ enum: ["a", 1, true, null] }), '"a" | 1 | true | null');
+  assertEquals(responseType({ const: "only" }), '"only"');
+  assertEquals(responseType({}), "unknown", "an opaque schema is unknown");
+  assertEquals(responseType({ type: "array", items: { type: "number" } }), "number[]");
+  assertEquals(
+    responseType({ type: "array", items: { type: ["string", "null"] } }),
+    "(string | null)[]",
+    "a union item type is parenthesised",
+  );
+  assertEquals(
+    responseType({ type: "array", prefixItems: [{ type: "string" }, { type: "number" }] }),
+    "[string, number]",
+  );
+  assertEquals(
+    responseType({ oneOf: [{ type: "string" }, { type: "number" }] }),
+    "(string | number)",
+  );
+  assertEquals(
+    responseType({
+      allOf: [{ type: "object", properties: { a: { type: "string" } } }, {
+        type: "object",
+        properties: { b: { type: "number" } },
+        required: ["b"],
+      }],
+    }),
+    "({ a?: string; } & { b: number; })",
+  );
+  assertEquals(
+    responseType({
+      type: "object",
+      properties: {
+        id: { type: "string", description: "The id */ end" },
+        "kebab-key": { type: "boolean" },
+      },
+      required: ["id"],
+      additionalProperties: { type: "number" },
+    }),
+    '{ /** The id *\\/ end */ id: string; "kebab-key"?: boolean; } & Record<string, number>',
+  );
+  assertEquals(responseType({ type: "object" }), "Record<string, unknown>");
+  assertEquals(
+    responseType({ type: "object", additionalProperties: false }),
+    "Record<string, never>",
+  );
+  assertEquals(
+    responseType({ $ref: "#/components/schemas/ApiError" }),
+    'components["schemas"]["ApiError"]',
+  );
+  // Inline `$defs` (Zod 4's shape) are expanded; a recursive one is cut at the cycle.
+  assertEquals(
+    responseType({
+      $defs: { Leaf: { type: "object", properties: { v: { type: "number" } } } },
+      type: "array",
+      items: { $ref: "#/$defs/Leaf" },
+    }),
+    "{ v?: number; }[]",
+  );
+  assertEquals(
+    responseType({
+      $defs: {
+        Node: {
+          type: "object",
+          properties: { next: { $ref: "#/$defs/Node" } },
+          required: ["next"],
+        },
+      },
+      $ref: "#/$defs/Node",
+    }),
+    "{ next: unknown; }",
+  );
+  assertEquals(responseType({ $ref: "#/$defs/missing" }), "unknown");
+});
+
+Deno.test("emitTypes: the fixture document → paths/components + a denext ApiSchema", async () => {
+  const { document } = await buildOpenApi({
+    manifest,
+    load,
+    info: { title: "Todos", version: "2" },
+  });
+  const out = emitTypes(document);
+  assertStringIncludes(out, '// Generated by `denext openapi types` from "Todos" 2.');
+  assertStringIncludes(out, "x-denext-wire: 1");
+  // openapi-typescript shape: path templates, lower-cased methods, parameters/requestBody/responses.
+  assertStringIncludes(out, '  "/api/todos/{id}": {\n    delete: {');
+  assertStringIncludes(
+    out,
+    "    patch: {\n      parameters: {\n        path: {\n          id: string;",
+  );
+  assertStringIncludes(out, "        path: {\n          id: string;\n        };");
+  assertStringIncludes(
+    out,
+    'requestBody: {\n        content: {\n          "application/json": unknown;\n        };\n      };',
+  );
+  assertStringIncludes(
+    out,
+    '"400": {\n          content: {\n            "application/json": (components["schemas"]["ApiError"] & {',
+  );
+  assertStringIncludes(out, 'code?: "validation" | "bad_request";');
+  assertStringIncludes(
+    out,
+    'default: {\n          content: {\n            "application/json": components["schemas"]["ApiError"];\n          };\n        };',
+  );
+  assertStringIncludes(out, "export interface components {\n  schemas: {\n    ApiError: {");
+  // denext shape: route patterns, METHODS, params/query/body/response/errors.
+  assertStringIncludes(
+    out,
+    '  "/api/files/[...path]": {\n    GET: {\n      params: {\n        path: string[];',
+  );
+  assertStringIncludes(
+    out,
+    '    GET: {\n      query: {\n        done?: "true" | "false";\n        page: number;\n      };\n      response: Record<string, unknown>[];\n      errors: "validation";',
+  );
+  assertStringIncludes(
+    out,
+    "    POST: {\n      body: {\n        title?: string;\n      };\n      response: {\n        id: string;\n        title: string;\n      };",
+  );
+  assertStringIncludes(out, 'errors: "validation" | "bad_request" | "duplicate" | "teapot";');
+  assertStringIncludes(
+    out,
+    "    DELETE: {\n      params: {\n        id: string;\n      };\n    };",
+    "a plain handler on a dynamic route: params only",
+  );
+  assertStringIncludes(
+    out,
+    '    PATCH: {\n      params: {\n        id: string;\n      };\n      body: unknown;\n      errors: "validation" | "bad_request" | "not_found";',
+  );
+  assert(!out.includes("HEAD:"), "HEAD is derived, never an operation");
+  // The views can be emitted separately.
+  assert(!emitTypes(document, { paths: false }).includes("export interface paths"));
+  assert(!emitTypes(document, { denextSchema: false }).includes("export type ApiSchema"));
+});
+
+Deno.test("emitTypes: a document from another producer (no x-denext-* extensions) still emits", () => {
+  const out = emitTypes({
+    openapi: "3.1.0",
+    info: { title: "Foreign", version: "0" },
+    paths: {
+      "/v1/items/{id}": {
+        delete: {
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: {
+            "404": {
+              content: {
+                "application/json": {
+                  schema: {
+                    allOf: [{ $ref: "#/components/schemas/ApiError" }, {
+                      properties: { error: { properties: { code: { enum: ["gone"] } } } },
+                    }],
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    components: { schemas: {} },
+  });
+  assertStringIncludes(
+    out,
+    '  "/v1/items/[id]": {\n    DELETE: {\n      params: {\n        id: string;\n      };\n      errors: "gone";',
+  );
+});
+
+Deno.test("emitTypes: params stay strings, catchall objects intersect, nullable items parenthesise", () => {
+  const doc = {
+    openapi: "3.1.0",
+    info: { title: "t", version: "1" },
+    paths: {
+      "/api/x/{id}": {
+        get: {
+          "x-denext-path": "/api/x/[id]",
+          parameters: [
+            { name: "id", in: "path", required: true, schema: { type: "number" } },
+          ],
+          responses: {
+            "200": {
+              description: "ok",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      a: { type: "string" },
+                      list: {
+                        type: "array",
+                        items: { type: ["object", "null"], properties: { b: { type: "string" } } },
+                      },
+                    },
+                    additionalProperties: { type: "number" },
+                  },
+                },
+              },
+            },
+          },
+        },
+        trace: { responses: { "200": { description: "never in ApiSchema" } } },
+      },
+    },
+  } as unknown as Parameters<typeof emitTypes>[0];
+  const out = emitTypes(doc);
+  // `ApiEndpoint.params` admits only string | string[] — a coerced number schema lives in `paths`.
+  assert(/params: \{\s*id: string;\s*\}/.test(out), `params are strings:\n${out}`);
+  assertStringIncludes(out, "} & Record<string, number>"); // not an index signature beside members
+  assert(!/\| null\[\]/.test(out), "a nullable item type is parenthesised before []");
+  assertStringIncludes(out, "| null)[]");
+  assert(!/^\s*TRACE:/m.test(out), "TRACE is not an HttpMethod");
+  assertStringIncludes(out, "trace: {"); // but it is still in `paths`
+});
+
+Deno.test("emitTypes: a hostile info/description cannot break out of the header comment", () => {
+  const doc = {
+    openapi: "3.1.0",
+    info: {
+      title: "T\u2028export const pwnTitle = 1;//",
+      version: "1.0\nexport const pwnVersion = 1;\n//",
+    },
+    paths: {
+      "/api/x/{id}": {
+        get: {
+          parameters: [{ name: "id", in: "path", required: true, description: 5, schema: {} }],
+          responses: { "200": { description: "ok" } },
+        },
+      },
+    },
+  } as unknown as Parameters<typeof emitTypes>[0];
+  const out = emitTypes(doc);
+  assert(!/^export const pwn/m.test(out), "document strings stay inside the header comment");
+  const header = out.split("\n\n")[0].split("\n");
+  assert(header.every((l) => l.startsWith("//")), `header is comment-only:\n${header.join("\n")}`);
+  assertStringIncludes(out, "export interface paths");
+});
+
+Deno.test("emitTypes: the ApiSchema types createApiClient from another module (deno check)", async () => {
+  const { document } = await buildOpenApi({ manifest, load });
+  const dir = await Deno.makeTempDir({ prefix: "denext_openapi_types_" });
+  try {
+    await Deno.writeTextFile(`${dir}/api.ts`, emitTypes(document));
+    const client = new URL("../src/runtime/api-client.ts", import.meta.url).href;
+    await Deno.writeTextFile(
+      `${dir}/consumer.ts`,
+      [
+        `import { createApiClient } from ${JSON.stringify(client)};`,
+        `import type { ApiSchema } from "./api.ts";`,
+        `const api = createApiClient<ApiSchema>({ base: "http://api.test" });`,
+        `const created = await api("/api/todos", "POST", { body: { title: "x" } });`,
+        `const id: string = created.id;`,
+        `const list = await api("/api/todos", "GET", { query: { page: 1 } });`,
+        `const first: Record<string, unknown> = list[0];`,
+        `await api("/api/todos/[id]", "PATCH", { params: { id: "1" }, body: { anything: true } });`,
+        `await api("/api/todos/[id]", "DELETE", { params: { id: "1" } });`,
+        `// @ts-expect-error a plain handler on a dynamic route still needs its params`,
+        `await api("/api/todos/[id]", "DELETE");`,
+        `await api("/api/files/[...path]", "GET", { params: { path: ["a", "b"] } });`,
+        `// @ts-expect-error the query is required (page is required)`,
+        `await api("/api/todos", "GET");`,
+        `// @ts-expect-error not a route`,
+        `await api("/api/nope", "GET");`,
+        `// @ts-expect-error title is a string`,
+        `await api("/api/todos", "POST", { body: { title: 1 } });`,
+        `// @ts-expect-error a catch-all takes a string[]`,
+        `await api("/api/files/[...path]", "GET", { params: { path: "a" } });`,
+        `export { first, id };`,
+      ].join("\n"),
+    );
+    const { code, stderr } = await new Deno.Command(Deno.execPath(), {
+      args: ["check", `${dir}/consumer.ts`],
+      stderr: "piped",
+      stdout: "null",
+    }).output();
+    assertEquals(code, 0, new TextDecoder().decode(stderr));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

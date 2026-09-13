@@ -23,6 +23,7 @@ permissions:
 jobs:
   e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
         with:
@@ -53,3 +54,48 @@ jobs:
         # astral downloads a pinned Chromium on first run; the suite builds example
         # apps and drives hydration + next-compat pages in a real browser.
         run: deno task test:e2e
+
+  # Migration beds: clone SHA-pinned real-world apps (tests/migration-bed/*.test.ts), run
+  # `denext migrate` against this checkout, build, serve, and render-assert routes. Every
+  # real-app migration so far found bugs by hand; this is that walk, nightly. A separate job
+  # so a bed flake never masks a core e2e failure and each gets its own timeout. A clone or
+  # dependency install or post-migrate setup command that fails for network reasons SKIPS the
+  # bed; `denext migrate`, the build, serving and the route assertions FAIL the job.
+  # Add a bed: a new `tests/migration-bed/<app>.test.ts` describing the app as data and
+  # calling `runBed` (see _bed.ts); bump a pin deliberately and say why in the commit.
+  migration-beds:
+    runs-on: ubuntu-latest
+    # Above one bed's summed step deadlines (~55 min for a full stall) so the harness's own
+    # `[killed after …]` diagnostics print instead of the runner cutting the job first.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'development' || github.ref }}
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: "2.9.6" # match ci.yml
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up pnpm
+        # The beds install with the app's own package manager; the playground is a pnpm app.
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Cache Deno dependencies
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/deno
+          key: ${{ runner.os }}-deno-${{ hashFiles('deno.lock') }}
+          restore-keys: ${{ runner.os }}-deno-
+
+      - name: Migration beds
+        run: deno task test:migration-bed

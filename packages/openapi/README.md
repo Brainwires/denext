@@ -29,7 +29,7 @@ and `denext build` writes `openapi.json` into the output directory.
 denext plugin add @denext/openapi
 ```
 
-Or by hand: add `"@denext/openapi": "jsr:@denext/openapi@^0.1.0"` to `deno.json`'s
+Or by hand: add `"@denext/openapi": "jsr:@denext/openapi@^0.3.0"` to `deno.json`'s
 `imports` and the plugin to `denext.config.ts` as above.
 
 ## What gets described
@@ -151,7 +151,42 @@ middleware-documented (`documentsSecurity`) → document-level `security` → no
 denext openapi emit --out openapi.json   # regenerate the committed spec
 denext openapi diff openapi.json         # exit 1 when an operation or schema changed
 denext openapi lint --strict             # exit 1 when anything is undescribed
+denext openapi types --out api-types.ts  # TypeScript types for a consumer outside the app
 ```
+
+## Consume the API from another project
+
+Inside the app, `createApiClient()` is already typed — `denext build`/`dev` write `.denext/api.ts`
+straight from the route modules. That file re-reads the app's own sources, so it cannot leave
+the repo. `denext openapi types` emits what can: one `.ts` with no imports, derived from the
+document, holding two views of the same API:
+
+- `paths` / `components` — the openapi-typescript shape, for openapi-fetch and friends;
+- `ApiSchema` — denext's shape, keyed by route pattern and method. Hand it to the client from
+  `jsr:@denext/denext` and a separate frontend gets the same typed calls the app has, wire codec
+  and typed error codes included:
+
+```ts
+// a different repo — a Deno/TS frontend, a script, a worker
+import { createApiClient, isApiClientError } from "jsr:@denext/denext";
+import type { ApiSchema } from "./api-types.ts"; // `denext openapi types --out api-types.ts`
+
+const api = createApiClient<ApiSchema>({ base: "https://api.example.com" });
+const pet = await api("/api/pets/[id]", "GET", { params: { id: "1" } }); // typed response
+try {
+  await api("/api/pets", "POST", { body: { name: "", species: "cat" } });
+} catch (err) {
+  if (isApiClientError(err) && err.code === "duplicate") { /* narrowed to the declared codes */ }
+}
+```
+
+Types only — no fetch wrapper is generated, deliberately: a plain `fetch` consumer sees plain
+JSON except for values holding a Date, Map, Set, BigInt, URL, `undefined`, NaN, ±Infinity or -0, which
+arrive `$`-tagged with an `x-denext-wire: 1` header; `createApiClient` decodes those (and
+dedupes and batches), so it IS the client. An opaque schema (`{}`, see Lint codes) becomes
+`unknown`; a recursive `$defs` reference is cut to `unknown` at the cycle. The document stamps
+two extensions the emitter reads — `x-denext-path` (the route pattern) and `x-denext-errors`
+(`{ code: status }`) — so a document from another producer still emits, keyed by `{id}` → `[id]`.
 
 `@denext/openapi/spec` exports `buildOpenApi`, `diffSpecs` and `toJsonSchema` for scripts
 that need no server:
@@ -193,13 +228,15 @@ const { document, warnings } = await buildOpenApi({
   (the lint count).
 - `GET /docs` (builtin renderer): the page plus its stylesheet at `<docs>.css`, served
   same-origin (`max-age=3600`).
-- Operations carry `x-denext-max-body-bytes` when the definition sets `maxBodyBytes`.
+- Operations carry `x-denext-path` (the denext route pattern), `x-denext-errors` (`{ code:
+  status }` for every code a call may fail with, builtins included) and, when the definition
+  sets `maxBodyBytes`, `x-denext-max-body-bytes`.
 - Lint codes: `opaque-schema`, `undescribed-route`, `missing-summary`, `catch-all-path`,
   `load-failed`, `path-collision`.
 - Subpaths: `@denext/openapi/spec` (`buildOpenApi`, `diffSpecs`, `toJsonSchema`,
   `pathVariants`, `API_ERROR_SCHEMA`), `@denext/openapi/command` (`createOpenapiCommand`,
-  `formatWarning`); the root also exports `renderDocsHtml`, `renderSchema`, `DOCS_CSS`,
-  `DOCS_CDN`.
+  `formatWarning`), `@denext/openapi/types` (`emitTypes`); the root also exports
+  `renderDocsHtml`, `renderSchema`, `DOCS_CSS`, `DOCS_CDN`.
 
 ## Security notes
 

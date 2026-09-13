@@ -1,0 +1,23 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+  line-height: 1.5;
+}
+body {
+  margin: 0 auto;
+  max-width: 40rem;
+  padding: 1rem 1.25rem;
+}
+nav {
+  display: flex;
+  gap: 1rem;
+  padding-block: 0.75rem;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+}
+nav a[data-status="active"] {
+  font-weight: 700;
+  text-decoration: none;
+}
+.boot {
+  opacity: 0.6;
+}

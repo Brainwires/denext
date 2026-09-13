@@ -92,7 +92,9 @@ security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
   provides compile-time `import.meta.env` (the Vite `define` analogue). A
   denext-native SPA keeps the fast plain-`deno bundle` path. Opt-in `spa.csp`
   emits a strict Content-Security-Policy (`<meta>`) into the shell. Mutually
-  exclusive with the App Router per project. See `examples/spa`.
+  exclusive with the App Router per project. See `examples/spa`, and
+  `examples/tanstack-router` for a stock file-based TanStack Router app in this
+  mode (library mode: the router runs in the browser, no plugin needed).
 
 ## React runtime (own React 19-compatible implementation)
 
@@ -388,7 +390,7 @@ cache uses Deno's built-in `node:sqlite`.)
   for an OpenAPI/docs plugin.
 - **`@denext/openapi`** (`packages/openapi`): the same definitions as an OpenAPI 3.1
   document — `GET /openapi.json` + a zero-JavaScript docs page at `GET /docs` (or Scalar /
-  Swagger UI), `openapi.json` in the build output, `denext openapi emit | diff | lint`.
+  Swagger UI), `openapi.json` in the build output, `denext openapi emit | diff | lint | types`.
   JSON Schema via Standard JSON Schema (Zod ≥ 4.2, ArkType, Valibot), TypeBox, a
   `toJsonSchema()` method, or a converter; the shared `ApiError` envelope with per-status
   code enums; an `authorize` gate that falls through to the app's 404.

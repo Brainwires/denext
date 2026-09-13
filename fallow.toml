@@ -32,6 +32,7 @@ ignoreDependencies = [
   "@pothos/core", # examples/graphql/deno.json: npm:@pothos/core@^4.6.0 (the recommended schema builder)
   "zod", # examples/openapi/deno.json: npm:zod@^4 (defineApi schemas → OpenAPI via Standard JSON Schema)
   "react-router", # examples/react-router/app/*: bare RR runtime import, mapped to denext/remix in that example's deno.json
+  "@tanstack/react-router", # examples/tanstack-router/package.json: installed into that example's manual node_modules
   "drizzle-orm", # examples/drizzle/deno.json: npm:drizzle-orm@^0.44.7
   "@prisma/adapter-better-sqlite3", # examples/prisma/deno.json: npm:@prisma/adapter-better-sqlite3
   "@capacitor/cli", # examples/native/deno.json: npm:@capacitor/cli@^7
@@ -109,6 +110,9 @@ entry = [
   "examples/react-router/app/root.tsx",
   "examples/react-router/app/routes.ts",
   "examples/react-router/app/routes/**",
+  # TanStack Router file-based routes (examples/tanstack-router): every module under
+  # src/routes/ is wired by the generated src/routeTree.gen.ts (the TanStack Router CLI).
+  "examples/tanstack-router/src/routes/**",
   # SPA mode: the entry (and worker) named by `spa.entry` in denext.config.ts.
   "**/src/main.tsx",
   "**/src/worker.ts",
@@ -158,6 +162,10 @@ ignorePatterns = [
   # Content-collection entries: `.mdx` documents the @denext/content-collections plugin compiles
   # at build (never imported as modules by the app), so the graph can't reach them.
   "examples/*/content/**/*.mdx",
+  # Generated modules in examples (`*.gen.ts`): the TanStack Router CLI's route tree
+  # (`deno task routes`) and `denext openapi types` output; their exported helper types are
+  # for consumers, never imported here. Regenerated, never hand-edited.
+  "examples/**/*.gen.ts",
 ]
 
 # Loaded with `await import("./dev-proxy.ts")` only when `spa.proxy` is configured (it pulls

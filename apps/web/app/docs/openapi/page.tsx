@@ -129,7 +129,28 @@ openapi({ ui: "scalar", cdn: "/vendor/scalar.js" });   // self-hosted bundle`}
       <Code lang="sh">
         {`denext openapi emit --out openapi.json   # regenerate the committed spec
 denext openapi diff openapi.json         # exit 1 when an operation or schema changed
-denext openapi lint --strict             # exit 1 when anything is undescribed`}
+denext openapi lint --strict             # exit 1 when anything is undescribed
+denext openapi types --out api-types.ts  # TypeScript types for a consumer outside the app`}
+      </Code>
+
+      <h2>Consume the API from another project</h2>
+      <p>
+        Inside the app <code>createApiClient()</code>{" "}
+        is already typed from the route modules. For a separate frontend or a script,{" "}
+        <code>denext openapi types</code> emits one <code>.ts</code>{" "}
+        with no imports: the openapi-typescript <code>paths</code> / <code>components</code>{" "}
+        shape, and denext&apos;s <code>ApiSchema</code> — hand it to the client from{" "}
+        <code>jsr:@denext/denext</code>{" "}
+        and the other project gets the same typed calls, wire codec and error-code narrowing. Types
+        only; the client library is the client.
+      </p>
+      <Code lang="ts">
+        {`// a different repo
+import { createApiClient, isApiClientError } from "jsr:@denext/denext";
+import type { ApiSchema } from "./api-types.ts"; // denext openapi types --out api-types.ts
+
+const api = createApiClient<ApiSchema>({ base: "https://api.example.com" });
+const pet = await api("/api/pets/[id]", "GET", { params: { id: "1" } }); // typed`}
       </Code>
       <p>
         <code>@denext/openapi/spec</code> exports <code>buildOpenApi</code>, <code>diffSpecs</code>

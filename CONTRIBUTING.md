@@ -28,6 +28,17 @@ deno task hooks:install   # install the pre-commit hook (once per clone)
   per-function coverage map the Fallow gate scores CRAP with; without it fallow
   _estimates_ coverage and can block a commit on framework internals that tests
   reach only transitively. Details under _The Fallow gate_ below.
+- **`deno task test:e2e`** and **`deno task test:migration-bed`** are the two
+  network-bound suites `check` never runs; the nightly workflow
+  (`.github/workflows/e2e.yml`) does. The e2e suite drives the examples in a real
+  Chromium. The **migration beds** (`tests/migration-bed/`) clone SHA-pinned
+  real-world apps, run `denext migrate` against your checkout, build, serve and
+  render-assert routes — one `<app>.test.ts` per bed describing the app as data
+  and calling `runBed` (see `_bed.ts`). A clone, dependency install or post-migrate setup
+  command that fails for network reasons skips the bed; `denext migrate`, the build, serving
+  and the route assertions are real failures. Bump a bed's SHA
+  deliberately and say why in the commit (the pin comment names what the newer
+  upstream needs).
 
 ### The Fallow gate
 

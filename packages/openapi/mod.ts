@@ -64,6 +64,8 @@ export { DOCS_CDN, DOCS_CSS, renderDocsHtml, renderSchema } from "./docs-ui.ts";
 export type { DocsHtmlOptions, DocsUi } from "./docs-ui.ts";
 export { createOpenapiCommand, formatWarning } from "./command.ts";
 export type { OpenapiCommandIo } from "./command.ts";
+export { emitTypes } from "./types.ts";
+export type { EmitTypesOptions } from "./types.ts";
 
 // The denext types this package's public API references, and their transitively
 // referenced members, re-exported so the generated docs are self-contained

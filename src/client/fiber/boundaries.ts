@@ -36,7 +36,13 @@ export function retrySuspendedTransition(inst: Fiber): void {
 
 export function retrySuspense(inst: Fiber): void {
   if (inst.unmounted) return; // boundary was unmounted before the promise settled
+  // Clear the flag on BOTH buffers: `inst` is the fiber that suspended, and if an ancestor
+  // re-rendered while the promise was pending (a parent setState from a layout effect —
+  // TanStack Router's Transitioner) the committed buffer is now its alternate, and the
+  // next work-in-progress copies `showingFallback` from THAT buffer (createWorkInProgress)
+  // — so a one-sided clear would render the fallback forever.
   inst.showingFallback = false;
+  if (inst.alternate) inst.alternate.showingFallback = false;
   const st = inst.listState;
   if (st && inst.listIndex != null) {
     // Mark this member ready on the shared state (indexed — the captured fiber may
@@ -49,7 +55,10 @@ export function retrySuspense(inst: Fiber): void {
 }
 
 export function resetBoundary(inst: Fiber): void {
+  // Both buffers, for the same reason as retrySuspense: `__error` is carried over from the
+  // committed buffer, which may be `inst.alternate` if an ancestor re-rendered since the catch.
   inst.__error = undefined;
+  if (inst.alternate) inst.alternate.__error = undefined;
   scheduleUpdate(inst);
   flushRoots(SyncLane); // event-time (fallback's reset button): commit synchronously
 }
@@ -68,7 +77,13 @@ function triggerBoundary(inst: Fiber, error: unknown): void {
     return;
   }
   reportCaught(inst, error);
+  // Both buffers (see `resetBoundary`): the fiber that routed here was captured at render or
+  // commit time — an event handler's `onErrorFor`, an effect, `useErrorBoundary()` — and after
+  // an ancestor re-render its `.return` chain ends at the boundary's ALTERNATE; `carryOver`
+  // would then copy `undefined` from the current buffer over a one-sided write and the error
+  // vanished: reported, no fallback, DOM unchanged.
   inst.__error = error;
+  if (inst.alternate) inst.alternate.__error = error;
   scheduleUpdate(inst);
   // Event-handler / async errors are caught outside render; commit the fallback
   // synchronously so the DOM reflects it immediately (React can't do this).

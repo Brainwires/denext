@@ -259,7 +259,8 @@ kit:
   single denext route (or the SPA shell) that hydrates the router client-side. This
   needs **nothing from `plugin-kit`** — denext's [SPA mode](./FEATURES.md) already
   serves a shell + a client entry bundle. React Router / TanStack Router in library
-  mode run on denext today; a plugin here is mostly config sugar + the client-entry
+  mode run on denext today (`examples/tanstack-router` is a stock file-based TanStack
+  Router app in SPA mode); a plugin here is mostly config sugar + the client-entry
   convention.
 - **Framework / SSR-data mode** (server loaders, streaming SSR, hydration — React
   Router framework mode, TanStack Start): the plugin claims requests
@@ -289,7 +290,7 @@ scales to a full framework router, not just aliasing.
 - **[`@denext/openapi`](./packages/openapi)** — uses all of the non-render seams at once:
   a **route synthesizer** only to observe each scanned manifest, a **request handler** for
   `/openapi.json` + `/docs`, a **build step** that writes the document, and a **CLI verb**
-  (`denext openapi emit | diff | lint`). It reads route metadata through the plugin-kit's
+  (`denext openapi emit | diff | lint | types`). It reads route metadata through the plugin-kit's
   `apiDefinitionOf` — the model for a plugin that _describes_ an app rather than renders it.
 - **[`@denext/graphql`](./packages/graphql)** — mounts a third-party HTTP handler (GraphQL
   Yoga) through the **request handler** seam, bridges the app's `createChannel` pushes into

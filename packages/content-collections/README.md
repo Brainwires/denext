@@ -95,7 +95,7 @@ document (`{ h1: Heading, Callout }`).
   runtime renders it for you: `await renderContent(entry)` or `<Content entry={entry} />`
   (server-only). A `.md` entry renders through the package's first-party, zero-dependency
   Markdown renderer at request time (`@denext/content-collections/markdown` — headings with ids,
-  lists, fenced code, blockquotes / `> [!NOTE]` callouts, links, emphasis; raw HTML is escaped,
+  lists, fenced code, blockquotes / `> [!NOTE]` callouts, inline and reference-style links, emphasis; raw HTML is escaped,
   `javascript:`/`data:` links are dropped). A `.mdx` entry is compiled **at build** (and at dev
   startup / on change) into a component module under `.denext/content/<collection>/<id>.js`
   with denext's build-time `@mdx-js/mdx` — nothing MDX-related runs at request time — and

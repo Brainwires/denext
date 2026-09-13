@@ -204,7 +204,8 @@ four documented bounds of the opt-in:
   that is the same-origin check working as intended.
 - **`@denext/openapi` describes what a validator can export.** A schema with no JSON
   Schema (no Standard JSON Schema, not TypeBox, no `toJsonSchema()`, no converter) is
-  emitted as `{}` with an `opaque-schema` lint warning. Middleware-produced responses
+  emitted as `{}` with an `opaque-schema` lint warning — and as `unknown` in the TypeScript
+  `denext openapi types` emits (a recursive `$defs` reference is `unknown` at the cycle). Middleware-produced responses
   (`requireSession` 401, `rateLimit` 429) appear only as the operation's `default`
   response — a definition cannot name them. The `scalar` / `swagger` renderers load a
   pinned bundle from a CDN (not strict-CSP clean; self-host via `cdn`); the `builtin`
@@ -223,6 +224,12 @@ four documented bounds of the opt-in:
   Yoga `batching` on, the budget is enforced per operation, so an N-operation batch can cost up
   to N×. The schema resolves once per process: in `denext dev`, an edit to a schema module needs
   a server restart (Deno's module graph caches it).
+
+- **`denext doctor` / `probeApp` see a crash only as the framework's bare 500.** The
+  "no-crash-marker" check matches the 500 fallback body (`Internal Server Error` and nothing
+  else) and raw stack frames. A server error that a segment `error.tsx` caught and rendered
+  at status 200 — the redacted message inside the boundary's own markup — is a rendered page
+  to the probe. Assert on such routes yourself (a `contains` on the expected content).
 
 ## DevTools (dev-only)
 
@@ -251,7 +258,11 @@ Implemented for compatibility but tracking still-unstable upstream surfaces, so
 they may change: `unstable_cache` (still `unstable_` in Next 16),
 `unstable_batchedUpdates` (a no-op — see [ARCHITECTURE.md](./ARCHITECTURE.md)),
 `useMemoCache`/`c` (React Compiler runtime — the compiler hit 1.0 stable; this
-is an internal helper). **`ViewTransition` honors per-element transitions across
+is an internal helper). **Not provided:** Next 16.4 canary's navigation-stage APIs
+(`unstable_navigation` / `unstable_prefetch` from `next/cache`, the "prefetch stage"
+experiment) — an app importing them fails the compat build with "No matching export", which
+is why the `next-app-router-playground` migration bed is pinned before the commit that
+adopted them. **`ViewTransition` honors per-element transitions across
 navigations**: on every soft-nav path (Flight, isomorphic, and full-HTML — the
 iso/HTML paths now await their re-injected entry so the DOM swap happens inside the
 transition), the wrapper stamps real `view-transition-name` on its host child on both

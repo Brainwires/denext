@@ -365,6 +365,10 @@ function describe(
   const op: OpenApiOperation = {
     operationId: operationId(method, pattern),
     tags: (options.tags ?? defaultTags)(route),
+    // The denext route pattern (`/api/todos/[id]`), so a types emitter can key `ApiSchema` by
+    // it instead of reversing `{id}` → `[id]` (and an optional catch-all's two path variants
+    // find their one route).
+    "x-denext-path": route.routePath,
   };
   const security = securityFor(meta?.def.security, route, options.security);
   if (security) op.security = security;
@@ -403,6 +407,10 @@ function describe(
   }
   if (def.maxBodyBytes !== undefined) op["x-denext-max-body-bytes"] = def.maxBodyBytes;
   op.responses = responses(def, def.response ? convert(def.response, "response") : undefined);
+  const codes = errorCodes(def);
+  // Every error code a call may fail with (the builtins the definition implies + its own), with
+  // its status — the flat form a client's `isApiClientError(err).code` narrows on.
+  if (Object.keys(codes).length) op["x-denext-errors"] = codes;
   return op;
 }
 
@@ -450,6 +458,21 @@ function queryParameters(query: JsonSchema | undefined): OpenApiOperation[] {
   }));
 }
 
+/**
+ * Every error code a definition can answer with, by status: the builtins its inputs imply
+ * (`validation` when anything is validated, `bad_request` when there is a body) and its own
+ * `errors`, in that order.
+ */
+function errorCodes(def: ApiDefinition): Record<string, number> {
+  const codes: Record<string, number> = {};
+  if (def.params || def.query || def.body) codes.validation = 400;
+  if (def.body) codes.bad_request = 400;
+  for (const [code, spec] of Object.entries(def.errors ?? {})) {
+    codes[code] = typeof spec === "number" ? spec : spec.status;
+  }
+  return codes;
+}
+
 /** The success response plus one response per declared error status (codes as an enum). */
 function responses(def: ApiDefinition, response: JsonSchema | undefined): Record<string, unknown> {
   const out: Record<string, unknown> = {
@@ -458,17 +481,20 @@ function responses(def: ApiDefinition, response: JsonSchema | undefined): Record
       : { description: "OK (a handler that returns nothing answers 204)" },
   };
   const byStatus = new Map<number, { codes: string[]; messages: string[] }>();
-  const add = (status: number, code: string, message?: string) => {
+  const messageOf = (code: string): string | undefined => {
+    if (code === "validation" && !(code in (def.errors ?? {}))) return "Validation failed";
+    if (code === "bad_request" && !(code in (def.errors ?? {}))) {
+      return "Malformed or non-JSON body";
+    }
+    const spec = def.errors?.[code];
+    return typeof spec === "object" ? spec.message : undefined;
+  };
+  for (const [code, status] of Object.entries(errorCodes(def))) {
     const entry = byStatus.get(status) ?? { codes: [], messages: [] };
     entry.codes.push(code);
+    const message = messageOf(code);
     if (message) entry.messages.push(message);
     byStatus.set(status, entry);
-  };
-  if (def.params || def.query || def.body) add(400, "validation", "Validation failed");
-  if (def.body) add(400, "bad_request", "Malformed or non-JSON body");
-  for (const [code, spec] of Object.entries(def.errors ?? {})) {
-    if (typeof spec === "number") add(spec, code);
-    else add(spec.status, code, spec.message);
   }
   for (const [status, { codes, messages }] of [...byStatus].sort(([a], [b]) => a - b)) {
     out[String(status)] = {

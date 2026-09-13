@@ -1,0 +1,5 @@
+.denext/
+out/
+node_modules/
+deno.lock
+.tanstack/

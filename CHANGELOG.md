@@ -8,6 +8,106 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.4.2] - 2026-09-13
+
+### Added
+
+- **`denext openapi types` (`@denext/openapi` 0.3.0).** TypeScript types for a consumer outside
+  the app — a separate frontend, a script — as one import-free `.ts`: openapi-typescript-style
+  `paths`/`components`, and denext's `ApiSchema` so `createApiClient<ApiSchema>({ base })` from
+  JSR is a fully typed client from any TypeScript project. Types only; the client library is
+  the client. See the package CHANGELOG.
+- **`examples/tanstack-router`.** A stock file-based TanStack Router app running in SPA mode
+  with no plugin (library mode: the router in the browser, denext bundling the entry and
+  serving the shell for every URL), in exactly the shape `denext migrate` writes for a Vite +
+  TanStack Router project — `spa.rootId: "app"`, `nodeModulesDir: "manual"`, the route tree
+  generated out-of-band by the TanStack Router CLI (`deno task routes`). An opt-in e2e drives
+  it in Chromium (render, same-document `<Link>` navigation, deep URL, not-found).
+- **Changelog on the docs site.** `/docs/changelog` (Reference → Changelog) renders this file
+  through the docs shell at export time, newest release first, with the version headings
+  linking to their JSR release and the "On this page" rail listing the versions; search
+  indexes every version. The shared first-party Markdown renderer
+  (`@denext/content-collections/markdown`) gained reference-style links to render it.
+
+### Changed
+
+- **Migration-bed nightly.** A second job in the nightly e2e workflow (`migration-beds`,
+  `deno task test:migration-bed`, `tests/migration-bed/`) clones SHA-pinned real-world apps,
+  runs `denext migrate` against the checkout, builds, serves and render-asserts routes — the
+  walk every real-app migration so far did by hand. Beds: `vercel/next-app-router-playground`
+  (App Router, `cacheComponents`, parallel and intercepting routes, MDX) and
+  `epicweb-dev/epic-stack` at its last Remix commit (`--from remix`: remix-flat-routes, Prisma +
+  SQLite with the seeded admin, session redirects, resource routes, remix-seo). A clone, dependency
+  install or post-migrate setup command that fails for network reasons skips the bed;
+  `denext migrate`, the build, serving and the route assertions fail the job. The publish
+  workflow's verify step ignores the bed directory (it has no network gate; it would have
+  failed every release).
+- **`probeApp` / `denext doctor` crash marker.** The "no-crash-marker" check flagged any
+  document containing the words "Internal Server Error" — prose on a page about error
+  handling (or a rendered changelog) failed conformance. It now matches only the framework's
+  actual 500 fallback, whose whole body is that bare text; the raw-stack-frame test is unchanged.
+
+### Fixed
+
+- **Unbundled dev pages did not hydrate (`denext dev`, the default per-module HMR loop).** The
+  on-demand class runtime (`denext/class-runtime`, 2.4.0) was never added to the dev server's
+  pre-bundled `@dep` set, so the client's import of it answered 404, the whole module graph
+  failed to load, and every page stayed server HTML — silently, since a failed module fetch is
+  not a console error. Both the native `@dep` map and the compat runtime-file map now carry it,
+  and a unit test asserts every specifier in the compat runtime-file map has a native `@dep`
+  entry and a prebuilt compat runtime file. The same audit found `denext/feature` missing from
+  all of them: `feature()` calls are folded at build but the import stays in the module, so a
+  `"use client"` file using a flag 404'd its module graph in unbundled dev the same silent way.
+  Added to the native `@dep` set, the compat runtime map and the prebuilt runtime entries.
+- **A Suspense boundary that suspended on mount could show its fallback forever.** If an
+  ancestor re-rendered while the promise was pending (a parent `setState` from a layout
+  effect — TanStack Router's `Transitioner` does exactly this on mount), the boundary's fiber
+  buffers swapped and the retry cleared `showingFallback` on the stale buffer only; the next
+  render copied `true` back from the committed one. A migrated TanStack Router app rendered a
+  blank page with no error. The retry now clears both buffers; `ErrorBoundary`'s `reset()` had
+  the same one-sided clear of the caught error and is fixed the same way — and so did the
+  catch itself: an error thrown by an event handler, an effect or `useErrorBoundary()` after an
+  ancestor had re-rendered was written to the boundary's stale buffer only, so it was reported
+  but no fallback appeared and the DOM stayed as it was. Both buffers now take the error.
+- **`denext migrate` (Vite SPA): the mount element and the Tailwind stylesheet.** The
+  generated shell always mounted `#root` while the entry rendered into whatever `index.html`
+  declared (`#app` in TanStack's scaffold) — `createRoot(null)`, a blank page; migrate now
+  reads the id from the entry's `getElementById`/`querySelector` (else the first `<div id>`
+  in `<body>`) and writes `spa.rootId` when it is not `root` — preferring the lookup passed
+  to `createRoot`/`hydrateRoot`/`render`, so an entry that first removes a `#splash` element
+  still mounts `#app`. Tailwind was detected only when
+  the stylesheet was `src/index.css`; the known Vite/CRA names (`styles.css`, `App.css`, …)
+  and then every `.css` under `src/` (three directory levels deep) are scanned for the Tailwind
+  directive (the whole-framework `@import "tailwindcss"` or a v3 `@tailwind` directive — a
+  component stylesheet's `@import "tailwindcss/theme"` no longer counts); the config's
+  `tailwind.input` points at the file found, `.gitignore` at its `.gen.css` output, and the
+  report names the stylesheet and the mount id. `@tailwindcss/vite`,
+  `@tanstack/router-plugin` and `@tanstack/devtools-vite` (Vite plugins with no role under
+  denext) are dropped from the report instead of passed through.
+- **The first-party Markdown renderer swallowed digit runs and could break out of an `href`
+  (`@denext/content-collections` 0.3.0).** Code spans were parked behind a `N` placeholder,
+  so any `1` in prose was replaced by the wrong span or by `undefined` (the rendered changelog
+  above had 120 of them), and a span parked inside a link destination was restored INSIDE the
+  attribute after escaping. The placeholder is now NUL-delimited (NUL is stripped from the
+  source), a destination with whitespace is not a link, and a `[label]: url` line inside a
+  fence is code, not a definition. Same fix in the package CHANGELOG.
+- **`emitTypes` (`@denext/openapi` 0.3.0), pre-release fixes.** `ApiSchema.params` typed a
+  dynamic segment from its parameter schema, so a coerced `z.number()` param produced a file
+  `createApiClient<ApiSchema>` rejected outright (`params` must be strings — the URL's); params
+  are always `string`/`string[]` now, the rich type stays in `paths`. An object with members AND
+  `additionalProperties` (Zod `.catchall()`) emitted an index signature beside the members
+  (TS2411) — now an intersection. A nullable item type was not parenthesised before `[]`.
+  `TRACE` is no longer keyed in `ApiSchema` (not a denext `HttpMethod`); a document without
+  `paths` no longer throws. A document's `info.title`/`info.version` containing a line
+  terminator (`\n`, U+2028) ended the header comment and became code in the generated module;
+  both are folded to one line. A non-string `description` no longer throws.
+- **An interrupted compat build left css-shim redirects in the app's `deno.json`.** The build
+  injects `file:///…/x.css` → `.denext/css-shims/*.js` import-map entries transiently and
+  restores the committed file when the build child exits; a `SIGKILL` mid-crawl skipped the
+  restore, and the next build then captured the polluted file as the "original" (it happened
+  to `examples/tanstack-router`). The next `denext build`/`dev` now restores from the leftover
+  backup before injecting again.
+
 ## [2.4.1] - 2026-09-11
 
 ### Added
@@ -6435,6 +6535,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.4.2]: https://jsr.io/@denext/denext@2.4.2
 [2.4.1]: https://jsr.io/@denext/denext@2.4.1
 [2.4.0]: https://jsr.io/@denext/denext@2.4.0
 [2.3.0]: https://jsr.io/@denext/denext@2.3.0
