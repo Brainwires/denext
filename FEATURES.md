@@ -1,5 +1,8 @@
 # denext features
 
+`path:line` citations refer to this repository at `main` — browse them
+at [github.com/Brainwires/denext](https://github.com/Brainwires/denext).
+
 This file has **two parts**:
 
 - **Part 1 — What denext ships**, the master list of supported features by
