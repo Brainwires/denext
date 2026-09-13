@@ -14,7 +14,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
-import { startCliServer } from "../e2e/harness.ts";
+import { killTree, startCliServer } from "../e2e/harness.ts";
 
 /** One route to render-assert after the migrated app is built and served. */
 interface BedRoute {
@@ -22,8 +22,21 @@ interface BedRoute {
   path: string;
   /** Expected HTTP status (default 200). */
   status?: number;
-  /** A substring the response body must contain. */
+  /** A substring the response body must contain (skip with `""`). */
   contains: string;
+  /** For a redirect: a substring the `Location` header must contain (redirects are not followed). */
+  location?: string;
+}
+
+/**
+ * A setup command with its own deadline. `expect` marks success by output: a script that does
+ * its work and then never exits (a DB seed holding a Prisma engine handle open) counts as done
+ * once its output contains `expect`, even though the deadline had to kill it.
+ */
+interface TimedCommand {
+  cmd: string[];
+  timeoutMs?: number;
+  expect?: string;
 }
 
 /** A real-world app to migrate, as data. */
@@ -42,6 +55,13 @@ export interface Bed {
   prepare?: (appDir: string) => Promise<void>;
   /** Extra `denext migrate` flags (`["--from", "remix"]`). */
   migrate?: string[];
+  /**
+   * Commands to run after migrate and before build, in the app dir — the setup a migrated
+   * app's README asks for (a Prisma task migrate generated, an icon build, a DB seed). The
+   * token `$deno` is this test's Deno binary. Same network-skip semantics as `install`; an
+   * entry may be a {@linkcode TimedCommand} for its own deadline / success marker.
+   */
+  afterMigrate?: Array<string[] | TimedCommand>;
   /** The `kind` migrate must report (`"next"`, `"spa"`, `"remix"`, …). */
   kind: string;
   /** `flagged` dependencies the bed tolerates (native deps the app does not exercise). */
@@ -64,7 +84,13 @@ const DOCTOR_TIMEOUT_MS = 300_000;
 const NETWORK_FAILURE =
   /ENOTFOUND|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|Could not resolve host|unable to access|registry\.npmjs\.org|network|fetch failed|ERR_PNPM_META_FETCH_FAIL|ERR_PNPM_FETCH/i;
 
-/** Run a command in `cwd`, bounded by `timeoutMs`. Never throws — reports instead. */
+/**
+ * Run a command in `cwd`, bounded by `timeoutMs`. Never throws — reports instead. The
+ * deadline SIGKILLs the whole process tree (`killTree`): `AbortSignal.timeout` only sends
+ * SIGTERM to the direct child, which a seed script holding a database engine open ignored
+ * for ten minutes. Output read before the kill is kept, so a caller can still recognise a
+ * "done" line from a process that finished its work and then never exited.
+ */
 async function run(
   cmd: string,
   args: string[],
@@ -72,25 +98,38 @@ async function run(
   timeoutMs: number,
   env: Record<string, string> = {},
 ): Promise<{ ok: boolean; out: string }> {
+  let child: Deno.ChildProcess;
   try {
-    const { success, stdout, stderr } = await new Deno.Command(cmd, {
-      args,
-      cwd,
-      env,
-      stdout: "piped",
-      stderr: "piped",
-      signal: AbortSignal.timeout(timeoutMs),
-    }).output();
-    return {
-      ok: success,
-      out: new TextDecoder().decode(stdout) + new TextDecoder().decode(stderr),
-    };
+    child = new Deno.Command(cmd, { args, cwd, env, stdout: "piped", stderr: "piped" }).spawn();
   } catch (e) {
-    return {
-      ok: false,
-      out: `\`${cmd} ${args.join(" ")}\` did not finish within ${timeoutMs}ms: ${e}`,
-    };
+    return { ok: false, out: `could not spawn \`${cmd} ${args.join(" ")}\`: ${e}` };
   }
+  const chunks: Uint8Array[] = [];
+  const collect = async (stream: ReadableStream<Uint8Array>) => {
+    for await (const chunk of stream) chunks.push(chunk);
+  };
+  const drained = Promise.all([collect(child.stdout), collect(child.stderr)]);
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    killTree(child.pid).catch(() => {});
+  }, timeoutMs);
+  const status = await child.status;
+  clearTimeout(timer);
+  // An orphaned grandchild can hold the pipes open after the kill — do not wait on it forever.
+  await Promise.race([drained, new Promise((r) => setTimeout(r, 3000))]);
+  const total = chunks.reduce((n, c) => n + c.length, 0);
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    bytes.set(c, offset);
+    offset += c.length;
+  }
+  const out = new TextDecoder().decode(bytes);
+  return {
+    ok: status.success && !timedOut,
+    out: timedOut ? `${out}\n[\`${cmd} ${args.join(" ")}\` killed after ${timeoutMs}ms]` : out,
+  };
 }
 
 /** The CLI, as the migrated app's generated tasks run it (see `spaTasks`/`nextTasks` in migrate). */
@@ -132,7 +171,36 @@ function parseMigrateJson(out: string): Record<string, unknown> {
   return JSON.parse(out.slice(start, out.lastIndexOf("}") + 1));
 }
 
-/** Clone → install → prepare → migrate → build → serve → render-assert → doctor (informational). */
+/**
+ * Run `commands` in order in the app dir. Returns false (after warning) when one failed for
+ * network reasons — the caller skips the bed; throws on any other failure.
+ */
+async function runCommands(
+  bed: Bed,
+  commands: Array<string[] | TimedCommand>,
+  app: string,
+): Promise<boolean> {
+  for (const entry of commands) {
+    const timed: TimedCommand = Array.isArray(entry) ? { cmd: entry } : entry;
+    const [cmd, ...args] = timed.cmd;
+    const bin = cmd === "$deno" ? Deno.execPath() : cmd;
+    const r = await run(bin, args, app, timed.timeoutMs ?? INSTALL_TIMEOUT_MS, {
+      DENEXT_MIN_DEP_AGE: "0",
+    });
+    if (r.ok || (timed.expect !== undefined && r.out.includes(timed.expect))) continue;
+    if (NETWORK_FAILURE.test(r.out)) {
+      console.warn(
+        `migration-bed ${bed.name}: skipping — \`${cmd} ${args.join(" ")}\` failed ` +
+          `(npm unreachable / offline?):\n${r.out.slice(-2000)}`,
+      );
+      return false;
+    }
+    throw new Error(`${bed.name}: \`${cmd} ${args.join(" ")}\` failed:\n${r.out}`);
+  }
+  return true;
+}
+
+/** Clone → install → prepare → migrate → afterMigrate → build → serve → render-assert → doctor (informational). */
 export async function runBed(t: Deno.TestContext, bed: Bed): Promise<void> {
   const { dir, skip } = await cloneAt(bed);
   try {
@@ -142,19 +210,7 @@ export async function runBed(t: Deno.TestContext, bed: Bed): Promise<void> {
     }
     const app = bed.subdir ? join(dir, bed.subdir) : dir;
 
-    for (const [cmd, ...args] of bed.install) {
-      const r = await run(cmd, args, app, INSTALL_TIMEOUT_MS);
-      if (r.ok) continue;
-      if (NETWORK_FAILURE.test(r.out)) {
-        console.warn(
-          `migration-bed ${bed.name}: skipping — \`${cmd} ${
-            args.join(" ")
-          }\` failed (npm unreachable / offline?):\n${r.out.slice(-2000)}`,
-        );
-        return;
-      }
-      throw new Error(`${bed.name}: \`${cmd} ${args.join(" ")}\` failed:\n${r.out}`);
-    }
+    if (!(await runCommands(bed, bed.install, app))) return;
     await bed.prepare?.(app);
 
     await t.step("denext migrate", async () => {
@@ -177,6 +233,8 @@ export async function runBed(t: Deno.TestContext, bed: Bed): Promise<void> {
       assertEquals(report.denoJsonExists, false, "the clone must not already carry a deno.json");
     });
 
+    if (bed.afterMigrate && !(await runCommands(bed, bed.afterMigrate, app))) return;
+
     await t.step("denext build", async () => {
       const r = await denext(["build", "."], app, BUILD_TIMEOUT_MS);
       assert(r.ok, `build failed:\n${r.out}`);
@@ -187,14 +245,21 @@ export async function runBed(t: Deno.TestContext, bed: Bed): Promise<void> {
       await t.step("routes render", async () => {
         const failures: string[] = [];
         for (const route of bed.routes) {
-          const res = await fetch(server.origin + route.path);
+          const res = await fetch(server.origin + route.path, { redirect: "manual" });
           const body = await res.text();
           const want = route.status ?? 200;
+          const location = res.headers.get("location") ?? "";
           if (res.status !== want) {
             failures.push(`${route.path}: status ${res.status}, expected ${want}`);
           } else if (!body.includes(route.contains)) {
             failures.push(
               `${route.path}: body lacks ${JSON.stringify(route.contains)} (${body.length} bytes)`,
+            );
+          } else if (route.location !== undefined && !location.includes(route.location)) {
+            failures.push(
+              `${route.path}: Location ${JSON.stringify(location)} lacks ${
+                JSON.stringify(route.location)
+              }`,
             );
           }
         }
