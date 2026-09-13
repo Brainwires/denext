@@ -62,10 +62,12 @@ deno task dev`}
         <code>next.config.*</code>). It detects the shape and writes a{" "}
         <a href="/docs/spa">SPA-mode</a> config instead: <code>mode: "spa"</code> +{" "}
         <code>compatibilityMode: true</code>, your <code>~/</code> path alias from{" "}
-        <code>tsconfig.json</code>, a <code>tailwind</code> block when it finds{" "}
-        <code>@tailwindcss/vite</code>, and <code>spa.env</code> seeded from your Vite{" "}
-        <code>define</code> block and <code>import.meta.env.VITE_*</code> usage. Add{" "}
-        <code>--desktop</code> to also emit a <code>deno desktop</code> entry, and{" "}
+        <code>tsconfig.json</code>, a <code>tailwind</code>{" "}
+        block when it finds a stylesheet with the Tailwind directive (<code>
+          @import "tailwindcss"
+        </code>), the mount element id your entry renders into, and <code>spa.env</code>{" "}
+        seeded from your Vite <code>define</code> block and <code>import.meta.env.VITE_*</code>{" "}
+        usage. Add <code>--desktop</code> to also emit a <code>deno desktop</code> entry, and{" "}
         <code>--backend http://127.0.0.1:3773 --proxy /api,/ws</code> to wire a{" "}
         <a href="/docs/spa">backend proxy</a>:
       </p>
@@ -150,14 +152,21 @@ deno task dev`}
       </p>
 
       <Callout kind="warn">
-        Behavioral divergences are documented honestly. Before a large migration, skim{" "}
+        Where denext differs from Next is documented honestly. Before a large migration, skim{" "}
+        <a
+          href="https://github.com/Brainwires/denext/blob/main/KNOWN-DIFFERENCES.md"
+          rel="noopener"
+        >
+          KNOWN-DIFFERENCES
+        </a>{" "}
+        (the deliberate behavioral differences) and{" "}
         <a
           href="https://github.com/Brainwires/denext/blob/main/KNOWN-LIMITATIONS.md"
           rel="noopener"
         >
           KNOWN-LIMITATIONS
         </a>{" "}
-        for the small set of edges where denext differs from Next.
+        (the surface gaps).
       </Callout>
     </DocsShell>
   );

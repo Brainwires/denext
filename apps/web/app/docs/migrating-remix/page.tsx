@@ -328,7 +328,7 @@ export default function Page(props: { params: Record<string, string> }) {
         </li>
       </ul>
       <p>
-        The full list of divergences lives in{" "}
+        The full list of edges lives in{" "}
         <a
           href="https://github.com/Brainwires/denext/blob/main/KNOWN-LIMITATIONS.md#migration-remix-runs-on-the-denextremix-runtime"
           rel="noopener"

@@ -31,7 +31,12 @@ and this project adheres to
   denext-original features; ROADMAP, MISSION and README no longer name a finished release
   cycle; CONTRIBUTING's release table lists every published package and says a member's
   changelog is rolled by hand. Links that said "divergences → KNOWN-LIMITATIONS" now point at
-  KNOWN-DIFFERENCES.
+  KNOWN-DIFFERENCES. The same pass over the docs site (`apps/web/app/docs`): the config page's
+  `classComponents` entry and CSP note, the content-collections page (it still said there was no
+  first-party renderer; `renderContent` / `<Content>` shipped in 0.2.0) and its package pin, the
+  graphql pin, the typed-API wire-codec list, the auth page's middleware helper
+  (`redirectResponse`), the migrating page's Tailwind detection and its differences/limitations
+  links, and the plugin seam list.
 
 ## [2.4.2] - 2026-09-13
 

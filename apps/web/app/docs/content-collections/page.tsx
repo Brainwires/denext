@@ -54,7 +54,7 @@ export default {
       <Code lang="json">
         {`{
   "imports": {
-    "@denext/content-collections": "jsr:@denext/content-collections@^0.1.0"
+    "@denext/content-collections": "jsr:@denext/content-collections@^0.3.0"
   }
 }`}
       </Code>
@@ -128,11 +128,28 @@ export default async function Blog() {
 
       <h2>Render Markdown/MDX</h2>
       <p>
-        Collections are a <em>data</em> layer: an entry's <code>body</code>{" "}
-        is the raw source, which you render with your own MDX setup or a Markdown renderer of your
-        choice. There is no first-party render helper — you pick the renderer, denext gives you the
-        validated data and the types.
+        An entry's <code>body</code> is the raw source, and the package renders it for you:{" "}
+        <code>&lt;Content entry={"{post}"} /&gt;</code> (or{" "}
+        <code>await renderContent(post)</code>) from{" "}
+        <code>@denext/content-collections/runtime</code>. A <code>.md</code>{" "}
+        entry goes through the package's own zero-dependency Markdown renderer at request time
+        (headings with ids, lists, fenced code, blockquotes and <code>&gt; [!NOTE]</code>{" "}
+        callouts, inline and reference-style links, emphasis; raw HTML is escaped and script-scheme
+        links dropped); a <code>.mdx</code>{" "}
+        entry is compiled to a component module at build, so nothing MDX-related runs per request.
+        Pass <code>components</code> to map elements or MDX components to your own.
       </p>
+      <Code lang="tsx">
+        {`// app/blog/[id]/page.tsx
+import { notFound } from "denext";
+import { Content, getEntry } from "@denext/content-collections/runtime";
+
+export default async function Post({ params }) {
+  const post = await getEntry("blog", params.id);
+  if (!post) notFound();
+  return <article><h1>{post.data.title}</h1><Content entry={post} /></article>;
+}`}
+      </Code>
 
       <h2>CLI</h2>
       <p>

@@ -11,7 +11,7 @@ export default function Routing() {
     <DocsShell
       active="routing"
       title="Routing"
-      lead="File-convention routing under app/ — the same conventions as the Next.js App Router (divergences are listed in KNOWN-LIMITATIONS)."
+      lead="File-convention routing under app/ — the same conventions as the Next.js App Router (deliberate differences are listed in KNOWN-DIFFERENCES, gaps in KNOWN-LIMITATIONS)."
     >
       <h2>Conventions</h2>
       <Code lang="text">

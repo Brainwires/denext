@@ -136,12 +136,12 @@ See [Data & caching](/docs/data).
   `maxAge`, `includeSubDomains`, `preload`. Set `false` to omit the header (e.g.
   when your edge sets it).
 - **`csp`** — `CspSetting` (default `"strict"`). App-wide
-  Content-Security-Policy: `"strict"` (denext's hash-based strict policy on
-  buffered pages), `"off"` (emit no CSP — set it at the edge), or a `RouteCsp`
+  Content-Security-Policy: `"strict"` (denext's hash-based strict policy on every
+  HTML page response), `"off"` (emit no CSP — set it at the edge), or a `RouteCsp`
   object (the strict policy plus global opt-ins). A route's own `csp` export
-  overrides this. Streamed responses carry the **same** strict hash-based CSP as
-  buffered ones; the only uncovered case is an inline `<style>`/`<script>` inside a
-  streamed hole flushed after the head.
+  overrides this. Streamed and PPR responses carry the **same** strict hash-based
+  CSP as buffered ones; the only uncovered case is an inline `<style>`/`<script>`
+  inside a streamed hole flushed after the head.
 - **`publicEnv`** — `string[]`. Public-env keys to always embed in the page, in
   addition to the ones the build detects. Use it for a key read via a computed
   expression the build can't see (e.g. `publicEnv()["NEXT_PUBLIC_" + x]`).
@@ -162,11 +162,14 @@ See [Data & caching](/docs/data).
   `package.json` lists `react`/`next`; a pure denext-native app keeps the
   zero-overhead source-load path. (Renamed from `nextCompat`; the old key is no
   longer accepted.)
-- **`classComponents`** — `boolean` (default `false`). Enable React class
-  components in the **next-compat build** only, where the flag compiles in as a
-  `define` so the class runtime is dead-code-eliminated when off. The standard
-  `deno bundle` pipeline always includes the (small) class runtime and ignores
-  this flag.
+- **`classComponents`** — `boolean` (unset by default). Class components work
+  without it: the class runtime is a separate chunk loaded on demand — before
+  hydration when the server rendered a class, statically when the build scan finds
+  `Component` in the app's own sources. `true` always imports the runtime
+  statically (no round trip); `false` keeps it out entirely (zero bytes, and a
+  class throws a guided error). On the next-compat/SPA esbuild path the flag is
+  also a `define`, so `false` dead-code-eliminates the reconciler's class guards
+  from that bundle too.
 - **`mdx`** — `MdxConfig`. MDX/CommonMark compilation options for `.mdx`/`.md`
   sources in a compat (npm-React) app. The baseline loader compiles plain MDX;
   set this to thread your own `remarkPlugins`, `rehypePlugins`, `recmaPlugins`,
@@ -181,8 +184,9 @@ See [Data & caching](/docs/data).
 
 - **`plugins`** — `DenextPlugin[]`. denext plugins (e.g. a Pages Router, or
   htmx). Each is set up once before routes are scanned and may contribute
-  routes, claim requests, emit build assets, and add CLI verbs. Apps with no
-  plugins pay nothing.
+  routes, claim requests, emit build assets, generate inputs the app imports
+  (prepare steps, live in dev), register a teardown, and add CLI verbs. Apps with
+  no plugins pay nothing.
 
 Install and wire one in a single step with the CLI:
 

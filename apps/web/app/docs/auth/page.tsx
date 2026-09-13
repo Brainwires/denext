@@ -213,13 +213,12 @@ export async function login(formData: FormData) {
       <h2>Gate routes with middleware</h2>
       <Code lang="ts">
         {`// middleware.ts
-import { next, redirect } from "denext/server";
-import { getSession } from "denext/server";
+import { getSession, next, redirectResponse } from "denext/server";
 
 export default async function middleware(_req, ctx) {
   if (ctx.url.pathname.startsWith("/app")) {
     const s = await getSession({ secret: SECRET });
-    if (!s.data) return redirect("/login", 307);
+    if (!s.data) return redirectResponse("/login", 307);
   }
   return next();
 }`}
