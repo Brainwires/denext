@@ -21,7 +21,7 @@ convert the app.
 > too, so an unmodified Next.js App Router app now builds and runs on denext's
 > single React. The stage table and verdict below are a **dated point-in-time
 > record** (the `convert.ts` prototype that motivated `denext migrate`); see
-> [README-NEXT-MIGRATION.md](../../README-NEXT-MIGRATION.md) for the current,
+> [Migrating from Next.js](https://denext.dev/docs/migrating) for the current,
 > authoritative status of the next-compat drop-in path.
 
 - **`probe-server.ts`** — imports each server-only Node dependency under Deno's

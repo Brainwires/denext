@@ -25,7 +25,7 @@ Open <http://localhost:3002> and type quickly in the filter box.
 > that makes the time-slicing and interruption directly visible (a spinner that
 > keeps moving while a huge grid re-renders, plus a started/committed counter),
 > see `examples/concurrency`. Full model:
-> [`README-NEXT-MIGRATION.md` §10](../../README-NEXT-MIGRATION.md).
+> [Concurrency](https://denext.dev/docs/architecture#concurrency-fiber-based-time-sliced-and-interruptible).
 
 ## Shared-element view transitions (`<ViewTransition>`)
 
