@@ -55,7 +55,7 @@ DX to make it memorable.
 **See also:**
 [ROADMAP.md](./ROADMAP.md) — the pending engineering gap to this mission ·
 [FEATURES.md](./FEATURES.md) — what's already shipped ·
-[ARCHITECTURE.md](./ARCHITECTURE.md) — the deliberate under-the-surface choices ·
+[Architecture](https://denext.dev/docs/architecture) — the deliberate under-the-surface choices ·
 [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) — the honest surface gaps ·
 [KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md) — deliberate behavioral differences ·
 [POLICIES.md](./POLICIES.md) — the standing engineering guardrails and the security policy

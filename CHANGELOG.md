@@ -48,6 +48,27 @@ and this project adheres to
   graphql pin, the typed-API wire-codec list, the auth page's middleware helper
   (`redirectResponse`), the migrating page's Tailwind detection and its differences/limitations
   links, and the plugin seam list.
+- **Docs: one source per topic; the guides now live in the site.** `DEPLOYMENT.md`,
+  `DATABASE.md`, `PLUGINS.md`, `ARCHITECTURE.md`, `README-NEXT-MIGRATION.md`,
+  `README-REMIX-MIGRATION.md` and `CVE-DEFENSE-GUIDE.md` moved into
+  `apps/web/app/docs/<slug>/content.md` and render at denext.dev (`/docs/deploy`,
+  `/docs/database`, `/docs/plugins`, `/docs/architecture`, `/docs/migrating`,
+  `/docs/migrating-remix`, `/docs/security`); the hand-written site pages that duplicated
+  four of them were replaced by the real source after their unique content (static export,
+  `/_denext/health`, the Deno Deploy cache fallback, the Vite/CRA/generic SPA migration
+  path, `--node-modules-dir=none`, `--codemod`, the Remix flat-routes / `Layout` /
+  load-context / route-relative-link / assets bullets) was folded into the guides.
+  `KNOWN-LIMITATIONS.md`, `KNOWN-DIFFERENCES.md`, `FEATURES.md` and `POLICIES.md` stay at
+  the root and are also rendered (`/docs/limitations`, `/docs/differences`,
+  `/docs/features`, `/docs/policies`). The Next migration guide's concurrency section moved
+  to the architecture page. `README.md` is a ~300-line landing page whose documentation
+  links are absolute denext.dev URLs (the relative links to publish-excluded files were
+  already broken on jsr.io); its ops runbook, observability and security-responsibility
+  sections now live in the deployment guide.
+- **Docs: CVE guide log sections retired.** The security page keeps the CVE-class tables,
+  the status paragraph and the two open rows (the deployment-layer CPU/concurrency ceiling;
+  OIDC `id_token` multi-`aud`); the closed "Known Gaps" items and the 22-item backlog were
+  done work — history is in the 0.12.0 and 2.0.0 Security entries.
 
 ## [2.4.2] - 2026-09-13
 

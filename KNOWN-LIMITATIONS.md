@@ -11,10 +11,10 @@ Internal differences that **don't** break the surface — denext's own reconcile
 its async SSR renderer, the two-mechanism soft-nav, request-scoped
 `React.cache`, Pages-Router-as-a-plugin, the next-compat build defaults — are
 **design choices, not limitations**, and live in
-[ARCHITECTURE.md](./ARCHITECTURE.md). Places where denext **deliberately behaves
+[the architecture guide](https://denext.dev/docs/architecture). Places where denext **deliberately behaves
 differently** from React/Next — observable, documented, and not going to change —
 are in [KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md). Operational defaults live
-in [DEPLOYMENT.md](./DEPLOYMENT.md).
+in [the deployment guide](https://denext.dev/docs/deploy).
 
 ## React / Next.js surface gaps
 
@@ -280,7 +280,7 @@ for the common case).
 
 Implemented for compatibility but tracking still-unstable upstream surfaces, so
 they may change: `unstable_cache` (still `unstable_` in Next 16),
-`unstable_batchedUpdates` (a no-op — see [ARCHITECTURE.md](./ARCHITECTURE.md)),
+`unstable_batchedUpdates` (a no-op — see [the architecture guide](https://denext.dev/docs/architecture)),
 `useMemoCache`/`c` (React Compiler runtime — the compiler hit 1.0 stable; this
 is an internal helper). **Not provided:** Next 16.4 canary's navigation-stage APIs
 (`unstable_navigation` / `unstable_prefetch` from `next/cache`, the "prefetch stage"
@@ -315,7 +315,7 @@ Residual gaps in the React 19.2 additions (the features themselves are in
 
 `denext migrate --from remix` ports a Remix app onto the first-party `denext/remix` runtime
 with its data model intact — what it does and writes is documented in
-[README-REMIX-MIGRATION.md](./README-REMIX-MIGRATION.md). These are the edges of that
+[the Remix migration guide](https://denext.dev/docs/migrating-remix). These are the edges of that
 runtime and transform (reported as review notes, never silently changed):
 
 - **Deferred DATA is whole-at-end, like every denext route.** The `<Await>` _content_
@@ -359,7 +359,7 @@ runtime and transform (reported as review notes, never silently changed):
   those under Node or port them; and a `new PrismaClient(<non-object-arg>)` is flagged for a
   one-line manual adapter add (the empty and object-literal forms are wired automatically).
   Non-SQLite datasources need their own Prisma driver adapter instead of better-sqlite3. The
-  recipe itself is in [DATABASE.md](./DATABASE.md).
+  recipe itself is in [the database guide](https://denext.dev/docs/database).
 
 ## Not yet available
 

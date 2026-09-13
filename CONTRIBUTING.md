@@ -13,6 +13,7 @@ Two helpers make it painless:
 ```sh
 deno task check:fix  # deno fmt + deno lint --fix, then a report-only deno lint
 deno task hooks:install   # install the pre-commit hook (once per clone)
+deno task release-check   # check + doc-lint + deno publish --dry-run (run before tagging)
 ```
 
 - **`check:fix`** auto-fixes everything that _can_ be auto-fixed — formatting
@@ -28,6 +29,9 @@ deno task hooks:install   # install the pre-commit hook (once per clone)
   per-function coverage map the Fallow gate scores CRAP with; without it fallow
   _estimates_ coverage and can block a commit on framework internals that tests
   reach only transitively. Details under _The Fallow gate_ below.
+- **Formatting is `deno fmt`** (no Prettier, no npm), configured under `fmt` in
+  `deno.json`; format files under `apps/web` **from the repo root**
+  (`deno fmt --config deno.json <paths>`), never from inside `apps/web`.
 - **`deno task test:e2e`** and **`deno task test:migration-bed`** are the two
   network-bound suites `check` never runs; the nightly workflow
   (`.github/workflows/e2e.yml`) does. The e2e suite drives the examples in a real
@@ -221,7 +225,8 @@ will publish. `publish.yml` is on `main` with `permissions: id-token: write`.
    the diff, then commits, tags `vX.Y.Z` and pushes — the tag triggers the
    publish.
 3. **Before running it for a stable major/minor**, hand-edit the prose the bump
-   does not: `ROADMAP.md`'s status paragraph and any `README.md` stage language.
+   does not: `ROADMAP.md`'s status paragraph, any `README.md` stage language, and
+   any stage language on the docs-site pages (`apps/web/app/docs/*/content.md`).
 4. **Watch the publish and verify it went live:**
    `gh run watch "$(gh run list --workflow=publish.yml --limit 1 --json databaseId -q '.[0].databaseId')" --exit-status`,
    then `deno eval --min-dep-age=0 "console.log((await import('jsr:@denext/denext@X.Y.Z')).VERSION)"`.
@@ -287,6 +292,50 @@ deployed.
   `deno doc --lint` reads as private.
 - **Commits:** stage per file (never `git add -A`); keep the working tree
   buildable.
+
+## Where docs live
+
+One topic, one Markdown source. Guides live in
+`apps/web/app/docs/<slug>/content.md` with a 13-line `page.tsx` wrapper and
+render at `https://denext.dev/docs/<slug>`. Taxonomy files stay at the repo root
+and are rendered from there by a wrapper:
+
+- `FEATURES.md` (what ships + the `file:line` ledger) → `/docs/features`
+- `KNOWN-DIFFERENCES.md` (deliberate divergences) → `/docs/differences`
+- `KNOWN-LIMITATIONS.md` (real gaps) → `/docs/limitations`
+- `ROADMAP.md` (still to do; not rendered)
+- `CHANGELOG.md` (done) → `/docs/changelog`
+- `POLICIES.md` (standing rules + the security policy) → `/docs/policies`
+- `CONTRIBUTING.md` → `/docs/contributing`
+- `AGENTS.md` (the agent guide — read from JSR at runtime by `denext mcp`, and
+  the source of the MCP docs corpus and `llms*.txt`)
+
+Never write a fact in two files: put it in the owning file and link it. From a
+root file link the site (`https://denext.dev/docs/<slug>`); from a `content.md`
+link `/docs/<slug>` and use absolute
+`github.com/Brainwires/denext/blob/main/…` URLs for repo files. A new guide page
+needs a `NAV` entry in `apps/web/components/ui.tsx` or it gets no sidebar entry.
+A root `docs/` folder is reserved for `deno doc --html` output (gitignored).
+
+## Repo layout
+
+```
+src/jsx       JSX runtime, renderToString, renderToReadableStream
+src/runtime   hooks, context, Suspense, error boundaries
+src/router    segment parsing/matching + the filesystem manifest scanner
+src/server    request handler, page pipeline, API dispatch, static, middleware
+src/client    virtual-DOM reconciler, hydration, soft navigation
+src/build     deno-bundle integration, dev server, prod server, CLI wiring
+src/compat    the React / Next / next-intl compat surface
+packages/*    first-party JSR packages
+apps/web      the docs site
+examples/*    runnable example apps
+cli.ts        the `denext` CLI entry
+mod.ts        the package entry
+```
+
+`src/jsx` + `src/runtime` + `src/client` are the React-equivalent (there is no
+React in the tree) and `deno bundle` is the only bundler on the native path.
 
 ## The build must run from a remote framework (JSR), not just a local checkout
 

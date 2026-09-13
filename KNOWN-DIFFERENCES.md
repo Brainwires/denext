@@ -5,7 +5,7 @@ is an observable behavior, documented so a port knows what to expect — not a g
 waiting to be closed. A surface that is missing, throwing, or wrong is a
 _limitation_ and lives in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); an
 internal design choice with no observable difference lives in
-[ARCHITECTURE.md](./ARCHITECTURE.md).
+[the architecture guide](https://denext.dev/docs/architecture).
 
 ## React rendering semantics
 
@@ -118,7 +118,7 @@ internal design choice with no observable difference lives in
 ## Security posture — safe defaults
 
 Deliberate **safe defaults** that differ from Next's, each with a one-line
-opt-in — documented, not surprises. Full checklist in [DEPLOYMENT.md](./DEPLOYMENT.md).
+opt-in — documented, not surprises. Full checklist in [the deployment guide](https://denext.dev/docs/deploy).
 
 - **Strict CSP by default** blocks external `<script>`/stylesheet/`<img>` until
   opted in per route (`csp: "strict" | "off" | {…}`; a route's `csp` export
