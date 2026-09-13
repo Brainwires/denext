@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.4.2] - 2026-09-13
+
 ### Added
 
 - **`denext openapi types` (`@denext/openapi` 0.3.0).** TypeScript types for a consumer outside
@@ -26,6 +28,24 @@ and this project adheres to
   linking to their JSR release and the "On this page" rail listing the versions; search
   indexes every version. The shared first-party Markdown renderer
   (`@denext/content-collections/markdown`) gained reference-style links to render it.
+
+### Changed
+
+- **Migration-bed nightly.** A second job in the nightly e2e workflow (`migration-beds`,
+  `deno task test:migration-bed`, `tests/migration-bed/`) clones SHA-pinned real-world apps,
+  runs `denext migrate` against the checkout, builds, serves and render-asserts routes — the
+  walk every real-app migration so far did by hand. Beds: `vercel/next-app-router-playground`
+  (App Router, `cacheComponents`, parallel and intercepting routes, MDX) and
+  `epicweb-dev/epic-stack` at its last Remix commit (`--from remix`: remix-flat-routes, Prisma +
+  SQLite with the seeded admin, session redirects, resource routes, remix-seo). A clone, dependency
+  install or post-migrate setup command that fails for network reasons skips the bed;
+  `denext migrate`, the build, serving and the route assertions fail the job. The publish
+  workflow's verify step ignores the bed directory (it has no network gate; it would have
+  failed every release).
+- **`probeApp` / `denext doctor` crash marker.** The "no-crash-marker" check flagged any
+  document containing the words "Internal Server Error" — prose on a page about error
+  handling (or a rendered changelog) failed conformance. It now matches only the framework's
+  actual 500 fallback, whose whole body is that bare text; the raw-stack-frame test is unchanged.
 
 ### Fixed
 
@@ -64,7 +84,6 @@ and this project adheres to
   report names the stylesheet and the mount id. `@tailwindcss/vite`,
   `@tanstack/router-plugin` and `@tanstack/devtools-vite` (Vite plugins with no role under
   denext) are dropped from the report instead of passed through.
-
 - **The first-party Markdown renderer swallowed digit runs and could break out of an `href`
   (`@denext/content-collections` 0.3.0).** Code spans were parked behind a `N` placeholder,
   so any `1` in prose was replaced by the wrong span or by `undefined` (the rendered changelog
@@ -88,24 +107,6 @@ and this project adheres to
   restore, and the next build then captured the polluted file as the "original" (it happened
   to `examples/tanstack-router`). The next `denext build`/`dev` now restores from the leftover
   backup before injecting again.
-
-### Changed
-
-- **Migration-bed nightly.** A second job in the nightly e2e workflow (`migration-beds`,
-  `deno task test:migration-bed`, `tests/migration-bed/`) clones SHA-pinned real-world apps,
-  runs `denext migrate` against the checkout, builds, serves and render-asserts routes — the
-  walk every real-app migration so far did by hand. Beds: `vercel/next-app-router-playground`
-  (App Router, `cacheComponents`, parallel and intercepting routes, MDX) and
-  `epicweb-dev/epic-stack` at its last Remix commit (`--from remix`: remix-flat-routes, Prisma +
-  SQLite with the seeded admin, session redirects, resource routes, remix-seo). A clone, dependency
-  install or post-migrate setup command that fails for network reasons skips the bed;
-  `denext migrate`, the build, serving and the route assertions fail the job. The publish
-  workflow's verify step ignores the bed directory (it has no network gate; it would have
-  failed every release).
-- **`probeApp` / `denext doctor` crash marker.** The "no-crash-marker" check flagged any
-  document containing the words "Internal Server Error" — prose on a page about error
-  handling (or a rendered changelog) failed conformance. It now matches only the framework's
-  actual 500 fallback, whose whole body is that bare text; the raw-stack-frame test is unchanged.
 
 ## [2.4.1] - 2026-09-11
 
@@ -6534,6 +6535,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.4.2]: https://jsr.io/@denext/denext@2.4.2
 [2.4.1]: https://jsr.io/@denext/denext@2.4.1
 [2.4.0]: https://jsr.io/@denext/denext@2.4.0
 [2.3.0]: https://jsr.io/@denext/denext@2.3.0
