@@ -1,7 +1,8 @@
 // Generate the in-site examples index from the `examples/` directories themselves.
 // Each example's title + blurb come from its own README (H1 + first paragraph) and its
-// "wired as" tags are read out of `denext.config.ts` AS TEXT — the config is never
-// imported, so this runs without any of the examples' dependencies being installed.
+// "wired as" tags are read out of `denext.config.ts` (and, for the hand-served next-compat
+// examples, `serve.ts`) AS TEXT — nothing is imported, so this runs without any of the
+// examples' dependencies being installed.
 //
 //   deno task docs:examples   # regenerate examples.json
 //   deno task docs:build      # regenerate + export the site
@@ -90,8 +91,14 @@ export function configTags(configSrc: string): string[] {
   return tags;
 }
 
+/** A hand-rolled `serve.ts` that drives the next-compat build layer marks a compat example. */
+export function isCompatEntry(serveSrc: string): boolean {
+  return /\b(?:serveCompat|buildNextCompatPages)\s*\(/.test(stripComments(serveSrc));
+}
+
 function tagsFor(dir: string): string[] {
   const tags = configTags(readOr(`${dir}/denext.config.ts`, ""));
+  if (!tags.includes("compat") && isCompatEntry(readOr(`${dir}/serve.ts`, ""))) tags.push("compat");
   if (exists(`${dir}/desktop.ts`)) tags.push("desktop");
   if (exists(`${dir}/pages`)) tags.push("pages-router");
   if (exists(`${dir}/app`) && !tags.includes("spa")) tags.push("app-router");

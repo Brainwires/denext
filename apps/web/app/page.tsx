@@ -111,6 +111,7 @@ export default function Landing() {
         <div class="cta">
           <a class="btn primary" href="/docs/getting-started">Get started</a>
           <a class="btn" href="/docs/tutorial">Follow the tutorial</a>
+          <a class="btn" href="/docs/migrating">Migrate a Next.js app</a>
         </div>
         <Code lang="tsx">{SAMPLE}</Code>
       </section>

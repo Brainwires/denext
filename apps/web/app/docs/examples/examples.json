@@ -16,6 +16,7 @@
       "blurb": "Two real npm animation libraries — motion (motion.dev) and @react-spring/web — co-existing in one project, both running on denext's single React.",
       "url": "https://github.com/Brainwires/denext/tree/main/examples/animation",
       "tags": [
+        "compat",
         "app-router"
       ],
       "hasReadme": true
@@ -57,6 +58,7 @@
       "blurb": "A runnable demo of denext's fiber concurrency — the things the earlier cooperative scheduler could not do: time-slicing and mid-flight interruption.",
       "url": "https://github.com/Brainwires/denext/tree/main/examples/concurrency",
       "tags": [
+        "compat",
         "app-router"
       ],
       "hasReadme": true
@@ -121,6 +123,7 @@
       "blurb": "A small 3D game built on Three.js (WebGL — plain JavaScript, not WASM) running on denext, bundled through the same next-compat esbuild path that handles motion / recharts.",
       "url": "https://github.com/Brainwires/denext/tree/main/examples/game",
       "tags": [
+        "compat",
         "app-router"
       ],
       "hasReadme": true
@@ -214,6 +217,7 @@
       "blurb": "This app renders the actual @radix-ui/react-collapsible npm package on denext's own React — server-rendered, then hydrated.",
       "url": "https://github.com/Brainwires/denext/tree/main/examples/next-compat",
       "tags": [
+        "compat",
         "app-router"
       ],
       "hasReadme": true
@@ -232,6 +236,7 @@
       "blurb": "This example runs the actual recharts npm package — a charting library built on React class components — on denext's single React, server-rendered to SVG and hydrated on the client.",
       "url": "https://github.com/Brainwires/denext/tree/main/examples/next-compat-recharts",
       "tags": [
+        "compat",
         "app-router"
       ],
       "hasReadme": true
@@ -368,6 +373,7 @@
       "blurb": "A runnable demo of denext's fiber concurrency on the classic typeahead.",
       "url": "https://github.com/Brainwires/denext/tree/main/examples/transitions",
       "tags": [
+        "compat",
         "app-router"
       ],
       "hasReadme": true

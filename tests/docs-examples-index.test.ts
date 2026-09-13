@@ -8,6 +8,7 @@ import {
   configTags,
   type ExampleEntry,
   generateExamplesIndex,
+  isCompatEntry,
   OUT,
   plainText,
   readmeSummary,
@@ -57,6 +58,23 @@ Deno.test("config tags come from the config TEXT, never from importing it", () =
     };`),
     [],
   );
+});
+
+Deno.test("a serve.ts that drives the next-compat build layer tags the example compat", async () => {
+  assert(
+    isCompatEntry(`import { serveCompat } from "../_shared/serve-compat.ts";\nserveCompat({});`),
+  );
+  assert(isCompatEntry(`const [p] = await buildNextCompatPages({ projectDir: dir });`));
+  assert(!isCompatEntry(`// serveCompat({}) is what the compat examples do\nDeno.serve(handler);`));
+  assert(!isCompatEntry(""));
+  const { examples } = JSON.parse(await Deno.readTextFile(OUT)) as { examples: ExampleEntry[] };
+  const byName = new Map(examples.map((e) => [e.name, e.tags]));
+  assert(byName.get("next-compat")?.includes("compat"), "next-compat is tagged compat");
+  assert(
+    byName.get("next-compat-recharts")?.includes("compat"),
+    "recharts example is tagged compat",
+  );
+  assert(!byName.get("notes")?.includes("compat"), "a native example is not");
 });
 
 Deno.test("stripComments keeps strings and drops comments", () => {
