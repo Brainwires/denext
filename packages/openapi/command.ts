@@ -8,12 +8,17 @@
  *   when an operation or shared schema was added, removed or changed.
  * - `denext openapi lint [--strict]` — list what could not be described (opaque schemas,
  *   plain handlers, missing summaries); `--strict` exits 1 when there is anything.
+ * - `denext openapi types [--out <file>]` — TypeScript types for ANOTHER project (a separate
+ *   frontend): openapi-typescript-style `paths`/`components` plus denext's `ApiSchema`, so
+ *   `createApiClient<ApiSchema>({ base })` from `jsr:@denext/denext` is a typed client there.
  *
  * @module
  */
 
+import { resolve } from "@std/path";
 import type { CommandContext, CommandSpec } from "@denext/denext/cli/command";
 import { diffSpecs, type OpenApiBuild, type OpenApiDocument, type OpenApiWarning } from "./spec.ts";
+import { emitTypes } from "./types.ts";
 
 // The denext CLI types this entrypoint's public API references (doc completeness).
 export type {
@@ -66,7 +71,14 @@ export function createOpenapiCommand(
 ): CommandSpec {
   return {
     name: "openapi",
-    summary: "Emit, diff or lint the app's OpenAPI document",
+    summary: "Emit, diff, lint or type the app's OpenAPI document",
+    // Every action imports the route modules, so the CLI must apply its module gate first: an
+    // app whose routes import an npm package resolves it only after the merged framework+app
+    // config re-exec (the same gate `doctor`/`build` run under). Without this every such route
+    // was a `load-failed` warning and the document had no operations.
+    loadsModules: true,
+    // The verb takes an action, not a directory: the project is the working directory (`--cwd`).
+    moduleDir: (ctx) => resolve(ctx.global.cwd ?? "."),
     usage: [
       "Usage: denext openapi <action> [options]",
       "",
@@ -74,16 +86,17 @@ export function createOpenapiCommand(
       "  emit [--out <file>]   Print the OpenAPI 3.1 document (default), or write it",
       "  diff <file>           Compare against a committed spec; exit 1 on any change",
       "  lint [--strict]       List what could not be described; --strict exits 1 if any",
+      "  types [--out <file>]  TypeScript types (paths/components + a denext ApiSchema) for another project",
     ].join("\n"),
     positionals: [
-      { name: "action", help: "emit | diff | lint" },
+      { name: "action", help: "emit | diff | lint | types" },
       { name: "file", help: "the committed spec to diff against" },
     ],
     flags: [
       {
         name: "out",
         type: "string",
-        help: "write the document here instead of stdout",
+        help: "emit/types: write the output here instead of stdout",
         valueName: "<file>",
       },
       { name: "strict", type: "boolean", help: "lint: exit 1 when there are findings" },
@@ -101,7 +114,8 @@ async function runOpenapi(
   if (action === "emit") return emit(await build(), ctx, io);
   if (action === "lint") return lint(await build(), ctx, io);
   if (action === "diff") return diff(await build(), ctx, io);
-  io.error(`Unknown action "${action}". Try: denext openapi emit | diff <file> | lint`);
+  if (action === "types") return types(await build(), ctx, io);
+  io.error(`Unknown action "${action}". Try: denext openapi emit | diff <file> | lint | types`);
   throw new Error(`unknown openapi action: ${action}`);
 }
 
@@ -110,25 +124,57 @@ async function emit(
   ctx: CommandContext,
   io: OpenapiCommandIo,
 ): Promise<void> {
-  const text = JSON.stringify(result.document, null, 2) + "\n";
+  const warnings = result.warnings.length;
+  await output(
+    JSON.stringify(result.document, null, 2) + "\n",
+    result.document,
+    ctx,
+    io,
+    (n) => `${n} operation${n === 1 ? "" : "s"}, ${warnings} warning${warnings === 1 ? "" : "s"}`,
+  );
+  if (warnings) io.error(`${warnings} lint warning(s) — run \`denext openapi lint\``);
+}
+
+/** Write `text` to `--out` (logging a summary of the document) or print it. */
+async function output(
+  text: string,
+  document: OpenApiDocument,
+  ctx: CommandContext,
+  io: OpenapiCommandIo,
+  summary: (operations: number) => string,
+): Promise<void> {
   const out = ctx.flags.out;
   if (typeof out === "string" && out) {
     await io.writeFile(out, text);
-    const n = Object.values(result.document.paths).reduce(
-      (sum, item) => sum + Object.keys(item).length,
-      0,
-    );
-    io.log(
-      `Wrote ${out} (${n} operation${n === 1 ? "" : "s"}, ${result.warnings.length} warning${
-        result.warnings.length === 1 ? "" : "s"
-      })`,
-    );
+    io.log(`Wrote ${out} (${summary(operationCount(document))})`);
   } else {
     io.log(text.trimEnd());
   }
-  if (result.warnings.length) {
-    io.error(`${result.warnings.length} lint warning(s) — run \`denext openapi lint\``);
+}
+
+/** `types`: the TypeScript module for a consumer outside the app, to stdout or `--out`. */
+async function types(
+  result: OpenApiBuild,
+  ctx: CommandContext,
+  io: OpenapiCommandIo,
+): Promise<void> {
+  await output(
+    emitTypes(result.document),
+    result.document,
+    ctx,
+    io,
+    (n) => `${n} operation${n === 1 ? "" : "s"}`,
+  );
+  const opaque = result.warnings.filter((w) => w.code === "opaque-schema").length;
+  if (opaque) {
+    io.error(
+      `${opaque} opaque schema(s) emitted as \`unknown\` — run \`denext openapi lint\` for where`,
+    );
   }
+}
+
+function operationCount(document: OpenApiDocument): number {
+  return Object.values(document.paths).reduce((sum, item) => sum + Object.keys(item).length, 0);
 }
 
 function lint(result: OpenApiBuild, ctx: CommandContext, io: OpenapiCommandIo): void {

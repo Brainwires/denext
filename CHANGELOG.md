@@ -10,6 +10,11 @@ and this project adheres to
 
 ### Added
 
+- **`denext openapi types` (`@denext/openapi` 0.3.0).** TypeScript types for a consumer outside
+  the app — a separate frontend, a script — as one import-free `.ts`: openapi-typescript-style
+  `paths`/`components`, and denext's `ApiSchema` so `createApiClient<ApiSchema>({ base })` from
+  JSR is a fully typed client from any TypeScript project. Types only; the client library is
+  the client. See the package CHANGELOG.
 - **`examples/tanstack-router`.** A stock file-based TanStack Router app running in SPA mode
   with no plugin (library mode: the router in the browser, denext bundling the entry and
   serving the shell for every URL), in exactly the shape `denext migrate` writes for a Vite +

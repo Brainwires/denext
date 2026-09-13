@@ -204,7 +204,8 @@ four documented bounds of the opt-in:
   that is the same-origin check working as intended.
 - **`@denext/openapi` describes what a validator can export.** A schema with no JSON
   Schema (no Standard JSON Schema, not TypeBox, no `toJsonSchema()`, no converter) is
-  emitted as `{}` with an `opaque-schema` lint warning. Middleware-produced responses
+  emitted as `{}` with an `opaque-schema` lint warning — and as `unknown` in the TypeScript
+  `denext openapi types` emits (a recursive `$defs` reference is `unknown` at the cycle). Middleware-produced responses
   (`requireSession` 401, `rateLimit` 429) appear only as the operation's `default`
   response — a definition cannot name them. The `scalar` / `swagger` renderers load a
   pinned bundle from a CDN (not strict-CSP clean; self-host via `cdn`); the `builtin`

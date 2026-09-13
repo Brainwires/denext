@@ -115,9 +115,10 @@ rest are kept here so they aren't lost; not yet scheduled.
 
 ## Later (not committed to 2.4)
 
-- Generated clients for **non-denext consumers** from the OpenAPI/GraphQL
-  documents (other languages, other frontends) — denext apps already get typed
-  calls to their own routes from `createApiClient`.
+- Generated clients for **non-denext consumers** in **other languages** from the
+  OpenAPI/GraphQL documents. TypeScript consumers are served: `denext openapi types`
+  emits an import-free `ApiSchema` that `createApiClient<ApiSchema>({ base })` from
+  JSR types from any project, so no fetch wrapper is generated for TS.
 - `esbuild` off npm (above) — the last build-time npm codec (the `lightningcss` /
   `swc` repoints have shipped).
 - **Node-stream `Writable` backpressure** for `renderToPipeableStream` /

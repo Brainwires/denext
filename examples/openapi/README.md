@@ -26,6 +26,22 @@ curl -s localhost:3000/api/pets -X POST -H "authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' -d '{"name":""}'
 ```
 
+## Types for a consumer outside this app
+
+```sh
+deno task openapi:types    # writes lib/api-types.gen.ts (committed; regenerate after changing an API)
+```
+
+`lib/api-types.gen.ts` is what a **separate** frontend or script uses: openapi-typescript-style
+`paths`/`components`, plus denext's `ApiSchema`, which makes the client from JSR fully typed there:
+
+```ts
+import { createApiClient } from "jsr:@denext/denext";
+import type { ApiSchema } from "./api-types.gen.ts";
+const api = createApiClient<ApiSchema>({ base: "http://localhost:3000" });
+const pets = await api("/api/pets", "GET", { query: { species: "cat" } }); // typed
+```
+
 ## Login & the Authorize button
 
 The config declares a bearer scheme (`securitySchemes`), so **Swagger UI shows an "Authorize"

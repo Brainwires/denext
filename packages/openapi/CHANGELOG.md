@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.3.0
+
+- **`denext openapi types [--out <file>]` + `emitTypes(document)`** (`@denext/openapi/types`).
+  TypeScript for a consumer OUTSIDE the app — a separate frontend, a script — as one `.ts` with
+  no imports: openapi-typescript-style `paths`/`components` interfaces, and denext's `ApiSchema`
+  keyed by route pattern and method so `createApiClient<ApiSchema>({ base })` from
+  `jsr:@denext/denext` is a fully typed client there (wire codec, dedupe, batching, error-code
+  narrowing). Types only, by design; the header states the wire format. JSON Schema subset:
+  `$ref` (components + inline `$defs`, recursion cut to `unknown`), `type` incl. arrays and
+  `null`, `enum`/`const`, objects with `required`/`additionalProperties`, arrays with
+  `items`/`prefixItems`, `oneOf`/`anyOf`/`allOf`, `nullable`, `description` → JSDoc; an opaque
+  schema is `unknown`.
+- **Operation extensions** `x-denext-path` (the denext route pattern) and `x-denext-errors`
+  (`{ code: status }`, builtins included), which the emitter reads. `diff` treats them as
+  ordinary keys.
+- **Fixed: `denext openapi <action>` on an app whose routes import an npm package.** The verb
+  never asked the CLI for its module gate, so those route modules failed to load in-process
+  (`load-failed` … "not a dependency and not in import map") and the emitted document had no
+  operations — the `examples/openapi` app (Zod) included. The command now declares
+  `loadsModules` with the working directory as the project, and runs under the merged
+  framework+app config like `build`/`doctor`.
+
 ## 0.2.0
 
 - **Security schemes → the Swagger "Authorize" button.** New `securitySchemes` option emits
