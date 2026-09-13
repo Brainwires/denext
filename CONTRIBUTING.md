@@ -227,6 +227,9 @@ will publish. `publish.yml` is on `main` with `permissions: id-token: write`.
 3. **Before running it for a stable major/minor**, hand-edit the prose the bump
    does not: `ROADMAP.md`'s status paragraph, any `README.md` stage language, and
    any stage language on the docs-site pages (`apps/web/app/docs/*/content.md`).
+   A `### Breaking` changelog entry also gets a row on `/docs/upgrading`
+   (`apps/web/app/docs/upgrading/content.md`): one bullet, a one-line action,
+   linked to that release's changelog anchor.
 4. **Watch the publish and verify it went live:**
    `gh run watch "$(gh run list --workflow=publish.yml --limit 1 --json databaseId -q '.[0].databaseId')" --exit-status`,
    then `deno eval --min-dep-age=0 "console.log((await import('jsr:@denext/denext@X.Y.Z')).VERSION)"`.

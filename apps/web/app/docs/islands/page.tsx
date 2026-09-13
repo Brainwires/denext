@@ -43,67 +43,72 @@ export default function Page() {
       </Callout>
 
       <h2>The six directives</h2>
-      <table class="table">
-        <thead>
-          <tr>
-            <th>Directive</th>
-            <th>Hydrates when…</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>
-              <code>client:load</code>
-            </td>
-            <td>
-              Immediately — but per-island (its own scoped hydration, not the whole tree).
-            </td>
-          </tr>
-          <tr>
-            <td>
-              <code>client:idle</code>
-            </td>
-            <td>
-              The main thread goes idle (<code>requestIdleCallback</code>, with a timeout fallback).
-            </td>
-          </tr>
-          <tr>
-            <td>
-              <code>client:visible</code>
-            </td>
-            <td>
-              The island scrolls into view (<code>IntersectionObserver</code>).
-            </td>
-          </tr>
-          <tr>
-            <td>
-              <code>client:interaction</code>
-            </td>
-            <td>
-              The first interaction inside it — a delegated listener catches the event, hydrates the
-              island, and <em>replays</em> the event so the real handler fires. May never hydrate.
-            </td>
-          </tr>
-          <tr>
-            <td>
-              <code>client:media="(min-width:800px)"</code>
-            </td>
-            <td>
-              A CSS media query matches (<code>matchMedia</code>); re-checked as the query changes.
-            </td>
-          </tr>
-          <tr>
-            <td>
-              <code>client:only</code>
-            </td>
-            <td>
-              Client-only —{" "}
-              <strong>no SSR</strong>. The server renders no HTML for it; the client mounts it fresh
-              (<code>createRoot</code>, not hydrate).
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Directive</th>
+              <th>Hydrates when…</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <code>client:load</code>
+              </td>
+              <td>
+                Immediately — but per-island (its own scoped hydration, not the whole tree).
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>client:idle</code>
+              </td>
+              <td>
+                The main thread goes idle (<code>requestIdleCallback</code>, with a timeout
+                fallback).
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>client:visible</code>
+              </td>
+              <td>
+                The island scrolls into view (<code>IntersectionObserver</code>).
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>client:interaction</code>
+              </td>
+              <td>
+                The first interaction inside it — a delegated listener catches the event, hydrates
+                the island, and <em>replays</em>{" "}
+                the event so the real handler fires. May never hydrate.
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>client:media="(min-width:800px)"</code>
+              </td>
+              <td>
+                A CSS media query matches (<code>matchMedia</code>); re-checked as the query
+                changes.
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>client:only</code>
+              </td>
+              <td>
+                Client-only —{" "}
+                <strong>no SSR</strong>. The server renders no HTML for it; the client mounts it
+                fresh (<code>createRoot</code>, not hydrate).
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
 
       <h2>Examples</h2>
       <Code lang="tsx">

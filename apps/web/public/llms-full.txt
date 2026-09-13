@@ -399,6 +399,7 @@ denext ships tooling so agents get it right the first time:
   agent's context. Resources: `denext://guide`, `denext://import-map`.
 - **`llms.txt`** — [denext.dev/llms.txt](https://denext.dev/llms.txt) (concise) and
   [llms-full.txt](https://denext.dev/llms-full.txt) (this guide + an API summary).
+- **Docs pages worth pointing an agent at:** the generated [CLI reference](https://denext.dev/docs/cli), [Troubleshooting](https://denext.dev/docs/troubleshooting) (symptom → cause → fix), [Upgrading](https://denext.dev/docs/upgrading) (breaking changes per version) and the [examples index](https://denext.dev/docs/examples).
 
 ---
 

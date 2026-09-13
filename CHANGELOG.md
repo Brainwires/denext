@@ -18,6 +18,7 @@ and this project adheres to
   when it has no frontmatter and rewrites relative links to the rendering docs page or the GitHub
   blob/tree URL — `/docs/contributing` was showing its two tables as literal pipes, an empty `<h1>`,
   and five 404 links. Groundwork for rendering every root guide on denext.dev from one source.
+- **Docs site: eleven new pages.** A generated [CLI reference](https://denext.dev/docs/cli) (`scripts/gen-cli-reference.ts`, from the command registry, with a drift test) and a generated [examples index](https://denext.dev/docs/examples) (`scripts/gen-examples-index.ts`, from every example's README and config, with a drift test); a [tutorial](https://denext.dev/docs/tutorial) that narrates `examples/notes` end to end with every code block pinned to the example by a test; [Troubleshooting](https://denext.dev/docs/troubleshooting) (symptom → cause → fix, each linking its owner); [Upgrading](https://denext.dev/docs/upgrading) (breaking changes and renamed config keys per minor, linked to the changelog); and narrative pages for shipped features that had none — [Error handling](https://denext.dev/docs/error-handling), [Project layout](https://denext.dev/docs/project-layout), [Internationalization](https://denext.dev/docs/i18n), [Fonts](https://denext.dev/docs/fonts), [Pages Router](https://denext.dev/docs/pages-router) and [Doctor, audit & info](https://denext.dev/docs/doctor-audit). Both generators run in `deno task docs:build`.
 
 ### Changed
 
