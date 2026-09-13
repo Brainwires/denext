@@ -1,5 +1,25 @@
 # @denext/content-collections
 
+## [Unreleased]
+
+### Added
+
+- **GFM pipe tables** in the Markdown renderer: the delimiter row under the header sets each
+  column's alignment (`:--` / `:-:` / `--:`, emitted as an `align-*` class, not a `style=`
+  attribute), the outer pipes are optional, and a `\|` escape is consumed **before** the inline
+  pass so a pipe inside a code span (`` `redirect(url, "push"\|"replace")` ``) survives cell
+  splitting. Short rows are padded and long rows truncated to the header width (GFM), and the
+  table is emitted inside a `<div class="table-wrap">`. A header line plus a delimiter row of the
+  same width is the whole trigger, so prose containing a pipe stays a paragraph.
+
+### Changed
+
+- **A blank `>` line splits a quote or a `> [!NOTE]` callout into `<p>` paragraphs.** A
+  single-paragraph quote renders exactly as before (bare, no `<p>`).
+- **Heading ids now match GitHub for punctuation between spaces:** each space becomes one hyphen
+  instead of one hyphen per run, so `## Known Gaps & Residual Risk` anchors as
+  `known-gaps--residual-risk`. Anchors of headings with a `&` or `—` between words change.
+
 ## [0.3.0] - 2026-09-13
 
 ### Added

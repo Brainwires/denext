@@ -972,14 +972,14 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
 - **Everyday browser-API hooks React/Next don't ship** — SSR-inert and
   feature-detected: `useMediaQuery` (`src/utils/use-media-query.ts`),
   `useLocalStorage` / `useSessionStorage` (`useState`-style Web Storage with JSON
-  - cross-tab sync, hydration-safe — `src/utils/use-storage.ts`),
-    `useEventListener` / `useClickOutside` (declarative DOM listeners, no stale
-    closures — `src/utils/use-dom-events.ts`), `useIntersectionObserver`
-    (`src/utils/use-intersection-observer.ts`), `useWindowSize`
-    (`src/utils/use-window-size.ts`), `useNetworkState`
-    (`src/utils/use-network-state.ts`), `useDebouncedValue`
-    (`src/utils/use-debounced-value.ts`), and `useCopyToClipboard`
-    (`src/utils/use-clipboard.ts`).
+  plus cross-tab sync, hydration-safe — `src/utils/use-storage.ts`),
+  `useEventListener` / `useClickOutside` (declarative DOM listeners, no stale
+  closures — `src/utils/use-dom-events.ts`), `useIntersectionObserver`
+  (`src/utils/use-intersection-observer.ts`), `useWindowSize`
+  (`src/utils/use-window-size.ts`), `useNetworkState`
+  (`src/utils/use-network-state.ts`), `useDebouncedValue`
+  (`src/utils/use-debounced-value.ts`), and `useCopyToClipboard`
+  (`src/utils/use-clipboard.ts`).
 - **OPFS + File System Observer hooks** — read, write, and _live-observe_ the
   Origin Private File System: `useFileSystemObserver` (the generic change
   primitive over any `FileSystemHandle` —

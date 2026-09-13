@@ -246,6 +246,15 @@ four documented bounds of the opt-in:
   their on/off states are embedded in the client bundle (like `NEXT_PUBLIC_*` env vars) — don't
   encode secrets in flag keys.
 
+### First-party Markdown renderer (`@denext/content-collections/markdown`)
+
+- **Deliberately a subset of CommonMark + GFM, not an engine.** It covers headings (with ids),
+  paragraphs, flat ordered/unordered lists with lazy continuation, fenced code, blockquotes and
+  `> [!NOTE]` callouts (multi-paragraph), GFM pipe tables, inline and reference-style links,
+  emphasis and inline code — and deliberately omits **nested lists, footnotes, images, 4-space
+  indented code and raw-HTML passthrough** (raw HTML is escaped, never passed through). A
+  document that needs those is an `.mdx` entry, compiled at build.
+
 ## DevTools (dev-only)
 
 denext ships its **own** in-page glass-box panel (`denext/devtools`,
