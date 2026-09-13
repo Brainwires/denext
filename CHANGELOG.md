@@ -8,6 +8,15 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- **Docs: `POLICIES.md`.** The standing engineering guardrails (zero-npm runtime, honest
+  compatibility, no decorator-metadata stage, no React Native) moved out of `ROADMAP.md` —
+  which lists only work still to do — into a new `POLICIES.md`, together with the security
+  policy (supported versions, private reporting, scope). `SECURITY.md` stays as a short
+  pointer so GitHub's Security tab and existing links keep working. The parity guardrail is
+  reworded: the surface is pursued to the limit; only the _claim_ of 100% is off the table.
+
 ## [2.4.2] - 2026-09-13
 
 ### Added

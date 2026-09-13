@@ -1123,8 +1123,10 @@ Each doc owns one job, so the same fact lives in exactly one canonical place:
   behaves differently from React/Next (documented, not gaps).
 - [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md) — the canonical,
   threat-by-threat security posture vs the ecosystem's CVEs.
-- [SECURITY.md](./SECURITY.md) — supported versions and how to report a
-  vulnerability privately.
+- [POLICIES.md](./POLICIES.md) — the standing engineering guardrails (zero-npm
+  runtime, honest compatibility, no decorator metadata, no React Native) and the
+  security policy: supported versions and how to report a vulnerability privately
+  (`SECURITY.md` is the conventional pointer to it).
 - [CONTRIBUTING.md](./CONTRIBUTING.md) — the check/lint gate, conventions, and
   the JSR release flow.
 - [ROADMAP.md](./ROADMAP.md) — what still needs doing (the rest of the 2.1 cycle:

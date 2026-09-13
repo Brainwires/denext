@@ -4,7 +4,8 @@
 > needs doing.** Completed work lives in [FEATURES.md](./FEATURES.md) and
 > [CHANGELOG.md](./CHANGELOG.md); honest gaps in
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the mission + its superiority
-> pillars in [MISSION.md](./MISSION.md).
+> pillars in [MISSION.md](./MISSION.md); the standing engineering guardrails and the
+> security policy in [POLICIES.md](./POLICIES.md).
 >
 > `development` is **2.4.2** (the version line `deno task bump` rewrites). 2.1 — the
 > typed, self-documenting API surface (`defineApi`, the typed client,
@@ -113,23 +114,6 @@ guardrail; both are build-time.
   (the alias half is small and is the whole "two Reacts" fix), keep esbuild for the
   remaining transforms, then move those one hook at a time; the compat e2es
   (`tests/e2e/next-compat-*`, `spa-compat`, `unbundled-*`) are the gate.
-
-## Guardrails (standing)
-
-- **Zero-npm runtime is sacred** — never reintroduce an npm dependency into a
-  shipped bundle (CI-enforced by the `no-npm-compat-guard` test). Build-time-only
-  WASM/JSR tools are fine. OpenAPI/GraphQL libraries are **opt-in server-side**
-  deps resolved through the merged-config re-exec (`src/build/module-config.ts`),
-  the ORM-support precedent; prefer JSR / zero-dep options where they exist
-  (`@denext/openapi` is zero-dep; `@denext/graphql` is a declared npm bridge like
-  `@denext/effect`).
-- **Never claim 100% React/Next parity** — compat is the on-ramp, never the
-  headline. Do not market the typed API surface as "NestJS on Deno" either.
-- **No decorator-metadata transpile stage.** A proposal for
-  `experimentalDecorators` / `emitDecoratorMetadata` must clear a much higher bar
-  than "it's how Nest does it."
-- **Out of scope:** React Native / native rendering — Capacitor/WebView stays the
-  mobile story; a true RN target is a separate future frontier.
 
 ## Candidate features (from the framework-gap survey)
 

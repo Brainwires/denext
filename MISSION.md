@@ -58,4 +58,5 @@ DX to make it memorable.
 [ARCHITECTURE.md](./ARCHITECTURE.md) — the deliberate under-the-surface choices ·
 [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) — the honest surface gaps ·
 [KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md) — deliberate behavioral differences ·
-[SECURITY.md](./SECURITY.md) — how to report a vulnerability.
+[POLICIES.md](./POLICIES.md) — the standing engineering guardrails and the security policy
+(how to report a vulnerability).
