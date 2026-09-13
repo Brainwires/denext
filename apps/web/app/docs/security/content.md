@@ -1,4 +1,8 @@
-# denext — CVE Defense Guide
+---
+title: Security posture
+slug: security
+lead: Every Next.js, React and React-tooling CVE class, mapped to whether denext's reimplementation shares the vulnerable behavior — verified by a live parity test suite.
+---
 
 A living catalogue of the security vulnerabilities that have affected
 **Next.js**, **React / React Server Components**, and the **React tooling
@@ -10,8 +14,7 @@ optimization, Server Actions, RSC/Flight) on Deno with **its own tiny
 React-equivalent** and **zero runtime npm dependencies**. So most published CVEs
 are not a dependency-bump problem for us — they are a question of "does our
 reimplementation share the vulnerable behavior?" This guide answers that, CVE by
-CVE, and doubles as a **backlog of security checks to add next** (every row
-marked `⚪ Needs review`).
+CVE.
 
 > **Status:** first compilation — 2026-08-10; carried forward through **2.0.0**,
 > last reviewed **2026-09-05** (the pre-2.0.0 whole-app audit) after the review
@@ -45,7 +48,7 @@ marked `⚪ Needs review`).
 | 🟡 **Partial / config-dependent** | A guard exists but coverage depends on user configuration or a documented developer responsibility; or one sub-case is unguarded.                                                        |
 | 🔵 **N/A — feature absent**       | denext does not implement the vulnerable feature or ship the vulnerable dependency, so the CVE cannot apply.                                                                             |
 | 🔴 **Gap**                        | denext implements the feature and currently has **no** guard — real residual risk, tracked in [Known Gaps](#known-gaps--residual-risk).                                                  |
-| ⚪ **Needs review**               | Not yet assessed. These are the **future security-check backlog** — see [Backlog](#backlog--checks-to-add-next).                                                                         |
+| ⚪ **Needs review**               | Not yet assessed — tracked in [Known Gaps](#known-gaps--residual-risk) until it is.                                                                                                      |
 
 ---
 
@@ -271,117 +274,27 @@ verdicts.
 These are the rows where denext implements the feature and the guard is missing
 or weaker than ideal.
 
-> **Update (2.0.0).** All six gaps below are closed or mitigated — see the ✅
-> notes. Details in `CHANGELOG.md`.
+> **Update.** Every gap tracked here through 2.0.0 is closed or mitigated — the
+> history is in the `Security` entries of the [changelog](/docs/changelog) from
+> 0.12.0 (the original six residual-risk gaps closed, ten CVE classes locked in
+> with parity tests) through 2.0.0 (the auth-hardening pass and the weak-secret
+> boot guard). Two rows remain open:
 
-1. **✅ `javascript:`/`data:` URI schemes in URL attributes — CLOSED.** A shared
-   `sanitizeUrlAttr` chokepoint (SSR renderers + client `setAttribute`) drops
-   `javascript:`/`vbscript:` in any URL-bearing attribute and executable `data:`
-   in a navigable/scripty context, defeating whitespace/control-char
-   obfuscation; a dev-only warning fires. `tests/url-scheme.test.ts`.
-2. **✅ `dangerouslySetInnerHTML` dev warning — CLOSED.** A dev-only warning
-   (`__denextDev`) now fires at every SSR sink and in the client reconciler; the
-   client also applies the HTML correctly (a latent `[object Object]` attribute
-   bug was fixed). `tests/dangerous-html.test.ts`.
-3. **✅ Default security headers — CLOSED.** `X-Content-Type-Options: nosniff`,
-   `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy`, HSTS-over-HTTPS, and a
-   **default CSP** (external scripts/styles blocked by default; per-route
-   opt-in) now ship on every document response, overridable by the app.
-   `script-src` is exactly `'self'` — inline scripts are never hashed, so an
-   injected inline `<script>` can't self-authorize (SEC-M2); inline `<style>` is
-   still hashed. `tests/security-headers.test.ts`, `tests/csp*.test.ts`.
-4. **🟡 Server-Action / RSC CPU & concurrency throttling — mostly mitigated.**
+1. **🟡 Server-Action / RSC CPU & concurrency throttling — mostly mitigated.**
    The slow-body vector is CLOSED (idle timeout on the action body reader → 408,
    CVE-2024-56332); a handler deadline is available via `requestTimeout`
    (default **30 s**; set `requestTimeout: 0` for legitimately slow SSR). A per-request CPU budget
    and connection-slot ceiling remain a deployment-layer concern (reverse proxy
    / platform), by design.
-5. **✅ Middleware `redirectResponse()` verbatim emission — CLOSED.** All framework
-   redirect emissions (middleware, server-component, server-action) normalize
-   through `safeRedirectLocation`; explicit `http(s)://` targets are preserved.
-6. **✅ Dev-server reload-stream origin verification — CLOSED.** The dev
-   `/_denext/reload` SSE endpoint now refuses cross-origin subscribers;
-   `allowedDevOrigins` mirrors Next.js. `tests/dev-origin.test.ts`. (denext's
-   live reload is SSE, not a WebSocket.)
-7. **✅ Weak session secret — CLOSED.** A `<32`-char secret warns once in
-   development and **throws** under the production signal: `denextAuth()` at
-   boot and `getSession` per call (`session.ts`, `auth/mod.ts`). `denext start`
-   sets `DENEXT_ENV=production` itself when a deploy set neither it nor
-   `NODE_ENV`, so the guard fires under a plain `deno task start`.
-   `tests/session.test.ts`, `tests/auth.test.ts`.
-8. **🟡 OIDC `id_token` multi-`aud` acceptance.** `verifyIdToken` enforces `aud`
+2. **🟡 OIDC `id_token` multi-`aud` acceptance.** `verifyIdToken` enforces `aud`
    **membership** — a token whose `aud` array contains the expected client id
    passes even if it also lists other audiences (no `azp`/single-aud
    strictness). Accepted as OIDC-conformant for the common multi-audience case;
    documented in §15.
 
----
-
-## Backlog — checks to add next
-
-Every `⚪ Needs review` row, consolidated as a security-hardening backlog. Each
-should become either a new `tests/nextjs-cve-parity.test.ts` case (proving
-immunity) or a fix:
-
-- [x] **Dynamic-route param injection** — matched route equals rendered route
-      (CVE-2026-44574). _Parity test._
-- [x] **Segment-prefetch / soft-nav variant** cannot bypass middleware
-      (CVE-2026-44575). _Parity test._
-- [x] **i18n data-route** — no unprefixed data endpoint escapes the matcher
-      (CVE-2026-44573). _Parity test (denext has no `/_next/data`; data-shaped
-      variants 404 or hit the same middleware)._
-- [x] **WebSocket-upgrade proxying** — an Upgrade request is served normally,
-      never proxied (CVE-2026-44578). _Parity test._
-- [~] **RSC/action resource budget** — slow-body idle timeout done
-  (CVE-2024-56332); the multipart `fdIndex` unbounded-iteration path is now
-  bounded (CVE-2026-64641, fixed + tested); the remaining CPU/concurrency
-  ceiling is deployment-layer (-23869/70, -44907).
-- [x] **Slow-body / idle-connection timeout** on action handlers
-      (CVE-2024-56332). _Idle timeout → 408; `tests/server-action.test.ts`._
-- [x] **Prefetch `Cache-Control`** — soft-nav responses are `private, no-store`
-      (CVE-2023-46298). _Fix + parity test._
-- [x] **Cache-busting token strength** for soft-nav/RSC requests
-      (CVE-2026-44582). _Parity test — partitions by the `x-denext-nav` header
-      (not a URL token); soft variant is `no-store`; a `?_rsc=…` token is
-      ignored._
-- [x] **Invalid-UTF-8 string body** keys distinctly in `cachedFetch`
-      (CVE-2026-64647). _Parity test._
-- [x] **SVG source rasterization cost** — SVG image sources are now rejected
-      outright (`400`, sniffed from the leading bytes before decode) in
-      `optimizeImage` (CVE-2026-64644). Tested in
-      `tests/nextjs-cve-parity.test.ts`.
-- [x] **Image internal fetch** — no user credential forwarding:
-      `fetchRemoteImage` takes only a URL and its outbound init carries no
-      `Cookie`/`Authorization` (CVE-2025-57752). _Parity test._
-- [x] **Error/404 page** reflects no unescaped markup (CVE-2018-18282). _Parity
-      test._
-- [x] **Inline-script serialization** — every framework data island escapes
-      `<`→`\u003c`, so a request-derived value can't break out of `<script>`
-      (CVE-2026-44580). _Parity test. An app's own `<Script>` inline body stays
-      verbatim by design (developer responsibility, as in next/script)._
-- [x] **Action-ID enumeration** — an unknown id is indistinguishable and never
-      echoed (CVE-2026-64643). _Parity test._
-- [x] **Malformed-URL / unhandled-rejection** fuzzing of the server loop
-      (CVE-2021-43803, …). _Parity test (odd-but-valid paths never crash)._
-- [x] **Regression tests** for by-design protections: Server-Function source
-      non-disclosure (CVE-2025-55183), internal-header redirect poisoning
-      (CVE-2026-44572). _Parity tests._
-- [x] **Windows-FS path traversal RCE** — `serveStatic` containment holds under
-      backslash/UNC/drive/mixed-encoding escapes (CVE-2026-75604 /
-      GHSA-p293-qw3h-jr36, Aug 2026). _Parity test._
-- [x] **AVIF/libheif RCE** — no `sharp`/`libheif`; AVIF is opt-in wasm _output_
-      only, never a decode target (GHSA-2xp9-vwfh-vxw4, Aug 2026). _Parity
-      test._
-- [x] **SSR attribute-NAME injection** — hostile spread prop keys can't break
-      the attribute context (React CVE-2018-6341). _Parity test
-      (back-propagated)._
-- [x] **CSP nonce reflection** — CSP is hash-based, no request-supplied nonce
-      reflected (CVE-2026-44581). _Parity test._
-- [x] **i18n internal-path DoS** — locale-prefixed / deeply-nested paths never
-      crash the router (CVE-2022-21721). _Parity test._
-- [x] **Unhandled-rejection containment** — a throwing/rejecting page is
-      contained as a 500, never a server teardown (CVE-2022-36046). _Parity
-      test._
+The former backlog of parity checks is complete — each is now a case in
+`tests/nextjs-cve-parity.test.ts` or `tests/safe-fetch.test.ts`; see the
+`Security` sections of the changelog, 0.12.0 → 2.0.0.
 
 ---
 
