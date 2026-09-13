@@ -66,15 +66,27 @@ export const NAV: {
     group: "Reference",
     items: [
       { slug: "config", label: "Configuration" },
+      { slug: "plugins", label: "Writing a plugin" },
       { slug: "api", label: "API reference" },
       { slug: "mcp", label: "MCP server" },
       { slug: "changelog", label: "Changelog" },
     ],
   },
   {
+    group: "Under the hood",
+    items: [
+      { slug: "features", label: "Features" },
+      { slug: "architecture", label: "Architecture" },
+      { slug: "differences", label: "Deliberate differences" },
+      { slug: "limitations", label: "Known limitations" },
+      { slug: "security", label: "Security posture" },
+    ],
+  },
+  {
     group: "Contribute",
     items: [
       { slug: "contributing", label: "Contributing" },
+      { slug: "policies", label: "Policies & security" },
     ],
   },
 ];
