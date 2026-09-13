@@ -8,6 +8,17 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **The first-party Markdown renderer gained GFM pipe tables and multi-paragraph quotes
+  (`@denext/content-collections` 0.4.0).** Tables (alignment from the delimiter row, optional outer
+  pipes, `\|` escapes, rows padded to the header width) render inside the site's `.table-wrap`; a
+  blank `>` line splits a quote or callout into paragraphs; heading ids now match GitHub's slugs
+  (each space one hyphen). The docs site's `MarkdownDoc` takes a root file's `# H1` as the page title
+  when it has no frontmatter and rewrites relative links to the rendering docs page or the GitHub
+  blob/tree URL — `/docs/contributing` was showing its two tables as literal pipes, an empty `<h1>`,
+  and five 404 links. Groundwork for rendering every root guide on denext.dev from one source.
+
 ### Changed
 
 - **Docs: `POLICIES.md`.** The standing engineering guardrails (zero-npm runtime, honest

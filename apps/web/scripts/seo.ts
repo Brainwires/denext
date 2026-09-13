@@ -150,6 +150,56 @@ function defList(el: Element): string {
   return out.filter(Boolean).join("\n");
 }
 
+/** One `<tr>`'s cells → a GFM row (`| a | b |`), with any literal `|` escaped. */
+function tableRow(cells: Element[]): string {
+  const rendered = cells.map((cell) => collapseWs(inline(cell)).trim().replace(/\|/g, "\\|"));
+  return `| ${rendered.join(" | ")} |`;
+}
+
+const ROW_GROUPS = new Set(["THEAD", "TBODY", "TFOOT"]);
+// The GFM delimiter cell for each alignment class the Markdown renderer emits.
+const ALIGNMENTS: ReadonlyArray<readonly [string, string]> = [
+  ["align-center", ":--:"],
+  ["align-right", "--:"],
+  ["align-left", ":--"],
+];
+
+/** Every `<tr>` under a table — direct children and row groups — in document order. */
+function tableRows(el: Element): Element[] {
+  const rows: Element[] = [];
+  for (const c of childNodes(el)) {
+    if (!isEl(c)) continue;
+    if (tag(c) === "TR") rows.push(c);
+    else if (ROW_GROUPS.has(tag(c))) rows.push(...tableRows(c));
+  }
+  return rows;
+}
+
+const rowCells = (row: Element): Element[] =>
+  childNodes(row).filter((c): c is Element => isEl(c) && (tag(c) === "TH" || tag(c) === "TD"));
+
+/** The delimiter row, one cell per header cell, from its `align-*` class (else `---`). */
+const delimiterRow = (header: Element[]): string => {
+  const cells = header.map((cell) =>
+    ALIGNMENTS.find(([name]) => cell.classList?.contains(name))?.[1] ?? "---"
+  );
+  return `| ${cells.join(" | ")} |`;
+};
+
+/** A `<table>` → a GFM table; short rows are padded out to the header's width. */
+function table(el: Element): string {
+  const rows = tableRows(el);
+  const header = rows.length ? rowCells(rows[0]) : [];
+  if (!header.length) return "";
+  const lines = [tableRow(header), delimiterRow(header)];
+  for (const row of rows.slice(1)) {
+    const cells = rowCells(row);
+    const pad = Math.max(0, header.length - cells.length);
+    lines.push(tableRow(cells) + " |".repeat(pad));
+  }
+  return lines.join("\n");
+}
+
 /** Block-level markdown for a container's children, as separate blocks. */
 function blocks(node: Node): string[] {
   const out: string[] = [];
@@ -185,6 +235,8 @@ function blocks(node: Node): string[] {
       );
     } else if (t === "HR") {
       out.push("---");
+    } else if (t === "TABLE") {
+      out.push(table(c));
     } else if (CONTAINERS.has(t)) {
       out.push(...blocks(c)); // recurse into wrappers
     } else {
@@ -215,7 +267,7 @@ function headInjection(url: string, title: string, desc: string): string {
   ].filter(Boolean).join("\n");
 }
 
-function toMarkdown(doc: ReturnType<DOMParser["parseFromString"]>, meta: {
+export function toMarkdown(doc: ReturnType<DOMParser["parseFromString"]>, meta: {
   title: string;
   description: string;
   url: string;
@@ -308,14 +360,16 @@ Sitemap: ${ORIGIN}/sitemap.xml
 
 // ---------- run ----------
 
-const pages: PageInfo[] = [];
-for await (const file of walkHtml(OUT)) {
-  const info = await processPage(file);
-  if (info) pages.push(info);
-}
-await Deno.writeTextFile(`${OUT}/sitemap.xml`, serializeSitemap(pages));
-await Deno.writeTextFile(`${OUT}/robots.txt`, ROBOTS);
+if (import.meta.main) {
+  const pages: PageInfo[] = [];
+  for await (const file of walkHtml(OUT)) {
+    const info = await processPage(file);
+    if (info) pages.push(info);
+  }
+  await Deno.writeTextFile(`${OUT}/sitemap.xml`, serializeSitemap(pages));
+  await Deno.writeTextFile(`${OUT}/robots.txt`, ROBOTS);
 
-console.log(
-  `seo: ${pages.length} pages — canonical+og injected, .md emitted, sitemap.xml + robots.txt written`,
-);
+  console.log(
+    `seo: ${pages.length} pages — canonical+og injected, .md emitted, sitemap.xml + robots.txt written`,
+  );
+}

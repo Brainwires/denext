@@ -419,6 +419,22 @@ main {
   margin: 28px 0;
 }
 
+/* Multi-paragraph quotes and callouts (the Markdown renderer wraps each in a <p>). */
+.md blockquote p,
+.md .callout p {
+  margin: 0 0 10px;
+}
+
+.md blockquote p:last-child,
+.md .callout p:last-child {
+  margin-bottom: 0;
+}
+
+.md img {
+  max-width: 100%;
+  height: auto;
+}
+
 /* Below the 3-column breakpoint the right-rail TOC doesn't fit — fall back to 2 columns. */
 /* (`.site` raises specificity above the 3-column `.docs.has-toc` rule declared later.) */
 @media (max-width: 1000px) {
@@ -485,6 +501,26 @@ main {
 }
 .table-wrap td code {
   white-space: nowrap;
+}
+
+/* GFM table alignment (classes emitted by the Markdown renderer). */
+.table-wrap th.align-center,
+.table-wrap td.align-center {
+  text-align: center;
+}
+.table-wrap th.align-right,
+.table-wrap td.align-right {
+  text-align: right;
+}
+.table-wrap th.align-left,
+.table-wrap td.align-left {
+  text-align: left;
+}
+
+/* Wide reference tables rendered from Markdown: let long code cells wrap, so a
+   123-row table doesn't become a multi-screen horizontal scroll. */
+.md .table-wrap td code {
+  white-space: normal;
 }
 
 /* API reference: entry-point index cards + per-module nav + symbols */
