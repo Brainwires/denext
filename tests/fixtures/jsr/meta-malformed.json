@@ -1,0 +1,6 @@
+{
+  "scope": "denext",
+  "name": "openapi",
+  "latest": "latest; rm -rf /",
+  "versions": {}
+}

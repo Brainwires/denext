@@ -1,0 +1,78 @@
+{
+  "items": [
+    null,
+    42,
+    "@denext/denext",
+    [
+      "denext",
+      "denext"
+    ],
+    {
+      "scope": "-bad",
+      "name": "leading-hyphen-scope",
+      "latestVersion": "1.0.0"
+    },
+    {
+      "scope": "Upper",
+      "name": "case",
+      "latestVersion": "1.0.0"
+    },
+    {
+      "scope": "abcdefghijklmnopqrstu",
+      "name": "scope-too-long",
+      "latestVersion": "1.0.0"
+    },
+    {
+      "scope": "ok",
+      "name": "double--hyphen",
+      "latestVersion": "1.0.0"
+    },
+    {
+      "scope": "ok",
+      "latestVersion": "1.0.0"
+    },
+    {
+      "scope": "ok",
+      "name": 7,
+      "latestVersion": "1.0.0"
+    },
+    {
+      "scope": "ok",
+      "name": "no-version"
+    },
+    {
+      "scope": "ok",
+      "name": "null-version",
+      "latestVersion": null
+    },
+    {
+      "scope": "ok",
+      "name": "bad-version",
+      "latestVersion": "latest"
+    },
+    {
+      "scope": "ok",
+      "name": "short-version",
+      "latestVersion": "1.0"
+    },
+    {
+      "scope": "ok",
+      "name": "spaced-version",
+      "latestVersion": "1.0.0 "
+    },
+    {
+      "scope": "ok",
+      "name": "path/../escape",
+      "latestVersion": "1.0.0"
+    },
+    {
+      "scope": "ok",
+      "name": "survivor",
+      "latestVersion": "2.0.0",
+      "description": "line one\u0000\u001b[31m red\u0007\nline\ttwo \u202eevil\u202c \u200bzero-width \u009f",
+      "score": "100",
+      "isArchived": "true"
+    }
+  ],
+  "total": -3
+}

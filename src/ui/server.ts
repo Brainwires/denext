@@ -43,6 +43,8 @@ export interface UiServerOptions {
   readonly token?: string;
   /** `--read-only`: refuse every mutation with a `403`. */
   readonly readOnly?: boolean;
+  /** Never reach the network (no JSR plugin search): `denext ui --offline`. */
+  readonly offline?: boolean;
   /** Aborting this stops accepting and drains in-flight requests. */
   readonly signal?: AbortSignal;
   /** `--ui-dev`: watch `src/ui/**` and push a reload to every open page. */
@@ -180,6 +182,7 @@ async function buildContext(
       url,
       method: request.method,
       readOnly: options.readOnly === true,
+      offline: options.offline === true,
       csrf: session.csrf,
       json: url.pathname.startsWith("/api/"),
       fragment: (request.headers.get("accept") ?? "").includes("text/html-fragment"),

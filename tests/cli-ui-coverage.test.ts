@@ -98,7 +98,7 @@ Deno.test("the verb is declared as a non-module-loading, loopback-only GUI", () 
   assertEquals(uiCommand.name, "ui");
   assertEquals(uiCommand.loadsModules, false);
   const flags = (uiCommand.flags ?? []).map((f) => f.name).sort();
-  assertEquals(flags, ["no-open", "port", "read-only", "token", "ui-dev"]);
+  assertEquals(flags, ["no-open", "offline", "port", "read-only", "token", "ui-dev"]);
   assertEquals(
     (uiCommand.flags ?? []).find((f) => f.name === "port")?.default,
     undefined,
