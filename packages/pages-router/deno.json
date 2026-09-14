@@ -14,7 +14,14 @@
     "@denext/denext/plugin-kit": "jsr:@denext/denext@^2.5.0-rc.1/plugin-kit",
     "@std/path": "jsr:@std/path@^1.0.0"
   },
-  "denext": { "catalog": { "kind": "plugin", "factory": "pagesRouter", "configKeys": ["dir"] } },
+  "denext": {
+    "catalog": {
+      "kind": "plugin",
+      "factory": "pagesRouter",
+      "optionsType": "PagesRouterOptions",
+      "configKeys": ["dir"]
+    }
+  },
   "publish": {
     "include": [
       "mod.ts",

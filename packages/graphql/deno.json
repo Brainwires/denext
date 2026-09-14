@@ -17,6 +17,7 @@
     "catalog": {
       "kind": "plugin",
       "factory": "graphql",
+      "optionsType": "GraphqlOptions",
       "verb": "graphql",
       "configKeys": [
         "schema",

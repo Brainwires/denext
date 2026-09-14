@@ -10,7 +10,14 @@
     "@denext/denext/plugin-kit": "jsr:@denext/denext@^2.5.0-rc.1/plugin-kit",
     "effect": "npm:effect@^3.22.0"
   },
-  "denext": { "catalog": { "kind": "plugin", "factory": "effect", "configKeys": ["layer"] } },
+  "denext": {
+    "catalog": {
+      "kind": "plugin",
+      "factory": "effect",
+      "optionsType": "EffectPluginOptions",
+      "configKeys": ["layer"]
+    }
+  },
   "publish": {
     "include": [
       "mod.ts",

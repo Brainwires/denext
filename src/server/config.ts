@@ -228,7 +228,11 @@ export interface SpaConfig {
   rootId?: string;
   /** `<title>` for the generated shell. Default `"denext app"`. */
   title?: string;
-  /** Extra raw HTML injected into the shell `<head>` (meta tags, preconnect links, …). */
+  /**
+   * Extra raw HTML injected into the shell `<head>` (meta tags, preconnect links, …).
+   *
+   * @widget textarea
+   */
   head?: string;
   /**
    * Raw HTML rendered INSIDE the mount element (`#${rootId}`) in the generated shell — the
@@ -238,6 +242,8 @@ export interface SpaConfig {
    * background (pair with a pre-paint script in {@link head}), a logo splash, or a spinner —
    * the same role a Vite/CRA `index.html` fills with markup inside `<div id="root">…</div>`.
    * `denext migrate --from vite` carries the source `index.html`'s `#root` content here.
+   *
+   * @widget textarea
    */
   loading?: string;
   /** `<html lang>` value for the generated shell. Default `"en"`. */

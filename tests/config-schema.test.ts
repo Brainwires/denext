@@ -1,19 +1,17 @@
 // Drift check for the generated config artifacts (src/server/config-keys.generated.ts +
 // denext.config.schema.json) against the `DenextConfig` type, plus unit tests of the
-// deno-doc → JSON-Schema mapping in scripts/gen-config-schema.ts.
+// deno-doc → JSON-Schema mapping shared through scripts/lib/ts-to-schema.ts.
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
+import { generate, KEYS_OUT, SCHEMA_OUT } from "../scripts/gen-config-schema.ts";
 import {
   constraints,
   description,
   type DocType,
-  generate,
-  KEYS_OUT,
   propertyNames,
-  SCHEMA_OUT,
   symbolTable,
   tsTypeToSchema,
-} from "../scripts/gen-config-schema.ts";
+} from "../scripts/lib/ts-to-schema.ts";
 import { CONFIG_KEYS, EXPERIMENTAL_KEYS } from "../src/server/config-keys.generated.ts";
 
 const STALE = "is stale — run `deno task gen:config-schema` (or `deno task docs:api`) and commit";
@@ -66,7 +64,8 @@ Deno.test("the committed schema mirrors the runtime validator's contract", async
   assertEquals(schema.properties.experimental.properties.features.additionalProperties, {
     type: "boolean",
   });
-  assertEquals(schema.properties.experimental.properties.features["x-denext"].widget, "map");
+  // No marker: a map is recognised structurally, from its `additionalProperties`.
+  assertEquals(schema.properties.experimental.properties.features["x-denext"], undefined);
   // A bound reaches the schema only from an explicit JSDoc tag backing a validator rule.
   assertEquals(schema.properties.apiBatch.properties.maxItems.minimum, 1);
   assertEquals(schema.properties.apiBatch.properties.maxItems.maximum, 100);
@@ -170,11 +169,7 @@ Deno.test("tsTypeToSchema describes thunks, standard generics and maps (unit)", 
   });
 
   // Maps: `Record`, a mapped type and an index signature all describe one value schema.
-  const boolMap = {
-    type: "object",
-    additionalProperties: { type: "boolean" },
-    "x-denext": { widget: "map" },
-  };
+  const boolMap = { type: "object", additionalProperties: { type: "boolean" } };
   assertEquals(tsTypeToSchema(generic("Record", kw("string"), kw("boolean")), ctx), boolMap);
   assertEquals(
     tsTypeToSchema({ kind: "mapped", value: { tsType: kw("boolean") } }, ctx),
@@ -187,11 +182,10 @@ Deno.test("tsTypeToSchema describes thunks, standard generics and maps (unit)", 
     ),
     boolMap,
   );
-  // An opaque value type still marks the map — it just claims nothing about the values.
+  // An opaque value type is still a map — it just claims nothing about the values.
   assertEquals(tsTypeToSchema(generic("Record", kw("string"), kw("unknown")), ctx), {
     type: "object",
     additionalProperties: {},
-    "x-denext": { widget: "map" },
   });
 });
 

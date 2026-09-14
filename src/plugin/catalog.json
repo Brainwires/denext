@@ -31,7 +31,21 @@
       ],
       "title": "@denext/content-collections",
       "blurb": "A typed, validated, queryable content layer for denext apps — MD/MDX/YAML/JSON, in the spirit of Astro's Content Layer and Nuxt Content.",
-      "docs": "/docs/content-collections"
+      "docs": "/docs/content-collections",
+      "optionsType": "ContentCollectionsOptions",
+      "optionsSchema": {
+        "description": "Options for the contentCollections plugin.",
+        "type": "object",
+        "properties": {
+          "watch": {
+            "description": "Glob patterns (relative to the project root) whose changes regenerate the store + types in `denext dev`. Defaults to `content.config.ts` and a `content/**` tree; override if your content lives elsewhere.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
     },
     {
       "name": "@denext/effect",
@@ -47,7 +61,17 @@
       ],
       "title": "@denext/effect",
       "blurb": "First-class Effect support for denext. Run an Effect from a Server Component, route handler, or Server Action and get typed errors, dependency injection (services from a Layer), structured…",
-      "docs": "/docs/effect"
+      "docs": "/docs/effect",
+      "optionsType": "EffectPluginOptions",
+      "optionsSchema": {
+        "description": "Options for the effect plugin.",
+        "type": "object",
+        "properties": {
+          "layer": {
+            "description": "An app `Layer` providing the services your Effects require (its requirements must be `never`). The plugin builds a memoized runtime from it and disposes it on shutdown; the ambient runEffect/runEffectExit then resolve those services at run time."
+          }
+        }
+      }
     },
     {
       "name": "@denext/graphql",
@@ -78,7 +102,113 @@
       ],
       "title": "@denext/graphql",
       "blurb": "A GraphQL endpoint for a denext app, as a plugin. It mounts a GraphQL Yoga server at /graphql, bridges subscriptions onto denext channels (the app's push primitive — no second event bus, no separate…",
-      "docs": "/docs/graphql"
+      "docs": "/docs/graphql",
+      "optionsType": "GraphqlOptions",
+      "optionsSchema": {
+        "description": "Options for graphql.",
+        "type": "object",
+        "properties": {
+          "schema": {
+            "description": "The schema (Pothos `builder.toSchema()`, `createSchema({ typeDefs, resolvers })`, …)."
+          },
+          "path": {
+            "description": "Where the endpoint is mounted (default `/graphql`, app-relative: `basePath` is already stripped).",
+            "type": "string"
+          },
+          "graphiql": {
+            "description": "Serve GraphiQL on a browser `GET` (default: dev only).",
+            "type": "boolean"
+          },
+          "introspection": {
+            "description": "Answer introspection queries (default: dev only — production hides the type graph).",
+            "type": "boolean"
+          },
+          "maxBodyBytes": {
+            "description": "Max request body in bytes (default 1 MiB, like a route handler; over → 413).",
+            "type": "number"
+          },
+          "maxDepth": {
+            "description": "Reject a query nested deeper than this many selection levels — a cheap guard against the DoS where a small deeply-nested query over a cyclic type relation exhausts CPU/memory (the body cap allows thousands of levels). Default 12; `false` disables it. Raise it for a schema with legitimately deep trees.",
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "enum": [
+                  false
+                ]
+              }
+            ]
+          },
+          "maxCost": {
+            "description": "Reject a query whose estimated **cost** exceeds this budget — the guard against the *multiplicative* DoS a depth limit misses: `users(first: 1000) { posts(first: 1000) { … } }` is shallow but fans out to a million resolver calls. Cost is estimated over the AST (no schema or resolver run): each field costs CostOptions.fieldCost (default 1), and a field carrying a pagination argument (`first`/`last`/`limit` by default) multiplies its children's cost by that integer. Default `false` (off — `maxDepth` stays the on-by-default guard); set a number (a budget of ~1000 suits most apps) to enable it. The check runs at execute time, so a page size passed as a **variable** (`first: $n`) is counted at its **actual** value — a variable can't smuggle a large page past the budget. With Yoga `batching` enabled the budget is per-operation, so an N-operation batch may cost up to N×.",
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "enum": [
+                  false
+                ]
+              }
+            ]
+          },
+          "costOptions": {
+            "description": "Tune the GraphqlOptions.maxCost estimate (field weight, which args multiply).",
+            "type": "object",
+            "properties": {
+              "fieldCost": {
+                "description": "Cost charged for each field selected (default `1`).",
+                "type": "number"
+              },
+              "listMultiplierArgs": {
+                "description": "Argument names whose integer value multiplies a field's subtree cost (default `[\"first\", \"last\", \"limit\"]`).",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "defaultMultiplier": {
+                "description": "Multiplier used for a pagination field when its size is a variable or absent (default `1`).",
+                "type": "number"
+              }
+            }
+          },
+          "requireSameOrigin": {
+            "description": "Require the same-origin proof denext applies to every state-changing RPC (Server Actions, the typed-API batch) on non-GET requests: a cross-site `<form>` or fetch is refused with 403 before Yoga parses it. Default `true`. Turn off only for a public, cookie-free API — resolvers run in the viewer's session, so a mutation reached cross-site is a CSRF.",
+            "type": "boolean"
+          },
+          "allowedOrigins": {
+            "description": "Extra origins (`https://app.example.com`) allowed to call mutations, beyond the request's own host.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "context": {
+            "description": "Build the per-request context your resolvers receive (merged with Yoga's)."
+          },
+          "yoga": {
+            "description": "Further Yoga options: `plugins`, `maskedErrors`, `cors`, `batching`, `logging`, … Note `cors` defaults to OFF here (Yoga's own default reflects any `Origin` with credentials); set `cors: { origin: [...] }` to open the endpoint to named sites."
+          },
+          "outFile": {
+            "description": "The SDL file `denext build` writes into the output directory (default `schema.graphql`); `false` skips it.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "enum": [
+                  false
+                ]
+              }
+            ]
+          }
+        },
+        "required": [
+          "schema"
+        ]
+      }
     },
     {
       "name": "@denext/htmx",
@@ -97,7 +227,18 @@
       ],
       "title": "@denext/htmx",
       "blurb": "First-class htmx support for denext, shipped as a denext plugin. Add it, drop <Htmx/> in your layout, and every hx-* attribute just works — server-rendered verbatim, 0 KB of denext client JS on pages…",
-      "docs": "/docs/htmx"
+      "docs": "/docs/htmx",
+      "optionsType": "HtmxOptions",
+      "optionsSchema": {
+        "description": "Options for htmx.",
+        "type": "object",
+        "properties": {
+          "path": {
+            "description": "Override the URL the runtime is served from. Defaults to HTMX_RUNTIME_PATH. App-relative: the pipeline strips the project's `basePath` before a plugin sees a request (the browser-facing `<Htmx/>` `src` keeps it).",
+            "type": "string"
+          }
+        }
+      }
     },
     {
       "name": "@denext/lightningcss",
@@ -152,7 +293,131 @@
       ],
       "title": "@denext/openapi",
       "blurb": "An OpenAPI 3.1 document and a docs page for a denext app, derived from the defineApi definitions its route handlers already carry.",
-      "docs": "/docs/openapi"
+      "docs": "/docs/openapi",
+      "optionsType": "OpenApiOptions",
+      "optionsSchema": {
+        "description": "Options for openapi.",
+        "type": "object",
+        "properties": {
+          "path": {
+            "description": "Where the document is served (default `/openapi.json`, app-relative: `basePath` is already stripped).",
+            "type": "string"
+          },
+          "docs": {
+            "description": "Where the docs page is served (default `/docs`, app-relative); `false` disables it.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "enum": [
+                  false
+                ]
+              }
+            ]
+          },
+          "ui": {
+            "description": "The docs renderer: `builtin` (server-rendered, no JavaScript, strict-CSP clean — the default), `scalar` or `swagger` (interactive, loaded from a CDN).",
+            "enum": [
+              "builtin",
+              "scalar",
+              "swagger"
+            ]
+          },
+          "cdn": {
+            "description": "Override the CDN URL for `scalar` (script URL) or `swagger` (dist base URL).",
+            "type": "string"
+          },
+          "info": {
+            "description": "The document's `info` (defaults: the project directory's name, version `0.0.0`).",
+            "type": "object",
+            "properties": {
+              "title": {
+                "description": "The API's title.",
+                "type": "string"
+              },
+              "version": {
+                "description": "The API's version (yours, not denext's).",
+                "type": "string"
+              },
+              "description": {
+                "description": "A longer description (CommonMark).",
+                "type": "string"
+              }
+            }
+          },
+          "servers": {
+            "description": "The document's `servers`.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "description": "The base URL.",
+                  "type": "string"
+                },
+                "description": {
+                  "description": "What this server is (`\"production\"`, …).",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "url"
+              ]
+            }
+          },
+          "toJsonSchema": {
+            "description": "Describe validators the built-in detection cannot (consulted first)."
+          },
+          "include": {
+            "description": "Keep a route in the document (default: every API route)."
+          },
+          "tags": {
+            "description": "Tag an operation (default: the first path segment after `/api`).",
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "x-denext": {
+              "wrapper": "function"
+            }
+          },
+          "securitySchemes": {
+            "description": "Security schemes the document advertises (→ `components.securitySchemes`). Swagger UI and Scalar render an \"Authorize\" button from these, so a token is entered once and sent with each request. E.g. `{ bearerAuth: { type: \"http\", scheme: \"bearer\" } }`.",
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": {}
+            }
+          },
+          "security": {
+            "description": "Which scheme(s) an operation requires. An **array** is a document-wide default; a **function** is applied per route — return `[{ bearerAuth: [] }]` to require it, `[]` for a public route (e.g. `/api/login`), or `undefined` to leave it at the document default. This is DOCUMENTATION only — enforce the token with route middleware (`createApi().use(...)`)."
+          },
+          "expose": {
+            "description": "When the live endpoints are served. `\"always\"` (default) serves `/openapi.json` and `/docs` in every mode — the zero-config default, since a document describing your own API is usually fine to expose. `\"dev\"` serves them only under `denext dev` (like GraphiQL), so production reveals no route/schema map. Either way authorize still applies.",
+            "enum": [
+              "always",
+              "dev"
+            ]
+          },
+          "authorize": {
+            "description": "Gate the live endpoints. Return `false` to hide them from a request (the app's own 404 answers — no distinguishable \"forbidden\"). Runs after expose. Default: open."
+          },
+          "outFile": {
+            "description": "The file `denext build` writes into the output directory (default `openapi.json`); `false` skips the build step.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "enum": [
+                  false
+                ]
+              }
+            ]
+          }
+        }
+      }
     },
     {
       "name": "@denext/pages-router",
@@ -173,7 +438,18 @@
       ],
       "title": "@denext/pages-router",
       "blurb": "A Next.js Pages Router for denext, shipped as a first-party plugin. Drop it into your denext.config.ts and a pages/ tree renders alongside your App Router app/ routes — App Router routes always win,…",
-      "docs": "/docs/pages-router"
+      "docs": "/docs/pages-router",
+      "optionsType": "PagesRouterOptions",
+      "optionsSchema": {
+        "description": "Options for pagesRouter.",
+        "type": "object",
+        "properties": {
+          "dir": {
+            "description": "Absolute or project-relative path to the pages directory. Defaults to auto-detecting `pages/` then `src/pages/` under the project root.",
+            "type": "string"
+          }
+        }
+      }
     },
     {
       "name": "@denext/photon",
@@ -203,7 +479,22 @@
       ],
       "title": "@denext/react-router",
       "blurb": "Run a React Router v7 framework-mode app on denext — with your app's source unchanged.",
-      "docs": "/docs/react-router"
+      "docs": "/docs/react-router",
+      "optionsType": "ReactRouterOptions",
+      "optionsSchema": {
+        "description": "Options for reactRouter.",
+        "type": "object",
+        "properties": {
+          "appDirectory": {
+            "description": "The RR app directory relative to the project (default: `react-router.config.ts`'s `appDirectory`, else `app`).",
+            "type": "string"
+          },
+          "routesFile": {
+            "description": "The routes config module relative to the app directory (default `routes.ts`).",
+            "type": "string"
+          }
+        }
+      }
     },
     {
       "name": "@denext/swc",

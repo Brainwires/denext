@@ -16,6 +16,7 @@
     "catalog": {
       "kind": "plugin",
       "factory": "openapi",
+      "optionsType": "OpenApiOptions",
       "verb": "openapi",
       "configKeys": [
         "path",

@@ -19,6 +19,7 @@
     "catalog": {
       "kind": "plugin",
       "factory": "reactRouter",
+      "optionsType": "ReactRouterOptions",
       "configKeys": ["appDirectory", "routesFile"]
     }
   },
