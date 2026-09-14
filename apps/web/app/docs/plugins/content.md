@@ -32,7 +32,8 @@ denext plugin add my-denext-plugin
 `denext.config.ts` (dropping the `plugins` entry, its import, and the whole
 `plugins: []` key if it empties) and then drops the dependency. `denext plugin
 list` shows the plugins currently wired into the config, each with the package
-it's imported from.
+it's imported from. [`denext ui`](/docs/ui#plugins) does the same from a browser, can search
+JSR for a plugin to add, and edits a wired first-party plugin's options through a form.
 
 `setup` runs **once per process, before the first route scan**. Apps with no plugins
 pay nothing — every seam is a no-op when unused.
@@ -207,7 +208,9 @@ export default {
 ```
 
 `help` is **required** on a flag — it is what `denext seed --help` prints, and a verb with
-undocumented flags is a verb nobody can use.
+undocumented flags is a verb nobody can use. It is also the help text next to the flag's
+control in [`denext ui`](/docs/ui#project-commands)'s Commands panel, which renders one typed
+control per declared flag and positional and runs the verb with exactly those.
 
 Either way the verb gets the framework's own flag parsing, `--help`, and "did you mean"
 suggestions — there is no second CLI to learn.
@@ -343,15 +346,55 @@ App Router pipeline (Flight, streaming, per-segment boundaries, soft nav, ISR, F
 serves them, and the plugin writes no render path of its own. Proof the synthesizer seam
 scales to a full framework router, not just aliasing.
 
+## The first-party catalog
+
+The **first-party catalog is generated**, not hand-maintained: every `@denext/*` package,
+its current version and `jsr:` range, whether it is a plugin or a plain library, its factory
+export, the CLI verb it contributes, its option keys and — for a plugin — the JSON Schema of
+its options are emitted to `src/plugin/catalog.json` from the packages' own `deno.json` +
+README (`deno task gen:plugin-catalog`; a drift test fails if it goes stale). `denext migrate`
+takes its plugin pins from it, and `denext ui` lists it.
+
+What a package cannot state about itself it declares in its `deno.json`, under
+`denext.catalog`:
+
+```jsonc
+// packages/openapi/deno.json (excerpt)
+{
+  "name": "@denext/openapi",
+  "denext": {
+    "catalog": {
+      "kind": "plugin", // or "library"
+      "factory": "openapi", // the export placed in `plugins: []`
+      "optionsType": "OpenApiOptions", // the interface the factory takes as options
+      "verb": "openapi", // the CLI verb it contributes, if any
+      "configKeys": ["path", "docs", "info" /* … */]
+    }
+  }
+}
+```
+
+`optionsType` names the options interface, exported from the package's root module. The
+generator runs `deno doc --json` over that module, maps the interface through the same
+TypeScript-to-JSON-Schema mapper as `denext.config.schema.json`
+(`scripts/lib/ts-to-schema.ts`) — expanding referenced interfaces up to four deep, with
+anything deeper left as `{}` — and embeds the result in the plugin's row as `optionsSchema`.
+It **fails** when a plugin names no `optionsType`, when the root module exports no interface
+of that name, and when `configKeys` lists a key the interface does not declare, so the schema
+cannot drift from the factory's real type. A library declares none of `factory`, `verb` or
+`optionsType`.
+
+That schema is what [`denext ui`](/docs/ui#plugin-options) builds a wired plugin's options
+form from: the same widgets as the config editor, each option's JSDoc as its help text (so
+document the interface you export), writes spliced into the factory call one key at a time,
+and code-valued options left read-only. The catalog covers denext's own workspace only — a
+third-party plugin found through the UI's JSR search is wired as a zero-argument call and gets
+no options form.
+
 ## Complete examples
 
-The **first-party catalog itself is generated**, not hand-maintained here: every
-`@denext/*` package, its current version and `jsr:` range, whether it is a plugin or a
-plain library, its factory export, the CLI verb it contributes and its option keys are
-emitted to `src/plugin/catalog.json` from the packages' own `deno.json` + README
-(`deno task gen:plugin-catalog`; a drift test fails if it goes stale). `denext migrate`
-takes its plugin pins from it. The walk-throughs below are the ones worth **reading as
-models** of a seam — not the full list.
+The walk-throughs below are the ones worth **reading as models** of a seam — the
+[catalog](#the-first-party-catalog) has the full list.
 
 - **[`examples/plugin-aliases`](https://github.com/Brainwires/denext/tree/main/examples/plugin-aliases)** — a ~40-line plugin using
   the **route-synthesizer** + **teardown** seams (path aliases). The smallest end-to-end

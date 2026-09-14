@@ -1,7 +1,7 @@
 ---
 title: Project UI
 slug: ui
-lead: denext ui serves a loopback GUI for the project in front of you — a schema-driven denext.config.ts editor that preserves your comments, plugin management, a GUI over generate, Docker regeneration with diffs, a setup wizard, and your project's own CLI verbs.
+lead: denext ui serves a loopback GUI for the project in front of you — a schema-driven denext.config.ts editor that preserves your comments, plugin management with per-plugin option forms and JSR search, a GUI over generate, Docker regeneration plus an in-place compose editor, a setup wizard, and your project's own CLI verbs.
 ---
 
 `denext ui` is a browser GUI for the project you are standing in — the `vue ui` idea,
@@ -12,6 +12,7 @@ nothing installed, and binds loopback only.
 denext ui                    # serve the current project and open a browser
 denext ui ./my-app --port 6000
 denext ui --read-only        # browse; every mutation is refused
+denext ui --offline          # no JSR plugin search; the UI makes no network requests
 denext ui --no-open --json   # print { url, port, token } and keep serving
 ```
 
@@ -22,15 +23,16 @@ tab's SSE connection cannot hold the drain.
 
 ## Flags
 
-| Flag              | Default | What it does                                                                   |
-| ----------------- | ------- | ------------------------------------------------------------------------------ |
-| `[dir]`           | `.`     | The project directory to manage                                                |
-| `--port <port>`   | `5177`  | Port to listen on. `0` picks a free one                                        |
-| `--no-open`       | off     | Don't launch a browser — print the URL instead                                 |
-| `--read-only`     | off     | Refuse every mutation with a `403` before it runs                              |
-| `--token <token>` | minted  | Use this session token instead of a fresh 256-bit one (at least 22 characters) |
-| `--ui-dev`        | off     | Internal: watch `src/ui` and reload open pages on change (a checkout only)     |
-| `--json` (global) | off     | Print `{ url, port, token }` as one JSON line, then keep serving               |
+| Flag              | Default | What it does                                                                    |
+| ----------------- | ------- | ------------------------------------------------------------------------------- |
+| `[dir]`           | `.`     | The project directory to manage                                                 |
+| `--port <port>`   | `5177`  | Port to listen on. `0` picks a free one                                         |
+| `--no-open`       | off     | Don't launch a browser — print the URL instead                                  |
+| `--read-only`     | off     | Refuse every mutation with a `403` before it runs                               |
+| `--offline`       | off     | Never reach the network: JSR plugin search is off (combines with `--read-only`) |
+| `--token <token>` | minted  | Use this session token instead of a fresh 256-bit one (at least 22 characters)  |
+| `--ui-dev`        | off     | Internal: watch `src/ui` and reload open pages on change (a checkout only)      |
+| `--json` (global) | off     | Print `{ url, port, token }` as one JSON line, then keep serving                |
 
 **The port is a requirement when you name one.** Left to the default, `5177` falls
 forward through at most ten ports when it is busy and the URL it prints says which one it
@@ -104,21 +106,34 @@ the `next.config` evaluator, **and discovering the verbs your project contribute
 [`src/ui/proc.ts`](https://github.com/Brainwires/denext/blob/main/src/ui/proc.ts), always
 with array argv and never through a shell. A name that came from the browser is never
 interpolated into a command: a task name must appear in your own `deno.json` `tasks` map,
-and a package name must be one of the catalog's own.
+and a package name must be one of the catalog's own — or, for a
+[JSR add](#finding-third-party-plugins), a name that passes JSR's own naming rules, installed
+at the version the registry reports, never one the browser sent.
 
 `--read-only` prevents writes **by the UI**; it does not stop your own config from
 executing inside that short-lived discovery child, which is precisely why the child is
 where it runs.
+
+**The one outbound request.** The UI process reaches the network for exactly one feature —
+[JSR plugin search](#finding-third-party-plugins) — and only two pinned origins,
+`https://api.jsr.io` and `https://jsr.io`. Each request carries no credentials, refuses every
+redirect, has a five-second deadline that also covers reading the body, and reads at most
+64 KiB of `application/json`; what comes back is normalised and escaped like any other
+untrusted text. `denext ui --offline` turns it off, and so does a process that does not
+already hold net permission for both hosts — the UI queries that permission and never
+prompts for it. The page's CSP is unchanged: the browser still talks only to the UI
+(`connect-src 'self'`), and the registry is called by the server.
 
 **How containment is enforced.** A path the browser named is refused outright when it is
 absolute, then joined and checked lexically, and then the deepest ancestor that actually
 exists is `realpath`ed and must still resolve inside the project — so a `denext.config.ts`
 or an `app/` that is a symlink pointing out of the project is neither read nor written.
 The same realpath gate (`uiSafeUnder`) is applied to the **absolute paths a planner
-resolved for itself** — `generateArtifact`'s dry run, a Docker plan — because a lexical
-check alone would have passed `<project>/app/x` while `app` pointed elsewhere. Every write
-is a sibling `.tmp` file followed by one rename, so a reader never sees a half-written
-file and a failed write leaves the previous bytes exactly as they were.
+resolved for itself** — `generateArtifact`'s dry run — because a lexical check alone would
+have passed `<project>/app/x` while `app` pointed elsewhere. Every write — the config, a
+plugin's options, the Docker files, a compose edit — goes back through `uiSafeJoin` and is a
+sibling `.tmp` file followed by one rename, so a reader never sees a half-written file and a
+failed write leaves the previous bytes exactly as they were.
 
 > [!NOTE]
 > On a shared machine, loopback is not a boundary: any local user can reach
@@ -133,18 +148,25 @@ file and a failed write leaves the previous bytes exactly as they were.
 — the same schema your editor uses for completions — with one collapsible section per
 top-level key. Each field gets the control its type deserves:
 
-| Schema shape                    | Widget                                                                                                                                                      |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `enum` (≤ 4 short values)       | Segmented radio group                                                                                                                                       |
-| `enum` (longer)                 | Select, with "— unset —" first when optional                                                                                                                |
-| `anyOf`                         | A branch picker, then the selected branch's form (`csp`, `hsts`, `compatibilityMode`)                                                                       |
-| Array of `enum`                 | Checkbox group (`images.formats`)                                                                                                                           |
-| Array of scalars                | Chips: add, remove, reorder (`publicEnv`, `i18n.locales`)                                                                                                   |
-| Array of objects                | A typed sub-form per row with `↑` `↓` `✕` and `+ Add` (`redirects`, `rewrites`, `headers`, `images.remotePatterns`, `images.localPatterns`, `i18n.domains`) |
-| `Record<string, T>`             | Key/value map rows (`scheduledTasks`, `experimental.features`)                                                                                              |
-| Object with properties          | A collapsible group                                                                                                                                         |
-| `boolean` / `number` / `string` | Toggle / number (with the schema's bounds) / text                                                                                                           |
-| Anything opaque                 | A read-only code cell                                                                                                                                       |
+| Schema shape                       | Widget                                                                                                                                                      |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enum` (≤ 4 short values)          | Segmented radio group                                                                                                                                       |
+| `enum` (longer)                    | Select, with "— unset —" first when optional                                                                                                                |
+| `anyOf`                            | A branch picker, then the selected branch's form (`csp`, `hsts`, `compatibilityMode`)                                                                       |
+| Array of `enum`                    | Checkbox group (`images.formats`)                                                                                                                           |
+| Array of scalars                   | Chips: add, remove, reorder (`publicEnv`, `i18n.locales`)                                                                                                   |
+| Array of objects                   | A typed sub-form per row with `↑` `↓` `✕` and `+ Add` (`redirects`, `rewrites`, `headers`, `images.remotePatterns`, `images.localPatterns`, `i18n.domains`) |
+| `Record<string, T>`                | Key/value map rows (`scheduledTasks`, `experimental.features`)                                                                                              |
+| Object with properties             | A collapsible group                                                                                                                                         |
+| `boolean` / `number` / `string`    | Toggle / number (with the schema's bounds) / one-line text                                                                                                  |
+| `string` tagged `@widget textarea` | A multi-line textarea (`spa.head`, `spa.loading`)                                                                                                           |
+| Anything opaque                    | A read-only code cell                                                                                                                                       |
+
+The textarea is a JSDoc hint on the config type (`@widget textarea`) that the schema
+generator records as `x-denext.widget`, so a multi-line string gets room without a
+hand-written override. A value that starts with a newline keeps it: a browser drops the first
+newline after `<textarea>`, so the control writes one back in front of the value (the raw-file
+editor below goes through the same control).
 
 ### The two buckets
 
@@ -154,14 +176,17 @@ read-only code cell, because a form that round-trips it would have to regenerate
 regenerating code destroys it. That is why `plugins` (each entry is a live `setup`
 function), `cache.store` (an object of methods), `live.authorize` and the other Live
 callbacks, `mdx.remarkPlugins`/`rehypePlugins`/`recmaPlugins`, and `commands` (every entry
-carries a `run` function, so the whole key is code) are never editable here.
+carries a `run` function, so the whole key is code) are never editable here. The schema still
+describes `commands` in full — each entry's `flags` and `positionals` item by item — so your
+editor completes them; the panel just won't rewrite a key that holds code.
 
 The bucket is decided **per top-level key**, on the value as it is written in your file —
 so one code-valued field makes its whole top-level key a read-only cell. A `cache` object
 that names a custom `cache.store` is shown verbatim in full, `cache.ttl` included.
 
 `plugins` is the one policy exception: it is data, but the [plugins panel](#plugins) owns
-it, because adding an entry also means adding an import.
+it, because adding an entry also means adding an import — and each wired first-party
+plugin's options are edited on its own [options form](#plugin-options).
 
 `redirects`, `rewrites` and `headers` are functions returning an array. The thunk is code,
 so the wrapper is left exactly where it is — but the array it returns is unwrapped and its
@@ -231,10 +256,10 @@ in the same diff-then-confirm path as everything else.
 `/plugins` lists the first-party catalog —
 [`src/plugin/catalog.json`](https://github.com/Brainwires/denext/blob/main/src/plugin/catalog.json),
 generated from the workspace packages themselves (name, version, caret-pinned `jsr:`
-spec, the factory export, the CLI verb it contributes, and its README's first paragraph
-cut to 200 characters)
+spec, the factory export, the CLI verb it contributes, its README's first paragraph cut to
+200 characters, and each plugin's options schema)
 — next to what this project already has wired into `denext.config.ts` and pinned in
-`deno.json`.
+`deno.json`. A wired plugin the catalog does not know is listed under **Third-party**.
 
 Adding is `deno add jsr:@denext/<pkg>@^<version>` plus the config wiring through the same
 import-preserving injector `denext plugin add` uses; removing is the inverse, ending in
@@ -246,10 +271,87 @@ the browser asks for it. The `deno add` / `deno remove` child gets a five-minute
 spawns dies with the request that started it and with the UI itself — nothing is
 orphaned.
 
-Only catalogued names are accepted — a package name from the browser is matched against
-the catalog before it can reach an argv array. Third-party plugin discovery is not in this
-release; wire those in by hand or with `denext plugin add` (see
-[Writing a plugin](/docs/plugins)).
+Only catalogued names are accepted by `op=add` — a package name from the browser is matched
+against the catalog before it can reach an argv array. A package found on JSR takes its own,
+equally strict path: see [Finding third-party plugins](#finding-third-party-plugins).
+
+### Plugin options
+
+A wired first-party plugin gets an **Options** link to `/plugins/options?name=<package>`
+(`/plugins/options` on its own lists every plugin that has an options form, linking the wired
+ones). The form is built from the plugin's `optionsSchema` in the catalog — generated from
+the options interface the package exports (see
+[the first-party catalog](/docs/plugins#the-first-party-catalog)) — with the same widgets as
+`/config`, each option's JSDoc as its help text, and the values your config passes today
+filled in.
+
+The plugin's call is read and written through
+[`src/build/call-args-edit.ts`](https://github.com/Brainwires/denext/blob/main/src/build/call-args-edit.ts):
+the same swc splice as the config writer, so the config is never evaluated and every byte an
+edit does not touch — comments, the other plugins, the code around the call — stays.
+`openapi()` becomes `openapi({ path: "/spec.json" })`; an existing `openapi({ … })` has
+single keys set, changed or deleted in place.
+
+- **Per-field writes.** The form is diffed against the file field by field and only what you
+  changed is written, so keys the schema does not declare and options the form does not show
+  are never touched. Clearing a field deletes its key. An untouched toggle or an empty list
+  over an option your config does not set writes nothing — a toggle over an unset option is
+  written only when you switch it on.
+- **Code stays code.** An option whose value is code — a callback, a variable, a call — is
+  listed under _Code-valued options_ with its source, read-only, and never rewritten. So is
+  any part of the schema a form cannot round-trip: a `{}` (a type the generator could not
+  describe) or a function-wrapped list (openapi's `tags`) renders as a disabled cell.
+- **An honest bail.** A call the writer cannot own — spread arguments, a variable or a call as
+  the argument, an options object that spreads another, more than one argument, two calls to
+  the same factory, a member call like `x.openapi()` — is a `422` with the reason and the
+  offending source, and nothing is written. Pass the plugin one object literal to edit it
+  here.
+- **Preview, then confirm.** The first `POST` answers with the unified diff and a confirm
+  form carrying the exact writes; the second (`confirm=1`) re-reads the file and re-applies
+  them. Both carry `_base`, the SHA-256 of the source the form was rendered from: a stale one
+  is a `409` and writes nothing.
+
+A plugin that is not catalogued with an options schema, or not wired into the config, is a
+`404`. The panel knows a plugin is wired by its import — `import { openapi } from
+"@denext/openapi"` — so an aliased import (`import { openapi as oa } …`) or one from a full
+`jsr:` specifier is not recognised and gets no options link. The JSON twin, `/api/plugins/options?name=…`, reads
+`{ ok, name, callee, values, codeKeys, schema }` and takes `sets: [{ path, value }]` (a set
+with no `value` deletes the key), plus `confirm: true` to write.
+
+### Finding third-party plugins
+
+The bottom of `/plugins` searches JSR. The search box is a plain `GET` form
+(`/plugins?q=…`), so it works with JavaScript disabled and under `--read-only`; the
+`/api/plugins` twin carries the outcome as `jsr: { available, query, search? }`. Each hit
+shows its scope and name, its latest version, an _archived_ badge when JSR says so, its
+description as plain text (control, zero-width and bidi characters removed, cut to 300
+characters), and an **Add** form naming the factory export to wire — the camelCased package
+name unless you change it.
+
+Adding one posts `op=add-jsr`, and the browser supplies exactly two values, both validated
+before any request or subprocess:
+
+- `spec` — `@scope/name` under JSR's own naming rules: a 2–20-character scope and a
+  2–58-character name of `[a-z0-9-]`, with no leading, trailing or doubled hyphen. Anything
+  else is a `400`.
+- `export` — the factory to import, which must be a JavaScript identifier and not a
+  reserved word (`400` otherwise).
+
+The version never comes from the form. The UI reads the package's `latest` from
+`https://jsr.io/@scope/name/meta.json` in the same request — the preview and the confirm each
+look it up — and plans `deno add jsr:@scope/name@^<latest>` plus the same import-preserving
+wiring as a catalog add: a zero-argument `factory()` call in `plugins`. A registry that cannot
+be reached, or answers with anything but a valid version, is a `502`; a UI that may not query
+JSR answers `503`. From there it is the catalog's path — preview, confirm, `303` or a
+streamed `deno` log.
+
+A third-party plugin gets no options form: option schemas come from the first-party catalog,
+which is generated from denext's own workspace. Set its options in `denext.config.ts`.
+
+**Offline.** `denext ui --offline` keeps the UI off the network: the search box renders
+disabled with a note, nothing is fetched, and `op=add-jsr` is a `503`. It combines with
+`--read-only`. The UI degrades the same way on its own when the process does not hold net
+permission for both `api.jsr.io` and `jsr.io` — it checks the permission and never prompts.
 
 ## Generate
 
@@ -266,8 +368,13 @@ exactly: the kinds that take no name here are the kinds that take no name there.
 
 ## Docker
 
-`/docker` regenerates the `Dockerfile`, `docker-compose.yml` and `.dockerignore` with
-options: image mode (`server` — build plus `deno task start`; `static` — `deno task
+`/docker` does two things with the Docker files: it **regenerates** `Dockerfile`,
+`docker-compose.yml` and `.dockerignore` from a few options, and it **edits** an existing
+`docker-compose.yml` in place, service by service.
+
+### Regenerating
+
+The options are the image mode (`server` — build plus `deno task start`; `static` — `deno task
 export` plus a file server), the exposed port, the `denoland/deno:` tag to pin, and
 whether to emit a real Postgres service. The mode is auto-detected from `mode: "spa"` in
 your config when you don't pick one. A generated Postgres service publishes
@@ -277,11 +384,12 @@ machine and from nowhere else on the network.
 Every file is shown with its state and a per-file unified diff against what is on disk
 before anything is written:
 
-| State       | Meaning                                                        |
-| ----------- | -------------------------------------------------------------- |
-| `absent`    | Not present — will be created                                  |
-| `generated` | Still carries the generated-file sentinel — safe to regenerate |
-| `edited`    | Hand-edited — will not be overwritten                          |
+| State       | Meaning                                                                                          |
+| ----------- | ------------------------------------------------------------------------------------------------ |
+| `absent`    | Not present — will be created                                                                    |
+| `generated` | Still carries the generated-file sentinel — safe to regenerate                                   |
+| `edited`    | Hand-edited — will not be overwritten                                                            |
+| `opaque`    | A hand-edited `docker-compose.yml` the editor cannot follow — read-only, will not be overwritten |
 
 The sentinel is a header comment every generated file carries:
 
@@ -293,10 +401,51 @@ A file without it was written or edited by a human, so a write refuses to touch 
 shows you its diff anyway, so the change can be copied across by hand. That is the same
 never-clobber honesty `denext migrate` and the config writer apply.
 
-> [!NOTE]
-> This release _emits_ the compose file; it never parses one. Options are re-applied by
-> regenerating, not by round-tripping YAML, so a hand-written `docker-compose.yml` is read
-> as `edited` and left alone. Compose round-tripping needs a YAML parser and is deferred.
+### Editing `docker-compose.yml` in place
+
+Below the regeneration form, every service in `docker-compose.yml` gets its own form, in
+source order: `image` (text), `restart` (`no`, `always`, `on-failure`, `unless-stopped`, or the
+file's own value — `on-failure:<n>` is accepted too), and row editors for `ports`,
+`environment`, `depends_on` (a picker of the file's other services) and `volumes`. A service
+can be commented out, and a commented-out block — the Postgres example the generated file
+carries, say — can be enabled again; enabling is the only edit a commented service accepts.
+
+Nothing is regenerated. [`src/build/compose-edit.ts`](https://github.com/Brainwires/denext/blob/main/src/build/compose-edit.ts)
+parses the file with `@std/yaml` to validate it, locates each service and field line by line
+with an indentation-aware scan keyed on the parsed names, splices only the lines an edit
+touches, then re-parses the result and compares it with the same change applied to the
+parsed model — a mismatch is a refusal, never a write. Comments, blank lines, quoting and
+every untouched line stay byte for byte. `environment` keeps the form it was written in (a
+`- KEY=value` list or a `KEY: value` map); a new port mapping is always double-quoted
+(`5432:5432` unquoted is a number to a YAML 1.1 reader); a long-syntax port or volume (a
+mapping) can be removed but not rewritten; a flow-style field (`ports: ["80:80"]`) is refused
+with "edit it by hand".
+
+Each submit is one edit set for one service — every field that differs from the file, every
+filled add row, and the button you pressed — and it takes the usual two steps. The first
+`POST` answers with the unified diff, plus a warning when an enabled service mounts a named
+volume that the top-level `volumes:` does not declare (`docker compose up` refuses such a
+file). The confirm re-posts the same operations — never the edited text — re-reads the file,
+and writes only when they still apply. Both carry `_base`, the SHA-256 of the file the page
+was rendered from: a stale one is a `409` and writes nothing. Every service, variable, row
+and dependency a request names is checked against the parsed file first, so the editor never
+writes one the file did not report (a `400` otherwise).
+
+A file the editor cannot follow line by line is **opaque**, and gets the regeneration view it
+always had: the file shown read-only next to the regeneration diff, with no edit form. That is
+a file that does not parse, whose top level or `services:` is not a block mapping, or that uses
+anchors, aliases or merge keys, flow-style services, several documents (`---`), or mixed CRLF
+and LF line endings.
+
+A file that still carries the sentinel is editable as well, with a note: **Write files**
+regenerates it and discards edits made here, so delete the header line to keep them. Only
+`docker-compose.yml` at the project root is discovered — a `compose.yaml` is not.
+
+`GET /api/docker` returns the parsed `model` (`null` for a missing or opaque file) and its
+`base` alongside the regeneration view. A compose edit on the twin is a `POST` with
+`editor: "compose"` and `ops` — from the closed set `set` (`image` / `restart`), `ports`,
+`env`, `dependsOn`, `volumes` and `toggleService`, at most 100 per request — plus `base` and
+`confirm: true` to write.
 
 Deployment targets, images and platform notes are in the [deployment guide](/docs/deploy).
 
@@ -370,11 +519,25 @@ it was handed) under the same 1.5 s budget, then exits. **A built-in verb always
 name collision** — a `commands:` entry named `dev` is ignored, never shadowing the core
 verb.
 
-In the panel, a project or plugin verb that declares no required positional gets a Run
-button and streams its output. Built-ins never do: `denext dev` would never exit, and its
-output belongs in your terminal. Running a verb is a mutation — a verb may write anything
-— so it is refused under `--read-only`, and it pays plugin discovery again in its own
-child.
+In the panel, every project or plugin verb gets a run form built from what it declares: a
+checkbox per boolean flag, a number input per number flag, a text input per string flag, one
+input per positional, and a row editor (`+ Add`, `✕`) for a variadic one. A required
+positional is a required field, so a verb that needs an argument runs from the panel too.
+Built-ins never get a run form — `denext dev` would never exit, and its output belongs in your
+terminal — so the panel lists their arguments and flags instead. A run streams its output.
+
+The argv is built on the server from the **refreshed** listing, never from the form's idea of
+which flags exist: a field the verb does not declare is ignored, every value is its own argv
+element (no shell, and no `--name=value` built from browser text), and a flag that shares a
+name with one of the CLI's global flags (`--cwd`, `--config`, `--json`, `--verbose`,
+`--quiet`) or with `--help` / `--version` is never offered — the UI pins `--cwd` itself. A
+positional may not start with `-`, a number must be finite, and a required positional left
+blank is refused: each is a `422` naming the field (`pos:0`, `flag:rows`), and nothing is
+spawned. A JSON client posts the same names as keys:
+`{ "verb": "seed", "flag:rows": 5, "pos:0": "users" }`.
+
+Running a verb is a mutation — a verb may write anything — so it is refused under
+`--read-only`, and it pays plugin discovery again in its own child.
 
 ## Working without JavaScript
 
@@ -391,42 +554,56 @@ returned fragment is parsed with `DOMParser` and adopted as nodes — untrusted 
 never assigned to `innerHTML`. Long-running work (a `deno task`, a `deno add`, `denext
 dev`) streams over SSE at `/_ui/events`.
 
+**How the views are built.** Every panel is a component tree built with `h()` from denext's
+own JSX runtime, in plain `.ts` modules, and rendered once to a string on the server. That
+changes nothing on the wire: there is still no client bundle, no hydration and no island,
+`/_ui/ui.js` is the only script, and every page works with it switched off.
+
 ## The JSON API
 
 Every feature path has an `/api/*` twin served by the _same handler_ with JSON output, so
 the browser and a machine client exercise identical code:
 
-| Path           | Methods               | JSON twin              |
-| -------------- | --------------------- | ---------------------- |
-| `/`            | `GET` `HEAD`          | `/api/overview`        |
-| `/config`      | `GET` `POST`          | `/api/config`          |
-| `/config/next` | `GET`                 | `/api/config/next`     |
-| `/plugins`     | `GET` `POST` `DELETE` | `/api/plugins`         |
-| `/generate`    | `GET` `POST`          | `/api/generate`        |
-| `/docker`      | `GET` `POST`          | `/api/docker`          |
-| `/wizard`      | `GET` `POST`          | `/api/wizard`          |
-| `/commands`    | `GET` `POST`          | `/api/commands`        |
-| `/tasks/run`   | `POST`                | `/api/tasks/run` (SSE) |
+| Path               | Methods               | JSON twin              |
+| ------------------ | --------------------- | ---------------------- |
+| `/`                | `GET` `HEAD`          | `/api/overview`        |
+| `/config`          | `GET` `POST`          | `/api/config`          |
+| `/config/next`     | `GET`                 | `/api/config/next`     |
+| `/plugins`         | `GET` `POST` `DELETE` | `/api/plugins`         |
+| `/plugins/options` | `GET` `POST`          | `/api/plugins/options` |
+| `/generate`        | `GET` `POST`          | `/api/generate`        |
+| `/docker`          | `GET` `POST`          | `/api/docker`          |
+| `/wizard`          | `GET` `POST`          | `/api/wizard`          |
+| `/commands`        | `GET` `POST`          | `/api/commands`        |
+| `/tasks/run`       | `POST`                | `/api/tasks/run` (SSE) |
 
 Every answer carries `ok`. Beyond that the payload is the panel's own — a JSON twin
 describes what its panel does, it does not flatten every panel into one shape:
 
-| Twin               | A read answers                        | A mutation answers                                    |
-| ------------------ | ------------------------------------- | ----------------------------------------------------- |
-| `/api/config`      | `{ ok, file, form, keys, schema? }`   | `{ ok, applied, diff }` (a write adds `file`)         |
-| `/api/config/next` | `{ ok, … }` the read next.config view | — (read-only)                                         |
-| `/api/plugins`     | `{ ok, … }` the catalogue             | `{ ok, applied, diff, name, op, command, bailed, … }` |
-| `/api/generate`    | `{ ok, kinds }`                       | `{ ok, written, skipped, preview? }`                  |
-| `/api/docker`      | `{ ok, mode, files }`                 | `{ ok, mode, files, written, refused }`               |
-| `/api/commands`    | `{ ok, timedOut, error?, commands }`  | `{ ok, verb, code, output }`                          |
-| `/api/wizard`      | `{ ok, … }` the step view             | `{ ok, … }` the step outcome                          |
+| Twin                   | A read answers                                                                        | A mutation answers                                                                               |
+| ---------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `/api/config`          | `{ ok, file, form, keys, schema? }`                                                   | `{ ok, applied, diff }` (a write adds `file`)                                                    |
+| `/api/config/next`     | `{ ok, … }` the read next.config view                                                 | — (read-only)                                                                                    |
+| `/api/plugins`         | `{ ok, installed, catalog, config, jsr }`                                             | `{ ok, applied, diff, name, op, command, bailed, … }`                                            |
+| `/api/plugins/options` | `{ ok, name, callee, values, codeKeys, schema }` (`{ ok, plugins }` with no `?name=`) | `{ ok, applied, diff, values }`                                                                  |
+| `/api/generate`        | `{ ok, kinds }`                                                                       | `{ ok, written, skipped, preview? }`                                                             |
+| `/api/docker`          | `{ ok, mode, files, model, base }`                                                    | `{ ok, mode, files, written, refused }`; a compose edit `{ ok, applied, model, warnings, diff }` |
+| `/api/commands`        | `{ ok, timedOut, error?, commands }`                                                  | `{ ok, verb, code, output }`                                                                     |
+| `/api/wizard`          | `{ ok, … }` the step view                                                             | `{ ok, … }` the step outcome                                                                     |
 
-So `{ ok, applied, diff }` — the diff-then-confirm envelope — is what the two writers that
-splice a file answer: `/api/config` and `/api/plugins`. Every refusal — `401` no cookie,
-`403` bad origin, bad CSRF token or `--read-only`, `404` unknown path, `405` wrong method,
-`409` the config changed on disk since the form was rendered, `422` a value the config
-validator rejected, `500` an unexpected error — answers `{ ok: false, reason }`, with the
-offending `field` and the would-be `diff` where there is one.
+So `{ ok, applied, diff }` — the diff-then-confirm envelope — is what the writers that
+splice a file answer: `/api/config`, `/api/plugins`, `/api/plugins/options`, and a compose
+edit on `/api/docker`. Each of those checks `_base` (`base` on the compose twin) when it is
+posted, and a JSON client may opt out of the stale-file check by posting none.
+
+Every refusal — `400` a malformed request (an unknown plugin, operation or compose service, a
+bad JSR name or export), `401` no cookie, `403` bad origin, bad CSRF token or `--read-only`,
+`404` unknown path or a plugin with no options form, `405` wrong method, `409` the file
+changed on disk since the form was rendered, `422` a value the config validator rejected, a
+plugin call the options writer cannot own, or a command argument the run refused, `500` an
+unexpected error, `502` a JSR lookup that failed, `503` JSR discovery unavailable — answers
+`{ ok: false, reason }`, with the offending `field` and the would-be `diff` where there is
+one.
 
 ```sh
 denext ui --no-open --json --port 0
@@ -444,13 +621,16 @@ above.
 
 ## What it does not do yet
 
-| Not yet                      | Why                                                                                                                                 |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Compose YAML round-trip      | The Docker panel emits a compose file, never parses one; a hand-written file is left alone                                          |
-| Per-plugin option schemas    | The catalog knows a plugin's factory and its option _keys_, not the shape of its options                                            |
-| Third-party plugin discovery | Only the first-party catalog is browsable; wire others in by hand                                                                   |
-| Agent / MCP control          | Deferred; every panel already answers a JSON twin so it can be added without changing the wire                                      |
-| A denext app                 | The UI is a zero-bundler server-rendered `.ts` surface, not an App Router app — which is what lets it start instantly with no build |
+| Not yet                      | Why                                                                                                                                                                                            |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Compose edits beyond the set | The editor owns `image`, `restart`, `ports`, `environment`, `depends_on`, `volumes` and commenting a service out or in; anything else — a new service, `build`, `networks` — is edited by hand |
+| YAML the editor can't follow | Anchors, aliases, merge keys, flow-style services, several documents and mixed line endings make the file opaque: read-only, with the regeneration diff                                        |
+| Other compose file names     | Only `docker-compose.yml` at the project root is discovered — not `compose.yaml`                                                                                                               |
+| Third-party plugin options   | Option schemas come from the first-party catalog, so a JSR plugin gets no options form; set its options in `denext.config.ts`                                                                  |
+| Aliased plugin imports       | `import { openapi as oa }`, or an import from a full `jsr:` specifier, is not recognised as the catalog's plugin, so it gets no options link                                                   |
+| Code-valued options          | A callback, a variable, a `{}` schema part or a function-wrapped list is shown read-only, never rewritten                                                                                      |
+| Agent / MCP control          | Deferred; every panel already answers a JSON twin so it can be added without changing the wire                                                                                                 |
+| A denext app                 | The UI is server-rendered components built with `h()` — no bundler, no hydration — not an App Router app, which is what lets it start instantly with no build                                  |
 
 ## See also
 
