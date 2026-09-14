@@ -32,7 +32,7 @@ import { Raw, renderView } from "../view.ts";
 import { control, field as labelled, opButton } from "../form/control.ts";
 import { OP_FIELD, parseOp } from "../form/value.ts";
 import type { WidgetOption } from "../form/widget.ts";
-import { UI_CSRF_FIELD, uiSafeJoin, writeFileAtomic } from "../security.ts";
+import { StaleWriteError, UI_CSRF_FIELD, uiSafeJoin, writeFileAtomic } from "../security.ts";
 
 /** The compose file the editor reads and writes, at the project root. */
 export const COMPOSE_FILE = "docker-compose.yml";
@@ -216,20 +216,41 @@ export async function composeSubmit(
     const preview = { csrf: ctx.csrf, readOnly: ctx.readOnly, base: file.base, ops, outcome };
     return panelResponse(ctx, renderView(h(ComposePreview, preview)));
   }
-  if (result.source !== file.text) {
-    try {
-      await writeFileAtomic(ctx.dir, COMPOSE_FILE, result.source);
-    } catch (err) {
-      // A symlink out of the project, a permission error, a read-only filesystem: a refusal
-      // at the panel (like the plugin-options writer), never a bare 500.
-      return await deny(`could not write ${COMPOSE_FILE}: ${(err as Error).message}`, 403);
-    }
-  }
+  const refused = result.source === file.text
+    ? null
+    : await writeCompose(ctx, file.text, result.source);
+  if (refused) return await deny(refused.reason, refused.status);
   if (ctx.json) return jsonResponse(outcome);
   return new Response(null, {
     status: 303,
     headers: { location: `/docker?saved=${EDITOR_VALUE}` },
   });
+}
+
+/**
+ * Write the edited compose file over exactly the text the edit was based on.
+ *
+ * @returns `null` once written, else the refusal to answer with: a `409` when the file changed
+ * after it was read, a `403` for a symlink out of the project, a permission error or a
+ * read-only filesystem (a refusal at the panel, like the plugin-options writer — never a 500).
+ */
+async function writeCompose(
+  ctx: UiContext,
+  base: string,
+  source: string,
+): Promise<{ reason: string; status: number } | null> {
+  try {
+    await writeFileAtomic(ctx.dir, COMPOSE_FILE, source, { unchangedFrom: base });
+    return null;
+  } catch (err) {
+    return err instanceof StaleWriteError
+      ? {
+        reason: `${COMPOSE_FILE} changed on disk while this edit was being applied — ` +
+          "nothing was written.",
+        status: 409,
+      }
+      : { reason: `could not write ${COMPOSE_FILE}: ${(err as Error).message}`, status: 403 };
+  }
 }
 
 /** What a preview or a write of `source` reports. */

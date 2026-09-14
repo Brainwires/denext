@@ -39,7 +39,7 @@ import {
 import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
 import { Raw, renderView } from "../view.ts";
 import { broadcast } from "../events.ts";
-import { writeFileAtomic } from "../security.ts";
+import { StaleWriteError, writeFileAtomic } from "../security.ts";
 import { renderWidget } from "../form/render.ts";
 import { resolveAt, type SchemaNode } from "../form/schema.ts";
 import { widgetFor, type WidgetSpec } from "../form/widget.ts";
@@ -616,8 +616,15 @@ async function write(
   edit: { source: string; diff: string },
 ): Promise<Response> {
   try {
-    await writeFileAtomic(ctx.dir, target.configName, edit.source);
+    await writeFileAtomic(ctx.dir, target.configName, edit.source, {
+      unchangedFrom: target.source,
+    });
   } catch (error) {
+    if (error instanceof StaleWriteError) {
+      const reason = `${target.configName} changed on disk while this change was being ` +
+        "applied — nothing was written. Reload the options and re-apply your change.";
+      return refuse(ctx, titleOf(target), reason, 409);
+    }
     const why = error instanceof Error ? error.message : String(error);
     return refuse(ctx, titleOf(target), `${target.configName} could not be written: ${why}`, 403);
   }

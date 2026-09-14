@@ -54,7 +54,7 @@ import {
   PreviewLead,
 } from "../components.ts";
 import { Raw, renderView } from "../view.ts";
-import { UI_CSRF_FIELD, uiSafeJoin, writeFileAtomic } from "../security.ts";
+import { StaleWriteError, UI_CSRF_FIELD, uiSafeJoin, writeFileAtomic } from "../security.ts";
 import { loadConfigSchema, resolveAt, type SchemaNode } from "../form/schema.ts";
 import { widgetFor, type WidgetSpec } from "../form/widget.ts";
 import { readWidget, renderWidget } from "../form/render.ts";
@@ -784,8 +784,13 @@ async function write(
   anchor: string,
 ): Promise<Response> {
   try {
-    await writeFileAtomic(ctx.dir, state.name, source);
+    await writeFileAtomic(ctx.dir, state.name, source, { unchangedFrom: state.source });
   } catch (error) {
+    if (error instanceof StaleWriteError) {
+      const stale = `${state.name} changed on disk while this change was being applied — ` +
+        "nothing was written. Review the current file below and re-apply your change.";
+      return refuse(ctx, await readState(ctx.dir), stale, 409);
+    }
     const reason = error instanceof Error ? error.message : String(error);
     return refuse(ctx, state, `${state.name} could not be written: ${reason}`, 403);
   }
