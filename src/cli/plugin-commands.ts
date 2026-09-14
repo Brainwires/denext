@@ -11,7 +11,7 @@
 // must still answer promptly.
 
 import { resolveProject } from "../build/paths.ts";
-import { applyPlugins, getPluginCommands } from "../plugin/mod.ts";
+import { applyPlugins, getPluginCommands, pluginGeneration } from "../plugin/mod.ts";
 import { defaultLoader } from "../server/mod.ts";
 import type { CommandRegistry, CommandSpec } from "./command.ts";
 
@@ -60,7 +60,11 @@ async function withBudget<T>(work: Promise<T>, ms: number): Promise<T | typeof T
  * config read, no plugin setup.
  */
 async function collectProjectCommands(dir: string): Promise<CommandSpec[]> {
+  const startedUnder = pluginGeneration();
   const paths = await resolveProject(dir);
+  // A later resetPlugins() (the next discovery) supersedes this run: importing the config may
+  // outlive the caller's budget, and a stale run must not mark plugins the next one will skip.
+  if (pluginGeneration() !== startedUnder) return [];
   const config = paths.config;
   if (!config) return [];
   const specs: CommandSpec[] = (config.commands ?? []).map((command) => ({

@@ -324,6 +324,18 @@ export async function runPluginTeardown(): Promise<void> {
 }
 
 /** Clear all plugin registrations. For tests that register plugins in-process. */
+/**
+ * The current plugin-registry generation — bumped by every {@linkcode resetPlugins}. A caller
+ * that resets, then does slow work before {@linkcode applyPlugins} (e.g. importing the
+ * project's config under a time budget) compares this value before and after that work, so a
+ * run another reset has superseded never reaches `applyPlugins` at all.
+ *
+ * @returns The generation counter as of now.
+ */
+export function pluginGeneration(): number {
+  return generation;
+}
+
 export function resetPlugins(): void {
   requestHandlers.length = 0;
   buildSteps.length = 0;
