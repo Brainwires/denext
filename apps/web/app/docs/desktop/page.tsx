@@ -223,20 +223,135 @@ deno task desktop:package:linux --arch both --appimage`}
       <p>
         You get a <code>capacitor.config.ts</code> that bundles the export (<code>
           webDir: "out"
-        </code>) into the native iOS/Android shells, plus the <code>mobile:*</code> tasks:
+        </code>) into the native iOS/Android shells, a <code>package.json</code>{" "}
+        pinning Capacitor 8 (<code>^8.5.2</code>), plus the <code>mobile:*</code>{" "}
+        tasks. Add each platform once, then sync after every change:
       </p>
       <Code lang="bash">
         {`deno install                # Capacitor's CLI + platforms are npm packages
-deno task mobile:sync       # export + copy assets into the native projects
+deno run -A --node-modules-dir npm:@capacitor/cli@^8.5.2 add ios       # once
+deno run -A --node-modules-dir npm:@capacitor/cli@^8.5.2 add android   # once
+deno task mobile:sync       # export, then copy out/ into the native projects
 deno task mobile:ios        # open in Xcode
 deno task mobile:android    # open in Android Studio`}
       </Code>
+      <p>
+        Commit <code>ios/</code> and{" "}
+        <code>android/</code>: Capacitor 8 builds iOS with Swift Package Manager, and the native
+        projects are yours to edit. The scaffolded <code>.gitignore</code>{" "}
+        ignores only their build outputs and the web assets <code>mobile:sync</code>{" "}
+        copies in; Capacitor's own generated <code>.gitignore</code>{" "}
+        files cover the rest. The webview loads files straight from the app bundle, so the export
+        ships no precompressed <code>.gz</code>{" "}
+        siblings — the App Router export never writes them, and a SPA-mode app turns them off with
+        {" "}
+        <code>{"spa: { precompress: false }"}</code>.
+      </p>
       <Callout kind="note">
         A complete project wired for web + desktop + mobile is{" "}
         <a href="https://github.com/Brainwires/denext/tree/main/examples/native">
           <code>examples/native</code>
         </a>. Native builds are experimental, and the mobile targets need the platform toolchains
         installed (Xcode for iOS, Android Studio for Android).
+      </Callout>
+
+      <h3>
+        The <code>denext/mobile</code> runtime
+      </h3>
+      <p>
+        A webview inside a native shell needs a few things a browser tab doesn't: knowing it is in
+        the shell, recovering when the app returns from the background, opening links outside the
+        webview, a swipe-back gesture, and room for the notch and home indicator.{" "}
+        <code>denext/mobile</code> is a small client runtime for exactly that — import it from{" "}
+        <code>"use client"</code> modules (add <code>denext/mobile</code> to <code>deno.json</code>
+        's <code>imports</code> next to your other <code>denext/*</code> entries):
+      </p>
+      <Code lang="tsx">
+        {`"use client";
+import { useRouter } from "denext";
+import { isNativeShell, openExternal, useAppResume, useBackSwipe } from "denext/mobile";
+
+export function Shell({ children }: { children: unknown }) {
+  const router = useRouter();
+  // Time away decides: under 10 s the connection is likely alive — probe it;
+  // 10 s or more, reconnect and refetch. (probe/reconnect are your app's own.)
+  useAppResume((awayMs) => (awayMs < 10_000 ? probe() : reconnect()));
+  const swipeRef = useBackSwipe(() => router.back(), { enabled: isNativeShell() });
+  return (
+    <main ref={swipeRef} style={{ touchAction: "pan-y" }}>
+      <button type="button" onClick={() => openExternal("https://denext.dev/docs")}>Docs</button>
+      {children}
+    </main>
+  );
+}`}
+      </Code>
+      <ul>
+        <li>
+          <code>isNativeShell()</code> / <code>nativePlatform()</code>{" "}
+          — whether the page runs in the shell, and which one (<code>"ios"</code>,{" "}
+          <code>"android"</code> or <code>"web"</code>).
+        </li>
+        <li>
+          <code>useAppResume(cb)</code> (or <code>onAppResume</code> outside components) — calls
+          {" "}
+          <code>cb(awayMs)</code>{" "}
+          when the app returns to the foreground, with the time it spent in the background.
+        </li>
+        <li>
+          <code>openExternal(url)</code>{" "}
+          — opens the in-app browser through Capacitor's native Browser plugin, else{" "}
+          <code>window.open</code> with <code>noopener</code>. Only http(s), <code>mailto:</code>
+          {" "}
+          and <code>tel:</code> URLs are allowed.
+        </li>
+        <li>
+          <code>useBackSwipe(onBack)</code>{" "}
+          — returns a ref callback; a rightward swipe of at least 72 px, at least 1.4× as horizontal
+          as vertical, calls{" "}
+          <code>onBack</code>. It yields to text editing and horizontal scrollers. Give the element
+          {" "}
+          <code>touch-action: pan-y</code>{" "}
+          so the browser keeps vertical scrolling and leaves horizontal movement to the gesture.
+          {" "}
+          <code>isBackSwipe(dx, dy)</code> is the pure test behind it.
+        </li>
+        <li>
+          <code>installKeyboardInset()</code> / <code>useKeyboardInset()</code>{" "}
+          — the on-screen keyboard's height, as the <code>--denext-keyboard-inset</code>{" "}
+          custom property (or a number of px), for shells that set the Keyboard plugin's{" "}
+          <code>resize: "none"</code>.
+        </li>
+      </ul>
+      <p>
+        <code>SAFE_AREA_CSS</code> defines <code>--denext-safe-top</code>/<code>-right</code>/
+        <code>-bottom</code>/<code>-left</code>{" "}
+        from the device's safe-area insets. They are only non-zero with{" "}
+        <code>viewport-fit=cover</code>{" "}
+        in the viewport meta — export it from the root layout (in SPA mode, put the meta tag in{" "}
+        <code>spa.head</code>):
+      </p>
+      <Code lang="tsx">
+        {`// app/layout.tsx
+import { SAFE_AREA_CSS } from "denext/mobile";
+
+export const viewport = { width: "device-width", initialScale: 1, viewportFit: "cover" };
+
+export default function RootLayout({ children }: { children: unknown }) {
+  return (
+    <html>
+      <head><style>{SAFE_AREA_CSS}</style></head>
+      <body style={{ paddingTop: "var(--denext-safe-top)" }}>{children}</body>
+    </html>
+  );
+}`}
+      </Code>
+      <Callout kind="note">
+        <code>denext/mobile</code> talks to Capacitor only through the <code>window.Capacitor</code>
+        {" "}
+        global the shell injects before page scripts — there is no <code>@capacitor/core</code>{" "}
+        dependency, and it costs nothing on the web: importing it runs no code, every export
+        tree-shakes on its own, and on the web (and during SSR) each function takes its
+        plain-browser path.
       </Callout>
 
       <h2>Environment variables</h2>

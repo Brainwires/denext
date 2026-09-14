@@ -316,7 +316,7 @@ const devRoute: PageRoute = {
 };
 
 Deno.test("generateRouteEntry emits Fast Refresh registration only in dev", () => {
-  const dev = generateRouteEntry(devRoute, true);
+  const dev = generateRouteEntry(devRoute, { dev: true });
   assertStringIncludes(dev, "enableFastRefresh()");
   assertStringIncludes(dev, "registerFamily(Page,");
   assertStringIncludes(dev, "registerFamily(Layout0,");

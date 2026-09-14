@@ -12,10 +12,11 @@ disabled (`tests/auth-example.test.ts` drives the app that way in CI).
   table**: registration calls `createUser` + `linkAccount` + `setCredential`
   (`lib/users.ts`), and `session.user.id` is therefore the adapter's id.
 - **Credentials with real password hashing** — passwords are stored with
-  `hashPassword` (salted scrypt, self-describing so the cost can be raised later)
-  and checked with `verifyPassword` (constant-time, never throws). An unknown
-  address and a wrong password take the same path, so the endpoint is no
-  user-enumeration oracle.
+  `hashPassword` (salted scrypt, self-describing so the cost can be raised later).
+  `credentials()` has **no `authorize`**: the built-in check looks the address up
+  with the adapter's `getUserByEmail`, verifies against `getCredential` with the
+  configured hasher, and costs one verify whether or not the account exists — so
+  the endpoint is no user-enumeration oracle.
 - **Brute-force protection** — the login endpoint is rate-limited (`rateLimit`:
   5 failures per client IP + email per 15 minutes → a generic `429`, the same
   "never reveal whether the account exists" posture as the `401`).
@@ -46,6 +47,34 @@ disabled (`tests/auth-example.test.ts` drives the app that way in CI).
   script (shown **once**, stored only as a SHA-256 hash) and revokes one;
   `app/api/me/route.ts` is protected with
   `createApi().use(requireBearer(authConfig))`.
+- **Email verification** — `/verify-email` calls `requestEmailVerification`; the
+  mailed link opens `GET /auth/verify`, which sets `emailVerified` on the adapter
+  user and redirects to `pages.verifyRequest` (`/check-email?verified=1`).
+- **Password reset** — `/forgot` posts to `POST /auth/reset` (the same answer for
+  every address, 3 sends per address per 15 minutes). The link opens the app's own
+  `/reset` page (`email.resetPath: "/reset"`), which posts the new password to
+  `POST /auth/reset/confirm`; that sets it, revokes every session and redirects to
+  `/login?reset=1`. A refused password keeps the link usable.
+- **Magic sign-in link** — `magicLink()` adds **Email me a sign-in link** to
+  `/login` (`POST /auth/callback/email`); the single-use link signs the mailbox's
+  owner in, or creates a verified account for a new address. A first email sign-in
+  into an **unverified** account first retires that account's password, API tokens
+  and sessions — so someone who registered an address they don't own loses the
+  account the moment its owner signs in (pre-account-hijacking protection).
+- **TOTP two-factor authentication** — `/account/security` enrols an authenticator
+  app (`enrollTotp`: the base32 secret and the `otpauth://` URI as text — denext
+  ships no QR renderer), confirms it with a first code (`confirmTotp`, which mints
+  ten backup codes shown **once**) and turns it off with a current code
+  (`verifySecondFactor` + `disableTotp`, throttled). An enrolled user's sign-in —
+  password or magic link — stops at `/mfa` (`pages.mfa`) holding a **pending**
+  session that `auth()` and `requireAuth` read as signed out; the code posts to
+  `POST /auth/mfa`, which swaps it for a fresh, complete session. A TOTP code and a
+  backup code each work once.
+- **A development mailer** — denext ships no mailer: every emailed token goes to
+  `sendVerificationRequest`. `lib/outbox.ts` keeps each message in an in-process
+  outbox and prints its link; **`/dev/outbox`** lists them so you can click
+  through. In production the mailer refuses and the page is a 404 — plug your mail
+  service in there instead.
 - **The whole client surface** — `auth()` in Server Components, `requireAuth`
   middleware, and `SessionProvider` / `useSession` / `signIn` / `signOut` in
   `app/user-menu.tsx` and `app/login/login-form.tsx`.
@@ -72,6 +101,11 @@ first account, the **admin**. Environment:
 | `OIDC_CLIENT_SECRET` | Optional: the OIDC client secret                                                                    |
 | `AUTH_DEBUG`         | Optional: also print the framework's `logger.debug` flow tracing                                    |
 
+Production is `NODE_ENV=production` or `DENEXT_ENV=production` — `denext start` sets
+the latter when neither is set. There the public fallback secret is refused, the dev
+mailer captures and prints nothing, and `/dev/outbox` is a 404. Emailed links are
+built on `CANONICAL_ORIGIN`, never the request's `Host` header.
+
 ## Try it
 
 1. Sign in as `demo@denext.dev` / `password` and open **/admin** — the user list,
@@ -94,7 +128,18 @@ first account, the **admin**. Environment:
    `/auth/tokens` JSON endpoints (POST/GET, and DELETE `/auth/tokens/:id`) do the
    same job for a JavaScript client; both refuse a bearer token — only a cookie
    session may mint or revoke one.
-5. Point `OIDC_*` at an identity provider and a **Sign in with corp** link appears
+5. **Forgot your password?** on `/login` → enter `demo@denext.dev` → open
+   **/dev/outbox** and click the reset link → choose a new password. Every session
+   of the account is signed out, and only the new password works.
+6. **Email me a sign-in link** on `/login` → click it in **/dev/outbox** → you are
+   signed in, no password. Try an address with no account: the link creates one.
+7. Open **/verify-email** and send yourself a verification link — the admin page's
+   _Address_ column turns to `verified`.
+8. Open **/account/security**, add the secret to an authenticator app, and confirm
+   with its code. Save the backup codes, sign out and sign back in: you land on
+   `/mfa`, not the dashboard, until you enter a code (or a backup code — each works
+   once).
+9. Point `OIDC_*` at an identity provider and a **Sign in with corp** link appears
    on the login page. A first corporate login creates the user and links the
    account — unless the address already belongs to a password account whose email
    nobody verified, which denext refuses (`account_not_linked`) rather than hand

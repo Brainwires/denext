@@ -7,11 +7,13 @@ import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/a
 import {
   createRequestContext,
   type RequestContext,
+  runDeferred,
   runWithContext,
 } from "../src/server/request-context.ts";
 import { handleAuthRequest } from "../src/server/auth/routes.ts";
 import { auth, denextAuth, requireAuth } from "../src/server/auth/mod.ts";
-import { credentials, oidc } from "../src/server/auth/providers.ts";
+import { credentials, emailOtp, magicLink, oidc } from "../src/server/auth/providers.ts";
+import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
 import { base64UrlEncode } from "../src/server/auth/oauth.ts";
 import type { AuthConfig } from "../src/server/auth/types.ts";
 
@@ -440,11 +442,62 @@ Deno.test("CVE-2023-48309: a foreign/forged JWT injected as the session cookie i
   }
 });
 
-// CVE-2022-35924 — next-auth's EmailProvider split a comma-separated `email` and
-// sent magic links to every address, letting an attacker log in as a combined
-// address. denext ships NO email/magic-link provider (only OAuth/OIDC + Credentials),
-// and a Credentials identifier is passed to `authorize` verbatim — never split.
-Deno.test("CVE-2022-35924: no email provider exists; a Credentials identifier is never comma-split", async () => {
+// CVE-2022-35924 — next-auth's EmailProvider split a comma-separated `email` and mailed
+// the sign-in link to EVERY address, so an attacker listing `attacker,victim` received a
+// link that signed in as the victim. denext's email providers (`magicLink()` /
+// `emailOtp()`) normalise the field to exactly ONE address: a list — comma, semicolon or
+// whitespace separated — sends nothing, and gets the same generic answer a real send gets
+// (so the answer can't be used to probe either address).
+Deno.test("CVE-2022-35924: an email provider mails exactly one address; a list sends nothing and gets the generic answer", async () => {
+  const mailed: string[] = [];
+  const config: AuthConfig = {
+    secret: "test-secret-value-at-least-32-chars-long",
+    canonicalOrigin: ORIGIN,
+    providers: [magicLink(), emailOtp()],
+    adapter: inMemoryAuthAdapter(),
+    sendVerificationRequest: ({ identifier }) => void mailed.push(identifier),
+  };
+  const list = await run(new Request(`${ORIGIN}/auth/providers`), config);
+  const providers = (await list.res!.json()) as Array<{ id: string; type: string }>;
+  assertEquals(
+    providers.filter((p) => p.type === "email").map((p) => p.id),
+    ["email", "email-otp"],
+    "the email providers are listed",
+  );
+
+  const sendTo = async (provider: string, email: string): Promise<[number, string]> => {
+    const { res, ctx } = await run(
+      new Request(`${ORIGIN}/auth/callback/${provider}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json", origin: ORIGIN },
+        body: JSON.stringify({ email }),
+      }),
+      config,
+    );
+    await runDeferred(ctx); // the mail goes out in `after()`
+    return [res!.status, await res!.text()];
+  };
+  const combined = [
+    "attacker@evil.com,victim@good.com",
+    "attacker@evil.com, victim@good.com",
+    "attacker@evil.com;victim@good.com",
+    "attacker@evil.com; victim@good.com",
+    "attacker@evil.com victim@good.com",
+    "attacker@evil.com\tvictim@good.com",
+  ];
+  for (const provider of ["email", "email-otp"]) {
+    const real = await sendTo(provider, "victim@good.com");
+    assertEquals(real, [200, JSON.stringify({ ok: true })], `${provider}: a real send`);
+    for (const email of combined) {
+      assertEquals(await sendTo(provider, email), real, `${provider}: ${JSON.stringify(email)}`);
+    }
+  }
+  assertEquals(mailed, ["victim@good.com", "victim@good.com"], "only the real sends mailed");
+});
+
+// The same CVE's other half: a Credentials identifier is the app's to interpret, so it
+// reaches `authorize` verbatim — never split into addresses.
+Deno.test("CVE-2022-35924: a Credentials identifier reaches authorize verbatim — never comma-split", async () => {
   let seen: string | undefined;
   const config: AuthConfig = {
     secret: "test-secret-value-at-least-32-chars-long",
@@ -458,10 +511,6 @@ Deno.test("CVE-2022-35924: no email provider exists; a Credentials identifier is
       }),
     ],
   };
-  const list = await run(new Request(`${ORIGIN}/auth/providers`), config);
-  const providers = (await list.res!.json()) as Array<{ type: string }>;
-  assert(!providers.some((p) => p.type === "email"), "denext exposes no email provider");
-
   const { res } = await run(
     new Request(`${ORIGIN}/auth/callback/credentials`, {
       method: "POST",

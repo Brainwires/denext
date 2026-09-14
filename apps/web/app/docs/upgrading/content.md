@@ -24,6 +24,41 @@ links back to the release that introduced it.
   generated file changed shape.** Migrate writes config by default and is
   non-destructive to your source; see [Migrating from Next.js](/docs/migrating).
 
+## Upgrading to 2.5
+
+2.5 is in release candidates; this section covers rc.1 and rc.2.
+
+- **A help flag before the verb prints help instead of running the verb.**
+  `denext --help build` used to run a build; it now prints `build`'s help. A
+  script that relied on it runs `denext build`. An unknown flag before the verb
+  is now an error instead of being silently ignored. ([2.5.0-rc.2](/docs/changelog))
+- **`AuthProvider` has a third member, `EmailProvider` (`type: "email"`).** An
+  exhaustive `switch` over `provider.type` needs an `"email"` case.
+  `credentials()`'s `authorize` became optional and the internal
+  `issueAuthSession` gained a trailing options argument — both source-compatible,
+  nothing to change. ([2.5.0-rc.2](/docs/changelog))
+- **The config schema no longer emits `x-denext.widget: "map"`.** Only a tool
+  reading `denext.config.schema.json` is affected: detect a map from its
+  `additionalProperties`. ([2.5.0-rc.2](/docs/changelog))
+- **The `linkAccount` event carries identity only** — provider, provider-side id,
+  type and owner. A handler that read provider tokens off it reads the stored
+  account back through the adapter.
+  ([2.5.0-rc.1](/docs/changelog#250-rc1---2026-09-14))
+- **`Await<T>` is renamed `MaybePromise<T>`** (`denext/server`). Rename the
+  import. ([2.5.0-rc.1](/docs/changelog#250-rc1---2026-09-14))
+- **`InspectNode.source` (`denext/devtools`) is a `SourceLocation` object.** The
+  old string stays as `sourceId` for one minor.
+  ([2.5.0-rc.1](/docs/changelog#250-rc1---2026-09-14))
+- **Raised the scrypt `cost`? Pass the same options to `verifyPassword`**, or an
+  unknown account rejects measurably faster than a known one.
+  ([2.5.0-rc.1](/docs/changelog#250-rc1---2026-09-14))
+- **A custom `SessionStore` needs `update` for sliding expiry.** Without it a
+  session is never slid forward, and the store warns once.
+  ([2.5.0-rc.1](/docs/changelog#250-rc1---2026-09-14))
+- **`denext --help` no longer lists a project's own verbs** — `denext commands`
+  does, and shell completions still include them.
+  ([2.5.0-rc.1](/docs/changelog#250-rc1---2026-09-14))
+
 ## Upgrading to 2.4
 
 - **`denext deploy` was removed.** Deploy with `deployctl` (Deno Deploy), your

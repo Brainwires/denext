@@ -154,7 +154,8 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
 - **Authentication** — first-party **`denextAuth`** plugin: OAuth 2.0 / OIDC
   (Authorization Code + PKCE) with **thirteen provider presets** (Google, GitHub,
   Microsoft Entra, Apple, Discord, GitLab, Slack, Auth0, Okta, Keycloak,
-  Facebook, generic **OIDC**) plus an email-password **Credentials** provider. Added as
+  Facebook, generic **OIDC**) plus an email-password **Credentials** provider and
+  passwordless **`magicLink()`** / **`emailOtp()`**. Added as
   `plugins: [denextAuth({ … })]`, it auto-mounts `/auth/*`
   (signin/callback/session/providers/signout) — no route files to write. Read
   the session with `auth()`, gate routes with `requireAuth()` middleware, and
@@ -196,12 +197,23 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   (`signIn`, `signOut`, `signInFailed`, `sessionRevoked`, `createUser`,
   `linkAccount` — a throwing handler can never change the HTTP result), a
   configurable **`basePath`** and cookie names, and per-IP rate limits on
-  `/auth/signin/*` (20 per 15 min) and `/auth/session` (60 per min) on top of the
-  per-credential one. A **`Hasher`** seam (`{ hash, verify }`, `scryptHasher()`
-  default) is configurable now and takes effect when the flows that hash a
-  user-known secret land in rc.2; today it is consumed only by `scryptHasher`
-  itself, whose `verify` matches the equal-work rejection to the configured cost —
-  a custom `Hasher` must equalise its own unknown-account work.
+  `/auth/signin/*` (20 per 15 min) and `/auth/session` (60 per min), a per-address
+  send budget and a per-user second-factor budget on top of the per-credential one.
+  **Account flows**: `credentials()` with no `authorize` verifies against the adapter
+  through the **`Hasher`** seam (`{ hash, verify }`, `scryptHasher()` default — equal
+  work for an unknown account); **email verification and password reset**
+  (`/auth/verify`, `/auth/reset`, `/auth/reset/confirm`, or
+  `requestEmailVerification` / `verifyEmail` / `requestPasswordReset` /
+  `resetPassword` from a Server Action) over single-use tokens stored as hashes and
+  scoped to one address and purpose, answering the same for every address;
+  **passwordless sign-in** by link or code, mailed to exactly one address (a list
+  sends nothing — the next-auth CVE-2022-35924 class); and **TOTP two-factor**
+  (RFC 6238 enroll / confirm / disable at `/auth/mfa*`, single-use backup codes
+  stored as hashes, a replay-guarded step claim) whose pending step-up reads as
+  signed out everywhere until the second factor, then mints a fresh session. A
+  first email sign-in into an unverified account retires whatever was set up
+  without proof of the mailbox (pre-account hijacking). denext ships no mailer:
+  every message goes through `sendVerificationRequest`.
 - **`cookies()` / `headers()`** with **secure cookie defaults** (httpOnly,
   SameSite=Lax, Secure over HTTPS).
 - **Signed-cookie sessions**: `getSession()` (HMAC-SHA256, secret rotation) —
@@ -294,13 +306,19 @@ rework (the enhancement rationale + mechanism is in **Part 2 §4**):
   editor** — honoring `DENEXT_EDITOR` / `VISUAL` / `EDITOR` (VS Code, JetBrains,
   Sublime, and terminal editors; default `code`).
 - **`dynamic()`** with `ssr: false` code-split islands.
+- **`denext/mobile`** — a client runtime for apps shipped in a Capacitor
+  iOS/Android shell: `isNativeShell` / `nativePlatform`, `useAppResume`,
+  `openExternal`, `useKeyboardInset`, `useBackSwipe` and `SAFE_AREA_CSS`, talking
+  to Capacitor only through the `window.Capacitor` global (no `@capacitor/*`
+  dependency).
 - **First-party DevTools** (`denext/devtools`, dev-only): a native in-page
   glass-box panel (auto-mounted in dev — App Router **and** SPA; toggle
   Ctrl+Shift+D) at React-DevTools-quality, in **six tabs** (`Alt+1`…`6`,
   `Ctrl+Shift+[`/`]`, `Escape`) — an **element picker** with a hover-highlight
   overlay; a **searchable, collapsible component tree** (+ optional host nodes);
   per-node **props, hooks/state, and context** with **named hooks**
-  (`count · useState`, same-module custom hooks expanded as breadcrumbs, and an
+  (`count · useState`, custom hooks expanded as breadcrumbs — declared in the same
+  module or across a static relative import — **`useDebugValue`** labels, and an
   honest all-or-nothing fallback to kind labels when the walk can't be trusted),
   **live `useState` editing**, **ref-set / reducer-dispatch**, **live prop
   overrides**, and **deep lazy value inspection** (copy / `console.log` /
@@ -309,7 +327,8 @@ rework (the enhancement rationale + mechanism is in **Part 2 §4**):
   flashes each re-rendered element over a five-step colour ramp); a **Profiler**
   tab with a **flamegraph** and **per-commit step-through** (ranked-by-self +
   why-each-rendered); real **`file:line:column` source** (from a dev-only pass
-  over the same AST Fast Refresh walks) that **opens the file at the line in your
+  over the same AST Fast Refresh walks; on the bundled App Router dev path, for
+  the route files) that **opens the file at the line in your
   editor** (`DENEXT_EDITOR`/`VISUAL`/`EDITOR`) + **owner/ancestor stack**; a
   **Render modes** tab — the server-emitted page verdict (static, dynamic or
   streamed, plus page-cache HIT/STALE/MISS), a **real-time per-Suspense-boundary
@@ -578,9 +597,14 @@ cache uses Deno's built-in `node:sqlite`.)
   bails honestly when the config's shape is beyond the splicer, with the patch to
   apply by hand whenever one can be computed), a read-and-translate view over a
   compat app's `next.config.*`, the first-party plugin catalog with add/remove
-  previews, a GUI over every `generate` kind, Docker regenerate-with-diff, a
-  nine-step setup wizard for a fresh clone, and a runner for the project's own
-  verbs. Server-rendered with **zero bundler and full progressive enhancement**
+  previews and **per-plugin option forms** built from each plugin's generated
+  options schema, **JSR plugin search** (`--offline` keeps the UI and every
+  process it starts off the network), a GUI over every `generate` kind, Docker
+  regenerate-with-diff plus an **in-place `docker-compose.yml` editor** (a line
+  splice checked by re-parsing, so comments and untouched lines stay byte for
+  byte), a nine-step setup wizard for a fresh clone, and a runner for the
+  project's own verbs with a typed input per declared flag. Server-rendered
+  components built with `h()` — **zero bundler and full progressive enhancement**
   (every action works with JavaScript off) behind a six-layer local security
   model: loopback-only bind, a DNS-rebinding / `Sec-Fetch-Site` host gate, a
   per-launch 256-bit token exchanged **once** for an `HttpOnly; SameSite=Strict`
@@ -593,7 +617,8 @@ cache uses Deno's built-in `node:sqlite`.)
   forward when busy; an explicit `--port` is required exactly.
 - **A generated first-party package catalog** (`src/plugin/catalog.json`): every
   `@denext/*` package's version, `jsr:` range, plugin-or-library kind, factory
-  export, CLI verb and option keys, emitted from the packages' own `deno.json` +
+  export, CLI verb, option keys and an options JSON Schema, emitted from the
+  packages' own `deno.json` +
   README (`deno task gen:plugin-catalog`, drift-tested). `denext migrate` takes
   its plugin pins from it.
 - **Tooling for AI agents** — a first-party **MCP server** (`denext mcp`, stdio
@@ -1111,10 +1136,11 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
   factory calls byte for byte, and the writer bails rather than reformatting a
   file it can't splice (handing back the patch whenever one can be computed) —
   with widgets derived from the generated JSON Schema, plus plugin
-  add/remove, a `generate` GUI, Docker regenerate-with-diff and a setup wizard.
+  add/remove with per-plugin option forms and JSR search, a `generate` GUI, Docker
+  regenerate-with-diff with an in-place compose editor, and a setup wizard.
   Server-rendered with no bundler and no JavaScript requirement. —
   `src/cli/commands/ui.ts`, `src/ui/server.ts`, `src/build/config-edit.ts`,
-  `src/ui/form/widget.ts`.
+  `src/build/call-args-edit.ts`, `src/build/compose-edit.ts`, `src/ui/form/widget.ts`.
 - **Project-local CLI verbs, enumerable [opt-in].** A `commands:` array in
   `denext.config.ts` adds a real `denext <name>` verb with the same flag parsing,
   `--help` and did-you-mean as a built-in, no plugin required; a plugin's

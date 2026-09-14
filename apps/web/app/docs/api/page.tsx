@@ -16,6 +16,7 @@ const BLURB: Record<string, string> = {
   "denext/live": "Live Server Components — server-pushed boundary updates.",
   "denext/lazy": "Lazy / deferred module + island hydration helpers.",
   "denext/desktop": "Desktop packaging runtime.",
+  "denext/mobile": "Client runtime for apps in a Capacitor iOS/Android shell.",
   "denext/cli/command": "The CLI command contract (for plugins contributing verbs).",
 };
 

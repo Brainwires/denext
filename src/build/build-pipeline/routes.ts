@@ -73,15 +73,12 @@ export async function bundleNativeRoutes(ctx: BuildContext): Promise<void> {
   );
   const entries = clientRoutes.map((route) => ({
     key: routeId(route.routePath),
-    source: generateRouteEntry(
-      route,
-      false,
-      false,
-      paths.instrumentationClientPath,
-      ctx.classRuntime,
-      ctx.usesActivity,
-      ctx.usesViewTransition,
-    ),
+    source: generateRouteEntry(route, {
+      instrumentationClient: paths.instrumentationClientPath,
+      classRuntime: ctx.classRuntime,
+      usesActivity: ctx.usesActivity,
+      usesViewTransition: ctx.usesViewTransition,
+    }),
   }));
   if (globalError) {
     entries.push({

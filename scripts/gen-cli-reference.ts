@@ -64,7 +64,7 @@ export interface RefCommand {
  * CLI can enumerate them.
  */
 export interface RefProjectCommands {
-  /** Whether the CLI lists project verbs in `--help` and shell completions. */
+  /** Whether the CLI can enumerate project verbs (`denext commands`, shell completions). */
   enumerable: boolean;
   /** Prose the docs page renders next to the built-in table. */
   note: string;
@@ -82,9 +82,11 @@ const PROJECT_COMMANDS: RefProjectCommands = {
   enumerable: true,
   note: "A project can add its own verbs — `commands: [{ name, summary, run }]` in " +
     "denext.config.ts, or a plugin's `addCommand`. They are resolved from the project's " +
-    "config, so they are not listed here; `denext --help` and `denext completions <shell>` " +
-    'load them (under a 1.5 s budget) and list them under "Project commands". A built-in ' +
-    "verb always wins a name collision.",
+    "config, so they are not listed here. `denext --help` lists only the built-in verbs — " +
+    "it never imports the project — and inside a denext project it ends with " +
+    '"Project verbs: run `denext commands` (they are also in shell completions)." ' +
+    "`denext commands` and `denext completions <shell>` load them (under a 1.5 s budget). " +
+    "A built-in verb always wins a name collision.",
 };
 
 /** One flag, with a stable key order regardless of which optionals are present. */

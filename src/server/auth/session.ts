@@ -88,34 +88,82 @@ export async function readAuthSession(config: AuthConfig): Promise<AuthSession |
   return await resolveSession(session.data, options.sessionStore, options.maxAge);
 }
 
+/** How {@link issueAuthSession} marks the session it mints. */
+export interface IssueAuthSessionOptions {
+  /**
+   * Mint a session that still owes a second factor: `auth()` answers `null` for it and
+   * only the MFA routes accept it (see `AuthSession.mfaPending`).
+   */
+  mfaPending?: boolean;
+  /** Authentication methods completed so far (`pwd`, `ext`, `email`, `otp`, `totp`, `bcp`). */
+  amr?: string[];
+  /**
+   * Seconds this session lives, never more than the configured `maxAge` (the default).
+   * A pending session is minted short-lived, so a first factor alone opens only a brief
+   * window for the second.
+   */
+  lifetime?: number;
+}
+
+/**
+ * Re-apply the fields the framework owns over what `callbacks.session` returned. The
+ * callback shapes the session's DATA; it never decides whether the session is complete. A
+ * callback that rebuilds the object instead of spreading it would otherwise drop
+ * `mfaPending` and turn a first-factor-only sign-in into a complete session. It may ADD
+ * `mfaPending` (fail closed), never remove it; `v`, `issuedAt` and `amr` are always the
+ * minted ones; a pending session never outlives its short lifetime; and an expiry the
+ * callback dropped or mangled is restored, so a session never becomes never-expiring or
+ * store-rejected.
+ *
+ * @param result What the session callback returned.
+ * @param minted The payload the framework minted before the callback ran.
+ * @returns The callback's session with the framework-owned fields restored.
+ */
+function sealOwnedFields(result: AuthSession, minted: AuthSession): AuthSession {
+  const { mfaPending: _pending, amr: _amr, ...rest } = result;
+  const pending = minted.mfaPending === true || result.mfaPending === true;
+  const expiresAt = Number.isFinite(rest.expiresAt) ? rest.expiresAt : minted.expiresAt;
+  const sealed: AuthSession = {
+    ...rest,
+    v: minted.v,
+    issuedAt: minted.issuedAt,
+    expiresAt: minted.mfaPending ? Math.min(expiresAt, minted.expiresAt) : expiresAt,
+  };
+  if (pending) sealed.mfaPending = true;
+  if (minted.amr) sealed.amr = [...minted.amr];
+  return sealed;
+}
+
 /**
  * Issue (sign + set) a session for `user` from `provider`, applying the session callback.
  *
  * @param config The app's auth config.
  * @param user The authenticated user.
  * @param provider The provider id that authenticated them.
+ * @param issue Pending-MFA marking, the methods proven so far, and a shorter lifetime.
  * @returns The issued session (carrying `sessionId` when store-backed).
  */
 export async function issueAuthSession(
   config: AuthConfig,
   user: AuthUser,
   provider: string,
+  issue: IssueAuthSessionOptions = {},
 ): Promise<AuthSession> {
   const options = resolveAuthOptions(config);
   const maxAge = options.maxAge;
   const now = Math.floor(Date.now() / 1000);
+  const lifetime = Math.min(maxAge, issue.lifetime ?? maxAge);
   let payload: AuthSession = {
     user,
     provider,
-    expiresAt: now + maxAge,
+    expiresAt: now + lifetime,
     v: 2,
     issuedAt: now,
   };
-  if (config.callbacks?.session) payload = await config.callbacks.session(payload);
-  if (!Number.isFinite(payload.expiresAt)) {
-    // A callback that dropped/mangled the expiry must not yield a never-expiring or a
-    // store-rejected (500) session: restore the configured lifetime.
-    payload = { ...payload, expiresAt: Math.floor(Date.now() / 1000) + maxAge };
+  if (issue.mfaPending) payload.mfaPending = true;
+  if (issue.amr?.length) payload.amr = [...issue.amr];
+  if (config.callbacks?.session) {
+    payload = sealOwnedFields(await config.callbacks.session(payload), payload);
   }
   const session = await getSession<CookieData>(sessionOptions(config));
   if (!options.sessionStore) {

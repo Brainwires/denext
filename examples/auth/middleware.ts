@@ -25,7 +25,9 @@ export async function middleware(request: Request): Promise<Response | null> {
 
 export const config = {
   // Both the bare path and everything under it (`:path*` alone needs a trailing segment).
-  // /api/me is deliberately absent: it authenticates with a bearer token, not a cookie.
+  // /api/me is deliberately absent: it authenticates with a bearer token, not a cookie. So
+  // is /mfa: it serves the PENDING session a sign-in holds before its second factor, which
+  // `requireAuth` (rightly) reads as signed out.
   matcher: [
     "/dashboard",
     "/dashboard/:path*",
@@ -33,5 +35,6 @@ export const config = {
     "/account/:path*",
     "/admin",
     "/admin/:path*",
+    "/verify-email",
   ],
 };

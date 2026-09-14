@@ -13,7 +13,12 @@
 import type { CommandContext, CommandSpec } from "../command.ts";
 import { installShutdown, projectDir } from "../shared.ts";
 import { openBrowser } from "../../ui/open.ts";
-import { DEFAULT_UI_PORT, startUiServer, type UiServer } from "../../ui/server.ts";
+import {
+  DEFAULT_UI_PORT,
+  startUiServer,
+  type UiServer,
+  type UiServerOptions,
+} from "../../ui/server.ts";
 
 /**
  * The servers this verb currently has running. `run` resolves only when its server drains, so a
@@ -22,16 +27,29 @@ import { DEFAULT_UI_PORT, startUiServer, type UiServer } from "../../ui/server.t
  */
 export const activeUiServers = new Set<UiServer>();
 
-/** Print the human banner (suppressed by `--json` and `--quiet`). */
-function banner(server: UiServer, dir: string, readOnly: boolean): void {
-  console.log(
-    `\n  denext ui  ▸  ${dir}\n` +
-      `  ${server.url}\n` +
-      (readOnly ? "  read-only — every change is refused\n" : "") +
-      "  The link carries a single-use token; it is exchanged for a session cookie and then\n" +
-      "  refused, so the URL in your shell history is not a second way in.\n" +
-      `  Ctrl+C to stop.\n`,
-  );
+/**
+ * The human banner (suppressed by `--json` and `--quiet`).
+ *
+ * @param url The handshake URL the server is serving.
+ * @param dir The project directory.
+ * @param modes `--read-only` and `--offline`, each announced on its own line when on.
+ * @returns The banner text, ready for `console.log`.
+ */
+export function uiBanner(
+  url: string,
+  dir: string,
+  modes: { readonly readOnly: boolean; readonly offline: boolean },
+): string {
+  return `\n  denext ui  ▸  ${dir}\n` +
+    `  ${url}\n` +
+    (modes.readOnly ? "  read-only — every change is refused\n" : "") +
+    (modes.offline
+      ? "  offline — nothing the UI starts reaches the network; deno task, denext dev and\n" +
+        "  plugin add/remove are refused\n"
+      : "") +
+    "  The link carries a single-use token; it is exchanged for a session cookie and then\n" +
+    "  refused, so the URL in your shell history is not a second way in.\n" +
+    `  Ctrl+C to stop.\n`;
 }
 
 /**
@@ -45,12 +63,36 @@ function uiPort(ctx: CommandContext): number | undefined {
   return ok ? raw as number : undefined;
 }
 
+/**
+ * The {@linkcode startUiServer} options a parsed `denext ui` invocation asks for — `--offline`
+ * among them, which keeps the UI and every process it starts off the network (it combines freely
+ * with `--read-only`).
+ *
+ * @param ctx The parsed command line.
+ * @param signal The shutdown signal (SIGINT/SIGTERM, or a test's own).
+ * @returns The options to start the server with.
+ */
+export function uiServerOptions(ctx: CommandContext, signal: AbortSignal): UiServerOptions {
+  const port = uiPort(ctx);
+  return {
+    dir: projectDir(ctx),
+    port: port ?? DEFAULT_UI_PORT,
+    strictPort: port !== undefined,
+    token: typeof ctx.flags.token === "string" ? ctx.flags.token : undefined,
+    readOnly: ctx.flags["read-only"] === true,
+    offline: ctx.flags.offline === true,
+    uiDev: ctx.flags["ui-dev"] === true,
+    signal,
+  };
+}
+
 export const uiCommand: CommandSpec = {
   name: "ui",
   summary: "Open the project management UI in a browser (loopback only)",
   usage: "  denext ui                    Serve the UI for the current project and open it\n" +
     "  denext ui ./my-app --port 6000   That exact port, or a clear error if it is taken\n" +
     "  denext ui --read-only        Browse without offering any write\n" +
+    "  denext ui --offline          Keep the UI and every process it starts off the network\n" +
     "  denext ui --no-open --json   Print { url, port, token } and keep serving\n\n" +
     "  The UI binds 127.0.0.1 only. The printed URL carries a per-launch 256-bit token that\n" +
     "  is exchanged ONCE for an HttpOnly, SameSite=Strict cookie — the query token is then\n" +
@@ -70,6 +112,13 @@ export const uiCommand: CommandSpec = {
     { name: "no-open", type: "boolean", help: "Don't launch a browser" },
     { name: "read-only", type: "boolean", help: "Refuse every mutation" },
     {
+      name: "offline",
+      type: "boolean",
+      help: "Never reach the network: no JSR search; denext verbs and doctor run with " +
+        "--deny-net --cached-only, deno install with --cached-only; deno task, denext dev and " +
+        "plugin add/remove are refused (combines with --read-only)",
+    },
+    {
       name: "token",
       type: "string",
       valueName: "<token>",
@@ -82,25 +131,18 @@ export const uiCommand: CommandSpec = {
     },
   ],
   run: async (ctx) => {
-    const dir = projectDir(ctx);
-    const readOnly = ctx.flags["read-only"] === true;
     const controller = new AbortController();
+    const options = uiServerOptions(ctx, controller.signal);
     installShutdown(controller);
-    const port = uiPort(ctx);
-    const server = await startUiServer({
-      dir,
-      port: port ?? DEFAULT_UI_PORT,
-      strictPort: port !== undefined,
-      token: typeof ctx.flags.token === "string" ? ctx.flags.token : undefined,
-      readOnly,
-      uiDev: ctx.flags["ui-dev"] === true,
-      signal: controller.signal,
-    });
+    const server = await startUiServer(options);
     activeUiServers.add(server);
     if (ctx.global.json) {
       console.log(JSON.stringify({ url: server.url, port: server.port, token: server.token }));
     } else if (!ctx.global.quiet) {
-      banner(server, dir, readOnly);
+      console.log(uiBanner(server.url, options.dir, {
+        readOnly: options.readOnly === true,
+        offline: options.offline === true,
+      }));
     }
     if (ctx.flags["no-open"] !== true && !(await openBrowser(server.url))) {
       console.log(`  Couldn't launch a browser — open ${server.url} yourself.`);

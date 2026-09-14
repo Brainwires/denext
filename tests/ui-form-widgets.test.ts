@@ -20,6 +20,7 @@ import {
 } from "../src/ui/form/schema.ts";
 import { OVERRIDES } from "../src/ui/form/schema-overrides.ts";
 import { widgetFor, type WidgetKind, type WidgetSpec } from "../src/ui/form/widget.ts";
+import { decode, encode } from "../src/ui/form/value.ts";
 
 const SCHEMA = loadConfigSchema();
 
@@ -91,10 +92,7 @@ Deno.test("the read-only set is exactly the values denext cannot serialise", () 
     "cache.store.getPage",
     "cache.store.setData",
     "cache.store.setPage",
-    // `CommandFlag[]`/`CommandPositional[]` are arrays the generator emits without `items`…
-    "commands[].flags",
-    "commands[].positionals",
-    // …and `run` is the command's handler.
+    // A project command's handler (its `flags`/`positionals` are typed lists).
     "commands[].run",
     // A message catalogue: `Record<string, unknown>` — a map whose values are opaque.
     "i18n.messages",
@@ -150,7 +148,7 @@ Deno.test("every top-level config key maps to the widget its type deserves", () 
   });
 });
 
-Deno.test("every row property of the six list fields gets a typed control", () => {
+Deno.test("every row property of the eight list fields gets a typed control", () => {
   assertRowKinds(["redirects"], {
     source: "text",
     destination: "text",
@@ -167,6 +165,21 @@ Deno.test("every row property of the six list fields gets a typed control", () =
     search: "text",
   });
   assertRowKinds(["images", "localPatterns"], { pathname: "text", search: "text" });
+  assertRowKinds(["commands", "0", "flags"], {
+    name: "text",
+    alias: "text",
+    altNames: "chips",
+    type: "segmented",
+    default: "union",
+    help: "text",
+    valueName: "text",
+  });
+  assertRowKinds(["commands", "0", "positionals"], {
+    name: "text",
+    help: "text",
+    required: "toggle",
+    variadic: "toggle",
+  });
   assertRowKinds(["i18n", "domains"], {
     domain: "text",
     defaultLocale: "text",
@@ -241,8 +254,8 @@ Deno.test("records become key/value maps, opaque ones stay read-only", () => {
   assertEquals(specAt("spa", "env").items?.kind, "text");
   assertEquals(specAt("experimental", "features").items?.kind, "toggle");
   assertEquals(specAt("scheduledTasks").items?.kind, "union");
-  // `x-denext.widget: "map"` is not enough on its own: the values must be described.
-  assertEquals(resolveAt(SCHEMA, ["i18n", "messages"])["x-denext"]?.widget, "map");
+  // A map carries no marker; with opaque values (`Record<string, unknown>`) it stays read-only.
+  assertEquals(resolveAt(SCHEMA, ["i18n", "messages"])["x-denext"], undefined);
   assertEquals(kindAt("i18n", "messages"), "code");
   assertEquals(mapValueSchema(resolveAt(SCHEMA, ["i18n", "messages"])), undefined);
 });
@@ -271,9 +284,20 @@ Deno.test("numbers carry the bounds the schema declares", () => {
 Deno.test("a string opts into a textarea through the generator's widget hint", () => {
   const hinted: SchemaNode = { type: "string", "x-denext": { widget: "textarea" } };
   assertEquals(widgetFor(hinted, ["spa", "head"], false).kind, "textarea");
-  // The committed schema does not carry the hint yet, so these render as one-line inputs.
-  assertEquals(kindAt("spa", "head"), "text");
-  assertEquals(kindAt("spa", "loading"), "text");
+  // `@widget textarea` on `SpaConfig.head` / `.loading` reaches the committed schema…
+  assertEquals(resolveAt(SCHEMA, ["spa", "head"])["x-denext"]?.widget, "textarea");
+  assertEquals(kindAt("spa", "head"), "textarea");
+  assertEquals(kindAt("spa", "loading"), "textarea");
+  // …while an untagged string stays a one-line input, and so does an unknown hint.
+  assertEquals(kindAt("spa", "title"), "text");
+  const unknown = { type: "string", "x-denext": { widget: "wysiwyg" } } as unknown as SchemaNode;
+  assertEquals(widgetFor(unknown, ["x"], false).kind, "text");
+});
+
+Deno.test("a textarea field round-trips multi-line HTML through the form codec", () => {
+  const spec = specAt("spa", "loading");
+  const html = '<div class="splash">\n  <img src="/logo.svg" alt="">\n</div>';
+  assertEquals(decode(spec, encode(spec, html)), html);
 });
 
 Deno.test("paths collapse to the key OVERRIDES is written in", () => {

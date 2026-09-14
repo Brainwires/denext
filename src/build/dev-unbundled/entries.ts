@@ -37,15 +37,14 @@ export function supportsRoute(route: PageRoute): boolean {
 export function serveEntry(st: UnbundledState, route: PageRoute): Promise<string> {
   return transformGeneratedEntry(
     st,
-    generateRouteEntry(
-      route,
-      true,
-      true,
-      st.opts.instrumentationClient ?? null,
-      "eager",
-      true,
-      true,
-    ),
+    generateRouteEntry(route, {
+      dev: true,
+      perModule: true,
+      instrumentationClient: st.opts.instrumentationClient,
+      classRuntime: "eager",
+      usesActivity: true,
+      usesViewTransition: true,
+    }),
     `entry:${route.routePath}`,
   );
 }

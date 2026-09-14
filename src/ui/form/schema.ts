@@ -30,8 +30,11 @@ export interface SchemaNode {
   minimum?: number;
   /** Inclusive upper bound of a number field (from a `@maximum` JSDoc tag). */
   maximum?: number;
-  /** denext's generator hints (`widget`, `wrapper`). */
-  "x-denext"?: { widget?: string; wrapper?: string };
+  /**
+   * denext's generator hints: `widget: "textarea"` (from a `@widget textarea` JSDoc tag) for a
+   * multi-line string, and `wrapper: "function"` for a list written back as `() => [...]`.
+   */
+  "x-denext"?: { widget?: "textarea"; wrapper?: "function" };
 }
 
 /**

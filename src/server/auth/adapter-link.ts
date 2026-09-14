@@ -70,13 +70,15 @@ export function accountNotLinkedCode(error: unknown): string | undefined {
 // between the two goes through these two functions and nowhere else.
 
 /**
- * Is a stored verification timestamp a verified address?
+ * Is a stored verification timestamp a verified address? Only a number counts: an
+ * Auth.js-style adapter stores `null` for an unverified address, and `null` must never
+ * read as verified (it would skip the pre-account-hijacking defence).
  *
- * @param storedAt The adapter's `emailVerified` (epoch seconds) or `undefined`.
+ * @param storedAt The adapter's `emailVerified` (epoch seconds), or `undefined` / `null`.
  * @returns `true` when the address was ever verified.
  */
-function isVerified(storedAt: number | undefined): boolean {
-  return storedAt !== undefined;
+export function isVerified(storedAt: number | null | undefined): storedAt is number {
+  return typeof storedAt === "number";
 }
 
 /**
@@ -104,7 +106,13 @@ function assignDefined<T extends object>(target: T, values: Partial<T>): T {
 }
 
 /** Project an adapter record onto the session user, `emailVerified` back to a boolean. */
-function toAuthUser(user: AdapterUser): AuthUser {
+/**
+ * The session user for a stored adapter user (`emailVerified` becomes a boolean).
+ *
+ * @param user The adapter's user record.
+ * @returns The {@link AuthUser} the session carries.
+ */
+export function toAuthUser(user: AdapterUser): AuthUser {
   return assignDefined<AuthUser>(
     { id: user.id, emailVerified: isVerified(user.emailVerified) },
     { email: user.email, name: user.name, image: user.image, roles: user.roles },
@@ -132,7 +140,7 @@ function learned(user: AdapterUser, profile: AuthUser, now: number): Partial<Ada
     email: user.email === undefined ? profile.email : undefined,
     name: user.name === undefined ? profile.name : undefined,
     image: user.image === undefined ? profile.image : undefined,
-    emailVerified: user.emailVerified === undefined
+    emailVerified: !isVerified(user.emailVerified)
       ? verifiedAt(profile.emailVerified, now)
       : undefined,
   });

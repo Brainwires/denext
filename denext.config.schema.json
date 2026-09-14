@@ -27,12 +27,18 @@
           "type": "string"
         },
         "head": {
-          "description": "Extra raw HTML injected into the shell `<head>` (meta tags, preconnect links, …).",
-          "type": "string"
+          "description": "Extra raw HTML injected into the shell `<head>` (meta tags, preconnect links, …). A `<meta name=\"viewport\">` here replaces the shell's default (`width=device-width, initial-scale=1`) — e.g. `viewport-fit=cover` for iOS safe areas.",
+          "type": "string",
+          "x-denext": {
+            "widget": "textarea"
+          }
         },
         "loading": {
           "description": "Raw HTML rendered INSIDE the mount element (`#${rootId}`) in the generated shell — the boot placeholder shown before the client bundle loads and renders. The framework does not touch it; the app's first render (createRoot/hydrateRoot) replaces `#root`'s children, clearing it. Use it to paint instantly instead of a blank page: a themed background (pair with a pre-paint script in head), a logo splash, or a spinner — the same role a Vite/CRA `index.html` fills with markup inside `<div id=\"root\">…</div>`. `denext migrate --from vite` carries the source `index.html`'s `#root` content here.",
-          "type": "string"
+          "type": "string",
+          "x-denext": {
+            "widget": "textarea"
+          }
         },
         "lang": {
           "description": "`<html lang>` value for the generated shell. Default `\"en\"`.",
@@ -43,9 +49,6 @@
           "type": "object",
           "additionalProperties": {
             "type": "string"
-          },
-          "x-denext": {
-            "widget": "map"
           }
         },
         "csp": {
@@ -121,6 +124,10 @@
             "target"
           ]
         },
+        "precompress": {
+          "description": "Write a gzip `.gz` sibling next to each compressible client asset at `build` and `export`, so `denext start` serves `Content-Encoding: gzip` with no per-request CPU. Default `true`. Set `false` when the export is bundled into a native shell such as Capacitor, whose iOS/Android webview loads files from the app bundle and never requests the `.gz` variants, to keep them out of the bundle.",
+          "type": "boolean"
+        },
         "desktop": {
           "description": "`deno desktop` packaging settings (used when building the desktop app).",
           "type": "object",
@@ -161,10 +168,7 @@
         "messages": {
           "description": "Optional message catalogs keyed by locale, powering `useTranslations()`. The active locale's catalog is provided to the render and embedded in the hydration payload. Server components may also load catalogs directly.",
           "type": "object",
-          "additionalProperties": {},
-          "x-denext": {
-            "widget": "map"
-          }
+          "additionalProperties": {}
         },
         "hreflang": {
           "description": "Automatically emit `<link rel=\"alternate\" hreflang>` alternates (one per locale, plus `x-default`) and a per-locale canonical for every page. On by default when i18n is configured; set `false` to opt out. A page that sets its own `alternates.languages` always takes precedence over the generated set.",
@@ -326,9 +330,6 @@
             }
           }
         ]
-      },
-      "x-denext": {
-        "widget": "map"
       }
     },
     "images": {
@@ -479,10 +480,7 @@
         "remarkRehypeOptions": {
           "description": "Options forwarded to MDX's `remark-rehype` bridge (`remarkRehypeOptions`).",
           "type": "object",
-          "additionalProperties": {},
-          "x-denext": {
-            "widget": "map"
-          }
+          "additionalProperties": {}
         },
         "providerImportSource": {
           "description": "MDX `providerImportSource` (module exporting `useMDXComponents`), if used.",
@@ -796,9 +794,6 @@
           "type": "object",
           "additionalProperties": {
             "type": "boolean"
-          },
-          "x-denext": {
-            "widget": "map"
           }
         },
         "nodeResolve": {
@@ -864,11 +859,91 @@
           },
           "flags": {
             "description": "Declarative flags (parsed, defaulted, and documented like a built-in verb's).",
-            "type": "array"
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "description": "Long name without the leading `--` (e.g. `\"port\"` for `--port`).",
+                  "type": "string"
+                },
+                "alias": {
+                  "description": "Optional single-character alias without the leading `-` (e.g. `\"p\"`).",
+                  "type": "string"
+                },
+                "altNames": {
+                  "description": "Additional long names that resolve to this flag (e.g. `[\"hostname\"]`).",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "type": {
+                  "description": "Value kind. `boolean` flags take no value (presence = `true`).",
+                  "enum": [
+                    "boolean",
+                    "string",
+                    "number"
+                  ]
+                },
+                "default": {
+                  "description": "Default applied when the flag is absent.",
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                },
+                "help": {
+                  "description": "One-line help shown under `--help`.",
+                  "type": "string"
+                },
+                "valueName": {
+                  "description": "Value placeholder for help/usage of a valued flag (e.g. `\"<port>\"`).",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "type",
+                "help"
+              ]
+            }
           },
           "positionals": {
             "description": "Declarative positionals (for help/usage; parsing collects all positionals).",
-            "type": "array"
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "description": "Display name (e.g. `\"dir\"`).",
+                  "type": "string"
+                },
+                "help": {
+                  "description": "One-line help.",
+                  "type": "string"
+                },
+                "required": {
+                  "description": "Whether omitting it is an error.",
+                  "type": "boolean"
+                },
+                "variadic": {
+                  "description": "Whether it soaks up all remaining positionals.",
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "name",
+                "help"
+              ]
+            }
           },
           "run": {
             "description": "The implementation, handed the parsed invocation."

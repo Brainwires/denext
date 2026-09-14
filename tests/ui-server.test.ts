@@ -5,10 +5,14 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { startUiServer, type UiServer } from "../src/ui/server.ts";
+import { cliInvocation } from "../src/ui/proc.ts";
 import { projectTasks, UI_ROUTES } from "../src/ui/routes.ts";
 import { UI_COOKIE, UI_CSRF_HEADER } from "../src/ui/security.ts";
 import { deriveCsrf } from "../src/ui/security.ts";
-import { diffHtml, esc, html, opForm, raw, toHtml, UI_NAV } from "../src/ui/html.ts";
+import { toHtml, UI_NAV } from "../src/ui/html.ts";
+import { Fragment, h } from "../src/jsx/jsx-runtime.ts";
+import { DiffBlock, OpForm } from "../src/ui/components.ts";
+import { Raw, renderView } from "../src/ui/view.ts";
 import { decodePatch } from "../src/ui/features/config.ts";
 import { readWidget, renderWidget } from "../src/ui/form/render.ts";
 import { branchFor, itemSchema, loadConfigSchema, resolveAt } from "../src/ui/form/schema.ts";
@@ -24,19 +28,30 @@ interface Harness {
   headers: Record<string, string>;
 }
 
-async function ui(): Promise<Harness> {
+async function ui(options: { offline?: boolean } = {}): Promise<Harness> {
   const dir = await Deno.makeTempDir({ prefix: "denext_ui_srv_" });
   await Deno.writeTextFile(
     join(dir, "deno.json"),
     '{ "tasks": { "hello": "eval console.log(1)" } }',
   );
-  const server = await startUiServer({ dir, port: 0 });
+  const server = await startUiServer({ dir, port: 0, ...options });
   return {
     server,
     dir,
     base: `http://127.0.0.1:${server.port}`,
     headers: { cookie: `${UI_COOKIE}=${server.token}` },
   };
+}
+
+/** POST `/tasks/run` for `task`, as the wizard's no-JS form would. */
+async function postTask(h: Harness, task: string): Promise<Response> {
+  const form = new FormData();
+  form.set("task", task);
+  return await fetch(`${h.base}/tasks/run`, {
+    method: "POST",
+    headers: { ...h.headers, origin: h.base, [UI_CSRF_HEADER]: await deriveCsrf(h.server.token) },
+    body: form,
+  });
 }
 
 async function stop(h: Harness): Promise<void> {
@@ -162,17 +177,7 @@ Deno.test("the overview's JSON twin reports the project and the route table", as
 Deno.test("/tasks/run refuses a task the project does not declare", async () => {
   const h = await ui();
   try {
-    const form = new FormData();
-    form.set("task", "rm -rf /");
-    const res = await fetch(`${h.base}/tasks/run`, {
-      method: "POST",
-      headers: {
-        ...h.headers,
-        origin: h.base,
-        [UI_CSRF_HEADER]: await deriveCsrf(h.server.token),
-      },
-      body: form,
-    });
+    const res = await postTask(h, "rm -rf /");
     assertEquals(res.status, 400);
     const payload = await res.json();
     assertEquals(payload.ok, false);
@@ -181,6 +186,36 @@ Deno.test("/tasks/run refuses a task the project does not declare", async () => 
   } finally {
     await stop(h);
   }
+});
+
+Deno.test("--offline: a declared task is a 503, an undeclared one still a 400, and the overview says so", async () => {
+  const h = await ui({ offline: true });
+  try {
+    const refused = await postTask(h, "hello");
+    assertEquals(refused.status, 503);
+    assertStringIncludes((await refused.json()).reason, "deno task is unavailable");
+    const unknown = await postTask(h, "rm -rf /");
+    assertEquals(unknown.status, 400);
+    await unknown.body?.cancel();
+    const overview = await (await fetch(`${h.base}/`, { headers: h.headers })).text();
+    assertStringIncludes(overview, "Offline mode — nothing the UI starts reaches the network");
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("cliInvocation adds --deny-net --cached-only after -A only when offline", () => {
+  const online = cliInvocation();
+  assertEquals(online.slice(0, 2), ["run", "-A"]);
+  assertEquals(online.length, 3);
+  assertEquals(cliInvocation({ offline: false }), online);
+  assertEquals(cliInvocation({ offline: true }), [
+    "run",
+    "-A",
+    "--deny-net",
+    "--cached-only",
+    online[2],
+  ]);
 });
 
 Deno.test("/_ui/events is an event stream", async () => {
@@ -305,23 +340,27 @@ Deno.test({
 
 // ── the view layer ───────────────────────────────────────────────────────────
 
-Deno.test("the html tag escapes interpolations and passes raw() through", () => {
+Deno.test("a view escapes text and attributes, and Raw passes trusted markup through", () => {
   const name = '<img src=x onerror="alert(1)">';
-  assertStringIncludes(toHtml(html`<p>${name}</p>`), "&#60;img");
-  assertEquals(toHtml(html`<p>${raw("<b>ok</b>")}</p>`), "<p><b>ok</b></p>");
-  assertEquals(toHtml(html`${null}${undefined}${false}`), "");
-  assertEquals(toHtml(html`${[1, 2, 3]}`), "123");
-  assertEquals(esc(`&<>"'`), "&#38;&#60;&#62;&#34;&#39;");
+  assertStringIncludes(toHtml(renderView(h("p", null, name))), "&lt;img");
+  assertEquals(toHtml(renderView(h("p", null, h(Raw, { html: "<b>ok</b>" })))), "<p><b>ok</b></p>");
+  assertEquals(toHtml(renderView(h(Fragment, null, null, undefined, false))), "");
+  assertEquals(toHtml(renderView(h(Fragment, null, [1, 2, 3]))), "123");
+  assertEquals(
+    toHtml(renderView(h("p", { title: `&<>"'` }, `&<>"'`))),
+    '<p title="&amp;&lt;&gt;&quot;&#39;">&amp;&lt;&gt;&quot;&#39;</p>',
+  );
 });
 
-Deno.test("opForm renders the CSRF token, the hidden fields and the button", () => {
-  const markup = toHtml(opForm("tok", {
+Deno.test("OpForm renders the CSRF token, the hidden fields and the button", () => {
+  const markup = toHtml(renderView(h(OpForm, {
+    csrf: "tok",
     action: "/wizard",
     label: "Apply",
     fields: { op: "denojson", confirm: "1" },
     className: "op",
     disabled: true,
-  }));
+  })));
   assertStringIncludes(markup, 'action="/wizard"');
   assertStringIncludes(markup, 'class="op"');
   assertStringIncludes(markup, 'name="_csrf" value="tok"');
@@ -330,10 +369,11 @@ Deno.test("opForm renders the CSRF token, the hidden fields and the button", () 
   assertStringIncludes(markup, '<button type="submit" disabled>Apply</button>');
 });
 
-Deno.test("diffHtml classes a unified diff's lines, escaping every one of them", () => {
-  const markup = toHtml(diffHtml("--- a/x\n+++ b/x\n@@ -1 +1 @@\n-was <b>\n+now\n ctx"));
+Deno.test("DiffBlock classes a unified diff's lines, escaping every one of them", () => {
+  const diff = "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-was <b>\n+now\n ctx";
+  const markup = toHtml(renderView(h(DiffBlock, { diff })));
   assertStringIncludes(markup, '<pre class="out"><code class="diff">');
-  assertStringIncludes(markup, '<span class="del">-was &#60;b&#62;</span>');
+  assertStringIncludes(markup, '<span class="del">-was &lt;b&gt;</span>');
   assertStringIncludes(markup, '<span class="add">+now</span>');
   assertStringIncludes(markup, '<span class="meta">@@ -1 +1 @@</span>');
   assertStringIncludes(markup, "\n ctx</code></pre>", "context lines are left unclassed");

@@ -754,7 +754,7 @@
       "name": "ui",
       "summary": "Open the project management UI in a browser (loopback only)",
       "usage": "denext ui [dir] [options]",
-      "description": "  denext ui                    Serve the UI for the current project and open it\n  denext ui ./my-app --port 6000   That exact port, or a clear error if it is taken\n  denext ui --read-only        Browse without offering any write\n  denext ui --no-open --json   Print { url, port, token } and keep serving\n\n  The UI binds 127.0.0.1 only. The printed URL carries a per-launch 256-bit token that\n  is exchanged ONCE for an HttpOnly, SameSite=Strict cookie — the query token is then\n  refused, so a copied link cannot open a second session. Every mutation additionally\n  needs a same-origin Origin and a derived CSRF token.\n  Note: with --open, the token is visible in the browser-launcher's argv on this machine.",
+      "description": "  denext ui                    Serve the UI for the current project and open it\n  denext ui ./my-app --port 6000   That exact port, or a clear error if it is taken\n  denext ui --read-only        Browse without offering any write\n  denext ui --offline          Keep the UI and every process it starts off the network\n  denext ui --no-open --json   Print { url, port, token } and keep serving\n\n  The UI binds 127.0.0.1 only. The printed URL carries a per-launch 256-bit token that\n  is exchanged ONCE for an HttpOnly, SameSite=Strict cookie — the query token is then\n  refused, so a copied link cannot open a second session. Every mutation additionally\n  needs a same-origin Origin and a derived CSRF token.\n  Note: with --open, the token is visible in the browser-launcher's argv on this machine.",
       "flags": [
         {
           "name": "port",
@@ -771,6 +771,11 @@
           "name": "read-only",
           "type": "boolean",
           "description": "Refuse every mutation"
+        },
+        {
+          "name": "offline",
+          "type": "boolean",
+          "description": "Never reach the network: no JSR search; denext verbs and doctor run with --deny-net --cached-only, deno install with --cached-only; deno task, denext dev and plugin add/remove are refused (combines with --read-only)"
         },
         {
           "name": "token",
@@ -811,6 +816,6 @@
   ],
   "projectCommands": {
     "enumerable": true,
-    "note": "A project can add its own verbs — `commands: [{ name, summary, run }]` in denext.config.ts, or a plugin's `addCommand`. They are resolved from the project's config, so they are not listed here; `denext --help` and `denext completions <shell>` load them (under a 1.5 s budget) and list them under \"Project commands\". A built-in verb always wins a name collision."
+    "note": "A project can add its own verbs — `commands: [{ name, summary, run }]` in denext.config.ts, or a plugin's `addCommand`. They are resolved from the project's config, so they are not listed here. `denext --help` lists only the built-in verbs — it never imports the project — and inside a denext project it ends with \"Project verbs: run `denext commands` (they are also in shell completions).\" `denext commands` and `denext completions <shell>` load them (under a 1.5 s budget). A built-in verb always wins a name collision."
   }
 }

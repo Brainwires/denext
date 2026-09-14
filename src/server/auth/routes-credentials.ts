@@ -10,6 +10,12 @@
  * refusal there is answered with the SAME generic `401` a wrong password gets — the
  * reason reaches the app through `signInFailed` and the logger, never the client.
  *
+ * A provider configured **without** `authorize` verifies against the adapter's credentials
+ * group instead: the submitted `email` through `getUserByEmail`, the `password` against the
+ * hash `getCredential` returns, with the configured {@link ./hasher.ts | Hasher}. The record
+ * the password was proven against is the session user, so that path owes no account
+ * linking — and every way it can refuse is the same generic `401`, counted in the limiter.
+ *
  * Every outcome is observable without changing it: a completed sign-in fires `signIn`, a
  * refusal fires `signInFailed` with a stable `reason`, and anything this module swallows
  * (a provider `authorize()` that threw, an unparseable body) is routed to the configured
@@ -23,25 +29,19 @@ import { bufferedRequest, readCappedBody, STALLED, TOO_LARGE } from "../body.ts"
 import { emitAuthEvent } from "./events.ts";
 import {
   clientIpBucket,
+  consumeHitBudget,
   credentialsLimiter,
   defaultRateLimitKey,
-  IP_BUCKET_FACTOR,
   ipBucketKey,
   proxiedWithoutTrust,
   type RateLimiter,
+  settleAttempt,
 } from "./rate-limit.ts";
-import type { ResolvedSignIn } from "./adapter-link.ts";
+import type { AdapterUser } from "./adapter.ts";
+import { type ResolvedSignIn, toAuthUser } from "./adapter-link.ts";
 import { resolveSessionUser } from "./routes-oauth.ts";
-import {
-  afterSignIn,
-  applySignInCallback,
-  type AuthRouteContext,
-  isSameOrigin,
-  json,
-  redirect,
-  wantsJson,
-} from "./routes-shared.ts";
-import { issueAuthSession } from "./session.ts";
+import { applySignInCallback, type AuthRouteContext, isSameOrigin, json } from "./routes-shared.ts";
+import { finishSignIn } from "./sign-in-tail.ts";
 import type { AuthUser, CredentialsProvider } from "./types.ts";
 
 /** The most a credentials POST body may carry (a login form is a few hundred bytes). */
@@ -81,24 +81,97 @@ function emitFailure(
 }
 
 /**
- * Run `authorize`, treating a throw as a rejection (never a 500 that leaks details) — but
- * report it, so a broken user lookup is visible to the app instead of looking to every
- * caller like a wrong password.
+ * A credentials check that passed. `resolved` is set when the adapter-backed default made
+ * the check: the stored record the password was verified against IS the identity, so the
+ * sign-in owes no account linking — whose email-verification rule guards a provider
+ * ASSERTING an address, not a password proven against that very record.
+ */
+interface Authorized {
+  /** The user the check produced. */
+  user: AuthUser;
+  /** The finished sign-in, when no account linking is owed. */
+  resolved?: ResolvedSignIn;
+}
+
+/**
+ * Run the provider's `authorize` — or, when it has none, the adapter-backed
+ * {@linkcode defaultAuthorize} — treating a throw as a rejection (never a 500 that leaks
+ * details) but reporting it, so a broken user lookup is visible to the app instead of
+ * looking to every caller like a wrong password.
+ *
+ * @param ctx The route context.
+ * @param provider The credentials provider the callback names.
+ * @param creds The submitted string fields.
+ * @returns The passed check, or `null` to refuse.
  */
 async function authorizeCredentials(
   ctx: AuthRouteContext,
   provider: CredentialsProvider,
   creds: Record<string, string>,
-): Promise<AuthUser | null> {
+): Promise<Authorized | null> {
+  const check = provider.authorize ? "authorize()" : "adapter-backed credentials check";
   try {
-    return await provider.authorize(creds);
+    if (!provider.authorize) return await defaultAuthorize(ctx, creds);
+    const user = await provider.authorize(creds);
+    return user ? { user } : null;
   } catch (error) {
     ctx.options.logger.error(
-      `denextAuth: the "${provider.id}" provider's authorize() threw; treating it as a refusal`,
+      `denextAuth: the "${provider.id}" provider's ${check} threw; treating it as a refusal`,
       error,
     );
     return null;
   }
+}
+
+/**
+ * The check a Credentials provider WITHOUT `authorize` gets: the submitted `email` is
+ * looked up through the adapter's `getUserByEmail`, and the `password` is verified against
+ * the hash `getCredential` returns, with the configured {@link ./hasher.ts | Hasher}.
+ *
+ * Every refusal — a missing email or password, an unknown address, a user with no password
+ * on file, an adapter without the credentials group, a wrong password — costs exactly one
+ * `hasher.verify` (an empty stored value makes the hasher burn equal work and answer
+ * `false`), so response time says nothing about whether the account exists. The caller
+ * answers each of them with the same generic `401`, and counts it in the limiter.
+ *
+ * @param ctx The route context (its resolved options carry the adapter and the hasher).
+ * @param creds The submitted string fields (`email` + `password`).
+ * @returns The verified adapter user as a finished sign-in, or `null` to refuse.
+ */
+async function defaultAuthorize(
+  ctx: AuthRouteContext,
+  creds: Record<string, string>,
+): Promise<Authorized | null> {
+  const password = creds.password ?? "";
+  const stored = await storedCredential(ctx, creds.email ?? "");
+  const ok = await ctx.options.hasher.verify(password, stored?.hash ?? "");
+  // `stored` is re-checked: a custom hasher that wrongly accepts an empty hash must not
+  // turn an unknown address into a sign-in.
+  if (!ok || !stored || password === "") return null;
+  const user = toAuthUser(stored.user);
+  return { user, resolved: { user, isNewUser: false } };
+}
+
+/**
+ * The adapter user an address belongs to and their stored password hash, or `undefined`
+ * when there is nothing to verify against (no address, no adapter credentials group, an
+ * unknown address, no password on file). The address is trimmed and lower-cased — the
+ * normalisation both built-in adapters apply to the addresses they store.
+ *
+ * @param ctx The route context (its resolved options carry the adapter).
+ * @param email The submitted address.
+ * @returns The record and its hash, or `undefined`.
+ */
+async function storedCredential(
+  ctx: AuthRouteContext,
+  email: string,
+): Promise<{ user: AdapterUser; hash: string } | undefined> {
+  const adapter = ctx.options.adapter;
+  const address = email.trim().toLowerCase();
+  if (address === "" || !adapter?.getCredential) return undefined;
+  const user = await adapter.getUserByEmail(address);
+  const hash = user ? await adapter.getCredential(user.id) : undefined;
+  return user && hash ? { user, hash } : undefined;
 }
 
 /**
@@ -142,9 +215,7 @@ async function refuseIfLimited(
   limiter: RateLimiter | null,
   keys: { key: string; ipKey: string | null },
 ): Promise<Response | null> {
-  if (!limiter) return null;
-  const retryAfter = (await limiter.lockedOut(keys.key)) ??
-    (keys.ipKey === null ? null : await limiter.lockedOut(keys.ipKey, IP_BUCKET_FACTOR));
+  const retryAfter = await consumeHitBudget(limiter, keys);
   if (retryAfter === null) return null;
   await emitFailure(ctx, provider.id, "rate_limited");
   return json({ error: "too many attempts" }, 429, { "retry-after": String(retryAfter) });
@@ -192,8 +263,9 @@ async function persistSignIn(
 }
 
 /**
- * `POST {basePath}/callback/:provider` for a Credentials provider: rate-limit, authorize,
- * resolve through the adapter (when one is configured), then issue a session. Failures
+ * `POST {basePath}/callback/:provider` for a Credentials provider: rate-limit, authorize
+ * (the provider's `authorize`, or the adapter-backed default), resolve through the adapter
+ * (when one is configured), then issue a session. Failures
  * are counted per client key (IP + identifier by default) and, past the limit, answered
  * with a generic `429` — like the generic `401`, it never reveals whether the account
  * exists.
@@ -216,17 +288,15 @@ export async function handleCredentials(
   const limited = await refuseIfLimited(ctx, provider, limiter, keys);
   if (limited) return limited;
 
-  const user = await authorizeCredentials(ctx, provider, creds);
-  if (!user) {
-    await limiter?.fail(keys.key);
-    if (keys.ipKey !== null) await limiter?.fail(keys.ipKey);
+  const authorized = await authorizeCredentials(ctx, provider, creds);
+  if (!authorized) {
     await emitFailure(ctx, provider.id, "invalid_credentials");
     // Generic failure — never reveal whether the account exists.
     return json({ error: "invalid credentials" }, 401);
   }
-  await limiter?.succeed(keys.key);
+  await settleAttempt(limiter, keys);
 
-  const resolved = await persistSignIn(ctx, provider, user);
+  const resolved = authorized.resolved ?? await persistSignIn(ctx, provider, authorized.user);
   if (resolved instanceof Response) return resolved;
 
   const approved = await applySignInCallback(ctx.config, resolved.user, provider.id);
@@ -235,15 +305,12 @@ export async function handleCredentials(
     return json({ error: "access denied" }, 403);
   }
 
-  await issueAuthSession(ctx.config, approved, provider.id);
-  await emitAuthEvent(ctx.options, "signIn", {
-    user: approved,
-    provider: provider.id,
-    isNewUser: resolved.isNewUser,
-  });
-  if (wantsJson(ctx.request)) return json({ ok: true, user: approved });
   const callbackUrl = typeof creds.callbackUrl === "string" ? creds.callbackUrl : undefined;
-  return redirect(afterSignIn(ctx.config, callbackUrl));
+  return await finishSignIn(ctx, approved, provider.id, {
+    isNewUser: resolved.isNewUser,
+    returnTo: callbackUrl,
+    amr: ["pwd"],
+  });
 }
 
 /**

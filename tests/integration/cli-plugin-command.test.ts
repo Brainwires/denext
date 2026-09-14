@@ -94,8 +94,7 @@ Deno.test("a `commands:` verb dispatches with no plugin at all", async () => {
 Deno.test("`--help` does not load project code — it points at `denext commands`", async () => {
   const dir = await project("denext_config_help_", COMMANDS_CONFIG);
   try {
-    // `--cwd=<dir>` (not `--cwd <dir>`): with no verb, a bare `<dir>` token would be
-    // read as the verb — the parser resolves the verb before any global flag value.
+    // `--cwd=<dir>` names the project whose help is printed (`--help <dir>` does too).
     const { code, out, err } = await runCli(["--help", `--cwd=${dir}`]);
     assert(code === 0, `expected exit 0, got ${code}. stderr:\n${err}`);
     // Discovering `seed` would mean importing denext.config.ts and running every plugin

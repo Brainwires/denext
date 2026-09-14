@@ -1,0 +1,77 @@
+{
+  "items": [
+    {
+      "scope": "denext",
+      "name": "openapi",
+      "description": "OpenAPI 3.1 for denext: /openapi.json, a docs page, and the `denext openapi` verb.",
+      "githubRepository": {
+        "id": 1326934085,
+        "owner": "Brainwires",
+        "name": "denext",
+        "updatedAt": "2026-08-07T19:20:10.094845Z",
+        "createdAt": "2026-08-07T19:20:10.094845Z"
+      },
+      "runtimeCompat": {
+        "browser": false,
+        "deno": true
+      },
+      "updatedAt": "2026-09-13T12:55:39.449544Z",
+      "createdAt": "2026-09-07T07:23:58.664470Z",
+      "versionCount": 3,
+      "dependencyCount": 0,
+      "dependentCount": 0,
+      "score": 94,
+      "latestVersion": "0.3.0",
+      "whenFeatured": null,
+      "isArchived": false,
+      "readmeSource": "jsdoc",
+      "symbolCount": 12
+    },
+    {
+      "scope": "acme",
+      "name": "denext-sitemap",
+      "description": "Sitemap plugin for denext.",
+      "githubRepository": null,
+      "runtimeCompat": {
+        "browser": false,
+        "deno": true
+      },
+      "updatedAt": "2026-09-13T12:55:39.449544Z",
+      "createdAt": "2026-09-07T07:23:58.664470Z",
+      "versionCount": 3,
+      "dependencyCount": 0,
+      "dependentCount": 0,
+      "score": 71,
+      "latestVersion": "1.2.0-beta.3+build.7",
+      "whenFeatured": null,
+      "isArchived": true,
+      "readmeSource": "jsdoc",
+      "symbolCount": 12
+    },
+    {
+      "scope": "someone",
+      "name": "no-score",
+      "description": null,
+      "githubRepository": {
+        "id": 1326934085,
+        "owner": "Brainwires",
+        "name": "denext",
+        "updatedAt": "2026-08-07T19:20:10.094845Z",
+        "createdAt": "2026-08-07T19:20:10.094845Z"
+      },
+      "runtimeCompat": {},
+      "updatedAt": "2026-09-13T12:55:39.449544Z",
+      "createdAt": "2026-09-07T07:23:58.664470Z",
+      "versionCount": 3,
+      "dependencyCount": 0,
+      "dependentCount": 0,
+      "score": null,
+      "latestVersion": "0.0.1",
+      "whenFeatured": null,
+      "isArchived": false,
+      "readmeSource": "jsdoc",
+      "symbolCount": 12
+    }
+  ],
+  "total": 14
+}

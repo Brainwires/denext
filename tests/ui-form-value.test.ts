@@ -279,7 +279,7 @@ Deno.test("nothing in a config value can escape into markup", () => {
   const markup = render(specAt("redirects"), [{ source: attack, destination: attack }]);
   assert(!markup.includes("<script"), markup.slice(0, 400));
   // The quote that would have closed the `value` attribute is escaped along with the tag.
-  assertStringIncludes(markup, "&#34;&#62;&#60;script&#62;");
+  assertStringIncludes(markup, "&quot;&gt;&lt;script&gt;");
   const mapMarkup = render(specAt("spa", "env"), { [attack]: attack });
   assert(!mapMarkup.includes("<script"));
   const codeMarkup = render(specAt("mdx", "remarkPlugins"), [attack]);
@@ -289,7 +289,7 @@ Deno.test("nothing in a config value can escape into markup", () => {
 Deno.test("the control primitive is the only place markup is built", () => {
   assertEquals(
     toHtml(control({ tag: "input", name: "a&b", value: '<"x">' })),
-    '<input name="a&#38;b" type="text" value="&#60;&#34;x&#34;&#62;">',
+    '<input name="a&amp;b" type="text" value="&lt;&quot;x&quot;&gt;">',
   );
   assertEquals(
     toHtml(
@@ -299,7 +299,7 @@ Deno.test("the control primitive is the only place markup is built", () => {
   );
   assertStringIncludes(
     toHtml(control({ tag: "textarea", name: "t", value: "<x>", rows: 2 })),
-    ">&#60;x&#62;</textarea>",
+    ">\n&lt;x&gt;</textarea>",
   );
   assertStringIncludes(
     toHtml(
@@ -317,6 +317,41 @@ Deno.test("the control primitive is the only place markup is built", () => {
     toHtml(opButton({ op: "remove", at: 0, list: "l", label: "✕", title: "Remove" })),
     'value="remove:0:l"',
   );
+});
+
+/** The references the renderer emits, back to characters. */
+const ENTITY: Record<string, string> = {
+  "&amp;": "&",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&quot;": '"',
+  "&#39;": "'",
+};
+
+/**
+ * A `<textarea>`'s value as a browser parses and posts it: the content between its start and
+ * end tags, minus the ONE newline the HTML parser drops right after the start tag, decoded.
+ */
+function parsedTextarea(markup: string, name: string): string {
+  const start = markup.indexOf(`<textarea name="${name}"`);
+  assert(start >= 0, `no textarea named ${name}`);
+  const open = markup.indexOf(">", start) + 1;
+  const content = markup.slice(open, markup.indexOf("</textarea>", open));
+  return content.replace(/^\n/, "").replace(/&(?:amp|lt|gt|quot|#39);/g, (ref) => ENTITY[ref]);
+}
+
+Deno.test("a textarea keeps a value's leading newlines through render and parse", () => {
+  const value = '\n\n<meta name="x">\n';
+  const markup = toHtml(control({ tag: "textarea", name: "t", value }));
+  // The one newline the parser eats, then the value's own two.
+  assertStringIncludes(markup, 'style="width:100%">\n\n\n&lt;meta');
+  assertEquals(parsedTextarea(markup, "t"), value);
+  // The same through a schema-driven textarea widget, and back through the form codec.
+  const spec = specAt("spa", "head");
+  assertEquals(spec.kind, "textarea");
+  const posted = parsedTextarea(render(spec, value), "spa.head");
+  assertEquals(posted, value);
+  assertEquals(decode(spec, [{ name: "spa.head", value: posted }]), value);
 });
 
 Deno.test("readWidget decodes one posted field on its own", () => {

@@ -1,6 +1,8 @@
 // `/plugins` — the plugin manager: the first-party catalog (`src/plugin/catalog.json`), what this
 // project already has wired into `denext.config.ts` and pinned in `deno.json`, and add/remove over
-// `deno add`/`deno remove` + `injectPlugin`/`ejectPlugin`. The UI twin of `denext plugin`.
+// `deno add`/`deno remove` + `injectPlugin`/`ejectPlugin`. The UI twin of `denext plugin`. A wired
+// plugin with a published options schema links to its options sub-panel (`plugin-options.ts`),
+// and third-party plugins are found on JSR and added through the same path (`plugin-search.ts`).
 //
 // Every mutation is two steps: the first POST computes the new config text and answers with a
 // unified diff plus the exact `deno` argv — nothing has touched disk — and a second POST carrying
@@ -11,7 +13,9 @@
 // Two rules this module inherits from the kernel: the UI process never imports project code (the
 // dependency step is a `src/ui/proc.ts` subprocess, the config edit is pure string surgery), and a
 // name that came from the browser is never interpolated into a command — it must be one of the
-// catalog's own names, and the argv is an array.
+// catalog's own names (or, for `op=add-jsr`, a package name JSR's own rules accept, at the version
+// the registry reports), and the argv is an array. Under `denext ui --offline` every add and
+// remove is refused with a `503` before anything runs (`../offline.ts`).
 
 import { parse as parseJsonc } from "@std/jsonc";
 import { join } from "@std/path";
@@ -27,22 +31,26 @@ import {
   type PluginNames,
   resolvePluginNames,
 } from "../../build/plugin-install.ts";
-import {
-  diffHtml,
-  html,
-  jsonResponse,
-  opForm,
-  panelResponder,
-  type RawHtml,
-  type UiContext,
-  type UiHandler,
-} from "../html.ts";
+import { Fragment, h } from "../../jsx/jsx-runtime.ts";
+import type { VNode, VNodeChild } from "../../jsx/types.ts";
+import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
+import { DiffBlock, Mono, Note, OpForm, Out, Panel, PreviewLead } from "../components.ts";
+import { renderView } from "../view.ts";
 import { broadcast, sseProcess } from "../events.ts";
 import { runDeno } from "../proc.ts";
+import { OFFLINE_REFUSALS, OFFLINE_STATUS } from "../offline.ts";
 import { uiSafeJoin, writeFileAtomic } from "../security.ts";
+import type { SchemaNode } from "../form/schema.ts";
+import {
+  discover,
+  type Discovery,
+  discoveryPayload,
+  JsrDiscovery,
+  resolveJsrAdd,
+} from "./plugin-search.ts";
 
-/** The fields of a `src/plugin/catalog.json` row this panel reads. */
-interface CatalogRow {
+/** The fields of a `src/plugin/catalog.json` row the plugin panels read. */
+export interface CatalogRow {
   /** The JSR package name — the row's anchor id, and the only accepted `name` field value. */
   readonly name: string;
   /** The catalogued version. */
@@ -59,10 +67,13 @@ interface CatalogRow {
   readonly docs?: string;
   /** One sentence from the package's README. */
   readonly blurb: string;
+  /** The JSON Schema of the factory's options (a plugin row only). */
+  readonly optionsSchema?: SchemaNode;
 }
 
 /** The catalogued first-party packages, in catalog order. */
-const CATALOG_ROWS: readonly CatalogRow[] = CATALOG.plugins as readonly CatalogRow[];
+export const CATALOG_ROWS: readonly CatalogRow[] = CATALOG
+  .plugins as unknown as readonly CatalogRow[];
 
 /** Where a catalogued package's documentation lives (always absolute — the UI is not the site). */
 const DOCS_ORIGIN = "https://denext.dev";
@@ -84,7 +95,7 @@ export function setProcRunner(runner?: typeof runDeno): void {
 // ── the project's current state ──────────────────────────────────────────────
 
 /** What the project says about plugins right now (read-only; no module is ever evaluated). */
-interface ProjectState {
+export interface ProjectState {
   /** The config file that exists, or where one would be created. */
   readonly configPath: string;
   /** That file's name, for diff headers. */
@@ -129,7 +140,7 @@ async function readDeps(dir: string): Promise<string[]> {
  * @param dir The project directory.
  * @returns The config location, its plugins array and the declared dependencies.
  */
-async function readProject(dir: string): Promise<ProjectState> {
+export async function readProject(dir: string): Promise<ProjectState> {
   const deps = await readDeps(dir);
   for (const name of CONFIG_FILES) {
     const source = await readText(dir, name);
@@ -139,6 +150,34 @@ async function readProject(dir: string): Promise<ProjectState> {
   }
   const configName = CONFIG_FILES[0];
   return { configPath: join(dir, configName), configName, source: null, wired: [], deps };
+}
+
+/** Whether a wired `plugins` entry is this catalogue row's factory. */
+function matches(plugin: ConfiguredPlugin, entry: CatalogRow): boolean {
+  return plugin.importSpec === entry.name ||
+    (plugin.importSpec === null && entry.factory !== undefined && plugin.factory === entry.factory);
+}
+
+/**
+ * The `plugins` entry a catalogue row is wired in as — its `factory` is the local identifier the
+ * config calls it by.
+ *
+ * @param state The project's plugin state.
+ * @param entry The catalogue row.
+ * @returns The wired entry, or `undefined` when the row is not in the `plugins` array.
+ */
+export function wiredAs(state: ProjectState, entry: CatalogRow): ConfiguredPlugin | undefined {
+  return state.wired.find((plugin) => matches(plugin, entry));
+}
+
+/**
+ * Where a catalogued plugin's options sub-panel lives.
+ *
+ * @param name The catalogue name.
+ * @returns `/plugins/options?name=<name>`.
+ */
+export function optionsHref(name: string): string {
+  return `/plugins/options?name=${encodeURIComponent(name)}`;
 }
 
 /** One catalogue row plus this project's state for it. */
@@ -156,11 +195,7 @@ function rowsFor(state: ProjectState): PluginRow[] {
   return CATALOG_ROWS.map((entry) => ({
     entry,
     dependency: state.deps.some((dep) => dep === entry.name || dep.startsWith(entry.name + "/")),
-    wired: state.wired.some((plugin) =>
-      plugin.importSpec === entry.name ||
-      (plugin.importSpec === null && entry.factory !== undefined &&
-        plugin.factory === entry.factory)
-    ),
+    wired: wiredAs(state, entry) !== undefined,
   }));
 }
 
@@ -169,19 +204,38 @@ function isInstalled(row: PluginRow): boolean {
   return row.wired || row.dependency;
 }
 
+/** The wired plugins no catalogue row accounts for — the third-party ones. */
+function thirdParty(state: ProjectState): ConfiguredPlugin[] {
+  return state.wired.filter((plugin) => !CATALOG_ROWS.some((entry) => matches(plugin, entry)));
+}
+
 // ── the two operations ───────────────────────────────────────────────────────
 
-/** What this panel can do to a catalogued package. */
+/** What this panel can do to a package. */
 type Op = "add" | "remove";
+
+/** What a plan acts on: a catalogue row, or a JSR package resolved in this request. */
+interface Target {
+  /** The package name (the row anchor and the event payload). */
+  readonly name: string;
+  /** A `plugins: []` entry, or a plain library. */
+  readonly kind: string;
+  /** The resolved import/factory names. */
+  readonly names: PluginNames;
+  /** The hidden fields that identify it on the confirm form (besides `op`). */
+  readonly fields: Readonly<Record<string, string>>;
+  /** The `op` field value an add of it posts (`add`, or `add-jsr`). */
+  readonly addOp: string;
+}
 
 /** A computed, not-yet-applied change: the argv to run and the config text to write. */
 interface Plan {
   /** Which operation this is. */
   readonly op: Op;
-  /** The catalogue row it acts on. */
-  readonly entry: CatalogRow;
-  /** The resolved import/factory names. */
-  readonly names: PluginNames;
+  /** The `op` field value that re-posts it. */
+  readonly post: string;
+  /** What it acts on. */
+  readonly target: Target;
   /** The `deno` argv (array form, never shell-interpreted). */
   readonly command: readonly string[];
   /** The config file to write. */
@@ -211,23 +265,24 @@ function rewrite(name: string, before: string, after: string) {
   };
 }
 
-/** The import/factory names for a catalogue row (the factory is declared, never guessed). */
-function namesFor(entry: CatalogRow): PluginNames {
-  return resolvePluginNames(entry.spec, entry.factory ? { export: entry.factory } : {});
+/** A catalogue row as a plan target (the factory is declared, never guessed). */
+function catalogTarget(entry: CatalogRow): Target {
+  const names = resolvePluginNames(entry.spec, entry.factory ? { export: entry.factory } : {});
+  return { name: entry.name, kind: entry.kind, names, fields: { name: entry.name }, addOp: "add" };
 }
 
 /** Plan an install: `deno add <spec>`, then wire the factory into the config. */
-function planAdd(entry: CatalogRow, state: ProjectState): Plan {
-  const names = namesFor(entry);
+function planAdd(target: Target, state: ProjectState): Plan {
+  const { names } = target;
   const base = {
     op: "add" as const,
-    entry,
-    names,
+    post: target.addOp,
+    target,
     command: ["add", names.addSpec],
     configPath: state.configPath,
     configName: state.configName,
   };
-  if (entry.kind !== "plugin") {
+  if (target.kind !== "plugin") {
     return { ...base, ...NO_CONFIG, note: "A library: only the dependency is added." };
   }
   if (state.source === null) {
@@ -246,12 +301,12 @@ function planAdd(entry: CatalogRow, state: ProjectState): Plan {
 }
 
 /** Plan a removal: unwire the factory, then `deno remove <spec>`. */
-function planRemove(entry: CatalogRow, state: ProjectState): Plan {
-  const names = namesFor(entry);
+function planRemove(target: Target, state: ProjectState): Plan {
+  const { names } = target;
   const base = {
     op: "remove" as const,
-    entry,
-    names,
+    post: "remove",
+    target,
     command: ["remove", names.importSpec],
     configPath: state.configPath,
     configName: state.configName,
@@ -263,7 +318,7 @@ function planRemove(entry: CatalogRow, state: ProjectState): Plan {
       note: "No denext config in this project — only the pin is dropped.",
     };
   }
-  if (entry.kind !== "plugin") {
+  if (target.kind !== "plugin") {
     return { ...base, ...NO_CONFIG, note: "A library: only the dependency is removed." };
   }
   const result = ejectPlugin(state.source, names);
@@ -274,7 +329,7 @@ function planRemove(entry: CatalogRow, state: ProjectState): Plan {
 }
 
 /** The operation table (dispatch, never an if-chain). */
-const OPS: Record<Op, (entry: CatalogRow, state: ProjectState) => Plan> = {
+const OPS: Record<Op, (target: Target, state: ProjectState) => Plan> = {
   add: planAdd,
   remove: planRemove,
 };
@@ -342,88 +397,201 @@ function docsUrl(entry: CatalogRow): string {
 /** Wrap a panel section as a fragment (the `ui.js` swap) or as the full document. */
 const panelResponse = panelResponder("Plugins", "/plugins");
 
+/** Render a view as the panel response. */
+function page(ctx: UiContext, view: VNode, status = 200): Response {
+  return panelResponse(ctx, renderView(view), status);
+}
+
 /** One add/remove/confirm form — a real POST, upgraded by `ui.js` when it is running. */
-function pluginForm(ctx: UiContext, entry: CatalogRow, op: Op, confirm = false): RawHtml {
-  return opForm(ctx.csrf, {
-    action: "/plugins",
-    label: confirm ? "Apply" : op === "add" ? "Add" : "Remove",
-    fields: { name: entry.name, op, ...(confirm ? { confirm: "1" } : {}) },
-    disabled: ctx.readOnly,
-  });
+function PluginForm(
+  { ctx, fields, label }: {
+    readonly ctx: UiContext;
+    readonly fields: Readonly<Record<string, string>>;
+    readonly label: string;
+  },
+): VNode {
+  const disabled = ctx.readOnly || ctx.offline === true;
+  return h(OpForm, { csrf: ctx.csrf, action: "/plugins", label, fields, disabled });
+}
+
+/** The docs link, the spec and — for a wired plugin with an options schema — the options link. */
+function CardLinks({ row }: { readonly row: PluginRow }): VNode {
+  const { entry } = row;
+  const options = row.wired && entry.optionsSchema !== undefined;
+  return h(
+    "p",
+    null,
+    h("a", { href: docsUrl(entry) }, "Docs"),
+    " · ",
+    h(Mono, null, entry.spec),
+    options ? h(Fragment, null, " · ", h("a", { href: optionsHref(entry.name) }, "Options")) : null,
+  );
 }
 
 /** One catalogue row: what it is, what this project has done with it, and the one thing to do. */
-function card(ctx: UiContext, row: PluginRow): RawHtml {
+function Card({ ctx, row }: { readonly ctx: UiContext; readonly row: PluginRow }): VNode {
+  const { entry } = row;
   const state = row.wired ? "wired" : row.dependency ? "pinned" : "available";
-  return html`<article class="card" id="${row.entry.name}">
-<strong>${row.entry.name}</strong>
-<span class="badge">${row.entry.version}</span>
-<span class="badge">${state}</span>
-${row.entry.verb ? html`<span class="badge">denext ${row.entry.verb}</span>` : ""}
-<span>${row.entry.blurb}</span>
-<p><a href="${docsUrl(row.entry)}">Docs</a> · <code class="mono">${row.entry.spec}</code></p>
-${pluginForm(ctx, row.entry, isInstalled(row) ? "remove" : "add")}
-</article>`;
+  const op = isInstalled(row) ? "remove" : "add";
+  return h(
+    "article",
+    { class: "card", id: entry.name },
+    h("strong", null, entry.name),
+    " ",
+    h("span", { class: "badge" }, entry.version),
+    " ",
+    h("span", { class: "badge" }, state),
+    " ",
+    entry.verb ? h("span", { class: "badge" }, `denext ${entry.verb}`) : null,
+    " ",
+    h("span", null, entry.blurb),
+    h(CardLinks, { row }),
+    h(PluginForm, {
+      ctx,
+      fields: { name: entry.name, op },
+      label: op === "add" ? "Add" : "Remove",
+    }),
+  );
 }
 
-/** The catalogue, in its two groups. */
-function catalogSection(ctx: UiContext, rows: readonly PluginRow[], notice?: RawHtml): RawHtml {
+/** One group of catalogue cards. */
+function Cards({ ctx, rows }: { readonly ctx: UiContext; readonly rows: readonly PluginRow[] }) {
+  return h(
+    "div",
+    { class: "cards" },
+    rows.map((row) => h(Card, { key: row.entry.name, ctx, row })),
+  );
+}
+
+/** The wired plugins the catalogue does not know, and why they have no options panel. */
+function ThirdParty({ plugins }: { readonly plugins: readonly ConfiguredPlugin[] }): VNode {
+  return h(
+    Fragment,
+    null,
+    h("h2", null, "Third-party"),
+    h(
+      "ul",
+      null,
+      plugins.map((plugin) =>
+        h(
+          "li",
+          { key: plugin.factory },
+          h("code", null, plugin.call),
+          plugin.importSpec
+            ? h(Fragment, null, " from ", h("code", null, plugin.importSpec))
+            : null,
+        )
+      ),
+    ),
+    h(
+      Note,
+      null,
+      "No options panel for these: a third-party plugin publishes no options schema here. ",
+      "Edit its options in denext.config.ts.",
+    ),
+  );
+}
+
+/** What the panel says under `--offline`, where every add and remove renders disabled. */
+const OFFLINE_NOTE = "Offline — add and remove are refused: deno add needs the registry, and " +
+  "deno remove can re-resolve the remaining dependencies over the network.";
+
+/** The whole catalogue panel: the two groups, the third-party plugins and JSR discovery. */
+function PluginsPanel(
+  { ctx, state, discovery, notice }: {
+    readonly ctx: UiContext;
+    readonly state: ProjectState;
+    readonly discovery: Discovery;
+    readonly notice?: VNodeChild;
+  },
+): VNode {
+  const rows = rowsFor(state);
+  const others = thirdParty(state);
   const group = (kind: string) =>
-    html`<div class="cards">${
-      rows.filter((row) => row.entry.kind === kind).map((row) => card(ctx, row))
-    }</div>`;
-  return html`<section id="panel" data-panel="Plugins">
-<h1>Plugins</h1>
-<p class="lead">The first-party catalog. Adding or removing one previews the exact
-<code>deno</code> command and a diff of your config before anything is written.</p>
-${ctx.readOnly ? html`<p class="note">Read-only mode — add and remove are refused.</p>` : ""}
-${notice ?? ""}
-<h2>Plugins</h2>
-${group("plugin")}
-<h2>Libraries</h2>
-${group("library")}
-</section>`;
+    h(Cards, { ctx, rows: rows.filter((r) => r.entry.kind === kind) });
+  return h(
+    Panel,
+    { name: "Plugins", title: "Plugins" },
+    h(
+      "p",
+      { class: "lead" },
+      "The first-party catalog. Adding or removing one previews the exact ",
+      h("code", null, "deno"),
+      " command and a diff of your config before anything is written.",
+    ),
+    ctx.readOnly ? h(Note, null, "Read-only mode — add and remove are refused.") : null,
+    ctx.offline === true ? h(Note, null, OFFLINE_NOTE) : null,
+    notice ?? null,
+    h("h2", null, "Plugins"),
+    group("plugin"),
+    h("h2", null, "Libraries"),
+    group("library"),
+    others.length > 0 ? h(ThirdParty, { plugins: others }) : null,
+    h(JsrDiscovery, { ctx, discovery }),
+  );
 }
 
 /** The honest outcome when the config's default export cannot be spliced safely. */
-function manualNote(names: PluginNames): RawHtml {
-  return html`<p class="note">This config's default export is not an object literal, so the
-<code>plugins</code> entry cannot be spliced in safely. Add it by hand:</p>
-<pre class="out">import { ${names.factory} } from "${names.importSpec}";
-// …then add ${names.call} to the default export's plugins array.</pre>`;
+function ManualNote({ names }: { readonly names: PluginNames }): VNode {
+  return h(
+    Fragment,
+    null,
+    h(
+      Note,
+      null,
+      "This config's default export is not an object literal, so the ",
+      h("code", null, "plugins"),
+      " entry cannot be spliced in safely. Add it by hand:",
+    ),
+    h(
+      Out,
+      null,
+      `import { ${names.factory} } from "${names.importSpec}";\n`,
+      `// …then add ${names.call} to the default export's plugins array.`,
+    ),
+  );
 }
 
 /** The diff preview: nothing has been written yet, and this is exactly what will be. */
-function previewSection(ctx: UiContext, plan: Plan): RawHtml {
-  return html`<section id="panel" data-panel="Plugins">
-<h1>${plan.op === "add" ? "Add" : "Remove"} ${plan.entry.name}</h1>
-<p class="lead">Nothing has been written yet — review the change, then apply it.</p>
-<h2>Command</h2>
-<pre class="out">deno ${plan.command.join(" ")}</pre>
-${plan.bailed ? manualNote(plan.names) : ""}
-${plan.note ? html`<p class="note">${plan.note}</p>` : ""}
-${
+function PreviewSection({ ctx, plan }: { readonly ctx: UiContext; readonly plan: Plan }): VNode {
+  return h(
+    Panel,
+    { name: "Plugins", title: `${plan.op === "add" ? "Add" : "Remove"} ${plan.target.name}` },
+    h(PreviewLead, null),
+    h("h2", null, "Command"),
+    h(Out, null, `deno ${plan.command.join(" ")}`),
+    plan.bailed ? h(ManualNote, { names: plan.target.names }) : null,
+    plan.note ? h(Note, null, plan.note) : null,
     plan.diff
-      ? html`
-        <h2>${plan.configName}</h2>
-        ${diffHtml(plan.diff)}
-      `
-      : ""
-  }
-${pluginForm(ctx, plan.entry, plan.op, true)}
-<p><a href="/plugins">Cancel</a></p>
-</section>`;
+      ? h(Fragment, null, h("h2", null, plan.configName), h(DiffBlock, { diff: plan.diff }))
+      : null,
+    h(PluginForm, {
+      ctx,
+      fields: { ...plan.target.fields, op: plan.post, confirm: "1" },
+      label: "Apply",
+    }),
+    h("p", null, h("a", { href: "/plugins" }, "Cancel")),
+  );
+}
+
+/** The one-line summary of a finished plan: what changed, or the failed command. */
+function outcomeHead(plan: Plan, outcome: ApplyOutcome): string {
+  if (outcome.code !== 0) return `deno ${plan.command.join(" ")} exited ${outcome.code}.`;
+  const what = plan.op === "add" ? "Added" : "Removed";
+  const wrote = outcome.wrote ? ` and updated ${plan.configName}` : "";
+  return `${what} ${plan.target.name}${wrote}.`;
 }
 
 /** What the panel says after a plan ran. */
-function outcomeNotice(plan: Plan, outcome: ApplyOutcome): RawHtml {
-  const what = plan.op === "add" ? "Added" : "Removed";
-  const head = outcome.code === 0
-    ? `${what} ${plan.entry.name}${outcome.wrote ? ` and updated ${plan.configName}` : ""}.`
-    : `deno ${plan.command.join(" ")} exited ${outcome.code}.`;
-  return html`<p class="note">${head}</p>${
-    outcome.output ? html`<pre class="out">${outcome.output}</pre>` : ""
-  }`;
+function OutcomeNotice(
+  { plan, outcome }: { readonly plan: Plan; readonly outcome: ApplyOutcome },
+): VNode {
+  return h(
+    Fragment,
+    null,
+    h(Note, null, outcomeHead(plan, outcome)),
+    outcome.output ? h(Out, null, outcome.output) : null,
+  );
 }
 
 // ── the JSON twin ────────────────────────────────────────────────────────────
@@ -444,6 +612,7 @@ function payload(state: ProjectState): Record<string, unknown> {
       blurb: row.entry.blurb,
       dependency: row.dependency,
       wired: row.wired,
+      options: row.wired && row.entry.optionsSchema ? optionsHref(row.entry.name) : null,
     })),
     config: state.source === null ? null : state.configName,
   };
@@ -452,8 +621,8 @@ function payload(state: ProjectState): Record<string, unknown> {
 /** The machine view of a computed plan. */
 function planPayload(plan: Plan): Record<string, unknown> {
   return {
-    name: plan.entry.name,
-    op: plan.op,
+    name: plan.target.name,
+    op: plan.post,
     command: ["deno", ...plan.command].join(" "),
     diff: plan.diff,
     bailed: plan.bailed,
@@ -463,24 +632,36 @@ function planPayload(plan: Plan): Record<string, unknown> {
 
 // ── the handler ──────────────────────────────────────────────────────────────
 
-/** One posted field, from a form body or a JSON body. */
-function field(ctx: UiContext, key: string): string {
+/**
+ * One posted field, from a form body or a JSON body.
+ *
+ * @param ctx The request context.
+ * @param key The field name.
+ * @returns The posted string, or `""` when the field is absent or not a string.
+ */
+export function postedField(ctx: UiContext, key: string): string {
   const posted = ctx.form?.get(key);
   if (typeof posted === "string") return posted;
   const value = (ctx.body as Record<string, unknown> | undefined)?.[key];
   return typeof value === "string" ? value : "";
 }
 
-/** Whether this POST is the second step (apply), not the first (preview). */
-function confirmed(ctx: UiContext): boolean {
-  return field(ctx, "confirm") === "1" ||
+/**
+ * Whether this POST is the second step (apply), not the first (preview): `confirm=1` from a
+ * form, or `confirm: true` from a JSON body.
+ *
+ * @param ctx The request context.
+ * @returns `true` for the confirmed step.
+ */
+export function confirmed(ctx: UiContext): boolean {
+  return postedField(ctx, "confirm") === "1" ||
     (ctx.body as Record<string, unknown> | undefined)?.confirm === true;
 }
 
 /** The requested operation: `DELETE` means remove, otherwise the posted `op` field. */
 function opFor(ctx: UiContext): Op | null {
   if (ctx.method === "DELETE") return "remove";
-  const op = field(ctx, "op");
+  const op = postedField(ctx, "op");
   return op === "add" || op === "remove" ? op : null;
 }
 
@@ -490,19 +671,25 @@ function wantsStream(request: Request): boolean {
 }
 
 /** A refusal, in whichever shape the caller asked for. */
-function refusal(ctx: UiContext, state: ProjectState, reason: string, status: number): Response {
+async function refusal(
+  ctx: UiContext,
+  state: ProjectState,
+  reason: string,
+  status: number,
+): Promise<Response> {
   if (ctx.json) return jsonResponse({ ok: false, reason, ...payload(state) }, status);
-  return panelResponse(
-    ctx,
-    catalogSection(ctx, rowsFor(state), html`<p class="note">${reason}</p>`),
-    status,
-  );
+  const discovery = await discover(ctx);
+  const notice = h(Note, null, reason);
+  return page(ctx, h(PluginsPanel, { ctx, state, discovery, notice }), status);
 }
 
-/** The catalogue view. */
-function view(ctx: UiContext, state: ProjectState): Response {
-  if (ctx.json) return jsonResponse({ ok: true, ...payload(state) });
-  return panelResponse(ctx, catalogSection(ctx, rowsFor(state)));
+/** The catalogue view (with a JSR search when the `GET` carries `?q=`). */
+async function view(ctx: UiContext, state: ProjectState): Promise<Response> {
+  const discovery = await discover(ctx);
+  if (ctx.json) {
+    return jsonResponse({ ok: true, ...payload(state), ...discoveryPayload(discovery) });
+  }
+  return page(ctx, h(PluginsPanel, { ctx, state, discovery }));
 }
 
 /** The first POST: compute the change and show it. */
@@ -515,7 +702,7 @@ function preview(ctx: UiContext, plan: Plan, state: ProjectState): Response {
       ...payload(state),
     });
   }
-  return panelResponse(ctx, previewSection(ctx, plan));
+  return page(ctx, h(PreviewSection, { ctx, plan }));
 }
 
 /** The confirmed POST: run it, then answer with the refreshed catalogue (or a `303` for no-JS). */
@@ -525,9 +712,9 @@ async function apply(ctx: UiContext, plan: Plan, before: ProjectState): Promise<
     outcome = await applyPlan(plan, ctx.dir, ctx.signal);
   } catch (error) {
     const why = error instanceof Error ? error.message : String(error);
-    return refusal(ctx, before, `${plan.op} failed: ${why}`, 403);
+    return await refusal(ctx, before, `${plan.op} failed: ${why}`, 403);
   }
-  broadcast(ctx.events, { type: "plugins-changed", name: plan.entry.name });
+  broadcast(ctx.events, { type: "plugins-changed", name: plan.target.name });
   const state = await readProject(ctx.dir);
   if (ctx.json) {
     return jsonResponse({
@@ -543,10 +730,12 @@ async function apply(ctx: UiContext, plan: Plan, before: ProjectState): Promise<
   if (!ctx.fragment) {
     return new Response(null, {
       status: 303,
-      headers: { location: `/plugins#${plan.entry.name}` },
+      headers: { location: `/plugins#${plan.target.name}` },
     });
   }
-  return panelResponse(ctx, catalogSection(ctx, rowsFor(state), outcomeNotice(plan, outcome)));
+  const discovery = await discover(ctx);
+  const notice = h(OutcomeNotice, { plan, outcome });
+  return page(ctx, h(PluginsPanel, { ctx, state, discovery, notice }));
 }
 
 /** The confirmed POST, streamed: the `deno` child's output as it arrives. */
@@ -559,27 +748,57 @@ function streamApply(ctx: UiContext, plan: Plan): Response {
     {
       prelude: [`$ deno ${plan.command.join(" ")}`],
       signal: ctx.signal,
-      settled: () => broadcast(ctx.events, { type: "plugins-changed", name: plan.entry.name }),
+      settled: () => broadcast(ctx.events, { type: "plugins-changed", name: plan.target.name }),
     },
   );
 }
 
-/** A mutation: validate the name against the catalogue, plan it, then preview or apply it. */
-async function mutate(request: Request, ctx: UiContext, state: ProjectState): Promise<Response> {
-  if (ctx.readOnly) return refusal(ctx, state, "read-only", 403);
-  const name = field(ctx, "name");
-  const entry = CATALOG_ROWS.find((row) => row.name === name);
-  if (!entry) return refusal(ctx, state, `unknown plugin "${name}"`, 400);
-  const op = opFor(ctx);
-  if (op === null) return refusal(ctx, state, `unknown operation "${field(ctx, "op")}"`, 400);
-  const plan = OPS[op](entry, state);
+/** Preview a plan, or — confirmed and not bailed — apply it (streamed when asked). */
+async function run(
+  request: Request,
+  ctx: UiContext,
+  plan: Plan,
+  state: ProjectState,
+): Promise<Response> {
   if (!confirmed(ctx) || plan.bailed) return preview(ctx, plan, state);
   return wantsStream(request) ? streamApply(ctx, plan) : await apply(ctx, plan, state);
 }
 
 /**
- * Serve the plugin-manager panel: the catalogue on `GET`, a diff preview on the first `POST`,
- * and the `deno add`/`deno remove` + config write on a `POST` carrying `confirm=1`.
+ * `op=add-jsr`: a third-party package, validated (name, export) before anything runs, its version
+ * read from JSR in this request, then the same add path — and diff discipline — as the catalogue.
+ */
+async function mutateJsr(request: Request, ctx: UiContext, state: ProjectState) {
+  const resolved = await resolveJsrAdd(ctx, postedField(ctx, "spec"), postedField(ctx, "export"));
+  if (!resolved.ok) return await refusal(ctx, state, resolved.reason, resolved.status);
+  const { spec, names, fields } = resolved.add;
+  const target: Target = { name: spec, kind: "plugin", names, fields, addOp: "add-jsr" };
+  return await run(request, ctx, planAdd(target, state), state);
+}
+
+/**
+ * A mutation: validate the name against the catalogue, plan it, then preview or apply it. Under
+ * `--offline` a valid add or remove is refused with a `503` — preview included — before anything
+ * runs: `deno add` needs the registry, and `deno remove` can re-resolve the rest over the network.
+ */
+async function mutate(request: Request, ctx: UiContext, state: ProjectState): Promise<Response> {
+  if (ctx.readOnly) return await refusal(ctx, state, "read-only", 403);
+  if (postedField(ctx, "op") === "add-jsr") return await mutateJsr(request, ctx, state);
+  const name = postedField(ctx, "name");
+  const entry = CATALOG_ROWS.find((row) => row.name === name);
+  if (!entry) return await refusal(ctx, state, `unknown plugin "${name}"`, 400);
+  const op = opFor(ctx);
+  if (op === null) {
+    return await refusal(ctx, state, `unknown operation "${postedField(ctx, "op")}"`, 400);
+  }
+  if (ctx.offline === true) return await refusal(ctx, state, OFFLINE_REFUSALS[op], OFFLINE_STATUS);
+  return await run(request, ctx, OPS[op](catalogTarget(entry), state), state);
+}
+
+/**
+ * Serve the plugin-manager panel: the catalogue (and a JSR search for `?q=`) on `GET`, a diff
+ * preview on the first `POST`, and the `deno add`/`deno remove` + config write on a `POST`
+ * carrying `confirm=1`.
  *
  * @param request The incoming request (its `Accept` decides fragment vs streamed vs document).
  * @param ctx The kernel's request context (already past the origin, CSRF and read-only gates).
@@ -590,6 +809,6 @@ export const pluginsPanel: UiHandler = async (
   ctx: UiContext,
 ): Promise<Response> => {
   const state = await readProject(ctx.dir);
-  if (ctx.method === "GET" || ctx.method === "HEAD") return view(ctx, state);
+  if (ctx.method === "GET" || ctx.method === "HEAD") return await view(ctx, state);
   return await mutate(request, ctx, state);
 };

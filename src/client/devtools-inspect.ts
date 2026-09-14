@@ -15,7 +15,7 @@
 // lazily on request, and the only per-commit cost is the single observer notify the
 // reconciler already guards.
 
-import type { Fiber, HookCell } from "./fiber/fiber.ts";
+import type { DebugValueEntry, Fiber, HookCell } from "./fiber/fiber.ts";
 import {
   clearFiberProps,
   devRootFibers,
@@ -203,6 +203,14 @@ export interface InspectHook {
    * extra cells (e.g. the memo behind `useTransition`) carry the hook without a name.
    */
   hook?: string;
+  /**
+   * The `useDebugValue` label recorded after this cell during the last render — its
+   * `format` applied now, lazily (a throwing formatter reads `"<format threw>"`). A call
+   * takes no cell, so it rides the row of the cell it FOLLOWS: for the idiomatic call at
+   * the end of a custom hook, that hook's last cell. Several calls there read as an array.
+   * Absent when none was recorded (always, in production).
+   */
+  debug?: SerializedValue;
 }
 
 /** Where a component was declared — the build-time position behind the panel's source link. */
@@ -362,7 +370,41 @@ function serializeHookCell(cell: HookCell, index: number, named?: ResolvedHookNa
 function serializeHooks(fiber: Fiber, names?: ResolvedHookName[]): InspectHook[] {
   const cells = fiber.hooks;
   if (!cells || cells.length === 0) return [];
-  return cells.map((cell, i) => serializeHookCell(cell, i, names?.[i]));
+  const rows = cells.map((cell, i) => serializeHookCell(cell, i, names?.[i]));
+  if (fiber.debugValues !== undefined) attachDebugValues(fiber.debugValues, rows);
+  return rows;
+}
+
+/** What a `useDebugValue` formatter that throws is shown as (the inspector never throws). */
+const FORMAT_THREW = "<format threw>";
+
+/** A recorded debug value as displayed: its formatter applied now — lazily — and guarded. */
+function formatDebugValue(entry: DebugValueEntry): unknown {
+  if (entry.format === undefined) return entry.value;
+  try {
+    return entry.format(entry.value);
+  } catch {
+    return FORMAT_THREW;
+  }
+}
+
+/**
+ * Put each recorded `useDebugValue` call on the row of the cell it follows (`index - 1`;
+ * a call before any cell lands on the first row). A component with no cells has no row
+ * to carry one. Several calls on one row serialize as an array with one-level entries —
+ * never an inline preview of their contents, so the snapshot's string redaction holds.
+ */
+function attachDebugValues(entries: DebugValueEntry[], rows: InspectHook[]): void {
+  const byRow = new Map<number, unknown[]>();
+  for (const entry of entries) {
+    const row = Math.min(Math.max(entry.index - 1, 0), rows.length - 1);
+    const values = byRow.get(row) ?? [];
+    values.push(formatDebugValue(entry));
+    byRow.set(row, values);
+  }
+  for (const [row, values] of byRow) {
+    rows[row].debug = values.length === 1 ? serializeValue(values[0]) : serializeValueDeep(values);
+  }
 }
 
 /**

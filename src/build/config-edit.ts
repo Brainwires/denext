@@ -41,7 +41,7 @@ const MAX_WIDTH = 100;
 /** How much offending source a bail quotes back. */
 const SNIPPET_MAX = 200;
 /** The file name config diffs are labelled with. */
-const CONFIG_LABEL = "denext.config.ts";
+export const CONFIG_LABEL = "denext.config.ts";
 /** A key that can be written without quotes. */
 const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 
@@ -177,7 +177,7 @@ function compactText(value: unknown, json: boolean): string {
  * @param json Write JSON: quoted keys, no trailing comma.
  * @returns The serialised source text, without a trailing comma of its own.
  */
-function renderValue(value: unknown, indent: string, column: number, json: boolean): string {
+export function renderValue(value: unknown, indent: string, column: number, json: boolean): string {
   const compact = compactText(value, json);
   if (column + compact.length + 1 <= MAX_WIDTH) return compact;
   const inner = `${indent}  `;
@@ -233,7 +233,7 @@ function lineStart(ctx: Ctx, at: number): number {
 }
 
 /** The leading whitespace of the line `at` sits on. */
-function indentAt(ctx: Ctx, at: number): string {
+export function indentAt(ctx: Ctx, at: number): string {
   const from = lineStart(ctx, at);
   let i = from;
   while (i < at && isBlank(ctx.bytes[i])) i++;
@@ -241,7 +241,7 @@ function indentAt(ctx: Ctx, at: number): string {
 }
 
 /** The character column `at` sits at (characters, not bytes — widths are visual). */
-function columnAt(ctx: Ctx, at: number): number {
+export function columnAt(ctx: Ctx, at: number): number {
   return slice(ctx, lineStart(ctx, at), at).length;
 }
 
@@ -251,7 +251,7 @@ function rightTrim(text: string): string {
 }
 
 /** A bail's quoted source, truncated. */
-function snippetOf(ctx: Ctx, node: Node): string {
+export function snippetOf(ctx: Ctx, node: Node): string {
   const text = slice(ctx, startOf(ctx, node), endOf(ctx, node));
   return text.length > SNIPPET_MAX ? `${text.slice(0, SNIPPET_MAX)}…` : text;
 }
@@ -259,7 +259,7 @@ function snippetOf(ctx: Ctx, node: Node): string {
 // --- AST shape helpers ------------------------------------------------------
 
 /** Strip the wrappers that never change a value's identity (`(x)`, `x as T`, `x satisfies T`). */
-function unwrap(node: Node): Node {
+export function unwrap(node: Node): Node {
   let n = node;
   while (
     n && (n.type === "ParenthesisExpression" || n.type === "TsAsExpression" ||
@@ -309,7 +309,7 @@ interface Slot {
 }
 
 /** Every named member of an object literal, in source order. */
-function objectSlots(ctx: Ctx, obj: Node): Map<string, Slot> {
+export function objectSlots(ctx: Ctx, obj: Node): Map<string, Slot> {
   const out = new Map<string, Slot>();
   for (const prop of obj.properties ?? []) {
     const name = propName(prop);
@@ -646,7 +646,7 @@ async function locateScope(source: string): Promise<{ ctx: Ctx; scope: Scope } |
 }
 
 /** The slot a top-level key occupies in this scope, if it is set. */
-function scopeSlot(ctx: Ctx, scope: Scope, key: string): Slot | null {
+export function scopeSlot(ctx: Ctx, scope: Scope, key: string): Slot | null {
   if (scope.obj) return objectSlots(ctx, scope.obj).get(key) ?? null;
   return scope.named?.get(key) ?? null;
 }
@@ -715,7 +715,7 @@ function resolvePath(
  * otherwise hand the caller a file that no longer parses; re-parsing costs one more `swc` pass
  * per write and turns that class of bug into an honest refusal.
  */
-async function commit(
+export async function commit(
   source: string,
   ctx: Ctx,
   edits: Edit[],
@@ -730,12 +730,12 @@ async function commit(
 }
 
 /** A refusal, optionally carrying the patch the user would have to apply by hand. */
-function bail(reason: string, snippet: string, diff?: string): EditResult {
+export function bail(reason: string, snippet: string, diff?: string): EditResult {
   return diff ? { ok: false, reason, snippet, diff } : { ok: false, reason, snippet };
 }
 
 /** The scope for a source, or the refusal to hand back when there is none. */
-async function scopeOf(
+export async function scopeOf(
   source: string,
 ): Promise<{ ok: true; ctx: Ctx; scope: Scope } | { ok: false; result: EditResult }> {
   const found = await locateScope(source);

@@ -39,22 +39,26 @@ import { createUnifiedDiff } from "../../build/patch-diff.ts";
 import { CONFIG_FILES } from "../../build/paths.ts";
 import type { DenextConfig } from "../../server/config.ts";
 import { validateDenextConfig, warnUnknownConfigKeys } from "../../server/config-validate.ts";
+import { Fragment, h } from "../../jsx/jsx-runtime.ts";
+import type { VNode } from "../../jsx/types.ts";
+import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
 import {
-  diffHtml,
-  esc,
-  html,
-  jsonResponse,
-  panelResponder,
-  raw,
-  type RawHtml,
-  type UiContext,
-  type UiHandler,
-} from "../html.ts";
+  DiffBlock,
+  Hidden,
+  Mono,
+  NoChange,
+  Note,
+  OpForm,
+  Out,
+  Panel,
+  PreviewLead,
+} from "../components.ts";
+import { Raw, renderView } from "../view.ts";
 import { UI_CSRF_FIELD, uiSafeJoin, writeFileAtomic } from "../security.ts";
-import { control } from "../form/control.ts";
 import { loadConfigSchema, resolveAt, type SchemaNode } from "../form/schema.ts";
 import { widgetFor, type WidgetSpec } from "../form/widget.ts";
 import { readWidget, renderWidget } from "../form/render.ts";
+import { control } from "../form/control.ts";
 import {
   applyListOp,
   decode,
@@ -460,9 +464,9 @@ interface Feedback {
   readonly errors: Record<string, string>;
 }
 
-/** One hidden input. */
-function hidden(name: string, value: string): RawHtml {
-  return control({ tag: "input", type: "hidden", name, value });
+/** One hidden input, keyed by its name (every list of them has unique names). */
+function hidden(name: string, value: string): VNode {
+  return h(Hidden, { key: name, name, value });
 }
 
 /** The URL a section's form posts to. */
@@ -471,125 +475,223 @@ function sectionAction(key: string): string {
 }
 
 /** A read-only cell: the value's own source text, and where to edit it by hand. */
-function codeCell(state: ConfigState, section: Section): RawHtml {
-  return html`<pre class="out">${section.text ?? "— not set —"}</pre>
-<p class="lead">Read-only: this value is code, not data, so the editor never rewrites it.
-Open <code class="mono">${state.path}</code> in your editor to change it.</p>`;
+function ReadOnlyCell(
+  { state, section }: { readonly state: ConfigState; readonly section: Section },
+): VNode {
+  return h(
+    Fragment,
+    null,
+    h(Out, null, section.text ?? "— not set —"),
+    h(
+      "p",
+      { class: "lead" },
+      "Read-only: this value is code, not data, so the editor never rewrites it. Open ",
+      h(Mono, null, state.path),
+      " in your editor to change it.",
+    ),
+  );
+}
+
+/** The `plugins` key: shown as code, with the pointer to the panel that owns it. */
+function ManagedCell(
+  { state, section }: { readonly state: ConfigState; readonly section: Section },
+): VNode {
+  return h(
+    Fragment,
+    null,
+    h(
+      Note,
+      null,
+      "The ",
+      h("a", { href: "/plugins" }, "plugins panel"),
+      " owns this key — it keeps the config array and the import map in step.",
+    ),
+    h(ReadOnlyCell, { state, section }),
+  );
+}
+
+/** What {@linkcode EditableField} renders: one editable section's widget tree. */
+interface EditableProps {
+  /** The current request (its token and read-only flag). */
+  readonly ctx: UiContext;
+  /** The `_base` stamp the form carries. */
+  readonly base: string;
+  /** The section being edited. */
+  readonly section: Section;
+  /** Its widget tree. */
+  readonly spec: WidgetSpec;
+  /** The posted value and errors of a refused submit, when they belong to this section. */
+  readonly feedback?: Feedback;
 }
 
 /** The form for an editable section: the widget tree, Save, and Clear when the key is set. */
-function sectionForm(
-  ctx: UiContext,
-  base: string,
-  section: Section,
-  feedback?: Feedback,
-): RawHtml {
+function EditableField({ ctx, base, section, spec, feedback }: EditableProps): VNode {
   const value = feedback ? feedback.value : section.value;
-  const spec = section.spec;
-  if (!spec) return html``;
-  return html`<form method="post" action="${sectionAction(section.key)}">
-${hidden(BASE_FIELD, base)}
-${renderWidget(spec, value, { csrf: ctx.csrf, readOnly: ctx.readOnly, errors: feedback?.errors })}
-<button type="submit"${ctx.readOnly ? raw(" disabled") : ""}>Save</button>
-${
-    section.present
-      ? html`
-        <button type="submit" class="ghost" name="clear" value="1" ${ctx.readOnly
-          ? raw(" disabled")
-          : ""}>Clear</button>
-      `
-      : ""
-  }
-</form>`;
+  const widgets = renderWidget(spec, value, {
+    csrf: ctx.csrf,
+    readOnly: ctx.readOnly,
+    errors: feedback?.errors,
+  });
+  const clear = h(
+    "button",
+    { type: "submit", class: "ghost", name: "clear", value: "1", disabled: ctx.readOnly },
+    "Clear",
+  );
+  return h(
+    "form",
+    { method: "post", action: sectionAction(section.key) },
+    hidden(BASE_FIELD, base),
+    h(Raw, { html: widgets }),
+    h("button", { type: "submit", disabled: ctx.readOnly }, "Save"),
+    section.present ? h(Fragment, null, " ", clear) : null,
+  );
+}
+
+/** What one section of the editor is rendered from. */
+interface SectionProps {
+  /** The current request. */
+  readonly ctx: UiContext;
+  /** The project's config. */
+  readonly state: ConfigState;
+  /** The section. */
+  readonly section: Section;
+  /** The posted value and errors of a refused submit (for whichever section was posted). */
+  readonly feedback?: Feedback;
+}
+
+/** A section's body, by bucket: the plugins hand-off, a code cell, or the widget form. */
+function SectionBody({ ctx, state, section, feedback }: SectionProps): VNode {
+  if (section.kind === "managed") return h(ManagedCell, { state, section });
+  if (section.kind === "readonly") return h(ReadOnlyCell, { state, section });
+  if (!section.spec) return h(Fragment, null);
+  return h(EditableField, { ctx, base: state.base, section, spec: section.spec, feedback });
 }
 
 /** One top-level key: a collapsible section, open when the key is set. */
-function sectionHtml(
-  ctx: UiContext,
-  state: ConfigState,
-  section: Section,
-  feedback?: Feedback,
-): RawHtml {
+function ConfigSection({ ctx, state, section, feedback }: SectionProps): VNode {
   const mine = feedback?.key === section.key;
   const badge = section.kind === "editable" ? (section.present ? "set" : "unset") : section.kind;
-  const open = section.present || mine ? " open" : "";
-  return html`
-    ${raw(`<details id="${esc(section.key)}"${open}>`)}
-        <summary><strong>${section.key}</strong> <span class="badge">${badge}</span></summary>
-        ${section.description ? html`<p class="lead">${section.description}</p>` : ""}
-        ${section.kind === "managed"
-          ? html`<p class="note">The <a href="/plugins">plugins panel</a> owns this key — it keeps
-the config array and the import map in step.</p>${codeCell(state, section)}`
-          : section.kind === "readonly"
-          ? codeCell(state, section)
-          : sectionForm(ctx, state.base, section, mine ? feedback : undefined)}
-        </details>
-  `;
+  return h(
+    "details",
+    { id: section.key, open: section.present || mine },
+    h("summary", null, h("strong", null, section.key), " ", h("span", { class: "badge" }, badge)),
+    section.description ? h("p", { class: "lead" }, section.description) : null,
+    h(SectionBody, { ctx, state, section, feedback: mine ? feedback : undefined }),
+  );
 }
 
-/** The raw-file escape hatch: the whole file, saved only if it still parses as a config. */
-function rawSection(ctx: UiContext, state: ConfigState): RawHtml {
-  return html`
-    <details id="raw-file">
-      <summary><strong>Edit the file directly</strong></summary>
-      <p class="lead">The escape hatch: the whole file, saved only when it still parses as a denext
-    config. Everything above edits one key and preserves the rest byte for byte.</p>
-      <form method="post" action="/config?raw=1">
-    ${hidden(UI_CSRF_FIELD, ctx.csrf)}${hidden(BASE_FIELD, state.base)}
-    ${control({
+/** The request and the config state, which every page-level piece of the editor takes. */
+interface StateProps {
+  /** The current request. */
+  readonly ctx: UiContext;
+  /** The project's config. */
+  readonly state: ConfigState;
+}
+
+/**
+ * The raw-file escape hatch: the whole file, saved only if it still parses as a config. The
+ * source is the text content of the form renderer's `<textarea>` control, so the renderer
+ * escapes it and a browser posts back exactly the file's bytes.
+ */
+function RawFileEditor({ ctx, state }: StateProps): VNode {
+  const editor = h(Raw, {
+    html: control({
       tag: "textarea",
       name: "raw",
-      rows: 18,
-      value: state.exists ? state.source : EMPTY_CONFIG,
       ariaLabel: `${state.name} source`,
       disabled: ctx.readOnly,
-    })}
-    <button type="submit"${ctx.readOnly ? raw(" disabled") : ""}>Save file</button>
-      </form>
-    </details>
-  `;
+      rows: 18,
+      value: state.exists ? state.source : EMPTY_CONFIG,
+    }),
+  });
+  return h(
+    "details",
+    { id: "raw-file" },
+    h("summary", null, h("strong", null, "Edit the file directly")),
+    h(
+      "p",
+      { class: "lead" },
+      "The escape hatch: the whole file, saved only when it still parses as a denext config. " +
+        "Everything above edits one key and preserves the rest byte for byte.",
+    ),
+    h(OpForm, {
+      csrf: ctx.csrf,
+      action: "/config?raw=1",
+      label: "Save file",
+      fields: { [BASE_FIELD]: state.base },
+      extra: editor,
+      disabled: ctx.readOnly,
+    }),
+  );
 }
 
 /** The "this project has no denext config yet" header, with the offer to create one. */
-function createOffer(ctx: UiContext, state: ConfigState): RawHtml {
-  return html`<p class="note">This project has no denext config. Saving any section below
-creates <code class="mono">${state.name}</code>; so does this:</p>
-<form method="post" action="/config?create=1">
-${hidden(UI_CSRF_FIELD, ctx.csrf)}
-<button type="submit"${ctx.readOnly ? raw(" disabled") : ""}>Create ${state.name}</button>
-</form>`;
+function CreateOffer({ ctx, state }: StateProps): VNode {
+  return h(
+    Fragment,
+    null,
+    h(
+      Note,
+      null,
+      "This project has no denext config. Saving any section below creates ",
+      h(Mono, null, state.name),
+      "; so does this:",
+    ),
+    h(OpForm, {
+      csrf: ctx.csrf,
+      action: "/config?create=1",
+      label: `Create ${state.name}`,
+      disabled: ctx.readOnly,
+    }),
+  );
 }
 
 /** The header a config whose module shape the writer cannot own gets instead of Save buttons. */
-function unsupportedNote(state: ConfigState): RawHtml {
-  return html`<p class="note"><code class="mono">${state.name}</code> cannot be edited key by key:
-its default export is neither a config object, a <code>defineConfig(…)</code> call, a function
-returning one, nor a set of named config exports. Use the file editor at the bottom of this page,
-or rewrite the export in one of those shapes.</p>`;
+function UnsupportedNote({ name }: { readonly name: string }): VNode {
+  return h(
+    Note,
+    null,
+    h(Mono, null, name),
+    " cannot be edited key by key: its default export is neither a config object, a ",
+    h("code", null, "defineConfig(…)"),
+    " call, a function returning one, nor a set of named config exports. Use the file editor " +
+      "at the bottom of this page, or rewrite the export in one of those shapes.",
+  );
 }
 
 /** What the panel page is rendered from. */
 interface PanelOptions {
   /** A message to show above the sections. */
-  readonly notice?: RawHtml;
+  readonly notice?: VNode;
   /** The posted value and errors of a refused submit. */
   readonly feedback?: Feedback;
 }
 
 /** The whole editor: one collapsible section per top-level key, then the escape hatch. */
-function panelBody(ctx: UiContext, state: ConfigState, options: PanelOptions = {}): RawHtml {
-  return html`<section id="panel" data-panel="Config">
-<h1>Config</h1>
-<p class="lead">Every key of <code class="mono">${state.path}</code>, rendered from the config
-schema. A change is previewed as a diff before anything is written; comments and the values you
-did not touch come through byte for byte.</p>
-${ctx.readOnly ? html`<p class="note">Read-only mode — every change is refused.</p>` : ""}
-${state.exists ? "" : createOffer(ctx, state)}
-${state.exists && state.form === "unsupported" ? unsupportedNote(state) : ""}
-${options.notice ?? ""}
-${state.sections.map((section) => sectionHtml(ctx, state, section, options.feedback))}
-${rawSection(ctx, state)}
-</section>`;
+function ConfigPanel(
+  { ctx, state, options }: StateProps & { readonly options: PanelOptions },
+): VNode {
+  const { notice, feedback } = options;
+  return h(
+    Panel,
+    { name: "Config", title: "Config" },
+    h(
+      "p",
+      { class: "lead" },
+      "Every key of ",
+      h(Mono, null, state.path),
+      ", rendered from the config schema. A change is previewed as a diff before anything is " +
+        "written; comments and the values you did not touch come through byte for byte.",
+    ),
+    ctx.readOnly ? h(Note, null, "Read-only mode — every change is refused.") : null,
+    state.exists ? null : h(CreateOffer, { ctx, state }),
+    state.exists && state.form === "unsupported" ? h(UnsupportedNote, { name: state.name }) : null,
+    notice ?? null,
+    state.sections.map((section) =>
+      h(ConfigSection, { key: section.key, ctx, state, section, feedback })
+    ),
+    h(RawFileEditor, { ctx, state }),
+  );
 }
 
 /** A not-yet-applied write: the diff, the fields that re-post it, and the Confirm button. */
@@ -599,39 +701,49 @@ interface Pending {
   /** Where the confirm form posts. */
   readonly action: string;
   /** The hidden fields that re-post exactly this change. */
-  readonly fields: RawHtml;
+  readonly fields: readonly VNode[];
   /** The SHA-256 of the source this change was computed against. */
   readonly base: string;
   /** The unified diff of what will be written. */
   readonly diff: string;
   /** A message shown above the diff (a bail's reason, a "no change" note). */
-  readonly notes?: RawHtml;
+  readonly notes?: VNode;
   /** Whether there is anything to confirm. */
   readonly ok: boolean;
   /** The live section form, rendered under the diff so the change is visible, not just diffed. */
-  readonly body?: RawHtml;
+  readonly body?: VNode;
+}
+
+/** The Confirm form: the change's own fields again, plus `confirm=1`. */
+function ConfirmForm(
+  { ctx, pending }: { readonly ctx: UiContext; readonly pending: Pending },
+): VNode {
+  return h(OpForm, {
+    csrf: ctx.csrf,
+    action: pending.action,
+    label: "Confirm",
+    fields: { [BASE_FIELD]: pending.base },
+    extra: [...pending.fields, hidden("confirm", "1")],
+    disabled: ctx.readOnly,
+  });
 }
 
 /** The preview page: nothing has been written yet, and this is exactly what will be. */
-function previewBody(ctx: UiContext, pending: Pending): RawHtml {
-  return html`<section id="panel" data-panel="Config">
-<h1>${pending.title}</h1>
-<p class="lead">Nothing has been written yet — review the change, then apply it.</p>
-${pending.notes ?? ""}
-${pending.diff ? diffHtml(pending.diff) : ""}
-${
-    pending.ok
-      ? html`<form method="post" action="${pending.action}">
-${hidden(UI_CSRF_FIELD, ctx.csrf)}${hidden(BASE_FIELD, pending.base)}${pending.fields}${
-        hidden("confirm", "1")
-      }
-<button type="submit"${ctx.readOnly ? raw(" disabled") : ""}>Confirm</button>
-</form>`
-      : ""
-  }
-<p><a href="/config">Back to the editor</a></p>
-${pending.body ? html`<h2>The section as it will read</h2>${pending.body}` : ""}
-</section>`;
+function PreviewPanel(
+  { ctx, pending }: { readonly ctx: UiContext; readonly pending: Pending },
+): VNode {
+  return h(
+    Panel,
+    { name: "Config", title: pending.title },
+    h(PreviewLead, null),
+    pending.notes ?? null,
+    pending.diff ? h(DiffBlock, { diff: pending.diff }) : null,
+    pending.ok ? h(ConfirmForm, { ctx, pending }) : null,
+    h("p", null, h("a", { href: "/config" }, "Back to the editor")),
+    pending.body
+      ? h(Fragment, null, h("h2", null, "The section as it will read"), pending.body)
+      : null,
+  );
 }
 
 // ── responses ────────────────────────────────────────────────────────────────
@@ -639,14 +751,25 @@ ${pending.body ? html`<h2>The section as it will read</h2>${pending.body}` : ""}
 /** Wrap a panel section as a fragment (the `ui.js` swap) or as the full document. */
 const panelResponse = panelResponder("Config", "/config");
 
+/** The editor page, with an optional notice above the sections and a refused submit's feedback. */
+function editorResponse(
+  ctx: UiContext,
+  state: ConfigState,
+  options: PanelOptions = {},
+  status?: number,
+): Response {
+  return panelResponse(ctx, renderView(h(ConfigPanel, { ctx, state, options })), status);
+}
+
+/** A preview page, as the fragment or the whole document. */
+function previewResponse(ctx: UiContext, pending: Pending, status?: number): Response {
+  return panelResponse(ctx, renderView(h(PreviewPanel, { ctx, pending })), status);
+}
+
 /** A refusal, in whichever shape the caller asked for. */
 function refuse(ctx: UiContext, state: ConfigState, reason: string, status: number): Response {
   if (ctx.json) return jsonResponse({ ok: false, reason }, status);
-  return panelResponse(
-    ctx,
-    panelBody(ctx, state, { notice: html`<p class="note">${reason}</p>` }),
-    status,
-  );
+  return editorResponse(ctx, state, { notice: h(Note, null, reason) }, status);
 }
 
 /**
@@ -668,8 +791,8 @@ async function write(
   }
   const next = await readState(ctx.dir);
   if (ctx.json) return jsonResponse({ ok: true, applied: true, file: next.name });
-  const notice = html`<p class="note">Wrote ${next.name}.</p>`;
-  if (ctx.fragment) return panelResponse(ctx, panelBody(ctx, next, { notice }));
+  const notice = h(Note, null, `Wrote ${next.name}.`);
+  if (ctx.fragment) return editorResponse(ctx, next, { notice });
   return new Response(null, { status: 303, headers: { location: `/config#${anchor}` } });
 }
 
@@ -726,8 +849,8 @@ function invalid(
 ): Response {
   if (ctx.json) return jsonResponse({ ok: false, reason: error.message, field: error.field }, 422);
   const feedback: Feedback = { key, value, errors: { [error.field]: error.message } };
-  const notice = html`<p class="note" role="alert">${error.message}</p>`;
-  return panelResponse(ctx, panelBody(ctx, state, { notice, feedback }), 422);
+  const notice = h(Note, { role: "alert" }, error.message);
+  return editorResponse(ctx, state, { notice, feedback }, 422);
 }
 
 /** The preview (or the writer's refusal) for one planned section write. */
@@ -745,33 +868,40 @@ function sectionPreview(ctx: UiContext, state: ConfigState, plan: Plan): Respons
       result.ok ? 200 : 422,
     );
   }
-  const fields = html`${hidden("section", section.key)}${
-    encode(section.spec as WidgetSpec, plan.posted).map((entry) => hidden(entry.name, entry.value))
-  }${plan.request ? hidden(OP_FIELD, postedField(ctx, OP_FIELD)) : ""}`;
-  return panelResponse(
+  const spec = section.spec as WidgetSpec;
+  const fields = [
+    hidden("section", section.key),
+    ...encode(spec, plan.posted).map((entry) => hidden(entry.name, entry.value)),
+    ...(plan.request ? [hidden(OP_FIELD, postedField(ctx, OP_FIELD))] : []),
+  ];
+  const body = h(EditableField, {
     ctx,
-    previewBody(ctx, {
-      title: `Config · ${section.key}`,
-      action: sectionAction(section.key),
-      base: state.base,
-      fields,
-      diff: result.ok ? result.diff : (result.diff ?? ""),
-      notes: result.ok
-        ? (result.diff
-          ? undefined
-          : html`<p class="note">No change — the file already says this.</p>`)
-        : html`
-          <p class="note" role="alert">${result.reason}</p>
-          <pre class="out">${result.snippet}</pre>
-        `,
-      ok: result.ok && result.diff !== "",
-      body: sectionForm(ctx, state.base, { ...section, present: true }, {
-        key: section.key,
-        value: plan.next,
-        errors: {},
-      }),
-    }),
-    result.ok ? 200 : 422,
+    base: state.base,
+    section: { ...section, present: true },
+    spec,
+    feedback: { key: section.key, value: plan.next, errors: {} },
+  });
+  const pending: Pending = {
+    title: `Config · ${section.key}`,
+    action: sectionAction(section.key),
+    base: state.base,
+    fields,
+    diff: result.ok ? result.diff : (result.diff ?? ""),
+    notes: previewNotes(result),
+    ok: result.ok && result.diff !== "",
+    body,
+  };
+  return previewResponse(ctx, pending, result.ok ? 200 : 422);
+}
+
+/** What a section preview says above its diff: nothing, "no change", or the writer's refusal. */
+function previewNotes(result: EditResult): VNode | undefined {
+  if (result.ok) return result.diff ? undefined : h(NoChange, null);
+  return h(
+    Fragment,
+    null,
+    h(Note, { role: "alert" }, result.reason),
+    h(Out, null, result.snippet),
   );
 }
 
@@ -810,20 +940,15 @@ async function writeRaw(ctx: UiContext, state: ConfigState): Promise<Response> {
   const diff = createUnifiedDiff(state.source, source, state.name);
   if (confirmed(ctx)) return await write(ctx, state, source, "raw-file");
   if (ctx.json) return jsonResponse({ ok: true, applied: false, diff });
-  return panelResponse(
-    ctx,
-    previewBody(ctx, {
-      title: `Config · ${state.name}`,
-      action: "/config?raw=1",
-      base: state.base,
-      fields: hidden("raw", source),
-      diff,
-      ok: diff !== "",
-      notes: diff === ""
-        ? html`<p class="note">No change — the file already says this.</p>`
-        : undefined,
-    }),
-  );
+  return previewResponse(ctx, {
+    title: `Config · ${state.name}`,
+    action: "/config?raw=1",
+    base: state.base,
+    fields: [hidden("raw", source)],
+    diff,
+    ok: diff !== "",
+    notes: diff === "" ? h(NoChange, null) : undefined,
+  });
 }
 
 /** Create the config file the project does not have yet. */
@@ -832,17 +957,14 @@ async function writeCreate(ctx: UiContext, state: ConfigState): Promise<Response
   const diff = createUnifiedDiff("", EMPTY_CONFIG, state.name);
   if (confirmed(ctx)) return await write(ctx, state, EMPTY_CONFIG, "raw-file");
   if (ctx.json) return jsonResponse({ ok: true, applied: false, diff });
-  return panelResponse(
-    ctx,
-    previewBody(ctx, {
-      title: `Create ${state.name}`,
-      action: "/config?create=1",
-      base: state.base,
-      fields: html``,
-      diff,
-      ok: true,
-    }),
-  );
+  return previewResponse(ctx, {
+    title: `Create ${state.name}`,
+    action: "/config?create=1",
+    base: state.base,
+    fields: [],
+    diff,
+    ok: true,
+  });
 }
 
 // ── the handler ──────────────────────────────────────────────────────────────
@@ -927,7 +1049,7 @@ export const configPanel: UiHandler = async (
     if (ctx.json) {
       return jsonResponse({ ok: true, ...payload(state, ctx.url.searchParams.has("schema")) });
     }
-    return panelResponse(ctx, panelBody(ctx, state));
+    return editorResponse(ctx, state);
   }
   return await mutate(ctx, state);
 };

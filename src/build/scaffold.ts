@@ -97,6 +97,24 @@ export interface ScaffoldFile {
 const dep = `jsr:@denext/denext@^${VERSION}`;
 /** The version-pinned CLI specifier used by generated `deno task`s. */
 const cli = `${dep}/cli`;
+/** The Capacitor release `--capacitor` scaffolds (CLI, core and both native platforms). */
+const CAPACITOR = "^8.5.2";
+/**
+ * What `--capacitor` gitignores. Capacitor 8 builds iOS with Swift Package Manager, and the
+ * `ios/` + `android/` projects are meant to be committed — so only their build outputs and
+ * the web assets `cap sync` copies in are ignored here (the platforms' own generated
+ * `.gitignore` files cover the rest).
+ */
+const CAPACITOR_IGNORES = [
+  "node_modules/",
+  "ios/App/App/public/",
+  "ios/App/build/",
+  "ios/DerivedData/",
+  "android/app/src/main/assets/public/",
+  "android/app/build/",
+  "android/build/",
+  "android/.gradle/",
+];
 
 /** The `deno task` entries for a scaffolded project (dev/build/start + native targets). */
 function scaffoldTasks(opts: ScaffoldOptions): Record<string, string> {
@@ -129,7 +147,10 @@ function scaffoldTasks(opts: ScaffoldOptions): Record<string, string> {
     tasks["desktop:package:windows"] = "deno run -A scripts/package-windows.ts";
   }
   if (opts.capacitor) {
-    const cap = "deno run -A --node-modules-dir npm:@capacitor/cli";
+    // `mobile:sync` exports, then `cap sync` copies `out/` into the native projects. The
+    // export writes no `.gz` siblings the webview would never load: the App Router export
+    // doesn't precompress, and a SPA-mode app turns it off with `spa.precompress: false`.
+    const cap = `deno run -A --node-modules-dir npm:@capacitor/cli@${CAPACITOR}`;
     tasks["mobile:sync"] = `deno task export && ${cap} sync`;
     tasks["mobile:ios"] = `${cap} open ios`;
     tasks["mobile:android"] = `${cap} open android`;
@@ -151,7 +172,12 @@ function scaffoldImports(opts: ScaffoldOptions): Record<string, string> {
     // Native-target deps as bare, versioned specifiers (the lint plugin forbids
     // inline `jsr:`/`npm:` in source).
     ...(opts.desktop ? { "denext/desktop": `${dep}/desktop` } : {}),
-    ...(opts.capacitor ? { "@capacitor/cli": "npm:@capacitor/cli@^7" } : {}),
+    ...(opts.capacitor
+      ? {
+        "denext/mobile": `${dep}/mobile`,
+        "@capacitor/cli": `npm:@capacitor/cli@${CAPACITOR}`,
+      }
+      : {}),
     // React + Next compatibility: alias those specifiers to denext. The
     // react-family entries come from the single canonical specifier list.
     ...(opts.compatibilityMode
@@ -270,10 +296,10 @@ function packageJson(): string {
       // Capacitor's CLI + native platforms are Node packages. Install once with
       // \`deno install\` (or npm install), then use the \`mobile:*\` deno tasks.
       devDependencies: {
-        "@capacitor/cli": "^7.0.0",
-        "@capacitor/core": "^7.0.0",
-        "@capacitor/ios": "^7.0.0",
-        "@capacitor/android": "^7.0.0",
+        "@capacitor/cli": CAPACITOR,
+        "@capacitor/core": CAPACITOR,
+        "@capacitor/ios": CAPACITOR,
+        "@capacitor/android": CAPACITOR,
       },
     },
     null,
@@ -415,7 +441,7 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
   const ignore = [".denext/", "out/", ".env*.local", "*.local", "patches/.work/"];
   if (opts.tailwind) ignore.push(`${appBase}/globals.css`);
   if (opts.desktop) ignore.push("dist/"); // packaged desktop binaries
-  if (opts.capacitor) ignore.push("node_modules/", "ios/", "android/"); // Capacitor
+  if (opts.capacitor) ignore.push(...CAPACITOR_IGNORES);
   const gitignore = ignore.join("\n") + "\n";
 
   const files: ScaffoldFile[] = [

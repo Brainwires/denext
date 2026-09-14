@@ -43,6 +43,13 @@ export interface UiServerOptions {
   readonly token?: string;
   /** `--read-only`: refuse every mutation with a `403`. */
   readonly readOnly?: boolean;
+  /**
+   * `denext ui --offline`: nothing the UI starts reaches the network. No JSR search; every
+   * denext-CLI child (the commands listing, verb runs, doctor) runs `--deny-net --cached-only`
+   * and `deno install` runs `--cached-only`; `deno task`, the wizard's `denext dev` and plugin
+   * add/remove are refused with a `503` (`offline.ts`).
+   */
+  readonly offline?: boolean;
   /** Aborting this stops accepting and drains in-flight requests. */
   readonly signal?: AbortSignal;
   /** `--ui-dev`: watch `src/ui/**` and push a reload to every open page. */
@@ -180,6 +187,7 @@ async function buildContext(
       url,
       method: request.method,
       readOnly: options.readOnly === true,
+      offline: options.offline === true,
       csrf: session.csrf,
       json: url.pathname.startsWith("/api/"),
       fragment: (request.headers.get("accept") ?? "").includes("text/html-fragment"),

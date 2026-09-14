@@ -44,7 +44,7 @@ Deno.test("plugin catalog: catalog.json is regenerated from packages/*", async (
   // `denext.catalog` block without running `deno task gen:plugin-catalog` fails here.
   assertEquals(
     await Deno.readTextFile(CATALOG_OUT),
-    generatePluginCatalog(),
+    await generatePluginCatalog(),
     "src/plugin/catalog.json is stale — run `deno task gen:plugin-catalog` and commit",
   );
 });

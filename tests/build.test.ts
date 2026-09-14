@@ -137,7 +137,9 @@ Deno.test("generateRouteEntry imports instrumentation-client FIRST when the proj
     unauthorized: null,
     templateChain: [],
   };
-  const entry = generateRouteEntry(route, false, false, "/proj/instrumentation-client.ts");
+  const entry = generateRouteEntry(route, {
+    instrumentationClient: "/proj/instrumentation-client.ts",
+  });
   const lines = entry.split("\n");
   assertEquals(
     lines[1],

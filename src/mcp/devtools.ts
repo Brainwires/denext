@@ -292,7 +292,17 @@ function hookLabel(cell: SnapshotHook): string {
   return name || from || text(hook.kind) || "hook";
 }
 
-/** One hook cell as a line: `[0] count · useState = 0  deps [a, b]`. */
+/** The `useDebugValue` suffix: `  debug=Online`, `  debug=[a, b]` for several, or `""`. */
+function debugSuffix(hook: SnapshotHook): string {
+  const debug = hook.debug;
+  if (debug === null || typeof debug !== "object") return "";
+  const shown = Array.isArray(debug.entries)
+    ? `[${debug.entries.map((e) => text(e?.value?.preview)).join(", ")}]`
+    : text(debug.preview);
+  return `  debug=${shown}`;
+}
+
+/** One hook cell as a line: `[0] count · useState = 0  deps [a, b]  debug=…`. */
 function hookLine(cell: SnapshotHook): string {
   const hook = cell ?? {} as SnapshotHook; // a posted `hooks: [null]` must not throw
   const deps = Array.isArray(hook.deps)
@@ -300,7 +310,9 @@ function hookLine(cell: SnapshotHook): string {
     : "";
   const cleanup = hook.hasCleanup ? "  (has cleanup)" : "";
   const value = text(hook.value?.preview);
-  return `  [${num(hook.index)}] ${hookLabel(hook)} = ${value}${deps}${cleanup}`;
+  return `  [${num(hook.index)}] ${hookLabel(hook)} = ${value}${deps}${cleanup}${
+    debugSuffix(hook)
+  }`;
 }
 
 /**

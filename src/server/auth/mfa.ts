@@ -1,0 +1,294 @@
+/**
+ * Multi-factor authentication (TOTP): the step-up decision the sign-in tails consult,
+ * enrollment (`enrollTotp` → `confirmTotp`), verification (`verifySecondFactor`, TOTP or a
+ * single-use backup code), `disableTotp`, and the step-up that turns a pending session
+ * into a complete one (`completeStepUp`).
+ *
+ * Three guards hold on every code check: a TOTP code is accepted within ±`mfa.window`
+ * steps and its step is then **claimed** through the adapter's atomic `claimTotpStep`
+ * (so the same code can't be presented twice); a backup code is spent through the
+ * adapter's atomic `consumeBackupCode` (stored only as a {@link ./hasher.ts | Hasher}
+ * hash); and the attempt budget is spent by the HTTP layer
+ * ({@link ./routes-mfa.ts | the MFA routes}).
+ *
+ * **Disabling.** The adapter's MFA group has no delete: `disableTotp` writes an empty,
+ * unconfirmed record (no secret, no backup codes) in the user's place, which reads as
+ * "not enrolled" everywhere — {@linkcode mfaPendingFor}, {@linkcode mfaStatus}, and every
+ * verification.
+ *
+ * @module
+ */
+
+import type { AuthAdapter, MfaRecord } from "./adapter.ts";
+import { backupCodeMatcher, generateBackupCodes } from "./backup-codes.ts";
+import { emitAuthEvent } from "./events.ts";
+import { resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
+import type { AuthRouteContext } from "./routes-shared.ts";
+import { issueAuthSession } from "./session.ts";
+import { generateTotpSecret, totpAuthUri, verifyTotp } from "./totp.ts";
+import type { AuthConfig, AuthSession, AuthUser } from "./types.ts";
+
+/** The adapter methods the MFA flows need, all present. */
+type MfaAdapter = Required<
+  Pick<AuthAdapter, "getMfa" | "setMfa" | "consumeBackupCode" | "claimTotpStep">
+>;
+
+/** A second factor a step-up can be completed with: a TOTP code, or a backup code. */
+export type MfaMethod = "totp" | "bcp";
+
+/** A user's second-factor state, as {@linkcode mfaStatus} reports it. */
+export interface MfaStatus {
+  /** A TOTP secret is on file (confirmed or not). */
+  enrolled: boolean;
+  /** The enrollment was confirmed with a code — sign-in now asks for the second factor. */
+  confirmed: boolean;
+  /** Unspent backup codes (`0` when not enrolled). */
+  backupCodesRemaining: number;
+}
+
+/** A fresh, unconfirmed TOTP enrollment, as {@linkcode enrollTotp} returns it. */
+export interface TotpEnrollment {
+  /** The base32 secret, for manual entry into an authenticator app. */
+  secret: string;
+  /** The `otpauth://totp/…` provisioning URI — render it as a QR code. */
+  uri: string;
+}
+
+/**
+ * The outcome of {@linkcode confirmTotp}: on success, the plaintext backup codes — the
+ * only time they exist anywhere; show them to the user once.
+ */
+export type ConfirmTotpResult = { ok: true; backupCodes: string[] } | { ok: false };
+
+/**
+ * Whether signing `user` in must stop at a pending session that still owes a second
+ * factor. `mfa.required: "always"` says yes for everyone (an unenrolled user is sent to
+ * enrol); the default `"enrolled"` says yes only for a user with a confirmed factor.
+ * Without an adapter (or one without the MFA group) nobody is enrolled.
+ *
+ * @param options The resolved auth options.
+ * @param user The user the first factor authenticated.
+ * @returns `true` when the session must be issued as MFA-pending.
+ */
+export async function mfaPendingFor(
+  options: ResolvedAuthOptions,
+  user: AuthUser,
+): Promise<boolean> {
+  if (options.mfa.required === "always") return true;
+  const record = await options.adapter?.getMfa?.(user.id);
+  return record?.confirmedAt !== undefined;
+}
+
+/** The adapter when it implements the whole MFA group, else `undefined`. */
+function mfaAdapter(options: ResolvedAuthOptions): MfaAdapter | undefined {
+  const adapter = options.adapter;
+  if (!adapter?.getMfa || !adapter.setMfa) return undefined;
+  if (!adapter.consumeBackupCode || !adapter.claimTotpStep) return undefined;
+  return adapter as MfaAdapter;
+}
+
+/**
+ * Whether the configured adapter can run the MFA flows — it implements `getMfa`,
+ * `setMfa`, `consumeBackupCode` and `claimTotpStep`. Without them the MFA endpoints don't
+ * exist (a plain 404).
+ *
+ * @param options The resolved auth options.
+ * @returns `true` when every MFA adapter method is present.
+ */
+export function hasMfaAdapter(options: ResolvedAuthOptions): boolean {
+  return mfaAdapter(options) !== undefined;
+}
+
+/** The MFA adapter, or a descriptive throw naming the caller. */
+function requireMfaAdapter(options: ResolvedAuthOptions, fn: string): MfaAdapter {
+  const adapter = mfaAdapter(options);
+  if (adapter) return adapter;
+  throw new Error(
+    `${fn}: the configured \`adapter\` has no MFA group (\`getMfa\`, \`setMfa\`, ` +
+      "`consumeBackupCode`, `claimTotpStep`) — use `sqliteAuthAdapter({ path })`, or " +
+      "`inMemoryAuthAdapter()` in tests.",
+  );
+}
+
+/** A record with a live secret whose enrollment was confirmed. */
+function isConfirmed(record: MfaRecord | undefined): record is MfaRecord {
+  return !!record?.secret && record.confirmedAt !== undefined;
+}
+
+/**
+ * A user's second-factor state — for an account-settings page.
+ *
+ * @param config The app's auth config.
+ * @param userId The user.
+ * @returns Whether a factor is enrolled and confirmed, and how many backup codes remain.
+ */
+export async function mfaStatus(config: AuthConfig, userId: string): Promise<MfaStatus> {
+  const record = await resolveAuthOptions(config).adapter?.getMfa?.(userId);
+  if (!record?.secret) return { enrolled: false, confirmed: false, backupCodesRemaining: 0 };
+  return {
+    enrolled: true,
+    confirmed: record.confirmedAt !== undefined,
+    backupCodesRemaining: record.backupCodeHashes.length,
+  };
+}
+
+/**
+ * Start a TOTP enrollment: mint a secret, store it **unconfirmed**, and return it with the
+ * provisioning URI (issuer `mfa.issuer`, account `user.email ?? user.id`). An earlier
+ * unconfirmed enrollment is replaced; a CONFIRMED factor is not — disable it first.
+ *
+ * @param config The app's auth config.
+ * @param user The user enrolling.
+ * @returns The secret and URI, or `null` when the user already has a confirmed factor.
+ * @throws {Error} When the adapter has no MFA group.
+ */
+export async function enrollTotp(
+  config: AuthConfig,
+  user: AuthUser,
+): Promise<TotpEnrollment | null> {
+  const options = resolveAuthOptions(config);
+  const adapter = requireMfaAdapter(options, "enrollTotp");
+  if (isConfirmed(await adapter.getMfa(user.id))) return null;
+  const secret = generateTotpSecret();
+  await adapter.setMfa({ userId: user.id, secret, backupCodeHashes: [] });
+  const account = user.email ?? user.id;
+  return { secret, uri: totpAuthUri({ secret, account, issuer: options.mfa.issuer }) };
+}
+
+/**
+ * Verify a TOTP code against `record`'s secret (±`mfa.window` steps) and claim its step,
+ * so the same code can never be accepted twice.
+ */
+async function claimTotp(
+  options: ResolvedAuthOptions,
+  adapter: MfaAdapter,
+  record: MfaRecord,
+  code: string,
+): Promise<boolean> {
+  const result = await verifyTotp(record.secret, code, { window: options.mfa.window });
+  return result.ok && await adapter.claimTotpStep(record.userId, result.step);
+}
+
+/**
+ * Confirm a pending enrollment with a code from the authenticator app. On success the
+ * factor is marked confirmed and `mfa.backupCodes` backup codes are minted — returned
+ * here in plaintext exactly once, and stored only as hashes. The code's step is claimed,
+ * so it can't then be replayed at the step-up.
+ *
+ * @param config The app's auth config.
+ * @param user The user confirming.
+ * @param code The code the user typed.
+ * @returns `{ ok: true, backupCodes }`, or `{ ok: false }` for a wrong or replayed code,
+ * no pending enrollment, or an already-confirmed factor.
+ * @throws {Error} When the adapter has no MFA group.
+ */
+export async function confirmTotp(
+  config: AuthConfig,
+  user: AuthUser,
+  code: string,
+): Promise<ConfirmTotpResult> {
+  const options = resolveAuthOptions(config);
+  const adapter = requireMfaAdapter(options, "confirmTotp");
+  const record = await adapter.getMfa(user.id);
+  if (!record?.secret || record.confirmedAt !== undefined) return { ok: false };
+  if (!await claimTotp(options, adapter, record, code)) return { ok: false };
+  const { codes, hashes } = await generateBackupCodes(options.hasher, options.mfa.backupCodes);
+  // Re-read: the claim just advanced `lastStep`, which the write below must keep — and an
+  // enrollment replaced meanwhile must not be confirmed with the old secret's code.
+  const current = await adapter.getMfa(user.id);
+  if (current?.secret !== record.secret) return { ok: false };
+  const confirmedAt = Math.floor(Date.now() / 1000);
+  await adapter.setMfa({ ...current, confirmedAt, backupCodeHashes: hashes });
+  return { ok: true, backupCodes: codes };
+}
+
+/**
+ * Check a second-factor code for a user with a confirmed factor: first as a TOTP code
+ * (claiming its step — a replay is refused), else as a backup code (spent on a match).
+ *
+ * @param config The app's auth config.
+ * @param userId The user.
+ * @param code The code the user typed (TOTP digits or a backup code, hyphen optional).
+ * @returns `"totp"` or `"bcp"` for the method that verified, or `null`.
+ */
+export async function verifySecondFactor(
+  config: AuthConfig,
+  userId: string,
+  code: string,
+): Promise<MfaMethod | null> {
+  const options = resolveAuthOptions(config);
+  const adapter = mfaAdapter(options);
+  const record = await adapter?.getMfa(userId);
+  if (!adapter || !isConfirmed(record)) return null;
+  if (await claimTotp(options, adapter, record, code)) return "totp";
+  const spent = await adapter.consumeBackupCode(userId, backupCodeMatcher(options.hasher, code));
+  return spent ? "bcp" : null;
+}
+
+/**
+ * Remove a user's TOTP factor and backup codes. A no-op for a user who never enrolled.
+ * Callers must have proved a fresh factor first — see the `/mfa/disable` endpoint.
+ *
+ * @param config The app's auth config.
+ * @param userId The user.
+ * @throws {Error} When the adapter has no MFA group.
+ */
+export async function disableTotp(config: AuthConfig, userId: string): Promise<void> {
+  const adapter = requireMfaAdapter(resolveAuthOptions(config), "disableTotp");
+  if (!(await adapter.getMfa(userId))) return;
+  await adapter.setMfa({ userId, secret: "", backupCodeHashes: [] });
+}
+
+/**
+ * Whether `session` carries a second-factor proof recent enough for a sensitive action:
+ * its `amr` includes `totp` or `bcp` and it was established at most `mfa.freshness`
+ * seconds ago.
+ *
+ * With sliding expiry on (`session.updateAge > 0`) this is always `false`: a slide
+ * re-stamps `issuedAt`, so a session slid forward long after its step-up would otherwise
+ * look freshly proven — the caller must present a code instead.
+ *
+ * @param options The resolved auth options.
+ * @param session A complete session.
+ * @param nowMs The clock, in epoch ms (injectable for tests).
+ * @returns `true` when the session's own second factor still counts as fresh.
+ */
+export function hasFreshFactor(
+  options: ResolvedAuthOptions,
+  session: AuthSession,
+  nowMs: number = Date.now(),
+): boolean {
+  if (options.updateAge > 0 || session.issuedAt === undefined) return false;
+  const proved = (session.amr ?? []).some((method) => method === "totp" || method === "bcp");
+  const age = Math.floor(nowMs / 1000) - session.issuedAt;
+  return proved && age >= 0 && age <= options.mfa.freshness;
+}
+
+/**
+ * Finish a step-up: mint a **fresh** complete session for the pending one's user —
+ * never upgrade the pending session in place (session fixation). A store-backed pending
+ * session's record is deleted first; a stateless one is replaced by the new cookie. The
+ * new session's `amr` is the pending one's plus `method`. Fires `signIn` — the event a
+ * pending sign-in deferred.
+ *
+ * @param ctx The route context.
+ * @param session The pending session the second factor was proven for.
+ * @param method How the second factor was proven.
+ * @returns The new, complete session.
+ */
+export async function completeStepUp(
+  ctx: AuthRouteContext,
+  session: AuthSession,
+  method: MfaMethod,
+): Promise<AuthSession> {
+  if (session.sessionId) await ctx.options.sessionStore?.delete(session.sessionId);
+  const fresh = await issueAuthSession(ctx.config, session.user, session.provider, {
+    amr: [...(session.amr ?? []), method],
+  });
+  await emitAuthEvent(ctx.options, "signIn", {
+    user: session.user,
+    provider: session.provider,
+    isNewUser: false,
+  });
+  return fresh;
+}

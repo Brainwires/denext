@@ -17,7 +17,14 @@ import type { Hasher } from "./hasher.ts";
 import { scryptHasher } from "./hasher.ts";
 import type { SessionOptions } from "../session.ts";
 import type { SessionStore } from "./session-store.ts";
-import type { AuthConfig, AuthCookieConfig, AuthEvents, AuthLogger } from "./types.ts";
+import type {
+  AuthConfig,
+  AuthCookieConfig,
+  AuthEmailConfig,
+  AuthEvents,
+  AuthLogger,
+  AuthMfaConfig,
+} from "./types.ts";
 
 /** The endpoint prefix when `basePath` is not set. */
 const DEFAULT_BASE_PATH = "/auth";
@@ -27,6 +34,18 @@ const DEFAULT_SESSION_COOKIE = "denext_auth";
 const DEFAULT_TX_COOKIE = "denext_auth_tx";
 /** Default session lifetime: 7 days. */
 const DEFAULT_MAX_AGE = 60 * 60 * 24 * 7;
+
+/** Email-token lifetimes (seconds) when `email.*MaxAge` is not set. */
+const DEFAULT_EMAIL_MAX_AGES = { verify: 86_400, reset: 3_600, magic: 600, otp: 300 };
+/** MFA defaults: one step of drift, ten backup codes, a 15-minute step-up window. */
+const DEFAULT_MFA = { window: 1, backupCodes: 10, freshness: 900 };
+/** The issuer label an authenticator shows when neither `mfa.issuer` nor `canonicalOrigin` is set. */
+const DEFAULT_MFA_ISSUER = "denext";
+/**
+ * A same-origin absolute path: one leading `/` (never `//` or `/\`, which a browser reads
+ * as another host) and no whitespace or backslash anywhere.
+ */
+const LINK_PATH_RE = /^\/(?![/\\])[^\s\\]*$/;
 
 /** A path made of non-empty, URL-safe segments — what a `basePath` must look like. */
 const BASE_PATH_RE = /^(?:\/[A-Za-z0-9._~-]+)+$/;
@@ -84,6 +103,13 @@ export interface ResolvedAuthOptions {
   sessionStore?: SessionStore;
   /** The persistence adapter, when one is configured. */
   adapter?: AuthAdapter;
+  /**
+   * Email-token lifetimes (seconds) and the paths the emailed links open, every default
+   * applied (`verifyPath`/`resetPath` default to `{basePath}/verify` and `{basePath}/reset`).
+   */
+  email: Required<AuthEmailConfig>;
+  /** Second-factor policy, every default applied and every count clamped. */
+  mfa: Required<AuthMfaConfig>;
 }
 
 /**
@@ -140,6 +166,8 @@ export function resolveAuthOptions(config: AuthConfig): ResolvedAuthOptions {
     events: config.events ?? {},
     sessionStore: resolveSessionStore(config, logger),
     adapter: config.adapter,
+    email: resolveEmail(config.email ?? {}, basePath),
+    mfa: resolveMfa(config.mfa ?? {}, config.canonicalOrigin),
   };
   resolved.set(config, options);
   return options;
@@ -166,6 +194,76 @@ function normalizeBasePath(configured: string | undefined): string {
     );
   }
   return trimmed;
+}
+
+/** A positive, finite lifetime in whole seconds, else `fallback`. */
+function lifetime(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 1
+    ? Math.floor(value)
+    : fallback;
+}
+
+/** A whole number clamped into `[min, max]`; a non-finite value is `fallback`. */
+function clamped(value: number | undefined, fallback: number, min: number, max: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, Math.trunc(value)));
+}
+
+/**
+ * A configured link path, or `fallback` when unset. Anything that isn't a same-origin
+ * absolute path is refused at config time — a `//host` value would mail users a link to
+ * another site, carrying a live token.
+ */
+function linkPath(field: string, configured: string | undefined, fallback: string): string {
+  if (configured === undefined) return fallback;
+  if (!LINK_PATH_RE.test(configured)) {
+    throw new Error(
+      `denextAuth: \`email.${field}\` ${JSON.stringify(configured)} is not a same-origin ` +
+        'path — it must start with a single "/" (e.g. "/account/verify") and contain no ' +
+        "whitespace or backslashes.",
+    );
+  }
+  return configured;
+}
+
+/** Apply the email-flow defaults: lifetimes, the OTP length, and the two link targets. */
+function resolveEmail(email: AuthEmailConfig, basePath: string): Required<AuthEmailConfig> {
+  return {
+    verifyMaxAge: lifetime(email.verifyMaxAge, DEFAULT_EMAIL_MAX_AGES.verify),
+    resetMaxAge: lifetime(email.resetMaxAge, DEFAULT_EMAIL_MAX_AGES.reset),
+    magicMaxAge: lifetime(email.magicMaxAge, DEFAULT_EMAIL_MAX_AGES.magic),
+    otpMaxAge: lifetime(email.otpMaxAge, DEFAULT_EMAIL_MAX_AGES.otp),
+    otpDigits: clamped(email.otpDigits, 6, 6, 10),
+    verifyPath: linkPath("verifyPath", email.verifyPath, `${basePath}/verify`),
+    resetPath: linkPath("resetPath", email.resetPath, `${basePath}/reset`),
+  };
+}
+
+/** The authenticator issuer label: the configured one, else the canonical host, else "denext". */
+function mfaIssuer(configured: string | undefined, canonicalOrigin: string | undefined): string {
+  const trimmed = configured?.trim();
+  if (trimmed) return trimmed;
+  try {
+    return canonicalOrigin
+      ? new URL(canonicalOrigin).hostname || DEFAULT_MFA_ISSUER
+      : DEFAULT_MFA_ISSUER;
+  } catch {
+    return DEFAULT_MFA_ISSUER;
+  }
+}
+
+/** Apply the MFA defaults, clamping the drift window and the backup-code count. */
+function resolveMfa(
+  mfa: AuthMfaConfig,
+  canonicalOrigin: string | undefined,
+): Required<AuthMfaConfig> {
+  return {
+    required: mfa.required === "always" ? "always" : "enrolled",
+    issuer: mfaIssuer(mfa.issuer, canonicalOrigin),
+    window: clamped(mfa.window, DEFAULT_MFA.window, 0, 2),
+    backupCodes: clamped(mfa.backupCodes, DEFAULT_MFA.backupCodes, 0, 20),
+    freshness: lifetime(mfa.freshness, DEFAULT_MFA.freshness),
+  };
 }
 
 /** Apply the cookie defaults, validating the name so it can't break the Set-Cookie header. */

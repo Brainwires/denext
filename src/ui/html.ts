@@ -1,61 +1,22 @@
 // The view layer of `denext ui` — and the contract every feature module implements.
 //
-// Shape (decided in the 2.5 UI design): the UI is server-rendered HTML *strings*, the
-// `packages/openapi/docs-ui.ts` model — no bundler, no TSX, no client framework. Every view is
-// `(props) => string` behind the single {@linkcode renderPage} seam, so a later minor can flip
-// the implementation to TSX + `renderToStringSync` without touching a route.
+// Shape: the UI is server-rendered HTML with no bundler, no client framework and no hydration
+// (the `packages/openapi/docs-ui.ts` model). Every view is an `h()`-built component tree,
+// rendered once, synchronously, on the server through `view.ts` into a pre-escaped
+// {@linkcode RawHtml} fragment; the pieces the panels share live in `components.ts`. Every page
+// render goes through the single {@linkcode renderPage} seam.
 //
 // This module also owns the handler contract ({@linkcode UiContext}, {@linkcode UiRoute}) and the
 // navigation list, rather than `routes.ts`, so that `features/*.ts` can depend on it while
-// `routes.ts` depends on the features — one direction, no import cycle.
+// `routes.ts` depends on the features — one direction, no import cycle. The graph below it is
+// one-way too: `html.ts` → `layout.ts` → `view.ts`, and `html.ts` → `view.ts`.
 
-/** A pre-escaped HTML fragment: interpolating it into {@linkcode html} inserts it verbatim. */
-export interface RawHtml {
-  /** The already-safe markup. */
-  readonly __html: string;
-}
+import type { VNode } from "../jsx/types.ts";
+import type { SseClients } from "../build/sse.ts";
+import { layout, type NavItem } from "./layout.ts";
+import { type RawHtml, renderView } from "./view.ts";
 
-/**
- * Mark a string as already-safe markup so {@linkcode html} interpolates it verbatim.
- *
- * @param value Markup the caller vouches for.
- * @returns The fragment wrapper.
- */
-export function raw(value: string): RawHtml {
-  return { __html: value };
-}
-
-/**
- * Escape a value for interpolation into HTML text or a double-quoted attribute.
- *
- * @param value Anything; stringified first.
- * @returns The escaped text.
- */
-export function esc(value: unknown): string {
-  return String(value).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
-}
-
-/**
- * Tagged template for HTML. Interpolated values are escaped unless they are {@linkcode RawHtml};
- * arrays are interpolated element-wise and joined; `null`/`undefined`/`false` render as nothing.
- *
- * @param strings The literal chunks.
- * @param values The interpolated values.
- * @returns The assembled fragment.
- */
-export function html(strings: TemplateStringsArray, ...values: unknown[]): RawHtml {
-  let out = strings[0];
-  for (let i = 0; i < values.length; i++) out += interpolate(values[i]) + strings[i + 1];
-  return { __html: out };
-}
-
-/** One interpolated value as markup (escaped unless raw). */
-function interpolate(value: unknown): string {
-  if (value === null || value === undefined || value === false) return "";
-  if (Array.isArray(value)) return value.map(interpolate).join("");
-  if (typeof value === "object" && "__html" in (value as RawHtml)) return (value as RawHtml).__html;
-  return esc(value);
-}
+export type { RawHtml } from "./view.ts";
 
 /**
  * Unwrap a fragment to its markup string.
@@ -69,9 +30,6 @@ export function toHtml(fragment: RawHtml): string {
 
 // ── the handler contract ─────────────────────────────────────────────────────
 
-import type { SseClients } from "../build/sse.ts";
-import { UI_CSRF_FIELD } from "./security.ts";
-
 /** Everything a feature handler is told about the current request. */
 export interface UiContext {
   /** Absolute path of the project the UI was opened on. */
@@ -82,6 +40,8 @@ export interface UiContext {
   readonly method: string;
   /** `--read-only`: every mutation is refused before it reaches a feature. */
   readonly readOnly: boolean;
+  /** True when JSR discovery is off (`denext ui --offline`); read it as `ctx.offline === true`. */
+  readonly offline?: boolean;
   /** The CSRF token this session's forms must carry. */
   readonly csrf: string;
   /** True for the `/api/*` twin of a feature route (answer with JSON). */
@@ -114,22 +74,8 @@ export interface UiRoute {
   readonly handle: UiHandler;
 }
 
-/** The same-origin stylesheet path (also the route that serves it). */
-export const UI_CSS_PATH = "/_ui/ui.css";
-
-/** The same-origin client-module path (also the route that serves it). */
-export const UI_JS_PATH = "/_ui/ui.js";
-
 /** The broadcast channel path (also the route that serves it). */
 export const UI_EVENTS_PATH = "/_ui/events";
-
-/** One item of the UI's top navigation. */
-export interface NavItem {
-  /** The path it links to. */
-  readonly href: string;
-  /** The label. */
-  readonly label: string;
-}
 
 /** The UI's top navigation, in order. */
 export const UI_NAV: readonly NavItem[] = [
@@ -143,65 +89,31 @@ export const UI_NAV: readonly NavItem[] = [
   { href: "/commands", label: "Commands" },
 ];
 
-// ── the shell ────────────────────────────────────────────────────────────────
+// ── the page seam ────────────────────────────────────────────────────────────
 
-/** Inputs to {@linkcode layout}. */
-export interface LayoutOptions {
-  /** The document title (also the page heading). */
-  readonly title: string;
-  /** The navigation to render. */
-  readonly nav: readonly NavItem[];
-  /** The page body (already-safe markup). */
-  readonly body: RawHtml;
-  /** The session CSRF token, published to `ui.js` as a `<meta>`. */
-  readonly csrf: string;
-  /** The nav href to mark current. */
-  readonly active?: string;
-}
+/** What a view may return: a component (VNode) tree, an already-rendered fragment, or markup. */
+type ViewResult = string | RawHtml | VNode;
 
 /**
- * The full HTML document every UI page is served as: one same-origin stylesheet, one
- * same-origin module, no inline script — clean under `script-src 'self'; style-src 'self'`.
- *
- * @param options Title, navigation, body, CSRF token and the active nav entry.
- * @returns The complete document source.
- */
-export function layout(options: LayoutOptions): string {
-  const nav = options.nav.map((item) =>
-    html`
-      <a href="${item.href}" ${item.href === options.active
-        ? raw(' aria-current="page"')
-        : ""}>${item.label}</a>
-    `
-  );
-  return "<!doctype html>" + toHtml(html`
-    <html lang="en">
-      <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <meta name="denext-csrf" content="${options.csrf}">
-        <title>${options.title} · denext ui</title>
-        <link rel="stylesheet" href="${UI_CSS_PATH}">
-      </head>
-      <body>
-        <header class="topbar"><span class="brand">denext&nbsp;ui</span><nav>${nav}</nav></header>
-        <main id="main">${options.body}</main>
-        <script type="module" src="${UI_JS_PATH}"></script>
-      </body>
-    </html>
-  `);
-}
-
-/**
- * The single indirection every page render goes through, so the rendering strategy is one
- * edit away from changing.
+ * The single indirection every page render goes through. A view returns a component tree
+ * (rendered here through `renderView`, synchronously); an already-rendered fragment or a markup
+ * string passes through untouched. A view that throws (or an async component) throws out of this
+ * call, which the server answers with its hardened `500` before any byte of the page is written.
  *
  * @param view A view function.
  * @param props Its props.
  * @returns The rendered document.
  */
-export function renderPage<P>(view: (props: P) => string, props: P): string {
-  return view(props);
+export function renderPage<P>(view: (props: P) => ViewResult, props: P): string {
+  const result = view(props);
+  if (typeof result === "string") return result;
+  if (isRawHtml(result)) return result.__html;
+  return renderView(result).__html;
+}
+
+/** Whether a view's result is an already-rendered fragment (a VNode has no markup field). */
+function isRawHtml(result: RawHtml | VNode): result is RawHtml {
+  return typeof (result as Partial<RawHtml>).__html === "string";
 }
 
 // ── responses ────────────────────────────────────────────────────────────────
@@ -256,77 +168,4 @@ export function panelResponder(
       status,
     );
   };
-}
-
-/** What one {@linkcode opForm} posts. */
-export interface OpFormOptions {
-  /** The form action (the panel's own path unless the operation posts elsewhere). */
-  readonly action: string;
-  /** The submit button's label. */
-  readonly label: string;
-  /** Hidden fields carried with the operation (`op`, a row name, `confirm`, …). */
-  readonly fields?: Readonly<Record<string, string>>;
-  /** Extra markup inside the form, after the hidden fields. */
-  readonly extra?: RawHtml;
-  /** A class on the `<form>` itself. */
-  readonly className?: string;
-  /** Disable the button (what `--read-only` does to every write). */
-  readonly disabled?: boolean;
-}
-
-/**
- * One operation as a real `<form method="post">` — the CSRF token, the operation's hidden
- * fields and a submit button. Works with JavaScript disabled; `ui.js` upgrades the same form to
- * fetch + panel swap.
- *
- * @param csrf The session CSRF token.
- * @param options Action, label, hidden fields and whether the button is disabled.
- * @returns The form markup.
- */
-export function opForm(csrf: string, options: OpFormOptions): RawHtml {
-  const parts = [hiddenField(UI_CSRF_FIELD, csrf)];
-  for (const [name, value] of Object.entries(options.fields ?? {})) {
-    parts.push(hiddenField(name, value));
-  }
-  if (options.extra) parts.push(toHtml(options.extra));
-  const className = options.className ? ` class="${esc(options.className)}"` : "";
-  const disabled = options.disabled ? " disabled" : "";
-  parts.push(`<button type="submit"${disabled}>${esc(options.label)}</button>`);
-  const open = `<form method="post" action="${esc(options.action)}"${className}>`;
-  return raw([open, ...parts, "</form>"].join("\n"));
-}
-
-/** One hidden input, escaped. */
-function hiddenField(name: string, value: string): string {
-  return `<input type="hidden" name="${esc(name)}" value="${esc(value)}">`;
-}
-
-/**
- * A unified diff as the panels' ordinary `<pre class="out">` block, with each added, removed
- * and hunk-header line wrapped in a class the stylesheet colours (no inline style, no script —
- * the CSP holds).
- *
- * @param diff The unified diff text.
- * @returns The rendered block.
- */
-export function diffHtml(diff: string): RawHtml {
-  const lines = diff.split("\n").map((line) => {
-    const kind = diffClass(line);
-    return kind === "" ? html`${line}` : html`<span class="${kind}">${line}</span>`;
-  });
-  return html`<pre class="out"><code class="diff">${joinLines(lines)}</code></pre>`;
-}
-
-/** The class one diff line gets: an addition, a removal, a hunk header, or nothing. */
-function diffClass(line: string): string {
-  if (line.startsWith("+++") || line.startsWith("---")) return "meta";
-  if (line.startsWith("@@")) return "meta";
-  if (line.startsWith("+")) return "add";
-  if (line.startsWith("-")) return "del";
-  return "";
-}
-
-/** Join rendered lines back with the newlines `split` removed. */
-function joinLines(lines: readonly RawHtml[]): RawHtml {
-  return raw(lines.map(toHtml).join("\n"));
 }

@@ -228,7 +228,13 @@ export interface SpaConfig {
   rootId?: string;
   /** `<title>` for the generated shell. Default `"denext app"`. */
   title?: string;
-  /** Extra raw HTML injected into the shell `<head>` (meta tags, preconnect links, …). */
+  /**
+   * Extra raw HTML injected into the shell `<head>` (meta tags, preconnect links, …).
+   * A `<meta name="viewport">` here replaces the shell's default
+   * (`width=device-width, initial-scale=1`) — e.g. `viewport-fit=cover` for iOS safe areas.
+   *
+   * @widget textarea
+   */
   head?: string;
   /**
    * Raw HTML rendered INSIDE the mount element (`#${rootId}`) in the generated shell — the
@@ -238,6 +244,8 @@ export interface SpaConfig {
    * background (pair with a pre-paint script in {@link head}), a logo splash, or a spinner —
    * the same role a Vite/CRA `index.html` fills with markup inside `<div id="root">…</div>`.
    * `denext migrate --from vite` carries the source `index.html`'s `#root` content here.
+   *
+   * @widget textarea
    */
   loading?: string;
   /** `<html lang>` value for the generated shell. Default `"en"`. */
@@ -274,6 +282,14 @@ export interface SpaConfig {
    * matched requests — HTTP and WebSocket — to the backend. Omit for a backend-less SPA.
    */
   proxy?: SpaProxyConfig;
+  /**
+   * Write a gzip `.gz` sibling next to each compressible client asset at `build` and
+   * `export`, so `denext start` serves `Content-Encoding: gzip` with no per-request CPU.
+   * Default `true`. Set `false` when the export is bundled into a native shell such as
+   * Capacitor, whose iOS/Android webview loads files from the app bundle and never requests
+   * the `.gz` variants, to keep them out of the bundle.
+   */
+  precompress?: boolean;
   /** `deno desktop` packaging settings (used when building the desktop app). */
   desktop?: SpaDesktopConfig;
 }

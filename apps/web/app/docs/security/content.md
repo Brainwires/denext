@@ -283,7 +283,8 @@ denext ships its **own** OAuth2 / OIDC / JWT / Credentials layer on HMAC-signed
 cookie sessions (`src/server/auth/`); it does **not** use next-auth/Auth.js. So
 the next-auth CVE history is a question of whether **our** implementation shares
 the flaw. Source audit + the live `tests/auth.test.ts`,
-`tests/auth-crypto.test.ts`, and `tests/session.test.ts` suites back these
+`tests/auth-crypto.test.ts`, `tests/auth-magic-link.test.ts`,
+`tests/auth-mfa-bypass.test.ts` and `tests/session.test.ts` suites back these
 verdicts.
 
 | CVE / Advisory                                                                 | Description                                                                                                                                                     | Protection Level                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
@@ -293,15 +294,15 @@ verdicts.
 | **CVE-2023-27490**                                                             | next-auth accepted an OAuth callback **without** verifying the state/nonce/PKCE it issued → login CSRF (log the victim in as the attacker). CVSS 8.1.           | ✅ **Protected (tested)** — `state` is bound to a signed `__Host-` tx cookie and every callback with a bad / absent / empty state, missing code, or a foreign-provider tx is refused (`error=invalid_state`, no session); nonce+PKCE (S256) ride the same tx. `routes.ts:269`; `tests/auth.test.ts`.                                                                                                                                                                                                                                                                                               |
 | **CVE-2023-48309**                                                             | next-auth's default middleware treated **any** next-auth-issued JWT (e.g. from an interrupted OAuth flow) as a session when injected as the cookie → mock user. | ✅ **Protected (tested)** — denext's session is its own HMAC-signed `{user,provider,expiresAt}` token; a foreign JWT or a self-shaped-but-unsigned token fails `verify()` and reads as signed-out. `session.ts:96`; `tests/auth.test.ts`.                                                                                                                                                                                                                                                                                                                                                          |
 | **id_token binding** _(OIDC token-substitution / `aud`-`iss` confusion class)_ | A validly-signed id_token minted for a **different RP / issuer**, or without the login's **nonce**, replayed at this client (confused deputy).                  | ✅ **Protected (tested)** — `verifyIdToken` rejects a wrong `iss` (incl. trailing-slash), an `aud` array not containing our client id, and a missing `nonce` when one was issued. Since 2.5 the audience check is **strict by default** (`strictAudience`), implementing OIDC Core §3.1.3.7 steps 3–5: a single `aud` must **be** our client id, a multi-valued `aud` must carry an `azp` naming us, and any `azp` present must name us. `strictAudience: false` restores plain membership for an IdP that legitimately mints multi-audience tokens without an `azp`. `tests/auth-crypto.test.ts`. |
-| **CVE-2022-35924**                                                             | next-auth's EmailProvider split a comma-separated `email` and mailed magic links to every address → login as a combined address.                                | 🔵 **N/A by design** — denext ships **no** email/magic-link provider (only OAuth/OIDC + Credentials); a Credentials identifier reaches `authorize` **verbatim**, never split on `,`. `tests/auth.test.ts`.                                                                                                                                                                                                                                                                                                                                                                                         |
+| **CVE-2022-35924**                                                             | next-auth's EmailProvider split a comma-separated `email` and mailed magic links to every address → login as a combined address.                                | ✅ **Protected (tested)** — `magicLink()` / `emailOtp()` mail exactly one normalised address; a list (six variants, `,` `;` and whitespace included) sends nothing and gets the generic answer, and a Credentials identifier still reaches `authorize` verbatim. `tests/auth.test.ts`, `tests/auth-magic-link.test.ts`.                                                                                                                                                                                                                                                                            |
 | **next-auth `callbackUrl` open redirect** _(class)_                            | A hostile `callbackUrl` on the login flow redirects the user off-site after auth.                                                                               | ✅ **Protected (tested)** — a hostile OAuth `callbackUrl` is coerced to a same-origin path by `sameOriginRedirect` (foreign absolutes stripped to path-only before `safeRedirectLocation`) at both signin ingestion and the callback. `routes.ts:124`; `tests/auth.test.ts` (credentials + OAuth paths).                                                                                                                                                                                                                                                                                           |
 | **Session fixation** _(CWE-384)_                                               | An attacker plants a session identifier before login and inherits the authenticated session.                                                                    | ✅ **Protected (tested)** — sessions are **stateless by default** — signed tokens minted fresh at each login (no server-side id to fixate) — and a `sessionStore` session gets a fresh random 256-bit id per login; a login ignores any inbound cookie and issues its own `__Host-` (Secure, `Path=/`, no `Domain`) token, and `__Host-` blocks subdomain cookie-shadowing. `auth/session.ts`; `tests/auth.test.ts`, `tests/session.test.ts`.                                                                                                                                                      |
 | **CVE-2022-31186**                                                             | next-auth logged the identity provider's **client secret** at error/debug during OAuth error handling (info disclosure).                                        | 🟢 **Protected (by design)** — denext's OAuth error paths surface a generic `error=` code to the client and never serialize `clientSecret` into a response or an error message. _(No secret-in-response test yet; audit only.)_                                                                                                                                                                                                                                                                                                                                                                    |
 
 ### What 2.5 added to the auth surface
 
-The adapter, bearer tokens and the reserved MFA state are new attack surface, so each
-ships with its own invariant:
+The adapter, bearer tokens, the emailed flows and the second factor are new attack
+surface, so each ships with its own invariant:
 
 - **API tokens are never recoverable.** A token is `tok_` plus 256 random bits, returned
   **once** at issue and stored only as its SHA-256; verification hashes the presented
@@ -316,18 +317,50 @@ ships with its own invariant:
   `authorize` and Server Actions all inherit the refusal — and `GET /auth/session`
   answers `{ user: null, expires: null, mfa: "required" }`. `/auth/tokens` mints nothing
   under a pending second factor: a first factor alone cannot create a bearer credential.
-  The payload fields ship now so the rc.2 flows need no cookie migration.
+  A pending session lasts 15 minutes and is never slid forward. Completing the step-up
+  **mints a fresh session**: the pending one — a credential issued before authentication
+  finished — is discarded with its store record rather than upgraded in place, so there is
+  nothing to fixate. The `/mfa*` endpoints read only the cookie, so a bearer token can
+  neither step up nor enroll. The eight bypass paths — `auth()`, `requireAuth`,
+  `requireSession`, `GET /session`, Live `authorize`, `requireBearer`, `POST /auth/tokens`
+  and `/mfa/disable` — each have a case in `tests/auth-mfa-bypass.test.ts`.
 - **Consume-once is an adapter contract, not a convention.** `useVerificationToken`,
   `consumeBackupCode` and `claimTotpStep` are specified as **atomic** delete-and-return /
   match-and-remove / claim operations; a non-atomic implementation is documented as a
   replay window, and both first-party adapters implement them atomically.
+- **Emailed secrets are stored as hashes, and scoped.** A verification, reset or magic-link
+  token is 256 random bits kept only as its SHA-256, bound to one `(address, purpose)` and
+  consumed atomically, so a wrong token cannot burn the real one. A one-time code is short
+  enough to brute-force from an unkeyed hash, so it is stored as an HMAC-SHA-256 under the
+  auth `secret` over `(purpose, address, code)`, and wrong codes spend a 5-per-5-minute
+  budget per address plus an IP-wide bucket. `tests/auth-email.test.ts`,
+  `tests/auth-magic-link.test.ts`.
+- **The emailed flows answer the same for every address.** A reset request, a verification
+  request and an email sign-in send are identical for a known address, an unknown one and
+  an invalid one: the per-address send budget is spent before the lookup, and inside a
+  request the mail goes out after the response (`after()`), so the mailer's latency is no
+  oracle. The input is normalised to exactly one address and a list sends nothing — the
+  CVE-2022-35924 row above.
+- **Pre-account hijacking is closed.** Registering a victim's address with a password and
+  waiting for the victim to sign in by email gains nothing: before a first magic-link or
+  code sign-in marks an unverified address verified, it retires the password, any TOTP
+  factor and backup codes, every bearer token and every server-side session set up without
+  that proof. If a step fails, the address stays unverified and the redeem fails
+  generically. A stateless cookie session opened earlier cannot be revoked and lives until
+  it expires — run a `sessionStore`.
+- **Resets and codes close what they open.** A completed password reset revokes every
+  server-side session of that user. A second-factor code works once: a TOTP step is claimed
+  through `claimTotpStep` (not even confirm-then-step-up can reuse it), backup codes are
+  stored only as `hasher` hashes and spent through `consumeBackupCode`, and every code check
+  spends the per-user budget, so a correct guess cannot reset it.
 - **Sign-in starts and session reads are rate-limited.** `GET /auth/signin/:provider`
   allows 20 per client IP per 15 minutes (`rateLimit.signin`) and `GET /auth/session` 60
   per minute (`rateLimit.session`), both counted on every hit, so an unauthenticated
   visitor cannot make the app mint transaction cookies and outbound provider requests — or
   verify cookies and read the session store — in a loop. The credentials limiter (5 per
-  client + identifier per 15 minutes) is unchanged; `rateLimit: false` disables all of
-  them. They count per process unless a shared `rateLimit.store` is supplied.
+  client + identifier per 15 minutes) is unchanged; rc.2 adds a send budget (3 per address
+  per 15 minutes) and a second-factor budget (5 per user per 5 minutes), each with an
+  IP-wide bucket at ten times that, and `rateLimit: false` disables all five. They count per process unless a shared `rateLimit.store` is supplied.
 
   Three properties make the limiter dependable rather than decorative. An IPv6 client is
   normalised and bucketed by **/64**, so rotating through a client's own prefix does not

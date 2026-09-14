@@ -29,7 +29,9 @@ import type { DenextPlugin } from "../../plugin/mod.ts";
 import { safeRedirectLocation } from "../config.ts";
 import { isProductionEnv, isWeakSecret } from "../session.ts";
 import { emitAuthEvent } from "./events.ts";
+import { hasMfaAdapter } from "./mfa.ts";
 import { resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
+import { assertEmailProviderConfig } from "./providers-email.ts";
 import { handleAuthRequest } from "./routes.ts";
 import type { SessionStore } from "./session-store.ts";
 import { readAuthSession, refreshIfStale } from "./session.ts";
@@ -54,11 +56,21 @@ function validateConfig(config: AuthConfig): void {
     );
   }
   validateProviders(config.providers);
+  assertCredentialsVerifiable(config);
+  assertEmailProviderConfig(config);
   warnOnUndeclaredProxy(config);
   // Resolving validates the 2.5 surface too: an unusable `basePath`, an invalid cookie
   // name, or `session.strategy: "database"` with nowhere to store sessions all throw here
   // — at config time, not on the first login.
-  resolveAuthOptions(config);
+  const options = resolveAuthOptions(config);
+  if (options.mfa.required === "always" && !hasMfaAdapter(options)) {
+    // Every sign-in would come back pending with no way to enroll or verify a factor:
+    // nobody could ever finish signing in.
+    throw new Error(
+      'denextAuth: `mfa.required: "always"` needs an adapter with the MFA group (getMfa, ' +
+        "setMfa, consumeBackupCode, claimTotpStep).",
+    );
+  }
   if (!config.canonicalOrigin) requireCanonicalOriginInProd();
   if (config.dangerouslyAllowInsecureProviders) {
     console.warn(
@@ -79,6 +91,36 @@ function validateProviders(providers: AuthConfig["providers"]): void {
     seen.add(p.id);
     if (isOAuthProvider(p)) assertOAuthCredentials(p);
   }
+}
+
+/**
+ * A Credentials provider without `authorize` verifies against the adapter's credentials
+ * group (`getUserByEmail` → `getCredential` → the configured `hasher`), so configuring one
+ * needs an adapter that has that group. Caught here, at config time, instead of as every
+ * login quietly answering `401`.
+ *
+ * @param config The app's auth config.
+ * @throws {Error} Naming the provider and both fixes, when nothing could verify its logins.
+ */
+function assertCredentialsVerifiable(config: AuthConfig): void {
+  const adapter = config.adapter;
+  if (
+    typeof adapter?.getUserByEmail === "function" && typeof adapter.getCredential === "function"
+  ) {
+    return;
+  }
+  const unverifiable = config.providers.find((p) => p.type === "credentials" && !p.authorize);
+  if (!unverifiable) return;
+  throw new Error(
+    `denextAuth: the credentials provider "${unverifiable.id}" has no \`authorize\` and ` +
+      (adapter
+        ? "the configured `adapter` lacks the credentials group (`getUserByEmail` + " +
+          "`getCredential`)"
+        : "no `adapter` is configured") +
+      ", so nothing can verify its logins. Either pass `authorize` to the provider, or " +
+      "configure an `adapter` that implements `getUserByEmail` and `getCredential` (e.g. " +
+      "`sqliteAuthAdapter({ path })`, or `inMemoryAuthAdapter()` in tests).",
+  );
 }
 
 /**
@@ -209,7 +251,7 @@ export async function revokeAllSessions(userId: string): Promise<void> {
 
 /**
  * The raw session for this request — **including** one that still owes a second factor.
- * Only the guards below (and, later, the MFA endpoints) may see a pending session;
+ * Only the guards below and {@link pendingMfaSession} may see a pending session;
  * everything else goes through {@link auth}, which hides it.
  */
 function currentSession(): Promise<AuthSession | null> {
@@ -232,6 +274,23 @@ function currentSession(): Promise<AuthSession | null> {
 export async function auth(): Promise<AuthSession | null> {
   const session = await currentSession();
   return session?.mfaPending ? null : session;
+}
+
+/**
+ * The current request's session **only while it still owes a second factor** — `null`
+ * for a complete session, and for none. For the app's `pages.mfa` page: render the code
+ * form (or, under `mfa.required: "always"` for a user with no factor yet, the enrollment
+ * step) when this returns a session, and redirect onward when it doesn't.
+ *
+ * A pending session grants nothing: {@link auth} and every guard still read it as signed
+ * out, and it is never slid forward. It is short-lived, and the step-up replaces it with
+ * a fresh session rather than upgrading it.
+ *
+ * @returns The pending {@link AuthSession}, or `null`.
+ */
+export async function pendingMfaSession(): Promise<AuthSession | null> {
+  const session = await currentSession();
+  return session?.mfaPending ? session : null;
 }
 
 /**

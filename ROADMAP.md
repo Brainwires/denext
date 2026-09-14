@@ -8,11 +8,13 @@
 > security policy in [POLICIES.md](./POLICIES.md).
 >
 > `development` is on the **2.5 rc series** (the version line `deno task bump` rewrites).
-> rc.1 carries `denext ui`, the auth flexibility cut + database adapter + bearer tokens, and
-> the DevTools completeness pass — all in [CHANGELOG.md](./CHANGELOG.md). What remains is the
-> rc.2 list below, the 2.6 candidates, the last build-time-purity item, the TanStack Start
-> depth of the router plugins, and the unscheduled candidates. Items target the next minor
-> unless marked otherwise; this file is rewritten each cycle.
+> rc.1 carried `denext ui`, the auth flexibility cut + database adapter + bearer tokens, and
+> the DevTools completeness pass; rc.2 carries the emailed auth flows and TOTP two-factor, the
+> rest of the `denext ui` list and the last three DevTools items — all in
+> [CHANGELOG.md](./CHANGELOG.md). What remains is the 2.6 candidates, the last
+> build-time-purity item, the TanStack Start depth of the router plugins, and the
+> unscheduled candidates. Items target the next minor unless marked otherwise; this file is
+> rewritten each cycle.
 
 ---
 
@@ -114,47 +116,6 @@ guardrail; both are build-time.
   remaining transforms, then move those one hook at a time; the compat e2es
   (`tests/e2e/next-compat-*`, `spa-compat`, `unbundled-*`) are the gate.
 
-## 2.5 rc.2 (the rest of the rc series)
-
-**Auth — the flows that need an outbound message** (the seam and the reserved session
-fields shipped in rc.1, so none of this invalidates a session):
-
-- **Password reset + email verification** — `verification.ts` / `email.ts` /
-  `routes-account.ts`: single-use hashed verification tokens bound to `(identifier, purpose)`,
-  `/auth/verify`, `/auth/reset`, `/auth/reset/confirm` (consume, `setCredential`, revoke every
-  session), and a config-time throw when `sendVerificationRequest` is missing. Consumes
-  `pages.error` / `pages.verifyRequest`.
-- **Magic link / email OTP** — `magicLink()` + `emailOtp()` presets over the same tokens. The
-  identifier is exactly one RFC address and is never split on `,` (the CVE-2022-35924 class),
-  which will flip that row in [the security guide](https://denext.dev/docs/security).
-- **TOTP 2FA with a pending-MFA step-up** — RFC 6238 enrol/confirm/disable, hashed backup
-  codes (the first flow to actually drive the `Hasher` seam, which rc.1 only configures), a
-  replay-guarded step claim, and the eight bypass paths (`auth()`, `requireAuth`,
-  `requireSession`, `GET /session`, Live `authorize`, `requireBearer`, `/auth/tokens`,
-  `/mfa/disable` freshness) each gated and each tested.
-
-**`denext ui`:**
-
-- Compose **YAML round-trip** so a hand-written `docker-compose.yml` can be edited, not only
-  regenerated.
-- **Per-plugin option schemas** (the catalog knows the keys, not the types) and **JSR plugin
-  discovery** beyond the first-party catalog.
-- The **TSX flip**: render the UI with denext itself behind the existing `renderPage()` seam —
-  the dogfooding case.
-- Typed **`commands[].flags` sub-forms** (add `src/cli/command.ts` to `CONFIG_TYPE_SOURCES`) and
-  a textarea widget tag for `spa.head` / `spa.loading`.
-- Share migrate's `next.config` evaluator and its translation table with the UI's
-  `config-next.ts` instead of keeping two.
-- Fix the `denext --help <dir>` parser quirk — documented as a limitation with its `--cwd=`
-  workaround in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
-
-**DevTools:**
-
-- Route-structural component metadata on the **bundled** App Router path (a `devMeta?` pre-pass
-  through `generateRouteEntry`), so `DENEXT_DEV_UNBUNDLED=0` gets families with locations.
-- **Cross-module custom-hook name expansion** (naming stops at a module boundary today).
-- A dev-only **`useDebugValue`** op that pushes to the fiber without changing hook-cell count.
-
 ## After 2.5 (2.6 candidates)
 
 **Auth:**
@@ -162,11 +123,34 @@ fields shipped in rc.1, so none of this invalidates a session):
 - **Passkeys / WebAuthn** over the adapter's credential tables.
 - A **`next-auth` compat shim** so a drop-in Next app that imports `next-auth` runs.
 - A standalone **`denext/auth` subpath** (today the surface lives in `denext/server`).
-- **A TOTP URI helper + `totpQrSvg()`** — both arrive with the rc.2 TOTP flow; denext
-  ships neither today.
+- **OAuth `response_mode=form_post`** — a POST callback plus a `SameSite=None` transaction
+  cookie for it (a `Lax` cookie never rides a cross-site POST, so the callback would always
+  fail `invalid_state`). It is what Apple needs to hand over a user's name and email; Apple
+  stays `openid`-only until then.
+- **An optional magic-link confirm page**: the GET renders a form that POSTs the token,
+  closing link-scanner burns and login CSRF.
+- **`totpQrSvg()`** — a dependency-free QR renderer for the `otpauth://` URI `enrollTotp` /
+  `totpAuthUri` return (rc.2 ships the URI, not the picture).
+- **Optional adapter `deleteCredential?` / `deleteMfa?`**, so disabling TOTP and a
+  pre-account-hijacking eviction delete instead of overwrite (today: an empty, unconfirmed
+  MFA record and a password hash of a random secret).
+- **A never-slid `authTime` on the session payload.** Sliding expiry re-stamps `issuedAt`, so
+  with `session.updateAge > 0` `/mfa/disable` can never take its `amr`-based freshness
+  shortcut and always needs a code.
+- **A public helper that spends the MFA attempt budget from a Server Action.** The limiter the
+  `/mfa*` endpoints spend is internal, so an action calling `verifySecondFactor` or
+  `confirmTotp` throttles itself (`examples/auth` carries its own).
 - **`activeAuthConfig()`** so `requireBearer`'s first argument becomes optional.
 - **Richer events**: API-token issue/revoke events, a `signInFailed.reason` union, and an
   `AuthEvents.ip` for audit trails.
+
+**`denext ui`:**
+
+- **Third-party plugin option schemas.** Options forms come only from the first-party
+  catalog; a JSR plugin found by the search is added and wired, but its options are set by
+  hand.
+- **Export the UI's form components** (`FormField`, `Control`, `Field`, `OpButton`, `Widget`)
+  and retire the form renderer's remaining string API.
 
 **DevTools:**
 

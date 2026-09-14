@@ -7,27 +7,30 @@
 // and passes the origin + CSRF + `--read-only` gates in `server.ts` before arriving here.
 
 import { sseStream } from "../build/sse.ts";
+import { h } from "../jsx/jsx-runtime.ts";
+import type { VNode } from "../jsx/types.ts";
 import {
-  html,
   htmlResponse,
   jsonResponse,
-  layout,
   renderPage,
-  UI_CSS_PATH,
   UI_EVENTS_PATH,
-  UI_JS_PATH,
   UI_NAV,
   type UiContext,
   type UiHandler,
   type UiRoute,
 } from "./html.ts";
+import { layout, type NavItem, UI_CSS_PATH, UI_JS_PATH } from "./layout.ts";
+import { Note, Panel } from "./components.ts";
+import { renderView } from "./view.ts";
 import { UI_CSS } from "./styles.ts";
 import { UI_JS } from "./client.ts";
 import { broadcast, sseProcess } from "./events.ts";
 import { runDeno } from "./proc.ts";
+import { OFFLINE_REFUSALS, OFFLINE_STATUS } from "./offline.ts";
 import { readDenoConfig, taskMap } from "./tasks.ts";
 import { configPanel } from "./features/config.ts";
 import { pluginsPanel } from "./features/plugins.ts";
+import { pluginOptionsPanel } from "./features/plugin-options.ts";
 import { generatePanel } from "./features/generate.ts";
 import { dockerPanel } from "./features/docker.ts";
 import { wizardPanel } from "./features/wizard.ts";
@@ -48,6 +51,7 @@ const FEATURES: readonly FeatureRoute[] = [
   { path: "/config", methods: ["GET", "POST"], handle: configPanel },
   { path: "/config/next", methods: ["GET"], handle: configPanel },
   { path: "/plugins", methods: ["GET", "POST", "DELETE"], handle: pluginsPanel },
+  { path: "/plugins/options", methods: ["GET", "POST"], handle: pluginOptionsPanel },
   { path: "/generate", methods: ["GET", "POST"], handle: generatePanel },
   { path: "/docker", methods: ["GET", "POST"], handle: dockerPanel },
   { path: "/wizard", methods: ["GET", "POST"], handle: wizardPanel },
@@ -99,22 +103,43 @@ const CARD_LEAD: Record<string, string> = {
   "/config/next": "Read a compat app's next.config and translate it.",
   "/plugins": "Browse the catalog; add or remove plugins.",
   "/generate": "Scaffold pages, routes, layouts, components, actions.",
-  "/docker": "Regenerate the Dockerfile and compose file with a diff.",
+  "/docker": "Edit docker-compose.yml in place, or regenerate the Docker files with a diff.",
   "/wizard": "Take a fresh clone to a running dev server.",
   "/commands": "Run this project's own denext verbs.",
 };
 
-/** The overview page: where the UI is pointed, and a card per panel. */
-function home(_request: Request, ctx: UiContext): Promise<Response> {
-  const cards = UI_NAV.filter((item) => item.href !== "/").map((item) =>
-    html`<a class="card" href="${item.href}"><strong>${item.label}</strong><span>${
-      CARD_LEAD[item.href] ?? ""
-    }</span></a>`
+/** What the overview says under `--offline`. */
+const OFFLINE_OVERVIEW = "Offline mode — nothing the UI starts reaches the network: denext " +
+  "verbs run with --deny-net --cached-only, and deno task, denext dev and plugin add/remove " +
+  "are refused.";
+
+/** One overview card: a panel's name, and what it does. */
+function Card({ item }: { readonly item: NavItem }): VNode {
+  return h(
+    "a",
+    { class: "card", href: item.href },
+    h("strong", null, item.label),
+    h("span", null, CARD_LEAD[item.href] ?? ""),
   );
-  const body = html`<section id="panel"><h1>Project</h1>
-<p class="lead mono">${ctx.dir}</p>
-${ctx.readOnly ? html`<p class="note">Read-only mode — every change is refused.</p>` : ""}
-<div class="cards">${cards}</div></section>`;
+}
+
+/** The overview panel: where the UI is pointed, and a card per panel. */
+function Overview({ ctx }: { readonly ctx: UiContext }): VNode {
+  const cards = UI_NAV.filter((item) => item.href !== "/").map((item) =>
+    h(Card, { key: item.href, item })
+  );
+  return h(
+    Panel,
+    { title: "Project" },
+    h("p", { class: "lead mono" }, ctx.dir),
+    ctx.readOnly ? h(Note, null, "Read-only mode — every change is refused.") : null,
+    ctx.offline === true ? h(Note, null, OFFLINE_OVERVIEW) : null,
+    h("div", { class: "cards" }, cards),
+  );
+}
+
+/** The overview page (always the whole document), or its JSON twin. */
+function home(_request: Request, ctx: UiContext): Promise<Response> {
   if (ctx.json) {
     return Promise.resolve(
       jsonResponse({
@@ -125,6 +150,7 @@ ${ctx.readOnly ? html`<p class="note">Read-only mode — every change is refused
       }),
     );
   }
+  const body = renderView(h(Overview, { ctx }));
   return Promise.resolve(htmlResponse(
     renderPage(layout, { title: "Project", nav: UI_NAV, body, csrf: ctx.csrf, active: "/" }),
   ));
@@ -137,12 +163,17 @@ ${ctx.readOnly ? html`<p class="note">Read-only mode — every change is refused
  * it must appear in the project's own `deno.json`/`deno.jsonc` `tasks` map, and it is passed as
  * an argv element — never through a shell. The child is tied to the stream: it dies when the
  * page disconnects and when the UI server shuts down, so no task is left running as an orphan.
+ * Under `--offline` a declared task is refused with a `503`: a task is arbitrary shell, and no
+ * flag can keep it off the network.
  */
 async function runTask(request: Request, ctx: UiContext): Promise<Response> {
   const name = String(ctx.form?.get("task") ?? new URL(request.url).searchParams.get("task") ?? "");
   const tasks = await projectTasks(ctx.dir);
   if (!tasks.includes(name)) {
     return jsonResponse({ ok: false, reason: `unknown task "${name}"`, tasks }, 400);
+  }
+  if (ctx.offline === true) {
+    return jsonResponse({ ok: false, reason: OFFLINE_REFUSALS.task }, OFFLINE_STATUS);
   }
   return sseProcess(
     async (line, signal) =>

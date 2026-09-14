@@ -8,10 +8,13 @@
 // hand-edited file (sentinel deleted, or never generated) is never clobbered — the same
 // never-clobber honesty `denext migrate` applies with its own generated-file marker.
 //
-// Build-time only; never imported by a shipped bundle. No YAML parser is involved: the compose
-// file is emitted, never parsed (a round-trip edit of a hand-written compose file is 2.5 rc.2).
+// Build-time only; never imported by a shipped bundle. This module only EMITS: it never parses
+// a compose file. Editing an existing one in place (keeping its comments and every line an edit
+// does not touch) is `compose-edit.ts`'s job, which the UI panel's compose editor calls — a
+// regeneration and a round-trip edit are two separate paths, and only the first comes through
+// here. (`compose-scan.ts` imports this module's sentinel check, so the dependency runs one way.)
 
-import { join } from "@std/path";
+import { isAbsolute, join, relative } from "@std/path";
 
 /** How the generated Docker image serves the app. */
 export type DockerMode = "server" | "static";
@@ -263,9 +266,15 @@ desktop-icon.png
 
 // ---- the plan --------------------------------------------------------------
 
-/** The file's current contents, or `undefined` when it does not exist. */
-async function readIfPresent(path: string): Promise<string | undefined> {
+/**
+ * The file's current contents, or `undefined` when it does not exist — or when it resolves
+ * (through a symlink) outside `projectDir`: a plan never reads a file from beyond the project
+ * into a preview, and a write there is refused by the caller's own containment gate.
+ */
+async function readIfPresent(projectDir: string, path: string): Promise<string | undefined> {
   try {
+    const rel = relative(await Deno.realPath(projectDir), await Deno.realPath(path));
+    if (rel.startsWith("..") || isAbsolute(rel)) return undefined;
     return await Deno.readTextFile(path);
   } catch {
     return undefined;
@@ -293,7 +302,7 @@ export async function dockerPlan(
   const plan: DockerPlanFile[] = [];
   for (const [name, contents] of rendered) {
     const path = join(projectDir, name);
-    const existing = await readIfPresent(path);
+    const existing = await readIfPresent(projectDir, path);
     plan.push({
       path,
       contents,

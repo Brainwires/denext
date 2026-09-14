@@ -144,6 +144,12 @@ The master list of everything denext ships — **and** the ledger of where denex
 with `file:line` mechanisms and `[default]`/`[opt-in]` labels — is [FEATURES.md](./FEATURES.md),
 rendered at [denext.dev/docs/features](https://denext.dev/docs/features).
 
+What a Next app normally installs is first-party here: **auth** — OAuth/OIDC, passwords, magic
+links and one-time codes, email verification and reset, TOTP two-factor
+([Auth](https://denext.dev/docs/auth)) — and **`denext ui`**, a loopback GUI over the project
+with a comment-preserving config editor, per-plugin option forms and a `docker-compose.yml`
+editor ([Project UI](https://denext.dev/docs/ui)).
+
 ## Desktop & mobile
 
 Ship the same app to the web, the desktop (via
@@ -151,7 +157,9 @@ Ship the same app to the web, the desktop (via
 iOS/Android (via [Capacitor](https://capacitorjs.com)); both native targets serve denext's static
 export. Scaffold with `denext create --desktop --capacitor`, then `deno task desktop` /
 `deno task mobile:ios` — see [Desktop & mobile](https://denext.dev/docs/desktop) and
-[`examples/native`](./examples/native).
+[`examples/native`](./examples/native). Inside the shell, `denext/mobile` covers what a native
+app needs from the page — safe areas, the keyboard inset, the back swipe, app resume and
+opening links in the system browser — with no `@capacitor/*` dependency.
 
 ## React & Next.js compatibility
 

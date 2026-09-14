@@ -25,6 +25,14 @@ export default async function Home({ searchParams }: PageProps) {
         <code>events</code>, and a signed-in user can mint <code>Bearer</code>{" "}
         API tokens for scripts.
       </p>
+      <p>
+        The emailed flows ride the same adapter: email verification, a password reset, and a magic
+        sign-in link — captured by a development mailer at <a href="/dev/outbox">/dev/outbox</a>
+        {" "}
+        instead of sent. And a TOTP second factor (with single-use backup codes) can be turned on at
+        {" "}
+        <code>/account/security</code>.
+      </p>
       {session
         ? (
           <p>

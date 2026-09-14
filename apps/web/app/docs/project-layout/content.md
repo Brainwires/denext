@@ -46,8 +46,10 @@ The default template is deliberately small: `deno.json`, `.gitignore`,
 carrying the `tailwind` block. `--src-dir` moves the app under `src/`;
 `--desktop` adds `desktop.ts`, `icons/` and the three `scripts/package-*.ts`
 packaging scripts; `--capacitor` adds `capacitor.config.ts` and a minimal
-`package.json` for Capacitor's Node CLI. Nothing else is generated — every other
-row above appears only when you add the feature.
+`package.json` pinning Capacitor 8 (`^8.5.2`) for its Node CLI and native
+platforms — the `ios/` and `android/` projects that `cap add` creates are meant
+to be committed, so only their build outputs are gitignored. Nothing else is
+generated — every other row above appears only when you add the feature.
 
 > [!NOTE]
 > `.denext/` and `out/` are generated, so keep them out of version control.

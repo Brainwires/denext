@@ -233,7 +233,12 @@ Persist users with an adapter (`sqliteAuthAdapter({ path })` on `node:sqlite`, o
 `inMemoryAuthAdapter()`), and gate a machine-to-machine API with
 `requireBearer(authConfig, { scope: "pets:write" })` — it self-documents as `bearerAuth`
 for `@denext/openapi` (declare the matching `securitySchemes: { bearerAuth: … }` once in the
-`openapi()` options). Full guide: https://denext.dev/docs/auth
+`openapi()` options). `credentials()` with no `authorize` verifies against the adapter
+(`getUserByEmail` + `getCredential` + the hasher). Passwordless: `providers: [magicLink(),
+emailOtp()]` plus `sendVerificationRequest` (denext ships no mailer). Second factor: an
+enrolled user's sign-in comes back pending; your `pages.mfa` page renders when
+`pendingMfaSession()` returns a session and posts `{ code }` to `/auth/mfa`; enrollment is
+`/auth/mfa/enroll` → `/auth/mfa/confirm`. Full guide: https://denext.dev/docs/auth
 
 **A project-local CLI verb (no plugin):** put it in `denext.config.ts` and run it as a verb.
 
@@ -249,12 +254,18 @@ export default {
 
 **A GUI over the project:** `denext ui` serves a loopback (127.0.0.1) project-management
 page — schema-driven `denext.config.ts` editing (a comment-preserving splice: outside the
-value span it replaces, the file keeps its bytes), plugins, every `generate` kind, Docker
-files, a setup wizard and the project's own verbs. It works with JavaScript disabled, and
+value span it replaces, the file keeps its bytes), plugins with per-plugin option forms and
+JSR search, every `generate` kind, Docker files plus in-place `docker-compose.yml` editing, a
+setup wizard and the project's own verbs. It works with JavaScript disabled, and
 **project code never runs in the UI's process** — every project-touching operation,
 including verb discovery (`denext commands --json`), is a `deno` subprocess.
 `--read-only` prevents writes by the UI, not execution of your config inside that
-discovery child. Docs: https://denext.dev/docs/ui
+discovery child. `--offline` keeps the UI and every process it starts off the network.
+Docs: https://denext.dev/docs/ui
+
+**A Capacitor shell:** `denext/mobile` (client-only) — `isNativeShell()`, `useAppResume`,
+`openExternal`, `useKeyboardInset`, `useBackSwipe`, `SAFE_AREA_CSS`. It talks to Capacitor
+through `window.Capacitor`, so no `@capacitor/*` import. Docs: https://denext.dev/docs/desktop
 
 **A database (zero-npm, server-only module):**
 
@@ -675,7 +686,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useContext<T>(context: Context<T>): T` — Read the current value of context from the nearest enclosing provider.
 - `useCopyToClipboard(resetAfterMs?: number): UseClipboardResult` — Copy text to the clipboard, exposing a transient copied flag for feedback.
 - `useDebouncedValue<T>(value: T, delayMs: number): T` — Return a debounced copy of value. Each change restarts a delayMs timer; the returned value updates only once the input stops changing for that long.
-- `useDebugValue<T>(_value: T, _format?: (value: T) => unknown): void` — Label a custom hook's value for React DevTools. A no-op at runtime (React itself only invokes it when DevTools is attached), provided for API compatibility.
+- `useDebugValue<T>(value: T, format?: (value: T) => unknown): void` — Label a custom hook's value for the DevTools inspector. In development on the client the value is recorded against the rendering component — without taking a hook cell, so adding or removing a call never shifts hook state (Fast Refresh keeps it) — and shown on the hook row it follows in the panel, denext_hook_state and the MCP snapshot. format is never called during render: the inspector applies it lazily, only when it reads the value. In production and during server rendering this is a no-op.
 - `useDeferredValue<T>(value: T, initialValue?: T): T` — Return a deferred copy of value that lags behind during rapid updates, letting urgent renders finish first. On the client this is a true **render-phase** deferral (React-accurate): during an urgent render the hook returns the previous value and schedules a low-priority transition to catch up, so the deferred update is time-sliced and interruptible and the value never trails by an extra commit. The optional initialValue (React 19) is returned on the first render, with a transition scheduled to reach value. On the server (no lane scheduler) it returns initialValue ?? value.
 - `useDirectory(pathOrHandle: string | FileSystemDirectoryHandle, options?: UseDirectoryOptions): UseDirectoryResult` — List a directory's entries and keep the listing live: it re-reads whenever the File System Observer reports a change (when that API is available).
 - `interface UseDirectoryOptions` — Options for useDirectory.
@@ -733,7 +744,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type (a returned Response carries no body type).
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 2.5.0-rc.1` — The denext framework version.
+- `VERSION: 2.5.0-rc.2` — The denext framework version.
 - `ViewTransition(props: object): VNode` — React.ViewTransition (experimental) — the client-driven view-transition wrapper. It is transparent (no DOM node of its own) and carries its config by stamping the DNX_VT_ATTR attribute onto its **single host child** (a DOM attribute survives server rendering AND the Flight boundary, unlike a VNode marker). Around a soft navigation the import-gated marking runtime finds these elements and applies real view-transition-name (and view-transition-class from enter/exit/update/share), so a name shared across routes morphs one element into the other. **Route-level** transitions apply regardless: a soft navigation commits inside document.startViewTransition where the browser supports it (see withViewTransition in src/client/navigation.ts). Without the gated runtime, or for a wrapper whose child isn't a single element (nothing to mark), it is a plain passthrough.
 - `interface VNode` — A single virtual DOM node.
 - `type VNodeChild = VNode | string | number | bigint | boolean | null | undefined` — Anything that can appear as a child in JSX.
@@ -794,17 +805,21 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface AuthCallbacks` — Callbacks that let an app veto or enrich a sign-in.
 - `interface AuthConfig` — Configuration for denextAuth.
 - `interface AuthCookieConfig` — One auth cookie's name and attributes.
+- `interface AuthEmailConfig` — The email-token flows' knobs: how long each kind of token lives and which pages the emailed links open. Every field is optional; lifetimes are in **seconds**, and a non-finite or non-positive lifetime falls back to its default.
 - `interface AuthEvents` — Side-effect hooks on the auth lifecycle. A handler may be async; it is awaited, and a throw is caught and routed to AuthLogger.error — an event handler can never fail a sign-in.
 - `interface AuthLogger` — Where the framework logs; every method is optional and defaults to silence.
+- `interface AuthMfaConfig` — Second-factor (TOTP) policy. Every field is optional; see each default.
 - `interface Author` — A named author (<meta name="author">, optional <link rel="author">).
 - `interface AuthorizedCallbackInput` — What AuthCallbacks.authorized is asked about.
-- `type AuthProvider = OAuthProvider | CredentialsProvider` — Any configured provider.
+- `type AuthProvider = OAuthProvider | CredentialsProvider | EmailProvider` — Any configured provider.
 - `interface AuthSession` — The signed (readable, tamper-evident) session payload. Never stores tokens/secrets.
 - `interface AuthSessionConfig` — Session lifetime + storage strategy.
 - `interface AuthUser` — A normalized user profile — the non-sensitive identity denext stores in the session.
 - `type AwaitableCookieStore = CookieStore & PromiseLike<CookieStore>` — cookies()'s return: usable synchronously AND awaitable (await cookies(), Next 15).
 - `type AwaitableDraftMode = DraftMode & PromiseLike<DraftMode>` — draftMode()'s return: usable synchronously AND awaitable (await draftMode(), Next 15).
 - `type AwaitableHeaders = Headers & PromiseLike<Headers>` — headers()'s return: usable synchronously AND awaitable (await headers(), Next 15).
+- `backupCodeMatcher(hasher: Hasher, code: string): (hash: string) => Promise<boolean>` — Build the matches predicate the adapter's consumeBackupCode walks the stored hashes with. The presented code is normalised (spaces and hyphens stripped, lowercased); a malformed one yields a predicate that matches nothing — yet still runs one hasher.verify per stored hash, so a garbage submission costs what a wrong code does.
+- `interface BackupCodes` — A fresh set of backup codes: show codes once, store only hashes.
 - `interface BearerContext` — What requireBearer adds to the handler's ctx.
 - `broadcastChannelTransport(name?: string): ChannelTransport` — A transport over the Web BroadcastChannel API: every instance that shares the channel name (Deno Deploy isolates, workers in one host) receives each event. Zero dependencies.
 - `type BuiltinApiErrorCode = validation | bad_request | unauthorized | forbidden | not_found | method_not_allowed | payload_too_large | request_timeout | rate_limited | internal` — The error codes the framework itself may produce for any endpoint. An endpoint's declared errors (see defineApi) are unioned with these on the client. Two are reserved rather than emitted as envelopes today: a 405 is plain text and a batch 408 is { error: string }, so a client sees them as http_error.
@@ -833,6 +848,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface CompiledPattern` — A source pattern compiled to a matcher with its capture keys.
 - `type Component<P> = (props: P & object) => VNode | Promise<VNode>` — A component is a function that receives props and returns a renderable node.
 - `composeMiddleware(entries: MiddlewareEntry[], moduleConfig?: MiddlewareConfig): MiddlewareRunner` — Compose an ordered list of entries into a single MiddlewareRunner.
+- `confirmTotp(config: AuthConfig, user: AuthUser, code: string): Promise<ConfirmTotpResult>` — Confirm a pending enrollment with a code from the authenticator app. On success the factor is marked confirmed and mfa.backupCodes backup codes are minted — returned here in plaintext exactly once, and stored only as hashes. The code's step is claimed, so it can't then be replayed at the step-up.
+- `type ConfirmTotpResult = object | object` — The outcome of confirmTotp: on success, the plaintext backup codes — the only time they exist anywhere; show them to the user once.
 - `connection(): Promise<void>` — connection() (Next.js) — an explicit dynamic-rendering signal. Awaiting it marks the current render as dynamic (per-request), opting the route out of static generation/caching, without reading any specific request data (unlike cookies()/headers()). Resolves once the runtime is ready to handle the request; outside a request it resolves immediately.
 - `cookies(): AwaitableCookieStore` — Access the current request's cookies (reads incoming, writes Set-Cookie).
 - `interface CookieSetOptions` — Options accepted when setting a cookie.
@@ -841,7 +858,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `createApp(config: AppConfig): RequestHandler` — Build the core request handler from an AppConfig: routing, SSR/streaming, API routes, the image endpoint, static files, caching, and the optional request-logging/timeout wrappers. Most apps use serve instead; use createApp directly to embed denext in a custom server.
 - `createChannel<T>(config: ChannelConfig<T>): Channel<T>` — Create a channel. Export it from a "use server" module (or give it an id).
 - `createMiddlewareRunner(mod: MiddlewareModule): MiddlewareRunner` — Build a runner from a loaded middleware module. The module may export a single handler or an ordered array of handlers/entries (composed into one chain). Returns null if the module exports no handler.
-- `credentials(options: CredentialsOptions): CredentialsProvider` — An email/password (or any custom) credentials provider.
+- `credentials(options?: CredentialsOptions): CredentialsProvider` — An email/password (or any custom) credentials provider.
 - `interface CredentialsOptions` — Options for the credentials provider.
 - `interface CredentialsProvider` — A Credentials (e.g. email/password) provider.
 - `type CspSetting = strict | off | RouteCsp` — How a scope's Content-Security-Policy is decided (three-state): - "strict" — denext's default hash-based strict policy. - "off" — emit **no** CSP header for this scope (e.g. Next.js-compat, or to set the policy entirely at the edge/proxy). - a RouteCsp object — the strict policy plus the listed external opt-ins.
@@ -859,12 +876,18 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DenextPlugin` — A denext plugin. Declared in denext.config.ts as plugins: [myPlugin()]; its setup runs once per process, before the first route scan.
 - `detectLocale(request: Request, i18n: I18nConfig): string` — Pick the best supported locale for a request from the NEXT_LOCALE cookie (highest priority) then the Accept-Language header, falling back to the default locale. Matches on both exact tags and the primary subtag (fr-CA matches a supported fr).
 - `type Directive = client | server | null` — Which boundary a module declares, or null when it declares none.
+- `disableTotp(config: AuthConfig, userId: string): Promise<void>` — Remove a user's TOTP factor and backup codes. A no-op for a user who never enrolled. Callers must have proved a fresh factor first — see the /mfa/disable endpoint.
 - `discord(options: OAuthClientOptions): OAuthProvider` — Discord (OAuth 2.0). Reads the profile from /users/@me; only an address Discord reports as verified reaches the session.
 - `interface DocumentOptions` — Inputs to renderDocument for assembling the full HTML page.
 - `documentsSecurity<M>(mw: M, security: Record<string, string[]>[]): M` — Tag a middleware so applying it also DOCUMENTS its OpenAPI requirement: an endpoint built with createApi().use(documentsSecurity(mw, [{ bearerAuth: [] }])).define(...) is marked secured in the generated document with no security on the definition — one declaration both enforces (the middleware) and documents (this tag). A security on the definition still overrides it, and @denext/openapi must declare the scheme (securitySchemes) for the "Authorize" button.
 - `draftMode(): AwaitableDraftMode` — Read and control draft (preview) mode for the current request. Backed by an httpOnly cookie holding a **server-minted random token** — a forged cookie value cannot enable draft mode. Still gate enable() behind your own authorization in a route handler (defense in depth); only that authorized call mints a valid token.
 - `interface DraftMode` — Draft (preview) mode state and controls, returned by draftMode.
 - `interface DraftTokenStore` — Backing store for server-minted draft tokens. Draft mode is "on" only when the request cookie holds a token this server issued via enable(); a forged or guessed value is not in the store, so it cannot turn draft mode on.
+- `emailOtp(options?: EmailProviderOptions): EmailProvider` — Passwordless sign-in by **one-time code**: POST {basePath}/callback/email-otp with { email } mails a numeric code (email.otpDigits, default 6; valid 5 minutes by default, email.otpMaxAge); posting { email, code } to the same endpoint signs the user in. Wrong codes count against a failure budget (5 per 5 minutes per address).
+- `interface EmailProvider` — A passwordless **email** provider: magicLink() mails a single-use sign-in link, emailOtp() a one-time numeric code. Both deliver through AuthConfig.sendVerificationRequest and need an adapter with the verification-token group plus getUserByEmail / createUser / updateUser.
+- `interface EmailProviderOptions` — Options for magicLink and emailOtp.
+- `interface EmailRequestResult` — What a verification or reset request reports — never whether the address exists.
+- `enrollTotp(config: AuthConfig, user: AuthUser): Promise<TotpEnrollment | null>` — Start a TOTP enrollment: mint a secret, store it **unconfirmed**, and return it with the provisioning URI (issuer mfa.issuer, account user.email ?? user.id). An earlier unconfirmed enrollment is replaced; a CONFIRMED factor is not — disable it first.
 - `type ErrorSpec = number | object` — How a declared error code maps to HTTP: a status, or a status with a default message.
 - `interface ExperimentalConfig` — Opt-in experimental features, set under experimental in denext.config.ts. Each is off by default. A feature lives here only while it is genuinely **incomplete** — being new is not enough — so shipped, complete capabilities (streaming, Live, islands, resumability, SPA mode, Cache Components) are top-level config, not here.
 - `facebook(options: OAuthClientOptions): OAuthProvider` — Facebook (OAuth 2.0, Graph API v19.0). The Graph /me response carries no verification flag, so the mapped user's emailVerified is always undefined, and Facebook may omit the email entirely (an account registered with a phone number, or a revoked permission).
@@ -888,6 +911,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `forbidden(): never` — Throw to render the nearest forbidden.tsx UI with a 403 status.
 - `interface FormatDetectionMetadata` — format-detection (telephone=no etc.).
 - `type FormFields = Record<string, FormDataEntryValue>` — The form fields of a submission as a plain object (the default input shape).
+- `generateBackupCodes(hasher: Hasher, count?: number): Promise<BackupCodes>` — Generate a set of unique backup codes and hash each through hasher. The hash covers the normalised form (no hyphen, lowercase), so a user may type a code with or without the hyphen, in any case.
+- `generateTotpSecret(bytes?: number): string` — Generate a fresh TOTP secret: bytes of CSPRNG output as unpadded, uppercase RFC 4648 base32 — the form authenticator apps expect.
 - `getCacheStats(): CacheStats` — A snapshot of cache activity: page (ISR) cache hit/miss/set counts and the recent revalidateTag/revalidatePath invalidations (with timing). The observable layer a cache glass-box / devtools reads — and usable for production monitoring.
 - `getCacheStore(): CacheStore` — The CacheStore currently backing the data + page cache.
 - `getSession<T>(options: SessionOptions): Promise<Session<T>>` — Read (and manage) the current request's session. The returned object exposes the verified data, plus set()/clear().
@@ -963,6 +988,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `localeHref(locale: string, rest: string, i18n: I18nConfig): string` — Build the pathname that serves locale for a locale-free path rest — the inverse of peelLocale. With localePrefix: "as-needed" (default) the default locale is served unprefixed and every other locale is prefixed; with localePrefix: "always" the default locale is prefixed too. Used to generate hreflang alternates and locale-switch links.
 - `localeMiddleware(i18n: I18nConfig): Middleware` — A middleware entry that redirects an unprefixed request to the visitor's detected locale when it differs from the default. Compose it into the middleware chain to get automatic locale routing:
 - `interface LocalPattern` — An allowed **local** image source pattern (Next.js images.localPatterns). A local source (/… under public/) matches when its pathname matches pathname (a glob: * = one path segment, ** = any) and, if search is given, its query string equals it exactly (search: "" ⇒ only a query-less URL). When localPatterns is set, a local source matching none is refused — an enumeration guard for query-string variants.
+- `magicLink(options?: EmailProviderOptions): EmailProvider` — Passwordless sign-in by **magic link**: POST {basePath}/callback/email with { email } mails a single-use link (10 minutes by default, email.magicMaxAge); opening it signs the user in. The link is consumed by its GET, so a mail gateway that pre-fetches links can spend it — prefer emailOtp where link scanners are common.
 - `makeTranslate(messages: Messages): TranslateFn` — Build a TranslateFn over messages (missing keys return the key).
 - `interface MatchContext` — What a matcher's has/missing conditions are evaluated against.
 - `interface MatcherCondition` — One has/missing condition of a matcher entry (Next's shape): the request must carry (has) or lack (missing) a header, cookie, query parameter, or host. Without value the condition is presence; with it, the actual value must equal value — or match it as a regular expression when it contains regex syntax ((?<team>\w+), a|b, .*).
@@ -973,7 +999,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface MdxConfig` — MDX compilation options (see DenextConfig.mdx). Each plugin list is a unified PluggableList: an array whose entries are either a plugin function or a [plugin, options] tuple. Typed loosely (unknown[]) so the public config surface doesn't depend on unified/@mdx-js types; the values are forwarded verbatim to MDX's compile.
 - `type Messages = Record<string, string>` — A flat message catalog for one locale: message key → template string.
 - `interface Metadata` — Page metadata a page or layout module may export as metadata/generateMetadata.
+- `type MfaMethod = totp | bcp` — A second factor a step-up can be completed with: a TOTP code, or a backup code.
 - `interface MfaRecord` — A user's TOTP factor plus their single-use backup codes.
+- `mfaStatus(config: AuthConfig, userId: string): Promise<MfaStatus>` — A user's second-factor state — for an account-settings page.
+- `interface MfaStatus` — A user's second-factor state, as mfaStatus reports it.
 - `microsoftEntra(options: MicrosoftEntraOptions): OAuthProvider` — Microsoft Entra ID (formerly Azure AD) — OIDC v2.0 endpoints, id_token verified against the tenant's JWKS. Single-tenant only (see MicrosoftEntraOptions.tenant); claims come from the verified id_token, so no Microsoft Graph call is made.
 - `interface MicrosoftEntraOptions` — Options for microsoftEntra.
 - `type Middleware = (request: Request, context: MiddlewareContext) => MiddlewareResult | Promise<MiddlewareResult>` — A root middleware handler run before routing.
@@ -1014,6 +1043,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `parsePattern(pattern: string): Segment[]` — Parse a route pattern like "blog/[slug]" into an ordered segment list.
 - `interface PeeledLocale` — The result of peeling a locale prefix off a pathname.
 - `peelLocale(pathname: string, i18n: I18nConfig | undefined, host?: string): PeeledLocale` — Peel a leading locale segment off pathname. If the first path segment is a configured locale it is stripped and returned; otherwise the default locale is used and the pathname is returned unchanged.
+- `pendingMfaSession(): Promise<AuthSession | null>` — The current request's session **only while it still owes a second factor** — null for a complete session, and for none. For the app's pages.mfa page: render the code form (or, under mfa.required: "always" for a user with no factor yet, the enrollment step) when this returns a session, and redirect onward when it doesn't.
 - `permanentRedirect(url: Href | parenthesized, type?: RedirectType): never` — Throw to issue a permanent (308) redirect to url.
 - `interface PluginBuildContext` — Context passed to a PluginBuildStep.
 - `type PluginBuildStep = (context: PluginBuildContext) => void | Promise<void>` — A build-time step that emits the plugin's client bundles/assets into outDir.
@@ -1053,10 +1083,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `renderToHtmlFlight(node: VNodeChildren, options?: HtmlFlightOptions): Promise<HtmlFlight>` — Render a VNode tree to HTML and Flight in a single pass.
 - `interface RequestContext` — Ambient state for the request currently being handled.
 - `interface RequestCookie` — A single cookie as cookies().get() / .getAll() return it (Next.js's shape).
+- `requestEmailVerification(config: AuthConfig, userOrEmail: Pick<AdapterUser, email> | string): Promise<EmailRequestResult>` — Email a verification link to a user (or an address). The link opens email.verifyPath (default {basePath}/verify, which verifies and redirects).
 - `interface RequestErrorContext` — Context passed to OnRequestError describing where the error occurred — mirrors Next.js's onRequestError context so instrumentation (Sentry, etc.) written for Next works unchanged.
 - `type RequestHandler = (request: Request) => Promise<Response>` — An HTTP request handler that resolves a Request to a Response.
 - `interface RequestLogInfo` — Per-request telemetry passed to AppConfig.onRequest.
 - `requestOrigin(request: Request, opts?: OriginOptions): string` — The public origin (scheme://host) for request. Resolution order: canonicalOrigin (if set) → forwarded headers (only when trustForwardedHeaders is set) → the Host header → the request URL. Only the first value of a comma-separated forwarded header is used.
+- `requestPasswordReset(config: AuthConfig, email: string): Promise<EmailRequestResult>` — Email a password-reset link. The link opens email.resetPath (default {basePath}/reset) — a page your app renders, posting email, token and password to {basePath}/reset/confirm (or calling resetPassword).
 - `requireAuth(request: Request, options?: RequireAuthOptions): Promise<Response | null>` — Middleware guard: allow the request through when signed in, otherwise return a redirect to the sign-in page carrying a callbackUrl back to the target.
 - `interface RequireAuthOptions` — Options for requireAuth.
 - `requireBearer(config: AuthConfig, options?: RequireBearerOptions): ApiMiddleware<object, BearerContext>` — Require a valid bearer API token (denext auth): verifies Authorization: Bearer tok_…, loads the token's user, and extends the handler's context with BearerContext — or fails with a 401 unauthorized envelope before any schema runs. A valid token that lacks the required scope or role fails with 403 forbidden instead, so "who are you" stays distinguishable from "may you".
@@ -1064,6 +1096,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `requireSession(options?: RequireSessionOptions): ApiMiddleware<object, object>` — Require a signed-in viewer (denext auth): extends the context with { session }, or fails with a 401 unauthorized envelope before any schema runs. With role, a signed-in caller who holds none of the listed roles fails with a 403 forbidden envelope instead.
 - `interface RequireSessionOptions` — Options for requireSession.
 - `resetCacheStats(): void` — Reset the cache-activity counters (tests / a fresh monitoring window).
+- `resetPassword(config: AuthConfig, input: object): Promise<ResetPasswordResult>` — Redeem a password-reset token and set a new password: the configured hasher hashes it, adapter.setCredential stores it, and every server-side session of the user is revoked. Fires passwordReset (after sessionRevoked).
+- `type ResetPasswordResult = object | object` — What resetPassword reports.
 - `resolveCacheLife(profile: string | CacheLifeProfile): CacheLifeProfile` — Resolve a cacheLife argument — a built-in/custom profile name or an inline profile object — to a concrete CacheLifeProfile. An unknown name falls back to the default profile. Missing fields inherit from default.
 - `type ResolvedMetadata = Metadata` — The merged metadata of the segments ABOVE the current one (what parent resolves to).
 - `interface ResolvedRules` — The config's rule functions resolved to concrete arrays (evaluated once).
@@ -1161,6 +1195,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `taskNames(): string[]` — Every registered task name, sorted.
 - `interface ThemeColorDescriptor` — <meta name="theme-color"> with an optional media query.
 - `TOO_LARGE: Symbol` — Sentinel returned by readCappedBody when the body exceeds the cap.
+- `totpAuthUri(options: TotpAuthUriOptions): string` — Build the otpauth://totp/… provisioning URI (Google Authenticator key-URI format) to render as a QR code or a link. The label is Issuer:account with each part percent-encoded (so a : inside either part can't forge the separator), and every query value is percent-encoded too (a space is %20, never +).
+- `interface TotpAuthUriOptions` — Options for totpAuthUri.
+- `interface TotpEnrollment` — A fresh, unconfirmed TOTP enrollment, as enrollTotp returns it.
+- `interface TotpVerifyOptions` — Options for verifyTotp.
+- `type TotpVerifyResult = object | object` — The outcome of verifyTotp: on a match, the time step the code belongs to — hand it to the adapter's claimTotpStep so the same code can't be presented twice.
 - `type TranslateFn = (key: string, vars?: TranslationVars) => string` — A translation function: look up key and interpolate any {var} placeholders.
 - `type TranslationVars = Record<string, string | number>` — Values interpolated into a message template's {name} placeholders.
 - `interface TwitterMetadata` — Twitter Card metadata (twitter:* tags), Next.js-shaped (images, not image).
@@ -1179,7 +1218,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface VerificationTokenRecord` — A single-use token proving control of an identifier (an email verification link, a password-reset link, a magic link, a one-time code). Only the **hash** is stored, so a database read never yields a usable token.
 - `interface VerificationTokenRef` — Identifies one verification token (the tuple its uniqueness is scoped by).
 - `verifyApiToken(config: AuthConfig, presented: string): Promise<ApiTokenRecord | null>` — Verify a presented bearer token: hash it, look the hash up (an indexed exact match — no secret is ever compared in-process), and check it is still live.
+- `verifyEmail(config: AuthConfig, input: object): Promise<AdapterUser | null>` — Redeem an email-verification token and mark the address verified (emailVerified, epoch seconds, through adapter.updateUser). Fires emailVerified.
 - `verifyPassword(password: string, stored: string, options?: HashPasswordOptions): Promise<boolean>` — Verify a password against a hash produced by hashPassword. The comparison is constant-time (timingSafeEqual), and a malformed/unsupported stored value — an empty column, a legacy format, a corrupted row — returns false rather than throwing, so an authorize callback can't leak a stack trace or a 500. That rejection still runs a full scrypt derivation, so an unknown account takes as long to reject as a wrong password for a known one (no user-enumeration timing oracle).
+- `verifySecondFactor(config: AuthConfig, userId: string, code: string): Promise<MfaMethod | null>` — Check a second-factor code for a user with a confirmed factor: first as a TOTP code (claiming its step — a replay is refused), else as a backup code (spent on a match).
+- `verifyTotp(secret: string, code: string, options?: TotpVerifyOptions): Promise<TotpVerifyResult>` — Verify a TOTP code (RFC 6238 over RFC 4226 HOTP, HMAC-SHA-1) against a base32 secret, accepting any step within ±window of the current one. Whitespace in the code is stripped ("123 456"); anything else malformed — non-digits, the wrong length, a secret that isn't base32 — is { ok: false }, never a throw. Every candidate step is computed and compared in constant time; the loop never exits early on a match.
 - `interface Viewport` — Viewport + theme metadata (Next.js viewport/generateViewport).
 - `interface VNode` — A single virtual DOM node.
 - `type VNodeChild = VNode | string | number | bigint | boolean | null | undefined` — Anything that can appear as a child in JSX.
@@ -1315,7 +1357,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface UseApiResult<T, E>` — What useApi returns.
 - `useCallback<T>(fn: T, deps?: DependencyList): T` — Return a memoized version of fn that only changes when deps change.
 - `useContext<T>(context: Context<T>): T` — Read the current value of context from the nearest enclosing provider.
-- `useDebugValue<T>(_value: T, _format?: (value: T) => unknown): void` — Label a custom hook's value for React DevTools. A no-op at runtime (React itself only invokes it when DevTools is attached), provided for API compatibility.
+- `useDebugValue<T>(value: T, format?: (value: T) => unknown): void` — Label a custom hook's value for the DevTools inspector. In development on the client the value is recorded against the rendering component — without taking a hook cell, so adding or removing a call never shifts hook state (Fast Refresh keeps it) — and shown on the hook row it follows in the panel, denext_hook_state and the MCP snapshot. format is never called during render: the inspector applies it lazily, only when it reads the value. In production and during server rendering this is a no-op.
 - `useDeferredValue<T>(value: T, initialValue?: T): T` — Return a deferred copy of value that lags behind during rapid updates, letting urgent renders finish first. On the client this is a true **render-phase** deferral (React-accurate): during an urgent render the hook returns the previous value and schedules a low-priority transition to catch up, so the deferred update is time-sliced and interruptible and the value never trails by an extra commit. The optional initialValue (React 19) is returned on the first render, with a transition scheduled to reach value. On the server (no lane scheduler) it returns initialValue ?? value.
 - `useEffect(effect: () => EffectCleanup, deps?: DependencyList): void` — Run a side effect after render, re-running whenever deps change.
 - `useEffectEvent<A, R>(handler: (...args: A) => R): (...args: A) => R` — Return a **stable** callback that always sees the latest props/state — React 19.2's useEffectEvent. Use it for the "event" part of an Effect that should not itself be a dependency (so the Effect doesn't re-run when the handler's closure changes). Do not call the returned function during render.
@@ -1474,6 +1516,22 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `resolveOutDir(options: RunDesktopOptions): string` — The static-export dir to serve: outDir (relative to importMetaUrl when given), else out/.
 - `runDesktop(options?: RunDesktopOptions): Promise<void>` — Serve a denext SPA export in a deno desktop window. Adopts the initial Deno.BrowserWindow and quits the process on window close; under a plain deno run (no desktop runtime) it just starts the server.
 - `interface RunDesktopOptions`
+
+### `denext/mobile`
+
+- `interface BackSwipeOptions` — Options for useBackSwipe and isBackSwipe.
+- `installKeyboardInset(opts?: KeyboardInsetOptions): () => void` — Keep a CSS custom property on document.documentElement (default --denext-keyboard-inset) equal to the on-screen keyboard's height in px, so layout can lift a composer or a bottom bar above it: padding-bottom: var(--denext-keyboard-inset).
+- `isBackSwipe(dx: number, dy: number, opts?: BackSwipeOptions): boolean` — The pure gesture test behind useBackSwipe: whether a movement of dx/dy CSS px from the touch start is a back swipe, i.e. rightward by at least minDistance and horizontal by at least ratio × the absolute vertical movement.
+- `isNativeShell(): boolean` — Whether the page runs inside a Capacitor iOS/Android native shell (webview origin capacitor://localhost on iOS, https://localhost on Android). false on the web, when @capacitor/core is merely bundled into a web build, and during SSR.
+- `interface KeyboardInsetOptions` — Options for installKeyboardInset and useKeyboardInset.
+- `nativePlatform(): NativePlatform` — The platform the page runs on: "ios" or "android" inside a Capacitor native shell, otherwise "web". SSR-safe ("web" when there is no window). A Capacitor custom platform (e.g. Electron) also reads "web": only the iOS and Android shells count.
+- `type NativePlatform = ios | android | web` — The platform a page runs on, as denext/mobile distinguishes them.
+- `onAppResume(cb: (awayMs: number) => void): () => void` — Call cb each time the page returns to the foreground, with how long it was away in milliseconds.
+- `openExternal(url: string): Promise<void>` — Open a URL outside the app.
+- `SAFE_AREA_CSS: string` — A stylesheet fragment that defines --denext-safe-top, --denext-safe-right, --denext-safe-bottom and --denext-safe-left on :root as the device's safe-area insets (env(safe-area-inset-*, 0px): the notch, status bar and home indicator), 0px where there are none. Drop it into a stylesheet or a <style> tag, then pad with the variables.
+- `useAppResume(cb: (awayMs: number) => void): void` — Hook form of onAppResume: subscribes on mount, unsubscribes on unmount. The latest cb is always called (it is held in a ref), so passing a fresh closure each render never re-subscribes.
+- `useBackSwipe(onBack: () => void, opts?: BackSwipeOptions): (el: Element | null) => void` — Swipe right to go back. Returns a ref callback: attach it to the element that should recognize the gesture (often the page's scroll container). A touch that travels rightward at least minDistance CSS px (default 72), with horizontal travel at least ratio (default 1.4) × vertical travel, fires onBack once, as soon as it qualifies.
+- `useKeyboardInset(opts?: KeyboardInsetOptions): number` — Hook form of installKeyboardInset: installs the custom property on mount, disposes it on unmount, and returns the current keyboard height in px (0 during SSR and before mount).
 
 ### `denext/cli/command`
 

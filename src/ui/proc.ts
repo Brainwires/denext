@@ -34,14 +34,26 @@ export interface RunDenoOptions {
 }
 
 /**
+ * What keeps a denext-CLI child off the network under `denext ui --offline`. `--deny-net` takes
+ * precedence over `-A` (and refuses listening as well as connecting); `--cached-only` covers the
+ * module loader, which the net permission does not govern — without it a child would still
+ * download an uncached import.
+ */
+const OFFLINE_FLAGS: readonly string[] = ["--deny-net", "--cached-only"];
+
+/**
  * The argv prefix that runs this framework's own CLI as a child process — under whatever
  * scheme denext itself was loaded from, so a checkout runs its `cli.ts` and an installed copy
  * runs the JSR one.
  *
- * @returns `["run", "-A", "<framework>/cli.ts"]`, to be spread before the verb and its flags.
+ * @param options `offline`: `denext ui --offline` — the child may neither open a socket nor
+ *   download a module.
+ * @returns `["run", "-A", "<framework>/cli.ts"]` (with `--deny-net --cached-only` after `-A`
+ *   when offline), to be spread before the verb and its flags.
  */
-export function cliInvocation(): string[] {
-  return ["run", "-A", frameworkFileUrl("cli.ts")];
+export function cliInvocation(options: { readonly offline?: boolean } = {}): string[] {
+  const offline = options.offline === true ? OFFLINE_FLAGS : [];
+  return ["run", "-A", ...offline, frameworkFileUrl("cli.ts")];
 }
 
 /** The outcome of a {@linkcode runDeno} call. */

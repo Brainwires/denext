@@ -10,6 +10,9 @@
  * including the three below — is a data literal handed to the shared `oauthPreset`
  * factory.
  *
+ * The passwordless email providers — `magicLink` and `emailOtp` — live in
+ * {@link ./providers-email.ts | providers-email.ts} and are re-exported here as well.
+ *
  * @module
  */
 
@@ -33,6 +36,7 @@ export {
   type OktaOptions,
   slack,
 } from "./providers-presets.ts";
+export { emailOtp, type EmailProviderOptions, magicLink } from "./providers-email.ts";
 
 /**
  * Google (OIDC). Verifies the `id_token`; no userinfo round-trip needed.
@@ -183,8 +187,11 @@ export interface CredentialsOptions {
    *   },
    * })
    * ```
+   *
+   * Omit it to verify against the configured adapter's credentials group
+   * (`getUserByEmail` → `getCredential` → `AuthConfig.hasher`).
    */
-  authorize: (
+  authorize?: (
     credentials: Record<string, string>,
   ) => Promise<AuthUser | null> | AuthUser | null;
 }
@@ -192,9 +199,11 @@ export interface CredentialsOptions {
 /**
  * An email/password (or any custom) credentials provider.
  *
- * @param options The `authorize` callback and an optional provider id.
+ * @param options The optional `authorize` callback and provider id.
  * @returns The configured credentials provider.
  */
-export function credentials(options: CredentialsOptions): CredentialsProvider {
-  return { id: options.id ?? "credentials", type: "credentials", authorize: options.authorize };
+export function credentials(options: CredentialsOptions = {}): CredentialsProvider {
+  const provider: CredentialsProvider = { id: options.id ?? "credentials", type: "credentials" };
+  if (options.authorize) provider.authorize = options.authorize;
+  return provider;
 }

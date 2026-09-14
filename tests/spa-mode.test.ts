@@ -191,6 +191,24 @@ Deno.test("spaShellHtml: no spa.loading leaves #root empty (default)", async () 
   assertStringIncludes(html, '<div id="root"></div>');
 });
 
+Deno.test("spaShellHtml: a viewport meta in spa.head replaces the default one", async () => {
+  const count = (html: string) => (html.match(/<meta name="viewport"/g) ?? []).length;
+  const plain = await spaShellHtml({ spa: { entry: "./src/main.tsx" }, scriptSrc: "/x.js" });
+  assertEquals(count(plain), 1);
+  assertStringIncludes(plain, 'content="width=device-width, initial-scale=1"');
+
+  // iOS safe areas need viewport-fit=cover; two viewport metas would leave the winner to
+  // browser tie-breaking, so the app's own one is the only one emitted.
+  const appViewport =
+    '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />';
+  const html = await spaShellHtml({
+    spa: { entry: "./src/main.tsx", head: appViewport },
+    scriptSrc: "/x.js",
+  });
+  assertEquals(count(html), 1);
+  assertStringIncludes(html, appViewport);
+});
+
 Deno.test("collectSpaPreloads: transitive STATIC import graph only (dynamic imports excluded)", async () => {
   const { collectSpaPreloads } = await import("../src/build/spa.ts");
   const dir = await Deno.makeTempDir({ prefix: "denext_preload_" });

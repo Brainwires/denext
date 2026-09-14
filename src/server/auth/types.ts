@@ -1,11 +1,11 @@
 /**
  * Shared types for denext auth: the normalized user/session shapes and the
- * provider contracts (OAuth 2.0 / OIDC and Credentials).
+ * provider contracts (OAuth 2.0 / OIDC, Credentials, and passwordless Email).
  *
  * @module
  */
 
-import type { AdapterAccount, AdapterUser, AuthAdapter } from "./adapter.ts";
+import type { AdapterAccount, AdapterUser, AuthAdapter, VerificationPurpose } from "./adapter.ts";
 import type { Hasher } from "./hasher.ts";
 import type { RateLimitOptions } from "./rate-limit.ts";
 import type { SessionStore } from "./session-store.ts";
@@ -57,8 +57,12 @@ export interface AuthSession {
    */
   v?: 2;
   /**
-   * When this session was established, epoch seconds. Absent on a v1 payload, where
-   * readers infer `expiresAt - maxAge`. Sliding expiry extends `expiresAt`, never this.
+   * When this session payload was last issued, epoch seconds: at sign-in, and again each
+   * time sliding expiry (`session.updateAge`) re-issues the session — a slide re-stamps
+   * `issuedAt` along with `expiresAt`. With sliding on it is therefore the time of the
+   * last slide, not of the sign-in, so an age measured from it (the `mfa.freshness` rule)
+   * says nothing about when a factor was proven. Absent on a v1 payload, where readers
+   * infer `expiresAt - maxAge`.
    */
   issuedAt?: number;
   /**
@@ -165,18 +169,58 @@ export interface CredentialsProvider {
    * a wrong password alike) and must compare passwords in constant time — store hashes
    * from `hashPassword` and check with `verifyPassword` (both from `denext/server`).
    * Failed attempts are rate-limited by the framework (see `AuthConfig.rateLimit`).
+   *
+   * Optional: without it, the framework verifies against the configured adapter's
+   * credentials group (`getUserByEmail` → `getCredential` → `AuthConfig.hasher`).
    */
-  authorize: (
+  authorize?: (
     credentials: Record<string, string>,
   ) => Promise<AuthUser | null> | AuthUser | null;
 }
 
-/** Any configured provider. */
-export type AuthProvider = OAuthProvider | CredentialsProvider;
+/**
+ * A passwordless **email** provider: `magicLink()` mails a single-use sign-in link,
+ * `emailOtp()` a one-time numeric code. Both deliver through
+ * {@link AuthConfig.sendVerificationRequest} and need an adapter with the
+ * verification-token group plus `getUserByEmail` / `createUser` / `updateUser`.
+ */
+export interface EmailProvider {
+  /** Provider id (the `[provider]` route segment): `"email"` / `"email-otp"` by default. */
+  id: string;
+  /** Display name for a sign-in button — `GET {basePath}/providers` echoes it. */
+  name: string;
+  /** Discriminant marking this as an email provider. */
+  type: "email";
+  /** `"magic"` mails a link (redeemed by its GET); `"otp"` mails a code (redeemed by a POST). */
+  mode: "magic" | "otp";
+  /**
+   * Whether an address with no account may sign up by proving its mailbox. With `false`
+   * an unknown address is sent nothing — and answered exactly as if it had been.
+   */
+  allowSignUp: boolean;
+}
 
-/** True for an OAuth/OIDC provider (vs. Credentials). */
+/** Any configured provider. */
+export type AuthProvider = OAuthProvider | CredentialsProvider | EmailProvider;
+
+/**
+ * True for an OAuth/OIDC provider (vs. Credentials or Email).
+ *
+ * @param p Any configured provider.
+ * @returns Whether `p` is an {@link OAuthProvider}.
+ */
 export function isOAuthProvider(p: AuthProvider): p is OAuthProvider {
   return p.type === "oauth" || p.type === "oidc";
+}
+
+/**
+ * True for a passwordless email provider (`magicLink()` / `emailOtp()`).
+ *
+ * @param p Any configured provider.
+ * @returns Whether `p` is an {@link EmailProvider}.
+ */
+export function isEmailProvider(p: AuthProvider): p is EmailProvider {
+  return p.type === "email";
 }
 
 /** What {@link AuthCallbacks.authorized} is asked about. */
@@ -237,17 +281,24 @@ export interface AuthEvents {
   }) => Promise<void> | void;
   /** A sign-in attempt was refused (bad credentials, a denied callback, a bad state). */
   signInFailed?: (payload: {
-    /** The provider id the attempt targeted, when known. */
+    /**
+     * The provider id the attempt targeted, when known — for a refused second factor, the
+     * provider of the first.
+     */
     provider?: string;
     /**
-     * A stable machine-readable reason: `"invalid_credentials"`, `"rate_limited"`,
-     * `"access_denied"`, `"account_not_linked"`, `"adapter_error"`, or an OAuth failure code.
+     * A stable machine-readable reason: `"invalid_credentials"` (a wrong password, or a
+     * wrong, spent or expired email link / code), `"invalid_mfa_code"` (a wrong TOTP or
+     * backup code at the second-factor step), `"rate_limited"`, `"access_denied"`,
+     * `"account_not_linked"`, `"adapter_error"`, or an OAuth failure code
+     * (`"invalid_state"`, `"config"`, `"oauth_failed"`, or the provider's own `?error=`).
      */
     reason: string;
     /**
      * The client bucket the limiter keyed on — present on the rate-limited routes (the
-     * credentials POST and the sign-in start). IPv4 as seen; an IPv6 client appears as its
-     * /64 prefix, which is what the limiter actually counts.
+     * credentials POST, the sign-in start, the email link / code redeem and the MFA
+     * steps). IPv4 as seen; an IPv6 client appears as its /64 prefix, which is what the
+     * limiter actually counts.
      */
     ip?: string;
   }) => Promise<void> | void;
@@ -275,6 +326,39 @@ export interface AuthEvents {
      * handler genuinely needs the tokens.
      */
     account: Pick<AdapterAccount, "userId" | "provider" | "providerAccountId" | "type">;
+  }) => Promise<void> | void;
+  /**
+   * A verification token was delivered through `sendVerificationRequest` (an
+   * email-verification or password-reset email, or a `magicLink()` / `emailOtp()` sign-in
+   * link or code). Fires only for a real send — never for
+   * an unknown address, a throttled request or a failed delivery — and never carries the
+   * token or the link.
+   */
+  verificationRequested?: (payload: {
+    /** The normalised address the token was sent to. */
+    identifier: string;
+    /** Which flow issued it. */
+    purpose: VerificationPurpose;
+    /** When the token expires, epoch seconds. */
+    expiresAt: number;
+  }) => Promise<void> | void;
+  /**
+   * A user proved control of their address: by redeeming an email-verification token, or
+   * by a first magic-link / one-time-code sign-in into an existing unverified account —
+   * whose password, bearer tokens and server-side sessions were retired first
+   * (`sessionRevoked` fired for the sessions).
+   */
+  emailVerified?: (payload: {
+    /** The user record, with `emailVerified` set. */
+    user: AdapterUser;
+  }) => Promise<void> | void;
+  /**
+   * A user set a new password by redeeming a password-reset token. Their server-side
+   * sessions have already been revoked when this fires (`sessionRevoked` fired too).
+   */
+  passwordReset?: (payload: {
+    /** The user whose password changed. */
+    user: AdapterUser;
   }) => Promise<void> | void;
 }
 
@@ -342,6 +426,65 @@ export type SendVerificationRequest = (
   params: VerificationRequestParams,
 ) => Promise<void> | void;
 
+/**
+ * The email-token flows' knobs: how long each kind of token lives and which pages the
+ * emailed links open. Every field is optional; lifetimes are in **seconds**, and a
+ * non-finite or non-positive lifetime falls back to its default.
+ */
+export interface AuthEmailConfig {
+  /** How long an email-verification link stays valid, in seconds. Default `86400` (24 hours). */
+  verifyMaxAge?: number;
+  /** How long a password-reset link stays valid, in seconds. Default `3600` (1 hour). */
+  resetMaxAge?: number;
+  /** How long a magic sign-in link stays valid, in seconds. Default `600` (10 minutes). */
+  magicMaxAge?: number;
+  /** How long a one-time code stays valid, in seconds. Default `300` (5 minutes). */
+  otpMaxAge?: number;
+  /** How many digits a one-time code has. Default `6`; clamped to `6..10`. */
+  otpDigits?: number;
+  /**
+   * The same-origin path an email-verification link opens (the link adds `?token=…&email=…`).
+   * Default `{basePath}/verify` — `"/auth/verify"` — the built-in endpoint, which verifies
+   * the address and redirects. Must start with a single `/`.
+   */
+  verifyPath?: string;
+  /**
+   * The same-origin path a password-reset link opens (the link adds `?token=…&email=…`) —
+   * a page YOUR app renders: a form posting `email`, `token` and the new `password` to
+   * `{basePath}/reset/confirm`. Default `{basePath}/reset` — `"/auth/reset"`; the auth
+   * endpoints only claim a POST there, so a GET falls through to e.g.
+   * `app/auth/reset/page.tsx`. Must start with a single `/`.
+   */
+  resetPath?: string;
+}
+
+/** Second-factor (TOTP) policy. Every field is optional; see each default. */
+export interface AuthMfaConfig {
+  /**
+   * Who must present a second factor: `"enrolled"` (the default) asks only users who have
+   * enrolled one; `"always"` asks everyone, sending a user without a factor to enrol
+   * first. Any other value reads as `"enrolled"`.
+   */
+  required?: "enrolled" | "always";
+  /**
+   * The issuer label an authenticator app shows next to the account. Default: the host
+   * name of `canonicalOrigin`, else `"denext"`.
+   */
+  issuer?: string;
+  /**
+   * How many 30-second TOTP steps of clock drift are accepted either side of now.
+   * Default `1` (±30 seconds); clamped to `0..2`.
+   */
+  window?: number;
+  /** How many single-use backup codes enrollment mints. Default `10`; clamped to `0..20`. */
+  backupCodes?: number;
+  /**
+   * How recent, in seconds, a second-factor proof must be for an action that demands a
+   * fresh one (step-up). Default `900` (15 minutes).
+   */
+  freshness?: number;
+}
+
 /** Configuration for {@link ../auth/mod.ts | denextAuth}. */
 export interface AuthConfig {
   /** Configured providers. */
@@ -379,7 +522,11 @@ export interface AuthConfig {
     mfa?: string;
     /** The "check your email" page shown after a verification token is sent. */
     verifyRequest?: string;
-    /** A page that renders `?error=` codes instead of the sign-in page. */
+    /**
+     * A page that renders `?error=` codes for the emailed flows (a bad verification, reset,
+     * sign-in link or code) instead of the sign-in page. OAuth callback and guard errors
+     * still land on `signIn`.
+     */
     error?: string;
   };
   /**
@@ -391,7 +538,7 @@ export interface AuthConfig {
    * Brute-force protection. ON by default: the Credentials endpoint allows 5 failed
    * attempts per client IP + identifier per 15 minutes, and `/signin/*` allows 20 sign-in
    * starts per client IP per 15 minutes (`rateLimit.signin`) — both answer a generic `429`.
-   * Tune the limits, key, or store here, or pass `false` to disable both (e.g. you
+   * Tune the limits, key, or store here, or pass `false` to disable every limiter (e.g. you
    * rate-limit at the edge). The default store is per-process — pass a shared `store` for
    * multi-replica deployments.
    */
@@ -443,4 +590,8 @@ export interface AuthConfig {
    * denext ships no mailer; the flows that need one refuse to start without this.
    */
   sendVerificationRequest?: SendVerificationRequest;
+  /** Token lifetimes and link targets for email verification, password reset, magic links and one-time codes. */
+  email?: AuthEmailConfig;
+  /** Second-factor (TOTP) policy. */
+  mfa?: AuthMfaConfig;
 }

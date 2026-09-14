@@ -12,6 +12,7 @@ import { dirExists, setupPlugins } from "../pipeline-shared.ts";
 import { exportSpa } from "../spa.ts";
 import { createUseCacheLoader } from "../use-cache-loader.ts";
 import type { ExportContext, StaticExportOptions, StaticExportResult } from "./context.ts";
+import { freshStagingDir, resolveExportOutDir, swapStagingDir } from "./out-dir.ts";
 
 /** Copy `src` into `dest` when `src` is a directory. */
 async function copyDirIfPresent(src: string, dest: string): Promise<void> {
@@ -99,6 +100,8 @@ export async function prepareExport(
   paths: ProjectPaths,
   options: StaticExportOptions,
 ): Promise<ExportContext> {
+  // Validate the target first: the swap in `finishExport` replaces it wholesale.
+  const finalOutDir = resolveExportOutDir(paths, options.outDir);
   await setupPlugins(paths, "export");
   await runPluginPrepareSteps({
     projectRoot: paths.projectDir,
@@ -110,9 +113,7 @@ export async function prepareExport(
   // Render into a STAGING dir next to the target; `finishExport` swaps it into place. The
   // previous export stays intact (and servable) until the new one is complete — a failed
   // export never leaves an empty `out/`.
-  const finalOutDir = join(projectDir, options.outDir ?? "out");
-  const outDir = `${finalOutDir}.staging`;
-  await Deno.remove(outDir, { recursive: true }).catch(() => {});
+  const outDir = await freshStagingDir(finalOutDir);
   const clientOut = join(outDir, "_denext", "client");
   await ensureDir(clientOut);
   return {
@@ -142,9 +143,5 @@ export async function prepareExport(
  * route deleted since the last run lingering as stale HTML.
  */
 export async function finishExport(ctx: ExportContext): Promise<void> {
-  const previous = `${ctx.finalOutDir}.prev`;
-  await Deno.remove(previous, { recursive: true }).catch(() => {});
-  const had = await Deno.rename(ctx.finalOutDir, previous).then(() => true, () => false);
-  await Deno.rename(ctx.outDir, ctx.finalOutDir);
-  if (had) await Deno.remove(previous, { recursive: true }).catch(() => {});
+  await swapStagingDir(ctx.outDir, ctx.finalOutDir);
 }

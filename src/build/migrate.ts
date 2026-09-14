@@ -15,6 +15,7 @@
 
 import { dirname, join, relative, resolve, toFileUrl } from "@std/path";
 import { anyExists, exists, firstExisting } from "./migrate-fs.ts";
+import { evalNextConfigProgram, LOAD_NEXT_CONFIG } from "./next-config-eval.ts";
 import { parse as parseJsonc } from "@std/jsonc";
 import { readFrameworkJson } from "./bundle.ts";
 import { appendGitignore } from "./gitignore.ts";
@@ -745,32 +746,23 @@ const NEXT_DROP_GUIDANCE: Record<string, string> = {
 /** The set of drop keys (derived from {@link NEXT_DROP_GUIDANCE}). */
 const NEXT_DROP_KEYS = new Set(Object.keys(NEXT_DROP_GUIDANCE));
 
-/**
- * The evaluator program run as a SUBPROCESS in the app's own directory, so the config's
- * npm plugin imports (`@next/mdx`, …) and `next` resolve from the app's node_modules — not
- * denext's module graph. It imports the resolved default export, copies the honored literal
- * fields, CALLS `redirects`/`rewrites`/`headers` and inlines their resolved arrays (a
- * function can't be serialized; its result can, and denext's config takes the same shape),
- * lists dropped keys, and prints one JSON line. `import(Deno.args[0])`.
- */
-/**
- * Max time to spend evaluating an app's next.config before falling back to hand-port. Read at USE
- * time (not module load) and env-tunable (`DENEXT_NEXT_EVAL_TIMEOUT_MS`) so a CPU-starved run —
- * e.g. the migrate fixture test under the parallel gate — doesn't hit the abort and silently drop
- * to the raw port (which yields a different, golden-mismatching config); production keeps 15 s.
- */
-function nextEvalTimeoutMs(): number {
-  return Number(Deno.env.get("DENEXT_NEXT_EVAL_TIMEOUT_MS")) || 15_000;
-}
+/** The line prefix {@link NEXT_EVAL_PROGRAM} prints its JSON result behind. */
+const NEXT_EVAL_MARKER = "__DENEXT_NEXT_CONFIG__";
 
+/**
+ * The evaluator program run as a SUBPROCESS in the app's own directory (through the shared
+ * bounded evaluator, `next-config-eval.ts`), so the config's npm plugin imports (`@next/mdx`,
+ * …) and `next` resolve from the app's node_modules — not denext's module graph. It imports
+ * the resolved default export, copies the honored literal fields, CALLS
+ * `redirects`/`rewrites`/`headers` and inlines their resolved arrays (a function can't be
+ * serialized; its result can, and denext's config takes the same shape), lists dropped keys,
+ * and prints one JSON line.
+ */
 const NEXT_EVAL_PROGRAM = `
 const PASS = ${JSON.stringify(NEXT_PASSTHROUGH_KEYS)};
 const RULES = ${JSON.stringify(NEXT_RULE_FNS)};
 const DROP = ${JSON.stringify([...NEXT_DROP_KEYS])};
-const mod = await import(Deno.args[0]);
-let cfg = mod?.default ?? mod;
-if (typeof cfg === "function") cfg = await cfg();
-cfg = await cfg;
+${LOAD_NEXT_CONFIG}
 const out = { fields: {}, rules: {}, dropped: [] };
 if (cfg && typeof cfg === "object") {
   for (const k of PASS) if (cfg[k] !== undefined) out.fields[k] = cfg[k];
@@ -781,7 +773,7 @@ if (cfg && typeof cfg === "object") {
   }
   for (const k of Object.keys(cfg)) if (DROP.includes(k)) out.dropped.push(k);
 }
-console.log("__DENEXT_NEXT_CONFIG__" + JSON.stringify(out));
+console.log(${JSON.stringify(NEXT_EVAL_MARKER)} + JSON.stringify(out));
 // Exit NOW: a config wrapper (fumadocs-mdx's createMDX, a plugin spawning a watcher) may keep
 // the event loop alive or crash asynchronously after the config object was already handed
 // over — that must not turn a successful evaluation into a failed one.
@@ -834,55 +826,26 @@ async function hasMdxPluginWiring(configFile: string): Promise<boolean> {
 /**
  * Evaluate the config in a bounded subprocess. A side-effectful next.config (a watcher, a
  * DB connect, an unresolved top-level await) would otherwise hang `denext migrate` forever;
- * on timeout the child is aborted and the caller falls back to the hand-port path (raw:true).
+ * on timeout (`DENEXT_NEXT_EVAL_TIMEOUT_MS`, default 15 s — widened by the migrate fixture
+ * test so a CPU-starved gate doesn't silently drop to the golden-mismatching raw port) the
+ * child is killed and the caller falls back to the hand-port path (raw:true).
  */
 async function evalNextConfig(
   dir: string,
   file: string,
   base: NextConfigTranslation,
 ): Promise<NextConfigTranslation> {
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), nextEvalTimeoutMs());
-  try {
-    // Least privilege: the config is the app's own code but it is run on the migrating
-    // machine — it may read its project + env (what a real `next build` sees), not write,
-    // spawn, or reach the network.
-    const cmd = new Deno.Command(Deno.execPath(), {
-      args: [
-        "run",
-        "--no-prompt",
-        `--allow-read=${dir}`,
-        "--allow-env",
-        "--allow-sys",
-        "-",
-        toFileUrl(join(dir, file)).href,
-      ],
-      cwd: dir,
-      stdin: "piped",
-      stdout: "piped",
-      stderr: "null",
-      signal: ctl.signal,
-    });
-    const child = cmd.spawn();
-    const w = child.stdin.getWriter();
-    await w.write(new TextEncoder().encode(NEXT_EVAL_PROGRAM));
-    await w.close();
-    const { stdout } = await child.output();
-    // The result line is marker-prefixed and read regardless of the exit code: the config
-    // may have been printed before a plugin's background work crashed the process.
-    const line = new TextDecoder().decode(stdout).split("\n")
-      .find((l) => l.startsWith("__DENEXT_NEXT_CONFIG__"));
-    if (!line) return { ...base, raw: true };
-    const parsed = JSON.parse(line.slice("__DENEXT_NEXT_CONFIG__".length)) as Pick<
-      NextConfigTranslation,
-      "fields" | "rules" | "dropped"
-    >;
-    return { ...base, ...parsed };
-  } catch {
-    return { ...base, raw: true };
-  } finally {
-    clearTimeout(timer);
-  }
+  const result = await evalNextConfigProgram({
+    dir,
+    file,
+    program: NEXT_EVAL_PROGRAM,
+    marker: NEXT_EVAL_MARKER,
+  });
+  if (!result.ok) return { ...base, raw: true };
+  return {
+    ...base,
+    ...(result.value as Pick<NextConfigTranslation, "fields" | "rules" | "dropped">),
+  };
 }
 
 /**
@@ -1562,8 +1525,9 @@ function pnpUnsupported(dir: string): Error {
 /**
  * Entry module + title from `index.html`, PLUS the boot content a Vite/CRA app puts there:
  * the `#root` inner markup (a splash/spinner shown before the bundle loads) → `spa.loading`,
- * and the `<head>` content minus charset/viewport/title/the entry `<script>` (a theme
- * pre-paint script, boot styles, theme-color/manifest/icon links) → `spa.head`. Carrying
+ * and the `<head>` content minus charset/title/the entry `<script>` (a theme pre-paint
+ * script, boot styles, theme-color/manifest/icon links, a non-default viewport such as
+ * `viewport-fit=cover`) → `spa.head`. Carrying
  * these keeps the migrated SPA's instant first paint instead of a blank screen.
  */
 async function readIndexHtml(
@@ -1638,17 +1602,44 @@ function extractRootInner(html: string, rootId = "root"): string {
   return "";
 }
 
-/** `<head>` inner minus the parts denext's shell emits itself (charset/viewport/title/entry). */
+/**
+ * `<head>` inner minus the parts denext's shell emits itself (charset/title/entry, and a
+ * viewport that asks for nothing beyond the shell's default).
+ */
 function extractBootHead(html: string): string {
   const hm = /<head\b[^>]*>([\s\S]*?)<\/head>/i.exec(html);
   if (!hm) return "";
   return hm[1]
     .replace(/<meta\b[^>]*charset[^>]*>/gi, "")
-    .replace(/<meta\b[^>]*name=["']viewport["'][^>]*>/gi, "")
+    .replace(
+      /<meta\b[^>]*name=["']viewport["'][^>]*>/gi,
+      (tag) => viewportBeyondDefault(tag) ? tag : "",
+    )
     .replace(/<title>[\s\S]*?<\/title>/gi, "")
     .replace(/<script\b[^>]*type=["']module["'][^>]*>[\s\S]*?<\/script>/gi, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+/**
+ * Whether a `<meta name="viewport">` asks for more than the SPA shell's default
+ * (`width=device-width, initial-scale=1`): `viewport-fit=cover` (iOS safe areas),
+ * `interactive-widget`, a zoom lock. Only such a viewport is carried into `spa.head` — the
+ * shell then drops its own default — so a stock Vite viewport adds no noise to the config.
+ */
+function viewportBeyondDefault(tag: string): boolean {
+  const content = /\bcontent=["']([^"']*)["']/i.exec(tag)?.[1] ?? "";
+  const defaults: Record<string, string> = { width: "device-width", "initial-scale": "1" };
+  return content.split(/[,;]/).some((part) => {
+    const [rawKey, rawValue = ""] = part.split("=");
+    const key = rawKey.trim().toLowerCase();
+    if (!key) return false;
+    const expected = defaults[key];
+    if (expected === undefined) return true;
+    const value = rawValue.trim().toLowerCase();
+    const numeric = Number(value);
+    return Number.isNaN(numeric) ? value !== expected : numeric !== Number(expected);
+  });
 }
 
 /** `import.meta.env.*` names used across vite.config + `src/` — the seed for `spa.env`. */
@@ -1780,6 +1771,23 @@ function tailwindOutputFor(input: string): string {
 }
 
 /**
+ * A key the evaluated next.config reported, made safe to write into a `//` comment: the
+ * config is untrusted input, so a key carrying a line break (including U+2028 / U+2029,
+ * which end a JS line comment too) must not break out of the comment into code.
+ */
+function commentSafe(key: string): string {
+  return JSON.stringify(key).slice(1, -1).replace(
+    /[\u2028\u2029]/g,
+    (c) => `\\u${c.charCodeAt(0).toString(16)}`,
+  );
+}
+
+/** A property key for generated source: a bare identifier as is, anything else quoted. */
+function propertyKey(key: string): string {
+  return /^[A-Za-z_$][\w$]*$/.test(key) ? key : JSON.stringify(key);
+}
+
+/**
  * Per-key guidance for the dropped next.config keys, so a load-bearing key isn't dropped
  * without a pointer to its denext equivalent. Inert keys (no note) are grouped on one line.
  */
@@ -1787,9 +1795,9 @@ function droppedKeyNotes(dropped: string[]): string[] {
   const notes: string[] = [];
   const inert: string[] = [];
   for (const k of dropped) {
-    const note = NEXT_DROP_GUIDANCE[k];
-    if (note) notes.push(`  // ${k}: ${note}`);
-    else inert.push(k);
+    const note = Object.hasOwn(NEXT_DROP_GUIDANCE, k) ? NEXT_DROP_GUIDANCE[k] : undefined;
+    if (note) notes.push(`  // ${commentSafe(k)}: ${note}`);
+    else inert.push(commentSafe(k));
   }
   if (inert.length) notes.push(`  // Dropped (no denext equivalent needed): ${inert.join(", ")}.`);
   return notes;
@@ -1810,7 +1818,9 @@ function nextConfigTranslationLines(next: NextConfigTranslation, bodyLines: stri
     ];
   }
   const notes: string[] = [];
-  for (const [k, v] of Object.entries(next.fields)) bodyLines.push(`  ${k}: ${JSON.stringify(v)},`);
+  for (const [k, v] of Object.entries(next.fields)) {
+    bodyLines.push(`  ${propertyKey(k)}: ${JSON.stringify(v)},`);
+  }
   const ruleEntries = Object.entries(next.rules);
   if (ruleEntries.length) {
     notes.push(`  // redirects/rewrites/headers inlined from ${next.file} at migrate time.`);

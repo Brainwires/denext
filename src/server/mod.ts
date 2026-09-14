@@ -396,6 +396,7 @@ export {
 export {
   auth,
   denextAuth,
+  pendingMfaSession,
   requireAuth,
   revokeAllSessions,
   revokeSession,
@@ -407,11 +408,13 @@ export {
   auth0,
   credentials,
   discord,
+  emailOtp,
   facebook,
   github,
   gitlab,
   google,
   keycloak,
+  magicLink,
   microsoftEntra,
   oidc,
   okta,
@@ -420,6 +423,7 @@ export {
 export type {
   Auth0Options,
   CredentialsOptions,
+  EmailProviderOptions,
   GitLabOptions,
   KeycloakOptions,
   MicrosoftEntraOptions,
@@ -467,18 +471,37 @@ export type { IssueApiTokenOptions, IssuedApiToken } from "./auth/api-token.ts";
 export type { InMemorySessionStoreOptions, SessionStore } from "./auth/session-store.ts";
 export { sqliteSessionStore } from "./auth/sqlite-session-store.ts";
 export type { SqliteSessionStoreOptions } from "./auth/sqlite-session-store.ts";
+// Email verification + password reset — what `{basePath}/verify` and `/reset` run, callable
+// from your own Server Actions too.
+export {
+  requestEmailVerification,
+  requestPasswordReset,
+  resetPassword,
+  verifyEmail,
+} from "./auth/email.ts";
+export type { EmailRequestResult, ResetPasswordResult } from "./auth/email.ts";
+// The TOTP second factor: the flows behind `{basePath}/mfa*` and their RFC 6238 primitives.
+export { confirmTotp, disableTotp, enrollTotp, mfaStatus, verifySecondFactor } from "./auth/mfa.ts";
+export type { ConfirmTotpResult, MfaMethod, MfaStatus, TotpEnrollment } from "./auth/mfa.ts";
+export { generateTotpSecret, totpAuthUri, verifyTotp } from "./auth/totp.ts";
+export type { TotpAuthUriOptions, TotpVerifyOptions, TotpVerifyResult } from "./auth/totp.ts";
+export { backupCodeMatcher, generateBackupCodes } from "./auth/backup-codes.ts";
+export type { BackupCodes } from "./auth/backup-codes.ts";
 export type {
   AuthCallbacks,
   AuthConfig,
   AuthCookieConfig,
+  AuthEmailConfig,
   AuthEvents,
   AuthLogger,
+  AuthMfaConfig,
   AuthorizedCallbackInput,
   AuthProvider,
   AuthSession,
   AuthSessionConfig,
   AuthUser,
   CredentialsProvider,
+  EmailProvider,
   OAuthProvider,
   ProfileInput,
   SendVerificationRequest,

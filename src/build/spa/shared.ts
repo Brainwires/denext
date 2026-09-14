@@ -237,6 +237,11 @@ export async function spaShellHtml(opts: {
     .join("");
   if (spa.head) warnRawSpaHeadOnce();
   const head = spa.head ? `\n    ${spa.head}` : "";
+  // An app-supplied viewport (`viewport-fit=cover` for iOS safe areas, `interactive-widget`)
+  // replaces the default instead of competing with it.
+  const viewport = /<meta\b[^>]*\bname=["']viewport["']/i.test(spa.head ?? "")
+    ? ""
+    : `\n    <meta name="viewport" content="width=device-width, initial-scale=1" />`;
   // Boot placeholder rendered inside #root; the app's first render replaces it.
   const loading = spa.loading ?? "";
   const devScript = opts.devScriptSrc
@@ -246,8 +251,7 @@ export async function spaShellHtml(opts: {
   return `<!doctype html>
 <html lang="${escapeHtml(lang)}">
   <head>
-    <meta charset="utf-8" />${cspMeta}
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta charset="utf-8" />${cspMeta}${viewport}
     <title>${escapeHtml(title)}</title>${style}${preload}${head}
   </head>
   <body>

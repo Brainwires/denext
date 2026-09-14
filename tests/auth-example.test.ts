@@ -2,12 +2,20 @@
 // plugin's /auth/* endpoints (mounted the way the servers mount plugin handlers), the
 // requireAuth middleware gate, scrypt-hashed registration + login through the sqlite
 // AUTH ADAPTER, roles gating /admin, bearer API tokens, the login rate limit, and
-// revocation via the adapter's session store ("sign out everywhere").
+// revocation via the adapter's session store ("sign out everywhere") — and the rc.2 flows:
+// email verification, password reset, the magic sign-in link (with the pre-account-hijacking
+// retirement of an unverified account's password and sessions), and the TOTP second factor
+// with single-use backup codes. Mail is read from the example's dev outbox (lib/outbox.ts).
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
+import { decodeBase32 } from "@std/encoding/base32";
 import { createTestApp, createTestClient, type TestClient, type TestHandler } from "denext/testing";
 import type { DenextPlugin, PluginContext, PluginRequestHandler } from "../src/plugin/mod.ts";
-import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
+import {
+  createRequestContext,
+  runDeferred,
+  runWithContext,
+} from "../src/server/request-context.ts";
 
 // A throwaway database file + a fixed secret — set before the app loads any module. It is a
 // real file, not ":memory:", because the admin page opens a second read handle onto it.
@@ -20,8 +28,9 @@ const APP = new URL("../examples/auth", import.meta.url).pathname;
 /**
  * The example's `denext.config.ts` plugin, set up the way `applyPlugins` does it, and
  * composed with the test app: `/auth/*` goes to the plugin (inside a request context,
- * with its Set-Cookie headers merged like the pipeline's `finalize`), everything else
- * to the app (pages, Server Actions, middleware).
+ * with its Set-Cookie headers merged like the pipeline's `finalize`, and its `after()`
+ * work — the mail a reset or magic-link request sends — drained before answering),
+ * everything else to the app (pages, Server Actions, middleware).
  */
 async function appWithAuth(): Promise<TestHandler> {
   const config = (await import(`${APP}/denext.config.ts`)).default as {
@@ -40,6 +49,7 @@ async function appWithAuth(): Promise<TestHandler> {
     }
     const rc = createRequestContext(request);
     const res = await runWithContext(rc, () => handlers[0](request));
+    await runDeferred(rc);
     const headers = new Headers(res!.headers);
     for (const c of rc.outgoingHeaders.getSetCookie()) {
       headers.append("set-cookie", c);
@@ -58,7 +68,9 @@ const login = (email: string, password: string) => ({
 const postCredentials = (client: TestClient, email: string, password: string) =>
   client.post("/auth/callback/credentials", login(email, password));
 
-type Ctx = { handler: TestHandler; client: TestClient };
+/** What later steps need from earlier ones: the TOTP secret and the backup codes. */
+type Carried = { secret: string; backupCodes: string[] };
+type Ctx = { handler: TestHandler; client: TestClient; carried: Carried };
 
 async function homeRendersAndDashboardIsGated({ client }: Ctx) {
   const home = await client.get("/");
@@ -260,6 +272,267 @@ async function apiTokensAuthenticateAndRevoke({ handler }: Ctx) {
   assertEquals((await withBearer(owner, token)).status, 401, "a revoked token is dead at once");
 }
 
+// ---- the emailed flows (verification, reset, magic link) + TOTP -------------------------
+
+/** Ada's password after the reset step (and every later step's). */
+const RESET_PASSWORD = "reset password 2";
+
+/** A captured message, as lib/outbox.ts keeps it. */
+type Mail = { identifier: string; purpose: string; url: string; token: string };
+
+/** Every message the example's dev mailer captured so far, oldest first. */
+async function sentMail(): Promise<Mail[]> {
+  const { listMail } = await import(`${APP}/lib/outbox.ts`);
+  return [...(listMail() as Mail[])].reverse();
+}
+
+/**
+ * The newest message to `to` for `purpose` sent after `since` messages existed. A Server
+ * Action's mail goes out in `after()`, which the pipeline drains once the response is sent,
+ * so this waits a few ticks for it.
+ */
+async function mailTo(to: string, purpose: string, since: number): Promise<Mail> {
+  for (let tick = 0; tick < 200; tick++) {
+    const found = (await sentMail()).slice(since)
+      .filter((m) => m.identifier === to && m.purpose === purpose).at(-1);
+    if (found) return found;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`no "${purpose}" mail to ${to}`);
+}
+
+/** A mailed link as a same-origin path + search (what the test client requests). */
+function pathOf(mail: Mail): string {
+  const url = new URL(mail.url);
+  return url.pathname + url.search;
+}
+
+async function verifyEmail({ client }: Ctx) {
+  const page = await client.get("/verify-email");
+  assertEquals(page.status, 200);
+  assertStringIncludes(page.text, "is not verified yet");
+  const since = (await sentMail()).length;
+  const sent = await client.submit(client.form(page.text));
+  assertEquals(sent.status, 303);
+  assertStringIncludes(sent.location ?? "", "/verify-email?sent=1");
+
+  const mail = await mailTo("ada@denext.dev", "email", since);
+  assertMatch(pathOf(mail), /^\/auth\/verify\?token=[^&]+&email=ada%40denext\.dev$/);
+  const opened = await client.get(pathOf(mail));
+  assertEquals(opened.status, 303);
+  assertEquals(opened.location, "/check-email?verified=1");
+  assertStringIncludes((await client.get("/check-email?verified=1")).text, "Address verified");
+
+  const { findUser } = await import(`${APP}/lib/users.ts`);
+  assertEquals(typeof (await findUser("ada@denext.dev")).emailVerified, "number");
+  assertStringIncludes((await client.get("/verify-email")).text, "verified on");
+  assertEquals((await client.get(pathOf(mail))).location, "/check-email?error=invalid_token");
+}
+
+async function resetPassword({ handler, client: adaEarlier }: Ctx) {
+  const client = createTestClient(handler);
+  const forgot = await client.get("/forgot");
+  const request = (email: string) => client.submit(client.form(forgot.text), { email });
+  const since = (await sentMail()).length;
+  // The same answer for an address with no account — and no mail for it.
+  const unknown = await request("nobody@denext.dev");
+  const known = await request("ada@denext.dev");
+  for (const res of [unknown, known]) {
+    assertEquals([res.status, res.location], [303, "/check-email?sent=1"]);
+  }
+  assertStringIncludes((await client.get("/check-email?sent=1")).text, "Check your email");
+
+  const mail = await mailTo("ada@denext.dev", "reset", since);
+  assertEquals((await sentMail()).slice(since).length, 1, "nothing was mailed to nobody@");
+  assertMatch(pathOf(mail), /^\/reset\?token=/, "the link opens the app's own /reset page");
+  const page = await client.get(pathOf(mail));
+  assertEquals(page.status, 200);
+  const weak = await client.submit(client.form(page.text), { password: "short" });
+  assertEquals(weak.status, 303);
+  assertMatch(weak.location ?? "", /^\/reset\?.*error=invalid_password/, "the link survives");
+  const done = await client.submit(client.form(page.text), { password: RESET_PASSWORD });
+  assertEquals([done.status, done.location], [303, "/login?reset=1"]);
+  assertStringIncludes((await client.get("/login?reset=1")).text, "Password reset");
+
+  assertEquals((await adaEarlier.get("/dashboard")).status, 302, "the reset revoked sessions");
+  assertEquals((await postCredentials(client, "ada@denext.dev", "new password 1")).status, 401);
+  assertEquals((await postCredentials(client, "ada@denext.dev", RESET_PASSWORD)).status, 200);
+}
+
+/** Ask for a sign-in link from /login's form and return the mail it sent to `email`. */
+async function requestMagicLink(client: TestClient, email: string): Promise<Mail> {
+  const login = await client.get("/login");
+  const since = (await sentMail()).length;
+  const form = client.form(login.text, { action: /\/auth\/callback\/email$/ });
+  const sent = await client.submit(form, { email });
+  assertEquals([sent.status, sent.location], [303, "/check-email?sent=1"]);
+  return await mailTo(email, "magic", since);
+}
+
+async function magicLinkSignsIn({ handler }: Ctx) {
+  const client = createTestClient(handler);
+  const mail = await requestMagicLink(client, "ada@denext.dev");
+  assertMatch(pathOf(mail), /^\/auth\/callback\/email\?token=.+&callbackUrl=%2Fdashboard$/);
+  const opened = await client.get(pathOf(mail));
+  assertEquals([opened.status, opened.location], [303, "/dashboard"]);
+  const dash = await client.get("/dashboard");
+  assertEquals(dash.status, 200);
+  assertStringIncludes(dash.text, "ada@denext.dev");
+  assertEquals((await client.get(pathOf(mail))).location, "/login?error=Verification");
+  // Ada's address was verified, so the link retired nothing: the password still works.
+  assertEquals((await postCredentials(client, "ada@denext.dev", RESET_PASSWORD)).status, 200);
+}
+
+async function magicLinkRetiresUnverifiedAccess({ handler }: Ctx) {
+  // Someone registers grace@ with a password without owning the mailbox…
+  const squatter = createTestClient(handler);
+  const register = await squatter.get("/register");
+  await squatter.submit(squatter.form(register.text), {
+    name: "Grace",
+    email: "grace@denext.dev",
+    password: "squatter password",
+  });
+  assertEquals(
+    (await postCredentials(squatter, "grace@denext.dev", "squatter password")).status,
+    200,
+  );
+  assertEquals((await squatter.get("/dashboard")).status, 200);
+
+  // …then the real owner signs in with a link from that mailbox.
+  const owner = createTestClient(handler);
+  const opened = await owner.get(pathOf(await requestMagicLink(owner, "grace@denext.dev")));
+  assertEquals([opened.status, opened.location], [303, "/dashboard"]);
+  assertStringIncludes((await owner.get("/dashboard")).text, "grace@denext.dev");
+
+  assertEquals((await squatter.get("/dashboard")).status, 302, "the squatter's session is gone");
+  const old = await postCredentials(squatter, "grace@denext.dev", "squatter password");
+  assertEquals(old.status, 401, "and so is the password nobody proved");
+  const { findUser } = await import(`${APP}/lib/users.ts`);
+  assertEquals(typeof (await findUser("grace@denext.dev")).emailVerified, "number");
+}
+
+/** An RFC 6238 code for `secret`, `offset` 30-second steps from now (HMAC-SHA-1, 6 digits). */
+async function totp(secret: string, offset = 0): Promise<string> {
+  const bytes = decodeBase32(secret.padEnd(Math.ceil(secret.length / 8) * 8, "="));
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new Uint8Array(bytes),
+    { name: "HMAC", hash: "SHA-1" },
+    false,
+    ["sign"],
+  );
+  const counter = new DataView(new ArrayBuffer(8));
+  counter.setBigUint64(0, BigInt(Math.floor(Date.now() / 30_000) + offset));
+  const mac = new DataView(await crypto.subtle.sign("HMAC", key, counter.buffer));
+  const at = mac.getUint8(mac.byteLength - 1) & 0x0f;
+  return String((mac.getUint32(at) & 0x7fffffff) % 1_000_000).padStart(6, "0");
+}
+
+/** The backup codes rendered on a page (`xxxxx-xxxxx`). */
+function renderedBackupCodes(html: string): string[] {
+  return [...html.matchAll(/<code>([2-9a-z]{5}-[2-9a-z]{5})<\/code>/g)].map((m) => m[1]);
+}
+
+async function enrolTotp({ client, carried }: Ctx) {
+  // The reset revoked this device's session: sign back in with the new password, then enrol.
+  assertEquals((await postCredentials(client, "ada@denext.dev", RESET_PASSWORD)).status, 200);
+  const page = await client.get("/account/security");
+  assertEquals(page.status, 200);
+  assertStringIncludes(page.text, "is <strong>off</strong>");
+  const started = await client.submit(client.form(page.text));
+  assertEquals([started.status, started.location], [303, "/account/security?step=confirm"]);
+
+  const step = await client.get("/account/security?step=confirm");
+  carried.secret = /<code class="token">([A-Z2-7]{32})<\/code>/.exec(step.text)?.[1] ?? "";
+  assert(carried.secret, "the base32 secret is shown for manual entry");
+  assertStringIncludes(step.text, `otpauth://totp/`);
+  assertStringIncludes(step.text, `secret=${carried.secret}`);
+
+  const confirmed = await client.submit(client.form(step.text, { has: "code" }), {
+    code: await totp(carried.secret),
+  });
+  assertEquals([confirmed.status, confirmed.location], [303, "/account/security?confirmed=1"]);
+  carried.backupCodes = renderedBackupCodes((await client.get(confirmed.location!)).text);
+  assertEquals(carried.backupCodes.length, 10, "ten backup codes, shown this once");
+  const again = await client.get("/account/security?confirmed=1");
+  assertEquals(renderedBackupCodes(again.text), [], "and never again");
+  assertStringIncludes(again.text, "is <strong>on</strong>");
+}
+
+/** Sign in through the rendered login form (the JS-disabled path) and return its answer. */
+async function formSignIn(client: TestClient, password = RESET_PASSWORD) {
+  const login = await client.get("/login");
+  return await client.submit(client.form(login.text, { has: "password" }), {
+    email: "ada@denext.dev",
+    password,
+  });
+}
+
+/** Submit a code on the /mfa page the pending sign-in was sent to. */
+async function submitMfaCode(client: TestClient, code: string) {
+  const page = await client.get("/mfa?callbackUrl=%2Fdashboard");
+  assertEquals(page.status, 200);
+  assertStringIncludes(page.text, "ada@denext.dev");
+  return await client.submit(client.form(page.text, { has: "code" }), { code });
+}
+
+/** Sign in with the password: it must stop at /mfa, with the dashboard still refused. */
+async function pendingSignIn(handler: TestHandler): Promise<TestClient> {
+  const client = createTestClient(handler);
+  const res = await formSignIn(client);
+  assertEquals([res.status, res.location], [303, "/mfa?callbackUrl=%2Fdashboard"]);
+  assertEquals((await client.get("/dashboard")).status, 302, "a pending session is signed out");
+  return client;
+}
+
+async function totpStepUp({ client, carried }: Ctx) {
+  const dash = await client.get("/dashboard");
+  const out = await client.submit(client.form(dash.text, { action: /\/auth\/signout/ }));
+  assertEquals(out.status, 303);
+  assertEquals((await client.get("/dashboard")).status, 302, "signed out");
+
+  const res = await formSignIn(client);
+  assertEquals([res.status, res.location], [303, "/mfa?callbackUrl=%2Fdashboard"]);
+  assertEquals((await client.get("/dashboard")).status, 302, "a pending session is signed out");
+  // The confirm step claimed the current 30-second step; the next one is still in window.
+  const done = await submitMfaCode(client, await totp(carried.secret, 1));
+  assertEquals([done.status, done.location], [303, "/dashboard"]);
+  assertEquals((await client.get("/dashboard")).status, 200);
+}
+
+async function backupCodeWorksOnce({ handler, carried }: Ctx) {
+  const [first, second] = carried.backupCodes;
+  const one = await pendingSignIn(handler);
+  const used = await submitMfaCode(one, first);
+  assertEquals([used.status, used.location], [303, "/dashboard"]);
+  assertEquals((await one.get("/dashboard")).status, 200);
+
+  const two = await pendingSignIn(handler);
+  const reused = await submitMfaCode(two, first);
+  assertEquals(reused.status, 303);
+  assertStringIncludes(reused.location ?? "", "/mfa?error=CredentialsSignin");
+  assertStringIncludes((await two.get(reused.location!)).text, "A code changes every 30 seconds");
+  assertEquals((await two.get("/dashboard")).status, 302, "a spent backup code grants nothing");
+  const other = await submitMfaCode(two, second);
+  assertEquals([other.status, other.location], [303, "/dashboard"]);
+}
+
+async function disableTotp({ handler, carried }: Ctx) {
+  const client = await pendingSignIn(handler);
+  await submitMfaCode(client, carried.backupCodes[2]);
+  const page = await client.get("/account/security");
+  assertStringIncludes(page.text, "Backup codes left: <strong>7</strong>");
+  const form = () => client.form(page.text, { has: "code" });
+  const wrong = await client.submit(form(), { code: "abcdef" });
+  assertEquals(wrong.location, "/account/security?error=code");
+  const off = await client.submit(form(), { code: carried.backupCodes[3] });
+  assertEquals(off.location, "/account/security?disabled=1");
+  assertStringIncludes((await client.get(off.location!)).text, "is <strong>off</strong>");
+
+  const res = await postCredentials(createTestClient(handler), "ada@denext.dev", RESET_PASSWORD);
+  assertEquals((res.json() as AuthJson).user?.email, "ada@denext.dev", "no second step now");
+}
+
 const STEPS: Array<[string, (ctx: Ctx) => Promise<void>]> = [
   ["home renders; /dashboard is gated by requireAuth", homeRendersAndDashboardIsGated],
   ["a wrong password is a generic 401 and sets no cookie", wrongPasswordIsGeneric401],
@@ -286,11 +559,32 @@ const STEPS: Array<[string, (ctx: Ctx) => Promise<void>]> = [
     "API tokens: created once, authenticate `Authorization: Bearer`, dead when revoked",
     apiTokensAuthenticateAndRevoke,
   ],
+  ["email verification: /verify-email mails a link; opening it sets emailVerified", verifyEmail],
+  [
+    "password reset: /forgot → the mailed link → /reset; the old password is refused, the new one signs in",
+    resetPassword,
+  ],
+  [
+    "magic link: 'Email me a sign-in link' on /login → the mailed link signs a verified account in",
+    magicLinkSignsIn,
+  ],
+  [
+    "a first email sign-in into an UNVERIFIED account retires its password and sessions",
+    magicLinkRetiresUnverifiedAccess,
+  ],
+  [
+    "TOTP: enrol on /account/security (secret + otpauth URI) → confirm → backup codes shown once",
+    enrolTotp,
+  ],
+  ["sign out → sign in lands on /mfa, not the dashboard → a TOTP code → dashboard", totpStepUp],
+  ["a backup code completes the step-up exactly once", backupCodeWorksOnce],
+  ["turning TOTP off needs a current code; then sign-in is one step again", disableTotp],
 ];
 
 Deno.test("examples/auth: the full app works with JavaScript disabled", async (t) => {
   const handler = await appWithAuth();
-  const ctx: Ctx = { handler, client: createTestClient(handler) };
+  const carried: Carried = { secret: "", backupCodes: [] };
+  const ctx: Ctx = { handler, client: createTestClient(handler), carried };
   try {
     for (const [name, fn] of STEPS) await t.step(name, () => fn(ctx));
   } finally {

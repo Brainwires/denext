@@ -1,6 +1,6 @@
 /**
  * Brute-force protection for the sign-in endpoints: fixed-window counters in a pluggable
- * {@linkcode RateLimitStore}. Three limiters are built from one `rateLimit` config and
+ * {@linkcode RateLimitStore}. Five limiters are built from one `rateLimit` config and
  * share this module's factory:
  *
  * - the **credentials** limiter counts *failed* `POST {basePath}/callback/:provider`
@@ -10,7 +10,13 @@
  *   PKCE/state transactions (or probe provider ids) without bound;
  * - the **session-read** limiter counts every `GET {basePath}/session` per client IP,
  *   60 per minute (`rateLimit.session`), so the unauthenticated poll endpoint can't be
- *   turned into free cookie-verification + store-read work.
+ *   turned into free cookie-verification + store-read work;
+ * - the **verification** limiter counts every outbound-token request (a password-reset,
+ *   email-verification, sign-in link or one-time-code send) per address, 3 per 15 minutes (`rateLimit.verification`),
+ *   plus an IP-wide bucket at {@linkcode IP_BUCKET_FACTOR}× that — so nobody can turn the
+ *   app into a mail cannon aimed at one inbox, or at many;
+ * - the **MFA** limiter bounds second-factor attempts per user, 5 per 5 minutes
+ *   (`rateLimit.mfa`), plus the same kind of IP-wide bucket.
  *
  * Past the limit the endpoint answers a generic `429` with `Retry-After` until the window
  * ends; a successful credentials sign-in resets its key. The in-memory default store is
@@ -49,6 +55,12 @@ export interface RateLimitStore {
   increment(key: string, windowMs: number): RateLimitWindow | Promise<RateLimitWindow>;
   /** Forget `key` (called on a successful sign-in). */
   reset(key: string): void | Promise<void>;
+  /**
+   * Give back one unit counted for `key` (an attempt reserved up front that turned out to
+   * succeed, or that another bucket refused). Optional: a store without it simply keeps the
+   * unit, which only makes its limiter stricter.
+   */
+  decrement?(key: string): void | Promise<void>;
 }
 
 /** Options for {@linkcode inMemoryRateLimitStore}. */
@@ -104,6 +116,29 @@ export interface RateLimitOptions {
     /** Window length in ms. Default 1 minute. */
     windowMs?: number;
   };
+  /**
+   * Tune the **verification** limiter — outbound-token requests (password-reset and
+   * email-verification sends), counted on every request for an address whether or not
+   * the address has an account, so a throttled unknown address answers exactly like a
+   * throttled known one. The IP-wide bucket allows `IP_BUCKET_FACTOR` (10)× `max`. Shares
+   * `store`; ignores the credentials `max`/`windowMs`/`keyGenerator`.
+   */
+  verification?: {
+    /** Requests allowed per address per window before a `429`. Default 3. */
+    max?: number;
+    /** Window length in ms. Default 15 minutes. */
+    windowMs?: number;
+  };
+  /**
+   * Tune the **MFA** limiter — second-factor attempts per user, plus an IP-wide bucket at
+   * `IP_BUCKET_FACTOR` (10)× `max`. Shares `store`; ignores the credentials fields.
+   */
+  mfa?: {
+    /** Attempts allowed per user per window before a `429`. Default 5. */
+    max?: number;
+    /** Window length in ms. Default 5 minutes. */
+    windowMs?: number;
+  };
 }
 
 /** A configured limiter (what the credentials route drives). */
@@ -117,6 +152,16 @@ export interface RateLimiter {
   fail(key: string): Promise<void>;
   /** Clear `key` after a successful attempt. */
   succeed(key: string): Promise<void>;
+  /**
+   * Count one attempt for `key` FIRST, then refuse when the count is over budget — the
+   * atomic form of `lockedOut` + `fail`. Concurrent requests each see their own count, so a
+   * burst can't all pass the check before any of them is counted.
+   *
+   * @returns `retryAfterSec` when this attempt is over budget, else `null`.
+   */
+  hit(key: string, maxFactor?: number): Promise<number | null>;
+  /** Give back one unit {@linkcode RateLimiter.hit} counted for `key` (the store's `decrement`). */
+  refund(key: string): Promise<void>;
 }
 
 const DEFAULT_MAX = 5;
@@ -127,6 +172,12 @@ const DEFAULT_SESSION_MAX = 60;
 const DEFAULT_WINDOW_MS = 15 * 60_000;
 /** The session-read limiter's window: a minute, not the sign-in quarter-hour. */
 const DEFAULT_SESSION_WINDOW_MS = 60_000;
+/** Outbound-token requests one address may trigger per window before a `429`. */
+const DEFAULT_VERIFICATION_MAX = 3;
+/** Second-factor attempts one user may make per window before a `429`. */
+const DEFAULT_MFA_MAX = 5;
+/** The MFA limiter's window: five minutes. */
+const DEFAULT_MFA_WINDOW_MS = 5 * 60_000;
 const DEFAULT_MAX_KEYS = 10_000;
 /** Which submitted field names the default key treats as "the account identifier". */
 const IDENTIFIER_FIELDS = ["email", "username", "login", "identifier"];
@@ -175,6 +226,10 @@ export function inMemoryRateLimitStore(
       return { ...w };
     },
     reset: (key) => void windows.delete(key),
+    decrement(key) {
+      const w = live(key);
+      if (w && w.count > 0) w.count -= 1;
+    },
   };
 }
 
@@ -373,11 +428,19 @@ export function createRateLimiter(options: RateLimitOptions = {}): RateLimiter {
   const max = options.max ?? DEFAULT_MAX;
   const windowMs = options.windowMs ?? DEFAULT_WINDOW_MS;
   const store = options.store ?? inMemoryRateLimitStore({ lockoutAt: max });
+  const retryAfter = (w: RateLimitWindow) =>
+    Math.max(1, Math.ceil((w.resetAt - Date.now()) / 1000));
   return {
     async lockedOut(key, maxFactor = 1) {
       const w = await store.get(key);
-      if (!w || w.count < max * maxFactor) return null;
-      return Math.max(1, Math.ceil((w.resetAt - Date.now()) / 1000));
+      return !w || w.count < max * maxFactor ? null : retryAfter(w);
+    },
+    async hit(key, maxFactor = 1) {
+      const w = await store.increment(key, windowMs);
+      return w.count > max * maxFactor ? retryAfter(w) : null;
+    },
+    async refund(key) {
+      await store.decrement?.(key);
     },
     async fail(key) {
       await store.increment(key, windowMs);
@@ -393,13 +456,13 @@ export function createRateLimiter(options: RateLimitOptions = {}): RateLimiter {
  * imports the config type (which imports {@linkcode RateLimitOptions} from here).
  */
 export interface RateLimitConfig {
-  /** The app's `rateLimit` config, or `false` to disable BOTH limiters. */
+  /** The app's `rateLimit` config, or `false` to disable every limiter. */
   rateLimit?: RateLimitOptions | false;
   /** Whether a fronting proxy's `x-forwarded-for` may be believed. */
   trustForwardedHeaders?: boolean;
 }
 
-/** The three limiters one auth config drives; `null` where `rateLimit: false` disabled them. */
+/** The limiters one auth config drives; `null` where `rateLimit: false` disabled them. */
 interface ConfigLimiters {
   /** Failed credentials attempts. */
   credentials: RateLimiter | null;
@@ -407,30 +470,56 @@ interface ConfigLimiters {
   signinStart: RateLimiter | null;
   /** Session-read hits. */
   sessionRead: RateLimiter | null;
+  /** Outbound-token requests (password-reset / email-verification sends). */
+  verification: RateLimiter | null;
+  /** Second-factor attempts. */
+  mfa: RateLimiter | null;
 }
 
 // One pair per config object (the plugin hands the same `config` to every request), built
 // lazily so an app that opts out (`rateLimit: false`) allocates no stores at all.
 const limiters = new WeakMap<RateLimitConfig, ConfigLimiters>();
 
-/** Build both limiters for a config — one factory, two budgets, one (optional) shared store. */
+/**
+ * One of the secondary budgets: its own `max`/`windowMs` (tuned by a `rateLimit.<name>`
+ * block, else the defaults given) over the one optional shared store.
+ */
+function budget(
+  options: RateLimitOptions,
+  tuning: { max?: number; windowMs?: number } | undefined,
+  max: number,
+  windowMs: number,
+): RateLimiter {
+  return createRateLimiter({
+    max: tuning?.max ?? max,
+    windowMs: tuning?.windowMs ?? windowMs,
+    store: options.store,
+  });
+}
+
+/** Build every limiter for a config — one factory, five budgets, one (optional) shared store. */
 function buildLimiters(config: RateLimitConfig): ConfigLimiters {
   if (config.rateLimit === false) {
-    return { credentials: null, signinStart: null, sessionRead: null };
+    return {
+      credentials: null,
+      signinStart: null,
+      sessionRead: null,
+      verification: null,
+      mfa: null,
+    };
   }
   const options = config.rateLimit ?? {};
   return {
     credentials: createRateLimiter(options),
-    signinStart: createRateLimiter({
-      max: options.signin?.max ?? DEFAULT_SIGNIN_MAX,
-      windowMs: options.signin?.windowMs ?? DEFAULT_WINDOW_MS,
-      store: options.store,
-    }),
-    sessionRead: createRateLimiter({
-      max: options.session?.max ?? DEFAULT_SESSION_MAX,
-      windowMs: options.session?.windowMs ?? DEFAULT_SESSION_WINDOW_MS,
-      store: options.store,
-    }),
+    signinStart: budget(options, options.signin, DEFAULT_SIGNIN_MAX, DEFAULT_WINDOW_MS),
+    sessionRead: budget(options, options.session, DEFAULT_SESSION_MAX, DEFAULT_SESSION_WINDOW_MS),
+    verification: budget(
+      options,
+      options.verification,
+      DEFAULT_VERIFICATION_MAX,
+      DEFAULT_WINDOW_MS,
+    ),
+    mfa: budget(options, options.mfa, DEFAULT_MFA_MAX, DEFAULT_MFA_WINDOW_MS),
   };
 }
 
@@ -474,6 +563,116 @@ export function signinStartLimiter(config: RateLimitConfig): RateLimiter | null 
  */
 export function sessionReadLimiter(config: RateLimitConfig): RateLimiter | null {
   return limitersFor(config).sessionRead;
+}
+
+/**
+ * The verification (outbound-token) limiter for an auth config: 3 requests per address
+ * per 15 minutes by default, tunable with `rateLimit.verification`. Drive it with
+ * {@linkcode subjectBucketKeys}`("verify", …)` + {@linkcode consumeHitBudget}.
+ *
+ * @param config The app's auth config.
+ * @returns The limiter, or `null` when `rateLimit: false` disabled it.
+ */
+export function verificationLimiter(config: RateLimitConfig): RateLimiter | null {
+  return limitersFor(config).verification;
+}
+
+/**
+ * The MFA limiter for an auth config: 5 second-factor attempts per user per 5 minutes by
+ * default, tunable with `rateLimit.mfa`. Key it with {@linkcode subjectBucketKeys}`("mfa", …)`.
+ *
+ * @param config The app's auth config.
+ * @returns The limiter, or `null` when `rateLimit: false` disabled it.
+ */
+export function mfaLimiter(config: RateLimitConfig): RateLimiter | null {
+  return limitersFor(config).mfa;
+}
+
+/** Which per-subject budget a {@linkcode SubjectBucketKeys} pair counts against. */
+export type SubjectBudget = "verify" | "mfa";
+
+/** The two buckets one per-subject attempt counts against. */
+export interface SubjectBucketKeys {
+  /** The subject's own bucket (a normalised address, or a user id). */
+  key: string;
+  /**
+   * The client-IP bucket (checked at `IP_BUCKET_FACTOR`× the budget), or `null` when there
+   * is no request to key on or the request came through an undeclared proxy.
+   */
+  ipKey: string | null;
+}
+
+/**
+ * The bucket pair for one per-subject attempt: `<budget>|<subject>` plus an IP-wide
+ * `<budget>-ip|<client bucket>`, namespaced away from every other limiter's keys. The
+ * IP-wide bucket is dropped behind an undeclared reverse proxy ({@linkcode proxiedWithoutTrust})
+ * — every client would share it there — and when there is no request (a server function
+ * called outside one), leaving the subject bucket to bound the attempt alone.
+ *
+ * @param budget Which limiter the keys are for.
+ * @param subject The normalised address (`"verify"`) or the user id (`"mfa"`).
+ * @param request The incoming request, when there is one.
+ * @param config The app's auth config (its `trustForwardedHeaders`).
+ * @returns The two keys.
+ */
+export function subjectBucketKeys(
+  budget: SubjectBudget,
+  subject: string,
+  request: Request | undefined,
+  config: RateLimitConfig,
+): SubjectBucketKeys {
+  const ipKey = request && !proxiedWithoutTrust(request, config)
+    ? `${budget}-ip|${
+      clientIpBucket(request, { trustForwardedHeaders: config.trustForwardedHeaders })
+    }`
+    : null;
+  return { key: `${budget}|${subject}`, ipKey };
+}
+
+/** The buckets one attempt counts against: an optional subject bucket plus the IP-wide one. */
+export interface AttemptKeys {
+  /** The subject's own bucket, or `null` when the attempt has none (a magic-link redeem). */
+  readonly key: string | null;
+  /** The client-IP bucket (checked at `IP_BUCKET_FACTOR`× the budget), or `null`. */
+  readonly ipKey: string | null;
+}
+
+/**
+ * Spend one unit of a budget for an attempt that is about to run: count it against the
+ * subject bucket, then the IP-wide one, refusing as soon as either is over. Counting comes
+ * FIRST ({@linkcode RateLimiter.hit}), so a concurrent burst can't all pass the check before
+ * any of it is counted. A hit-counted budget (every attempt counts) stops here; a
+ * failure-counted one (a password, a one-time code) also calls {@linkcode settleAttempt} when
+ * the attempt succeeds.
+ *
+ * @param limiter The limiter, or `null` when rate limiting is off (never refuses).
+ * @param keys The subject + IP buckets ({@linkcode subjectBucketKeys}).
+ * @returns Seconds until the budget refills when refused, else `null` (go ahead).
+ */
+export async function consumeHitBudget(
+  limiter: RateLimiter | null,
+  keys: AttemptKeys,
+): Promise<number | null> {
+  if (!limiter) return null;
+  const own = keys.key === null ? null : await limiter.hit(keys.key);
+  if (own !== null) return own;
+  const shared = keys.ipKey === null ? null : await limiter.hit(keys.ipKey, IP_BUCKET_FACTOR);
+  // The IP refused, so the attempt never ran: don't charge the subject for it.
+  if (shared !== null && keys.key !== null) await limiter.refund(keys.key);
+  return shared;
+}
+
+/**
+ * Settle a failure-counted attempt that succeeded: clear the subject bucket and give the
+ * IP-wide bucket back the unit {@linkcode consumeHitBudget} reserved, so only failures count.
+ *
+ * @param limiter The limiter, or `null` when rate limiting is off.
+ * @param keys The buckets the attempt was charged to.
+ */
+export async function settleAttempt(limiter: RateLimiter | null, keys: AttemptKeys): Promise<void> {
+  if (!limiter) return;
+  if (keys.key !== null) await limiter.succeed(keys.key);
+  if (keys.ipKey !== null) await limiter.refund(keys.ipKey);
 }
 
 /** Warn about an undeclared proxy at most once per process. */

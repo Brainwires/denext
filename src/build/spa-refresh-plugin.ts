@@ -7,7 +7,7 @@
 // calls `createRoot(el).render(<App/>)`, and its components live in ordinary source
 // modules denext never authored. So there is nowhere to hang the registrations.
 //
-// This plugin supplies them. On the esbuild `onLoad` for each app `.tsx`/`.jsx`
+// This plugin supplies them. On the esbuild `onLoad` for each app `.tsx`/`.jsx`/`.ts`
 // source, it appends a `registerFamily(Name, "<sourceUrl>#Name")` call for every
 // top-level component-shaped declaration (a PascalCase function / class, or a const
 // bound to an arrow/function expression). The family id is the **source** file URL —
@@ -46,47 +46,63 @@ export interface ModuleComponents {
  * contributes hook-name metadata.
  *
  * @param parsed The module parsed by `parseModule()`.
+ * @param sourceUrl The module's `file://` URL — resolves the `from` of a custom hook bound
+ *   by a static relative import (omitted ⇒ such calls stay opaque).
  * @returns The family names and the per-declaration metadata.
  */
-export function collectComponents(parsed: ParsedModule): ModuleComponents {
+export function collectComponents(parsed: ParsedModule, sourceUrl?: string): ModuleComponents {
   return {
     names: componentDecls(parsed).filter((d) => d.component).map((d) => d.name),
-    metas: collectComponentMeta(parsed),
+    metas: collectComponentMeta(parsed, sourceUrl),
   };
 }
 
 /**
  * The `registerFamily` import + one registration per component, appended to a module —
- * with the DevTools metadata sidecar (`__dnxMeta(id, {…})`) when `metas` is given.
+ * with the DevTools metadata sidecar (`__dnxMeta(id, {…})`) when `metas` is given. A module
+ * of custom hooks only (no component) gets the sidecar alone, so a component importing one
+ * of its hooks can name that hook's cells across the module boundary.
  *
  * @param sourceUrl The module's `file://` URL (the family id prefix).
  * @param names The component names to register.
  * @param metas Optional dev metadata (omitted ⇒ no sidecar).
- * @returns The footer source, or `""` when the module has no components.
+ * @returns The footer source, or `""` when there is nothing to register or record.
  */
 export function refreshFooter(
   sourceUrl: string,
   names: string[],
   metas?: Record<string, ComponentDevMeta>,
 ): string {
-  if (names.length === 0) return "";
+  const sidecar = metas ? metaFooter(sourceUrl, metas) : "";
+  if (names.length === 0 && !sidecar) return "";
   // Alias the import so it can never shadow (or be shadowed by) a user binding named
   // `registerFamily`. The import is idempotent — ESM allows a module to import the
   // same specifier more than once — so a hand-written `denext/client` import is fine.
-  const regs = names
+  const regs = names.length === 0 ? "" : names
     .map((n) => `__dnxRegisterFamily(${n}, ${JSON.stringify(`${sourceUrl}#${n}`)});`)
     .join("\n");
   // Leading blank lines: the source may end without a newline (a registration must
   // not fuse onto a trailing `//` comment or expression).
   return `\n\n/* denext Fast Refresh (dev) */\n` +
-    `import { registerFamily as __dnxRegisterFamily } from "denext/client-runtime";\n` +
-    regs + "\n" + (metas ? metaFooter(sourceUrl, metas) : "");
+    (regs
+      ? `import { registerFamily as __dnxRegisterFamily } from "denext/client-runtime";\n` +
+        regs + "\n"
+      : "") +
+    sidecar;
 }
+
+/**
+ * The modules SPA dev instruments: component source AND `.ts` modules, so a custom-hook
+ * module (`useCart.ts`) carries its `__dnxMeta` sidecar and a component's breadcrumb can
+ * expand it across the import (the unbundled App Router transform instruments `.ts` too).
+ */
+const SPA_REFRESH_FILTER = /\.(tsx|jsx|ts)$/;
 
 /**
  * A dev-only esbuild plugin that instruments each app source module with Fast
  * Refresh family registrations (see the module header). Registered as an
  * `extraPlugin` so its `onLoad` front-runs the deno-loader's own file load.
+ * `.ts` modules are claimed too (with esbuild's `ts` loader) for their hook metadata.
  *
  * @param projectDir Absolute app root — only files under it are instrumented (npm
  *   deps under `node_modules`, and the generated `.entries` wrappers, are skipped).
@@ -97,8 +113,9 @@ export function spaRefreshPlugin(projectDir: string): esbuild.Plugin {
     // leaves the module as written — those components simply remount on edit.
     const parsed = await parseModule(source);
     if (!parsed) return null; // unparseable/empty → leave unchanged
-    const { names, metas } = collectComponents(parsed);
-    if (names.length === 0) return null; // nothing component-shaped → leave unchanged
-    return source + refreshFooter(toFileUrl(path).href, names, metas);
-  });
+    const url = toFileUrl(path).href;
+    const { names, metas } = collectComponents(parsed, url);
+    const footer = refreshFooter(url, names, metas);
+    return footer ? source + footer : null; // nothing to register or record → unchanged
+  }, { filter: SPA_REFRESH_FILTER });
 }

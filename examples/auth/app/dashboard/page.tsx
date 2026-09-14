@@ -27,6 +27,8 @@ function Identity({ session }: { session: AuthSession }) {
       </p>
       <p class="row">
         <a href="/account/tokens">API tokens</a>
+        <a href="/account/security">Two-factor authentication</a>
+        <a href="/verify-email">Email verification</a>
         {roles.includes("admin") && <a href="/admin">Admin</a>}
       </p>
     </>

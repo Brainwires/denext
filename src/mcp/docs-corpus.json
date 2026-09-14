@@ -1986,7 +1986,7 @@
       "title": "useDebugValue",
       "module": "denext",
       "url": "/docs/api/denext/useDebugValue",
-      "text": "useDebugValue useDebugValue<T>(_value: T, _format?: (value: T) => unknown): void Label a custom hook's value for React DevTools. A no-op at runtime (React itself only invokes it when DevTools is attached), provided for API compatibility. The value to display. Optional formatter, applied lazily by DevTools only.",
+      "text": "useDebugValue useDebugValue<T>(value: T, format?: (value: T) => unknown): void Label a custom hook's value for the DevTools inspector. In development on the client the value is recorded against the rendering component — without taking a hook cell, so adding or removing a call never shifts hook state (Fast Refresh keeps it) — and shown on the hook row it follows in the panel, denext_hook_state and the MCP snapshot. format is never called during render: the inspector applies it lazily, only when it reads the value. In production and during server rendering this is a no-op. The value to display. Optional formatter, applied lazily by the inspector only.",
       "denextOnly": false
     },
     {
@@ -2508,7 +2508,7 @@
       "title": "VERSION",
       "module": "denext",
       "url": "/docs/api/denext/VERSION",
-      "text": "VERSION VERSION: 2.5.0-rc.1 The denext framework version.",
+      "text": "VERSION VERSION: 2.5.0-rc.2 The denext framework version.",
       "denextOnly": true
     },
     {
@@ -3025,6 +3025,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/AuthEmailConfig",
+      "kind": "interface",
+      "title": "AuthEmailConfig",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/AuthEmailConfig",
+      "text": "AuthEmailConfig interface AuthEmailConfig The email-token flows' knobs: how long each kind of token lives and which pages the emailed links open. Every field is optional; lifetimes are in **seconds**, and a non-finite or non-positive lifetime falls back to its default.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/AuthEvents",
       "kind": "interface",
       "title": "AuthEvents",
@@ -3040,6 +3049,15 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/AuthLogger",
       "text": "AuthLogger interface AuthLogger Where the framework logs; every method is optional and defaults to silence.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/AuthMfaConfig",
+      "kind": "interface",
+      "title": "AuthMfaConfig",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/AuthMfaConfig",
+      "text": "AuthMfaConfig interface AuthMfaConfig Second-factor (TOTP) policy. Every field is optional; see each default.",
       "denextOnly": true
     },
     {
@@ -3066,7 +3084,7 @@
       "title": "AuthProvider",
       "module": "denext/server",
       "url": "/docs/api/denext-server/AuthProvider",
-      "text": "AuthProvider type AuthProvider = OAuthProvider | CredentialsProvider Any configured provider.",
+      "text": "AuthProvider type AuthProvider = OAuthProvider | CredentialsProvider | EmailProvider Any configured provider.",
       "denextOnly": true
     },
     {
@@ -3121,6 +3139,24 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/AwaitableHeaders",
       "text": "AwaitableHeaders type AwaitableHeaders = Headers & PromiseLike<Headers> headers()'s return: usable synchronously AND awaitable (await headers(), Next 15).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/backupCodeMatcher",
+      "kind": "function",
+      "title": "backupCodeMatcher",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/backupCodeMatcher",
+      "text": "backupCodeMatcher backupCodeMatcher(hasher: Hasher, code: string): (hash: string) => Promise<boolean> Build the matches predicate the adapter's consumeBackupCode walks the stored hashes with. The presented code is normalised (spaces and hyphens stripped, lowercased); a malformed one yields a predicate that matches nothing — yet still runs one hasher.verify per stored hash, so a garbage submission costs what a wrong code does. The auth Hasher the codes were hashed with. The code the user typed. A predicate resolving true only when code is the one hash was made from.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/BackupCodes",
+      "kind": "interface",
+      "title": "BackupCodes",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/BackupCodes",
+      "text": "BackupCodes interface BackupCodes A fresh set of backup codes: show codes once, store only hashes.",
       "denextOnly": true
     },
     {
@@ -3376,6 +3412,24 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/confirmTotp",
+      "kind": "function",
+      "title": "confirmTotp",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/confirmTotp",
+      "text": "confirmTotp confirmTotp(config: AuthConfig, user: AuthUser, code: string): Promise<ConfirmTotpResult> Confirm a pending enrollment with a code from the authenticator app. On success the factor is marked confirmed and mfa.backupCodes backup codes are minted — returned here in plaintext exactly once, and stored only as hashes. The code's step is claimed, so it can't then be replayed at the step-up. The app's auth config. The user confirming. The code the user typed. { ok: true, backupCodes }, or { ok: false } for a wrong or replayed code, no pending enrollment, or an already-confirmed factor.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/ConfirmTotpResult",
+      "kind": "typeAlias",
+      "title": "ConfirmTotpResult",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ConfirmTotpResult",
+      "text": "ConfirmTotpResult type ConfirmTotpResult = object | object The outcome of confirmTotp: on success, the plaintext backup codes — the only time they exist anywhere; show them to the user once.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/connection",
       "kind": "function",
       "title": "connection",
@@ -3453,7 +3507,7 @@
       "title": "credentials",
       "module": "denext/server",
       "url": "/docs/api/denext-server/credentials",
-      "text": "credentials credentials(options: CredentialsOptions): CredentialsProvider An email/password (or any custom) credentials provider. The authorize callback and an optional provider id. The configured credentials provider.",
+      "text": "credentials credentials(options?: CredentialsOptions): CredentialsProvider An email/password (or any custom) credentials provider. The optional authorize callback and provider id. The configured credentials provider.",
       "denextOnly": true
     },
     {
@@ -3610,6 +3664,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/disableTotp",
+      "kind": "function",
+      "title": "disableTotp",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/disableTotp",
+      "text": "disableTotp disableTotp(config: AuthConfig, userId: string): Promise<void> Remove a user's TOTP factor and backup codes. A no-op for a user who never enrolled. Callers must have proved a fresh factor first — see the /mfa/disable endpoint. The app's auth config. The user.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/discord",
       "kind": "function",
       "title": "discord",
@@ -3661,6 +3724,51 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/DraftTokenStore",
       "text": "DraftTokenStore interface DraftTokenStore Backing store for server-minted draft tokens. Draft mode is \"on\" only when the request cookie holds a token this server issued via enable(); a forged or guessed value is not in the store, so it cannot turn draft mode on. The default store is in-memory (per-process, resets on restart). A multi-instance deployment can inject a store backed by a shared cache (Redis/KV) via setDraftTokenStore so a token minted on one instance is honored on another. The store is synchronous to keep draftMode's isEnabled synchronous; back an async store with a synchronously-readable cache, or mint signed/stateless tokens instead.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/emailOtp",
+      "kind": "function",
+      "title": "emailOtp",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/emailOtp",
+      "text": "emailOtp emailOtp(options?: EmailProviderOptions): EmailProvider Passwordless sign-in by **one-time code**: POST {basePath}/callback/email-otp with { email } mails a numeric code (email.otpDigits, default 6; valid 5 minutes by default, email.otpMaxAge); posting { email, code } to the same endpoint signs the user in. Wrong codes count against a failure budget (5 per 5 minutes per address). The provider id, display name and sign-up policy. The configured provider (id: \"email-otp\", mode: \"otp\").",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/EmailProvider",
+      "kind": "interface",
+      "title": "EmailProvider",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/EmailProvider",
+      "text": "EmailProvider interface EmailProvider A passwordless **email** provider: magicLink() mails a single-use sign-in link, emailOtp() a one-time numeric code. Both deliver through AuthConfig.sendVerificationRequest and need an adapter with the verification-token group plus getUserByEmail / createUser / updateUser.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/EmailProviderOptions",
+      "kind": "interface",
+      "title": "EmailProviderOptions",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/EmailProviderOptions",
+      "text": "EmailProviderOptions interface EmailProviderOptions Options for magicLink and emailOtp.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/EmailRequestResult",
+      "kind": "interface",
+      "title": "EmailRequestResult",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/EmailRequestResult",
+      "text": "EmailRequestResult interface EmailRequestResult What a verification or reset request reports — never whether the address exists.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/enrollTotp",
+      "kind": "function",
+      "title": "enrollTotp",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/enrollTotp",
+      "text": "enrollTotp enrollTotp(config: AuthConfig, user: AuthUser): Promise<TotpEnrollment | null> Start a TOTP enrollment: mint a secret, store it **unconfirmed**, and return it with the provisioning URI (issuer mfa.issuer, account user.email ?? user.id). An earlier unconfirmed enrollment is replaced; a CONFIRMED factor is not — disable it first. The app's auth config. The user enrolling. The secret and URI, or null when the user already has a confirmed factor.",
       "denextOnly": true
     },
     {
@@ -3868,6 +3976,24 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/FormFields",
       "text": "FormFields type FormFields = Record<string, FormDataEntryValue> The form fields of a submission as a plain object (the default input shape).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/generateBackupCodes",
+      "kind": "function",
+      "title": "generateBackupCodes",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/generateBackupCodes",
+      "text": "generateBackupCodes generateBackupCodes(hasher: Hasher, count?: number): Promise<BackupCodes> Generate a set of unique backup codes and hash each through hasher. The hash covers the normalised form (no hyphen, lowercase), so a user may type a code with or without the hyphen, in any case. The auth Hasher (ResolvedAuthOptions.hasher). How many codes, clamped to 0–20. Default 10. The plaintext codes and their hashes.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/generateTotpSecret",
+      "kind": "function",
+      "title": "generateTotpSecret",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/generateTotpSecret",
+      "text": "generateTotpSecret generateTotpSecret(bytes?: number): string Generate a fresh TOTP secret: bytes of CSPRNG output as unpadded, uppercase RFC 4648 base32 — the form authenticator apps expect. Secret length in bytes; at least 20 (160 bits). Default 20. The base32 secret (32 characters at the default length).",
       "denextOnly": true
     },
     {
@@ -4546,6 +4672,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/magicLink",
+      "kind": "function",
+      "title": "magicLink",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/magicLink",
+      "text": "magicLink magicLink(options?: EmailProviderOptions): EmailProvider Passwordless sign-in by **magic link**: POST {basePath}/callback/email with { email } mails a single-use link (10 minutes by default, email.magicMaxAge); opening it signs the user in. The link is consumed by its GET, so a mail gateway that pre-fetches links can spend it — prefer emailOtp where link scanners are common. The provider id, display name and sign-up policy. The configured provider (id: \"email\", mode: \"magic\").",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/makeTranslate",
       "kind": "function",
       "title": "makeTranslate",
@@ -4636,12 +4771,39 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/MfaMethod",
+      "kind": "typeAlias",
+      "title": "MfaMethod",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/MfaMethod",
+      "text": "MfaMethod type MfaMethod = totp | bcp A second factor a step-up can be completed with: a TOTP code, or a backup code.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/MfaRecord",
       "kind": "interface",
       "title": "MfaRecord",
       "module": "denext/server",
       "url": "/docs/api/denext-server/MfaRecord",
       "text": "MfaRecord interface MfaRecord A user's TOTP factor plus their single-use backup codes.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/mfaStatus-fn",
+      "kind": "function",
+      "title": "mfaStatus",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/mfaStatus-fn",
+      "text": "mfaStatus mfaStatus(config: AuthConfig, userId: string): Promise<MfaStatus> A user's second-factor state — for an account-settings page. The app's auth config. The user. Whether a factor is enrolled and confirmed, and how many backup codes remain.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/MfaStatus-iface",
+      "kind": "interface",
+      "title": "MfaStatus",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/MfaStatus-iface",
+      "text": "MfaStatus interface MfaStatus A user's second-factor state, as mfaStatus reports it.",
       "denextOnly": true
     },
     {
@@ -5005,6 +5167,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/pendingMfaSession",
+      "kind": "function",
+      "title": "pendingMfaSession",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/pendingMfaSession",
+      "text": "pendingMfaSession pendingMfaSession(): Promise<AuthSession | null> The current request's session **only while it still owes a second factor** — null for a complete session, and for none. For the app's pages.mfa page: render the code form (or, under mfa.required: \"always\" for a user with no factor yet, the enrollment step) when this returns a session, and redirect onward when it doesn't. A pending session grants nothing: auth and every guard still read it as signed out, and it is never slid forward. It is short-lived, and the step-up replaces it with a fresh session rather than upgrading it. The pending AuthSession, or null.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/permanentRedirect",
       "kind": "function",
       "title": "permanentRedirect",
@@ -5356,6 +5527,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/requestEmailVerification",
+      "kind": "function",
+      "title": "requestEmailVerification",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/requestEmailVerification",
+      "text": "requestEmailVerification requestEmailVerification(config: AuthConfig, userOrEmail: Pick<AdapterUser, email> | string): Promise<EmailRequestResult> Email a verification link to a user (or an address). The link opens email.verifyPath (default {basePath}/verify, which verifies and redirects). Resolves normally — sending nothing — for an address with no account, an already-verified one, or a value that isn't exactly one address. Throws only for a misconfiguration: no sendVerificationRequest, or an adapter without the verification-token group. The app's auth config. The user record (its email is used) or the address. Whether the request was throttled.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/RequestErrorContext",
       "kind": "interface",
       "title": "RequestErrorContext",
@@ -5389,6 +5569,15 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/requestOrigin",
       "text": "requestOrigin requestOrigin(request: Request, opts?: OriginOptions): string The public origin (scheme://host) for request. Resolution order: canonicalOrigin (if set) → forwarded headers (only when trustForwardedHeaders is set) → the Host header → the request URL. Only the first value of a comma-separated forwarded header is used. The incoming request. Origin-resolution options (defaults ignore forwarded headers). The origin, e.g. https://example.com.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/requestPasswordReset",
+      "kind": "function",
+      "title": "requestPasswordReset",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/requestPasswordReset",
+      "text": "requestPasswordReset requestPasswordReset(config: AuthConfig, email: string): Promise<EmailRequestResult> Email a password-reset link. The link opens email.resetPath (default {basePath}/reset) — a page your app renders, posting email, token and password to {basePath}/reset/confirm (or calling resetPassword). Resolves normally for an address with no account — with no mail, and comparable work — so a caller can't learn which addresses have accounts. Throws only for a misconfiguration: no sendVerificationRequest, or an adapter without the verification-token group and setCredential. The app's auth config. The submitted address (exactly one; a list sends nothing). Whether the request was throttled — the same for known and unknown addresses.",
       "denextOnly": true
     },
     {
@@ -5452,6 +5641,24 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/resetCacheStats",
       "text": "resetCacheStats resetCacheStats(): void Reset the cache-activity counters (tests / a fresh monitoring window).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/resetPassword",
+      "kind": "function",
+      "title": "resetPassword",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/resetPassword",
+      "text": "resetPassword resetPassword(config: AuthConfig, input: object): Promise<ResetPasswordResult> Redeem a password-reset token and set a new password: the configured hasher hashes it, adapter.setCredential stores it, and every server-side session of the user is revoked. Fires passwordReset (after sessionRevoked). The password is checked (8–1024 characters) **before** the token is touched, so a refused password leaves the link usable. The app's auth config. The address, the presented token and the new password. { ok: true, user }, or { ok: false, error }. Throws only when the adapter lacks the verification-token group or setCredential.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/ResetPasswordResult",
+      "kind": "typeAlias",
+      "title": "ResetPasswordResult",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ResetPasswordResult",
+      "text": "ResetPasswordResult type ResetPasswordResult = object | object What resetPassword reports.",
       "denextOnly": true
     },
     {
@@ -6328,6 +6535,51 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/totpAuthUri",
+      "kind": "function",
+      "title": "totpAuthUri",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/totpAuthUri",
+      "text": "totpAuthUri totpAuthUri(options: TotpAuthUriOptions): string Build the otpauth://totp/… provisioning URI (Google Authenticator key-URI format) to render as a QR code or a link. The label is Issuer:account with each part percent-encoded (so a : inside either part can't forge the separator), and every query value is percent-encoded too (a space is %20, never +). The secret, labels and code parameters. The URI, e.g. otpauth://totp/Acme:ada%40example.com?secret=…&issuer=Acme&algorithm=SHA1&digits=6&period=30.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/TotpAuthUriOptions",
+      "kind": "interface",
+      "title": "TotpAuthUriOptions",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/TotpAuthUriOptions",
+      "text": "TotpAuthUriOptions interface TotpAuthUriOptions Options for totpAuthUri.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/TotpEnrollment",
+      "kind": "interface",
+      "title": "TotpEnrollment",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/TotpEnrollment",
+      "text": "TotpEnrollment interface TotpEnrollment A fresh, unconfirmed TOTP enrollment, as enrollTotp returns it.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/TotpVerifyOptions",
+      "kind": "interface",
+      "title": "TotpVerifyOptions",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/TotpVerifyOptions",
+      "text": "TotpVerifyOptions interface TotpVerifyOptions Options for verifyTotp.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/TotpVerifyResult",
+      "kind": "typeAlias",
+      "title": "TotpVerifyResult",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/TotpVerifyResult",
+      "text": "TotpVerifyResult type TotpVerifyResult = object | object The outcome of verifyTotp: on a match, the time step the code belongs to — hand it to the adapter's claimTotpStep so the same code can't be presented twice.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/TranslateFn",
       "kind": "typeAlias",
       "title": "TranslateFn",
@@ -6490,12 +6742,39 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/verifyEmail",
+      "kind": "function",
+      "title": "verifyEmail",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/verifyEmail",
+      "text": "verifyEmail verifyEmail(config: AuthConfig, input: object): Promise<AdapterUser | null> Redeem an email-verification token and mark the address verified (emailVerified, epoch seconds, through adapter.updateUser). Fires emailVerified. Unlike a first magic-link / one-time-code sign-in, this does **not** retire the account's password or revoke its sessions. In the normal register → verify → sign-in flow the password was set by the very person now proving the mailbox, so wiping it would break that flow; and verifying signs nobody in, so the mailbox owner gains no access here. The residual risk is a victim confirming an account someone else registered with their address — it then counts as verified (a later OAuth sign-in with that address links to it) — so word the mail to say that ignoring it is safe. The app's auth config. The address and the presented token. The updated user, or null for any failure (wrong, spent or expired token; an address whose account is gone). Throws only when the adapter lacks the token group.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/verifyPassword",
       "kind": "function",
       "title": "verifyPassword",
       "module": "denext/server",
       "url": "/docs/api/denext-server/verifyPassword",
       "text": "verifyPassword verifyPassword(password: string, stored: string, options?: HashPasswordOptions): Promise<boolean> Verify a password against a hash produced by hashPassword. The comparison is constant-time (timingSafeEqual), and a malformed/unsupported stored value — an empty column, a legacy format, a corrupted row — returns false rather than throwing, so an authorize callback can't leak a stack trace or a 500. That rejection still runs a full scrypt derivation, so an unknown account takes as long to reject as a wrong password for a known one (no user-enumeration timing oracle). The submitted plaintext password. The stored scrypt$… string. The cost this deployment hashes at — pass the SAME options hashPassword was given (scryptHasher does). It is used only for the equal-work rejection of a missing/malformed stored value: a real comparison always uses the parameters embedded in the stored string. Omitting it on a deployment that raised the cost makes an unknown account reject measurably faster than a known one. true only when the password matches.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/verifySecondFactor",
+      "kind": "function",
+      "title": "verifySecondFactor",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/verifySecondFactor",
+      "text": "verifySecondFactor verifySecondFactor(config: AuthConfig, userId: string, code: string): Promise<MfaMethod | null> Check a second-factor code for a user with a confirmed factor: first as a TOTP code (claiming its step — a replay is refused), else as a backup code (spent on a match). The app's auth config. The user. The code the user typed (TOTP digits or a backup code, hyphen optional). \"totp\" or \"bcp\" for the method that verified, or null.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/verifyTotp",
+      "kind": "function",
+      "title": "verifyTotp",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/verifyTotp",
+      "text": "verifyTotp verifyTotp(secret: string, code: string, options?: TotpVerifyOptions): Promise<TotpVerifyResult> Verify a TOTP code (RFC 6238 over RFC 4226 HOTP, HMAC-SHA-1) against a base32 secret, accepting any step within ±window of the current one. Whitespace in the code is stripped (\"123 456\"); anything else malformed — non-digits, the wrong length, a secret that isn't base32 — is { ok: false }, never a throw. Every candidate step is computed and compared in constant time; the loop never exits early on a match. This does NOT stop replay: pass the returned step to the adapter's claimTotpStep. The user's base32 secret (padding, spaces and case are tolerated). The code the user typed. Window, clock and code parameters. { ok: true, step } for the first (earliest) matching step, else { ok: false }.",
       "denextOnly": true
     },
     {
@@ -7692,7 +7971,7 @@
       "title": "useDebugValue",
       "module": "denext/client",
       "url": "/docs/api/denext-client/useDebugValue",
-      "text": "useDebugValue useDebugValue<T>(_value: T, _format?: (value: T) => unknown): void Label a custom hook's value for React DevTools. A no-op at runtime (React itself only invokes it when DevTools is attached), provided for API compatibility. The value to display. Optional formatter, applied lazily by DevTools only.",
+      "text": "useDebugValue useDebugValue<T>(value: T, format?: (value: T) => unknown): void Label a custom hook's value for the DevTools inspector. In development on the client the value is recorded against the rendering component — without taking a hook cell, so adding or removing a call never shifts hook state (Fast Refresh keeps it) — and shown on the hook row it follows in the panel, denext_hook_state and the MCP snapshot. format is never called during render: the inspector applies it lazily, only when it reads the value. In production and during server rendering this is a no-op. The value to display. Optional formatter, applied lazily by the inspector only.",
       "denextOnly": false
     },
     {
@@ -8983,6 +9262,123 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-mobile/BackSwipeOptions",
+      "kind": "interface",
+      "title": "BackSwipeOptions",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/BackSwipeOptions",
+      "text": "BackSwipeOptions interface BackSwipeOptions Options for useBackSwipe and isBackSwipe.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/installKeyboardInset",
+      "kind": "function",
+      "title": "installKeyboardInset",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/installKeyboardInset",
+      "text": "installKeyboardInset installKeyboardInset(opts?: KeyboardInsetOptions): () => void Keep a CSS custom property on document.documentElement (default --denext-keyboard-inset) equal to the on-screen keyboard's height in px, so layout can lift a composer or a bottom bar above it: padding-bottom: var(--denext-keyboard-inset). The value is derived from window.visualViewport (innerHeight - visualViewport.height - visualViewport.offsetTop, clamped at ≥ 0) and updated at most once per animation frame. It is set to 0px immediately, and stays 0px where visualViewport is unavailable. This is for shells whose Capacitor Keyboard plugin is configured with resize: \"none\", where the webview keeps its size and the keyboard covers the page. With resize: \"native\" the webview itself shrinks, so the inset is always 0 and this is unnecessary. Several installs of the same property may coexist (e.g. two useKeyboardInset components); the property is removed when the last one is disposed. SSR-safe: without a document it installs nothing. { property }, the custom property to maintain. A dispose function that stops listening and, for the last install, removes the property.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/isBackSwipe",
+      "kind": "function",
+      "title": "isBackSwipe",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/isBackSwipe",
+      "text": "isBackSwipe isBackSwipe(dx: number, dy: number, opts?: BackSwipeOptions): boolean The pure gesture test behind useBackSwipe: whether a movement of dx/dy CSS px from the touch start is a back swipe, i.e. rightward by at least minDistance and horizontal by at least ratio × the absolute vertical movement. Horizontal movement since the touch started (positive = rightward). Vertical movement since the touch started (sign ignored). { minDistance = 72, ratio = 1.4 }; enabled is not consulted here. true when the movement qualifies as a back swipe.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/isNativeShell",
+      "kind": "function",
+      "title": "isNativeShell",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/isNativeShell",
+      "text": "isNativeShell isNativeShell(): boolean Whether the page runs inside a Capacitor iOS/Android native shell (webview origin capacitor://localhost on iOS, https://localhost on Android). false on the web, when @capacitor/core is merely bundled into a web build, and during SSR. true only inside the native shell.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/KeyboardInsetOptions",
+      "kind": "interface",
+      "title": "KeyboardInsetOptions",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/KeyboardInsetOptions",
+      "text": "KeyboardInsetOptions interface KeyboardInsetOptions Options for installKeyboardInset and useKeyboardInset.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/nativePlatform-fn",
+      "kind": "function",
+      "title": "nativePlatform",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/nativePlatform-fn",
+      "text": "nativePlatform nativePlatform(): NativePlatform The platform the page runs on: \"ios\" or \"android\" inside a Capacitor native shell, otherwise \"web\". SSR-safe (\"web\" when there is no window). A Capacitor custom platform (e.g. Electron) also reads \"web\": only the iOS and Android shells count. \"ios\", \"android\" or \"web\".",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/NativePlatform-type",
+      "kind": "typeAlias",
+      "title": "NativePlatform",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/NativePlatform-type",
+      "text": "NativePlatform type NativePlatform = ios | android | web The platform a page runs on, as denext/mobile distinguishes them.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/onAppResume",
+      "kind": "function",
+      "title": "onAppResume",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/onAppResume",
+      "text": "onAppResume onAppResume(cb: (awayMs: number) => void): () => void Call cb each time the page returns to the foreground, with how long it was away in milliseconds. It listens for visibilitychange (every browser and webview), pagehide/pageshow (a back-forward-cache restore) and the pause/resume document events that Capacitor's iOS shell fires on scene background/foreground. Whichever signal arrives first counts; the others are deduplicated, so cb runs once per return. A subscription made while the page is already hidden measures from the moment of subscribing. The time away is wall-clock (Date.now()), not performance.now(): iOS's monotonic clock stops while the device sleeps, which would under-report a phone left locked for an hour. A backwards clock jump reads as 0. **The intended pattern** (the rule T3 Code's native app uses): under 10 s away, the connection is probably intact, so probe it (a ping, a cheap refetch); 10 s or more, assume the OS froze the page and its sockets, so reconnect and refetch. SSR-safe: without a document it subscribes to nothing and returns a no-op. Called with awayMs, the time since the page was hidden. A function that unsubscribes.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/openExternal",
+      "kind": "function",
+      "title": "openExternal",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/openExternal",
+      "text": "openExternal openExternal(url: string): Promise<void> Open a URL outside the app. - Inside the native shell, an http(s) URL opens in the in-app browser of the @capacitor/browser plugin when it is installed natively (read from Capacitor.Plugins.Browser; no JS import of the plugin is needed). - Otherwise, including mailto:/tel: and on the web, it calls window.open(url, \"_blank\", \"noopener,noreferrer\"). The iOS shell hands a window.open to the OS (Safari, Mail, Phone); Android routes it to an intent. Only http:, https:, mailto: and tel: URLs are accepted. Anything else, including javascript:, data:, file: and relative URLs, is refused **synchronously** with a TypeError before anything opens. The vetted, normalized URL.href is what gets opened. An absolute http:, https:, mailto: or tel: URL. A promise that settles once the URL has been handed off. It rejects if the Browser plugin rejects, or when there is no window (SSR).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/SAFE_AREA_CSS",
+      "kind": "variable",
+      "title": "SAFE_AREA_CSS",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/SAFE_AREA_CSS",
+      "text": "SAFE_AREA_CSS SAFE_AREA_CSS: string A stylesheet fragment that defines --denext-safe-top, --denext-safe-right, --denext-safe-bottom and --denext-safe-left on :root as the device's safe-area insets (env(safe-area-inset-*, 0px): the notch, status bar and home indicator), 0px where there are none. Drop it into a stylesheet or a <style> tag, then pad with the variables. The insets are only non-zero when the viewport meta includes viewport-fit=cover. In the App Router, export viewport = { width: \"device-width\", initialScale: 1, viewportFit: \"cover\" } from the root layout. In SPA mode, put the meta tag in spa.head; denext's SPA shell keeps an app's own viewport meta instead of emitting its default.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/useAppResume",
+      "kind": "function",
+      "title": "useAppResume",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/useAppResume",
+      "text": "useAppResume useAppResume(cb: (awayMs: number) => void): void Hook form of onAppResume: subscribes on mount, unsubscribes on unmount. The latest cb is always called (it is held in a ref), so passing a fresh closure each render never re-subscribes. Called with awayMs each time the page returns to the foreground. Under 10 s away, probe the connection; 10 s or more, reconnect and refetch.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/useBackSwipe",
+      "kind": "function",
+      "title": "useBackSwipe",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/useBackSwipe",
+      "text": "useBackSwipe useBackSwipe(onBack: () => void, opts?: BackSwipeOptions): (el: Element | null) => void Swipe right to go back. Returns a ref callback: attach it to the element that should recognize the gesture (often the page's scroll container). A touch that travels rightward at least minDistance CSS px (default 72), with horizontal travel at least ratio (default 1.4) × vertical travel, fires onBack once, as soon as it qualifies. It yields, and never fires, when the touch starts inside an editable element (input, textarea, select, contenteditable) or inside an element scrolled away from its left edge (scrollLeft > 0), so carousels and code blocks keep their own horizontal pans. Only touch pointers count (pointerType === \"touch\"); mouse and pen are ignored. onBack and opts are held in refs: changing them between renders never re-binds, and the returned ref callback is stable. Give the element touch-action: pan-y so the browser does not claim horizontal pans for itself (which would cancel the pointer stream). Called when a back swipe is recognized, e.g. () => router.back(). BackSwipeOptions: minDistance, ratio, enabled. A ref callback for the element to watch.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/useKeyboardInset",
+      "kind": "function",
+      "title": "useKeyboardInset",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/useKeyboardInset",
+      "text": "useKeyboardInset useKeyboardInset(opts?: KeyboardInsetOptions): number Hook form of installKeyboardInset: installs the custom property on mount, disposes it on unmount, and returns the current keyboard height in px (0 during SSR and before mount). { property }, the custom property to maintain. The on-screen keyboard's height in CSS px.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-cli-command/CommandContext",
       "kind": "interface",
       "title": "CommandContext",
@@ -9096,7 +9492,7 @@
       "title": "Common tasks",
       "module": "guide",
       "url": "https://github.com/Brainwires/denext/blob/main/AGENTS.md#common-tasks",
-      "text": "## Common tasks **A page with data (Server Component):** ``tsx // app/page.tsx export default async function Home() { const posts = await getPosts(); return <ul>{posts.map((p) => <li key={p.id}>{p.title}</li>)}</ul>; } ` **An interactive component:** `tsx // app/counter.tsx \"use client\"; import { useState } from \"denext\"; export function Counter() { const [n, setN] = useState(0); return <button type=\"button\" onClick={() => setN(n + 1)}>Clicked {n}</button>; } ` **A route handler (API):** `ts // app/api/hello/route.ts export function GET(_req: Request): Response { return Response.json({ ok: true }); } ` **A validated route handler + calling it with end-to-end types (no tRPC):** defineApi takes Standard Schemas (Zod/Valibot/ArkType/TypeBox/hand-rolled) for params / query / body / response plus the errors it may fail with; the handler gets parsed, typed input and a schema mismatch is a structured 400 before it runs. denext dev/build generate .denext/api.ts from the route modules' TYPES and register it, so createApiClient() and useApi type-check every call — path, method, params, query, body, response, error codes. `ts // app/api/user/[id]/route.ts import { createApi, defineApi, requireSession } from \"denext/server\"; import { z } from \"zod\"; export const GET = defineApi({ params: z.object({ id: z.string() }), response: z.object({ id: z.string(), name: z.string() }), // strips undeclared keys, in prod too errors: { not_found: 404 }, }, async ({ params, fail }) => (await db.users.get(params.id)) ?? fail(\"not_found\")); export const PATCH = createApi().use(requireSession()).define({ params: z.object({ id: z.string() }), body: z.object({ name: z.string().min(1) }), errors: { not_owner: 403 }, }, async ({ params, body, ctx, fail }) => { if (ctx.session.user.id !== params.id) fail(\"not_owner\"); return db.users.update(params.id, body); }); ` `ts // anywhere (server component, client component, or a test) import { createApiClient, isApiClientError } from \"denext\"; import type {} from \"./.denext/api.ts\"; // registers the schema (type-only; nothing ships) const api = createApiClient(); // typed against THIS app's routes const user = await api(\"/api/user/[id]\", \"GET\", { params: { id: \"1\" } }); // user is typed try { await api(\"/api/user/[id]\", \"PATCH\", { params: { id: \"1\" }, body: { name: \"\" } }); } catch (err) { if (isApiClientError(err) && err.code === \"not_owner\") { /* narrowed to the declared codes */ } } ` `tsx // a client component — the hook; GETs in one tick ride ONE batched request \"use client\"; import { useApi } from \"denext\"; export function User({ id }: { id: string }) { const { data, error, pending } = useApi(\"/api/user/[id]\", \"GET\", { params: { id } }); return pending ? <p>…</p> : error ? <p>{error.code}</p> : <p>{data?.name}</p>; } ` Add the @denext/openapi plugin (plugins: [openapi()] in denext.config.ts) and those same definitions serve GET /openapi.json (OpenAPI 3.1) + a docs page at GET /docs, write openapi.json at build, and back denext openapi emit | diff | lint | types — zero extra annotation. Schemas that implement Standard JSON Schema (Zod ≥ 4.2, ArkType, Valibot) or TypeBox are described in full; others are {} + a lint warning. Need GraphQL? @denext/graphql mounts GraphQL Yoga at /graphql (any GraphQLSchema; Pothos recommended, no decorators) and fromChannel(channel, key) turns a createChannel into a subscription source — the same push the Live socket delivers. A plain handler still works and is still typed: return TypedResponse<T> / take a TypedRequest<B> from denext/server. A plain route.ts body is capped at 1 MiB (export const maxBodyBytes = N | false); redirect()/notFound() inside one are HTTP responses; a thrown ApiError(status, code, { data }) is a typed JSON error envelope. **Typed live data (validated subscription + server push):** `ts // app/live.ts \"use server\"; import { createChannel, defineSubscription } from \"denext/server\"; export const orderStatus = defineSubscription({ input: z.object({ id: z.string() }), // validated on every subscribe tags: ({ id }) => [order:${id}], // server-derived; re-pushed on revalidateTag authorize: async ({ id }) => (await auth())?.user.id === (await db.orders.owner(id)), resolve: ({ id }) => db.orders.status(id), }); export const orderEvents = createChannel<{ status: string }>({ authorize: async (_ctx, key) => key === user:${(await auth())?.user.id}, // REQUIRED }); // anywhere on the server: await orderEvents.publish(user:${userId}, { status: \"shipped\" }); ` `tsx \"use client\"; import { useChannel, useSubscription } from \"denext/live\"; import { orderEvents, orderStatus } from \"./live.ts\"; const { data } = useSubscription(orderStatus, { id }, { initial }); const { data: event } = useChannel(orderEvents, user:${userId}); ` **A typed Server Action (the mutation side, also type-checked):** defineAction validates FormData into a typed input (a parser, or a Zod/Valibot/any Standard Schema) and its Out flows into useActionState. `ts // app/actions.ts \"use server\"; import { ActionValidationError, defineAction } from \"denext/server\"; export const createPost = defineAction({ input: (f) => ({ title: String(f.title ?? \"\").trim() }), // typed input: { title: string } handler: async ({ title }) => { if (!title) throw new ActionValidationError(\"bad\", { title: \"Title is required\" }); return { id: await db.posts.insert({ title }) }; // Out inferred: { id: string } }, }); ` `tsx // app/new-post.tsx \"use client\"; import { idleActionState, useActionState } from \"denext\"; import { createPost } from \"./actions.ts\"; export function NewPost() { const [state, action] = useActionState(createPost, idleActionState<{ id: string }>()); return ( <form action={action}> <input name=\"title\" /> {!state.ok && state.fieldErrors?.title} {/* typed */} {state.ok && created ${state.data.id}} {/* typed */} </form> ); } ` **Reading cookies / a session (auth):** `ts import { redirect } from \"denext\"; import { auth, cookies, createApi, getSession, requireAuth, requireSession } from \"denext/server\"; // cookies are Secure + httpOnly + SameSite=Lax by DEFAULT; pass { httpOnly: false } to opt out. const session = await getSession<{ userId: string }>({ secret: Deno.env.get(\"SESSION_SECRET\")!, }); if (!session.data) redirect(\"/login\"); await session.set({ userId: user.id }); // sign in // With the denextAuth({ … }) plugin the same three calls cover server, middleware and API: const s = await auth(); // anywhere on the server; null while a second factor is pending // middleware.ts — a Response to redirect (302 + ?error=forbidden), or null to continue: export const middleware = (request: Request) => requireAuth(request, { role: \"admin\" }); // a route handler — requireSession({ role }) refuses with 403: export const GET = createApi().use(requireSession({ role: \"admin\" })).define(/* … */); ` Persist users with an adapter (sqliteAuthAdapter({ path }) on node:sqlite, or inMemoryAuthAdapter()), and gate a machine-to-machine API with requireBearer(authConfig, { scope: \"pets:write\" }) — it self-documents as bearerAuth for @denext/openapi (declare the matching securitySchemes: { bearerAuth: … } once in the openapi() options). Full guide: https://denext.dev/docs/auth **A project-local CLI verb (no plugin):** put it in denext.config.ts and run it as a verb. `ts // denext.config.ts export default { commands: [{ name: \"seed\", summary: \"Load fixtures\", run: (ctx) => seed() }], }; // denext seed — same flag parsing, --help and did-you-mean as a built-in. List this // project's own verbs with denext commands [--json]; they are in shell completions too. // denext --help shows only the built-ins, because help never imports your config. ` **A GUI over the project:** denext ui serves a loopback (127.0.0.1) project-management page — schema-driven denext.config.ts editing (a comment-preserving splice: outside the value span it replaces, the file keeps its bytes), plugins, every generate kind, Docker files, a setup wizard and the project's own verbs. It works with JavaScript disabled, and **project code never runs in the UI's process** — every project-touching operation, including verb discovery (denext commands --json), is a deno subprocess. --read-only prevents writes by the UI, not execution of your config inside that discovery child. Docs: https://denext.dev/docs/ui **A database (zero-npm, server-only module):** `ts // lib/db.ts — Deno's built-in SQLite; no install. // KV / Postgres recipes: https://denext.dev/docs/database import { DatabaseSync } from \"node:sqlite\"; const db = new DatabaseSync(Deno.env.get(\"DB_PATH\") ?? \"app.db\"); export const listNotes = () => db.prepare(\"SELECT * FROM notes\").all(); ` Open the connection once at module scope; do writes in Server Actions. **A scheduled / background task (cron):** put it in tasks/<name>.ts; schedule it in denext.config.ts (scheduledTasks) or per-task; run it on demand with runTask(name) or denext task <name>. Uses Deno.cron where available (Deno Deploy), else a userland tick — no npm cron dependency. **Cron expressions are evaluated in UTC** (matching Deno.cron), and a schedule never fires on startup nor overlaps a still-running instance of the same task. `ts // tasks/cleanup.ts import { defineTask } from \"denext/server\"; export default defineTask({ description: \"purge expired sessions\", schedule: \"0 3 * * *\", // optional; or list it in config.scheduledTasks handler: async ({ payload }) => { await db.exec(\"DELETE FROM sessions WHERE expires_at < now()\"); }, }); // denext.config.ts → scheduledTasks: { \"0 0 * * 1\": [\"digest\", \"warm-cache\"] } // anywhere on the server: import { runTask } from \"denext/server\"; await runTask(\"cleanup\"); ` **A content collection (typed MD/MDX/YAML/JSON — the @denext/content-collections plugin):** add plugins: [contentCollections()] to denext.config.ts, declare collections in content.config.ts with a Standard Schema + a loader, then query them typed from a Server Component. The plugin validates entries and generates types — live in denext dev, and at denext build. `ts // content.config.ts import { defineCollection, defineContentConfig, glob } from \"@denext/content-collections/config\"; import { z } from \"zod\"; export default defineContentConfig({ collections: { blog: defineCollection({ loader: glob({ pattern: \"**/*.md\", base: \"content/blog\" }), schema: z.object({ title: z.string(), date: z.string(), draft: z.boolean().default(false) }), }), }, }); ` `tsx // app/page.tsx — server-only query, typed to the schema import \"../.denext/content.ts\"; // registers the collection types (generated) import { getCollection } from \"@denext/content-collections/runtime\"; export default async function Blog() { const posts = await getCollection(\"blog\", (p) => !p.data.draft); // p.data is typed return <ul>{posts.map((p) => <li key={p.id}>{p.data.title}</li>)}</ul>; } // Render an entry's body: <Content entry={post} /> (or await renderContent(post)) from the // same module — .md through the first-party renderer, .mdx through a module compiled at build. // CLI: denext content build | list | validate (validate exits 1 on a schema failure — a CI gate). ` **A compile-time feature flag (dead-code-eliminated):** feature(\"KEY\") from denext/feature folds to a boolean literal at build time for any KEY in experimental.features — denext's feature() (cf. Bun's bun:bundle). feature() always returns the configured value; the untaken branch is dead-code eliminated where it folds (native App Router component modules, SPA, dev), and read at runtime on the compat drop-in App Router path. Keep the argument a string literal; a key not listed reads false. Flag names/states are embedded in the client bundle (don't encode secrets). `tsx import { feature } from \"denext/feature\"; export function Checkout() { return feature(\"NEW_CHECKOUT\") ? <NewCheckout /> : <LegacyCheckout />; } // denext.config.ts → experimental: { features: { NEW_CHECKOUT: false } } ` **Inspect / shrink the client bundle:** denext analyze breaks the bundle down by chunk + role; denext analyze --md writes a markdown report (per-module on the esbuild path) to pipe into CI. Imports of one export from a \"sideEffects\": false dep (lucide-react, Radix) are tree-shaken automatically on the esbuild path. **Testing an app (no browser, JS-disabled path):** `ts import { createTestApp, createTestClient } from \"denext/testing\"; const client = createTestClient(await createTestApp(\"./\")); const res = await client.submit( client.form((await client.get(\"/login\")).text), { email, password, }, ); // res.status, client.cookies — a cookie jar persists the session across requests. ` **Testing a component (hooks/effects/events, no browser):** `ts import { fireEvent, render } from \"denext/testing\"; import { h } from \"denext/jsx-runtime\"; const screen = await render(h(Counter, null)); // async — await it await screen.fireEvent.click(screen.getByRole(\"button\")); // getByRole/getByText/getByLabelText/getByTestId; fireEvent.change wires to onChange. ` **Conformance-probing every route (CI gate):** `ts import { formatReport, probeApp } from \"denext/testing\"; const report = await probeApp(\"./\"); // renders every route, asserts valid HTML docs if (!report.ok) throw new Error(formatReport(report)); // or run denext doctor ` **Config:** denext.config.ts exports { ... } (redirects, rewrites, headers, i18n, images, cacheComponents, streaming, live, plugins, experimental, tailwind, csp, compatibilityMode; mode: \"spa\" + spa: { entry, … } for SPA mode). Not next.config.js. **Writing a plugin:** a DenextPlugin ({ name, setup(ctx) } from denext/plugin-kit, the semver-stable toolkit) hooks six seams — addRouteSynthesizer (add/adjust routes), addRequestHandler (claim unmatched requests), addBuildStep (emit assets), addPrepareStep (codegen the app imports — runs at build AND dev startup, and re-runs on watch-glob changes in dev), addTeardown (dispose on drain), and addCommand (contribute a CLI verb). Declare it as plugins: [myPlugin()]. See the [plugin guide](https://denext.dev/docs/plugins) and [examples/plugin-aliases`](https://github.com/Brainwires/denext/tree/main/examples/plugin-aliases).",
+      "text": "## Common tasks **A page with data (Server Component):** ``tsx // app/page.tsx export default async function Home() { const posts = await getPosts(); return <ul>{posts.map((p) => <li key={p.id}>{p.title}</li>)}</ul>; } ` **An interactive component:** `tsx // app/counter.tsx \"use client\"; import { useState } from \"denext\"; export function Counter() { const [n, setN] = useState(0); return <button type=\"button\" onClick={() => setN(n + 1)}>Clicked {n}</button>; } ` **A route handler (API):** `ts // app/api/hello/route.ts export function GET(_req: Request): Response { return Response.json({ ok: true }); } ` **A validated route handler + calling it with end-to-end types (no tRPC):** defineApi takes Standard Schemas (Zod/Valibot/ArkType/TypeBox/hand-rolled) for params / query / body / response plus the errors it may fail with; the handler gets parsed, typed input and a schema mismatch is a structured 400 before it runs. denext dev/build generate .denext/api.ts from the route modules' TYPES and register it, so createApiClient() and useApi type-check every call — path, method, params, query, body, response, error codes. `ts // app/api/user/[id]/route.ts import { createApi, defineApi, requireSession } from \"denext/server\"; import { z } from \"zod\"; export const GET = defineApi({ params: z.object({ id: z.string() }), response: z.object({ id: z.string(), name: z.string() }), // strips undeclared keys, in prod too errors: { not_found: 404 }, }, async ({ params, fail }) => (await db.users.get(params.id)) ?? fail(\"not_found\")); export const PATCH = createApi().use(requireSession()).define({ params: z.object({ id: z.string() }), body: z.object({ name: z.string().min(1) }), errors: { not_owner: 403 }, }, async ({ params, body, ctx, fail }) => { if (ctx.session.user.id !== params.id) fail(\"not_owner\"); return db.users.update(params.id, body); }); ` `ts // anywhere (server component, client component, or a test) import { createApiClient, isApiClientError } from \"denext\"; import type {} from \"./.denext/api.ts\"; // registers the schema (type-only; nothing ships) const api = createApiClient(); // typed against THIS app's routes const user = await api(\"/api/user/[id]\", \"GET\", { params: { id: \"1\" } }); // user is typed try { await api(\"/api/user/[id]\", \"PATCH\", { params: { id: \"1\" }, body: { name: \"\" } }); } catch (err) { if (isApiClientError(err) && err.code === \"not_owner\") { /* narrowed to the declared codes */ } } ` `tsx // a client component — the hook; GETs in one tick ride ONE batched request \"use client\"; import { useApi } from \"denext\"; export function User({ id }: { id: string }) { const { data, error, pending } = useApi(\"/api/user/[id]\", \"GET\", { params: { id } }); return pending ? <p>…</p> : error ? <p>{error.code}</p> : <p>{data?.name}</p>; } ` Add the @denext/openapi plugin (plugins: [openapi()] in denext.config.ts) and those same definitions serve GET /openapi.json (OpenAPI 3.1) + a docs page at GET /docs, write openapi.json at build, and back denext openapi emit | diff | lint | types — zero extra annotation. Schemas that implement Standard JSON Schema (Zod ≥ 4.2, ArkType, Valibot) or TypeBox are described in full; others are {} + a lint warning. Need GraphQL? @denext/graphql mounts GraphQL Yoga at /graphql (any GraphQLSchema; Pothos recommended, no decorators) and fromChannel(channel, key) turns a createChannel into a subscription source — the same push the Live socket delivers. A plain handler still works and is still typed: return TypedResponse<T> / take a TypedRequest<B> from denext/server. A plain route.ts body is capped at 1 MiB (export const maxBodyBytes = N | false); redirect()/notFound() inside one are HTTP responses; a thrown ApiError(status, code, { data }) is a typed JSON error envelope. **Typed live data (validated subscription + server push):** `ts // app/live.ts \"use server\"; import { createChannel, defineSubscription } from \"denext/server\"; export const orderStatus = defineSubscription({ input: z.object({ id: z.string() }), // validated on every subscribe tags: ({ id }) => [order:${id}], // server-derived; re-pushed on revalidateTag authorize: async ({ id }) => (await auth())?.user.id === (await db.orders.owner(id)), resolve: ({ id }) => db.orders.status(id), }); export const orderEvents = createChannel<{ status: string }>({ authorize: async (_ctx, key) => key === user:${(await auth())?.user.id}, // REQUIRED }); // anywhere on the server: await orderEvents.publish(user:${userId}, { status: \"shipped\" }); ` `tsx \"use client\"; import { useChannel, useSubscription } from \"denext/live\"; import { orderEvents, orderStatus } from \"./live.ts\"; const { data } = useSubscription(orderStatus, { id }, { initial }); const { data: event } = useChannel(orderEvents, user:${userId}); ` **A typed Server Action (the mutation side, also type-checked):** defineAction validates FormData into a typed input (a parser, or a Zod/Valibot/any Standard Schema) and its Out flows into useActionState. `ts // app/actions.ts \"use server\"; import { ActionValidationError, defineAction } from \"denext/server\"; export const createPost = defineAction({ input: (f) => ({ title: String(f.title ?? \"\").trim() }), // typed input: { title: string } handler: async ({ title }) => { if (!title) throw new ActionValidationError(\"bad\", { title: \"Title is required\" }); return { id: await db.posts.insert({ title }) }; // Out inferred: { id: string } }, }); ` `tsx // app/new-post.tsx \"use client\"; import { idleActionState, useActionState } from \"denext\"; import { createPost } from \"./actions.ts\"; export function NewPost() { const [state, action] = useActionState(createPost, idleActionState<{ id: string }>()); return ( <form action={action}> <input name=\"title\" /> {!state.ok && state.fieldErrors?.title} {/* typed */} {state.ok && created ${state.data.id}} {/* typed */} </form> ); } ` **Reading cookies / a session (auth):** `ts import { redirect } from \"denext\"; import { auth, cookies, createApi, getSession, requireAuth, requireSession } from \"denext/server\"; // cookies are Secure + httpOnly + SameSite=Lax by DEFAULT; pass { httpOnly: false } to opt out. const session = await getSession<{ userId: string }>({ secret: Deno.env.get(\"SESSION_SECRET\")!, }); if (!session.data) redirect(\"/login\"); await session.set({ userId: user.id }); // sign in // With the denextAuth({ … }) plugin the same three calls cover server, middleware and API: const s = await auth(); // anywhere on the server; null while a second factor is pending // middleware.ts — a Response to redirect (302 + ?error=forbidden), or null to continue: export const middleware = (request: Request) => requireAuth(request, { role: \"admin\" }); // a route handler — requireSession({ role }) refuses with 403: export const GET = createApi().use(requireSession({ role: \"admin\" })).define(/* … */); ` Persist users with an adapter (sqliteAuthAdapter({ path }) on node:sqlite, or inMemoryAuthAdapter()), and gate a machine-to-machine API with requireBearer(authConfig, { scope: \"pets:write\" }) — it self-documents as bearerAuth for @denext/openapi (declare the matching securitySchemes: { bearerAuth: … } once in the openapi() options). credentials() with no authorize verifies against the adapter (getUserByEmail + getCredential + the hasher). Passwordless: providers: [magicLink(), emailOtp()] plus sendVerificationRequest (denext ships no mailer). Second factor: an enrolled user's sign-in comes back pending; your pages.mfa page renders when pendingMfaSession() returns a session and posts { code } to /auth/mfa; enrollment is /auth/mfa/enroll → /auth/mfa/confirm. Full guide: https://denext.dev/docs/auth **A project-local CLI verb (no plugin):** put it in denext.config.ts and run it as a verb. `ts // denext.config.ts export default { commands: [{ name: \"seed\", summary: \"Load fixtures\", run: (ctx) => seed() }], }; // denext seed — same flag parsing, --help and did-you-mean as a built-in. List this // project's own verbs with denext commands [--json]; they are in shell completions too. // denext --help shows only the built-ins, because help never imports your config. ` **A GUI over the project:** denext ui serves a loopback (127.0.0.1) project-management page — schema-driven denext.config.ts editing (a comment-preserving splice: outside the value span it replaces, the file keeps its bytes), plugins with per-plugin option forms and JSR search, every generate kind, Docker files plus in-place docker-compose.yml editing, a setup wizard and the project's own verbs. It works with JavaScript disabled, and **project code never runs in the UI's process** — every project-touching operation, including verb discovery (denext commands --json), is a deno subprocess. --read-only prevents writes by the UI, not execution of your config inside that discovery child. --offline keeps the UI and every process it starts off the network. Docs: https://denext.dev/docs/ui **A Capacitor shell:** denext/mobile (client-only) — isNativeShell(), useAppResume, openExternal, useKeyboardInset, useBackSwipe, SAFE_AREA_CSS. It talks to Capacitor through window.Capacitor, so no @capacitor/* import. Docs: https://denext.dev/docs/desktop **A database (zero-npm, server-only module):** `ts // lib/db.ts — Deno's built-in SQLite; no install. // KV / Postgres recipes: https://denext.dev/docs/database import { DatabaseSync } from \"node:sqlite\"; const db = new DatabaseSync(Deno.env.get(\"DB_PATH\") ?? \"app.db\"); export const listNotes = () => db.prepare(\"SELECT * FROM notes\").all(); ` Open the connection once at module scope; do writes in Server Actions. **A scheduled / background task (cron):** put it in tasks/<name>.ts; schedule it in denext.config.ts (scheduledTasks) or per-task; run it on demand with runTask(name) or denext task <name>. Uses Deno.cron where available (Deno Deploy), else a userland tick — no npm cron dependency. **Cron expressions are evaluated in UTC** (matching Deno.cron), and a schedule never fires on startup nor overlaps a still-running instance of the same task. `ts // tasks/cleanup.ts import { defineTask } from \"denext/server\"; export default defineTask({ description: \"purge expired sessions\", schedule: \"0 3 * * *\", // optional; or list it in config.scheduledTasks handler: async ({ payload }) => { await db.exec(\"DELETE FROM sessions WHERE expires_at < now()\"); }, }); // denext.config.ts → scheduledTasks: { \"0 0 * * 1\": [\"digest\", \"warm-cache\"] } // anywhere on the server: import { runTask } from \"denext/server\"; await runTask(\"cleanup\"); ` **A content collection (typed MD/MDX/YAML/JSON — the @denext/content-collections plugin):** add plugins: [contentCollections()] to denext.config.ts, declare collections in content.config.ts with a Standard Schema + a loader, then query them typed from a Server Component. The plugin validates entries and generates types — live in denext dev, and at denext build. `ts // content.config.ts import { defineCollection, defineContentConfig, glob } from \"@denext/content-collections/config\"; import { z } from \"zod\"; export default defineContentConfig({ collections: { blog: defineCollection({ loader: glob({ pattern: \"**/*.md\", base: \"content/blog\" }), schema: z.object({ title: z.string(), date: z.string(), draft: z.boolean().default(false) }), }), }, }); ` `tsx // app/page.tsx — server-only query, typed to the schema import \"../.denext/content.ts\"; // registers the collection types (generated) import { getCollection } from \"@denext/content-collections/runtime\"; export default async function Blog() { const posts = await getCollection(\"blog\", (p) => !p.data.draft); // p.data is typed return <ul>{posts.map((p) => <li key={p.id}>{p.data.title}</li>)}</ul>; } // Render an entry's body: <Content entry={post} /> (or await renderContent(post)) from the // same module — .md through the first-party renderer, .mdx through a module compiled at build. // CLI: denext content build | list | validate (validate exits 1 on a schema failure — a CI gate). ` **A compile-time feature flag (dead-code-eliminated):** feature(\"KEY\") from denext/feature folds to a boolean literal at build time for any KEY in experimental.features — denext's feature() (cf. Bun's bun:bundle). feature() always returns the configured value; the untaken branch is dead-code eliminated where it folds (native App Router component modules, SPA, dev), and read at runtime on the compat drop-in App Router path. Keep the argument a string literal; a key not listed reads false. Flag names/states are embedded in the client bundle (don't encode secrets). `tsx import { feature } from \"denext/feature\"; export function Checkout() { return feature(\"NEW_CHECKOUT\") ? <NewCheckout /> : <LegacyCheckout />; } // denext.config.ts → experimental: { features: { NEW_CHECKOUT: false } } ` **Inspect / shrink the client bundle:** denext analyze breaks the bundle down by chunk + role; denext analyze --md writes a markdown report (per-module on the esbuild path) to pipe into CI. Imports of one export from a \"sideEffects\": false dep (lucide-react, Radix) are tree-shaken automatically on the esbuild path. **Testing an app (no browser, JS-disabled path):** `ts import { createTestApp, createTestClient } from \"denext/testing\"; const client = createTestClient(await createTestApp(\"./\")); const res = await client.submit( client.form((await client.get(\"/login\")).text), { email, password, }, ); // res.status, client.cookies — a cookie jar persists the session across requests. ` **Testing a component (hooks/effects/events, no browser):** `ts import { fireEvent, render } from \"denext/testing\"; import { h } from \"denext/jsx-runtime\"; const screen = await render(h(Counter, null)); // async — await it await screen.fireEvent.click(screen.getByRole(\"button\")); // getByRole/getByText/getByLabelText/getByTestId; fireEvent.change wires to onChange. ` **Conformance-probing every route (CI gate):** `ts import { formatReport, probeApp } from \"denext/testing\"; const report = await probeApp(\"./\"); // renders every route, asserts valid HTML docs if (!report.ok) throw new Error(formatReport(report)); // or run denext doctor ` **Config:** denext.config.ts exports { ... } (redirects, rewrites, headers, i18n, images, cacheComponents, streaming, live, plugins, experimental, tailwind, csp, compatibilityMode; mode: \"spa\" + spa: { entry, … } for SPA mode). Not next.config.js. **Writing a plugin:** a DenextPlugin ({ name, setup(ctx) } from denext/plugin-kit, the semver-stable toolkit) hooks six seams — addRouteSynthesizer (add/adjust routes), addRequestHandler (claim unmatched requests), addBuildStep (emit assets), addPrepareStep (codegen the app imports — runs at build AND dev startup, and re-runs on watch-glob changes in dev), addTeardown (dispose on drain), and addCommand (contribute a CLI verb). Declare it as plugins: [myPlugin()]. See the [plugin guide](https://denext.dev/docs/plugins) and [examples/plugin-aliases`](https://github.com/Brainwires/denext/tree/main/examples/plugin-aliases).",
       "denextOnly": false
     },
     {

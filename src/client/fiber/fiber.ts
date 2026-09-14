@@ -102,6 +102,21 @@ export interface HookCell {
   reducer?: (s: unknown, a: unknown) => unknown;
 }
 
+/**
+ * One `useDebugValue` call recorded during a component's render (dev only). It takes no
+ * hook cell; `index` is how many cells the render had consumed at the call, which places
+ * it after the cell it follows. `format` is kept, not applied — the inspector runs it
+ * lazily when it serializes the value.
+ */
+export interface DebugValueEntry {
+  /** The hook cursor at the call — the number of cells consumed before it. */
+  index: number;
+  /** The raw value passed to `useDebugValue`. */
+  value: unknown;
+  /** The optional formatter, applied only when the inspector reads the entry. */
+  format?: (value: unknown) => unknown;
+}
+
 /** A cursor over a parent's server-rendered child nodes, used during hydration. */
 export interface Cursor {
   parent: Node;
@@ -222,6 +237,10 @@ export interface Fiber {
   // (which cascades a fresh `inherited` map identity to the whole subtree). `undefined`
   // means the last render read no context. Rebuilt each render; carried on a bailout.
   readContexts?: Set<symbol>;
+  // Dev only: this render's `useDebugValue` calls (not hook cells — see DebugValueEntry).
+  // Cleared at the start of every render pass; carried on a bailout like readContexts.
+  // Never set in production, where the dispatcher returns before recording.
+  debugValues?: DebugValueEntry[];
 
   // Host bookkeeping (satisfies HostState from dom-props.ts).
   listeners?: Map<string, EventListener>;
@@ -368,6 +387,8 @@ export function createWorkInProgress(current: Fiber, pendingVNode: VNode | null)
 function carryOver(wip: Fiber, current: Fiber): void {
   wip.hooks = current.hooks;
   wip.readContexts = current.readContexts; // kept if the fiber bails (doesn't re-render)
+  // Dev-only slot: compared first so a production fiber (always undefined) never gains it.
+  if (wip.debugValues !== current.debugValues) wip.debugValues = current.debugValues;
   wip.insertionEffects = undefined;
   wip.pendingEffects = undefined;
   wip.passiveEffects = undefined;

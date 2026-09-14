@@ -11,7 +11,13 @@
 // cross-site, rebound Host) · a config write that changes exactly one value · a `generate`
 // write · a Docker diff preview · `--read-only` · SIGTERM draining the port, including with a
 // browser tab still holding `/_ui/events` open · an explicit `--port` being required exactly ·
-// a too-short `--token` refused at startup.
+// a too-short `--token` refused at startup · the plugin-options sub-panel (a widget-form preview
+// that writes nothing, a confirm that adds exactly one key with the leading comment intact, a
+// stale `_base` refused with 409) · the compose editor (an edit that moves only the port line; an
+// unparseable file shown read-only and its edit refused with 400) · `--offline` (the JSR search
+// box disabled, the offline JSON shape, a verb run holding no net, `deno task` refused with a
+// 503, no connection reaching a trap proxy) · the Commands panel's flags form (the argv a
+// project verb receives carries exactly the declared flags).
 
 import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
@@ -43,6 +49,7 @@ const PAGES = [
   "/config",
   "/config/next",
   "/plugins",
+  "/plugins/options",
   "/generate",
   "/docker",
   "/wizard",
@@ -55,30 +62,102 @@ const API_TWINS = [
   "/api/config",
   "/api/config/next",
   "/api/plugins",
+  "/api/plugins/options",
   "/api/generate",
   "/api/docker",
   "/api/wizard",
   "/api/commands",
 ];
 
+/** The catalogued first-party plugin the options sub-panel edits (two string options). */
+const PLUGIN = "@denext/react-router";
+
+/** Its options sub-panel. */
+const OPTIONS_HREF = `/plugins/options?name=${encodeURIComponent(PLUGIN)}`;
+
+/** A config wiring {@linkcode PLUGIN} with one option set — the options editor's fixture. */
+const PLUGIN_CONFIG = `// the app's own config — this comment must survive every write
+import { reactRouter } from "@denext/react-router";
+
+export default {
+  plugins: [
+    reactRouter({ appDirectory: "app" }), // the router
+  ],
+};
+`;
+
+/** {@linkcode PLUGIN_CONFIG} once the options editor has added `routesFile` — and nothing else. */
+const PLUGIN_CONFIG_AFTER = PLUGIN_CONFIG.replace(
+  'reactRouter({ appDirectory: "app" })',
+  'reactRouter({ appDirectory: "app", routesFile: "app/routes.ts" })',
+);
+
+/** A hand-written compose file, comments and all — the compose editor's fixture. */
+const COMPOSE = `# hand-written compose — every comment here must survive an edit
+services:
+  web:
+    image: denext-app # the app image
+    ports:
+      - "3000:3000" # host:container
+    environment:
+      DENO_ENV: production
+  db:
+    image: postgres:16 # the database
+    ports:
+      - "5432:5432"
+`;
+
+/** A compose file the editor cannot follow (flow style, never closed). */
+const UNPARSEABLE_COMPOSE = `# hand-mangled — flow style, never closed
+services: {web: {image: denext-app, ports: ["3000:3000"
+`;
+
+/** A config contributing two project verbs: one with declared flags, one that reports `net`. */
+const COMMANDS_CONFIG = `// project verbs the Commands panel runs
+export default {
+  commands: [
+    {
+      name: "echo-flags",
+      summary: "Print the argv the UI built",
+      flags: [
+        { name: "loud", type: "boolean", help: "Shout it" },
+        { name: "greeting", type: "string", help: "What to say" },
+      ],
+      run: () => console.log("ARGV " + JSON.stringify(Deno.args)),
+    },
+    {
+      name: "net-state",
+      summary: "Print whether this process may reach the network",
+      run: async () => console.log("NET " + (await Deno.permissions.query({ name: "net" })).state),
+    },
+  ],
+};
+`;
+
 // ── the project ──────────────────────────────────────────────────────────────
 
 /**
  * A throwaway project for the UI to manage: a `deno.json` aliasing `denext` at this checkout,
- * one page, and a `denext.config.ts` with a scalar and a rule thunk.
+ * one page, and a `denext.config.ts` (by default one with a scalar and a rule thunk).
  *
+ * @param config The `denext.config.ts` source.
+ * @param files Extra project-relative files to write.
  * @returns The project directory.
  */
-async function project(): Promise<string> {
+async function project(
+  config = CONFIG,
+  files: Readonly<Record<string, string>> = {},
+): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "denext_ui_e2e_" });
-  const config = { imports: { "denext": MOD, "denext/": ROOT }, tasks: { hello: "eval 1" } };
-  await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify(config, null, 2) + "\n");
+  const deno = { imports: { "denext": MOD, "denext/": ROOT }, tasks: { hello: "eval 1" } };
+  await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify(deno, null, 2) + "\n");
   await Deno.mkdir(join(dir, "app"));
   await Deno.writeTextFile(
     join(dir, "app", "page.tsx"),
     "export default function Page() {\n  return <h1>hi</h1>;\n}\n",
   );
-  await Deno.writeTextFile(join(dir, "denext.config.ts"), CONFIG);
+  await Deno.writeTextFile(join(dir, "denext.config.ts"), config);
+  for (const [name, text] of Object.entries(files)) await Deno.writeTextFile(join(dir, name), text);
   return dir;
 }
 
@@ -170,12 +249,18 @@ async function swallow(reader: ReadableStreamDefaultReader<Uint8Array>): Promise
  *
  * @param dir The project to manage.
  * @param extra Extra flags (e.g. `--read-only`).
+ * @param env Extra environment for the child (merged over this process's).
  * @returns The running child and what it announced.
  */
-async function spawnUi(dir: string, extra: string[] = []): Promise<Launch> {
+async function spawnUi(
+  dir: string,
+  extra: string[] = [],
+  env?: Record<string, string>,
+): Promise<Launch> {
   const args = ["run", "-A", CLI, "ui", dir, "--no-open", "--json", "--port", "0", ...extra];
   const proc = new Deno.Command(Deno.execPath(), {
     args,
+    env,
     cwd: ROOT,
     stdout: "piped",
     stderr: "piped",
@@ -229,6 +314,42 @@ function session(launch: Launch, dir: string): Ui {
   };
 }
 
+/** What one {@linkcode withUi} launch starts from. */
+interface Setup {
+  /** The project's `denext.config.ts` (default {@linkcode CONFIG}). */
+  readonly config?: string;
+  /** Extra project files. */
+  readonly files?: Readonly<Record<string, string>>;
+  /** Extra `denext ui` flags. */
+  readonly flags?: string[];
+  /** Extra environment for the child. */
+  readonly env?: Record<string, string>;
+}
+
+/**
+ * Make a project, launch `denext ui` over it, run `body`, then stop the child and delete the
+ * project — whatever `body` did.
+ *
+ * @param setup The project and the launch flags.
+ * @param body The work, handed the (not yet authenticated) session and the launch.
+ */
+async function withUi(
+  setup: Setup,
+  body: (ui: Ui, launch: Launch) => Promise<void>,
+): Promise<void> {
+  const dir = await project(setup.config, setup.files);
+  try {
+    const launch = await spawnUi(dir, setup.flags, setup.env);
+    try {
+      await body(session(launch, dir), launch);
+    } finally {
+      await stopUi(launch);
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+}
+
 // ── talking to it ────────────────────────────────────────────────────────────
 
 /** A request carrying the session cookie and a browser's `Sec-Fetch-Site: same-origin`. */
@@ -239,19 +360,137 @@ function authed(ui: Ui, path: string, init: RequestInit = {}): Promise<Response>
   return fetch(ui.base + path, { ...init, headers, redirect: "manual" });
 }
 
+/** Form fields to post: a value, or several under one name (a checkbox after its hidden twin). */
+type Fields = Readonly<Record<string, string | readonly string[]>>;
+
 /** A `POST` with a form body, the same-origin `Origin` and (unless refused) the CSRF field. */
 function mutate(
   ui: Ui,
   path: string,
-  fields: Record<string, string>,
+  fields: Fields,
   init: { csrf?: boolean; site?: string } = {},
 ): Promise<Response> {
   const body = new FormData();
-  for (const [name, value] of Object.entries(fields)) body.set(name, value);
+  for (const [name, value] of Object.entries(fields)) {
+    for (const item of typeof value === "string" ? [value] : value) body.append(name, item);
+  }
   if (init.csrf !== false) body.set("_csrf", ui.csrf);
   const headers = new Headers({ origin: ui.base });
   if (init.site) headers.set("sec-fetch-site", init.site);
   return authed(ui, path, { method: "POST", body, headers });
+}
+
+/** A mutation's answer, with the body already read. */
+interface Sent {
+  /** The status. */
+  readonly status: number;
+  /** The `Location` header, when there is one. */
+  readonly location: string | null;
+  /** The body. */
+  readonly text: string;
+}
+
+/** {@linkcode mutate}, answered: the status, the `Location` and the drained body. */
+async function send(ui: Ui, path: string, fields: Fields): Promise<Sent> {
+  const res = await mutate(ui, path, fields);
+  return { status: res.status, location: res.headers.get("location"), text: await res.text() };
+}
+
+/** A page's HTML, asserting it answered `200`. */
+async function getText(ui: Ui, path: string): Promise<string> {
+  const res = await authed(ui, path);
+  const text = await res.text();
+  assertEquals(res.status, 200, `${path} answered ${res.status}`);
+  return text;
+}
+
+/** A JSON twin's payload, asserting it answered `200`. */
+async function getJson(ui: Ui, path: string) {
+  return JSON.parse(await getText(ui, path));
+}
+
+/** Decode the entities the UI's renderer writes (`&quot;` `&#39;` `&lt;` `&gt;` `&amp;`). */
+function unescapeHtml(text: string): string {
+  return text.replaceAll("&quot;", '"').replaceAll("&#39;", "'").replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+}
+
+/** Every `<input>` tag in `html` named `name`, in document order. */
+function inputTags(html: string, name: string): string[] {
+  return [...html.matchAll(/<input\b[^>]*>/g)].map((match) => match[0])
+    .filter((tag) => tag.includes(` name="${name}"`));
+}
+
+/** The decoded value of the first `<input>` named `name` — what a browser would post for it. */
+function fieldValue(html: string, name: string): string {
+  const tag = inputTags(html, name)[0];
+  assert(tag, `the page has no <input name="${name}">`);
+  return unescapeHtml(/\svalue="([^"]*)"/.exec(tag)?.[1] ?? "");
+}
+
+/** The fields a rendered confirm form would re-post, read off the preview page. */
+function confirmFields(html: string, names: readonly string[]): Record<string, string> {
+  return Object.fromEntries(names.map((name) => [name, fieldValue(html, name)]));
+}
+
+/** The hex SHA-256 of a text — the `_base` stamp an editor form carries. */
+async function sha256(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** The lines of `after` that differ from `before`, as `[index, line]` (line count asserted). */
+function changedLines(before: string, after: string): [number, string][] {
+  const was = before.split("\n");
+  const now = after.split("\n");
+  assertEquals(now.length, was.length, "an in-place edit neither adds nor drops a line");
+  return now.flatMap((line, index): [number, string][] =>
+    line === was[index] ? [] : [[index, line]]
+  );
+}
+
+/** A loopback listener standing in for an HTTP(S) proxy: it counts every connection, then drops it. */
+interface NetTrap {
+  /** `http://127.0.0.1:<port>`, for `HTTPS_PROXY` / `HTTP_PROXY`. */
+  readonly url: string;
+  /** How many connections reached it. */
+  hits: number;
+  /** Stop listening. */
+  close(): Promise<void>;
+}
+
+/**
+ * Open a {@linkcode NetTrap}. A child started with {@linkcode trapEnv} sends every outbound
+ * `fetch` here instead of the internet, so "nothing reached the network" is a count of zero.
+ */
+function netTrap(): NetTrap {
+  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  let accepting: Promise<void> = Promise.resolve();
+  const trap: NetTrap = {
+    url: `http://127.0.0.1:${(listener.addr as Deno.NetAddr).port}`,
+    hits: 0,
+    close: async () => {
+      listener.close();
+      await accepting;
+    },
+  };
+  accepting = (async () => {
+    for await (const conn of listener) {
+      trap.hits++;
+      conn.close();
+    }
+  })().catch(() => {});
+  return trap;
+}
+
+/** The child environment that routes outbound HTTP(S) through `trap` (loopback excepted). */
+function trapEnv(trap: NetTrap): Record<string, string> {
+  return {
+    HTTPS_PROXY: trap.url,
+    HTTP_PROXY: trap.url,
+    NO_PROXY: "127.0.0.1,localhost",
+    DENO_NO_UPDATE_CHECK: "1",
+  };
 }
 
 /** Drain a response body (the resource sanitizer wants every one consumed) and report the status. */
@@ -450,13 +689,219 @@ async function checkDockerPreview(ui: Ui): Promise<void> {
   assertEquals(await exists(join(ui.dir, "Dockerfile")), false, "a preview writes nothing");
 }
 
+/**
+ * The index twin lists the wired plugin, its twin reports the call's options, and its form renders
+ * from the catalogue's schema with the `_base` stamp of the file on disk.
+ *
+ * @returns The form's `_base`.
+ */
+async function checkOptionsForm(ui: Ui): Promise<string> {
+  const index = await getJson(ui, "/api/plugins/options");
+  const row = index.plugins.find((plugin: { name: string }) => plugin.name === PLUGIN);
+  assertEquals(row, { name: PLUGIN, wired: true, href: OPTIONS_HREF });
+  const twin = await getJson(ui, "/api" + OPTIONS_HREF);
+  assertEquals(twin.callee, "reactRouter");
+  assertEquals(twin.values, { appDirectory: "app" });
+  assertEquals(twin.codeKeys, []);
+  const html = await getText(ui, OPTIONS_HREF);
+  assertEquals(fieldValue(html, "o.appDirectory"), "app");
+  assertEquals(fieldValue(html, "o.routesFile"), "");
+  const base = fieldValue(html, "_base");
+  assertEquals(base, await sha256(PLUGIN_CONFIG), "_base is the SHA-256 of the rendered source");
+  return base;
+}
+
+/**
+ * The widget form's first POST: the diff and a confirm form carrying exactly one option write —
+ * and not one byte of the file touched.
+ *
+ * @returns The confirm form's fields.
+ */
+async function checkOptionsPreview(ui: Ui, base: string): Promise<Record<string, string>> {
+  const form = { "o.appDirectory": "app", "o.routesFile": "app/routes.ts", _base: base };
+  const res = await send(ui, OPTIONS_HREF, form);
+  assertEquals(res.status, 200);
+  const path = join(ui.dir, "denext.config.ts");
+  assertEquals(await Deno.readTextFile(path), PLUGIN_CONFIG, "a preview never touches the file");
+  const page = unescapeHtml(res.text);
+  assertStringIncludes(page, '-    reactRouter({ appDirectory: "app" }), // the router');
+  assertStringIncludes(
+    page,
+    '+    reactRouter({ appDirectory: "app", routesFile: "app/routes.ts" }), // the router',
+  );
+  const fields = confirmFields(res.text, ["sets", "_base", "confirm"]);
+  assertEquals(JSON.parse(fields.sets), [{ path: ["routesFile"], value: "app/routes.ts" }]);
+  assertEquals([fields._base, fields.confirm], [base, "1"]);
+  return fields;
+}
+
+/** The confirm POST adds exactly one key; the leading comment and every other byte stay put. */
+async function checkOptionsConfirm(ui: Ui, confirm: Record<string, string>): Promise<void> {
+  const res = await send(ui, OPTIONS_HREF, confirm);
+  assertEquals([res.status, res.location], [303, OPTIONS_HREF]);
+  const written = await Deno.readTextFile(join(ui.dir, "denext.config.ts"));
+  assertEquals(written, PLUGIN_CONFIG_AFTER, "one key added — every other byte is unchanged");
+  assertEquals(changedLines(PLUGIN_CONFIG, written).length, 1);
+  assertEquals(written.split("\n")[0], PLUGIN_CONFIG.split("\n")[0], "the leading comment");
+  const twin = await getJson(ui, "/api" + OPTIONS_HREF);
+  assertEquals(twin.values, { appDirectory: "app", routesFile: "app/routes.ts" });
+}
+
+/** Replaying the confirm form after the file moved on is a `409` that writes nothing. */
+async function checkOptionsStale(ui: Ui, confirm: Record<string, string>): Promise<void> {
+  assertEquals((await send(ui, OPTIONS_HREF, confirm)).status, 409);
+  const res = await send(ui, "/api" + OPTIONS_HREF, confirm);
+  assertEquals(res.status, 409);
+  const payload = JSON.parse(res.text);
+  assertEquals(payload.ok, false);
+  assertStringIncludes(payload.reason, "changed on disk");
+  const path = join(ui.dir, "denext.config.ts");
+  assertEquals(await Deno.readTextFile(path), PLUGIN_CONFIG_AFTER, "a stale form writes nothing");
+}
+
+/**
+ * The compose editor, the way the page drives it: post one service's whole form with a changed
+ * port, re-post the preview's confirm form, and find exactly the port line moved.
+ */
+async function checkComposeEdit(ui: Ui): Promise<void> {
+  const file = join(ui.dir, "docker-compose.yml");
+  const base = fieldValue(await getText(ui, "/docker"), "_base");
+  assertEquals(base, await sha256(COMPOSE), "the service form carries the file's stamp");
+  const preview = await send(ui, "/docker", {
+    editor: "compose",
+    service: "web",
+    _base: base,
+    image: "denext-app",
+    restart: "",
+    "port.0": "8080:3000",
+    "port.new": "",
+    "env.0": "production",
+    "env.new.key": "",
+    "env.new.value": "",
+    "volume.new": "",
+    op: "apply",
+  });
+  assertEquals(preview.status, 200);
+  assertEquals(await Deno.readTextFile(file), COMPOSE, "a preview writes nothing");
+  assertStringIncludes(unescapeHtml(preview.text), '+      - "8080:3000" # host:container');
+  const confirm = confirmFields(preview.text, ["editor", "_base", "ops", "confirm"]);
+  const applied = await send(ui, "/docker", confirm);
+  assertEquals([applied.status, applied.location], [303, "/docker?saved=compose"]);
+  assertEquals(
+    changedLines(COMPOSE, await Deno.readTextFile(file)),
+    [[5, '      - "8080:3000" # host:container']],
+    "only the port line moved — its comment and every other line are byte-identical",
+  );
+}
+
+/** An unparseable compose file is `opaque`: shown read-only, and an edit of it is a `400`. */
+async function checkOpaqueCompose(ui: Ui): Promise<void> {
+  const file = join(ui.dir, "docker-compose.yml");
+  await Deno.writeTextFile(file, UNPARSEABLE_COMPOSE);
+  const twin = await getJson(ui, "/api/docker");
+  const compose = twin.files.find((entry: { path: string }) => entry.path === "docker-compose.yml");
+  assertEquals(compose?.state, "opaque");
+  assertEquals(twin.model, null);
+  const html = await getText(ui, "/docker");
+  assertStringIncludes(html, "uses YAML the editor cannot follow line by line");
+  assertEquals(inputTags(html, "editor").length, 0, "an opaque file gets no editor form");
+
+  const edit = {
+    editor: "compose",
+    service: "web",
+    _base: await sha256(UNPARSEABLE_COMPOSE),
+    "port.0": "8080:3000",
+    op: "apply",
+  };
+  const refused = await send(ui, "/api/docker", edit);
+  assertEquals(refused.status, 400);
+  assertStringIncludes(JSON.parse(refused.text).reason, "cannot follow");
+  assertEquals((await send(ui, "/docker", { ...edit, confirm: "1" })).status, 400);
+  assertEquals(await Deno.readTextFile(file), UNPARSEABLE_COMPOSE, "a refused edit writes nothing");
+}
+
+/** `--offline`: the search box and its button are disabled with a note; the twin ran no query. */
+async function checkOfflineSearch(ui: Ui): Promise<void> {
+  const html = await getText(ui, "/plugins?q=denext");
+  assertStringIncludes(inputTags(html, "q")[0] ?? "", " disabled", "the search box is disabled");
+  assertMatch(html, /<button[^>]*\sdisabled[^>]*>Search<\/button>/);
+  assertStringIncludes(html, "JSR search is unavailable — the UI runs --offline");
+  assertEquals(html.includes('id="jsr:@'), false, "no results are rendered");
+  const twin = await getJson(ui, "/api/plugins?q=denext");
+  assertEquals(twin.ok, true);
+  assertEquals(twin.jsr, { available: false, query: "denext" }, "no `search` key: no query ran");
+}
+
+/** The control: without `--offline` the same search leaves the process — into the trap. */
+async function checkOnlineSearch(ui: Ui, trap: NetTrap): Promise<void> {
+  const twin = await getJson(ui, "/api/plugins?q=denext");
+  assertEquals(twin.jsr.available, true);
+  assertEquals(twin.jsr.search?.ok, false, "the trap drops the connection, so the search fails");
+  assert(trap.hits > 0, "the trap saw the search — so a zero under --offline means something");
+}
+
+/** A verb run from the panel under `--offline` holds no `net` permission (`--deny-net` wins). */
+async function checkOfflineChildNet(ui: Ui): Promise<void> {
+  const res = await send(ui, "/api/commands", { verb: "net-state" });
+  const output: string[] = JSON.parse(res.text).output ?? [];
+  const line = output.find((entry) => entry.startsWith("NET "));
+  assertMatch(line ?? output.join("\n"), /^NET denied$/);
+}
+
+/** `deno task` under `--offline`: a declared task is refused with a `503` and never spawned. */
+async function checkOfflineTask(ui: Ui): Promise<void> {
+  const res = await send(ui, "/api/tasks/run", { task: "hello" });
+  assertEquals(res.status, 503);
+  assertStringIncludes(JSON.parse(res.text).reason, "the UI runs --offline");
+}
+
+/** The run form is typed from the verb's declared flags. */
+async function checkRunForm(ui: Ui): Promise<void> {
+  const html = await getText(ui, "/commands");
+  assertStringIncludes(html, "denext echo-flags");
+  const loud = inputTags(html, "flag:loud");
+  assertEquals(loud.length, 2, "a boolean flag is a hidden `false` twin plus a checkbox");
+  assertStringIncludes(loud[0], 'type="hidden"');
+  assertStringIncludes(loud[1], 'type="checkbox"');
+  assertStringIncludes(inputTags(html, "flag:greeting")[0] ?? "", 'type="text"');
+}
+
+/** Fields no run may honour: a global flag, undeclared flags, a positional the verb lacks. */
+const SMUGGLED: Fields = { "flag:cwd": "/etc", "flag:bogus": "1", "--evil": "1", "pos:0": "x" };
+
+/** Each submitted run form, and the argv (after `<verb> --cwd <dir>`) the verb must receive. */
+const RUNS: readonly { readonly fields: Fields; readonly argv: readonly string[] }[] = [
+  {
+    fields: { "flag:loud": ["false", "true"], "flag:greeting": "hello world" },
+    argv: ["--loud", "--greeting", "hello world"],
+  },
+  { fields: { "flag:loud": "false", "flag:greeting": "" }, argv: [] },
+];
+
+/** The argv `echo-flags` printed. */
+function verbArgs(output: readonly string[]): string[] {
+  const line = output.find((entry) => entry.startsWith("ARGV "));
+  assert(line, `the verb printed no argv:\n${output.join("\n")}`);
+  return JSON.parse(line.slice("ARGV ".length));
+}
+
+/** Each run's argv is built from the declared flags alone; undeclared fields never reach it. */
+async function checkFlagRuns(ui: Ui): Promise<void> {
+  for (const run of RUNS) {
+    const res = await send(ui, "/api/commands", { verb: "echo-flags", ...SMUGGLED, ...run.fields });
+    assertEquals(res.status, 200, res.text);
+    const payload = JSON.parse(res.text);
+    assertEquals([payload.ok, payload.code], [true, 0], payload.output?.join("\n"));
+    const args = verbArgs(payload.output);
+    assertEquals(args.slice(0, 2), ["echo-flags", "--cwd"]);
+    assertEquals(args.slice(3), run.argv, "exactly the declared flags that were submitted");
+  }
+}
+
 // ── the tests ────────────────────────────────────────────────────────────────
 
-Deno.test("`denext ui` serves, guards and writes over real HTTP", async (t) => {
-  const dir = await project();
-  const launch = await spawnUi(dir);
-  const ui = session(launch, dir);
-  try {
+Deno.test("`denext ui` serves, guards and writes over real HTTP", (t) =>
+  withUi({}, async (ui, launch) => {
     assertStringIncludes(launch.url, `:${launch.port}/?t=${launch.token}`);
     await t.step("an unauthenticated request is a 401", () => checkUnauthenticated(ui));
     await t.step("the ?t= handshake parks a strict cookie", () => handshake(ui));
@@ -468,17 +913,10 @@ Deno.test("`denext ui` serves, guards and writes over real HTTP", async (t) => {
     await t.step("a config write moves exactly one value", () => checkConfigWrite(ui));
     await t.step("generate writes the component", () => checkGenerate(ui));
     await t.step("docker previews a diff without writing", () => checkDockerPreview(ui));
-  } finally {
-    await stopUi(launch);
-    await Deno.remove(dir, { recursive: true });
-  }
-});
+  }));
 
-Deno.test("SIGTERM exits promptly with a browser tab holding /_ui/events open", async () => {
-  const dir = await project();
-  const launch = await spawnUi(dir);
-  const ui = session(launch, dir);
-  try {
+Deno.test("SIGTERM exits promptly with a browser tab holding /_ui/events open", () =>
+  withUi({}, async (ui, launch) => {
     await handshake(ui);
     // A real page keeps this stream open for the life of the tab. Before the SSE controllers
     // were closed on abort, `Deno.serve` never finished draining and one Ctrl+C looked hung.
@@ -500,11 +938,7 @@ Deno.test("SIGTERM exits promptly with a browser tab holding /_ui/events open", 
     );
     await reader.cancel().catch(() => {});
     assert(await portFree(launch.port), "the port is released");
-  } finally {
-    await stopUi(launch);
-    await Deno.remove(dir, { recursive: true });
-  }
-});
+  }));
 
 Deno.test("an explicit --port is required exactly, and a short --token is refused", async () => {
   const dir = await project();
@@ -537,11 +971,8 @@ Deno.test("an explicit --port is required exactly, and a short --token is refuse
   }
 });
 
-Deno.test("`--read-only` refuses every mutation, and SIGTERM drains the port", async () => {
-  const dir = await project();
-  const launch = await spawnUi(dir, ["--read-only"]);
-  const ui = session(launch, dir);
-  try {
+Deno.test("`--read-only` refuses every mutation, and SIGTERM drains the port", () =>
+  withUi({ flags: ["--read-only"] }, async (ui, launch) => {
     await handshake(ui);
     const banner = await (await authed(ui, "/")).text();
     assertStringIncludes(banner, "Read-only mode");
@@ -553,7 +984,7 @@ Deno.test("`--read-only` refuses every mutation, and SIGTERM drains the port", a
     });
     assertEquals(res.status, 403);
     assertEquals((await res.json()).reason, "read-only");
-    assertEquals(await exists(join(dir, "components", "Widget.tsx")), false);
+    assertEquals(await exists(join(ui.dir, "components", "Widget.tsx")), false);
 
     launch.proc.kill("SIGTERM");
     const status = await withTimeout(
@@ -563,8 +994,66 @@ Deno.test("`--read-only` refuses every mutation, and SIGTERM drains the port", a
     );
     assertEquals(status.code, 0, "a signalled `denext ui` exits cleanly");
     assert(await portFree(launch.port), "the port is released");
+  }));
+
+Deno.test("plugin options and compose edits splice the file in place", (t) =>
+  withUi({ config: PLUGIN_CONFIG, files: { "docker-compose.yml": COMPOSE } }, async (ui) => {
+    await handshake(ui);
+    let base = "";
+    let confirm: Record<string, string> = {};
+    await t.step("the options form renders from the plugin's schema", async () => {
+      base = await checkOptionsForm(ui);
+    });
+    await t.step("an options preview returns a diff and writes nothing", async () => {
+      confirm = await checkOptionsPreview(ui, base);
+    });
+    await t.step(
+      "the confirm adds exactly one key; the leading comment survives",
+      () => checkOptionsConfirm(ui, confirm),
+    );
+    await t.step("a stale _base is a 409", () => checkOptionsStale(ui, confirm));
+    await t.step("a compose edit moves only the port line", () => checkComposeEdit(ui));
+    await t.step(
+      "an unparseable compose file is read-only and refuses edits",
+      () => checkOpaqueCompose(ui),
+    );
+  }));
+
+Deno.test("`--offline` disables JSR search and reaches no network", async (t) => {
+  const trap = netTrap();
+  const env = trapEnv(trap);
+  try {
+    await withUi({ config: COMMANDS_CONFIG, flags: ["--offline"], env }, async (ui) => {
+      await handshake(ui);
+      await t.step(
+        "the search box is disabled; the twin reports offline",
+        () => checkOfflineSearch(ui),
+      );
+      await t.step(
+        "a UI subprocess under --offline holds no net permission",
+        () => checkOfflineChildNet(ui),
+      );
+      await t.step("deno task is refused with a 503", () => checkOfflineTask(ui));
+      await t.step("nothing reached the network", () => assertEquals(trap.hits, 0));
+    });
+    await withUi({ env }, async (ui) => {
+      await handshake(ui);
+      await t.step(
+        "control: online, the same search reaches the trap",
+        () => checkOnlineSearch(ui, trap),
+      );
+    });
   } finally {
-    await stopUi(launch);
-    await Deno.remove(dir, { recursive: true });
+    await trap.close();
   }
 });
+
+Deno.test("the Commands panel runs a project verb with exactly its declared flags", (t) =>
+  withUi({ config: COMMANDS_CONFIG }, async (ui) => {
+    await handshake(ui);
+    await t.step("the run form is typed from the declared flags", () => checkRunForm(ui));
+    await t.step(
+      "argv carries the submitted flags; undeclared fields are ignored",
+      () => checkFlagRuns(ui),
+    );
+  }));

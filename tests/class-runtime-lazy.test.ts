@@ -150,10 +150,10 @@ Deno.test("route entry: lazy makes main() async and loads the chunk before start
   assertStringIncludes(src, LAZY_BOOT);
   assert(src.indexOf(LAZY_IMPORT) < src.indexOf("startClient(el, tree)"));
   assert(!src.includes(EAGER_IMPORT));
-  const eager = generateRouteEntry(route, false, false, null, "eager");
+  const eager = generateRouteEntry(route, { classRuntime: "eager" });
   assertStringIncludes(eager, EAGER_IMPORT);
   assert(!eager.includes(LAZY_BOOT));
-  const off = generateRouteEntry(route, false, false, null, "off");
+  const off = generateRouteEntry(route, { classRuntime: "off" });
   assert(!off.includes("class-runtime") && !off.includes("loadClassRuntime"));
 });
 

@@ -1,14 +1,21 @@
 // The recursive half of the schema-driven form: walk a widget spec and render it through the one
-// `control()` primitive — arrays recursing into a typed sub-form per row, unions into the
+// `Control` primitive — arrays recursing into a typed sub-form per row, unions into the
 // selected branch, maps into key/value rows.
+//
+// Every widget kind is a component built with `h()`, and nested widgets compose as components
+// (no string round-trips inside the renderer); `renderWidget` renders the tree once, at the
+// boundary, back to the pre-escaped fragment its callers interpolate.
 //
 // Everything here is plain server-rendered HTML with real submit buttons, so the editor works
 // with JavaScript disabled; `src/ui/client.ts` upgrades the same submits to a fragment swap. No
 // inline `<script>`, no `on*` attribute — clean under the UI's `script-src 'self'`.
 
-import { html, type RawHtml } from "../html.ts";
+import { Fragment, h } from "../../jsx/jsx-runtime.ts";
+import type { VNode, VNodeChild, VNodeChildren } from "../../jsx/types.ts";
+import type { RawHtml } from "../html.ts";
 import { UI_CSRF_FIELD } from "../security.ts";
-import { control, field, opButton } from "./control.ts";
+import { renderView } from "../view.ts";
+import { Control, Field, OpButton } from "./control.ts";
 import { resolveAt, type SchemaNode } from "./schema.ts";
 import {
   BRANCH_SUFFIX,
@@ -33,8 +40,21 @@ export interface RenderContext {
   readonly errors?: Readonly<Record<string, string>>;
 }
 
-/** One widget's markup. */
-type Renderer = (spec: WidgetSpec, value: unknown, ctx: RenderContext) => RawHtml;
+/** What every widget component is handed. */
+type WidgetProps = {
+  /** The widget. */
+  readonly spec: WidgetSpec;
+  /** The current value at its path. */
+  readonly value: unknown;
+  /** The render context. */
+  readonly ctx: RenderContext;
+};
+
+/** One widget kind's component. */
+type WidgetComponent = (props: WidgetProps) => VNode;
+
+/** The inline layout of one radio or checkbox beside its label. */
+const CHOICE_STYLE = "display:inline-flex;align-items:center;gap:4px;margin:0 12px 0 0";
 
 /** The field name this spec posts under. */
 function nameOf(spec: WidgetSpec, ctx: RenderContext): string {
@@ -51,55 +71,86 @@ function text(value: unknown): string {
   return value === undefined || value === null ? "" : String(value);
 }
 
-/** Wrap a control in its label, help and validation message. */
-function wrap(spec: WidgetSpec, ctx: RenderContext, body: RawHtml, badge?: string): RawHtml {
+/** Inline siblings separated by one space, as the whitespace between them used to render. */
+function spaced(nodes: readonly VNode[]): VNodeChild[] {
+  return nodes.flatMap((node, index) => index === 0 ? [node] : [" ", node]);
+}
+
+/** A control in its label, help and validation message. */
+function Wrap(
+  props: {
+    readonly spec: WidgetSpec;
+    readonly ctx: RenderContext;
+    readonly badge?: string;
+    readonly children?: VNodeChildren;
+  },
+): VNode {
+  const { spec, ctx } = props;
   const name = nameOf(spec, ctx);
-  return field({
+  return h(Field, {
     id: idOf(name),
     label: spec.label,
     help: spec.description,
     error: ctx.errors?.[name],
-    badge: badge ?? (spec.required ? "required" : undefined),
-    body,
-  });
+    badge: props.badge ?? (spec.required ? "required" : undefined),
+  }, props.children);
+}
+
+/** One radio or checkbox beside its label (`for` only where the control carries an id). */
+function Choice(
+  props: { readonly for?: string; readonly label: string; readonly children?: VNodeChildren },
+): VNode {
+  return h("label", { for: props.for, style: CHOICE_STYLE }, props.children, props.label);
 }
 
 /** The hidden marker that tells `decode` a list or map was present in the form. */
-function marker(name: string, length: number, ctx: RenderContext): RawHtml {
-  return control({
+function Marker(
+  props: { readonly name: string; readonly length: number; readonly ctx: RenderContext },
+): VNode {
+  return h(Control, {
     tag: "input",
     type: "hidden",
-    name: name + COUNT_SUFFIX,
-    value: String(length),
-    disabled: ctx.readOnly,
+    name: props.name + COUNT_SUFFIX,
+    value: String(props.length),
+    disabled: props.ctx.readOnly,
   });
 }
 
 /** `↑ ↓ ✕` for one row. */
-function rowButtons(list: string, at: number, last: number, ctx: RenderContext): RawHtml {
-  const off = ctx.readOnly === true;
-  return html`<span style="display:inline-flex;gap:4px">
-    ${opButton({ op: "up", at, list, label: "↑", title: "Move up", disabled: off || at === 0 })}
-    ${
-    opButton({ op: "down", at, list, label: "↓", title: "Move down", disabled: off || at >= last })
-  }
-    ${opButton({ op: "remove", at, list, label: "✕", title: "Remove", disabled: off })}
-  </span>`;
-}
-
-/** The `+ Add` button under a list or map. */
-function addButton(list: string, at: number, ctx: RenderContext): RawHtml {
-  return opButton({ op: "add", at, list, label: "+ Add", title: "Add", disabled: ctx.readOnly });
+function RowButtons(
+  props: {
+    readonly list: string;
+    readonly at: number;
+    readonly last: number;
+    readonly ctx: RenderContext;
+  },
+): VNode {
+  const { list, at } = props;
+  const off = props.ctx.readOnly === true;
+  return h(
+    "span",
+    { style: "display:inline-flex;gap:4px" },
+    h(OpButton, { op: "up", at, list, label: "↑", title: "Move up", disabled: off || at === 0 }),
+    h(OpButton, {
+      op: "down",
+      at,
+      list,
+      label: "↓",
+      title: "Move down",
+      disabled: off || at >= props.last,
+    }),
+    h(OpButton, { op: "remove", at, list, label: "✕", title: "Remove", disabled: off }),
+  );
 }
 
 /** A scalar `<input>` / `<textarea>` widget. */
-function scalar(tag: "input" | "textarea", type?: string): Renderer {
-  return (spec, value, ctx) => {
+function scalar(tag: "input" | "textarea", type?: string): WidgetComponent {
+  return ({ spec, value, ctx }) => {
     const name = nameOf(spec, ctx);
-    return wrap(
-      spec,
-      ctx,
-      control({
+    return h(
+      Wrap,
+      { spec, ctx },
+      h(Control, {
         tag,
         type,
         name,
@@ -113,49 +164,63 @@ function scalar(tag: "input" | "textarea", type?: string): Renderer {
   };
 }
 
+/** A one-line text input. */
+const TextWidget = scalar("input");
+
+/** A multi-line text area (`x-denext.widget: "textarea"`). */
+const TextareaWidget = scalar("textarea");
+
+/** A number input, carrying the schema's bounds. */
+const NumberWidget = scalar("input", "number");
+
 /** A checkbox with a hidden `off` companion, so "unchecked" posts a real `false`. */
-const renderToggle: Renderer = (spec, value, ctx) => {
+function ToggleWidget({ spec, value, ctx }: WidgetProps): VNode {
   const name = nameOf(spec, ctx);
   const common = { tag: "input", name, disabled: ctx.readOnly } as const;
-  return wrap(
-    spec,
-    ctx,
-    html`${control({ ...common, type: "hidden", value: "off" })}${
-      control({ ...common, type: "checkbox", id: idOf(name), value: "on", checked: value === true })
-    }`,
+  return h(
+    Wrap,
+    { spec, ctx },
+    h(Control, { ...common, type: "hidden", value: "off" }),
+    h(Control, {
+      ...common,
+      type: "checkbox",
+      id: idOf(name),
+      value: "on",
+      checked: value === true,
+    }),
   );
-};
+}
 
 /** Radios — one per allowed value — for a short closed set. */
-const renderSegmented: Renderer = (spec, value, ctx) => {
+function SegmentedWidget({ spec, value, ctx }: WidgetProps): VNode {
   const name = nameOf(spec, ctx);
   const current = text(value);
-  const radios = (spec.options ?? []).map((option, index) =>
-    html`
-      <label
-        for="${idOf(name)}-${index}"
-        style="display:inline-flex;align-items:center;gap:4px;margin:0 12px 0 0"
-      >${control({
+  const radios = (spec.options ?? []).map((option, index) => {
+    const id = `${idOf(name)}-${index}`;
+    return h(
+      Choice,
+      { key: index, for: id, label: option.label },
+      h(Control, {
         tag: "input",
         type: "radio",
         name,
-        id: `${idOf(name)}-${index}`,
+        id,
         value: option.value,
         checked: option.value === current,
         disabled: ctx.readOnly,
-      })}${option.label}</label>
-    `
-  );
-  return wrap(spec, ctx, html`<div>${radios}</div>`);
-};
+      }),
+    );
+  });
+  return h(Wrap, { spec, ctx }, h("div", null, spaced(radios)));
+}
 
 /** A `<select>` for a closed set too long to sit on one line. */
-const renderSelect: Renderer = (spec, value, ctx) => {
+function SelectWidget({ spec, value, ctx }: WidgetProps): VNode {
   const name = nameOf(spec, ctx);
-  return wrap(
-    spec,
-    ctx,
-    control({
+  return h(
+    Wrap,
+    { spec, ctx },
+    h(Control, {
       tag: "select",
       name,
       id: idOf(name),
@@ -164,30 +229,35 @@ const renderSelect: Renderer = (spec, value, ctx) => {
       disabled: ctx.readOnly,
     }),
   );
-};
+}
 
 /** A checkbox group over an `enum`; the decoded order follows the schema's `enum`. */
-const renderMultiSelect: Renderer = (spec, value, ctx) => {
+function MultiSelectWidget({ spec, value, ctx }: WidgetProps): VNode {
   const name = nameOf(spec, ctx);
   const chosen = (Array.isArray(value) ? value : []).map(String);
   const boxes = (spec.options ?? []).map((option, index) =>
-    html`
-      <label
-        style="display:inline-flex;align-items:center;gap:4px;margin:0 12px 0 0">${control({
-          tag: "input",
-          type: "checkbox",
-          name: fieldName([...spec.path, String(index)], ctx.namePrefix ?? ""),
-          value: option.value,
-          checked: chosen.includes(option.value),
-          disabled: ctx.readOnly,
-        })}${option.label}</label>
-    `
+    h(
+      Choice,
+      { key: index, label: option.label },
+      h(Control, {
+        tag: "input",
+        type: "checkbox",
+        name: fieldName([...spec.path, String(index)], ctx.namePrefix ?? ""),
+        value: option.value,
+        checked: chosen.includes(option.value),
+        disabled: ctx.readOnly,
+      }),
+    )
   );
-  return wrap(spec, ctx, html`<div>${marker(name, chosen.length, ctx)}${boxes}</div>`);
-};
+  return h(
+    Wrap,
+    { spec, ctx },
+    h("div", null, h(Marker, { name, length: chosen.length, ctx }), spaced(boxes)),
+  );
+}
 
 /** Everything one row of a list, chip list or map is rendered from. */
-interface RowContext {
+type RowProps = {
   /** The list's own widget. */
   readonly spec: WidgetSpec;
   /** The widget for this row. */
@@ -202,7 +272,7 @@ interface RowContext {
   readonly ctx: RenderContext;
   /** The list's field name, which the row's buttons act on. */
   readonly name: string;
-}
+};
 
 /** The value of a list widget, as the rows it holds. */
 type ToRows = (value: unknown) => readonly unknown[];
@@ -214,113 +284,137 @@ const asArray: ToRows = (value) => Array.isArray(value) ? value : [];
 const asPairs: ToRows = (value) =>
   typeof value === "object" && value !== null ? Object.entries(value) : [];
 
+/** A row's `↑ ↓ ✕` buttons. */
+function rowButtonsOf(one: RowProps): VNode {
+  return h(RowButtons, { list: one.name, at: one.index, last: one.last, ctx: one.ctx });
+}
+
 /**
- * Build a row-editor renderer: the presence marker, the rows and `+ Add` are shared, and the
- * caller supplies only what one row looks like.
+ * Build a row-editor widget: the presence marker, the rows and `+ Add` are shared, and the
+ * caller supplies only the component for one row.
  */
-function listRenderer(row: (context: RowContext) => RawHtml, toRows: ToRows = asArray): Renderer {
-  return (spec, value, ctx) => {
+function listWidget(Row: (props: RowProps) => VNode, toRows: ToRows = asArray): WidgetComponent {
+  return ({ spec, value, ctx }) => {
     const name = nameOf(spec, ctx);
     const list = toRows(value);
+    const last = list.length - 1;
     const rows = list.map((entry, index) =>
-      row({ spec, row: rowSpec(spec, index), entry, index, last: list.length - 1, ctx, name })
+      h(Row, { key: index, spec, row: rowSpec(spec, index), entry, index, last, ctx, name })
     );
-    const body = html`<div>${marker(name, rows.length, ctx)}${rows}${
-      addButton(name, rows.length, ctx)
-    }</div>`;
-    return wrap(spec, ctx, body);
+    const add = h(OpButton, {
+      op: "add",
+      at: rows.length,
+      list: name,
+      label: "+ Add",
+      title: "Add",
+      disabled: ctx.readOnly,
+    });
+    return h(
+      Wrap,
+      { spec, ctx },
+      h("div", null, h(Marker, { name, length: rows.length, ctx }), rows, add),
+    );
   };
 }
 
-/** Reorderable one-line rows for a list of scalars. */
-const renderChips: Renderer = listRenderer((one) =>
-  html`<div class="row">${
-    control({
+/** One reorderable one-line row of a list of scalars. */
+function ChipRow(one: RowProps): VNode {
+  return h(
+    "div",
+    { class: "row" },
+    h(Control, {
       tag: "input",
       type: one.row.kind === "number" ? "number" : "text",
       name: fieldName(one.row.path, one.ctx.namePrefix ?? ""),
       value: text(one.entry),
       ariaLabel: `${one.spec.label} ${one.index + 1}`,
       disabled: one.ctx.readOnly,
-    })
-  }${rowButtons(one.name, one.index, one.last, one.ctx)}</div>`
-);
+    }),
+    rowButtonsOf(one),
+  );
+}
 
-/** A typed sub-form per row, each with its own reorder and remove buttons. */
-const renderList: Renderer = listRenderer((one) =>
-  html`
-    <fieldset style="padding:10px 12px">
-      <legend>${one.row.label} ${rowButtons(one.name, one.index, one.last, one.ctx)}</legend>
-      ${(one.row.children ?? []).map((child) =>
-        renderSpec(child, fieldOf(one.entry, child), one.ctx)
-      )}
-    </fieldset>
-  `
-);
+/** One typed sub-form of a list of objects, with its own reorder and remove buttons. */
+function FormRow(one: RowProps): VNode {
+  return h(
+    "fieldset",
+    { style: "padding:10px 12px" },
+    h("legend", null, one.row.label, " ", rowButtonsOf(one)),
+    fieldsOf(one.row, one.entry, one.ctx),
+  );
+}
 
-/** Key/value rows for a record. */
-const renderMap: Renderer = listRenderer((one) => {
+/** One key/value row of a record. */
+function MapRow(one: RowProps): VNode {
   const [key, held] = one.entry as [string, unknown];
-  return html`
-    <div class="row top">${control({
+  return h(
+    "div",
+    { class: "row top" },
+    h(Control, {
       tag: "input",
       name: fieldName(one.row.path, one.ctx.namePrefix ?? "") + KEY_SUFFIX,
       value: key,
       ariaLabel: `${one.spec.label} key ${one.index + 1}`,
       disabled: one.ctx.readOnly,
-    })}<span class="grow">${renderSpec(one.row, held, one.ctx)}</span>${rowButtons(
-      one.name,
-      one.index,
-      one.last,
-      one.ctx,
-    )}</div>
-  `;
-}, asPairs);
+    }),
+    h("span", { class: "grow" }, h(Widget, { spec: one.row, value: held, ctx: one.ctx })),
+    rowButtonsOf(one),
+  );
+}
+
+/** Reorderable one-line rows for a list of scalars. */
+const ChipsWidget = listWidget(ChipRow);
+
+/** A typed sub-form per row, each with its own reorder and remove buttons. */
+const ListOfFormsWidget = listWidget(FormRow);
+
+/** Key/value rows for a record. */
+const MapWidget = listWidget(MapRow, asPairs);
 
 /** A discriminator picker plus the selected alternative. */
-const renderUnion: Renderer = (spec, value, ctx) => {
+function UnionWidget({ spec, value, ctx }: WidgetProps): VNode {
   const name = nameOf(spec, ctx) + BRANCH_SUFFIX;
   const { branch, index } = selectedBranch(spec, value);
   const picker = (spec.branches ?? []).map((entry, position) =>
-    html`
-      <label
-        style="display:inline-flex;align-items:center;gap:4px;margin:0 12px 0 0">${control({
-          tag: "input",
-          type: "radio",
-          name,
-          value: String(position),
-          checked: position === index,
-          disabled: ctx.readOnly,
-        })}${entry.label}</label>
-    `
+    h(
+      Choice,
+      { key: position, label: entry.label },
+      h(Control, {
+        tag: "input",
+        type: "radio",
+        name,
+        value: String(position),
+        checked: position === index,
+        disabled: ctx.readOnly,
+      }),
+    )
   );
-  const body = branch ? renderSpec(branch.spec, value, ctx) : html``;
-  return wrap(spec, ctx, html`<div>${picker}</div>${body}`);
-};
+  return h(
+    Wrap,
+    { spec, ctx },
+    h("div", null, spaced(picker)),
+    branch ? h(Widget, { spec: branch.spec, value, ctx }) : null,
+  );
+}
 
 /** A collapsible group of fields. */
-const renderGroup: Renderer = (spec, value, ctx) => {
-  const children = (spec.children ?? []).map((child) =>
-    renderSpec(child, fieldOf(value, child), ctx)
+function GroupWidget({ spec, value, ctx }: WidgetProps): VNode {
+  return h(
+    "details",
+    { open: true, id: `${idOf(nameOf(spec, ctx))}--group`, style: "margin:0 0 14px" },
+    h("summary", { style: "cursor:pointer;font-weight:600" }, spec.label),
+    spec.description ? h("p", { class: "lead", style: "font-size:13px" }, spec.description) : null,
+    h("div", { style: "padding:8px 0 0 12px" }, fieldsOf(spec, value, ctx)),
   );
-  return html`
-    <details open id="${idOf(nameOf(spec, ctx))}--group" style="margin:0 0 14px">
-      <summary style="cursor:pointer;font-weight:600">${spec.label}</summary>
-      ${spec.description
-        ? html`<p class="lead" style="font-size:13px">${spec.description}</p>`
-        : ""}
-      <div style="padding:8px 0 0 12px">${children}</div>
-    </details>
-  `;
-};
+}
 
 /** A value the editor will not own: shown, disabled, and left untouched on submit. */
-const renderCode: Renderer = (spec, value, ctx) => {
+function CodeCell({ spec, value, ctx }: WidgetProps): VNode {
   const name = nameOf(spec, ctx);
-  return wrap(
-    spec,
-    ctx,
-    control({
+  return h(
+    Wrap,
+    { spec, ctx, badge: "read-only" },
+    h(Control, {
       tag: "textarea",
       name,
       id: idOf(name),
@@ -328,25 +422,24 @@ const renderCode: Renderer = (spec, value, ctx) => {
       value: value === undefined ? "" : JSON.stringify(value, null, 2),
       disabled: true,
     }),
-    "read-only",
   );
-};
+}
 
-/** The renderer table — one row per widget kind. */
-const RENDERERS: Record<WidgetKind, Renderer> = {
-  text: scalar("input"),
-  textarea: scalar("textarea"),
-  number: scalar("input", "number"),
-  toggle: renderToggle,
-  select: renderSelect,
-  segmented: renderSegmented,
-  "multi-select": renderMultiSelect,
-  chips: renderChips,
-  "list-of-forms": renderList,
-  map: renderMap,
-  union: renderUnion,
-  group: renderGroup,
-  code: renderCode,
+/** The widget table — one component per widget kind. */
+const WIDGETS: Record<WidgetKind, WidgetComponent> = {
+  text: TextWidget,
+  textarea: TextareaWidget,
+  number: NumberWidget,
+  toggle: ToggleWidget,
+  select: SelectWidget,
+  segmented: SegmentedWidget,
+  "multi-select": MultiSelectWidget,
+  chips: ChipsWidget,
+  "list-of-forms": ListOfFormsWidget,
+  map: MapWidget,
+  union: UnionWidget,
+  group: GroupWidget,
+  code: CodeCell,
 };
 
 /** The value of one child of `value`, by the child's last path segment. */
@@ -356,9 +449,16 @@ function fieldOf(value: unknown, child: WidgetSpec): unknown {
   return key === undefined ? undefined : (value as Record<string, unknown>)[key];
 }
 
-/** Render one spec (the recursive half, without the CSRF field). */
-function renderSpec(spec: WidgetSpec, value: unknown, ctx: RenderContext): RawHtml {
-  return RENDERERS[spec.kind](spec, value, ctx);
+/** The widgets of a group's (or a form row's) children, each given its slice of `value`. */
+function fieldsOf(spec: WidgetSpec, value: unknown, ctx: RenderContext): VNode[] {
+  return (spec.children ?? []).map((child, index) =>
+    h(Widget, { key: index, spec: child, value: fieldOf(value, child), ctx })
+  );
+}
+
+/** One spec, dispatched to its kind's component (the recursive half, without the CSRF field). */
+function Widget(props: WidgetProps): VNode {
+  return h(WIDGETS[props.spec.kind], { spec: props.spec, value: props.value, ctx: props.ctx });
 }
 
 /**
@@ -370,14 +470,14 @@ function renderSpec(spec: WidgetSpec, value: unknown, ctx: RenderContext): RawHt
  * @returns The field markup.
  */
 export function renderWidget(spec: WidgetSpec, value: unknown, ctx: RenderContext): RawHtml {
-  const csrf = control({
+  const csrf = h(Control, {
     tag: "input",
     type: "hidden",
     name: UI_CSRF_FIELD,
     value: ctx.csrf,
     disabled: ctx.readOnly,
   });
-  return html`${csrf}${renderSpec(spec, value, ctx)}`;
+  return renderView(h(Fragment, null, csrf, h(Widget, { spec, value, ctx })));
 }
 
 /**

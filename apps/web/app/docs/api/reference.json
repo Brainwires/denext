@@ -2906,17 +2906,17 @@
           "name": "useDebugValue",
           "slug": "useDebugValue",
           "kind": "function",
-          "signature": "useDebugValue<T>(_value: T, _format?: (value: T) => unknown): void",
-          "doc": "Label a custom hook's value for React DevTools. A no-op at runtime (React itself only invokes it when DevTools is attached), provided for API compatibility.",
-          "docFull": "Label a custom hook's value for React DevTools. A no-op at runtime (React itself\nonly invokes it when DevTools is attached), provided for API compatibility.",
+          "signature": "useDebugValue<T>(value: T, format?: (value: T) => unknown): void",
+          "doc": "Label a custom hook's value for the DevTools inspector. In development on the client the value is recorded against the rendering component — without taking a hook cell, so adding or removing a call never shifts hook state (Fast Refresh keeps it) — and shown on the hook row it follows in the panel, denext_hook_state and the MCP snapshot. format is never called during render: the inspector applies it lazily, only when it reads the value. In production and during server rendering this is a no-op.",
+          "docFull": "Label a custom hook's value for the DevTools inspector. In development on the client\nthe value is recorded against the rendering component — without taking a hook cell, so\nadding or removing a call never shifts hook state (Fast Refresh keeps it) — and shown\non the hook row it follows in the panel, `denext_hook_state` and the MCP snapshot.\n`format` is never called during render: the inspector applies it lazily, only when it\nreads the value. In production and during server rendering this is a no-op.",
           "params": [
             {
-              "name": "_value",
+              "name": "value",
               "doc": "The value to display."
             },
             {
-              "name": "_format",
-              "doc": "Optional formatter, applied lazily by DevTools only."
+              "name": "format",
+              "doc": "Optional formatter, applied lazily by the inspector only."
             }
           ],
           "returns": "",
@@ -3746,7 +3746,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 2.5.0-rc.1",
+          "signature": "VERSION: 2.5.0-rc.2",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -4516,6 +4516,18 @@
           "denextOnly": true
         },
         {
+          "name": "AuthEmailConfig",
+          "slug": "AuthEmailConfig",
+          "kind": "interface",
+          "signature": "interface AuthEmailConfig",
+          "doc": "The email-token flows' knobs: how long each kind of token lives and which pages the emailed links open. Every field is optional; lifetimes are in **seconds**, and a non-finite or non-positive lifetime falls back to its default.",
+          "docFull": "The email-token flows' knobs: how long each kind of token lives and which pages the\nemailed links open. Every field is optional; lifetimes are in **seconds**, and a\nnon-finite or non-positive lifetime falls back to its default.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "AuthEvents",
           "slug": "AuthEvents",
           "kind": "interface",
@@ -4534,6 +4546,18 @@
           "signature": "interface AuthLogger",
           "doc": "Where the framework logs; every method is optional and defaults to silence.",
           "docFull": "Where the framework logs; every method is optional and defaults to silence.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "AuthMfaConfig",
+          "slug": "AuthMfaConfig",
+          "kind": "interface",
+          "signature": "interface AuthMfaConfig",
+          "doc": "Second-factor (TOTP) policy. Every field is optional; see each default.",
+          "docFull": "Second-factor (TOTP) policy. Every field is optional; see each default.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -4567,7 +4591,7 @@
           "name": "AuthProvider",
           "slug": "AuthProvider",
           "kind": "typeAlias",
-          "signature": "type AuthProvider = OAuthProvider | CredentialsProvider",
+          "signature": "type AuthProvider = OAuthProvider | CredentialsProvider | EmailProvider",
           "doc": "Any configured provider.",
           "docFull": "Any configured provider.",
           "params": [],
@@ -4642,6 +4666,39 @@
           "signature": "type AwaitableHeaders = Headers & PromiseLike<Headers>",
           "doc": "headers()'s return: usable synchronously AND awaitable (await headers(), Next 15).",
           "docFull": "`headers()`'s return: usable synchronously AND awaitable (`await headers()`, Next 15).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "backupCodeMatcher",
+          "slug": "backupCodeMatcher",
+          "kind": "function",
+          "signature": "backupCodeMatcher(hasher: Hasher, code: string): (hash: string) => Promise<boolean>",
+          "doc": "Build the matches predicate the adapter's consumeBackupCode walks the stored hashes with. The presented code is normalised (spaces and hyphens stripped, lowercased); a malformed one yields a predicate that matches nothing — yet still runs one hasher.verify per stored hash, so a garbage submission costs what a wrong code does.",
+          "docFull": "Build the `matches` predicate the adapter's `consumeBackupCode` walks the stored hashes\nwith. The presented code is normalised (spaces and hyphens stripped, lowercased); a\nmalformed one yields a predicate that matches nothing — yet still runs one\n`hasher.verify` per stored hash, so a garbage submission costs what a wrong code does.",
+          "params": [
+            {
+              "name": "hasher",
+              "doc": "The auth Hasher the codes were hashed with."
+            },
+            {
+              "name": "code",
+              "doc": "The code the user typed."
+            }
+          ],
+          "returns": "A predicate resolving true only when code is the one hash was made from.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "BackupCodes",
+          "slug": "BackupCodes",
+          "kind": "interface",
+          "signature": "interface BackupCodes",
+          "doc": "A fresh set of backup codes: show codes once, store only hashes.",
+          "docFull": "A fresh set of backup codes: show `codes` once, store only `hashes`.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -5022,6 +5079,43 @@
           "denextOnly": true
         },
         {
+          "name": "confirmTotp",
+          "slug": "confirmTotp",
+          "kind": "function",
+          "signature": "confirmTotp(config: AuthConfig, user: AuthUser, code: string): Promise<ConfirmTotpResult>",
+          "doc": "Confirm a pending enrollment with a code from the authenticator app. On success the factor is marked confirmed and mfa.backupCodes backup codes are minted — returned here in plaintext exactly once, and stored only as hashes. The code's step is claimed, so it can't then be replayed at the step-up.",
+          "docFull": "Confirm a pending enrollment with a code from the authenticator app. On success the\nfactor is marked confirmed and `mfa.backupCodes` backup codes are minted — returned\nhere in plaintext exactly once, and stored only as hashes. The code's step is claimed,\nso it can't then be replayed at the step-up.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The app's auth config."
+            },
+            {
+              "name": "user",
+              "doc": "The user confirming."
+            },
+            {
+              "name": "code",
+              "doc": "The code the user typed."
+            }
+          ],
+          "returns": "{ ok: true, backupCodes }, or { ok: false } for a wrong or replayed code, no pending enrollment, or an already-confirmed factor.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ConfirmTotpResult",
+          "slug": "ConfirmTotpResult",
+          "kind": "typeAlias",
+          "signature": "type ConfirmTotpResult = object | object",
+          "doc": "The outcome of confirmTotp: on success, the plaintext backup codes — the only time they exist anywhere; show them to the user once.",
+          "docFull": "The outcome of {@linkcode confirmTotp}: on success, the plaintext backup codes — the\nonly time they exist anywhere; show them to the user once.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "connection",
           "slug": "connection",
           "kind": "function",
@@ -5131,13 +5225,13 @@
           "name": "credentials",
           "slug": "credentials",
           "kind": "function",
-          "signature": "credentials(options: CredentialsOptions): CredentialsProvider",
+          "signature": "credentials(options?: CredentialsOptions): CredentialsProvider",
           "doc": "An email/password (or any custom) credentials provider.",
           "docFull": "An email/password (or any custom) credentials provider.",
           "params": [
             {
               "name": "options",
-              "doc": "The authorize callback and an optional provider id."
+              "doc": "The optional authorize callback and provider id."
             }
           ],
           "returns": "The configured credentials provider.",
@@ -5378,6 +5472,27 @@
           "denextOnly": true
         },
         {
+          "name": "disableTotp",
+          "slug": "disableTotp",
+          "kind": "function",
+          "signature": "disableTotp(config: AuthConfig, userId: string): Promise<void>",
+          "doc": "Remove a user's TOTP factor and backup codes. A no-op for a user who never enrolled. Callers must have proved a fresh factor first — see the /mfa/disable endpoint.",
+          "docFull": "Remove a user's TOTP factor and backup codes. A no-op for a user who never enrolled.\nCallers must have proved a fresh factor first — see the `/mfa/disable` endpoint.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The app's auth config."
+            },
+            {
+              "name": "userId",
+              "doc": "The user."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "discord",
           "slug": "discord",
           "kind": "function",
@@ -5460,6 +5575,80 @@
           "docFull": "Backing store for server-minted draft tokens. Draft mode is \"on\" only when the\nrequest cookie holds a token this server issued via `enable()`; a forged or\nguessed value is not in the store, so it cannot turn draft mode on.\n\nThe default store is in-memory (per-process, resets on restart). A\nmulti-instance deployment can inject a store backed by a shared cache\n(Redis/KV) via {@linkcode setDraftTokenStore} so a token minted on one\ninstance is honored on another. The store is synchronous to keep\n{@linkcode draftMode}'s `isEnabled` synchronous; back an async store with a\nsynchronously-readable cache, or mint signed/stateless tokens instead.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "emailOtp",
+          "slug": "emailOtp",
+          "kind": "function",
+          "signature": "emailOtp(options?: EmailProviderOptions): EmailProvider",
+          "doc": "Passwordless sign-in by **one-time code**: POST {basePath}/callback/email-otp with { email } mails a numeric code (email.otpDigits, default 6; valid 5 minutes by default, email.otpMaxAge); posting { email, code } to the same endpoint signs the user in. Wrong codes count against a failure budget (5 per 5 minutes per address).",
+          "docFull": "Passwordless sign-in by **one-time code**: `POST {basePath}/callback/email-otp` with\n`{ email }` mails a numeric code (`email.otpDigits`, default 6; valid 5 minutes by\ndefault, `email.otpMaxAge`); posting `{ email, code }` to the same endpoint signs the\nuser in. Wrong codes count against a failure budget (5 per 5 minutes per address).",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The provider id, display name and sign-up policy."
+            }
+          ],
+          "returns": "The configured provider (id: \"email-otp\", mode: \"otp\").",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "EmailProvider",
+          "slug": "EmailProvider",
+          "kind": "interface",
+          "signature": "interface EmailProvider",
+          "doc": "A passwordless **email** provider: magicLink() mails a single-use sign-in link, emailOtp() a one-time numeric code. Both deliver through AuthConfig.sendVerificationRequest and need an adapter with the verification-token group plus getUserByEmail / createUser / updateUser.",
+          "docFull": "A passwordless **email** provider: `magicLink()` mails a single-use sign-in link,\n`emailOtp()` a one-time numeric code. Both deliver through\n{@link AuthConfig.sendVerificationRequest} and need an adapter with the\nverification-token group plus `getUserByEmail` / `createUser` / `updateUser`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "EmailProviderOptions",
+          "slug": "EmailProviderOptions",
+          "kind": "interface",
+          "signature": "interface EmailProviderOptions",
+          "doc": "Options for magicLink and emailOtp.",
+          "docFull": "Options for {@linkcode magicLink} and {@linkcode emailOtp}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "EmailRequestResult",
+          "slug": "EmailRequestResult",
+          "kind": "interface",
+          "signature": "interface EmailRequestResult",
+          "doc": "What a verification or reset request reports — never whether the address exists.",
+          "docFull": "What a verification or reset request reports — never whether the address exists.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "enrollTotp",
+          "slug": "enrollTotp",
+          "kind": "function",
+          "signature": "enrollTotp(config: AuthConfig, user: AuthUser): Promise<TotpEnrollment | null>",
+          "doc": "Start a TOTP enrollment: mint a secret, store it **unconfirmed**, and return it with the provisioning URI (issuer mfa.issuer, account user.email ?? user.id). An earlier unconfirmed enrollment is replaced; a CONFIRMED factor is not — disable it first.",
+          "docFull": "Start a TOTP enrollment: mint a secret, store it **unconfirmed**, and return it with the\nprovisioning URI (issuer `mfa.issuer`, account `user.email ?? user.id`). An earlier\nunconfirmed enrollment is replaced; a CONFIRMED factor is not — disable it first.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The app's auth config."
+            },
+            {
+              "name": "user",
+              "doc": "The user enrolling."
+            }
+          ],
+          "returns": "The secret and URI, or null when the user already has a confirmed factor.",
           "examples": [],
           "denextOnly": true
         },
@@ -5741,6 +5930,44 @@
           "docFull": "The form fields of a submission as a plain object (the default `input` shape).",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "generateBackupCodes",
+          "slug": "generateBackupCodes",
+          "kind": "function",
+          "signature": "generateBackupCodes(hasher: Hasher, count?: number): Promise<BackupCodes>",
+          "doc": "Generate a set of unique backup codes and hash each through hasher. The hash covers the normalised form (no hyphen, lowercase), so a user may type a code with or without the hyphen, in any case.",
+          "docFull": "Generate a set of unique backup codes and hash each through `hasher`. The hash covers\nthe normalised form (no hyphen, lowercase), so a user may type a code with or without\nthe hyphen, in any case.",
+          "params": [
+            {
+              "name": "hasher",
+              "doc": "The auth Hasher (ResolvedAuthOptions.hasher)."
+            },
+            {
+              "name": "count",
+              "doc": "How many codes, clamped to 0–20. Default 10."
+            }
+          ],
+          "returns": "The plaintext codes and their hashes.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "generateTotpSecret",
+          "slug": "generateTotpSecret",
+          "kind": "function",
+          "signature": "generateTotpSecret(bytes?: number): string",
+          "doc": "Generate a fresh TOTP secret: bytes of CSPRNG output as unpadded, uppercase RFC 4648 base32 — the form authenticator apps expect.",
+          "docFull": "Generate a fresh TOTP secret: `bytes` of CSPRNG output as unpadded, uppercase RFC 4648\nbase32 — the form authenticator apps expect.",
+          "params": [
+            {
+              "name": "bytes",
+              "doc": "Secret length in bytes; at least 20 (160 bits). Default 20."
+            }
+          ],
+          "returns": "The base32 secret (32 characters at the default length).",
           "examples": [],
           "denextOnly": true
         },
@@ -6776,6 +7003,23 @@
           "denextOnly": true
         },
         {
+          "name": "magicLink",
+          "slug": "magicLink",
+          "kind": "function",
+          "signature": "magicLink(options?: EmailProviderOptions): EmailProvider",
+          "doc": "Passwordless sign-in by **magic link**: POST {basePath}/callback/email with { email } mails a single-use link (10 minutes by default, email.magicMaxAge); opening it signs the user in. The link is consumed by its GET, so a mail gateway that pre-fetches links can spend it — prefer emailOtp where link scanners are common.",
+          "docFull": "Passwordless sign-in by **magic link**: `POST {basePath}/callback/email` with `{ email }`\nmails a single-use link (10 minutes by default, `email.magicMaxAge`); opening it signs\nthe user in. The link is consumed by its GET, so a mail gateway that pre-fetches links\ncan spend it — prefer {@linkcode emailOtp} where link scanners are common.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The provider id, display name and sign-up policy."
+            }
+          ],
+          "returns": "The configured provider (id: \"email\", mode: \"magic\").",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "makeTranslate",
           "slug": "makeTranslate",
           "kind": "function",
@@ -6896,12 +7140,57 @@
           "denextOnly": true
         },
         {
+          "name": "MfaMethod",
+          "slug": "MfaMethod",
+          "kind": "typeAlias",
+          "signature": "type MfaMethod = totp | bcp",
+          "doc": "A second factor a step-up can be completed with: a TOTP code, or a backup code.",
+          "docFull": "A second factor a step-up can be completed with: a TOTP code, or a backup code.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "MfaRecord",
           "slug": "MfaRecord",
           "kind": "interface",
           "signature": "interface MfaRecord",
           "doc": "A user's TOTP factor plus their single-use backup codes.",
           "docFull": "A user's TOTP factor plus their single-use backup codes.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "mfaStatus",
+          "slug": "mfaStatus-fn",
+          "kind": "function",
+          "signature": "mfaStatus(config: AuthConfig, userId: string): Promise<MfaStatus>",
+          "doc": "A user's second-factor state — for an account-settings page.",
+          "docFull": "A user's second-factor state — for an account-settings page.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The app's auth config."
+            },
+            {
+              "name": "userId",
+              "doc": "The user."
+            }
+          ],
+          "returns": "Whether a factor is enrolled and confirmed, and how many backup codes remain.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "MfaStatus",
+          "slug": "MfaStatus-iface",
+          "kind": "interface",
+          "signature": "interface MfaStatus",
+          "doc": "A user's second-factor state, as mfaStatus reports it.",
+          "docFull": "A user's second-factor state, as {@linkcode mfaStatus} reports it.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -7421,6 +7710,18 @@
             }
           ],
           "returns": "The resolved locale and the pathname to route with.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "pendingMfaSession",
+          "slug": "pendingMfaSession",
+          "kind": "function",
+          "signature": "pendingMfaSession(): Promise<AuthSession | null>",
+          "doc": "The current request's session **only while it still owes a second factor** — null for a complete session, and for none. For the app's pages.mfa page: render the code form (or, under mfa.required: \"always\" for a user with no factor yet, the enrollment step) when this returns a session, and redirect onward when it doesn't.",
+          "docFull": "The current request's session **only while it still owes a second factor** — `null`\nfor a complete session, and for none. For the app's `pages.mfa` page: render the code\nform (or, under `mfa.required: \"always\"` for a user with no factor yet, the enrollment\nstep) when this returns a session, and redirect onward when it doesn't.\n\nA pending session grants nothing: {@link auth} and every guard still read it as signed\nout, and it is never slid forward. It is short-lived, and the step-up replaces it with\na fresh session rather than upgrading it.",
+          "params": [],
+          "returns": "The pending AuthSession, or null.",
           "examples": [],
           "denextOnly": true
         },
@@ -7953,6 +8254,27 @@
           "denextOnly": true
         },
         {
+          "name": "requestEmailVerification",
+          "slug": "requestEmailVerification",
+          "kind": "function",
+          "signature": "requestEmailVerification(config: AuthConfig, userOrEmail: Pick<AdapterUser, email> | string): Promise<EmailRequestResult>",
+          "doc": "Email a verification link to a user (or an address). The link opens email.verifyPath (default {basePath}/verify, which verifies and redirects).",
+          "docFull": "Email a verification link to a user (or an address). The link opens\n`email.verifyPath` (default `{basePath}/verify`, which verifies and redirects).\n\nResolves normally — sending nothing — for an address with no account, an\nalready-verified one, or a value that isn't exactly one address. Throws only for a\nmisconfiguration: no `sendVerificationRequest`, or an adapter without the\nverification-token group.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The app's auth config."
+            },
+            {
+              "name": "userOrEmail",
+              "doc": "The user record (its email is used) or the address."
+            }
+          ],
+          "returns": "Whether the request was throttled.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "RequestErrorContext",
           "slug": "RequestErrorContext",
           "kind": "interface",
@@ -8006,6 +8328,27 @@
             }
           ],
           "returns": "The origin, e.g. https://example.com.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "requestPasswordReset",
+          "slug": "requestPasswordReset",
+          "kind": "function",
+          "signature": "requestPasswordReset(config: AuthConfig, email: string): Promise<EmailRequestResult>",
+          "doc": "Email a password-reset link. The link opens email.resetPath (default {basePath}/reset) — a page your app renders, posting email, token and password to {basePath}/reset/confirm (or calling resetPassword).",
+          "docFull": "Email a password-reset link. The link opens `email.resetPath` (default\n`{basePath}/reset`) — a page your app renders, posting `email`, `token` and `password`\nto `{basePath}/reset/confirm` (or calling {@linkcode resetPassword}).\n\nResolves normally for an address with no account — with no mail, and comparable work —\nso a caller can't learn which addresses have accounts. Throws only for a\nmisconfiguration: no `sendVerificationRequest`, or an adapter without the\nverification-token group and `setCredential`.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The app's auth config."
+            },
+            {
+              "name": "email",
+              "doc": "The submitted address (exactly one; a list sends nothing)."
+            }
+          ],
+          "returns": "Whether the request was throttled — the same for known and unknown addresses.",
           "examples": [],
           "denextOnly": true
         },
@@ -8111,6 +8454,39 @@
           "signature": "resetCacheStats(): void",
           "doc": "Reset the cache-activity counters (tests / a fresh monitoring window).",
           "docFull": "Reset the cache-activity counters (tests / a fresh monitoring window).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "resetPassword",
+          "slug": "resetPassword",
+          "kind": "function",
+          "signature": "resetPassword(config: AuthConfig, input: object): Promise<ResetPasswordResult>",
+          "doc": "Redeem a password-reset token and set a new password: the configured hasher hashes it, adapter.setCredential stores it, and every server-side session of the user is revoked. Fires passwordReset (after sessionRevoked).",
+          "docFull": "Redeem a password-reset token and set a new password: the configured `hasher` hashes it,\n`adapter.setCredential` stores it, and every server-side session of the user is revoked.\nFires `passwordReset` (after `sessionRevoked`).\n\nThe password is checked (8–1024 characters) **before** the token is touched, so a\nrefused password leaves the link usable.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The app's auth config."
+            },
+            {
+              "name": "input",
+              "doc": "The address, the presented token and the new password."
+            }
+          ],
+          "returns": "{ ok: true, user }, or { ok: false, error }. Throws only when the adapter lacks the verification-token group or setCredential.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ResetPasswordResult",
+          "slug": "ResetPasswordResult",
+          "kind": "typeAlias",
+          "signature": "type ResetPasswordResult = object | object",
+          "doc": "What resetPassword reports.",
+          "docFull": "What {@linkcode resetPassword} reports.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -9418,6 +9794,71 @@
           "denextOnly": true
         },
         {
+          "name": "totpAuthUri",
+          "slug": "totpAuthUri",
+          "kind": "function",
+          "signature": "totpAuthUri(options: TotpAuthUriOptions): string",
+          "doc": "Build the otpauth://totp/… provisioning URI (Google Authenticator key-URI format) to render as a QR code or a link. The label is Issuer:account with each part percent-encoded (so a : inside either part can't forge the separator), and every query value is percent-encoded too (a space is %20, never +).",
+          "docFull": "Build the `otpauth://totp/…` provisioning URI (Google Authenticator key-URI format) to\nrender as a QR code or a link. The label is `Issuer:account` with each part\npercent-encoded (so a `:` inside either part can't forge the separator), and every\nquery value is percent-encoded too (a space is `%20`, never `+`).",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The secret, labels and code parameters."
+            }
+          ],
+          "returns": "The URI, e.g. otpauth://totp/Acme:ada%40example.com?secret=…&issuer=Acme&algorithm=SHA1&digits=6&period=30.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TotpAuthUriOptions",
+          "slug": "TotpAuthUriOptions",
+          "kind": "interface",
+          "signature": "interface TotpAuthUriOptions",
+          "doc": "Options for totpAuthUri.",
+          "docFull": "Options for {@linkcode totpAuthUri}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TotpEnrollment",
+          "slug": "TotpEnrollment",
+          "kind": "interface",
+          "signature": "interface TotpEnrollment",
+          "doc": "A fresh, unconfirmed TOTP enrollment, as enrollTotp returns it.",
+          "docFull": "A fresh, unconfirmed TOTP enrollment, as {@linkcode enrollTotp} returns it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TotpVerifyOptions",
+          "slug": "TotpVerifyOptions",
+          "kind": "interface",
+          "signature": "interface TotpVerifyOptions",
+          "doc": "Options for verifyTotp.",
+          "docFull": "Options for {@linkcode verifyTotp}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TotpVerifyResult",
+          "slug": "TotpVerifyResult",
+          "kind": "typeAlias",
+          "signature": "type TotpVerifyResult = object | object",
+          "doc": "The outcome of verifyTotp: on a match, the time step the code belongs to — hand it to the adapter's claimTotpStep so the same code can't be presented twice.",
+          "docFull": "The outcome of {@linkcode verifyTotp}: on a match, the time step the code belongs to —\nhand it to the adapter's `claimTotpStep` so the same code can't be presented twice.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "TranslateFn",
           "slug": "TranslateFn",
           "kind": "typeAlias",
@@ -9671,6 +10112,27 @@
           "denextOnly": true
         },
         {
+          "name": "verifyEmail",
+          "slug": "verifyEmail",
+          "kind": "function",
+          "signature": "verifyEmail(config: AuthConfig, input: object): Promise<AdapterUser | null>",
+          "doc": "Redeem an email-verification token and mark the address verified (emailVerified, epoch seconds, through adapter.updateUser). Fires emailVerified.",
+          "docFull": "Redeem an email-verification token and mark the address verified (`emailVerified`,\nepoch seconds, through `adapter.updateUser`). Fires `emailVerified`.\n\nUnlike a first magic-link / one-time-code sign-in, this does **not** retire the\naccount's password or revoke its sessions. In the normal register → verify → sign-in\nflow the password was set by the very person now proving the mailbox, so wiping it\nwould break that flow; and verifying signs nobody in, so the mailbox owner gains no\naccess here. The residual risk is a victim confirming an account someone else\nregistered with their address — it then counts as verified (a later OAuth sign-in with\nthat address links to it) — so word the mail to say that ignoring it is safe.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The app's auth config."
+            },
+            {
+              "name": "input",
+              "doc": "The address and the presented token."
+            }
+          ],
+          "returns": "The updated user, or null for any failure (wrong, spent or expired token; an address whose account is gone). Throws only when the adapter lacks the token group.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "verifyPassword",
           "slug": "verifyPassword",
           "kind": "function",
@@ -9695,6 +10157,56 @@
           "examples": [
             "```ts\ncredentials({\n  authorize: async ({ email, password }) => {\n    const row = findUser(email); // may be undefined — verify still does full work\n    const ok = await verifyPassword(password ?? \"\", row?.password_hash ?? \"\");\n    return ok && row ? { id: String(row.id), email: row.email } : null;\n  },\n})\n```"
           ],
+          "denextOnly": true
+        },
+        {
+          "name": "verifySecondFactor",
+          "slug": "verifySecondFactor",
+          "kind": "function",
+          "signature": "verifySecondFactor(config: AuthConfig, userId: string, code: string): Promise<MfaMethod | null>",
+          "doc": "Check a second-factor code for a user with a confirmed factor: first as a TOTP code (claiming its step — a replay is refused), else as a backup code (spent on a match).",
+          "docFull": "Check a second-factor code for a user with a confirmed factor: first as a TOTP code\n(claiming its step — a replay is refused), else as a backup code (spent on a match).",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The app's auth config."
+            },
+            {
+              "name": "userId",
+              "doc": "The user."
+            },
+            {
+              "name": "code",
+              "doc": "The code the user typed (TOTP digits or a backup code, hyphen optional)."
+            }
+          ],
+          "returns": "\"totp\" or \"bcp\" for the method that verified, or null.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "verifyTotp",
+          "slug": "verifyTotp",
+          "kind": "function",
+          "signature": "verifyTotp(secret: string, code: string, options?: TotpVerifyOptions): Promise<TotpVerifyResult>",
+          "doc": "Verify a TOTP code (RFC 6238 over RFC 4226 HOTP, HMAC-SHA-1) against a base32 secret, accepting any step within ±window of the current one. Whitespace in the code is stripped (\"123 456\"); anything else malformed — non-digits, the wrong length, a secret that isn't base32 — is { ok: false }, never a throw. Every candidate step is computed and compared in constant time; the loop never exits early on a match.",
+          "docFull": "Verify a TOTP code (RFC 6238 over RFC 4226 HOTP, HMAC-SHA-1) against a base32 secret,\naccepting any step within ±`window` of the current one. Whitespace in the code is\nstripped (`\"123 456\"`); anything else malformed — non-digits, the wrong length, a\nsecret that isn't base32 — is `{ ok: false }`, never a throw. Every candidate step is\ncomputed and compared in constant time; the loop never exits early on a match.\n\nThis does NOT stop replay: pass the returned `step` to the adapter's `claimTotpStep`.",
+          "params": [
+            {
+              "name": "secret",
+              "doc": "The user's base32 secret (padding, spaces and case are tolerated)."
+            },
+            {
+              "name": "code",
+              "doc": "The code the user typed."
+            },
+            {
+              "name": "options",
+              "doc": "Window, clock and code parameters."
+            }
+          ],
+          "returns": "{ ok: true, step } for the first (earliest) matching step, else { ok: false }.",
+          "examples": [],
           "denextOnly": true
         },
         {
@@ -11438,17 +11950,17 @@
           "name": "useDebugValue",
           "slug": "useDebugValue",
           "kind": "function",
-          "signature": "useDebugValue<T>(_value: T, _format?: (value: T) => unknown): void",
-          "doc": "Label a custom hook's value for React DevTools. A no-op at runtime (React itself only invokes it when DevTools is attached), provided for API compatibility.",
-          "docFull": "Label a custom hook's value for React DevTools. A no-op at runtime (React itself\nonly invokes it when DevTools is attached), provided for API compatibility.",
+          "signature": "useDebugValue<T>(value: T, format?: (value: T) => unknown): void",
+          "doc": "Label a custom hook's value for the DevTools inspector. In development on the client the value is recorded against the rendering component — without taking a hook cell, so adding or removing a call never shifts hook state (Fast Refresh keeps it) — and shown on the hook row it follows in the panel, denext_hook_state and the MCP snapshot. format is never called during render: the inspector applies it lazily, only when it reads the value. In production and during server rendering this is a no-op.",
+          "docFull": "Label a custom hook's value for the DevTools inspector. In development on the client\nthe value is recorded against the rendering component — without taking a hook cell, so\nadding or removing a call never shifts hook state (Fast Refresh keeps it) — and shown\non the hook row it follows in the panel, `denext_hook_state` and the MCP snapshot.\n`format` is never called during render: the inspector applies it lazily, only when it\nreads the value. In production and during server rendering this is a no-op.",
           "params": [
             {
-              "name": "_value",
+              "name": "value",
               "doc": "The value to display."
             },
             {
-              "name": "_format",
-              "doc": "Optional formatter, applied lazily by DevTools only."
+              "name": "format",
+              "doc": "Optional formatter, applied lazily by the inspector only."
             }
           ],
           "returns": "",
@@ -13405,6 +13917,234 @@
           "params": [],
           "returns": "",
           "examples": [],
+          "denextOnly": true
+        }
+      ]
+    },
+    {
+      "module": "denext/mobile",
+      "symbols": [
+        {
+          "name": "BackSwipeOptions",
+          "slug": "BackSwipeOptions",
+          "kind": "interface",
+          "signature": "interface BackSwipeOptions",
+          "doc": "Options for useBackSwipe and isBackSwipe.",
+          "docFull": "Options for {@linkcode useBackSwipe} and {@linkcode isBackSwipe}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "installKeyboardInset",
+          "slug": "installKeyboardInset",
+          "kind": "function",
+          "signature": "installKeyboardInset(opts?: KeyboardInsetOptions): () => void",
+          "doc": "Keep a CSS custom property on document.documentElement (default --denext-keyboard-inset) equal to the on-screen keyboard's height in px, so layout can lift a composer or a bottom bar above it: padding-bottom: var(--denext-keyboard-inset).",
+          "docFull": "Keep a CSS custom property on `document.documentElement` (default\n`--denext-keyboard-inset`) equal to the on-screen keyboard's height in px, so layout can\nlift a composer or a bottom bar above it: `padding-bottom: var(--denext-keyboard-inset)`.\n\nThe value is derived from `window.visualViewport` (`innerHeight - visualViewport.height -\nvisualViewport.offsetTop`, clamped at ≥ 0) and updated at most once per animation frame.\nIt is set to `0px` immediately, and stays `0px` where `visualViewport` is unavailable.\n\nThis is for shells whose Capacitor Keyboard plugin is configured with `resize: \"none\"`,\nwhere the webview keeps its size and the keyboard covers the page. With `resize: \"native\"`\nthe webview itself shrinks, so the inset is always 0 and this is unnecessary.\n\nSeveral installs of the same property may coexist (e.g. two {@linkcode useKeyboardInset}\ncomponents); the property is removed when the last one is disposed. SSR-safe: without a\n`document` it installs nothing.",
+          "params": [
+            {
+              "name": "opts",
+              "doc": "{ property }, the custom property to maintain."
+            }
+          ],
+          "returns": "A dispose function that stops listening and, for the last install, removes the property.",
+          "examples": [
+            "```ts\nimport { installKeyboardInset } from \"denext/mobile\";\nconst dispose = installKeyboardInset();\n// CSS: .composer { bottom: var(--denext-keyboard-inset, 0px); }\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "isBackSwipe",
+          "slug": "isBackSwipe",
+          "kind": "function",
+          "signature": "isBackSwipe(dx: number, dy: number, opts?: BackSwipeOptions): boolean",
+          "doc": "The pure gesture test behind useBackSwipe: whether a movement of dx/dy CSS px from the touch start is a back swipe, i.e. rightward by at least minDistance and horizontal by at least ratio × the absolute vertical movement.",
+          "docFull": "The pure gesture test behind {@linkcode useBackSwipe}: whether a movement of `dx`/`dy` CSS px\nfrom the touch start is a back swipe, i.e. rightward by at least `minDistance` and\nhorizontal by at least `ratio` × the absolute vertical movement.",
+          "params": [
+            {
+              "name": "dx",
+              "doc": "Horizontal movement since the touch started (positive = rightward)."
+            },
+            {
+              "name": "dy",
+              "doc": "Vertical movement since the touch started (sign ignored)."
+            },
+            {
+              "name": "opts",
+              "doc": "{ minDistance = 72, ratio = 1.4 }; enabled is not consulted here."
+            }
+          ],
+          "returns": "true when the movement qualifies as a back swipe.",
+          "examples": [
+            "```ts\nimport { isBackSwipe } from \"denext/mobile\";\nisBackSwipe(80, 20); // true: 80 ≥ 72 and 80 ≥ 1.4 × 20\nisBackSwipe(80, 60); // false: too diagonal\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "isNativeShell",
+          "slug": "isNativeShell",
+          "kind": "function",
+          "signature": "isNativeShell(): boolean",
+          "doc": "Whether the page runs inside a Capacitor iOS/Android native shell (webview origin capacitor://localhost on iOS, https://localhost on Android). false on the web, when @capacitor/core is merely bundled into a web build, and during SSR.",
+          "docFull": "Whether the page runs inside a Capacitor iOS/Android native shell (webview origin\n`capacitor://localhost` on iOS, `https://localhost` on Android). `false` on the web, when\n`@capacitor/core` is merely bundled into a web build, and during SSR.",
+          "params": [],
+          "returns": "true only inside the native shell.",
+          "examples": [
+            "```ts\nimport { isNativeShell } from \"denext/mobile\";\nif (isNativeShell()) document.documentElement.classList.add(\"native\");\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "KeyboardInsetOptions",
+          "slug": "KeyboardInsetOptions",
+          "kind": "interface",
+          "signature": "interface KeyboardInsetOptions",
+          "doc": "Options for installKeyboardInset and useKeyboardInset.",
+          "docFull": "Options for {@linkcode installKeyboardInset} and {@linkcode useKeyboardInset}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "nativePlatform",
+          "slug": "nativePlatform-fn",
+          "kind": "function",
+          "signature": "nativePlatform(): NativePlatform",
+          "doc": "The platform the page runs on: \"ios\" or \"android\" inside a Capacitor native shell, otherwise \"web\". SSR-safe (\"web\" when there is no window). A Capacitor custom platform (e.g. Electron) also reads \"web\": only the iOS and Android shells count.",
+          "docFull": "The platform the page runs on: `\"ios\"` or `\"android\"` inside a Capacitor native shell,\notherwise `\"web\"`. SSR-safe (`\"web\"` when there is no `window`). A Capacitor custom platform\n(e.g. Electron) also reads `\"web\"`: only the iOS and Android shells count.",
+          "params": [],
+          "returns": "\"ios\", \"android\" or \"web\".",
+          "examples": [
+            "```ts\nimport { nativePlatform } from \"denext/mobile\";\ndocument.documentElement.dataset.platform = nativePlatform();\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "NativePlatform",
+          "slug": "NativePlatform-type",
+          "kind": "typeAlias",
+          "signature": "type NativePlatform = ios | android | web",
+          "doc": "The platform a page runs on, as denext/mobile distinguishes them.",
+          "docFull": "The platform a page runs on, as `denext/mobile` distinguishes them.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "onAppResume",
+          "slug": "onAppResume",
+          "kind": "function",
+          "signature": "onAppResume(cb: (awayMs: number) => void): () => void",
+          "doc": "Call cb each time the page returns to the foreground, with how long it was away in milliseconds.",
+          "docFull": "Call `cb` each time the page returns to the foreground, with how long it was away in\nmilliseconds.\n\nIt listens for `visibilitychange` (every browser and webview), `pagehide`/`pageshow`\n(a back-forward-cache restore) and the `pause`/`resume` document events that Capacitor's\niOS shell fires on scene background/foreground. Whichever signal arrives first counts; the\nothers are deduplicated, so `cb` runs once per return. A subscription made while the page is\nalready hidden measures from the moment of subscribing.\n\nThe time away is wall-clock (`Date.now()`), not `performance.now()`: iOS's monotonic clock\nstops while the device sleeps, which would under-report a phone left locked for an hour.\nA backwards clock jump reads as `0`.\n\n**The intended pattern** (the rule T3 Code's native app uses): under 10 s away, the\nconnection is probably intact, so probe it (a ping, a cheap refetch); 10 s or more, assume\nthe OS froze the page and its sockets, so reconnect and refetch.\n\nSSR-safe: without a `document` it subscribes to nothing and returns a no-op.",
+          "params": [
+            {
+              "name": "cb",
+              "doc": "Called with awayMs, the time since the page was hidden."
+            }
+          ],
+          "returns": "A function that unsubscribes.",
+          "examples": [
+            "```ts\nimport { onAppResume } from \"denext/mobile\";\n\nconst stop = onAppResume((awayMs) => {\n  if (awayMs < 10_000) socket.ping();\n  else socket.reconnect();\n});\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "openExternal",
+          "slug": "openExternal",
+          "kind": "function",
+          "signature": "openExternal(url: string): Promise<void>",
+          "doc": "Open a URL outside the app.",
+          "docFull": "Open a URL outside the app.\n\n- Inside the native shell, an http(s) URL opens in the in-app browser of the\n  `@capacitor/browser` plugin when it is installed natively (read from\n  `Capacitor.Plugins.Browser`; no JS import of the plugin is needed).\n- Otherwise, including `mailto:`/`tel:` and on the web, it calls\n  `window.open(url, \"_blank\", \"noopener,noreferrer\")`. The iOS shell hands a\n  `window.open` to the OS (Safari, Mail, Phone); Android routes it to an intent.\n\nOnly `http:`, `https:`, `mailto:` and `tel:` URLs are accepted. Anything else, including\n`javascript:`, `data:`, `file:` and relative URLs, is refused **synchronously** with a\n`TypeError` before anything opens. The vetted, normalized `URL.href` is what gets opened.",
+          "params": [
+            {
+              "name": "url",
+              "doc": "An absolute http:, https:, mailto: or tel: URL."
+            }
+          ],
+          "returns": "A promise that settles once the URL has been handed off. It rejects if the Browser plugin rejects, or when there is no window (SSR).",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { openExternal } from \"denext/mobile\";\n\nexport function DocsLink() {\n  return <button type=\"button\" onClick={() => openExternal(\"https://denext.dev/docs\")}>Docs</button>;\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "SAFE_AREA_CSS",
+          "slug": "SAFE_AREA_CSS",
+          "kind": "variable",
+          "signature": "SAFE_AREA_CSS: string",
+          "doc": "A stylesheet fragment that defines --denext-safe-top, --denext-safe-right, --denext-safe-bottom and --denext-safe-left on :root as the device's safe-area insets (env(safe-area-inset-*, 0px): the notch, status bar and home indicator), 0px where there are none. Drop it into a stylesheet or a <style> tag, then pad with the variables.",
+          "docFull": "A stylesheet fragment that defines `--denext-safe-top`, `--denext-safe-right`,\n`--denext-safe-bottom` and `--denext-safe-left` on `:root` as the device's safe-area insets\n(`env(safe-area-inset-*, 0px)`: the notch, status bar and home indicator), `0px` where\nthere are none. Drop it into a stylesheet or a `<style>` tag, then pad with the variables.\n\nThe insets are only non-zero when the viewport meta includes `viewport-fit=cover`. In the\nApp Router, export `viewport = { width: \"device-width\", initialScale: 1, viewportFit:\n\"cover\" }` from the root layout. In SPA mode, put the meta tag in `spa.head`; denext's SPA\nshell keeps an app's own viewport meta instead of emitting its default.",
+          "params": [],
+          "returns": "",
+          "examples": [
+            "```tsx\nimport { SAFE_AREA_CSS } from \"denext/mobile\";\n\nexport default function RootLayout({ children }: { children: unknown }) {\n  return (\n    <html>\n      <head><style>{SAFE_AREA_CSS}</style></head>\n      <body style={{ paddingTop: \"var(--denext-safe-top)\" }}>{children}</body>\n    </html>\n  );\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "useAppResume",
+          "slug": "useAppResume",
+          "kind": "function",
+          "signature": "useAppResume(cb: (awayMs: number) => void): void",
+          "doc": "Hook form of onAppResume: subscribes on mount, unsubscribes on unmount. The latest cb is always called (it is held in a ref), so passing a fresh closure each render never re-subscribes.",
+          "docFull": "Hook form of {@linkcode onAppResume}: subscribes on mount, unsubscribes on unmount. The\nlatest `cb` is always called (it is held in a ref), so passing a fresh closure each render\nnever re-subscribes.",
+          "params": [
+            {
+              "name": "cb",
+              "doc": "Called with awayMs each time the page returns to the foreground. Under 10 s away, probe the connection; 10 s or more, reconnect and refetch."
+            }
+          ],
+          "returns": "",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { useAppResume } from \"denext/mobile\";\n\nexport function LiveFeed() {\n  useAppResume((awayMs) => (awayMs < 10_000 ? feed.probe() : feed.reconnect()));\n  return <Feed />;\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "useBackSwipe",
+          "slug": "useBackSwipe",
+          "kind": "function",
+          "signature": "useBackSwipe(onBack: () => void, opts?: BackSwipeOptions): (el: Element | null) => void",
+          "doc": "Swipe right to go back. Returns a ref callback: attach it to the element that should recognize the gesture (often the page's scroll container). A touch that travels rightward at least minDistance CSS px (default 72), with horizontal travel at least ratio (default 1.4) × vertical travel, fires onBack once, as soon as it qualifies.",
+          "docFull": "Swipe right to go back. Returns a ref callback: attach it to the element that should\nrecognize the gesture (often the page's scroll container). A touch that travels rightward at\nleast `minDistance` CSS px (default 72), with horizontal travel at least `ratio` (default\n1.4) × vertical travel, fires `onBack` once, as soon as it qualifies.\n\nIt yields, and never fires, when the touch starts inside an editable element (`input`,\n`textarea`, `select`, contenteditable) or inside an element scrolled away from its left\nedge (`scrollLeft > 0`), so carousels and code blocks keep their own horizontal pans. Only\ntouch pointers count (`pointerType === \"touch\"`); mouse and pen are ignored.\n\n`onBack` and `opts` are held in refs: changing them between renders never re-binds, and the\nreturned ref callback is stable. Give the element `touch-action: pan-y` so the browser does\nnot claim horizontal pans for itself (which would cancel the pointer stream).",
+          "params": [
+            {
+              "name": "onBack",
+              "doc": "Called when a back swipe is recognized, e.g. () => router.back()."
+            },
+            {
+              "name": "opts",
+              "doc": "BackSwipeOptions: minDistance, ratio, enabled."
+            }
+          ],
+          "returns": "A ref callback for the element to watch.",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { useRouter } from \"denext\";\nimport { useBackSwipe } from \"denext/mobile\";\n\nexport function Screen({ children }: { children: unknown }) {\n  const router = useRouter();\n  const ref = useBackSwipe(() => router.back());\n  return <main ref={ref} style={{ touchAction: \"pan-y\" }}>{children}</main>;\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "useKeyboardInset",
+          "slug": "useKeyboardInset",
+          "kind": "function",
+          "signature": "useKeyboardInset(opts?: KeyboardInsetOptions): number",
+          "doc": "Hook form of installKeyboardInset: installs the custom property on mount, disposes it on unmount, and returns the current keyboard height in px (0 during SSR and before mount).",
+          "docFull": "Hook form of {@linkcode installKeyboardInset}: installs the custom property on mount,\ndisposes it on unmount, and returns the current keyboard height in px (`0` during SSR and\nbefore mount).",
+          "params": [
+            {
+              "name": "opts",
+              "doc": "{ property }, the custom property to maintain."
+            }
+          ],
+          "returns": "The on-screen keyboard's height in CSS px.",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { useKeyboardInset } from \"denext/mobile\";\n\nexport function Composer() {\n  const inset = useKeyboardInset();\n  return <form style={{ paddingBottom: inset }}><textarea /></form>;\n}\n```"
+          ],
           "denextOnly": true
         }
       ]

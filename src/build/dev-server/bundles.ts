@@ -14,6 +14,7 @@ import { buildBoundaryManifest, importFunctionExports, routeEntryFiles } from ".
 import { bundleImportMap } from "./assets.ts";
 import { isCompat } from "./compat.ts";
 import { getManifest, getUnbundled } from "./manifest.ts";
+import { routeDevMeta } from "./route-meta.ts";
 import { type DevState, FLIGHT_BUNDLE_PATH, ROUTE_BUNDLE_PATH, ROUTE_CSS_PATH } from "./state.ts";
 
 /** Stash a bundle's split chunks (everything but the entry) for serving. */
@@ -23,12 +24,17 @@ function cacheChunks(st: DevState, bundle: BundleOutput): void {
   }
 }
 
-/** Bundle one route's client entry (native path) and cache it + its chunks. */
+/**
+ * Bundle one route's client entry (native path) and cache it + its chunks. The entry carries
+ * the route files' DevTools metadata ({@linkcode routeDevMeta}) — this bundled path has no
+ * per-module transform to append it.
+ */
 async function buildRouteBundle(st: DevState, route: PageRoute): Promise<string> {
   const bundle = await bundleRoute(route, {
     configPath: st.paths.configPath,
     importMap: await bundleImportMap(st),
     dev: true, // emit Fast Refresh registration into the entry
+    devMetaFooter: await routeDevMeta(st, route),
   });
   cacheChunks(st, bundle);
   const js = entryCode(bundle);

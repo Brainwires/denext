@@ -222,15 +222,6 @@ export function routeServerModules(route: PageRoute): string[] {
   return [...new Set(files)];
 }
 
-/**
- * Generate the browser entry source that hydrates a single page route.
- *
- * @param route The page route.
- * @param dev When true, emit Fast Refresh registration (dev only).
- * @param perModule When true (unbundled dev server), install PER-MODULE Fast Refresh
- *   (`enablePerModuleRefresh`, which adds the reconciler's family-current substitution)
- *   instead of the whole-entry `enableFastRefresh`. Only meaningful with `dev`.
- */
 type SlotEntry = readonly [name: string, file: string];
 
 /**
@@ -299,13 +290,15 @@ function routeEntryTree(route: PageRoute, slots: SlotEntry[]): string {
  * edit's re-registration (keyed by export name) would never reach the ref the tree
  * actually rendered. Just enable the seam. Both also install the first-party DevTools
  * (inspector + in-page panel), imported only here in dev so it never ships in production.
+ * Bundled mode appends `opts.devMetaFooter` (the route files' `__dnxMeta` calls) after the
+ * registrations; unbundled mode ignores it (its per-module footers carry the metadata).
  */
 function routeRefreshBlock(
   route: PageRoute,
   slots: SlotEntry[],
-  dev: boolean,
-  perModule: boolean,
+  opts: GenerateRouteEntryOptions,
 ): { refreshImport: string; refreshReg: string } {
+  const { dev = false, perModule = false } = opts;
   if (!dev) return { refreshImport: "", refreshReg: "" };
   if (perModule) {
     return {
@@ -325,7 +318,10 @@ function routeRefreshBlock(
   return {
     refreshImport:
       `import { enableFastRefresh, registerFamily } from "denext/client-runtime";\nimport { installDevtools } from "denext/devtools";\n`,
-    refreshReg: `enableFastRefresh();\ninstallDevtools();\n${lines.join("\n")}\n`,
+    // The DevTools metadata sidecar rides AFTER the registrations, keyed by the same
+    // `<url>#default` family ids (bundled dev only — see `GenerateRouteEntryOptions`).
+    refreshReg: `enableFastRefresh();\ninstallDevtools();\n${lines.join("\n")}\n` +
+      (opts.devMetaFooter ?? ""),
   };
 }
 
@@ -348,23 +344,51 @@ function clientInstrumentationImport(path: string | null | undefined): string {
   return path ? `import ${JSON.stringify(toFileUrl(path).href)};\n` : "";
 }
 
+/** How {@linkcode generateRouteEntry} shapes a route's browser entry. Every field is optional. */
+export interface GenerateRouteEntryOptions {
+  /** Emit Fast Refresh registration + the DevTools install (dev only). Default `false`. */
+  dev?: boolean;
+  /**
+   * The unbundled dev server: install PER-MODULE Fast Refresh (`enablePerModuleRefresh`,
+   * which adds the reconciler's family-current substitution) instead of the whole-entry
+   * `enableFastRefresh`. Only meaningful with `dev`. Default `false`.
+   */
+  perModule?: boolean;
+  /** The project's `instrumentation-client` module, imported first. Default none. */
+  instrumentationClient?: string | null;
+  /** How the entry gets the class-component runtime. Default `"lazy"`. */
+  classRuntime?: ClassRuntimeMode;
+  /** Install `<Activity>` support. Default `false`. */
+  usesActivity?: boolean;
+  /** Install `<ViewTransition>` support. Default `false`. */
+  usesViewTransition?: boolean;
+  /**
+   * The route files' DevTools metadata (`__dnxMeta(…)` calls plus their import, from
+   * `routeDevMeta`), appended after the `registerFamily` calls. Honoured ONLY for a bundled
+   * dev entry (`dev && !perModule`); a production or per-module entry ignores it.
+   */
+  devMetaFooter?: string;
+}
+
+/**
+ * Generate the browser entry source that hydrates a single page route.
+ *
+ * @param route The page route.
+ * @param opts Dev/refresh mode, runtime installs and the dev metadata footer.
+ * @returns The generated entry module source.
+ */
 export function generateRouteEntry(
   route: PageRoute,
-  dev = false,
-  perModule = false,
-  instrumentationClient: string | null = null,
-  classRuntime: ClassRuntimeMode = "lazy",
-  usesActivity = false,
-  usesViewTransition = false,
+  opts: GenerateRouteEntryOptions = {},
 ): string {
   const slots = routeSlotEntries(route);
-  const { refreshImport, refreshReg } = routeRefreshBlock(route, slots, dev, perModule);
-  const { classImport, classInstall, classBoot } = classSupportBlock(classRuntime);
-  const { activityImport, activityInstall } = activitySupportBlock(usesActivity);
-  const { vtImport, vtInstall } = viewTransitionSupportBlock(usesViewTransition);
+  const { refreshImport, refreshReg } = routeRefreshBlock(route, slots, opts);
+  const { classImport, classInstall, classBoot } = classSupportBlock(opts.classRuntime ?? "lazy");
+  const { activityImport, activityInstall } = activitySupportBlock(opts.usesActivity ?? false);
+  const { vtImport, vtInstall } = viewTransitionSupportBlock(opts.usesViewTransition ?? false);
   return `// denext generated route entry — do not edit.
 ${
-    clientInstrumentationImport(instrumentationClient)
+    clientInstrumentationImport(opts.instrumentationClient)
   }import { startClient, provideLayoutSegments } from "denext/client-runtime";
 import { Suspense, ErrorBoundary } from "denext/client";
 import { h } from "denext/jsx-runtime";
@@ -382,7 +406,7 @@ async function main() {
 ${classBoot}  try {
     startClient(el, tree);
   } catch (err) {
-    ${hydrationCatch(dev, "denext: skipping hydration for this route:")}
+    ${hydrationCatch(opts.dev ?? false, "denext: skipping hydration for this route:")}
   }
 }
 
@@ -1260,21 +1284,27 @@ export async function bundleRoutes(
   }
 }
 
-/** Bundle a page route's browser entry (entry + any dynamic-import chunks). */
+/**
+ * Bundle a page route's browser entry (entry + any dynamic-import chunks).
+ *
+ * @param route The page route.
+ * @param opts Bundle options; `devMetaFooter` (dev server only) is the route files'
+ *   DevTools metadata, appended to a `dev` entry (see {@linkcode GenerateRouteEntryOptions}).
+ * @returns The bundled entry and its chunks.
+ */
 export function bundleRoute(
   route: PageRoute,
-  opts: BundleOptions,
+  opts: BundleOptions & { devMetaFooter?: string },
 ): Promise<BundleOutput> {
   return bundleSourceFiles(
-    generateRouteEntry(
-      route,
-      opts.dev,
-      false,
-      opts.instrumentationClient ?? null,
-      opts.classRuntime ?? "lazy",
-      opts.usesActivity ?? false,
-      opts.usesViewTransition ?? false,
-    ),
+    generateRouteEntry(route, {
+      dev: opts.dev,
+      instrumentationClient: opts.instrumentationClient,
+      classRuntime: opts.classRuntime,
+      usesActivity: opts.usesActivity,
+      usesViewTransition: opts.usesViewTransition,
+      devMetaFooter: opts.devMetaFooter,
+    }),
     opts,
   );
 }

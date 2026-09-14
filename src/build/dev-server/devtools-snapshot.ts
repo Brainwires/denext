@@ -134,6 +134,22 @@ function cleanValue(v: unknown, depth = 0): SnapshotValue {
 }
 
 /**
+ * A value whose string CONTENTS must not be stored: every `string` node (the value and
+ * its entries) is reduced to `string(n)`, whatever the page sent. The page already
+ * redacts; this re-enforces the snapshot contract server-side for `debug`, the one hook
+ * field a page-side redactor written before it existed would pass through verbatim.
+ */
+function redactStrings(v: SnapshotValue): SnapshotValue {
+  if (v.type === "string") {
+    const length = v.length ?? Math.max(0, v.preview.length - 2);
+    v.preview = `string(${length})`;
+    v.length = length;
+  }
+  for (const e of v.entries ?? []) redactStrings(e.value);
+  return v;
+}
+
+/**
  * One hook cell, rebuilt from coerced fields.
  *
  * @param h The posted cell.
@@ -154,6 +170,9 @@ function cleanHook(h: unknown, index: number): SnapshotHook {
   if (name !== undefined) out.name = name;
   const hook = str(o.hook, MAX_NAME);
   if (hook !== undefined) out.hook = hook;
+  if (o.debug !== null && typeof o.debug === "object") {
+    out.debug = redactStrings(cleanValue(o.debug)); // same depth/preview caps as `value`
+  }
   return out;
 }
 

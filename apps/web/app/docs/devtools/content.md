@@ -122,16 +122,17 @@ pattern of every hook call in the module (see
 [below](#how-source-locations-and-hook-names-get-there)). How the label is
 chosen:
 
-| In the source                                      | The row reads                                                                |
-| -------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `const [count, setCount] = useState(0)`            | `count · useState`                                                           |
-| `const [, setOpen] = useState(false)`              | `setOpen · useState` — the first name the pattern binds                      |
-| `const { data } = useApi(…)`                       | `data · useApi`                                                              |
-| `const { data: rows } = useApi(…)`                 | `rows · useApi` — the local name                                             |
-| `const boxRef = useRef(null)`                      | `boxRef · useRef`                                                            |
-| `useEffect(() => {…}, [])`                         | `effect · useEffect` — nothing was bound, so the cell's kind stands in       |
-| a custom hook declared in the same module          | the hook's own cells, breadcrumbed: `useAuth › session · useAuth › useState` |
-| a composite (`useTransition`, `useActionState`, …) | its first cell is named; its internal extra cells carry the hook alone       |
+| In the source                                      | The row reads                                                             |
+| -------------------------------------------------- | ------------------------------------------------------------------------- |
+| `const [count, setCount] = useState(0)`            | `count · useState`                                                        |
+| `const [, setOpen] = useState(false)`              | `setOpen · useState` — the first name the pattern binds                   |
+| `const { data } = useApi(…)`                       | `data · useApi`                                                           |
+| `const { data: rows } = useApi(…)`                 | `rows · useApi` — the local name                                          |
+| `const boxRef = useRef(null)`                      | `boxRef · useRef`                                                         |
+| `useEffect(() => {…}, [])`                         | `effect · useEffect` — nothing was bound, so the cell's kind stands in    |
+| a custom hook declared in the same module          | the hook's own cells, breadcrumbed: `useAuth › user · useAuth › useState` |
+| a custom hook imported by a relative path          | the same breadcrumb, read from the module that declares the hook          |
+| a composite (`useTransition`, `useActionState`, …) | its first cell is named; its internal extra cells carry the hook alone    |
 
 The join is lockstep and checked: a table of how many cells each hook consumes
 (and with which kind tags) is walked against the component's live cells, and
@@ -142,9 +143,79 @@ name with the wrong cell. The pane then shows kind labels and says so:
 names unavailable (conditional hooks?)
 ```
 
-That is what you see for a conditionally-called hook, a custom hook imported from
-another module (there is no way to know how many cells an opaque hook took), or a
-chain of same-module custom hooks nested more than three deep.
+That is what you see for a conditionally-called hook, a chain of custom hooks
+nested more than three deep, or a custom hook whose declaring module registered no
+metadata — there is no way to know how many cells an unknown hook took, so every
+later name would be a guess.
+
+A custom hook does not have to live in the component's module. When a component
+calls a hook it bound through a **static relative import** — `import { useAuth }
+from "./auth"`, an aliased `{ useAuth as useA }`, or a default import — the
+metadata pass records the URL of the module the import names alongside the call
+(`HookDevMeta.from`, with the name that module exports the hook under), and the
+runtime expands the hook from _that_ module's metadata. It tries the URL as
+written, then the extensions and `index` files an extensionless import resolves
+to (`./auth` → `auth.tsx`, `auth.ts`, …; `./hooks` → `hooks/index.ts`). A
+default-imported hook breadcrumbs under its declared name (`useSession › user`),
+not `default`. A chain may cross modules and come back, under the same three-level
+cap, and each level resolves a same-module call in its own module. A module that
+declares only hooks (a `useCart.ts` with no component) still emits its metadata, so
+there is something to join against.
+
+Naming still stops at a hook imported by a bare specifier (a package, `npm:`,
+`jsr:`, or an import-map alias such as `@/lib/auth`), a URL, or through a namespace
+import (`import * as auth`, then `auth.useAuth()`), and at a hook re-exported
+through a barrel: `export { useAuth } from "./auth"` sends the lookup to the
+barrel, which declares nothing. An importee that has not registered yet — one
+behind a dynamic `import()` — is the same clean miss, never a wrong name.
+
+#### Debug values
+
+`useDebugValue` labels a custom hook's state for the inspector, the way React's
+does:
+
+```tsx
+import { useDebugValue, useState } from "denext";
+
+export function useOnline() {
+  const [online] = useState(true);
+  useDebugValue(online ? "Online" : "Offline");
+  return online;
+}
+```
+
+Every component that calls `useOnline()` then shows the label as a `debug` line
+under the hook row it follows:
+
+```text
+Hooks
+0 count · useState                          0
+1 useOnline › online · useOnline › useState true
+debug   "Online"
+2 label · useState                          "x"
+```
+
+- **It takes no hook cell.** The call is recorded on the rendering component,
+  outside its hook list, so adding or removing one never shifts hook state, never
+  trips the Fast Refresh signature check (an edit that adds a call keeps state),
+  and never throws hook naming off.
+- **`format` runs lazily.** In `useDebugValue(date, (d) => d.toISOString())` the
+  formatter is never called during render — the inspector applies it when it reads
+  the value, and one that throws reads `<format threw>`.
+- **The label rides the row of the cell before the call** — for the idiomatic
+  call at the end of a custom hook, that hook's last cell. A call before any cell
+  lands on the first row, a component with no hook cells has no row to carry one,
+  and several calls after the same cell read as an array (`[a, b]`).
+- **Dev-only.** Production and server rendering record nothing, and a call outside
+  a render is a silent no-op.
+
+The same label reaches the MCP snapshot and
+[`denext_hook_state`](#mcp-inspect-the-live-page), redacted like every hook value
+there — a string label travels as its length:
+
+```text
+[1] useOnline › online · useOnline › useState = true  debug=string(6)
+```
 
 ### Render modes
 
@@ -270,13 +341,25 @@ rather than something Chrome has already claimed.
 
 Fast Refresh already gives every component a stable family id
 (`<fileUrl>#<Export>`) — but that is a _name_, not a position. So the dev
-transforms record two more things while they are already parsing the module, and
-append them as a sidecar next to the refresh registration:
+transforms — the unbundled loop's per-module transform, and SPA dev's esbuild
+plugin, which instruments `.ts` hook modules as well as `.tsx`/`.jsx` — record
+more while they are already parsing the module, and append it as a sidecar next
+to the refresh registration:
 
 - the **line and column** each component (and each `use*` custom hook) is
   declared at — 1-based line, 1-based UTF-16 column, exact past multi-byte text,
   emoji, CRLF line endings and a directive/licence prologue;
-- the **binding** each hook call's result was given, in source order.
+- the **binding** each hook call's result was given, in source order — plus, for
+  a hook bound by a static relative import, the URL of the module that declares
+  it.
+
+A module of hooks alone gets the sidecar without any family registration. The
+bundled App Router dev path has no per-module transform, so its generated route
+entry carries the same records for the route-structural files — page, layouts,
+templates, `loading`, `error`, slot pages — keyed by the `<fileUrl>#default` id it
+registers them under (an anonymous `export default` included, its record named
+after the file stem). Each file's records are cached by mtime, so a rebuild
+re-parses only what changed.
 
 At runtime that lands in a dev-only registry the inspector joins against a live
 component type through its family id. Nothing else changes: `registerFamily` is
@@ -291,13 +374,14 @@ The pass is bounded and switchable:
   names);
 - a module the parser cannot handle is passed through unchanged.
 
-**Production bundles carry none of it.** The only emitters are the two dev
-transforms, so nothing in a production build references the metadata registry and
-the whole module — whose only module-level work is creating an empty `Map` — is
-tree-shaken away. Two tests hold that line: `tests/devtools-meta.test.ts` runs one
-module through the **production** plugin set and asserts no metadata call comes
-out, and `tests/spa-dev-integration.test.ts` greps a built entry for the dev-only
-symbols.
+**Production bundles carry none of it.** The only emitters are the dev transforms
+and the bundled dev route entry, so nothing in a production build references the
+metadata registry and the whole module — whose only module-level work is creating
+an empty `Map` — is tree-shaken away. Tests hold that line:
+`tests/devtools-meta.test.ts` runs one module through the **production** plugin
+set, and generates production route entries (even when one is handed a metadata
+footer), asserting no metadata call comes out; `tests/spa-dev-integration.test.ts`
+greps a built entry for the dev-only symbols.
 
 ## Stock React DevTools
 
@@ -320,11 +404,11 @@ settled commit the in-page sink serialises the component tree and POSTs it to th
 dev server, which keeps the latest snapshot per page URL. Three
 [MCP](/docs/mcp) tools read it back:
 
-| Tool                    | Answers                                                                                                               |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `denext_component_tree` | The live tree — every component with its source location, badges and render count (`filter`, `depth`, `maxNodes`)     |
-| `denext_why_render`     | Why a component last re-rendered: which props, hooks and contexts changed, and how many renders it has done           |
-| `denext_hook_state`     | A component's hook cells — each cell's name, the hook that produced it, its value and its deps (`index` for one cell) |
+| Tool                    | Answers                                                                                                                                          |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `denext_component_tree` | The live tree — every component with its source location, badges and render count (`filter`, `depth`, `maxNodes`)                                |
+| `denext_why_render`     | Why a component last re-rendered: which props, hooks and contexts changed, and how many renders it has done                                      |
+| `denext_hook_state`     | A component's hook cells — each cell's name, the hook that produced it, its value, its deps and any `useDebugValue` label (`index` for one cell) |
 
 All three take `url` (which page's tree, default: the most recent) and `dir` (the
 project directory) — the bridge always passes `url` when you name a page, which is
@@ -450,17 +534,26 @@ function and type is listed in the [API reference](/docs/api).
 - **The owner stack is the render-parent chain**, not React's JSX-owner chain.
   They coincide for the common case; a component passed as `children` through a
   wrapper is reported under the wrapper that rendered it.
-- **Custom hooks from another module are opaque.** Naming expands a `use*` hook
-  only when the same module declared it (three levels deep, breadcrumbed); an
-  imported one consumed an unknowable number of cells, so the component falls
-  back to kind labels.
+- **Cross-module hook naming follows static relative imports only.** A hook
+  imported by a bare, `npm:`/`jsr:`, URL or import-map-alias specifier, through a
+  namespace import, or re-exported through a barrel still consumed an unknowable
+  number of cells, so the component falls back to kind labels. The extension and
+  `index` lookups only append to the path as written, so `./auth.js` naming an
+  `auth.ts` file stops too. Expansion is capped at three levels, across modules
+  or within one.
 - **A conditional hook drops naming for that component** — the metadata and the
   live cells stop lining up, and the panel prefers kind labels over a wrong name.
-- **The bundled App Router dev path names less.** `DENEXT_DEV_UNBUNDLED=0` has no
-  per-module transform, so only route-structural modules (page, layouts,
-  templates, `loading`, `error`, slots) carry a source at all — without a line or
-  column — and no component gets hook names. The unbundled dev loop is the
-  default, so this affects an explicitly opted-out session only.
+- **The bundled App Router dev path names route files only.** With
+  `DENEXT_DEV_UNBUNDLED=0` (and for a route with an `.mdx`/`.md` page or layout,
+  which always takes that path) the route entry carries line, column and hook
+  names for the route-structural components — page, layouts, templates,
+  `loading`, `error`, slot pages — but not for the components those files render,
+  nor for a custom hook they import from another file: nothing instruments those
+  modules there. The bundled Flight entry (`"use client"` islands) carries none.
+  The unbundled dev loop, the default, covers every module.
+- **A `useDebugValue` label rides the row of the cell before the call.** It takes
+  no cell of its own, so a component with no hook cells shows none, and a call
+  placed between two hooks reads under the earlier one.
 - **Network, Cache, Routes and the MCP bridge need the App Router dev server.**
   SPA dev serves no `/_denext/*` endpoints: those tabs render
   `… is not available in SPA dev (App Router only)`, and the Source row falls
