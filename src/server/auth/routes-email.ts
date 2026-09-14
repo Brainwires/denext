@@ -19,9 +19,9 @@
  *   token (Auth.js parity: a mail gateway that pre-fetches links can spend one).
  *
  * A redeemed token proves the mailbox: an existing user's unset `emailVerified` is set
- * (firing `emailVerified`) — but first everything that authenticated that unverified
- * account without the proof (its password, bearer tokens and server-side sessions) is
- * retired, the pre-account-hijacking defence (`evictUnprovenAccess`); an unknown address becomes a new, already-verified user when
+ * (firing `emailVerified`) — but first everything set up on that unverified account
+ * without the proof (its password, second factor, bearer tokens and server-side sessions)
+ * is retired, the pre-account-hijacking defence (`evictUnprovenAccess`); an unknown address becomes a new, already-verified user when
  * the provider allows sign-up (firing `createUser` — no account row is linked: as in
  * Auth.js, the address on the user record is the identity). `callbacks.signIn` may then
  * veto it (`?error=AccessDenied`), and the one sign-in tail
@@ -44,6 +44,7 @@ import {
   tokenLink,
 } from "./email.ts";
 import { emitAuthEvent } from "./events.ts";
+import { disableTotp } from "./mfa.ts";
 import { randomToken } from "./oauth.ts";
 import type { ResolvedAuthOptions } from "./options.ts";
 import {
@@ -78,13 +79,13 @@ const MAX_BODY_BYTES = 8 * 1024;
 
 /**
  * The adapter surface an email sign-in needs — the email-flow group plus `createUser` —
- * and, where the adapter has them, the credentials + API-token methods a first
+ * and, where the adapter has them, the credentials, MFA and API-token methods a first
  * verification retires.
  */
 type EmailSignInAdapter =
   & EmailFlowAdapter
   & Pick<AuthAdapter, "createUser">
-  & Partial<Pick<AuthAdapter, "getCredential" | "listApiTokens" | "revokeApiToken">>;
+  & Partial<Pick<AuthAdapter, "getCredential" | "getMfa" | "listApiTokens" | "revokeApiToken">>;
 
 /** What a redeem is handed, from a body or the link's query. */
 interface RedeemInput {
@@ -350,6 +351,24 @@ async function retirePassword(
   await adapter.setCredential(userId, await options.hasher.hash(randomToken(32)));
 }
 
+/**
+ * Drop the second factor of an account whose address was never verified. A TOTP secret
+ * (and its backup codes) enrolled before the mailbox was proven belongs to whoever set it
+ * up — possibly an attacker, who would then hold the second factor of the victim's
+ * account, or lock the victim out of it. The adapter's MFA group has no delete, so this is
+ * {@link disableTotp}: the empty, unconfirmed record every MFA check reads as "not
+ * enrolled". An adapter that can read an MFA record but lacks the rest of the group makes
+ * `disableTotp` throw, which fails the redeem closed.
+ */
+async function retireSecondFactor(
+  ctx: AuthRouteContext,
+  adapter: EmailSignInAdapter,
+  userId: string,
+): Promise<void> {
+  if (!(await adapter.getMfa?.(userId))) return;
+  await disableTotp(ctx.config, userId);
+}
+
 /** Revoke every live bearer API token of `userId` (a no-op without the api-token group). */
 async function revokeApiTokens(adapter: EmailSignInAdapter, userId: string): Promise<void> {
   if (!adapter.listApiTokens || !adapter.revokeApiToken) return;
@@ -361,10 +380,11 @@ async function revokeApiTokens(adapter: EmailSignInAdapter, userId: string): Pro
  * unset was set up by someone who never proved the mailbox — possibly an attacker who
  * registered the victim's address with a password and is waiting for the victim's first
  * email sign-in to make the account the victim's while that password (and any session or
- * bearer token it earned) still works. So before a redeem marks the address verified,
- * everything that authenticated the account without that proof is retired: the password
- * (`retirePassword`), every bearer API token, and every server-side session
- * (`sessionRevoked`). A stateless cookie session can't be revoked — it lives until it
+ * bearer token it earned, or TOTP factor it enrolled) still works. So before a redeem
+ * marks the address verified, everything set up on the account without that proof is
+ * retired — nothing set before the proof of ownership survives it: the password
+ * (`retirePassword`), the second factor (`retireSecondFactor`), every bearer API token,
+ * and every server-side session (`sessionRevoked`). A stateless cookie session can't be revoked — it lives until it
  * expires, which is warned once. A throw leaves the address unverified: fail closed.
  */
 async function evictUnprovenAccess(
@@ -373,6 +393,7 @@ async function evictUnprovenAccess(
   userId: string,
 ): Promise<void> {
   await retirePassword(ctx.options, adapter, userId);
+  await retireSecondFactor(ctx, adapter, userId);
   await revokeApiTokens(adapter, userId);
   await revokeUserSessions(ctx.config, ctx.options, userId);
 }

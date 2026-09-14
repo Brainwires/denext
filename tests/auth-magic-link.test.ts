@@ -19,6 +19,9 @@ import { handleCredentials } from "../src/server/auth/routes-credentials.ts";
 import type { AuthRouteContext } from "../src/server/auth/routes-shared.ts";
 import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
 import { sha256Hex } from "../src/server/auth/hash.ts";
+import { generateBackupCodes } from "../src/server/auth/backup-codes.ts";
+import { enrollTotp, mfaStatus, verifySecondFactor } from "../src/server/auth/mfa.ts";
+import { generateTotpSecret } from "../src/server/auth/totp.ts";
 import {
   credentials,
   emailOtp,
@@ -623,4 +626,59 @@ Deno.test("an adapter that can read a password but not replace it fails the firs
   assertEquals((await h.adapter.getUser(user.id))?.emailVerified, undefined, "still unverified");
   assertEquals(h.events, ["signInFailed:adapter_error"]);
   assertEquals(errors.length, 1);
+});
+
+Deno.test("pre-account hijacking: a TOTP factor enrolled on the unverified account is dropped — the victim signs in with no MFA step", async () => {
+  const h = setup(magicLink());
+  const id = await withPassword(h, "victim@x.test", ATTACKER_PASSWORD);
+  // The attacker enrols a factor, then confirms it (written directly: no TOTP clock here).
+  const enrolment = await enrollTotp(h.config, { id, email: "victim@x.test" });
+  assert(enrolment, "the unverified account accepted an enrolment");
+  const { codes, hashes } = await generateBackupCodes(resolveAuthOptions(h.config).hasher, 2);
+  await h.adapter.setMfa!({
+    secret: enrolment.secret,
+    userId: id,
+    backupCodeHashes: hashes,
+    confirmedAt: 1,
+  });
+  assertEquals(
+    await verifySecondFactor(h.config, id, codes[0]),
+    "bcp",
+    "the factor works, unproven",
+  );
+
+  await send(h, "victim@x.test");
+  const victim = await click(h);
+  assertEquals(location(victim.res).pathname, "/home", "no MFA step: straight to afterSignIn");
+  const session = await sessionOf(h, victim.ctx);
+  assertEquals([session?.user.id, session?.mfaPending], [id, undefined]);
+  assertEquals(await h.adapter.getMfa!(id), { userId: id, secret: "", backupCodeHashes: [] });
+  assertEquals(await mfaStatus(h.config, id), {
+    enrolled: false,
+    confirmed: false,
+    backupCodesRemaining: 0,
+  }, "the attacker's TOTP secret no longer verifies anything");
+  assertEquals(
+    await verifySecondFactor(h.config, id, codes[1]),
+    null,
+    "nor its unspent backup code",
+  );
+  assertEquals(h.events, ["emailVerified", "signIn"]);
+});
+
+Deno.test("an already-verified account keeps its TOTP factor through an email sign-in — the step-up still applies", async () => {
+  const h = setup(emailOtp());
+  const id = await withPassword(h, "owner@x.test", OWNER_PASSWORD, 1);
+  const factor = {
+    backupCodeHashes: ["kept"],
+    confirmedAt: 7,
+    secret: generateTotpSecret(),
+    userId: id,
+  };
+  await h.adapter.setMfa!(factor);
+  await send(h, "owner@x.test");
+  const coded = await submitCode(h, "owner@x.test", h.sent[0].token);
+  assertEquals(await coded.res.json(), { ok: true, mfa: "required" });
+  assertEquals(await h.adapter.getMfa!(id), factor, "the owner's own factor is untouched");
+  assert(!h.events.includes("emailVerified"));
 });
