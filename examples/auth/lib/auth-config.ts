@@ -1,28 +1,23 @@
-// The denextAuth configuration: a Credentials provider backed by scrypt password
-// hashes, brute-force protection on the login endpoint, and the opt-in sqlite session
-// store that makes sessions revocable ("sign out everywhere"). An OIDC provider is
-// sketched below — fill in the issuer + client credentials to enable it.
+// The denextAuth configuration, in one object:
+//
+//   adapter    where users, linked accounts, password hashes and API tokens are persisted
+//   session    database-backed (revocable) sessions + a sliding expiry
+//   providers  email/password, plus a corporate OIDC provider when the env says so
+//   rateLimit  brute-force protection on the login endpoint
+//   events     the audit trail (lib/audit.ts), and `logger` for what auth would swallow
+//
+// `denext.config.ts` hands this object to `denextAuth()`, which mounts `/auth/*`; the app
+// imports the same object wherever it mints or revokes an API token.
 
 import {
   type AuthConfig,
+  type AuthProvider,
+  type AuthUser,
   credentials,
-  // oidc,
-  sqliteSessionStore,
-  verifyPassword,
+  oidc,
 } from "denext/server";
-import { findUserByEmail, type UserRow } from "./db.ts";
-
-const memory = Deno.env.get("AUTH_DB") === ":memory:";
-
-/** The stored hash for a row that may not exist — "" makes verifyPassword return false. */
-const storedHash = (row: UserRow | undefined): string => row?.password_hash ?? "";
-
-/** The non-sensitive identity denext keeps in the session. */
-const authUser = (row: UserRow) => ({
-  id: String(row.id),
-  email: row.email,
-  name: row.name,
-});
+import { authEvents, authLogger } from "./audit.ts";
+import { adapter, checkPassword, CREDENTIALS, findUser } from "./users.ts";
 
 export const authConfig: AuthConfig = {
   // A long random secret from the environment (`openssl rand -base64 32`); the public
@@ -37,34 +32,61 @@ export const authConfig: AuthConfig = {
   // 5 failed attempts per client IP + email per 15 minutes → a generic 429.
   rateLimit: { max: 5, windowMs: 15 * 60_000 },
 
-  // Opt-in revocable sessions: the cookie carries only a random id; the payload lives in
-  // this sqlite file, so `revokeSession` / `revokeAllSessions` end sessions at once.
-  // (Omit `sessionStore` for the default stateless signed cookie.)
-  sessionStore: sqliteSessionStore({
-    path: memory ? ":memory:" : "sessions.db",
-  }),
+  // Everything durable lives in one sqlite file (see lib/users.ts). Passing an adapter does
+  // NOT make sessions stateful by itself — that is the `session` block below.
+  adapter,
+
+  // Revocable sessions: the cookie carries only a random id and the payload lives in the
+  // adapter's `sessions` table, so `revokeSession` / `revokeAllSessions` end sessions at
+  // once. `updateAge` slides an active session's expiry forward at most hourly (on the
+  // paths that own their response: GET /auth/session, requireAuth, requireSession), so a
+  // user who keeps working is never logged out mid-session while an idle one still expires.
+  session: { strategy: "database", updateAge: 60 * 60 },
+
+  events: authEvents,
+  logger: authLogger,
 
   providers: [
     credentials({
       // Never reveal whether the account exists: an unknown email and a wrong password
       // take the same path (verifyPassword runs either way and returns false on "").
-      authorize: async ({ email = "", password = "" }) => {
-        const row = findUserByEmail(email.trim().toLowerCase());
-        const ok = await verifyPassword(password, storedHash(row));
-        return ok ? authUser(row!) : null;
-      },
+      authorize: ({ email = "", password = "" }) => sessionUser(email, password),
     }),
-    // oidc({
-    //   id: "corp",
-    //   issuer: "https://login.example.com",
-    //   authorizationUrl: "https://login.example.com/oauth2/authorize",
-    //   tokenUrl: "https://login.example.com/oauth2/token",
-    //   jwksUrl: "https://login.example.com/.well-known/jwks.json",
-    //   clientId: Deno.env.get("OIDC_CLIENT_ID")!,
-    //   clientSecret: Deno.env.get("OIDC_CLIENT_SECRET")!,
-    // }),
+    ...corporateOidc(),
   ],
 };
+
+/** The session user for a submitted email + password, or `null` to refuse. */
+async function sessionUser(email: string, password: string): Promise<AuthUser | null> {
+  const user = await findUser(email);
+  const ok = await checkPassword(user, password);
+  if (!ok || !user) return null;
+  // The id is the ADAPTER's, matching the `credentials` account row registration linked —
+  // so the sign-in resolves by account and the session carries the stored roles.
+  return { id: user.id, email: user.email, name: user.name, roles: user.roles };
+}
+
+/**
+ * The corporate OIDC provider — present only when the three `OIDC_*` variables are set, so
+ * the example runs with no configuration at all.
+ *
+ * The issuer alone is enough: denext reads the authorization/token/JWKS endpoints from
+ * `<issuer>/.well-known/openid-configuration` (OIDC discovery), pins the request to the
+ * issuer's host, refuses a document that names a different issuer, and caches the JWKS.
+ *
+ * @returns The provider list to spread into `providers` — one provider, or none.
+ */
+function corporateOidc(): AuthProvider[] {
+  const issuer = Deno.env.get("OIDC_ISSUER");
+  const clientId = Deno.env.get("OIDC_CLIENT_ID");
+  const clientSecret = Deno.env.get("OIDC_CLIENT_SECRET");
+  if (!issuer || !clientId || !clientSecret) return [];
+  // Sign-in starts at /auth/signin/corp and returns to /auth/callback/corp. With the
+  // adapter configured, a first corporate login creates the user and links the account —
+  // unless the address already belongs to a password account whose email nobody verified,
+  // which denext refuses (`account_not_linked`) rather than hand the account over.
+  return [oidc({ id: "corp", issuer, clientId, clientSecret })];
+}
 
 /** `AUTH_SECRET`, or the demo's public fallback — never the fallback in production. */
 function authSecret(): string {
@@ -74,4 +96,9 @@ function authSecret(): string {
     Deno.env.get("DENEXT_ENV") === "production";
   if (prod) throw new Error("AUTH_SECRET must be set in production (openssl rand -base64 32)");
   return "dev-only-secret-change-me-before-deploying-1";
+}
+
+/** The OAuth/OIDC providers a sign-in page should offer buttons for (never Credentials). */
+export function oauthProviders(): AuthProvider[] {
+  return authConfig.providers.filter((provider) => provider.id !== CREDENTIALS);
 }

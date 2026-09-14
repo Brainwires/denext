@@ -6,6 +6,9 @@ import type { I18nConfig } from "./i18n.ts";
 import type { DenextPlugin } from "../plugin/mod.ts";
 import type { CspSetting } from "./segment-config.ts";
 import type { CacheStore } from "./cache.ts";
+// Type-only (erased at runtime) — `src/cli/command.ts` is a dependency-free leaf whose
+// only import is a pure util, so naming it here adds no runtime edge and no cycle.
+import type { CommandContext, FlagSpec, PositionalSpec } from "../cli/command.ts";
 
 /** A URL-path redirect rule (`source` → `destination`). */
 export interface RedirectRule {
@@ -151,6 +154,8 @@ export interface ImagesConfig {
   /**
    * Minimum seconds to cache an optimized image (`Cache-Control: max-age`). Mirrors
    * Next.js `images.minimumCacheTTL`. Defaults to `14400` (4 hours).
+   *
+   * @minimum 0
    */
   minimumCacheTTL?: number;
   /**
@@ -163,6 +168,8 @@ export interface ImagesConfig {
   /**
    * Max redirect hops to follow for a remote source, each re-validated (matches
    * Next.js `images.maximumRedirects`). Defaults to `3`; `0` disables redirects.
+   *
+   * @minimum 0
    */
   maximumRedirects?: number;
   /**
@@ -304,9 +311,17 @@ export interface CacheConfig {
   store?: "sqlite" | "memory" | CacheStore;
   /** SQLite store file path (default `.denext/cache.db`). */
   path?: string;
-  /** Max rows in the durable data cache before FIFO eviction (default 1000). */
+  /**
+   * Max rows in the durable data cache before FIFO eviction (default 1000).
+   *
+   * @minimum 1
+   */
   maxDataEntries?: number;
-  /** Max rows in the durable page (ISR) cache before FIFO eviction (default 1000). */
+  /**
+   * Max rows in the durable page (ISR) cache before FIFO eviction (default 1000).
+   *
+   * @minimum 1
+   */
   maxPageEntries?: number;
 }
 
@@ -314,16 +329,73 @@ export interface CacheConfig {
 export interface ApiBatchConfig {
   /** Serve the endpoint at all (default true; `false` → 404). */
   enabled?: boolean;
-  /** Max items per batch (default 20, at most 100). */
+  /**
+   * Max items per batch (default 20, at most 100).
+   *
+   * @minimum 1
+   * @maximum 100
+   */
   maxItems?: number;
-  /** Max batch request body in bytes (default 1 MiB). */
+  /**
+   * Max batch request body in bytes (default 1 MiB).
+   *
+   * @minimum 1
+   */
   maxBodyBytes?: number;
-  /** Items run concurrently per batch (default 4). */
+  /**
+   * Items run concurrently per batch (default 4).
+   *
+   * @minimum 1
+   * @maximum 64
+   */
   concurrency?: number;
-  /** Max bytes of one item's response body carried back (default 4 MiB; over → a 500 item). */
+  /**
+   * Max bytes of one item's response body carried back (default 4 MiB; over → a 500 item).
+   *
+   * @minimum 1
+   */
   maxItemResponseBytes?: number;
-  /** Max bytes of ALL items' response bodies together (default 16 MiB; over → the rest are 500 items). */
+  /**
+   * Max bytes of ALL items' response bodies together (default 16 MiB; over → the rest are
+   * 500 items).
+   *
+   * @minimum 1
+   */
   maxTotalResponseBytes?: number;
+}
+
+/**
+ * A project-local CLI verb declared in `denext.config.ts` under
+ * {@link DenextConfig.commands} — the zero-ceremony half of denext's CLI extension
+ * story: no plugin, no `setup`, just an object. It is structurally a CLI
+ * `CommandSpec`, so the same parser, `--help` renderer, and dispatcher run it, and a
+ * verb that outgrows the config can move into a plugin's `addCommand` unchanged.
+ *
+ * ```ts
+ * // denext.config.ts
+ * export default {
+ *   commands: [{
+ *     name: "seed",
+ *     summary: "Load fixture data into the dev database",
+ *     flags: [{ name: "rows", type: "number", default: 100, help: "How many rows" }],
+ *     run: async (ctx) => { await seed(Number(ctx.flags.rows)); },
+ *   }],
+ * };
+ * ```
+ */
+export interface DenextCommand {
+  /** The verb, e.g. `"seed"` for `denext seed`. Lowercase; `[a-z][a-z0-9-]*`. */
+  name: string;
+  /** One-line summary shown by `denext commands` under "Project commands". */
+  summary: string;
+  /** Optional multi-line detail shown by `denext <name> --help`. */
+  usage?: string;
+  /** Declarative flags (parsed, defaulted, and documented like a built-in verb's). */
+  flags?: FlagSpec[];
+  /** Declarative positionals (for help/usage; parsing collects all positionals). */
+  positionals?: PositionalSpec[];
+  /** The implementation, handed the parsed invocation. */
+  run(ctx: CommandContext): void | Promise<void>;
 }
 
 /** Project configuration exported from `denext.config.{ts,js}` (as `default` or named). */
@@ -461,6 +533,8 @@ export interface DenextConfig {
    * The request-body cap for route handlers (`route.ts`), in bytes — default 1 MiB. A route
    * raises or lifts its own with `export const maxBodyBytes = N | false`; a `defineApi`
    * endpoint with `maxBodyBytes` in its definition overrides both. Over the cap → 413.
+   *
+   * @minimum 1
    */
   apiMaxBodyBytes?: number;
   /**
@@ -534,11 +608,29 @@ export interface DenextConfig {
    * {@linkcode DenextPlugin}. Apps with no plugins pay nothing.
    */
   plugins?: DenextPlugin[];
+  /**
+   * Project-local CLI verbs: `denext <name>` runs the entry's `run`, with the same
+   * flag parsing, `--help` rendering, and "did you mean" suggestions a built-in verb
+   * gets. The shorthand for a one-off project script — a plugin (`addCommand`) is
+   * only needed when the verb ships as a reusable package.
+   *
+   * They are listed under "Project commands" by `denext commands` and included in
+   * `denext completions <shell>` (`denext --help` deliberately imports nothing and
+   * points at `denext commands`). A **built-in verb always wins a name collision**:
+   * an entry named `dev` or `build` is ignored, never shadowing the core verb.
+   * Loading them costs one config read, paid only when the CLI must enumerate every
+   * verb (`commands`, `completions`) or hits a verb it doesn't recognize.
+   */
+  commands?: DenextCommand[];
 }
 
 /** `Strict-Transport-Security` (HSTS) header options. */
 export interface HstsConfig {
-  /** `max-age` in seconds (how long browsers pin HTTPS). Default `31536000` (1 year). */
+  /**
+   * `max-age` in seconds (how long browsers pin HTTPS). Default `31536000` (1 year).
+   *
+   * @minimum 0
+   */
   maxAge?: number;
   /** Add `includeSubDomains` (applies HSTS to every subdomain — enable only when all are HTTPS). */
   includeSubDomains?: boolean;

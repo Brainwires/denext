@@ -160,12 +160,13 @@ ctx.addTeardown(() => watcher.close());
 ### Seam 5 — contribute a CLI verb
 
 `ctx.addCommand(spec)` registers a first-class `denext` subcommand, so a plugin can
-extend the CLI — not just the request/route/build seams. `spec` is a `CommandSpec`
-(from `@denext/denext/cli/command`): a `name`, one-line `summary`, an optional
-declarative `flags`/`positionals` schema, and a `run(ctx)`. The verb is discovered
-**lazily** — only when the CLI hits an unknown verb in a project whose config lists
-your plugin — and a built-in verb of the same name always wins (core can't be
-shadowed).
+extend the CLI — not just the request/route/build seams. `spec` is a `CommandSpec` (from
+`@denext/denext/cli/command`) — the same shape a config `commands:` entry takes:
+`{ name, summary, usage?, flags?, positionals?, run }`. Each declared flag carries
+`{ name, type, help }` (plus optional `alias`, `default`, `valueName`); each positional
+`{ name, help }` (plus optional `required`, `variadic`). A built-in verb of the same name
+always wins (core can't be shadowed). See [Project commands](#project-commands) below for
+how the verb is discovered and listed.
 
 ```ts
 import type { CommandSpec } from "@denext/denext/cli/command";
@@ -178,6 +179,67 @@ const greet: CommandSpec = {
 ctx.addCommand(greet);
 // In a project with this plugin: `denext greet denext` → "hello, denext"
 ```
+
+## Project commands
+
+A project can add its own `denext` verbs **two** ways, and they behave identically once
+registered. A plugin uses the `addCommand(spec)` seam above; a project that just wants a
+verb skips the plugin entirely and puts a `commands:` array in `denext.config.ts` — the
+same `{ name, summary, usage?, flags?, positionals?, run }` shape, with no `setup` and
+nothing to install. That entry's type is `DenextCommand` (exported from `denext/server`),
+which is structurally the `CommandSpec` a plugin registers:
+
+```ts
+// denext.config.ts
+export default {
+  commands: [
+    {
+      name: "seed",
+      summary: "Load development fixtures",
+      flags: [
+        { name: "count", type: "number", default: 10, valueName: "<n>", help: "How many rows" },
+      ],
+      run: async (ctx) => await seed(ctx.flags.count as number),
+    },
+  ],
+};
+// `denext seed --count 50`
+```
+
+`help` is **required** on a flag — it is what `denext seed --help` prints, and a verb with
+undocumented flags is a verb nobody can use.
+
+Either way the verb gets the framework's own flag parsing, `--help`, and "did you mean"
+suggestions — there is no second CLI to learn.
+
+### How they are discovered
+
+Listing a project's verbs means importing its `denext.config.ts` and running every plugin
+`setup()` — arbitrary user code, under whatever permissions the CLI holds. Exactly one verb
+does that:
+
+```sh
+denext commands            # core verbs + this project's own, with flags and origins
+denext commands --json     # { core, project, timedOut, error? } for a tool
+```
+
+`denext commands` imports the config, discovers, prints, and **always exits** — a plugin
+`setup()` that leaves a timer or a watcher open can neither delay the listing nor keep the
+process alive. Discovery runs under a **1.5 s budget** (`--timeout <ms>` to change it); a
+budget that elapses or a config that cannot be read degrades to a printed notice and
+`timedOut` / `error` in the JSON, never a hang and never a non-zero exit.
+
+`denext --help` deliberately does **not** enumerate them: help must not evaluate your
+project. Inside a project it prints a single line pointing at `denext commands` (and noting
+that the verbs are in shell completions too), and stops.
+`denext completions bash|zsh|fish` still merges them in under the same budget (a shell can
+only complete a name it was handed) and then exits for the same reason. The
+`denext ui` Commands panel shells out to `denext commands --json` rather than importing
+anything itself.
+
+A built-in verb always wins a name collision, in both directions: you can't shadow
+`denext build`, and a future denext release that adds a verb can't be broken by a project
+that already used the name — the project's verb simply stops being reachable.
 
 ## Rendering
 
@@ -282,6 +344,14 @@ serves them, and the plugin writes no render path of its own. Proof the synthesi
 scales to a full framework router, not just aliasing.
 
 ## Complete examples
+
+The **first-party catalog itself is generated**, not hand-maintained here: every
+`@denext/*` package, its current version and `jsr:` range, whether it is a plugin or a
+plain library, its factory export, the CLI verb it contributes and its option keys are
+emitted to `src/plugin/catalog.json` from the packages' own `deno.json` + README
+(`deno task gen:plugin-catalog`; a drift test fails if it goes stale). `denext migrate`
+takes its plugin pins from it. The walk-throughs below are the ones worth **reading as
+models** of a seam — not the full list.
 
 - **[`examples/plugin-aliases`](https://github.com/Brainwires/denext/tree/main/examples/plugin-aliases)** — a ~40-line plugin using
   the **route-synthesizer** + **teardown** seams (path aliases). The smallest end-to-end

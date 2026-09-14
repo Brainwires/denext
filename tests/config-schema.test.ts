@@ -4,6 +4,7 @@
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import {
+  constraints,
   description,
   type DocType,
   generate,
@@ -44,7 +45,35 @@ Deno.test("the committed schema mirrors the runtime validator's contract", async
   assertEquals(schema.properties.publicEnv.type, "array");
   assertEquals(schema.properties.publicEnv.items, { type: "string" });
   assertEquals(schema.properties.spa.required, ["entry"]);
-  assert(!("type" in schema.properties.redirects), "a function field carries no JSON type");
+  // A thunk returning a rule array is described as THAT array, marked as function-wrapped
+  // so a config writer knows the literal belongs inside `() => [...]`.
+  assertEquals(schema.properties.redirects.type, "array");
+  assertEquals(Object.keys(schema.properties.redirects.items.properties), [
+    "source",
+    "destination",
+    "permanent",
+  ]);
+  assertEquals(schema.properties.redirects.items.properties.permanent.type, "boolean");
+  assertEquals(schema.properties.redirects["x-denext"].wrapper, "function");
+  // An array of literals keeps its allowed values (a multi-select, not a free-text list).
+  assertEquals(schema.properties.images.properties.formats, {
+    description: schema.properties.images.properties.formats.description,
+    type: "array",
+    items: { enum: ["image/webp", "image/avif"] },
+  });
+  // A `Record<K, V>` is an open object with one value schema — key/value rows, not fields.
+  assertEquals(schema.properties.experimental.properties.features.type, "object");
+  assertEquals(schema.properties.experimental.properties.features.additionalProperties, {
+    type: "boolean",
+  });
+  assertEquals(schema.properties.experimental.properties.features["x-denext"].widget, "map");
+  // A bound reaches the schema only from an explicit JSDoc tag backing a validator rule.
+  assertEquals(schema.properties.apiBatch.properties.maxItems.minimum, 1);
+  assertEquals(schema.properties.apiBatch.properties.maxItems.maximum, 100);
+  assertEquals(schema.properties.basePath.minimum, undefined);
+  // A handler function has no serialisable shape: description only, never a claimed type.
+  const run = schema.properties.commands.items.properties.run;
+  assertEquals(Object.keys(run), ["description"], "`commands[].run` stays unconstrained");
   // Every field carries its JSDoc (doc-lint guarantees the source has one) — honest copies.
   for (const [key, prop] of Object.entries<{ description?: string }>(schema.properties)) {
     assert(prop.description && prop.description.length > 0, `\`${key}\` has no description`);
@@ -90,6 +119,96 @@ Deno.test("tsTypeToSchema maps deno doc type nodes (unit)", () => {
     {},
   );
   assertEquals(tsTypeToSchema({ kind: "conditional" }, ctx), {});
+});
+
+Deno.test("tsTypeToSchema describes thunks, standard generics and maps (unit)", () => {
+  const ctx = { table: new Map(), stack: [] };
+  const kw = (v: string): DocType => ({ kind: "keyword", value: v });
+  const generic = (typeName: string, ...typeParams: DocType[]): DocType => ({
+    kind: "typeRef",
+    value: { typeName, typeParams },
+  });
+  const fn = (tsType?: DocType): DocType => ({ kind: "fnOrConstructor", value: { tsType } });
+  const array = (el: DocType): DocType => ({ kind: "array", value: el });
+
+  // A thunk is described by what it RETURNS, through `Promise` and through a union.
+  assertEquals(tsTypeToSchema(fn(generic("Promise", array(kw("string")))), ctx), {
+    type: "array",
+    items: { type: "string" },
+    "x-denext": { wrapper: "function" },
+  });
+  assertEquals(
+    tsTypeToSchema(
+      fn({ kind: "union", value: [array(kw("number")), generic("Promise", kw("void"))] }),
+      ctx,
+    ),
+    { type: "array", items: { type: "number" }, "x-denext": { wrapper: "function" } },
+  );
+  // Anything else a function may return has no serialisable shape.
+  assertEquals(tsTypeToSchema(fn(kw("void")), ctx), {});
+  assertEquals(tsTypeToSchema(fn(generic("Promise", kw("void"))), ctx), {});
+  assertEquals(tsTypeToSchema(fn(), ctx), {});
+
+  // Standard generics: array-ish expand, wrappers unwrap, `Partial` drops `required`.
+  const arrayOfString = { type: "array", items: { type: "string" } };
+  assertEquals(tsTypeToSchema(generic("Array", kw("string")), ctx), arrayOfString);
+  assertEquals(tsTypeToSchema(generic("ReadonlyArray", kw("string")), ctx), arrayOfString);
+  assertEquals(tsTypeToSchema(generic("Array"), ctx), { type: "array" });
+  assertEquals(tsTypeToSchema(generic("Promise", kw("boolean")), ctx), { type: "boolean" });
+  const literal = (name: string): DocType => ({
+    kind: "typeLiteral",
+    value: { properties: [{ name, tsType: kw("string") }] },
+  });
+  assertEquals(tsTypeToSchema(generic("Readonly", literal("a")), ctx), {
+    type: "object",
+    properties: { a: { type: "string" } },
+    required: ["a"],
+  });
+  assertEquals(tsTypeToSchema(generic("Partial", literal("a")), ctx), {
+    type: "object",
+    properties: { a: { type: "string" } },
+  });
+
+  // Maps: `Record`, a mapped type and an index signature all describe one value schema.
+  const boolMap = {
+    type: "object",
+    additionalProperties: { type: "boolean" },
+    "x-denext": { widget: "map" },
+  };
+  assertEquals(tsTypeToSchema(generic("Record", kw("string"), kw("boolean")), ctx), boolMap);
+  assertEquals(
+    tsTypeToSchema({ kind: "mapped", value: { tsType: kw("boolean") } }, ctx),
+    boolMap,
+  );
+  assertEquals(
+    tsTypeToSchema(
+      { kind: "typeLiteral", value: { indexSignatures: [{ tsType: kw("boolean") }] } },
+      ctx,
+    ),
+    boolMap,
+  );
+  // An opaque value type still marks the map — it just claims nothing about the values.
+  assertEquals(tsTypeToSchema(generic("Record", kw("string"), kw("unknown")), ctx), {
+    type: "object",
+    additionalProperties: {},
+    "x-denext": { widget: "map" },
+  });
+});
+
+Deno.test("constraints reads only the explicit @default/@minimum/@maximum tags", () => {
+  assertEquals(constraints(undefined), {});
+  assertEquals(constraints([{ kind: "unsupported", value: "@minimum 1" }]), { minimum: 1 });
+  assertEquals(
+    constraints([
+      { kind: "unsupported", value: "@default 3" },
+      { kind: "unsupported", value: "@maximum 100" },
+    ]),
+    { default: 3, maximum: 100 },
+  );
+  // A prose body claims nothing, and an unrelated tag is never a schema keyword.
+  assertEquals(constraints([{ kind: "unsupported", value: "@default the request origin" }]), {});
+  assertEquals(constraints([{ kind: "unsupported", value: "@deprecated use `cache`" }]), {});
+  assertEquals(constraints([{ kind: "param" }]), {});
 });
 
 Deno.test("local interface/alias references expand (with a cycle guard)", () => {

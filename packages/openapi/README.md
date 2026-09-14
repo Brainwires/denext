@@ -103,20 +103,34 @@ openapi({
 });
 ```
 
-**Let the middleware document it (recommended)** — tag your auth middleware with
-`documentsSecurity`, and every endpoint that applies it is marked secured automatically. One
-declaration both **enforces** (the middleware) and **documents** (the tag); nothing is repeated
-and the two can't drift:
+**Let the middleware document it (recommended)** — every endpoint that applies a documenting
+middleware is marked secured automatically. One declaration both **enforces** (the middleware) and
+**documents** (the tag); nothing is repeated and the two can't drift.
+
+denext's own bearer middleware, `requireBearer(authConfig)`, is already tagged with
+`[{ bearerAuth: [] }]`, so applying it is all it takes:
+
+```ts
+import { createApi, requireBearer } from "@denext/denext/server";
+import { authConfig } from "./auth.ts"; // the config you pass to denextAuth()
+
+const authed = createApi().use(requireBearer(authConfig, { scope: "pets:write" }));
+
+export const GET = defineApi({ summary: "List" }, list); //  no middleware → public
+export const POST = authed.define({ summary: "Create" }, create); // enforced AND marked secured
+```
+
+It verifies `Authorization: Bearer tok_…` against the tokens `issueApiToken` minted (hashed, in
+your `AuthAdapter`), answers an identical 401 for absent/unknown/expired/revoked tokens and a 403
+when the `scope`/`role` is missing, and hands the handler `ctx.token` / `ctx.user` / `ctx.session`.
+
+For your own middleware — a different scheme, an API key, an mTLS header — tag it yourself with
+`documentsSecurity`:
 
 ```ts
 import { createApi, documentsSecurity } from "@denext/denext/server";
 
-const authed = createApi().use(
-  documentsSecurity(requireBearer(), [{ bearerAuth: [] }]),
-);
-
-export const GET = defineApi({ summary: "List" }, list); //  no middleware → public
-export const POST = authed.define({ summary: "Create" }, create); // enforced AND marked secured
+const keyed = createApi().use(documentsSecurity(requireApiKey(), [{ apiKey: [] }]));
 ```
 
 A chain is the cartesian product of its middlewares' requirements (`(A | B)` then `C` documents

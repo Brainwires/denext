@@ -6,9 +6,11 @@ import type {
   InspectNode,
   InspectProp,
   SerializedValue,
+  SourceLocation,
   ValueRef,
 } from "../devtools-inspect.ts";
 import type { PanelCtx } from "./ctx.ts";
+import { openInEditor } from "./dev-api.ts";
 import { el } from "./styles.ts";
 
 function refKey(ref: ValueRef, path: Array<string | number>): string {
@@ -55,7 +57,10 @@ function valueActions(
   return wrap;
 }
 
-/** Render one value row (a prop/hook/context value or a nested entry), lazily expandable. */
+/**
+ * Render one value row (a prop/hook/context value or a nested entry), lazily expandable.
+ * `note` is an optional dim annotation drawn after the label (a hook row's hook name).
+ */
 export function renderValue(
   ctx: PanelCtx,
   ref: ValueRef,
@@ -64,6 +69,7 @@ export function renderValue(
   label: string,
   labelStyle: string,
   depth: number,
+  note?: string,
 ): void {
   const { doc, S, api, state, detailPane } = ctx;
   const kv = el(doc, "div", S.kv);
@@ -71,6 +77,8 @@ export function renderValue(
   const expandable = (sv.type === "object" || sv.type === "array") && (sv.size ?? 0) > 0;
   const key = refKey(ref, path);
   const isOpen = state.expanded.has(key);
+  kv.append(el(doc, "span", labelStyle, label));
+  if (note) kv.append(el(doc, "span", S.dim, note));
   if (expandable) {
     const prev = el(doc, "span", S.vExpand, `${isOpen ? "▼" : "▶"} ${sv.preview}`);
     prev.addEventListener("click", () => {
@@ -78,10 +86,9 @@ export function renderValue(
       else state.expanded.add(key);
       ctx.render();
     });
-    kv.append(el(doc, "span", labelStyle, label), prev, valueActions(ctx, ref, path, sv.preview));
+    kv.append(prev, valueActions(ctx, ref, path, sv.preview));
   } else {
     kv.append(
-      el(doc, "span", labelStyle, label),
       el(doc, "span", S.v, sv.preview),
       valueActions(ctx, ref, path, sv.preview),
     );
@@ -132,22 +139,79 @@ export function propEditor(ctx: PanelCtx, sel: InspectNode, p: InspectProp): HTM
   return valueEditor(ctx, p.value, (next) => ctx.api.setPropOverride(sel.id, p.key, next));
 }
 
-/** `file:///…/app/page.tsx#Export` → `app/page.tsx#Export` (last two path segments). */
-export function prettySource(source: string): string {
-  const hash = source.lastIndexOf("#");
-  const file = hash >= 0 ? source.slice(0, hash) : source;
-  const exp = hash >= 0 ? source.slice(hash) : "";
-  return file.split("/").slice(-2).join("/") + exp;
+/**
+ * A source location as the panel shows it: `app/page.tsx:42`.
+ *
+ * The path is repo-relative when the module is served from the app root (an unbundled
+ * dev module URL is same-origin with the page), and otherwise the URL's last two
+ * segments — the browser has no view of the project directory, so a `file://` module is
+ * shown by its tail rather than by a path it cannot shorten honestly.
+ *
+ * @param src The component's source location.
+ * @returns The display text (the line is appended when known).
+ */
+export function prettySource(src: SourceLocation): string {
+  let path = src.file;
+  try {
+    const url = new URL(src.file);
+    const origin = (globalThis as { location?: { origin?: string } }).location?.origin;
+    path = url.protocol !== "file:" && url.origin === origin
+      ? url.pathname.replace(/^\//, "")
+      : url.pathname.split("/").slice(-2).join("/");
+  } catch {
+    path = src.file.split("/").slice(-2).join("/");
+  }
+  return src.line === undefined ? path : `${path}:${src.line}`;
 }
 
-/** An editor-open URL (`vscode://file/<path>`) for a `file://` source, else "". */
-export function editorUrl(source: string): string {
-  const hash = source.lastIndexOf("#");
-  const file = hash >= 0 ? source.slice(0, hash) : source;
-  if (!file.startsWith("file://")) return "";
+/** `file:///a/b.tsx` → `/a/b.tsx`; a non-`file:` source keeps its text. */
+function filePath(file: string): string {
+  if (!file.startsWith("file://")) return file;
   try {
-    return "vscode://file" + new URL(file).pathname;
+    return decodeURIComponent(new URL(file).pathname);
   } catch {
-    return "";
+    return file;
   }
+}
+
+/** The full `path:line:column` a source link shows as its tooltip. */
+function sourceTitle(src: SourceLocation): string {
+  return `${filePath(src.file)}:${src.line ?? 1}:${src.column ?? 1}`;
+}
+
+/**
+ * The hard-coded editor URL the link falls back to — `vscode://file/<path>:<line>:<col>`
+ * — used only when the dev server's `/_denext/open-in-editor` endpoint answered
+ * "unavailable" (SPA dev serves no dev endpoints). `""` for a non-`file://` source.
+ *
+ * @param src The component's source location.
+ * @returns The `vscode://` URL, or `""`.
+ */
+export function editorFallbackUrl(src: SourceLocation): string {
+  if (!src.file.startsWith("file://")) return "";
+  return `vscode://file${sourceTitle(src)}`;
+}
+
+/**
+ * The detail pane's source link: focusable, titled with the full `file:line:column`, and
+ * routed through the dev server's editor endpoint (which honours `DENEXT_EDITOR`/
+ * `VISUAL`/`EDITOR`) — unless a dev endpoint has already reported itself unavailable, in
+ * which case it becomes a plain `vscode://` link the browser follows.
+ *
+ * @param ctx The mounted panel context.
+ * @param src The selected component's source location.
+ * @returns The anchor element.
+ */
+export function sourceLink(ctx: PanelCtx, src: SourceLocation): HTMLElement {
+  const { doc, S, state } = ctx;
+  const link = el(doc, "a", S.vExpand, prettySource(src)) as HTMLAnchorElement;
+  link.title = sourceTitle(src);
+  const fallback = state.dataUnavailable === true ? editorFallbackUrl(src) : "";
+  link.href = fallback || "#";
+  link.addEventListener("click", (e: Event) => {
+    if (fallback) return; // let the browser follow the vscode:// URL
+    e.preventDefault();
+    openInEditor(filePath(src.file), src.line ?? 1, src.column ?? 1);
+  });
+  return link;
 }

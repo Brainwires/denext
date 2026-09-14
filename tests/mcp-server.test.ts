@@ -134,6 +134,15 @@ Deno.test("resolveToolNames: a group name expands to its tools", () => {
   assertEquals(names, new Set([...TOOL_GROUPS.rag, ...TOOL_GROUPS.docs]));
 });
 
+Deno.test("resolveToolNames: the devtools group expands to the three bridge tools", () => {
+  const { names, unknown } = resolveToolNames(["devtools"]);
+  assertEquals(unknown, []);
+  assertEquals(
+    names,
+    new Set(["denext_component_tree", "denext_why_render", "denext_hook_state"]),
+  );
+});
+
 Deno.test("resolveToolNames: bare and prefixed tool names both resolve", () => {
   assertEquals(resolveToolNames(["render"]).names, new Set(["denext_render"]));
   assertEquals(resolveToolNames(["denext_doctor"]).names, new Set(["denext_doctor"]));

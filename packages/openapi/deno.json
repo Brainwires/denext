@@ -9,8 +9,31 @@
     "./types": "./types.ts"
   },
   "imports": {
-    "@denext/denext": "jsr:@denext/denext@^2.4.3",
+    "@denext/denext": "jsr:@denext/denext@^2.5.0-rc.1",
     "@std/path": "jsr:@std/path@^1.0.0"
+  },
+  "denext": {
+    "catalog": {
+      "kind": "plugin",
+      "factory": "openapi",
+      "verb": "openapi",
+      "configKeys": [
+        "path",
+        "docs",
+        "ui",
+        "cdn",
+        "info",
+        "servers",
+        "toJsonSchema",
+        "include",
+        "tags",
+        "securitySchemes",
+        "security",
+        "expose",
+        "authorize",
+        "outFile"
+      ]
+    }
   },
   "publish": {
     "include": [

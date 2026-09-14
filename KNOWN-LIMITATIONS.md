@@ -225,6 +225,98 @@ four documented bounds of the opt-in:
   to N×. The schema resolves once per process: in `denext dev`, an edit to a schema module needs
   a server restart (Deno's module graph caches it).
 
+### First-party auth (`denextAuth`)
+
+- **No mailer.** denext never sends mail. Every flow that needs an outbound message takes
+  your `sendVerificationRequest`, which is a type-level seam only today: nothing in the
+  shipped surface consumes it, and neither password reset, email verification, magic link /
+  email OTP nor TOTP 2FA exists yet (they are scheduled in [ROADMAP.md](./ROADMAP.md)). The
+  session payload already reserves `mfaPending` / `amr`, so adopting them later will need no
+  cookie migration and will log nobody out.
+- **No passkeys / WebAuthn, and no `next-auth` compat shim.** A Next app that imports
+  `next-auth` does not run under the drop-in; port it to `denextAuth` (both are tracked in
+  [ROADMAP.md](./ROADMAP.md)).
+- **`sqliteAuthAdapter` is single-node.** It is one SQLite file on Deno's built-in
+  `node:sqlite` — replicas need a shared volume or your own `AuthAdapter`. Its schema evolves
+  additively (`CREATE TABLE IF NOT EXISTS` + `ALTER TABLE ADD COLUMN`); there is no migration
+  framework, so a column can be added but never renamed or dropped for you. TOTP secrets are
+  stored in plaintext at rest by construction — TOTP verification needs the shared secret, so
+  protect the database file. (`MfaRecord.backupCodeHashes` is specified as hashed and the
+  adapters compare it through a caller-supplied matcher, but nothing hashes or consumes a
+  backup code yet — the MFA flow itself is still to come.)
+- **Sliding refresh only happens where a `Response` is being produced.** `session.updateAge`
+  re-issues the cookie on `GET {basePath}/session`, in `requireAuth()` and in
+  `requireSession()`. A bare `auth()` inside a streamed Server Component cannot set a cookie
+  after the headers are flushed and deliberately does not try — call `updateAuthSession()`
+  from a Server Action or route handler instead.
+- **Sliding a store-backed session needs `SessionStore.update`, and never stops sliding.**
+  The refresh is a write-only-if-present `update(id, session)`, so a revoke that raced the
+  request cannot be undone by an upsert; a custom store that does not implement `update`
+  simply never slides its sessions forward (they expire on their original schedule) and warns
+  once. And there is **no absolute session ceiling** — an account in continuous use is
+  extended indefinitely, so end a session with revocation or a shorter `maxAge`.
+- **Both rate limiters count per node** unless you pass a shared `rateLimit.store`; the
+  in-memory default is per process.
+- **Account linking refuses unverified-email matches by default** (a deliberate divergence —
+  see [KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md)), and **an adapter does not switch
+  sessions to database mode**: it is a persistence port, and `session: { strategy: "database" }`
+  is what makes sessions stateful.
+- **`pages.error` / `pages.verifyRequest` are declared but not yet consumed** — setting them
+  type-checks and changes nothing until the rc.2 flows land.
+- **Two presets carry provider constraints**: Apple is `openid`-only (name and email require
+  `response_mode=form_post`, a POST callback the router does not serve), and `microsoftEntra`
+  requires a specific tenant — the `common` issuer is a template no discovery document can
+  verify.
+- **The `Hasher` seam is configured but not yet driven.** `hasher` resolves and is carried
+  on the auth options, and `scryptHasher()` uses it to keep its equal-work rejection at the
+  configured cost — but no flow calls `hasher.hash` / `hasher.verify` today (your
+  `credentials` `authorize` callback does its own check). Setting it now is
+  forward-compatible; a custom implementation must equalise its own unknown-account work, as
+  `scryptHasher` does.
+- **`requireBearer` takes the auth config as its first argument.** There is no ambient
+  "current auth config" to read, so every call site passes the same object it passed to
+  `denextAuth()`; an `activeAuthConfig()` helper that would make it optional is on the roadmap.
+
+### Project UI (`denext ui`)
+
+- **The compose file is emitted, never parsed.** The Docker panel regenerates
+  `docker-compose.yml` from the templates and diffs the result; it cannot round-trip edits to a
+  hand-written compose file (no YAML parser is involved). A file without the generated-file
+  sentinel is never overwritten.
+- **Plugin options are not yet form-editable.** The catalog knows a plugin's option keys but
+  not their types, so the plugins panel adds and removes plugins — it does not render a form
+  for a plugin's options — and only first-party `@denext/*` packages are listed (there is no
+  JSR-wide plugin discovery).
+- **The UI is not itself a denext app.** It is server-rendered `.ts` behind one `renderPage()`
+  seam precisely so it can become one later; today it ships no bundler and no JSX.
+- **`/config/next` is read-only.** denext never loads `next.config.*` at runtime, so writing to
+  it would change nothing; the panel reads it in a bounded subprocess and offers to translate
+  what denext honors into `denext.config.ts`.
+- **The DEFAULT port falls forward.** With no `--port`, an occupied 5177 moves to the next
+  free one (up to ten), so read the printed URL (or `--json`) instead of assuming 5177. An
+  **explicit** `--port` is strict: a taken port is a clear error, never a quiet move.
+- **`denext --help <dir>` does not read the directory.** A bare positional is not taken as
+  the project directory on the help path, so a per-project help table needs `--cwd=<dir>`
+  (a parser quirk tracked in [ROADMAP.md](./ROADMAP.md)). Every verb honours `--cwd=<dir>`,
+  which is the workaround.
+- **`denext --help` does not list a project's own verbs, by design.** Rendering them would
+  mean importing `denext.config.ts` and running every plugin `setup()`; `denext commands`
+  (which the help footer points at) does that in a process that always exits, and shell
+  completions still include them. The UI's Commands panel reads the same subprocess — and
+  **running** a project verb from the panel pays plugin discovery again in its own child, so
+  a slow `setup()` is felt on every run.
+
+### Desktop & mobile (`denext desktop`, Capacitor)
+
+- **`denext dev --host 0.0.0.0` serves HTML but no assets to a non-loopback client.** Every
+  `/_denext/*` request (bundles, the module graph, the reload stream, the Live hub) is refused
+  for a host that is neither loopback nor in `allowedDevOrigins` — the CVE-2025-48068 defense —
+  and `allowedDevOrigins` has no config key, CLI flag or env var yet, only a programmatic
+  `DevServerOptions` field. So a phone or a packaged desktop window pointed at a LAN dev server
+  renders a dead page: **LAN / mobile dev attach is not supported yet** (tracked in
+  [ROADMAP.md](./ROADMAP.md)). `denext desktop run` serves a static export over loopback, which
+  is unaffected.
+
 ### Testing helpers (`denext doctor`, `probeApp`)
 
 - **`denext doctor` / `probeApp` see a crash only as the framework's bare 500.** The
@@ -252,29 +344,52 @@ four documented bounds of the opt-in:
   paragraphs, flat ordered/unordered lists with lazy continuation, fenced code, blockquotes and
   `> [!NOTE]` callouts (multi-paragraph), GFM pipe tables, inline and reference-style links,
   emphasis and inline code — and deliberately omits **nested lists, footnotes, images, 4-space
-  indented code and raw-HTML passthrough** (raw HTML is escaped, never passed through). A
-  document that needs those is an `.mdx` entry, compiled at build.
+  indented code, double-backtick code spans and raw-HTML passthrough** (raw HTML is escaped,
+  never passed through). Inline code is single-backtick only, so a span that must itself
+  contain a backtick has no spelling. A document that needs those is an `.mdx` entry, compiled
+  at build.
 
 ## DevTools (dev-only)
 
 denext ships its **own** in-page glass-box panel (`denext/devtools`,
-Ctrl+Shift+D) as the full-fidelity surface: a searchable, collapsible component
-tree; an element picker with a hover-highlight overlay; live-editable
-hooks/state (plus ref-set and reducer-dispatch); prop overrides; deep, lazy
-nested-value inspection with copy / `console.log` / store-as-`$d` actions;
-capability badges; "why did this render" diffs; a per-commit **Profiler** with a
-flamegraph + commit step-through; source links / owner stacks; and a render-mode
-tab (static/dynamic/streamed + page-cache HIT/STALE/MISS + a **real-time**
-Suspense-boundary waterfall + island hydration).
+Ctrl+Shift+D) as the full-fidelity surface — the six tabs and everything in them
+are listed in [FEATURES.md](./FEATURES.md). Its documented boundaries:
+
+- **Hook names are all-or-nothing per component.** The runtime walks the
+  build-time metadata and the fiber's hook cells in lockstep; any mismatch —
+  conditional hooks, or a custom hook imported from another module — aborts
+  naming for that component, which then shows kind labels and "names unavailable"
+  rather than a plausible-looking wrong name. Custom hooks expand only when they
+  are declared in the **same module** (≤3 levels of breadcrumb).
+- **The "owner stack" is the render-parent chain**, an approximation of React's
+  JSX-owner stack (they coincide for the common case); per-element `__source` is
+  on the roadmap.
+- **The bundled App Router path has coarser metadata.** With
+  `DENEXT_DEV_UNBUNDLED=0` there is no per-module transform, so component
+  families exist only for route-structural components, carry a module and export
+  but **no line/column**, and no component gets hook names. The default
+  (unbundled) dev loop has all of it.
+- **Network, Cache and Routes — and the MCP snapshot — need the App Router dev
+  server.** SPA dev serves none of those endpoints, so those tabs render a named
+  "App Router only" state (the panel itself does mount in SPA dev, and its editor
+  link falls back to `vscode://`).
+- **The MCP snapshot is push-based, and armed lazily.** `denext_component_tree` /
+  `denext_why_render` / `denext_hook_state` read the last snapshot the dev page
+  posted, so they need `deno task dev` running **and** the app open in a browser,
+  and an answer can be seconds stale — every answer states its age. A page that
+  nobody has inspected posts nothing at all: the first tool call arms the dev
+  server and the page starts pushing on its next settled commit, so that first
+  call may answer "posted nothing yet" (call it again, or start the server with
+  `DENEXT_DEV_INSPECT=1`). Snapshots expire after 10 minutes, a page can read only
+  its own, and string values arrive redacted as `string(n)` — the characters never
+  leave the browser, so a hook holding a token shows a length and nothing else.
 
 The stock **React DevTools** extension also works — Components tree, props, live
 prop/state editing, and element selection all route back through denext's
 reconciler (with an honest dev/prod build type). Two residuals are inherent to
 driving a non-React reconciler through the extension: its **hooks view** and its
 **Profiler** rely on React-internal introspection a synthetic fiber tree can't
-provide — use denext's own panel for those. The panel's "owner stack" is the
-render-parent chain, an approximation of React's JSX-owner stack (they coincide
-for the common case).
+provide — use denext's own panel for those.
 
 ## Experimental / unstable APIs
 

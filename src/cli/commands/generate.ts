@@ -5,23 +5,7 @@
 
 import { resolve } from "@std/path";
 import type { CommandContext, CommandSpec } from "../command.ts";
-import { generateArtifact, type GenerateKind } from "../../build/generate.ts";
-
-const KINDS: GenerateKind[] = [
-  "page",
-  "route",
-  "layout",
-  "loading",
-  "error",
-  "not-found",
-  "component",
-  "api",
-  "action",
-  "middleware",
-  "task",
-  "test",
-  "docker",
-];
+import { GENERATE_KINDS, generateArtifact, type GenerateKind } from "../../build/generate.ts";
 
 /**
  * Kinds whose second positional is not a required name — `docker` and
@@ -47,10 +31,10 @@ function generateTarget(
 ): { kind: GenerateKind; name: string } {
   const kind = ctx.positionals[0] as GenerateKind;
   const name = ctx.positionals[1] ?? "";
-  if (!KINDS.includes(kind)) {
+  if (!GENERATE_KINDS.includes(kind)) {
     console.error(
       `denext generate: unknown kind "${ctx.positionals[0] ?? ""}" (expected ${
-        KINDS.join(" | ")
+        GENERATE_KINDS.join(" | ")
       }).`,
     );
     Deno.exit(1);
@@ -83,7 +67,7 @@ export const generateCommand: CommandSpec = {
     "  denext generate docker            # Dockerfile + docker-compose.yml + .dockerignore\n" +
     "  denext generate docker spa        # force the static/SPA image (else auto-detected)",
   positionals: [
-    { name: "kind", help: KINDS.join(" | "), required: true },
+    { name: "kind", help: GENERATE_KINDS.join(" | "), required: true },
     {
       name: "name",
       help: "Route/component/action name (docker: optional server|spa)",

@@ -1,60 +1,58 @@
-// The user table, on Deno's built-in `node:sqlite` (zero npm). Passwords are stored
-// as `hashPassword` output — a self-describing, salted scrypt string — and checked
-// with `verifyPassword` (see lib/auth-config.ts). Set `AUTH_DB=:memory:` for an
-// ephemeral database (the CI test does).
+// The app's READ window onto the auth database.
+//
+// `sqliteAuthAdapter` (lib/users.ts) owns the `auth_*` tables: it creates them, extends
+// them additively across denext versions, and writes every row. The adapter is a
+// persistence *port* for the auth flow — createUser / getUserByEmail / linkAccount — not a
+// query layer, so a screen that needs a LIST (the admin page) reads the tables itself,
+// through this second `node:sqlite` handle. Zero npm, like the rest of the example.
+//
+// The handle opens lazily, on the first query: by then the adapter has already created the
+// schema, so there is no ordering rule to remember.
 
 import { DatabaseSync } from "node:sqlite";
-import { hashPassword } from "denext/server";
 
-/** A user row, including the hash (never render it). */
+/**
+ * The one sqlite file — users, linked accounts, password hashes, API tokens AND sessions
+ * (the adapter exposes a session store over the same handle). Point `AUTH_DB` somewhere
+ * writable in production; it must be a real file, because this read handle opens it again.
+ */
+export const DB_PATH = Deno.env.get("AUTH_DB") ?? "auth.db";
+
+let handle: DatabaseSync | undefined;
+
+/** The lazily-opened read handle (a WAL reader never blocks the adapter's writes). */
+function db(): DatabaseSync {
+  handle ??= new DatabaseSync(DB_PATH);
+  return handle;
+}
+
+/** A row of `auth_users`, exactly as the adapter stores it. */
 export interface UserRow {
-  id: number;
-  email: string;
-  name: string;
-  password_hash: string;
+  /** The adapter-assigned user id — what `session.user.id` carries. */
+  id: string;
+  /** Primary email, or null for an account that has none. */
+  email: string | null;
+  /** Display name. */
+  name: string | null;
+  /** Roles as a JSON array of strings (`["admin","user"]`), or null. */
+  roles: string | null;
+  /** When the address was verified, epoch seconds; null while unverified. */
+  email_verified: number | null;
+  /** Creation time, epoch seconds. */
+  created_at: number | null;
 }
 
-const db = new DatabaseSync(Deno.env.get("AUTH_DB") ?? "auth.db");
+const USER_COLUMNS = "id, email, name, roles, email_verified, created_at";
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    email         TEXT NOT NULL UNIQUE,
-    name          TEXT NOT NULL DEFAULT '',
-    password_hash TEXT NOT NULL
-  );
-`);
-
-/** Look up a user (with hash) by email — the `authorize` lookup. */
-export function findUserByEmail(email: string): UserRow | undefined {
-  return db.prepare(
-    "SELECT id, email, name, password_hash FROM users WHERE email = ?",
-  )
-    .get(email) as unknown as UserRow | undefined;
+/** Every account, newest first — the admin screen's list. */
+export function listUsers(): UserRow[] {
+  return db()
+    .prepare(`SELECT ${USER_COLUMNS} FROM auth_users ORDER BY created_at DESC, id`)
+    .all() as unknown as UserRow[];
 }
 
-/** Insert a user whose `passwordHash` came from `hashPassword`; returns the new id. */
-export function createUser(
-  email: string,
-  name: string,
-  passwordHash: string,
-): number {
-  const { lastInsertRowid } = db
-    .prepare("INSERT INTO users (email, name, password_hash) VALUES (?, ?, ?)")
-    .run(email, name, passwordHash);
-  return Number(lastInsertRowid);
-}
-
-/** Replace a user's password hash (the caller revokes their sessions afterwards). */
-export function updatePasswordHash(id: number, passwordHash: string): void {
-  db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(
-    passwordHash,
-    id,
-  );
-}
-
-// Seed a demo account the first time the database is created.
-const count = (db.prepare("SELECT COUNT(*) AS n FROM users").get() as { n: number }).n;
-if (count === 0) {
-  createUser("demo@denext.dev", "Demo User", await hashPassword("password"));
+/** How many accounts exist. The first one to register administers the app. */
+export function countUsers(): number {
+  const row = db().prepare("SELECT COUNT(*) AS n FROM auth_users").get() as { n: number };
+  return row.n;
 }

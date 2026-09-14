@@ -2,6 +2,7 @@
   "name": "@denext/swc",
   "version": "76.0.1",
   "exports": "./mod.ts",
+  "denext": { "catalog": { "kind": "library" } },
   "publish": {
     "include": ["mod.ts", "lib", "README.md", "LICENSE", "THIRD-PARTY-LICENSES.md", "deno.json"]
   }

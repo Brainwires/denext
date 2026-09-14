@@ -3,9 +3,9 @@
 
 import * as esbuild from "esbuild";
 import { dirname, fromFileUrl, toFileUrl } from "@std/path";
-import { collectComponentNames, refreshFooter } from "../spa-refresh-plugin.ts";
+import { collectComponents, refreshFooter } from "../spa-refresh-plugin.ts";
 import { transformFeatures } from "../feature-transform.ts";
-import { swcParse } from "../swc-ast.ts";
+import { parseModule } from "../swc-ast.ts";
 import { resolveFirstParty, rewriteSpecifier } from "./resolve.ts";
 import {
   addImporter,
@@ -56,7 +56,8 @@ async function mtimeOf(abs: string): Promise<number> {
 
 /**
  * Component detection (best-effort): a module exporting ≥1 component self-accepts and
- * gets the Fast Refresh footer registering each export's family. Returns the footer.
+ * gets the Fast Refresh footer registering each export's family — plus the dev-only
+ * DevTools metadata sidecar (source position + hook names). Returns the footer.
  */
 async function refreshFooterFor(
   st: UnbundledState,
@@ -65,11 +66,12 @@ async function refreshFooterFor(
 ): Promise<string> {
   try {
     const source = await Deno.readTextFile(abs);
-    const names = collectComponentNames(await (await swcParse())(source));
+    const parsed = await parseModule(source);
+    const { names, metas } = parsed ? collectComponents(parsed) : { names: [], metas: {} };
     if (names.length > 0) {
       entry.selfAccepting = true;
       st.accepting.add(abs);
-      return refreshFooter(toFileUrl(abs).href, names);
+      return refreshFooter(toFileUrl(abs).href, names, metas);
     }
     st.accepting.delete(abs); // e.g. a component was removed by the edit
   } catch { /* unreadable/unparsable — no footer, treated as non-accepting */ }

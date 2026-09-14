@@ -38,6 +38,10 @@ export function escapeHtml(s: string): string {
  * with the family seam already active — a plain static `import` of the entry would be
  * hoisted and execute before the inline enable call. The refresh runtime is dev-only,
  * so a production entry keeps the bare static import (nothing extra ships).
+ *
+ * The dev entry also sets `globalThis.__denextDev` and installs the DevTools panel: SPA
+ * dev has no other place that sets the flag, and both are dev-only, so neither reaches a
+ * production entry.
  */
 export function generateSpaEntry(
   entryUrl: string,
@@ -64,9 +68,16 @@ export function generateSpaEntry(
       JSON.stringify(entryUrl)
     };\n`;
   }
-  return `// denext generated SPA entry (dev) — do not edit.\n${prelude}${install}` +
+  // `__denextDev` is the FIRST statement (after the hoisted instrumentation import): the
+  // DevTools panel and the whole inspector no-op unless the flag is set, and nothing else
+  // in SPA dev sets it — the shell's dev script runs AFTER this module, so waiting for it
+  // would leave the panel unmounted. Installing it here, before the app's dynamic import,
+  // also lets the inspector see the very first commit.
+  return `// denext generated SPA entry (dev) — do not edit.\n${prelude}` +
+    `globalThis.__denextDev = true;\n${install}` +
     `import { enableFastRefresh } from "denext/client-runtime";\n` +
-    `enableFastRefresh();\n` +
+    `import { installDevtools } from "denext/devtools";\n` +
+    `enableFastRefresh();\ninstallDevtools();\n` +
     `await import(${JSON.stringify(entryUrl)});\n`;
 }
 

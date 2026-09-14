@@ -2,16 +2,13 @@
 
 // Server Actions for the account flows. Each `<form action={fn}>` works with
 // JavaScript disabled (denext renders a same-origin, CSRF-checked endpoint).
+//
+// Every write goes through the auth ADAPTER (lib/users.ts) — this app keeps no user table
+// of its own, so `session.user.id` and the stored record are always the same identity.
 
 import { redirect } from "denext";
-import {
-  auth,
-  type AuthSession,
-  hashPassword,
-  revokeAllSessions,
-  verifyPassword,
-} from "denext/server";
-import { createUser, findUserByEmail, updatePasswordHash, type UserRow } from "../lib/db.ts";
+import { auth, type AuthSession, revokeAllSessions } from "denext/server";
+import { checkPassword, createAccount, findUser, setPassword } from "../lib/users.ts";
 
 /** A form field as text ("" when absent). */
 const field = (formData: FormData, name: string): string => String(formData.get(name) ?? "");
@@ -24,49 +21,31 @@ async function requireSession(): Promise<AuthSession> {
 }
 
 /** The registration error code, or null when the input is acceptable. */
-function registrationError(email: string, password: string): string | null {
+async function registrationError(email: string, password: string): Promise<string | null> {
   if (!email.includes("@") || password.length < 8) return "invalid";
-  return findUserByEmail(email) ? "taken" : null;
+  return await findUser(email) ? "taken" : null;
 }
 
-/** Create an account: the password is stored as a scrypt hash, never in the clear. */
+/** Create an account: the adapter user, its credentials account row, and a scrypt hash. */
 export async function register(formData: FormData): Promise<void> {
   const email = field(formData, "email").trim().toLowerCase();
   const password = field(formData, "password");
-  const error = registrationError(email, password);
+  const error = await registrationError(email, password);
   if (error) redirect(`/register?error=${error}`);
-  createUser(
-    email,
-    field(formData, "name").trim(),
-    await hashPassword(password),
-  );
+  await createAccount(email, field(formData, "name").trim(), password);
   redirect("/login?registered=1");
-}
-
-/** The change-password error code, or null when the change may proceed. */
-async function passwordChangeError(
-  row: UserRow | undefined,
-  current: string,
-  next: string,
-): Promise<string | null> {
-  if (!row || !(await verifyPassword(current, row.password_hash))) {
-    return "current";
-  }
-  return next.length < 8 ? "weak" : null;
 }
 
 /** Change the password, then revoke every session — a stolen cookie is now useless. */
 export async function changePassword(formData: FormData): Promise<void> {
   const session = await requireSession();
-  const row = findUserByEmail(session.user.email ?? "");
+  const user = await findUser(session.user.email ?? "");
   const next = field(formData, "next");
-  const error = await passwordChangeError(
-    row,
-    field(formData, "current"),
-    next,
-  );
-  if (error) redirect(`/dashboard?error=${error}`);
-  updatePasswordHash(row!.id, await hashPassword(next));
+  if (!await checkPassword(user, field(formData, "current"))) {
+    redirect("/dashboard?error=current");
+  }
+  if (next.length < 8) redirect("/dashboard?error=weak");
+  await setPassword(session.user.id, next);
   await revokeAllSessions(session.user.id);
   redirect("/login?changed=1");
 }

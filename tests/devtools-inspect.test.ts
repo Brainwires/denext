@@ -49,6 +49,7 @@ import {
   subscribeBoundaries,
 } from "../src/client/devtools-inspect.ts";
 import { registerFamily } from "../src/client/refresh-runtime.ts";
+import { clearComponentMeta, registerComponentMeta } from "../src/client/devtools-meta.ts";
 
 // deno-lint-ignore no-explicit-any
 const asDoc = (d: FakeDocument): any => d;
@@ -265,13 +266,78 @@ Deno.test("inspector: source location + owner stack from the family registry", (
     const child = find(tree, "SrcChild");
     const parent = find(tree, "SrcParent");
     assert(child && parent, "both nodes present");
-    // Cache-buster (?g=0) stripped; export preserved.
-    assertEquals(parent!.source, "file:///app/parent.tsx#SrcParent");
-    assertEquals(child!.source, "file:///app/child.tsx#SrcChild");
+    // Cache-buster (?g=0) stripped; export preserved. No dev metadata was registered for
+    // these, so the location carries the module + export but no line/column.
+    assertEquals(parent!.source, { file: "file:///app/parent.tsx", export: "SrcParent" });
+    assertEquals(child!.source, { file: "file:///app/child.tsx", export: "SrcChild" });
+    // The pre-2.5 `fileUrl#Export` string is still reported alongside it.
+    assertEquals(parent!.sourceId, "file:///app/parent.tsx#SrcParent");
+    assertEquals(child!.sourceId, "file:///app/child.tsx#SrcChild");
+    // Without metadata the hooks keep their kind labels and carry no naming verdict.
+    assertEquals(child!.hooksNamed, undefined);
+    assertEquals(child!.hooks[0]?.kind, "state");
+    assertEquals(child!.hooks[0]?.name, undefined);
     // The child's owner/ancestor stack names its component parent.
     const owners = getOwnerStack(child!.id).map((o) => o.name);
     assert(owners.includes("SrcParent"), owners.join(","));
-    assertEquals(getOwnerStack(child!.id)[0]?.source, "file:///app/parent.tsx#SrcParent");
+    assertEquals(getOwnerStack(child!.id)[0]?.source, {
+      file: "file:///app/parent.tsx",
+      export: "SrcParent",
+    });
+  });
+});
+
+Deno.test("inspector: dev metadata overlays the declaration's line/column onto the source", () => {
+  withDev(true, () => {
+    function MetaLeaf(): VNode {
+      useState(1);
+      return h("i", null, "leaf");
+    }
+    function MetaHost(): VNode {
+      return h(MetaLeaf, null);
+    }
+    registerFamily(MetaHost, "file:///app/meta.tsx#MetaHost");
+    registerFamily(MetaLeaf, "file:///app/meta.tsx#MetaLeaf");
+    // The dev transforms append these sidecar calls; do it by hand.
+    registerComponentMeta("file:///app/meta.tsx#MetaHost", {
+      name: "MetaHost",
+      line: 12,
+      column: 17,
+      hooks: [],
+    });
+    registerComponentMeta("file:///app/meta.tsx#MetaLeaf", {
+      name: "MetaLeaf",
+      line: 42,
+      column: 5,
+      hooks: [{ hook: "useState", name: "count", line: 43 }],
+    });
+    try {
+      const { doc, container } = makeDom();
+      setDocument(asDoc(doc));
+      createRoot(asEl(container)).render(h(MetaHost, null));
+      flushSync();
+
+      const tree = getInspectorTree();
+      const leaf = find(tree, "MetaLeaf");
+      assert(leaf, "MetaLeaf present");
+      assertEquals(leaf!.source, {
+        file: "file:///app/meta.tsx",
+        export: "MetaLeaf",
+        line: 42,
+        column: 5,
+      });
+      // The legacy string is unchanged by the overlay.
+      assertEquals(leaf!.sourceId, "file:///app/meta.tsx#MetaLeaf");
+      // The owner stack carries the same shape (with the parent's own position).
+      assertEquals(getOwnerStack(leaf!.id)[0]?.source, {
+        file: "file:///app/meta.tsx",
+        export: "MetaHost",
+        line: 12,
+        column: 17,
+      });
+    } finally {
+      clearComponentMeta();
+    }
   });
 });
 
@@ -611,6 +677,49 @@ Deno.test("inspector: getRenderReason reports what changed and a render count", 
     } finally {
       disableRenderReasons();
     }
+  });
+});
+
+Deno.test("inspector: enableRenderReasons is refcounted — a second holder keeps the history", () => {
+  withDev(true, () => {
+    function HeldThing(): VNode {
+      const [n] = useState(0);
+      return h("div", { "data-n": String(n) });
+    }
+    // Holder A is the inspector sink (it holds for its whole lifetime, so the MCP
+    // `denext_why_render` has a history); holder B is the DevTools panel, opened and
+    // closed. Before the refcount, B's close cleared A's accrued reasons.
+    let nodeId = -1;
+    enableRenderReasons(); // A
+    try {
+      const { doc, container } = makeDom();
+      setDocument(asDoc(doc));
+      createRoot(asEl(container)).render(h(HeldThing, null));
+      flushSync();
+
+      const node = find(getInspectorTree(), "HeldThing")!;
+      nodeId = node.id;
+      const stateIdx = node.hooks.find((hk) => hk.kind === "state")!.index;
+      setHookState(node.id, stateIdx, 5);
+      flushSync();
+      assertEquals(getRenderReason(node.id)!.count, 2, "A has accrued two renders");
+
+      enableRenderReasons(); // B opens the panel — must NOT clear A's history
+      assertEquals(getRenderReason(node.id)!.count, 2, "opening the panel keeps the history");
+      disableRenderReasons(); // B closes it — A still holds, so tracking stays on
+      assertEquals(getRenderReason(node.id)!.count, 2, "closing the panel keeps the history");
+
+      setHookState(node.id, stateIdx, 6);
+      flushSync();
+      assertEquals(getRenderReason(node.id)!.count, 3, "and tracking is still live for A");
+    } finally {
+      disableRenderReasons(); // A releases: the last holder, so tracking really stops
+    }
+    // With every hold released, the NEXT enable is a fresh start: the baseline is re-seeded
+    // from what is mounted, so the accrued count is gone.
+    enableRenderReasons();
+    assertEquals(getRenderReason(nodeId)!.count, 1, "a fresh sole holder clears the history");
+    disableRenderReasons();
   });
 });
 

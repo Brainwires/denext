@@ -6,13 +6,14 @@
 // result shape.
 
 import { isAbsolute, relative, resolve } from "@std/path";
-import { generateArtifact, type GenerateKind } from "../build/generate.ts";
+import { GENERATE_KINDS, generateArtifact, type GenerateKind } from "../build/generate.ts";
 import { collectDoctorReport, doctorReportMarkdown } from "../cli/commands/doctor.ts";
 import { runCodemod } from "../build/codemod.ts";
 import { resolveProject } from "../build/paths.ts";
 import { scanRoutes } from "../router/manifest.ts";
 import type { DevEvent } from "../build/dev-events.ts";
 import { fetchDevState } from "./dev-client.ts";
+import { devtoolsTools } from "./devtools.ts";
 import { renderComponent, renderRoute, routeMap } from "./inspect.ts";
 import { profileApp } from "../profile/core.ts";
 import type { Budget } from "../profile/budget.ts";
@@ -63,6 +64,12 @@ function formatDiagnostics(diags: Diagnostic[]): string {
 }
 
 const str = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);
+
+/**
+ * The `denext_generate` kinds, rendered for the tool description and its `kind` help. Derived
+ * from {@link GENERATE_KINDS} so the enum can never drift from what the generator supports.
+ */
+const GENERATE_KIND_LIST = GENERATE_KINDS.join("|");
 
 /**
  * The directory every tool's `dir` is confined to once the stdio server arms it (the project
@@ -235,27 +242,33 @@ export const TOOLS: readonly Tool[] = [
   },
   {
     name: "denext_generate",
-    description:
-      "Scaffold a denext artifact into a project (writes files). kind = page|route|layout|" +
-      "component|api|action|test|docker.",
+    description: "Scaffold a denext artifact into a project (writes files). kind = " +
+      GENERATE_KIND_LIST +
+      ". Existing files are never overwritten unless force is set; pass dryRun to see the " +
+      "planned files and their contents without writing anything.",
     inputSchema: {
       type: "object",
       properties: {
-        kind: { type: "string", description: "page|route|layout|component|api|action|test|docker" },
+        kind: { type: "string", enum: [...GENERATE_KINDS], description: GENERATE_KIND_LIST },
         name: { type: "string", description: "Route/component/action name (optional for docker)." },
         dir: { type: "string", description: "Project directory (default: current directory)." },
+        force: { type: "boolean", description: "Overwrite files that already exist." },
+        dryRun: { type: "boolean", description: "Plan only: print what would be written." },
       },
       required: ["kind"],
     },
     run: async (args) => {
-      const { written, skipped } = await generateArtifact(
+      const dryRun = args.dryRun === true;
+      const { written, skipped, preview } = await generateArtifact(
         projectDir(args.dir),
         str(args.kind) as GenerateKind,
         str(args.name),
+        { force: args.force === true, dryRun },
       );
       const lines = [
-        ...written.map((p) => `+ ${p}`),
+        ...written.map((p) => `${dryRun ? "~ would write:" : "+"} ${p}`),
         ...skipped.map((p) => `• exists, skipped: ${p}`),
+        ...(preview ?? []).map((f) => `\n--- ${f.path}\n${f.contents}`),
       ];
       return { text: lines.length ? lines.join("\n") : "(nothing generated)" };
     },
@@ -513,6 +526,9 @@ export const TOOLS: readonly Tool[] = [
       };
     },
   },
+  // The DevTools bridge: the component tree / render reasons / hook cells a RUNNING dev
+  // page pushed to the dev server (see ./devtools.ts).
+  ...devtoolsTools(projectDir),
 ];
 
 /**
@@ -531,6 +547,8 @@ export const TOOL_GROUPS: Readonly<Record<string, readonly string[]>> = {
   profile: ["denext_profile"],
   /** The running dev server's live event log. */
   dev: ["denext_dev_logs"],
+  /** The in-page DevTools bridge: a running page's live component tree, renders, hooks. */
+  devtools: ["denext_component_tree", "denext_why_render", "denext_hook_state"],
   /** denext's own docs search (API reference + authoring guide). */
   docs: ["denext_search_docs"],
   /** Project-codebase search: index, query, find-definition, find-references. */

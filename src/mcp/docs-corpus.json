@@ -1590,7 +1590,7 @@
       "title": "SessionProvider",
       "module": "denext",
       "url": "/docs/api/denext/SessionProvider",
-      "text": "SessionProvider SessionProvider(props: SessionProviderProps): VNode Provide session state to the tree. Seed it with session from the server for no loading flash, or omit it to fetch /auth/session on mount. SessionProviderProps.",
+      "text": "SessionProvider SessionProvider(props: SessionProviderProps): VNode Provide session state to the tree. Seed it with session from the server for no loading flash, or omit it to fetch {basePath}/session on mount. SessionProviderProps. The provider element wrapping children.",
       "denextOnly": true
     },
     {
@@ -1653,7 +1653,7 @@
       "title": "signIn",
       "module": "denext",
       "url": "/docs/api/denext/signIn",
-      "text": "signIn signIn(provider: string, options?: SignInOptions): Promise<unknown> Start sign-in. For an OAuth/OIDC provider this navigates to the provider; for a Credentials provider (pass credentials) it POSTs and resolves with the result. The provider id (e.g. \"google\", \"credentials\"). SignInOptions.",
+      "text": "signIn signIn(provider: string, options?: SignInOptions): Promise<unknown> Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with redirect: false, resolves with the URL it would have gone to); for a Credentials provider (pass credentials) it POSTs and resolves with the result. The provider id (e.g. \"google\", \"credentials\"). SignInOptions. The credentials result, or the sign-in URL for the redirect flow.",
       "denextOnly": true
     },
     {
@@ -1671,7 +1671,7 @@
       "title": "signOut",
       "module": "denext",
       "url": "/docs/api/denext/signOut",
-      "text": "signOut signOut(options?: SignOutOptions): Promise<void> Sign out (same-origin POST to /auth/signout), then navigate to callbackUrl. SignOutOptions.",
+      "text": "signOut signOut(options?: SignOutOptions): Promise<void> Sign out (same-origin POST to {basePath}/signout), then navigate to callbackUrl. SignOutOptions. A promise that settles once the navigation has been started.",
       "denextOnly": true
     },
     {
@@ -2382,7 +2382,7 @@
       "title": "useSession",
       "module": "denext",
       "url": "/docs/api/denext/useSession",
-      "text": "useSession useSession(): ClientSession Read the current ClientSession. Must be under a SessionProvider.",
+      "text": "useSession useSession(): ClientSession Read the current ClientSession. Must be under a SessionProvider. The session state plus update().",
       "denextOnly": true
     },
     {
@@ -2508,7 +2508,7 @@
       "title": "VERSION",
       "module": "denext",
       "url": "/docs/api/denext/VERSION",
-      "text": "VERSION VERSION: 2.4.3 The denext framework version.",
+      "text": "VERSION VERSION: 2.5.0-rc.1 The denext framework version.",
       "denextOnly": true
     },
     {
@@ -2626,6 +2626,33 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/ActionValidationError",
       "text": "ActionValidationError class ActionValidationError Throw this from an input parser (or a handler) to return per-field form errors. The overall error message. Per-field messages, keyed by form field name.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/AdapterAccount",
+      "kind": "interface",
+      "title": "AdapterAccount",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/AdapterAccount",
+      "text": "AdapterAccount interface AdapterAccount A provider account linked to an AdapterUser.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/AdapterAccountRef",
+      "kind": "interface",
+      "title": "AdapterAccountRef",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/AdapterAccountRef",
+      "text": "AdapterAccountRef interface AdapterAccountRef Identifies one linked provider account.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/AdapterUser",
+      "kind": "interface",
+      "title": "AdapterUser",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/AdapterUser",
+      "text": "AdapterUser interface AdapterUser A user record as the adapter stores it. id is the identity session.user.id carries.",
       "denextOnly": true
     },
     {
@@ -2854,6 +2881,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/ApiTokenRecord",
+      "kind": "interface",
+      "title": "ApiTokenRecord",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ApiTokenRecord",
+      "text": "ApiTokenRecord interface ApiTokenRecord A long-lived bearer API token. The presented secret is never stored, only its hash.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/ApiValidationError",
       "kind": "class",
       "title": "ApiValidationError",
@@ -2878,6 +2914,15 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/AppConfig",
       "text": "AppConfig interface AppConfig Configuration for createApp: how to resolve the route manifest and load modules, plus optional cross-cutting behavior (request logging, per-request timeout, and the rest). ServeOptions extends this for the higher-level serve entry point.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/apple",
+      "kind": "function",
+      "title": "apple",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/apple",
+      "text": "apple apple(options: OAuthClientOptions): OAuthProvider Sign in with Apple (OIDC). Ships **openid only**: Apple returns name / email just once, and only over response_mode=form_post — a POST callback the auth router does not accept — so requesting them would break the login rather than enrich it. Requesting either scope throws; the session therefore carries Apple's sub and no email. clientSecret must be the ES256 client-secret **JWT** you mint from your Apple key (max 6 months); denext passes it through to the token endpoint verbatim. The app's Apple client credentials (Services ID + secret JWT). The configured Apple provider (id: \"apple\").",
       "denextOnly": true
     },
     {
@@ -2922,7 +2967,34 @@
       "title": "auth",
       "module": "denext/server",
       "url": "/docs/api/denext-server/auth",
-      "text": "auth auth(): Promise<AuthSession | null> Read the current request's auth session, or null when signed out. Call from a Server Component, a route.ts handler, or middleware.ts — anywhere inside the request context. The AuthSession, or null.",
+      "text": "auth auth(): Promise<AuthSession | null> Read the current request's auth session, or null when signed out. Call from a Server Component, a route.ts handler, or middleware.ts — anywhere inside the request context. A session that has passed the first factor but not the second (AuthSession.mfaPending) reads as null here — it **fails closed**, so every guard built on auth() (requireAuth, requireSession, Live authorize, Server Actions) refuses it without having to know MFA exists. The AuthSession, or null.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/auth0",
+      "kind": "function",
+      "title": "auth0",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/auth0",
+      "text": "auth0 auth0(options: Auth0Options): OAuthProvider Auth0 (OIDC). Note the issuer carries Auth0's trailing slash (https://<domain>/) — that is what the tenant's discovery document and id_token declare, and iss is compared exactly. Tenant domain plus the app's client credentials. The configured Auth0 provider (id: \"auth0\").",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/Auth0Options",
+      "kind": "interface",
+      "title": "Auth0Options",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/Auth0Options",
+      "text": "Auth0Options interface Auth0Options Options for auth0.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/AuthAdapter",
+      "kind": "interface",
+      "title": "AuthAdapter",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/AuthAdapter",
+      "text": "AuthAdapter interface AuthAdapter Where denext auth persists identities. Implement it over any store; denext ships inMemoryAuthAdapter() and sqliteAuthAdapter(). **Atomicity contract.** Three methods are **consume-once** and MUST be atomic against concurrent callers — a compare-and-delete / conditional update inside one transaction, not a read followed by a write. Two racing requests must see exactly one success: AuthAdapter.useVerificationToken (delete-and-return), AuthAdapter.consumeBackupCode (match-and-remove) and AuthAdapter.claimTotpStep (claim a TOTP step). A non-atomic implementation turns each of them into a replay window.",
       "denextOnly": true
     },
     {
@@ -2944,12 +3016,48 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/AuthCookieConfig",
+      "kind": "interface",
+      "title": "AuthCookieConfig",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/AuthCookieConfig",
+      "text": "AuthCookieConfig interface AuthCookieConfig One auth cookie's name and attributes.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/AuthEvents",
+      "kind": "interface",
+      "title": "AuthEvents",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/AuthEvents",
+      "text": "AuthEvents interface AuthEvents Side-effect hooks on the auth lifecycle. A handler may be async; it is awaited, and a throw is caught and routed to AuthLogger.error — an event handler can never fail a sign-in.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/AuthLogger",
+      "kind": "interface",
+      "title": "AuthLogger",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/AuthLogger",
+      "text": "AuthLogger interface AuthLogger Where the framework logs; every method is optional and defaults to silence.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/Author",
       "kind": "interface",
       "title": "Author",
       "module": "denext/server",
       "url": "/docs/api/denext-server/Author",
       "text": "Author interface Author A named author (<meta name=\"author\">, optional <link rel=\"author\">).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/AuthorizedCallbackInput",
+      "kind": "interface",
+      "title": "AuthorizedCallbackInput",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/AuthorizedCallbackInput",
+      "text": "AuthorizedCallbackInput interface AuthorizedCallbackInput What AuthCallbacks.authorized is asked about.",
       "denextOnly": true
     },
     {
@@ -2968,6 +3076,15 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/AuthSession",
       "text": "AuthSession interface AuthSession The signed (readable, tamper-evident) session payload. Never stores tokens/secrets.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/AuthSessionConfig",
+      "kind": "interface",
+      "title": "AuthSessionConfig",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/AuthSessionConfig",
+      "text": "AuthSessionConfig interface AuthSessionConfig Session lifetime + storage strategy.",
       "denextOnly": true
     },
     {
@@ -3004,6 +3121,15 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/AwaitableHeaders",
       "text": "AwaitableHeaders type AwaitableHeaders = Headers & PromiseLike<Headers> headers()'s return: usable synchronously AND awaitable (await headers(), Next 15).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/BearerContext",
+      "kind": "interface",
+      "title": "BearerContext",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/BearerContext",
+      "text": "BearerContext interface BearerContext What requireBearer adds to the handler's ctx.",
       "denextOnly": true
     },
     {
@@ -3327,7 +3453,7 @@
       "title": "credentials",
       "module": "denext/server",
       "url": "/docs/api/denext-server/credentials",
-      "text": "credentials credentials(options: CredentialsOptions): CredentialsProvider An email/password (or any custom) credentials provider.",
+      "text": "credentials credentials(options: CredentialsOptions): CredentialsProvider An email/password (or any custom) credentials provider. The authorize callback and an optional provider id. The configured credentials provider.",
       "denextOnly": true
     },
     {
@@ -3439,6 +3565,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/DenextCommand",
+      "kind": "interface",
+      "title": "DenextCommand",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/DenextCommand",
+      "text": "DenextCommand interface DenextCommand A project-local CLI verb declared in denext.config.ts under DenextConfig.commands — the zero-ceremony half of denext's CLI extension story: no plugin, no setup, just an object. It is structurally a CLI CommandSpec, so the same parser, --help renderer, and dispatcher run it, and a verb that outgrows the config can move into a plugin's addCommand unchanged. ``ts // denext.config.ts export default { commands: [{ name: \"seed\", summary: \"Load fixture data into the dev database\", flags: [{ name: \"rows\", type: \"number\", default: 100, help: \"How many rows\" }], run: async (ctx) => { await seed(Number(ctx.flags.rows)); }, }], }; ``",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/DenextConfig",
       "kind": "interface",
       "title": "DenextConfig",
@@ -3472,6 +3607,15 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/Directive",
       "text": "Directive type Directive = client | server | null Which boundary a module declares, or null when it declares none.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/discord",
+      "kind": "function",
+      "title": "discord",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/discord",
+      "text": "discord discord(options: OAuthClientOptions): OAuthProvider Discord (OAuth 2.0). Reads the profile from /users/@me; only an address Discord reports as verified reaches the session. The app's Discord client credentials. The configured Discord provider (id: \"discord\").",
       "denextOnly": true
     },
     {
@@ -3535,6 +3679,15 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/ExperimentalConfig",
       "text": "ExperimentalConfig interface ExperimentalConfig Opt-in experimental features, set under experimental in denext.config.ts. Each is off by default. A feature lives here only while it is genuinely **incomplete** — being new is not enough — so shipped, complete capabilities (streaming, Live, islands, resumability, SPA mode, Cache Components) are top-level config, not here.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/facebook",
+      "kind": "function",
+      "title": "facebook",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/facebook",
+      "text": "facebook facebook(options: OAuthClientOptions): OAuthProvider Facebook (OAuth 2.0, Graph API v19.0). The Graph /me response carries no verification flag, so the mapped user's emailVerified is always undefined, and Facebook may omit the email entirely (an account registered with a phone number, or a revoked permission). The app's Facebook app credentials. The configured Facebook provider (id: \"facebook\").",
       "denextOnly": true
     },
     {
@@ -3759,7 +3912,25 @@
       "title": "github",
       "module": "denext/server",
       "url": "/docs/api/denext-server/github",
-      "text": "github github(options: OAuthClientOptions): OAuthProvider GitHub (OAuth 2.0). Reads the profile from the /user API.",
+      "text": "github github(options: OAuthClientOptions): OAuthProvider GitHub (OAuth 2.0). Reads the profile from the /user API. The app's GitHub OAuth app credentials. The configured GitHub provider (id: \"github\").",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/gitlab",
+      "kind": "function",
+      "title": "gitlab",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/gitlab",
+      "text": "gitlab gitlab(options: GitLabOptions): OAuthProvider GitLab (OIDC, gitlab.com or self-managed). Claims come from the verified id_token. Optional instance origin plus the app's client credentials. The configured GitLab provider (id: \"gitlab\").",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/GitLabOptions",
+      "kind": "interface",
+      "title": "GitLabOptions",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/GitLabOptions",
+      "text": "GitLabOptions interface GitLabOptions Options for gitlab.",
       "denextOnly": true
     },
     {
@@ -3768,7 +3939,16 @@
       "title": "google",
       "module": "denext/server",
       "url": "/docs/api/denext-server/google",
-      "text": "google google(options: OAuthClientOptions): OAuthProvider Google (OIDC). Verifies the id_token; no userinfo round-trip needed.",
+      "text": "google google(options: OAuthClientOptions): OAuthProvider Google (OIDC). Verifies the id_token; no userinfo round-trip needed. The app's Google client credentials. The configured Google provider (id: \"google\").",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/Hasher",
+      "kind": "interface",
+      "title": "Hasher",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/Hasher",
+      "text": "Hasher interface Hasher How denext hashes and checks user-supplied secrets. An implementation MUST compare in constant time and MUST NOT throw on a malformed stored value — return false, so a corrupted row can never surface as a 500 or a stack trace.",
       "denextOnly": true
     },
     {
@@ -3961,6 +4141,24 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/inMemoryAuthAdapter",
+      "kind": "function",
+      "title": "inMemoryAuthAdapter",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/inMemoryAuthAdapter",
+      "text": "inMemoryAuthAdapter inMemoryAuthAdapter(options?: InMemoryAuthAdapterOptions): AuthAdapter Build a per-process, in-memory AuthAdapter: every method group (users, accounts, verification tokens, credentials, API tokens, MFA) plus a sessions store and close(). Ids are crypto.randomUUID() unless the caller supplies one; emails are matched case-insensitively and whitespace-trimmed. Nothing persists across a restart and nothing is shared between replicas — use it for development, tests and single-process demos, and sqliteAuthAdapter for anything real. Row cap and clock override. The adapter, ready to pass as denextAuth({ adapter }).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/InMemoryAuthAdapterOptions",
+      "kind": "interface",
+      "title": "InMemoryAuthAdapterOptions",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/InMemoryAuthAdapterOptions",
+      "text": "InMemoryAuthAdapterOptions interface InMemoryAuthAdapterOptions Options for inMemoryAuthAdapter.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/inMemoryCacheStore",
       "kind": "function",
       "title": "inMemoryCacheStore",
@@ -4150,6 +4348,33 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/issueApiToken",
+      "kind": "function",
+      "title": "issueApiToken",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/issueApiToken",
+      "text": "issueApiToken issueApiToken(config: AuthConfig, options: IssueApiTokenOptions): Promise<IssuedApiToken> Mint a bearer API token for a user and store its hash. The returned token is the ONLY copy of the plaintext: show it to the user once (the way GitHub shows a PAT) and never log it. Everything else about the token — its id, name, scopes and expiry — stays readable through listApiTokens. The app's auth config (the same object passed to denextAuth). The owner, plus the optional label, scopes and lifetime. The plaintext token (once) and the stored ApiTokenRecord.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/IssueApiTokenOptions",
+      "kind": "interface",
+      "title": "IssueApiTokenOptions",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/IssueApiTokenOptions",
+      "text": "IssueApiTokenOptions interface IssueApiTokenOptions What issueApiToken is asked for.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/IssuedApiToken",
+      "kind": "interface",
+      "title": "IssuedApiToken",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/IssuedApiToken",
+      "text": "IssuedApiToken interface IssuedApiToken What issueApiToken returns: the plaintext (once) plus the stored record.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/isTask",
       "kind": "function",
       "title": "isTask",
@@ -4195,6 +4420,24 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/keycloak",
+      "kind": "function",
+      "title": "keycloak",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/keycloak",
+      "text": "keycloak keycloak(options: KeycloakOptions): OAuthProvider Keycloak (OIDC). Endpoints follow the modern (Keycloak 17+) /realms/<realm> layout; a legacy instance served under /auth is configured with the generic oidc() provider. Keycloak origin, realm, and the app's client credentials. The configured Keycloak provider (id: \"keycloak\").",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/KeycloakOptions",
+      "kind": "interface",
+      "title": "KeycloakOptions",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/KeycloakOptions",
+      "text": "KeycloakOptions interface KeycloakOptions Options for keycloak.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/LayoutModule",
       "kind": "interface",
       "title": "LayoutModule",
@@ -4210,6 +4453,15 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/LayoutProps",
       "text": "LayoutProps type LayoutProps<P, Slots> = object & mapped Props passed to a layout component. Slots names the layout's parallel-route slots (@sidebar → LayoutProps<RouteParams, \"sidebar\"> adds a sidebar prop).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/listApiTokens",
+      "kind": "function",
+      "title": "listApiTokens",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/listApiTokens",
+      "text": "listApiTokens listApiTokens(config: AuthConfig, userId: string): Promise<ApiTokenRecord[]> A user's live API tokens (revoked and expired ones are already hidden by the adapter). The records carry tokenHash, never a usable token — redact it before sending a list to a client. The app's auth config. The owner. The user's live tokens.",
       "denextOnly": true
     },
     {
@@ -4348,6 +4600,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/MaybePromise",
+      "kind": "typeAlias",
+      "title": "MaybePromise",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/MaybePromise",
+      "text": "MaybePromise type MaybePromise<T> = T | Promise<T> A value an adapter may return directly or as a promise.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/MdxConfig",
       "kind": "interface",
       "title": "MdxConfig",
@@ -4372,6 +4633,33 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/Metadata",
       "text": "Metadata interface Metadata Page metadata a page or layout module may export as metadata/generateMetadata.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/MfaRecord",
+      "kind": "interface",
+      "title": "MfaRecord",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/MfaRecord",
+      "text": "MfaRecord interface MfaRecord A user's TOTP factor plus their single-use backup codes.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/microsoftEntra",
+      "kind": "function",
+      "title": "microsoftEntra",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/microsoftEntra",
+      "text": "microsoftEntra microsoftEntra(options: MicrosoftEntraOptions): OAuthProvider Microsoft Entra ID (formerly Azure AD) — OIDC v2.0 endpoints, id_token verified against the tenant's JWKS. Single-tenant only (see MicrosoftEntraOptions.tenant); claims come from the verified id_token, so no Microsoft Graph call is made. Tenant plus the app's client credentials. The configured Entra provider (id: \"microsoft-entra\").",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/MicrosoftEntraOptions",
+      "kind": "interface",
+      "title": "MicrosoftEntraOptions",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/MicrosoftEntraOptions",
+      "text": "MicrosoftEntraOptions interface MicrosoftEntraOptions Options for microsoftEntra.",
       "denextOnly": true
     },
     {
@@ -4533,7 +4821,7 @@
       "title": "oidc",
       "module": "denext/server",
       "url": "/docs/api/denext-server/oidc",
-      "text": "oidc oidc(options: OidcOptions): OAuthProvider A generic OIDC provider (Authorization Code + PKCE, id_token verified via JWKS).",
+      "text": "oidc oidc(options: OidcOptions): OAuthProvider A generic OIDC provider (Authorization Code + PKCE, id_token verified via JWKS). Two forms: ``ts oidc({ issuer: \"https://idp.example.com\", clientId, clientSecret }); // discovery oidc({ issuer, authorizationUrl, tokenUrl, jwksUrl, clientId, clientSecret }); // explicit ` The issuer-only form resolves the endpoints from <issuer>/.well-known/openid-configuration and refuses a document that declares a different issuer`. Passing *some* of the three endpoints is a configuration error: it would silently mix a hand-written endpoint with a discovered one. Issuer (+ optional endpoints/mapper) and the app's client credentials. The configured OIDC provider (id defaults to \"oidc\").",
       "denextOnly": true
     },
     {
@@ -4543,6 +4831,24 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/OidcOptions",
       "text": "OidcOptions interface OidcOptions Options for a generic oidc provider.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/okta",
+      "kind": "function",
+      "title": "okta",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/okta",
+      "text": "okta okta(options: OktaOptions): OAuthProvider Okta (OIDC, custom authorization server). Claims come from the verified id_token. Org domain, optional authorization server id, and client credentials. The configured Okta provider (id: \"okta\").",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/OktaOptions",
+      "kind": "interface",
+      "title": "OktaOptions",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/OktaOptions",
+      "text": "OktaOptions interface OktaOptions Options for okta.",
       "denextOnly": true
     },
     {
@@ -5091,7 +5397,7 @@
       "title": "requireAuth",
       "module": "denext/server",
       "url": "/docs/api/denext-server/requireAuth",
-      "text": "requireAuth requireAuth(request: Request, options?: RequireAuthOptions): Promise<Response | null> Middleware guard: allow the request through when signed in, otherwise return a redirect to the sign-in page carrying a callbackUrl back to the target. Use in middleware.ts (matcher-gated): ``ts export async function middleware(request: Request) { return await requireAuth(request); // returns a Response to redirect, or null to continue } export const config = { matcher: [\"/dashboard/:path*\"] }; `` The incoming request. Optional sign-in path override. A redirect Response when unauthenticated, or null to continue.",
+      "text": "requireAuth requireAuth(request: Request, options?: RequireAuthOptions): Promise<Response | null> Middleware guard: allow the request through when signed in, otherwise return a redirect to the sign-in page carrying a callbackUrl back to the target. Four checks, in order: no session → the sign-in page; a session still owing a second factor → pages.mfa (or the sign-in page); role not held → the sign-in page with ?error=forbidden; then callbacks.authorized({ session, request }) — false refuses exactly like a missing session, and a returned Response is passed through verbatim. A request that passes all four also slides the session's expiry forward when session.updateAge is configured — the re-issued cookie is queued on the request and attached to the response the pipeline finalizes, so \"continue\" still carries it. Use in middleware.ts (matcher-gated): ``ts export async function middleware(request: Request) { return await requireAuth(request); // returns a Response to redirect, or null to continue } export const config = { matcher: [\"/dashboard/:path*\"] }; `` The incoming request. Optional sign-in path override and role requirement. A redirect Response when unauthenticated, or null to continue.",
       "denextOnly": true
     },
     {
@@ -5104,12 +5410,30 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/requireBearer",
+      "kind": "function",
+      "title": "requireBearer",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/requireBearer",
+      "text": "requireBearer requireBearer(config: AuthConfig, options?: RequireBearerOptions): ApiMiddleware<object, BearerContext> Require a valid bearer API token (denext auth): verifies Authorization: Bearer tok_…, loads the token's user, and extends the handler's context with BearerContext — or fails with a 401 unauthorized envelope before any schema runs. A valid token that lacks the required scope or role fails with 403 forbidden instead, so \"who are you\" stays distinguishable from \"may you\". ``ts // lib/auth.ts export const authed = createApi().use(requireBearer(authConfig, { scope: \"pets:write\" })); // app/api/pets/route.ts export const POST = authed.define({ body: NewPet }, ({ body, ctx }) => add(ctx.user.id, body)); ` The middleware is tagged with documentsSecurity(…, [{ bearerAuth: [] }]), so @denext/openapi marks every endpoint that applies it as secured — declare the matching securitySchemes: { bearerAuth: … } once in the plugin options for the Authorize button. Bearer authentication **never sets a cookie** and never slides a session forward. It is also never accepted on the {basePath}/*` auth endpoints — minting and revoking tokens requires the interactive session, so a stolen token can't mint more of itself. The app's auth config (the same object passed to denextAuth). Throws here — at module load, not on the first request — when no adapter can store tokens. Optional scope / role requirements and the refusal messages. A middleware adding { token, user, session } to the handler's ctx.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/RequireBearerOptions",
+      "kind": "interface",
+      "title": "RequireBearerOptions",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/RequireBearerOptions",
+      "text": "RequireBearerOptions interface RequireBearerOptions Options for requireBearer.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/requireSession",
       "kind": "function",
       "title": "requireSession",
       "module": "denext/server",
       "url": "/docs/api/denext-server/requireSession",
-      "text": "requireSession requireSession(options?: RequireSessionOptions): ApiMiddleware<object, object> Require a signed-in viewer (denext auth): extends the context with { session }, or fails with a 401 unauthorized envelope before any schema runs. The 401 message. A middleware adding session: AuthSession to the handler's ctx.",
+      "text": "requireSession requireSession(options?: RequireSessionOptions): ApiMiddleware<object, object> Require a signed-in viewer (denext auth): extends the context with { session }, or fails with a 401 unauthorized envelope before any schema runs. With role, a signed-in caller who holds none of the listed roles fails with a 403 forbidden envelope instead. An API route owns its response, so this is also a sliding-expiry path: when session.updateAge is configured and the session has aged past it, the session is re-issued and the refreshed cookie rides the API response (see updateAuthSession). The 401 message, and optionally the required role(s). A middleware adding session: AuthSession to the handler's ctx.",
       "denextOnly": true
     },
     {
@@ -5217,7 +5541,16 @@
       "title": "revokeAllSessions",
       "module": "denext/server",
       "url": "/docs/api/denext-server/revokeAllSessions",
-      "text": "revokeAllSessions revokeAllSessions(userId: string): Promise<void> Revoke every server-side session of userId — \"sign out everywhere\", the right call after a password change or a suspected cookie theft. Requires denextAuth({ sessionStore }); throws when sessions are stateless. The user whose sessions end.",
+      "text": "revokeAllSessions revokeAllSessions(userId: string): Promise<void> Revoke every server-side session of userId — \"sign out everywhere\", the right call after a password change or a suspected cookie theft. Fires the sessionRevoked event. Requires denextAuth({ sessionStore }); throws when sessions are stateless. The user whose sessions end.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/revokeApiToken",
+      "kind": "function",
+      "title": "revokeApiToken",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/revokeApiToken",
+      "text": "revokeApiToken revokeApiToken(config: AuthConfig, id: string): Promise<void> Revoke a token by id — it stops authenticating immediately and can never be revived. Revoking an unknown (or already revoked) id is a no-op, not an error. The app's auth config. The ApiTokenRecord.id to revoke.",
       "denextOnly": true
     },
     {
@@ -5226,7 +5559,7 @@
       "title": "revokeSession",
       "module": "denext/server",
       "url": "/docs/api/denext-server/revokeSession",
-      "text": "revokeSession revokeSession(sessionId: string): Promise<void> Revoke one server-side session by id (the sessionId on an AuthSession), so its cookie stops authenticating immediately — \"sign out this device\". Requires denextAuth({ sessionStore }); throws when sessions are stateless. The session to end.",
+      "text": "revokeSession revokeSession(sessionId: string): Promise<void> Revoke one server-side session by id (the sessionId on an AuthSession), so its cookie stops authenticating immediately — \"sign out this device\". Fires the sessionRevoked event. Requires denextAuth({ sessionStore }); throws when sessions are stateless. The session to end.",
       "denextOnly": true
     },
     {
@@ -5428,6 +5761,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/scryptHasher",
+      "kind": "function",
+      "title": "scryptHasher",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/scryptHasher",
+      "text": "scryptHasher scryptHasher(options?: HashPasswordOptions): Hasher The default Hasher: salted **scrypt** through node:crypto, encoded as scrypt$N=…,r=…,p=…$salt$hash. Pass it explicitly to raise the cost: ``ts denextAuth({ hasher: scryptHasher({ cost: 2 ** 16 }), … }) `` Hashes stay self-describing, so raising the cost never invalidates existing ones. Tunable scrypt cost (cost/blockSize/parallelization). A Hasher backed by hashPassword / verifyPassword.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/SearchParams",
       "kind": "typeAlias",
       "title": "SearchParams",
@@ -5488,6 +5830,15 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/SegmentLevel",
       "text": "SegmentLevel interface SegmentLevel The convention files one route directory level contributes (own files, not inherited).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/SendVerificationRequest",
+      "kind": "typeAlias",
+      "title": "SendVerificationRequest",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/SendVerificationRequest",
+      "text": "SendVerificationRequest type SendVerificationRequest = (params: VerificationRequestParams) => Promise<void> | void Deliver a verification token. denext ships **no mailer** — email verification, password reset, magic links and one-time codes all call this, and the flows that need it refuse to start when it is absent.",
       "denextOnly": true
     },
     {
@@ -5689,6 +6040,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/slack",
+      "kind": "function",
+      "title": "slack",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/slack",
+      "text": "slack slack(options: OAuthClientOptions): OAuthProvider Slack (\"Sign in with Slack\", OIDC). Claims come from the verified id_token; Slack's email_verified claim is honoured by the shared mapper. The app's Slack client credentials. The configured Slack provider (id: \"slack\").",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/SlotRoutes",
       "kind": "interface",
       "title": "SlotRoutes",
@@ -5731,6 +6091,24 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/specificity",
       "text": "specificity specificity(pattern: Segment[]): number Specificity score for ordering routes: more specific (static) patterns should be tried before less specific (dynamic/catch-all) ones. Higher wins. Position-blind (a sum) — prefer compareSpecificity for ordering.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/sqliteAuthAdapter",
+      "kind": "function",
+      "title": "sqliteAuthAdapter",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/sqliteAuthAdapter",
+      "text": "sqliteAuthAdapter sqliteAuthAdapter(options?: SqliteAuthAdapterOptions): AuthAdapter Build the durable AuthAdapter on Deno's built-in node:sqlite: every method group (users, accounts, verification tokens, credentials, API tokens, MFA) plus a sessions store over the **same** database handle and an idempotent close(). Ids are crypto.randomUUID() unless the caller supplies one; emails are matched case-insensitively and whitespace-trimmed, and a unique index refuses a second user on one address. The schema is created on first use and evolved additively on every open (see the module doc). Single-node, and TOTP secrets are at rest in plaintext. Database path (or an openDb hook), clock override, sweep interval. The adapter, ready to pass as denextAuth({ adapter }).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/SqliteAuthAdapterOptions",
+      "kind": "interface",
+      "title": "SqliteAuthAdapterOptions",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/SqliteAuthAdapterOptions",
+      "text": "SqliteAuthAdapterOptions interface SqliteAuthAdapterOptions Options for sqliteAuthAdapter.",
       "denextOnly": true
     },
     {
@@ -6022,6 +6400,15 @@
       "denextOnly": false
     },
     {
+      "id": "api:denext-server/updateAuthSession",
+      "kind": "function",
+      "title": "updateAuthSession",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/updateAuthSession",
+      "text": "updateAuthSession updateAuthSession(): Promise<AuthSession | null> Read the session **and** slide its expiry forward when session.updateAge has elapsed — the explicit version of what GET {basePath}/session, requireAuth and requireSession() do for you. Call it from a Server Action or a route.ts handler (anywhere the response has not been sent yet); the refreshed cookie rides that response. In a streamed Server Component use auth instead — a Set-Cookie written after the headers flush is dropped silently. The (possibly refreshed) AuthSession, or null when signed out.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/updateTag",
       "kind": "function",
       "title": "updateTag",
@@ -6058,12 +6445,57 @@
       "denextOnly": false
     },
     {
+      "id": "api:denext-server/VerificationPurpose",
+      "kind": "typeAlias",
+      "title": "VerificationPurpose",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/VerificationPurpose",
+      "text": "VerificationPurpose type VerificationPurpose = email | reset | magic | otp What a verification token is for (one token space per purpose).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/VerificationRequestParams",
+      "kind": "interface",
+      "title": "VerificationRequestParams",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/VerificationRequestParams",
+      "text": "VerificationRequestParams interface VerificationRequestParams What AuthConfig.sendVerificationRequest is handed for each outbound token.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/VerificationTokenRecord",
+      "kind": "interface",
+      "title": "VerificationTokenRecord",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/VerificationTokenRecord",
+      "text": "VerificationTokenRecord interface VerificationTokenRecord A single-use token proving control of an identifier (an email verification link, a password-reset link, a magic link, a one-time code). Only the **hash** is stored, so a database read never yields a usable token.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/VerificationTokenRef",
+      "kind": "interface",
+      "title": "VerificationTokenRef",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/VerificationTokenRef",
+      "text": "VerificationTokenRef interface VerificationTokenRef Identifies one verification token (the tuple its uniqueness is scoped by).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/verifyApiToken",
+      "kind": "function",
+      "title": "verifyApiToken",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/verifyApiToken",
+      "text": "verifyApiToken verifyApiToken(config: AuthConfig, presented: string): Promise<ApiTokenRecord | null> Verify a presented bearer token: hash it, look the hash up (an indexed exact match — no secret is ever compared in-process), and check it is still live. Every failure mode returns the same null: an unknown token, a revoked one, an expired one, a malformed one, and \"bearer tokens aren't configured at all\". Callers must keep that uniformity in their answer — see requireBearer. The app's auth config. The raw token from the Authorization header. The live ApiTokenRecord, or null.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/verifyPassword",
       "kind": "function",
       "title": "verifyPassword",
       "module": "denext/server",
       "url": "/docs/api/denext-server/verifyPassword",
-      "text": "verifyPassword verifyPassword(password: string, stored: string): Promise<boolean> Verify a password against a hash produced by hashPassword. The comparison is constant-time (timingSafeEqual), and a malformed/unsupported stored value — an empty column, a legacy format, a corrupted row — returns false rather than throwing, so an authorize callback can't leak a stack trace or a 500. That rejection still runs a full scrypt derivation, so an unknown account takes as long to reject as a wrong password for a known one (no user-enumeration timing oracle). The submitted plaintext password. The stored scrypt$… string. true only when the password matches.",
+      "text": "verifyPassword verifyPassword(password: string, stored: string, options?: HashPasswordOptions): Promise<boolean> Verify a password against a hash produced by hashPassword. The comparison is constant-time (timingSafeEqual), and a malformed/unsupported stored value — an empty column, a legacy format, a corrupted row — returns false rather than throwing, so an authorize callback can't leak a stack trace or a 500. That rejection still runs a full scrypt derivation, so an unknown account takes as long to reject as a wrong password for a known one (no user-enumeration timing oracle). The submitted plaintext password. The stored scrypt$… string. The cost this deployment hashes at — pass the SAME options hashPassword was given (scryptHasher does). It is used only for the equal-work rejection of a missing/malformed stored value: a real comparison always uses the parameters embedded in the stored string. Omitting it on a deployment that raised the cost makes an unknown account reject measurably faster than a known one. true only when the password matches.",
       "denextOnly": true
     },
     {
@@ -6280,6 +6712,15 @@
       "module": "denext/client",
       "url": "/docs/api/denext-client/capturedScope",
       "text": "capturedScope capturedScope<T>(): T Read the captured lexical scope inside an extracted qrl handler segment. The build transform emits const [a, b] = capturedScope() at the top of a segment whose handler closed over component-local a/b; the values are the capture array passed to qrl (restored from the resume payload on the client). Must be called synchronously at handler entry. The captured values, in the order the transform emitted them.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/ClientSession",
+      "kind": "interface",
+      "title": "ClientSession",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/ClientSession",
+      "text": "ClientSession interface ClientSession The reactive session state from useSession.",
       "denextOnly": true
     },
     {
@@ -6994,12 +7435,75 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-client/SessionProvider",
+      "kind": "function",
+      "title": "SessionProvider",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/SessionProvider",
+      "text": "SessionProvider SessionProvider(props: SessionProviderProps): VNode Provide session state to the tree. Seed it with session from the server for no loading flash, or omit it to fetch {basePath}/session on mount. SessionProviderProps. The provider element wrapping children.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/SessionProviderProps",
+      "kind": "interface",
+      "title": "SessionProviderProps",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/SessionProviderProps",
+      "text": "SessionProviderProps interface SessionProviderProps Props for SessionProvider.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/SessionUser",
+      "kind": "interface",
+      "title": "SessionUser",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/SessionUser",
+      "text": "SessionUser interface SessionUser The signed-in user exposed to the client (non-sensitive fields only).",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-client/setApiInvalidationSource",
       "kind": "function",
       "title": "setApiInvalidationSource",
       "module": "denext/client",
       "url": "/docs/api/denext-client/setApiInvalidationSource",
       "text": "setApiInvalidationSource setApiInvalidationSource(source: ApiInvalidationSource | null): void Install the transport that delivers tag invalidations to useApi({ tags }) (the Live client does this in configureLive / useApiLive). The subscriber, or null to remove it.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/signIn",
+      "kind": "function",
+      "title": "signIn",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/signIn",
+      "text": "signIn signIn(provider: string, options?: SignInOptions): Promise<unknown> Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with redirect: false, resolves with the URL it would have gone to); for a Credentials provider (pass credentials) it POSTs and resolves with the result. The provider id (e.g. \"google\", \"credentials\"). SignInOptions. The credentials result, or the sign-in URL for the redirect flow.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/SignInOptions",
+      "kind": "interface",
+      "title": "SignInOptions",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/SignInOptions",
+      "text": "SignInOptions interface SignInOptions Options for signIn.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/signOut",
+      "kind": "function",
+      "title": "signOut",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/signOut",
+      "text": "signOut signOut(options?: SignOutOptions): Promise<void> Sign out (same-origin POST to {basePath}/signout), then navigate to callbackUrl. SignOutOptions. A promise that settles once the navigation has been started.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-client/SignOutOptions",
+      "kind": "interface",
+      "title": "SignOutOptions",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/SignOutOptions",
+      "text": "SignOutOptions interface SignOutOptions Options for signOut.",
       "denextOnly": true
     },
     {
@@ -7372,6 +7876,15 @@
       "denextOnly": false
     },
     {
+      "id": "api:denext-client/useSession",
+      "kind": "function",
+      "title": "useSession",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/useSession",
+      "text": "useSession useSession(): ClientSession Read the current ClientSession. Must be under a SessionProvider. The session state plus update().",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-client/useState",
       "kind": "function",
       "title": "useState",
@@ -7503,7 +8016,7 @@
       "title": "disableRenderReasons",
       "module": "denext/devtools",
       "url": "/docs/api/denext-devtools/disableRenderReasons",
-      "text": "disableRenderReasons disableRenderReasons(): void Stop tracking render reasons (and uninstall the commit hook if nothing else needs it).",
+      "text": "disableRenderReasons disableRenderReasons(): void Release one enableRenderReasons hold. Tracking stops (and the commit hook is uninstalled if nothing else needs it) only once the LAST holder has released.",
       "denextOnly": true
     },
     {
@@ -7521,7 +8034,7 @@
       "title": "enableRenderReasons",
       "module": "denext/devtools",
       "url": "/docs/api/denext-devtools/enableRenderReasons",
-      "text": "enableRenderReasons enableRenderReasons(): void Begin tracking why each component renders — install the commit hook and clear any prior data. The panel enables this when its \"why did this render\" view is on; the first commit after enabling seeds the baseline (so reasons appear from the next render onward). No-op in production.",
+      "text": "enableRenderReasons enableRenderReasons(): void Begin tracking why each component renders — install the commit hook and, when tracking was off, clear any prior data. The panel enables this when its \"why did this render\" view is on; the first commit after enabling seeds the baseline (so reasons appear from the next render onward). No-op in production. **Refcounted.** Each caller takes one hold and releases it with exactly one disableRenderReasons. Enabling while another holder is already tracking keeps the accrued history instead of clearing it — otherwise opening and closing the DevTools panel would wipe what the MCP bridge's denext_why_render reports.",
       "denextOnly": true
     },
     {
@@ -7593,7 +8106,7 @@
       "title": "getOwnerStack",
       "module": "denext/devtools",
       "url": "/docs/api/denext-devtools/getOwnerStack",
-      "text": "getOwnerStack getOwnerStack(fiberId: number): Array<object> The component ancestor chain for a node — the names of the component fibers above it (nearest first), each with its source when known. An approximation of React's \"owner stack\": the render-parent path rather than the JSX-owner, which coincide for the common case. fiberId comes from the most recent getInspectorTree. Empty in production or for an unknown/stale id.",
+      "text": "getOwnerStack getOwnerStack(fiberId: number): OwnerStackEntry[] The component ancestor chain for a node — the names of the component fibers above it (nearest first), each with its source when known. An approximation of React's \"owner stack\": the render-parent path rather than the JSX-owner, which coincide for the common case. fiberId comes from the most recent getInspectorTree. Empty in production or for an unknown/stale id.",
       "denextOnly": true
     },
     {
@@ -7714,6 +8227,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-devtools/OwnerStackEntry",
+      "kind": "interface",
+      "title": "OwnerStackEntry",
+      "module": "denext/devtools",
+      "url": "/docs/api/denext-devtools/OwnerStackEntry",
+      "text": "OwnerStackEntry interface OwnerStackEntry One component above a node in getOwnerStack.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-devtools/PageRenderMode",
       "kind": "interface",
       "title": "PageRenderMode",
@@ -7792,6 +8314,15 @@
       "module": "denext/devtools",
       "url": "/docs/api/denext-devtools/setRefValue",
       "text": "setRefValue setRefValue(fiberId: number, hookIndex: number, value: unknown): boolean Set a useRef cell's .current live. A ref write does not itself schedule a render (matching React), so the change is visible on the next commit the app makes; the panel updates its own view optimistically. Returns whether the cell was found and is a ref.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-devtools/SourceLocation",
+      "kind": "interface",
+      "title": "SourceLocation",
+      "module": "denext/devtools",
+      "url": "/docs/api/denext-devtools/SourceLocation",
+      "text": "SourceLocation interface SourceLocation Where a component was declared — the build-time position behind the panel's source link.",
       "denextOnly": true
     },
     {
@@ -8565,7 +9096,7 @@
       "title": "Common tasks",
       "module": "guide",
       "url": "https://github.com/Brainwires/denext/blob/main/AGENTS.md#common-tasks",
-      "text": "## Common tasks **A page with data (Server Component):** ``tsx // app/page.tsx export default async function Home() { const posts = await getPosts(); return <ul>{posts.map((p) => <li key={p.id}>{p.title}</li>)}</ul>; } ` **An interactive component:** `tsx // app/counter.tsx \"use client\"; import { useState } from \"denext\"; export function Counter() { const [n, setN] = useState(0); return <button type=\"button\" onClick={() => setN(n + 1)}>Clicked {n}</button>; } ` **A route handler (API):** `ts // app/api/hello/route.ts export function GET(_req: Request): Response { return Response.json({ ok: true }); } ` **A validated route handler + calling it with end-to-end types (no tRPC):** defineApi takes Standard Schemas (Zod/Valibot/ArkType/TypeBox/hand-rolled) for params / query / body / response plus the errors it may fail with; the handler gets parsed, typed input and a schema mismatch is a structured 400 before it runs. denext dev/build generate .denext/api.ts from the route modules' TYPES and register it, so createApiClient() and useApi type-check every call — path, method, params, query, body, response, error codes. `ts // app/api/user/[id]/route.ts import { createApi, defineApi, requireSession } from \"denext/server\"; import { z } from \"zod\"; export const GET = defineApi({ params: z.object({ id: z.string() }), response: z.object({ id: z.string(), name: z.string() }), // strips undeclared keys, in prod too errors: { not_found: 404 }, }, async ({ params, fail }) => (await db.users.get(params.id)) ?? fail(\"not_found\")); export const PATCH = createApi().use(requireSession()).define({ params: z.object({ id: z.string() }), body: z.object({ name: z.string().min(1) }), errors: { not_owner: 403 }, }, async ({ params, body, ctx, fail }) => { if (ctx.session.user.id !== params.id) fail(\"not_owner\"); return db.users.update(params.id, body); }); ` `ts // anywhere (server component, client component, or a test) import { createApiClient, isApiClientError } from \"denext\"; import type {} from \"./.denext/api.ts\"; // registers the schema (type-only; nothing ships) const api = createApiClient(); // typed against THIS app's routes const user = await api(\"/api/user/[id]\", \"GET\", { params: { id: \"1\" } }); // user is typed try { await api(\"/api/user/[id]\", \"PATCH\", { params: { id: \"1\" }, body: { name: \"\" } }); } catch (err) { if (isApiClientError(err) && err.code === \"not_owner\") { /* narrowed to the declared codes */ } } ` `tsx // a client component — the hook; GETs in one tick ride ONE batched request \"use client\"; import { useApi } from \"denext\"; export function User({ id }: { id: string }) { const { data, error, pending } = useApi(\"/api/user/[id]\", \"GET\", { params: { id } }); return pending ? <p>…</p> : error ? <p>{error.code}</p> : <p>{data?.name}</p>; } ` Add the @denext/openapi plugin (plugins: [openapi()] in denext.config.ts) and those same definitions serve GET /openapi.json (OpenAPI 3.1) + a docs page at GET /docs, write openapi.json at build, and back denext openapi emit | diff | lint | types — zero extra annotation. Schemas that implement Standard JSON Schema (Zod ≥ 4.2, ArkType, Valibot) or TypeBox are described in full; others are {} + a lint warning. Need GraphQL? @denext/graphql mounts GraphQL Yoga at /graphql (any GraphQLSchema; Pothos recommended, no decorators) and fromChannel(channel, key) turns a createChannel into a subscription source — the same push the Live socket delivers. A plain handler still works and is still typed: return TypedResponse<T> / take a TypedRequest<B> from denext/server. A plain route.ts body is capped at 1 MiB (export const maxBodyBytes = N | false); redirect()/notFound() inside one are HTTP responses; a thrown ApiError(status, code, { data }) is a typed JSON error envelope. **Typed live data (validated subscription + server push):** `ts // app/live.ts \"use server\"; import { createChannel, defineSubscription } from \"denext/server\"; export const orderStatus = defineSubscription({ input: z.object({ id: z.string() }), // validated on every subscribe tags: ({ id }) => [order:${id}], // server-derived; re-pushed on revalidateTag authorize: async ({ id }) => (await auth())?.user.id === (await db.orders.owner(id)), resolve: ({ id }) => db.orders.status(id), }); export const orderEvents = createChannel<{ status: string }>({ authorize: async (_ctx, key) => key === user:${(await auth())?.user.id}, // REQUIRED }); // anywhere on the server: await orderEvents.publish(user:${userId}, { status: \"shipped\" }); ` `tsx \"use client\"; import { useChannel, useSubscription } from \"denext/live\"; import { orderEvents, orderStatus } from \"./live.ts\"; const { data } = useSubscription(orderStatus, { id }, { initial }); const { data: event } = useChannel(orderEvents, user:${userId}); ` **A typed Server Action (the mutation side, also type-checked):** defineAction validates FormData into a typed input (a parser, or a Zod/Valibot/any Standard Schema) and its Out flows into useActionState. `ts // app/actions.ts \"use server\"; import { ActionValidationError, defineAction } from \"denext/server\"; export const createPost = defineAction({ input: (f) => ({ title: String(f.title ?? \"\").trim() }), // typed input: { title: string } handler: async ({ title }) => { if (!title) throw new ActionValidationError(\"bad\", { title: \"Title is required\" }); return { id: await db.posts.insert({ title }) }; // Out inferred: { id: string } }, }); ` `tsx // app/new-post.tsx \"use client\"; import { idleActionState, useActionState } from \"denext\"; import { createPost } from \"./actions.ts\"; export function NewPost() { const [state, action] = useActionState(createPost, idleActionState<{ id: string }>()); return ( <form action={action}> <input name=\"title\" /> {!state.ok && state.fieldErrors?.title} {/* typed */} {state.ok && created ${state.data.id}} {/* typed */} </form> ); } ` **Reading cookies / a session (auth):** `ts import { cookies, getSession } from \"denext/server\"; // cookies are Secure + httpOnly + SameSite=Lax by DEFAULT; pass { httpOnly: false } to opt out. const session = await getSession<{ userId: string }>({ secret: Deno.env.get(\"SESSION_SECRET\")!, }); if (!session.data) redirect(\"/login\"); await session.set({ userId: user.id }); // sign in ` **A database (zero-npm, server-only module):** `ts // lib/db.ts — Deno's built-in SQLite; no install. // KV / Postgres recipes: https://denext.dev/docs/database import { DatabaseSync } from \"node:sqlite\"; const db = new DatabaseSync(Deno.env.get(\"DB_PATH\") ?? \"app.db\"); export const listNotes = () => db.prepare(\"SELECT * FROM notes\").all(); ` Open the connection once at module scope; do writes in Server Actions. **A scheduled / background task (cron):** put it in tasks/<name>.ts; schedule it in denext.config.ts (scheduledTasks) or per-task; run it on demand with runTask(name) or denext task <name>. Uses Deno.cron where available (Deno Deploy), else a userland tick — no npm cron dependency. **Cron expressions are evaluated in UTC** (matching Deno.cron), and a schedule never fires on startup nor overlaps a still-running instance of the same task. `ts // tasks/cleanup.ts import { defineTask } from \"denext/server\"; export default defineTask({ description: \"purge expired sessions\", schedule: \"0 3 * * *\", // optional; or list it in config.scheduledTasks handler: async ({ payload }) => { await db.exec(\"DELETE FROM sessions WHERE expires_at < now()\"); }, }); // denext.config.ts → scheduledTasks: { \"0 0 * * 1\": [\"digest\", \"warm-cache\"] } // anywhere on the server: import { runTask } from \"denext/server\"; await runTask(\"cleanup\"); ` **A content collection (typed MD/MDX/YAML/JSON — the @denext/content-collections plugin):** add plugins: [contentCollections()] to denext.config.ts, declare collections in content.config.ts with a Standard Schema + a loader, then query them typed from a Server Component. The plugin validates entries and generates types — live in denext dev, and at denext build. `ts // content.config.ts import { defineCollection, defineContentConfig, glob } from \"@denext/content-collections/config\"; import { z } from \"zod\"; export default defineContentConfig({ collections: { blog: defineCollection({ loader: glob({ pattern: \"**/*.md\", base: \"content/blog\" }), schema: z.object({ title: z.string(), date: z.string(), draft: z.boolean().default(false) }), }), }, }); ` `tsx // app/page.tsx — server-only query, typed to the schema import \"../.denext/content.ts\"; // registers the collection types (generated) import { getCollection } from \"@denext/content-collections/runtime\"; export default async function Blog() { const posts = await getCollection(\"blog\", (p) => !p.data.draft); // p.data is typed return <ul>{posts.map((p) => <li key={p.id}>{p.data.title}</li>)}</ul>; } // Render an entry's body: <Content entry={post} /> (or await renderContent(post)) from the // same module — .md through the first-party renderer, .mdx through a module compiled at build. // CLI: denext content build | list | validate (validate exits 1 on a schema failure — a CI gate). ` **A compile-time feature flag (dead-code-eliminated):** feature(\"KEY\") from denext/feature folds to a boolean literal at build time for any KEY in experimental.features — denext's feature() (cf. Bun's bun:bundle). feature() always returns the configured value; the untaken branch is dead-code eliminated where it folds (native App Router component modules, SPA, dev), and read at runtime on the compat drop-in App Router path. Keep the argument a string literal; a key not listed reads false. Flag names/states are embedded in the client bundle (don't encode secrets). `tsx import { feature } from \"denext/feature\"; export function Checkout() { return feature(\"NEW_CHECKOUT\") ? <NewCheckout /> : <LegacyCheckout />; } // denext.config.ts → experimental: { features: { NEW_CHECKOUT: false } } ` **Inspect / shrink the client bundle:** denext analyze breaks the bundle down by chunk + role; denext analyze --md writes a markdown report (per-module on the esbuild path) to pipe into CI. Imports of one export from a \"sideEffects\": false dep (lucide-react, Radix) are tree-shaken automatically on the esbuild path. **Testing an app (no browser, JS-disabled path):** `ts import { createTestApp, createTestClient } from \"denext/testing\"; const client = createTestClient(await createTestApp(\"./\")); const res = await client.submit( client.form((await client.get(\"/login\")).text), { email, password, }, ); // res.status, client.cookies — a cookie jar persists the session across requests. ` **Testing a component (hooks/effects/events, no browser):** `ts import { fireEvent, render } from \"denext/testing\"; import { h } from \"denext/jsx-runtime\"; const screen = await render(h(Counter, null)); // async — await it await screen.fireEvent.click(screen.getByRole(\"button\")); // getByRole/getByText/getByLabelText/getByTestId; fireEvent.change wires to onChange. ` **Conformance-probing every route (CI gate):** `ts import { formatReport, probeApp } from \"denext/testing\"; const report = await probeApp(\"./\"); // renders every route, asserts valid HTML docs if (!report.ok) throw new Error(formatReport(report)); // or run denext doctor ` **Config:** denext.config.ts exports { ... } (redirects, rewrites, headers, i18n, images, cacheComponents, streaming, live, plugins, experimental, tailwind, csp, compatibilityMode; mode: \"spa\" + spa: { entry, … } for SPA mode). Not next.config.js. **Writing a plugin:** a DenextPlugin ({ name, setup(ctx) } from denext/plugin-kit, the semver-stable toolkit) hooks six seams — addRouteSynthesizer (add/adjust routes), addRequestHandler (claim unmatched requests), addBuildStep (emit assets), addPrepareStep (codegen the app imports — runs at build AND dev startup, and re-runs on watch-glob changes in dev), addTeardown (dispose on drain), and addCommand (contribute a CLI verb). Declare it as plugins: [myPlugin()]. See the [plugin guide](https://denext.dev/docs/plugins) and [examples/plugin-aliases`](https://github.com/Brainwires/denext/tree/main/examples/plugin-aliases).",
+      "text": "## Common tasks **A page with data (Server Component):** ``tsx // app/page.tsx export default async function Home() { const posts = await getPosts(); return <ul>{posts.map((p) => <li key={p.id}>{p.title}</li>)}</ul>; } ` **An interactive component:** `tsx // app/counter.tsx \"use client\"; import { useState } from \"denext\"; export function Counter() { const [n, setN] = useState(0); return <button type=\"button\" onClick={() => setN(n + 1)}>Clicked {n}</button>; } ` **A route handler (API):** `ts // app/api/hello/route.ts export function GET(_req: Request): Response { return Response.json({ ok: true }); } ` **A validated route handler + calling it with end-to-end types (no tRPC):** defineApi takes Standard Schemas (Zod/Valibot/ArkType/TypeBox/hand-rolled) for params / query / body / response plus the errors it may fail with; the handler gets parsed, typed input and a schema mismatch is a structured 400 before it runs. denext dev/build generate .denext/api.ts from the route modules' TYPES and register it, so createApiClient() and useApi type-check every call — path, method, params, query, body, response, error codes. `ts // app/api/user/[id]/route.ts import { createApi, defineApi, requireSession } from \"denext/server\"; import { z } from \"zod\"; export const GET = defineApi({ params: z.object({ id: z.string() }), response: z.object({ id: z.string(), name: z.string() }), // strips undeclared keys, in prod too errors: { not_found: 404 }, }, async ({ params, fail }) => (await db.users.get(params.id)) ?? fail(\"not_found\")); export const PATCH = createApi().use(requireSession()).define({ params: z.object({ id: z.string() }), body: z.object({ name: z.string().min(1) }), errors: { not_owner: 403 }, }, async ({ params, body, ctx, fail }) => { if (ctx.session.user.id !== params.id) fail(\"not_owner\"); return db.users.update(params.id, body); }); ` `ts // anywhere (server component, client component, or a test) import { createApiClient, isApiClientError } from \"denext\"; import type {} from \"./.denext/api.ts\"; // registers the schema (type-only; nothing ships) const api = createApiClient(); // typed against THIS app's routes const user = await api(\"/api/user/[id]\", \"GET\", { params: { id: \"1\" } }); // user is typed try { await api(\"/api/user/[id]\", \"PATCH\", { params: { id: \"1\" }, body: { name: \"\" } }); } catch (err) { if (isApiClientError(err) && err.code === \"not_owner\") { /* narrowed to the declared codes */ } } ` `tsx // a client component — the hook; GETs in one tick ride ONE batched request \"use client\"; import { useApi } from \"denext\"; export function User({ id }: { id: string }) { const { data, error, pending } = useApi(\"/api/user/[id]\", \"GET\", { params: { id } }); return pending ? <p>…</p> : error ? <p>{error.code}</p> : <p>{data?.name}</p>; } ` Add the @denext/openapi plugin (plugins: [openapi()] in denext.config.ts) and those same definitions serve GET /openapi.json (OpenAPI 3.1) + a docs page at GET /docs, write openapi.json at build, and back denext openapi emit | diff | lint | types — zero extra annotation. Schemas that implement Standard JSON Schema (Zod ≥ 4.2, ArkType, Valibot) or TypeBox are described in full; others are {} + a lint warning. Need GraphQL? @denext/graphql mounts GraphQL Yoga at /graphql (any GraphQLSchema; Pothos recommended, no decorators) and fromChannel(channel, key) turns a createChannel into a subscription source — the same push the Live socket delivers. A plain handler still works and is still typed: return TypedResponse<T> / take a TypedRequest<B> from denext/server. A plain route.ts body is capped at 1 MiB (export const maxBodyBytes = N | false); redirect()/notFound() inside one are HTTP responses; a thrown ApiError(status, code, { data }) is a typed JSON error envelope. **Typed live data (validated subscription + server push):** `ts // app/live.ts \"use server\"; import { createChannel, defineSubscription } from \"denext/server\"; export const orderStatus = defineSubscription({ input: z.object({ id: z.string() }), // validated on every subscribe tags: ({ id }) => [order:${id}], // server-derived; re-pushed on revalidateTag authorize: async ({ id }) => (await auth())?.user.id === (await db.orders.owner(id)), resolve: ({ id }) => db.orders.status(id), }); export const orderEvents = createChannel<{ status: string }>({ authorize: async (_ctx, key) => key === user:${(await auth())?.user.id}, // REQUIRED }); // anywhere on the server: await orderEvents.publish(user:${userId}, { status: \"shipped\" }); ` `tsx \"use client\"; import { useChannel, useSubscription } from \"denext/live\"; import { orderEvents, orderStatus } from \"./live.ts\"; const { data } = useSubscription(orderStatus, { id }, { initial }); const { data: event } = useChannel(orderEvents, user:${userId}); ` **A typed Server Action (the mutation side, also type-checked):** defineAction validates FormData into a typed input (a parser, or a Zod/Valibot/any Standard Schema) and its Out flows into useActionState. `ts // app/actions.ts \"use server\"; import { ActionValidationError, defineAction } from \"denext/server\"; export const createPost = defineAction({ input: (f) => ({ title: String(f.title ?? \"\").trim() }), // typed input: { title: string } handler: async ({ title }) => { if (!title) throw new ActionValidationError(\"bad\", { title: \"Title is required\" }); return { id: await db.posts.insert({ title }) }; // Out inferred: { id: string } }, }); ` `tsx // app/new-post.tsx \"use client\"; import { idleActionState, useActionState } from \"denext\"; import { createPost } from \"./actions.ts\"; export function NewPost() { const [state, action] = useActionState(createPost, idleActionState<{ id: string }>()); return ( <form action={action}> <input name=\"title\" /> {!state.ok && state.fieldErrors?.title} {/* typed */} {state.ok && created ${state.data.id}} {/* typed */} </form> ); } ` **Reading cookies / a session (auth):** `ts import { redirect } from \"denext\"; import { auth, cookies, createApi, getSession, requireAuth, requireSession } from \"denext/server\"; // cookies are Secure + httpOnly + SameSite=Lax by DEFAULT; pass { httpOnly: false } to opt out. const session = await getSession<{ userId: string }>({ secret: Deno.env.get(\"SESSION_SECRET\")!, }); if (!session.data) redirect(\"/login\"); await session.set({ userId: user.id }); // sign in // With the denextAuth({ … }) plugin the same three calls cover server, middleware and API: const s = await auth(); // anywhere on the server; null while a second factor is pending // middleware.ts — a Response to redirect (302 + ?error=forbidden), or null to continue: export const middleware = (request: Request) => requireAuth(request, { role: \"admin\" }); // a route handler — requireSession({ role }) refuses with 403: export const GET = createApi().use(requireSession({ role: \"admin\" })).define(/* … */); ` Persist users with an adapter (sqliteAuthAdapter({ path }) on node:sqlite, or inMemoryAuthAdapter()), and gate a machine-to-machine API with requireBearer(authConfig, { scope: \"pets:write\" }) — it self-documents as bearerAuth for @denext/openapi (declare the matching securitySchemes: { bearerAuth: … } once in the openapi() options). Full guide: https://denext.dev/docs/auth **A project-local CLI verb (no plugin):** put it in denext.config.ts and run it as a verb. `ts // denext.config.ts export default { commands: [{ name: \"seed\", summary: \"Load fixtures\", run: (ctx) => seed() }], }; // denext seed — same flag parsing, --help and did-you-mean as a built-in. List this // project's own verbs with denext commands [--json]; they are in shell completions too. // denext --help shows only the built-ins, because help never imports your config. ` **A GUI over the project:** denext ui serves a loopback (127.0.0.1) project-management page — schema-driven denext.config.ts editing (a comment-preserving splice: outside the value span it replaces, the file keeps its bytes), plugins, every generate kind, Docker files, a setup wizard and the project's own verbs. It works with JavaScript disabled, and **project code never runs in the UI's process** — every project-touching operation, including verb discovery (denext commands --json), is a deno subprocess. --read-only prevents writes by the UI, not execution of your config inside that discovery child. Docs: https://denext.dev/docs/ui **A database (zero-npm, server-only module):** `ts // lib/db.ts — Deno's built-in SQLite; no install. // KV / Postgres recipes: https://denext.dev/docs/database import { DatabaseSync } from \"node:sqlite\"; const db = new DatabaseSync(Deno.env.get(\"DB_PATH\") ?? \"app.db\"); export const listNotes = () => db.prepare(\"SELECT * FROM notes\").all(); ` Open the connection once at module scope; do writes in Server Actions. **A scheduled / background task (cron):** put it in tasks/<name>.ts; schedule it in denext.config.ts (scheduledTasks) or per-task; run it on demand with runTask(name) or denext task <name>. Uses Deno.cron where available (Deno Deploy), else a userland tick — no npm cron dependency. **Cron expressions are evaluated in UTC** (matching Deno.cron), and a schedule never fires on startup nor overlaps a still-running instance of the same task. `ts // tasks/cleanup.ts import { defineTask } from \"denext/server\"; export default defineTask({ description: \"purge expired sessions\", schedule: \"0 3 * * *\", // optional; or list it in config.scheduledTasks handler: async ({ payload }) => { await db.exec(\"DELETE FROM sessions WHERE expires_at < now()\"); }, }); // denext.config.ts → scheduledTasks: { \"0 0 * * 1\": [\"digest\", \"warm-cache\"] } // anywhere on the server: import { runTask } from \"denext/server\"; await runTask(\"cleanup\"); ` **A content collection (typed MD/MDX/YAML/JSON — the @denext/content-collections plugin):** add plugins: [contentCollections()] to denext.config.ts, declare collections in content.config.ts with a Standard Schema + a loader, then query them typed from a Server Component. The plugin validates entries and generates types — live in denext dev, and at denext build. `ts // content.config.ts import { defineCollection, defineContentConfig, glob } from \"@denext/content-collections/config\"; import { z } from \"zod\"; export default defineContentConfig({ collections: { blog: defineCollection({ loader: glob({ pattern: \"**/*.md\", base: \"content/blog\" }), schema: z.object({ title: z.string(), date: z.string(), draft: z.boolean().default(false) }), }), }, }); ` `tsx // app/page.tsx — server-only query, typed to the schema import \"../.denext/content.ts\"; // registers the collection types (generated) import { getCollection } from \"@denext/content-collections/runtime\"; export default async function Blog() { const posts = await getCollection(\"blog\", (p) => !p.data.draft); // p.data is typed return <ul>{posts.map((p) => <li key={p.id}>{p.data.title}</li>)}</ul>; } // Render an entry's body: <Content entry={post} /> (or await renderContent(post)) from the // same module — .md through the first-party renderer, .mdx through a module compiled at build. // CLI: denext content build | list | validate (validate exits 1 on a schema failure — a CI gate). ` **A compile-time feature flag (dead-code-eliminated):** feature(\"KEY\") from denext/feature folds to a boolean literal at build time for any KEY in experimental.features — denext's feature() (cf. Bun's bun:bundle). feature() always returns the configured value; the untaken branch is dead-code eliminated where it folds (native App Router component modules, SPA, dev), and read at runtime on the compat drop-in App Router path. Keep the argument a string literal; a key not listed reads false. Flag names/states are embedded in the client bundle (don't encode secrets). `tsx import { feature } from \"denext/feature\"; export function Checkout() { return feature(\"NEW_CHECKOUT\") ? <NewCheckout /> : <LegacyCheckout />; } // denext.config.ts → experimental: { features: { NEW_CHECKOUT: false } } ` **Inspect / shrink the client bundle:** denext analyze breaks the bundle down by chunk + role; denext analyze --md writes a markdown report (per-module on the esbuild path) to pipe into CI. Imports of one export from a \"sideEffects\": false dep (lucide-react, Radix) are tree-shaken automatically on the esbuild path. **Testing an app (no browser, JS-disabled path):** `ts import { createTestApp, createTestClient } from \"denext/testing\"; const client = createTestClient(await createTestApp(\"./\")); const res = await client.submit( client.form((await client.get(\"/login\")).text), { email, password, }, ); // res.status, client.cookies — a cookie jar persists the session across requests. ` **Testing a component (hooks/effects/events, no browser):** `ts import { fireEvent, render } from \"denext/testing\"; import { h } from \"denext/jsx-runtime\"; const screen = await render(h(Counter, null)); // async — await it await screen.fireEvent.click(screen.getByRole(\"button\")); // getByRole/getByText/getByLabelText/getByTestId; fireEvent.change wires to onChange. ` **Conformance-probing every route (CI gate):** `ts import { formatReport, probeApp } from \"denext/testing\"; const report = await probeApp(\"./\"); // renders every route, asserts valid HTML docs if (!report.ok) throw new Error(formatReport(report)); // or run denext doctor ` **Config:** denext.config.ts exports { ... } (redirects, rewrites, headers, i18n, images, cacheComponents, streaming, live, plugins, experimental, tailwind, csp, compatibilityMode; mode: \"spa\" + spa: { entry, … } for SPA mode). Not next.config.js. **Writing a plugin:** a DenextPlugin ({ name, setup(ctx) } from denext/plugin-kit, the semver-stable toolkit) hooks six seams — addRouteSynthesizer (add/adjust routes), addRequestHandler (claim unmatched requests), addBuildStep (emit assets), addPrepareStep (codegen the app imports — runs at build AND dev startup, and re-runs on watch-glob changes in dev), addTeardown (dispose on drain), and addCommand (contribute a CLI verb). Declare it as plugins: [myPlugin()]. See the [plugin guide](https://denext.dev/docs/plugins) and [examples/plugin-aliases`](https://github.com/Brainwires/denext/tree/main/examples/plugin-aliases).",
       "denextOnly": false
     },
     {
@@ -8583,7 +9114,7 @@
       "title": "Tooling for AI agents (MCP + llms.txt)",
       "module": "guide",
       "url": "https://github.com/Brainwires/denext/blob/main/AGENTS.md#tooling-for-ai-agents-mcp-llms-txt",
-      "text": "## Tooling for AI agents (MCP + llms.txt) denext ships tooling so agents get it right the first time: - **MCP server** — deno run -A jsr:@denext/denext/cli mcp (or denext mcp). It speaks MCP over stdio; configure it as an MCP server in your client. Tools: denext_check_snippet (lint a code string for Next-isms before you write it), denext_import_map (map a Next/React import to denext), denext_generate (scaffold), denext_doctor, denext_codemod, denext_list_routes (an app's pages + API routes), denext_dev_logs (the RUNNING dev server's recent events — server errors, server + browser console, completed requests, and HMR — so you can see what actually happened at runtime), denext_render (render a route or component server-side, no browser, and get the HTML/error — SEE what your edit produces), denext_route_map (the full render tree at a path: layouts, boundaries, server/client split), denext_profile (build unminified, serve, and profile a route in headless Chromium — CPU self-time by function + heap growth + a leak check; pass interact to profile a re-render, budget to gate a regression), denext_search_docs (BM25 over the denext docs), and the codebase tools denext_index_codebase / denext_query_codebase / denext_find_definition / denext_find_references. denext mcp --disable rag,docs hides tool groups or individual tools to trim an agent's context. Resources: denext://guide, denext://import-map. - **llms.txt** — [denext.dev/llms.txt](https://denext.dev/llms.txt) (concise) and [llms-full.txt](https://denext.dev/llms-full.txt) (this guide + an API summary). - **Docs pages worth pointing an agent at:** the generated [CLI reference](https://denext.dev/docs/cli), [Troubleshooting](https://denext.dev/docs/troubleshooting) (symptom → cause → fix), [Upgrading](https://denext.dev/docs/upgrading) (breaking changes per version) and the [examples index](https://denext.dev/docs/examples). ---",
+      "text": "## Tooling for AI agents (MCP + llms.txt) denext ships tooling so agents get it right the first time: - **MCP server** — deno run -A jsr:@denext/denext/cli mcp (or denext mcp). It speaks MCP over stdio; configure it as an MCP server in your client. Tools: denext_check_snippet (lint a code string for Next-isms before you write it), denext_import_map (map a Next/React import to denext), denext_generate (scaffold — takes force and dryRun), denext_doctor, denext_codemod, denext_list_routes (an app's pages + API routes), denext_dev_logs (the RUNNING dev server's recent events — server errors, server + browser console, completed requests, and HMR — so you can see what actually happened at runtime), denext_render (render a route or component server-side, no browser, and get the HTML/error — SEE what your edit produces), denext_route_map (the full render tree at a path: layouts, boundaries, server/client split), denext_component_tree / denext_why_render / denext_hook_state (the LIVE component tree from a running dev page — props, named hooks, why a component re-rendered; these need deno task dev AND the app open in a browser, and each answer states how stale its snapshot is. The page starts pushing only once one of them has been called, so the FIRST call may say \"posted nothing yet\" — call it again after the page's next commit, or start dev with DENEXT_DEV_INSPECT=1. String values arrive redacted as string(n)), denext_profile (build unminified, serve, and profile a route in headless Chromium — CPU self-time by function + heap growth + a leak check; pass interact to profile a re-render, budget to gate a regression), denext_search_docs (BM25 over the denext docs), and the codebase tools denext_index_codebase / denext_query_codebase / denext_find_definition / denext_find_references. denext mcp --disable rag,docs hides tool groups or individual tools to trim an agent's context. Resources: denext://guide, denext://import-map. - **llms.txt** — [denext.dev/llms.txt](https://denext.dev/llms.txt) (concise) and [llms-full.txt](https://denext.dev/llms-full.txt) (this guide + an API summary). - **Docs pages worth pointing an agent at:** the generated [CLI reference](https://denext.dev/docs/cli), [Troubleshooting](https://denext.dev/docs/troubleshooting) (symptom → cause → fix), [Upgrading](https://denext.dev/docs/upgrading) (breaking changes per version), the [Project UI](https://denext.dev/docs/ui) and the [examples index](https://denext.dev/docs/examples). ---",
       "denextOnly": false
     }
   ]

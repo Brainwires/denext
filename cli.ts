@@ -16,7 +16,7 @@
 
 import { join, resolve } from "@std/path";
 import { entrypointArg, isStandaloneBinary } from "./src/cli/self-exec.ts";
-import { resolveProject } from "./src/build/paths.ts";
+import { CONFIG_FILES, resolveProject } from "./src/build/paths.ts";
 import { buildAppCss, injectAppConfigRedirects, restoreAppConfig } from "./src/build/css.ts";
 import { tailwindPaths } from "./src/build/tailwind.ts";
 import { denoExecutable, frameworkRoot, minDepAgeArgs } from "./src/build/bundle.ts";
@@ -27,8 +27,7 @@ import {
   writeMergedModuleConfig,
 } from "./src/build/module-config.ts";
 import { loadEnv } from "./src/server/env.ts";
-import { defaultLoader } from "./src/server/mod.ts";
-import { applyPlugins, getPluginCommands } from "./src/plugin/mod.ts";
+import { loadPluginCommands } from "./src/cli/plugin-commands.ts";
 import { VERSION } from "./mod.ts";
 import type { CommandContext, CommandSpec, ParseOutcome } from "./src/cli/command.ts";
 import type { CommandRegistry } from "./src/cli/command.ts";
@@ -225,53 +224,77 @@ function cwdFromArgs(argv: string[]): string {
 }
 
 /**
- * Merge the target project's plugin-contributed CLI verbs into `registry`. Called
- * only when the first parse hit an unknown verb — so plain projects and typos pay a
- * single config read, not a plugin setup. Plugin verbs never override a built-in
- * (core wins). Failures degrade to the original "unknown command" error.
+ * Whether this outcome has to list EVERY verb NAME, which means the project's own verbs
+ * (config `commands:` + plugin `addCommand`) must be merged in before it is printed. Only the
+ * shell-completion scripts do: a shell can only complete a name it was handed.
+ *
+ * `--help` deliberately does NOT. Discovering project verbs means importing the project's
+ * `denext.config.ts` and running every plugin `setup()` — arbitrary user code, under whatever
+ * permissions the CLI holds — which is far too much to ask of `denext --help`, and a `setup`
+ * that leaks a handle would keep help from ever exiting. Help prints
+ * {@linkcode PROJECT_HELP_NOTE} instead and `denext commands` does the discovery.
  */
-async function loadPluginCommands(registry: CommandRegistry, dir: string): Promise<void> {
-  try {
-    const paths = await resolveProject(dir);
-    if (!paths.config?.plugins?.length) return;
-    await applyPlugins({
-      projectRoot: dir,
-      appDir: paths.appDir,
-      config: paths.config,
-      mode: "build",
-      load: defaultLoader,
-    });
-    for (const spec of getPluginCommands()) {
-      if (!registry.get(spec.name)) registry.register(spec);
-    }
-  } catch { /* no plugin verbs available — keep the unknown-command error */ }
+function needsEveryCommand(outcome: ParseOutcome): boolean {
+  return outcome.kind === "run" && outcome.command.name === "completions";
+}
+
+/** The footer `--help` prints, in place of a verb list it refuses to import the project for. */
+const PROJECT_HELP_NOTE =
+  "Project verbs: run `denext commands` (they are also in shell completions).";
+
+/**
+ * Whether `dir` holds a denext config — a file-existence probe, never an import, so
+ * `denext --help` inside a project evaluates none of the project's code.
+ */
+async function hasDenextConfig(dir: string): Promise<boolean> {
+  for (const name of CONFIG_FILES) {
+    try {
+      const stat = await Deno.stat(join(dir, name));
+      if (stat.isFile) return true;
+    } catch { /* not this name */ }
+  }
+  return false;
 }
 
 async function main(): Promise<void> {
   const registry = buildRegistry();
   let outcome = registry.parse(Deno.args);
-  // An unknown verb may be one a project plugin contributes — load them and retry.
+  // An unknown verb may be one the project contributes — load them and retry.
   if (outcome.kind === "error" && outcome.message.startsWith("unknown command")) {
     await loadPluginCommands(registry, cwdFromArgs(Deno.args));
     outcome = registry.parse(Deno.args);
   }
+  // Completions enumerate the whole verb set, so they load project verbs up front — under a
+  // time budget, since a plugin's `setup` is arbitrary user code (the verb then exits, so a
+  // handle that `setup` leaked cannot keep the shell waiting).
+  if (needsEveryCommand(outcome)) await loadPluginCommands(registry, cwdFromArgs(Deno.args));
 
-  if (outcome.kind !== "run") return printOutcome(registry, outcome);
+  if (outcome.kind !== "run") {
+    const note = outcome.kind === "help" && outcome.command === undefined &&
+      await hasDenextConfig(cwdFromArgs(Deno.args));
+    return printOutcome(registry, outcome, note);
+  }
   if (await moduleGate(outcome.command, outcome.ctx)) return;
   await outcome.command.run(outcome.ctx);
 }
 
-/** Print a non-run outcome: the version, help, or a usage error (exit 1). */
+/**
+ * Print a non-run outcome: the version, help, or a usage error (exit 1). `projectNote`
+ * says the target directory is a denext project, so the help table — which lists only the
+ * built-ins — points at `denext commands` for the verbs this project adds.
+ */
 function printOutcome(
   registry: CommandRegistry,
   outcome: Exclude<ParseOutcome, { kind: "run" }>,
+  projectNote = false,
 ): void {
   if (outcome.kind === "version") {
     console.log(`denext ${VERSION}`);
   } else if (outcome.kind === "help") {
-    console.log(
-      outcome.command ? registry.formatCommandHelp(outcome.command) : registry.formatHelp(VERSION),
-    );
+    const help = outcome.command
+      ? registry.formatCommandHelp(outcome.command)
+      : registry.formatHelp(VERSION);
+    console.log(projectNote ? `${help}\n\n${PROJECT_HELP_NOTE}` : help);
   } else {
     console.error(
       `denext: ${outcome.message}` +

@@ -66,6 +66,7 @@ export const NAV: {
       { slug: "bundling", label: "Bundling & flags" },
       { slug: "testing", label: "Testing" },
       { slug: "doctor-audit", label: "Doctor & audit" },
+      { slug: "ui", label: "Project UI" },
       { slug: "deploy", label: "Deployment" },
       { slug: "desktop", label: "Desktop & mobile" },
       { slug: "troubleshooting", label: "Troubleshooting" },

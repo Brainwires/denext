@@ -19,7 +19,9 @@ import { desktopCommand } from "./commands/desktop.ts";
 import { pluginCommand } from "./commands/plugin.ts";
 import { patchCommand } from "./commands/patch.ts";
 import { mcpCommand } from "./commands/mcp.ts";
+import { uiCommand } from "./commands/ui.ts";
 import { makeCompletionsCommand } from "./commands/completions.ts";
+import { makeCommandsCommand } from "./commands/commands.ts";
 
 /** Build a registry with every first-party denext verb registered. */
 export function buildRegistry(): CommandRegistry {
@@ -55,9 +57,14 @@ export function buildRegistry(): CommandRegistry {
   reg.register(desktopCommand);
   reg.register(pluginCommand);
   reg.register(patchCommand);
+  // Project management UI (loopback GUI).
+  reg.register(uiCommand);
   // AI-agent tooling (MCP server over stdio).
   reg.register(mcpCommand);
-  // Completions (bound to the assembled registry, so it lists the real verb set).
+  // Both bound to the assembled registry, so they enumerate the real verb set: `commands`
+  // merges the PROJECT's verbs into it (the one verb that imports the project's config), and
+  // `completions` reads whatever the registry holds when it runs.
+  reg.register(makeCommandsCommand(reg));
   reg.register(makeCompletionsCommand(reg));
   return reg;
 }

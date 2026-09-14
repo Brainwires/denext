@@ -28,8 +28,11 @@
 import type { DenextPlugin } from "../../plugin/mod.ts";
 import { safeRedirectLocation } from "../config.ts";
 import { isProductionEnv, isWeakSecret } from "../session.ts";
+import { emitAuthEvent } from "./events.ts";
+import { resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
 import { handleAuthRequest } from "./routes.ts";
-import { readAuthSession } from "./session.ts";
+import type { SessionStore } from "./session-store.ts";
+import { readAuthSession, refreshIfStale } from "./session.ts";
 import { isOAuthProvider } from "./types.ts";
 import type { AuthConfig, AuthSession } from "./types.ts";
 
@@ -51,6 +54,11 @@ function validateConfig(config: AuthConfig): void {
     );
   }
   validateProviders(config.providers);
+  warnOnUndeclaredProxy(config);
+  // Resolving validates the 2.5 surface too: an unusable `basePath`, an invalid cookie
+  // name, or `session.strategy: "database"` with nowhere to store sessions all throw here
+  // — at config time, not on the first login.
+  resolveAuthOptions(config);
   if (!config.canonicalOrigin) requireCanonicalOriginInProd();
   if (config.dangerouslyAllowInsecureProviders) {
     console.warn(
@@ -91,6 +99,26 @@ function assertOAuthCredentials(p: { id: string; clientId?: string; clientSecret
   }
 }
 
+/** Whether the proxy hint has already been printed (once per process). */
+let warnedNoProxyTrust = false;
+
+/**
+ * A config with a `canonicalOrigin` is a config meant for production, and in production
+ * denext is behind something. If `trustForwardedHeaders` was never decided, say so once at
+ * boot: without it every per-IP rate-limit bucket keys on the proxy rather than the
+ * client, and `clientIp` reports the proxy to the app's own handlers too.
+ */
+function warnOnUndeclaredProxy(config: AuthConfig): void {
+  if (!config.canonicalOrigin || config.trustForwardedHeaders !== undefined) return;
+  if (warnedNoProxyTrust) return;
+  warnedNoProxyTrust = true;
+  console.warn(
+    "denextAuth: `canonicalOrigin` is set but `trustForwardedHeaders` is not — if a reverse " +
+      "proxy fronts this app, set it to true (only when the proxy OVERWRITES " +
+      "`x-forwarded-for`) so rate limits and `signInFailed.ip` see the real client.",
+  );
+}
+
 /**
  * `canonicalOrigin` is required in production: without it the OAuth redirect_uri and the
  * same-origin checks fall back to the attacker-controllable Host header. Detected via the
@@ -126,46 +154,67 @@ export function denextAuth(config: AuthConfig): DenextPlugin {
     name: "denext-auth",
     setup(ctx) {
       ctx.addRequestHandler((request) => handleAuthRequest(request, config));
-      // A store that holds a resource (the sqlite handle) is released on server drain.
-      const store = config.sessionStore;
+      // Anything holding a resource (the sqlite handles) is released on server drain: the
+      // session store, and the adapter — whose `close()` had never been wired up, so a
+      // `sqliteAuthAdapter` kept its file handle open for the life of the process.
+      const store = resolveAuthOptions(config).sessionStore;
       if (store?.close) ctx.addTeardown(() => store.close!());
+      const adapter = config.adapter;
+      if (adapter?.close) ctx.addTeardown(() => adapter.close!());
     },
   };
 }
 
-/** The configured session store, or throw: revocation needs server-side sessions. */
-function requireSessionStore(fn: string): NonNullable<AuthConfig["sessionStore"]> {
-  const store = activeConfig?.sessionStore;
-  if (!store) {
+/** The resolved options plus the configured store, or throw: revocation needs one. */
+function requireSessionStore(
+  fn: string,
+): { options: ResolvedAuthOptions; store: SessionStore } {
+  const options = activeConfig ? resolveAuthOptions(activeConfig) : undefined;
+  if (!options?.sessionStore) {
     throw new Error(
       `${fn}: no \`sessionStore\` is configured — sessions are stateless signed cookies, ` +
         "which can't be revoked before they expire. Pass `sessionStore` (e.g. " +
         "`sqliteSessionStore()`) to denextAuth to enable revocation.",
     );
   }
-  return store;
+  return { options, store: options.sessionStore };
 }
 
 /**
  * Revoke one server-side session by id (the `sessionId` on an {@link AuthSession}), so
- * its cookie stops authenticating immediately — "sign out this device". Requires
- * `denextAuth({ sessionStore })`; throws when sessions are stateless.
+ * its cookie stops authenticating immediately — "sign out this device". Fires the
+ * `sessionRevoked` event. Requires `denextAuth({ sessionStore })`; throws when sessions
+ * are stateless.
  *
  * @param sessionId The session to end.
  */
 export async function revokeSession(sessionId: string): Promise<void> {
-  await requireSessionStore("revokeSession").delete(sessionId);
+  const { options, store } = requireSessionStore("revokeSession");
+  await store.delete(sessionId);
+  await emitAuthEvent(options, "sessionRevoked", { sessionId });
 }
 
 /**
  * Revoke every server-side session of `userId` — "sign out everywhere", the right call
- * after a password change or a suspected cookie theft. Requires
- * `denextAuth({ sessionStore })`; throws when sessions are stateless.
+ * after a password change or a suspected cookie theft. Fires the `sessionRevoked` event.
+ * Requires `denextAuth({ sessionStore })`; throws when sessions are stateless.
  *
  * @param userId The user whose sessions end.
  */
 export async function revokeAllSessions(userId: string): Promise<void> {
-  await requireSessionStore("revokeAllSessions").deleteByUser(userId);
+  const { options, store } = requireSessionStore("revokeAllSessions");
+  await store.deleteByUser(userId);
+  await emitAuthEvent(options, "sessionRevoked", { userId });
+}
+
+/**
+ * The raw session for this request — **including** one that still owes a second factor.
+ * Only the guards below (and, later, the MFA endpoints) may see a pending session;
+ * everything else goes through {@link auth}, which hides it.
+ */
+function currentSession(): Promise<AuthSession | null> {
+  if (!activeConfig) return Promise.resolve(null);
+  return readAuthSession(activeConfig);
 }
 
 /**
@@ -173,23 +222,91 @@ export async function revokeAllSessions(userId: string): Promise<void> {
  * Server Component, a `route.ts` handler, or `middleware.ts` — anywhere inside the
  * request context.
  *
+ * A session that has passed the first factor but not the second
+ * ({@link AuthSession.mfaPending}) reads as `null` here — it **fails closed**, so every
+ * guard built on `auth()` (requireAuth, requireSession, Live `authorize`, Server
+ * Actions) refuses it without having to know MFA exists.
+ *
  * @returns The {@link AuthSession}, or `null`.
  */
-export function auth(): Promise<AuthSession | null> {
-  if (!activeConfig) return Promise.resolve(null);
-  return readAuthSession(activeConfig);
+export async function auth(): Promise<AuthSession | null> {
+  const session = await currentSession();
+  return session?.mfaPending ? null : session;
+}
+
+/**
+ * Slide `session` forward when `session.updateAge` says it is stale. Shared by the guards
+ * and {@link updateAuthSession}; the refreshed cookie rides the request's outgoing
+ * headers, so only call it where the response has not been sent yet.
+ */
+function refreshActiveSession(session: AuthSession): Promise<AuthSession> {
+  return activeConfig ? refreshIfStale(activeConfig, session) : Promise.resolve(session);
+}
+
+/**
+ * Read the session **and** slide its expiry forward when `session.updateAge` has elapsed
+ * — the explicit version of what `GET {basePath}/session`, {@link requireAuth} and
+ * `requireSession()` do for you. Call it from a Server Action or a `route.ts` handler
+ * (anywhere the response has not been sent yet); the refreshed cookie rides that
+ * response. In a streamed Server Component use {@link auth} instead — a `Set-Cookie`
+ * written after the headers flush is dropped silently.
+ *
+ * @returns The (possibly refreshed) {@link AuthSession}, or `null` when signed out.
+ */
+export async function updateAuthSession(): Promise<AuthSession | null> {
+  const session = await auth();
+  return session ? await refreshActiveSession(session) : null;
+}
+
+/**
+ * Whether a session carries at least one of the required roles (any-of).
+ *
+ * `undefined` means "no requirement" and allows everything. An **empty array** does not:
+ * `role: []` names a set of acceptable roles that is empty, so nothing satisfies it and
+ * this returns `false`. That is the fail-closed reading, and the one that matters — an
+ * empty list is what a computed requirement (`role: user.requiredRoles`) degrades to when
+ * the computation goes wrong, and it used to let every caller through. Use `undefined`
+ * (or simply omit `role`) to mean "anyone signed in".
+ *
+ * A requirement against a session with no `roles` always refuses.
+ *
+ * @param session The live session.
+ * @param role The required role, or roles (any one of which suffices).
+ * @returns `true` when the session may proceed.
+ */
+export function hasRole(session: AuthSession, role: string | string[] | undefined): boolean {
+  if (role === undefined) return true;
+  const required = Array.isArray(role) ? role : [role];
+  if (required.length === 0) return false;
+  const held = session.user.roles;
+  return !!held && required.some((r) => held.includes(r));
 }
 
 /** Options for {@link requireAuth}. */
 export interface RequireAuthOptions {
   /** Where to send unauthenticated users (default: the config `pages.signIn` or `/`). */
   signInPath?: string;
+  /**
+   * Require at least one of these roles (`AuthUser.roles`) — any-of. A signed-in
+   * user without a listed role is redirected to the sign-in page with `?error=forbidden`.
+   */
+  role?: string | string[];
 }
 
 /**
  * Middleware guard: allow the request through when signed in, otherwise return a
- * redirect to the sign-in page carrying a `callbackUrl` back to the target. Use in
- * `middleware.ts` (matcher-gated):
+ * redirect to the sign-in page carrying a `callbackUrl` back to the target.
+ *
+ * Four checks, in order: no session → the sign-in page; a session still owing a second
+ * factor → `pages.mfa` (or the sign-in page); `role` not held → the sign-in page with
+ * `?error=forbidden`; then `callbacks.authorized({ session, request })` — `false` refuses
+ * exactly like a missing session, and a returned `Response` is passed through verbatim.
+ *
+ * A request that passes all four also slides the session's expiry forward when
+ * `session.updateAge` is configured — the re-issued cookie is queued on the request and
+ * attached to the response the pipeline finalizes, so "continue" still carries it.
+ *
+ * Use in `middleware.ts` (matcher-gated):
  * ```ts
  * export async function middleware(request: Request) {
  *   return await requireAuth(request); // returns a Response to redirect, or null to continue
@@ -198,19 +315,57 @@ export interface RequireAuthOptions {
  * ```
  *
  * @param request The incoming request.
- * @param options Optional sign-in path override.
+ * @param options Optional sign-in path override and `role` requirement.
  * @returns A redirect `Response` when unauthenticated, or `null` to continue.
  */
 export async function requireAuth(
   request: Request,
   options: RequireAuthOptions = {},
 ): Promise<Response | null> {
-  const session = await auth();
-  if (session) return null;
+  const session = await currentSession();
+  if (!session) return refuse(request, options.signInPath);
+  // A half-authenticated session goes to the MFA page (falling back to sign-in), so the
+  // user can finish the second factor instead of being bounced into a fresh login.
+  if (session.mfaPending) {
+    return refuse(request, options.signInPath ?? activeConfig?.pages?.mfa);
+  }
+  if (!hasRole(session, options.role)) return refuse(request, options.signInPath, "forbidden");
+  const decision = await applyAuthorized(session, request);
+  if (decision instanceof Response) return decision;
+  if (decision === false) return refuse(request, options.signInPath);
+  // Allowed: slide the expiry forward. Middleware runs inside the request context, so the
+  // re-issued cookie is queued on the outgoing headers and the pipeline attaches it to
+  // whatever response the request ends up producing — the "continue" case needs no
+  // Response of its own.
+  await refreshActiveSession(session);
+  return null;
+}
+
+/**
+ * Consult `callbacks.authorized`, treating a throw as a refusal — an authorization hook
+ * that crashes must fail closed, never open.
+ */
+async function applyAuthorized(
+  session: AuthSession,
+  request: Request,
+): Promise<boolean | Response> {
+  const authorized = activeConfig?.callbacks?.authorized;
+  if (!authorized) return true;
+  try {
+    return await authorized({ session, request });
+  } catch (error) {
+    if (activeConfig) resolveAuthOptions(activeConfig).logger.error("authorized threw", error);
+    return false;
+  }
+}
+
+/** The refusal every guard shares: a 302 back to the sign-in page, carrying `callbackUrl`. */
+function refuse(request: Request, signInPath?: string, error?: string): Response {
   const url = new URL(request.url);
-  const signIn = options.signInPath ?? activeConfig?.pages?.signIn ?? "/";
+  const signIn = signInPath ?? activeConfig?.pages?.signIn ?? "/";
+  const reason = error ? `error=${encodeURIComponent(error)}&` : "";
   const target = safeRedirectLocation(
-    `${signIn}?callbackUrl=${encodeURIComponent(url.pathname + url.search)}`,
+    `${signIn}?${reason}callbackUrl=${encodeURIComponent(url.pathname + url.search)}`,
   );
   return new Response(null, { status: 302, headers: { location: target } });
 }

@@ -16,6 +16,7 @@ import { setDevtoolsHooks } from "../src/client/fiber/devtools-seam.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { useState } from "../src/runtime/hooks.ts";
 import { makeDom } from "./helpers/dom.ts";
+import type { InspectNode, OwnerStackEntry, SourceLocation } from "../src/devtools.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -259,4 +260,25 @@ Deno.test("a throwing DevTools hook never propagates to the caller", () => {
     g.__REACT_DEVTOOLS_GLOBAL_HOOK__ = prev;
     _resetDevTools();
   }
+});
+
+Deno.test("denext/devtools exposes the source-location types on its public surface", () => {
+  // Type-only: the assertions below compile solely because `denext/devtools` re-exports
+  // `SourceLocation` (and the owner-stack entry that carries it) — the module is doc-linted,
+  // so an inline anonymous shape here would be a surface regression.
+  const source: SourceLocation = {
+    file: "file:///app/page.tsx",
+    line: 42,
+    column: 5,
+    export: "Page",
+  };
+  const owner: OwnerStackEntry = { name: "Page", source };
+  const node: Pick<InspectNode, "source" | "sourceId" | "hooksNamed"> = {
+    source,
+    sourceId: "file:///app/page.tsx#Page",
+    hooksNamed: true,
+  };
+  assertEquals(owner.source?.line, 42);
+  assertEquals(node.source?.export, "Page");
+  assertEquals(node.hooksNamed, true);
 });

@@ -1,7 +1,7 @@
 // DevTools panel: the Render-modes tab — the page's server verdict, the streamed Suspense
 // waterfall, and the client-island hydration waterfall.
 
-import { h4, type PanelCtx } from "./ctx.ts";
+import { h4, type PanelCtx, proportionalBar } from "./ctx.ts";
 import { el } from "./styles.ts";
 
 type PageVerdict = ReturnType<PanelCtx["api"]["getPageRenderMode"]>;
@@ -29,17 +29,14 @@ function renderBoundaryWaterfall(ctx: PanelCtx, boundaries: Boundaries, first: b
   detailPane.append(h4(ctx, first, "Suspense boundaries (live waterfall)"));
   let maxMs = 0;
   for (const b of boundaries) if (b.ms > maxMs) maxMs = b.ms;
-  maxMs = maxMs || 0.0001;
   const bul = el(doc, "ul", S.wf);
   for (const b of boundaries) {
-    const bar = el(doc, "div", S.rankBar);
-    bar.style.width = Math.max(3, Math.round((b.ms / maxMs) * 70)) + "px";
     const li = el(
       doc,
       "li",
       S.wfLi,
       el(doc, "span", S.comp, b.id),
-      bar,
+      proportionalBar(ctx, b.ms, maxMs),
       el(doc, "span", S.dim, `${b.ms}ms server`),
     );
     // The client reveal time lands in real time, before the server-resolve island.

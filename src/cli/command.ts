@@ -111,8 +111,21 @@ export interface CommandSpec {
   readonly passthrough?: boolean;
   /** Hide from the top-level help table (still runnable). */
   readonly hidden?: boolean;
+  /**
+   * Where this verb came from, for help grouping: `"core"` (a first-party denext
+   * verb — also the meaning of leaving it unset), `"plugin"` (contributed through a
+   * plugin's `addCommand`), or `"project"` (a `commands:` entry in the project's
+   * `denext.config.ts`). Stamped by the loader, not by the author of the spec; a
+   * non-core value moves the verb into the help's "Project commands" section.
+   */
+  readonly source?: "core" | "plugin" | "project";
   /** The command implementation. */
   run(ctx: CommandContext): void | Promise<void>;
+}
+
+/** Whether a spec belongs in help's "Project commands" section (not a core verb). */
+function isProjectSourced(spec: CommandSpec): boolean {
+  return (spec.source ?? "core") !== "core";
 }
 
 /** The global flags every command accepts, as data (drives parsing + help). */
@@ -248,23 +261,23 @@ export class CommandRegistry {
     return parseCommandArgv(command, rest);
   }
 
-  /** Render the top-level help (verb table + global flags). */
+  /**
+   * Render the top-level help (verb table + global flags). Verbs carrying a non-core
+   * {@linkcode CommandSpec.source} — plugin verbs and `denext.config.ts` `commands:`
+   * entries, which the CLI merges in before printing help — are listed in their own
+   * "Project commands" section under the built-in table.
+   */
   formatHelp(version: string): string {
-    const rows = this.#canonical
-      .filter((c) => !c.hidden)
-      .map((c) => [`  denext ${c.name}`, c.summary] as const);
-    const width = Math.max(...rows.map(([l]) => l.length));
-    const table = rows.map(([l, s]) => `${l.padEnd(width + 3)}${s}`).join("\n");
-    const globals = GLOBAL_FLAGS
-      .map((f) =>
-        `  --${f.name}${f.valueName ? " " + f.valueName : ""}`.padEnd(20) +
-        f.help
-      )
-      .join("\n");
+    const visible = this.#canonical.filter((c) => !c.hidden);
+    const width = Math.max(...visible.map((c) => label(c).length)) + 3;
+    const table = (specs: CommandSpec[]) =>
+      specs.map((c) => `${label(c).padEnd(width)}${c.summary}`).join("\n");
+    const project = visible.filter(isProjectSourced);
+    const projectSection = project.length === 0 ? "" : `\n\nProject commands:\n${table(project)}`;
     return `denext ${version} — one power tool for all of React\n\n` +
       `Usage: denext <command> [options]\n\n` +
-      `Commands:\n${table}\n\n` +
-      `Global options:\n${globals}\n\n` +
+      `Commands:\n${table(visible.filter((c) => !isProjectSourced(c)))}${projectSection}\n\n` +
+      `Global options:\n${globalFlagsHelp()}\n\n` +
       `Run \`denext <command> --help\` for command-specific options.`;
   }
 
@@ -278,6 +291,18 @@ export class CommandRegistry {
       ...section(flagsHelp(flags), "Options:"),
     ].join("\n");
   }
+}
+
+/** The left column of a top-level help row (`  denext dev`). */
+function label(spec: CommandSpec): string {
+  return `  denext ${spec.name}`;
+}
+
+/** The global-flag block shared by the top-level help. */
+function globalFlagsHelp(): string {
+  return GLOBAL_FLAGS
+    .map((f) => `  --${f.name}${f.valueName ? " " + f.valueName : ""}`.padEnd(20) + f.help)
+    .join("\n");
 }
 
 /** A blank-line-separated help section (with an optional heading); nothing when empty. */

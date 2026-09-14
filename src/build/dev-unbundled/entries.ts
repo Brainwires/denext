@@ -82,16 +82,21 @@ export async function serveFlightEntry(
 }
 
 /**
- * Serve the SPA's generated client entry: enable per-module Fast Refresh, then import
- * the app's single entry (`main.tsx`) by its `@fs` URL. The app's whole module graph is
- * then served unbundled, so any component edit hot-swaps that one module in place. Its
- * `denext`/`react`/npm imports resolve through the specifier rewrite like any route.
+ * Serve the SPA's generated client entry: mark the page as dev, enable per-module Fast
+ * Refresh, mount the DevTools panel, then import the app's single entry (`main.tsx`) by
+ * its `@fs` URL. The app's whole module graph is then served unbundled, so any component
+ * edit hot-swaps that one module in place. Its `denext`/`react`/npm imports resolve
+ * through the specifier rewrite like any route.
  */
 export async function serveSpaEntry(st: UnbundledState): Promise<string> {
   await ensureClientDeps(st);
   const abs = norm(st.opts.spaEntry!);
+  // `__denextDev` FIRST: `installDevtools()` no-ops unless the flag is set, and the SPA
+  // shell's dev script (which sets it for the App Router) runs after this module.
   const src = `// denext generated SPA entry (dev, unbundled) — do not edit.\n` +
-    `import { enablePerModuleRefresh } from "denext/client-runtime";\nimport { installDevtools } from "denext/devtools";\n` +
+    `globalThis.__denextDev = true;\n` +
+    `import { enablePerModuleRefresh } from "denext/client-runtime";\n` +
+    `import { installDevtools } from "denext/devtools";\n` +
     `enablePerModuleRefresh();\ninstallDevtools();\n` +
     `await import(${JSON.stringify(toFileUrl(abs).href)});\n`;
   return transformGeneratedEntry(st, src, "entry:spa");

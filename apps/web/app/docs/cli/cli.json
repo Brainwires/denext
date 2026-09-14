@@ -138,6 +138,22 @@
       ]
     },
     {
+      "name": "commands",
+      "summary": "List this project's own CLI verbs (config commands: + plugin addCommand)",
+      "usage": "denext commands [options]",
+      "description": "  denext commands [--json] [--timeout <ms>] [--cwd <dir>]\n\n  Imports denext.config.ts and runs every plugin setup() to discover the verbs the\n  project contributes, then exits. A plugin that hangs or throws degrades to a notice\n  (--json: `timedOut` / `error`); the exit code stays 0 either way.",
+      "flags": [
+        {
+          "name": "timeout",
+          "type": "number",
+          "valueName": "<ms>",
+          "default": 1500,
+          "description": "Budget for plugin discovery"
+        }
+      ],
+      "positionals": []
+    },
+    {
       "name": "completions",
       "summary": "Print a shell completion script (bash|zsh|fish)",
       "usage": "denext completions <shell>",
@@ -445,13 +461,13 @@
       "name": "mcp",
       "summary": "Run the denext MCP server (stdio) so agents/IDEs can call denext's tooling",
       "usage": "denext mcp [options]",
-      "description": "  denext mcp                     # speak MCP over stdio (configure as an MCP server)\n  denext mcp --disable rag,docs # expose fewer tools to trim the client's context\n\n  Tools: denext_check_snippet, denext_import_map, denext_generate, denext_doctor,\n  denext_codemod, denext_list_routes, denext_dev_logs, denext_render, denext_route_map,\n  denext_search_docs, denext_index_codebase, denext_query_codebase, denext_find_definition,\n  denext_find_references. Resources: denext://guide, denext://import-map.\n\n  --disable takes a comma-separated list of groups (authoring, project, inspect, profile, dev, docs, rag) and/or tool\n  names (with or without the denext_ prefix), e.g. --disable rag,docs or --disable render.",
+      "description": "  denext mcp                     # speak MCP over stdio (configure as an MCP server)\n  denext mcp --disable rag,docs # expose fewer tools to trim the client's context\n\n  Tools: denext_check_snippet, denext_import_map, denext_generate, denext_doctor,\n  denext_codemod, denext_list_routes, denext_dev_logs, denext_render, denext_route_map,\n  denext_search_docs, denext_index_codebase, denext_query_codebase, denext_find_definition,\n  denext_find_references. Resources: denext://guide, denext://import-map.\n\n  --disable takes a comma-separated list of groups (authoring, project, inspect, profile, dev, devtools, docs, rag) and/or tool\n  names (with or without the denext_ prefix), e.g. --disable rag,docs or --disable render.",
       "flags": [
         {
           "name": "disable",
           "type": "string",
           "valueName": "<groups|tools>",
-          "description": "Comma-separated groups (authoring, project, inspect, profile, dev, docs, rag) and/or tool names to hide"
+          "description": "Comma-separated groups (authoring, project, inspect, profile, dev, devtools, docs, rag) and/or tool names to hide"
         }
       ],
       "positionals": []
@@ -735,6 +751,49 @@
       ]
     },
     {
+      "name": "ui",
+      "summary": "Open the project management UI in a browser (loopback only)",
+      "usage": "denext ui [dir] [options]",
+      "description": "  denext ui                    Serve the UI for the current project and open it\n  denext ui ./my-app --port 6000   That exact port, or a clear error if it is taken\n  denext ui --read-only        Browse without offering any write\n  denext ui --no-open --json   Print { url, port, token } and keep serving\n\n  The UI binds 127.0.0.1 only. The printed URL carries a per-launch 256-bit token that\n  is exchanged ONCE for an HttpOnly, SameSite=Strict cookie — the query token is then\n  refused, so a copied link cannot open a second session. Every mutation additionally\n  needs a same-origin Origin and a derived CSRF token.\n  Note: with --open, the token is visible in the browser-launcher's argv on this machine.",
+      "flags": [
+        {
+          "name": "port",
+          "type": "number",
+          "valueName": "<port>",
+          "description": "Port to listen on (default 5177, which falls forward when busy; an explicit --port is required exactly, and 0 picks a free one)"
+        },
+        {
+          "name": "no-open",
+          "type": "boolean",
+          "description": "Don't launch a browser"
+        },
+        {
+          "name": "read-only",
+          "type": "boolean",
+          "description": "Refuse every mutation"
+        },
+        {
+          "name": "token",
+          "type": "string",
+          "valueName": "<token>",
+          "description": "Use this session token instead of minting one (at least 22 characters)"
+        },
+        {
+          "name": "ui-dev",
+          "type": "boolean",
+          "description": "Internal: watch src/ui and reload open pages on change"
+        }
+      ],
+      "positionals": [
+        {
+          "name": "dir",
+          "required": false,
+          "variadic": false,
+          "description": "Project directory (default: .)"
+        }
+      ]
+    },
+    {
       "name": "update",
       "summary": "Update dependencies to latest (deno outdated --update)",
       "usage": "denext update [packages] [-- <deno args>]",
@@ -749,5 +808,9 @@
         }
       ]
     }
-  ]
+  ],
+  "projectCommands": {
+    "enumerable": true,
+    "note": "A project can add its own verbs — `commands: [{ name, summary, run }]` in denext.config.ts, or a plugin's `addCommand`. They are resolved from the project's config, so they are not listed here; `denext --help` and `denext completions <shell>` load them (under a 1.5 s budget) and list them under \"Project commands\". A built-in verb always wins a name collision."
+  }
 }

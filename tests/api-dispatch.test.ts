@@ -24,6 +24,7 @@ function recordingFetch(): { fetch: typeof fetch; calls: string[] } {
 }
 
 type S = {
+  "/api/cookie": { GET: { response: unknown } };
   "/api/echo": { GET: { response: { q: string; cookie: string | null } } };
   "/api/when": { GET: { response: { at: Date } } };
   "/api/boom": { GET: { response: unknown; errors: "conflict" } };
@@ -149,4 +150,32 @@ Deno.test("in-process: outside a request, a foreign origin, or a reserved path f
     await api("/_denext/live" as "/api/echo", "GET"); // reserved: never in-process
   });
   assertEquals(calls, ["/api/echo", "https://other.example/api/echo", "/_denext/live"]);
+});
+
+Deno.test("in-process: a child's Set-Cookie rides the PARENT response (uncached calls only)", async () => {
+  // `requireSession()` inside an API route slides the session forward and queues the
+  // refreshed cookie on the CHILD's response. Without propagation that cookie died with
+  // the sub-request and an active user was quietly logged out when the session expired.
+  batchApp();
+  const ctx = createRequestContext(new Request(`${ORIGIN}/page`, { headers: { cookie: "a=b" } }));
+  await runWithContext(ctx, async () => {
+    const api = createApiClient<S>({ fetch: noNetwork });
+    await api("/api/cookie", "GET").catch(() => {});
+  });
+  assertEquals(
+    ctx.outgoingHeaders.getSetCookie(),
+    ["seen=1; Path=/"],
+    "the parent response carries what the sub-request set",
+  );
+
+  // A CACHED call must not: its body is replayed for other callers, and whatever cookie
+  // the miss produced belongs to that one caller.
+  const cached = createRequestContext(
+    new Request(`${ORIGIN}/page`, { headers: { cookie: "a=b" } }),
+  );
+  await runWithContext(cached, async () => {
+    const api = createApiClient<S>({ fetch: noNetwork });
+    await api("/api/cookie", "GET", { next: { tags: ["cookie"] } }).catch(() => {});
+  });
+  assertEquals(cached.outgoingHeaders.getSetCookie(), []);
 });

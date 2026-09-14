@@ -1,7 +1,10 @@
 // Coverage for `src/cli/commands/completions.ts` and `src/cli/register.ts`: build the
 // real first-party registry, then drive the completions command's emitters for each
-// supported shell and assert the generated scripts. The unknown-shell branch exits, so
-// it is exercised with Deno.exit stubbed to throw.
+// supported shell and assert the generated scripts.
+//
+// EVERY branch exits: the verb runs after eager project-verb discovery, so a plugin `setup`
+// that leaked a timer or a watcher must not keep the shell's completion call alive. Each case
+// therefore runs with Deno.exit stubbed to throw, and asserts the code it exited with.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { buildRegistry } from "../src/cli/register.ts";
@@ -33,6 +36,22 @@ function capture(): { logs: string[]; errs: string[]; restore: () => void } {
   };
 }
 
+/** Run the completions verb with `Deno.exit` stubbed; it always exits, never returns. */
+function emit(shell: string): { logs: string[]; errs: string[]; codes: number[] } {
+  const reg = buildRegistry();
+  const cap = capture();
+  const exit = stubExit();
+  try {
+    reg.get("completions")!.run(ctx([shell]));
+  } catch (e) {
+    assert(String(e).startsWith("Error: __exit__"), `unexpected throw: ${e}`);
+  } finally {
+    exit.restore();
+    cap.restore();
+  }
+  return { logs: cap.logs, errs: cap.errs, codes: exit.calls };
+}
+
 function stubExit(): { calls: number[]; restore: () => void } {
   const orig = Deno.exit;
   const calls: number[] = [];
@@ -56,62 +75,39 @@ Deno.test("buildRegistry wires every first-party verb", () => {
   assertStringIncludes(help, "denext dev");
 });
 
-Deno.test("completions emits a bash script for the real verb set", () => {
-  const reg = buildRegistry();
-  const cap = capture();
-  try {
-    reg.get("completions")!.run(ctx(["bash"]));
-  } finally {
-    cap.restore();
-  }
-  const out = cap.logs.join("\n");
+Deno.test("completions emits a bash script for the real verb set, then exits", () => {
+  const { logs, codes } = emit("bash");
+  const out = logs.join("\n");
   assertStringIncludes(out, "_denext_complete()");
   assertStringIncludes(out, "complete -F _denext_complete denext");
   // Verb names appear in the compgen word list.
   assertStringIncludes(out, "doctor");
   assertStringIncludes(out, "migrate");
+  // A plugin `setup` that leaked a handle cannot hold the process open past the script.
+  assertEquals(codes, [0]);
 });
 
-Deno.test("completions emits a zsh compdef script", () => {
-  const reg = buildRegistry();
-  const cap = capture();
-  try {
-    reg.get("completions")!.run(ctx(["zsh"]));
-  } finally {
-    cap.restore();
-  }
-  const out = cap.logs.join("\n");
+Deno.test("completions emits a zsh compdef script, then exits", () => {
+  const { logs, codes } = emit("zsh");
+  const out = logs.join("\n");
   assertStringIncludes(out, "#compdef denext");
   assertStringIncludes(out, "_describe 'command' commands");
   // Each verb carries its summary as a 'name:desc' pair.
   assertStringIncludes(out, "'doctor:");
+  assertEquals(codes, [0]);
 });
 
-Deno.test("completions emits a fish completion script", () => {
-  const reg = buildRegistry();
-  const cap = capture();
-  try {
-    reg.get("completions")!.run(ctx(["fish"]));
-  } finally {
-    cap.restore();
-  }
-  const out = cap.logs.join("\n");
+Deno.test("completions emits a fish completion script, then exits", () => {
+  const { logs, codes } = emit("fish");
+  const out = logs.join("\n");
   assertStringIncludes(out, "complete -c denext -n __fish_use_subcommand -a");
   assertStringIncludes(out, "-a doctor");
+  assertEquals(codes, [0]);
 });
 
 Deno.test("completions rejects an unknown shell with a non-zero exit", () => {
-  const reg = buildRegistry();
-  const cap = capture();
-  const exit = stubExit();
-  try {
-    reg.get("completions")!.run(ctx(["powershell"]));
-  } catch (e) {
-    assert(String(e).includes("__exit__1"));
-  } finally {
-    exit.restore();
-    cap.restore();
-  }
-  assertEquals(exit.calls, [1]);
-  assertStringIncludes(cap.errs.join("\n"), "unknown shell");
+  const { errs, codes, logs } = emit("powershell");
+  assertEquals(codes, [1]);
+  assertEquals(logs, [], "no script is printed for a shell it does not know");
+  assertStringIncludes(errs.join("\n"), "unknown shell");
 });

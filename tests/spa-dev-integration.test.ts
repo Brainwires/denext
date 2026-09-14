@@ -9,6 +9,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { startSpaDevOnDir } from "./e2e/harness.ts";
+import { generateSpaEntry } from "../src/build/spa/shared.ts";
 
 const SPA = new URL("../examples/spa", import.meta.url).pathname;
 
@@ -43,6 +44,16 @@ async function stepEntry({ origin }: Ctx): Promise<void> {
   const js = await res.text();
   // The entry enables per-module refresh and imports the app graph via dev URLs.
   assertStringIncludes(js, "/_denext/@");
+  // B10: the panel only mounts when `__denextDev` is already set — nothing else in SPA
+  // dev sets it, and the shell's dev script runs after this module. (esbuild hoists the
+  // import declarations above the flag, as ESM does anyway; what matters is that the
+  // `installDevtools()` CALL comes after it.)
+  const flag = js.indexOf("__denextDev");
+  assert(flag >= 0, "the served SPA dev entry sets __denextDev");
+  assert(
+    flag < js.indexOf("installDevtools()"),
+    "__denextDev is set before installDevtools() runs in the unbundled SPA dev entry",
+  );
 }
 
 async function stepFsMain({ origin }: Ctx): Promise<void> {
@@ -111,4 +122,20 @@ Deno.test({
   } finally {
     await server.close();
   }
+});
+
+Deno.test("the bundled SPA dev entry sets __denextDev before installing DevTools", () => {
+  const entry = "file:///app/src/main.tsx";
+  const dev = generateSpaEntry(entry, true);
+  const flag = dev.indexOf("globalThis.__denextDev = true;");
+  assert(flag >= 0, "the dev entry sets __denextDev");
+  assert(dev.indexOf("installDevtools()") > flag, "it is set before installDevtools() runs");
+  assert(dev.indexOf('from "denext/devtools"') > flag, "and before the devtools import");
+  assertStringIncludes(dev, 'import { installDevtools } from "denext/devtools";');
+
+  // …and a production entry carries neither (it must tree-shake to the bare import).
+  const prod = generateSpaEntry(entry, false);
+  assertEquals(prod.includes("__denextDev"), false, prod);
+  assertEquals(prod.includes("installDevtools"), false, prod);
+  assertEquals(prod.includes("denext/devtools"), false, prod);
 });

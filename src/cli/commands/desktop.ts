@@ -3,9 +3,13 @@
 //
 //   run      export the SPA, then open it in a `deno desktop` native window
 //   build    export the SPA to out/ (what the desktop window serves)
-//   package  build a distributable app bundle — macOS (.app, signed/notarized) or
-//            Linux (bundle → .tar.gz / AppImage); `--target-os` cross-builds. Windows
-//            is tracked in KNOWN-LIMITATIONS.
+//   package  build a distributable app bundle — macOS (.app, signed/notarized), Linux
+//            (bundle → .tar.gz / AppImage) or Windows (.exe, Authenticode-signed when a
+//            cert is supplied); `--target-os` cross-builds everything but macOS.
+//
+// All three serve a static export over loopback. Attaching a packaged window (or a
+// Capacitor app) to a running `denext dev` is not supported yet — see KNOWN-LIMITATIONS
+// ("Desktop & mobile") and the ROADMAP entry for the dev-attach work.
 //
 // A single command whose first positional selects the action, since the framework
 // models flat verbs; the second positional is the project dir.

@@ -4,7 +4,7 @@
 import type { InspectHook, InspectNode } from "../devtools-inspect.ts";
 import { findNode, h4, type PanelCtx } from "./ctx.ts";
 import { el } from "./styles.ts";
-import { editorUrl, hookEditor, prettySource, propEditor, renderValue } from "./values.ts";
+import { hookEditor, propEditor, renderValue, sourceLink } from "./values.ts";
 
 type RenderReason = ReturnType<PanelCtx["api"]["getRenderReason"]>;
 
@@ -23,11 +23,7 @@ function renderSourceAndOwners(ctx: PanelCtx, sel: InspectNode): void {
   const { doc, S, api, detailPane } = ctx;
   if (sel.source) {
     detailPane.append(h4(ctx, false, "Source"));
-    const link = el(doc, "a", S.v, prettySource(sel.source)) as unknown as HTMLAnchorElement;
-    const url = editorUrl(sel.source);
-    if (url) link.href = url;
-    link.title = sel.source;
-    detailPane.append(el(doc, "div", S.kv, link as unknown as Element));
+    detailPane.append(el(doc, "div", S.kv, sourceLink(ctx, sel.source)));
   }
   const owners = api.getOwnerStack(sel.id);
   if (owners.length > 0) {
@@ -82,6 +78,17 @@ function renderHookAnnotations(ctx: PanelCtx, hk: InspectHook): void {
   }
 }
 
+/**
+ * A hook row's two-part label: the variable it was bound to (or its kind, when the dev
+ * metadata didn't resolve), plus the dim hook name — `0 count` + `· useState`.
+ */
+function hookLabel(hk: InspectHook): { label: string; note?: string } {
+  return {
+    label: `${hk.index} ${hk.name ?? hk.kind}`,
+    note: hk.hook === undefined ? undefined : `· ${hk.hook}`,
+  };
+}
+
 function renderHooks(ctx: PanelCtx, sel: InspectNode, reason: RenderReason): void {
   const { doc, S, detailPane } = ctx;
   detailPane.append(h4(ctx, false, "Hooks"));
@@ -89,15 +96,19 @@ function renderHooks(ctx: PanelCtx, sel: InspectNode, reason: RenderReason): voi
     detailPane.append(el(doc, "div", S.empty, "none"));
     return;
   }
+  if (sel.hooksNamed === false) {
+    detailPane.append(el(doc, "div", S.empty, "names unavailable (conditional hooks?)"));
+  }
   for (const hk of sel.hooks) {
     const kStyle = reason?.hooks.includes(hk.index) === true ? S.kChanged : S.kHook;
-    const label = `${hk.index} ${hk.kind}`;
+    const { label, note } = hookLabel(hk);
     if (hk.editable) {
-      detailPane.append(
-        el(doc, "div", S.kv, el(doc, "span", kStyle, label), hookEditor(ctx, sel, hk)),
-      );
+      const row = el(doc, "div", S.kv, el(doc, "span", kStyle, label));
+      if (note) row.append(el(doc, "span", S.dim, note));
+      row.append(hookEditor(ctx, sel, hk));
+      detailPane.append(row);
     } else {
-      renderValue(ctx, { kind: "hook", index: hk.index }, [], hk.value, label, kStyle, 0);
+      renderValue(ctx, { kind: "hook", index: hk.index }, [], hk.value, label, kStyle, 0, note);
     }
     renderHookAnnotations(ctx, hk);
   }

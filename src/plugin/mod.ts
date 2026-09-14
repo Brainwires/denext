@@ -102,8 +102,11 @@ export interface PluginContext {
    * Contribute a first-class CLI verb (a {@linkcode CommandSpec}), so a plugin can
    * extend `denext <command>` — not only the request/route/build seams. The command
    * is discovered when the CLI encounters an unknown verb in a project whose config
-   * lists this plugin; a name that collides with a built-in verb is ignored (core
-   * verbs always win).
+   * lists this plugin, and eagerly (under a time budget) when the CLI has to
+   * enumerate every verb — `denext --help`, `denext completions <shell>`. A name that
+   * collides with a built-in verb is ignored (core verbs always win). The stored spec
+   * is a copy stamped with `source: "plugin"`, which groups it under "Project
+   * commands" in the help table.
    */
   addCommand(command: CommandSpec): void;
   /**
@@ -142,6 +145,13 @@ const teardowns: PluginTeardown[] = [];
 // process-global and otherwise leaks across in-process runs).
 const synthDisposers: (() => void)[] = [];
 const applied = new Set<string>();
+/**
+ * Bumped by {@linkcode resetPlugins}. An `applyPlugins` run that started under an older
+ * generation abandons itself instead of marking names or storing verbs: a discovery that
+ * was cut off by a time budget must not be able to make the NEXT discovery skip a plugin
+ * whose `setup` it never finished.
+ */
+let generation = 0;
 
 /** The per-pipeline facts a {@linkcode PluginContext} is built from. */
 export interface ApplyPluginsBase {
@@ -167,7 +177,9 @@ export interface ApplyPluginsBase {
  */
 export async function applyPlugins(base: ApplyPluginsBase): Promise<void> {
   const plugins = base.config.plugins ?? [];
+  const startedUnder = generation;
   for (const plugin of plugins) {
+    if (startedUnder !== generation) return; // superseded by a resetPlugins() — stale run
     if (applied.has(plugin.name)) continue;
     applied.add(plugin.name);
     const context: PluginContext = {
@@ -180,7 +192,11 @@ export async function applyPlugins(base: ApplyPluginsBase): Promise<void> {
       addRequestHandler: (handler) => requestHandlers.push(handler),
       addBuildStep: (step) => buildSteps.push(step),
       addPrepareStep: (step, opts) => prepareSteps.push({ step, watch: opts?.watch ?? [] }),
-      addCommand: (command) => pluginCommands.push(command),
+      // Stamped (on a copy — never mutate the plugin's own object) so the CLI can list
+      // plugin verbs under "Project commands" instead of among the built-ins.
+      addCommand: (command) => {
+        if (startedUnder === generation) pluginCommands.push({ ...command, source: "plugin" });
+      },
       addTeardown: (teardown) => teardowns.push(teardown),
     };
     await plugin.setup(context);
@@ -307,7 +323,19 @@ export async function runPluginTeardown(): Promise<void> {
   teardowns.length = 0;
 }
 
-/** Clear all plugin registrations. For tests that register plugins in-process. */
+/**
+ * The current plugin-registry generation — bumped by every {@linkcode resetPlugins}. A caller
+ * that resets, then does slow work before {@linkcode applyPlugins} (e.g. importing the
+ * project's config under a time budget) compares this value before and after that work, so a
+ * run another reset has superseded never reaches `applyPlugins` at all.
+ *
+ * @returns The generation counter as of now.
+ */
+export function pluginGeneration(): number {
+  return generation;
+}
+
+/** Clear all plugin registrations (and bump the generation). For tests that register plugins in-process. */
 export function resetPlugins(): void {
   requestHandlers.length = 0;
   buildSteps.length = 0;
@@ -317,4 +345,5 @@ export function resetPlugins(): void {
   for (const dispose of synthDisposers) dispose();
   synthDisposers.length = 0;
   applied.clear();
+  generation++;
 }

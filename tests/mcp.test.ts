@@ -10,6 +10,7 @@ import { readPackageFile } from "../src/mcp/package-file.ts";
 import { IMPORT_RULES, lookupImport } from "../src/mcp/next-denext-map.ts";
 import { dispatch } from "../src/mcp/server.ts";
 import { runTool, TOOLS } from "../src/mcp/tools.ts";
+import { GENERATE_KINDS } from "../src/build/generate.ts";
 import {
   browserLogEvent,
   captureConsole,
@@ -97,6 +98,10 @@ Deno.test("dispatch: tools/list lists every registered tool with a schema", asyn
   assertEquals(names.length, TOOLS.length);
   assert(names.includes("denext_check_snippet"));
   assert(names.includes("denext_import_map"));
+  // The DevTools bridge tools are registered through `devtoolsTools()`, not inline.
+  assert(names.includes("denext_component_tree"));
+  assert(names.includes("denext_why_render"));
+  assert(names.includes("denext_hook_state"));
   for (const t of res?.result.tools) assertEquals(t.inputSchema.type, "object");
 });
 
@@ -148,6 +153,34 @@ Deno.test("runTool: generate scaffolds a component into a temp project", async (
     const found = [...Deno.readDirSync(dir)].length > 0 ||
       await exists(`${dir}/components`);
     assert(found, "generate wrote something into the project dir");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("denext_generate advertises every kind the generator supports", () => {
+  const tool = TOOLS.find((t) => t.name === "denext_generate")!;
+  const kind = (tool.inputSchema.properties as Record<string, { enum?: string[] }>).kind;
+  assertEquals(kind.enum, [...GENERATE_KINDS]);
+  assertEquals(GENERATE_KINDS.length, 13);
+  for (const k of GENERATE_KINDS) assertStringIncludes(tool.description, k);
+});
+
+Deno.test("runTool: generate dryRun prints the plan and its contents, writing nothing", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-mcp-gen-dry-" });
+  try {
+    await Deno.writeTextFile(`${dir}/deno.json`, "{}");
+    await Deno.mkdir(`${dir}/app`, { recursive: true });
+    const res = await runTool("denext_generate", {
+      kind: "page",
+      name: "dashboard",
+      dir,
+      dryRun: true,
+    });
+    assert(!res.isError, res.content[0].text);
+    assertStringIncludes(res.content[0].text, "would write:");
+    assertStringIncludes(res.content[0].text, "function DashboardPage(");
+    assertEquals(await exists(`${dir}/app/dashboard/page.tsx`), false);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

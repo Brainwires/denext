@@ -307,9 +307,9 @@ The full documentation is at [denext.dev](https://denext.dev/docs/getting-starte
 
 **Move an app over** — [Migrating from Next.js](https://denext.dev/docs/migrating) · [Migrating from Remix](https://denext.dev/docs/migrating-remix) · [Patching packages](https://denext.dev/docs/patches)
 
-**Ship it** — [Deployment & ops](https://denext.dev/docs/deploy) · [Databases](https://denext.dev/docs/database) · [Testing](https://denext.dev/docs/testing) · [Desktop & mobile](https://denext.dev/docs/desktop) · [Security posture](https://denext.dev/docs/security)
+**Ship it** — [Deployment & ops](https://denext.dev/docs/deploy) · [Databases](https://denext.dev/docs/database) · [Auth](https://denext.dev/docs/auth) · [Testing](https://denext.dev/docs/testing) · [Desktop & mobile](https://denext.dev/docs/desktop) · [Security posture](https://denext.dev/docs/security)
 
-**Reference** — [Configuration](https://denext.dev/docs/config) · [API](https://denext.dev/docs/api) · [Writing a plugin](https://denext.dev/docs/plugins) · [MCP server](https://denext.dev/docs/mcp) · [Changelog](https://denext.dev/docs/changelog)
+**Reference** — [Configuration](https://denext.dev/docs/config) · [API](https://denext.dev/docs/api) · [Writing a plugin](https://denext.dev/docs/plugins) · [MCP server](https://denext.dev/docs/mcp) · [DevTools](https://denext.dev/docs/devtools) · [Project UI](https://denext.dev/docs/ui) · [Changelog](https://denext.dev/docs/changelog)
 
 **Under the hood & honest limits** — [Features](https://denext.dev/docs/features) · [FEATURES.md](./FEATURES.md) · [Architecture](https://denext.dev/docs/architecture) · [Deliberate differences](https://denext.dev/docs/differences) · [KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md) · [Known limitations](https://denext.dev/docs/limitations) · [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md)
 

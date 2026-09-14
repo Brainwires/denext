@@ -7,7 +7,7 @@
 
 import type { ApiMiddleware, ApiMiddlewareInput } from "./define-api.ts";
 import { ApiError } from "./api-error.ts";
-import { auth } from "./auth/mod.ts";
+import { hasRole, updateAuthSession } from "./auth/mod.ts";
 import type { AuthSession } from "./auth/types.ts";
 import { clientIp, inMemoryRateLimitStore, type RateLimitStore } from "./auth/rate-limit.ts";
 
@@ -15,22 +15,40 @@ import { clientIp, inMemoryRateLimitStore, type RateLimitStore } from "./auth/ra
 export interface RequireSessionOptions {
   /** The 401's message (default `"Unauthorized"`). */
   message?: string;
+  /**
+   * Also require at least one of these roles (`AuthUser.roles`) — any-of. A signed-in
+   * caller without a listed role fails with a 403 `forbidden` envelope, so "who are you"
+   * and "may you" stay distinguishable to the client.
+   */
+  role?: string | string[];
+  /** The 403's message when `role` is not held (default `"Forbidden"`). */
+  forbiddenMessage?: string;
 }
 
 /**
  * Require a signed-in viewer (denext auth): extends the context with `{ session }`, or fails
- * with a 401 `unauthorized` envelope before any schema runs.
+ * with a 401 `unauthorized` envelope before any schema runs. With `role`, a signed-in caller
+ * who holds none of the listed roles fails with a 403 `forbidden` envelope instead.
  *
- * @param options The 401 message.
+ * An API route owns its response, so this is also a sliding-expiry path: when
+ * `session.updateAge` is configured and the session has aged past it, the session is
+ * re-issued and the refreshed cookie rides the API response (see `updateAuthSession`).
+ *
+ * @param options The 401 message, and optionally the required `role`(s).
  * @returns A middleware adding `session: AuthSession` to the handler's `ctx`.
  */
 export function requireSession(
   options: RequireSessionOptions = {},
 ): ApiMiddleware<object, { session: AuthSession }> {
   return async () => {
-    const session = await auth();
+    const session = await updateAuthSession();
     if (!session) {
       throw new ApiError(401, "unauthorized", { message: options.message ?? "Unauthorized" });
+    }
+    if (!hasRole(session, options.role)) {
+      throw new ApiError(403, "forbidden", {
+        message: options.forbiddenMessage ?? "Forbidden",
+      });
     }
     return { session };
   };

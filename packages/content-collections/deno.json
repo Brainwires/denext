@@ -10,11 +10,19 @@
     "./command": "./command.ts"
   },
   "imports": {
-    "@denext/denext": "jsr:@denext/denext@^2.4.3",
+    "@denext/denext": "jsr:@denext/denext@^2.5.0-rc.1",
     "@std/front-matter": "jsr:@std/front-matter@^1.0.0",
     "@std/fs": "jsr:@std/fs@^1.0.0",
     "@std/path": "jsr:@std/path@^1.0.0",
     "@std/yaml": "jsr:@std/yaml@^1.0.0"
+  },
+  "denext": {
+    "catalog": {
+      "kind": "plugin",
+      "factory": "contentCollections",
+      "verb": "content",
+      "configKeys": ["watch"]
+    }
   },
   "publish": {
     "include": [

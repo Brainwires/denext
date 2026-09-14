@@ -17,14 +17,23 @@ import {
   devStateResponse,
   openInEditorResponse,
 } from "./dev-endpoints.ts";
+import {
+  devCacheResponse,
+  devInspectRead,
+  devInspectSink,
+  devRoutesResponse,
+} from "./devtools-endpoints.ts";
 import { getManifest, getUnbundled } from "./manifest.ts";
 import { broadcastError, reloadStream } from "./reload.ts";
 import { DEV_RELOAD_SCRIPT } from "./reload-script.ts";
 import { devErrorPage } from "./error-page.ts";
 import { serveImmutableAsset } from "../../server/serve-utils.ts";
 import {
+  DEV_CACHE_PATH,
+  DEV_INSPECT_PATH,
   DEV_LOG_PATH,
   DEV_RELOAD_JS_PATH,
+  DEV_ROUTES_PATH,
   DEV_STATE_PATH,
   type DevState,
   FLIGHT_BUNDLE_PATH,
@@ -56,8 +65,9 @@ function bundleErrorResponse(st: DevState, title: string, err: unknown): Respons
 }
 
 /**
- * The origin-gated dev endpoints: the live-reload SSE stream, open-in-editor, and the dev
- * black box (browser log sink + state read). Null when `url` is none of them (a 403 for ANY
+ * The origin-gated dev endpoints: the live-reload SSE stream, open-in-editor, the dev
+ * black box (browser log sink + state read), and the DevTools panel's cache + route-map
+ * reads. Null when `url` is none of them (a 403 for ANY
  * `/_denext/*` URL from a cross-origin page / foreign Host first — defense-in-depth, cf.
  * CVE-2025-48068 — and the caller's other dev handlers run only once the gate passed).
  */
@@ -81,6 +91,15 @@ function gatedDevEndpoint(
       return devLogResponse(st, request);
     case DEV_STATE_PATH:
       return devStateResponse(st, url);
+    case DEV_CACHE_PATH:
+      return devCacheResponse(st);
+    case DEV_ROUTES_PATH:
+      return devRoutesResponse(st, url);
+    case DEV_INSPECT_PATH:
+      // POST = the in-page DevTools sink, GET = the MCP bridge's read; nothing else.
+      if (request.method === "POST") return devInspectSink(st, request);
+      if (request.method === "GET") return devInspectRead(st, url, request);
+      return new Response("method not allowed", { status: 405, headers: { allow: "GET, POST" } });
     default:
       return null; // gate passed; another dev handler (or the app) serves it
   }
@@ -203,6 +222,9 @@ async function devErrorPageFor(st: DevState, request: Request, res: Response): P
   });
 }
 
+/** Longest `url`/`message` a recorded request event keeps (the log must stay bounded). */
+const MAX_EVENT_TEXT = 2048;
+
 /** The app request, timed and recorded as a `request` event in the black box. */
 async function appResponse(
   st: DevState,
@@ -212,13 +234,16 @@ async function appResponse(
 ): Promise<Response> {
   const started = performance.now();
   const res = await devErrorPageFor(st, request, await appHandler(request));
+  // Clamped: the path is attacker-chosen (any page can fetch a 60 KB URL), the black box
+  // retains thousands of events, and the DevTools Network tab renders every one of them.
+  const path = url.pathname.slice(0, MAX_EVENT_TEXT);
   st.devEvents.record({
     kind: "request",
     ts: Date.now(),
     source: "server",
     level: res.status >= 500 ? "error" : "info",
-    message: `${request.method} ${url.pathname} → ${res.status}`,
-    url: url.pathname,
+    message: `${request.method} ${path} → ${res.status}`,
+    url: path,
     status: res.status,
     durationMs: Math.round(performance.now() - started),
   });

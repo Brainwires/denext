@@ -131,7 +131,20 @@ opt-in — documented, not surprises. Full checklist in [the deployment guide](h
 - **`denextAuth` sessions are stateless by default, so they can't be revoked before
   they expire.** Opt in to server-side sessions with `sessionStore`
   (`inMemorySessionStore()` / `sqliteSessionStore()` or your own) to get
-  `revokeSession`/`revokeAllSessions`.
+  `revokeSession`/`revokeAllSessions`. **Configuring an `AuthAdapter` does not change
+  this** — an adapter is a persistence port (users, accounts, tokens), not a session
+  mechanism; `session: { strategy: "database" }` is the switch.
+- **`denextAuth` account linking refuses unverified-email matches**, where Auth.js links
+  an OAuth account to an existing user on a bare email match. denext links only when the
+  provider's email is verified _and_ the local account's email is verified; anything else
+  is `?error=account_not_linked` unless the provider opts in with
+  `allowDangerousEmailAccountLinking`. The default costs a support ticket; the alternative
+  costs an account takeover from any IdP that will mint a token for an unverified address.
+- **`id_token` audience validation is strict by default** (`strictAudience`): OIDC Core
+  §3.1.3.7 steps 3–5 — a single `aud` must _be_ this client, a multi-valued `aud` needs an
+  `azp` naming this client, and a foreign `azp` is refused. Auth.js accepts plain `aud`
+  membership. Set `strictAudience: false` for an IdP that legitimately mints multi-audience
+  tokens without an `azp`.
 - **The credentials rate limiter keys on the socket peer, not `x-forwarded-for`, unless
   `trustForwardedHeaders: true`.** Behind a proxy without that flag every client shares
   one IP key, so the limit is effectively per account (an attacker can lock an account

@@ -1,11 +1,17 @@
-import type { DenextConfig } from "denext/server";
+import { denextAuth, type DenextConfig } from "denext/server";
 import { openapi } from "@denext/openapi";
+import { authConfig } from "./lib/auth.ts";
 
 export default {
   // `@denext/openapi`: the OpenAPI 3.1 document is derived from this app's `defineApi`
   // definitions — no extra annotation. It serves the spec at `/openapi.json`, an interactive
   // docs page at `/docs`, and writes `openapi.json` into the build output.
   plugins: [
+    // First-party auth. It stores this demo's bearer API tokens (hashed) in the adapter
+    // `lib/auth.ts` configures, and mounts `/auth/*` — including `POST /auth/tokens`,
+    // `GET /auth/tokens` and `DELETE /auth/tokens/:id`, where a signed-in user manages
+    // their own tokens. `POST /api/login` is the shortcut this demo's Swagger flow uses.
+    denextAuth(authConfig),
     openapi({
       info: {
         title: "Pets API",
@@ -24,7 +30,7 @@ export default {
       // in at POST /api/login (username "demo", password "denext"), paste the returned token into
       // Authorize, and every protected request carries `Authorization: Bearer <token>`.
       securitySchemes: {
-        bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "opaque token" },
+        bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "tok_… (opaque)" },
       },
       // WHICH scheme each operation needs is declared per endpoint via `security` on the
       // definition (see app/api/**/route.ts) — so reads are public and writes are protected on the

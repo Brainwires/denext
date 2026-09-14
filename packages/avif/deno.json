@@ -2,6 +2,7 @@
   "name": "@denext/avif",
   "version": "0.1.2",
   "exports": "./mod.ts",
+  "denext": { "catalog": { "kind": "library" } },
   "publish": {
     "include": ["mod.ts", "lib", "README.md", "LICENSE", "THIRD-PARTY-LICENSES.md", "deno.json"]
   }

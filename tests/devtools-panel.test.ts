@@ -10,7 +10,25 @@ import { useState } from "../src/runtime/hooks.ts";
 import type { VNode } from "../src/jsx/types.ts";
 import { FakeDocument, type FakeElement, FakeNode } from "./helpers/dom.ts";
 import { installInspector } from "../src/client/devtools-inspect.ts";
-import { mountPanel } from "../src/client/devtools-panel.ts";
+import { initialState, mountPanel } from "../src/client/devtools-panel.ts";
+import type { PanelCtx } from "../src/client/devtools-panel/ctx.ts";
+import { buildStyles } from "../src/client/devtools-panel/styles.ts";
+import {
+  DEV_CACHE_PATH,
+  DEV_ROUTES_PATH,
+  DEV_STATE_PATH,
+  devFetch,
+  OPEN_IN_EDITOR_PATH,
+  openInEditor,
+} from "../src/client/devtools-panel/dev-api.ts";
+import { buildTabStrip } from "../src/client/devtools-panel/shell.ts";
+import { refreshNetworkTab, renderNetworkTab } from "../src/client/devtools-panel/network.ts";
+import { refreshCacheTab, renderCacheTab } from "../src/client/devtools-panel/cache.ts";
+import { refreshRoutesTab, renderRoutesTab } from "../src/client/devtools-panel/routes.ts";
+import {
+  DEV_STATE_PATH as SERVER_DEV_STATE_PATH,
+  OPEN_IN_EDITOR_PATH as SERVER_OPEN_IN_EDITOR_PATH,
+} from "../src/build/dev-server/state.ts";
 
 // deno-lint-ignore no-explicit-any
 const asAny = (v: unknown): any => v;
@@ -273,6 +291,15 @@ Deno.test("panel: the Render-modes tab shows the live boundary waterfall", () =>
         queryAll(body, (e) => e.textContent.includes("revealed @30ms")).length >= 1,
         "the live client reveal time is shown",
       );
+      // The waterfall draws its bar with the same proportionalBar() the Network tab uses
+      // (./ctx.ts): the only boundary is the scale's max, so it fills the 70 px width and
+      // carries no extra in-cell placement style.
+      const bar = queryAll(
+        body,
+        (e) => e.tagName === "DIV" && e.style.cssText.includes("height:9px"),
+      )[0];
+      assertEquals(asAny(bar).style.width, "70px", "the only boundary fills the bar scale");
+      assert(!bar.style.cssText.includes("display:inline-block"), bar.style.cssText);
     });
   } finally {
     if (prevB === undefined) delete gg.__denextBoundaries;
@@ -291,3 +318,287 @@ function findByName(
   }
   return null;
 }
+
+// ---- Panel shell: the six-tab IA, the keyboard map, highlight-updates, dev-api --------
+
+/** The panel frame (the fixed, column-flex chrome the launcher opens). */
+function panelEl(body: FakeElement): FakeElement {
+  return queryAll(
+    body,
+    (e) =>
+      e.tagName === "DIV" && e.style.cssText.includes("position:fixed") &&
+      e.style.cssText.includes("flex-direction:column"),
+  )[0];
+}
+
+/** Every `role="tab"` button, in strip order. */
+function tabButtons(body: FakeElement): FakeElement[] {
+  return queryAll(body, (e) => e.getAttribute("role") === "tab");
+}
+
+function tabByLabel(body: FakeElement, label: string): FakeElement {
+  return tabButtons(body).find((b) => b.textContent === label)!;
+}
+
+function Tiny(): VNode {
+  return h("div", null, "tiny");
+}
+
+Deno.test("panel: the header is a six-tab tablist with aria-selected tracking", () => {
+  withPanel(Tiny, ({ body }) => {
+    const tabs = tabButtons(body);
+    assertEquals(
+      tabs.map((t) => t.textContent),
+      ["Components", "Render modes", "Profiler", "Network", "Cache", "Routes"],
+    );
+    assertEquals(
+      tabs.map((t) => t.getAttribute("aria-selected")),
+      ["true", "false", "false", "false", "false", "false"],
+    );
+    // The strip itself scrolls rather than squeezing the buttons on a narrow panel.
+    const strip = queryAll(body, (e) => e.getAttribute("role") === "tablist")[0];
+    assert(strip, "the tab strip is a tablist");
+    assert(strip.style.cssText.includes("overflow-x:auto"), strip.style.cssText);
+    for (const t of tabs) assert(t.style.cssText.includes("flex:0 0 auto"), t.style.cssText);
+
+    tabByLabel(body, "Render modes").dispatch("click");
+    assertEquals(tabByLabel(body, "Render modes").getAttribute("aria-selected"), "true");
+    assertEquals(tabByLabel(body, "Components").getAttribute("aria-selected"), "false");
+  });
+});
+
+Deno.test("panel: Alt+3 selects the Profiler tab and Ctrl+Shift+] steps to the next", () => {
+  withPanel(Tiny, ({ doc, body }) => {
+    doc.dispatch("keydown", { altKey: true, key: "3" });
+    assertEquals(tabByLabel(body, "Profiler").getAttribute("aria-selected"), "true");
+    assert(
+      queryAll(body, (e) => e.tagName === "BUTTON" && e.textContent === "Clear").length >= 1,
+      "the profiler pane rendered",
+    );
+
+    doc.dispatch("keydown", { ctrlKey: true, shiftKey: true, key: "]" });
+    assertEquals(tabByLabel(body, "Network").getAttribute("aria-selected"), "true");
+    doc.dispatch("keydown", { ctrlKey: true, shiftKey: true, key: "[" });
+    assertEquals(tabByLabel(body, "Profiler").getAttribute("aria-selected"), "true");
+
+    // Cmd+… belongs to the browser: the same chord with metaKey is ignored.
+    doc.dispatch("keydown", { metaKey: true, altKey: true, key: "1" });
+    assertEquals(tabByLabel(body, "Profiler").getAttribute("aria-selected"), "true");
+    doc.dispatch("keydown", { altKey: true, key: "1" });
+    assertEquals(tabByLabel(body, "Components").getAttribute("aria-selected"), "true");
+  });
+});
+
+Deno.test("panel: the header title hides on a narrow panel", () => {
+  withPanel(Tiny, ({ body }) => {
+    const title = queryAll(body, (e) => e.textContent === "denext · glass-box")[0];
+    assert(title, "the title is shown at full width");
+    assertEquals(asAny(title.style).display, "");
+
+    // Simulate a 380px-wide panel and re-render.
+    panelEl(body).getBoundingClientRect = () => ({ top: 0, left: 0, width: 380, height: 400 });
+    tabByLabel(body, "Profiler").dispatch("click");
+    assertEquals(asAny(title.style).display, "none");
+
+    panelEl(body).getBoundingClientRect = () => ({ top: 0, left: 0, width: 620, height: 400 });
+    tabByLabel(body, "Components").dispatch("click");
+    assertEquals(asAny(title.style).display, "");
+  });
+});
+
+Deno.test("panel: Escape stops the picker first, and closes the panel next", () => {
+  withPanel(Tiny, ({ doc, body }) => {
+    const pickBtn = queryAll(body, (e) => e.tagName === "BUTTON" && e.textContent === "🎯")[0];
+    const panel = panelEl(body);
+    pickBtn.dispatch("click");
+    assert(pickBtn.style.cssText.includes("#8aa2ff"), "picking");
+
+    doc.dispatch("keydown", { key: "Escape" });
+    assert(!pickBtn.style.cssText.includes("#8aa2ff"), "Escape left pick mode");
+    assertEquals(asAny(panel.style).display, "flex", "the panel is still open");
+
+    doc.dispatch("keydown", { key: "Escape" });
+    assertEquals(asAny(panel.style).display, "none", "a second Escape closes it");
+    // Re-open so withPanel's Ctrl+Shift+D teardown leaves the panel closed.
+    doc.dispatch("keydown", { ctrlKey: true, shiftKey: true, key: "d" });
+  });
+});
+
+Deno.test("panel: highlight-updates flashes only the component that re-rendered", () => {
+  function HlLeaf(): VNode {
+    const [n] = useState(1);
+    return h("div", { "data-n": String(n) });
+  }
+  function HlStatic(): VNode {
+    return h("p", null, "static");
+  }
+  function HlApp(): VNode {
+    return h("section", null, h(HlLeaf, null), h(HlStatic, null));
+  }
+  withPanel(HlApp, ({ body, api }) => {
+    const tree = api!.getInspectorTree();
+    const leaf = findByName(tree, "HlLeaf")!;
+    const still = findByName(tree, "HlStatic")!;
+    // Give the two host nodes distinguishable boxes so the flash target is identifiable.
+    const rect = (top: number) => () => ({ top, left: 0, width: 10, height: 10 });
+    asAny(api!.getHostNode(leaf.id)).getBoundingClientRect = rect(11);
+    asAny(api!.getHostNode(still.id)).getBoundingClientRect = rect(99);
+
+    const overlay = queryAll(body, (e) => e.style.cssText.includes("rgba(138,162,255,.22)"))[0];
+    const hlBtn = queryAll(body, (e) => e.tagName === "BUTTON" && e.textContent === "✨")[0];
+    assert(hlBtn, "the ✨ highlight-updates toggle exists");
+    hlBtn.dispatch("click");
+    assert(hlBtn.style.cssText.includes("#8aa2ff"), "the toggle shows active");
+    assert(asAny(overlay.style).display !== "block", "enabling only baselines the tree");
+
+    const idx = leaf.hooks.find((hk) => hk.kind === "state")!.index;
+    api!.setHookState(leaf.id, idx, 2);
+    flushSync();
+
+    assertEquals(asAny(overlay.style).display, "block", "the re-rendered node flashed");
+    assertEquals(asAny(overlay.style).top, "11px", "it was HlLeaf's host node, not HlStatic's");
+    assert(asAny(overlay.style).borderColor, "the flash tints the overlay border");
+  });
+});
+
+// ---- The dev-endpoint contract (dev-api.ts) and the data tabs' unavailable state ------
+
+/** A panel context with no live panel, for driving one data tab in isolation. */
+function dataTabCtx(): { ctx: PanelCtx; detailPane: FakeElement } {
+  const doc = new FakeDocument();
+  const { S, S_BADGE } = buildStyles();
+  const treePane = doc.createElement("div");
+  const detailPane = doc.createElement("div");
+  const ctx: PanelCtx = {
+    doc: asAny(doc),
+    api: asAny({}),
+    S,
+    S_BADGE,
+    state: initialState(),
+    treePane: asAny(treePane),
+    detailPane: asAny(detailPane),
+    render: () => {},
+    selectNode: () => {},
+    highlight: () => {},
+    hideHighlight: () => {},
+  };
+  return { ctx, detailPane };
+}
+
+/** Run `fn` with `fetch` replaced by `stub`. */
+async function withFetch(stub: typeof fetch, fn: () => Promise<void>): Promise<void> {
+  const real = globalThis.fetch;
+  globalThis.fetch = stub;
+  try {
+    await fn();
+  } finally {
+    globalThis.fetch = real;
+  }
+}
+
+Deno.test("dev-api: the panel's path constants match the dev server's", () => {
+  assertEquals(DEV_STATE_PATH, SERVER_DEV_STATE_PATH);
+  assertEquals(OPEN_IN_EDITOR_PATH, SERVER_OPEN_IN_EDITOR_PATH);
+  // Job 5 adds these two to the dev server; the panel fixes their spelling here.
+  assertEquals(DEV_CACHE_PATH, "/_denext/dev-cache");
+  assertEquals(DEV_ROUTES_PATH, "/_denext/dev-routes");
+});
+
+Deno.test("dev-api: 404, 403 and a network failure all read as 'unavailable'", async () => {
+  for (const status of [403, 404]) {
+    await withFetch(
+      () => Promise.resolve(new Response("no", { status })),
+      async () => {
+        assertEquals(await devFetch(DEV_CACHE_PATH), { ok: false, reason: "unavailable" });
+      },
+    );
+  }
+  await withFetch(() => Promise.reject(new TypeError("failed to fetch")), async () => {
+    assertEquals(await devFetch(DEV_ROUTES_PATH), { ok: false, reason: "unavailable" });
+  });
+  // A relative URL with no document base (this test runtime) is a network failure too.
+  assertEquals(await devFetch(DEV_STATE_PATH, { kind: "request" }), {
+    ok: false,
+    reason: "unavailable",
+  });
+});
+
+Deno.test("dev-api: a 500 is an error, and a 200 returns the parsed payload", async () => {
+  await withFetch(() => Promise.resolve(new Response("boom", { status: 500 })), async () => {
+    assertEquals(await devFetch(DEV_CACHE_PATH), { ok: false, reason: "error" });
+  });
+  await withFetch(
+    (input) => {
+      assertEquals(String(input), `${DEV_STATE_PATH}?kind=request&limit=2`);
+      return Promise.resolve(Response.json({ events: [1] }));
+    },
+    async () => {
+      assertEquals(await devFetch(DEV_STATE_PATH, { kind: "request", limit: "2" }), {
+        ok: true,
+        data: { events: [1] },
+      });
+    },
+  );
+});
+
+Deno.test("panel: the data tabs say they are App-Router-only when the endpoint is absent", async () => {
+  const tabs = [
+    { name: "Network", render: renderNetworkTab, refresh: refreshNetworkTab },
+    { name: "Cache", render: renderCacheTab, refresh: refreshCacheTab },
+    { name: "Routes", render: renderRoutesTab, refresh: refreshRoutesTab },
+  ];
+  for (const tab of tabs) {
+    const { ctx, detailPane } = dataTabCtx();
+    tab.render(ctx);
+    assertEquals(detailPane.textContent, "loading…", `${tab.name} starts out loading`);
+
+    let rendered = 0;
+    asAny(ctx).render = () => {
+      rendered++;
+      detailPane.replaceChildren();
+      tab.render(ctx);
+    };
+    await withFetch(() => Promise.resolve(new Response("nope", { status: 404 })), async () => {
+      tab.refresh(ctx);
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    assertEquals(rendered, 1, `${tab.name} re-rendered once per read`);
+    assertEquals(
+      detailPane.textContent,
+      `${tab.name} is not available in SPA dev (App Router only)`,
+    );
+    assertEquals(ctx.state.dataUnavailable, true);
+  }
+});
+
+Deno.test("shell: buildTabStrip produces an accessible, scrollable tablist", () => {
+  const doc = new FakeDocument();
+  const { S } = buildStyles();
+  const { strip, buttons } = buildTabStrip(asAny(doc), S, [
+    { id: "components", label: "Components" },
+    { id: "cache", label: "Cache" },
+  ]);
+  assertEquals(asAny(strip).getAttribute("role"), "tablist");
+  assert(asAny(strip).style.cssText.includes("overflow-x:auto"));
+  assertEquals(Object.keys(buttons).sort(), ["cache", "components"]);
+  assertEquals(asAny(buttons.cache).getAttribute("role"), "tab");
+  assertEquals(asAny(buttons.cache).getAttribute("aria-selected"), "false");
+  assertEquals(asAny(buttons.cache).title, "Cache (Alt+2)");
+});
+
+Deno.test("dev-api: openInEditor asks the dev server for file:line:column", async () => {
+  let asked = "";
+  await withFetch((input) => {
+    asked = String(input);
+    return Promise.resolve(new Response("ok"));
+  }, async () => {
+    openInEditor("/proj/app/page.tsx", 12, 5);
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  assertEquals(
+    asked,
+    `${OPEN_IN_EDITOR_PATH}?file=%2Fproj%2Fapp%2Fpage.tsx&line=12&column=5`,
+  );
+  // No dev server (a relative URL with no document base) must not throw.
+  openInEditor("/proj/app/page.tsx");
+});

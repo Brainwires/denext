@@ -4,9 +4,23 @@
 // drain). The MCP live tools read that file, then fetch `/_denext/dev-state` to get the dev
 // black box — recent server errors + browser console/errors. A stale file (the server died
 // without cleanup) just makes the fetch fail, which the caller reports as "not running".
+//
+// The same discovery backs the DevTools bridge: `/_denext/dev-inspect` returns the latest
+// component tree the in-page inspector pushed, which is what the component-tree/
+// why-render/hook-state tools render.
 
 import { join } from "@std/path";
 import type { DevEvent } from "../build/dev-events.ts";
+import type { InspectSnapshot } from "../client/devtools-inspect-sink.ts";
+
+/**
+ * The DevTools bridge endpoint (`src/build/dev-server/state.ts`'s `DEV_INSPECT_PATH`).
+ *
+ * A copy of the VALUE, not an import: this module is reached by the `denext ui` wizard,
+ * whose module graph is asserted never to touch `src/build/dev-server/` (and through it
+ * the bundler). A test asserts the two spellings stay equal.
+ */
+const DEV_INSPECT_PATH = "/_denext/dev-inspect";
 
 /** The `.denext/dev.json` a running dev server writes. */
 export interface DevInfo {
@@ -18,8 +32,12 @@ export interface DevInfo {
   startedAt: number;
 }
 
-/** The `/_denext/dev-state` response: recent events + the total retained. */
-export interface DevState {
+/**
+ * The `/_denext/dev-state` response: recent events + the total retained. (Named for the
+ * response, not the dev server's own `DevState` record in `src/build/dev-server/state.ts`
+ * — this is the JSON an out-of-process reader gets, and nothing more.)
+ */
+export interface DevStateResponse {
   events: DevEvent[];
   total: number;
 }
@@ -49,7 +67,7 @@ export async function readDevInfo(dir: string): Promise<DevInfo | null> {
 export async function fetchDevState(
   dir: string,
   opts: { kind?: string; limit?: number } = {},
-): Promise<DevState | null> {
+): Promise<DevStateResponse | null> {
   const info = await readDevInfo(dir);
   if (!info) return null;
   const params = new URLSearchParams();
@@ -65,8 +83,53 @@ export async function fetchDevState(
       await res.body?.cancel();
       return null;
     }
-    return await res.json() as DevState;
+    return await res.json() as DevStateResponse;
   } catch {
     return null;
+  }
+}
+
+/** The `/_denext/dev-inspect` read: the page's latest component tree and how stale it is. */
+export interface DevInspect {
+  /** The tree the page's DevTools sink posted. */
+  snapshot: InspectSnapshot;
+  /** How long ago it arrived, on the dev server's clock (ms). */
+  ageMs: number;
+}
+
+/**
+ * Why an inspector read came back empty — the two cases an agent must be told apart: no
+ * dev server at all, versus a dev server no page has ever pushed a tree to.
+ */
+export type DevInspectMiss = "no-dev-server" | "no-snapshot";
+
+/** An inspector read: the snapshot, or which of the two empty cases applies. */
+export type DevInspectResult =
+  | { ok: true; inspect: DevInspect }
+  | { ok: false; reason: DevInspectMiss };
+
+/**
+ * Fetch the latest component tree the running dev server holds for a page.
+ *
+ * @param dir The project directory.
+ * @param url Optional page URL/path to select (default: the most recent page posted).
+ * @returns The snapshot, or `no-dev-server` / `no-snapshot`.
+ */
+export async function fetchDevInspect(dir: string, url?: string): Promise<DevInspectResult> {
+  const info = await readDevInfo(dir);
+  if (!info) return { ok: false, reason: "no-dev-server" };
+  const qs = url ? `?url=${encodeURIComponent(url)}` : "";
+  try {
+    // A wedged dev server must not hang the tool (the MCP loop dispatches serially).
+    const res = await fetch(`${info.origin}${DEV_INSPECT_PATH}${qs}`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) {
+      await res.body?.cancel();
+      return { ok: false, reason: res.status === 404 ? "no-snapshot" : "no-dev-server" };
+    }
+    return { ok: true, inspect: await res.json() as DevInspect };
+  } catch {
+    return { ok: false, reason: "no-dev-server" };
   }
 }

@@ -7,8 +7,16 @@
     "./command": "./command.ts"
   },
   "imports": {
-    "@denext/denext": "jsr:@denext/denext@^2.4.3",
+    "@denext/denext": "jsr:@denext/denext@^2.5.0-rc.1",
     "@std/path": "jsr:@std/path@^1.0.0"
+  },
+  "denext": {
+    "catalog": {
+      "kind": "plugin",
+      "factory": "htmx",
+      "verb": "htmx",
+      "configKeys": ["path"]
+    }
   },
   "publish": {
     "include": [

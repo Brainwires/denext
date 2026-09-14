@@ -320,6 +320,16 @@ link `/docs/<slug>` and use absolute
 needs a `NAV` entry in `apps/web/components/ui.tsx` or it gets no sidebar entry.
 A root `docs/` folder is reserved for `deno doc --html` output (gitignored).
 
+Some docs are **generated** and must never be hand-edited — regenerate them
+instead: `deno task docs:cli` (the CLI reference), `deno task docs:examples`
+(the examples index), `deno task docs:mcp` (the MCP reference),
+`deno task gen:config-schema` (`denext.config.schema.json` +
+`src/server/config-keys.generated.ts`) and `deno task gen:plugin-catalog`
+(`src/plugin/catalog.json` — the first-party package catalog the plugins page,
+`denext migrate` and the `denext ui` plugins panel all read; a new `packages/*`
+needs a `"denext": { "catalog": { … } }` block in its `deno.json` to appear).
+Each has a drift test, so a stale artifact fails CI rather than shipping.
+
 ## Repo layout
 
 ```

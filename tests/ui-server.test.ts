@@ -1,0 +1,387 @@
+// The `denext ui` kernel: loopback binding, the asset routes, every feature route's HTML page
+// and its `/api/*` JSON twin, the broadcast channel, task-name validation, clean shutdown — and
+// the standing guarantee that the UI's module graph never reaches the bundler.
+
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { join } from "@std/path";
+import { startUiServer, type UiServer } from "../src/ui/server.ts";
+import { projectTasks, UI_ROUTES } from "../src/ui/routes.ts";
+import { UI_COOKIE, UI_CSRF_HEADER } from "../src/ui/security.ts";
+import { deriveCsrf } from "../src/ui/security.ts";
+import { diffHtml, esc, html, opForm, raw, toHtml, UI_NAV } from "../src/ui/html.ts";
+import { decodePatch } from "../src/ui/features/config.ts";
+import { readWidget, renderWidget } from "../src/ui/form/render.ts";
+import { branchFor, itemSchema, loadConfigSchema, resolveAt } from "../src/ui/form/schema.ts";
+import { widgetFor } from "../src/ui/form/widget.ts";
+import { control } from "../src/ui/form/control.ts";
+import { decode, encode } from "../src/ui/form/value.ts";
+import { OVERRIDES } from "../src/ui/form/schema-overrides.ts";
+
+interface Harness {
+  server: UiServer;
+  base: string;
+  dir: string;
+  headers: Record<string, string>;
+}
+
+async function ui(): Promise<Harness> {
+  const dir = await Deno.makeTempDir({ prefix: "denext_ui_srv_" });
+  await Deno.writeTextFile(
+    join(dir, "deno.json"),
+    '{ "tasks": { "hello": "eval console.log(1)" } }',
+  );
+  const server = await startUiServer({ dir, port: 0 });
+  return {
+    server,
+    dir,
+    base: `http://127.0.0.1:${server.port}`,
+    headers: { cookie: `${UI_COOKIE}=${server.token}` },
+  };
+}
+
+async function stop(h: Harness): Promise<void> {
+  await h.server.shutdown();
+  await Deno.remove(h.dir, { recursive: true });
+}
+
+Deno.test("the server binds loopback only and hands back its URL + token", async () => {
+  const h = await ui();
+  try {
+    assertEquals(h.server.hostname, "127.0.0.1");
+    assert(h.server.port > 0);
+    assertStringIncludes(h.server.url, `:${h.server.port}/?t=${h.server.token}`);
+    assert(/^https?:\/\/(localhost|127\.0\.0\.1)/.test(h.server.url), h.server.url);
+    assert(h.server.token.length >= 43, "the session token carries 256 bits of entropy");
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("the overview page renders the shell, the nav and the project dir", async () => {
+  const h = await ui();
+  try {
+    const res = await fetch(`${h.base}/`, { headers: h.headers });
+    assertEquals(res.status, 200);
+    assertStringIncludes(res.headers.get("content-type") ?? "", "text/html");
+    const body = await res.text();
+    assertStringIncludes(body, "<!doctype html>");
+    assertStringIncludes(body, '<link rel="stylesheet" href="/_ui/ui.css">');
+    assertStringIncludes(body, '<script type="module" src="/_ui/ui.js">');
+    assertStringIncludes(body, 'name="denext-csrf"');
+    for (const item of UI_NAV) assertStringIncludes(body, `href="${item.href}"`);
+    assert(!body.includes("<script>"), "the UI ships no inline script");
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("the same-origin assets are served with the right content types", async () => {
+  const h = await ui();
+  try {
+    const css = await fetch(`${h.base}/_ui/ui.css`, { headers: h.headers });
+    assertEquals(css.status, 200);
+    assertStringIncludes(css.headers.get("content-type") ?? "", "text/css");
+    assertStringIncludes(await css.text(), "prefers-color-scheme");
+
+    const js = await fetch(`${h.base}/_ui/ui.js`, { headers: h.headers });
+    assertEquals(js.status, 200);
+    assertStringIncludes(js.headers.get("content-type") ?? "", "javascript");
+    const source = await js.text();
+    assertStringIncludes(source, "DOMParser");
+    assertStringIncludes(source, "/_ui/events");
+    assert(!source.includes(".innerHTML ="), "untrusted text is never innerHTML'd");
+    // It is a string in `client.ts`, so nothing else parses it: do it here.
+    new Function(source);
+    // Every frame the panels push is dispatched (an unknown one is ignored, not thrown on).
+    const frames = [
+      "reload",
+      "plugins-changed",
+      "command-done",
+      "task-done",
+      "dev-output",
+      "dev-exit",
+      "dev-ready",
+    ];
+    for (const type of frames) assertStringIncludes(source, type);
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("every feature route serves a page with the panel ui.js swaps", async () => {
+  const h = await ui();
+  try {
+    const pages = Object.entries(UI_ROUTES)
+      .filter(([path, route]) =>
+        !path.startsWith("/api/") && !path.startsWith("/_ui/") && path !== "/" &&
+        route.methods.includes("GET")
+      );
+    assert(pages.length >= 7, `expected the seven feature panels, saw ${pages.length}`);
+    for (const [path] of pages) {
+      const page = await fetch(`${h.base}${path}`, { headers: h.headers });
+      assertEquals(page.status, 200, path);
+      assertStringIncludes(await page.text(), '<section id="panel"', path);
+    }
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("a fragment request returns only the section ui.js swaps", async () => {
+  const h = await ui();
+  try {
+    const res = await fetch(`${h.base}/plugins`, {
+      headers: { ...h.headers, accept: "text/html-fragment" },
+    });
+    const body = await res.text();
+    assert(!body.includes("<!doctype html>"));
+    assertStringIncludes(body, '<section id="panel"');
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("the overview's JSON twin reports the project and the route table", async () => {
+  const h = await ui();
+  try {
+    const res = await fetch(`${h.base}/api/overview`, { headers: h.headers });
+    assertEquals(res.status, 200);
+    const payload = await res.json();
+    assertEquals(payload.ok, true);
+    assertEquals(payload.dir, h.dir);
+    assertEquals(payload.readOnly, false);
+    for (const path of ["/", "/config", "/api/config", "/tasks/run", "/_ui/events"]) {
+      assert(payload.routes.includes(path), path);
+      assert(Object.keys(UI_ROUTES).includes(path), path);
+    }
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("/tasks/run refuses a task the project does not declare", async () => {
+  const h = await ui();
+  try {
+    const form = new FormData();
+    form.set("task", "rm -rf /");
+    const res = await fetch(`${h.base}/tasks/run`, {
+      method: "POST",
+      headers: {
+        ...h.headers,
+        origin: h.base,
+        [UI_CSRF_HEADER]: await deriveCsrf(h.server.token),
+      },
+      body: form,
+    });
+    assertEquals(res.status, 400);
+    const payload = await res.json();
+    assertEquals(payload.ok, false);
+    assertStringIncludes(payload.reason, "unknown task");
+    assertEquals(payload.tasks, ["hello"]);
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("/_ui/events is an event stream", async () => {
+  const h = await ui();
+  try {
+    const res = await fetch(`${h.base}/_ui/events`, { headers: h.headers });
+    assertEquals(res.status, 200);
+    assertStringIncludes(res.headers.get("content-type") ?? "", "text/event-stream");
+    await res.body?.cancel();
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("shutdown releases the port", async () => {
+  const h = await ui();
+  const port = h.server.port;
+  await h.server.shutdown();
+  await Deno.remove(h.dir, { recursive: true });
+  // Rebinding the same port proves the listener was released.
+  const listener = Deno.listen({ hostname: "127.0.0.1", port });
+  listener.close();
+});
+
+Deno.test("the UI module graph never reaches the bundler or npm", async () => {
+  // Rooted at the VERB, not the kernel: `denext ui` is what the user runs, and a stray import
+  // in the command module (or anything it reaches) counts just as much as one in the server.
+  const output = await new Deno.Command(Deno.execPath(), {
+    args: ["info", "--json", "src/cli/commands/ui.ts"],
+    cwd: new URL("../", import.meta.url).pathname,
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  assert(output.success, new TextDecoder().decode(output.stderr));
+  const graph = JSON.parse(new TextDecoder().decode(output.stdout)) as {
+    modules: { specifier: string }[];
+  };
+  const forbidden = graph.modules
+    .map((m) => m.specifier)
+    .filter((s) => /esbuild|dev-server\/manifest|dev-unbundled|^npm:/.test(s));
+  assertEquals(
+    forbidden,
+    [],
+    "denext ui must never load the bundler or an npm dependency — everything that needs the " +
+      "project runs as a subprocess (src/ui/proc.ts)",
+  );
+});
+
+/**
+ * A project whose config — and whose plugin `setup()` — each write a marker file naming the pid
+ * that executed them. Evaluated in the UI process, the markers would carry the UI's own pid.
+ */
+const MARKER_CONFIG = `await Deno.writeTextFile(
+  new URL("./config-ran.txt", import.meta.url),
+  String(Deno.pid),
+);
+export default {
+  plugins: [{
+    name: "marker",
+    async setup(ctx) {
+      await Deno.writeTextFile(
+        new URL("./setup-ran.txt", import.meta.url),
+        String(Deno.pid),
+      );
+      ctx.addCommand({ name: "marked", summary: "a plugin verb", run: () => {} });
+    },
+  }],
+};
+`;
+
+/** Read a marker's pid, or null when the file was never written. */
+async function markerPid(dir: string, name: string): Promise<number | null> {
+  try {
+    return Number(await Deno.readTextFile(join(dir, name)));
+  } catch {
+    return null;
+  }
+}
+
+Deno.test({
+  name: "project code never runs in the UI process — discovery is a separate pid",
+  // The real (unstubbed) discovery path spawns `denext commands --json`, which imports the
+  // project's config for real.
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: "denext_ui_marker_" });
+    await Deno.writeTextFile(join(dir, "deno.json"), "{}\n");
+    await Deno.writeTextFile(join(dir, "denext.config.ts"), MARKER_CONFIG);
+    // read-only: the UI refuses every write of its own, and a GET still lists verbs — the
+    // discovery CHILD is allowed to execute the project, which is the whole point of the split.
+    const server = await startUiServer({ dir, port: 0, readOnly: true });
+    const headers = { cookie: `${UI_COOKIE}=${server.token}` };
+    const base = `http://127.0.0.1:${server.port}`;
+    try {
+      const page = await fetch(`${base}/commands`, { headers });
+      assertEquals(page.status, 200);
+      assertStringIncludes(await page.text(), "denext dev", "read-only still lists verbs");
+
+      const api = await fetch(`${base}/api/commands`, { headers });
+      assertEquals(api.status, 200);
+      const body = await api.json() as { commands: { name: string; source: string }[] };
+      assert(
+        body.commands.some((c) => c.name === "marked" && c.source === "plugin"),
+        `the project's plugin verb was discovered: ${
+          JSON.stringify(body.commands.map((c) => c.name))
+        }`,
+      );
+
+      // The markers exist — the project DID run — but in the child, never here.
+      const config = await markerPid(dir, "config-ran.txt");
+      const setup = await markerPid(dir, "setup-ran.txt");
+      assert(config !== null && setup !== null, "the discovery child evaluated the project");
+      assert(config !== Deno.pid, `denext.config.ts ran in the UI process (pid ${Deno.pid})`);
+      assert(setup !== Deno.pid, `the plugin setup ran in the UI process (pid ${Deno.pid})`);
+    } finally {
+      await server.shutdown();
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+// ── the view layer ───────────────────────────────────────────────────────────
+
+Deno.test("the html tag escapes interpolations and passes raw() through", () => {
+  const name = '<img src=x onerror="alert(1)">';
+  assertStringIncludes(toHtml(html`<p>${name}</p>`), "&#60;img");
+  assertEquals(toHtml(html`<p>${raw("<b>ok</b>")}</p>`), "<p><b>ok</b></p>");
+  assertEquals(toHtml(html`${null}${undefined}${false}`), "");
+  assertEquals(toHtml(html`${[1, 2, 3]}`), "123");
+  assertEquals(esc(`&<>"'`), "&#38;&#60;&#62;&#34;&#39;");
+});
+
+Deno.test("opForm renders the CSRF token, the hidden fields and the button", () => {
+  const markup = toHtml(opForm("tok", {
+    action: "/wizard",
+    label: "Apply",
+    fields: { op: "denojson", confirm: "1" },
+    className: "op",
+    disabled: true,
+  }));
+  assertStringIncludes(markup, 'action="/wizard"');
+  assertStringIncludes(markup, 'class="op"');
+  assertStringIncludes(markup, 'name="_csrf" value="tok"');
+  assertStringIncludes(markup, 'name="op" value="denojson"');
+  assertStringIncludes(markup, 'name="confirm" value="1"');
+  assertStringIncludes(markup, '<button type="submit" disabled>Apply</button>');
+});
+
+Deno.test("diffHtml classes a unified diff's lines, escaping every one of them", () => {
+  const markup = toHtml(diffHtml("--- a/x\n+++ b/x\n@@ -1 +1 @@\n-was <b>\n+now\n ctx"));
+  assertStringIncludes(markup, '<pre class="out"><code class="diff">');
+  assertStringIncludes(markup, '<span class="del">-was &#60;b&#62;</span>');
+  assertStringIncludes(markup, '<span class="add">+now</span>');
+  assertStringIncludes(markup, '<span class="meta">@@ -1 +1 @@</span>');
+  assertStringIncludes(markup, "\n ctx</code></pre>", "context lines are left unclassed");
+});
+
+Deno.test("projectTasks reads deno.json and deno.jsonc, and tolerates neither", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_ui_tasks_" });
+  try {
+    assertEquals(await projectTasks(dir), []);
+    await Deno.writeTextFile(
+      join(dir, "deno.jsonc"),
+      '{ /* comments are fine */ "tasks": { "dev": "x", "build": "y" } }',
+    );
+    assertEquals(await projectTasks(dir), ["dev", "build"]);
+    await Deno.writeTextFile(join(dir, "deno.json"), '{ "tasks": { "only": "z" } }');
+    assertEquals(await projectTasks(dir), ["only"]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+// ── the schema-driven form modules (J4c) ─────────────────────────────────────
+
+Deno.test("the form modules turn the committed schema into typed controls", () => {
+  assertEquals(OVERRIDES, {}, "schema-overrides.ts ships empty on purpose");
+  const schema = loadConfigSchema();
+  const node = resolveAt(schema, ["images", "formats"]);
+  const spec = widgetFor(node, ["images", "formats"], false);
+  assertEquals(spec.kind, "multi-select");
+  assertEquals(itemSchema(node).enum, ["image/webp", "image/avif"]);
+  assertEquals(branchFor(resolveAt(schema, ["csp"]), "strict").enum, ["strict"]);
+  assertEquals(encode(spec, ["image/avif"]), [
+    { name: "images.formats~n", value: "1" },
+    { name: "images.formats[1]", value: "image/avif" },
+  ]);
+  assertEquals(decode(spec, encode(spec, ["image/avif"])), ["image/avif"]);
+  assertStringIncludes(
+    toHtml(renderWidget(spec, ["image/avif"], { csrf: "tok" })),
+    'value="image/avif" checked',
+  );
+  assertStringIncludes(toHtml(control({ tag: "input", name: "x", value: "y" })), 'name="x"');
+  assertEquals(readWidget(schema, "trailingSlash", "on"), true);
+});
+
+Deno.test("decodePatch walks the posted fields through the widget codec", () => {
+  const form = new FormData();
+  form.set("_csrf", "ignored");
+  form.set("trailingSlash", "on");
+  assertEquals(decodePatch(form, loadConfigSchema()), { trailingSlash: true });
+  assertEquals(decodePatch(new FormData(), { type: "object" }), {});
+});

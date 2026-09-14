@@ -216,6 +216,7 @@ export {
   type ApiBatchConfig,
   type CacheConfig,
   type CompiledPattern,
+  type DenextCommand,
   type DenextConfig,
   type ExperimentalConfig,
   type HeaderRule,
@@ -392,13 +393,59 @@ export {
 // First-party auth: OAuth 2.0 / OIDC (+ Credentials) on signed-cookie sessions.
 // `denextAuth(config)` is a plugin (add to `plugins` in denext.config); it
 // auto-mounts `/auth/*`. Read the session anywhere with `auth()`.
-export { auth, denextAuth, requireAuth, revokeAllSessions, revokeSession } from "./auth/mod.ts";
+export {
+  auth,
+  denextAuth,
+  requireAuth,
+  revokeAllSessions,
+  revokeSession,
+  updateAuthSession,
+} from "./auth/mod.ts";
 export type { RequireAuthOptions } from "./auth/mod.ts";
-export { credentials, github, google, oidc } from "./auth/providers.ts";
-export type { CredentialsOptions, OAuthClientOptions, OidcOptions } from "./auth/providers.ts";
+export {
+  apple,
+  auth0,
+  credentials,
+  discord,
+  facebook,
+  github,
+  gitlab,
+  google,
+  keycloak,
+  microsoftEntra,
+  oidc,
+  okta,
+  slack,
+} from "./auth/providers.ts";
+export type {
+  Auth0Options,
+  CredentialsOptions,
+  GitLabOptions,
+  KeycloakOptions,
+  MicrosoftEntraOptions,
+  OAuthClientOptions,
+  OidcOptions,
+  OktaOptions,
+} from "./auth/providers.ts";
 // Password hashing for the Credentials provider (salted scrypt via node:crypto).
 export { hashPassword, verifyPassword } from "./auth/password.ts";
 export type { HashPasswordOptions } from "./auth/password.ts";
+// The hashing seam: swap scrypt for Argon2id/bcrypt without touching the auth flow.
+export { scryptHasher } from "./auth/hasher.ts";
+export type { Hasher } from "./auth/hasher.ts";
+// The persistence port: users, linked accounts, credentials, tokens, MFA factors.
+export type {
+  AdapterAccount,
+  AdapterAccountRef,
+  AdapterUser,
+  ApiTokenRecord,
+  AuthAdapter,
+  MaybePromise,
+  MfaRecord,
+  VerificationPurpose,
+  VerificationTokenRecord,
+  VerificationTokenRef,
+} from "./auth/adapter.ts";
 // Brute-force protection for the credentials endpoint (`AuthConfig.rateLimit`).
 export { inMemoryRateLimitStore } from "./auth/rate-limit.ts";
 export type {
@@ -409,18 +456,33 @@ export type {
 } from "./auth/rate-limit.ts";
 // Opt-in revocable sessions (`AuthConfig.sessionStore`): in-memory or node:sqlite.
 export { inMemorySessionStore } from "./auth/session-store.ts";
+export { inMemoryAuthAdapter } from "./auth/memory-adapter.ts";
+export type { InMemoryAuthAdapterOptions } from "./auth/memory-adapter.ts";
+export { sqliteAuthAdapter } from "./auth/sqlite-adapter.ts";
+export type { SqliteAuthAdapterOptions } from "./auth/sqlite-adapter.ts";
+export { requireBearer } from "./auth/bearer.ts";
+export type { BearerContext, RequireBearerOptions } from "./auth/bearer.ts";
+export { issueApiToken, listApiTokens, revokeApiToken, verifyApiToken } from "./auth/api-token.ts";
+export type { IssueApiTokenOptions, IssuedApiToken } from "./auth/api-token.ts";
 export type { InMemorySessionStoreOptions, SessionStore } from "./auth/session-store.ts";
 export { sqliteSessionStore } from "./auth/sqlite-session-store.ts";
 export type { SqliteSessionStoreOptions } from "./auth/sqlite-session-store.ts";
 export type {
   AuthCallbacks,
   AuthConfig,
+  AuthCookieConfig,
+  AuthEvents,
+  AuthLogger,
+  AuthorizedCallbackInput,
   AuthProvider,
   AuthSession,
+  AuthSessionConfig,
   AuthUser,
   CredentialsProvider,
   OAuthProvider,
   ProfileInput,
+  SendVerificationRequest,
+  VerificationRequestParams,
 } from "./auth/types.ts";
 
 // Metadata file conventions (sitemap.ts / robots.ts / manifest.ts / favicon.ico).

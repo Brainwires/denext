@@ -5,7 +5,7 @@ import { UserMenu } from "./user-menu.tsx";
 export const metadata = {
   title: "denext · auth",
   description:
-    "A runnable denextAuth app: scrypt password hashing, brute-force protection, and opt-in revocable sessions.",
+    "A runnable denextAuth app: the sqlite adapter, roles, OIDC discovery, audit events and bearer API tokens.",
   head: `<link rel="stylesheet" href="/styles.css">`,
 };
 
@@ -24,7 +24,7 @@ export default async function RootLayout({ children }: LayoutProps) {
       </header>
       <main class="content">{children}</main>
       <footer class="foot">
-        denextAuth · scrypt passwords · rate-limited login · revocable sqlite sessions
+        denextAuth · sqlite adapter · roles · OIDC discovery · audit events · bearer API tokens
       </footer>
     </div>
   );

@@ -154,3 +154,40 @@ code {
   padding: 1px 5px;
   border-radius: 4px;
 }
+
+.role {
+  margin-right: 6px;
+}
+
+.token {
+  display: block;
+  padding: 10px 12px;
+  overflow-wrap: anywhere;
+}
+
+.provider {
+  color: var(--link);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 8px 12px;
+  text-decoration: none;
+}
+
+.grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.grid th,
+.grid td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: middle;
+}
+
+.grid th {
+  color: var(--ink-soft);
+  font-weight: 600;
+}

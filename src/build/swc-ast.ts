@@ -202,6 +202,51 @@ export function forEachChild(
   }
 }
 
+/**
+ * The byte offset at which each line of `bytes` starts (line 1 → `index[0]` → 0). One
+ * scan for `\n`; the result is the index {@link positionAt} binary-searches, so build it
+ * once per module and reuse it for every position lookup.
+ *
+ * @param bytes The module source as UTF-8 bytes.
+ * @returns The byte offset of every line start, ascending.
+ */
+export function lineIndex(bytes: Uint8Array): number[] {
+  const starts = [0];
+  for (let i = 0; i < bytes.length; i++) {
+    if (bytes[i] === 0x0a) starts.push(i + 1);
+  }
+  return starts;
+}
+
+/**
+ * Map a UTF-8 byte offset to a 1-based `{ line, column }`, where the column counts
+ * **UTF-16 code units** — the convention the rest of the toolchain uses (`dev-codeframe.ts`
+ * carets, `editorCommand()` links, browser stack frames), and the reason a byte offset
+ * cannot simply be subtracted: a multi-byte character is one byte offset but one (or two)
+ * UTF-16 units. A CRLF line's `\r` belongs to the preceding line, so it never shifts a column.
+ *
+ * @param bytes The module source as UTF-8 bytes.
+ * @param index The line-start index from {@link lineIndex} over the same bytes.
+ * @param byteOffset The offset to locate (clamped into the source).
+ * @returns The 1-based line and 1-based UTF-16 column of `byteOffset`.
+ */
+export function positionAt(
+  bytes: Uint8Array,
+  index: number[],
+  byteOffset: number,
+): { line: number; column: number } {
+  const at = Math.max(0, Math.min(byteOffset, bytes.length));
+  let lo = 0;
+  let hi = index.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (index[mid] <= at) lo = mid;
+    else hi = mid - 1;
+  }
+  const column = decoder.decode(bytes.subarray(index[lo], at)).length + 1;
+  return { line: lo + 1, column };
+}
+
 /** A `./` or `../` specifier. */
 export function isRelativeSpecifier(spec: string): boolean {
   return spec.startsWith("./") || spec.startsWith("../");

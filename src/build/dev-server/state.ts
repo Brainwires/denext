@@ -14,6 +14,7 @@ import type { AppCss } from "../css.ts";
 import type { MiddlewareRunner } from "../../server/middleware.ts";
 import type { Instrumentation } from "../../server/instrumentation.ts";
 import { DevEventLog } from "../dev-events.ts";
+import type { InspectSnapshot } from "../../client/devtools-inspect-sink.ts";
 
 /** Live-reload / Fast Refresh SSE stream. */
 export const RELOAD_PATH = "/_denext/reload";
@@ -36,6 +37,15 @@ export const DEV_LOG_PATH = "/_denext/dev-log";
 export const DEV_STATE_PATH = "/_denext/dev-state";
 /** Dev overlay "open in editor" (same cross-origin gate as the reload stream). */
 export const OPEN_IN_EDITOR_PATH = "/_denext/open-in-editor";
+/** DevTools Cache tab: the page/data cache counters + recent invalidations (GET). */
+export const DEV_CACHE_PATH = "/_denext/dev-cache";
+/** DevTools Routes tab: the render tree at a path (`?path=`, GET). */
+export const DEV_ROUTES_PATH = "/_denext/dev-routes";
+/**
+ * DevTools → MCP bridge: the in-page inspector POSTs its component tree here, and the MCP
+ * component/why-render/hook tools GET it back (`?url=`).
+ */
+export const DEV_INSPECT_PATH = "/_denext/dev-inspect";
 
 export interface DevServerOptions {
   paths: ProjectPaths;
@@ -67,6 +77,22 @@ export interface DevServerOptions {
    * test, a parallel run) must leave it off, or concurrent servers would fight over console.
    */
   captureServerConsole?: boolean;
+}
+
+/** How many page URLs keep a posted inspector snapshot before the oldest is evicted. */
+export const MAX_INSPECT_URLS = 8;
+
+/**
+ * How long a posted inspector snapshot is served before it is treated as gone (10 min).
+ * A snapshot is a page's live props, hook cells and contexts; it answers a question an
+ * agent is asking NOW, and there is no reason to keep yesterday's open tab readable.
+ */
+export const INSPECT_TTL_MS = 10 * 60 * 1000;
+
+/** One stored inspector snapshot plus the SERVER clock when it arrived (staleness is ours). */
+export interface InspectSnapshotEntry {
+  snapshot: InspectSnapshot;
+  receivedAt: number;
 }
 
 /** Everything the dev server's stages share. Mutable fields are per-generation caches. */
@@ -176,6 +202,24 @@ export interface DevState {
    * DEV_LOG_PATH) land here and are read back via DEV_STATE_PATH (the MCP live tools).
    */
   readonly devEvents: DevEventLog;
+  /**
+   * DevTools inspector snapshots the page pushed (`DEV_INSPECT_PATH`), keyed by page URL,
+   * one latest each. Insertion order is write recency, so the Map doubles as the LRU the
+   * MCP bridge reads: the oldest key is evicted past {@link MAX_INSPECT_URLS}.
+   */
+  readonly devInspect: Map<string, InspectSnapshotEntry>;
+  /**
+   * Whether any reader has asked for a snapshot (an MCP `denext_component_tree` /
+   * `denext_why_render` / `denext_hook_state`, or any other GET of `DEV_INSPECT_PATH`).
+   *
+   * Pages ask for this with a cheap `?probe=1` GET and walk their fiber tree ONLY once it
+   * is true — a whole-tree walk on every commit costs real time, and on most dev pages
+   * nobody is reading. Sticky for the dev server's lifetime (a reader that asked once will
+   * ask again), and pre-armed by `DENEXT_DEV_INSPECT=1` for a session that wants the very
+   * first read to land.
+   */
+  devInspectArmed: boolean;
+
   /** Monotonic token so a stale `deno check` run is dropped when a newer edit lands. */
   typeCheckToken: number;
 
@@ -234,6 +278,8 @@ export function createDevState(options: DevServerOptions): DevState {
     instrumentation: {},
     reloadClients: new Set(),
     devEvents: new DevEventLog(),
+    devInspect: new Map(),
+    devInspectArmed: Deno.env.get("DENEXT_DEV_INSPECT") === "1",
     typeCheckToken: 0,
     load: () => Promise.reject(new Error("denext: dev loader used before startDevServer wired it")),
     tagLoad: () =>

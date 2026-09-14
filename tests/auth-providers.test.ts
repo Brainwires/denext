@@ -2,11 +2,32 @@
 // handling), the non-OIDC OAuth callback path (userinfo + emails, no id_token), the
 // signIn / session callbacks on both flows, and requireAuth's authenticated pass-through.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { handleAuthRequest } from "../src/server/auth/routes.ts";
 import { denextAuth, requireAuth } from "../src/server/auth/mod.ts";
-import { credentials, github, google, oidc } from "../src/server/auth/providers.ts";
+import {
+  apple,
+  auth0,
+  credentials,
+  discord,
+  facebook,
+  github,
+  gitlab,
+  google,
+  keycloak,
+  microsoftEntra,
+  oidc,
+  okta,
+  slack,
+} from "../src/server/auth/providers.ts";
+import type {
+  Auth0Options,
+  GitLabOptions,
+  KeycloakOptions,
+  MicrosoftEntraOptions,
+  OktaOptions,
+} from "../src/server/auth/providers.ts";
 import type { AuthConfig, OAuthProvider } from "../src/server/auth/types.ts";
 
 const ORIGIN = "https://app.test";
@@ -261,4 +282,302 @@ Deno.test("requireAuth returns null (continue) for an authenticated request", as
   });
   const res = await runWithContext(createRequestContext(request), () => requireAuth(request));
   assertEquals(res, null, "signed in → the middleware lets the request through");
+});
+
+// ---- the nine built-in presets ------------------------------------------------
+// (imported through `providers.ts`, which re-exports `providers-presets.ts` — the same
+// path `denext/server` takes.)
+
+const CRED = { clientId: "cid", clientSecret: "csecret" };
+
+// The per-provider option types are the public config surface an app writes against.
+const ENTRA_OPTS: MicrosoftEntraOptions = {
+  ...CRED,
+  tenant: "11111111-2222-3333-4444-555555555555",
+};
+const GITLAB_OPTS: GitLabOptions = { ...CRED, baseUrl: "https://git.example.com" };
+const AUTH0_OPTS: Auth0Options = { ...CRED, domain: "acme.eu.auth0.com" };
+const OKTA_OPTS: OktaOptions = { ...CRED, domain: "dev-1234.okta.com" };
+const KEYCLOAK_OPTS: KeycloakOptions = {
+  ...CRED,
+  baseUrl: "https://sso.example.com",
+  realm: "acme",
+};
+
+/** Every built-in OAuth/OIDC preset, built with the same throwaway credentials. */
+function allPresets(): OAuthProvider[] {
+  return [
+    google(CRED),
+    github(CRED),
+    microsoftEntra(ENTRA_OPTS),
+    apple(CRED),
+    discord(CRED),
+    gitlab(CRED),
+    slack(CRED),
+    auth0(AUTH0_OPTS),
+    okta(OKTA_OPTS),
+    keycloak(KEYCLOAK_OPTS),
+    facebook(CRED),
+  ];
+}
+
+Deno.test("presets: unique ids, non-empty scopes, https endpoints, default strictAudience", () => {
+  const presets = allPresets();
+  const ids = presets.map((p) => p.id);
+  assertEquals(new Set(ids).size, ids.length, `duplicate provider id in ${ids.join(", ")}`);
+  for (const p of presets) {
+    assert(/^[a-z0-9-]+$/.test(p.id), `${p.id} is not a URL-safe route segment`);
+    assert(p.scopes.length > 0, `${p.id} requests no scopes`);
+    assertEquals(p.clientId, "cid");
+    assertEquals(
+      p.strictAudience,
+      undefined,
+      `${p.id} must leave strictAudience at the (strict) default`,
+    );
+    for (const url of [p.authorizationUrl, p.tokenUrl, p.userinfoUrl, p.jwksUrl]) {
+      if (url) assertEquals(new URL(url).protocol, "https:", `${p.id}: ${url} is not https`);
+    }
+  }
+});
+
+Deno.test("presets: every OIDC preset carries a matching discovery issuer; OAuth ones don't", () => {
+  for (const p of allPresets()) {
+    if (p.type === "oidc") {
+      assert(p.issuer, `${p.id} has no issuer`);
+      assert(p.jwksUrl, `${p.id} has no jwksUrl`);
+      // `google` keeps its long-standing static endpoints (no behavior change); the nine
+      // new presets publish the issuer so discovery can refresh/verify the URLs.
+      if (p.id !== "google") {
+        assertEquals(p.discovery?.issuer, p.issuer, `${p.id} discovery issuer mismatch`);
+      }
+    } else {
+      assertEquals(p.discovery, undefined, `${p.id} is not OIDC but advertises discovery`);
+    }
+  }
+});
+
+Deno.test("preset endpoints: tenant / domain / realm land in the documented URLs", () => {
+  const entra = microsoftEntra({ ...CRED, tenant: "contoso.com" });
+  assertEquals(entra.issuer, "https://login.microsoftonline.com/contoso.com/v2.0");
+  assertEquals(
+    entra.authorizationUrl,
+    "https://login.microsoftonline.com/contoso.com/oauth2/v2.0/authorize",
+  );
+  assertEquals(entra.tokenUrl, "https://login.microsoftonline.com/contoso.com/oauth2/v2.0/token");
+  assertEquals(entra.jwksUrl, "https://login.microsoftonline.com/contoso.com/discovery/v2.0/keys");
+  assertEquals(entra.userinfoUrl, undefined, "claims come from the verified id_token");
+
+  // Auth0's issuer keeps its trailing slash — `iss` is compared byte-for-byte.
+  const a0 = auth0({ ...CRED, domain: "acme.eu.auth0.com" });
+  assertEquals(a0.issuer, "https://acme.eu.auth0.com/");
+  assertEquals(a0.authorizationUrl, "https://acme.eu.auth0.com/authorize");
+  assertEquals(a0.jwksUrl, "https://acme.eu.auth0.com/.well-known/jwks.json");
+
+  assertEquals(
+    okta({ ...CRED, domain: "dev-1234.okta.com" }).issuer,
+    "https://dev-1234.okta.com/oauth2/default",
+  );
+  assertEquals(
+    okta({ ...CRED, domain: "dev-1234.okta.com", authorizationServer: "aus1x" }).tokenUrl,
+    "https://dev-1234.okta.com/oauth2/aus1x/v1/token",
+  );
+
+  const kc = keycloak(KEYCLOAK_OPTS);
+  assertEquals(kc.issuer, "https://sso.example.com/realms/acme");
+  assertEquals(
+    kc.authorizationUrl,
+    "https://sso.example.com/realms/acme/protocol/openid-connect/auth",
+  );
+  assertEquals(kc.jwksUrl, "https://sso.example.com/realms/acme/protocol/openid-connect/certs");
+
+  assertEquals(gitlab(CRED).issuer, "https://gitlab.com");
+  assertEquals(
+    gitlab(GITLAB_OPTS).tokenUrl,
+    "https://git.example.com/oauth/token",
+  );
+  assertEquals(slack(CRED).tokenUrl, "https://slack.com/api/openid.connect.token");
+});
+
+Deno.test("preset OIDC mapper: shared across the presets; an unverified email never surfaces", () => {
+  for (const p of [slack(CRED), auth0({ ...CRED, domain: "acme.auth0.com" })]) {
+    assertEquals(
+      p.profile({
+        tokens: {},
+        claims: { sub: "u1", name: "U", email: "u@x.test", email_verified: true, picture: "p.png" },
+      }),
+      { id: "u1", name: "U", email: "u@x.test", emailVerified: true, image: "p.png" },
+    );
+    // The STRING "false" some IdPs ship must not read as "verified".
+    const dropped = p.profile({
+      tokens: {},
+      claims: { sub: "u2", email: "victim@x.test", email_verified: "false" },
+    });
+    assertEquals(dropped.email, undefined);
+    assertEquals(dropped.emailVerified, false);
+    // No claim at all → no assertion either way (an adapter refuses to link on that).
+    assertEquals(
+      p.profile({ tokens: {}, claims: { sub: "u3", email: "e@x.test" } }).emailVerified,
+      undefined,
+    );
+  }
+});
+
+Deno.test("discord profile: the `verified` flag gates the email; avatar becomes a CDN URL", () => {
+  const p = discord(CRED);
+  const full = p.profile({
+    tokens: {},
+    userinfo: {
+      id: "1234",
+      username: "octo",
+      global_name: "Octo Cat",
+      email: "octo@x.test",
+      verified: true,
+      avatar: "abc123",
+    },
+  });
+  assertEquals(full, {
+    id: "1234",
+    name: "Octo Cat",
+    email: "octo@x.test",
+    emailVerified: true,
+    image: "https://cdn.discordapp.com/avatars/1234/abc123.png",
+  });
+  const unverified = p.profile({
+    tokens: {},
+    userinfo: { id: "9", username: "u", email: "victim@x.test", verified: false },
+  });
+  assertEquals(unverified.email, undefined, "an unverified Discord address is dropped");
+  assertEquals(unverified.emailVerified, false);
+  assertEquals(unverified.name, "u", "username is the fallback display name");
+  assertEquals(unverified.image, undefined);
+  assertEquals(p.profile({ tokens: {}, userinfo: { id: "9" } }).emailVerified, undefined);
+});
+
+Deno.test("facebook profile: Graph fields; the Graph API never asserts email verification", () => {
+  const p = facebook(CRED);
+  const mapped = p.profile({
+    tokens: {},
+    userinfo: {
+      id: "42",
+      name: "Zed",
+      email: "zed@x.test",
+      picture: { data: { url: "https://cdn.x.test/z.jpg" } },
+    },
+  });
+  assertEquals(mapped, {
+    id: "42",
+    name: "Zed",
+    email: "zed@x.test",
+    image: "https://cdn.x.test/z.jpg",
+  });
+  assertEquals(mapped.emailVerified, undefined, "Graph makes no verification claim");
+  // Phone-registered accounts (or a revoked permission) simply omit the email.
+  assertEquals(p.profile({ tokens: {}, userinfo: { id: "43" } }).email, undefined);
+  assertStringIncludes(p.userinfoUrl!, "fields=id,name,email,picture");
+});
+
+Deno.test("apple: `openid` only — name/email need response_mode=form_post (documented limitation)", () => {
+  const p = apple(CRED);
+  assertEquals(p.scopes, ["openid"]);
+  assertEquals(p.issuer, "https://appleid.apple.com");
+  assertThrows(
+    () => apple({ ...CRED, scopes: ["openid", "email"] }),
+    TypeError,
+    "form_post",
+  );
+  assertThrows(() => apple({ ...CRED, scopes: ["name"] }), TypeError);
+});
+
+Deno.test("microsoftEntra: the multi-tenant aliases are refused (template issuer can't be verified)", () => {
+  for (const tenant of ["common", "organizations", "consumers", "COMMON"]) {
+    assertThrows(
+      () => microsoftEntra({ ...CRED, tenant }),
+      TypeError,
+      "specific tenant",
+    );
+  }
+  assertThrows(() => microsoftEntra({ ...CRED, tenant: "contoso.com/evil" }), TypeError);
+  assertThrows(() => microsoftEntra({ ...CRED, tenant: "" }), TypeError);
+});
+
+Deno.test("preset inputs are validated: http, paths, credentials and separators are refused", () => {
+  for (
+    const domain of [
+      "http://acme.eu.auth0.com",
+      "acme.eu.auth0.com/evil.test",
+      "https://user:pw@acme.eu.auth0.com",
+      "acme.eu.auth0.com?x=1",
+      "acme.eu.auth0.com#f",
+      "",
+    ]
+  ) {
+    assertThrows(() => auth0({ ...CRED, domain }), TypeError, "auth0 domain");
+  }
+  assertThrows(
+    () => keycloak({ ...CRED, baseUrl: "http://sso.example.com", realm: "acme" }),
+    TypeError,
+    "keycloak baseUrl",
+  );
+  assertThrows(
+    () => keycloak({ ...CRED, baseUrl: "https://sso.example.com", realm: "../master" }),
+    TypeError,
+    "keycloak realm",
+  );
+  assertThrows(
+    () => okta({ ...CRED, domain: "dev-1234.okta.com", authorizationServer: "a/b" }),
+    TypeError,
+    "okta authorizationServer",
+  );
+  assertThrows(() => gitlab({ ...CRED, baseUrl: "http://git.example.com" }), TypeError);
+  // A host with an explicit port is fine (self-managed instances run on one).
+  assertEquals(
+    keycloak({ ...CRED, baseUrl: "https://sso.example.com:8443", realm: "acme" }).issuer,
+    "https://sso.example.com:8443/realms/acme",
+  );
+  // An empty scope override is refused rather than sent as an empty `scope=` param.
+  assertThrows(() => slack({ ...CRED, scopes: [] }), TypeError, "at least one scope");
+  assertEquals(discord({ ...CRED, scopes: ["identify"] }).scopes, ["identify"]);
+});
+
+Deno.test("oidc(): issuer-only discovery form, explicit form, and the refused half-configured one", () => {
+  const discovered = oidc({ issuer: "https://idp.test", clientId: "c", clientSecret: "s" });
+  assertEquals(discovered.discovery?.issuer, "https://idp.test");
+  assertEquals(discovered.scopes, ["openid", "email", "profile"]);
+  // Until discovery resolves them the endpoints point at the issuer's own discovery
+  // document — never at an invented path — which also pins safeFetch to the issuer host.
+  const wellKnown = "https://idp.test/.well-known/openid-configuration";
+  assertEquals(discovered.authorizationUrl, wellKnown);
+  assertEquals(discovered.tokenUrl, wellKnown);
+  assertEquals(discovered.jwksUrl, wellKnown);
+  assertEquals(
+    oidc({ issuer: "https://idp.test/", clientId: "c", clientSecret: "s" }).jwksUrl,
+    wellKnown,
+    "a trailing slash on the issuer never doubles up in the discovery URL",
+  );
+
+  // The four-URL form is unchanged and never triggers discovery.
+  const explicit = oidc({
+    id: "corp",
+    issuer: "https://idp.test",
+    authorizationUrl: "https://idp.test/a",
+    tokenUrl: "https://idp.test/t",
+    jwksUrl: "https://idp.test/j",
+    clientId: "c",
+    clientSecret: "s",
+  });
+  assertEquals(explicit.discovery, undefined);
+  assertEquals(explicit.authorizationUrl, "https://idp.test/a");
+  assertEquals(explicit.id, "corp");
+
+  assertThrows(
+    () =>
+      oidc({
+        issuer: "https://idp.test",
+        tokenUrl: "https://idp.test/t",
+        clientId: "c",
+        clientSecret: "s",
+      }),
+    TypeError,
+    "issuer-only OIDC discovery",
+  );
 });

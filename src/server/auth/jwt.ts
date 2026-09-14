@@ -175,6 +175,13 @@ export interface VerifyIdTokenOptions {
   clockToleranceSec?: number;
   /** Current time in ms (injectable for tests; defaults to `Date.now()`). */
   now?: number;
+  /**
+   * Refuse a multi-audience token that does not name this client in `azp`, and require a
+   * single `aud` to BE this client (OIDC Core §3.1.3.7 steps 3-5). **On by default.**
+   * `false` restores plain `aud` membership — the pre-2.5 behaviour — for a provider that
+   * legitimately mints multi-audience tokens without an `azp`.
+   */
+  strictAudience?: boolean;
 }
 
 /**
@@ -197,7 +204,8 @@ export async function verifyIdToken(options: VerifyIdTokenOptions): Promise<IdTo
   if (typ && typ !== "jwt" && typ !== "id_token+jwt") {
     throw new Error(`unexpected id_token typ: ${header.typ}`);
   }
-  // Select the key by `kid`; fall back to the sole key when the token omits one.
+  // Select the key by `kid`; a token that omits one is tried against EVERY key in the set
+  // (`anyKeyVerifies` skips the ones whose key type doesn't match the alg).
   const candidates = header.kid ? options.jwks.filter((k) => k.kid === header.kid) : options.jwks;
   if (candidates.length === 0) throw new Error("no matching JWKS key for id_token");
   if (!(await anyKeyVerifies(candidates, params, signingInput, signature))) {
@@ -237,6 +245,21 @@ async function anyKeyVerifies(
 }
 
 /**
+ * The `kid` an `id_token` header names, without verifying anything — the JWKS cache needs
+ * it to decide whether a cached key set can possibly answer, *before* verification runs.
+ *
+ * @param idToken The compact `id_token`.
+ * @returns The `kid`, or `undefined` when the token is malformed or omits one.
+ */
+export function idTokenKid(idToken: string): string | undefined {
+  try {
+    return parseJws(idToken).header.kid;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * `iss` / `aud` / `nonce`, then the time claims: `exp` (required — a token that omits
  * it is rejected, not treated as non-expiring), `nbf`, and `iat` (when present it must
  * not lie in the future — a forged/misclocked token can't claim to be minted later than
@@ -244,12 +267,57 @@ async function anyKeyVerifies(
  */
 function assertIdTokenClaims(claims: IdTokenClaims, options: VerifyIdTokenOptions): void {
   if (claims.iss !== options.issuer) throw new Error("id_token issuer mismatch");
-  const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
-  if (!aud.includes(options.audience)) throw new Error("id_token audience mismatch");
+  assertAudience(claims, options);
   if (options.nonce !== undefined && claims.nonce !== options.nonce) {
     throw new Error("id_token nonce mismatch");
   }
   assertTimeClaims(claims, options);
+}
+
+/**
+ * The audience binding. Membership alone (`aud` *contains* our client id) is the weak
+ * form: a token minted for several relying parties is then usable at ours, which is the
+ * confused-deputy half of OIDC token substitution. So by default denext asks for what
+ * OIDC Core §3.1.3.7 steps 3-5 ask for — a single `aud` must BE our client, a multi-valued
+ * one must carry `azp` naming us, and any `azp` present must name us. `strictAudience:
+ * false` restores the membership check for a provider that can't do better.
+ */
+function assertAudience(claims: IdTokenClaims, options: VerifyIdTokenOptions): void {
+  const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+  if (!aud.includes(options.audience)) throw new Error("id_token audience mismatch");
+  if (options.strictAudience === false) return;
+  if (aud.length > 1 && claims.azp === undefined) {
+    throw strictAudienceError("id_token audience is multi-valued without an azp");
+  }
+  if (claims.azp !== undefined && claims.azp !== options.audience) {
+    throw strictAudienceError("id_token azp names another client");
+  }
+}
+
+/** The `name` the two strict-only audience refusals carry, so callers can recognise them. */
+const STRICT_AUDIENCE_ERROR = "StrictAudienceError";
+
+/**
+ * A refusal that `strictAudience: false` would have allowed — tagged so the OAuth callback
+ * can name that escape hatch instead of letting the operator stare at `?error=oauth_failed`.
+ * A plain audience MISMATCH is never tagged: no flag makes a token minted for someone else
+ * acceptable.
+ */
+function strictAudienceError(message: string): Error {
+  const error = new Error(message);
+  error.name = STRICT_AUDIENCE_ERROR;
+  return error;
+}
+
+/**
+ * Whether `error` is an `id_token` refusal that the provider's `strictAudience: false`
+ * escape hatch would have allowed.
+ *
+ * @param error The value {@linkcode verifyIdToken} threw.
+ * @returns `true` for a strict-only audience refusal.
+ */
+export function isStrictAudienceError(error: unknown): boolean {
+  return error instanceof Error && error.name === STRICT_AUDIENCE_ERROR;
 }
 
 /** The `exp` / `nbf` / `iat` checks (split out to keep each check function small). */

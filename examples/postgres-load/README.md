@@ -18,6 +18,7 @@ cd examples/postgres-load
 cp .env.example .env         # DATABASE_URL + POOL_SIZE
 
 deno task db:up              # start Postgres in Docker (or point .env anywhere)
+                             # it publishes 127.0.0.1:5432 — this machine only
 deno task build              # build the app
 deno task start              # serve on http://localhost:3005
 ```

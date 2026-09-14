@@ -3,13 +3,29 @@
  * helpers that talk to the auto-mounted `/auth/*` endpoints. Mirrors the familiar
  * NextAuth surface. Import from `@denext/denext` (client entry).
  *
+ * The provider keeps the session fresh three ways, all optional: an explicit
+ * `session.update()`, a `refetchInterval` poll, and a refetch when the window regains
+ * focus. Each one is a `GET {basePath}/session`, which is also the server's sliding-expiry
+ * path — so a client that polls keeps an active user signed in (see `session.updateAge`).
+ *
  * @module
  */
 
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChildren } from "../jsx/types.ts";
 import { createContext } from "../runtime/context.ts";
-import { type Context, useContext, useEffect, useState } from "../runtime/hooks.ts";
+import {
+  type Context,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "../runtime/hooks.ts";
+
+/** The endpoint prefix denext auth mounts on unless the app configured `basePath`. */
+const DEFAULT_BASE_PATH = "/auth";
 
 /** The signed-in user exposed to the client (non-sensitive fields only). */
 export interface SessionUser {
@@ -27,14 +43,72 @@ export interface SessionUser {
 export interface ClientSession {
   /** The signed-in user, or `null`. */
   user: SessionUser | null;
-  /** `"loading"` until resolved, then `"authenticated"` / `"unauthenticated"`. */
-  status: "loading" | "authenticated" | "unauthenticated";
+  /**
+   * `"loading"` until resolved, then `"authenticated"` / `"unauthenticated"`, or
+   * `"mfa-required"` while the user still owes a second factor.
+   */
+  status: "loading" | "authenticated" | "unauthenticated" | "mfa-required";
+  /** `"required"` while the user still owes a second factor. */
+  mfa?: "required";
+  /**
+   * Refetch `{basePath}/session` now and update every consumer — call it after an action
+   * that changes the session server-side (a profile edit, finishing a second factor).
+   *
+   * @returns The freshly fetched session.
+   */
+  update(): Promise<ClientSession>;
+}
+
+/** The session facts the provider tracks — a {@link ClientSession} before `update`. */
+type SessionState = Omit<ClientSession, "update">;
+
+/** The JSON `GET {basePath}/session` answers with. */
+interface SessionResponse {
+  /** The signed-in user, or `null`. */
+  user?: SessionUser | null;
+  /** Expiry in epoch seconds, or `null`. */
+  expires?: number | null;
+  /** `"required"` when the session still owes a second factor. */
+  mfa?: "required";
+}
+
+/** The state before anything has been fetched. */
+const LOADING: SessionState = { user: null, status: "loading" };
+
+/** Outside a {@link SessionProvider} there is nothing to refetch. */
+function noSession(): Promise<ClientSession> {
+  return Promise.resolve({ ...LOADING, update: noSession });
 }
 
 const SessionContext: Context<ClientSession> = createContext<ClientSession>({
-  user: null,
-  status: "loading",
+  ...LOADING,
+  update: noSession,
 });
+
+/** The state a `{basePath}/session` payload describes. */
+function stateFrom(data: SessionResponse | null): SessionState {
+  if (data?.mfa === "required") return { user: null, status: "mfa-required", mfa: "required" };
+  const user = data?.user ?? null;
+  return { user, status: user ? "authenticated" : "unauthenticated" };
+}
+
+/**
+ * Fetch the session endpoint. A network failure, a non-JSON body or an error status all
+ * read as "signed out" rather than throwing into the tree — the UI degrades to the
+ * logged-out view instead of unmounting behind an error boundary.
+ */
+async function fetchSession(basePath: string): Promise<SessionState> {
+  try {
+    const res = await fetch(`${basePath}/session`, {
+      headers: { accept: "application/json" },
+      credentials: "same-origin",
+    });
+    if (!res.ok) return { user: null, status: "unauthenticated" };
+    return stateFrom(await res.json() as SessionResponse);
+  } catch {
+    return { user: null, status: "unauthenticated" };
+  }
+}
 
 /** Props for {@link SessionProvider}. */
 export interface SessionProviderProps {
@@ -42,107 +116,217 @@ export interface SessionProviderProps {
   children?: VNodeChildren;
   /**
    * Seed the session from the server (SSR) to avoid a loading flash. Pass the user
-   * (or `null`); omit to fetch `/auth/session` on mount instead.
+   * (or `null`); omit to fetch `{basePath}/session` on mount instead.
    */
   session?: SessionUser | null;
+  /** The auth endpoint prefix, when the app configured `denextAuth({ basePath })`. Default `"/auth"`. */
+  basePath?: string;
+  /**
+   * Poll `{basePath}/session` every N milliseconds. `0` (the default) never polls.
+   * With `session.updateAge` set server-side, polling is also what slides an active
+   * user's expiry forward.
+   */
+  refetchInterval?: number;
+  /** Refetch when the window regains focus (default `true`), so a stale tab catches up. */
+  refetchOnWindowFocus?: boolean;
 }
 
 /**
  * Provide session state to the tree. Seed it with `session` from the server for no
- * loading flash, or omit it to fetch `/auth/session` on mount.
+ * loading flash, or omit it to fetch `{basePath}/session` on mount.
  *
  * @param props {@link SessionProviderProps}.
+ * @returns The provider element wrapping `children`.
  */
 export function SessionProvider(props: SessionProviderProps): VNode {
+  const basePath = props.basePath ?? DEFAULT_BASE_PATH;
   const seeded = props.session !== undefined;
-  const [state, setState] = useState<ClientSession>(
+  const [state, setState] = useState<SessionState>(
     seeded
       ? { user: props.session ?? null, status: props.session ? "authenticated" : "unauthenticated" }
-      : { user: null, status: "loading" },
+      : LOADING,
   );
+  // Guards every setState: a refetch in flight when the provider unmounts must not write.
+  const mounted = useRef(true);
+  useEffect(() => () => {
+    mounted.current = false;
+  }, []);
+
+  const update: () => Promise<ClientSession> = useCallback(async () => {
+    const next = await fetchSession(basePath);
+    if (mounted.current) setState(next);
+    return { ...next, update };
+  }, [basePath]);
 
   useEffect(() => {
     if (seeded || typeof fetch === "undefined") return;
-    let cancelled = false;
-    fetch("/auth/session", { headers: { accept: "application/json" }, credentials: "same-origin" })
-      .then((r) => r.json())
-      .then((d: { user: SessionUser | null }) => {
-        if (!cancelled) {
-          setState({ user: d.user ?? null, status: d.user ? "authenticated" : "unauthenticated" });
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setState({ user: null, status: "unauthenticated" });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    void update();
+  }, [update]);
 
-  return h(SessionContext, { value: state }, props.children);
+  useRefetchTriggers(update, props.refetchInterval ?? 0, props.refetchOnWindowFocus !== false);
+
+  const value = useMemo<ClientSession>(() => ({ ...state, update }), [state, update]);
+  return h(SessionContext, { value }, props.children);
 }
 
-/** Read the current {@link ClientSession}. Must be under a {@link SessionProvider}. */
+/**
+ * The two ambient refetch triggers — an interval poll and the window regaining focus.
+ * Both are browser-only and unsubscribe on unmount or when their setting changes.
+ */
+function useRefetchTriggers(
+  update: () => Promise<ClientSession>,
+  interval: number,
+  onFocus: boolean,
+): void {
+  useEffect(() => {
+    if (!(interval > 0)) return;
+    const id = setInterval(() => void update(), interval);
+    return () => clearInterval(id);
+  }, [update, interval]);
+
+  useEffect(() => {
+    if (!onFocus || typeof addEventListener === "undefined") return;
+    const listener = () => void update();
+    addEventListener("focus", listener);
+    return () => removeEventListener("focus", listener);
+  }, [update, onFocus]);
+}
+
+/**
+ * Read the current {@link ClientSession}. Must be under a {@link SessionProvider}.
+ *
+ * @returns The session state plus `update()`.
+ */
 export function useSession(): ClientSession {
   return useContext(SessionContext);
 }
 
+/** The current path + query, or `"/"` when there is no `location` (SSR, tests). */
+function currentUrl(): string {
+  return typeof location === "undefined" ? "/" : location.pathname + location.search;
+}
+
+/**
+ * Coerce a caller-supplied `callbackUrl` to a **same-origin path**, because these helpers
+ * navigate to it: `signOut({ callbackUrl })` assigns it to `location.href`, and `signIn`
+ * hands it to the server which reflects it back as a `Location`. A `callbackUrl` is
+ * routinely read straight out of the current URL's query, so it is attacker-influenced —
+ * `javascript:…` would execute, `//evil.test/x` is protocol-relative and `https://evil.test`
+ * absolute, and all three are open redirects (the `javascript:` one an XSS).
+ *
+ * An absolute URL on the page's OWN origin keeps only its path + query + hash; anything
+ * else falls back. The server coerces again (`sameOriginRedirect`) — this is the half that
+ * protects the purely client-side navigation, which never reaches the server at all.
+ *
+ * @param requested The caller's `callbackUrl`, if any.
+ * @param fallback Where to go when `requested` is absent or foreign.
+ * @returns A same-origin path, always starting with a single `/`.
+ */
+function sameOriginPath(requested: string | undefined, fallback: string): string {
+  if (!requested) return fallback;
+  const origin = typeof location === "undefined" ? undefined : location.origin;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(requested)) {
+    // Absolute (or scheme-like: `javascript:`, `data:`) — admitted only on our own origin.
+    try {
+      const url = new URL(requested);
+      if (origin && url.origin === origin) return url.pathname + url.search + url.hash;
+    } catch { /* not a URL at all */ }
+    return fallback;
+  }
+  // Protocol-relative (`//evil.test/x`) is a foreign origin dressed as a path; a value
+  // that is not rooted at all is not a path we are willing to guess at either.
+  if (!requested.startsWith("/") || requested.startsWith("//")) return fallback;
+  return requested;
+}
+
 /** Options for {@link signIn}. */
 export interface SignInOptions {
-  /** Where to return after signing in (defaults to the current URL). */
+  /**
+   * Where to return after signing in (defaults to the current URL). Coerced to a
+   * same-origin path: an absolute URL on another origin, a protocol-relative `//host/…`
+   * or a `javascript:` value falls back to the default.
+   */
   callbackUrl?: string;
   /**
    * For a Credentials provider, the fields to submit. When present, `signIn` POSTs
    * them to the credentials callback instead of redirecting to an OAuth provider.
    */
   credentials?: Record<string, string>;
+  /**
+   * Navigate to the provider (default `true`). Pass `false` to get the sign-in URL back
+   * instead — for a popup, a custom transition, or a test. Ignored for a `credentials`
+   * sign-in, which never navigates.
+   */
+  redirect?: boolean;
+  /** The auth endpoint prefix, when the app configured `denextAuth({ basePath })`. Default `"/auth"`. */
+  basePath?: string;
 }
 
 /**
- * Start sign-in. For an OAuth/OIDC provider this navigates to the provider; for a
- * Credentials provider (pass `credentials`) it POSTs and resolves with the result.
+ * Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with
+ * `redirect: false`, resolves with the URL it would have gone to); for a Credentials
+ * provider (pass `credentials`) it POSTs and resolves with the result.
  *
  * @param provider The provider id (e.g. `"google"`, `"credentials"`).
  * @param options {@link SignInOptions}.
+ * @returns The credentials result, or the sign-in URL for the redirect flow.
  */
 export function signIn(provider: string, options: SignInOptions = {}): Promise<unknown> {
-  const callbackUrl = options.callbackUrl ?? location.pathname + location.search;
+  const basePath = options.basePath ?? DEFAULT_BASE_PATH;
+  const callbackUrl = sameOriginPath(options.callbackUrl, currentUrl());
   if (options.credentials) {
-    return fetch(`/auth/callback/${encodeURIComponent(provider)}`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "accept": "application/json",
-        "x-denext-auth": "1",
-      },
-      credentials: "same-origin",
-      body: JSON.stringify({ ...options.credentials, callbackUrl }),
-    }).then(async (r) => {
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error((data as { error?: string }).error ?? "sign in failed");
-      return data;
-    });
+    return submitCredentials(basePath, provider, options.credentials, callbackUrl);
   }
-  location.href = `/auth/signin/${encodeURIComponent(provider)}?callbackUrl=${
+  const url = `${basePath}/signin/${encodeURIComponent(provider)}?callbackUrl=${
     encodeURIComponent(callbackUrl)
   }`;
-  return Promise.resolve();
+  if (options.redirect !== false) location.href = url;
+  return Promise.resolve(url);
+}
+
+/** POST the Credentials form to the callback endpoint and unwrap its JSON. */
+async function submitCredentials(
+  basePath: string,
+  provider: string,
+  credentials: Record<string, string>,
+  callbackUrl: string,
+): Promise<unknown> {
+  const res = await fetch(`${basePath}/callback/${encodeURIComponent(provider)}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "accept": "application/json",
+      "x-denext-auth": "1",
+    },
+    credentials: "same-origin",
+    body: JSON.stringify({ ...credentials, callbackUrl }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as { error?: string }).error ?? "sign in failed");
+  return data;
 }
 
 /** Options for {@link signOut}. */
 export interface SignOutOptions {
-  /** Where to go after signing out (defaults to `/`). */
+  /**
+   * Where to go after signing out (defaults to `/`). Coerced to a same-origin path — this
+   * one is assigned to `location.href`, so a foreign or `javascript:` value is refused.
+   */
   callbackUrl?: string;
+  /** The auth endpoint prefix, when the app configured `denextAuth({ basePath })`. Default `"/auth"`. */
+  basePath?: string;
 }
 
 /**
- * Sign out (same-origin POST to `/auth/signout`), then navigate to `callbackUrl`.
+ * Sign out (same-origin POST to `{basePath}/signout`), then navigate to `callbackUrl`.
  *
  * @param options {@link SignOutOptions}.
+ * @returns A promise that settles once the navigation has been started.
  */
 export function signOut(options: SignOutOptions = {}): Promise<void> {
-  const callbackUrl = options.callbackUrl ?? "/";
-  return fetch(`/auth/signout?callbackUrl=${encodeURIComponent(callbackUrl)}`, {
+  const basePath = options.basePath ?? DEFAULT_BASE_PATH;
+  const callbackUrl = sameOriginPath(options.callbackUrl, "/");
+  return fetch(`${basePath}/signout?callbackUrl=${encodeURIComponent(callbackUrl)}`, {
     method: "POST",
     headers: { accept: "application/json", "x-denext-auth": "1" },
     credentials: "same-origin",
