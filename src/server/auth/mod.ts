@@ -30,6 +30,7 @@ import { safeRedirectLocation } from "../config.ts";
 import { isProductionEnv, isWeakSecret } from "../session.ts";
 import { emitAuthEvent } from "./events.ts";
 import { resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
+import { assertEmailProviderConfig } from "./providers-email.ts";
 import { handleAuthRequest } from "./routes.ts";
 import type { SessionStore } from "./session-store.ts";
 import { readAuthSession, refreshIfStale } from "./session.ts";
@@ -55,6 +56,7 @@ function validateConfig(config: AuthConfig): void {
   }
   validateProviders(config.providers);
   assertCredentialsVerifiable(config);
+  assertEmailProviderConfig(config);
   warnOnUndeclaredProxy(config);
   // Resolving validates the 2.5 surface too: an unusable `basePath`, an invalid cookie
   // name, or `session.strategy: "database"` with nowhere to store sessions all throw here
@@ -240,7 +242,7 @@ export async function revokeAllSessions(userId: string): Promise<void> {
 
 /**
  * The raw session for this request — **including** one that still owes a second factor.
- * Only the guards below (and, later, the MFA endpoints) may see a pending session;
+ * Only the guards below and {@link pendingMfaSession} may see a pending session;
  * everything else goes through {@link auth}, which hides it.
  */
 function currentSession(): Promise<AuthSession | null> {
@@ -263,6 +265,23 @@ function currentSession(): Promise<AuthSession | null> {
 export async function auth(): Promise<AuthSession | null> {
   const session = await currentSession();
   return session?.mfaPending ? null : session;
+}
+
+/**
+ * The current request's session **only while it still owes a second factor** — `null`
+ * for a complete session, and for none. For the app's `pages.mfa` page: render the code
+ * form (or, under `mfa.required: "always"` for a user with no factor yet, the enrolment
+ * step) when this returns a session, and redirect onward when it doesn't.
+ *
+ * A pending session grants nothing: {@link auth} and every guard still read it as signed
+ * out, and it is never slid forward. It is short-lived, and the step-up replaces it with
+ * a fresh session rather than upgrading it.
+ *
+ * @returns The pending {@link AuthSession}, or `null`.
+ */
+export async function pendingMfaSession(): Promise<AuthSession | null> {
+  const session = await currentSession();
+  return session?.mfaPending ? session : null;
 }
 
 /**

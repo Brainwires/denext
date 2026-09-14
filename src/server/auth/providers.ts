@@ -10,6 +10,9 @@
  * including the three below — is a data literal handed to the shared `oauthPreset`
  * factory.
  *
+ * The passwordless email providers — `magicLink` and `emailOtp` — live in
+ * {@link ./providers-email.ts | providers-email.ts} and are re-exported here as well.
+ *
  * @module
  */
 
@@ -33,6 +36,7 @@ export {
   type OktaOptions,
   slack,
 } from "./providers-presets.ts";
+export { emailOtp, type EmailProviderOptions, magicLink } from "./providers-email.ts";
 
 /**
  * Google (OIDC). Verifies the `id_token`; no userinfo round-trip needed.

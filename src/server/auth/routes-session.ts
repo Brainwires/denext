@@ -16,6 +16,7 @@ import {
 } from "./routes-shared.ts";
 import { emitAuthEvent } from "./events.ts";
 import { clearAuthSession, readAuthSession, refreshIfStale } from "./session.ts";
+import { isEmailProvider } from "./types.ts";
 
 /**
  * `GET {basePath}/session` — the client's view of the session: the user and the expiry,
@@ -39,14 +40,19 @@ export async function handleSession(ctx: AuthRouteContext): Promise<Response> {
 }
 
 /**
- * `GET {basePath}/providers` — the configured providers' ids and types, so a sign-in page
- * can render its buttons. Never exposes client ids, secrets, or endpoints.
+ * `GET {basePath}/providers` — the configured providers' ids and types (plus the display
+ * `name` of an email provider), so a sign-in page can render its buttons. Never exposes
+ * client ids, secrets, or endpoints.
  *
  * @param ctx The route context.
  * @returns The JSON provider list.
  */
 export function handleProviders(ctx: AuthRouteContext): Response {
-  return json(ctx.config.providers.map((p) => ({ id: p.id, type: p.type })));
+  return json(
+    ctx.config.providers.map((p) =>
+      isEmailProvider(p) ? { id: p.id, name: p.name, type: p.type } : { id: p.id, type: p.type }
+    ),
+  );
 }
 
 /**

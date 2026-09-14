@@ -391,6 +391,16 @@ Deno.test("resetPassword: stores the hasher's output and revokes every session o
   });
 });
 
+Deno.test("verifyEmail: register → verify keeps the password the registrant set", async () => {
+  const { config, adapter, sent } = setup();
+  const { id, email } = await makeUser(adapter);
+  await adapter.setCredential!(id, "scrypt$registered");
+  await requestEmailVerification(config, email);
+  const verified = await verifyEmail(config, { email, token: sent[0].token });
+  assertEquals(typeof verified?.emailVerified, "number");
+  assertEquals(await adapter.getCredential!(id), "scrypt$registered");
+});
+
 Deno.test("resetPassword: a refused password leaves the link usable", async () => {
   const { config, adapter, sent } = setup({ hasher: spyHasher([]) });
   const { email } = await makeUser(adapter);

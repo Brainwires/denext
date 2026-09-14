@@ -21,13 +21,17 @@
  *   token pointing at the attacker's site).
  * - A completed reset **revokes every server-side session** of the user.
  *
+ * The send path ({@linkcode sendThrottled}) is shared with the passwordless magic-link and
+ * one-time-code sign-in ({@link ./routes-email.ts | routes-email.ts}), so those inherit
+ * every property above.
+ *
  * @module
  */
 
 import { requestOrigin } from "../absolute-url.ts";
 import { after, currentContext } from "../request-context.ts";
 import { isProductionEnv } from "../session.ts";
-import type { AdapterUser, AuthAdapter } from "./adapter.ts";
+import type { AdapterUser, AuthAdapter, VerificationPurpose } from "./adapter.ts";
 import { emitAuthEvent } from "./events.ts";
 import { sha256Hex } from "./hash.ts";
 import { randomToken } from "./oauth.ts";
@@ -84,7 +88,7 @@ const MIN_PASSWORD_LENGTH = 8;
 const MAX_PASSWORD_LENGTH = 1024;
 /** Returned whenever a request went through (sent, or deliberately not). */
 const NOT_THROTTLED: EmailRequestResult = { throttled: false };
-/** Configs already warned that a reset could not revoke their stateless sessions. */
+/** Configs already warned that a revocation could not reach their stateless sessions. */
 const warnedStateless = new WeakSet<AuthConfig>();
 
 /** The current time in epoch seconds. */
@@ -146,8 +150,21 @@ function linkOrigin(config: AuthConfig, request: Request | undefined): string {
   );
 }
 
-/** The absolute link for a token: `path` on `origin`, carrying the token and the address. */
-function tokenLink(origin: string, path: string, token: string, identifier: string): string {
+/**
+ * The absolute link for a token: `path` on `origin`, carrying the token and the address.
+ *
+ * @param origin The origin emailed links are built on (the `canonicalOrigin` rule).
+ * @param path The same-origin path the link opens.
+ * @param token The plaintext token.
+ * @param identifier The normalised address.
+ * @returns The absolute URL.
+ */
+export function tokenLink(
+  origin: string,
+  path: string,
+  token: string,
+  identifier: string,
+): string {
   const url = new URL(path, origin);
   url.searchParams.set("token", token);
   url.searchParams.set("email", identifier);
@@ -200,6 +217,62 @@ export interface StartEmailFlowOptions {
   send: SendVerificationRequest;
 }
 
+/** What {@linkcode sendThrottled} is handed. */
+export interface ThrottledSendOptions {
+  /** The normalised address (from {@link normalizeEmailIdentifier}). */
+  identifier: string;
+  /** The token space a send issues into — also what the no-send path's dummy round-trip names. */
+  purpose: VerificationPurpose;
+  /** The incoming request, when there is one (the IP bucket and the dev link origin). */
+  request?: Request;
+  /** The adapter, from {@link emailFlowAdapter}. */
+  adapter: EmailFlowAdapter;
+  /** The app's mailer. */
+  send: SendVerificationRequest;
+  /**
+   * Whether the looked-up address gets mail (`user` is `undefined` for an address with no
+   * account). `false` does comparable dummy work instead, so the two can't be told apart.
+   */
+  shouldSend(user: AdapterUser | undefined): boolean;
+  /** Mint the token and build the message, with its link on `origin`. */
+  issue(origin: string): Promise<VerificationRequestParams>;
+}
+
+/**
+ * The send path every emailed-token flow shares (email verification, password reset,
+ * magic link, one-time code): resolve the link origin, spend the send budget, look the
+ * address up, then either issue + deliver a token or do the equivalent dummy work —
+ * hashing a fresh token and making one adapter round-trip that matches nothing, where the
+ * real path hashes and stores. Callers have already validated the address and the
+ * configuration.
+ *
+ * @param config The app's auth config.
+ * @param input The address, the budget inputs, the adapter, the mailer and the flow's two
+ * decisions (whether to send, and what).
+ * @returns Whether the request was throttled — identical for known and unknown addresses.
+ */
+export async function sendThrottled(
+  config: AuthConfig,
+  input: ThrottledSendOptions,
+): Promise<EmailRequestResult> {
+  const origin = linkOrigin(config, input.request);
+  const keys = subjectBucketKeys("verify", input.identifier, input.request, config);
+  const retryAfter = await consumeHitBudget(verificationLimiter(config), keys);
+  if (retryAfter !== null) return { throttled: true, retryAfter };
+  const user = await input.adapter.getUserByEmail(input.identifier);
+  if (!input.shouldSend(user)) {
+    const tokenHash = await sha256Hex(randomToken(32));
+    await input.adapter.useVerificationToken({
+      identifier: input.identifier,
+      purpose: input.purpose,
+      tokenHash,
+    });
+    return NOT_THROTTLED;
+  }
+  await deliver(resolveAuthOptions(config), input.send, await input.issue(origin));
+  return NOT_THROTTLED;
+}
+
 /**
  * The core both request functions (and `POST {basePath}/reset`) share: spend the send
  * budget, look the address up, then either issue + deliver a token or do the equivalent
@@ -217,37 +290,25 @@ export async function startEmailFlow(
   input: StartEmailFlowOptions,
 ): Promise<EmailRequestResult> {
   const options = resolveAuthOptions(config);
-  const origin = linkOrigin(config, input.request);
-  const keys = subjectBucketKeys("verify", input.identifier, input.request, config);
-  const retryAfter = await consumeHitBudget(verificationLimiter(config), keys);
-  if (retryAfter !== null) return { throttled: true, retryAfter };
-  const user = await input.adapter.getUserByEmail(input.identifier);
-  if (!user || (input.flow === "email" && user.emailVerified !== undefined)) {
-    // Comparable work: hash a fresh token and make one adapter round-trip that matches
-    // nothing (a random hash), where the real path hashes and stores.
-    const tokenHash = await sha256Hex(randomToken(32));
-    await input.adapter.useVerificationToken({
-      identifier: input.identifier,
-      purpose: input.flow,
-      tokenHash,
-    });
-    return NOT_THROTTLED;
-  }
   const reset = input.flow === "reset";
-  const { token, expiresAt } = await issueVerificationToken(config, {
+  return await sendThrottled(config, {
     identifier: input.identifier,
     purpose: input.flow,
-    ttl: reset ? options.email.resetMaxAge : options.email.verifyMaxAge,
+    request: input.request,
+    adapter: input.adapter,
+    send: input.send,
+    shouldSend: (user) => user !== undefined && (reset || user.emailVerified === undefined),
+    issue: async (origin) => {
+      const { token, expiresAt } = await issueVerificationToken(config, {
+        identifier: input.identifier,
+        purpose: input.flow,
+        ttl: reset ? options.email.resetMaxAge : options.email.verifyMaxAge,
+      });
+      const path = reset ? options.email.resetPath : options.email.verifyPath;
+      const url = tokenLink(origin, path, token, input.identifier);
+      return { identifier: input.identifier, url, token, purpose: input.flow, expiresAt };
+    },
   });
-  const path = reset ? options.email.resetPath : options.email.verifyPath;
-  await deliver(options, input.send, {
-    identifier: input.identifier,
-    url: tokenLink(origin, path, token, input.identifier),
-    token,
-    purpose: input.flow,
-    expiresAt,
-  });
-  return NOT_THROTTLED;
 }
 
 /**
@@ -280,6 +341,14 @@ export async function requestEmailVerification(
 /**
  * Redeem an email-verification token and mark the address verified (`emailVerified`,
  * epoch seconds, through `adapter.updateUser`). Fires `emailVerified`.
+ *
+ * Unlike a first magic-link / one-time-code sign-in, this does **not** retire the
+ * account's password or revoke its sessions. In the normal register → verify → sign-in
+ * flow the password was set by the very person now proving the mailbox, so wiping it
+ * would break that flow; and verifying signs nobody in, so the mailbox owner gains no
+ * access here. The residual risk is a victim confirming an account someone else
+ * registered with their address — it then counts as verified (a later OAuth sign-in with
+ * that address links to it) — so word the mail to say that ignoring it is safe.
  *
  * @param config The app's auth config.
  * @param input The address and the presented token.
@@ -338,10 +407,16 @@ function acceptablePassword(password: unknown): password is string {
 }
 
 /**
- * End every server-side session of `userId` after its password changed. Stateless cookie
- * sessions can't be revoked; that is said once per config rather than silently skipped.
+ * End every server-side session of `userId` and fire `sessionRevoked` — after a password
+ * reset, and when a first email sign-in retires the access an unverified account had
+ * ({@link ./routes-email.ts | routes-email.ts}). Stateless cookie sessions can't be
+ * revoked; that is said once per config rather than silently skipped.
+ *
+ * @param config The app's auth config (it keys the one-time stateless warning).
+ * @param options The resolved options: their store is revoked, their logger warns.
+ * @param userId The user whose sessions end.
  */
-async function revokeUserSessions(
+export async function revokeUserSessions(
   config: AuthConfig,
   options: ResolvedAuthOptions,
   userId: string,
@@ -350,9 +425,10 @@ async function revokeUserSessions(
     if (!warnedStateless.has(config)) {
       warnedStateless.add(config);
       options.logger.warn(
-        "denextAuth: a password was reset, but sessions are stateless signed cookies — the " +
-          "user's existing sessions stay valid until they expire. Configure a `sessionStore` " +
-          '(or `session: { strategy: "database" }`) so a reset signs out every device.',
+        "denextAuth: sessions are stateless signed cookies, so a password reset (or a first " +
+          "email sign-in into an unverified account) can't sign out the user's existing " +
+          "sessions — they stay valid until they expire. Configure a `sessionStore` (or " +
+          '`session: { strategy: "database" }`) so either one signs out every device.',
       );
     }
     return;

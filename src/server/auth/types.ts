@@ -1,6 +1,6 @@
 /**
  * Shared types for denext auth: the normalized user/session shapes and the
- * provider contracts (OAuth 2.0 / OIDC and Credentials).
+ * provider contracts (OAuth 2.0 / OIDC, Credentials, and passwordless Email).
  *
  * @module
  */
@@ -57,8 +57,12 @@ export interface AuthSession {
    */
   v?: 2;
   /**
-   * When this session was established, epoch seconds. Absent on a v1 payload, where
-   * readers infer `expiresAt - maxAge`. Sliding expiry extends `expiresAt`, never this.
+   * When this session payload was last issued, epoch seconds: at sign-in, and again each
+   * time sliding expiry (`session.updateAge`) re-issues the session — a slide re-stamps
+   * `issuedAt` along with `expiresAt`. With sliding on it is therefore the time of the
+   * last slide, not of the sign-in, so an age measured from it (the `mfa.freshness` rule)
+   * says nothing about when a factor was proven. Absent on a v1 payload, where readers
+   * infer `expiresAt - maxAge`.
    */
   issuedAt?: number;
   /**
@@ -174,12 +178,49 @@ export interface CredentialsProvider {
   ) => Promise<AuthUser | null> | AuthUser | null;
 }
 
-/** Any configured provider. */
-export type AuthProvider = OAuthProvider | CredentialsProvider;
+/**
+ * A passwordless **email** provider: `magicLink()` mails a single-use sign-in link,
+ * `emailOtp()` a one-time numeric code. Both deliver through
+ * {@link AuthConfig.sendVerificationRequest} and need an adapter with the
+ * verification-token group plus `getUserByEmail` / `createUser` / `updateUser`.
+ */
+export interface EmailProvider {
+  /** Provider id (the `[provider]` route segment): `"email"` / `"email-otp"` by default. */
+  id: string;
+  /** Display name for a sign-in button — `GET {basePath}/providers` echoes it. */
+  name: string;
+  /** Discriminant marking this as an email provider. */
+  type: "email";
+  /** `"magic"` mails a link (redeemed by its GET); `"otp"` mails a code (redeemed by a POST). */
+  mode: "magic" | "otp";
+  /**
+   * Whether an address with no account may sign up by proving its mailbox. With `false`
+   * an unknown address is sent nothing — and answered exactly as if it had been.
+   */
+  allowSignUp: boolean;
+}
 
-/** True for an OAuth/OIDC provider (vs. Credentials). */
+/** Any configured provider. */
+export type AuthProvider = OAuthProvider | CredentialsProvider | EmailProvider;
+
+/**
+ * True for an OAuth/OIDC provider (vs. Credentials or Email).
+ *
+ * @param p Any configured provider.
+ * @returns Whether `p` is an {@link OAuthProvider}.
+ */
 export function isOAuthProvider(p: AuthProvider): p is OAuthProvider {
   return p.type === "oauth" || p.type === "oidc";
+}
+
+/**
+ * True for a passwordless email provider (`magicLink()` / `emailOtp()`).
+ *
+ * @param p Any configured provider.
+ * @returns Whether `p` is an {@link EmailProvider}.
+ */
+export function isEmailProvider(p: AuthProvider): p is EmailProvider {
+  return p.type === "email";
 }
 
 /** What {@link AuthCallbacks.authorized} is asked about. */
@@ -240,17 +281,24 @@ export interface AuthEvents {
   }) => Promise<void> | void;
   /** A sign-in attempt was refused (bad credentials, a denied callback, a bad state). */
   signInFailed?: (payload: {
-    /** The provider id the attempt targeted, when known. */
+    /**
+     * The provider id the attempt targeted, when known — for a refused second factor, the
+     * provider of the first.
+     */
     provider?: string;
     /**
-     * A stable machine-readable reason: `"invalid_credentials"`, `"rate_limited"`,
-     * `"access_denied"`, `"account_not_linked"`, `"adapter_error"`, or an OAuth failure code.
+     * A stable machine-readable reason: `"invalid_credentials"` (a wrong password, or a
+     * wrong, spent or expired email link / code), `"invalid_mfa_code"` (a wrong TOTP or
+     * backup code at the second-factor step), `"rate_limited"`, `"access_denied"`,
+     * `"account_not_linked"`, `"adapter_error"`, or an OAuth failure code
+     * (`"invalid_state"`, `"config"`, `"oauth_failed"`, or the provider's own `?error=`).
      */
     reason: string;
     /**
      * The client bucket the limiter keyed on — present on the rate-limited routes (the
-     * credentials POST and the sign-in start). IPv4 as seen; an IPv6 client appears as its
-     * /64 prefix, which is what the limiter actually counts.
+     * credentials POST, the sign-in start, the email link / code redeem and the MFA
+     * steps). IPv4 as seen; an IPv6 client appears as its /64 prefix, which is what the
+     * limiter actually counts.
      */
     ip?: string;
   }) => Promise<void> | void;
@@ -293,7 +341,12 @@ export interface AuthEvents {
     /** When the token expires, epoch seconds. */
     expiresAt: number;
   }) => Promise<void> | void;
-  /** A user proved control of their address by redeeming an email-verification token. */
+  /**
+   * A user proved control of their address: by redeeming an email-verification token, or
+   * by a first magic-link / one-time-code sign-in into an existing unverified account —
+   * whose password, bearer tokens and server-side sessions were retired first
+   * (`sessionRevoked` fired for the sessions).
+   */
   emailVerified?: (payload: {
     /** The user record, with `emailVerified` set. */
     user: AdapterUser;
