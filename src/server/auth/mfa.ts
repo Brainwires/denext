@@ -1,6 +1,6 @@
 /**
  * Multi-factor authentication (TOTP): the step-up decision the sign-in tails consult,
- * enrolment (`enrollTotp` → `confirmTotp`), verification (`verifySecondFactor`, TOTP or a
+ * enrollment (`enrollTotp` → `confirmTotp`), verification (`verifySecondFactor`, TOTP or a
  * single-use backup code), `disableTotp`, and the step-up that turns a pending session
  * into a complete one (`completeStepUp`).
  *
@@ -40,13 +40,13 @@ export type MfaMethod = "totp" | "bcp";
 export interface MfaStatus {
   /** A TOTP secret is on file (confirmed or not). */
   enrolled: boolean;
-  /** The enrolment was confirmed with a code — sign-in now asks for the second factor. */
+  /** The enrollment was confirmed with a code — sign-in now asks for the second factor. */
   confirmed: boolean;
   /** Unspent backup codes (`0` when not enrolled). */
   backupCodesRemaining: number;
 }
 
-/** A fresh, unconfirmed TOTP enrolment, as {@linkcode enrollTotp} returns it. */
+/** A fresh, unconfirmed TOTP enrollment, as {@linkcode enrollTotp} returns it. */
 export interface TotpEnrollment {
   /** The base32 secret, for manual entry into an authenticator app. */
   secret: string;
@@ -110,7 +110,7 @@ function requireMfaAdapter(options: ResolvedAuthOptions, fn: string): MfaAdapter
   );
 }
 
-/** A record with a live secret whose enrolment was confirmed. */
+/** A record with a live secret whose enrollment was confirmed. */
 function isConfirmed(record: MfaRecord | undefined): record is MfaRecord {
   return !!record?.secret && record.confirmedAt !== undefined;
 }
@@ -133,9 +133,9 @@ export async function mfaStatus(config: AuthConfig, userId: string): Promise<Mfa
 }
 
 /**
- * Start a TOTP enrolment: mint a secret, store it **unconfirmed**, and return it with the
+ * Start a TOTP enrollment: mint a secret, store it **unconfirmed**, and return it with the
  * provisioning URI (issuer `mfa.issuer`, account `user.email ?? user.id`). An earlier
- * unconfirmed enrolment is replaced; a CONFIRMED factor is not — disable it first.
+ * unconfirmed enrollment is replaced; a CONFIRMED factor is not — disable it first.
  *
  * @param config The app's auth config.
  * @param user The user enrolling.
@@ -170,7 +170,7 @@ async function claimTotp(
 }
 
 /**
- * Confirm a pending enrolment with a code from the authenticator app. On success the
+ * Confirm a pending enrollment with a code from the authenticator app. On success the
  * factor is marked confirmed and `mfa.backupCodes` backup codes are minted — returned
  * here in plaintext exactly once, and stored only as hashes. The code's step is claimed,
  * so it can't then be replayed at the step-up.
@@ -179,7 +179,7 @@ async function claimTotp(
  * @param user The user confirming.
  * @param code The code the user typed.
  * @returns `{ ok: true, backupCodes }`, or `{ ok: false }` for a wrong or replayed code,
- * no pending enrolment, or an already-confirmed factor.
+ * no pending enrollment, or an already-confirmed factor.
  * @throws {Error} When the adapter has no MFA group.
  */
 export async function confirmTotp(
@@ -194,7 +194,7 @@ export async function confirmTotp(
   if (!await claimTotp(options, adapter, record, code)) return { ok: false };
   const { codes, hashes } = await generateBackupCodes(options.hasher, options.mfa.backupCodes);
   // Re-read: the claim just advanced `lastStep`, which the write below must keep — and an
-  // enrolment replaced meanwhile must not be confirmed with the old secret's code.
+  // enrollment replaced meanwhile must not be confirmed with the old secret's code.
   const current = await adapter.getMfa(user.id);
   if (current?.secret !== record.secret) return { ok: false };
   const confirmedAt = Math.floor(Date.now() / 1000);

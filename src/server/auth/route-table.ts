@@ -76,7 +76,7 @@ async function guardLimit(
   if (!limiter || proxiedWithoutTrust(ctx.request, ctx.config)) return await handler(ctx);
   const options = { trustForwardedHeaders: ctx.config.trustForwardedHeaders };
   const key = keyFor(ctx.request, options);
-  const retryAfter = await limiter.lockedOut(key);
+  const retryAfter = await limiter.hit(key);
   if (retryAfter !== null) {
     if (limit === "signin-start") {
       await emitAuthEvent(ctx.options, "signInFailed", {
@@ -87,7 +87,6 @@ async function guardLimit(
     }
     return json({ error: "too many attempts" }, 429, { "retry-after": String(retryAfter) });
   }
-  await limiter.fail(key);
   return await handler(ctx);
 }
 

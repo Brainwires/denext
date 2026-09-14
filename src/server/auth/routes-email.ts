@@ -34,24 +34,21 @@
  */
 
 import { bufferedRequest, readCappedBody, STALLED } from "../body.ts";
-import type { AdapterUser, AuthAdapter } from "./adapter.ts";
+import type { AuthAdapter } from "./adapter.ts";
 import { type ResolvedSignIn, toAuthUser } from "./adapter-link.ts";
 import {
   type EmailFlowAdapter,
   emailFlowAdapter,
-  revokeUserSessions,
+  markVerified,
   sendThrottled,
   tokenLink,
 } from "./email.ts";
 import { emitAuthEvent } from "./events.ts";
-import { disableTotp } from "./mfa.ts";
-import { randomToken } from "./oauth.ts";
-import type { ResolvedAuthOptions } from "./options.ts";
 import {
   clientIpBucket,
-  IP_BUCKET_FACTOR,
+  consumeHitBudget,
   mfaLimiter,
-  type RateLimiter,
+  settleAttempt,
   subjectBucketKeys,
 } from "./rate-limit.ts";
 import {
@@ -295,24 +292,6 @@ function redeemKeys(
   return { key: provider.mode === "otp" ? keys.key : null, ipKey: keys.ipKey };
 }
 
-/** Seconds until the budget refills when either bucket is spent, else `null`. */
-async function retryAfterFor(
-  limiter: RateLimiter | null,
-  keys: RedeemKeys,
-): Promise<number | null> {
-  if (!limiter) return null;
-  const own = keys.key === null ? null : await limiter.lockedOut(keys.key);
-  if (own !== null || keys.ipKey === null) return own;
-  return await limiter.lockedOut(keys.ipKey, IP_BUCKET_FACTOR);
-}
-
-/** Count one failed redeem against every bucket it belongs to. */
-async function countFailure(limiter: RateLimiter | null, keys: RedeemKeys): Promise<void> {
-  for (const key of [keys.key, keys.ipKey]) {
-    if (key !== null) await limiter?.fail(key);
-  }
-}
-
 /** Consume the presented link token or code for `identifier`, or `null`. */
 function redeemSecret(
   config: AuthConfig,
@@ -328,92 +307,6 @@ function redeemSecret(
   return redeemVerificationCode(config, { identifier, purpose: "otp", token: code });
 }
 
-/**
- * Retire the password of an account whose address was never verified, by replacing it
- * with the configured hasher's hash of a random secret nobody holds. The adapter contract
- * has no way to delete a credential (`setCredential` only replaces one); this keeps to its
- * letter — a value `Hasher.hash` produced — so every verifier (the built-in check, or an
- * app's `authorize` over `getCredential`) refuses every password for the account. An
- * adapter that can read a password but not replace one fails the redeem instead.
- */
-async function retirePassword(
-  options: ResolvedAuthOptions,
-  adapter: EmailSignInAdapter,
-  userId: string,
-): Promise<void> {
-  if (!(await adapter.getCredential?.(userId))) return;
-  if (!adapter.setCredential) {
-    throw new Error(
-      "denextAuth: the adapter implements `getCredential` but not `setCredential`, so the " +
-        "password of an unverified account can't be retired before its address is verified.",
-    );
-  }
-  await adapter.setCredential(userId, await options.hasher.hash(randomToken(32)));
-}
-
-/**
- * Drop the second factor of an account whose address was never verified. A TOTP secret
- * (and its backup codes) enrolled before the mailbox was proven belongs to whoever set it
- * up — possibly an attacker, who would then hold the second factor of the victim's
- * account, or lock the victim out of it. The adapter's MFA group has no delete, so this is
- * {@link disableTotp}: the empty, unconfirmed record every MFA check reads as "not
- * enrolled". An adapter that can read an MFA record but lacks the rest of the group makes
- * `disableTotp` throw, which fails the redeem closed.
- */
-async function retireSecondFactor(
-  ctx: AuthRouteContext,
-  adapter: EmailSignInAdapter,
-  userId: string,
-): Promise<void> {
-  if (!(await adapter.getMfa?.(userId))) return;
-  await disableTotp(ctx.config, userId);
-}
-
-/** Revoke every live bearer API token of `userId` (a no-op without the api-token group). */
-async function revokeApiTokens(adapter: EmailSignInAdapter, userId: string): Promise<void> {
-  if (!adapter.listApiTokens || !adapter.revokeApiToken) return;
-  for (const token of await adapter.listApiTokens(userId)) await adapter.revokeApiToken(token.id);
-}
-
-/**
- * The **pre-account-hijacking** defence. An existing account whose `emailVerified` is
- * unset was set up by someone who never proved the mailbox — possibly an attacker who
- * registered the victim's address with a password and is waiting for the victim's first
- * email sign-in to make the account the victim's while that password (and any session or
- * bearer token it earned, or TOTP factor it enrolled) still works. So before a redeem
- * marks the address verified, everything set up on the account without that proof is
- * retired — nothing set before the proof of ownership survives it: the password
- * (`retirePassword`), the second factor (`retireSecondFactor`), every bearer API token,
- * and every server-side session (`sessionRevoked`). A stateless cookie session can't be revoked — it lives until it
- * expires, which is warned once. A throw leaves the address unverified: fail closed.
- */
-async function evictUnprovenAccess(
-  ctx: AuthRouteContext,
-  adapter: EmailSignInAdapter,
-  userId: string,
-): Promise<void> {
-  await retirePassword(ctx.options, adapter, userId);
-  await retireSecondFactor(ctx, adapter, userId);
-  await revokeApiTokens(adapter, userId);
-  await revokeUserSessions(ctx.config, ctx.options, userId);
-}
-
-/**
- * Set an existing user's `emailVerified` if it isn't yet — the redeem just proved the
- * mailbox — after retiring the access the unverified account had (`evictUnprovenAccess`).
- */
-async function markVerified(
-  ctx: AuthRouteContext,
-  adapter: EmailSignInAdapter,
-  user: AdapterUser,
-): Promise<AdapterUser> {
-  if (user.emailVerified !== undefined) return user;
-  await evictUnprovenAccess(ctx, adapter, user.id);
-  const verified = await adapter.updateUser({ id: user.id, emailVerified: nowSeconds() });
-  await emitAuthEvent(ctx.options, "emailVerified", { user: verified });
-  return verified;
-}
-
 /** The user a proven address signs in as: the existing one, a new verified one, or `null`. */
 async function findOrCreateUser(
   ctx: AuthRouteContext,
@@ -423,7 +316,10 @@ async function findOrCreateUser(
 ): Promise<ResolvedSignIn | null> {
   const existing = await adapter.getUserByEmail(identifier);
   if (existing) {
-    return { user: toAuthUser(await markVerified(ctx, adapter, existing)), isNewUser: false };
+    return {
+      user: toAuthUser(await markVerified(ctx.config, ctx.options, adapter, existing)),
+      isNewUser: false,
+    };
   }
   if (!provider.allowSignUp) return null;
   const created = await adapter.createUser({ email: identifier, emailVerified: nowSeconds() });
@@ -489,18 +385,17 @@ async function redeem(
   const identifier = normalizeEmailIdentifier(input.email) ?? "";
   const limiter = mfaLimiter(ctx.config);
   const keys = redeemKeys(ctx, provider, identifier);
-  const retryAfter = await retryAfterFor(limiter, keys);
+  const retryAfter = await consumeHitBudget(limiter, keys);
   if (retryAfter !== null) {
     await emitFailure(ctx, provider, "rate_limited");
     return tooManyAttempts(retryAfter);
   }
   const record = await redeemSecret(ctx.config, provider, identifier, input.secret);
   if (!record) {
-    await countFailure(limiter, keys);
     await emitFailure(ctx, provider, "invalid_credentials");
     return verificationFailed(ctx, asJson);
   }
-  if (keys.key !== null) await limiter?.succeed(keys.key);
+  await settleAttempt(limiter, keys);
   const proof = { identifier: record.identifier, callbackUrl: input.callbackUrl, asJson };
   return await signInByEmail(ctx, provider, adapter, proof);
 }

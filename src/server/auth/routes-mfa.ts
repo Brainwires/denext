@@ -7,11 +7,11 @@
  *   `{ ok: true, user }` or a `303` to `afterSignIn(callbackUrl)`; a wrong code is a
  *   generic `401` — or, for a plain form post, a `303` back to `pages.mfa` with
  *   `?error=CredentialsSignin`.
- * - `POST {basePath}/mfa/enroll` — start a TOTP enrolment: `{ secret, uri }` (render the
+ * - `POST {basePath}/mfa/enroll` — start a TOTP enrollment: `{ secret, uri }` (render the
  *   URI as a QR code). `409` when a confirmed factor already exists.
- * - `POST {basePath}/mfa/confirm` — `{ code }`: confirm the enrolment and receive the
+ * - `POST {basePath}/mfa/confirm` — `{ code }`: confirm the enrollment and receive the
  *   backup codes, once: `{ ok: true, backupCodes }`. Confirming from a pending session
- *   (enrolment during the step-up, under `mfa.required: "always"`) also completes the
+ *   (enrollment during the step-up, under `mfa.required: "always"`) also completes the
  *   step-up, and the answer carries the new session's `user`.
  * - `POST {basePath}/mfa/disable` — `{ code? }`: remove the factor. Needs a complete
  *   session AND a fresh second factor — a `code` that verifies now, or a session whose
@@ -124,7 +124,7 @@ async function mfaCaller(
   return accepts(session) ? session : json({ error: "forbidden" }, 403);
 }
 
-/** Enrolment is for a complete session — or a pending one when every user must enrol. */
+/** Enrollment is for a complete session — or a pending one when every user must enrol. */
 function mayEnrol(ctx: AuthRouteContext): (session: AuthSession) => boolean {
   return (session) => !session.mfaPending || ctx.options.mfa.required === "always";
 }
@@ -187,12 +187,12 @@ async function handleStepUp(ctx: AuthRouteContext): Promise<Response | null> {
 async function handleEnroll(ctx: AuthRouteContext): Promise<Response | null> {
   const session = await mfaCaller(ctx, mayEnrol(ctx));
   if (!session || session instanceof Response) return session;
-  const enrolment = await enrollTotp(ctx.config, session.user);
-  return enrolment ? json(enrolment) : json({ error: "already enrolled" }, 409);
+  const enrollment = await enrollTotp(ctx.config, session.user);
+  return enrollment ? json(enrollment) : json({ error: "already enrolled" }, 409);
 }
 
 /**
- * `POST {basePath}/mfa/confirm` — confirm the enrolment with a code; answer the backup
+ * `POST {basePath}/mfa/confirm` — confirm the enrollment with a code; answer the backup
  * codes once. From a pending session this also completes the step-up (amr `totp`).
  */
 async function handleConfirm(ctx: AuthRouteContext): Promise<Response | null> {

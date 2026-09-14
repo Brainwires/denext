@@ -682,3 +682,39 @@ Deno.test("an already-verified account keeps its TOTP factor through an email si
   assertEquals(await h.adapter.getMfa!(id), factor, "the owner's own factor is untouched");
   assert(!h.events.includes("emailVerified"));
 });
+
+Deno.test("one-time code: a concurrent burst can't overrun the 5-guess budget — the right code after it is refused", async () => {
+  const h = setup(emailOtp());
+  await send(h, "burst@x.test");
+  const code = h.sent[0].token;
+  // Every guess from its own IP, so only the per-address budget stands between the burst
+  // and the code; each request is counted before it is evaluated.
+  const guesses = Array.from(
+    { length: 40 },
+    (_, i) => submitCode(h, "burst@x.test", wrongCode(code), { peer: `203.0.113.${i + 1}` }),
+  );
+  const statuses = (await Promise.all(guesses)).map(({ res }) => res.status);
+  assertEquals(statuses.filter((s) => s === 401).length, 5, "only the budget's worth is evaluated");
+  assertEquals((await submitCode(h, "burst@x.test", code)).res.status, 429);
+});
+
+Deno.test("an adapter that stores null for an unverified address still gets the pre-account-hijacking defence", async () => {
+  const base = inMemoryAuthAdapter();
+  // An Auth.js-style adapter: an unverified address reads back as `null`, not `undefined`.
+  const h = setup(magicLink(), {}, {
+    ...base,
+    getUserByEmail: async (email: string) => {
+      const user = await base.getUserByEmail(email);
+      return user && { ...user, emailVerified: (user.emailVerified ?? null) as unknown as number };
+    },
+  });
+  const id = await withPassword(h, "nulled@x.test", ATTACKER_PASSWORD);
+  await send(h, "nulled@x.test");
+  await click(h);
+  assertEquals(
+    typeof (await h.adapter.getUser(id))?.emailVerified,
+    "number",
+    "null read as unverified",
+  );
+  assertEquals((await passwordSignIn(h, "nulled@x.test", ATTACKER_PASSWORD)).res.status, 401);
+});

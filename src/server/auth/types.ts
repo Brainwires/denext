@@ -329,7 +329,8 @@ export interface AuthEvents {
   }) => Promise<void> | void;
   /**
    * A verification token was delivered through `sendVerificationRequest` (an
-   * email-verification or password-reset email). Fires only for a real send — never for
+   * email-verification or password-reset email, or a `magicLink()` / `emailOtp()` sign-in
+   * link or code). Fires only for a real send — never for
    * an unknown address, a throttled request or a failed delivery — and never carries the
    * token or the link.
    */
@@ -475,7 +476,7 @@ export interface AuthMfaConfig {
    * Default `1` (±30 seconds); clamped to `0..2`.
    */
   window?: number;
-  /** How many single-use backup codes enrolment mints. Default `10`; clamped to `0..20`. */
+  /** How many single-use backup codes enrollment mints. Default `10`; clamped to `0..20`. */
   backupCodes?: number;
   /**
    * How recent, in seconds, a second-factor proof must be for an action that demands a
@@ -521,7 +522,11 @@ export interface AuthConfig {
     mfa?: string;
     /** The "check your email" page shown after a verification token is sent. */
     verifyRequest?: string;
-    /** A page that renders `?error=` codes instead of the sign-in page. */
+    /**
+     * A page that renders `?error=` codes for the emailed flows (a bad verification, reset,
+     * sign-in link or code) instead of the sign-in page. OAuth callback and guard errors
+     * still land on `signIn`.
+     */
     error?: string;
   };
   /**
@@ -533,7 +538,7 @@ export interface AuthConfig {
    * Brute-force protection. ON by default: the Credentials endpoint allows 5 failed
    * attempts per client IP + identifier per 15 minutes, and `/signin/*` allows 20 sign-in
    * starts per client IP per 15 minutes (`rateLimit.signin`) — both answer a generic `429`.
-   * Tune the limits, key, or store here, or pass `false` to disable both (e.g. you
+   * Tune the limits, key, or store here, or pass `false` to disable every limiter (e.g. you
    * rate-limit at the edge). The default store is per-process — pass a shared `store` for
    * multi-replica deployments.
    */

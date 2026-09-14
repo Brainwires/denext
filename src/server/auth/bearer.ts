@@ -23,6 +23,7 @@
 import { ApiError } from "../api-error.ts";
 import { type ApiMiddleware, documentsSecurity } from "../define-api.ts";
 import type { AdapterUser, ApiTokenRecord } from "./adapter.ts";
+import { isVerified } from "./adapter-link.ts";
 import { requireApiTokenAdapter, verifyApiToken } from "./api-token.ts";
 import { hasRole } from "./mod.ts";
 import { resolveAuthOptions } from "./options.ts";
@@ -115,7 +116,7 @@ function bearerSession(
       id: user.id,
       name: user.name,
       email: user.email,
-      emailVerified: user.emailVerified !== undefined,
+      emailVerified: isVerified(user.emailVerified),
       image: user.image,
       roles: user.roles,
     },

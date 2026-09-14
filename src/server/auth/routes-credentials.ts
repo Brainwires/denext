@@ -29,12 +29,13 @@ import { bufferedRequest, readCappedBody, STALLED, TOO_LARGE } from "../body.ts"
 import { emitAuthEvent } from "./events.ts";
 import {
   clientIpBucket,
+  consumeHitBudget,
   credentialsLimiter,
   defaultRateLimitKey,
-  IP_BUCKET_FACTOR,
   ipBucketKey,
   proxiedWithoutTrust,
   type RateLimiter,
+  settleAttempt,
 } from "./rate-limit.ts";
 import type { AdapterUser } from "./adapter.ts";
 import { type ResolvedSignIn, toAuthUser } from "./adapter-link.ts";
@@ -214,9 +215,7 @@ async function refuseIfLimited(
   limiter: RateLimiter | null,
   keys: { key: string; ipKey: string | null },
 ): Promise<Response | null> {
-  if (!limiter) return null;
-  const retryAfter = (await limiter.lockedOut(keys.key)) ??
-    (keys.ipKey === null ? null : await limiter.lockedOut(keys.ipKey, IP_BUCKET_FACTOR));
+  const retryAfter = await consumeHitBudget(limiter, keys);
   if (retryAfter === null) return null;
   await emitFailure(ctx, provider.id, "rate_limited");
   return json({ error: "too many attempts" }, 429, { "retry-after": String(retryAfter) });
@@ -291,13 +290,11 @@ export async function handleCredentials(
 
   const authorized = await authorizeCredentials(ctx, provider, creds);
   if (!authorized) {
-    await limiter?.fail(keys.key);
-    if (keys.ipKey !== null) await limiter?.fail(keys.ipKey);
     await emitFailure(ctx, provider.id, "invalid_credentials");
     // Generic failure — never reveal whether the account exists.
     return json({ error: "invalid credentials" }, 401);
   }
-  await limiter?.succeed(keys.key);
+  await settleAttempt(limiter, keys);
 
   const resolved = authorized.resolved ?? await persistSignIn(ctx, provider, authorized.user);
   if (resolved instanceof Response) return resolved;

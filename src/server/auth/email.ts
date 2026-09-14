@@ -32,8 +32,10 @@ import { requestOrigin } from "../absolute-url.ts";
 import { after, currentContext } from "../request-context.ts";
 import { isProductionEnv } from "../session.ts";
 import type { AdapterUser, AuthAdapter, VerificationPurpose } from "./adapter.ts";
+import { isVerified } from "./adapter-link.ts";
 import { emitAuthEvent } from "./events.ts";
 import { sha256Hex } from "./hash.ts";
+import { disableTotp } from "./mfa.ts";
 import { randomToken } from "./oauth.ts";
 import { resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
 import { consumeHitBudget, subjectBucketKeys, verificationLimiter } from "./rate-limit.ts";
@@ -297,7 +299,7 @@ export async function startEmailFlow(
     request: input.request,
     adapter: input.adapter,
     send: input.send,
-    shouldSend: (user) => user !== undefined && (reset || user.emailVerified === undefined),
+    shouldSend: (user) => user !== undefined && (reset || !isVerified(user.emailVerified)),
     issue: async (origin) => {
       const { token, expiresAt } = await issueVerificationToken(config, {
         identifier: input.identifier,
@@ -367,7 +369,7 @@ export async function verifyEmail(
   });
   const user = record ? await adapter.getUserByEmail(record.identifier) : undefined;
   if (!user) return null;
-  const verified = user.emailVerified !== undefined
+  const verified = isVerified(user.emailVerified)
     ? user
     : await adapter.updateUser({ id: user.id, emailVerified: nowSeconds() });
   await emitAuthEvent(resolveAuthOptions(config), "emailVerified", { user: verified });
@@ -416,7 +418,7 @@ function acceptablePassword(password: unknown): password is string {
  * @param options The resolved options: their store is revoked, their logger warns.
  * @param userId The user whose sessions end.
  */
-export async function revokeUserSessions(
+async function revokeUserSessions(
   config: AuthConfig,
   options: ResolvedAuthOptions,
   userId: string,
@@ -435,6 +437,110 @@ export async function revokeUserSessions(
   }
   await options.sessionStore.deleteByUser(userId);
   await emitAuthEvent(options, "sessionRevoked", { userId });
+}
+
+/**
+ * The adapter methods a proof of mailbox ownership touches ({@link markVerified}): the
+ * user update, plus the optional groups it retires access from.
+ */
+type ProvenMailboxAdapter = Pick<
+  AuthAdapter,
+  "updateUser" | "getCredential" | "setCredential" | "getMfa" | "listApiTokens" | "revokeApiToken"
+>;
+
+/**
+ * Retire the password of an account whose address was never verified, by replacing it
+ * with the configured hasher's hash of a random secret nobody holds. The adapter contract
+ * has no way to delete a credential (`setCredential` only replaces one); this keeps to its
+ * letter — a value `Hasher.hash` produced — so every verifier (the built-in check, or an
+ * app's `authorize` over `getCredential`) refuses every password for the account. An
+ * adapter that can read a password but not replace one fails the flow instead.
+ */
+async function retirePassword(
+  options: ResolvedAuthOptions,
+  adapter: ProvenMailboxAdapter,
+  userId: string,
+): Promise<void> {
+  if (!(await adapter.getCredential?.(userId))) return;
+  if (!adapter.setCredential) {
+    throw new Error(
+      "denextAuth: the adapter implements `getCredential` but not `setCredential`, so the " +
+        "password of an unverified account can't be retired before its address is verified.",
+    );
+  }
+  await adapter.setCredential(userId, await options.hasher.hash(randomToken(32)));
+}
+
+/**
+ * Drop the second factor of an account whose address was never verified. A TOTP secret
+ * (and its backup codes) enrolled before the mailbox was proven belongs to whoever set it
+ * up — possibly an attacker, who would then hold the second factor of the victim's
+ * account, or lock the victim out of it. The adapter's MFA group has no delete, so this is
+ * `disableTotp`: the empty, unconfirmed record every MFA check reads as "not enrolled". An
+ * adapter that can read an MFA record but lacks the rest of the group makes `disableTotp`
+ * throw, which fails the flow closed.
+ */
+async function retireSecondFactor(
+  config: AuthConfig,
+  adapter: ProvenMailboxAdapter,
+  userId: string,
+): Promise<void> {
+  if (!(await adapter.getMfa?.(userId))) return;
+  await disableTotp(config, userId);
+}
+
+/** Revoke every live bearer API token of `userId` (a no-op without the api-token group). */
+async function revokeApiTokens(adapter: ProvenMailboxAdapter, userId: string): Promise<void> {
+  if (!adapter.listApiTokens || !adapter.revokeApiToken) return;
+  for (const token of await adapter.listApiTokens(userId)) await adapter.revokeApiToken(token.id);
+}
+
+/**
+ * The **pre-account-hijacking** defence. An existing account whose `emailVerified` is
+ * unset was set up by someone who never proved the mailbox — possibly an attacker who
+ * registered the victim's address with a password and is waiting for the victim to make
+ * the account theirs (a first email sign-in, or a password reset) while that password (and
+ * any session or bearer token it earned, or TOTP factor it enrolled) still works. So the
+ * first proof of ownership retires everything set up without it: the password, the second
+ * factor, every bearer API token, and every server-side session (`sessionRevoked`). A
+ * stateless cookie session can't be revoked — it lives until it expires, which is warned
+ * once. A throw leaves the address unverified: fail closed.
+ */
+async function evictUnprovenAccess(
+  config: AuthConfig,
+  options: ResolvedAuthOptions,
+  adapter: ProvenMailboxAdapter,
+  userId: string,
+): Promise<void> {
+  await retirePassword(options, adapter, userId);
+  await retireSecondFactor(config, adapter, userId);
+  await revokeApiTokens(adapter, userId);
+  await revokeUserSessions(config, options, userId);
+}
+
+/**
+ * Record that `user` just proved their mailbox (a redeemed sign-in link or code, or a
+ * password reset): an unset `emailVerified` is set — firing `emailVerified` — after
+ * {@link evictUnprovenAccess} retires everything the unverified account had. An address
+ * that was already verified is returned unchanged.
+ *
+ * @param config The app's auth config.
+ * @param options The resolved auth options.
+ * @param adapter The configured adapter.
+ * @param user The account whose mailbox was just proven.
+ * @returns The (now verified) user.
+ */
+export async function markVerified(
+  config: AuthConfig,
+  options: ResolvedAuthOptions,
+  adapter: ProvenMailboxAdapter,
+  user: AdapterUser,
+): Promise<AdapterUser> {
+  if (isVerified(user.emailVerified)) return user;
+  await evictUnprovenAccess(config, options, adapter, user.id);
+  const verified = await adapter.updateUser({ id: user.id, emailVerified: nowSeconds() });
+  await emitAuthEvent(options, "emailVerified", { user: verified });
+  return verified;
 }
 
 /**
@@ -464,8 +570,13 @@ export async function resetPassword(
   const user = record ? await adapter.getUserByEmail(record.identifier) : undefined;
   if (!user) return { ok: false, error: "invalid_token" };
   const options = resolveAuthOptions(config);
+  // A reset proves the mailbox too: an account that was never verified is cleared of
+  // everything set up without that proof (and its sessions revoked) before it is marked
+  // verified, exactly as a first email sign-in would.
+  const wasVerified = isVerified(user.emailVerified);
+  const owner = await markVerified(config, options, adapter, user);
   await adapter.setCredential!(user.id, await options.hasher.hash(input.password));
-  await revokeUserSessions(config, options, user.id);
-  await emitAuthEvent(options, "passwordReset", { user });
-  return { ok: true, user };
+  if (wasVerified) await revokeUserSessions(config, options, user.id);
+  await emitAuthEvent(options, "passwordReset", { user: owner });
+  return { ok: true, user: owner };
 }

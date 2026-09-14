@@ -488,3 +488,27 @@ Deno.test("signinStartLimiter/credentialsLimiter: memoised per config, both off 
   assertEquals(signinStartLimiter(off), null);
   assertEquals(credentialsLimiter(off), null);
 });
+
+Deno.test("createRateLimiter: hit counts first, so concurrent hits never overrun; refund gives a unit back", async () => {
+  const limiter = createRateLimiter({ max: 3, windowMs: 60_000 });
+  const results = await Promise.all(Array.from({ length: 10 }, () => limiter.hit("k")));
+  assertEquals(results.filter((r) => r === null).length, 3);
+  assert(results.every((r) => r === null || r >= 1), "a refusal carries Retry-After");
+
+  const single = createRateLimiter({ max: 1, windowMs: 60_000 });
+  assertEquals(await single.hit("j"), null);
+  await single.refund("j");
+  assertEquals(await single.hit("j"), null, "the refunded unit is spendable again");
+  assert((await single.hit("j")) !== null);
+});
+
+Deno.test("credentials: a concurrent burst can't overrun the budget — the right password after it is refused", async () => {
+  const config = limitedConfig();
+  const burst = Array.from(
+    { length: 20 },
+    () => login(config, { email: "a@b.co", password: "no" }),
+  );
+  const statuses = (await Promise.all(burst)).map((r) => r.status);
+  assertEquals(statuses.filter((s) => s === 401).length, 2, "only the budget's worth is evaluated");
+  assertEquals((await login(config, { email: "a@b.co", password: "pw" })).status, 429);
+});

@@ -650,3 +650,35 @@ Deno.test("verificationLimiter + mfaLimiter: memoised per config, own budgets, o
   const off = { rateLimit: false as const };
   assertEquals([verificationLimiter(off), mfaLimiter(off)], [null, null]);
 });
+
+Deno.test("resetPassword: a never-verified account loses the tokens and TOTP set up without proof, and becomes verified", async () => {
+  const adapter = inMemoryAuthAdapter();
+  const { config, sent } = setup({}, adapter);
+  // Pre-registered by someone who never proved the mailbox: a password, a bearer token, TOTP.
+  const { id, email } = await makeUser(adapter);
+  await adapter.setCredential!(id, "attacker-hash");
+  await issueApiToken(config, { userId: id, name: "attacker" });
+  await adapter.setMfa!({
+    userId: id,
+    confirmedAt: 1,
+    secret: "JBSWY3DPEHPK3PXP",
+    backupCodeHashes: ["h"],
+  });
+
+  await requestPasswordReset(config, email);
+  const result = await resetPassword(config, {
+    email,
+    token: sent[0].token,
+    password: "the owner's new password",
+  });
+  assert(result.ok);
+  assertEquals(await adapter.listApiTokens!(id), [], "the pre-registered bearer token is revoked");
+  assertEquals((await adapter.getMfa!(id))?.confirmedAt, undefined, "the TOTP factor is dropped");
+  assertEquals(
+    typeof (await adapter.getUser(id))?.emailVerified,
+    "number",
+    "the reset proved the mailbox",
+  );
+  assertEquals(typeof result.user.emailVerified, "number");
+  assertNotEquals(await adapter.getCredential!(id), "attacker-hash");
+});

@@ -11,8 +11,8 @@
  * - the **session-read** limiter counts every `GET {basePath}/session` per client IP,
  *   60 per minute (`rateLimit.session`), so the unauthenticated poll endpoint can't be
  *   turned into free cookie-verification + store-read work;
- * - the **verification** limiter counts every outbound-token request (a password-reset
- *   or email-verification send) per address, 3 per 15 minutes (`rateLimit.verification`),
+ * - the **verification** limiter counts every outbound-token request (a password-reset,
+ *   email-verification, sign-in link or one-time-code send) per address, 3 per 15 minutes (`rateLimit.verification`),
  *   plus an IP-wide bucket at {@linkcode IP_BUCKET_FACTOR}× that — so nobody can turn the
  *   app into a mail cannon aimed at one inbox, or at many;
  * - the **MFA** limiter bounds second-factor attempts per user, 5 per 5 minutes
@@ -55,6 +55,12 @@ export interface RateLimitStore {
   increment(key: string, windowMs: number): RateLimitWindow | Promise<RateLimitWindow>;
   /** Forget `key` (called on a successful sign-in). */
   reset(key: string): void | Promise<void>;
+  /**
+   * Give back one unit counted for `key` (an attempt reserved up front that turned out to
+   * succeed, or that another bucket refused). Optional: a store without it simply keeps the
+   * unit, which only makes its limiter stricter.
+   */
+  decrement?(key: string): void | Promise<void>;
 }
 
 /** Options for {@linkcode inMemoryRateLimitStore}. */
@@ -146,6 +152,16 @@ export interface RateLimiter {
   fail(key: string): Promise<void>;
   /** Clear `key` after a successful attempt. */
   succeed(key: string): Promise<void>;
+  /**
+   * Count one attempt for `key` FIRST, then refuse when the count is over budget — the
+   * atomic form of `lockedOut` + `fail`. Concurrent requests each see their own count, so a
+   * burst can't all pass the check before any of them is counted.
+   *
+   * @returns `retryAfterSec` when this attempt is over budget, else `null`.
+   */
+  hit(key: string, maxFactor?: number): Promise<number | null>;
+  /** Give back one unit {@linkcode RateLimiter.hit} counted for `key` (the store's `decrement`). */
+  refund(key: string): Promise<void>;
 }
 
 const DEFAULT_MAX = 5;
@@ -210,6 +226,10 @@ export function inMemoryRateLimitStore(
       return { ...w };
     },
     reset: (key) => void windows.delete(key),
+    decrement(key) {
+      const w = live(key);
+      if (w && w.count > 0) w.count -= 1;
+    },
   };
 }
 
@@ -408,11 +428,19 @@ export function createRateLimiter(options: RateLimitOptions = {}): RateLimiter {
   const max = options.max ?? DEFAULT_MAX;
   const windowMs = options.windowMs ?? DEFAULT_WINDOW_MS;
   const store = options.store ?? inMemoryRateLimitStore({ lockoutAt: max });
+  const retryAfter = (w: RateLimitWindow) =>
+    Math.max(1, Math.ceil((w.resetAt - Date.now()) / 1000));
   return {
     async lockedOut(key, maxFactor = 1) {
       const w = await store.get(key);
-      if (!w || w.count < max * maxFactor) return null;
-      return Math.max(1, Math.ceil((w.resetAt - Date.now()) / 1000));
+      return !w || w.count < max * maxFactor ? null : retryAfter(w);
+    },
+    async hit(key, maxFactor = 1) {
+      const w = await store.increment(key, windowMs);
+      return w.count > max * maxFactor ? retryAfter(w) : null;
+    },
+    async refund(key) {
+      await store.decrement?.(key);
     },
     async fail(key) {
       await store.increment(key, windowMs);
@@ -601,25 +629,50 @@ export function subjectBucketKeys(
   return { key: `${budget}|${subject}`, ipKey };
 }
 
+/** The buckets one attempt counts against: an optional subject bucket plus the IP-wide one. */
+export interface AttemptKeys {
+  /** The subject's own bucket, or `null` when the attempt has none (a magic-link redeem). */
+  readonly key: string | null;
+  /** The client-IP bucket (checked at `IP_BUCKET_FACTOR`× the budget), or `null`. */
+  readonly ipKey: string | null;
+}
+
 /**
- * Spend one unit of a hit-counted budget (every attempt counts, not only failures): refuse
- * when either bucket is already spent, otherwise count the attempt against both.
+ * Spend one unit of a budget for an attempt that is about to run: count it against the
+ * subject bucket, then the IP-wide one, refusing as soon as either is over. Counting comes
+ * FIRST ({@linkcode RateLimiter.hit}), so a concurrent burst can't all pass the check before
+ * any of it is counted. A hit-counted budget (every attempt counts) stops here; a
+ * failure-counted one (a password, a one-time code) also calls {@linkcode settleAttempt} when
+ * the attempt succeeds.
  *
  * @param limiter The limiter, or `null` when rate limiting is off (never refuses).
- * @param keys The subject + IP buckets from {@linkcode subjectBucketKeys}.
+ * @param keys The subject + IP buckets ({@linkcode subjectBucketKeys}).
  * @returns Seconds until the budget refills when refused, else `null` (go ahead).
  */
 export async function consumeHitBudget(
   limiter: RateLimiter | null,
-  keys: SubjectBucketKeys,
+  keys: AttemptKeys,
 ): Promise<number | null> {
   if (!limiter) return null;
-  const retryAfter = (await limiter.lockedOut(keys.key)) ??
-    (keys.ipKey === null ? null : await limiter.lockedOut(keys.ipKey, IP_BUCKET_FACTOR));
-  if (retryAfter !== null) return retryAfter;
-  await limiter.fail(keys.key);
-  if (keys.ipKey !== null) await limiter.fail(keys.ipKey);
-  return null;
+  const own = keys.key === null ? null : await limiter.hit(keys.key);
+  if (own !== null) return own;
+  const shared = keys.ipKey === null ? null : await limiter.hit(keys.ipKey, IP_BUCKET_FACTOR);
+  // The IP refused, so the attempt never ran: don't charge the subject for it.
+  if (shared !== null && keys.key !== null) await limiter.refund(keys.key);
+  return shared;
+}
+
+/**
+ * Settle a failure-counted attempt that succeeded: clear the subject bucket and give the
+ * IP-wide bucket back the unit {@linkcode consumeHitBudget} reserved, so only failures count.
+ *
+ * @param limiter The limiter, or `null` when rate limiting is off.
+ * @param keys The buckets the attempt was charged to.
+ */
+export async function settleAttempt(limiter: RateLimiter | null, keys: AttemptKeys): Promise<void> {
+  if (!limiter) return;
+  if (keys.key !== null) await limiter.succeed(keys.key);
+  if (keys.ipKey !== null) await limiter.refund(keys.ipKey);
 }
 
 /** Warn about an undeclared proxy at most once per process. */

@@ -29,6 +29,7 @@ import type { DenextPlugin } from "../../plugin/mod.ts";
 import { safeRedirectLocation } from "../config.ts";
 import { isProductionEnv, isWeakSecret } from "../session.ts";
 import { emitAuthEvent } from "./events.ts";
+import { hasMfaAdapter } from "./mfa.ts";
 import { resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
 import { assertEmailProviderConfig } from "./providers-email.ts";
 import { handleAuthRequest } from "./routes.ts";
@@ -61,7 +62,15 @@ function validateConfig(config: AuthConfig): void {
   // Resolving validates the 2.5 surface too: an unusable `basePath`, an invalid cookie
   // name, or `session.strategy: "database"` with nowhere to store sessions all throw here
   // — at config time, not on the first login.
-  resolveAuthOptions(config);
+  const options = resolveAuthOptions(config);
+  if (options.mfa.required === "always" && !hasMfaAdapter(options)) {
+    // Every sign-in would come back pending with no way to enroll or verify a factor:
+    // nobody could ever finish signing in.
+    throw new Error(
+      'denextAuth: `mfa.required: "always"` needs an adapter with the MFA group (getMfa, ' +
+        "setMfa, consumeBackupCode, claimTotpStep).",
+    );
+  }
   if (!config.canonicalOrigin) requireCanonicalOriginInProd();
   if (config.dangerouslyAllowInsecureProviders) {
     console.warn(
@@ -270,7 +279,7 @@ export async function auth(): Promise<AuthSession | null> {
 /**
  * The current request's session **only while it still owes a second factor** — `null`
  * for a complete session, and for none. For the app's `pages.mfa` page: render the code
- * form (or, under `mfa.required: "always"` for a user with no factor yet, the enrolment
+ * form (or, under `mfa.required: "always"` for a user with no factor yet, the enrollment
  * step) when this returns a session, and redirect onward when it doesn't.
  *
  * A pending session grants nothing: {@link auth} and every guard still read it as signed

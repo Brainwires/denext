@@ -106,6 +106,35 @@ export interface IssueAuthSessionOptions {
 }
 
 /**
+ * Re-apply the fields the framework owns over what `callbacks.session` returned. The
+ * callback shapes the session's DATA; it never decides whether the session is complete. A
+ * callback that rebuilds the object instead of spreading it would otherwise drop
+ * `mfaPending` and turn a first-factor-only sign-in into a complete session. It may ADD
+ * `mfaPending` (fail closed), never remove it; `v`, `issuedAt` and `amr` are always the
+ * minted ones; a pending session never outlives its short lifetime; and an expiry the
+ * callback dropped or mangled is restored, so a session never becomes never-expiring or
+ * store-rejected.
+ *
+ * @param result What the session callback returned.
+ * @param minted The payload the framework minted before the callback ran.
+ * @returns The callback's session with the framework-owned fields restored.
+ */
+function sealOwnedFields(result: AuthSession, minted: AuthSession): AuthSession {
+  const { mfaPending: _pending, amr: _amr, ...rest } = result;
+  const pending = minted.mfaPending === true || result.mfaPending === true;
+  const expiresAt = Number.isFinite(rest.expiresAt) ? rest.expiresAt : minted.expiresAt;
+  const sealed: AuthSession = {
+    ...rest,
+    v: minted.v,
+    issuedAt: minted.issuedAt,
+    expiresAt: minted.mfaPending ? Math.min(expiresAt, minted.expiresAt) : expiresAt,
+  };
+  if (pending) sealed.mfaPending = true;
+  if (minted.amr) sealed.amr = [...minted.amr];
+  return sealed;
+}
+
+/**
  * Issue (sign + set) a session for `user` from `provider`, applying the session callback.
  *
  * @param config The app's auth config.
@@ -133,11 +162,8 @@ export async function issueAuthSession(
   };
   if (issue.mfaPending) payload.mfaPending = true;
   if (issue.amr?.length) payload.amr = [...issue.amr];
-  if (config.callbacks?.session) payload = await config.callbacks.session(payload);
-  if (!Number.isFinite(payload.expiresAt)) {
-    // A callback that dropped/mangled the expiry must not yield a never-expiring or a
-    // store-rejected (500) session: restore the configured lifetime.
-    payload = { ...payload, expiresAt: Math.floor(Date.now() / 1000) + maxAge };
+  if (config.callbacks?.session) {
+    payload = sealOwnedFields(await config.callbacks.session(payload), payload);
   }
   const session = await getSession<CookieData>(sessionOptions(config));
   if (!options.sessionStore) {

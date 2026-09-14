@@ -420,3 +420,33 @@ Deno.test("a pending session expires after its 15-minute lifetime", async () => 
   );
   assertEquals(await answer(late), [401, { error: "unauthorized" }]);
 });
+
+Deno.test("a session callback that rebuilds the object can't drop mfaPending — the first factor alone stays pending", async () => {
+  const app = await mount({
+    callbacks: {
+      // An ordinary-looking enrichment callback that names the fields it keeps (no spread).
+      session: (s) => ({
+        user: { ...s.user, name: "Ada L." },
+        provider: s.provider,
+        expiresAt: s.expiresAt,
+      }),
+    },
+  });
+  const cookie = await pendingCookie(app);
+  assertEquals((await inRequest({ cookie }, () => auth())).value, null, "still not signed in");
+  const pending = (await inRequest({ cookie }, () => pendingMfaSession())).value;
+  assertEquals(pending?.mfaPending, true, "the framework re-applied mfaPending after the callback");
+  assertEquals(pending?.amr, ["pwd"]);
+  assertEquals(pending?.user.name, "Ada L.", "the callback's data change survives");
+});
+
+Deno.test("a concurrent burst of codes at POST /auth/mfa is capped at the 5-attempt budget", async () => {
+  const app = await mount();
+  const cookie = await pendingCookie(app);
+  const valid = await totpNow(app.totpSecret);
+  const codes = Array.from({ length: 40 }, (_, i) => String(100000 + i)).filter((c) => c !== valid);
+  const statuses = await Promise.all(
+    codes.map(async (code) => (await post(app, "/auth/mfa", cookie, { code })).value?.status),
+  );
+  assertEquals(statuses.filter((s) => s !== 429).length, 5, "only the budget is evaluated");
+});
