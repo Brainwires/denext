@@ -234,7 +234,7 @@ function listRenderer(row: (context: RowContext) => RawHtml, toRows: ToRows = as
 
 /** Reorderable one-line rows for a list of scalars. */
 const renderChips: Renderer = listRenderer((one) =>
-  html`<div style="display:flex;gap:6px;align-items:center;margin:0 0 6px">${
+  html`<div class="row">${
     control({
       tag: "input",
       type: one.row.kind === "number" ? "number" : "text",
@@ -262,19 +262,18 @@ const renderList: Renderer = listRenderer((one) =>
 const renderMap: Renderer = listRenderer((one) => {
   const [key, held] = one.entry as [string, unknown];
   return html`
-    <div
-      style="display:flex;gap:6px;align-items:flex-start;margin:0 0 6px">${control({
-        tag: "input",
-        name: fieldName(one.row.path, one.ctx.namePrefix ?? "") + KEY_SUFFIX,
-        value: key,
-        ariaLabel: `${one.spec.label} key ${one.index + 1}`,
-        disabled: one.ctx.readOnly,
-      })}<span style="flex:1">${renderSpec(one.row, held, one.ctx)}</span>${rowButtons(
-        one.name,
-        one.index,
-        one.last,
-        one.ctx,
-      )}</div>
+    <div class="row top">${control({
+      tag: "input",
+      name: fieldName(one.row.path, one.ctx.namePrefix ?? "") + KEY_SUFFIX,
+      value: key,
+      ariaLabel: `${one.spec.label} key ${one.index + 1}`,
+      disabled: one.ctx.readOnly,
+    })}<span class="grow">${renderSpec(one.row, held, one.ctx)}</span>${rowButtons(
+      one.name,
+      one.index,
+      one.last,
+      one.ctx,
+    )}</div>
   `;
 }, asPairs);
 

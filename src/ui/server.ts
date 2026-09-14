@@ -10,7 +10,8 @@ import { fromFileUrl } from "@std/path";
 import type { SseClients } from "../build/sse.ts";
 import { displayHost, serveWithPortFallback } from "../server/serve-utils.ts";
 import { jsonResponse, type UiContext } from "./html.ts";
-import { broadcast, UI_ROUTES } from "./routes.ts";
+import { broadcast } from "./events.ts";
+import { UI_ROUTES } from "./routes.ts";
 import {
   applySecurityHeaders,
   authorized,

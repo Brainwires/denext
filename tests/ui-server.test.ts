@@ -8,7 +8,7 @@ import { startUiServer, type UiServer } from "../src/ui/server.ts";
 import { projectTasks, UI_ROUTES } from "../src/ui/routes.ts";
 import { UI_COOKIE, UI_CSRF_HEADER } from "../src/ui/security.ts";
 import { deriveCsrf } from "../src/ui/security.ts";
-import { esc, html, raw, stubSection, toHtml, UI_NAV } from "../src/ui/html.ts";
+import { diffHtml, esc, html, opForm, raw, toHtml, UI_NAV } from "../src/ui/html.ts";
 import { decodePatch } from "../src/ui/features/config.ts";
 import { readWidget, renderWidget } from "../src/ui/form/render.ts";
 import { branchFor, itemSchema, loadConfigSchema, resolveAt } from "../src/ui/form/schema.ts";
@@ -90,15 +90,25 @@ Deno.test("the same-origin assets are served with the right content types", asyn
     assertStringIncludes(source, "DOMParser");
     assertStringIncludes(source, "/_ui/events");
     assert(!source.includes(".innerHTML ="), "untrusted text is never innerHTML'd");
+    // It is a string in `client.ts`, so nothing else parses it: do it here.
+    new Function(source);
+    // Every frame the panels push is dispatched (an unknown one is ignored, not thrown on).
+    const frames = [
+      "reload",
+      "plugins-changed",
+      "command-done",
+      "task-done",
+      "dev-output",
+      "dev-exit",
+      "dev-ready",
+    ];
+    for (const type of frames) assertStringIncludes(source, type);
   } finally {
     await stop(h);
   }
 });
 
-/** Feature panels not yet implemented — each ships as a 501 stub until its own job lands. */
-const STILL_STUBBED = new Set<string>([]);
-
-Deno.test("every feature route serves a page; the unfinished ones a placeholder + 501 JSON twin", async () => {
+Deno.test("every feature route serves a page with the panel ui.js swaps", async () => {
   const h = await ui();
   try {
     const pages = Object.entries(UI_ROUTES)
@@ -110,16 +120,7 @@ Deno.test("every feature route serves a page; the unfinished ones a placeholder 
     for (const [path] of pages) {
       const page = await fetch(`${h.base}${path}`, { headers: h.headers });
       assertEquals(page.status, 200, path);
-      const body = await page.text();
-      assertStringIncludes(body, '<section id="panel"', path);
-      if (!STILL_STUBBED.has(path)) continue;
-      assertStringIncludes(body, "Not implemented yet", path);
-
-      const api = await fetch(`${h.base}/api${path}`, { headers: h.headers });
-      assertEquals(api.status, 501, `/api${path}`);
-      const payload = await api.json();
-      assertEquals(payload.ok, false, `/api${path}`);
-      assertEquals(payload.reason, "not implemented", `/api${path}`);
+      assertStringIncludes(await page.text(), '<section id="panel"', path);
     }
   } finally {
     await stop(h);
@@ -236,12 +237,29 @@ Deno.test("the html tag escapes interpolations and passes raw() through", () => 
   assertEquals(esc(`&<>"'`), "&#38;&#60;&#62;&#34;&#39;");
 });
 
-Deno.test("stubSection renders the swappable panel a feature stub answers with", () => {
-  const markup = toHtml(stubSection({ title: "Docker", lead: "lead text", job: "J8" }));
-  assertStringIncludes(markup, '<section id="panel"');
-  assertStringIncludes(markup, "Docker");
-  assertStringIncludes(markup, "lead text");
-  assertStringIncludes(markup, "J8");
+Deno.test("opForm renders the CSRF token, the hidden fields and the button", () => {
+  const markup = toHtml(opForm("tok", {
+    action: "/wizard",
+    label: "Apply",
+    fields: { op: "denojson", confirm: "1" },
+    className: "op",
+    disabled: true,
+  }));
+  assertStringIncludes(markup, 'action="/wizard"');
+  assertStringIncludes(markup, 'class="op"');
+  assertStringIncludes(markup, 'name="_csrf" value="tok"');
+  assertStringIncludes(markup, 'name="op" value="denojson"');
+  assertStringIncludes(markup, 'name="confirm" value="1"');
+  assertStringIncludes(markup, '<button type="submit" disabled>Apply</button>');
+});
+
+Deno.test("diffHtml classes a unified diff's lines, escaping every one of them", () => {
+  const markup = toHtml(diffHtml("--- a/x\n+++ b/x\n@@ -1 +1 @@\n-was <b>\n+now\n ctx"));
+  assertStringIncludes(markup, '<pre class="out"><code class="diff">');
+  assertStringIncludes(markup, '<span class="del">-was &#60;b&#62;</span>');
+  assertStringIncludes(markup, '<span class="add">+now</span>');
+  assertStringIncludes(markup, '<span class="meta">@@ -1 +1 @@</span>');
+  assertStringIncludes(markup, "\n ctx</code></pre>", "context lines are left unclassed");
 });
 
 Deno.test("projectTasks reads deno.json and deno.jsonc, and tolerates neither", async () => {

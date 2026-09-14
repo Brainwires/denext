@@ -14,27 +14,14 @@
 
 import { join, toFileUrl } from "@std/path";
 import { readConfigModel } from "../../build/config-edit.ts";
-import {
-  html,
-  htmlResponse,
-  jsonResponse,
-  layout,
-  raw,
-  type RawHtml,
-  renderPage,
-  toHtml,
-  UI_NAV,
-  type UiContext,
-} from "../html.ts";
+import { CONFIG_FILES } from "../../build/paths.ts";
+import { html, jsonResponse, panelResponder, raw, type RawHtml, type UiContext } from "../html.ts";
 import { UI_CSRF_FIELD } from "../security.ts";
 import { control } from "../form/control.ts";
 import { loadConfigSchema, resolveAt } from "../form/schema.ts";
 import { widgetFor } from "../form/widget.ts";
 import { encode } from "../form/value.ts";
 import { runDeno } from "../proc.ts";
-
-/** The denext config names this panel probes for a `compatibilityMode` opt-in. */
-const DENEXT_CONFIGS = ["denext.config.ts", "denext.config.mts", "denext.config.js"];
 
 /** The `next.config.*` names, in the order Next itself resolves them. */
 const NEXT_CONFIGS = ["next.config.ts", "next.config.mjs", "next.config.js", "next.config.cjs"];
@@ -74,7 +61,8 @@ const EVAL_TIMEOUT_MS = 15_000;
 const RESULT_MARKER = "__DENEXT_UI_NEXT_CONFIG__";
 
 /**
- * The evaluator, run as a subprocess rooted at the app dir. It imports the config, unwraps a
+ * The evaluator, piped to `deno run -` as a subprocess rooted at the app dir (so the program
+ * never exists as a file or a `data:` URL). It imports the config, unwraps a
  * function/promise form, CALLS the rule thunks (a function cannot be serialised; its result
  * can), and prints one marker line. It exits explicitly: a config wrapper may keep the event
  * loop alive or crash asynchronously long after it handed the object over.
@@ -123,7 +111,6 @@ function unreadable(file: string): NextConfigRead {
 
 /** Evaluate `next.config.*` in a bounded, least-privilege subprocess. */
 const evalNextConfig: NextConfigEvaluator = async (dir, file) => {
-  const program = "data:application/typescript," + encodeURIComponent(EVAL_PROGRAM);
   try {
     const result = await runDeno([
       "run",
@@ -131,9 +118,13 @@ const evalNextConfig: NextConfigEvaluator = async (dir, file) => {
       `--allow-read=${dir}`,
       "--allow-env",
       "--allow-sys",
-      program,
+      "-",
       toFileUrl(join(dir, file)).href,
-    ], { cwd: dir, signal: AbortSignal.timeout(EVAL_TIMEOUT_MS) });
+    ], {
+      cwd: dir,
+      stdin: EVAL_PROGRAM,
+      signal: AbortSignal.timeout(EVAL_TIMEOUT_MS),
+    });
     const line = result.stdout.split("\n").find((l) => l.startsWith(RESULT_MARKER));
     if (!line) return unreadable(file);
     return { file, failed: false, ...JSON.parse(line.slice(RESULT_MARKER.length)) };
@@ -182,7 +173,7 @@ async function dependsOnNext(dir: string): Promise<boolean> {
 
 /** Whether the denext config opts into the compat pipeline. */
 async function usesCompatMode(dir: string): Promise<boolean> {
-  for (const name of DENEXT_CONFIGS) {
+  for (const name of CONFIG_FILES) {
     const text = await Deno.readTextFile(join(dir, name)).catch(() => null);
     if (text === null) continue;
     const info = (await readConfigModel(text)).keys.compatibilityMode;
@@ -214,9 +205,9 @@ async function detect(dir: string): Promise<Compat> {
 /** One `<table>` with a header row. */
 function table(head: readonly string[], rows: readonly RawHtml[]): RawHtml {
   return html`
-    <table style="width:100%;border-collapse:collapse;text-align:left">
+    <table class="table">
       <thead>
-        <tr>${head.map((cell) => html`<th style="padding:4px 8px">${cell}</th>`)}</tr>
+        <tr>${head.map((cell) => html`<th>${cell}</th>`)}</tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>
@@ -249,9 +240,9 @@ ${control({ tag: "input", type: "hidden", name: UI_CSRF_FIELD, value: ctx.csrf }
 function honoredRow(ctx: UiContext, key: string, value: unknown): RawHtml {
   return html`
     <tr>
-      <td style="padding:4px 8px"><code class="mono">${key}</code></td>
-      <td style="padding:4px 8px"><code class="mono">${preview(value)}</code></td>
-      <td style="padding:4px 8px">${translateForm(ctx, key, value)}</td>
+      <td><code class="mono">${key}</code></td>
+      <td><code class="mono">${preview(value)}</code></td>
+      <td>${translateForm(ctx, key, value)}</td>
     </tr>
   `;
 }
@@ -261,8 +252,8 @@ function droppedRow(key: string): RawHtml {
   const note = DROP_NOTES[key];
   return html`
     <tr>
-      <td style="padding:4px 8px"><code class="mono">${key}</code></td>
-      <td style="padding:4px 8px">${note === undefined || note === ""
+      <td><code class="mono">${key}</code></td>
+      <td>${note === undefined || note === ""
         ? "no denext equivalent — nothing to port."
         : note}</td>
     </tr>
@@ -337,6 +328,9 @@ function payload(compat: Compat, read: NextConfigRead | null): Record<string, un
   };
 }
 
+/** The panel shell: the bare section for `ui.js`, the whole document for a navigation. */
+const panelResponse = panelResponder("next.config", "/config/next");
+
 /**
  * Serve the `next.config` panel: a one-paragraph note for a native denext app, and for a compat
  * app the evaluated config as three tables, each honored key offering to translate itself into
@@ -350,13 +344,5 @@ export async function nextConfigPanel(_request: Request, ctx: UiContext): Promis
   const compat = await detect(ctx.dir);
   const read = compat.compat && compat.file ? await evaluate(ctx.dir, compat.file) : null;
   if (ctx.json) return jsonResponse({ ok: true, ...payload(compat, read) });
-  const body = compat.compat ? readBody(ctx, compat, read) : notCompatBody();
-  if (ctx.fragment) return htmlResponse(toHtml(body));
-  return htmlResponse(renderPage(layout, {
-    title: "next.config",
-    nav: UI_NAV,
-    body,
-    csrf: ctx.csrf,
-    active: "/config/next",
-  }));
+  return panelResponse(ctx, compat.compat ? readBody(ctx, compat, read) : notCompatBody());
 }

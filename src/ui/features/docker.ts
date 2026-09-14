@@ -24,15 +24,12 @@ import {
 } from "../../build/docker-template.ts";
 import { createUnifiedDiff } from "../../build/patch-diff.ts";
 import {
+  diffHtml,
   html,
-  htmlResponse,
   jsonResponse,
-  layout,
+  panelResponder,
   raw,
   type RawHtml,
-  renderPage,
-  toHtml,
-  UI_NAV,
   type UiContext,
   type UiHandler,
 } from "../html.ts";
@@ -231,20 +228,15 @@ function seeResult(
   return new Response(null, { status: 303, headers: { location: `/docker?${params}` } });
 }
 
+/** The panel shell: the bare section for `ui.js`, the whole document for a navigation. */
+const panelResponse = panelResponder("Docker", "/docker");
+
 /**
  * Answer with the panel — the whole document, or only the `<section>` when `ui.js` asked for a
  * fragment to swap in place.
  */
 function respond(state: PanelState, ctx: UiContext, status = 200): Response {
-  const section = panelSection(state);
-  const markup = ctx.fragment ? toHtml(section) : renderPage(layout, {
-    title: "Docker",
-    nav: UI_NAV,
-    body: section,
-    csrf: state.csrf,
-    active: "/docker",
-  });
-  return htmlResponse(markup, status);
+  return panelResponse(ctx, panelSection(state), status);
 }
 
 // ── options ──────────────────────────────────────────────────────────────────
@@ -422,7 +414,7 @@ function previewView(state: PanelState): RawHtml {
         <summary><code>${file.path}</code> <span class="badge">${badge}</span></summary>
         ${file.diff === undefined
           ? html`<p class="note">Identical to what is on disk.</p>`
-          : html`<pre class="out">${file.diff}</pre>`}
+          : diffHtml(file.diff)}
       </details>
     `;
   });

@@ -157,7 +157,8 @@ Deno.test("a missing dev task previews as a merge that adds only that key", asyn
     assertStringIncludes(body, 'name="confirm" value="1"');
     // The diff introduces exactly one key. The preceding member is re-emitted only because it
     // gains a comma, so it shows up on both sides and cancels out; nothing else moves.
-    const lines = body.split("\n");
+    // The rendered diff classes each line, so the markup comes off before the +/- is read.
+    const lines = body.replace(/<[^>]+>/g, "").split("\n");
     const keysOn = (sign: string): string[] =>
       lines
         .filter((l) => l.startsWith(sign) && !l.startsWith(sign.repeat(3)))

@@ -17,8 +17,6 @@
 // `--read-only`, and only project/plugin verbs that declare no required positional are offered
 // a Run button — built-ins belong in the terminal, where their long-lived output does.
 
-import { frameworkFileUrl } from "../../build/bundle.ts";
-import { sseSend } from "../../build/sse.ts";
 import {
   CommandRegistry,
   type CommandSpec,
@@ -29,18 +27,15 @@ import { COMMAND_LOAD_BUDGET_MS, loadPluginCommands } from "../../cli/plugin-com
 import { resetPlugins } from "../../plugin/mod.ts";
 import {
   html,
-  htmlResponse,
   jsonResponse,
-  layout,
+  opForm,
+  panelResponder,
   type RawHtml,
-  renderPage,
-  toHtml,
-  UI_NAV,
   type UiContext,
   type UiHandler,
 } from "../html.ts";
-import { runDeno, type RunDenoOptions } from "../proc.ts";
-import { UI_CSRF_FIELD } from "../security.ts";
+import { broadcast, exitLine, sseProcess } from "../events.ts";
+import { cliInvocation, runDeno, type RunDenoOptions } from "../proc.ts";
 
 /** The panel's own path — its form action, and the nav entry it marks current. */
 const PATH = "/commands";
@@ -128,11 +123,6 @@ export function setCommandBudget(ms: number): number {
   const previous = budgetMs;
   budgetMs = ms;
   return previous;
-}
-
-/** The argv prefix that runs this framework's own CLI in a child process. */
-function cliInvocation(): string[] {
-  return ["run", "-A", frameworkFileUrl("cli.ts")];
 }
 
 // ── discovery ────────────────────────────────────────────────────────────────
@@ -275,7 +265,7 @@ function renderFlags(flags: readonly FlagSpec[]): RawHtml {
     `
   );
   return html`
-    <table class="flags">
+    <table class="table">
       <thead>
         <tr>
           <th>Flag</th>
@@ -302,10 +292,7 @@ ${positional.required ? html`<span class="badge">required</span>` : ""}</li>`
 
 /** The one-button form that runs a verb (a real POST, upgraded to fetch + SSE by ui.js). */
 function runForm(name: string, csrf: string): RawHtml {
-  return html`<form method="post" action="${PATH}">
-<input type="hidden" name="${UI_CSRF_FIELD}" value="${csrf}">
-<input type="hidden" name="verb" value="${name}">
-<button type="submit">Run</button></form>`;
+  return opForm(csrf, { action: PATH, label: "Run", fields: { verb: name } });
 }
 
 /** One verb: what it is, how it is invoked, and (when it needs no argument) how to run it. */
@@ -366,29 +353,19 @@ ${GROUPS.map((group) => renderGroup(group, list.commands, csrf))}
 <pre class="out">${output.join("\n")}</pre></section>`;
 }
 
+/** The panel's shell: a fragment for `ui.js`, the whole document for a plain navigation. */
+const respond = panelResponder("Commands", PATH);
+
 /** Answer with the panel: the bare section when ui.js asked for one, else the full document. */
 function panelResponse(ctx: UiContext, list: UiCommandList, output: readonly string[]): Response {
-  const section = panelSection(list, ctx.csrf, output);
-  if (ctx.fragment) return htmlResponse(toHtml(section));
-  return htmlResponse(renderPage(layout, {
-    title: "Commands",
-    nav: UI_NAV,
-    body: section,
-    csrf: ctx.csrf,
-    active: PATH,
-  }));
+  return respond(ctx, panelSection(list, ctx.csrf, output));
 }
 
 // ── running a verb ───────────────────────────────────────────────────────────
 
-/** The last line of every run, so a reader can tell "finished" from "still going". */
-function exitLine(code: number): string {
-  return `— exited ${code}`;
-}
-
 /** Tell every open page a run finished, so a second tab's list is not stale. */
 function announce(ctx: UiContext, verb: string, code: number): void {
-  sseSend(ctx.events, JSON.stringify({ type: "command-done", command: verb, code }));
+  broadcast(ctx.events, { type: "command-done", command: verb, code });
 }
 
 /** The verb the mutation asked for — a form field (no-JS and ui.js) or a JSON body. */
@@ -408,27 +385,13 @@ function refusal(verb: string, info: UiCommandInfo | undefined): string {
 
 /**
  * Stream a verb's output to the browser as SSE `data:` frames, one per line, closing with the
- * exit frame. Writes are queued on a single writer, so lines arrive in the order they were
- * produced and a page that navigated away simply drops them.
+ * exit frame. A page that navigated away simply drops what is still arriving.
  */
 function streamRun(ctx: UiContext, verb: string, argv: string[]): Response {
-  const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
-  const writer = writable.getWriter();
-  const encoder = new TextEncoder();
-  const frame = (line: string): void => {
-    const data = `data: ${line.replace(/\r?\n/g, " ")}\n\n`;
-    writer.write(encoder.encode(data)).catch(() => {/* the page navigated away mid-run */});
-  };
-  runner(argv, { cwd: ctx.dir, onLine: frame })
-    .then((code) => {
-      frame(exitLine(code));
-      announce(ctx, verb, code);
-    })
-    .catch((error) => frame(`— failed: ${error instanceof Error ? error.message : error}`))
-    .finally(() => {
-      writer.close().catch(() => {/* already closed by the client */});
-    });
-  return new Response(readable, { headers: { "content-type": "text/event-stream" } });
+  return sseProcess(
+    (line) => runner(argv, { cwd: ctx.dir, onLine: line }),
+    { settled: (code) => code !== null && announce(ctx, verb, code) },
+  );
 }
 
 /** Run the verb the way this client can consume it: SSE, a JSON envelope, or a re-rendered page. */

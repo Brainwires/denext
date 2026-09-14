@@ -170,7 +170,14 @@ function scaffoldImports(opts: ScaffoldOptions): Record<string, string> {
   };
 }
 
-function denoJson(opts: ScaffoldOptions): string {
+/**
+ * The `deno.json` a fresh `denext create` writes — also the template the UI's setup wizard
+ * diffs an existing project's config against.
+ *
+ * @param opts The scaffold options (only the feature flags are read).
+ * @returns The file's text.
+ */
+export function denoJson(opts: ScaffoldOptions): string {
   const config: Record<string, unknown> = {
     tasks: scaffoldTasks(opts),
     compilerOptions: {

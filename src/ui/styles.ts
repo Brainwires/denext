@@ -13,6 +13,8 @@ export const UI_CSS = `:root {
   --line: #dfe3e9;
   --accent: #2f6feb;
   --warn: #8a5a00;
+  --add: #1a7f37;
+  --del: #b3261e;
   --radius: 8px;
 }
 @media (prefers-color-scheme: dark) {
@@ -24,6 +26,8 @@ export const UI_CSS = `:root {
     --line: #262b35;
     --accent: #6c9bff;
     --warn: #e0b050;
+    --add: #58c470;
+    --del: #ff8080;
   }
 }
 * { box-sizing: border-box; }
@@ -101,6 +105,41 @@ pre.out {
   white-space: pre-wrap;
   font-size: 13px;
 }
+.diff { font: inherit; }
+.diff .add { color: var(--add); }
+.diff .del { color: var(--del); }
+.diff .meta { color: var(--dim); }
+.step { border-top: 1px solid var(--line); padding-top: 8px; margin: 0 0 22px; }
+.step h2 { margin-top: 4px; }
+.outcome {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 10px 14px;
+  margin: 10px 0 0;
+}
+.outcome > :first-child { margin-top: 0; }
+.outcome > :last-child { margin-bottom: 0; }
+.checks { list-style: none; margin: 8px 0; padding: 0; }
+.checks li { padding: 3px 0; border-bottom: 1px solid var(--line); }
+.checks li:last-child { border-bottom: 0; }
+form.op { display: inline-block; margin: 4px 8px 4px 0; }
+.table { width: 100%; border-collapse: collapse; margin: 6px 0 14px; font-size: 14px; }
+.table th, .table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 5px 10px 5px 0;
+  border-bottom: 1px solid var(--line);
+}
+.table th { color: var(--dim); font-weight: 600; }
+.row { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; }
+.row.top { align-items: flex-start; }
+.row .grow { flex: 1; }
+.verb { border-top: 1px solid var(--line); padding: 10px 0 4px; }
+.verb h3 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
+.verb p { margin: 0 0 6px; }
+.args { margin: 4px 0 8px; padding-left: 18px; color: var(--dim); font-size: 13px; }
 .badge {
   display: inline-block;
   font-size: 12px;

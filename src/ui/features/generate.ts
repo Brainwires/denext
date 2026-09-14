@@ -20,14 +20,10 @@ import {
 } from "../../build/generate.ts";
 import {
   html,
-  htmlResponse,
   jsonResponse,
-  layout,
+  panelResponder,
   raw,
   type RawHtml,
-  renderPage,
-  toHtml,
-  UI_NAV,
   type UiContext,
   type UiHandler,
 } from "../html.ts";
@@ -212,20 +208,12 @@ function seeResult(
   return new Response(null, { status: 303, headers: { location: `/generate?${params}` } });
 }
 
+/** The panel shell: the bare section for `ui.js`, the whole document for a navigation. */
+const panelResponse = panelResponder("Generate", "/generate");
+
 /** The panel as a full document, or as the bare `<section>` on a fragment request. */
 function page(state: PanelState, ctx: UiContext, status = 200): Response {
-  const section = panelSection(state);
-  if (ctx.fragment) return htmlResponse(toHtml(section), status);
-  return htmlResponse(
-    renderPage(layout, {
-      title: "Generate",
-      nav: UI_NAV,
-      body: section,
-      csrf: state.csrf,
-      active: "/generate",
-    }),
-    status,
-  );
+  return panelResponse(ctx, panelSection(state), status);
 }
 
 // ── views ────────────────────────────────────────────────────────────────────

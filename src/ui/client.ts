@@ -89,7 +89,51 @@ document.addEventListener("submit", (event) => {
   submit(form, event.submitter).catch((error) => console.error("denext ui:", error));
 });
 
-// Server-pushed events: task progress broadcast to every open page, and the --ui-dev reload.
+// Server-pushed events: progress broadcast to every open page, the wizard's dev-server run,
+// and the --ui-dev reload. Each frame is one JSON object with a "type"; anything unknown is
+// ignored, so a newer server never breaks an older page.
+
+/** Re-fetch the panel this page is showing, so a change made elsewhere lands here too. */
+async function refresh() {
+  const response = await fetch(location.pathname + location.search, {
+    headers: { accept: "text/html-fragment" },
+  });
+  if (response.ok) swapPanel(await response.text());
+}
+
+/** Append one line to the panel's output block, if it is showing one. */
+function appendOut(line) {
+  const sink = document.querySelector("#panel pre.out");
+  if (!sink) return;
+  sink.append(document.createTextNode(line + "\\n"));
+  sink.scrollTop = sink.scrollHeight;
+}
+
+/** The dev server came up: put its address in the panel, once. */
+function devReady(url) {
+  const panel = document.querySelector("#panel");
+  if (!panel || panel.querySelector("[data-dev-url]")) return;
+  const note = document.createElement("p");
+  note.className = "note";
+  note.setAttribute("data-dev-url", url);
+  note.append(document.createTextNode("Dev server running at "));
+  const link = document.createElement("a");
+  link.href = url;
+  link.textContent = url;
+  note.append(link);
+  panel.prepend(note);
+}
+
+const FRAMES = {
+  reload: () => location.reload(),
+  "plugins-changed": () => refresh(),
+  "command-done": () => refresh(),
+  "task-done": () => refresh(),
+  "dev-output": (payload) => appendOut(payload.line ?? ""),
+  "dev-exit": (payload) => appendOut("\u2014 exited " + payload.code),
+  "dev-ready": (payload) => devReady(payload.url ?? ""),
+};
+
 const events = new EventSource(EVENTS);
 events.addEventListener("message", (event) => {
   let payload = null;
@@ -98,6 +142,8 @@ events.addEventListener("message", (event) => {
   } catch {
     return;
   }
-  if (payload && payload.type === "reload") location.reload();
+  if (!payload || !Object.hasOwn(FRAMES, payload.type)) return;
+  Promise.resolve(FRAMES[payload.type](payload))
+    .catch((error) => console.error("denext ui:", error));
 });
 `;

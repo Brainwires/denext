@@ -6,9 +6,7 @@
 // HTML UI and a machine client exercise identical code. Anything not `GET`/`HEAD` is a mutation
 // and passes the origin + CSRF + `--read-only` gates in `server.ts` before arriving here.
 
-import { parse as parseJsonc } from "@std/jsonc";
-import { join } from "@std/path";
-import { type SseClients, sseSend, sseStream } from "../build/sse.ts";
+import { sseStream } from "../build/sse.ts";
 import {
   html,
   htmlResponse,
@@ -25,7 +23,9 @@ import {
 } from "./html.ts";
 import { UI_CSS } from "./styles.ts";
 import { UI_JS } from "./client.ts";
+import { broadcast, sseProcess } from "./events.ts";
 import { runDeno } from "./proc.ts";
+import { readDenoConfig, taskMap } from "./tasks.ts";
 import { configPanel } from "./features/config.ts";
 import { pluginsPanel } from "./features/plugins.ts";
 import { generatePanel } from "./features/generate.ts";
@@ -91,16 +91,6 @@ function buildRoutes(): Record<string, UiRoute> {
 /** Every path `denext ui` serves, keyed by pathname. */
 export const UI_ROUTES: Record<string, UiRoute> = buildRoutes();
 
-/**
- * Push a JSON event to every open UI page.
- *
- * @param clients The `/_ui/events` subscribers.
- * @param event A JSON-serialisable payload.
- */
-export function broadcast(clients: SseClients, event: unknown): void {
-  sseSend(clients, JSON.stringify(event));
-}
-
 // ── `/` ──────────────────────────────────────────────────────────────────────
 
 /** What each card on the overview says. */
@@ -153,39 +143,19 @@ async function runTask(request: Request, ctx: UiContext): Promise<Response> {
   if (!tasks.includes(name)) {
     return jsonResponse({ ok: false, reason: `unknown task "${name}"`, tasks }, 400);
   }
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream<Uint8Array>({
-    start: (controller) => {
-      const frame = (line: string) => {
-        try {
-          controller.enqueue(encoder.encode(`data: ${line.replace(/\r?\n/g, " ")}\n\n`));
-        } catch { /* the page navigated away */ }
-      };
-      runDeno(["task", name], { cwd: ctx.dir, onLine: frame })
-        .then((r) => frame(`— exited ${r.code}`))
-        .catch((e) => frame(`— failed: ${e instanceof Error ? e.message : String(e)}`))
-        .finally(() => {
-          broadcast(ctx.events, { type: "task-done", task: name });
-          controller.close();
-        });
-    },
-  });
-  return new Response(stream, { headers: { "content-type": "text/event-stream" } });
+  return sseProcess(
+    async (line) => (await runDeno(["task", name], { cwd: ctx.dir, onLine: line })).code,
+    { settled: () => broadcast(ctx.events, { type: "task-done", task: name }) },
+  );
 }
 
 /**
- * The task names declared in the project's `deno.json` / `deno.jsonc`.
+ * The task names declared in the project's `deno.json` / `deno.jsonc` — the only names
+ * `/tasks/run` will spawn.
  *
  * @param dir The project directory.
  * @returns The declared task names (empty when there is no config, or it is unreadable).
  */
 export async function projectTasks(dir: string): Promise<string[]> {
-  for (const name of ["deno.json", "deno.jsonc"]) {
-    try {
-      const parsed = parseJsonc(await Deno.readTextFile(join(dir, name)));
-      const tasks = (parsed as { tasks?: Record<string, unknown> } | null)?.tasks;
-      if (tasks && typeof tasks === "object") return Object.keys(tasks);
-    } catch { /* absent or malformed — try the next name */ }
-  }
-  return [];
+  return Object.keys(taskMap(await readDenoConfig(dir)));
 }

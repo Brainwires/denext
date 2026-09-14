@@ -17,28 +17,25 @@
 
 import { createUnifiedDiff } from "../../build/patch-diff.ts";
 import { setJsonValue } from "../../build/json-edit.ts";
-import { frameworkFileUrl } from "../../build/bundle.ts";
 import { denoVersionOk, MIN_DENO_VERSION } from "../../build/deno-version.ts";
 import { generateArtifact } from "../../build/generate.ts";
-import { scaffoldFiles, scaffoldProject } from "../../build/scaffold.ts";
-import { sseSend } from "../../build/sse.ts";
+import { denoJson, scaffoldProject } from "../../build/scaffold.ts";
 import { type DevInfo, readDevInfo } from "../../mcp/dev-client.ts";
 import { FEATURES } from "../../cli/commands/create.ts";
 import {
+  diffHtml,
   html,
-  htmlResponse,
   jsonResponse,
-  layout,
+  opForm,
+  panelResponder,
   raw,
   type RawHtml,
-  renderPage,
-  toHtml,
-  UI_NAV,
   type UiContext,
   type UiHandler,
 } from "../html.ts";
+import { broadcast } from "../events.ts";
 import { uiSafeJoin } from "../security.ts";
-import { runDeno } from "../proc.ts";
+import { cliInvocation, runDeno } from "../proc.ts";
 import { envExampleSource, type EnvScan, scanEnvUsage } from "../env-scan.ts";
 import { type DenoConfigFile, readDenoConfig, taskMap } from "../tasks.ts";
 
@@ -95,8 +92,7 @@ let template: Record<string, unknown> | null = null;
  */
 function templateJson(): Record<string, unknown> {
   if (template === null) {
-    const file = scaffoldFiles({ dir: "." }).find((f) => f.path === "deno.json");
-    template = JSON.parse(file?.content ?? "{}") as Record<string, unknown>;
+    template = JSON.parse(denoJson({ dir: "." })) as Record<string, unknown>;
   }
   return template;
 }
@@ -650,8 +646,8 @@ function opStartDev(ctx: UiContext, s: Survey): Promise<OpOutcome> {
  * immediately and the page follows the SSE channel.
  */
 function startDevServer(ctx: UiContext): void {
-  const push = (event: unknown): void => sseSend(ctx.events, JSON.stringify(event));
-  runDeno(["run", "-A", frameworkFileUrl("cli.ts"), "dev", ctx.dir], {
+  const push = (event: unknown): void => broadcast(ctx.events, event);
+  runDeno([...cliInvocation(), "dev", ctx.dir], {
     cwd: ctx.dir,
     onLine: (line) => push({ type: "dev-output", line }),
   })
@@ -707,7 +703,7 @@ export function setDoctorRunner(runner: DoctorRunner | null): void {
  */
 async function runDoctorSubprocess(dir: string): Promise<DoctorCheck[]> {
   const run = await runDeno(
-    ["run", "-A", frameworkFileUrl("cli.ts"), "doctor", "--json", "--cwd", dir],
+    [...cliInvocation(), "doctor", "--json", "--cwd", dir],
     { cwd: dir, signal: AbortSignal.timeout(120_000) },
   );
   const parsed = run.json();
@@ -727,12 +723,14 @@ function isCheck(value: unknown): value is DoctorCheck {
 
 /** One operation, as the real form that works without JavaScript. */
 function actionForm(ctx: UiContext, action: StepAction): RawHtml {
-  return html`<form method="post" action="${action.action ?? "/wizard"}" class="op">
-<input type="hidden" name="_csrf" value="${ctx.csrf}">
-<input type="hidden" name="op" value="${action.op}">
-${action.fields ?? ""}
-<button type="submit"${ctx.readOnly ? raw(" disabled") : ""}>${action.label}</button>
-</form>`;
+  return opForm(ctx.csrf, {
+    action: action.action ?? "/wizard",
+    label: action.label,
+    fields: { op: action.op },
+    extra: action.fields,
+    className: "op",
+    disabled: ctx.readOnly,
+  });
 }
 
 /** The result of the operation that was just posted, rendered inside its own step. */
@@ -744,7 +742,7 @@ function renderOutcome(ctx: UiContext, outcome: OpOutcome): RawHtml {
   };
   return html`<div class="outcome">
 ${outcome.message ? html`<p class="note">${outcome.message}</p>` : ""}
-${outcome.diff ? html`<pre class="out">${outcome.diff}</pre>` : ""}
+${outcome.diff ? diffHtml(outcome.diff) : ""}
 ${confirm ? actionForm(ctx, confirm) : ""}
 ${outcome.output ? html`<pre class="out">${outcome.output}</pre>` : ""}
 ${outcome.checks ? renderChecks(ctx, outcome.checks) : ""}
@@ -798,6 +796,9 @@ function jsonStep(view: StepView): Record<string, unknown> {
   };
 }
 
+/** The panel shell: the bare section for `ui.js`, the whole document for a navigation. */
+const panelResponse = panelResponder("Wizard", "/wizard");
+
 /** Render the wizard as a page, a fragment, or the JSON twin. */
 function respond(ctx: UiContext, survey: Survey, outcome?: OpOutcome): Response {
   const views = STEPS.map((step) => step.view(survey));
@@ -810,15 +811,7 @@ function respond(ctx: UiContext, survey: Survey, outcome?: OpOutcome): Response 
       ...(outcome ? { outcome } : {}),
     }, outcome && !outcome.ok ? 400 : 200);
   }
-  const body = renderWizard(ctx, views, outcome);
-  if (ctx.fragment) return htmlResponse(toHtml(body));
-  return htmlResponse(renderPage(layout, {
-    title: "Wizard",
-    nav: UI_NAV,
-    body,
-    csrf: ctx.csrf,
-    active: "/wizard",
-  }));
+  return panelResponse(ctx, renderWizard(ctx, views, outcome));
 }
 
 /** A completed write: `303` back to the step that did it, so a reload never re-posts. */

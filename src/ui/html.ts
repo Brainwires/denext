@@ -70,6 +70,7 @@ export function toHtml(fragment: RawHtml): string {
 // ── the handler contract ─────────────────────────────────────────────────────
 
 import type { SseClients } from "../build/sse.ts";
+import { UI_CSRF_FIELD } from "./security.ts";
 
 /** Everything a feature handler is told about the current request. */
 export interface UiContext {
@@ -226,56 +227,99 @@ export function htmlResponse(markup: string, status = 200): Response {
   });
 }
 
-// ── feature stubs ────────────────────────────────────────────────────────────
-
-/** What a not-yet-implemented feature panel announces. */
-export interface StubSpec {
-  /** Panel title. */
-  readonly title: string;
-  /** One sentence describing what the panel will do. */
-  readonly lead: string;
-  /** The job id that fills this panel in. */
-  readonly job: string;
-}
+// ── panels ──────────────────────────────────────────────────────────────────
 
 /**
- * Render one feature panel's `<section>`; the piece `ui.js` swaps on a fragment request.
+ * Build one feature module's panel responder: the answer to "a fragment, or the whole page?"
+ * that every panel gives identically — the bare `<section id="panel">` when `ui.js` asked for
+ * one to swap, the full document otherwise.
  *
- * @param spec The panel description.
- * @returns The section markup.
+ * @param title The panel's title (the document title, and its heading in the tab bar).
+ * @param active The nav href to mark current — the panel's own HTML path.
+ * @returns The `(ctx, body, status?) => Response` the module answers every HTML request with.
  */
-export function stubSection(spec: StubSpec): RawHtml {
-  return html`
-    <section id="panel" data-panel="${spec.title}">
-      <h1>${spec.title}</h1>
-      <p class="lead">${spec.lead}</p>
-      <p class="note">Not implemented yet — this panel lands in ${spec.job}.</p>
-    </section>
-  `;
-}
-
-/**
- * Build the handler a not-yet-implemented feature module exports: a walkable placeholder page
- * on the HTML route, a `501` `{ ok: false, reason }` envelope on the `/api/*` twin.
- *
- * @param spec The panel description.
- * @returns The handler.
- */
-export function stubHandler(spec: StubSpec): UiHandler {
-  return (_request: Request, ctx: UiContext): Promise<Response> => {
-    if (ctx.json) {
-      return Promise.resolve(
-        jsonResponse({ ok: false, reason: "not implemented", job: spec.job }, 501),
-      );
-    }
-    const section = stubSection(spec);
-    if (ctx.fragment) return Promise.resolve(htmlResponse(toHtml(section)));
-    return Promise.resolve(htmlResponse(renderPage(layout, {
-      title: spec.title,
-      nav: UI_NAV,
-      body: section,
-      csrf: ctx.csrf,
-      active: ctx.url.pathname,
-    })));
+export function panelResponder(
+  title: string,
+  active: string,
+): (ctx: UiContext, body: RawHtml, status?: number) => Response {
+  return (ctx: UiContext, body: RawHtml, status = 200): Response => {
+    if (ctx.fragment) return htmlResponse(toHtml(body), status);
+    return htmlResponse(
+      renderPage(layout, { title, nav: UI_NAV, body, csrf: ctx.csrf, active }),
+      status,
+    );
   };
+}
+
+/** What one {@linkcode opForm} posts. */
+export interface OpFormOptions {
+  /** The form action (the panel's own path unless the operation posts elsewhere). */
+  readonly action: string;
+  /** The submit button's label. */
+  readonly label: string;
+  /** Hidden fields carried with the operation (`op`, a row name, `confirm`, …). */
+  readonly fields?: Readonly<Record<string, string>>;
+  /** Extra markup inside the form, after the hidden fields. */
+  readonly extra?: RawHtml;
+  /** A class on the `<form>` itself. */
+  readonly className?: string;
+  /** Disable the button (what `--read-only` does to every write). */
+  readonly disabled?: boolean;
+}
+
+/**
+ * One operation as a real `<form method="post">` — the CSRF token, the operation's hidden
+ * fields and a submit button. Works with JavaScript disabled; `ui.js` upgrades the same form to
+ * fetch + panel swap.
+ *
+ * @param csrf The session CSRF token.
+ * @param options Action, label, hidden fields and whether the button is disabled.
+ * @returns The form markup.
+ */
+export function opForm(csrf: string, options: OpFormOptions): RawHtml {
+  const parts = [hiddenField(UI_CSRF_FIELD, csrf)];
+  for (const [name, value] of Object.entries(options.fields ?? {})) {
+    parts.push(hiddenField(name, value));
+  }
+  if (options.extra) parts.push(toHtml(options.extra));
+  const className = options.className ? ` class="${esc(options.className)}"` : "";
+  const disabled = options.disabled ? " disabled" : "";
+  parts.push(`<button type="submit"${disabled}>${esc(options.label)}</button>`);
+  const open = `<form method="post" action="${esc(options.action)}"${className}>`;
+  return raw([open, ...parts, "</form>"].join("\n"));
+}
+
+/** One hidden input, escaped. */
+function hiddenField(name: string, value: string): string {
+  return `<input type="hidden" name="${esc(name)}" value="${esc(value)}">`;
+}
+
+/**
+ * A unified diff as the panels' ordinary `<pre class="out">` block, with each added, removed
+ * and hunk-header line wrapped in a class the stylesheet colours (no inline style, no script —
+ * the CSP holds).
+ *
+ * @param diff The unified diff text.
+ * @returns The rendered block.
+ */
+export function diffHtml(diff: string): RawHtml {
+  const lines = diff.split("\n").map((line) => {
+    const kind = diffClass(line);
+    return kind === "" ? html`${line}` : html`<span class="${kind}">${line}</span>`;
+  });
+  return html`<pre class="out"><code class="diff">${joinLines(lines)}</code></pre>`;
+}
+
+/** The class one diff line gets: an addition, a removal, a hunk header, or nothing. */
+function diffClass(line: string): string {
+  if (line.startsWith("+++") || line.startsWith("---")) return "meta";
+  if (line.startsWith("@@")) return "meta";
+  if (line.startsWith("+")) return "add";
+  if (line.startsWith("-")) return "del";
+  return "";
+}
+
+/** Join rendered lines back with the newlines `split` removed. */
+function joinLines(lines: readonly RawHtml[]): RawHtml {
+  return raw(lines.map(toHtml).join("\n"));
 }

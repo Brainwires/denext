@@ -19,8 +19,10 @@ Deno.test("readConfigModel: classifies data literals and code, per key", async (
   assertEquals(model.keys.basePath, { kind: "editable", text: `"/app"`, value: "/app" });
   assertEquals(model.keys.images.kind, "editable");
   assertEquals(model.keys.images.value, { domains: ["a.com"] });
-  assertEquals(model.keys.redirects.kind, "readonly");
+  assertEquals(model.keys.redirects.kind, "editable", "a rule thunk is data wearing a wrapper");
   assertEquals(model.keys.redirects.text, "() => []");
+  assertEquals(model.keys.redirects.wrapper, "function");
+  assertEquals(model.keys.redirects.value, []);
   assertEquals(model.keys.plugins, { kind: "readonly", text: "[htmx()]" });
   assert(!("i18n" in model.keys), "an absent key is simply missing");
 });
@@ -43,6 +45,44 @@ Deno.test("readConfigModel: every supported module form is recognised", async ()
 });
 
 // --- setConfigValue ---------------------------------------------------------
+
+Deno.test("readConfigModel: every thunk form around a data array reads as editable rows", async () => {
+  const rows = [{ source: "/a", destination: "/b", permanent: true }];
+  const bodies = [
+    '() => [{ source: "/a", destination: "/b", permanent: true }]',
+    '() => ([{ source: "/a", destination: "/b", permanent: true }])',
+    'async () => [{ source: "/a", destination: "/b", permanent: true }]',
+    'function () {\n    return [{ source: "/a", destination: "/b", permanent: true }];\n  }',
+  ];
+  for (const body of bodies) {
+    const model = await readConfigModel(`export default {\n  redirects: ${body},\n};\n`);
+    const info = model.keys.redirects;
+    assertEquals(info.kind, "editable", body);
+    assertEquals(info.wrapper, "function", body);
+    assertEquals(info.value, rows, body);
+  }
+  // The method shorthand carries its own name, so the slot text is the whole member.
+  const method = await readConfigModel(
+    'export default {\n  headers() {\n    return [{ source: "/x" }];\n  },\n};\n',
+  );
+  assertEquals(method.keys.headers.kind, "editable");
+  assertEquals(method.keys.headers.wrapper, "function");
+  assertEquals(method.keys.headers.value, [{ source: "/x" }]);
+});
+
+Deno.test("readConfigModel: a thunk that returns anything but data stays read-only", async () => {
+  const sources = [
+    "export default {\n  redirects: () => [rule()],\n};\n",
+    "export default {\n  redirects: () => loadRules(),\n};\n",
+    "export default {\n  redirects: () => ({ a: 1 }),\n};\n",
+    "export default {\n  redirects: () => {\n    log();\n    return [{ a: 1 }];\n  },\n};\n",
+  ];
+  for (const source of sources) {
+    const info = (await readConfigModel(source)).keys.redirects;
+    assertEquals(info.kind, "readonly", source);
+    assertEquals(info.wrapper, undefined, source);
+  }
+});
 
 Deno.test("setConfigValue: replaces only the value span of a plain default export", async () => {
   const r = await setConfigValue(PLAIN, ["basePath"], "/docs");

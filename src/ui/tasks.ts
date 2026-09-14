@@ -1,11 +1,12 @@
 // The project's `deno.json` as the UI sees it: the file's own bytes (so an edit can be spliced
 // back comment-preservingly), the parsed document, and the task table.
 //
-// `routes.ts` answers "which task names may `/tasks/run` spawn?" from its own `projectTasks`;
-// the wizard needs more than the names — the file's path and text for the merge preview in
-// step 3, and each task's command line for step 8 — and importing `routes.ts` from a feature
-// module would close an import cycle (`routes.ts` → `features/wizard.ts`). So the richer read
-// lives here, and nothing in this module evaluates project code: `deno.json` is *data*.
+// One reader for both callers: `routes.ts` asks "which task names may `/tasks/run` spawn?"
+// (the names alone), while the wizard needs the file's path and text for the merge preview in
+// step 3 and each task's command line for step 8. It lives here rather than in `routes.ts`
+// because a feature module importing `routes.ts` would close an import cycle
+// (`routes.ts` → `features/wizard.ts`). Nothing here evaluates project code: `deno.json` is
+// *data*.
 
 import { parse as parseJsonc } from "@std/jsonc";
 import { join } from "@std/path";

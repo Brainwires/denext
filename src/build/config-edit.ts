@@ -58,6 +58,13 @@ export interface ConfigKeyInfo {
   text: string;
   /** The decoded value, present only when {@linkcode ConfigKeyInfo.kind} is `editable`. */
   value?: unknown;
+  /**
+   * `"function"` when the value is a THUNK around its data — `key: () => [ … ]`, the shape
+   * `redirects`/`rewrites`/`headers` take. {@linkcode ConfigKeyInfo.value} is then the array
+   * the thunk returns, and {@linkcode applyArrayOps} rewrites those rows in place, leaving the
+   * `() => …` wrapper exactly where it is.
+   */
+  wrapper?: "function";
 }
 
 /** A config source as the UI sees it: its form plus one entry per top-level key. */
@@ -765,13 +772,36 @@ export async function readConfigModel(source: string): Promise<ConfigModel> {
   const slots = scope.obj ? objectSlots(ctx, scope.obj) : scope.named ?? new Map<string, Slot>();
   const keys: Record<string, ConfigKeyInfo> = {};
   for (const [name, slot] of slots) {
-    const text = slice(ctx, startOf(ctx, slot.value), endOf(ctx, slot.value));
-    const decoded = decodeLiteral(slot.value);
-    keys[name] = decoded.ok
-      ? { kind: "editable", text, value: decoded.value }
-      : { kind: "readonly", text };
+    keys[name] = keyInfo(ctx, slot);
   }
   return { form: scope.form, keys };
+}
+
+/**
+ * One key's entry: its verbatim source text plus the value the editor may rewrite — the
+ * literal itself, or the rows inside a `() => [ … ]` thunk (which is data wearing a wrapper:
+ * the rows edit, the wrapper stays).
+ */
+function keyInfo(ctx: Ctx, slot: Slot): ConfigKeyInfo {
+  const text = slice(ctx, startOf(ctx, slot.value), endOf(ctx, slot.value));
+  const decoded = decodeLiteral(slot.value);
+  if (decoded.ok) return { kind: "editable", text, value: decoded.value };
+  const rows = thunkRows(slot.value);
+  if (rows.ok) return { kind: "editable", text, value: rows.value, wrapper: "function" };
+  return { kind: "readonly", text };
+}
+
+/**
+ * The data rows a rule thunk returns — `() => [ … ]`, `() => ([ … ])`, `key() { return [ … ]; }`
+ * — or a refusal when the value is not a thunk, or its array holds anything but data literals.
+ */
+function thunkRows(node: Node): Decoded {
+  const n = unwrap(node);
+  const isThunk = n.type === "ArrowFunctionExpression" || n.type === "FunctionExpression" ||
+    n.type === "MethodProperty";
+  if (!isThunk) return NOT_DATA;
+  const array = literalFromBody(n.body, "ArrayExpression");
+  return array ? decodeArray(array) : NOT_DATA;
 }
 
 /**

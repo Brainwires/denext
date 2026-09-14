@@ -6,7 +6,7 @@
 // Array args only, never a shell: a task name or package spec that came from the browser cannot
 // become a command.
 
-import { denoExecutable } from "../build/bundle.ts";
+import { denoExecutable, frameworkFileUrl } from "../build/bundle.ts";
 
 /** Options for {@linkcode runDeno}. */
 export interface RunDenoOptions {
@@ -18,6 +18,22 @@ export interface RunDenoOptions {
   readonly signal?: AbortSignal;
   /** Extra environment for the child, merged over the UI's own. */
   readonly env?: Record<string, string>;
+  /**
+   * A program (or any input) piped to the child's stdin, which lets `deno run -` evaluate a
+   * generated program without it ever existing as a file or a `data:` URL.
+   */
+  readonly stdin?: string;
+}
+
+/**
+ * The argv prefix that runs this framework's own CLI as a child process — under whatever
+ * scheme denext itself was loaded from, so a checkout runs its `cli.ts` and an installed copy
+ * runs the JSR one.
+ *
+ * @returns `["run", "-A", "<framework>/cli.ts"]`, to be spread before the verb and its flags.
+ */
+export function cliInvocation(): string[] {
+  return ["run", "-A", frameworkFileUrl("cli.ts")];
 }
 
 /** The outcome of a {@linkcode runDeno} call. */
@@ -50,11 +66,12 @@ export async function runDeno(args: string[], opts: RunDenoOptions): Promise<Pro
     args,
     cwd: opts.cwd,
     env: opts.env,
-    stdin: "null",
+    stdin: opts.stdin === undefined ? "null" : "piped",
     stdout: "piped",
     stderr: "piped",
     signal: opts.signal,
   }).spawn();
+  if (opts.stdin !== undefined) await writeStdin(child, opts.stdin);
   const stdout: string[] = [];
   const stderr: string[] = [];
   await Promise.all([
@@ -63,6 +80,13 @@ export async function runDeno(args: string[], opts: RunDenoOptions): Promise<Pro
   ]);
   const { code } = await child.status;
   return result(code, stdout.join(""), stderr.join(""));
+}
+
+/** Feed the child its program, then close the pipe so it stops reading. */
+async function writeStdin(child: Deno.ChildProcess, input: string): Promise<void> {
+  const writer = child.stdin.getWriter();
+  await writer.write(new TextEncoder().encode(input));
+  await writer.close();
 }
 
 /** Assemble a {@linkcode ProcResult} (its `json()` never throws). */

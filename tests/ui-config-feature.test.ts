@@ -77,6 +77,12 @@ function hasField(body: string, name: string, value: string): boolean {
   return new RegExp(`name="${quoted(name)}"[^>]*value="${quoted(value)}"`).test(body);
 }
 
+/** The rendered diff block's text, with the per-line classing markup taken back off. */
+function diffText(body: string): string {
+  const open = body.indexOf('<pre class="out">');
+  return body.slice(open, body.indexOf("</pre>", open)).replace(/<[^>]+>/g, "");
+}
+
 /** Only the changed lines of a unified diff. */
 function changed(diff: string): string[] {
   return diff.split("\n").filter((line) =>
@@ -125,8 +131,7 @@ Deno.test("a scalar change previews a diff touching only that value, then writes
     assertEquals(preview.status, 200);
     const body = await preview.text();
     assertStringIncludes(body, "Nothing has been written yet");
-    const diff = body.slice(body.indexOf('<pre class="out">'), body.indexOf("</pre>"));
-    const lines = changed(diff);
+    const lines = changed(diffText(body));
     assertEquals(lines.length, 2, lines.join("\n"));
     assert(lines.every((line) => line.includes("basePath")), lines.join("\n"));
     assertEquals(await onDisk(dir), CONFIG, "a preview never touches the file");
@@ -364,6 +369,29 @@ Deno.test("/config/next tables a compat app's config and offers to translate wha
     } finally {
       setNextConfigEvaluator();
     }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("/config/next evaluates a real next.config in a subprocess (piped, not a file)", async () => {
+  const dir = await project();
+  try {
+    await Deno.writeTextFile(join(dir, "package.json"), '{ "dependencies": { "next": "15.0.0" } }');
+    await Deno.writeTextFile(
+      join(dir, "next.config.mjs"),
+      'export default {\n  basePath: "/shop",\n  webpack: (c) => c,\n' +
+        '  redirects: () => [{ source: "/old", destination: "/new", permanent: true }],\n};\n',
+    );
+    const payload = await (await call(dir, "/api/config/next")).json();
+    assertEquals(payload.failed, false);
+    assertEquals(payload.honored.basePath, "/shop");
+    assertEquals(payload.rules.redirects, [{
+      source: "/old",
+      destination: "/new",
+      permanent: true,
+    }]);
+    assertEquals(payload.dropped[0].key, "webpack");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

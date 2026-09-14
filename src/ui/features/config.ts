@@ -29,20 +29,17 @@ import {
   setConfigValue,
 } from "../../build/config-edit.ts";
 import { createUnifiedDiff } from "../../build/patch-diff.ts";
-import { type Node, parseModule, txt, walkAst } from "../../build/swc-ast.ts";
+import { CONFIG_FILES } from "../../build/paths.ts";
 import type { DenextConfig } from "../../server/config.ts";
 import { validateDenextConfig, warnUnknownConfigKeys } from "../../server/config-validate.ts";
 import {
+  diffHtml,
   esc,
   html,
-  htmlResponse,
   jsonResponse,
-  layout,
+  panelResponder,
   raw,
   type RawHtml,
-  renderPage,
-  toHtml,
-  UI_NAV,
   type UiContext,
   type UiHandler,
 } from "../html.ts";
@@ -63,14 +60,6 @@ import {
   parseOp,
 } from "../form/value.ts";
 import { nextConfigPanel } from "./config-next.ts";
-
-/** The config file names the editor looks for, in the loader's own resolution order. */
-const CONFIG_NAMES = [
-  "denext.config.ts",
-  "denext.config.mts",
-  "denext.config.js",
-  "denext.config.mjs",
-] as const;
 
 /** The file the editor offers to create when the project has no denext config at all. */
 const EMPTY_CONFIG = "export default {\n};\n";
@@ -140,40 +129,12 @@ async function readText(path: string): Promise<string | null> {
 
 /** Locate the project's config file: the first name that exists, else where one would go. */
 async function locateConfig(dir: string): Promise<{ path: string; name: string; source: string }> {
-  for (const name of CONFIG_NAMES) {
+  for (const name of CONFIG_FILES) {
     const path = join(dir, name);
     const source = await readText(path);
     if (source !== null) return { path, name, source };
   }
-  return { path: join(dir, CONFIG_NAMES[0]), name: CONFIG_NAMES[0], source: "" };
-}
-
-/**
- * The rows inside a `() => [ … ]` thunk. `readConfigModel` calls the thunk code — it is — so
- * the array literal it returns is re-read on its own: the editor owns the rows, never the
- * wrapper. Returns `undefined` when the body is not an array of data literals, which leaves the
- * key in the read-only bucket.
- */
-async function thunkRows(text: string): Promise<unknown[] | undefined> {
-  for (const candidate of [`const value = (${text});`, `const value = ({ ${text} });`]) {
-    const parsed = await parseModule(candidate);
-    if (!parsed) continue;
-    let found: Node | undefined;
-    walkAst({ body: parsed.body }, (node: Node) => {
-      if (!found && node.type === "ArrayExpression") found = node;
-    });
-    if (!found) continue;
-    const inner = await readConfigModel(`export default {\n  list: ${txt(parsed.ctx, found)},\n};`);
-    const list = inner.keys.list;
-    if (list?.kind === "editable" && Array.isArray(list.value)) return list.value;
-  }
-  return undefined;
-}
-
-/** Whether a widget edits a list of rows (the only widgets `applyArrayOps` writes). */
-function isList(spec: WidgetSpec | undefined): boolean {
-  return spec?.kind === "chips" || spec?.kind === "list-of-forms" ||
-    spec?.kind === "multi-select";
+  return { path: join(dir, CONFIG_FILES[0]), name: CONFIG_FILES[0], source: "" };
 }
 
 /** The `x-denext.wrapper === "function"` marker: this key is written as a thunk. */
@@ -181,21 +142,24 @@ function isWrapped(node: SchemaNode | undefined): boolean {
   return node?.["x-denext"]?.wrapper === "function";
 }
 
-/** Classify one top-level key into its bucket, unwrapping a rule thunk when there is one. */
-async function classify(
+/**
+ * Classify one top-level key into its bucket. A rule thunk (`key: () => [ … ]`) arrives from
+ * {@linkcode readConfigModel} already unwrapped — editable rows plus a `wrapper` marker — so
+ * the editor owns the rows while the `() => …` wrapper is left exactly where it is.
+ */
+function classify(
   key: string,
   node: SchemaNode | undefined,
   info: ConfigKeyInfo | undefined,
-): Promise<Section> {
+): Section {
   const present = info !== undefined;
-  const base = { key, present, wrapper: isWrapped(node), description: node?.description };
+  const wrapper = isWrapped(node) || info?.wrapper === "function";
+  const base = { key, present, wrapper, description: node?.description };
   if (!node) return { ...base, kind: "readonly", text: info?.text };
   const spec = widgetFor(node, [key], false);
   if (key === MANAGED_KEY) return { ...base, kind: "managed", spec, text: info?.text };
-  if (info?.kind === "editable") return { ...base, kind: "editable", spec, value: info.value };
   if (!info) return { ...base, kind: "editable", spec };
-  const rows = base.wrapper && isList(spec) ? await thunkRows(info.text) : undefined;
-  if (rows) return { ...base, kind: "editable", spec, value: rows };
+  if (info.kind === "editable") return { ...base, kind: "editable", spec, value: info.value };
   return { ...base, kind: "readonly", spec, text: info.text };
 }
 
@@ -213,10 +177,9 @@ async function readState(dir: string): Promise<ConfigState> {
   const schema = loadConfigSchema();
   const properties = schema.properties ?? {};
   const extra = Object.keys(model.keys).filter((key) => !(key in properties));
-  const sections: Section[] = [];
-  for (const key of [...Object.keys(properties), ...extra]) {
-    sections.push(await classify(key, properties[key], model.keys[key]));
-  }
+  const sections = [...Object.keys(properties), ...extra].map((key) =>
+    classify(key, properties[key], model.keys[key])
+  );
   return { path, name, exists: source !== "", source, form: model.form, sections };
 }
 
@@ -385,6 +348,12 @@ interface Plan {
 /** An array value, or an empty list. */
 function asList(value: unknown): readonly unknown[] {
   return Array.isArray(value) ? value : [];
+}
+
+/** Whether a widget edits a list of rows (the only widgets `applyArrayOps` writes). */
+function isList(spec: WidgetSpec | undefined): boolean {
+  return spec?.kind === "chips" || spec?.kind === "list-of-forms" ||
+    spec?.kind === "multi-select";
 }
 
 /** Compute the source edit one section write needs. */
@@ -586,7 +555,7 @@ function previewBody(ctx: UiContext, pending: Pending): RawHtml {
 <h1>${pending.title}</h1>
 <p class="lead">Nothing has been written yet — review the change, then apply it.</p>
 ${pending.notes ?? ""}
-${pending.diff ? html`<pre class="out">${pending.diff}</pre>` : ""}
+${pending.diff ? diffHtml(pending.diff) : ""}
 ${
     pending.ok
       ? html`<form method="post" action="${pending.action}">
@@ -603,19 +572,7 @@ ${pending.body ? html`<h2>The section as it will read</h2>${pending.body}` : ""}
 // ── responses ────────────────────────────────────────────────────────────────
 
 /** Wrap a panel section as a fragment (the `ui.js` swap) or as the full document. */
-function panelResponse(ctx: UiContext, body: RawHtml, status = 200): Response {
-  if (ctx.fragment) return htmlResponse(toHtml(body), status);
-  return htmlResponse(
-    renderPage(layout, {
-      title: "Config",
-      nav: UI_NAV,
-      body,
-      csrf: ctx.csrf,
-      active: "/config",
-    }),
-    status,
-  );
-}
+const panelResponse = panelResponder("Config", "/config");
 
 /** A refusal, in whichever shape the caller asked for. */
 function refuse(ctx: UiContext, state: ConfigState, reason: string, status: number): Response {

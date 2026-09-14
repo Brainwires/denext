@@ -182,7 +182,11 @@ async function importConfigFile(path: string, name: string): Promise<DenextConfi
 }
 
 /** The config file names probed, in order (Next.js also accepts `.mjs`/`.mts`). */
-const CONFIG_FILES = [
+/**
+ * The denext config file names, in the order the loader resolves them — the one list the
+ * loader, the UI's config editor and the plugin manager all probe.
+ */
+export const CONFIG_FILES: readonly string[] = [
   "denext.config.ts",
   "denext.config.mts",
   "denext.config.js",

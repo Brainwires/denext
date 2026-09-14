@@ -15,6 +15,7 @@
 
 import { parse as parseJsonc } from "@std/jsonc";
 import { join } from "@std/path";
+import { CONFIG_FILES } from "../../build/paths.ts";
 import CATALOG from "../../plugin/catalog.json" with { type: "json" };
 import { createUnifiedDiff } from "../../build/patch-diff.ts";
 import {
@@ -26,21 +27,17 @@ import {
   type PluginNames,
   resolvePluginNames,
 } from "../../build/plugin-install.ts";
-import { sseSend } from "../../build/sse.ts";
 import {
+  diffHtml,
   html,
-  htmlResponse,
   jsonResponse,
-  layout,
-  raw,
+  opForm,
+  panelResponder,
   type RawHtml,
-  renderPage,
-  toHtml,
-  UI_NAV,
   type UiContext,
   type UiHandler,
 } from "../html.ts";
-import { UI_CSRF_FIELD } from "../security.ts";
+import { broadcast, sseProcess } from "../events.ts";
 import { runDeno } from "../proc.ts";
 
 /** The fields of a `src/plugin/catalog.json` row this panel reads. */
@@ -68,9 +65,6 @@ const CATALOG_ROWS: readonly CatalogRow[] = CATALOG.plugins as readonly CatalogR
 
 /** Where a catalogued package's documentation lives (always absolute — the UI is not the site). */
 const DOCS_ORIGIN = "https://denext.dev";
-
-/** The config file names the panel reads, in resolution order. */
-const CONFIG_NAMES = ["denext.config.ts", "denext.config.js", "denext.config.mjs"] as const;
 
 /** The subprocess runner every `deno add`/`deno remove` goes through. */
 let proc: typeof runDeno = runDeno;
@@ -132,13 +126,13 @@ async function readDeps(dir: string): Promise<string[]> {
  */
 async function readProject(dir: string): Promise<ProjectState> {
   const deps = await readDeps(dir);
-  for (const name of CONFIG_NAMES) {
+  for (const name of CONFIG_FILES) {
     const configPath = join(dir, name);
     const source = await readText(configPath);
     if (source === null) continue;
     return { configPath, configName: name, source, wired: listPlugins(source), deps };
   }
-  const configName = CONFIG_NAMES[0];
+  const configName = CONFIG_FILES[0];
   return { configPath: join(dir, configName), configName, source: null, wired: [], deps };
 }
 
@@ -326,30 +320,16 @@ function docsUrl(entry: CatalogRow): string {
 }
 
 /** Wrap a panel section as a fragment (the `ui.js` swap) or as the full document. */
-function panelResponse(ctx: UiContext, body: RawHtml, status = 200): Response {
-  if (ctx.fragment) return htmlResponse(toHtml(body), status);
-  return htmlResponse(
-    renderPage(layout, {
-      title: "Plugins",
-      nav: UI_NAV,
-      body,
-      csrf: ctx.csrf,
-      active: "/plugins",
-    }),
-    status,
-  );
-}
+const panelResponse = panelResponder("Plugins", "/plugins");
 
 /** One add/remove/confirm form — a real POST, upgraded by `ui.js` when it is running. */
-function opForm(ctx: UiContext, entry: CatalogRow, op: Op, confirm = false): RawHtml {
-  const label = confirm ? "Apply" : op === "add" ? "Add" : "Remove";
-  return html`<form method="post" action="/plugins">
-<input type="hidden" name="${UI_CSRF_FIELD}" value="${ctx.csrf}">
-<input type="hidden" name="name" value="${entry.name}">
-<input type="hidden" name="op" value="${op}">
-${confirm ? html`<input type="hidden" name="confirm" value="1">` : ""}
-<button type="submit"${ctx.readOnly ? raw(" disabled") : ""}>${label}</button>
-</form>`;
+function pluginForm(ctx: UiContext, entry: CatalogRow, op: Op, confirm = false): RawHtml {
+  return opForm(ctx.csrf, {
+    action: "/plugins",
+    label: confirm ? "Apply" : op === "add" ? "Add" : "Remove",
+    fields: { name: entry.name, op, ...(confirm ? { confirm: "1" } : {}) },
+    disabled: ctx.readOnly,
+  });
 }
 
 /** One catalogue row: what it is, what this project has done with it, and the one thing to do. */
@@ -362,7 +342,7 @@ function card(ctx: UiContext, row: PluginRow): RawHtml {
 ${row.entry.verb ? html`<span class="badge">denext ${row.entry.verb}</span>` : ""}
 <span>${row.entry.blurb}</span>
 <p><a href="${docsUrl(row.entry)}">Docs</a> · <code class="mono">${row.entry.spec}</code></p>
-${opForm(ctx, row.entry, isInstalled(row) ? "remove" : "add")}
+${pluginForm(ctx, row.entry, isInstalled(row) ? "remove" : "add")}
 </article>`;
 }
 
@@ -406,11 +386,11 @@ ${
     plan.diff
       ? html`
         <h2>${plan.configName}</h2>
-        <pre class="out">${plan.diff}</pre>
+        ${diffHtml(plan.diff)}
       `
       : ""
   }
-${opForm(ctx, plan.entry, plan.op, true)}
+${pluginForm(ctx, plan.entry, plan.op, true)}
 <p><a href="/plugins">Cancel</a></p>
 </section>`;
 }
@@ -521,7 +501,7 @@ function preview(ctx: UiContext, plan: Plan, state: ProjectState): Response {
 /** The confirmed POST: run it, then answer with the refreshed catalogue (or a `303` for no-JS). */
 async function apply(ctx: UiContext, plan: Plan): Promise<Response> {
   const outcome = await applyPlan(plan, ctx.dir);
-  sseSend(ctx.events, JSON.stringify({ type: "plugins-changed", name: plan.entry.name }));
+  broadcast(ctx.events, { type: "plugins-changed", name: plan.entry.name });
   const state = await readProject(ctx.dir);
   if (ctx.json) {
     return jsonResponse({
@@ -545,28 +525,16 @@ async function apply(ctx: UiContext, plan: Plan): Promise<Response> {
 
 /** The confirmed POST, streamed: the `deno` child's output as it arrives. */
 function streamApply(ctx: UiContext, plan: Plan): Response {
-  const { readable, writable } = new TransformStream<string, string>();
-  const writer = writable.getWriter();
-  const frame = (line: string) => {
-    void writer.write(`data: ${line.replace(/\r?\n/g, " ")}\n\n`).catch(() => {});
-  };
-  frame(`$ deno ${plan.command.join(" ")}`);
-  applyPlan(plan, ctx.dir, frame)
-    .then((outcome) =>
-      frame(
-        outcome.wrote
-          ? `— exited ${outcome.code}, wrote ${plan.configName}`
-          : `— exited ${outcome.code}`,
-      )
-    )
-    .catch((error) => frame(`— failed: ${error instanceof Error ? error.message : String(error)}`))
-    .finally(() => {
-      sseSend(ctx.events, JSON.stringify({ type: "plugins-changed", name: plan.entry.name }));
-      void writer.close().catch(() => {});
-    });
-  return new Response(readable.pipeThrough(new TextEncoderStream()), {
-    headers: { "content-type": "text/event-stream" },
-  });
+  return sseProcess(
+    async (line) => {
+      const outcome = await applyPlan(plan, ctx.dir, line);
+      return { code: outcome.code, note: outcome.wrote ? `wrote ${plan.configName}` : undefined };
+    },
+    {
+      prelude: [`$ deno ${plan.command.join(" ")}`],
+      settled: () => broadcast(ctx.events, { type: "plugins-changed", name: plan.entry.name }),
+    },
+  );
 }
 
 /** A mutation: validate the name against the catalogue, plan it, then preview or apply it. */
