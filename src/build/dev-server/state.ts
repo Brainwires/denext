@@ -36,6 +36,10 @@ export const DEV_LOG_PATH = "/_denext/dev-log";
 export const DEV_STATE_PATH = "/_denext/dev-state";
 /** Dev overlay "open in editor" (same cross-origin gate as the reload stream). */
 export const OPEN_IN_EDITOR_PATH = "/_denext/open-in-editor";
+/** DevTools Cache tab: the page/data cache counters + recent invalidations (GET). */
+export const DEV_CACHE_PATH = "/_denext/dev-cache";
+/** DevTools Routes tab: the render tree at a path (`?path=`, GET). */
+export const DEV_ROUTES_PATH = "/_denext/dev-routes";
 
 export interface DevServerOptions {
   paths: ProjectPaths;

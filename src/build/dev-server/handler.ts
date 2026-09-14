@@ -17,14 +17,17 @@ import {
   devStateResponse,
   openInEditorResponse,
 } from "./dev-endpoints.ts";
+import { devCacheResponse, devRoutesResponse } from "./devtools-endpoints.ts";
 import { getManifest, getUnbundled } from "./manifest.ts";
 import { broadcastError, reloadStream } from "./reload.ts";
 import { DEV_RELOAD_SCRIPT } from "./reload-script.ts";
 import { devErrorPage } from "./error-page.ts";
 import { serveImmutableAsset } from "../../server/serve-utils.ts";
 import {
+  DEV_CACHE_PATH,
   DEV_LOG_PATH,
   DEV_RELOAD_JS_PATH,
+  DEV_ROUTES_PATH,
   DEV_STATE_PATH,
   type DevState,
   FLIGHT_BUNDLE_PATH,
@@ -56,8 +59,9 @@ function bundleErrorResponse(st: DevState, title: string, err: unknown): Respons
 }
 
 /**
- * The origin-gated dev endpoints: the live-reload SSE stream, open-in-editor, and the dev
- * black box (browser log sink + state read). Null when `url` is none of them (a 403 for ANY
+ * The origin-gated dev endpoints: the live-reload SSE stream, open-in-editor, the dev
+ * black box (browser log sink + state read), and the DevTools panel's cache + route-map
+ * reads. Null when `url` is none of them (a 403 for ANY
  * `/_denext/*` URL from a cross-origin page / foreign Host first — defense-in-depth, cf.
  * CVE-2025-48068 — and the caller's other dev handlers run only once the gate passed).
  */
@@ -81,6 +85,10 @@ function gatedDevEndpoint(
       return devLogResponse(st, request);
     case DEV_STATE_PATH:
       return devStateResponse(st, url);
+    case DEV_CACHE_PATH:
+      return devCacheResponse(st);
+    case DEV_ROUTES_PATH:
+      return devRoutesResponse(st, url);
     default:
       return null; // gate passed; another dev handler (or the app) serves it
   }
