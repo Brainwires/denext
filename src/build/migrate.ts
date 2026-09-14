@@ -19,6 +19,7 @@ import { parse as parseJsonc } from "@std/jsonc";
 import { readFrameworkJson } from "./bundle.ts";
 import { appendGitignore } from "./gitignore.ts";
 import { REACT_FAMILY_CLIENT, REACT_FAMILY_CORE } from "./react-specifiers.ts";
+import CATALOG from "../plugin/catalog.json" with { type: "json" };
 import { DESKTOP_ICON_FILE, detectIconSource } from "./desktop-icon.ts";
 import { isRemix, type RemixMigrateInfo, transformRemixApp } from "./remix-migrate.ts";
 import {
@@ -65,15 +66,26 @@ const DENEXT_OWNED = new Set([
   "server-only",
   "client-only",
 ]);
-/** The `@denext/pages-router` plugin specifier written for a `pages/` app. */
+/**
+ * The published range that pins a first-party package, read out of the generated catalog
+ * (`src/plugin/catalog.json`, `deno task gen:plugin-catalog`) rather than hard-coded here,
+ * so a package release reaches `denext migrate` by regenerating the catalog. Every range is
+ * caret + the package's full current version, which for a 0.x package admits only that
+ * minor line.
+ */
+function catalogSpec(name: string): string {
+  const entry = CATALOG.plugins.find((p) => p.name === name);
+  if (!entry) throw new Error(`the first-party plugin catalog has no entry for "${name}"`);
+  return entry.spec;
+}
 /**
  * The `@denext/pages-router` range a migrated `pages/` app gets. Must satisfy the workspace
- * package's current version (asserted by tests/migrate-universal.test.ts) — the plugin tracks
+ * package's current version (asserted by tests/plugin-catalog.test.ts) — the plugin tracks
  * denext's barrel surface, so an older 0.x line boots against a barrel it no longer matches.
  */
-export const PAGES_ROUTER_SPEC = "jsr:@denext/pages-router@^0.10.0";
+export const PAGES_ROUTER_SPEC: string = catalogSpec("@denext/pages-router");
 /** The `@denext/react-router` package the RR7 framework-mode plugin path pins. */
-const REACT_ROUTER_SPEC = "jsr:@denext/react-router@^0.1.0";
+const REACT_ROUTER_SPEC = catalogSpec("@denext/react-router");
 /**
  * The `@denext/effect` bridge specifier, mapped (and its `effect()` plugin wired into the
  * generated `denext.config.ts`) whenever the app depends on the npm `effect` package. The
@@ -81,7 +93,7 @@ const REACT_ROUTER_SPEC = "jsr:@denext/react-router@^0.1.0";
  * `import … from "effect"`; this only adds the denext-side bridge (`runEffect`,
  * `effectHandler`, `DenextRequest`, and the ambient-runtime plugin).
  */
-const EFFECT_SPEC = "jsr:@denext/effect@^0.1.0";
+const EFFECT_SPEC = catalogSpec("@denext/effect");
 /** Native/engine deps denext can't run — flag them. (Prisma is handled specially — see
  * `detectPrismaWiring` — so it is NOT listed here; it's wired to the Deno client + adapter.) */
 const HARD_UNSUPPORTED = /^(@swc\/core|node-gyp|canvas$)/;

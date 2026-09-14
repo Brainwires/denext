@@ -15,6 +15,13 @@
     "@std/path": "jsr:@std/path@^1.0.0",
     "@std/fs": "jsr:@std/fs@^1.0.0"
   },
+  "denext": {
+    "catalog": {
+      "kind": "plugin",
+      "factory": "reactRouter",
+      "configKeys": ["appDirectory", "routesFile"]
+    }
+  },
   "publish": {
     "include": [
       "mod.ts",

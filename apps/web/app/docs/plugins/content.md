@@ -283,6 +283,14 @@ scales to a full framework router, not just aliasing.
 
 ## Complete examples
 
+The **first-party catalog itself is generated**, not hand-maintained here: every
+`@denext/*` package, its current version and `jsr:` range, whether it is a plugin or a
+plain library, its factory export, the CLI verb it contributes and its option keys are
+emitted to `src/plugin/catalog.json` from the packages' own `deno.json` + README
+(`deno task gen:plugin-catalog`; a drift test fails if it goes stale). `denext migrate`
+takes its plugin pins from it. The walk-throughs below are the ones worth **reading as
+models** of a seam — not the full list.
+
 - **[`examples/plugin-aliases`](https://github.com/Brainwires/denext/tree/main/examples/plugin-aliases)** — a ~40-line plugin using
   the **route-synthesizer** + **teardown** seams (path aliases). The smallest end-to-end
   model to copy.

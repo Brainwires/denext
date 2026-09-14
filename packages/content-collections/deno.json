@@ -16,6 +16,14 @@
     "@std/path": "jsr:@std/path@^1.0.0",
     "@std/yaml": "jsr:@std/yaml@^1.0.0"
   },
+  "denext": {
+    "catalog": {
+      "kind": "plugin",
+      "factory": "contentCollections",
+      "verb": "content",
+      "configKeys": ["watch"]
+    }
+  },
   "publish": {
     "include": [
       "mod.ts",

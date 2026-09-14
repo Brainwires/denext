@@ -1,0 +1,220 @@
+{
+  "generatedBy": "scripts/gen-plugin-catalog.ts",
+  "plugins": [
+    {
+      "name": "@denext/avif",
+      "version": "0.1.2",
+      "spec": "jsr:@denext/avif@^0.1.2",
+      "exports": [
+        "."
+      ],
+      "kind": "library",
+      "title": "@denext/avif",
+      "blurb": "A Deno-native AVIF encoder — denext's first-party, zero-npm replacement for the @jsquash/avif peer codec its image optimizer used to lazily import."
+    },
+    {
+      "name": "@denext/content-collections",
+      "version": "0.4.0",
+      "spec": "jsr:@denext/content-collections@^0.4.0",
+      "exports": [
+        ".",
+        "./command",
+        "./config",
+        "./markdown",
+        "./runtime"
+      ],
+      "kind": "plugin",
+      "factory": "contentCollections",
+      "verb": "content",
+      "configKeys": [
+        "watch"
+      ],
+      "title": "@denext/content-collections",
+      "blurb": "A typed, validated, queryable content layer for denext apps — MD/MDX/YAML/JSON, in the spirit of Astro's Content Layer and Nuxt Content.",
+      "docs": "/docs/content-collections"
+    },
+    {
+      "name": "@denext/effect",
+      "version": "0.1.0",
+      "spec": "jsr:@denext/effect@^0.1.0",
+      "exports": [
+        "."
+      ],
+      "kind": "plugin",
+      "factory": "effect",
+      "configKeys": [
+        "layer"
+      ],
+      "title": "@denext/effect",
+      "blurb": "First-class Effect support for denext. Run an Effect from a Server Component, route handler, or Server Action and get typed errors, dependency injection (services from a Layer), structured…",
+      "docs": "/docs/effect"
+    },
+    {
+      "name": "@denext/graphql",
+      "version": "0.2.0",
+      "spec": "jsr:@denext/graphql@^0.2.0",
+      "exports": [
+        ".",
+        "./command",
+        "./subscriptions"
+      ],
+      "kind": "plugin",
+      "factory": "graphql",
+      "verb": "graphql",
+      "configKeys": [
+        "schema",
+        "path",
+        "graphiql",
+        "introspection",
+        "maxBodyBytes",
+        "maxDepth",
+        "maxCost",
+        "costOptions",
+        "requireSameOrigin",
+        "allowedOrigins",
+        "context",
+        "yoga",
+        "outFile"
+      ],
+      "title": "@denext/graphql",
+      "blurb": "A GraphQL endpoint for a denext app, as a plugin. It mounts a GraphQL Yoga server at /graphql, bridges subscriptions onto denext channels (the app's push primitive — no second event bus, no separate…",
+      "docs": "/docs/graphql"
+    },
+    {
+      "name": "@denext/htmx",
+      "version": "2.0.11",
+      "spec": "jsr:@denext/htmx@^2.0.11",
+      "exports": [
+        ".",
+        "./command",
+        "./types"
+      ],
+      "kind": "plugin",
+      "factory": "htmx",
+      "verb": "htmx",
+      "configKeys": [
+        "path"
+      ],
+      "title": "@denext/htmx",
+      "blurb": "First-class htmx support for denext, shipped as a denext plugin. Add it, drop <Htmx/> in your layout, and every hx-* attribute just works — server-rendered verbatim, 0 KB of denext client JS on pages…",
+      "docs": "/docs/htmx"
+    },
+    {
+      "name": "@denext/lightningcss",
+      "version": "1.0.0-rc.72",
+      "spec": "jsr:@denext/lightningcss@^1.0.0-rc.72",
+      "exports": [
+        "."
+      ],
+      "kind": "library",
+      "title": "@denext/lightningcss",
+      "blurb": "A Deno-native WebAssembly build of the lightningcss transform subset denext's CSS pipeline uses."
+    },
+    {
+      "name": "@denext/og",
+      "version": "0.1.1",
+      "spec": "jsr:@denext/og@^0.1.1",
+      "exports": [
+        "."
+      ],
+      "kind": "library",
+      "title": "@denext/og",
+      "blurb": "A Deno-native ImageResponse — denext's first-party, zero-npm replacement for the @cf-wasm/og peer codec its next/og implementation used to lazily import."
+    },
+    {
+      "name": "@denext/openapi",
+      "version": "0.3.0",
+      "spec": "jsr:@denext/openapi@^0.3.0",
+      "exports": [
+        ".",
+        "./command",
+        "./spec",
+        "./types"
+      ],
+      "kind": "plugin",
+      "factory": "openapi",
+      "verb": "openapi",
+      "configKeys": [
+        "path",
+        "docs",
+        "ui",
+        "cdn",
+        "info",
+        "servers",
+        "toJsonSchema",
+        "include",
+        "tags",
+        "securitySchemes",
+        "security",
+        "expose",
+        "authorize",
+        "outFile"
+      ],
+      "title": "@denext/openapi",
+      "blurb": "An OpenAPI 3.1 document and a docs page for a denext app, derived from the defineApi definitions its route handlers already carry.",
+      "docs": "/docs/openapi"
+    },
+    {
+      "name": "@denext/pages-router",
+      "version": "0.10.0",
+      "spec": "jsr:@denext/pages-router@^0.10.0",
+      "exports": [
+        ".",
+        "./client-runtime",
+        "./document",
+        "./head",
+        "./link",
+        "./router"
+      ],
+      "kind": "plugin",
+      "factory": "pagesRouter",
+      "configKeys": [
+        "dir"
+      ],
+      "title": "@denext/pages-router",
+      "blurb": "A Next.js Pages Router for denext, shipped as a first-party plugin. Drop it into your denext.config.ts and a pages/ tree renders alongside your App Router app/ routes — App Router routes always win,…",
+      "docs": "/docs/pages-router"
+    },
+    {
+      "name": "@denext/photon",
+      "version": "0.3.6",
+      "spec": "jsr:@denext/photon@^0.3.6",
+      "exports": [
+        "."
+      ],
+      "kind": "library",
+      "title": "@denext/photon",
+      "blurb": "A Deno-native WebAssembly build of photon-rs v0.3.3, exposing the image resize / encode subset denext's built-in image optimizer uses."
+    },
+    {
+      "name": "@denext/react-router",
+      "version": "0.1.1",
+      "spec": "jsr:@denext/react-router@^0.1.1",
+      "exports": [
+        ".",
+        "./dom",
+        "./routes"
+      ],
+      "kind": "plugin",
+      "factory": "reactRouter",
+      "configKeys": [
+        "appDirectory",
+        "routesFile"
+      ],
+      "title": "@denext/react-router",
+      "blurb": "Run a React Router v7 framework-mode app on denext — with your app's source unchanged.",
+      "docs": "/docs/react-router"
+    },
+    {
+      "name": "@denext/swc",
+      "version": "76.0.1",
+      "spec": "jsr:@denext/swc@^76.0.1",
+      "exports": [
+        "."
+      ],
+      "kind": "library",
+      "title": "@denext/swc",
+      "blurb": "A Deno-native WebAssembly build of swc's parse / print / transform / minify bindings — the same JS API @swc/wasm-web (npm) exposes, produced by mirroring swc's own bindings/binding_core_wasm (the…"
+    }
+  ]
+}

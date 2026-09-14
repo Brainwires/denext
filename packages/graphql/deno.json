@@ -13,6 +13,28 @@
     "graphql": "npm:graphql@^16.9.0",
     "graphql-yoga": "npm:graphql-yoga@^5.10.0"
   },
+  "denext": {
+    "catalog": {
+      "kind": "plugin",
+      "factory": "graphql",
+      "verb": "graphql",
+      "configKeys": [
+        "schema",
+        "path",
+        "graphiql",
+        "introspection",
+        "maxBodyBytes",
+        "maxDepth",
+        "maxCost",
+        "costOptions",
+        "requireSameOrigin",
+        "allowedOrigins",
+        "context",
+        "yoga",
+        "outFile"
+      ]
+    }
+  },
   "publish": {
     "include": [
       "mod.ts",
