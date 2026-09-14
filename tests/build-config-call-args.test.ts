@@ -377,3 +377,15 @@ Deno.test("setCallArguments: reserved keys and values that aren't plain JSON are
     assertStringIncludes(r.reason, "not plain JSON data", set.path.join("."));
   }
 });
+
+Deno.test("setCallArguments: a leading byte-order mark survives the splice", async () => {
+  const bom = String.fromCharCode(0xfeff);
+  const result = await setCallArguments(
+    `${bom}export default { plugins: [openapi()] };\n`,
+    OPENAPI,
+    [{ path: ["a"], value: 1 }],
+  );
+  assert(result.ok, result.ok ? "" : result.reason);
+  assert(result.source.startsWith(bom), "the BOM is still the first character");
+  assertStringIncludes(result.source, "a: 1");
+});

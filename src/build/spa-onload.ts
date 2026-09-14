@@ -6,6 +6,7 @@
 // written. Factored here so each plugin only supplies its per-module transform.
 
 import type * as esbuild from "esbuild";
+import { SEPARATOR } from "@std/path";
 
 /** Options for {@linkcode firstPartyTsxPlugin}. */
 export interface FirstPartyOnLoadOptions {
@@ -23,6 +24,12 @@ const TSX_FILTER = /\.(tsx|jsx)$/;
 /** The esbuild loader a claimed module is returned under. */
 function loaderFor(path: string): esbuild.Loader {
   return path.endsWith(".ts") ? "ts" : "tsx";
+}
+
+/** Whether `path` is `projectDir` or lies beneath it (a sibling like `/app-2` for `/app` does not). */
+function isInsideProject(path: string, projectDir: string): boolean {
+  const root = projectDir.endsWith(SEPARATOR) ? projectDir : projectDir + SEPARATOR;
+  return path === projectDir || path.startsWith(root);
 }
 
 /**
@@ -53,7 +60,7 @@ export function firstPartyTsxPlugin(
         if (
           args.path.includes("/node_modules/") ||
           args.path.includes("/.entries/") ||
-          !args.path.startsWith(projectDir)
+          !isInsideProject(args.path, projectDir)
         ) {
           return null; // let the deno-loader load it unchanged
         }
