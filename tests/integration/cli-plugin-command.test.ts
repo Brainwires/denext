@@ -1,10 +1,11 @@
 // Proves the two project-verb seams end-to-end, through the real `denext` binary:
 // a plugin's `addCommand` (discovered when the first parse hits an unknown command)
-// and the `commands:` shorthand in denext.config.ts (no plugin at all). Also that the
-// verbs that must enumerate EVERY command — `--help` and `completions` — load them
-// eagerly, so a project verb is discoverable and not just dispatchable.
+// and the `commands:` shorthand in denext.config.ts (no plugin at all). Also where each
+// listing stands on discovery: `denext commands` and `completions` enumerate project verbs
+// (so they are discoverable, not just dispatchable), while `--help` deliberately imports
+// nothing and points at `denext commands` instead.
 
-import { assert, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl } from "@std/path";
 import { join } from "@std/path";
 
@@ -90,18 +91,99 @@ Deno.test("a `commands:` verb dispatches with no plugin at all", async () => {
   }
 });
 
-Deno.test("`--help` lists a `commands:` verb under Project commands", async () => {
+Deno.test("`--help` does not load project code — it points at `denext commands`", async () => {
   const dir = await project("denext_config_help_", COMMANDS_CONFIG);
   try {
     // `--cwd=<dir>` (not `--cwd <dir>`): with no verb, a bare `<dir>` token would be
     // read as the verb — the parser resolves the verb before any global flag value.
     const { code, out, err } = await runCli(["--help", `--cwd=${dir}`]);
     assert(code === 0, `expected exit 0, got ${code}. stderr:\n${err}`);
-    assertStringIncludes(out, "Project commands:");
-    assertStringIncludes(out, "denext seed");
-    assertStringIncludes(out, "load fixture data");
-    // Built-ins stay in their own table, above it.
-    assert(out.indexOf("denext dev") < out.indexOf("Project commands:"));
+    // Discovering `seed` would mean importing denext.config.ts and running every plugin
+    // setup() just to print a table; help refuses and says where to look instead.
+    assert(!out.includes("Project commands:"), "help imports nothing, so it lists nothing");
+    assert(!out.includes("denext seed"), "the project verb is not in the help table");
+    assertStringIncludes(out, "Project verbs: run `denext commands`");
+    assertStringIncludes(out, "denext commands");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("`--help` outside a denext project prints no project footer", async () => {
+  const dir = await project("denext_no_config_");
+  try {
+    const { code, out } = await runCli(["--help", `--cwd=${dir}`]);
+    assert(code === 0, `expected exit 0, got ${code}`);
+    assert(!out.includes("Project verbs:"), "nothing to point at without a config");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("`denext commands` lists the project's verbs, in text and as JSON", async () => {
+  const dir = await project("denext_commands_verb_", COMMANDS_CONFIG);
+  try {
+    const text = await runCli(["commands", "--cwd", dir]);
+    assert(text.code === 0, `expected exit 0, got ${text.code}. stderr:\n${text.err}`);
+    assertStringIncludes(text.out, "Project commands (1):");
+    assertStringIncludes(text.out, "denext seed");
+    assertStringIncludes(text.out, "load fixture data");
+    assertStringIncludes(text.out, "[denext.config.ts]");
+
+    const json = await runCli(["commands", "--json", "--cwd", dir]);
+    assert(json.code === 0, `expected exit 0, got ${json.code}. stderr:\n${json.err}`);
+    const listing = JSON.parse(json.out) as {
+      core: { name: string }[];
+      project: { name: string; source: string; summary: string; runnable: boolean }[];
+      timedOut: boolean;
+      error?: string;
+    };
+    assertEquals(listing.timedOut, false);
+    assertEquals(listing.error, undefined);
+    assertEquals(
+      listing.project,
+      [{
+        name: "seed",
+        source: "project",
+        summary: "load fixture data",
+        flags: [],
+        positionals: [],
+        runnable: true,
+      }] as unknown as typeof listing.project,
+    );
+    assert(listing.core.some((c) => c.name === "dev"), "the built-ins travel too");
+    // A project verb can never shadow a built-in, so `commands` itself stays core.
+    assert(listing.core.some((c) => c.name === "commands"));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a plugin that leaks a handle cannot keep a listing alive", async () => {
+  // `setup` starts an hour-long interval and never clears it: before the listing verbs exited
+  // explicitly, `denext --help` and `denext completions` in this project never terminated.
+  const dir = await project(
+    "denext_leaky_plugin_",
+    `export default {
+  plugins: [{ name: "leaky", setup: () => { setInterval(() => {}, 3600e3); } }],
+  commands: [{ name: "seed", summary: "load fixture data", run: () => {} }],
+};
+`,
+  );
+  try {
+    for (
+      const args of [["--help", `--cwd=${dir}`], ["completions", "zsh", "--cwd", dir], [
+        "commands",
+        "--cwd",
+        dir,
+      ]]
+    ) {
+      const started = performance.now();
+      const { code } = await runCli(args);
+      const elapsed = performance.now() - started;
+      assertEquals(code, 0, `\`denext ${args.join(" ")}\` exited ${code}`);
+      assert(elapsed < 20_000, `\`denext ${args.join(" ")}\` took ${Math.round(elapsed)} ms`);
+    }
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

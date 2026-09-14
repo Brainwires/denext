@@ -138,6 +138,22 @@
       ]
     },
     {
+      "name": "commands",
+      "summary": "List this project's own CLI verbs (config commands: + plugin addCommand)",
+      "usage": "denext commands [options]",
+      "description": "  denext commands [--json] [--timeout <ms>] [--cwd <dir>]\n\n  Imports denext.config.ts and runs every plugin setup() to discover the verbs the\n  project contributes, then exits. A plugin that hangs or throws degrades to a notice\n  (--json: `timedOut` / `error`); the exit code stays 0 either way.",
+      "flags": [
+        {
+          "name": "timeout",
+          "type": "number",
+          "valueName": "<ms>",
+          "default": 1500,
+          "description": "Budget for plugin discovery"
+        }
+      ],
+      "positionals": []
+    },
+    {
       "name": "completions",
       "summary": "Print a shell completion script (bash|zsh|fish)",
       "usage": "denext completions <shell>",
@@ -738,14 +754,13 @@
       "name": "ui",
       "summary": "Open the project management UI in a browser (loopback only)",
       "usage": "denext ui [dir] [options]",
-      "description": "  denext ui                    Serve the UI for the current project and open it\n  denext ui ./my-app --port 6000\n  denext ui --read-only        Browse without offering any write\n  denext ui --no-open --json   Print { url, port, token } and keep serving\n\n  The UI binds 127.0.0.1 only. The printed URL carries a per-launch 256-bit token that\n  is exchanged once for an HttpOnly, SameSite=Strict cookie; every mutation additionally\n  needs a same-origin Origin and a derived CSRF token.",
+      "description": "  denext ui                    Serve the UI for the current project and open it\n  denext ui ./my-app --port 6000   That exact port, or a clear error if it is taken\n  denext ui --read-only        Browse without offering any write\n  denext ui --no-open --json   Print { url, port, token } and keep serving\n\n  The UI binds 127.0.0.1 only. The printed URL carries a per-launch 256-bit token that\n  is exchanged ONCE for an HttpOnly, SameSite=Strict cookie — the query token is then\n  refused, so a copied link cannot open a second session. Every mutation additionally\n  needs a same-origin Origin and a derived CSRF token.\n  Note: with --open, the token is visible in the browser-launcher's argv on this machine.",
       "flags": [
         {
           "name": "port",
           "type": "number",
           "valueName": "<port>",
-          "default": 5177,
-          "description": "Port to listen on (default 5177; 0 picks a free one)"
+          "description": "Port to listen on (default 5177, which falls forward when busy; an explicit --port is required exactly, and 0 picks a free one)"
         },
         {
           "name": "no-open",
@@ -761,7 +776,7 @@
           "name": "token",
           "type": "string",
           "valueName": "<token>",
-          "description": "Use this session token instead of minting one"
+          "description": "Use this session token instead of minting one (at least 22 characters)"
         },
         {
           "name": "ui-dev",

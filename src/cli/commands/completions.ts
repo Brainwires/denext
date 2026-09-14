@@ -6,6 +6,13 @@
 //   bash:  source <(denext completions bash)
 //   zsh:   denext completions zsh > "${fpath[1]}/_denext"
 //   fish:  denext completions fish > ~/.config/fish/completions/denext.fish
+//
+// Completions are the one listing that still discovers the PROJECT's verbs eagerly (a shell
+// can only complete a name it was given), so `cli.ts` merges them in first, under the
+// {@link COMMAND_LOAD_BUDGET_MS} budget — a plugin `setup` that hangs costs 1.5 s and the
+// script is emitted without that project's verbs. Because that same `setup` is arbitrary user
+// code that may leave a timer or a watcher open, this verb always `Deno.exit`s once the script
+// is on stdout: a leaked handle must never keep the shell's completion call alive.
 
 import type { CommandRegistry, CommandSpec } from "../command.ts";
 
@@ -56,6 +63,13 @@ function fishScript(reg: CommandRegistry): string {
     .join("\n") + "\n";
 }
 
+/** The script emitters, keyed by the shell name the verb accepts. */
+const emit: Record<string, (reg: CommandRegistry) => string> = {
+  bash: bashScript,
+  zsh: zshScript,
+  fish: fishScript,
+};
+
 /** Build the `completions` verb bound to `reg` (so it lists the real verb set). */
 export function makeCompletionsCommand(reg: CommandRegistry): CommandSpec {
   return {
@@ -64,22 +78,17 @@ export function makeCompletionsCommand(reg: CommandRegistry): CommandSpec {
     positionals: [{ name: "shell", help: "bash | zsh | fish", required: true }],
     run: (ctx) => {
       const shell = ctx.positionals[0];
-      switch (shell) {
-        case "bash":
-          console.log(bashScript(reg));
-          return;
-        case "zsh":
-          console.log(zshScript(reg));
-          return;
-        case "fish":
-          console.log(fishScript(reg));
-          return;
-        default:
-          console.error(
-            `denext completions: unknown shell "${shell ?? ""}" (expected bash | zsh | fish).`,
-          );
-          Deno.exit(1);
+      const script = emit[shell ?? ""];
+      if (!script) {
+        console.error(
+          `denext completions: unknown shell "${shell ?? ""}" (expected bash | zsh | fish).`,
+        );
+        Deno.exit(1);
       }
+      console.log(script(reg));
+      // Eager project-verb discovery ran a plugin `setup`; exit rather than wait on whatever
+      // handle it may have left open (see the module header).
+      Deno.exit(0);
     },
   };
 }

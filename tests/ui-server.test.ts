@@ -205,9 +205,11 @@ Deno.test("shutdown releases the port", async () => {
   listener.close();
 });
 
-Deno.test("the UI module graph never reaches the bundler", async () => {
+Deno.test("the UI module graph never reaches the bundler or npm", async () => {
+  // Rooted at the VERB, not the kernel: `denext ui` is what the user runs, and a stray import
+  // in the command module (or anything it reaches) counts just as much as one in the server.
   const output = await new Deno.Command(Deno.execPath(), {
-    args: ["info", "--json", "src/ui/server.ts"],
+    args: ["info", "--json", "src/cli/commands/ui.ts"],
     cwd: new URL("../", import.meta.url).pathname,
     stdout: "piped",
     stderr: "piped",
@@ -218,12 +220,87 @@ Deno.test("the UI module graph never reaches the bundler", async () => {
   };
   const forbidden = graph.modules
     .map((m) => m.specifier)
-    .filter((s) => /esbuild|dev-server\/manifest|dev-unbundled/.test(s));
+    .filter((s) => /esbuild|dev-server\/manifest|dev-unbundled|^npm:/.test(s));
   assertEquals(
     forbidden,
     [],
-    "denext ui must never load the bundler — everything runs as a subprocess (src/ui/proc.ts)",
+    "denext ui must never load the bundler or an npm dependency — everything that needs the " +
+      "project runs as a subprocess (src/ui/proc.ts)",
   );
+});
+
+/**
+ * A project whose config — and whose plugin `setup()` — each write a marker file naming the pid
+ * that executed them. Evaluated in the UI process, the markers would carry the UI's own pid.
+ */
+const MARKER_CONFIG = `await Deno.writeTextFile(
+  new URL("./config-ran.txt", import.meta.url),
+  String(Deno.pid),
+);
+export default {
+  plugins: [{
+    name: "marker",
+    async setup(ctx) {
+      await Deno.writeTextFile(
+        new URL("./setup-ran.txt", import.meta.url),
+        String(Deno.pid),
+      );
+      ctx.addCommand({ name: "marked", summary: "a plugin verb", run: () => {} });
+    },
+  }],
+};
+`;
+
+/** Read a marker's pid, or null when the file was never written. */
+async function markerPid(dir: string, name: string): Promise<number | null> {
+  try {
+    return Number(await Deno.readTextFile(join(dir, name)));
+  } catch {
+    return null;
+  }
+}
+
+Deno.test({
+  name: "project code never runs in the UI process — discovery is a separate pid",
+  // The real (unstubbed) discovery path spawns `denext commands --json`, which imports the
+  // project's config for real.
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: "denext_ui_marker_" });
+    await Deno.writeTextFile(join(dir, "deno.json"), "{}\n");
+    await Deno.writeTextFile(join(dir, "denext.config.ts"), MARKER_CONFIG);
+    // read-only: the UI refuses every write of its own, and a GET still lists verbs — the
+    // discovery CHILD is allowed to execute the project, which is the whole point of the split.
+    const server = await startUiServer({ dir, port: 0, readOnly: true });
+    const headers = { cookie: `${UI_COOKIE}=${server.token}` };
+    const base = `http://127.0.0.1:${server.port}`;
+    try {
+      const page = await fetch(`${base}/commands`, { headers });
+      assertEquals(page.status, 200);
+      assertStringIncludes(await page.text(), "denext dev", "read-only still lists verbs");
+
+      const api = await fetch(`${base}/api/commands`, { headers });
+      assertEquals(api.status, 200);
+      const body = await api.json() as { commands: { name: string; source: string }[] };
+      assert(
+        body.commands.some((c) => c.name === "marked" && c.source === "plugin"),
+        `the project's plugin verb was discovered: ${
+          JSON.stringify(body.commands.map((c) => c.name))
+        }`,
+      );
+
+      // The markers exist — the project DID run — but in the child, never here.
+      const config = await markerPid(dir, "config-ran.txt");
+      const setup = await markerPid(dir, "setup-ran.txt");
+      assert(config !== null && setup !== null, "the discovery child evaluated the project");
+      assert(config !== Deno.pid, `denext.config.ts ran in the UI process (pid ${Deno.pid})`);
+      assert(setup !== Deno.pid, `the plugin setup ran in the UI process (pid ${Deno.pid})`);
+    } finally {
+      await server.shutdown();
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
 });
 
 // ── the view layer ───────────────────────────────────────────────────────────

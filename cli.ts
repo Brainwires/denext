@@ -16,7 +16,7 @@
 
 import { join, resolve } from "@std/path";
 import { entrypointArg, isStandaloneBinary } from "./src/cli/self-exec.ts";
-import { resolveProject } from "./src/build/paths.ts";
+import { CONFIG_FILES, resolveProject } from "./src/build/paths.ts";
 import { buildAppCss, injectAppConfigRedirects, restoreAppConfig } from "./src/build/css.ts";
 import { tailwindPaths } from "./src/build/tailwind.ts";
 import { denoExecutable, frameworkRoot, minDepAgeArgs } from "./src/build/bundle.ts";
@@ -27,7 +27,7 @@ import {
   writeMergedModuleConfig,
 } from "./src/build/module-config.ts";
 import { loadEnv } from "./src/server/env.ts";
-import { COMMAND_LOAD_BUDGET_MS, loadPluginCommands } from "./src/cli/plugin-commands.ts";
+import { loadPluginCommands } from "./src/cli/plugin-commands.ts";
 import { VERSION } from "./mod.ts";
 import type { CommandContext, CommandSpec, ParseOutcome } from "./src/cli/command.ts";
 import type { CommandRegistry } from "./src/cli/command.ts";
@@ -224,20 +224,37 @@ function cwdFromArgs(argv: string[]): string {
 }
 
 /**
- * Whether this outcome has to list EVERY verb, which means the project's own verbs
- * (config `commands:` + plugin `addCommand`) must be merged in before it is printed:
- * the top-level help table and the shell-completion scripts. A specific command's
- * help, and every other verb, keep paying nothing.
+ * Whether this outcome has to list EVERY verb NAME, which means the project's own verbs
+ * (config `commands:` + plugin `addCommand`) must be merged in before it is printed. Only the
+ * shell-completion scripts do: a shell can only complete a name it was handed.
+ *
+ * `--help` deliberately does NOT. Discovering project verbs means importing the project's
+ * `denext.config.ts` and running every plugin `setup()` — arbitrary user code, under whatever
+ * permissions the CLI holds — which is far too much to ask of `denext --help`, and a `setup`
+ * that leaks a handle would keep help from ever exiting. Help prints
+ * {@linkcode PROJECT_HELP_NOTE} instead and `denext commands` does the discovery.
  */
 function needsEveryCommand(outcome: ParseOutcome): boolean {
-  if (outcome.kind === "help") return outcome.command === undefined;
   return outcome.kind === "run" && outcome.command.name === "completions";
 }
 
-/** The footer appended to the help table when eager discovery ran out of budget. */
-const TRUNCATED_HELP_NOTE = `project commands not listed: plugin setup exceeded ${
-  COMMAND_LOAD_BUDGET_MS / 1000
-} s`;
+/** The footer `--help` prints, in place of a verb list it refuses to import the project for. */
+const PROJECT_HELP_NOTE =
+  "Project verbs: run `denext commands` (they are also in shell completions).";
+
+/**
+ * Whether `dir` holds a denext config — a file-existence probe, never an import, so
+ * `denext --help` inside a project evaluates none of the project's code.
+ */
+async function hasDenextConfig(dir: string): Promise<boolean> {
+  for (const name of CONFIG_FILES) {
+    try {
+      const stat = await Deno.stat(join(dir, name));
+      if (stat.isFile) return true;
+    } catch { /* not this name */ }
+  }
+  return false;
+}
 
 async function main(): Promise<void> {
   const registry = buildRegistry();
@@ -247,25 +264,29 @@ async function main(): Promise<void> {
     await loadPluginCommands(registry, cwdFromArgs(Deno.args));
     outcome = registry.parse(Deno.args);
   }
-  // Help and completions enumerate the whole verb set, so they load project verbs
-  // up front — under a time budget, since a plugin's `setup` is arbitrary user code.
-  const eager = needsEveryCommand(outcome)
-    ? await loadPluginCommands(registry, cwdFromArgs(Deno.args))
-    : undefined;
+  // Completions enumerate the whole verb set, so they load project verbs up front — under a
+  // time budget, since a plugin's `setup` is arbitrary user code (the verb then exits, so a
+  // handle that `setup` leaked cannot keep the shell waiting).
+  if (needsEveryCommand(outcome)) await loadPluginCommands(registry, cwdFromArgs(Deno.args));
 
-  if (outcome.kind !== "run") return printOutcome(registry, outcome, eager?.timedOut === true);
+  if (outcome.kind !== "run") {
+    const note = outcome.kind === "help" && outcome.command === undefined &&
+      await hasDenextConfig(cwdFromArgs(Deno.args));
+    return printOutcome(registry, outcome, note);
+  }
   if (await moduleGate(outcome.command, outcome.ctx)) return;
   await outcome.command.run(outcome.ctx);
 }
 
 /**
- * Print a non-run outcome: the version, help, or a usage error (exit 1). `truncated`
- * says eager project-verb discovery timed out, so the help table is incomplete.
+ * Print a non-run outcome: the version, help, or a usage error (exit 1). `projectNote`
+ * says the target directory is a denext project, so the help table — which lists only the
+ * built-ins — points at `denext commands` for the verbs this project adds.
  */
 function printOutcome(
   registry: CommandRegistry,
   outcome: Exclude<ParseOutcome, { kind: "run" }>,
-  truncated = false,
+  projectNote = false,
 ): void {
   if (outcome.kind === "version") {
     console.log(`denext ${VERSION}`);
@@ -273,7 +294,7 @@ function printOutcome(
     const help = outcome.command
       ? registry.formatCommandHelp(outcome.command)
       : registry.formatHelp(VERSION);
-    console.log(truncated ? `${help}\n\n${TRUNCATED_HELP_NOTE}` : help);
+    console.log(projectNote ? `${help}\n\n${PROJECT_HELP_NOTE}` : help);
   } else {
     console.error(
       `denext: ${outcome.message}` +

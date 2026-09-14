@@ -14,6 +14,7 @@ Deno.test("registry exposes every first-party verb", () => {
     "build",
     "check",
     "codemod",
+    "commands",
     "completions",
     "create",
     "desktop",
@@ -49,8 +50,11 @@ Deno.test("module-loading verbs are flagged loadsModules", () => {
   for (const name of ["dev", "build", "export", "start", "doctor", "analyze", "task"]) {
     assert(reg.get(name)?.loadsModules, `${name} should load modules`);
   }
-  // Toolchain + scaffold verbs must NOT trigger the module/env re-exec gate.
-  for (const name of ["test", "lint", "fmt", "create", "migrate", "ui"]) {
+  // Toolchain + scaffold verbs must NOT trigger the module/env re-exec gate. `commands` is
+  // deliberately among them: it DOES import denext.config.ts (through loadPluginCommands), but
+  // a listing verb must never build the app's CSS or re-exec — the config load is budgeted and
+  // degrades to a notice, exactly as `completions` has always done.
+  for (const name of ["test", "lint", "fmt", "create", "migrate", "ui", "commands"]) {
     assert(!reg.get(name)?.loadsModules, `${name} should not load modules`);
   }
 });

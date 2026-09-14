@@ -2,29 +2,24 @@
 // `commands:` in denext.config.ts or a plugin's `addCommand`, runnable from the browser with
 // their output streamed back.
 //
-// Two discovery paths, deliberately different:
+// Discovery is ONE `deno` subprocess: `denext commands --json`. The panel parses its listing
+// and renders it; it never imports the project's `denext.config.ts`, never runs a plugin
+// `setup()`, and never imports the CLI registry (every serving verb pulls the dev server in,
+// and with it esbuild — which `tests/ui-server.test.ts` refuses for the whole `denext ui`
+// module graph). That is the UI process's standing guarantee: PROJECT CODE NEVER RUNS IN THE
+// UI'S PRIVILEGED PROCESS. `--read-only` bars the UI from writing; it does not (and cannot)
+// stop the project's own config from executing inside that short-lived child, which is exactly
+// why the child is where it runs.
 //
-//   * PROJECT + PLUGIN verbs come from {@linkcode loadPluginCommands} in this process — the
-//     seam J3 extracted so the `ui` verb could enumerate them — merged into a throwaway
-//     {@linkcode CommandRegistry} and budgeted, so a plugin `setup` that hangs degrades to a
-//     named notice instead of a dead page.
-//   * BUILT-IN verbs come from one cached `denext --help` SUBPROCESS. The UI must never import
-//     `src/cli/register.ts`: every serving verb pulls the dev server in, and with it esbuild —
-//     which `tests/ui-server.test.ts` refuses for the whole `denext ui` module graph. Parsing
-//     the CLI's own help table is the one source of built-in verbs that costs nothing here.
+// Concurrent page loads for the same directory SHARE one discovery — the child is spawned once
+// and every waiter resolves from it — and a successful listing is reused for a few seconds. A
+// failure or a timeout is never cached: the next request tries again.
 //
 // Running a verb is a MUTATION (a verb may write anything), so it is refused under
 // `--read-only`, and only project/plugin verbs that declare no required positional are offered
 // a Run button — built-ins belong in the terminal, where their long-lived output does.
 
-import {
-  CommandRegistry,
-  type CommandSpec,
-  type FlagSpec,
-  type PositionalSpec,
-} from "../../cli/command.ts";
-import { COMMAND_LOAD_BUDGET_MS, loadPluginCommands } from "../../cli/plugin-commands.ts";
-import { resetPlugins } from "../../plugin/mod.ts";
+import type { FlagSpec, PositionalSpec } from "../../cli/command.ts";
 import {
   html,
   jsonResponse,
@@ -43,8 +38,18 @@ const PATH = "/commands";
 /** Where the two extension seams are documented. */
 const DOCS = "https://denext.dev/docs/plugins#project-commands";
 
-/** How long the `denext --help` enumeration may take before the panel gives up on it. */
-const HELP_BUDGET_MS = 8000;
+/**
+ * How long the whole discovery subprocess may take before the panel gives up on it. Generous
+ * next to {@linkcode DEFAULT_BUDGET_MS}: the child pays Deno's own cold start before it even
+ * begins importing the project's config.
+ */
+const DISCOVERY_BUDGET_MS = 8000;
+
+/** The plugin-setup budget handed to the child, matching the CLI's own default. */
+const DEFAULT_BUDGET_MS = 1500;
+
+/** How long a SUCCESSFUL listing is reused before the next request re-discovers. */
+const LIST_TTL_MS = 5000;
 
 /** Where a verb came from, as the panel groups them. */
 export type VerbSource = "core" | "plugin" | "project";
@@ -92,14 +97,21 @@ export type UiCommandRunner = (argv: string[], opts: RunDenoOptions) => Promise<
 const defaultRunner: UiCommandRunner = async (argv, opts) => (await runDeno(argv, opts)).code;
 
 let runner: UiCommandRunner = defaultRunner;
-let budgetMs = COMMAND_LOAD_BUDGET_MS;
-
-/** The built-in verb table per project directory (one `--help` spawn per UI process). */
-const coreCache = new Map<string, Promise<CommandSpec[]>>();
+let budgetMs = DEFAULT_BUDGET_MS;
 
 /**
- * Swap the subprocess runner, clearing the built-in verb cache (a new runner answers `--help`
- * differently). Restore the returned value when done.
+ * Discovery in flight, keyed by project directory: every request that arrives while a child is
+ * running waits on the SAME promise, so eight concurrent `/api/commands` calls spawn one
+ * subprocess, not eight. Dropped the moment it settles.
+ */
+const inFlight = new Map<string, Promise<UiCommandList>>();
+
+/** The last SUCCESSFUL listing per directory, reused for {@linkcode LIST_TTL_MS}. */
+const listCache = new Map<string, { at: number; list: UiCommandList }>();
+
+/**
+ * Swap the subprocess runner, clearing the cached listing (a new runner answers differently).
+ * Restore the returned value when done.
  *
  * @internal Test seam.
  * @param next The runner to install.
@@ -108,12 +120,13 @@ const coreCache = new Map<string, Promise<CommandSpec[]>>();
 export function setCommandRunner(next: UiCommandRunner): UiCommandRunner {
   const previous = runner;
   runner = next;
-  coreCache.clear();
+  listCache.clear();
   return previous;
 }
 
 /**
- * Shorten (or lengthen) the project-verb discovery budget.
+ * Shorten (or lengthen) the plugin-setup budget handed to the discovery subprocess, clearing
+ * the cached listing so the next request actually re-discovers under it.
  *
  * @internal Test seam.
  * @param ms The new budget in milliseconds.
@@ -122,95 +135,114 @@ export function setCommandRunner(next: UiCommandRunner): UiCommandRunner {
 export function setCommandBudget(ms: number): number {
   const previous = budgetMs;
   budgetMs = ms;
+  listCache.clear();
   return previous;
 }
 
 // ── discovery ────────────────────────────────────────────────────────────────
 
-/** Built-in verbs are listed for reference only; the UI never dispatches one. */
-function noRun(): void {}
+/** The listing document `denext commands --json` prints (see `src/cli/commands/commands.ts`). */
+export interface CommandListing {
+  /** The built-ins denext ships. */
+  readonly core?: readonly UiCommandInfo[];
+  /** The verbs this project contributes. */
+  readonly project?: readonly UiCommandInfo[];
+  /** True when the child's plugin budget elapsed. */
+  readonly timedOut?: boolean;
+  /** The failure message when the child could not read the project's config. */
+  readonly error?: string;
+}
 
 /**
- * Parse the built-in verb table out of `denext --help`. Everything from the
- * "Project commands:" heading on is skipped: those verbs are discovered in-process, with their
- * full flag and positional schemas, which the help table does not carry.
+ * Pull the child's JSON document out of its combined output. `commands --json` pretty-prints,
+ * so the document opens on a bare `{` line and closes on a bare `}` line — anything Deno itself
+ * wrote around it (a download line, a warning) is left out.
  *
- * @internal Exported for its unit test (the default path spawns a subprocess).
- * @param help The CLI's help output.
- * @returns One name + summary spec per built-in verb, in help order.
+ * @internal Exported for its unit test.
+ * @param output Everything the child wrote, newline-joined.
+ * @returns The parsed listing, or `null` when there was no parsable document.
  */
-export function parseCoreVerbs(help: string): CommandSpec[] {
-  const specs: CommandSpec[] = [];
-  const seen = new Set<string>();
-  for (const line of help.split("\n")) {
-    if (line.startsWith("Project commands:")) break;
-    const match = /^ {2}denext ([a-z][a-z0-9-]*) {2,}(\S.*?)\s*$/.exec(line);
-    if (!match || seen.has(match[1])) continue;
-    seen.add(match[1]);
-    specs.push({ name: match[1], summary: match[2], run: noRun });
-  }
-  return specs;
-}
-
-/** Ask this framework's own CLI for its verb table. Never rejects — the panel degrades. */
-async function loadCoreVerbs(dir: string): Promise<CommandSpec[]> {
-  const lines: string[] = [];
+export function parseListing(output: string): CommandListing | null {
+  const lines = output.split("\n").map((line) => line.replace(/\r$/, ""));
+  const open = lines.indexOf("{");
+  const close = lines.lastIndexOf("}");
+  if (open < 0 || close < open) return null;
   try {
-    await runner([...cliInvocation(), "--help", `--cwd=${dir}`], {
-      cwd: dir,
-      onLine: (line) => lines.push(line),
-      signal: AbortSignal.timeout(HELP_BUDGET_MS),
-    });
-  } catch { /* no deno on PATH, or the enumeration timed out — built-ins are simply absent */ }
-  return parseCoreVerbs(lines.join("\n"));
+    const parsed = JSON.parse(lines.slice(open, close + 1).join("\n"));
+    return parsed !== null && typeof parsed === "object" ? parsed as CommandListing : null;
+  } catch {
+    return null;
+  }
 }
 
-/** The built-in verbs for `dir`, spawned at most once per UI process. */
-function coreVerbs(dir: string): Promise<CommandSpec[]> {
-  const cached = coreCache.get(dir);
-  if (cached) return cached;
-  const pending = loadCoreVerbs(dir);
-  coreCache.set(dir, pending);
-  return pending;
-}
-
-/** One registered spec as the panel describes it. */
-function describe(spec: CommandSpec): UiCommandInfo {
-  const positionals = spec.positionals ?? [];
-  const source = spec.source ?? "core";
+/** Built-ins first, then the project's own verbs — the order the panel and the JSON twin use. */
+function flatten(listing: CommandListing): UiCommandList {
   return {
-    name: spec.name,
-    source,
-    summary: spec.summary,
-    ...(spec.usage === undefined ? {} : { usage: spec.usage }),
-    flags: spec.flags ?? [],
-    positionals,
-    runnable: source !== "core" && positionals.every((p) => p.required !== true),
+    commands: [...listing.core ?? [], ...listing.project ?? []],
+    timedOut: listing.timedOut === true,
+    ...(typeof listing.error === "string" ? { error: listing.error } : {}),
   };
 }
 
 /**
- * Every verb this project can run: the built-ins the CLI ships, plus the `commands:` entries and
- * plugin `addCommand` verbs the project itself contributes. Seeding the registry with the
- * built-ins first reproduces the CLI's own rule — a core verb always wins a name collision.
+ * Spawn `denext commands --json` against `dir` and read its listing back. Never rejects: a
+ * child that cannot start, times out, or prints nothing parsable degrades to an empty list
+ * with an honest reason, which the panel renders as a notice.
+ */
+async function discover(dir: string): Promise<UiCommandList> {
+  const lines: string[] = [];
+  const argv = [
+    ...cliInvocation(),
+    "commands",
+    "--json",
+    "--timeout",
+    String(budgetMs),
+    "--cwd",
+    dir,
+  ];
+  try {
+    await runner(argv, {
+      cwd: dir,
+      onLine: (line) => lines.push(line),
+      signal: AbortSignal.timeout(DISCOVERY_BUDGET_MS),
+    });
+  } catch {
+    return { commands: [], timedOut: true };
+  }
+  const listing = parseListing(lines.join("\n"));
+  if (!listing) {
+    return { commands: [], timedOut: false, error: "denext commands printed no listing" };
+  }
+  return flatten(listing);
+}
+
+/** Whether a listing is worth reusing: a real answer, not a degraded one. */
+function cacheable(list: UiCommandList): boolean {
+  return !list.timedOut && list.error === undefined && list.commands.length > 0;
+}
+
+/**
+ * Every verb this project can run: the built-ins the CLI ships, plus the `commands:` entries
+ * and plugin `addCommand` verbs the project itself contributes.
+ *
+ * The work happens in a `deno` subprocess (`denext commands --json`), never in this process.
+ * Overlapping requests for the same `dir` share one child, and a successful listing is reused
+ * for {@linkcode LIST_TTL_MS}; a timeout or a failure is never cached.
  *
  * @param dir The project directory.
  * @returns The verb list, plus whether discovery was cut short by the budget or a bad config.
  */
-export async function listCommands(dir: string): Promise<UiCommandList> {
-  // Plugin setup is idempotent by plugin NAME in a process-global registry, so a second panel
-  // load would otherwise reuse whatever the first one left behind — including a `setup` that
-  // hung and never finished. The UI process runs no app, so it owns that registry alone: clear
-  // it, and every page load is an honest fresh discovery of the config as it stands now.
-  resetPlugins();
-  const registry = new CommandRegistry();
-  for (const spec of await coreVerbs(dir)) registry.register(spec);
-  const result = await loadPluginCommands(registry, dir, { timeoutMs: budgetMs });
-  return {
-    commands: registry.list().filter((spec) => spec.hidden !== true).map(describe),
-    timedOut: result.timedOut,
-    ...(result.error === undefined ? {} : { error: result.error }),
-  };
+export function listCommands(dir: string): Promise<UiCommandList> {
+  const cached = listCache.get(dir);
+  if (cached && Date.now() - cached.at < LIST_TTL_MS) return Promise.resolve(cached.list);
+  const pending = inFlight.get(dir);
+  if (pending) return pending;
+  const started = discover(dir).then((list) => {
+    if (cacheable(list)) listCache.set(dir, { at: Date.now(), list });
+    return list;
+  }).finally(() => inFlight.delete(dir));
+  inFlight.set(dir, started);
+  return started;
 }
 
 // ── the view ─────────────────────────────────────────────────────────────────
@@ -323,10 +355,11 @@ function notices(list: UiCommandList): RawHtml {
   const items: RawHtml[] = [];
   if (list.timedOut) {
     items.push(html`
-      <p
-        class="note">Plugin setup exceeded ${(budgetMs / 1000).toFixed(
-          1,
-        )} s — project verbs not listed. Built-in verbs are unaffected.</p>
+      <p class="note">Plugin setup exceeded ${(budgetMs / 1000).toFixed(1)} s — project verbs not
+      listed. ${list.commands.length === 0
+        ? html`Discovery itself was cut short; run <code>denext commands</code> in a terminal to
+see why.`
+        : html`Built-in verbs are unaffected.`}</p>
     `);
   }
   if (list.error !== undefined) {
