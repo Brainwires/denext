@@ -151,6 +151,8 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     "devtools": u("src/devtools.ts"),
     // `denext/feature` — the import survives the build-time fold of `feature()` calls.
     "feature": u("src/feature.ts"),
+    // `denext/mobile` — the Capacitor-shell client runtime; shares the one hooks instance.
+    "mobile": u("src/mobile/mod.ts"),
     // next/* compat modules (see NEXT_ALIASES) — prebuilt into the same graph so
     // they share the one denext instance.
     "next-index": u("src/compat/next/index.ts"),
@@ -486,6 +488,7 @@ const DENEXT_RUNTIME_FILES: Record<string, string> = {
   "denext/client-runtime": "client-runtime.js",
   "denext/devtools": "devtools.js",
   "denext/feature": "feature.js",
+  "denext/mobile": "mobile.js",
   "denext/jsx-runtime": "jsx-runtime.js",
   "denext/jsx-dev-runtime": "jsx-runtime.js",
   // The Remix compat client runtime (a migrated Remix app's client components).

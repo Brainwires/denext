@@ -35,6 +35,7 @@ const ENTRIES: { module: string; file: string }[] = [
   { module: "denext/live", file: `${ROOT}src/live.ts` },
   { module: "denext/lazy", file: `${ROOT}src/lazy.ts` },
   { module: "denext/desktop", file: `${ROOT}src/build/desktop.ts` },
+  { module: "denext/mobile", file: `${ROOT}src/mobile/mod.ts` },
   { module: "denext/cli/command", file: `${ROOT}src/cli/command.ts` },
 ];
 

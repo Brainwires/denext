@@ -9262,6 +9262,123 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-mobile/BackSwipeOptions",
+      "kind": "interface",
+      "title": "BackSwipeOptions",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/BackSwipeOptions",
+      "text": "BackSwipeOptions interface BackSwipeOptions Options for useBackSwipe and isBackSwipe.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/installKeyboardInset",
+      "kind": "function",
+      "title": "installKeyboardInset",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/installKeyboardInset",
+      "text": "installKeyboardInset installKeyboardInset(opts?: KeyboardInsetOptions): () => void Keep a CSS custom property on document.documentElement (default --denext-keyboard-inset) equal to the on-screen keyboard's height in px, so layout can lift a composer or a bottom bar above it: padding-bottom: var(--denext-keyboard-inset). The value is derived from window.visualViewport (innerHeight - visualViewport.height - visualViewport.offsetTop, clamped at ≥ 0) and updated at most once per animation frame. It is set to 0px immediately, and stays 0px where visualViewport is unavailable. This is for shells whose Capacitor Keyboard plugin is configured with resize: \"none\", where the webview keeps its size and the keyboard covers the page. With resize: \"native\" the webview itself shrinks, so the inset is always 0 and this is unnecessary. Several installs of the same property may coexist (e.g. two useKeyboardInset components); the property is removed when the last one is disposed. SSR-safe: without a document it installs nothing. { property }, the custom property to maintain. A dispose function that stops listening and, for the last install, removes the property.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/isBackSwipe",
+      "kind": "function",
+      "title": "isBackSwipe",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/isBackSwipe",
+      "text": "isBackSwipe isBackSwipe(dx: number, dy: number, opts?: BackSwipeOptions): boolean The pure gesture test behind useBackSwipe: whether a movement of dx/dy CSS px from the touch start is a back swipe, i.e. rightward by at least minDistance and horizontal by at least ratio × the absolute vertical movement. Horizontal movement since the touch started (positive = rightward). Vertical movement since the touch started (sign ignored). { minDistance = 72, ratio = 1.4 }; enabled is not consulted here. true when the movement qualifies as a back swipe.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/isNativeShell",
+      "kind": "function",
+      "title": "isNativeShell",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/isNativeShell",
+      "text": "isNativeShell isNativeShell(): boolean Whether the page runs inside a Capacitor iOS/Android native shell (webview origin capacitor://localhost on iOS, https://localhost on Android). false on the web, when @capacitor/core is merely bundled into a web build, and during SSR. true only inside the native shell.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/KeyboardInsetOptions",
+      "kind": "interface",
+      "title": "KeyboardInsetOptions",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/KeyboardInsetOptions",
+      "text": "KeyboardInsetOptions interface KeyboardInsetOptions Options for installKeyboardInset and useKeyboardInset.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/nativePlatform-fn",
+      "kind": "function",
+      "title": "nativePlatform",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/nativePlatform-fn",
+      "text": "nativePlatform nativePlatform(): NativePlatform The platform the page runs on: \"ios\" or \"android\" inside a Capacitor native shell, otherwise \"web\". SSR-safe (\"web\" when there is no window). A Capacitor custom platform (e.g. Electron) also reads \"web\": only the iOS and Android shells count. \"ios\", \"android\" or \"web\".",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/NativePlatform-type",
+      "kind": "typeAlias",
+      "title": "NativePlatform",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/NativePlatform-type",
+      "text": "NativePlatform type NativePlatform = ios | android | web The platform a page runs on, as denext/mobile distinguishes them.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/onAppResume",
+      "kind": "function",
+      "title": "onAppResume",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/onAppResume",
+      "text": "onAppResume onAppResume(cb: (awayMs: number) => void): () => void Call cb each time the page returns to the foreground, with how long it was away in milliseconds. It listens for visibilitychange (every browser and webview), pagehide/pageshow (a back-forward-cache restore) and the pause/resume document events that Capacitor's iOS shell fires on scene background/foreground. Whichever signal arrives first counts; the others are deduplicated, so cb runs once per return. A subscription made while the page is already hidden measures from the moment of subscribing. The time away is wall-clock (Date.now()), not performance.now(): iOS's monotonic clock stops while the device sleeps, which would under-report a phone left locked for an hour. A backwards clock jump reads as 0. **The intended pattern** (the rule T3 Code's native app uses): under 10 s away, the connection is probably intact, so probe it (a ping, a cheap refetch); 10 s or more, assume the OS froze the page and its sockets, so reconnect and refetch. SSR-safe: without a document it subscribes to nothing and returns a no-op. Called with awayMs, the time since the page was hidden. A function that unsubscribes.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/openExternal",
+      "kind": "function",
+      "title": "openExternal",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/openExternal",
+      "text": "openExternal openExternal(url: string): Promise<void> Open a URL outside the app. - Inside the native shell, an http(s) URL opens in the in-app browser of the @capacitor/browser plugin when it is installed natively (read from Capacitor.Plugins.Browser; no JS import of the plugin is needed). - Otherwise, including mailto:/tel: and on the web, it calls window.open(url, \"_blank\", \"noopener,noreferrer\"). The iOS shell hands a window.open to the OS (Safari, Mail, Phone); Android routes it to an intent. Only http:, https:, mailto: and tel: URLs are accepted. Anything else, including javascript:, data:, file: and relative URLs, is refused **synchronously** with a TypeError before anything opens. The vetted, normalized URL.href is what gets opened. An absolute http:, https:, mailto: or tel: URL. A promise that settles once the URL has been handed off. It rejects if the Browser plugin rejects, or when there is no window (SSR).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/SAFE_AREA_CSS",
+      "kind": "variable",
+      "title": "SAFE_AREA_CSS",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/SAFE_AREA_CSS",
+      "text": "SAFE_AREA_CSS SAFE_AREA_CSS: string A stylesheet fragment that defines --denext-safe-top, --denext-safe-right, --denext-safe-bottom and --denext-safe-left on :root as the device's safe-area insets (env(safe-area-inset-*, 0px): the notch, status bar and home indicator), 0px where there are none. Drop it into a stylesheet or a <style> tag, then pad with the variables. The insets are only non-zero when the viewport meta includes viewport-fit=cover. In the App Router, export viewport = { width: \"device-width\", initialScale: 1, viewportFit: \"cover\" } from the root layout. In SPA mode, put the meta tag in spa.head; denext's SPA shell keeps an app's own viewport meta instead of emitting its default.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/useAppResume",
+      "kind": "function",
+      "title": "useAppResume",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/useAppResume",
+      "text": "useAppResume useAppResume(cb: (awayMs: number) => void): void Hook form of onAppResume: subscribes on mount, unsubscribes on unmount. The latest cb is always called (it is held in a ref), so passing a fresh closure each render never re-subscribes. Called with awayMs each time the page returns to the foreground. Under 10 s away, probe the connection; 10 s or more, reconnect and refetch.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/useBackSwipe",
+      "kind": "function",
+      "title": "useBackSwipe",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/useBackSwipe",
+      "text": "useBackSwipe useBackSwipe(onBack: () => void, opts?: BackSwipeOptions): (el: Element | null) => void Swipe right to go back. Returns a ref callback: attach it to the element that should recognize the gesture (often the page's scroll container). A touch that travels rightward at least minDistance CSS px (default 72), with horizontal travel at least ratio (default 1.4) × vertical travel, fires onBack once, as soon as it qualifies. It yields, and never fires, when the touch starts inside an editable element (input, textarea, select, contenteditable) or inside an element scrolled away from its left edge (scrollLeft > 0), so carousels and code blocks keep their own horizontal pans. Only touch pointers count (pointerType === \"touch\"); mouse and pen are ignored. onBack and opts are held in refs: changing them between renders never re-binds, and the returned ref callback is stable. Give the element touch-action: pan-y so the browser does not claim horizontal pans for itself (which would cancel the pointer stream). Called when a back swipe is recognized, e.g. () => router.back(). BackSwipeOptions: minDistance, ratio, enabled. A ref callback for the element to watch.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/useKeyboardInset",
+      "kind": "function",
+      "title": "useKeyboardInset",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/useKeyboardInset",
+      "text": "useKeyboardInset useKeyboardInset(opts?: KeyboardInsetOptions): number Hook form of installKeyboardInset: installs the custom property on mount, disposes it on unmount, and returns the current keyboard height in px (0 during SSR and before mount). { property }, the custom property to maintain. The on-screen keyboard's height in CSS px.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-cli-command/CommandContext",
       "kind": "interface",
       "title": "CommandContext",

@@ -13,6 +13,14 @@ and this project adheres to
 - **`spa.precompress`.** Set `false` to skip the `.gz` siblings a SPA `build`/`export`
   writes next to client assets — for an export bundled into a native shell (Capacitor) whose
   webview never requests them. Default `true`.
+- **`denext/mobile`.** A zero-cost client runtime for apps shipped in a Capacitor iOS/Android
+  shell: `isNativeShell`/`nativePlatform`, `onAppResume`/`useAppResume` (time away, for a
+  probe-vs-reconnect rule), `openExternal` (the native Browser plugin, else `window.open` with
+  noopener; http(s)/mailto/tel only), `installKeyboardInset`/`useKeyboardInset`
+  (`--denext-keyboard-inset` for Keyboard `resize: "none"`), `useBackSwipe`/`isBackSwipe`
+  (swipe right to go back: 72 px, horizontal ≥ 1.4× vertical, yields to editing and horizontal
+  scrollers) and `SAFE_AREA_CSS`. It talks to Capacitor only through the `window.Capacitor`
+  global — no `@capacitor/*` dependency.
 
 ### Changed
 

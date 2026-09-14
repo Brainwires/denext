@@ -13922,6 +13922,234 @@
       ]
     },
     {
+      "module": "denext/mobile",
+      "symbols": [
+        {
+          "name": "BackSwipeOptions",
+          "slug": "BackSwipeOptions",
+          "kind": "interface",
+          "signature": "interface BackSwipeOptions",
+          "doc": "Options for useBackSwipe and isBackSwipe.",
+          "docFull": "Options for {@linkcode useBackSwipe} and {@linkcode isBackSwipe}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "installKeyboardInset",
+          "slug": "installKeyboardInset",
+          "kind": "function",
+          "signature": "installKeyboardInset(opts?: KeyboardInsetOptions): () => void",
+          "doc": "Keep a CSS custom property on document.documentElement (default --denext-keyboard-inset) equal to the on-screen keyboard's height in px, so layout can lift a composer or a bottom bar above it: padding-bottom: var(--denext-keyboard-inset).",
+          "docFull": "Keep a CSS custom property on `document.documentElement` (default\n`--denext-keyboard-inset`) equal to the on-screen keyboard's height in px, so layout can\nlift a composer or a bottom bar above it: `padding-bottom: var(--denext-keyboard-inset)`.\n\nThe value is derived from `window.visualViewport` (`innerHeight - visualViewport.height -\nvisualViewport.offsetTop`, clamped at ≥ 0) and updated at most once per animation frame.\nIt is set to `0px` immediately, and stays `0px` where `visualViewport` is unavailable.\n\nThis is for shells whose Capacitor Keyboard plugin is configured with `resize: \"none\"`,\nwhere the webview keeps its size and the keyboard covers the page. With `resize: \"native\"`\nthe webview itself shrinks, so the inset is always 0 and this is unnecessary.\n\nSeveral installs of the same property may coexist (e.g. two {@linkcode useKeyboardInset}\ncomponents); the property is removed when the last one is disposed. SSR-safe: without a\n`document` it installs nothing.",
+          "params": [
+            {
+              "name": "opts",
+              "doc": "{ property }, the custom property to maintain."
+            }
+          ],
+          "returns": "A dispose function that stops listening and, for the last install, removes the property.",
+          "examples": [
+            "```ts\nimport { installKeyboardInset } from \"denext/mobile\";\nconst dispose = installKeyboardInset();\n// CSS: .composer { bottom: var(--denext-keyboard-inset, 0px); }\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "isBackSwipe",
+          "slug": "isBackSwipe",
+          "kind": "function",
+          "signature": "isBackSwipe(dx: number, dy: number, opts?: BackSwipeOptions): boolean",
+          "doc": "The pure gesture test behind useBackSwipe: whether a movement of dx/dy CSS px from the touch start is a back swipe, i.e. rightward by at least minDistance and horizontal by at least ratio × the absolute vertical movement.",
+          "docFull": "The pure gesture test behind {@linkcode useBackSwipe}: whether a movement of `dx`/`dy` CSS px\nfrom the touch start is a back swipe, i.e. rightward by at least `minDistance` and\nhorizontal by at least `ratio` × the absolute vertical movement.",
+          "params": [
+            {
+              "name": "dx",
+              "doc": "Horizontal movement since the touch started (positive = rightward)."
+            },
+            {
+              "name": "dy",
+              "doc": "Vertical movement since the touch started (sign ignored)."
+            },
+            {
+              "name": "opts",
+              "doc": "{ minDistance = 72, ratio = 1.4 }; enabled is not consulted here."
+            }
+          ],
+          "returns": "true when the movement qualifies as a back swipe.",
+          "examples": [
+            "```ts\nimport { isBackSwipe } from \"denext/mobile\";\nisBackSwipe(80, 20); // true: 80 ≥ 72 and 80 ≥ 1.4 × 20\nisBackSwipe(80, 60); // false: too diagonal\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "isNativeShell",
+          "slug": "isNativeShell",
+          "kind": "function",
+          "signature": "isNativeShell(): boolean",
+          "doc": "Whether the page runs inside a Capacitor iOS/Android native shell (webview origin capacitor://localhost on iOS, https://localhost on Android). false on the web, when @capacitor/core is merely bundled into a web build, and during SSR.",
+          "docFull": "Whether the page runs inside a Capacitor iOS/Android native shell (webview origin\n`capacitor://localhost` on iOS, `https://localhost` on Android). `false` on the web, when\n`@capacitor/core` is merely bundled into a web build, and during SSR.",
+          "params": [],
+          "returns": "true only inside the native shell.",
+          "examples": [
+            "```ts\nimport { isNativeShell } from \"denext/mobile\";\nif (isNativeShell()) document.documentElement.classList.add(\"native\");\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "KeyboardInsetOptions",
+          "slug": "KeyboardInsetOptions",
+          "kind": "interface",
+          "signature": "interface KeyboardInsetOptions",
+          "doc": "Options for installKeyboardInset and useKeyboardInset.",
+          "docFull": "Options for {@linkcode installKeyboardInset} and {@linkcode useKeyboardInset}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "nativePlatform",
+          "slug": "nativePlatform-fn",
+          "kind": "function",
+          "signature": "nativePlatform(): NativePlatform",
+          "doc": "The platform the page runs on: \"ios\" or \"android\" inside a Capacitor native shell, otherwise \"web\". SSR-safe (\"web\" when there is no window). A Capacitor custom platform (e.g. Electron) also reads \"web\": only the iOS and Android shells count.",
+          "docFull": "The platform the page runs on: `\"ios\"` or `\"android\"` inside a Capacitor native shell,\notherwise `\"web\"`. SSR-safe (`\"web\"` when there is no `window`). A Capacitor custom platform\n(e.g. Electron) also reads `\"web\"`: only the iOS and Android shells count.",
+          "params": [],
+          "returns": "\"ios\", \"android\" or \"web\".",
+          "examples": [
+            "```ts\nimport { nativePlatform } from \"denext/mobile\";\ndocument.documentElement.dataset.platform = nativePlatform();\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "NativePlatform",
+          "slug": "NativePlatform-type",
+          "kind": "typeAlias",
+          "signature": "type NativePlatform = ios | android | web",
+          "doc": "The platform a page runs on, as denext/mobile distinguishes them.",
+          "docFull": "The platform a page runs on, as `denext/mobile` distinguishes them.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "onAppResume",
+          "slug": "onAppResume",
+          "kind": "function",
+          "signature": "onAppResume(cb: (awayMs: number) => void): () => void",
+          "doc": "Call cb each time the page returns to the foreground, with how long it was away in milliseconds.",
+          "docFull": "Call `cb` each time the page returns to the foreground, with how long it was away in\nmilliseconds.\n\nIt listens for `visibilitychange` (every browser and webview), `pagehide`/`pageshow`\n(a back-forward-cache restore) and the `pause`/`resume` document events that Capacitor's\niOS shell fires on scene background/foreground. Whichever signal arrives first counts; the\nothers are deduplicated, so `cb` runs once per return. A subscription made while the page is\nalready hidden measures from the moment of subscribing.\n\nThe time away is wall-clock (`Date.now()`), not `performance.now()`: iOS's monotonic clock\nstops while the device sleeps, which would under-report a phone left locked for an hour.\nA backwards clock jump reads as `0`.\n\n**The intended pattern** (the rule T3 Code's native app uses): under 10 s away, the\nconnection is probably intact, so probe it (a ping, a cheap refetch); 10 s or more, assume\nthe OS froze the page and its sockets, so reconnect and refetch.\n\nSSR-safe: without a `document` it subscribes to nothing and returns a no-op.",
+          "params": [
+            {
+              "name": "cb",
+              "doc": "Called with awayMs, the time since the page was hidden."
+            }
+          ],
+          "returns": "A function that unsubscribes.",
+          "examples": [
+            "```ts\nimport { onAppResume } from \"denext/mobile\";\n\nconst stop = onAppResume((awayMs) => {\n  if (awayMs < 10_000) socket.ping();\n  else socket.reconnect();\n});\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "openExternal",
+          "slug": "openExternal",
+          "kind": "function",
+          "signature": "openExternal(url: string): Promise<void>",
+          "doc": "Open a URL outside the app.",
+          "docFull": "Open a URL outside the app.\n\n- Inside the native shell, an http(s) URL opens in the in-app browser of the\n  `@capacitor/browser` plugin when it is installed natively (read from\n  `Capacitor.Plugins.Browser`; no JS import of the plugin is needed).\n- Otherwise, including `mailto:`/`tel:` and on the web, it calls\n  `window.open(url, \"_blank\", \"noopener,noreferrer\")`. The iOS shell hands a\n  `window.open` to the OS (Safari, Mail, Phone); Android routes it to an intent.\n\nOnly `http:`, `https:`, `mailto:` and `tel:` URLs are accepted. Anything else, including\n`javascript:`, `data:`, `file:` and relative URLs, is refused **synchronously** with a\n`TypeError` before anything opens. The vetted, normalized `URL.href` is what gets opened.",
+          "params": [
+            {
+              "name": "url",
+              "doc": "An absolute http:, https:, mailto: or tel: URL."
+            }
+          ],
+          "returns": "A promise that settles once the URL has been handed off. It rejects if the Browser plugin rejects, or when there is no window (SSR).",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { openExternal } from \"denext/mobile\";\n\nexport function DocsLink() {\n  return <button type=\"button\" onClick={() => openExternal(\"https://denext.dev/docs\")}>Docs</button>;\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "SAFE_AREA_CSS",
+          "slug": "SAFE_AREA_CSS",
+          "kind": "variable",
+          "signature": "SAFE_AREA_CSS: string",
+          "doc": "A stylesheet fragment that defines --denext-safe-top, --denext-safe-right, --denext-safe-bottom and --denext-safe-left on :root as the device's safe-area insets (env(safe-area-inset-*, 0px): the notch, status bar and home indicator), 0px where there are none. Drop it into a stylesheet or a <style> tag, then pad with the variables.",
+          "docFull": "A stylesheet fragment that defines `--denext-safe-top`, `--denext-safe-right`,\n`--denext-safe-bottom` and `--denext-safe-left` on `:root` as the device's safe-area insets\n(`env(safe-area-inset-*, 0px)`: the notch, status bar and home indicator), `0px` where\nthere are none. Drop it into a stylesheet or a `<style>` tag, then pad with the variables.\n\nThe insets are only non-zero when the viewport meta includes `viewport-fit=cover`. In the\nApp Router, export `viewport = { width: \"device-width\", initialScale: 1, viewportFit:\n\"cover\" }` from the root layout. In SPA mode, put the meta tag in `spa.head`; denext's SPA\nshell keeps an app's own viewport meta instead of emitting its default.",
+          "params": [],
+          "returns": "",
+          "examples": [
+            "```tsx\nimport { SAFE_AREA_CSS } from \"denext/mobile\";\n\nexport default function RootLayout({ children }: { children: unknown }) {\n  return (\n    <html>\n      <head><style>{SAFE_AREA_CSS}</style></head>\n      <body style={{ paddingTop: \"var(--denext-safe-top)\" }}>{children}</body>\n    </html>\n  );\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "useAppResume",
+          "slug": "useAppResume",
+          "kind": "function",
+          "signature": "useAppResume(cb: (awayMs: number) => void): void",
+          "doc": "Hook form of onAppResume: subscribes on mount, unsubscribes on unmount. The latest cb is always called (it is held in a ref), so passing a fresh closure each render never re-subscribes.",
+          "docFull": "Hook form of {@linkcode onAppResume}: subscribes on mount, unsubscribes on unmount. The\nlatest `cb` is always called (it is held in a ref), so passing a fresh closure each render\nnever re-subscribes.",
+          "params": [
+            {
+              "name": "cb",
+              "doc": "Called with awayMs each time the page returns to the foreground. Under 10 s away, probe the connection; 10 s or more, reconnect and refetch."
+            }
+          ],
+          "returns": "",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { useAppResume } from \"denext/mobile\";\n\nexport function LiveFeed() {\n  useAppResume((awayMs) => (awayMs < 10_000 ? feed.probe() : feed.reconnect()));\n  return <Feed />;\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "useBackSwipe",
+          "slug": "useBackSwipe",
+          "kind": "function",
+          "signature": "useBackSwipe(onBack: () => void, opts?: BackSwipeOptions): (el: Element | null) => void",
+          "doc": "Swipe right to go back. Returns a ref callback: attach it to the element that should recognize the gesture (often the page's scroll container). A touch that travels rightward at least minDistance CSS px (default 72), with horizontal travel at least ratio (default 1.4) × vertical travel, fires onBack once, as soon as it qualifies.",
+          "docFull": "Swipe right to go back. Returns a ref callback: attach it to the element that should\nrecognize the gesture (often the page's scroll container). A touch that travels rightward at\nleast `minDistance` CSS px (default 72), with horizontal travel at least `ratio` (default\n1.4) × vertical travel, fires `onBack` once, as soon as it qualifies.\n\nIt yields, and never fires, when the touch starts inside an editable element (`input`,\n`textarea`, `select`, contenteditable) or inside an element scrolled away from its left\nedge (`scrollLeft > 0`), so carousels and code blocks keep their own horizontal pans. Only\ntouch pointers count (`pointerType === \"touch\"`); mouse and pen are ignored.\n\n`onBack` and `opts` are held in refs: changing them between renders never re-binds, and the\nreturned ref callback is stable. Give the element `touch-action: pan-y` so the browser does\nnot claim horizontal pans for itself (which would cancel the pointer stream).",
+          "params": [
+            {
+              "name": "onBack",
+              "doc": "Called when a back swipe is recognized, e.g. () => router.back()."
+            },
+            {
+              "name": "opts",
+              "doc": "BackSwipeOptions: minDistance, ratio, enabled."
+            }
+          ],
+          "returns": "A ref callback for the element to watch.",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { useRouter } from \"denext\";\nimport { useBackSwipe } from \"denext/mobile\";\n\nexport function Screen({ children }: { children: unknown }) {\n  const router = useRouter();\n  const ref = useBackSwipe(() => router.back());\n  return <main ref={ref} style={{ touchAction: \"pan-y\" }}>{children}</main>;\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "useKeyboardInset",
+          "slug": "useKeyboardInset",
+          "kind": "function",
+          "signature": "useKeyboardInset(opts?: KeyboardInsetOptions): number",
+          "doc": "Hook form of installKeyboardInset: installs the custom property on mount, disposes it on unmount, and returns the current keyboard height in px (0 during SSR and before mount).",
+          "docFull": "Hook form of {@linkcode installKeyboardInset}: installs the custom property on mount,\ndisposes it on unmount, and returns the current keyboard height in px (`0` during SSR and\nbefore mount).",
+          "params": [
+            {
+              "name": "opts",
+              "doc": "{ property }, the custom property to maintain."
+            }
+          ],
+          "returns": "The on-screen keyboard's height in CSS px.",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { useKeyboardInset } from \"denext/mobile\";\n\nexport function Composer() {\n  const inset = useKeyboardInset();\n  return <form style={{ paddingBottom: inset }}><textarea /></form>;\n}\n```"
+          ],
+          "denextOnly": true
+        }
+      ]
+    },
+    {
       "module": "denext/cli/command",
       "symbols": [
         {

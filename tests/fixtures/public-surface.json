@@ -1103,6 +1103,21 @@
   "denext/feature": [
     "feature:function"
   ],
+  "denext/mobile": [
+    "BackSwipeOptions:interface",
+    "KeyboardInsetOptions:interface",
+    "NativePlatform:typeAlias",
+    "SAFE_AREA_CSS:variable",
+    "installKeyboardInset:function",
+    "isBackSwipe:function",
+    "isNativeShell:function",
+    "nativePlatform:function",
+    "onAppResume:function",
+    "openExternal:function",
+    "useAppResume:function",
+    "useBackSwipe:function",
+    "useKeyboardInset:function"
+  ],
   "denext/compiler-runtime": [
     "AsyncScope:interface",
     "Bindings:typeAlias",

@@ -172,7 +172,12 @@ function scaffoldImports(opts: ScaffoldOptions): Record<string, string> {
     // Native-target deps as bare, versioned specifiers (the lint plugin forbids
     // inline `jsr:`/`npm:` in source).
     ...(opts.desktop ? { "denext/desktop": `${dep}/desktop` } : {}),
-    ...(opts.capacitor ? { "@capacitor/cli": `npm:@capacitor/cli@${CAPACITOR}` } : {}),
+    ...(opts.capacitor
+      ? {
+        "denext/mobile": `${dep}/mobile`,
+        "@capacitor/cli": `npm:@capacitor/cli@${CAPACITOR}`,
+      }
+      : {}),
     // React + Next compatibility: alias those specifiers to denext. The
     // react-family entries come from the single canonical specifier list.
     ...(opts.compatibilityMode
