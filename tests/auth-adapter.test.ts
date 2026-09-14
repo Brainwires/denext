@@ -142,7 +142,7 @@ function seedUser(adapter: AuthAdapter, verified: boolean, extra: Partial<Adapte
 Deno.test("resolveSignInUser: no adapter ⇒ the profile passes through unchanged", async () => {
   const options = resolveAuthOptions({ secret: SECRET, providers: [] });
   const profile = profileOf();
-  const user = await resolveSignInUser(options, provider(), profile, account());
+  const { user } = await resolveSignInUser(options, provider(), profile, account());
   assertEquals(user, profile, "byte-for-byte the pre-2.5 flow");
 });
 
@@ -156,7 +156,7 @@ Deno.test("resolveSignInUser: a returning account is the fast path", async () =>
   });
   await adapter.linkAccount({ ...account(), userId: existing.id });
 
-  const user = await resolveSignInUser(options, provider(), profileOf(), account());
+  const { user } = await resolveSignInUser(options, provider(), profileOf(), account());
   assertEquals(user.id, existing.id, "session.user.id is the adapter id");
   assertEquals(user.roles, ["admin", "editor"], "roles come from the stored record");
   assertEquals(user.emailVerified, true, "the epoch-seconds field becomes a boolean claim");
@@ -168,7 +168,7 @@ Deno.test("resolveSignInUser: verified profile + verified user ⇒ link + event"
   const { adapter, options, events } = setup();
   const existing = await seedUser(adapter, true, { roles: ["admin"] });
 
-  const user = await resolveSignInUser(options, provider(), profileOf(), account("sub-9"));
+  const { user } = await resolveSignInUser(options, provider(), profileOf(), account("sub-9"));
   assertEquals(user.id, existing.id);
   assertEquals(user.roles, ["admin"]);
   assertEquals(events.created, [], "an existing identity is never re-created");
@@ -187,7 +187,7 @@ Deno.test("resolveSignInUser: a verified link fills in what the record was missi
   const { adapter, options } = setup();
   const existing = await adapter.createUser({ email: "ada@x.test", emailVerified: now() - 60 });
 
-  const user = await resolveSignInUser(
+  const { user } = await resolveSignInUser(
     options,
     provider(),
     profileOf({ name: "Ada L" }),
@@ -201,7 +201,7 @@ Deno.test("resolveSignInUser: the adapter wins for a field it already has", asyn
   const { adapter, options } = setup();
   const existing = await seedUser(adapter, true, { name: "Local Name" });
 
-  const user = await resolveSignInUser(options, provider(), profileOf(), account());
+  const { user } = await resolveSignInUser(options, provider(), profileOf(), account());
   assertEquals(user.name, "Local Name", "a local rename is not undone by every login");
   assertEquals((await adapter.getUser(existing.id))?.name, "Local Name");
 });
@@ -257,7 +257,7 @@ Deno.test("resolveSignInUser: allowDangerousEmailAccountLinking links anyway", a
   const existing = await seedUser(adapter, false);
   const dangerous = provider({ allowDangerousEmailAccountLinking: true });
 
-  const user = await resolveSignInUser(options, dangerous, profileOf(), account());
+  const { user } = await resolveSignInUser(options, dangerous, profileOf(), account());
   assertEquals(user.id, existing.id);
   assertEquals(events.linked.length, 1, "the opt-in links what the default refuses");
   assertEquals(user.emailVerified, true, "the provider's verified claim was recorded");
@@ -270,7 +270,7 @@ Deno.test("resolveSignInUser: allowDangerousEmailAccountLinking links anyway", a
 Deno.test("resolveSignInUser: a total miss creates the user and links the account", async () => {
   const { adapter, options, events } = setup();
 
-  const user = await resolveSignInUser(
+  const { user } = await resolveSignInUser(
     options,
     provider(),
     profileOf({ roles: ["member"] }),
@@ -296,7 +296,7 @@ Deno.test("resolveSignInUser: a profile with no email always starts a new user",
   const { adapter, options, events } = setup();
   await seedUser(adapter, true);
 
-  const user = await resolveSignInUser(
+  const { user } = await resolveSignInUser(
     options,
     provider(),
     { id: "sub-2", name: "Anonymous" },
@@ -310,7 +310,7 @@ Deno.test("resolveSignInUser: a profile with no email always starts a new user",
 Deno.test("resolveSignInUser: an unverified profile with no local match still creates", async () => {
   const { adapter, options, events } = setup();
 
-  const user = await resolveSignInUser(
+  const { user } = await resolveSignInUser(
     options,
     provider(),
     profileOf({ emailVerified: false }),
@@ -340,8 +340,43 @@ Deno.test("resolveSignInUser: an event handler that throws never fails the sign-
     logger: { error: (message) => void errors.push(message) },
   });
 
-  const user = await resolveSignInUser(options, provider(), profileOf(), account());
+  const { user } = await resolveSignInUser(options, provider(), profileOf(), account());
   assert(user.id);
   assertEquals(errors.length, 1, "the throw went to the logger, not the user");
   assert(errors[0].includes("createUser"));
+});
+
+Deno.test("linkAccount event: the payload carries the account IDENTITY, never its tokens", async () => {
+  // Event handlers are audit sinks — the shipped example writes one line per event to a log
+  // pipeline. A provider access/refresh/id token in an audit line is a credential in a log,
+  // so the payload is deliberately narrower than what the adapter persists.
+  const { adapter, options, events } = setup();
+  await resolveSignInUser(options, provider(), profileOf(), {
+    ...account(),
+    accessToken: "at-SECRET",
+    refreshToken: "rt-SECRET",
+    idToken: "id-SECRET",
+    scope: "openid email",
+  });
+  const linked = events.linked[0].account;
+  assertEquals(Object.keys(linked).sort(), ["provider", "providerAccountId", "type", "userId"]);
+  assertEquals(JSON.stringify(linked).includes("SECRET"), false, "no token reaches a handler");
+  // …but the adapter DID store them: persistence is what an adapter is for.
+  const stored = (await adapter.listAccounts!(linked.userId))[0];
+  assertEquals(stored.accessToken, "at-SECRET");
+  assertEquals(stored.refreshToken, "rt-SECRET");
+});
+
+Deno.test("resolveSignInUser: isNewUser is true only when the adapter record was created", async () => {
+  const { options } = setup();
+  const first = await resolveSignInUser(options, provider(), profileOf(), account("sub-new"));
+  assertEquals(first.isNewUser, true, "the first sign-in created the record");
+  const again = await resolveSignInUser(options, provider(), profileOf(), account("sub-new"));
+  assertEquals(again.isNewUser, false, "a returning account creates nothing");
+  // With no adapter at all nothing is ever created.
+  const bare = resolveAuthOptions({ secret: SECRET, providers: [] });
+  assertEquals(
+    (await resolveSignInUser(bare, provider(), profileOf(), account())).isNewUser,
+    false,
+  );
 });

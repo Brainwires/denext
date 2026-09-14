@@ -30,6 +30,8 @@ const DEFAULT_MAX_AGE = 60 * 60 * 24 * 7;
 
 /** A path made of non-empty, URL-safe segments — what a `basePath` must look like. */
 const BASE_PATH_RE = /^(?:\/[A-Za-z0-9._~-]+)+$/;
+/** Segments that would make the prefix traverse rather than name a place. */
+const TRAVERSAL_SEGMENTS = new Set([".", ".."]);
 /** An RFC 6265 cookie-name token (the `__Host-` prefix's `-` is inside the set). */
 const COOKIE_NAME_RE = /^[A-Za-z0-9!#$%&'*+\-.^_`|~]+$/;
 
@@ -152,11 +154,15 @@ function normalizeBasePath(configured: string | undefined): string {
   if (configured === undefined) return DEFAULT_BASE_PATH;
   const withSlash = configured.startsWith("/") ? configured : `/${configured}`;
   const trimmed = withSlash.endsWith("/") ? withSlash.slice(0, -1) : withSlash;
-  if (!BASE_PATH_RE.test(trimmed)) {
+  // `.` and `..` pass the character class (a dot is URL-safe) but are not places: a
+  // `basePath` of "/auth/.." would have the handler claim, and the routes advertise, a
+  // prefix that resolves somewhere else entirely.
+  const traverses = trimmed.split("/").some((segment) => TRAVERSAL_SEGMENTS.has(segment));
+  if (!BASE_PATH_RE.test(trimmed) || traverses) {
     throw new Error(
       `denextAuth: \`basePath\` ${JSON.stringify(configured)} is not a usable path — it must ` +
         'be one or more non-empty URL-safe segments, e.g. "/auth" or "/account/auth" ' +
-        '(and never "/", which would claim every request).',
+        '(never "/", which would claim every request, and never a "." or ".." segment).',
     );
   }
   return trimmed;

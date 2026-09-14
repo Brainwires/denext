@@ -22,12 +22,15 @@
 import { bufferedRequest, readCappedBody, STALLED, TOO_LARGE } from "../body.ts";
 import { emitAuthEvent } from "./events.ts";
 import {
+  clientIpBucket,
   credentialsLimiter,
   defaultRateLimitKey,
   IP_BUCKET_FACTOR,
   ipBucketKey,
+  proxiedWithoutTrust,
   type RateLimiter,
 } from "./rate-limit.ts";
+import type { ResolvedSignIn } from "./adapter-link.ts";
 import { resolveSessionUser } from "./routes-oauth.ts";
 import {
   afterSignIn,
@@ -52,18 +55,29 @@ type FailureReason =
   | "invalid_credentials"
   | "rate_limited"
   | "access_denied"
-  | "account_not_linked";
+  | "account_not_linked"
+  | "adapter_error";
 
 /**
  * Fire `signInFailed` for a refused attempt. The response is decided by the caller and is
  * never affected: `emitAuthEvent` swallows a throwing handler into the logger.
+ *
+ * The payload carries the client bucket the limiter counted this attempt against — the
+ * `ip` field the event has always declared and never populated, which is what makes
+ * "one address, many failures" visible to an alerting pipeline.
  */
 function emitFailure(
   ctx: AuthRouteContext,
   provider: string,
   reason: FailureReason,
 ): Promise<void> {
-  return emitAuthEvent(ctx.options, "signInFailed", { provider, reason });
+  return emitAuthEvent(ctx.options, "signInFailed", {
+    provider,
+    reason,
+    ip: clientIpBucket(ctx.request, {
+      trustForwardedHeaders: ctx.config.trustForwardedHeaders,
+    }),
+  });
 }
 
 /**
@@ -87,20 +101,94 @@ async function authorizeCredentials(
   }
 }
 
-/** Both limiter buckets for this attempt: the app's key, and an IP-wide one. */
+/**
+ * Both limiter buckets for this attempt: the app's key (IP + identifier by default), and
+ * an IP-wide one.
+ *
+ * Behind an **undeclared** reverse proxy the IP-wide bucket is dropped (`ipKey: null`):
+ * every client looks like the proxy there, so 50 failures anywhere would lock out
+ * everyone. The identifier-scoped key keeps counting, so a single account is still
+ * protected from brute force.
+ */
 function limiterKeys(
   ctx: AuthRouteContext,
   creds: Record<string, string>,
   limiter: RateLimiter | null,
-): { key: string; ipKey: string } {
+): { key: string; ipKey: string | null } {
   const config = ctx.config;
   const keyGenerator = (config.rateLimit || undefined)?.keyGenerator ??
     ((req: Request, c: Record<string, string>) =>
       defaultRateLimitKey(req, c, { trustForwardedHeaders: config.trustForwardedHeaders }));
   return {
     key: limiter ? keyGenerator(ctx.request, creds) : "",
-    ipKey: ipBucketKey(ctx.request, { trustForwardedHeaders: config.trustForwardedHeaders }),
+    ipKey: proxiedWithoutTrust(ctx.request, config)
+      ? null
+      : ipBucketKey(ctx.request, { trustForwardedHeaders: config.trustForwardedHeaders }),
   };
+}
+
+/**
+ * The `429` this attempt owes, if any: the app's key first, then the looser IP-wide bucket.
+ *
+ * @param ctx The route context.
+ * @param provider The provider the callback names.
+ * @param limiter The credentials limiter, or `null` when rate limiting is off.
+ * @param keys The two buckets this attempt counts against.
+ * @returns The `429` response, or `null` to let the attempt through.
+ */
+async function refuseIfLimited(
+  ctx: AuthRouteContext,
+  provider: CredentialsProvider,
+  limiter: RateLimiter | null,
+  keys: { key: string; ipKey: string | null },
+): Promise<Response | null> {
+  if (!limiter) return null;
+  const retryAfter = (await limiter.lockedOut(keys.key)) ??
+    (keys.ipKey === null ? null : await limiter.lockedOut(keys.ipKey, IP_BUCKET_FACTOR));
+  if (retryAfter === null) return null;
+  await emitFailure(ctx, provider.id, "rate_limited");
+  return json({ error: "too many attempts" }, 429, { "retry-after": String(retryAfter) });
+}
+
+/**
+ * The persistence step, with the adapter's failures contained. An adapter that throws —
+ * a UNIQUE race between two concurrent first sign-ins, a database that went away — used to
+ * escape as a raw `500` with no `signInFailed` at all; here it is the SAME generic `401` a
+ * wrong password gets, plus an event and a logged exception. Answering anything else would
+ * also tell the client that this address exists.
+ *
+ * @param ctx The route context.
+ * @param provider The credentials provider.
+ * @param user The user `authorize()` returned.
+ * @returns The resolved sign-in, or the response to send instead.
+ */
+async function persistSignIn(
+  ctx: AuthRouteContext,
+  provider: CredentialsProvider,
+  user: AuthUser,
+): Promise<ResolvedSignIn | Response> {
+  let resolved: ResolvedSignIn | undefined;
+  try {
+    // With an adapter, the session carries the ADAPTER's user id and roles rather than
+    // whatever `authorize()` minted, and the login gets an account row like any provider's.
+    resolved = await resolveSessionUser(ctx, provider, user, {
+      provider: provider.id,
+      providerAccountId: user.id,
+      type: "credentials",
+    });
+  } catch (error) {
+    ctx.options.logger.error(
+      `denextAuth: the "${provider.id}" sign-in could not be persisted`,
+      error,
+    );
+    await emitFailure(ctx, provider.id, "adapter_error");
+    return json({ error: "invalid credentials" }, 401);
+  }
+  if (resolved) return resolved;
+  await emitFailure(ctx, provider.id, "account_not_linked");
+  // The same generic failure a wrong password gets: that this address already belongs
+  // to another identity is precisely what this endpoint must not disclose.
+  return json({ error: "invalid credentials" }, 401);
 }
 
 /**
@@ -124,47 +212,35 @@ export async function handleCredentials(
   const limiter = credentialsLimiter(ctx.config);
   // Two buckets: the app's key (IP + identifier by default) and an IP-wide one, so varying
   // the identifier / identifier field per attempt can't dodge the limiter.
-  const { key, ipKey } = limiterKeys(ctx, creds, limiter);
-  const retryAfter = limiter
-    ? (await limiter.lockedOut(key)) ?? (await limiter.lockedOut(ipKey, IP_BUCKET_FACTOR))
-    : null;
-  if (retryAfter !== null) {
-    await emitFailure(ctx, provider.id, "rate_limited");
-    return json({ error: "too many attempts" }, 429, { "retry-after": String(retryAfter) });
-  }
+  const keys = limiterKeys(ctx, creds, limiter);
+  const limited = await refuseIfLimited(ctx, provider, limiter, keys);
+  if (limited) return limited;
 
   const user = await authorizeCredentials(ctx, provider, creds);
   if (!user) {
-    await limiter?.fail(key);
-    await limiter?.fail(ipKey);
+    await limiter?.fail(keys.key);
+    if (keys.ipKey !== null) await limiter?.fail(keys.ipKey);
     await emitFailure(ctx, provider.id, "invalid_credentials");
     // Generic failure — never reveal whether the account exists.
     return json({ error: "invalid credentials" }, 401);
   }
-  await limiter?.succeed(key);
+  await limiter?.succeed(keys.key);
 
-  // With an adapter, the session carries the ADAPTER's user id and roles rather than
-  // whatever `authorize()` minted, and the login gets an account row like any provider's.
-  const resolved = await resolveSessionUser(ctx, provider, user, {
-    provider: provider.id,
-    providerAccountId: user.id,
-    type: "credentials",
-  });
-  if (!resolved) {
-    await emitFailure(ctx, provider.id, "account_not_linked");
-    // The same generic failure a wrong password gets: that this address already belongs
-    // to another identity is precisely what this endpoint must not disclose.
-    return json({ error: "invalid credentials" }, 401);
-  }
+  const resolved = await persistSignIn(ctx, provider, user);
+  if (resolved instanceof Response) return resolved;
 
-  const approved = await applySignInCallback(ctx.config, resolved, provider.id);
+  const approved = await applySignInCallback(ctx.config, resolved.user, provider.id);
   if (!approved) {
     await emitFailure(ctx, provider.id, "access_denied");
     return json({ error: "access denied" }, 403);
   }
 
   await issueAuthSession(ctx.config, approved, provider.id);
-  await emitAuthEvent(ctx.options, "signIn", { user: approved, provider: provider.id });
+  await emitAuthEvent(ctx.options, "signIn", {
+    user: approved,
+    provider: provider.id,
+    isNewUser: resolved.isNewUser,
+  });
   if (wantsJson(ctx.request)) return json({ ok: true, user: approved });
   const callbackUrl = typeof creds.callbackUrl === "string" ? creds.callbackUrl : undefined;
   return redirect(afterSignIn(ctx.config, callbackUrl));

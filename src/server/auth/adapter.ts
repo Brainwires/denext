@@ -8,7 +8,7 @@
  * `session: { strategy: "database" }`.
  *
  * Shape notes, so every implementation agrees:
- * - Every method may be **sync or async** ({@linkcode Await}).
+ * - Every method may be **sync or async** ({@linkcode MaybePromise}).
  * - Timestamps are **epoch seconds**, never `Date`.
  * - A miss is `undefined`, never `null`.
  * - The `users` + `accounts` methods are **required**; every other group is optional
@@ -22,7 +22,7 @@
 import type { SessionStore } from "./session-store.ts";
 
 /** A value an adapter may return directly or as a promise. */
-export type Await<T> = T | Promise<T>;
+export type MaybePromise<T> = T | Promise<T>;
 
 /** What a verification token is for (one token space per purpose). */
 export type VerificationPurpose = "email" | "reset" | "magic" | "otp";
@@ -160,7 +160,7 @@ export interface AuthAdapter {
    * @param user The profile to store; supply `id` only to keep an externally minted one.
    * @returns The stored record, with its final `id`.
    */
-  createUser(user: Omit<AdapterUser, "id"> & { id?: string }): Await<AdapterUser>;
+  createUser(user: Omit<AdapterUser, "id"> & { id?: string }): MaybePromise<AdapterUser>;
 
   /**
    * Look a user up by id.
@@ -168,7 +168,7 @@ export interface AuthAdapter {
    * @param id The {@linkcode AdapterUser.id}.
    * @returns The user, or `undefined`.
    */
-  getUser(id: string): Await<AdapterUser | undefined>;
+  getUser(id: string): MaybePromise<AdapterUser | undefined>;
 
   /**
    * Look a user up by email (case-insensitively, if the store can).
@@ -176,7 +176,7 @@ export interface AuthAdapter {
    * @param email The address.
    * @returns The user, or `undefined`.
    */
-  getUserByEmail(email: string): Await<AdapterUser | undefined>;
+  getUserByEmail(email: string): MaybePromise<AdapterUser | undefined>;
 
   /**
    * Look a user up by a linked provider account — the primary sign-in path.
@@ -184,7 +184,7 @@ export interface AuthAdapter {
    * @param account The provider + provider-side account id.
    * @returns The user, or `undefined` when the account is not linked.
    */
-  getUserByAccount(account: AdapterAccountRef): Await<AdapterUser | undefined>;
+  getUserByAccount(account: AdapterAccountRef): MaybePromise<AdapterUser | undefined>;
 
   /**
    * Merge changed fields into a user.
@@ -192,7 +192,7 @@ export interface AuthAdapter {
    * @param user The `id` plus the fields to change.
    * @returns The updated record.
    */
-  updateUser(user: Partial<AdapterUser> & { id: string }): Await<AdapterUser>;
+  updateUser(user: Partial<AdapterUser> & { id: string }): MaybePromise<AdapterUser>;
 
   // ---- accounts (required) -------------------------------------------------
 
@@ -201,14 +201,14 @@ export interface AuthAdapter {
    *
    * @param account The account to store.
    */
-  linkAccount(account: AdapterAccount): Await<void>;
+  linkAccount(account: AdapterAccount): MaybePromise<void>;
 
   /**
    * Unlink a provider account (optional).
    *
    * @param account The provider + provider-side account id.
    */
-  unlinkAccount?(account: AdapterAccountRef): Await<void>;
+  unlinkAccount?(account: AdapterAccountRef): MaybePromise<void>;
 
   /**
    * Every provider account linked to a user (optional).
@@ -216,7 +216,7 @@ export interface AuthAdapter {
    * @param userId The owner.
    * @returns The linked accounts.
    */
-  listAccounts?(userId: string): Await<AdapterAccount[]>;
+  listAccounts?(userId: string): MaybePromise<AdapterAccount[]>;
 
   // ---- verification tokens (optional) --------------------------------------
 
@@ -225,7 +225,7 @@ export interface AuthAdapter {
    *
    * @param token The record to store (hash only — never the presented token).
    */
-  createVerificationToken?(token: VerificationTokenRecord): Await<void>;
+  createVerificationToken?(token: VerificationTokenRecord): MaybePromise<void>;
 
   /**
    * **Atomically** redeem a verification token: delete it and return what it was, or
@@ -237,7 +237,9 @@ export interface AuthAdapter {
    * @param ref The identifier + token hash + purpose to redeem.
    * @returns The consumed record, or `undefined`.
    */
-  useVerificationToken?(ref: VerificationTokenRef): Await<VerificationTokenRecord | undefined>;
+  useVerificationToken?(
+    ref: VerificationTokenRef,
+  ): MaybePromise<VerificationTokenRecord | undefined>;
 
   // ---- credentials (optional) ----------------------------------------------
 
@@ -247,7 +249,7 @@ export interface AuthAdapter {
    * @param userId The owner.
    * @returns The `scrypt$…` string, or `undefined` when the user has no password.
    */
-  getCredential?(userId: string): Await<string | undefined>;
+  getCredential?(userId: string): MaybePromise<string | undefined>;
 
   /**
    * Set (or replace) a user's password hash (optional).
@@ -255,7 +257,7 @@ export interface AuthAdapter {
    * @param userId The owner.
    * @param hash The value {@link ./hasher.ts | Hasher.hash} produced.
    */
-  setCredential?(userId: string, hash: string): Await<void>;
+  setCredential?(userId: string, hash: string): MaybePromise<void>;
 
   // ---- API tokens (optional) -----------------------------------------------
 
@@ -264,7 +266,7 @@ export interface AuthAdapter {
    *
    * @param token The record to store (hash only).
    */
-  createApiToken?(token: ApiTokenRecord): Await<void>;
+  createApiToken?(token: ApiTokenRecord): MaybePromise<void>;
 
   /**
    * Look a bearer token up by the hash of the presented string (optional).
@@ -272,7 +274,7 @@ export interface AuthAdapter {
    * @param tokenHash SHA-256 (hex) of the presented token.
    * @returns The record, or `undefined`.
    */
-  getApiTokenByHash?(tokenHash: string): Await<ApiTokenRecord | undefined>;
+  getApiTokenByHash?(tokenHash: string): MaybePromise<ApiTokenRecord | undefined>;
 
   /**
    * Record a successful presentation (optional; best-effort, never fails a request).
@@ -280,14 +282,14 @@ export interface AuthAdapter {
    * @param id The token id.
    * @param lastUsedAt Epoch seconds.
    */
-  touchApiToken?(id: string, lastUsedAt: number): Await<void>;
+  touchApiToken?(id: string, lastUsedAt: number): MaybePromise<void>;
 
   /**
    * Revoke a bearer token (optional).
    *
    * @param id The token id.
    */
-  revokeApiToken?(id: string): Await<void>;
+  revokeApiToken?(id: string): MaybePromise<void>;
 
   /**
    * A user's bearer tokens (optional). Implementations never return the secret.
@@ -295,7 +297,7 @@ export interface AuthAdapter {
    * @param userId The owner.
    * @returns The records.
    */
-  listApiTokens?(userId: string): Await<ApiTokenRecord[]>;
+  listApiTokens?(userId: string): MaybePromise<ApiTokenRecord[]>;
 
   // ---- MFA (optional) ------------------------------------------------------
 
@@ -305,14 +307,14 @@ export interface AuthAdapter {
    * @param userId The owner.
    * @returns The record, or `undefined` when the user has no factor.
    */
-  getMfa?(userId: string): Await<MfaRecord | undefined>;
+  getMfa?(userId: string): MaybePromise<MfaRecord | undefined>;
 
   /**
    * Store (or replace) a user's TOTP factor (optional).
    *
    * @param record The factor to store.
    */
-  setMfa?(record: MfaRecord): Await<void>;
+  setMfa?(record: MfaRecord): MaybePromise<void>;
 
   /**
    * **Atomically** spend one backup code. Backup codes are stored salted-and-hashed, so
@@ -326,7 +328,10 @@ export interface AuthAdapter {
    * @param matches Constant-time comparison of the presented code against one stored hash.
    * @returns `true` when a code was matched AND removed.
    */
-  consumeBackupCode?(userId: string, matches: (hash: string) => Await<boolean>): Await<boolean>;
+  consumeBackupCode?(
+    userId: string,
+    matches: (hash: string) => MaybePromise<boolean>,
+  ): MaybePromise<boolean>;
 
   /**
    * **Atomically** claim a TOTP time step, the replay guard for a valid code presented
@@ -338,7 +343,7 @@ export interface AuthAdapter {
    * @param step The TOTP step the presented code verified against.
    * @returns `true` when the step was claimed (i.e. not a replay).
    */
-  claimTotpStep?(userId: string, step: number): Await<boolean>;
+  claimTotpStep?(userId: string, step: number): MaybePromise<boolean>;
 
   // ---- sessions + lifecycle ------------------------------------------------
 
@@ -350,5 +355,5 @@ export interface AuthAdapter {
   sessions?: SessionStore;
 
   /** Optional: release resources (a database handle) when the server drains. */
-  close?(): Await<void>;
+  close?(): MaybePromise<void>;
 }

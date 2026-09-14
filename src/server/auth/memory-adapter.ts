@@ -13,9 +13,12 @@
  *
  * Shape notes:
  * - Every map is **bounded** (`maxUsers`, default 10 000) and evicts the oldest row, so a
- *   long-running dev server or a fuzzed test can't grow it without limit. Secondary
- *   indexes (email, API-token hash) are verified on read, so an eviction leaves no
- *   dangling lookup behind.
+ *   long-running dev server or a fuzzed test can't grow it without limit. Evicting a row
+ *   also clears what hangs off it (`onEvict`): an evicted user takes its email index
+ *   entry, password hash and TOTP factor with it, and an evicted API token its hash
+ *   index. The remaining lookups are verified on read, so a stale one heals itself.
+ * - A user's **email is unique**, exactly as the SQLite adapter's unique index makes it:
+ *   creating or updating a second user onto an address another user already holds throws.
  * - The three **consume-once** methods are atomic. `useVerificationToken` and
  *   `claimTotpStep` run to completion synchronously, which on one JS isolate *is* the
  *   critical section; `consumeBackupCode` has to `await` the caller's comparison, so it
@@ -69,8 +72,19 @@ interface Table<T> {
   delete(key: string): boolean;
 }
 
-/** Build a {@link Table} capped at `maxEntries` rows. */
-function table<T>(maxEntries: number): Table<T> {
+/**
+ * Build a {@link Table} capped at `maxEntries` rows.
+ *
+ * `onEvict` is what keeps the adapter's claim that every map is bounded true: the tables
+ * themselves always were, but the SECONDARY indexes hanging off them (email → id, token
+ * hash → id, password hashes, TOTP factors) were plain `Map`s that only ever grew. The
+ * hook lets each table clear its own satellites as a row leaves.
+ *
+ * @param maxEntries The row cap.
+ * @param onEvict Called with each row dropped to stay under the cap.
+ * @returns The table.
+ */
+function table<T>(maxEntries: number, onEvict?: (key: string, value: T) => void): Table<T> {
   const rows = new Map<string, T>();
   return {
     rows,
@@ -79,7 +93,12 @@ function table<T>(maxEntries: number): Table<T> {
     set(key, value) {
       rows.delete(key); // re-insert so a rewritten row is the youngest, never the next evicted
       rows.set(key, value);
-      while (rows.size > maxEntries) rows.delete(rows.keys().next().value as string);
+      while (rows.size > maxEntries) {
+        const oldest = rows.keys().next().value as string;
+        const evicted = rows.get(oldest) as T;
+        rows.delete(oldest);
+        onEvict?.(oldest, evicted);
+      }
     },
   };
 }
@@ -88,17 +107,17 @@ function table<T>(maxEntries: number): Table<T> {
 interface MemoryState {
   /** Users by id. */
   users: Table<AdapterUser>;
-  /** Normalised email → user id (verified on read; an eviction leaves a stale entry). */
+  /** Normalised email → user id (cleared when its user is evicted; verified on read). */
   emails: Map<string, string>;
-  /** Linked accounts by `provider\0providerAccountId`. */
-  accounts: Map<string, AdapterAccount>;
+  /** Linked accounts by `provider\0providerAccountId` (bounded; verified on read). */
+  accounts: Table<AdapterAccount>;
   /** Verification tokens by `purpose\0identifier\0tokenHash`. */
   tokens: Table<VerificationTokenRecord>;
   /** Password hashes by user id. */
   credentials: Map<string, string>;
   /** API tokens by token id. */
   apiTokens: Table<ApiTokenRecord>;
-  /** Token hash → token id (verified on read). */
+  /** Token hash → token id (cleared when its token is evicted; verified on read). */
   apiTokenHashes: Map<string, string>;
   /** TOTP factors by user id. */
   mfa: Map<string, MfaRecord>;
@@ -114,13 +133,17 @@ interface MemoryState {
 function createState(options: InMemoryAuthAdapterOptions): MemoryState {
   const max = options.maxUsers ?? DEFAULT_MAX_ENTRIES;
   const locks = new Map<string, Promise<unknown>>();
-  return {
-    users: table<AdapterUser>(max),
+  const state: MemoryState = {
+    // The two eviction hooks are what bound the secondary indexes; both only ever run
+    // later, so referring to `state` from inside them is safe.
+    users: table<AdapterUser>(max, (id, user) => forgetUser(state, id, user)),
     emails: new Map(),
-    accounts: new Map(),
+    accounts: table<AdapterAccount>(max),
     tokens: table<VerificationTokenRecord>(max),
     credentials: new Map(),
-    apiTokens: table<ApiTokenRecord>(max),
+    apiTokens: table<ApiTokenRecord>(max, (_id, token) => {
+      state.apiTokenHashes.delete(token.tokenHash);
+    }),
     apiTokenHashes: new Map(),
     mfa: new Map(),
     sessions: inMemorySessionStore(),
@@ -133,6 +156,22 @@ function createState(options: InMemoryAuthAdapterOptions): MemoryState {
       return next;
     },
   };
+  return state;
+}
+
+/**
+ * Everything keyed by a user id that must go when that user's row is evicted: its email
+ * index entry, its password hash and its TOTP factor. Linked accounts are a bounded table
+ * of their own and heal on read (see {@link userMethods}), so they are not scanned here —
+ * eviction stays O(1).
+ */
+function forgetUser(state: MemoryState, id: string, user: AdapterUser): void {
+  if (user.email) {
+    const key = emailKey(user.email);
+    if (state.emails.get(key) === id) state.emails.delete(key);
+  }
+  state.credentials.delete(id);
+  state.mfa.delete(id);
 }
 
 /**
@@ -159,13 +198,38 @@ function tokenKey(ref: VerificationTokenRef): string {
   return `${ref.purpose}${SEP}${ref.identifier}${SEP}${ref.tokenHash}`;
 }
 
-/** Store a user and keep the email index in step with its (possibly changed) address. */
+/**
+ * Store a user and keep the email index in step with its (possibly changed) address —
+ * refusing an address that already belongs to somebody else.
+ *
+ * That refusal is not a nicety: the SQLite adapter enforces it with a unique index, and an
+ * in-memory adapter that quietly let two users share an address would make the shared
+ * contract suite mean two different things — and would make "sign in by email" ambiguous
+ * in exactly the flow (account linking) whose whole job is to decide which identity an
+ * address belongs to.
+ */
 function saveUser(state: MemoryState, user: AdapterUser): AdapterUser {
+  const key = user.email ? emailKey(user.email) : undefined;
+  if (key !== undefined) assertEmailFree(state, key, user.id);
   const previous = state.users.get(user.id);
   if (previous?.email) state.emails.delete(emailKey(previous.email));
   state.users.set(user.id, { ...user });
-  if (user.email) state.emails.set(emailKey(user.email), user.id);
+  if (key !== undefined) state.emails.set(key, user.id);
   return { ...user };
+}
+
+/** Throw when `key` is already indexed to a LIVE user other than `userId`. */
+function assertEmailFree(state: MemoryState, key: string, userId: string): void {
+  const owner = state.emails.get(key);
+  if (owner === undefined || owner === userId) return;
+  if (!state.users.get(owner)) {
+    state.emails.delete(key); // the indexed user was evicted — the address is free again
+    return;
+  }
+  throw new Error(
+    `inMemoryAuthAdapter: that email address already belongs to user ${JSON.stringify(owner)} ` +
+      "— one account per address (sqliteAuthAdapter's unique index refuses it too).",
+  );
 }
 
 /** Resolve the email index, healing an entry whose user was evicted. */
@@ -193,8 +257,12 @@ function userMethods(
     getUser: (id) => copy(state.users.get(id)),
     getUserByEmail: (email) => copy(userByEmail(state, email)),
     getUserByAccount(ref) {
-      const userId = state.accounts.get(accountKey(ref))?.userId;
-      return userId === undefined ? undefined : copy(state.users.get(userId));
+      const key = accountKey(ref);
+      const userId = state.accounts.get(key)?.userId;
+      if (userId === undefined) return undefined;
+      const user = state.users.get(userId);
+      if (!user) state.accounts.delete(key); // its user was evicted: heal the dangling row
+      return copy(user);
     },
     updateUser(patch) {
       const current = state.users.get(patch.id);
@@ -223,7 +291,7 @@ function accountMethods(
       state.accounts.delete(accountKey(ref));
     },
     listAccounts: (userId) =>
-      [...state.accounts.values()]
+      [...state.accounts.rows.values()]
         .filter((account) => account.userId === userId)
         .map((account) => ({ ...account })),
   };
@@ -345,7 +413,7 @@ function mfaMethods(
 function closeState(state: MemoryState): void {
   state.users.rows.clear();
   state.emails.clear();
-  state.accounts.clear();
+  state.accounts.rows.clear();
   state.tokens.rows.clear();
   state.credentials.clear();
   state.apiTokens.rows.clear();

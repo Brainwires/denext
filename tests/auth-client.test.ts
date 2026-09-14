@@ -193,3 +193,20 @@ Deno.test("signIn({ credentials }) POSTs to the callback endpoint and resolves w
     globalThis.fetch = real;
   }
 });
+
+Deno.test("signIn/signOut: a foreign or javascript: callbackUrl is coerced to a same-origin path", async () => {
+  // `callbackUrl` is routinely read out of the current URL's query, so it is
+  // attacker-influenced — and `signOut` assigns it to `location.href`.
+  const target = async (callbackUrl: string) =>
+    new URL(
+      await signIn("google", { redirect: false, callbackUrl }) as string,
+      "https://app.test",
+    ).searchParams.get("callbackUrl");
+
+  assertEquals(await target("/dashboard?tab=1"), "/dashboard?tab=1", "a plain path is kept");
+  assertEquals(await target("javascript:alert(1)"), "/", "a javascript: URL is an XSS, refused");
+  assertEquals(await target("//evil.test/x"), "/", "protocol-relative is a foreign origin");
+  assertEquals(await target("https://evil.test/x"), "/", "an absolute foreign URL is refused");
+  assertEquals(await target("data:text/html,<script>"), "/", "any other scheme too");
+  assertEquals(await target("dashboard"), "/", "an unrooted value is not guessed at");
+});

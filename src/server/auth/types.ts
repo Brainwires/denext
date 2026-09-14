@@ -241,10 +241,14 @@ export interface AuthEvents {
     provider?: string;
     /**
      * A stable machine-readable reason: `"invalid_credentials"`, `"rate_limited"`,
-     * `"access_denied"`, `"account_not_linked"`, or an OAuth failure code.
+     * `"access_denied"`, `"account_not_linked"`, `"adapter_error"`, or an OAuth failure code.
      */
     reason: string;
-    /** The client IP the limiter keyed on, when the attempt came through a rate-limited route. */
+    /**
+     * The client bucket the limiter keyed on — present on the rate-limited routes (the
+     * credentials POST and the sign-in start). IPv4 as seen; an IPv6 client appears as its
+     * /64 prefix, which is what the limiter actually counts.
+     */
     ip?: string;
   }) => Promise<void> | void;
   /** A server-side session was revoked (one device, or everywhere). */
@@ -263,8 +267,14 @@ export interface AuthEvents {
   linkAccount?: (payload: {
     /** The user the account now belongs to. */
     user: AdapterUser;
-    /** The account that was linked. */
-    account: AdapterAccount;
+    /**
+     * The account that was linked, **without its tokens**. `accessToken` / `refreshToken`
+     * / `idToken` are deliberately absent: event handlers are audit sinks (the shipped
+     * example writes one line per event to a log pipeline), and a provider access token
+     * in a log is a credential in a log. Read the stored account through the adapter if a
+     * handler genuinely needs the tokens.
+     */
+    account: Pick<AdapterAccount, "userId" | "provider" | "providerAccountId" | "type">;
   }) => Promise<void> | void;
 }
 

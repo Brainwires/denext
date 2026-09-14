@@ -53,6 +53,10 @@ export interface Hasher {
 export function scryptHasher(options: HashPasswordOptions = {}): Hasher {
   return {
     hash: (plain: string): Promise<string> => hashPassword(plain, options),
-    verify: (plain: string, stored: string): Promise<boolean> => verifyPassword(plain, stored),
+    // The SAME options on both halves: `verify`'s equal-work rejection of an absent hash
+    // has to burn this deployment's cost, or an unknown account rejects measurably faster
+    // than a known one (a user-enumeration oracle that grows with `cost`).
+    verify: (plain: string, stored: string): Promise<boolean> =>
+      verifyPassword(plain, stored, options),
   };
 }

@@ -84,7 +84,22 @@ Deno.test("basePath: normalised (leading slash added, trailing stripped) and def
 });
 
 Deno.test("basePath: an unusable value is refused at config time, not at the first login", () => {
-  for (const bad of ["/", "", "//auth", "/a//b", "/au th", "/auth?x=1", "/auth#f"]) {
+  // `.` and `..` pass the URL-safe character class but are traversal, not a place.
+  for (
+    const bad of [
+      "/",
+      "",
+      "//auth",
+      "/a//b",
+      "/au th",
+      "/auth?x=1",
+      "/auth#f",
+      "/auth/..",
+      "/../auth",
+      "/auth/./x",
+      "/..",
+    ]
+  ) {
     assertThrows(
       () => denextAuth(config({ basePath: bad })),
       Error,

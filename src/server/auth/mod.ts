@@ -54,6 +54,7 @@ function validateConfig(config: AuthConfig): void {
     );
   }
   validateProviders(config.providers);
+  warnOnUndeclaredProxy(config);
   // Resolving validates the 2.5 surface too: an unusable `basePath`, an invalid cookie
   // name, or `session.strategy: "database"` with nowhere to store sessions all throw here
   // — at config time, not on the first login.
@@ -98,6 +99,26 @@ function assertOAuthCredentials(p: { id: string; clientId?: string; clientSecret
   }
 }
 
+/** Whether the proxy hint has already been printed (once per process). */
+let warnedNoProxyTrust = false;
+
+/**
+ * A config with a `canonicalOrigin` is a config meant for production, and in production
+ * denext is behind something. If `trustForwardedHeaders` was never decided, say so once at
+ * boot: without it every per-IP rate-limit bucket keys on the proxy rather than the
+ * client, and `clientIp` reports the proxy to the app's own handlers too.
+ */
+function warnOnUndeclaredProxy(config: AuthConfig): void {
+  if (!config.canonicalOrigin || config.trustForwardedHeaders !== undefined) return;
+  if (warnedNoProxyTrust) return;
+  warnedNoProxyTrust = true;
+  console.warn(
+    "denextAuth: `canonicalOrigin` is set but `trustForwardedHeaders` is not — if a reverse " +
+      "proxy fronts this app, set it to true (only when the proxy OVERWRITES " +
+      "`x-forwarded-for`) so rate limits and `signInFailed.ip` see the real client.",
+  );
+}
+
 /**
  * `canonicalOrigin` is required in production: without it the OAuth redirect_uri and the
  * same-origin checks fall back to the attacker-controllable Host header. Detected via the
@@ -133,9 +154,13 @@ export function denextAuth(config: AuthConfig): DenextPlugin {
     name: "denext-auth",
     setup(ctx) {
       ctx.addRequestHandler((request) => handleAuthRequest(request, config));
-      // A store that holds a resource (the sqlite handle) is released on server drain.
+      // Anything holding a resource (the sqlite handles) is released on server drain: the
+      // session store, and the adapter — whose `close()` had never been wired up, so a
+      // `sqliteAuthAdapter` kept its file handle open for the life of the process.
       const store = resolveAuthOptions(config).sessionStore;
       if (store?.close) ctx.addTeardown(() => store.close!());
+      const adapter = config.adapter;
+      if (adapter?.close) ctx.addTeardown(() => adapter.close!());
     },
   };
 }
@@ -234,8 +259,16 @@ export async function updateAuthSession(): Promise<AuthSession | null> {
 }
 
 /**
- * Whether a session carries at least one of the required roles (any-of). No requirement
- * allows everything; a requirement against a session with no `roles` always refuses.
+ * Whether a session carries at least one of the required roles (any-of).
+ *
+ * `undefined` means "no requirement" and allows everything. An **empty array** does not:
+ * `role: []` names a set of acceptable roles that is empty, so nothing satisfies it and
+ * this returns `false`. That is the fail-closed reading, and the one that matters — an
+ * empty list is what a computed requirement (`role: user.requiredRoles`) degrades to when
+ * the computation goes wrong, and it used to let every caller through. Use `undefined`
+ * (or simply omit `role`) to mean "anyone signed in".
+ *
+ * A requirement against a session with no `roles` always refuses.
  *
  * @param session The live session.
  * @param role The required role, or roles (any one of which suffices).
@@ -244,7 +277,7 @@ export async function updateAuthSession(): Promise<AuthSession | null> {
 export function hasRole(session: AuthSession, role: string | string[] | undefined): boolean {
   if (role === undefined) return true;
   const required = Array.isArray(role) ? role : [role];
-  if (required.length === 0) return true;
+  if (required.length === 0) return false;
   const held = session.user.roles;
   return !!held && required.some((r) => held.includes(r));
 }

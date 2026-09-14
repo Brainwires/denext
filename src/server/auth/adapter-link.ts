@@ -173,7 +173,15 @@ function assertLinkable(
   );
 }
 
-/** Store the account under `user` and announce it. */
+/**
+ * Store the account under `user` and announce it.
+ *
+ * The account is persisted **with** whatever tokens the provider returned (that is what an
+ * adapter is for), but the `linkAccount` event payload carries only the identity —
+ * provider, provider-side id, type, owner. An event handler is an audit sink, and an
+ * access/refresh/id token in an audit line is a credential in a log; a handler that
+ * genuinely needs them can read the stored account back through the adapter.
+ */
 async function link(
   options: ResolvedAuthOptions,
   adapter: AuthAdapter,
@@ -182,7 +190,23 @@ async function link(
 ): Promise<void> {
   const linked: AdapterAccount = { ...account, userId: user.id };
   await adapter.linkAccount(linked);
-  await emitAuthEvent(options, "linkAccount", { user, account: linked });
+  await emitAuthEvent(options, "linkAccount", {
+    user,
+    account: {
+      userId: linked.userId,
+      provider: linked.provider,
+      providerAccountId: linked.providerAccountId,
+      type: linked.type,
+    },
+  });
+}
+
+/** What {@linkcode resolveSignInUser} decided a sign-in is. */
+export interface ResolvedSignIn {
+  /** The user to issue a session for. */
+  user: AuthUser;
+  /** Whether this sign-in created the adapter's user record (the `signIn` event's `isNewUser`). */
+  isNewUser: boolean;
 }
 
 /**
@@ -199,7 +223,9 @@ async function link(
  * @param provider The provider that authenticated the profile.
  * @param profile The normalised profile `provider.profile` produced.
  * @param account The provider account to link, minus the `userId` this resolves.
- * @returns The session user: the adapter record when there is an adapter, else `profile`.
+ * @returns The session user plus whether this sign-in CREATED the adapter record — which
+ * is what the `signIn` event's documented `isNewUser` reports. Without an adapter nothing
+ * is created, so `isNewUser` is `false`.
  * @throws {AccountNotLinkedError} When an existing local account matches by email but the
  * match rests on an unverified address and the provider did not opt in.
  */
@@ -208,23 +234,25 @@ export async function resolveSignInUser(
   provider: OAuthProvider,
   profile: AuthUser,
   account: Omit<AdapterAccount, "userId">,
-): Promise<AuthUser> {
+): Promise<ResolvedSignIn> {
   const adapter = options.adapter;
-  if (!adapter) return profile;
+  if (!adapter) return { user: profile, isNewUser: false };
 
   const linked = await adapter.getUserByAccount(account);
-  if (linked) return toAuthUser(await mergeProfile(adapter, linked, profile));
+  if (linked) {
+    return { user: toAuthUser(await mergeProfile(adapter, linked, profile)), isNewUser: false };
+  }
 
   const existing = profile.email ? await adapter.getUserByEmail(profile.email) : undefined;
   if (existing) {
     assertLinkable(provider, profile, existing);
     const user = await mergeProfile(adapter, existing, profile);
     await link(options, adapter, user, account);
-    return toAuthUser(user);
+    return { user: toAuthUser(user), isNewUser: false };
   }
 
   const created = await adapter.createUser(toAdapterUser(profile, nowSeconds()));
   await emitAuthEvent(options, "createUser", { user: created });
   await link(options, adapter, created, account);
-  return toAuthUser(created);
+  return { user: toAuthUser(created), isNewUser: true };
 }

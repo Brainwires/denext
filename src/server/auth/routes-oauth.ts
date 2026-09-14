@@ -26,7 +26,7 @@
  */
 
 import { safeRedirectLocation } from "../config.ts";
-import { accountNotLinkedCode, resolveSignInUser } from "./adapter-link.ts";
+import { accountNotLinkedCode, type ResolvedSignIn, resolveSignInUser } from "./adapter-link.ts";
 import type { AdapterAccount } from "./adapter.ts";
 import {
   DiscoveryError,
@@ -43,7 +43,7 @@ import {
   type TokenResponse,
 } from "./flow.ts";
 import { getJwks } from "./jwks-cache.ts";
-import { idTokenKid, verifyIdToken } from "./jwt.ts";
+import { idTokenKid, isStrictAudienceError, verifyIdToken } from "./jwt.ts";
 import { buildAuthorizationUrl, generatePkce, randomToken } from "./oauth.ts";
 import {
   afterSignIn,
@@ -191,12 +191,36 @@ export async function handleOAuthCallback(
       `denextAuth: the "${provider.id}" callback failed`,
       error,
     );
+    warnOnStrictAudience(provider.id, error);
     return await refuse(
       ctx,
       provider.id,
       error instanceof DiscoveryError ? "config" : "oauth_failed",
     );
   }
+}
+
+/** Whether the strict-audience escape hatch has already been named this process. */
+let warnedStrictAudience = false;
+
+/**
+ * A strict-audience refusal reaches the user as a bare `?error=oauth_failed`, and the
+ * app's `logger` is a no-op unless one was configured — so the one class of failure whose
+ * fix is a single documented flag used to be invisible. Name it on the console, once.
+ *
+ * @param providerId The provider whose `id_token` was refused.
+ * @param error Whatever the callback threw.
+ */
+function warnOnStrictAudience(providerId: string, error: unknown): void {
+  if (warnedStrictAudience || !isStrictAudienceError(error)) return;
+  warnedStrictAudience = true;
+  console.warn(
+    `denextAuth: the "${providerId}" provider's id_token was refused by the strict audience ` +
+      `check (${(error as Error).message}). That is OIDC Core §3.1.3.7 done properly; if this ` +
+      "provider legitimately mints multi-audience tokens without `azp`, set " +
+      `\`strictAudience: false\` on the ${providerId} provider to fall back to the ` +
+      "membership check.",
+  );
 }
 
 /**
@@ -221,11 +245,15 @@ async function completeSignIn(
   const resolved = await resolveSessionUser(ctx, provider, result.profile, account);
   if (!resolved) return await refuse(ctx, provider.id, "account_not_linked");
 
-  const user = await applySignInCallback(ctx.config, resolved, provider.id);
+  const user = await applySignInCallback(ctx.config, resolved.user, provider.id);
   if (!user) return await refuse(ctx, provider.id, "access_denied");
 
   await issueAuthSession(ctx.config, user, provider.id);
-  await emitAuthEvent(ctx.options, "signIn", { user, provider: provider.id });
+  await emitAuthEvent(ctx.options, "signIn", {
+    user,
+    provider: provider.id,
+    isNewUser: resolved.isNewUser,
+  });
   return redirect(afterSignIn(ctx.config, returnTo));
 }
 
@@ -256,14 +284,15 @@ export type LinkingProvider = Pick<OAuthProvider, "id" | "allowDangerousEmailAcc
  * @param provider The provider that authenticated the user.
  * @param profile The provider-mapped (or credentials-authorized) user.
  * @param account The account row this sign-in links, minus the `userId` it resolves.
- * @returns The user to issue a session for, or `undefined` when linking was refused.
+ * @returns The user to issue a session for (and whether this sign-in created the adapter
+ * record — the `signIn` event's `isNewUser`), or `undefined` when linking was refused.
  */
 export async function resolveSessionUser(
   ctx: AuthRouteContext,
   provider: LinkingProvider,
   profile: AuthUser,
   account: Omit<AdapterAccount, "userId">,
-): Promise<AuthUser | undefined> {
+): Promise<ResolvedSignIn | undefined> {
   try {
     // The linking rules read only the two fields `LinkingProvider` names, which is what
     // lets the credentials route — whose provider has neither concept — share them.

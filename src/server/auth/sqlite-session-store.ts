@@ -99,6 +99,23 @@ export function sqliteSessionStore(options: SqliteSessionStoreOptions = {}): Ses
       );
       maybeSweep(d);
     },
+    update(id, session) {
+      // `UPDATE … WHERE id = ?` is the whole point: a row `revokeSession` deleted while
+      // this request was in flight is simply not there, so nothing is written and the
+      // caller keeps the session it read instead of resurrecting a revoked one.
+      const changed = getDb().query<{ id: string }>(
+        "UPDATE sessions SET user_id = ?, payload = ?, expires_at = ? " +
+          "WHERE id = ? AND expires_at > ? RETURNING id",
+        [
+          session.user.id,
+          JSON.stringify(session),
+          session.expiresAt,
+          id,
+          Math.floor(Date.now() / 1000),
+        ],
+      );
+      return changed.length === 1;
+    },
     get(id) {
       const row = getDb().query<{ payload: string }>(
         "SELECT payload FROM sessions WHERE id = ? AND expires_at > ?",

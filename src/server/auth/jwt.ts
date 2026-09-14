@@ -204,7 +204,8 @@ export async function verifyIdToken(options: VerifyIdTokenOptions): Promise<IdTo
   if (typ && typ !== "jwt" && typ !== "id_token+jwt") {
     throw new Error(`unexpected id_token typ: ${header.typ}`);
   }
-  // Select the key by `kid`; fall back to the sole key when the token omits one.
+  // Select the key by `kid`; a token that omits one is tried against EVERY key in the set
+  // (`anyKeyVerifies` skips the ones whose key type doesn't match the alg).
   const candidates = header.kid ? options.jwks.filter((k) => k.kid === header.kid) : options.jwks;
   if (candidates.length === 0) throw new Error("no matching JWKS key for id_token");
   if (!(await anyKeyVerifies(candidates, params, signingInput, signature))) {
@@ -286,11 +287,37 @@ function assertAudience(claims: IdTokenClaims, options: VerifyIdTokenOptions): v
   if (!aud.includes(options.audience)) throw new Error("id_token audience mismatch");
   if (options.strictAudience === false) return;
   if (aud.length > 1 && claims.azp === undefined) {
-    throw new Error("id_token audience is multi-valued without an azp");
+    throw strictAudienceError("id_token audience is multi-valued without an azp");
   }
   if (claims.azp !== undefined && claims.azp !== options.audience) {
-    throw new Error("id_token azp names another client");
+    throw strictAudienceError("id_token azp names another client");
   }
+}
+
+/** The `name` the two strict-only audience refusals carry, so callers can recognise them. */
+const STRICT_AUDIENCE_ERROR = "StrictAudienceError";
+
+/**
+ * A refusal that `strictAudience: false` would have allowed — tagged so the OAuth callback
+ * can name that escape hatch instead of letting the operator stare at `?error=oauth_failed`.
+ * A plain audience MISMATCH is never tagged: no flag makes a token minted for someone else
+ * acceptable.
+ */
+function strictAudienceError(message: string): Error {
+  const error = new Error(message);
+  error.name = STRICT_AUDIENCE_ERROR;
+  return error;
+}
+
+/**
+ * Whether `error` is an `id_token` refusal that the provider's `strictAudience: false`
+ * escape hatch would have allowed.
+ *
+ * @param error The value {@linkcode verifyIdToken} threw.
+ * @returns `true` for a strict-only audience refusal.
+ */
+export function isStrictAudienceError(error: unknown): boolean {
+  return error instanceof Error && error.name === STRICT_AUDIENCE_ERROR;
 }
 
 /** The `exp` / `nbf` / `iat` checks (split out to keep each check function small). */

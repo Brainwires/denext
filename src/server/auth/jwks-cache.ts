@@ -13,6 +13,12 @@
  * want of a key. Nothing here weakens verification — an unsigned or `alg:none` token is
  * still refused by `jwt.ts` no matter how many keys the cache holds.
  *
+ * Concurrency is the other half: a cold cache under a login burst used to make one
+ * upstream request per sign-in, because the attempt was only recorded after the fetch had
+ * returned. Fetches are now **deduped per URL** (everything that arrives while one is in
+ * flight shares it) and the attempt is stamped **before** the await, so 50 concurrent cold
+ * logins cost the IdP one request and 100 unknown `kid`s cost it one per minute.
+ *
  * The `Cache-Control` helper is shared with the discovery-document cache in
  * `discovery.ts`, which caches on exactly the same terms.
  *
@@ -72,6 +78,9 @@ interface JwksEntry {
 /** Process-wide, keyed by JWKS URL. Key sets are public data, so sharing them is safe. */
 const jwksCache = new Map<string, JwksEntry>();
 
+/** Refreshes in flight, keyed by JWKS URL, so concurrent misses share one round-trip. */
+const inFlight = new Map<string, Promise<Jwk[]>>();
+
 /** Options for {@link getJwks}. */
 export interface GetJwksOptions {
   /**
@@ -126,22 +135,45 @@ export function getJwks(
  * `onMiss` says this refetch was provoked by an unknown `kid`, which is what arms the
  * per-minute throttle for the next one.
  */
-async function refreshJwks(
+function refreshJwks(
   jwksUrl: string,
   doFetch: ProviderFetch,
   now: number,
   previous: JwksEntry | undefined,
   onMiss: boolean,
 ): Promise<Jwk[]> {
+  // Share a refresh already in flight: without this, every request that arrived during a
+  // cold fetch started its own, which is exactly the amplification the throttle exists to
+  // prevent — it just moved from "one per minute" to "one per concurrent login".
+  const existing = inFlight.get(jwksUrl);
+  if (existing) return existing;
+  // Stamp the attempt BEFORE awaiting, so a request that arrives mid-flight (or right
+  // after a failure) sees the throttle rather than an entry that still looks untried.
   const lastMissAt = onMiss ? now : previous?.lastMissAt;
+  if (previous) jwksCache.set(jwksUrl, { ...previous, lastAttemptAt: now, lastMissAt });
+  const pending = fetchAndStore(jwksUrl, doFetch, now, previous, lastMissAt)
+    .finally(() => {
+      inFlight.delete(jwksUrl);
+    });
+  inFlight.set(jwksUrl, pending);
+  return pending;
+}
+
+/** The round-trip itself: store what it returned, or keep the previous set on a failure. */
+async function fetchAndStore(
+  jwksUrl: string,
+  doFetch: ProviderFetch,
+  now: number,
+  previous: JwksEntry | undefined,
+  lastMissAt: number | undefined,
+): Promise<Jwk[]> {
   try {
     const { keys, ttlMs } = await fetchJwksDocument(jwksUrl, doFetch);
     jwksCache.set(jwksUrl, { keys, expiresAt: now + ttlMs, lastAttemptAt: now, lastMissAt });
     return keys;
   } catch (error) {
     if (!previous) throw error;
-    jwksCache.set(jwksUrl, { ...previous, lastAttemptAt: now, lastMissAt });
-    return previous.keys;
+    return previous.keys; // the attempt was already stamped before the await
   }
 }
 

@@ -59,12 +59,25 @@ function dispatchInProcess(
     body: init.body,
   });
   const run = () => runSubRequest(runPipeline, app, request, ctx);
-  if (init.method !== "GET") return run();
+  // Uncached runs carry the child's `Set-Cookie` back to the parent response, the way the
+  // batch handler does. A `requireSession()` inside the called route slides the session
+  // forward and queues a refreshed cookie on the CHILD's response; without this the cookie
+  // died with the sub-request and an active user was silently logged out on expiry.
+  // Deliberately NOT on the cached branch: a cached body is replayed for later callers, so
+  // a cookie the miss produced belongs to that one caller and must not ride along.
+  const runAndPropagate = async (): Promise<Response> => {
+    const res = await run();
+    for (const cookie of res.headers.getSetCookie()) {
+      ctx.outgoingHeaders.append("set-cookie", cookie);
+    }
+    return res;
+  };
+  if (init.method !== "GET") return runAndPropagate();
   const decision = fetchCacheDecision(ctx.segmentConfig?.fetchCache, {
     cache: init.cache,
     next: init.next,
   });
-  if (!decision) return run();
+  if (!decision) return runAndPropagate();
   // The cache key fingerprints the IDENTITY headers (cookie, authorization) plus whatever the
   // caller set explicitly, so two users never share an entry — and nothing else: a key that
   // varied on user-agent / x-forwarded-for / accept-* would let any client mint a fresh durable

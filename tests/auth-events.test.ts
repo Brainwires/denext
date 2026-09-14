@@ -7,6 +7,8 @@ import { assert, assertEquals } from "@std/assert";
 import { handleAuthRequest } from "../src/server/auth/routes.ts";
 import { credentials } from "../src/server/auth/providers.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
+import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
+import { setRemoteAddr } from "../src/server/remote-addr.ts";
 import type { AuthConfig, AuthEvents, AuthUser } from "../src/server/auth/types.ts";
 
 const ORIGIN = "https://app.test";
@@ -22,6 +24,8 @@ interface Recorded {
   provider?: string;
   /** The stable refusal reason, for a `signInFailed`. */
   reason?: string;
+  /** The client bucket the limiter keyed on, for a `signInFailed`. */
+  ip?: string;
 }
 
 /** One recorded `logger.error(...)` call. */
@@ -57,8 +61,8 @@ function harness(
   const errors: LoggedError[] = [];
   const recording: AuthEvents = {
     signIn: ({ user, provider }) => void events.push({ name: "signIn", user, provider }),
-    signInFailed: ({ provider, reason }) =>
-      void events.push({ name: "signInFailed", provider, reason }),
+    signInFailed: ({ provider, reason, ip }) =>
+      void events.push({ name: "signInFailed", provider, reason, ip }),
   };
   const config: AuthConfig = {
     secret: SECRET,
@@ -114,6 +118,7 @@ Deno.test('events: a bad password fires `signInFailed { reason: "invalid_credent
     name: "signInFailed",
     provider: "credentials",
     reason: "invalid_credentials",
+    ip: "unknown", // no socket peer on a hand-built Request
   }]);
 });
 
@@ -136,6 +141,7 @@ Deno.test('events: a denying `callbacks.signIn` fires `signInFailed { reason: "a
     name: "signInFailed",
     provider: "credentials",
     reason: "access_denied",
+    ip: "unknown",
   }]);
 });
 
@@ -203,4 +209,43 @@ Deno.test("events: an app that configures none (the default) signs in exactly as
     providers: [credentials({ authorize: ({ email }) => ({ id: "1", email }) })],
   };
   assertEquals((await login(config, { email: "a@b.co", password: "pw" })).status, 200);
+});
+
+Deno.test("credentials: an adapter that throws is a generic 401 + `adapter_error`, never a 500", async () => {
+  // The concurrent first-sign-in UNIQUE race (two requests creating the same user at once)
+  // and a database that went away both surface here. They used to escape `handleCredentials`
+  // as a raw 500 with no `signInFailed` at all — and a 500 where a 401 belongs is itself a
+  // user-enumeration signal.
+  const adapter = inMemoryAuthAdapter();
+  adapter.getUserByAccount = () => {
+    throw new Error("db password = hunter2");
+  };
+  const { config, events, errors } = harness({ adapter });
+  const res = await login(config, { email: "a@b.co", password: "pw" });
+  assertEquals(res.status, 401, "the SAME answer a wrong password gets");
+  assertEquals(await res.json(), { error: "invalid credentials" });
+  assertEquals(events.map((e) => e.reason), ["adapter_error"]);
+  assertEquals(errors.length, 1, "the exception reached the logger instead of the client");
+  assert(
+    !JSON.stringify(errors[0].message).includes("hunter2"),
+    "and the message the client could ever see names no internals",
+  );
+  await adapter.close?.();
+});
+
+Deno.test("credentials: signInFailed carries the client bucket the limiter keyed on", async () => {
+  const { config, events } = harness();
+  const request = new Request(`${ORIGIN}/auth/callback/credentials`, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json", origin: ORIGIN },
+    body: JSON.stringify({ email: "a@b.co", password: "no" }),
+  });
+  setRemoteAddr(request, { transport: "tcp", hostname: "203.0.113.7", port: 443 });
+  await runWithContext(createRequestContext(request), () => handleAuthRequest(request, config));
+  assertEquals(events.map((e) => e.reason), ["invalid_credentials"]);
+  assertEquals(
+    events.map((e) => e.ip),
+    ["203.0.113.7"],
+    "the `ip` field the event always declared is finally populated",
+  );
 });

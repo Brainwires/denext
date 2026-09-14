@@ -8,11 +8,14 @@ import { createRequestContext, runWithContext } from "../src/server/request-cont
 import { handleAuthRequest } from "../src/server/auth/routes.ts";
 import { credentials, github } from "../src/server/auth/providers.ts";
 import {
+  clientIpBucket,
   createRateLimiter,
   credentialsLimiter,
   defaultRateLimitKey,
   inMemoryRateLimitStore,
   ipBucketKey,
+  sessionReadKey,
+  sessionReadLimiter,
   signinStartKey,
   signinStartLimiter,
 } from "../src/server/auth/rate-limit.ts";
@@ -231,8 +234,8 @@ Deno.test("credentials: a session callback that mangles expiresAt gets the confi
   assertEquals((await login(config, { email: "a@b.co", password: "pw" })).status, 200);
 });
 
-Deno.test("inMemoryRateLimitStore: eviction drops expired windows first and keeps the busiest keys", async () => {
-  const store = inMemoryRateLimitStore({ maxKeys: 3 });
+Deno.test("inMemoryRateLimitStore: eviction drops expired windows first and keeps locked-out keys", async () => {
+  const store = inMemoryRateLimitStore({ maxKeys: 3, lockoutAt: 3 });
   await store.increment("locked", 60_000);
   await store.increment("locked", 60_000);
   await store.increment("locked", 60_000);
@@ -240,6 +243,47 @@ Deno.test("inMemoryRateLimitStore: eviction drops expired windows first and keep
   await store.increment("quiet-2", 60_000);
   await store.increment("quiet-3", 60_000); // over the cap: a quiet key goes, not `locked`
   assertEquals((await store.get("locked"))?.count, 3, "a key mid-lockout is never washed out");
+});
+
+Deno.test("inMemoryRateLimitStore: a full store of live lockouts refuses the new key, fail-closed", async () => {
+  const store = inMemoryRateLimitStore({ maxKeys: 2, lockoutAt: 1 });
+  // Both slots are keys that are already locked out (count >= lockoutAt).
+  await store.increment("attacker-a", 60_000);
+  await store.increment("attacker-b", 60_000);
+  const refused = await store.increment("newcomer", 60_000);
+  assert(refused.count > 1, "the increment reports the key as over budget, so a reader 429s");
+  assertEquals(await store.get("newcomer"), undefined, "nothing was tracked for it");
+  assertEquals((await store.get("attacker-a"))?.count, 1, "…and no lockout was dropped for it");
+  assertEquals((await store.get("attacker-b"))?.count, 1);
+});
+
+Deno.test("inMemoryRateLimitStore: an expired lockout is evictable again", async () => {
+  const store = inMemoryRateLimitStore({ maxKeys: 2, lockoutAt: 1 });
+  await store.increment("old", 1_000);
+  await store.increment("older", 1_000);
+  await atOffset(2_000, async () => {
+    const w = await store.increment("fresh", 60_000);
+    assertEquals(w.count, 1, "the expired windows made room");
+    assertEquals((await store.get("fresh"))?.count, 1);
+  });
+});
+
+Deno.test("clientIpBucket: every spelling of one IPv6 address shares ONE /64 bucket", () => {
+  const at = (ip: string) => {
+    const req = new Request(`${ORIGIN}/x`, { headers: { "x-forwarded-for": ip } });
+    return clientIpBucket(req, { trustForwardedHeaders: true });
+  };
+  const loopback = at("::1");
+  for (const spelling of ["0:0:0:0:0:0:0:1", "[::1]", "::0001", "0000:0000::0001"]) {
+    assertEquals(at(spelling), loopback, `${spelling} must not open its own budget`);
+  }
+  // A /64 is one client's allocation: the host half must not multiply the buckets.
+  const prefix = at("2001:db8:1:2::1");
+  assertEquals(at("2001:db8:1:2:ffff:ffff:ffff:ffff"), prefix, "bucketed by /64");
+  assert(at("2001:db8:1:3::1") !== prefix, "a different /64 is a different client");
+  // IPv4 is untouched.
+  assertEquals(at("203.0.113.9"), "203.0.113.9");
+  assertEquals(at("not-an-ip"), "not-an-ip", "an unparseable value passes through");
 });
 
 // ---- the sign-in-start endpoint (GET {basePath}/signin/:provider) ------------
@@ -371,6 +415,55 @@ Deno.test("signin-start: hostile input is a fall-through or a 404, never a 500",
   assertEquals((await signinStart(config, "203.0.113.70", undefined, "nope"))!.status, 429);
   // No socket peer and no trusted header: the bucket is `unknown`, still not an error.
   assertEquals((await signinStart(signinConfig()))!.status, 303);
+});
+
+Deno.test("signin-start: an UNDECLARED proxy disables the per-IP budget instead of sharing one", async () => {
+  // A private socket peer + an x-forwarded-for the app never declared trustworthy: every
+  // client looks like the proxy, so keying on it would 429 the whole app at the 21st start.
+  const config = signinConfig({ rateLimit: { signin: { max: 2, windowMs: 60_000 } } });
+  for (let i = 0; i < 6; i++) {
+    assertEquals(
+      (await signinStart(config, "10.0.0.7", `203.0.113.${i}`))!.status,
+      303,
+      "no client is locked out by another client's traffic",
+    );
+  }
+  // Declaring the proxy brings the budget back, keyed on the real client.
+  const trusted = signinConfig({
+    trustForwardedHeaders: true,
+    rateLimit: { signin: { max: 2, windowMs: 60_000 } },
+  });
+  assertEquals((await signinStart(trusted, "10.0.0.7", "203.0.113.99"))!.status, 303);
+  assertEquals((await signinStart(trusted, "10.0.0.7", "203.0.113.99"))!.status, 303);
+  assertEquals((await signinStart(trusted, "10.0.0.7", "203.0.113.99"))!.status, 429);
+});
+
+Deno.test("GET /auth/session: a per-IP budget, off under rateLimit:false and behind an undeclared proxy", async () => {
+  const config = signinConfig({ rateLimit: { session: { max: 2, windowMs: 60_000 } } });
+  const read = (peer?: string, forwarded?: string) => {
+    const headers: Record<string, string> = {};
+    if (forwarded) headers["x-forwarded-for"] = forwarded;
+    const request = new Request(`${ORIGIN}/auth/session`, { headers });
+    if (peer) setRemoteAddr(request, { transport: "tcp", hostname: peer, port: 443 });
+    return runWithContext(
+      createRequestContext(request),
+      () => handleAuthRequest(request, config),
+    );
+  };
+  assertEquals((await read("198.51.100.9"))!.status, 200);
+  assertEquals((await read("198.51.100.9"))!.status, 200);
+  const locked = (await read("198.51.100.9"))!;
+  assertEquals(locked.status, 429);
+  assert(Number(locked.headers.get("retry-after")) >= 1);
+  assertEquals((await read("198.51.100.10"))!.status, 200, "another client is unaffected");
+  // Behind an undeclared proxy the budget is skipped rather than shared app-wide.
+  for (let i = 0; i < 5; i++) {
+    assertEquals((await read("127.0.0.1", `198.51.100.${i}`))!.status, 200);
+  }
+  const off = signinConfig({ rateLimit: false });
+  assertEquals(sessionReadLimiter(off), null);
+  assert(sessionReadLimiter(config) !== signinStartLimiter(config), "a third, separate budget");
+  assert(sessionReadKey(new Request(`${ORIGIN}/x`)).startsWith("session|"));
 });
 
 Deno.test("signinStartKey: the client IP alone, namespaced away from the credentials keys", () => {

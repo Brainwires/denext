@@ -440,7 +440,7 @@ export type {
   AdapterUser,
   ApiTokenRecord,
   AuthAdapter,
-  Await,
+  MaybePromise,
   MfaRecord,
   VerificationPurpose,
   VerificationTokenRecord,

@@ -154,6 +154,43 @@ function shouldRefresh(
   return sessionAge(session, options.maxAge, Math.floor(nowMs / 1000)) >= options.updateAge;
 }
 
+/** Stores already warned about for want of `update` — one warning per store, ever. */
+const warnedStores = new WeakSet<SessionStore>();
+
+/**
+ * Rewrite a store-backed session in place, **only if the record is still there**.
+ *
+ * The write goes through {@link SessionStore.update}, not `create`: `create` is an upsert,
+ * so a session revoked between this request's read and its refresh would be written back
+ * with a full fresh lifetime — a stolen cookie in flight during `revokeAllSessions()`
+ * would survive the revocation. A store that predates `update` refreshes nothing rather
+ * than risk that, and says so once.
+ *
+ * @param options The resolved options (its store is rewritten; its logger hears a warning).
+ * @param sessionId The id whose record is rewritten.
+ * @param refreshed The payload to store.
+ * @returns `true` when the record was rewritten; `false` when it was gone (or unsupported).
+ */
+async function rewriteStored(
+  options: ResolvedAuthOptions,
+  sessionId: string,
+  refreshed: AuthSession,
+): Promise<boolean> {
+  const store = options.sessionStore!;
+  if (!store.update) {
+    if (!warnedStores.has(store)) {
+      warnedStores.add(store);
+      options.logger.warn(
+        "denextAuth: the configured `sessionStore` does not implement `update(id, session)`, " +
+          "so store-backed sessions are never slid forward by `session.updateAge` — " +
+          "implement it (write only if the row still exists) to enable sliding expiry.",
+      );
+    }
+    return false;
+  }
+  return await store.update(sessionId, refreshed);
+}
+
 /**
  * Sliding expiry: re-issue `session` with a fresh `issuedAt`/`expiresAt` (a full `maxAge`
  * from now) once it has aged past `session.updateAge`, so an active user is never logged
@@ -164,7 +201,9 @@ function shouldRefresh(
  * A store-backed session keeps the **same** `sid` (the record is rewritten in place, and
  * the cookie re-sent to renew its `Max-Age`): rotating it would invalidate the user's
  * other tabs for no benefit, since fixation is already prevented at login by minting a
- * fresh id there.
+ * fresh id there. That rewrite is a {@link SessionStore.update} — write-only-if-present —
+ * so a session revoked between this request's read and its refresh is NOT resurrected,
+ * and a custom store that doesn't implement `update` simply never slides forward.
  *
  * **Only call this on a path that still owns its response.** The refreshed cookie is
  * queued on the request's outgoing headers (`cookies().set()`), which the pipeline
@@ -202,7 +241,10 @@ export async function refreshIfStale(
   // Store-backed: without an id there is nothing to rewrite (a stateless cookie is not
   // honored in store mode anyway) — leave the session alone.
   if (!sessionId) return session;
-  await options.sessionStore.create(sessionId, refreshed);
+  // Revoked in flight (or a store that can't rewrite in place): keep the session exactly
+  // as it was read and re-issue NO cookie, so the next request reads the store again and
+  // sees the revocation.
+  if (!(await rewriteStored(options, sessionId, refreshed))) return session;
   await cookie.set({ sid: sessionId });
   return { ...refreshed, sessionId };
 }

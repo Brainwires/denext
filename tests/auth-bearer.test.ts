@@ -45,9 +45,16 @@ async function sha256Hex(text: string): Promise<string> {
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** Create an adapter user and return its id. */
+/** How many users this file has created, so each gets its own (unique) address. */
+let userCount = 0;
+
+/** Create an adapter user and return its id. Addresses are unique — one account each. */
 async function makeUser(adapter: AuthAdapter, roles?: string[]): Promise<string> {
-  const user = await adapter.createUser({ email: "dev@x.test", name: "Dev", roles });
+  const user = await adapter.createUser({
+    email: `dev-${++userCount}@x.test`,
+    name: "Dev",
+    roles,
+  });
   return user.id;
 }
 
@@ -438,4 +445,28 @@ Deno.test("/auth/tokens: without an API-token adapter the endpoints don't exist"
   assertEquals(await call(bare, "/auth/tokens/x", { method: "DELETE" }), null);
   // The rest of the auth surface is unaffected.
   assertEquals((await call(bare, "/auth/session"))!.status, 200);
+});
+
+Deno.test("/auth/tokens: a per-user cap bounds how many live tokens one session can mint", async () => {
+  // A session can mint in a loop and an API token never expires unless asked to, so without
+  // a cap one compromised session leaves an unbounded number of long-lived credentials.
+  const { config, adapter } = setup();
+  const userId = await makeUser(adapter);
+  const cookie = await sessionCookie(config, { id: userId, email: "dev@x.test" });
+  const mint = () => call(config, "/auth/tokens", { method: "POST", cookie });
+
+  const ids: string[] = [];
+  for (let i = 0; i < 50; i++) {
+    const res = (await mint())!;
+    assertEquals(res.status, 201, `token ${i + 1} of the budget`);
+    ids.push((await res.json()).id);
+  }
+  const refused = (await mint())!;
+  assertEquals(refused.status, 409);
+  assertEquals((await refused.json()).error, "too many tokens");
+
+  // Revoking one frees a slot — the cap counts LIVE tokens, not tokens ever minted.
+  const gone = (await call(config, `/auth/tokens/${ids[0]}`, { method: "DELETE", cookie }))!;
+  assertEquals(gone.status, 200);
+  assertEquals((await mint())!.status, 201);
 });

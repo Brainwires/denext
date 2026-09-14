@@ -11,7 +11,7 @@ import {
   resolveProviderEndpoints,
 } from "../src/server/auth/discovery.ts";
 import { getJwks } from "../src/server/auth/jwks-cache.ts";
-import type { ProviderFetch } from "../src/server/auth/flow.ts";
+import { makeHostPinnedFetch, type ProviderFetch } from "../src/server/auth/flow.ts";
 import { base64UrlEncode } from "../src/server/auth/oauth.ts";
 import { handleAuthRequest } from "../src/server/auth/routes.ts";
 import {
@@ -647,4 +647,117 @@ Deno.test("endpointHosts: the pinned host set follows the resolved endpoints", a
     { fetchImpl: idpFetch(idp) },
   );
   assertEquals(endpointHosts(endpoints), [new URL(issuer).host]);
+});
+
+Deno.test("discovery: a document whose endpoints are refused is NOT cached", async () => {
+  // Caching before vetting pinned a refusal for the document's whole TTL: every login in
+  // that hour re-derived the same `foreign_endpoint` from a document the IdP may already
+  // have fixed.
+  const issuer = freshIssuer();
+  const idp = await makeIdp(issuer);
+  idp.setCacheControl("public, max-age=3600");
+  idp.patchDocument({ token_endpoint: "https://evil.test/token" });
+  const provider = discoveryProvider(issuer);
+  const opts = { fetchImpl: idpFetch(idp) };
+
+  await assertRejects(() => resolveProviderEndpoints(provider, opts), DiscoveryError);
+  assertEquals(idp.hits.discovery, 1);
+  // The IdP fixes it; the very next resolution must see the new document, not a pinned
+  // refusal.
+  idp.patchDocument({});
+  const endpoints = await resolveProviderEndpoints(provider, opts);
+  assertEquals(endpoints.tokenUrl, `${issuer}/token`);
+  assertEquals(idp.hits.discovery, 2, "nothing bad was ever cached");
+});
+
+Deno.test("discovery: concurrent cold resolutions share ONE round-trip", async () => {
+  const issuer = freshIssuer();
+  const idp = await makeIdp(issuer);
+  const provider = discoveryProvider(issuer);
+  // A fetch that resolves on the next macrotask, so all 20 callers really are in flight.
+  const slow: ProviderFetch = (url) =>
+    new Promise((resolve) => setTimeout(() => resolve(idp.respond(url)), 10));
+  const all = await Promise.all(
+    Array.from({ length: 20 }, () => resolveProviderEndpoints(provider, { fetchImpl: slow })),
+  );
+  assertEquals(idp.hits.discovery, 1, "a login burst costs the IdP one request, not twenty");
+  assertEquals(new Set(all.map((e) => e.tokenUrl)).size, 1);
+});
+
+Deno.test("jwks cache: concurrent cold fetches share ONE round-trip", async () => {
+  let calls = 0;
+  const slow: ProviderFetch = () => {
+    calls++;
+    return new Promise((resolve) =>
+      setTimeout(() => resolve(Response.json({ keys: [{ kty: "RSA", kid: "k1" }] })), 10)
+    );
+  };
+  const url = `https://idp-${crypto.randomUUID()}.test/jwks`;
+  await Promise.all(Array.from({ length: 50 }, () => getJwks(url, slow)));
+  assertEquals(calls, 1, "50 concurrent cold logins, one upstream fetch");
+});
+
+// ---- the development host-pinned fetch --------------------------------------
+
+/** A local HTTP server; `handler` sees every request. Returns its host and a shutdown. */
+function serve(
+  handler: (request: Request) => Response | Promise<Response>,
+): { host: string; stop: () => Promise<void> } {
+  const server = Deno.serve({ port: 0, onListen: () => {} }, handler);
+  const { port } = server.addr as Deno.NetAddr;
+  return { host: `127.0.0.1:${port}`, stop: () => server.shutdown() };
+}
+
+Deno.test("dev host-pinned fetch: a redirect off the allowlist is refused, not followed", async () => {
+  // `dangerouslyAllowInsecureProviders` swaps safeFetch for the platform fetch so a
+  // localhost IdP works. The platform fetch follows redirects on its own, and only the
+  // FIRST url had ever been checked — so a 307 from the token endpoint delivered the POST
+  // body, `client_secret` and all, to any host the provider named.
+  let leaked: string | null = null;
+  const foreign = serve(async (request) => {
+    leaked = await request.text();
+    return new Response("ok");
+  });
+  const idp = serve(() =>
+    new Response(null, { status: 307, headers: { location: `http://${foreign.host}/steal` } })
+  );
+  try {
+    const doFetch = makeHostPinnedFetch([idp.host], "dev-idp", true);
+    const error = await assertRejects(() =>
+      doFetch(`http://${idp.host}/token`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: "client_secret=SUPER_SECRET&code=abc",
+      })
+    );
+    assertStringIncludes((error as Error).message, "not permitted for provider dev-idp");
+    assertEquals(leaked, null, "the foreign host received nothing at all");
+  } finally {
+    await idp.stop();
+    await foreign.stop();
+  }
+});
+
+Deno.test("dev host-pinned fetch: a redirect that stays on the allowlist is followed", async () => {
+  let hits = 0;
+  const idp = serve((request) => {
+    hits++;
+    const url = new URL(request.url);
+    if (url.pathname === "/token") {
+      return new Response(null, { status: 302, headers: { location: "/token/v2" } });
+    }
+    return Response.json({ access_token: "at" });
+  });
+  try {
+    const doFetch = makeHostPinnedFetch([idp.host], "dev-idp", true);
+    const res = await doFetch(`http://${idp.host}/token`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "code=abc",
+    });
+    assertEquals(await res.json(), { access_token: "at" });
+    assertEquals(hits, 2, "one hop, followed by hand");
+  } finally {
+    await idp.stop();
+  }
 });

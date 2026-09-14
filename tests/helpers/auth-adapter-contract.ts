@@ -115,6 +115,33 @@ const USER_CASES: Record<string, Case> = {
     const cleared = await adapter.createUser({ email: "u@x.test" });
     assertEquals((await adapter.getUser(cleared.id))?.emailVerified, undefined);
   },
+  "one account per email address — a second user on one address is refused": async (adapter) => {
+    // The SQLite adapter enforces this with a unique index; the in-memory one has to check
+    // for itself. Both must refuse, or "which identity owns this address" — the question
+    // account linking exists to answer — has two answers depending on the adapter.
+    const ada = await adapter.createUser({ email: "ada@x.test" });
+    await assertRejects(
+      async () => await adapter.createUser({ email: "ADA@x.test" }),
+      Error,
+      undefined,
+      "case-insensitively the same address, so it is the same address",
+    );
+    assertEquals(
+      (await adapter.getUserByEmail("ada@x.test"))?.id,
+      ada.id,
+      "the first user survives the refusal",
+    );
+    const other = await adapter.createUser({ email: "grace@x.test" });
+    await assertRejects(
+      async () => await adapter.updateUser({ id: other.id, email: "ada@x.test" }),
+      Error,
+      undefined,
+      "an update cannot take an address either",
+    );
+    // Address-less users are unconstrained, however many there are.
+    await adapter.createUser({ name: "anonymous" });
+    await adapter.createUser({ name: "also anonymous" });
+  },
   "a record handed back is a copy — mutating it does not change the store": async (adapter) => {
     const user = await adapter.createUser({ email: "copy@x.test", name: "Ada" });
     const read = await adapter.getUser(user.id);

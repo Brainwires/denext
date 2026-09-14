@@ -9,6 +9,8 @@
  *
  * `verifyPassword` recomputes the hash with the parameters embedded in the stored
  * string and compares with `timingSafeEqual`, and never throws on malformed input —
+ * its equal-work rejection of an absent hash burns the cost the CALLER configured, so
+ * raising `cost` never re-opens a user-enumeration timing oracle —
  * so an `authorize` callback stays a single `return (await verifyPassword(...)) ? user : null`.
  *
  * @module
@@ -132,16 +134,25 @@ export async function hashPassword(
   password: string,
   options: HashPasswordOptions = {},
 ): Promise<string> {
-  const params: ScryptParams = {
-    N: options.cost ?? DEFAULT_PARAMS.N,
-    r: options.blockSize ?? DEFAULT_PARAMS.r,
-    p: options.parallelization ?? DEFAULT_PARAMS.p,
-  };
+  const params = configuredParams(options);
   const salt = new Uint8Array(randomBytes(SALT_LENGTH));
   const hash = await deriveKey(password, salt, params);
   return `scrypt$N=${params.N},r=${params.r},p=${params.p}$${base64UrlEncode(salt)}$${
     base64UrlEncode(hash)
   }`;
+}
+
+/**
+ * The scrypt parameters an app configured, with the built-in defaults filled in — the
+ * cost {@linkcode hashPassword} writes, and the cost {@linkcode verifyPassword} must burn
+ * when there is no stored hash to read one from.
+ */
+function configuredParams(options: HashPasswordOptions): ScryptParams {
+  return {
+    N: options.cost ?? DEFAULT_PARAMS.N,
+    r: options.blockSize ?? DEFAULT_PARAMS.r,
+    p: options.parallelization ?? DEFAULT_PARAMS.p,
+  };
 }
 
 /** A stored hash split into its verified parts, or `null` when malformed/unsupported. */
@@ -169,10 +180,15 @@ const DUMMY_SALT = new Uint8Array(SALT_LENGTH);
  * doing the same scrypt work a real comparison does, so an unknown account (no hash on
  * file) takes as long to reject as a known one with the wrong password. Without this,
  * response time is a user-enumeration oracle.
+ *
+ * The dummy derivation runs at the **configured** cost, not the built-in default: an app
+ * that raised `scryptHasher({ cost: 2 ** 16 })` stores hashes that take ~4x longer to
+ * check than `DEFAULT_PARAMS`, so burning default-cost work here would have re-opened the
+ * very oracle this function exists to close.
  */
-async function rejectWithDummyWork(password: unknown): Promise<false> {
+async function rejectWithDummyWork(password: unknown, params: ScryptParams): Promise<false> {
   try {
-    await deriveKey(typeof password === "string" ? password : "", DUMMY_SALT, DEFAULT_PARAMS);
+    await deriveKey(typeof password === "string" ? password : "", DUMMY_SALT, params);
   } catch {
     // The dummy derivation only exists to burn time; its failure is irrelevant.
   }
@@ -200,13 +216,22 @@ async function rejectWithDummyWork(password: unknown): Promise<false> {
  *
  * @param password The submitted plaintext password.
  * @param stored The stored `scrypt$…` string.
+ * @param options The cost this deployment hashes at — pass the SAME options
+ * {@linkcode hashPassword} was given (`scryptHasher` does). It is used only for the
+ * equal-work rejection of a missing/malformed `stored` value: a real comparison always
+ * uses the parameters embedded in the stored string. Omitting it on a deployment that
+ * raised the cost makes an unknown account reject measurably faster than a known one.
  * @returns `true` only when the password matches.
  */
-export async function verifyPassword(password: string, stored: string): Promise<boolean> {
+export async function verifyPassword(
+  password: string,
+  stored: string,
+  options: HashPasswordOptions = {},
+): Promise<boolean> {
   const parsed = typeof password === "string" && typeof stored === "string"
     ? parseStored(stored)
     : null;
-  if (!parsed) return await rejectWithDummyWork(password);
+  if (!parsed) return await rejectWithDummyWork(password, configuredParams(options));
   const { salt, expected, params } = parsed;
   try {
     const actual = await deriveKey(password, salt, params);

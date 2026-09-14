@@ -206,9 +206,46 @@ function currentUrl(): string {
   return typeof location === "undefined" ? "/" : location.pathname + location.search;
 }
 
+/**
+ * Coerce a caller-supplied `callbackUrl` to a **same-origin path**, because these helpers
+ * navigate to it: `signOut({ callbackUrl })` assigns it to `location.href`, and `signIn`
+ * hands it to the server which reflects it back as a `Location`. A `callbackUrl` is
+ * routinely read straight out of the current URL's query, so it is attacker-influenced —
+ * `javascript:…` would execute, `//evil.test/x` is protocol-relative and `https://evil.test`
+ * absolute, and all three are open redirects (the `javascript:` one an XSS).
+ *
+ * An absolute URL on the page's OWN origin keeps only its path + query + hash; anything
+ * else falls back. The server coerces again (`sameOriginRedirect`) — this is the half that
+ * protects the purely client-side navigation, which never reaches the server at all.
+ *
+ * @param requested The caller's `callbackUrl`, if any.
+ * @param fallback Where to go when `requested` is absent or foreign.
+ * @returns A same-origin path, always starting with a single `/`.
+ */
+function sameOriginPath(requested: string | undefined, fallback: string): string {
+  if (!requested) return fallback;
+  const origin = typeof location === "undefined" ? undefined : location.origin;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(requested)) {
+    // Absolute (or scheme-like: `javascript:`, `data:`) — admitted only on our own origin.
+    try {
+      const url = new URL(requested);
+      if (origin && url.origin === origin) return url.pathname + url.search + url.hash;
+    } catch { /* not a URL at all */ }
+    return fallback;
+  }
+  // Protocol-relative (`//evil.test/x`) is a foreign origin dressed as a path; a value
+  // that is not rooted at all is not a path we are willing to guess at either.
+  if (!requested.startsWith("/") || requested.startsWith("//")) return fallback;
+  return requested;
+}
+
 /** Options for {@link signIn}. */
 export interface SignInOptions {
-  /** Where to return after signing in (defaults to the current URL). */
+  /**
+   * Where to return after signing in (defaults to the current URL). Coerced to a
+   * same-origin path: an absolute URL on another origin, a protocol-relative `//host/…`
+   * or a `javascript:` value falls back to the default.
+   */
   callbackUrl?: string;
   /**
    * For a Credentials provider, the fields to submit. When present, `signIn` POSTs
@@ -236,7 +273,7 @@ export interface SignInOptions {
  */
 export function signIn(provider: string, options: SignInOptions = {}): Promise<unknown> {
   const basePath = options.basePath ?? DEFAULT_BASE_PATH;
-  const callbackUrl = options.callbackUrl ?? currentUrl();
+  const callbackUrl = sameOriginPath(options.callbackUrl, currentUrl());
   if (options.credentials) {
     return submitCredentials(basePath, provider, options.credentials, callbackUrl);
   }
@@ -271,7 +308,10 @@ async function submitCredentials(
 
 /** Options for {@link signOut}. */
 export interface SignOutOptions {
-  /** Where to go after signing out (defaults to `/`). */
+  /**
+   * Where to go after signing out (defaults to `/`). Coerced to a same-origin path — this
+   * one is assigned to `location.href`, so a foreign or `javascript:` value is refused.
+   */
   callbackUrl?: string;
   /** The auth endpoint prefix, when the app configured `denextAuth({ basePath })`. Default `"/auth"`. */
   basePath?: string;
@@ -285,7 +325,7 @@ export interface SignOutOptions {
  */
 export function signOut(options: SignOutOptions = {}): Promise<void> {
   const basePath = options.basePath ?? DEFAULT_BASE_PATH;
-  const callbackUrl = options.callbackUrl ?? "/";
+  const callbackUrl = sameOriginPath(options.callbackUrl, "/");
   return fetch(`${basePath}/signout?callbackUrl=${encodeURIComponent(callbackUrl)}`, {
     method: "POST",
     headers: { accept: "application/json", "x-denext-auth": "1" },

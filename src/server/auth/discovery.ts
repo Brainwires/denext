@@ -18,8 +18,9 @@
  *   pins its endpoints and declares no `discovery`;
  * - the discovered document wins over statically pinned endpoints, but a provider that
  *   pins them keeps working when discovery fails (the failure is reported, not hidden);
- * - a successful document is cached per issuer for its `Cache-Control: max-age`
- *   (1 hour by default); a **failure is never cached**;
+ * - a document is cached per issuer for its `Cache-Control: max-age` (1 hour by default)
+ *   only once its endpoints have been **vetted** — a failure, of the fetch or of the
+ *   vetting, is never cached, and concurrent cold resolutions share ONE round-trip;
  * - nothing here throws a raw network error into the sign-in path — every refusal is a
  *   {@linkcode DiscoveryError} with a stable `code`, which the routes turn into a
  *   `?error=config` redirect.
@@ -129,6 +130,13 @@ interface EndpointRules {
 const documentCache = new Map<string, { doc: DiscoveryDocument; expiresAt: number }>();
 
 /**
+ * Round-trips in flight, keyed by issuer, so 50 concurrent cold sign-ins make ONE request
+ * to the IdP instead of 50. The entry is dropped as soon as it settles: a failure is never
+ * shared beyond the callers that were already waiting on it.
+ */
+const inFlightDocuments = new Map<string, Promise<{ doc: DiscoveryDocument; ttlMs: number }>>();
+
+/**
  * The endpoints to drive this provider with.
  *
  * A provider that names a `discovery.issuer` is resolved from its discovery document —
@@ -168,18 +176,34 @@ export async function resolveProviderEndpoints(
   }
 }
 
-/** Fetch (or reuse) the issuer's document and turn it into vetted endpoints. */
+/**
+ * Fetch (or reuse) the issuer's document and turn it into vetted endpoints.
+ *
+ * The order matters: the document is vetted **before** it is cached. Caching first meant a
+ * document whose endpoints were refused (a foreign `token_endpoint`, a plaintext one) was
+ * still pinned for an hour, so every login in that hour re-derived the same refusal from a
+ * document the IdP may already have fixed.
+ */
 async function discoverEndpoints(
   provider: OAuthProvider,
   issuer: string,
   options: ResolveEndpointsOptions,
 ): Promise<ProviderEndpoints> {
   const issuerUrl = parseIssuer(issuer, options.allowInsecure ?? false, provider.id);
-  const doc = await loadDiscoveryDocument(issuer, issuerUrl, provider, options);
-  return endpointsFromDocument(doc, {
+  const rules: EndpointRules = {
     allowedHosts: new Set([issuerUrl.host, ...(provider.allowedHosts ?? [])]),
     allowInsecure: options.allowInsecure ?? false,
-  }, provider.type === "oidc");
+  };
+  const needsJwks = provider.type === "oidc";
+  const now = options.now ?? Date.now();
+  const cached = documentCache.get(issuer);
+  if (cached && cached.expiresAt > now) {
+    return endpointsFromDocument(cached.doc, rules, needsJwks);
+  }
+  const { doc, ttlMs } = await loadDiscoveryDocument(issuer, issuerUrl, provider, options);
+  const endpoints = endpointsFromDocument(doc, rules, needsJwks); // throws ⇒ nothing cached
+  documentCache.set(issuer, { doc, expiresAt: now + ttlMs });
+  return endpoints;
 }
 
 /**
@@ -261,21 +285,25 @@ function parseIssuer(issuer: string, allowInsecure: boolean, providerId: string)
   return url;
 }
 
-/** The cached document for an issuer, fetching (and caching) it when there is none. */
-async function loadDiscoveryDocument(
+/**
+ * One round-trip for this issuer — shared with anything already waiting for it, so a cold
+ * cache under a login burst costs the IdP one request rather than one per sign-in.
+ */
+function loadDiscoveryDocument(
   issuer: string,
   issuerUrl: URL,
   provider: OAuthProvider,
   options: ResolveEndpointsOptions,
-): Promise<DiscoveryDocument> {
-  const now = options.now ?? Date.now();
-  const cached = documentCache.get(issuer);
-  if (cached && cached.expiresAt > now) return cached.doc;
+): Promise<{ doc: DiscoveryDocument; ttlMs: number }> {
+  const existing = inFlightDocuments.get(issuer);
+  if (existing) return existing;
   const doFetch = options.fetchImpl ??
     makeHostPinnedFetch([issuerUrl.host], provider.id, options.allowInsecure ?? false);
-  const { doc, ttlMs } = await fetchDiscoveryDocument(issuer, doFetch);
-  documentCache.set(issuer, { doc, expiresAt: now + ttlMs });
-  return doc;
+  const pending = fetchDiscoveryDocument(issuer, doFetch).finally(() => {
+    inFlightDocuments.delete(issuer);
+  });
+  inFlightDocuments.set(issuer, pending);
+  return pending;
 }
 
 /**

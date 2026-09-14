@@ -9,12 +9,12 @@ import {
   runWithContext,
 } from "../src/server/request-context.ts";
 import { handleAuthRequest } from "../src/server/auth/routes.ts";
-import { auth, denextAuth, requireAuth } from "../src/server/auth/mod.ts";
+import { auth, denextAuth, hasRole, requireAuth } from "../src/server/auth/mod.ts";
 import { requireSession } from "../src/server/api-middleware.ts";
 import { credentials } from "../src/server/auth/providers.ts";
 import { type ApiError, isApiError } from "../src/server/api-error.ts";
 import type { ApiMiddlewareInput } from "../src/server/define-api.ts";
-import type { AuthConfig } from "../src/server/auth/types.ts";
+import type { AuthConfig, AuthSession } from "../src/server/auth/types.ts";
 
 const ORIGIN = "https://app.test";
 const SECRET = "test-secret-value-at-least-32-chars-long";
@@ -249,4 +249,22 @@ Deno.test("auth(): an MFA-pending session reads as signed out; requireAuth sends
   denextAuth(noMfaPage);
   const back = await asViewer(await signIn(noMfaPage, "root@x.test"), (r) => requireAuth(r));
   assertStringIncludes(back!.headers.get("location")!, "/login?callbackUrl=");
+});
+
+Deno.test("hasRole: no requirement allows, but an EMPTY requirement refuses (fail closed)", () => {
+  const session: AuthSession = {
+    user: { id: "u1", roles: ["admin"] },
+    provider: "credentials",
+    expiresAt: Math.floor(Date.now() / 1000) + 3600,
+  };
+  assertEquals(hasRole(session, undefined), true, "no requirement at all");
+  assertEquals(hasRole(session, "admin"), true);
+  assertEquals(hasRole(session, ["editor", "admin"]), true, "any-of");
+  // An empty list is a set of acceptable roles that is empty — nothing satisfies it. This
+  // is what a computed `role: user.requiredRoles` degrades to when the computation breaks,
+  // and it used to let every caller through.
+  assertEquals(hasRole(session, []), false, "an empty requirement can never be satisfied");
+  const roleless: AuthSession = { ...session, user: { id: "u2" } };
+  assertEquals(hasRole(roleless, []), false);
+  assertEquals(hasRole(roleless, undefined), true);
 });

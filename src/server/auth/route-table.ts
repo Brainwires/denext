@@ -10,7 +10,16 @@
  * @module
  */
 
-import { signinStartKey, signinStartLimiter } from "./rate-limit.ts";
+import { emitAuthEvent } from "./events.ts";
+import {
+  clientIpBucket,
+  proxiedWithoutTrust,
+  type RateLimiter,
+  sessionReadKey,
+  sessionReadLimiter,
+  signinStartKey,
+  signinStartLimiter,
+} from "./rate-limit.ts";
 import { handleCredentials } from "./routes-credentials.ts";
 import { handleOAuthCallback, handleSignin } from "./routes-oauth.ts";
 import { handleProviders, handleSession, handleSignout } from "./routes-session.ts";
@@ -38,11 +47,12 @@ export interface AuthRoute {
   /**
    * A dispatch-level rate-limit gate to put in front of the handler, if any.
    * `"signin-start"` is the per-client-IP budget for starting a sign-in (20 hits per
-   * 15 minutes by default; see `rateLimit.signin`). Declaring it here rather than inside
-   * the handler keeps the limit visible in the one place the endpoint set is declared —
+   * 15 minutes by default; `rateLimit.signin`), `"session-read"` the one for reading the
+   * session (60 per minute; `rateLimit.session`). Declaring them here rather than inside
+   * the handlers keeps the limits visible in the one place the endpoint set is declared —
    * and keeps the route modules free of limiter plumbing.
    */
-  limit?: "signin-start";
+  limit?: AuthRouteLimit;
   /**
    * Answer the request.
    *
@@ -52,24 +62,49 @@ export interface AuthRoute {
   handler(ctx: AuthRouteContext): Promise<Response | null> | Response | null;
 }
 
+/** Which dispatch-level per-IP budget a row is gated by. */
+export type AuthRouteLimit = "signin-start" | "session-read";
+
+/** The limiter and key builder behind one {@link AuthRouteLimit}. */
+const LIMITS: Record<AuthRouteLimit, {
+  limiter: (config: AuthRouteContext["config"]) => RateLimiter | null;
+  key: (request: Request, options: { trustForwardedHeaders?: boolean }) => string;
+}> = {
+  "signin-start": { limiter: signinStartLimiter, key: signinStartKey },
+  "session-read": { limiter: sessionReadLimiter, key: sessionReadKey },
+};
+
 /**
- * The sign-in-start gate: EVERY hit counts (not only failures), because the cost being
+ * A per-IP dispatch gate: EVERY hit counts (not only failures), because what is being
  * bounded is the work the endpoint does for an unauthenticated caller — minting a PKCE
- * verifier, a `state`, a nonce and a signed transaction cookie — plus provider-id probing.
- * Past the budget the answer is a generic `429` with `Retry-After`; hostile input can't
- * make it throw, since the key is derived from the client IP alone.
+ * verifier, a `state`, a nonce and a signed transaction cookie on `/signin/:provider`; a
+ * cookie verification plus a store read (and possibly a re-issue) on `/session`. Past the
+ * budget the answer is a generic `429` with `Retry-After`; hostile input can't make it
+ * throw, since the key is derived from the client IP alone.
+ *
+ * The gate is **skipped** for a request that arrived through an undeclared reverse proxy
+ * ({@link proxiedWithoutTrust}): there every client looks like the proxy, so one bucket
+ * would be shared app-wide and the budget would be an outage rather than a defence.
  */
-async function guardSigninStart(
+async function guardLimit(
   ctx: AuthRouteContext,
+  limit: AuthRouteLimit,
   handler: AuthRoute["handler"],
 ): Promise<Response | null> {
-  const limiter = signinStartLimiter(ctx.config);
-  if (!limiter) return await handler(ctx);
-  const key = signinStartKey(ctx.request, {
-    trustForwardedHeaders: ctx.config.trustForwardedHeaders,
-  });
+  const { limiter: limiterFor, key: keyFor } = LIMITS[limit];
+  const limiter = limiterFor(ctx.config);
+  if (!limiter || proxiedWithoutTrust(ctx.request, ctx.config)) return await handler(ctx);
+  const options = { trustForwardedHeaders: ctx.config.trustForwardedHeaders };
+  const key = keyFor(ctx.request, options);
   const retryAfter = await limiter.lockedOut(key);
   if (retryAfter !== null) {
+    if (limit === "signin-start") {
+      await emitAuthEvent(ctx.options, "signInFailed", {
+        provider: ctx.params.provider,
+        reason: "rate_limited",
+        ip: clientIpBucket(ctx.request, options),
+      });
+    }
     return json({ error: "too many attempts" }, 429, { "retry-after": String(retryAfter) });
   }
   await limiter.fail(key);
@@ -78,9 +113,10 @@ async function guardSigninStart(
 
 /** Wrap a row's handler in the gate its `limit` names; an ungated row passes through. */
 function gated(route: AuthRoute): AuthRoute {
-  if (route.limit !== "signin-start") return route;
+  const limit = route.limit;
+  if (!limit) return route;
   const { handler } = route;
-  return { ...route, handler: (ctx) => guardSigninStart(ctx, handler) };
+  return { ...route, handler: (ctx) => guardLimit(ctx, limit, handler) };
 }
 
 /**
@@ -101,7 +137,7 @@ function handleCallback(ctx: AuthRouteContext): Promise<Response> | Response {
 
 /** Every auth endpoint, in match order. Later waves add rows here. */
 const declaredRoutes: readonly AuthRoute[] = [
-  { method: "GET", pattern: "/session", handler: handleSession },
+  { method: "GET", pattern: "/session", handler: handleSession, limit: "session-read" },
   { method: "GET", pattern: "/providers", handler: handleProviders },
   { method: "POST", pattern: "/signout", handler: handleSignout },
   { method: "GET", pattern: "/signin/:provider", handler: handleSignin, limit: "signin-start" },

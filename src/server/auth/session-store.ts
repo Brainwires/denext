@@ -24,6 +24,22 @@ import type { AuthSession } from "./types.ts";
 export interface SessionStore {
   /** Persist `session` under the (random, unguessable) `id`. */
   create(id: string, session: AuthSession): void | Promise<void>;
+  /**
+   * Optional, but **required for sliding expiry** (`session.updateAge`): rewrite an
+   * EXISTING record in place — write-only-if-present. It must NOT create a row: the
+   * whole point is that a session revoked between the read and the refresh stays
+   * revoked instead of being resurrected with a fresh lifetime by an upsert.
+   *
+   * A store that doesn't implement it simply never slides its sessions forward
+   * ({@link ../auth/session.ts | refreshIfStale} returns the session untouched and
+   * warns once), which is safe — the session still expires on its original schedule.
+   *
+   * @param id The session id to rewrite.
+   * @param session The refreshed payload.
+   * @returns `true` when a live row was rewritten; `false` when `id` is unknown,
+   * revoked or expired (nothing was written).
+   */
+  update?(id: string, session: AuthSession): boolean | Promise<boolean>;
   /** The live session for `id`, or `undefined` when absent, revoked, or expired. */
   get(id: string): AuthSession | undefined | Promise<AuthSession | undefined>;
   /** Revoke one session (a no-op for an unknown id). */
@@ -83,6 +99,15 @@ export function inMemorySessionStore(options: InMemorySessionStoreOptions = {}):
         for (const [k, s] of sessions) if (sessionExpired(s)) sessions.delete(k);
         while (sessions.size > maxEntries) sessions.delete(sessions.keys().next().value as string);
       }
+    },
+    update(id, session) {
+      // Write-only-if-present: a record deleted by `revokeSession`/`revokeAllSessions`
+      // while this request was in flight must NOT come back (see the interface doc).
+      const current = sessions.get(id);
+      if (!current || sessionExpired(current)) return false;
+      sessions.delete(id); // re-insert: the rewritten row is the youngest, like `create`
+      sessions.set(id, session);
+      return true;
     },
     get(id) {
       const s = sessions.get(id);

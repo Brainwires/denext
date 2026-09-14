@@ -3,7 +3,7 @@
 // cross-compatibility with a database sqliteSessionStore wrote, the additive schema
 // policy, durability across a restart, and the consume-once guards on a real file.
 
-import { assert, assertEquals, assertThrows } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { DatabaseSync } from "node:sqlite";
 import { sqliteAuthAdapter } from "../src/server/auth/sqlite-adapter.ts";
 import { sqliteSessionStore } from "../src/server/auth/sqlite-session-store.ts";
@@ -290,4 +290,52 @@ Deno.test("sqliteAuthAdapter: concurrent redemption of one backup code yields on
   ]);
   assertEquals(claims.filter(Boolean).length, 1, "a TOTP step is claimed exactly once");
   await adapter.close?.();
+});
+
+Deno.test("sqliteAuthAdapter: a legacy database with colliding emails still boots (index skipped)", () => {
+  // A pre-2.5 `auth_users` may hold two rows whose addresses differ only in case. Creating
+  // the UNIQUE index over it fails — and, when that throw escaped `initSchema`, it escaped
+  // on EVERY open, so every request re-ran the schema and re-threw: one legacy row pair
+  // turned the whole app into a permanent 500.
+  const path = tempDbPath();
+  const raw = new DatabaseSync(path);
+  raw.exec(
+    "CREATE TABLE auth_users (id TEXT PRIMARY KEY, email TEXT, email_lc TEXT, " +
+      "email_verified INTEGER, name TEXT, image TEXT, roles TEXT, created_at INTEGER)",
+  );
+  for (const [id, email] of [["u1", "ada@x.test"], ["u2", "ADA@x.test"]]) {
+    raw.prepare("INSERT INTO auth_users (id, email, email_lc) VALUES (?, ?, lower(?))")
+      .run(id, email, email);
+  }
+  raw.close();
+
+  const errors: string[] = [];
+  const realError = console.error;
+  console.error = (...args: unknown[]) => void errors.push(args.map(String).join(" "));
+  try {
+    const adapter = sqliteAuthAdapter({ path });
+    const created = adapter.createUser({ email: "grace@x.test" }) as { id: string };
+    assert(created.id, "the adapter works, index or no index");
+    assertEquals(adapter.getUserByEmail("grace@x.test") !== undefined, true);
+    adapter.close?.();
+  } finally {
+    console.error = realError;
+  }
+  assertEquals(errors.length, 1, "reported exactly once, not once per request");
+  assertStringIncludes(errors[0], "auth_users");
+  assertStringIncludes(errors[0], "email_lc", "names the colliding column");
+  assertStringIncludes(errors[0], "HAVING count(*) > 1", "and the query that finds them");
+});
+
+Deno.test("sqliteAuthAdapter: a closed adapter refuses to reopen the file", async () => {
+  const adapter = sqliteAuthAdapter({ path: tempDbPath() });
+  await adapter.createUser({ email: "ada@x.test" });
+  await adapter.close?.();
+  assertThrows(
+    () => void adapter.getUserByEmail("ada@x.test"),
+    Error,
+    "closed",
+    "a late request must not resurrect a handle the drain already released",
+  );
+  await adapter.close?.(); // still idempotent
 });

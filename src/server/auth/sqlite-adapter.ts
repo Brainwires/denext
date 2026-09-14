@@ -77,10 +77,21 @@ interface TableSpec {
   columns: Array<[name: string, decl: string]>;
   /** A table-level constraint clause (a composite PRIMARY KEY), when there is one. */
   constraints?: string;
-  /** `CREATE … INDEX IF NOT EXISTS` statements, run once every declared column exists. */
-  indexes?: string[];
+  /** Indexes to create once every declared column exists. */
+  indexes?: IndexSpec[];
   /** Repopulates derived columns after an older database gained one. */
   backfill?: string;
+}
+
+/** One index this adapter creates, plus how to explain a failure to create it. */
+interface IndexSpec {
+  /** The `CREATE … INDEX IF NOT EXISTS` statement. */
+  sql: string;
+  /**
+   * For a UNIQUE index: a query listing the rows that already violate it, quoted verbatim
+   * in the error an operator sees when creation fails on a pre-existing database.
+   */
+  duplicates?: string;
 }
 
 /** The six tables, in creation order. */
@@ -98,10 +109,12 @@ const SCHEMA: TableSpec[] = [
       ["created_at", "INTEGER"],
     ],
     // Unique WHERE NOT NULL: one account per address, any number of address-less users.
-    indexes: [
-      "CREATE UNIQUE INDEX IF NOT EXISTS auth_users_email ON auth_users (email_lc) " +
-      "WHERE email_lc IS NOT NULL",
-    ],
+    indexes: [{
+      sql: "CREATE UNIQUE INDEX IF NOT EXISTS auth_users_email ON auth_users (email_lc) " +
+        "WHERE email_lc IS NOT NULL",
+      duplicates: "SELECT email_lc, count(*) FROM auth_users WHERE email_lc IS NOT NULL " +
+        "GROUP BY email_lc HAVING count(*) > 1",
+    }],
     backfill: "UPDATE auth_users SET email_lc = lower(trim(email)) " +
       "WHERE email_lc IS NULL AND email IS NOT NULL",
   },
@@ -120,7 +133,9 @@ const SCHEMA: TableSpec[] = [
       ["id_token", "TEXT"],
     ],
     constraints: "PRIMARY KEY (provider, provider_account_id)",
-    indexes: ["CREATE INDEX IF NOT EXISTS auth_accounts_user ON auth_accounts (user_id)"],
+    indexes: [{
+      sql: "CREATE INDEX IF NOT EXISTS auth_accounts_user ON auth_accounts (user_id)",
+    }],
   },
   {
     name: "auth_verification_tokens",
@@ -134,9 +149,10 @@ const SCHEMA: TableSpec[] = [
     // One live token per (identifier, purpose): re-sending a link invalidates the previous
     // one, so a mailbox can never hold two working password-reset links at once.
     constraints: "PRIMARY KEY (identifier, purpose)",
-    indexes: [
-      "CREATE INDEX IF NOT EXISTS auth_verification_expiry ON auth_verification_tokens (expires)",
-    ],
+    indexes: [{
+      sql:
+        "CREATE INDEX IF NOT EXISTS auth_verification_expiry ON auth_verification_tokens (expires)",
+    }],
   },
   {
     name: "auth_credentials",
@@ -156,8 +172,13 @@ const SCHEMA: TableSpec[] = [
       ["created_at", "INTEGER"],
     ],
     indexes: [
-      "CREATE UNIQUE INDEX IF NOT EXISTS auth_api_tokens_hash ON auth_api_tokens (token_hash)",
-      "CREATE INDEX IF NOT EXISTS auth_api_tokens_user ON auth_api_tokens (user_id)",
+      {
+        sql:
+          "CREATE UNIQUE INDEX IF NOT EXISTS auth_api_tokens_hash ON auth_api_tokens (token_hash)",
+        duplicates: "SELECT token_hash, count(*) FROM auth_api_tokens " +
+          "GROUP BY token_hash HAVING count(*) > 1",
+      },
+      { sql: "CREATE INDEX IF NOT EXISTS auth_api_tokens_user ON auth_api_tokens (user_id)" },
     ],
   },
   {
@@ -202,7 +223,39 @@ function reconcileTable(db: SqliteDb, spec: TableSpec): void {
     added++;
   }
   if (added && spec.backfill) db.exec(spec.backfill);
-  for (const index of spec.indexes ?? []) db.exec(index);
+  for (const index of spec.indexes ?? []) createIndex(db, spec, index);
+}
+
+/** Indexes already reported as uncreatable, so the operator is told once, not per request. */
+const reportedIndexFailures = new Set<string>();
+
+/**
+ * Create one index, tolerating a failure.
+ *
+ * A UNIQUE index cannot be created over a table that already violates it — an
+ * `auth_users` populated before 2.5 may well hold two rows whose emails differ only in
+ * case. Letting that throw meant `initSchema` failed on EVERY open, so every request
+ * re-ran it and re-threw: one legacy row pair turned the whole app into a permanent 500.
+ * Instead the failure is reported once, with the query that finds the offending rows, and
+ * the adapter runs without that index — uniqueness is still enforced, by the adapter's own
+ * check in {@link saveUser}, just without the database backstop.
+ */
+function createIndex(db: SqliteDb, spec: TableSpec, index: IndexSpec): void {
+  try {
+    db.exec(index.sql);
+  } catch (error) {
+    if (reportedIndexFailures.has(index.sql)) return;
+    reportedIndexFailures.add(index.sql);
+    console.error(
+      `sqliteAuthAdapter: could not create an index on ${spec.name} ` +
+        `(${error instanceof Error ? error.message : String(error)}). ` +
+        (index.duplicates
+          ? `Existing rows violate it — find them with: ${index.duplicates};  ` +
+            "merge or delete the duplicates and restart to get the index. "
+          : "") +
+        "Auth continues without it (slower, and without the database-level guarantee).",
+    );
+  }
 }
 
 /** Bring a handle up to the current schema (idempotent) and set the usual WAL pragmas. */
@@ -332,19 +385,46 @@ const MFA_MAP: FieldMap<MfaRecord> = {
 // ---- statements ------------------------------------------------------------
 
 /**
- * Insert `values` (column name → bound parameter). Table and column names are module
- * constants; every value the caller supplies is a parameter, never interpolated.
+ * Insert `values` (column name → bound parameter), replacing any row it clashes with.
+ * Table and column names are module constants; every value the caller supplies is a
+ * parameter, never interpolated. The user table writes through {@link upsert} instead,
+ * because there a clash on a DIFFERENT unique index must fail rather than replace.
  */
 function put(
   db: SqliteDb,
   table: string,
   values: Record<string, SqlValue>,
-  replace = true,
 ): void {
   const columns = Object.keys(values);
   db.exec(
-    `INSERT${replace ? " OR REPLACE" : ""} INTO ${table} (${columns.join(", ")}) ` +
+    `INSERT OR REPLACE INTO ${table} (${columns.join(", ")}) ` +
       `VALUES (${columns.map(() => "?").join(", ")})`,
+    columns.map((column) => values[column]),
+  );
+}
+
+/**
+ * Insert `values`, or update the existing row when `conflict` (a UNIQUE/PK column) clashes
+ * — an atomic write-or-rewrite. Only that one constraint is absorbed: a violation of any
+ * OTHER unique index (the email one) still raises, which is the point.
+ *
+ * @param db The handle.
+ * @param table The table (a module constant, never caller input).
+ * @param values Column name → bound parameter.
+ * @param conflict The column whose clash means "this is a rewrite".
+ */
+function upsert(
+  db: SqliteDb,
+  table: string,
+  values: Record<string, SqlValue>,
+  conflict: string,
+): void {
+  const columns = Object.keys(values);
+  const updates = columns.filter((c) => c !== conflict).map((c) => `${c} = excluded.${c}`);
+  db.exec(
+    `INSERT INTO ${table} (${columns.join(", ")}) ` +
+      `VALUES (${columns.map(() => "?").join(", ")}) ` +
+      `ON CONFLICT(${conflict}) DO UPDATE SET ${updates.join(", ")}`,
     columns.map((column) => values[column]),
   );
 }
@@ -375,17 +455,22 @@ interface SqliteState {
 
 // ---- method groups ---------------------------------------------------------
 
-/** Write a user row, keeping `created_at` and the derived email index in step. */
+/**
+ * Write a user row, keeping `created_at` and the derived email index in step.
+ *
+ * `INSERT … ON CONFLICT(id) DO UPDATE` rather than `INSERT OR REPLACE` (which would
+ * resolve a clash on the unique email index by deleting the OTHER user — a second user on
+ * one address must FAIL) and rather than delete-then-insert (which left a window in which
+ * the row did not exist, so a concurrent reader on the same file could see the user
+ * vanish, and a failing insert lost it outright). One statement, so the row is either the
+ * old one or the new one and a unique-email violation still raises.
+ */
 function saveUser(state: SqliteState, user: AdapterUser, createdAt: number): AdapterUser {
-  const db = state.db();
-  // Delete-then-insert rather than INSERT OR REPLACE: REPLACE would resolve a clash on the
-  // unique email index by deleting the OTHER user. A second user on one address must fail.
-  db.exec("DELETE FROM auth_users WHERE id = ?", [user.id]);
-  put(db, "auth_users", {
+  upsert(state.db(), "auth_users", {
     ...toRow(USER_MAP, user),
     email_lc: user.email ? emailKey(user.email) : null,
     created_at: createdAt,
-  }, false);
+  }, "id");
   return { ...user };
 }
 
@@ -621,11 +706,20 @@ function createState(
   const sweepEvery = options.sweepEvery ?? SWEEP_INTERVAL;
   const now = options.now ?? (() => Math.floor(Date.now() / 1000));
   let db: SqliteDb | undefined;
+  let closed = false;
   let lastSweep = 0;
 
   // Memoize only after a clean open + init; a throw leaves `db` unset so the next access
   // retries instead of permanently disabling sign-in.
   const getDb = (): SqliteDb => {
+    // A closed adapter must not silently reopen the file: the server is draining, and a
+    // handle resurrected by a late request would outlive the process's own teardown.
+    if (closed) {
+      throw new Error(
+        "sqliteAuthAdapter: this adapter has been closed (the server drained, or close() " +
+          "was called) — build a new one instead of reusing it.",
+      );
+    }
     if (db) return db;
     const opened = open(path);
     initSchema(opened);
@@ -635,6 +729,7 @@ function createState(
   const close = (): void => {
     db?.close();
     db = undefined;
+    closed = true;
   };
   return {
     db: getDb,

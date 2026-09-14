@@ -81,15 +81,82 @@ export function makeHostPinnedFetch(
   if (!allowInsecure) {
     return (url, init) => safeFetch(url, { ...init, allowedHosts: allowed });
   }
-  return (url, init) => {
-    // Dev-only: enforce the same allowlist ourselves, then use the platform fetch
-    // (which safeFetch's loopback block would otherwise reject).
-    const host = new URL(url).host;
-    if (!allowed.includes(host)) {
-      return Promise.reject(new Error(`auth: host ${host} not permitted for provider ${label}`));
+  return makeInsecureHostPinnedFetch(allowed, label);
+}
+
+/** Redirect statuses the dev fetch follows itself (the set `safeFetch` follows). */
+const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
+/** How many hops the dev fetch follows before giving up — `safeFetch`'s default. */
+const MAX_REDIRECTS = 5;
+
+/** The request as it stands on the current redirect hop (mirrors `safe-fetch.ts`). */
+interface DevHop {
+  /** Where this hop goes. */
+  url: string;
+  /** The method this hop uses (a 303, or a 301/302 off a POST, downgrades to GET). */
+  method: string;
+  /** The body this hop carries — dropped with the method downgrade. */
+  body?: string;
+}
+
+/**
+ * The development variant of the pinned fetch: the platform `fetch` (so an
+ * `http://localhost` provider works, which `safeFetch`'s loopback block refuses), with
+ * the host allowlist enforced here instead.
+ *
+ * Redirects are followed **manually**, and EVERY hop is re-checked against the allowlist.
+ * Letting the platform follow them silently meant a provider that answered the token
+ * endpoint with a `307` could send denext — and with it the `client_secret` in the POST
+ * body — to any host it named; only the first URL had ever been checked.
+ */
+function makeInsecureHostPinnedFetch(allowed: readonly string[], label: string): ProviderFetch {
+  return async (url, init) => {
+    const hop: DevHop = { url, method: init.method, body: init.body };
+    for (let i = 0; i <= MAX_REDIRECTS; i++) {
+      assertHostAllowed(hop.url, allowed, label);
+      const res = await fetch(hop.url, {
+        method: hop.method,
+        headers: init.headers,
+        body: hop.body,
+        redirect: "manual",
+      });
+      const location = REDIRECT_STATUS.has(res.status) ? res.headers.get("location") : null;
+      if (location === null) return res;
+      await res.body?.cancel().catch(() => {});
+      advanceHop(hop, res.status, location);
     }
-    return fetch(url, init);
+    throw new Error(`auth: provider ${label} redirected more than ${MAX_REDIRECTS} times`);
   };
+}
+
+/** Refuse a URL that is not on the provider's allowlist (the check every hop repeats). */
+function assertHostAllowed(url: string, allowed: readonly string[], label: string): void {
+  let host: string;
+  try {
+    host = new URL(url).host;
+  } catch {
+    throw new Error(`auth: provider ${label} redirected to an unparseable URL`);
+  }
+  if (!allowed.includes(host)) {
+    throw new Error(`auth: host ${host} not permitted for provider ${label}`);
+  }
+}
+
+/**
+ * Move `hop` to a redirect's target. 303 — and 301/302 off a non-idempotent method —
+ * downgrade to a bodyless GET, exactly as the fetch spec (and `safeFetch`) do.
+ */
+function advanceHop(hop: DevHop, status: number, location: string): void {
+  try {
+    hop.url = new URL(location, hop.url).href;
+  } catch {
+    throw new Error(`auth: invalid redirect location: ${location}`);
+  }
+  const downgrades = status === 303 ||
+    ((status === 301 || status === 302) && hop.method !== "GET" && hop.method !== "HEAD");
+  if (!downgrades) return;
+  hop.method = "GET";
+  hop.body = undefined;
 }
 
 /** Tokens returned by the token endpoint. */

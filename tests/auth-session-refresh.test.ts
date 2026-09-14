@@ -247,6 +247,59 @@ Deno.test("store-backed: a revoked session neither reads nor refreshes", async (
   assertEquals(issued(cookies), undefined);
 });
 
+Deno.test("store-backed: a session revoked BETWEEN the read and the refresh is not resurrected", async () => {
+  // The exact race every refresh path runs: `readAuthSession()` first, then
+  // `refreshIfStale()`. A `revokeAllSessions()` that lands in between used to be undone by
+  // the refresh's upsert, which wrote the row back with a FULL fresh lifetime — a stolen
+  // cookie survived the revocation it was meant to be killed by.
+  const { cfg, store, cookie, record } = await storeSetup(UPDATE_AGE * 2);
+  const { value, cookies } = await inContext(
+    new Request(`${ORIGIN}/auth/session`, { headers: { cookie } }),
+    async () => {
+      const session = await readAuthSession(cfg);
+      assert(session, "the session is live when it is read");
+      await store.deleteByUser("u1"); // …and revoked while this request is in flight
+      return await refreshIfStale(cfg, session);
+    },
+  );
+  assertEquals(await store.get("sid-1"), undefined, "the revoked record stays revoked");
+  assertEquals(issued(cookies), undefined, "and no cookie is re-issued to renew it");
+  assertEquals(
+    value.expiresAt,
+    record.expiresAt,
+    "the caller keeps the session it read, with its original expiry",
+  );
+  // The next request sees the revocation, because nothing was written.
+  const after = await fetchSessionRoute(cfg, cookie);
+  assertEquals(after.body.user, null);
+});
+
+Deno.test("store-backed: a custom store without `update` never slides, and says so once", async () => {
+  const base = inMemorySessionStore();
+  const warnings: string[] = [];
+  // A pre-2.5-shaped store: create/get/delete/deleteByUser, no `update`.
+  const legacy: SessionStore = {
+    create: (id, session) => base.create(id, session),
+    get: (id) => base.get(id),
+    delete: (id) => base.delete(id),
+    deleteByUser: (userId) => base.deleteByUser(userId),
+  };
+  const cfg = config({
+    sessionStore: legacy,
+    logger: { warn: (message) => warnings.push(message) },
+  });
+  await legacy.create("sid-1", payload(UPDATE_AGE * 2));
+  const cookie = await mintCookie(cfg, { sid: "sid-1" });
+
+  const { cookies } = await fetchSessionRoute(cfg, cookie);
+  assertEquals(issued(cookies), undefined, "nothing is re-issued without a safe way to rewrite");
+  assert(await legacy.get("sid-1"), "the session is still live, just not extended");
+  assertEquals(warnings.length, 1, "warned exactly once");
+  assert(warnings[0].includes("`update(id, session)`"), warnings[0]);
+  await fetchSessionRoute(cfg, cookie);
+  assertEquals(warnings.length, 1, "…and not again on the next request");
+});
+
 // ---- auth() vs updateAuthSession() ------------------------------------------
 
 Deno.test("bare auth() reads a stale session but writes no Set-Cookie", async () => {

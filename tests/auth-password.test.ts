@@ -3,6 +3,7 @@
 
 import { assert, assertEquals, assertNotEquals, assertStringIncludes } from "@std/assert";
 import { hashPassword, verifyPassword } from "../src/server/auth/password.ts";
+import { scryptHasher } from "../src/server/auth/hasher.ts";
 
 Deno.test("hashPassword → verifyPassword round-trips; a wrong password fails", async () => {
   const stored = await hashPassword("correct horse battery staple");
@@ -85,4 +86,44 @@ Deno.test("verifyPassword: a stored hash demanding a huge scrypt working set is 
   const [, , salt, hash] = (await hashPassword("pw")).split("$");
   // 128·N·r = 4 GiB — over the 256 MiB self-DoS bound even though each parameter is in range.
   assertEquals(await verifyPassword("pw", `scrypt$N=1048576,r=32,p=1$${salt}$${hash}`), false);
+});
+
+Deno.test("verifyPassword: the equal-work rejection burns the CONFIGURED cost, not the default", async () => {
+  // An unknown account has no stored hash to read parameters from, so the dummy derivation
+  // has to be told what this deployment hashes at. Burning the built-in default instead
+  // made an unknown identifier reject several times faster than a known one — a
+  // user-enumeration timing oracle that got WORSE the more you raised `cost`.
+  const time = async (options: { cost: number }) => {
+    const at = performance.now();
+    await verifyPassword("whatever", "", options);
+    return performance.now() - at;
+  };
+  await time({ cost: 2 }); // warm the gate + the scrypt binding
+  const cheap = await time({ cost: 2 });
+  const dear = await time({ cost: 1 << 15 });
+  assert(
+    dear > cheap + 20,
+    `a high configured cost must cost time even with no stored hash (${cheap}ms vs ${dear}ms)`,
+  );
+});
+
+Deno.test("scryptHasher: verify threads the hasher's own cost into both halves", async () => {
+  const hasher = scryptHasher({ cost: 1 << 15 });
+  const stored = await hasher.hash("correct horse");
+  assertEquals(await hasher.verify("correct horse", stored), true);
+  assertEquals(await hasher.verify("wrong", stored), false);
+  // Known-account and unknown-account rejections now do comparable work.
+  const at = (fn: () => Promise<unknown>) =>
+    (async () => {
+      const start = performance.now();
+      await fn();
+      return performance.now() - start;
+    })();
+  await hasher.verify("warm", stored);
+  const known = await at(() => hasher.verify("wrong", stored));
+  const unknown = await at(() => hasher.verify("wrong", ""));
+  assert(
+    unknown > known * 0.5,
+    `no user-enumeration oracle: known ${known}ms vs unknown ${unknown}ms`,
+  );
 });

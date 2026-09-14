@@ -40,6 +40,13 @@ const MAX_NAME_LENGTH = 64;
 const MAX_SCOPES = 32;
 /** Longest accepted scope string. */
 const MAX_SCOPE_LENGTH = 64;
+/**
+ * Most LIVE tokens one user may hold. A session can mint tokens in a loop, and an API
+ * token never expires unless asked to, so without a cap one compromised session leaves an
+ * unbounded number of long-lived credentials behind (and `DELETE /tokens/:id` lists them
+ * all on every revoke). Revoking or expiring one frees a slot.
+ */
+const MAX_ACTIVE_TOKENS = 50;
 
 /** A token as a client may see it: everything except the hash (and the implicit owner). */
 interface PublicApiToken {
@@ -161,7 +168,8 @@ async function parseBody(ctx: AuthRouteContext): Promise<Record<string, unknown>
  *
  * @param ctx The route context.
  * @returns `201` with the token, `400` on an unusable body, `401` without a complete
- * session, `403` cross-origin — or `null` when API tokens aren't configured.
+ * session, `403` cross-origin, `409` once the caller holds `MAX_ACTIVE_TOKENS` live
+ * tokens — or `null` when API tokens aren't configured.
  */
 export async function handleCreateToken(ctx: AuthRouteContext): Promise<Response | null> {
   const userId = await mutatingCaller(ctx);
@@ -169,6 +177,10 @@ export async function handleCreateToken(ctx: AuthRouteContext): Promise<Response
   const body = await parseBody(ctx);
   const options = body && tokenOptions(body);
   if (!options) return json({ error: "invalid request" }, 400);
+  const live = await listApiTokens(ctx.config, userId);
+  if (live.length >= MAX_ACTIVE_TOKENS) {
+    return json({ error: "too many tokens", max: MAX_ACTIVE_TOKENS }, 409);
+  }
   const issued = await issueApiToken(ctx.config, { userId, ...options });
   // The one and only time the plaintext is disclosed.
   return json({ token: issued.token, ...publicToken(issued.record) }, 201);

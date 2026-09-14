@@ -8,8 +8,10 @@
 // - `signInFailed` carries a STABLE machine-readable reason (`invalid_credentials`,
 //   `rate_limited`, `access_denied`, `account_not_linked`), so alerting can key on it.
 //
-// Nothing here logs an email, a password, a token or a cookie: user ids and reason codes
-// only. Auth logs are the ones most likely to be shipped off-box.
+// Nothing here logs an email, a password, a token or a cookie: user ids, reason codes and
+// the client bucket only. Auth logs are the ones most likely to be shipped off-box —
+// which is also why `linkAccount` hands a handler the account's IDENTITY and never its
+// provider tokens.
 
 import type { AuthEvents, AuthLogger } from "denext/server";
 
@@ -22,7 +24,9 @@ function audit(event: string, fields: Record<string, unknown>): void {
 export const authEvents: AuthEvents = {
   signIn: ({ user, provider, isNewUser }) =>
     audit("sign-in", { user: user.id, provider, isNewUser }),
-  signInFailed: ({ provider, reason }) => audit("sign-in refused", { provider, reason }),
+  // `ip` is the bucket the rate limiter counted the attempt against (an IPv6 client
+  // appears as its /64) — the field to alert on for a distributed credential-stuffing run.
+  signInFailed: ({ provider, reason, ip }) => audit("sign-in refused", { provider, reason, ip }),
   sessionRevoked: ({ sessionId, userId }) => audit("sessions revoked", { sessionId, userId }),
 };
 
