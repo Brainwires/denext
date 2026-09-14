@@ -4,6 +4,12 @@
  * is always the same generic `401` (never a user-enumeration oracle), and the body is
  * read through the shared size/stall cap.
  *
+ * With an {@link ./adapter.ts | AuthAdapter} configured the authorized user is resolved
+ * through the same account-linking rules the OAuth callback uses, so the session carries
+ * the adapter's user id and roles and the login gets a `"credentials"` account row. A
+ * refusal there is answered with the SAME generic `401` a wrong password gets — the
+ * reason reaches the app through `signInFailed` and the logger, never the client.
+ *
  * Every outcome is observable without changing it: a completed sign-in fires `signIn`, a
  * refusal fires `signInFailed` with a stable `reason`, and anything this module swallows
  * (a provider `authorize()` that threw, an unparseable body) is routed to the configured
@@ -22,6 +28,7 @@ import {
   ipBucketKey,
   type RateLimiter,
 } from "./rate-limit.ts";
+import { resolveSessionUser } from "./routes-oauth.ts";
 import {
   afterSignIn,
   applySignInCallback,
@@ -41,7 +48,11 @@ const MAX_CREDENTIALS_BYTES = 64 * 1024;
  * Why a credentials attempt was refused, as `signInFailed` reports it. Stable strings —
  * an app routes on them (alerting on `"rate_limited"`, counting `"invalid_credentials"`).
  */
-type FailureReason = "invalid_credentials" | "rate_limited" | "access_denied";
+type FailureReason =
+  | "invalid_credentials"
+  | "rate_limited"
+  | "access_denied"
+  | "account_not_linked";
 
 /**
  * Fire `signInFailed` for a refused attempt. The response is decided by the caller and is
@@ -94,9 +105,10 @@ function limiterKeys(
 
 /**
  * `POST {basePath}/callback/:provider` for a Credentials provider: rate-limit, authorize,
- * then issue a session. Failures are counted per client key (IP + identifier by default)
- * and, past the limit, answered with a generic `429` — like the generic `401`, it never
- * reveals whether the account exists.
+ * resolve through the adapter (when one is configured), then issue a session. Failures
+ * are counted per client key (IP + identifier by default) and, past the limit, answered
+ * with a generic `429` — like the generic `401`, it never reveals whether the account
+ * exists.
  *
  * @param ctx The route context.
  * @param provider The credentials provider the callback names.
@@ -131,7 +143,21 @@ export async function handleCredentials(
   }
   await limiter?.succeed(key);
 
-  const approved = await applySignInCallback(ctx.config, user, provider.id);
+  // With an adapter, the session carries the ADAPTER's user id and roles rather than
+  // whatever `authorize()` minted, and the login gets an account row like any provider's.
+  const resolved = await resolveSessionUser(ctx, provider, user, {
+    provider: provider.id,
+    providerAccountId: user.id,
+    type: "credentials",
+  });
+  if (!resolved) {
+    await emitFailure(ctx, provider.id, "account_not_linked");
+    // The same generic failure a wrong password gets: that this address already belongs
+    // to another identity is precisely what this endpoint must not disclose.
+    return json({ error: "invalid credentials" }, 401);
+  }
+
+  const approved = await applySignInCallback(ctx.config, resolved, provider.id);
   if (!approved) {
     await emitFailure(ctx, provider.id, "access_denied");
     return json({ error: "access denied" }, 403);

@@ -10,6 +10,13 @@
  * `issuer` is resolved from its OIDC discovery document (cached, host-pinned) and one
  * that pins its endpoints never makes that request at all.
  *
+ * Between the provider round-trip and `callbacks.signIn` sits the persistence step: with
+ * an {@link ./adapter.ts | AuthAdapter} configured, the profile is resolved (or created,
+ * or linked) through {@link ./adapter-link.ts | resolveSignInUser}, the provider tokens
+ * are written onto the account row, and the session then carries the **adapter's** user
+ * id and roles. With no adapter that step is a pass-through and nothing is persisted —
+ * byte-for-byte the flow denext shipped before 2.5.
+ *
  * Failures are *observable*: each one redirects to the sign-in page with a stable
  * `?error=` code, fires the `signInFailed` event, and — where the cause is an exception —
  * hands the exception to `logger.error`. Nothing vanishes silently any more, and nothing
@@ -19,6 +26,8 @@
  */
 
 import { safeRedirectLocation } from "../config.ts";
+import { accountNotLinkedCode, resolveSignInUser } from "./adapter-link.ts";
+import type { AdapterAccount } from "./adapter.ts";
 import {
   DiscoveryError,
   endpointHosts,
@@ -31,6 +40,7 @@ import {
   fetchUserEmails,
   fetchUserInfo,
   makeProviderFetch,
+  type TokenResponse,
 } from "./flow.ts";
 import { getJwks } from "./jwks-cache.ts";
 import { idTokenKid, verifyIdToken } from "./jwt.ts";
@@ -143,9 +153,11 @@ export async function handleSignin(ctx: AuthRouteContext): Promise<Response> {
 
 /**
  * `GET {basePath}/callback/:provider` — complete the OAuth/OIDC flow: verify the
- * transaction-bound `state`, exchange the code, map the profile, then issue a session.
- * Every failure degrades to the sign-in page with an `?error=` code; none of them leak
- * the provider's response or the client secret.
+ * transaction-bound `state`, exchange the code, map the profile, resolve it through the
+ * adapter (when one is configured), then issue a session. Every failure degrades to the
+ * sign-in page with an `?error=` code — a refused account link included, which answers
+ * `?error=account_not_linked` rather than a `500`; none of them leak the provider's
+ * response or the client secret.
  *
  * @param ctx The route context.
  * @param provider The OAuth/OIDC provider the callback belongs to.
@@ -168,15 +180,9 @@ export async function handleOAuthCallback(
 
   try {
     const redirectUri = callbackUri(ctx, provider.id);
-    const profile = await fetchOAuthProfile(ctx, provider, { code, tx, redirectUri });
-    if (!profile.id) throw new Error("provider profile had no id");
-
-    const user = await applySignInCallback(ctx.config, profile, provider.id);
-    if (!user) return await refuse(ctx, provider.id, "access_denied");
-
-    await issueAuthSession(ctx.config, user, provider.id);
-    await emitAuthEvent(ctx.options, "signIn", { user, provider: provider.id });
-    return redirect(afterSignIn(ctx.config, tx.returnTo));
+    const result = await fetchOAuthProfile(ctx, provider, { code, tx, redirectUri });
+    if (!result.profile.id) throw new Error("provider profile had no id");
+    return await completeSignIn(ctx, provider, result, tx.returnTo);
   } catch (error) {
     // A provider round-trip that failed used to vanish here. Log it (the app's logger is
     // silent by default, so this is opt-in), and tell an unresolvable provider apart from
@@ -194,6 +200,149 @@ export async function handleOAuthCallback(
 }
 
 /**
+ * The tail of a completed provider round-trip: resolve (or create) the user the sign-in
+ * belongs to, run the app's `signIn` callback, issue the session, and announce it. Split
+ * out of {@linkcode handleOAuthCallback} so that callback stays a readable sequence of
+ * gates — and so the persistence step has one home.
+ *
+ * @param ctx The route context.
+ * @param provider The provider that authenticated the profile.
+ * @param result The mapped profile and the tokens it arrived with.
+ * @param returnTo The already-coerced same-origin path the transaction asked to return to.
+ * @returns A redirect — to the post-sign-in target, or to the sign-in page with an error.
+ */
+async function completeSignIn(
+  ctx: AuthRouteContext,
+  provider: OAuthProvider,
+  result: OAuthProfileResult,
+  returnTo: string | undefined,
+): Promise<Response> {
+  const account = accountFromTokens(ctx, provider, result.profile, result.tokens);
+  const resolved = await resolveSessionUser(ctx, provider, result.profile, account);
+  if (!resolved) return await refuse(ctx, provider.id, "account_not_linked");
+
+  const user = await applySignInCallback(ctx.config, resolved, provider.id);
+  if (!user) return await refuse(ctx, provider.id, "access_denied");
+
+  await issueAuthSession(ctx.config, user, provider.id);
+  await emitAuthEvent(ctx.options, "signIn", { user, provider: provider.id });
+  return redirect(afterSignIn(ctx.config, returnTo));
+}
+
+/**
+ * The two fields the account-linking rules read off a provider: its id, and whether it
+ * opted into linking on an **unverified** address. A Credentials provider has no such
+ * flag, so {@linkcode resolveSessionUser} takes this narrow view of a provider and the
+ * credentials route passes itself straight in.
+ */
+export type LinkingProvider = Pick<OAuthProvider, "id" | "allowDangerousEmailAccountLinking">;
+
+/**
+ * Resolve the user a sign-in should become through the configured adapter — reusing the
+ * user the account is already linked to, linking it to a matching local identity, or
+ * creating both records — and turn the one refusal those rules can raise into a value
+ * instead of an exception.
+ *
+ * With **no adapter** this is a pass-through: `profile` comes straight back, so an app
+ * written for 2.4 keeps issuing sessions carrying the provider's own id, and no token is
+ * persisted anywhere.
+ *
+ * Both sign-in routes share this, and each answers a refusal in its own currency: the
+ * OAuth callback redirects with `?error=account_not_linked`, while the credentials POST
+ * keeps its GENERIC 401 — answering "that address exists, under another provider" there
+ * would be exactly the user-enumeration oracle that endpoint is built not to be.
+ *
+ * @param ctx The route context (its options carry the adapter, the events and the logger).
+ * @param provider The provider that authenticated the user.
+ * @param profile The provider-mapped (or credentials-authorized) user.
+ * @param account The account row this sign-in links, minus the `userId` it resolves.
+ * @returns The user to issue a session for, or `undefined` when linking was refused.
+ */
+export async function resolveSessionUser(
+  ctx: AuthRouteContext,
+  provider: LinkingProvider,
+  profile: AuthUser,
+  account: Omit<AdapterAccount, "userId">,
+): Promise<AuthUser | undefined> {
+  try {
+    // The linking rules read only the two fields `LinkingProvider` names, which is what
+    // lets the credentials route — whose provider has neither concept — share them.
+    return await resolveSignInUser(ctx.options, provider as OAuthProvider, profile, account);
+  } catch (error) {
+    if (!accountNotLinkedCode(error)) throw error;
+    ctx.options.logger.error(
+      `denextAuth: refused to link the "${provider.id}" sign-in to an existing account`,
+      error,
+    );
+    return undefined;
+  }
+}
+
+/**
+ * The account row this sign-in links. The token fields are attached **only when an
+ * adapter is configured**: persisting them is what an adapter is for, and without one
+ * there is nowhere to put them — a provider's refresh token then never outlives the
+ * request it arrived on.
+ *
+ * @param ctx The route context (its resolved options say whether an adapter exists).
+ * @param provider The provider that authenticated the profile.
+ * @param profile The provider-mapped user — its `id` IS the provider-side account id.
+ * @param tokens The token endpoint's response.
+ * @returns The account to link, minus the `userId` the linking rules decide.
+ */
+function accountFromTokens(
+  ctx: AuthRouteContext,
+  provider: OAuthProvider,
+  profile: AuthUser,
+  tokens: TokenResponse,
+): Omit<AdapterAccount, "userId"> {
+  const account: Omit<AdapterAccount, "userId"> = {
+    provider: provider.id,
+    providerAccountId: profile.id,
+    type: provider.type,
+  };
+  if (!ctx.options.adapter) return account;
+  return {
+    ...account,
+    ...withoutUndefined({
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token,
+      idToken: tokens.id_token,
+      tokenType: tokens.token_type,
+      scope: typeof tokens.scope === "string" ? tokens.scope : undefined,
+      expiresAt: expiryAt(tokens.expires_in),
+    }),
+  };
+}
+
+/** The entries whose value is defined — an absent token is never stored as `undefined`. */
+function withoutUndefined<T extends object>(values: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(values).filter(([, value]) => value !== undefined),
+  ) as Partial<T>;
+}
+
+/**
+ * When an access token expires, absolute, from the relative `expires_in` a provider
+ * returned.
+ *
+ * @param expiresIn Seconds until expiry, when the provider said.
+ * @returns Epoch seconds, or `undefined` when it didn't say (or said something unusable).
+ */
+function expiryAt(expiresIn: number | undefined): number | undefined {
+  if (typeof expiresIn !== "number" || !Number.isFinite(expiresIn)) return undefined;
+  return Math.floor(Date.now() / 1000) + Math.floor(expiresIn);
+}
+
+/** What one provider round-trip produced. */
+interface OAuthProfileResult {
+  /** The provider-mapped session user. */
+  profile: AuthUser;
+  /** The token endpoint's response — what an adapter persists on the account row. */
+  tokens: TokenResponse;
+}
+
+/**
  * The networked half of the callback: resolve the endpoints, exchange the code, verify
  * the `id_token` (OIDC), fetch userinfo / the verified-email list, and map it all through
  * `provider.profile`.
@@ -201,13 +350,13 @@ export async function handleOAuthCallback(
  * @param ctx The route context.
  * @param provider The OAuth/OIDC provider.
  * @param params The authorization code, the transaction it belongs to, and the redirect URI.
- * @returns The provider-mapped {@link AuthUser}.
+ * @returns The provider-mapped {@link AuthUser} and the tokens it was mapped from.
  */
 async function fetchOAuthProfile(
   ctx: AuthRouteContext,
   provider: OAuthProvider,
   params: { code: string; tx: Transaction; redirectUri: string },
-): Promise<AuthUser> {
+): Promise<OAuthProfileResult> {
   const endpoints = await endpointsFor(ctx, provider);
   // Pin the fetch to the provider's own hosts PLUS whatever discovery resolved — a
   // discovery-only provider configures no URL for `providerHosts` to derive them from.
@@ -243,7 +392,7 @@ async function fetchOAuthProfile(
   const emails = provider.userEmailsUrl && tokens.access_token
     ? await fetchUserEmails(provider, tokens.access_token, doFetch)
     : undefined;
-  return provider.profile({ tokens, userinfo, claims, emails });
+  return { profile: provider.profile({ tokens, userinfo, claims, emails }), tokens };
 }
 
 /**
