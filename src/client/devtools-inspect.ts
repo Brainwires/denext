@@ -29,6 +29,7 @@ import { devtoolsHooksImpl } from "./fiber/devtools-bridge.ts";
 import { setDevtoolsHooks } from "./fiber/devtools-seam.ts";
 import { setInspectorBridge } from "./devtools.ts";
 import { familyIdOf } from "./refresh-runtime.ts";
+import { componentMetaOf, type ResolvedHookName, resolveHookNames } from "./devtools-meta.ts";
 import {
   brandOf,
   componentDisplayName,
@@ -190,6 +191,30 @@ export interface InspectHook {
   deps?: SerializedValue[];
   /** Whether an effect cell currently holds a cleanup function (effect/layout). */
   hasCleanup?: boolean;
+  /**
+   * The variable the hook call was bound to (`count`), breadcrumbed through same-module
+   * custom-hook expansions (`useAuth › count`). Present only when the dev metadata
+   * resolved (see {@link InspectNode.hooksNamed}) and the call was bound to something.
+   */
+  name?: string;
+  /**
+   * The hook that produced this cell (`useState`), breadcrumbed likewise
+   * (`useAuth › useState`). Present only when the dev metadata resolved. A composite's
+   * extra cells (e.g. the memo behind `useTransition`) carry the hook without a name.
+   */
+  hook?: string;
+}
+
+/** Where a component was declared — the build-time position behind the panel's source link. */
+export interface SourceLocation {
+  /** The declaring module's URL (`file:///…/app/page.tsx`), cache-buster stripped. */
+  file: string;
+  /** 1-based line of the declaration, when the dev metadata pass instrumented it. */
+  line?: number;
+  /** 1-based UTF-16 column of the declaration, when known. */
+  column?: number;
+  /** The binding the component is registered under (the family id's `#` suffix). */
+  export?: string;
 }
 
 /** One prop entry — for per-prop display and live override. */
@@ -235,23 +260,60 @@ export interface InspectNode {
   /** Contexts read this render (empty when none). */
   contexts: InspectContext[];
   /**
-   * Source location (`fileUrl#Export`) from the Fast Refresh family registry, when
-   * known — powers the panel's source link. Absent for host/fragment/text nodes and
-   * components that weren't registered (e.g. in a production-shaped bundle).
+   * Where the component was declared — its module from the Fast Refresh family
+   * registry, plus the line/column the dev metadata pass recorded. Powers the panel's
+   * source link. Absent for host/fragment/text nodes and components that weren't
+   * registered (e.g. in a production-shaped bundle).
    */
-  source?: string;
+  source?: SourceLocation;
+  /**
+   * The raw Fast Refresh family id (`"<fileUrl>#<Export>"`, cache-buster stripped) —
+   * what {@link source} was before it became a {@link SourceLocation}.
+   *
+   * @deprecated Read {@link source} instead. Kept for one minor.
+   */
+  sourceId?: string;
+  /**
+   * Whether the hook `name`/`hook` labels resolved against the build-time metadata.
+   * `false` means metadata existed but did not line up with the live cells (a
+   * conditional hook, or an opaque custom hook) — the panel then shows kind labels and
+   * says so. Absent when the component carries no metadata at all.
+   */
+  hooksNamed?: boolean;
   /** Child nodes, in order. */
   children: InspectNode[];
 }
 
-/** A component's source `fileUrl#Export` (cache-buster stripped), or undefined. */
-function sourceOf(type: unknown): string | undefined {
+/** A component's raw family id `fileUrl#Export` (cache-buster stripped), or undefined. */
+function sourceIdOf(type: unknown): string | undefined {
   const fam = familyIdOf(type);
   if (!fam) return undefined;
   const hash = fam.lastIndexOf("#");
   const url = (hash >= 0 ? fam.slice(0, hash) : fam).replace(/\?[^#]*$/, "");
   const exp = hash >= 0 ? fam.slice(hash + 1) : "";
   return exp ? `${url}#${exp}` : url;
+}
+
+/**
+ * A component's source location: its module + export from the Fast Refresh family
+ * registry, overlaid with the line/column the dev metadata pass recorded for the
+ * declaration. Line/column are absent when the module wasn't instrumented.
+ */
+function sourceOf(type: unknown): SourceLocation | undefined {
+  const fam = familyIdOf(type);
+  if (!fam) return undefined;
+  const hash = fam.lastIndexOf("#");
+  const loc: SourceLocation = {
+    file: (hash >= 0 ? fam.slice(0, hash) : fam).replace(/\?[^#]*$/, ""),
+  };
+  const exp = hash >= 0 ? fam.slice(hash + 1) : "";
+  if (exp) loc.export = exp;
+  const meta = componentMetaOf(type);
+  if (meta) {
+    loc.line = meta.line;
+    loc.column = meta.column;
+  }
+  return loc;
 }
 
 let idCounter = 0;
@@ -271,28 +333,63 @@ function idFor(fiber: Fiber): number {
   return id;
 }
 
-function serializeHooks(fiber: Fiber): InspectHook[] {
+/** Whether the panel may edit a cell live: a `useState` cell holding a primitive. */
+function isEditableCell(cell: HookCell, kind: number, value: SerializedValue): boolean {
+  if (kind !== STATE_KIND || typeof cell.updater !== "function") return false;
+  return value.type === "string" || value.type === "number" || value.type === "boolean" ||
+    value.type === "null";
+}
+
+/** One live hook cell as an {@link InspectHook}, with its name when the metadata resolved. */
+function serializeHookCell(cell: HookCell, index: number, named?: ResolvedHookName): InspectHook {
+  const kind = cell.kind ?? 0;
+  const value = serializeValue(cell.value);
+  const hook: InspectHook = {
+    index,
+    kind: HOOK_KIND_LABELS[kind] ?? "hook",
+    value,
+    editable: isEditableCell(cell, kind, value),
+  };
+  if (Array.isArray(cell.deps)) hook.deps = cell.deps.map((d) => serializeValue(d));
+  if (kind === 3 || kind === 10) hook.hasCleanup = typeof cell.cleanup === "function";
+  if (named !== undefined) {
+    hook.hook = named.hook;
+    if (named.name) hook.name = named.name;
+  }
+  return hook;
+}
+
+function serializeHooks(fiber: Fiber, names?: ResolvedHookName[]): InspectHook[] {
   const cells = fiber.hooks;
   if (!cells || cells.length === 0) return [];
-  const out: InspectHook[] = [];
-  for (let i = 0; i < cells.length; i++) {
-    const cell = cells[i];
-    const kind = cell.kind ?? 0;
-    const value = serializeValue(cell.value);
-    const editable = kind === STATE_KIND && typeof cell.updater === "function" &&
-      (value.type === "string" || value.type === "number" || value.type === "boolean" ||
-        value.type === "null");
-    const hook: InspectHook = {
-      index: i,
-      kind: HOOK_KIND_LABELS[kind] ?? "hook",
-      value,
-      editable,
-    };
-    if (Array.isArray(cell.deps)) hook.deps = cell.deps.map((d) => serializeValue(d));
-    if (kind === 3 || kind === 10) hook.hasCleanup = typeof cell.cleanup === "function";
-    out.push(hook);
-  }
-  return out;
+  return cells.map((cell, i) => serializeHookCell(cell, i, names?.[i]));
+}
+
+/**
+ * A component's hook names, joined from its dev metadata: the per-cell labels, `null`
+ * when metadata exists but doesn't line up with the live cells, and `undefined` when the
+ * component carries no metadata (an uninstrumented module / a production-shaped bundle).
+ */
+function hookNamesFor(fiber: Fiber): ResolvedHookName[] | null | undefined {
+  const type = fiber.vnode.type;
+  const fam = familyIdOf(type);
+  const meta = componentMetaOf(type);
+  if (fam === undefined || meta === undefined) return undefined;
+  return resolveHookNames(fam, meta, fiber.hooks ?? []);
+}
+
+/** The component-only part of an {@link InspectNode}: props, hooks, contexts, source. */
+function componentDetail(fiber: Fiber): Partial<InspectNode> {
+  const names = hookNamesFor(fiber);
+  const detail: Partial<InspectNode> = {
+    propEntries: serializeProps(fiber),
+    hooks: serializeHooks(fiber, names ?? undefined),
+    contexts: serializeContexts(fiber),
+    source: sourceOf(fiber.vnode.type),
+    sourceId: sourceIdOf(fiber.vnode.type),
+  };
+  if (names !== undefined) detail.hooksNamed = names !== null;
+  return detail;
 }
 
 /**
@@ -394,10 +491,7 @@ function nodeShape(fiber: Fiber): Partial<InspectNode> & Pick<InspectNode, "name
         name: componentDisplayName(fiber.vnode.type),
         kind: "component",
         badges,
-        propEntries: serializeProps(fiber),
-        hooks: serializeHooks(fiber),
-        contexts: serializeContexts(fiber),
-        source: sourceOf(fiber.vnode.type),
+        ...componentDetail(fiber),
       };
     case "suspense":
     case "errorboundary":
@@ -657,6 +751,14 @@ export function clearPropOverrides(fiberId: number): boolean {
   return true;
 }
 
+/** One component above a node in {@link getOwnerStack}. */
+export interface OwnerStackEntry {
+  /** The ancestor's display name. */
+  name: string;
+  /** Where it was declared, when the family registry knows (see {@link SourceLocation}). */
+  source?: SourceLocation;
+}
+
 /**
  * The component ancestor chain for a node — the names of the component fibers above
  * it (nearest first), each with its source when known. An approximation of React's
@@ -664,11 +766,11 @@ export function clearPropOverrides(fiberId: number): boolean {
  * the common case. `fiberId` comes from the most recent {@link getInspectorTree}.
  * Empty in production or for an unknown/stale id.
  */
-export function getOwnerStack(fiberId: number): Array<{ name: string; source?: string }> {
+export function getOwnerStack(fiberId: number): OwnerStackEntry[] {
   if (!isDev()) return [];
   const fiber = idToFiber.get(fiberId);
   if (!fiber) return [];
-  const stack: Array<{ name: string; source?: string }> = [];
+  const stack: OwnerStackEntry[] = [];
   for (let f = fiber.return; f !== null; f = f.return) {
     if (f.tag === "component") {
       stack.push({ name: componentDisplayName(f.vnode.type), source: sourceOf(f.vnode.type) });
@@ -1301,7 +1403,7 @@ export interface DenextDevtoolsApi {
   /** Drop a component's live prop overrides (see {@link clearPropOverrides}). */
   clearPropOverrides(fiberId: number): boolean;
   /** The component ancestor/owner stack for a node (see {@link getOwnerStack}). */
-  getOwnerStack(fiberId: number): Array<{ name: string; source?: string }>;
+  getOwnerStack(fiberId: number): OwnerStackEntry[];
   /** Resolve a DOM node to its owning component id (see {@link getFiberIdForDom}). */
   getFiberIdForDom(el: Node | null): number | null;
   /** The host element for a fiber id (see {@link getHostNode}). */
