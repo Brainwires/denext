@@ -162,10 +162,9 @@ ctx.addTeardown(() => watcher.close());
 `ctx.addCommand(spec)` registers a first-class `denext` subcommand, so a plugin can
 extend the CLI — not just the request/route/build seams. `spec` is a `CommandSpec`
 (from `@denext/denext/cli/command`): a `name`, one-line `summary`, an optional
-declarative `flags`/`positionals` schema, and a `run(ctx)`. The verb is discovered
-**lazily** — only when the CLI hits an unknown verb in a project whose config lists
-your plugin — and a built-in verb of the same name always wins (core can't be
-shadowed).
+declarative `flags`/`positionals` schema, and a `run(ctx)`. A built-in verb of the same
+name always wins (core can't be shadowed). See [Project commands](#project-commands)
+below for how the verb is discovered and listed.
 
 ```ts
 import type { CommandSpec } from "@denext/denext/cli/command";
@@ -178,6 +177,47 @@ const greet: CommandSpec = {
 ctx.addCommand(greet);
 // In a project with this plugin: `denext greet denext` → "hello, denext"
 ```
+
+## Project commands
+
+A project can add its own `denext` verbs **two** ways, and they behave identically once
+registered. A plugin uses the `addCommand(spec)` seam above; a project that just wants a
+verb skips the plugin entirely and puts a `commands:` array in `denext.config.ts` — the same
+`CommandSpec` shape, with no `setup` and nothing to install:
+
+```ts
+// denext.config.ts
+export default {
+  commands: [
+    {
+      name: "seed",
+      summary: "Load development fixtures",
+      flags: [{ name: "count", type: "number", default: 10, valueName: "<n>" }],
+      run: async (ctx) => await seed(ctx.flags.count as number),
+    },
+  ],
+};
+// `denext seed --count 50`
+```
+
+Either way the verb gets the framework's own flag parsing, `--help`, and "did you mean"
+suggestions — there is no second CLI to learn.
+
+Project verbs are **enumerable**: `denext --help` lists them in a **Project commands**
+section under the built-in table, and `denext completions bash|zsh|fish` includes them, so a
+teammate discovers your verb the same way they discover `denext build`.
+
+Discovery costs one config read, and only when it can matter: when the CLI is asked to
+enumerate every verb (`--help` with no command, `completions`) or when it hits a verb it
+doesn't recognise. Everything else — `denext dev`, `denext build`, a per-command `--help` —
+pays nothing. Because a plugin's `setup` is arbitrary user code, discovery runs under a
+**1.5 s budget**; if it overruns, the registry is left untouched and the help table says
+`project commands not listed: plugin setup exceeded 1.5 s` rather than hanging.
+
+A built-in verb always wins a name collision, in both directions: you can't shadow
+`denext build`, and a future denext release that adds a verb can't be broken by a project
+that already used the name — the project's verb simply stops being reachable, and `denext ui`'s
+Commands panel shows which verbs the project contributes.
 
 ## Rendering
 

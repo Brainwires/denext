@@ -50,6 +50,16 @@ CMD ["deno", "run", "--allow-net", "--allow-read", "--allow-env", \
 `docker build -t my-app . && docker run -p 3000:3000 -e SESSION_SECRET=… my-app`.
 Put a concurrency ceiling / TLS in front (§1) — a reverse proxy or your platform.
 
+**Don't hand-write it.** `denext generate docker` writes the `Dockerfile`,
+`docker-compose.yml` and `.dockerignore` for you — SSR or static image auto-detected from
+your config — and the [Project UI](/docs/ui)'s Docker panel regenerates the same three files
+with options (port, `denoland/deno` tag, an optional Postgres service) and shows a per-file
+diff before it writes. Both are the same templates, and a file you edited by hand (one
+without the generated-file sentinel header) is never overwritten. The generator is the
+source of truth: the snippet above is a readable illustration and can lag it in details like
+the dependency-cache layer, the exact run flags and whether the port comes from `PORT` or
+`--port`.
+
 ### Deno Deploy
 
 Push the repo and point the entrypoint at `jsr:@denext/denext@^2/cli` with args

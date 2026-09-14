@@ -7,12 +7,12 @@
 > pillars in [MISSION.md](./MISSION.md); the standing engineering guardrails and the
 > security policy in [POLICIES.md](./POLICIES.md).
 >
-> `development` is **2.4.3** (the version line `deno task bump` rewrites). The 2.4 line
-> has shipped — the first-party build-time codecs on JSR, `denext openapi types`, the
-> TanStack Router example, the migration-bed nightly. What remains is the last
-> build-time-purity item, the TanStack Start depth of the router plugins, and the
-> unscheduled candidates below. Items target the next minor unless marked otherwise;
-> this file is rewritten each cycle.
+> `development` is on the **2.5 rc series** (the version line `deno task bump` rewrites).
+> rc.1 carries `denext ui`, the auth flexibility cut + database adapter + bearer tokens, and
+> the DevTools completeness pass — all in [CHANGELOG.md](./CHANGELOG.md). What remains is the
+> rc.2 list below, the 2.6 candidates, the last build-time-purity item, the TanStack Start
+> depth of the router plugins, and the unscheduled candidates. Items target the next minor
+> unless marked otherwise; this file is rewritten each cycle.
 
 ---
 
@@ -114,12 +114,105 @@ guardrail; both are build-time.
   remaining transforms, then move those one hook at a time; the compat e2es
   (`tests/e2e/next-compat-*`, `spa-compat`, `unbundled-*`) are the gate.
 
+## 2.5 rc.2 (the rest of the rc series)
+
+**Auth — the flows that need an outbound message** (the seam and the reserved session
+fields shipped in rc.1, so none of this invalidates a session):
+
+- **Password reset + email verification** — `verification.ts` / `email.ts` /
+  `routes-account.ts`: single-use hashed verification tokens bound to `(identifier, purpose)`,
+  `/auth/verify`, `/auth/reset`, `/auth/reset/confirm` (consume, `setCredential`, revoke every
+  session), and a config-time throw when `sendVerificationRequest` is missing. Consumes
+  `pages.error` / `pages.verifyRequest`.
+- **Magic link / email OTP** — `magicLink()` + `emailOtp()` presets over the same tokens. The
+  identifier is exactly one RFC address and is never split on `,` (the CVE-2022-35924 class),
+  which will flip that row in [the security guide](https://denext.dev/docs/security).
+- **TOTP 2FA with a pending-MFA step-up** — RFC 6238 enrol/confirm/disable, hashed backup
+  codes, a replay-guarded step claim, and the eight bypass paths (`auth()`, `requireAuth`,
+  `requireSession`, `GET /session`, Live `authorize`, `requireBearer`, `/auth/tokens`,
+  `/mfa/disable` freshness) each gated and each tested.
+
+**`denext ui`:**
+
+- Compose **YAML round-trip** so a hand-written `docker-compose.yml` can be edited, not only
+  regenerated.
+- **Per-plugin option schemas** (the catalog knows the keys, not the types) and **JSR plugin
+  discovery** beyond the first-party catalog.
+- The **TSX flip**: render the UI with denext itself behind the existing `renderPage()` seam —
+  the dogfooding case.
+- Typed **`commands[].flags` sub-forms** (add `src/cli/command.ts` to `CONFIG_TYPE_SOURCES`) and
+  a textarea widget tag for `spa.head` / `spa.loading`.
+- Share migrate's `next.config` evaluator and its translation table with the UI's
+  `config-next.ts` instead of keeping two.
+- Fix the `denext --help <dir>` parser quirk (a bare positional is not read as the project
+  directory — `--cwd=` is the workaround today).
+
+**DevTools:**
+
+- Route-structural component metadata on the **bundled** App Router path (a `devMeta?` pre-pass
+  through `generateRouteEntry`), so `DENEXT_DEV_UNBUNDLED=0` gets families with locations.
+- **Cross-module custom-hook name expansion** (naming stops at a module boundary today).
+- A dev-only **`useDebugValue`** op that pushes to the fiber without changing hook-cell count.
+
+## After 2.5 (2.6 candidates)
+
+**Auth:**
+
+- **Passkeys / WebAuthn** over the adapter's credential tables.
+- A **`next-auth` compat shim** so a drop-in Next app that imports `next-auth` runs.
+- A standalone **`denext/auth` subpath** (today the surface lives in `denext/server`).
+- **`totpQrSvg()`** — denext ships `totpAuthUri()` only; no QR encoder.
+- **`activeAuthConfig()`** so `requireBearer`'s first argument becomes optional.
+- **Richer events**: API-token issue/revoke events, a `signInFailed.reason` union, and an
+  `AuthEvents.ip` for audit trails.
+
+**DevTools:**
+
+- **Per-element `__source`** (a true JSX owner stack instead of the render-parent chain).
+- **Profiler export / compare** across commits, plus component filters.
+- A **Live / channel + state inspector** tab (subscriptions, channel pushes, cache entries).
+- **On-demand snapshot pull** over the reload stream, so the MCP tools can ask for a fresh
+  tree instead of reading the last pushed one.
+
+**`denext ui`:** agent support — an MCP front end over the UI's operations. Every mutation
+already answers a `{ ok, diff, reason }` JSON envelope for exactly this, but the surface is a
+3.0 commitment, not a 2.6 one.
+
+**Docs:** align the [deployment guide](https://denext.dev/docs/deploy)'s hand-written
+Dockerfile with what `denext generate docker` emits — the dependency-cache layer, the
+least-privilege run flags, and `PORT` vs `--port` differ today. The guide now points at the
+generator as the source of truth; the remaining work is making the two byte-comparable (a test
+that diffs the guide's fenced block against the template would keep them that way).
+
 ## Candidate features (from the framework-gap survey)
 
 Vetted gaps vs Next/Nuxt/Astro/SvelteKit/TanStack (the three picks that shipped — scheduled
 tasks, type-safe routing, `@denext/content-collections` — are in CHANGELOG/FEATURES). The rest
 are kept here so they aren't lost; not yet scheduled.
 
+- **Dev server attach for desktop and Capacitor apps (the Metro model).** A packaged desktop
+  window or a phone running the app should be able to attach to `denext dev` and get HMR, the
+  way a React Native app attaches to Metro. Today it cannot: every `/_denext/*` asset is
+  refused for a non-loopback host (see [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md)). The
+  work, smallest first:
+  - **A user-facing `allowedDevOrigins`** — a `denext.config.ts` key plus
+    `denext dev --allowed-dev-origin`, in the generated config schema and documented. It is a
+    programmatic `DevServerOptions` field only today.
+  - **Auto-allow an explicitly bound `--host`**, and stop `.denext/dev.json` rewriting
+    `0.0.0.0` to `127.0.0.1` when the bind was deliberate.
+  - **`denext dev --lan`** — pick the LAN IPv4, bind it, allow it, print the URL and an ASCII
+    QR code (no dependency).
+  - **Capacitor live reload** — a `mobile:dev` task that writes `server.url` into the
+    Capacitor config so the phone's page origin _is_ the dev server (which is what makes the
+    existing SSE reload and the origin checks work unchanged).
+  - **`denext desktop dev`** — a window over a loopback reverse proxy to the dev server
+    (reusing `src/build/dev-proxy.ts`), so `location.origin` stays loopback and neither the CSP
+    nor the origin gate has to be relaxed.
+  - **A dev-vs-release packaging permission split** — `migrate --desktop` bakes
+    `--allow-net=127.0.0.1,localhost` into the compiled task, which a dev attach would have to
+    widen; the scaffold and package paths use `-A`. Pick one story per mode.
+  - Optional: a spike on `deno desktop --inspect-renderer` (CDP into the window, which
+    `src/profile/browser.ts` already knows how to drive).
 - **Deploy adapter API + presets** (the larger, separate bet — Nitro / Next 16 Adapters):
   a typed build manifest (routes, prerenders, assets, cache rules) + a pluggable adapter
   seam with first-party presets. Achievable targets for a Deno-native framework: **static

@@ -208,14 +208,43 @@ export function NewPost() {
 **Reading cookies / a session (auth):**
 
 ```ts
-import { cookies, getSession } from "denext/server";
+import { auth, cookies, createApi, getSession, requireAuth, requireSession } from "denext/server";
 // cookies are Secure + httpOnly + SameSite=Lax by DEFAULT; pass { httpOnly: false } to opt out.
 const session = await getSession<{ userId: string }>({
   secret: Deno.env.get("SESSION_SECRET")!,
 });
 if (!session.data) redirect("/login");
 await session.set({ userId: user.id }); // sign in
+
+// With the `denextAuth({ … })` plugin the same three calls cover server, middleware and API:
+const s = await auth(); // anywhere on the server; null while a second factor is pending
+// middleware.ts — a Response to redirect (302 + ?error=forbidden), or null to continue:
+export const middleware = (request: Request) => requireAuth(request, { role: "admin" });
+// a route handler — requireSession({ role }) refuses with 403:
+export const GET = createApi().use(requireSession({ role: "admin" })).define(/* … */);
 ```
+
+Persist users with an adapter (`sqliteAuthAdapter({ path })` on `node:sqlite`, or
+`inMemoryAuthAdapter()`), and gate a machine-to-machine API with
+`requireBearer(authConfig, { scope: "pets:write" })` — it self-documents as `bearerAuth`
+for `@denext/openapi`. Full guide: https://denext.dev/docs/auth
+
+**A project-local CLI verb (no plugin):** put it in `denext.config.ts` and run it as a verb.
+
+```ts
+// denext.config.ts
+export default {
+  commands: [{ name: "seed", summary: "Load fixtures", run: (ctx) => seed() }],
+};
+// `denext seed` — same flag parsing, --help and did-you-mean as a built-in; it also shows
+// under "Project commands" in `denext --help` and in `denext completions <shell>`.
+```
+
+**A GUI over the project:** `denext ui` serves a loopback (127.0.0.1) project-management
+page — schema-driven `denext.config.ts` editing (comment-preserving), plugins, every
+`generate` kind, Docker files, a setup wizard and the project's own verbs. It works with
+JavaScript disabled and never loads the project's modules. Docs:
+https://denext.dev/docs/ui
 
 **A database (zero-npm, server-only module):**
 
@@ -379,13 +408,18 @@ denext ships tooling so agents get it right the first time:
 - **MCP server** — `deno run -A jsr:@denext/denext/cli mcp` (or `denext mcp`). It speaks
   MCP over stdio; configure it as an MCP server in your client. Tools:
   `denext_check_snippet` (lint a code string for Next-isms before you write it),
-  `denext_import_map` (map a Next/React import to denext), `denext_generate` (scaffold),
+  `denext_import_map` (map a Next/React import to denext), `denext_generate` (scaffold —
+  takes `force` and `dryRun`),
   `denext_doctor`, `denext_codemod`, `denext_list_routes` (an app's pages + API routes),
   `denext_dev_logs` (the RUNNING dev server's recent events — server errors, server +
   browser console, completed requests, and HMR — so you can see what actually happened at
   runtime), `denext_render` (render a route or component server-side, no browser, and get
   the HTML/error — SEE what your edit produces), `denext_route_map` (the full render
-  tree at a path: layouts, boundaries, server/client split), `denext_profile` (build
+  tree at a path: layouts, boundaries, server/client split), `denext_component_tree` /
+  `denext_why_render` / `denext_hook_state` (the LIVE component tree from a running dev
+  page — props, named hooks, why a component re-rendered; these need `deno task dev`
+  AND the app open in a browser, and each answer states how stale its snapshot is),
+  `denext_profile` (build
   unminified, serve, and profile a route in headless Chromium — CPU self-time by
   function + heap growth + a leak check; pass `interact` to profile a re-render, `budget`
   to gate a regression), `denext_search_docs` (BM25
@@ -395,7 +429,7 @@ denext ships tooling so agents get it right the first time:
   agent's context. Resources: `denext://guide`, `denext://import-map`.
 - **`llms.txt`** — [denext.dev/llms.txt](https://denext.dev/llms.txt) (concise) and
   [llms-full.txt](https://denext.dev/llms-full.txt) (this guide + an API summary).
-- **Docs pages worth pointing an agent at:** the generated [CLI reference](https://denext.dev/docs/cli), [Troubleshooting](https://denext.dev/docs/troubleshooting) (symptom → cause → fix), [Upgrading](https://denext.dev/docs/upgrading) (breaking changes per version) and the [examples index](https://denext.dev/docs/examples).
+- **Docs pages worth pointing an agent at:** the generated [CLI reference](https://denext.dev/docs/cli), [Troubleshooting](https://denext.dev/docs/troubleshooting) (symptom → cause → fix), [Upgrading](https://denext.dev/docs/upgrading) (breaking changes per version), the [Project UI](https://denext.dev/docs/ui) and the [examples index](https://denext.dev/docs/examples).
 
 ---
 

@@ -8,6 +8,189 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`denext ui` — a loopback project-management GUI served by the CLI.**
+  `denext ui [dir] --port 5177 --no-open --read-only --token <t>` binds `127.0.0.1`, opens a
+  browser, and serves a server-rendered, zero-bundler, progressive-enhancement UI over the
+  project (`--json` prints `{ url, port, token }` and keeps serving; an occupied port falls
+  forward to the next free one). Panels:
+  - **Config** — every `denext.config.ts` key rendered from the generated JSON Schema:
+    enum selects and segmented controls, typed list-row editors with add / remove / reorder,
+    key/value maps, nested groups, union discriminator pickers. Writes go through a
+    comment-preserving AST splice behind a diff-then-confirm step, the whole proposed config
+    is validated before anything is written, code-valued keys (plugin factory calls, callbacks)
+    are read-only cells preserved verbatim, and a raw-file escape hatch is always one click away.
+    `/config/next` reads a compat app's `next.config.*` in a bounded subprocess and offers to
+    translate what denext honors — denext never loads it at runtime, so the panel is read-only.
+  - **Plugins** — the generated first-party catalog with installed state; add/remove previews the
+    `deno add` / `deno remove` command **and** the `denext.config.ts` diff before running either.
+  - **Generate** — all 13 `denext generate` kinds with a dry-run preview; existing files are
+    never overwritten.
+  - **Docker** — regenerate `Dockerfile` / `docker-compose.yml` / `.dockerignore` with options
+    (`server` | `static`, port, `denoland/deno` tag, optional Postgres service) and a per-file
+    diff; a hand-edited file (no generated-file sentinel) is never clobbered.
+  - **Setup wizard** — nine steps for a fresh clone: detect, Deno runtime, a comment-preserving
+    `deno.json` merge, `deno install`, an env-var scan that writes `.env.example` (never `.env`),
+    `denext doctor --json`, the `denext create` feature toggles, tasks, and start dev.
+  - **Commands** — the project's own verbs with their flags and arguments, runnable with streamed
+    output.
+
+  Six layers guard the local write surface: loopback-only bind; a DNS-rebinding / `Sec-Fetch-Site`
+  host gate; a per-launch 256-bit token exchanged once for an `HttpOnly; SameSite=Strict` cookie;
+  same-origin plus an HMAC-derived CSRF token on every mutation; realpath-checked path containment;
+  and a strict CSP with `COOP`/`CORP` and `no-store`. The UI process never loads project modules or
+  the bundler — doctor, tasks, `next.config` evaluation and `deno add` all run as `deno`
+  subprocesses. Every action works with JavaScript disabled, and each `/api/*` JSON twin answers
+  the `{ ok, diff, reason }` envelope the HTML path uses.
+- **Project-local CLI verbs without a plugin — `commands:` in `denext.config.ts`.** Declare
+  `{ name, summary, usage?, flags?, positionals?, run }` and run it as `denext <name>`, with the
+  same flag parsing, `--help` and did-you-mean as a built-in. Project verbs (config `commands:`
+  **and** a plugin's `addCommand`) are now enumerable: `denext --help` lists them under
+  **Project commands** and `denext completions <shell>` includes them, discovered under a 1.5 s
+  budget (a plugin `setup` that overruns it gets an honest "project commands not listed" footer
+  instead of a hang). A built-in verb always wins a name collision.
+- **A generated first-party package catalog** (`src/plugin/catalog.json`, `deno task gen:plugin-catalog`).
+  Built from each `packages/*/deno.json` and README: version, `jsr:` range, plugin-or-library kind,
+  factory export, CLI verb and option keys. `denext migrate` now takes its plugin pins from it
+  instead of hard-coded constants, and a drift test fails if it goes stale.
+- **Comment-preserving config editing** (`src/build/config-edit.ts`). `denext.config.ts` values,
+  keys and list fields (`redirects`, `rewrites`, `headers`, `images.remotePatterns`, …) are rewritten
+  by an swc-AST splice that leaves comments, imports and plugin factory calls byte-for-byte intact —
+  list operations (insert / remove / move / update), a `deno fmt`-stable serialiser, and an honest
+  bail that hands back the patch to apply by hand when the config's shape is beyond the splicer.
+  The same treatment for `deno.json` / `.jsonc` (`src/build/json-edit.ts`).
+- **`generateArtifact(dir, kind, name, { force, dryRun })`** — `dryRun` returns the full plan
+  without touching disk, `force` overwrites. The MCP `denext_generate` tool exposes both.
+- **Auth: a database adapter.** `AuthAdapter` is the persistence port — users, linked accounts,
+  credentials, verification tokens, API tokens and MFA factors, with atomic consume-once methods —
+  with two implementations: `inMemoryAuthAdapter()` and `sqliteAuthAdapter()` on Deno's built-in
+  `node:sqlite` (six `auth_` tables). `sqliteAuthAdapter` delegates `sessions` to
+  `sqliteSessionStore` over the same handle, so an existing session database is adopted with no
+  migration and nobody is logged out. An adapter never makes sessions stateful on its own — that
+  is `session: { strategy: "database" }`.
+- **Auth: account linking rules.** A returning linked account signs in; a verified provider email
+  matching a verified local account links (a `linkAccount` event); an unverified match on either
+  side is refused with `?error=account_not_linked` unless the provider sets
+  `allowDangerousEmailAccountLinking`; anything else creates the user (`createUser` + `linkAccount`).
+- **Auth: OIDC discovery + a JWKS cache.** A provider that names an `issuer` resolves its endpoints
+  from `.well-known/openid-configuration` — issuer-host-pinned fetch, the document's `issuer` must
+  match, `https:` on the issuer host (or an allow-listed one), cached per `Cache-Control`, with the
+  statically configured endpoints as the fallback. Signing keys are cached per JWKS URL instead of
+  refetched on every login; an unknown `kid` triggers one refetch, throttled to one a minute.
+  `oidc({ issuer, clientId, clientSecret })` is now enough — no hand-copied endpoint URLs.
+- **Auth: nine more providers** — `microsoftEntra()`, `apple()`, `discord()`, `gitlab()`, `slack()`,
+  `auth0()`, `okta()`, `keycloak()` and `facebook()` from `denext/server`, thirteen with
+  `google`/`github`/`oidc`/`credentials`. Apple is `openid`-only (name and email need
+  `response_mode=form_post`); `microsoftEntra` requires a specific tenant, because the `common`
+  issuer is an unverifiable template.
+- **Auth: sliding sessions.** `session.updateAge` re-issues an aged-but-still-valid session on the
+  paths that own their response — `GET /auth/session`, `requireAuth()`, `requireSession()` — plus
+  `updateAuthSession()` for Server Actions and route handlers. A store-backed session keeps its id.
+- **Auth: client session control.** `useSession().update()`, `SessionProvider`'s `refetchInterval` /
+  `refetchOnWindowFocus` / `basePath`, a `"mfa-required"` status, and `signIn(provider, { redirect: false })`
+  returning the URL instead of navigating. The client trio (`SessionProvider` / `useSession` /
+  `signIn` / `signOut`) is now exported from `denext/client` as well as the root entry.
+- **Auth: roles and an `authorized` callback.** `AuthUser.roles`, `requireAuth(request, { role })`
+  (any-of; a missing role redirects with `?error=forbidden`), `requireSession({ role })` (403), and
+  `callbacks.authorized({ session, request })` returning `true` / `false` / a `Response`.
+- **Auth: events and a logger.** `events: { signIn, signOut, signInFailed, sessionRevoked, createUser,
+  linkAccount }` and `logger`. An event handler that throws can never change the HTTP result, and the
+  failures the OAuth routes used to swallow now reach the logger.
+- **Auth: configurable base path and cookie names.** `basePath` (default `/auth`) and
+  `cookies.session` / `cookies.transaction` (name, `__Host-` prefix, `SameSite`, `Path`). The
+  defaults are byte-identical to 2.4.
+- **Auth: a `Hasher` seam** (`scryptHasher()` is the default) so Argon2id or bcrypt can replace scrypt
+  without touching the flow.
+- **Auth: a versioned session payload** (`v: 2`, `issuedAt`, and reserved `mfaPending` / `amr`).
+  Cookies minted by older versions keep verifying, and a pending-MFA session fails closed in `auth()`.
+- **Auth: bearer API tokens.** `requireBearer(authConfig, { scope, role })` drops into any
+  `createApi()` chain: one identical 401 for an absent, unknown, expired or revoked token, 403 for a
+  missing scope or role, a scopeless token satisfies no scope requirement, it never sets a cookie,
+  and it self-documents as `bearerAuth` for `@denext/openapi`. `issueApiToken` / `listApiTokens` /
+  `revokeApiToken` / `verifyApiToken` manage them — a token is `tok_` plus 256 bits, shown once and
+  stored only as its SHA-256. `POST|GET /auth/tokens` and `DELETE /auth/tokens/:id` are cookie-session
+  only, and never served under a pending second factor.
+- **DevTools: six tabs, real source locations and named hooks.** The panel shell is now Components,
+  Render modes, Profiler, **Network**, **Cache** and **Routes** (a scrollable tablist, `Alt+1`…`6`,
+  `Ctrl+Shift+[` / `]`, `Escape`), plus:
+  - **Highlight updates** — a toolbar toggle that flashes each re-rendered element, colour-ramped over
+    a five-step streak.
+  - **Real `file:line:column` source** from a dev-only metadata pass over the same swc AST Fast Refresh
+    already walks; the detail pane's Source row opens the file at the line through the dev server's
+    editor endpoint (`DENEXT_EDITOR` / `VISUAL` / `EDITOR`, with the `vscode://` fallback in SPA dev).
+  - **Named hooks** — `count · useState` instead of `useState`, with same-module custom hooks expanded
+    as breadcrumbs; naming is all-or-nothing per component, so a mismatch degrades to kind labels
+    rather than lying.
+  - **Network** — the dev server's recent requests with status pills, duration bars and filters.
+  - **Cache** — the page/data cache counters, from `/_denext/dev-cache`.
+  - **Routes** — the render tree at a path (`/_denext/dev-routes?path=`) with server/client badges and
+    click-to-editor.
+
+  `registerComponentMeta` is exported from `denext/client-runtime` for the transport; emission is
+  capped at 64 hooks and 16 KB per module and killed outright by `DENEXT_DEV_META=0`.
+- **DevTools → MCP: `denext_component_tree`, `denext_why_render`, `denext_hook_state`.** The dev page
+  pushes a snapshot of the live component tree to `POST /_denext/dev-inspect` (throttled, stripped of
+  raw values, capped at 256 KB / 2000 nodes / depth 50, same-origin gated, one snapshot per page URL in
+  an 8-entry LRU) and the three tools read it. Every answer states the snapshot's age; all three need
+  `deno task dev` running **and** the app open in a browser.
+- **Docs: a new [Project UI](https://denext.dev/docs/ui) page**, and
+  [Auth](https://denext.dev/docs/auth) and [DevTools](https://denext.dev/docs/devtools) rewritten
+  from the shipped code.
+
+### Changed
+
+- **The generated config schema describes list items, maps and function-returned arrays.**
+  `redirects` / `rewrites` / `headers` now carry the rule-array schema (marked
+  `x-denext.wrapper: "function"` because the config key is a function returning the array),
+  `Record` fields are marked `x-denext.widget: "map"`, `images.formats` keeps its enum, and
+  `@minimum` / `@maximum` surface the bounds `config-validate.ts` already enforces — which is what
+  lets the UI render a typed widget per field instead of a text box.
+- **With an adapter configured, `session.user.id` is the adapter's user id** (and roles come from the
+  stored record), and provider access/refresh tokens persist on the account row. Opt-in: without an
+  adapter the flow is byte-for-byte what it was.
+- **`GET /auth/session` gained an `mfa` field**; a session pending a second factor answers
+  `{ user: null, expires: null, mfa: "required" }`.
+- **`InspectNode.source` (`denext/devtools`) is a `SourceLocation` object**, not a string. The old
+  string stays as `sourceId` for one minor. The panel's editor link now goes through
+  `/_denext/open-in-editor` instead of a hard-coded `vscode://file/` URL.
+- **`denext generate docker` templates moved to `src/build/docker-template.ts`**, shared with the UI's
+  Docker panel, and the generated `.dockerignore` now carries the generated-file sentinel line the
+  other two already had.
+- **`examples/auth` demonstrates the adapter** (no app-side user table), roles with an `/admin` page,
+  OIDC discovery, audit events and bearer tokens (`/account/tokens`, `/api/me`); `examples/openapi`
+  drops its hand-rolled bearer middleware for `requireBearer`.
+
+### Security
+
+- **`id_token` audience validation is strict by default (`strictAudience`).** A multi-valued `aud` must
+  now be accompanied by an `azp` naming this client, a single `aud` must _be_ this client, and an `azp`
+  naming someone else is refused even when `aud` still lists us — OIDC Core §3.1.3.7 steps 3–5. This
+  closes the last open row in [the security guide](https://denext.dev/docs/security).
+  `strictAudience: false` restores plain membership for a provider that legitimately mints
+  multi-audience tokens without an `azp`.
+- **`GET /auth/signin/*` is rate-limited per client IP** (20 per 15 minutes, `rateLimit.signin`), so an
+  unauthenticated visitor can't make the app mint transaction cookies and outbound provider calls in a
+  loop. `rateLimit: false` disables both limiters.
+- **The DevTools inspector sink is the first dev endpoint that stores browser-supplied structured
+  data**, so it is fenced accordingly: dev only, loopback + `Sec-Fetch-Site` gated like every
+  `/_denext/*` endpoint, `POST` + JSON only, a 256 KB cap, the tree's shape re-validated server-side,
+  and at most 8 page URLs retained.
+
+### Fixed
+
+- **The MCP `denext_generate` tool advertised 8 of the 13 artifact kinds.** Its enum is now derived from
+  `GENERATE_KINDS`, so it can never drift again.
+- **The DevTools panel never mounted in SPA dev** — the generated SPA dev entry never set
+  `window.__denextDev`, so `installDevtools()` bailed. `DENEXT_DEV_UNBUNDLED=0` on the App Router path
+  mounts too.
+
+### Removed
+
+- **The never-exported `DevPanel` server component.** It injected an inline `<style>` and `<script>`
+  that denext's own dev CSP blocks, so it could not have worked in a denext app; its data is the
+  DevTools Cache tab now. `getCacheStats()` stays public.
+
 ## [2.4.3] - 2026-09-14
 
 ### Added

@@ -2291,15 +2291,15 @@
           "slug": "SessionProvider",
           "kind": "function",
           "signature": "SessionProvider(props: SessionProviderProps): VNode",
-          "doc": "Provide session state to the tree. Seed it with session from the server for no loading flash, or omit it to fetch /auth/session on mount.",
-          "docFull": "Provide session state to the tree. Seed it with `session` from the server for no\nloading flash, or omit it to fetch `/auth/session` on mount.",
+          "doc": "Provide session state to the tree. Seed it with session from the server for no loading flash, or omit it to fetch {basePath}/session on mount.",
+          "docFull": "Provide session state to the tree. Seed it with `session` from the server for no\nloading flash, or omit it to fetch `{basePath}/session` on mount.",
           "params": [
             {
               "name": "props",
               "doc": "SessionProviderProps."
             }
           ],
-          "returns": "",
+          "returns": "The provider element wrapping children.",
           "examples": [],
           "denextOnly": true
         },
@@ -2385,8 +2385,8 @@
           "slug": "signIn",
           "kind": "function",
           "signature": "signIn(provider: string, options?: SignInOptions): Promise<unknown>",
-          "doc": "Start sign-in. For an OAuth/OIDC provider this navigates to the provider; for a Credentials provider (pass credentials) it POSTs and resolves with the result.",
-          "docFull": "Start sign-in. For an OAuth/OIDC provider this navigates to the provider; for a\nCredentials provider (pass `credentials`) it POSTs and resolves with the result.",
+          "doc": "Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with redirect: false, resolves with the URL it would have gone to); for a Credentials provider (pass credentials) it POSTs and resolves with the result.",
+          "docFull": "Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with\n`redirect: false`, resolves with the URL it would have gone to); for a Credentials\nprovider (pass `credentials`) it POSTs and resolves with the result.",
           "params": [
             {
               "name": "provider",
@@ -2397,7 +2397,7 @@
               "doc": "SignInOptions."
             }
           ],
-          "returns": "",
+          "returns": "The credentials result, or the sign-in URL for the redirect flow.",
           "examples": [],
           "denextOnly": true
         },
@@ -2418,15 +2418,15 @@
           "slug": "signOut",
           "kind": "function",
           "signature": "signOut(options?: SignOutOptions): Promise<void>",
-          "doc": "Sign out (same-origin POST to /auth/signout), then navigate to callbackUrl.",
-          "docFull": "Sign out (same-origin POST to `/auth/signout`), then navigate to `callbackUrl`.",
+          "doc": "Sign out (same-origin POST to {basePath}/signout), then navigate to callbackUrl.",
+          "docFull": "Sign out (same-origin POST to `{basePath}/signout`), then navigate to `callbackUrl`.",
           "params": [
             {
               "name": "options",
               "doc": "SignOutOptions."
             }
           ],
-          "returns": "",
+          "returns": "A promise that settles once the navigation has been started.",
           "examples": [],
           "denextOnly": true
         },
@@ -3554,7 +3554,7 @@
           "doc": "Read the current ClientSession. Must be under a SessionProvider.",
           "docFull": "Read the current {@link ClientSession}. Must be under a {@link SessionProvider}.",
           "params": [],
-          "returns": "",
+          "returns": "The session state plus update().",
           "examples": [],
           "denextOnly": true
         },
@@ -3953,6 +3953,42 @@
           "denextOnly": true
         },
         {
+          "name": "AdapterAccount",
+          "slug": "AdapterAccount",
+          "kind": "interface",
+          "signature": "interface AdapterAccount",
+          "doc": "A provider account linked to an AdapterUser.",
+          "docFull": "A provider account linked to an {@linkcode AdapterUser}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "AdapterAccountRef",
+          "slug": "AdapterAccountRef",
+          "kind": "interface",
+          "signature": "interface AdapterAccountRef",
+          "doc": "Identifies one linked provider account.",
+          "docFull": "Identifies one linked provider account.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "AdapterUser",
+          "slug": "AdapterUser",
+          "kind": "interface",
+          "signature": "interface AdapterUser",
+          "doc": "A user record as the adapter stores it. id is the identity session.user.id carries.",
+          "docFull": "A user record as the adapter stores it. `id` is the identity `session.user.id` carries.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "after",
           "slug": "after",
           "kind": "function",
@@ -4276,6 +4312,18 @@
           "denextOnly": true
         },
         {
+          "name": "ApiTokenRecord",
+          "slug": "ApiTokenRecord",
+          "kind": "interface",
+          "signature": "interface ApiTokenRecord",
+          "doc": "A long-lived bearer API token. The presented secret is never stored, only its hash.",
+          "docFull": "A long-lived bearer API token. The presented secret is never stored, only its hash.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "ApiValidationError",
           "slug": "ApiValidationError",
           "kind": "class",
@@ -4308,6 +4356,23 @@
           "docFull": "Configuration for {@linkcode createApp}: how to resolve the route manifest and\nload modules, plus optional cross-cutting behavior (request logging, per-request\ntimeout, and the rest). {@linkcode ServeOptions} extends this for the\nhigher-level {@linkcode serve} entry point.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "apple",
+          "slug": "apple",
+          "kind": "function",
+          "signature": "apple(options: OAuthClientOptions): OAuthProvider",
+          "doc": "Sign in with Apple (OIDC). Ships **openid only**: Apple returns name / email just once, and only over response_mode=form_post — a POST callback the auth router does not accept — so requesting them would break the login rather than enrich it. Requesting either scope throws; the session therefore carries Apple's sub and no email.",
+          "docFull": "Sign in with Apple (OIDC). Ships **`openid` only**: Apple returns `name` / `email` just\nonce, and only over `response_mode=form_post` — a POST callback the auth router does not\naccept — so requesting them would break the login rather than enrich it. Requesting\neither scope throws; the session therefore carries Apple's `sub` and no email.\n\n`clientSecret` must be the ES256 client-secret **JWT** you mint from your Apple key\n(max 6 months); denext passes it through to the token endpoint verbatim.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The app's Apple client credentials (Services ID + secret JWT)."
+            }
+          ],
+          "returns": "The configured Apple provider (id: \"apple\").",
           "examples": [],
           "denextOnly": true
         },
@@ -4367,9 +4432,50 @@
           "kind": "function",
           "signature": "auth(): Promise<AuthSession | null>",
           "doc": "Read the current request's auth session, or null when signed out. Call from a Server Component, a route.ts handler, or middleware.ts — anywhere inside the request context.",
-          "docFull": "Read the current request's auth session, or `null` when signed out. Call from a\nServer Component, a `route.ts` handler, or `middleware.ts` — anywhere inside the\nrequest context.",
+          "docFull": "Read the current request's auth session, or `null` when signed out. Call from a\nServer Component, a `route.ts` handler, or `middleware.ts` — anywhere inside the\nrequest context.\n\nA session that has passed the first factor but not the second\n({@link AuthSession.mfaPending}) reads as `null` here — it **fails closed**, so every\nguard built on `auth()` (requireAuth, requireSession, Live `authorize`, Server\nActions) refuses it without having to know MFA exists.",
           "params": [],
           "returns": "The AuthSession, or null.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "auth0",
+          "slug": "auth0",
+          "kind": "function",
+          "signature": "auth0(options: Auth0Options): OAuthProvider",
+          "doc": "Auth0 (OIDC). Note the issuer carries Auth0's trailing slash (https://<domain>/) — that is what the tenant's discovery document and id_token declare, and iss is compared exactly.",
+          "docFull": "Auth0 (OIDC). Note the issuer carries Auth0's trailing slash\n(`https://<domain>/`) — that is what the tenant's discovery document and `id_token`\ndeclare, and `iss` is compared exactly.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "Tenant domain plus the app's client credentials."
+            }
+          ],
+          "returns": "The configured Auth0 provider (id: \"auth0\").",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Auth0Options",
+          "slug": "Auth0Options",
+          "kind": "interface",
+          "signature": "interface Auth0Options",
+          "doc": "Options for auth0.",
+          "docFull": "Options for {@link auth0}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "AuthAdapter",
+          "slug": "AuthAdapter",
+          "kind": "interface",
+          "signature": "interface AuthAdapter",
+          "doc": "Where denext auth persists identities. Implement it over any store; denext ships inMemoryAuthAdapter() and sqliteAuthAdapter().",
+          "docFull": "Where denext auth persists identities. Implement it over any store; denext ships\n`inMemoryAuthAdapter()` and `sqliteAuthAdapter()`.\n\n**Atomicity contract.** Three methods are **consume-once** and MUST be atomic against\nconcurrent callers — a compare-and-delete / conditional update inside one transaction,\nnot a read followed by a write. Two racing requests must see exactly one success:\n{@linkcode AuthAdapter.useVerificationToken} (delete-and-return),\n{@linkcode AuthAdapter.consumeBackupCode} (match-and-remove) and\n{@linkcode AuthAdapter.claimTotpStep} (claim a TOTP step). A non-atomic implementation\nturns each of them into a replay window.",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         },
@@ -4398,12 +4504,60 @@
           "denextOnly": true
         },
         {
+          "name": "AuthCookieConfig",
+          "slug": "AuthCookieConfig",
+          "kind": "interface",
+          "signature": "interface AuthCookieConfig",
+          "doc": "One auth cookie's name and attributes.",
+          "docFull": "One auth cookie's name and attributes.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "AuthEvents",
+          "slug": "AuthEvents",
+          "kind": "interface",
+          "signature": "interface AuthEvents",
+          "doc": "Side-effect hooks on the auth lifecycle. A handler may be async; it is awaited, and a throw is caught and routed to AuthLogger.error — an event handler can never fail a sign-in.",
+          "docFull": "Side-effect hooks on the auth lifecycle. A handler may be async; it is awaited, and a\nthrow is caught and routed to {@link AuthLogger.error} — an event handler can never\nfail a sign-in.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "AuthLogger",
+          "slug": "AuthLogger",
+          "kind": "interface",
+          "signature": "interface AuthLogger",
+          "doc": "Where the framework logs; every method is optional and defaults to silence.",
+          "docFull": "Where the framework logs; every method is optional and defaults to silence.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "Author",
           "slug": "Author",
           "kind": "interface",
           "signature": "interface Author",
           "doc": "A named author (<meta name=\"author\">, optional <link rel=\"author\">).",
           "docFull": "A named author (`<meta name=\"author\">`, optional `<link rel=\"author\">`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "AuthorizedCallbackInput",
+          "slug": "AuthorizedCallbackInput",
+          "kind": "interface",
+          "signature": "interface AuthorizedCallbackInput",
+          "doc": "What AuthCallbacks.authorized is asked about.",
+          "docFull": "What {@link AuthCallbacks.authorized} is asked about.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -4434,6 +4588,18 @@
           "denextOnly": true
         },
         {
+          "name": "AuthSessionConfig",
+          "slug": "AuthSessionConfig",
+          "kind": "interface",
+          "signature": "interface AuthSessionConfig",
+          "doc": "Session lifetime + storage strategy.",
+          "docFull": "Session lifetime + storage strategy.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "AuthUser",
           "slug": "AuthUser",
           "kind": "interface",
@@ -4444,6 +4610,18 @@
           "returns": "",
           "examples": [],
           "denextOnly": true
+        },
+        {
+          "name": "Await",
+          "slug": "Await",
+          "kind": "typeAlias",
+          "signature": "type Await<T> = T | Promise<T>",
+          "doc": "A value an adapter may return directly or as a promise.",
+          "docFull": "A value an adapter may return directly or as a promise.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
         },
         {
           "name": "AwaitableCookieStore",
@@ -4476,6 +4654,18 @@
           "signature": "type AwaitableHeaders = Headers & PromiseLike<Headers>",
           "doc": "headers()'s return: usable synchronously AND awaitable (await headers(), Next 15).",
           "docFull": "`headers()`'s return: usable synchronously AND awaitable (`await headers()`, Next 15).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "BearerContext",
+          "slug": "BearerContext",
+          "kind": "interface",
+          "signature": "interface BearerContext",
+          "doc": "What requireBearer adds to the handler's ctx.",
+          "docFull": "What {@link requireBearer} adds to the handler's `ctx`.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -4956,8 +5146,13 @@
           "signature": "credentials(options: CredentialsOptions): CredentialsProvider",
           "doc": "An email/password (or any custom) credentials provider.",
           "docFull": "An email/password (or any custom) credentials provider.",
-          "params": [],
-          "returns": "",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The authorize callback and an optional provider id."
+            }
+          ],
+          "returns": "The configured credentials provider.",
           "examples": [],
           "denextOnly": true
         },
@@ -5135,6 +5330,18 @@
           "denextOnly": true
         },
         {
+          "name": "DenextCommand",
+          "slug": "DenextCommand",
+          "kind": "interface",
+          "signature": "interface DenextCommand",
+          "doc": "A project-local CLI verb declared in denext.config.ts under DenextConfig.commands — the zero-ceremony half of denext's CLI extension story: no plugin, no setup, just an object. It is structurally a CLI CommandSpec, so the same parser, --help renderer, and dispatcher run it, and a verb that outgrows the config can move into a plugin's addCommand unchanged.",
+          "docFull": "A project-local CLI verb declared in `denext.config.ts` under\n{@link DenextConfig.commands} — the zero-ceremony half of denext's CLI extension\nstory: no plugin, no `setup`, just an object. It is structurally a CLI\n`CommandSpec`, so the same parser, `--help` renderer, and dispatcher run it, and a\nverb that outgrows the config can move into a plugin's `addCommand` unchanged.\n\n```ts\n// denext.config.ts\nexport default {\n  commands: [{\n    name: \"seed\",\n    summary: \"Load fixture data into the dev database\",\n    flags: [{ name: \"rows\", type: \"number\", default: 100, help: \"How many rows\" }],\n    run: async (ctx) => { await seed(Number(ctx.flags.rows)); },\n  }],\n};\n```",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DenextConfig",
           "slug": "DenextConfig",
           "kind": "interface",
@@ -5179,6 +5386,23 @@
           "docFull": "Which boundary a module declares, or null when it declares none.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "discord",
+          "slug": "discord",
+          "kind": "function",
+          "signature": "discord(options: OAuthClientOptions): OAuthProvider",
+          "doc": "Discord (OAuth 2.0). Reads the profile from /users/@me; only an address Discord reports as verified reaches the session.",
+          "docFull": "Discord (OAuth 2.0). Reads the profile from `/users/@me`; only an address Discord\nreports as `verified` reaches the session.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The app's Discord client credentials."
+            }
+          ],
+          "returns": "The configured Discord provider (id: \"discord\").",
           "examples": [],
           "denextOnly": true
         },
@@ -5272,6 +5496,23 @@
           "docFull": "Opt-in experimental features, set under `experimental` in `denext.config.ts`. Each is\noff by default. A feature lives here only while it is genuinely **incomplete** — being\nnew is not enough — so shipped, complete capabilities (streaming, Live, islands,\nresumability, SPA mode, Cache Components) are top-level config, not here.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "facebook",
+          "slug": "facebook",
+          "kind": "function",
+          "signature": "facebook(options: OAuthClientOptions): OAuthProvider",
+          "doc": "Facebook (OAuth 2.0, Graph API v19.0). The Graph /me response carries no verification flag, so the mapped user's emailVerified is always undefined, and Facebook may omit the email entirely (an account registered with a phone number, or a revoked permission).",
+          "docFull": "Facebook (OAuth 2.0, Graph API v19.0). The Graph `/me` response carries no verification\nflag, so the mapped user's `emailVerified` is always `undefined`, and Facebook may omit\nthe email entirely (an account registered with a phone number, or a revoked permission).",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The app's Facebook app credentials."
+            }
+          ],
+          "returns": "The configured Facebook provider (id: \"facebook\").",
           "examples": [],
           "denextOnly": true
         },
@@ -5577,6 +5818,40 @@
           "signature": "github(options: OAuthClientOptions): OAuthProvider",
           "doc": "GitHub (OAuth 2.0). Reads the profile from the /user API.",
           "docFull": "GitHub (OAuth 2.0). Reads the profile from the `/user` API.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The app's GitHub OAuth app credentials."
+            }
+          ],
+          "returns": "The configured GitHub provider (id: \"github\").",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "gitlab",
+          "slug": "gitlab",
+          "kind": "function",
+          "signature": "gitlab(options: GitLabOptions): OAuthProvider",
+          "doc": "GitLab (OIDC, gitlab.com or self-managed). Claims come from the verified id_token.",
+          "docFull": "GitLab (OIDC, gitlab.com or self-managed). Claims come from the verified `id_token`.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "Optional instance origin plus the app's client credentials."
+            }
+          ],
+          "returns": "The configured GitLab provider (id: \"gitlab\").",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "GitLabOptions",
+          "slug": "GitLabOptions",
+          "kind": "interface",
+          "signature": "interface GitLabOptions",
+          "doc": "Options for gitlab.",
+          "docFull": "Options for {@link gitlab}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -5589,6 +5864,23 @@
           "signature": "google(options: OAuthClientOptions): OAuthProvider",
           "doc": "Google (OIDC). Verifies the id_token; no userinfo round-trip needed.",
           "docFull": "Google (OIDC). Verifies the `id_token`; no userinfo round-trip needed.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The app's Google client credentials."
+            }
+          ],
+          "returns": "The configured Google provider (id: \"google\").",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Hasher",
+          "slug": "Hasher",
+          "kind": "interface",
+          "signature": "interface Hasher",
+          "doc": "How denext hashes and checks user-supplied secrets. An implementation MUST compare in constant time and MUST NOT throw on a malformed stored value — return false, so a corrupted row can never surface as a 500 or a stack trace.",
+          "docFull": "How denext hashes and checks user-supplied secrets. An implementation MUST compare in\nconstant time and MUST NOT throw on a malformed `stored` value — return `false`, so a\ncorrupted row can never surface as a 500 or a stack trace.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -5861,6 +6153,35 @@
           "signature": "interface ImagesConfig",
           "doc": "Image-optimization config (the /_denext/image endpoint).",
           "docFull": "Image-optimization config (the `/_denext/image` endpoint).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "inMemoryAuthAdapter",
+          "slug": "inMemoryAuthAdapter",
+          "kind": "function",
+          "signature": "inMemoryAuthAdapter(options?: InMemoryAuthAdapterOptions): AuthAdapter",
+          "doc": "Build a per-process, in-memory AuthAdapter: every method group (users, accounts, verification tokens, credentials, API tokens, MFA) plus a sessions store and close(). Ids are crypto.randomUUID() unless the caller supplies one; emails are matched case-insensitively and whitespace-trimmed.",
+          "docFull": "Build a per-process, in-memory {@link ./adapter.ts | AuthAdapter}: every method group\n(users, accounts, verification tokens, credentials, API tokens, MFA) plus a\n`sessions` store and `close()`. Ids are `crypto.randomUUID()` unless the caller\nsupplies one; emails are matched case-insensitively and whitespace-trimmed.\n\nNothing persists across a restart and nothing is shared between replicas — use it for\ndevelopment, tests and single-process demos, and\n{@link ./sqlite-adapter.ts | sqliteAuthAdapter} for anything real.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "Row cap and clock override."
+            }
+          ],
+          "returns": "The adapter, ready to pass as denextAuth({ adapter }).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "InMemoryAuthAdapterOptions",
+          "slug": "InMemoryAuthAdapterOptions",
+          "kind": "interface",
+          "signature": "interface InMemoryAuthAdapterOptions",
+          "doc": "Options for inMemoryAuthAdapter.",
+          "docFull": "Options for {@linkcode inMemoryAuthAdapter}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -6148,6 +6469,51 @@
           "denextOnly": true
         },
         {
+          "name": "issueApiToken",
+          "slug": "issueApiToken",
+          "kind": "function",
+          "signature": "issueApiToken(config: AuthConfig, options: IssueApiTokenOptions): Promise<IssuedApiToken>",
+          "doc": "Mint a bearer API token for a user and store its hash.",
+          "docFull": "Mint a bearer API token for a user and store its hash.\n\nThe returned `token` is the ONLY copy of the plaintext: show it to the user once (the\nway GitHub shows a PAT) and never log it. Everything else about the token — its id,\nname, scopes and expiry — stays readable through {@link listApiTokens}.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The app's auth config (the same object passed to denextAuth)."
+            },
+            {
+              "name": "options",
+              "doc": "The owner, plus the optional label, scopes and lifetime."
+            }
+          ],
+          "returns": "The plaintext token (once) and the stored ApiTokenRecord.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "IssueApiTokenOptions",
+          "slug": "IssueApiTokenOptions",
+          "kind": "interface",
+          "signature": "interface IssueApiTokenOptions",
+          "doc": "What issueApiToken is asked for.",
+          "docFull": "What {@linkcode issueApiToken} is asked for.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "IssuedApiToken",
+          "slug": "IssuedApiToken",
+          "kind": "interface",
+          "signature": "interface IssuedApiToken",
+          "doc": "What issueApiToken returns: the plaintext (once) plus the stored record.",
+          "docFull": "What {@linkcode issueApiToken} returns: the plaintext (once) plus the stored record.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "isTask",
           "slug": "isTask",
           "kind": "function",
@@ -6217,6 +6583,35 @@
           "denextOnly": true
         },
         {
+          "name": "keycloak",
+          "slug": "keycloak",
+          "kind": "function",
+          "signature": "keycloak(options: KeycloakOptions): OAuthProvider",
+          "doc": "Keycloak (OIDC). Endpoints follow the modern (Keycloak 17+) /realms/<realm> layout; a legacy instance served under /auth is configured with the generic oidc() provider.",
+          "docFull": "Keycloak (OIDC). Endpoints follow the modern (Keycloak 17+) `/realms/<realm>` layout; a\nlegacy instance served under `/auth` is configured with the generic `oidc()` provider.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "Keycloak origin, realm, and the app's client credentials."
+            }
+          ],
+          "returns": "The configured Keycloak provider (id: \"keycloak\").",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "KeycloakOptions",
+          "slug": "KeycloakOptions",
+          "kind": "interface",
+          "signature": "interface KeycloakOptions",
+          "doc": "Options for keycloak.",
+          "docFull": "Options for {@link keycloak}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "LayoutModule",
           "slug": "LayoutModule",
           "kind": "interface",
@@ -6237,6 +6632,27 @@
           "docFull": "Props passed to a layout component. `Slots` names the layout's parallel-route slots\n(`@sidebar` → `LayoutProps<RouteParams, \"sidebar\">` adds a `sidebar` prop).",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "listApiTokens",
+          "slug": "listApiTokens",
+          "kind": "function",
+          "signature": "listApiTokens(config: AuthConfig, userId: string): Promise<ApiTokenRecord[]>",
+          "doc": "A user's live API tokens (revoked and expired ones are already hidden by the adapter). The records carry tokenHash, never a usable token — redact it before sending a list to a client.",
+          "docFull": "A user's live API tokens (revoked and expired ones are already hidden by the adapter).\nThe records carry `tokenHash`, never a usable token — redact it before sending a list\nto a client.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The app's auth config."
+            },
+            {
+              "name": "userId",
+              "doc": "The owner."
+            }
+          ],
+          "returns": "The user's live tokens.",
           "examples": [],
           "denextOnly": true
         },
@@ -6480,6 +6896,47 @@
           "denextOnly": true
         },
         {
+          "name": "MfaRecord",
+          "slug": "MfaRecord",
+          "kind": "interface",
+          "signature": "interface MfaRecord",
+          "doc": "A user's TOTP factor plus their single-use backup codes.",
+          "docFull": "A user's TOTP factor plus their single-use backup codes.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "microsoftEntra",
+          "slug": "microsoftEntra",
+          "kind": "function",
+          "signature": "microsoftEntra(options: MicrosoftEntraOptions): OAuthProvider",
+          "doc": "Microsoft Entra ID (formerly Azure AD) — OIDC v2.0 endpoints, id_token verified against the tenant's JWKS. Single-tenant only (see MicrosoftEntraOptions.tenant); claims come from the verified id_token, so no Microsoft Graph call is made.",
+          "docFull": "Microsoft Entra ID (formerly Azure AD) — OIDC v2.0 endpoints, `id_token` verified\nagainst the tenant's JWKS. Single-tenant only (see {@link MicrosoftEntraOptions.tenant});\nclaims come from the verified `id_token`, so no Microsoft Graph call is made.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "Tenant plus the app's client credentials."
+            }
+          ],
+          "returns": "The configured Entra provider (id: \"microsoft-entra\").",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "MicrosoftEntraOptions",
+          "slug": "MicrosoftEntraOptions",
+          "kind": "interface",
+          "signature": "interface MicrosoftEntraOptions",
+          "doc": "Options for microsoftEntra.",
+          "docFull": "Options for {@link microsoftEntra}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "Middleware",
           "slug": "Middleware",
           "kind": "typeAlias",
@@ -6689,9 +7146,14 @@
           "kind": "function",
           "signature": "oidc(options: OidcOptions): OAuthProvider",
           "doc": "A generic OIDC provider (Authorization Code + PKCE, id_token verified via JWKS).",
-          "docFull": "A generic OIDC provider (Authorization Code + PKCE, `id_token` verified via JWKS).",
-          "params": [],
-          "returns": "",
+          "docFull": "A generic OIDC provider (Authorization Code + PKCE, `id_token` verified via JWKS).\n\nTwo forms:\n```ts\noidc({ issuer: \"https://idp.example.com\", clientId, clientSecret }); // discovery\noidc({ issuer, authorizationUrl, tokenUrl, jwksUrl, clientId, clientSecret }); // explicit\n```\nThe issuer-only form resolves the endpoints from\n`<issuer>/.well-known/openid-configuration` and refuses a document that declares a\ndifferent `issuer`. Passing *some* of the three endpoints is a configuration error: it\nwould silently mix a hand-written endpoint with a discovered one.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "Issuer (+ optional endpoints/mapper) and the app's client credentials."
+            }
+          ],
+          "returns": "The configured OIDC provider (id defaults to \"oidc\").",
           "examples": [],
           "denextOnly": true
         },
@@ -6702,6 +7164,35 @@
           "signature": "interface OidcOptions",
           "doc": "Options for a generic oidc provider.",
           "docFull": "Options for a generic {@link oidc} provider.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "okta",
+          "slug": "okta",
+          "kind": "function",
+          "signature": "okta(options: OktaOptions): OAuthProvider",
+          "doc": "Okta (OIDC, custom authorization server). Claims come from the verified id_token.",
+          "docFull": "Okta (OIDC, custom authorization server). Claims come from the verified `id_token`.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "Org domain, optional authorization server id, and client credentials."
+            }
+          ],
+          "returns": "The configured Okta provider (id: \"okta\").",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "OktaOptions",
+          "slug": "OktaOptions",
+          "kind": "interface",
+          "signature": "interface OktaOptions",
+          "doc": "Options for okta.",
+          "docFull": "Options for {@link okta}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -7523,8 +8014,8 @@
           "slug": "requireAuth",
           "kind": "function",
           "signature": "requireAuth(request: Request, options?: RequireAuthOptions): Promise<Response | null>",
-          "doc": "Middleware guard: allow the request through when signed in, otherwise return a redirect to the sign-in page carrying a callbackUrl back to the target. Use in middleware.ts (matcher-gated): ``ts export async function middleware(request: Request) { return await requireAuth(request); // returns a Response to redirect, or null to continue } export const config = { matcher: [\"/dashboard/:path*\"] }; ``",
-          "docFull": "Middleware guard: allow the request through when signed in, otherwise return a\nredirect to the sign-in page carrying a `callbackUrl` back to the target. Use in\n`middleware.ts` (matcher-gated):\n```ts\nexport async function middleware(request: Request) {\n  return await requireAuth(request); // returns a Response to redirect, or null to continue\n}\nexport const config = { matcher: [\"/dashboard/:path*\"] };\n```",
+          "doc": "Middleware guard: allow the request through when signed in, otherwise return a redirect to the sign-in page carrying a callbackUrl back to the target.",
+          "docFull": "Middleware guard: allow the request through when signed in, otherwise return a\nredirect to the sign-in page carrying a `callbackUrl` back to the target.\n\nFour checks, in order: no session → the sign-in page; a session still owing a second\nfactor → `pages.mfa` (or the sign-in page); `role` not held → the sign-in page with\n`?error=forbidden`; then `callbacks.authorized({ session, request })` — `false` refuses\nexactly like a missing session, and a returned `Response` is passed through verbatim.\n\nA request that passes all four also slides the session's expiry forward when\n`session.updateAge` is configured — the re-issued cookie is queued on the request and\nattached to the response the pipeline finalizes, so \"continue\" still carries it.\n\nUse in `middleware.ts` (matcher-gated):\n```ts\nexport async function middleware(request: Request) {\n  return await requireAuth(request); // returns a Response to redirect, or null to continue\n}\nexport const config = { matcher: [\"/dashboard/:path*\"] };\n```",
           "params": [
             {
               "name": "request",
@@ -7532,7 +8023,7 @@
             },
             {
               "name": "options",
-              "doc": "Optional sign-in path override."
+              "doc": "Optional sign-in path override and role requirement."
             }
           ],
           "returns": "A redirect Response when unauthenticated, or null to continue.",
@@ -7552,16 +8043,49 @@
           "denextOnly": true
         },
         {
+          "name": "requireBearer",
+          "slug": "requireBearer",
+          "kind": "function",
+          "signature": "requireBearer(config: AuthConfig, options?: RequireBearerOptions): ApiMiddleware<object, BearerContext>",
+          "doc": "Require a valid bearer API token (denext auth): verifies Authorization: Bearer tok_…, loads the token's user, and extends the handler's context with BearerContext — or fails with a 401 unauthorized envelope before any schema runs. A valid token that lacks the required scope or role fails with 403 forbidden instead, so \"who are you\" stays distinguishable from \"may you\".",
+          "docFull": "Require a valid bearer API token (denext auth): verifies `Authorization: Bearer tok_…`,\nloads the token's user, and extends the handler's context with\n{@link BearerContext} — or fails with a `401 unauthorized` envelope before any schema\nruns. A valid token that lacks the required `scope` or `role` fails with `403 forbidden`\ninstead, so \"who are you\" stays distinguishable from \"may you\".\n\n```ts\n// lib/auth.ts\nexport const authed = createApi().use(requireBearer(authConfig, { scope: \"pets:write\" }));\n// app/api/pets/route.ts\nexport const POST = authed.define({ body: NewPet }, ({ body, ctx }) => add(ctx.user.id, body));\n```\n\nThe middleware is tagged with `documentsSecurity(…, [{ bearerAuth: [] }])`, so\n`@denext/openapi` marks every endpoint that applies it as secured — declare the matching\n`securitySchemes: { bearerAuth: … }` once in the plugin options for the Authorize button.\n\nBearer authentication **never sets a cookie** and never slides a session forward. It is\nalso never accepted on the `{basePath}/*` auth endpoints — minting and revoking tokens\nrequires the interactive session, so a stolen token can't mint more of itself.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The app's auth config (the same object passed to denextAuth). Throws here — at module load, not on the first request — when no adapter can store tokens."
+            },
+            {
+              "name": "options",
+              "doc": "Optional scope / role requirements and the refusal messages."
+            }
+          ],
+          "returns": "A middleware adding { token, user, session } to the handler's ctx.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RequireBearerOptions",
+          "slug": "RequireBearerOptions",
+          "kind": "interface",
+          "signature": "interface RequireBearerOptions",
+          "doc": "Options for requireBearer.",
+          "docFull": "Options for {@link requireBearer}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "requireSession",
           "slug": "requireSession",
           "kind": "function",
           "signature": "requireSession(options?: RequireSessionOptions): ApiMiddleware<object, object>",
-          "doc": "Require a signed-in viewer (denext auth): extends the context with { session }, or fails with a 401 unauthorized envelope before any schema runs.",
-          "docFull": "Require a signed-in viewer (denext auth): extends the context with `{ session }`, or fails\nwith a 401 `unauthorized` envelope before any schema runs.",
+          "doc": "Require a signed-in viewer (denext auth): extends the context with { session }, or fails with a 401 unauthorized envelope before any schema runs. With role, a signed-in caller who holds none of the listed roles fails with a 403 forbidden envelope instead.",
+          "docFull": "Require a signed-in viewer (denext auth): extends the context with `{ session }`, or fails\nwith a 401 `unauthorized` envelope before any schema runs. With `role`, a signed-in caller\nwho holds none of the listed roles fails with a 403 `forbidden` envelope instead.\n\nAn API route owns its response, so this is also a sliding-expiry path: when\n`session.updateAge` is configured and the session has aged past it, the session is\nre-issued and the refreshed cookie rides the API response (see `updateAuthSession`).",
           "params": [
             {
               "name": "options",
-              "doc": "The 401 message."
+              "doc": "The 401 message, and optionally the required role(s)."
             }
           ],
           "returns": "A middleware adding session: AuthSession to the handler's ctx.",
@@ -7737,8 +8261,8 @@
           "slug": "revokeAllSessions",
           "kind": "function",
           "signature": "revokeAllSessions(userId: string): Promise<void>",
-          "doc": "Revoke every server-side session of userId — \"sign out everywhere\", the right call after a password change or a suspected cookie theft. Requires denextAuth({ sessionStore }); throws when sessions are stateless.",
-          "docFull": "Revoke every server-side session of `userId` — \"sign out everywhere\", the right call\nafter a password change or a suspected cookie theft. Requires\n`denextAuth({ sessionStore })`; throws when sessions are stateless.",
+          "doc": "Revoke every server-side session of userId — \"sign out everywhere\", the right call after a password change or a suspected cookie theft. Fires the sessionRevoked event. Requires denextAuth({ sessionStore }); throws when sessions are stateless.",
+          "docFull": "Revoke every server-side session of `userId` — \"sign out everywhere\", the right call\nafter a password change or a suspected cookie theft. Fires the `sessionRevoked` event.\nRequires `denextAuth({ sessionStore })`; throws when sessions are stateless.",
           "params": [
             {
               "name": "userId",
@@ -7750,12 +8274,33 @@
           "denextOnly": true
         },
         {
+          "name": "revokeApiToken",
+          "slug": "revokeApiToken",
+          "kind": "function",
+          "signature": "revokeApiToken(config: AuthConfig, id: string): Promise<void>",
+          "doc": "Revoke a token by id — it stops authenticating immediately and can never be revived. Revoking an unknown (or already revoked) id is a no-op, not an error.",
+          "docFull": "Revoke a token by id — it stops authenticating immediately and can never be revived.\nRevoking an unknown (or already revoked) id is a no-op, not an error.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The app's auth config."
+            },
+            {
+              "name": "id",
+              "doc": "The ApiTokenRecord.id to revoke."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "revokeSession",
           "slug": "revokeSession",
           "kind": "function",
           "signature": "revokeSession(sessionId: string): Promise<void>",
-          "doc": "Revoke one server-side session by id (the sessionId on an AuthSession), so its cookie stops authenticating immediately — \"sign out this device\". Requires denextAuth({ sessionStore }); throws when sessions are stateless.",
-          "docFull": "Revoke one server-side session by id (the `sessionId` on an {@link AuthSession}), so\nits cookie stops authenticating immediately — \"sign out this device\". Requires\n`denextAuth({ sessionStore })`; throws when sessions are stateless.",
+          "doc": "Revoke one server-side session by id (the sessionId on an AuthSession), so its cookie stops authenticating immediately — \"sign out this device\". Fires the sessionRevoked event. Requires denextAuth({ sessionStore }); throws when sessions are stateless.",
+          "docFull": "Revoke one server-side session by id (the `sessionId` on an {@link AuthSession}), so\nits cookie stops authenticating immediately — \"sign out this device\". Fires the\n`sessionRevoked` event. Requires `denextAuth({ sessionStore })`; throws when sessions\nare stateless.",
           "params": [
             {
               "name": "sessionId",
@@ -8045,6 +8590,23 @@
           "denextOnly": true
         },
         {
+          "name": "scryptHasher",
+          "slug": "scryptHasher",
+          "kind": "function",
+          "signature": "scryptHasher(options?: HashPasswordOptions): Hasher",
+          "doc": "The default Hasher: salted **scrypt** through node:crypto, encoded as scrypt$N=…,r=…,p=…$salt$hash. Pass it explicitly to raise the cost: ``ts denextAuth({ hasher: scryptHasher({ cost: 2 ** 16 }), … }) `` Hashes stay self-describing, so raising the cost never invalidates existing ones.",
+          "docFull": "The default {@linkcode Hasher}: salted **scrypt** through `node:crypto`, encoded as\n`scrypt$N=…,r=…,p=…$salt$hash`. Pass it explicitly to raise the cost:\n```ts\ndenextAuth({ hasher: scryptHasher({ cost: 2 ** 16 }), … })\n```\nHashes stay self-describing, so raising the cost never invalidates existing ones.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "Tunable scrypt cost (cost/blockSize/parallelization)."
+            }
+          ],
+          "returns": "A Hasher backed by hashPassword / verifyPassword.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "SearchParams",
           "slug": "SearchParams",
           "kind": "typeAlias",
@@ -8125,6 +8687,18 @@
           "signature": "interface SegmentLevel",
           "doc": "The convention files one route directory level contributes (own files, not inherited).",
           "docFull": "The convention files one route directory level contributes (own files, not inherited).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SendVerificationRequest",
+          "slug": "SendVerificationRequest",
+          "kind": "typeAlias",
+          "signature": "type SendVerificationRequest = (params: VerificationRequestParams) => Promise<void> | void",
+          "doc": "Deliver a verification token. denext ships **no mailer** — email verification, password reset, magic links and one-time codes all call this, and the flows that need it refuse to start when it is absent.",
+          "docFull": "Deliver a verification token. denext ships **no mailer** — email verification,\npassword reset, magic links and one-time codes all call this, and the flows that need\nit refuse to start when it is absent.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -8427,6 +9001,23 @@
           "denextOnly": true
         },
         {
+          "name": "slack",
+          "slug": "slack",
+          "kind": "function",
+          "signature": "slack(options: OAuthClientOptions): OAuthProvider",
+          "doc": "Slack (\"Sign in with Slack\", OIDC). Claims come from the verified id_token; Slack's email_verified claim is honoured by the shared mapper.",
+          "docFull": "Slack (\"Sign in with Slack\", OIDC). Claims come from the verified `id_token`; Slack's\n`email_verified` claim is honoured by the shared mapper.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The app's Slack client credentials."
+            }
+          ],
+          "returns": "The configured Slack provider (id: \"slack\").",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "SlotRoutes",
           "slug": "SlotRoutes",
           "kind": "interface",
@@ -8481,6 +9072,35 @@
           "signature": "specificity(pattern: Segment[]): number",
           "doc": "Specificity score for ordering routes: more specific (static) patterns should be tried before less specific (dynamic/catch-all) ones. Higher wins. Position-blind (a sum) — prefer compareSpecificity for ordering.",
           "docFull": "Specificity score for ordering routes: more specific (static) patterns\nshould be tried before less specific (dynamic/catch-all) ones. Higher wins.\nPosition-blind (a sum) — prefer {@linkcode compareSpecificity} for ordering.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "sqliteAuthAdapter",
+          "slug": "sqliteAuthAdapter",
+          "kind": "function",
+          "signature": "sqliteAuthAdapter(options?: SqliteAuthAdapterOptions): AuthAdapter",
+          "doc": "Build the durable AuthAdapter on Deno's built-in node:sqlite: every method group (users, accounts, verification tokens, credentials, API tokens, MFA) plus a sessions store over the **same** database handle and an idempotent close().",
+          "docFull": "Build the durable {@link ./adapter.ts | AuthAdapter} on Deno's built-in `node:sqlite`:\nevery method group (users, accounts, verification tokens, credentials, API tokens, MFA)\nplus a `sessions` store over the **same** database handle and an idempotent `close()`.\n\nIds are `crypto.randomUUID()` unless the caller supplies one; emails are matched\ncase-insensitively and whitespace-trimmed, and a unique index refuses a second user on\none address. The schema is created on first use and evolved additively on every open\n(see the module doc). Single-node, and TOTP secrets are at rest in plaintext.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "Database path (or an openDb hook), clock override, sweep interval."
+            }
+          ],
+          "returns": "The adapter, ready to pass as denextAuth({ adapter }).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SqliteAuthAdapterOptions",
+          "slug": "SqliteAuthAdapterOptions",
+          "kind": "interface",
+          "signature": "interface SqliteAuthAdapterOptions",
+          "doc": "Options for sqliteAuthAdapter.",
+          "docFull": "Options for {@linkcode sqliteAuthAdapter}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -8907,6 +9527,18 @@
           "denextOnly": false
         },
         {
+          "name": "updateAuthSession",
+          "slug": "updateAuthSession",
+          "kind": "function",
+          "signature": "updateAuthSession(): Promise<AuthSession | null>",
+          "doc": "Read the session **and** slide its expiry forward when session.updateAge has elapsed — the explicit version of what GET {basePath}/session, requireAuth and requireSession() do for you. Call it from a Server Action or a route.ts handler (anywhere the response has not been sent yet); the refreshed cookie rides that response. In a streamed Server Component use auth instead — a Set-Cookie written after the headers flush is dropped silently.",
+          "docFull": "Read the session **and** slide its expiry forward when `session.updateAge` has elapsed\n— the explicit version of what `GET {basePath}/session`, {@link requireAuth} and\n`requireSession()` do for you. Call it from a Server Action or a `route.ts` handler\n(anywhere the response has not been sent yet); the refreshed cookie rides that\nresponse. In a streamed Server Component use {@link auth} instead — a `Set-Cookie`\nwritten after the headers flush is dropped silently.",
+          "params": [],
+          "returns": "The (possibly refreshed) AuthSession, or null when signed out.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "updateTag",
           "slug": "updateTag",
           "kind": "function",
@@ -8968,6 +9600,75 @@
           "returns": "",
           "examples": [],
           "denextOnly": false
+        },
+        {
+          "name": "VerificationPurpose",
+          "slug": "VerificationPurpose",
+          "kind": "typeAlias",
+          "signature": "type VerificationPurpose = email | reset | magic | otp",
+          "doc": "What a verification token is for (one token space per purpose).",
+          "docFull": "What a verification token is for (one token space per purpose).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "VerificationRequestParams",
+          "slug": "VerificationRequestParams",
+          "kind": "interface",
+          "signature": "interface VerificationRequestParams",
+          "doc": "What AuthConfig.sendVerificationRequest is handed for each outbound token.",
+          "docFull": "What {@link AuthConfig.sendVerificationRequest} is handed for each outbound token.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "VerificationTokenRecord",
+          "slug": "VerificationTokenRecord",
+          "kind": "interface",
+          "signature": "interface VerificationTokenRecord",
+          "doc": "A single-use token proving control of an identifier (an email verification link, a password-reset link, a magic link, a one-time code). Only the **hash** is stored, so a database read never yields a usable token.",
+          "docFull": "A single-use token proving control of an identifier (an email verification link, a\npassword-reset link, a magic link, a one-time code). Only the **hash** is stored, so a\ndatabase read never yields a usable token.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "VerificationTokenRef",
+          "slug": "VerificationTokenRef",
+          "kind": "interface",
+          "signature": "interface VerificationTokenRef",
+          "doc": "Identifies one verification token (the tuple its uniqueness is scoped by).",
+          "docFull": "Identifies one verification token (the tuple its uniqueness is scoped by).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "verifyApiToken",
+          "slug": "verifyApiToken",
+          "kind": "function",
+          "signature": "verifyApiToken(config: AuthConfig, presented: string): Promise<ApiTokenRecord | null>",
+          "doc": "Verify a presented bearer token: hash it, look the hash up (an indexed exact match — no secret is ever compared in-process), and check it is still live.",
+          "docFull": "Verify a presented bearer token: hash it, look the hash up (an indexed exact match — no\nsecret is ever compared in-process), and check it is still live.\n\nEvery failure mode returns the same `null`: an unknown token, a revoked one, an expired\none, a malformed one, and \"bearer tokens aren't configured at all\". Callers must keep\nthat uniformity in their answer — see `requireBearer`.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The app's auth config."
+            },
+            {
+              "name": "presented",
+              "doc": "The raw token from the Authorization header."
+            }
+          ],
+          "returns": "The live ApiTokenRecord, or null.",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "verifyPassword",
@@ -9316,6 +10017,18 @@
           "docFull": "Read the captured lexical scope inside an extracted qrl handler segment. The\nbuild transform emits `const [a, b] = capturedScope()` at the top of a\nsegment whose handler closed over component-local `a`/`b`; the values are the\ncapture array passed to {@link qrl} (restored from the resume payload on the\nclient). Must be called synchronously at handler entry.",
           "params": [],
           "returns": "The captured values, in the order the transform emitted them.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ClientSession",
+          "slug": "ClientSession",
+          "kind": "interface",
+          "signature": "interface ClientSession",
+          "doc": "The reactive session state from useSession.",
+          "docFull": "The reactive session state from {@link useSession}.",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         },
@@ -10336,6 +11049,47 @@
           "denextOnly": true
         },
         {
+          "name": "SessionProvider",
+          "slug": "SessionProvider",
+          "kind": "function",
+          "signature": "SessionProvider(props: SessionProviderProps): VNode",
+          "doc": "Provide session state to the tree. Seed it with session from the server for no loading flash, or omit it to fetch {basePath}/session on mount.",
+          "docFull": "Provide session state to the tree. Seed it with `session` from the server for no\nloading flash, or omit it to fetch `{basePath}/session` on mount.",
+          "params": [
+            {
+              "name": "props",
+              "doc": "SessionProviderProps."
+            }
+          ],
+          "returns": "The provider element wrapping children.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SessionProviderProps",
+          "slug": "SessionProviderProps",
+          "kind": "interface",
+          "signature": "interface SessionProviderProps",
+          "doc": "Props for SessionProvider.",
+          "docFull": "Props for {@link SessionProvider}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SessionUser",
+          "slug": "SessionUser",
+          "kind": "interface",
+          "signature": "interface SessionUser",
+          "doc": "The signed-in user exposed to the client (non-sensitive fields only).",
+          "docFull": "The signed-in user exposed to the client (non-sensitive fields only).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "setApiInvalidationSource",
           "slug": "setApiInvalidationSource",
           "kind": "function",
@@ -10348,6 +11102,68 @@
               "doc": "The subscriber, or null to remove it."
             }
           ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "signIn",
+          "slug": "signIn",
+          "kind": "function",
+          "signature": "signIn(provider: string, options?: SignInOptions): Promise<unknown>",
+          "doc": "Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with redirect: false, resolves with the URL it would have gone to); for a Credentials provider (pass credentials) it POSTs and resolves with the result.",
+          "docFull": "Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with\n`redirect: false`, resolves with the URL it would have gone to); for a Credentials\nprovider (pass `credentials`) it POSTs and resolves with the result.",
+          "params": [
+            {
+              "name": "provider",
+              "doc": "The provider id (e.g. \"google\", \"credentials\")."
+            },
+            {
+              "name": "options",
+              "doc": "SignInOptions."
+            }
+          ],
+          "returns": "The credentials result, or the sign-in URL for the redirect flow.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SignInOptions",
+          "slug": "SignInOptions",
+          "kind": "interface",
+          "signature": "interface SignInOptions",
+          "doc": "Options for signIn.",
+          "docFull": "Options for {@link signIn}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "signOut",
+          "slug": "signOut",
+          "kind": "function",
+          "signature": "signOut(options?: SignOutOptions): Promise<void>",
+          "doc": "Sign out (same-origin POST to {basePath}/signout), then navigate to callbackUrl.",
+          "docFull": "Sign out (same-origin POST to `{basePath}/signout`), then navigate to `callbackUrl`.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "SignOutOptions."
+            }
+          ],
+          "returns": "A promise that settles once the navigation has been started.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SignOutOptions",
+          "slug": "SignOutOptions",
+          "kind": "interface",
+          "signature": "interface SignOutOptions",
+          "doc": "Options for signOut.",
+          "docFull": "Options for {@link signOut}.",
+          "params": [],
           "returns": "",
           "examples": [],
           "denextOnly": true
@@ -10899,6 +11715,18 @@
           "denextOnly": false
         },
         {
+          "name": "useSession",
+          "slug": "useSession",
+          "kind": "function",
+          "signature": "useSession(): ClientSession",
+          "doc": "Read the current ClientSession. Must be under a SessionProvider.",
+          "docFull": "Read the current {@link ClientSession}. Must be under a {@link SessionProvider}.",
+          "params": [],
+          "returns": "The session state plus update().",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "useState",
           "slug": "useState",
           "kind": "function",
@@ -11195,7 +12023,7 @@
           "name": "getOwnerStack",
           "slug": "getOwnerStack",
           "kind": "function",
-          "signature": "getOwnerStack(fiberId: number): Array<object>",
+          "signature": "getOwnerStack(fiberId: number): OwnerStackEntry[]",
           "doc": "The component ancestor chain for a node — the names of the component fibers above it (nearest first), each with its source when known. An approximation of React's \"owner stack\": the render-parent path rather than the JSX-owner, which coincide for the common case. fiberId comes from the most recent getInspectorTree. Empty in production or for an unknown/stale id.",
           "docFull": "The component ancestor chain for a node — the names of the component fibers above\nit (nearest first), each with its source when known. An approximation of React's\n\"owner stack\": the render-parent path rather than the JSX-owner, which coincide for\nthe common case. `fiberId` comes from the most recent {@link getInspectorTree}.\nEmpty in production or for an unknown/stale id.",
           "params": [],
@@ -11360,6 +12188,18 @@
           "denextOnly": true
         },
         {
+          "name": "OwnerStackEntry",
+          "slug": "OwnerStackEntry",
+          "kind": "interface",
+          "signature": "interface OwnerStackEntry",
+          "doc": "One component above a node in getOwnerStack.",
+          "docFull": "One component above a node in {@link getOwnerStack}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "PageRenderMode",
           "slug": "PageRenderMode",
           "kind": "interface",
@@ -11462,6 +12302,18 @@
           "signature": "setRefValue(fiberId: number, hookIndex: number, value: unknown): boolean",
           "doc": "Set a useRef cell's .current live. A ref write does not itself schedule a render (matching React), so the change is visible on the next commit the app makes; the panel updates its own view optimistically. Returns whether the cell was found and is a ref.",
           "docFull": "Set a `useRef` cell's `.current` live. A ref write does not itself schedule a render\n(matching React), so the change is visible on the next commit the app makes; the panel\nupdates its own view optimistically. Returns whether the cell was found and is a ref.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SourceLocation",
+          "slug": "SourceLocation",
+          "kind": "interface",
+          "signature": "interface SourceLocation",
+          "doc": "Where a component was declared — the build-time position behind the panel's source link.",
+          "docFull": "Where a component was declared — the build-time position behind the panel's source link.",
           "params": [],
           "returns": "",
           "examples": [],
