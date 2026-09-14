@@ -11,7 +11,7 @@ import { deriveCsrf } from "../src/ui/security.ts";
 import { esc, html, raw, stubSection, toHtml, UI_NAV } from "../src/ui/html.ts";
 import { decodePatch } from "../src/ui/features/config.ts";
 import { readWidget, renderWidget } from "../src/ui/form/render.ts";
-import { branchFor, itemSchema, resolveAt } from "../src/ui/form/schema.ts";
+import { branchFor, itemSchema, loadConfigSchema, resolveAt } from "../src/ui/form/schema.ts";
 import { widgetFor } from "../src/ui/form/widget.ts";
 import { control } from "../src/ui/form/control.ts";
 import { decode, encode } from "../src/ui/form/value.ts";
@@ -95,7 +95,10 @@ Deno.test("the same-origin assets are served with the right content types", asyn
   }
 });
 
-Deno.test("every feature route serves a placeholder page and a 501 JSON twin", async () => {
+/** Feature panels not yet implemented — each ships as a 501 stub until its own job lands. */
+const STILL_STUBBED = new Set(["/config", "/config/next", "/docker"]);
+
+Deno.test("every feature route serves a page; the unfinished ones a placeholder + 501 JSON twin", async () => {
   const h = await ui();
   try {
     const pages = Object.entries(UI_ROUTES)
@@ -109,6 +112,7 @@ Deno.test("every feature route serves a placeholder page and a 501 JSON twin", a
       assertEquals(page.status, 200, path);
       const body = await page.text();
       assertStringIncludes(body, '<section id="panel"', path);
+      if (!STILL_STUBBED.has(path)) continue;
       assertStringIncludes(body, "Not implemented yet", path);
 
       const api = await fetch(`${h.base}/api${path}`, { headers: h.headers });
@@ -256,43 +260,33 @@ Deno.test("projectTasks reads deno.json and deno.jsonc, and tolerates neither", 
   }
 });
 
-// ── the schema-driven form modules (J4c fills these in) ──────────────────────
+// ── the schema-driven form modules (J4c) ─────────────────────────────────────
 
-Deno.test("the form modules ship with final signatures and J4c stub bodies", () => {
+Deno.test("the form modules turn the committed schema into typed controls", () => {
   assertEquals(OVERRIDES, {}, "schema-overrides.ts ships empty on purpose");
-  const node = { type: "string" };
-  const throws = [
-    () => resolveAt(node, "images.formats"),
-    () => itemSchema(node),
-    () => branchFor(node, null),
-    () => widgetFor(node, "images.formats", false),
-    () => control({ kind: "text", name: "x", value: "" }),
-    () => encode("x", "text"),
-    () => decode("x", "text"),
-    () => renderWidget(node, "x", null),
-    () => readWidget(node, "x", ""),
-  ];
-  for (const fn of throws) {
-    try {
-      fn();
-      throw new Error("expected the stub to throw");
-    } catch (error) {
-      assertStringIncludes(String(error), "not implemented: J4c");
-    }
-  }
+  const schema = loadConfigSchema();
+  const node = resolveAt(schema, ["images", "formats"]);
+  const spec = widgetFor(node, ["images", "formats"], false);
+  assertEquals(spec.kind, "multi-select");
+  assertEquals(itemSchema(node).enum, ["image/webp", "image/avif"]);
+  assertEquals(branchFor(resolveAt(schema, ["csp"]), "strict").enum, ["strict"]);
+  assertEquals(encode(spec, ["image/avif"]), [
+    { name: "images.formats~n", value: "1" },
+    { name: "images.formats[1]", value: "image/avif" },
+  ]);
+  assertEquals(decode(spec, encode(spec, ["image/avif"])), ["image/avif"]);
+  assertStringIncludes(
+    toHtml(renderWidget(spec, ["image/avif"], { csrf: "tok" })),
+    'value="image/avif" checked',
+  );
+  assertStringIncludes(toHtml(control({ tag: "input", name: "x", value: "y" })), 'name="x"');
+  assertEquals(readWidget(schema, "trailingSlash", "on"), true);
 });
 
-Deno.test("decodePatch walks the posted fields through the (stubbed) widget codec", () => {
+Deno.test("decodePatch walks the posted fields through the widget codec", () => {
   const form = new FormData();
   form.set("_csrf", "ignored");
-  form.set("images.formats", "webp");
-  let threw = false;
-  try {
-    decodePatch(form, { type: "object" });
-  } catch (error) {
-    threw = true;
-    assertStringIncludes(String(error), "not implemented: J4c");
-  }
-  assert(threw, "decodePatch defers to the form codec, which J4c implements");
+  form.set("trailingSlash", "on");
+  assertEquals(decodePatch(form, loadConfigSchema()), { trailingSlash: true });
   assertEquals(decodePatch(new FormData(), { type: "object" }), {});
 });

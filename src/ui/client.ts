@@ -52,9 +52,9 @@ async function streamInto(response, sink) {
   }
 }
 
-/** Submit one enhanced form; returns false when the browser should submit it itself. */
-async function submit(form) {
-  const body = new FormData(form);
+/** Submit one enhanced form; the submitter carries a list row's op field, so it is included. */
+async function submit(form, submitter) {
+  const body = new FormData(form, submitter instanceof HTMLElement ? submitter : undefined);
   body.set(CSRF_FIELD, csrf);
   const response = await fetch(form.action, {
     method: "POST",
@@ -86,7 +86,7 @@ document.addEventListener("submit", (event) => {
   if (!(form instanceof HTMLFormElement)) return;
   if ((form.method || "get").toLowerCase() !== "post") return;
   event.preventDefault();
-  submit(form).catch((error) => console.error("denext ui:", error));
+  submit(form, event.submitter).catch((error) => console.error("denext ui:", error));
 });
 
 // Server-pushed events: task progress broadcast to every open page, and the --ui-dev reload.

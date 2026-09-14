@@ -5,7 +5,11 @@
 // `scripts/gen-config-schema.ts` (J4b) so the schema — the artifact plugins, editors and agents
 // all read — is the single source of truth, rather than being patched behind the UI's back.
 
-import type { WidgetKind } from "./widget.ts";
+import type { SchemaNode } from "./schema.ts";
 
-/** Per-path widget overrides, keyed by dotted config path. Intentionally empty. */
-export const OVERRIDES: Record<string, WidgetKind> = {};
+/**
+ * Per-path schema patches, keyed by the dotted path `pathKey()` produces
+ * (`images.remotePatterns[].hostname`). Each entry is shallow-merged over the generated node by
+ * `resolveAt()`. Intentionally empty.
+ */
+export const OVERRIDES: Record<string, Partial<SchemaNode>> = {};
