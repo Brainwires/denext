@@ -181,9 +181,10 @@ Deno.test("a POST with the derived CSRF token and a same-origin Origin passes th
       },
       body: new FormData(),
     });
-    // Past every gate: the feature stub itself answers 501, not a 403.
-    assertEquals(res.status, 501);
-    assertEquals((await res.json()).reason, "not implemented");
+    // Past every gate: the config panel itself answers — a POST that names no section is its
+    // own 400 — rather than a 403 from the security chain.
+    assertEquals(res.status, 400);
+    assertEquals((await res.json()).reason, 'unknown config section ""');
   } finally {
     await stop(s);
   }

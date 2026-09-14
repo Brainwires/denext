@@ -96,7 +96,7 @@ Deno.test("the same-origin assets are served with the right content types", asyn
 });
 
 /** Feature panels not yet implemented — each ships as a 501 stub until its own job lands. */
-const STILL_STUBBED = new Set(["/config", "/config/next", "/docker"]);
+const STILL_STUBBED = new Set<string>([]);
 
 Deno.test("every feature route serves a page; the unfinished ones a placeholder + 501 JSON twin", async () => {
   const h = await ui();
