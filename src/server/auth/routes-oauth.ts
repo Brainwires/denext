@@ -46,7 +46,6 @@ import { getJwks } from "./jwks-cache.ts";
 import { idTokenKid, isStrictAudienceError, verifyIdToken } from "./jwt.ts";
 import { buildAuthorizationUrl, generatePkce, randomToken } from "./oauth.ts";
 import {
-  afterSignIn,
   applySignInCallback,
   type AuthRouteContext,
   callbackUri,
@@ -59,7 +58,7 @@ import {
   setTx,
   type Transaction,
 } from "./routes-shared.ts";
-import { issueAuthSession } from "./session.ts";
+import { finishSignIn } from "./sign-in-tail.ts";
 import { type AuthUser, isOAuthProvider, type OAuthProvider } from "./types.ts";
 
 /**
@@ -248,13 +247,12 @@ async function completeSignIn(
   const user = await applySignInCallback(ctx.config, resolved.user, provider.id);
   if (!user) return await refuse(ctx, provider.id, "access_denied");
 
-  await issueAuthSession(ctx.config, user, provider.id);
-  await emitAuthEvent(ctx.options, "signIn", {
-    user,
-    provider: provider.id,
+  return await finishSignIn(ctx, user, provider.id, {
     isNewUser: resolved.isNewUser,
+    returnTo,
+    amr: ["ext"],
+    json: false,
   });
-  return redirect(afterSignIn(ctx.config, returnTo));
 }
 
 /**

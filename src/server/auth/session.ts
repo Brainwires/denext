@@ -88,29 +88,51 @@ export async function readAuthSession(config: AuthConfig): Promise<AuthSession |
   return await resolveSession(session.data, options.sessionStore, options.maxAge);
 }
 
+/** How {@link issueAuthSession} marks the session it mints. */
+export interface IssueAuthSessionOptions {
+  /**
+   * Mint a session that still owes a second factor: `auth()` answers `null` for it and
+   * only the MFA routes accept it (see `AuthSession.mfaPending`).
+   */
+  mfaPending?: boolean;
+  /** Authentication methods completed so far (`pwd`, `ext`, `email`, `otp`, `totp`, `bcp`). */
+  amr?: string[];
+  /**
+   * Seconds this session lives, never more than the configured `maxAge` (the default).
+   * A pending session is minted short-lived, so a first factor alone opens only a brief
+   * window for the second.
+   */
+  lifetime?: number;
+}
+
 /**
  * Issue (sign + set) a session for `user` from `provider`, applying the session callback.
  *
  * @param config The app's auth config.
  * @param user The authenticated user.
  * @param provider The provider id that authenticated them.
+ * @param issue Pending-MFA marking, the methods proven so far, and a shorter lifetime.
  * @returns The issued session (carrying `sessionId` when store-backed).
  */
 export async function issueAuthSession(
   config: AuthConfig,
   user: AuthUser,
   provider: string,
+  issue: IssueAuthSessionOptions = {},
 ): Promise<AuthSession> {
   const options = resolveAuthOptions(config);
   const maxAge = options.maxAge;
   const now = Math.floor(Date.now() / 1000);
+  const lifetime = Math.min(maxAge, issue.lifetime ?? maxAge);
   let payload: AuthSession = {
     user,
     provider,
-    expiresAt: now + maxAge,
+    expiresAt: now + lifetime,
     v: 2,
     issuedAt: now,
   };
+  if (issue.mfaPending) payload.mfaPending = true;
+  if (issue.amr?.length) payload.amr = [...issue.amr];
   if (config.callbacks?.session) payload = await config.callbacks.session(payload);
   if (!Number.isFinite(payload.expiresAt)) {
     // A callback that dropped/mangled the expiry must not yield a never-expiring or a

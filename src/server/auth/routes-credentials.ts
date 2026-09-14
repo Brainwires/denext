@@ -39,16 +39,8 @@ import {
 import type { AdapterUser } from "./adapter.ts";
 import { type ResolvedSignIn, toAuthUser } from "./adapter-link.ts";
 import { resolveSessionUser } from "./routes-oauth.ts";
-import {
-  afterSignIn,
-  applySignInCallback,
-  type AuthRouteContext,
-  isSameOrigin,
-  json,
-  redirect,
-  wantsJson,
-} from "./routes-shared.ts";
-import { issueAuthSession } from "./session.ts";
+import { applySignInCallback, type AuthRouteContext, isSameOrigin, json } from "./routes-shared.ts";
+import { finishSignIn } from "./sign-in-tail.ts";
 import type { AuthUser, CredentialsProvider } from "./types.ts";
 
 /** The most a credentials POST body may carry (a login form is a few hundred bytes). */
@@ -316,15 +308,12 @@ export async function handleCredentials(
     return json({ error: "access denied" }, 403);
   }
 
-  await issueAuthSession(ctx.config, approved, provider.id);
-  await emitAuthEvent(ctx.options, "signIn", {
-    user: approved,
-    provider: provider.id,
-    isNewUser: resolved.isNewUser,
-  });
-  if (wantsJson(ctx.request)) return json({ ok: true, user: approved });
   const callbackUrl = typeof creds.callbackUrl === "string" ? creds.callbackUrl : undefined;
-  return redirect(afterSignIn(ctx.config, callbackUrl));
+  return await finishSignIn(ctx, approved, provider.id, {
+    isNewUser: resolved.isNewUser,
+    returnTo: callbackUrl,
+    amr: ["pwd"],
+  });
 }
 
 /**
