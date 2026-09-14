@@ -43,7 +43,7 @@ import {
   enrollTotp,
   hasFreshFactor,
   hasMfaAdapter,
-  verifyTotpCode,
+  verifySecondFactor,
 } from "./mfa.ts";
 import { clientIpBucket, consumeHitBudget, mfaLimiter, subjectBucketKeys } from "./rate-limit.ts";
 import {
@@ -169,7 +169,7 @@ async function handleStepUp(ctx: AuthRouteContext): Promise<Response | null> {
   const limited = await spendAttempt(ctx, session);
   if (limited) return limited;
   const { code, callbackUrl } = await readMfaFields(ctx);
-  const method = await verifyTotpCode(ctx.config, session.user.id, code);
+  const method = await verifySecondFactor(ctx.config, session.user.id, code);
   const asJson = wantsJson(ctx.request);
   if (!method) {
     await emitMfaFailure(ctx, session, "invalid_mfa_code");
@@ -219,7 +219,7 @@ async function freshFactor(
   if (!code) return hasFreshFactor(ctx.options, session);
   const limited = await spendAttempt(ctx, session);
   if (limited) return limited;
-  return (await verifyTotpCode(ctx.config, session.user.id, code)) !== null;
+  return (await verifySecondFactor(ctx.config, session.user.id, code)) !== null;
 }
 
 /** `POST {basePath}/mfa/disable` — remove the factor, given a fresh second factor. */

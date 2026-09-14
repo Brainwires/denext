@@ -1,7 +1,16 @@
 /**
  * The auth route table: one row per endpoint, matched against the path **after** the
  * configured `basePath` has been stripped. This is the single place the endpoint set is
- * declared — `routes.ts` only strips the prefix, matches a row, and calls it.
+ * declared — `routes.ts` only strips the prefix, matches a row, and calls it. The rows
+ * come from the route modules: session + sign-in (`routes-session`, `routes-oauth`), the
+ * per-provider callback verbs (`routes-credentials`, `routes-oauth`, `routes-email`),
+ * bearer tokens (`routes-tokens`), account recovery (`routes-account`) and the second
+ * factor (`routes-mfa`).
+ *
+ * A row claims ONE method on its path: another verb falls through to the app (a plain
+ * 404, or the app's own page — `GET {basePath}/reset` is where the reset link lands). Only
+ * `/callback/:provider` answers every method, because its allowed verbs depend on the
+ * provider's type; there a verb the type lacks is a `405`.
  *
  * Patterns are plain segment patterns (`/signin/:provider`), not `URLPattern`, so a
  * capture can be percent-decoded and an undecodable segment can fall through as "no
@@ -20,7 +29,10 @@ import {
   signinStartKey,
   signinStartLimiter,
 } from "./rate-limit.ts";
+import { accountRoutes } from "./routes-account.ts";
 import { handleCredentials } from "./routes-credentials.ts";
+import { emailCallbacks } from "./routes-email.ts";
+import { mfaRoutes } from "./routes-mfa.ts";
 import { handleOAuthCallback, handleSignin } from "./routes-oauth.ts";
 import { handleProviders, handleSession, handleSignout } from "./routes-session.ts";
 import {
@@ -31,7 +43,7 @@ import {
   json,
 } from "./routes-shared.ts";
 import { handleCreateToken, handleListTokens, handleRevokeToken } from "./routes-tokens.ts";
-import { isOAuthProvider } from "./types.ts";
+import type { AuthProvider } from "./types.ts";
 
 /** The limiter and key builder behind one {@link AuthRouteLimit}. */
 const LIMITS: Record<AuthRouteLimit, {
@@ -87,23 +99,68 @@ function gated(route: AuthRoute): AuthRoute {
   return { ...route, handler: (ctx) => guardLimit(ctx, limit, handler) };
 }
 
+/** The verbs a callback can answer. */
+type CallbackVerb = "GET" | "POST";
+
+/** The configured provider whose `type` is `T` (both OAuth flavours for `"oauth"`/`"oidc"`). */
+type ProviderOfType<T extends AuthProvider["type"], P extends AuthProvider = AuthProvider> =
+  P extends AuthProvider ? (T extends P["type"] ? P : never) : never;
+
+/** One callback verb's handler, handed the provider already narrowed to its type. */
+type CallbackHandler<P extends AuthProvider> = (
+  ctx: AuthRouteContext,
+  provider: P,
+) => Promise<Response> | Response;
+
 /**
- * `{basePath}/callback/:provider` — the one path whose verb depends on the provider:
- * GET is the OAuth/OIDC callback, POST the Credentials one, and anything else a `405`.
+ * `{basePath}/callback/:provider`, per provider type: the verbs it answers. GET is the
+ * OAuth/OIDC redirect back and the magic-link click; POST the Credentials sign-in and the
+ * email send/redeem. A verb missing here is a `405`.
+ */
+const CALLBACKS: {
+  readonly [T in AuthProvider["type"]]: Partial<
+    Record<CallbackVerb, CallbackHandler<ProviderOfType<T>>>
+  >;
+} = {
+  credentials: { POST: handleCredentials },
+  email: emailCallbacks,
+  oauth: { GET: handleOAuthCallback },
+  oidc: { GET: handleOAuthCallback },
+};
+
+/** Whether `method` is a verb some callback answers. */
+function isCallbackVerb(method: string): method is CallbackVerb {
+  return method === "GET" || method === "POST";
+}
+
+/**
+ * The handler `provider`'s callback has for `method`, or `undefined` (→ `405`). The one
+ * widening cast is sound: `CALLBACKS` is keyed by `provider.type`, and every entry takes
+ * exactly the provider narrowed to that type.
+ */
+function callbackVerb(
+  provider: AuthProvider,
+  method: string,
+): CallbackHandler<AuthProvider> | undefined {
+  if (!isCallbackVerb(method)) return undefined;
+  const verbs = CALLBACKS[provider.type] as Partial<
+    Record<CallbackVerb, CallbackHandler<AuthProvider>>
+  >;
+  return verbs[method];
+}
+
+/**
+ * `{basePath}/callback/:provider` — the one path whose verb depends on the provider: an
+ * unknown provider is a `404`, a verb its type doesn't answer a `405`.
  */
 function handleCallback(ctx: AuthRouteContext): Promise<Response> | Response {
   const provider = findProvider(ctx.config, ctx.params.provider);
   if (!provider) return json({ error: "unknown provider" }, 404);
-  if (provider.type === "credentials" && ctx.method === "POST") {
-    return handleCredentials(ctx, provider);
-  }
-  if (isOAuthProvider(provider) && ctx.method === "GET") {
-    return handleOAuthCallback(ctx, provider);
-  }
-  return json({ error: "method not allowed" }, 405);
+  const handler = callbackVerb(provider, ctx.method);
+  return handler ? handler(ctx, provider) : json({ error: "method not allowed" }, 405);
 }
 
-/** Every auth endpoint, in match order. Later waves add rows here. */
+/** Every auth endpoint, in match order. */
 const declaredRoutes: readonly AuthRoute[] = [
   { method: "GET", pattern: "/session", handler: handleSession, limit: "session-read" },
   { method: "GET", pattern: "/providers", handler: handleProviders },
@@ -116,6 +173,13 @@ const declaredRoutes: readonly AuthRoute[] = [
   { method: "POST", pattern: "/tokens", handler: handleCreateToken },
   { method: "GET", pattern: "/tokens", handler: handleListTokens },
   { method: "DELETE", pattern: "/tokens/:id", handler: handleRevokeToken },
+  // Email verification + password reset: GET/POST `/verify`, POST `/reset`, POST
+  // `/reset/confirm` (the link click carries the per-IP `"session-read"` gate). They
+  // answer `null` without an adapter that has the verification-token group.
+  ...accountRoutes,
+  // The second factor: POST `/mfa`, `/mfa/enroll`, `/mfa/confirm`, `/mfa/disable` — each
+  // spends the per-user MFA budget itself, and answers `null` without the MFA group.
+  ...mfaRoutes,
 ];
 
 /** The table the dispatcher matches against: every row with its `limit` gate applied. */

@@ -10,7 +10,7 @@ import {
   type TotpVerifyResult,
   verifyTotp,
 } from "../src/server/auth/totp.ts";
-import { generateBackupCodes, matchBackupCode } from "../src/server/auth/backup-codes.ts";
+import { backupCodeMatcher, generateBackupCodes } from "../src/server/auth/backup-codes.ts";
 import { type Hasher, scryptHasher } from "../src/server/auth/hasher.ts";
 
 /** RFC 6238 Appendix B: the ASCII seed "12345678901234567890", base32. */
@@ -295,7 +295,7 @@ Deno.test("generateBackupCodes clamps count to 0–20", async () => {
   }
 });
 
-Deno.test("matchBackupCode matches its own hash across hyphen/case/space variations only", async () => {
+Deno.test("backupCodeMatcher matches its own hash across hyphen/case/space variations only", async () => {
   const hasher = spyHasher();
   const { codes, hashes } = await generateBackupCodes(hasher, 2);
   const [code] = codes;
@@ -307,13 +307,13 @@ Deno.test("matchBackupCode matches its own hash across hyphen/case/space variati
       ` ${code.slice(0, 5)} ${code.slice(6)} `,
     ]
   ) {
-    const matches = matchBackupCode(hasher, typed);
+    const matches = backupCodeMatcher(hasher, typed);
     assertEquals(await matches(hashes[0]), true, typed);
     assertEquals(await matches(hashes[1]), false, typed);
   }
 });
 
-Deno.test("matchBackupCode: malformed input matches nothing but still runs one verify per hash", async () => {
+Deno.test("backupCodeMatcher: malformed input matches nothing but still runs one verify per hash", async () => {
   const hasher = spyHasher();
   const { hashes } = await generateBackupCodes(hasher, 3);
   for (
@@ -327,7 +327,7 @@ Deno.test("matchBackupCode: malformed input matches nothing but still runs one v
     ]
   ) {
     hasher.verified = 0;
-    const matches = matchBackupCode(hasher, bad);
+    const matches = backupCodeMatcher(hasher, bad);
     for (const hash of [...hashes, "h:"]) assertEquals(await matches(hash), false, String(bad));
     assertEquals(hasher.verified, 4, "equal work: one verify per stored hash");
   }
@@ -337,6 +337,6 @@ Deno.test("backup codes round-trip through the real scrypt Hasher", async () => 
   const hasher = scryptHasher({ cost: 1024 });
   const { codes, hashes } = await generateBackupCodes(hasher, 2);
   assert(hashes.every((h) => h.startsWith("scrypt$")));
-  assertEquals(await matchBackupCode(hasher, codes[1].toUpperCase())(hashes[1]), true);
-  assertEquals(await matchBackupCode(hasher, codes[1])(hashes[0]), false);
+  assertEquals(await backupCodeMatcher(hasher, codes[1].toUpperCase())(hashes[1]), true);
+  assertEquals(await backupCodeMatcher(hasher, codes[1])(hashes[0]), false);
 });

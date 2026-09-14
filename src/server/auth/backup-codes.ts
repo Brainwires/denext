@@ -6,7 +6,7 @@
  * app that swaps the algorithm swaps it here too.
  *
  * Redemption is the adapter's atomic `consumeBackupCode(userId, matches)`;
- * {@linkcode matchBackupCode} builds that `matches` predicate.
+ * {@linkcode backupCodeMatcher} builds that `matches` predicate.
  *
  * @module
  */
@@ -64,7 +64,7 @@ export async function generateBackupCodes(
  * @param code The code the user typed.
  * @returns A predicate resolving `true` only when `code` is the one `hash` was made from.
  */
-export function matchBackupCode(
+export function backupCodeMatcher(
   hasher: Hasher,
   code: string,
 ): (hash: string) => Promise<boolean> {

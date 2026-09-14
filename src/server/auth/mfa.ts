@@ -1,6 +1,6 @@
 /**
  * Multi-factor authentication (TOTP): the step-up decision the sign-in tails consult,
- * enrolment (`enrollTotp` → `confirmTotp`), verification (`verifyTotpCode`, TOTP or a
+ * enrolment (`enrollTotp` → `confirmTotp`), verification (`verifySecondFactor`, TOTP or a
  * single-use backup code), `disableTotp`, and the step-up that turns a pending session
  * into a complete one (`completeStepUp`).
  *
@@ -20,7 +20,7 @@
  */
 
 import type { AuthAdapter, MfaRecord } from "./adapter.ts";
-import { generateBackupCodes, matchBackupCode } from "./backup-codes.ts";
+import { backupCodeMatcher, generateBackupCodes } from "./backup-codes.ts";
 import { emitAuthEvent } from "./events.ts";
 import { resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
 import type { AuthRouteContext } from "./routes-shared.ts";
@@ -211,7 +211,7 @@ export async function confirmTotp(
  * @param code The code the user typed (TOTP digits or a backup code, hyphen optional).
  * @returns `"totp"` or `"bcp"` for the method that verified, or `null`.
  */
-export async function verifyTotpCode(
+export async function verifySecondFactor(
   config: AuthConfig,
   userId: string,
   code: string,
@@ -221,7 +221,7 @@ export async function verifyTotpCode(
   const record = await adapter?.getMfa(userId);
   if (!adapter || !isConfirmed(record)) return null;
   if (await claimTotp(options, adapter, record, code)) return "totp";
-  const spent = await adapter.consumeBackupCode(userId, matchBackupCode(options.hasher, code));
+  const spent = await adapter.consumeBackupCode(userId, backupCodeMatcher(options.hasher, code));
   return spent ? "bcp" : null;
 }
 
