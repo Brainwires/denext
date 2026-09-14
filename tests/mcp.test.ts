@@ -98,6 +98,10 @@ Deno.test("dispatch: tools/list lists every registered tool with a schema", asyn
   assertEquals(names.length, TOOLS.length);
   assert(names.includes("denext_check_snippet"));
   assert(names.includes("denext_import_map"));
+  // The DevTools bridge tools are registered through `devtoolsTools()`, not inline.
+  assert(names.includes("denext_component_tree"));
+  assert(names.includes("denext_why_render"));
+  assert(names.includes("denext_hook_state"));
   for (const t of res?.result.tools) assertEquals(t.inputSchema.type, "object");
 });
 

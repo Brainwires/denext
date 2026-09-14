@@ -18,6 +18,7 @@
 // entries, so production never pulls it in; it also no-ops unless `__denextDev`.
 
 import { type DenextDevtoolsApi, installInspector } from "./devtools-inspect.ts";
+import { installInspectSink } from "./devtools-inspect-sink.ts";
 import { emptyTabCache, type PanelCtx, type PanelState } from "./devtools-panel/ctx.ts";
 import {
   createDataPoller,
@@ -132,6 +133,10 @@ export function installDevtools(): void {
   if (!api) return;
   installed = true;
   mount(api, document);
+  // The MCP bridge: push each settled commit's component tree to the dev server, so
+  // `denext_component_tree`/`denext_why_render`/`denext_hook_state` can read this page
+  // out-of-process. Independent of the panel — it runs whether or not it is opened.
+  installInspectSink(api);
   announceReady();
 }
 

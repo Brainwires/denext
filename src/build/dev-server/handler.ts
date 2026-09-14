@@ -17,7 +17,12 @@ import {
   devStateResponse,
   openInEditorResponse,
 } from "./dev-endpoints.ts";
-import { devCacheResponse, devRoutesResponse } from "./devtools-endpoints.ts";
+import {
+  devCacheResponse,
+  devInspectRead,
+  devInspectSink,
+  devRoutesResponse,
+} from "./devtools-endpoints.ts";
 import { getManifest, getUnbundled } from "./manifest.ts";
 import { broadcastError, reloadStream } from "./reload.ts";
 import { DEV_RELOAD_SCRIPT } from "./reload-script.ts";
@@ -25,6 +30,7 @@ import { devErrorPage } from "./error-page.ts";
 import { serveImmutableAsset } from "../../server/serve-utils.ts";
 import {
   DEV_CACHE_PATH,
+  DEV_INSPECT_PATH,
   DEV_LOG_PATH,
   DEV_RELOAD_JS_PATH,
   DEV_ROUTES_PATH,
@@ -89,6 +95,11 @@ function gatedDevEndpoint(
       return devCacheResponse(st);
     case DEV_ROUTES_PATH:
       return devRoutesResponse(st, url);
+    case DEV_INSPECT_PATH:
+      // POST = the in-page DevTools sink, GET = the MCP bridge's read; nothing else.
+      if (request.method === "POST") return devInspectSink(st, request);
+      if (request.method === "GET") return devInspectRead(st, url);
+      return new Response("method not allowed", { status: 405, headers: { allow: "GET, POST" } });
     default:
       return null; // gate passed; another dev handler (or the app) serves it
   }

@@ -317,6 +317,96 @@
           "required": false
         }
       ]
+    },
+    {
+      "name": "denext_component_tree",
+      "description": "Show the LIVE component tree of a running dev page — every component with its source location, badges and render count, as the in-page DevTools last pushed it. Use it to see what actually mounted. Requires `deno task dev` to be running AND the app open in a browser (the tree is pushed from the page, so it is a snapshot, and the answer says how old it is).",
+      "params": [
+        {
+          "name": "url",
+          "type": "string",
+          "description": "Which page's tree to read, e.g. `/blog/hello` (default: the most recent).",
+          "required": false
+        },
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: .)",
+          "required": false
+        },
+        {
+          "name": "filter",
+          "type": "string",
+          "description": "Only components whose name contains this (and their ancestors).",
+          "required": false
+        },
+        {
+          "name": "depth",
+          "type": "number",
+          "description": "How deep to render (default 12).",
+          "required": false
+        },
+        {
+          "name": "maxNodes",
+          "type": "number",
+          "description": "How many components to render (default 200).",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_why_render",
+      "description": "Explain why a component in a running dev page last re-rendered — which props, hooks and contexts changed, and how many renders it has done. Use it to chase a re-render loop or a missing memo. Requires `deno task dev` to be running AND the app open in a browser (the tree is pushed from the page, so it is a snapshot, and the answer says how old it is).",
+      "params": [
+        {
+          "name": "component",
+          "type": "string",
+          "description": "Component name, e.g. `Counter`.",
+          "required": true
+        },
+        {
+          "name": "url",
+          "type": "string",
+          "description": "Which page's tree to read, e.g. `/blog/hello` (default: the most recent).",
+          "required": false
+        },
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: .)",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_hook_state",
+      "description": "Read a component's live hook cells in a running dev page — each cell's name, the hook that produced it, its current value and its deps. Use it to see the state a component actually holds. Requires `deno task dev` to be running AND the app open in a browser (the tree is pushed from the page, so it is a snapshot, and the answer says how old it is).",
+      "params": [
+        {
+          "name": "component",
+          "type": "string",
+          "description": "Component name, e.g. `Counter`.",
+          "required": true
+        },
+        {
+          "name": "index",
+          "type": "number",
+          "description": "Show only this hook index (default: all).",
+          "required": false
+        },
+        {
+          "name": "url",
+          "type": "string",
+          "description": "Which page's tree to read, e.g. `/blog/hello` (default: the most recent).",
+          "required": false
+        },
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: .)",
+          "required": false
+        }
+      ]
     }
   ],
   "resources": [

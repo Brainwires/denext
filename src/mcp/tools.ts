@@ -13,6 +13,7 @@ import { resolveProject } from "../build/paths.ts";
 import { scanRoutes } from "../router/manifest.ts";
 import type { DevEvent } from "../build/dev-events.ts";
 import { fetchDevState } from "./dev-client.ts";
+import { devtoolsTools } from "./devtools.ts";
 import { renderComponent, renderRoute, routeMap } from "./inspect.ts";
 import { profileApp } from "../profile/core.ts";
 import type { Budget } from "../profile/budget.ts";
@@ -525,6 +526,9 @@ export const TOOLS: readonly Tool[] = [
       };
     },
   },
+  // The DevTools bridge: the component tree / render reasons / hook cells a RUNNING dev
+  // page pushed to the dev server (see ./devtools.ts).
+  ...devtoolsTools(projectDir),
 ];
 
 /**
@@ -543,6 +547,8 @@ export const TOOL_GROUPS: Readonly<Record<string, readonly string[]>> = {
   profile: ["denext_profile"],
   /** The running dev server's live event log. */
   dev: ["denext_dev_logs"],
+  /** The in-page DevTools bridge: a running page's live component tree, renders, hooks. */
+  devtools: ["denext_component_tree", "denext_why_render", "denext_hook_state"],
   /** denext's own docs search (API reference + authoring guide). */
   docs: ["denext_search_docs"],
   /** Project-codebase search: index, query, find-definition, find-references. */
