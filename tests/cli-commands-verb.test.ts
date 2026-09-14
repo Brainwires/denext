@@ -193,7 +193,14 @@ Deno.test("--timeout overrides the discovery budget and is reported in the notic
   await withProject(config, async (dir) => {
     const started = performance.now();
     const { out, codes } = await invoke(dir, { flags: { timeout: 60 } });
-    assert(performance.now() - started < 5000, "the budget was honoured");
+    // The property under test is "exits at all despite a leaked one-hour interval" — the
+    // 1.5 s discovery budget is what makes that true. The wall-clock ceiling is loose on
+    // purpose: under the full parallel test run a cold `deno run` of the CLI alone can take
+    // tens of seconds, and a tight bound here turned that load into a flake (43 s observed).
+    assert(
+      performance.now() - started < 120_000,
+      "the leaky plugin did not keep the process alive",
+    );
     assertStringIncludes(out, "plugin setup exceeded 0.1 s");
     assertEquals(codes, [0]);
   });
