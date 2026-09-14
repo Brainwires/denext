@@ -75,8 +75,10 @@ export async function mfaPendingFor(
   user: AuthUser,
 ): Promise<boolean> {
   if (options.mfa.required === "always") return true;
-  const record = await options.adapter?.getMfa?.(user.id);
-  return record?.confirmedAt !== undefined;
+  // The same test every MFA check uses: a confirmed record that still holds a secret. An
+  // adapter whose `setMfa` merges fields could keep `confirmedAt` on a disabled (secret-less)
+  // record, which must not leave that user pending forever.
+  return isConfirmed(await options.adapter?.getMfa?.(user.id));
 }
 
 /** The adapter when it implements the whole MFA group, else `undefined`. */
