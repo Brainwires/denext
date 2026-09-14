@@ -26,12 +26,12 @@
     },
     {
       "name": "denext_generate",
-      "description": "Scaffold a denext artifact into a project (writes files). kind = page|route|layout|component|api|action|test|docker.",
+      "description": "Scaffold a denext artifact into a project (writes files). kind = page|route|layout|loading|error|not-found|component|api|action|middleware|task|test|docker. Existing files are never overwritten unless force is set; pass dryRun to see the planned files and their contents without writing anything.",
       "params": [
         {
           "name": "kind",
           "type": "string",
-          "description": "page|route|layout|component|api|action|test|docker",
+          "description": "page|route|layout|loading|error|not-found|component|api|action|middleware|task|test|docker",
           "required": true
         },
         {
@@ -44,6 +44,18 @@
           "name": "dir",
           "type": "string",
           "description": "Project directory (default: current directory).",
+          "required": false
+        },
+        {
+          "name": "force",
+          "type": "boolean",
+          "description": "Overwrite files that already exist.",
+          "required": false
+        },
+        {
+          "name": "dryRun",
+          "type": "boolean",
+          "description": "Plan only: print what would be written.",
           "required": false
         }
       ]

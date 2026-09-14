@@ -8,26 +8,54 @@
 import { dirname, join, relative } from "@std/path";
 import { resolveProject } from "./paths.ts";
 
+/**
+ * Every artifact `denext generate` can scaffold, in the order the CLI lists them. This is the
+ * single source of truth: the CLI verb, the MCP tool's enum and the `denext ui` picker all read
+ * it, so a new kind can never be half-registered.
+ */
+export const GENERATE_KINDS = [
+  "page",
+  "route",
+  "layout",
+  "loading",
+  "error",
+  "not-found",
+  "component",
+  "api",
+  "action",
+  "middleware",
+  "task",
+  "test",
+  "docker",
+] as const;
+
 /** The artifacts `denext generate` can scaffold. */
-export type GenerateKind =
-  | "page"
-  | "route"
-  | "layout"
-  | "loading"
-  | "error"
-  | "not-found"
-  | "component"
-  | "api"
-  | "action"
-  | "middleware"
-  | "task"
-  | "test"
-  | "docker";
+export type GenerateKind = typeof GENERATE_KINDS[number];
+
+/** One file a generate run would produce. */
+export interface GeneratePreviewFile {
+  /** Absolute path the file would be written to. */
+  readonly path: string;
+  /** The file's full contents. */
+  readonly contents: string;
+}
+
+/** How a generate run treats the filesystem. */
+export interface GenerateOptions {
+  /** Overwrite files that already exist (default: never overwrite). */
+  readonly force?: boolean;
+  /** Compute the plan without touching disk; the result carries `preview`. */
+  readonly dryRun?: boolean;
+}
 
 /** Result of a generate run (for the CLI to print). */
 export interface GenerateResult {
+  /** Files written (on a dry run: the files that would be written). */
   readonly written: string[];
+  /** Files left alone because they already exist. */
   readonly skipped: string[];
+  /** On a dry run, every planned file with its contents. */
+  readonly preview?: GeneratePreviewFile[];
 }
 
 /** PascalCase identifier from a path/name segment (`blog/[slug]` → `Slug`). */
@@ -337,34 +365,36 @@ desktop-icon.png
 }
 
 /**
- * Generate `Dockerfile`, `docker-compose.yml`, and `.dockerignore` at the project
- * root. `mode` follows `override` (server | spa) or is auto-detected from the
- * denext config. Existing files are never overwritten.
+ * The `Dockerfile`, `docker-compose.yml` and `.dockerignore` a `generate docker` run would
+ * produce at the project root. `mode` follows `override` (server | spa) or is auto-detected
+ * from the denext config.
  */
-async function generateDocker(
+async function dockerPlan(
   projectDir: string,
   override: string | undefined,
-  written: string[],
-  skipped: string[],
-): Promise<void> {
+): Promise<GeneratePreviewFile[]> {
   const mode = await detectDockerMode(projectDir, override);
-  const dockerfile = mode === "static" ? dockerfileStaticSource() : dockerfileServerSource();
-  await writeIfAbsent(join(projectDir, "Dockerfile"), dockerfile, written, skipped);
-  await writeIfAbsent(
-    join(projectDir, "docker-compose.yml"),
-    dockerComposeSource(mode),
-    written,
-    skipped,
-  );
-  await writeIfAbsent(join(projectDir, ".dockerignore"), dockerignoreSource(), written, skipped);
+  return [
+    {
+      path: join(projectDir, "Dockerfile"),
+      contents: mode === "static" ? dockerfileStaticSource() : dockerfileServerSource(),
+    },
+    { path: join(projectDir, "docker-compose.yml"), contents: dockerComposeSource(mode) },
+    { path: join(projectDir, ".dockerignore"), contents: dockerignoreSource() },
+  ];
 }
 
 /**
  * Join `parts` under `base` and refuse to escape it — a user-supplied `name` like
  * `../../evil` must not let `generate` write outside the project. Throws a
  * `denext:`-prefixed error (printed cleanly by the CLI) on traversal.
+ *
+ * @param base The directory the result must stay inside.
+ * @param parts Path segments to join under it.
+ * @returns The joined absolute path.
+ * @throws When the joined path escapes `base`.
  */
-function safeJoin(base: string, ...parts: string[]): string {
+export function safeJoin(base: string, ...parts: string[]): string {
   const target = join(base, ...parts);
   const rel = relative(base, target);
   if (rel === ".." || rel.startsWith(".." + "/") || rel.startsWith(".." + "\\")) {
@@ -375,43 +405,50 @@ function safeJoin(base: string, ...parts: string[]): string {
   return target;
 }
 
-/** Write `content` to `path` unless it exists; record into `written`/`skipped`. */
+/** Whether `path` already exists on disk. */
+async function exists(path: string): Promise<boolean> {
+  try {
+    await Deno.stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Write `content` to `path` unless it exists (or `force` says to overwrite); record the
+ * outcome into `written`/`skipped`.
+ */
 async function writeIfAbsent(
   path: string,
   content: string,
   written: string[],
   skipped: string[],
+  force = false,
 ): Promise<void> {
-  try {
-    await Deno.stat(path);
+  if (!force && await exists(path)) {
     skipped.push(path);
     return;
-  } catch { /* absent — write it */ }
+  }
   await Deno.mkdir(dirname(path), { recursive: true });
   await Deno.writeTextFile(path, content);
   written.push(path);
 }
 
 /**
- * Scaffold one artifact of `kind` named `name` into the project at `projectDir`.
- * `page`/`route` are synonyms. Route-shaped kinds (page/route/layout/api) treat
- * `name` as a route path under `app/`; `component`/`action` place files under the
- * source base (`src/` when present, else the project root).
+ * The files one generate run would produce, in write order — the pure half of
+ * {@linkcode generateArtifact}, so a dry run and a real run can never disagree about what
+ * gets written.
  */
-export async function generateArtifact(
+async function planArtifacts(
   projectDir: string,
   kind: GenerateKind,
   name: string,
-): Promise<GenerateResult> {
-  const written: string[] = [];
-  const skipped: string[] = [];
+): Promise<GeneratePreviewFile[]> {
   // Docker assets live at the project root and don't need an App Router `app/` dir (a SPA
   // app may not have one), so handle them before `resolveProject`. `name`, when present,
   // is the mode override (`server` | `spa`).
-  if (kind === "docker") {
-    await generateDocker(projectDir, name || undefined, written, skipped);
-    return { written, skipped };
-  }
+  if (kind === "docker") return await dockerPlan(projectDir, name || undefined);
   const paths = await resolveProject(projectDir);
   const segment = name.replace(/^[\\/]+|[\\/]+$/g, "");
   // Reject `..` path components early with a clear message (safeJoin also guards).
@@ -419,7 +456,40 @@ export async function generateArtifact(
     throw new Error(`denext: generate name "${name}" must not contain ".." path segments.`);
   }
   const target = artifactTarget(kind, name, segment, projectDir, paths.appDir);
-  if (target) await writeIfAbsent(target.path, target.content, written, skipped);
+  return target ? [{ path: target.path, contents: target.content }] : [];
+}
+
+/**
+ * Scaffold one artifact of `kind` named `name` into the project at `projectDir`.
+ * `page`/`route` are synonyms. Route-shaped kinds (page/route/layout/api) treat
+ * `name` as a route path under `app/`; `component`/`action` place files under the
+ * source base (`src/` when present, else the project root).
+ *
+ * @param projectDir The project to scaffold into.
+ * @param kind The artifact kind (one of {@linkcode GENERATE_KINDS}).
+ * @param name The route/component/action name (the mode override for `docker`).
+ * @param options `force` overwrites existing files; `dryRun` plans without touching disk.
+ * @returns What was written and what was skipped — plus `preview` on a dry run.
+ */
+export async function generateArtifact(
+  projectDir: string,
+  kind: GenerateKind,
+  name: string,
+  options: GenerateOptions = {},
+): Promise<GenerateResult> {
+  const plan = await planArtifacts(projectDir, kind, name);
+  const force = options.force === true;
+  const written: string[] = [];
+  const skipped: string[] = [];
+  if (options.dryRun === true) {
+    for (const file of plan) {
+      (force || !(await exists(file.path)) ? written : skipped).push(file.path);
+    }
+    return { written, skipped, preview: plan };
+  }
+  for (const file of plan) {
+    await writeIfAbsent(file.path, file.contents, written, skipped, force);
+  }
   return { written, skipped };
 }
 
