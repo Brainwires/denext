@@ -7,7 +7,7 @@
 // calls `createRoot(el).render(<App/>)`, and its components live in ordinary source
 // modules denext never authored. So there is nowhere to hang the registrations.
 //
-// This plugin supplies them. On the esbuild `onLoad` for each app `.tsx`/`.jsx`
+// This plugin supplies them. On the esbuild `onLoad` for each app `.tsx`/`.jsx`/`.ts`
 // source, it appends a `registerFamily(Name, "<sourceUrl>#Name")` call for every
 // top-level component-shaped declaration (a PascalCase function / class, or a const
 // bound to an arrow/function expression). The family id is the **source** file URL —
@@ -92,9 +92,17 @@ export function refreshFooter(
 }
 
 /**
+ * The modules SPA dev instruments: component source AND `.ts` modules, so a custom-hook
+ * module (`useCart.ts`) carries its `__dnxMeta` sidecar and a component's breadcrumb can
+ * expand it across the import (the unbundled App Router transform instruments `.ts` too).
+ */
+const SPA_REFRESH_FILTER = /\.(tsx|jsx|ts)$/;
+
+/**
  * A dev-only esbuild plugin that instruments each app source module with Fast
  * Refresh family registrations (see the module header). Registered as an
  * `extraPlugin` so its `onLoad` front-runs the deno-loader's own file load.
+ * `.ts` modules are claimed too (with esbuild's `ts` loader) for their hook metadata.
  *
  * @param projectDir Absolute app root — only files under it are instrumented (npm
  *   deps under `node_modules`, and the generated `.entries` wrappers, are skipped).
@@ -109,5 +117,5 @@ export function spaRefreshPlugin(projectDir: string): esbuild.Plugin {
     const { names, metas } = collectComponents(parsed, url);
     const footer = refreshFooter(url, names, metas);
     return footer ? source + footer : null; // nothing to register or record → unchanged
-  });
+  }, { filter: SPA_REFRESH_FILTER });
 }

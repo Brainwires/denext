@@ -67,15 +67,12 @@ async function compatClientEntries(ctx: BuildContext): Promise<void> {
     clientDir: ctx.clientDir,
     entries: clientRoutes.map((route) => ({
       id: routeId(route.routePath),
-      source: generateRouteEntry(
-        route,
-        false,
-        false,
-        ctx.paths.instrumentationClientPath,
-        ctx.classRuntime,
-        ctx.usesActivity,
-        ctx.usesViewTransition,
-      ),
+      source: generateRouteEntry(route, {
+        instrumentationClient: ctx.paths.instrumentationClientPath,
+        classRuntime: ctx.classRuntime,
+        usesActivity: ctx.usesActivity,
+        usesViewTransition: ctx.usesViewTransition,
+      }),
     })),
   });
   for (const route of clientRoutes) {

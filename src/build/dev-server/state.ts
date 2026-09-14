@@ -189,6 +189,13 @@ export interface DevState {
   readonly chunkCache: Map<string, string>;
   /** In-flight route bundles, so a burst of first hits spawns one `deno bundle`. */
   readonly routeInFlight: Map<string, Promise<string>>;
+  /**
+   * Bundled-path DevTools metadata (`route-meta.ts`): each route-structural file's
+   * `__dnxMeta` calls by absolute path, valid while the file's mtime is unchanged — so a
+   * rebuild re-parses only the files that were edited. Deliberately NOT cleared per
+   * generation (the mtime is the invalidation).
+   */
+  readonly routeMetaCache: Map<string, { mtimeMs: number; footer: string }>;
 
   middlewareRunner: MiddlewareRunner;
   middlewareGen: number;
@@ -273,6 +280,7 @@ export function createDevState(options: DevServerOptions): DevState {
     bundleCache: new Map(),
     chunkCache: new Map(),
     routeInFlight: new Map(),
+    routeMetaCache: new Map(),
     middlewareRunner: null,
     middlewareGen: -1,
     instrumentation: {},

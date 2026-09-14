@@ -13,8 +13,9 @@
 // `metaFooter()` serialises the result as `__dnxMeta("<url>#<Name>", {…})` calls the
 // dev-only client registry (`src/client/devtools-meta.ts`) consumes.
 //
-// It is dev-only by construction: the only emitters are the two dev transforms
-// (the SPA Fast Refresh esbuild plugin and the unbundled dev per-module transform),
+// It is dev-only by construction: the only emitters are the dev transforms (the SPA Fast
+// Refresh esbuild plugin, the unbundled dev per-module transform) and the BUNDLED App
+// Router dev entry (`dev-server/route-meta.ts` → `generateRouteEntry`'s dev-only footer),
 // so a production bundle contains no reference to `registerComponentMeta` at all.
 
 import {
@@ -295,27 +296,92 @@ export function collectComponentMeta(
 ): Record<string, ComponentDevMeta> {
   const decls = componentDecls(parsed);
   if (decls.length === 0) return {};
-  const { ctx } = parsed;
-  const index = lineIndex(ctx.bytes);
-  const imports = importBindings(parsed.body, moduleUrl);
+  const scan = scanOf(parsed, moduleUrl);
   const metas: Record<string, ComponentDevMeta> = {};
-  for (const decl of decls) {
-    const pos = positionAt(ctx.bytes, index, startOf(ctx, decl.ident));
-    const hooks = hookCalls(decl.fn, ctx, imports).slice(0, MAX_HOOKS).map((h) => ({
-      hook: h.hook,
-      name: h.name,
-      line: positionAt(ctx.bytes, index, h.at).line,
-      ...(h.from ? { from: h.from } : {}),
-    }));
-    metas[decl.name] = { name: decl.name, line: pos.line, column: pos.column, hooks };
-  }
+  for (const decl of decls) metas[decl.name] = declMeta(scan, decl.name, decl.ident, decl.fn);
   const def = defaultExportName(parsed.body);
   if (def && HOOK_RE.test(def) && metas[def]) metas.default = metas[def];
   return metas;
 }
 
+/** What one module's metadata pass shares across its declarations. */
+interface MetaScan {
+  ctx: Ctx;
+  index: number[];
+  imports: ImportTable;
+}
+
+function scanOf(parsed: ParsedModule, moduleUrl: string | undefined): MetaScan {
+  const { ctx } = parsed;
+  return { ctx, index: lineIndex(ctx.bytes), imports: importBindings(parsed.body, moduleUrl) };
+}
+
+/** The metadata of one callable: `at` is the node reported as its position, `fn` is scanned. */
+function declMeta(scan: MetaScan, name: string, at: Node, fn: Node): ComponentDevMeta {
+  const { ctx, index, imports } = scan;
+  const pos = positionAt(ctx.bytes, index, startOf(ctx, at));
+  const hooks = hookCalls(fn, ctx, imports).slice(0, MAX_HOOKS).map((h) => ({
+    hook: h.hook,
+    name: h.name,
+    line: positionAt(ctx.bytes, index, h.at).line,
+    ...(h.from ? { from: h.from } : {}),
+  }));
+  return { name, line: pos.line, column: pos.column, hooks };
+}
+
+/** The module's `export default <function|class|arrow>` node, named or anonymous. */
+function defaultCallable(body: Node[]): Node | undefined {
+  for (const stmt of body) {
+    if (stmt?.type === "ExportDefaultDeclaration") {
+      const t = stmt.decl?.type;
+      return t === "FunctionExpression" || t === "ClassExpression" ? stmt.decl : undefined;
+    }
+    if (stmt?.type === "ExportDefaultExpression") {
+      return isCallableInit(stmt.expression) ? stmt.expression : undefined;
+    }
+  }
+  return undefined;
+}
+
+/** The file stem of a module URL (`file:///app/blog/page.tsx` → `page`). */
+function fileStem(moduleUrl: string): string {
+  const base = moduleUrl.slice(moduleUrl.lastIndexOf("/") + 1);
+  const dot = base.indexOf(".");
+  return decodeURIComponent(dot > 0 ? base.slice(0, dot) : base);
+}
+
+/**
+ * The dev metadata of a ROUTE-STRUCTURAL module (page, layout, template, loading, error,
+ * slot page): {@link collectComponentMeta}, plus the default export keyed `default` — the
+ * `"<url>#default"` family id the bundled route entry registers it under
+ * (`routeRefreshBlock` in `bundle.ts`). A tracked default (`export default function Page`,
+ * `export default Page`) reuses its own record (`name` stays `Page`); a lowercase-named or
+ * ANONYMOUS default (`export default function () {}`, `export default () => …`) is
+ * recorded from its own node, named after its identifier or else the file stem (`page`).
+ *
+ * @param parsed The module parsed by `parseModule()`.
+ * @param moduleUrl The module's `file://` URL (the family id prefix).
+ * @returns Binding name → its metadata, `default` included when the module has one.
+ */
+export function routeModuleMeta(
+  parsed: ParsedModule,
+  moduleUrl: string,
+): Record<string, ComponentDevMeta> {
+  const metas = collectComponentMeta(parsed, moduleUrl);
+  const def = defaultExportName(parsed.body);
+  if (def && metas[def]) {
+    metas.default = metas[def];
+    return metas;
+  }
+  const fn = defaultCallable(parsed.body);
+  if (!fn) return metas;
+  const name = (fn.identifier?.value as string | undefined) ?? fileStem(moduleUrl);
+  metas.default = declMeta(scanOf(parsed, moduleUrl), name, fn.identifier ?? fn, fn);
+  return metas;
+}
+
 /** Whether metadata emission is enabled (`DENEXT_DEV_META=0` is the kill switch). */
-function metaEnabled(): boolean {
+export function metaEnabled(): boolean {
   try {
     return Deno.env.get("DENEXT_DEV_META") !== "0";
   } catch {
@@ -335,6 +401,25 @@ function metaEnabled(): boolean {
  * @returns The footer source, or `""`.
  */
 export function metaFooter(sourceUrl: string, metas: Record<string, ComponentDevMeta>): string {
+  const body = metaCalls(sourceUrl, metas);
+  return body ? META_IMPORT + body : "";
+}
+
+/** The import every metadata footer opens with (`__dnxMeta` never shadows a user binding). */
+export const META_IMPORT =
+  `import { registerComponentMeta as __dnxMeta } from "denext/client-runtime";\n`;
+
+/**
+ * Just the `__dnxMeta("<url>#<Name>", {…});` lines of one module (newline-terminated),
+ * without {@link META_IMPORT} — so several modules' calls can share ONE import (the bundled
+ * route entry's footer). `""` when there is nothing to emit, the module's calls exceed
+ * {@link MAX_META_BYTES}, or `DENEXT_DEV_META=0`.
+ *
+ * @param sourceUrl The module's `file://` URL (the family id prefix).
+ * @param metas The module's metadata.
+ * @returns The calls, or `""`.
+ */
+export function metaCalls(sourceUrl: string, metas: Record<string, ComponentDevMeta>): string {
   const entries = Object.entries(metas);
   if (entries.length === 0 || !metaEnabled()) return "";
   const body = entries
@@ -345,6 +430,5 @@ export function metaFooter(sourceUrl: string, metas: Record<string, ComponentDev
   // UTF-8 bytes, not `.length`: a module of non-ASCII names measures up to 3× larger on
   // the wire than in code units, and this cap exists to bound what the dev bundle carries.
   if (ENCODER.encode(body).length > MAX_META_BYTES) return ""; // a huge module: no metadata
-  return `import { registerComponentMeta as __dnxMeta } from "denext/client-runtime";\n` +
-    body + "\n";
+  return body + "\n";
 }

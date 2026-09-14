@@ -17,8 +17,12 @@ import {
   collectComponentMeta,
   MAX_HOOKS,
   MAX_META_BYTES,
+  META_IMPORT,
   metaFooter,
 } from "../src/build/devtools-meta.ts";
+import { generateRouteEntry } from "../src/build/bundle.ts";
+import type { PageRoute } from "../src/router/manifest.ts";
+import { parsePattern } from "../src/router/segments.ts";
 import type { ComponentDevMeta } from "../src/client/devtools-meta.ts";
 import {
   collectComponents,
@@ -509,6 +513,18 @@ Deno.test("unbundled transform: an import's `from` is exactly the importee's fam
   }
 });
 
+/** Symbols no production module may contain (each is counted, and the count must be 0). */
+const DEVTOOLS_SYMBOLS = [
+  "__dnxMeta",
+  "registerComponentMeta",
+  "__dnxRegisterFamily",
+  "installDevtools",
+  "devtools-panel",
+];
+
+/** How many times `symbol` occurs in `code`. */
+const occurrences = (code: string, symbol: string): number => code.split(symbol).length - 1;
+
 Deno.test("production SPA transforms emit no DevTools metadata (DCE guard)", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext-devtools-prod-" });
   try {
@@ -524,8 +540,8 @@ Deno.test("production SPA transforms emit no DevTools metadata (DCE guard)", asy
     );
     assert(plugin, "the feature fold is enabled for this fixture config");
     const out = (await onLoadOf(plugin)({ path: file }))!.contents;
-    for (const symbol of ["__dnxMeta", "registerComponentMeta", "__dnxRegisterFamily"]) {
-      assert(!out.includes(symbol), `${symbol} must never reach a production module`);
+    for (const symbol of DEVTOOLS_SYMBOLS) {
+      assertEquals(occurrences(out, symbol), 0, `${symbol} must never reach a production module`);
     }
     // And the wiring itself: the refresh (hence metadata) plugin is dev-gated at its one call site.
     const bundleSrc = await Deno.readTextFile(
@@ -534,6 +550,51 @@ Deno.test("production SPA transforms emit no DevTools metadata (DCE guard)", asy
     assertStringIncludes(bundleSrc, "if (dev) return [spaRefreshPlugin(projectDir)];");
   } finally {
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("production App Router route entries emit no DevTools metadata (DCE guard)", async () => {
+  const route: PageRoute = {
+    kind: "page",
+    pattern: parsePattern(""),
+    routePath: "/",
+    filePath: "/app/page.tsx",
+    layoutChain: ["/app/layout.tsx"],
+    templateChain: [],
+    loading: "/app/loading.tsx",
+    error: "/app/error.tsx",
+    notFound: null,
+    forbidden: null,
+    unauthorized: null,
+  };
+  // Even when a footer is (wrongly) handed to a production entry, it must not be emitted.
+  const devMetaFooter = `${META_IMPORT}__dnxMeta("file:///app/page.tsx#default", {});\n`;
+  const entries = [
+    generateRouteEntry(route, { devMetaFooter }),
+    generateRouteEntry(route, {
+      devMetaFooter,
+      classRuntime: "eager",
+      usesActivity: true,
+      usesViewTransition: true,
+      instrumentationClient: "/app/instrumentation-client.ts",
+    }),
+  ];
+  for (const entry of entries) {
+    for (const symbol of DEVTOOLS_SYMBOLS) {
+      assertEquals(occurrences(entry, symbol), 0, `${symbol} in a production route entry`);
+    }
+  }
+  // And the wiring: only the dev server's bundled route path computes the footer — the
+  // production build/export call sites never reference it.
+  for (
+    const rel of [
+      "build-pipeline/routes.ts",
+      "build-pipeline/compat.ts",
+      "export-pipeline/assets.ts",
+    ]
+  ) {
+    const src = await Deno.readTextFile(new URL(`../src/build/${rel}`, import.meta.url));
+    assertEquals(occurrences(src, "devMetaFooter") + occurrences(src, "routeDevMeta"), 0, rel);
   }
 });
 
