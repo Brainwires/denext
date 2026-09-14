@@ -23,8 +23,26 @@ and this project adheres to
   `__proto__` / `constructor` / `prototype` keys and values that aren't plain JSON (`NaN`,
   functions, `Date`s) instead of silently coercing them.
 
+### Changed
+
+- `verifyEmail()` answers `{ ok: true, user }` or `{ ok: false, error: "invalid_token" }`
+  (`VerifyEmailResult`, exported from `denext/server`) — the shape `resetPassword()` has —
+  instead of `AdapterUser | null`, so later failure reasons can be added without a breaking
+  change.
+
 ### Fixed
 
+- Config writes (`denext ui`, `denext plugin add`) keep a leading byte-order mark; it was
+  silently dropped from every rewritten `denext.config.ts`.
+- `denext/mobile`: `openExternal()` rejects for a refused URL instead of throwing
+  synchronously from a function that returns a promise.
+- SPA dev: the first-party Fast Refresh plugin no longer treats a sibling directory whose name
+  starts with the project's (`/app-2` next to `/app`) as project source.
+- `denextAuth`: `mfa.freshness: 0` is kept (every action that demands a fresh second factor
+  asks for a code) instead of silently becoming the 900-second default.
+- `denext ui`: a confirmed config, plugin-options or compose write re-reads the file just
+  before the atomic rename and answers `409` if it changed after the form's stamp was checked,
+  instead of silently replacing a concurrent edit.
 - The next.config evaluator (`denext migrate` and the `denext ui` next.config panel) reads a
   CommonJS `next.config.js` (`module.exports`) and calls a function-form config the way Next.js
   does, `(phase, { defaultConfig })`.
