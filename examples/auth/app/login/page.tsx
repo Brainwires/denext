@@ -14,6 +14,8 @@ const ERRORS: Record<string, string> = {
   // A sign-in link that is wrong, already used or expired (the email provider's redeem).
   Verification: "That sign-in link is invalid, already used, or expired — ask for a new one.",
   AccessDenied: "That sign-in was refused.",
+  // A two-factor change needs a recent sign-in (account/security/actions.ts).
+  reauth: "Sign in again to change your two-factor settings.",
 };
 
 /** What `?<name>=1` reports: the outcome of the flow that redirected here. */

@@ -8,7 +8,9 @@
  *   generic `401` — or, for a plain form post, a `303` back to `pages.mfa` with
  *   `?error=CredentialsSignin`.
  * - `POST {basePath}/mfa/enroll` — start a TOTP enrollment: `{ secret, uri }` (render the
- *   URI as a QR code). `409` when a confirmed factor already exists.
+ *   URI as a QR code). `409` when a confirmed factor already exists. A complete session must
+ *   have signed in within `mfa.freshness` (at least five minutes; `authTime`), else
+ *   `403 { error: "reauth_required" }`.
  * - `POST {basePath}/mfa/confirm` — `{ code }`: confirm the enrollment and receive the
  *   backup codes, once: `{ ok: true, backupCodes }`. Confirming from a pending session
  *   (enrollment during the step-up, under `mfa.required: "always"`) also completes the
@@ -43,6 +45,7 @@ import {
   enrollTotp,
   hasFreshFactor,
   hasMfaAdapter,
+  recentlyAuthenticated,
   verifySecondFactor,
 } from "./mfa.ts";
 import { clientIpBucket, consumeHitBudget, mfaLimiter, subjectBucketKeys } from "./rate-limit.ts";
@@ -187,6 +190,11 @@ async function handleStepUp(ctx: AuthRouteContext): Promise<Response | null> {
 async function handleEnroll(ctx: AuthRouteContext): Promise<Response | null> {
   const session = await mfaCaller(ctx, mayEnrol(ctx));
   if (!session || session instanceof Response) return session;
+  // A complete session must have signed in recently: a stolen one must not be able to set
+  // up a factor of its own and lock the owner out. (A pending session is minutes old.)
+  if (!session.mfaPending && !recentlyAuthenticated(ctx.options, session)) {
+    return json({ error: "reauth_required" }, 403);
+  }
   const enrollment = await enrollTotp(ctx.config, session.user);
   return enrollment ? json(enrollment) : json({ error: "already enrolled" }, 409);
 }
