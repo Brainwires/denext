@@ -4567,7 +4567,7 @@
           "name": "AuthProvider",
           "slug": "AuthProvider",
           "kind": "typeAlias",
-          "signature": "type AuthProvider = OAuthProvider | CredentialsProvider",
+          "signature": "type AuthProvider = OAuthProvider | CredentialsProvider | EmailProvider",
           "doc": "Any configured provider.",
           "docFull": "Any configured provider.",
           "params": [],

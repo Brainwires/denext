@@ -3066,7 +3066,7 @@
       "title": "AuthProvider",
       "module": "denext/server",
       "url": "/docs/api/denext-server/AuthProvider",
-      "text": "AuthProvider type AuthProvider = OAuthProvider | CredentialsProvider Any configured provider.",
+      "text": "AuthProvider type AuthProvider = OAuthProvider | CredentialsProvider | EmailProvider Any configured provider.",
       "denextOnly": true
     },
     {
