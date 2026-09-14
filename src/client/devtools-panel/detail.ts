@@ -1,7 +1,7 @@
 // DevTools panel: the component detail pane (badges, why-did-this-render diff, source link,
 // owner stack, editable props/hooks, contexts).
 
-import type { InspectHook, InspectNode } from "../devtools-inspect.ts";
+import type { InspectHook, InspectNode, SerializedValue } from "../devtools-inspect.ts";
 import { findNode, h4, type PanelCtx } from "./ctx.ts";
 import { el } from "./styles.ts";
 import { hookEditor, propEditor, renderValue, sourceLink } from "./values.ts";
@@ -60,9 +60,27 @@ function renderProps(ctx: PanelCtx, sel: InspectNode, reason: RenderReason): voi
   detailPane.append(reset);
 }
 
-/** Deps / cleanup annotations (effect/memo/callback/deferred). */
+/** A `useDebugValue` label as text: its preview, or `[a, b]` when several were recorded. */
+function debugText(debug: SerializedValue): string {
+  return debug.entries
+    ? `[${debug.entries.map((e) => e.value.preview).join(", ")}]`
+    : debug.preview;
+}
+
+/** Deps / cleanup / debug-value annotations (effect/memo/callback/deferred, `useDebugValue`). */
 function renderHookAnnotations(ctx: PanelCtx, hk: InspectHook): void {
   const { doc, S, detailPane } = ctx;
+  if (hk.debug) {
+    detailPane.append(
+      el(
+        doc,
+        "div",
+        S.kv,
+        el(doc, "span", S.dim, "debug"),
+        el(doc, "span", S.v, debugText(hk.debug)),
+      ),
+    );
+  }
   if (hk.deps) {
     const depsText = hk.deps.length === 0
       ? "[] (once)"

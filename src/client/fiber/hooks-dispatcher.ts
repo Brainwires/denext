@@ -41,10 +41,18 @@ export function enterComponentRender(inst: Fiber | null, index: number): void {
   hookIndex = index;
 }
 
-/** Rewind the hook cursor for a (re-)render pass and clear the render-phase-update flag. */
+/**
+ * Rewind the hook cursor for a (re-)render pass and clear the render-phase-update flag.
+ * The pass's dev `useDebugValue` records are dropped too, so a StrictMode second pass or a
+ * render-phase re-run re-records them instead of appending duplicates (production never
+ * sets the slot, so this is one read).
+ */
 export function resetHookCursor(): void {
   hookIndex = 0;
   renderPhaseUpdateScheduled = false;
+  if (currentFiber !== null && currentFiber.debugValues !== undefined) {
+    currentFiber.debugValues = undefined;
+  }
 }
 
 // Hook kinds — a per-cell tag consumed only by the dev Fast Refresh signature guard
@@ -397,5 +405,15 @@ export const clientDispatcher: Dispatcher = {
     const inst = currentFiber!;
     // Insertion effects sit outside the Offscreen connect/disconnect cycle.
     scheduleEffect(inst, inst.insertionEffects!, getHook(HK_INSERTION), effect, deps, false);
+  },
+
+  // Cell-free on purpose: no getHook, so adding/removing a call never changes the hook
+  // signature the Fast Refresh guard compares. Dev only — production returns after one
+  // flag read, allocating nothing. `format` is stored and applied lazily by the inspector.
+  useDebugValue(value: unknown, format?: (value: unknown) => unknown): void {
+    if (!devHydrationActive()) return;
+    const inst = currentFiber;
+    if (inst === null) return;
+    (inst.debugValues ??= []).push({ index: hookIndex, value, format });
   },
 };

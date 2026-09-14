@@ -73,6 +73,13 @@ export interface Dispatcher {
    * directly.
    */
   useDeferredValue?<T>(value: T, initialValue?: T): T;
+  /**
+   * Record a custom hook's debug label for the inspector. Optional and cell-free: only
+   * the client fiber dispatcher implements it (and only in development); SSR renderers
+   * omit it, so the public {@link useDebugValue} is a no-op there. `format` is stored,
+   * not called — the inspector applies it lazily when it reads the value.
+   */
+  useDebugValue?(value: unknown, format?: (value: unknown) => unknown): void;
 }
 
 /**
@@ -283,14 +290,23 @@ export function useMemoCache(size: number): unknown[] {
 }
 
 /**
- * Label a custom hook's value for React DevTools. A no-op at runtime (React itself
- * only invokes it when DevTools is attached), provided for API compatibility.
+ * Label a custom hook's value for the DevTools inspector. In development on the client
+ * the value is recorded against the rendering component — without taking a hook cell, so
+ * adding or removing a call never shifts hook state (Fast Refresh keeps it) — and shown
+ * on the hook row it follows in the panel, `denext_hook_state` and the MCP snapshot.
+ * `format` is never called during render: the inspector applies it lazily, only when it
+ * reads the value. In production and during server rendering this is a no-op.
  *
- * @param _value The value to display.
- * @param _format Optional formatter, applied lazily by DevTools only.
+ * @param value The value to display.
+ * @param format Optional formatter, applied lazily by the inspector only.
  */
-export function useDebugValue<T>(_value: T, _format?: (value: T) => unknown): void {
-  // Intentionally empty — DevTools-only in React.
+export function useDebugValue<T>(value: T, format?: (value: T) => unknown): void {
+  // Read the slot directly rather than through dispatcher(): like React's, a stray call
+  // outside a render stays a silent no-op instead of throwing.
+  (globalThis as DispatcherHolder)[DISPATCHER_KEY]?.useDebugValue?.(
+    value,
+    format as ((value: unknown) => unknown) | undefined,
+  );
 }
 
 /**

@@ -151,7 +151,7 @@ Deno.test("jsxDEV accepts React's dev args (isStaticChildren, source, self)", as
   assertEquals(html, "<div>hi</div>");
 });
 
-Deno.test("useDebugValue is a no-op (renders fine)", async () => {
+Deno.test("useDebugValue is a no-op in SSR (renders fine)", async () => {
   function C(): VNode {
     useDebugValue("label");
     return h("i", null, "ok");

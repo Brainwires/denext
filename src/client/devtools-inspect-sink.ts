@@ -106,11 +106,13 @@ export interface SnapshotValue {
 }
 
 /** A hook cell as a snapshot carries it — its values redacted (see {@link SnapshotValue}). */
-export interface SnapshotHook extends Omit<InspectHook, "value" | "deps"> {
+export interface SnapshotHook extends Omit<InspectHook, "value" | "deps" | "debug"> {
   /** The cell's current value, redacted. */
   value: SnapshotValue;
   /** Its dependency array, redacted, when it has one. */
   deps?: SnapshotValue[];
+  /** The `useDebugValue` value riding this row, redacted, when there is one. */
+  debug?: SnapshotValue;
 }
 
 /** A context read as a snapshot carries it — its value redacted. */
@@ -212,6 +214,7 @@ function redactHook(h: InspectHook): SnapshotHook {
     ...h,
     value: redactValue(h.value),
     ...(h.deps ? { deps: h.deps.map(redactValue) } : {}),
+    ...(h.debug ? { debug: redactValue(h.debug) } : {}),
   };
 }
 
