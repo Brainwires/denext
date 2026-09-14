@@ -175,6 +175,13 @@ export interface VerifyIdTokenOptions {
   clockToleranceSec?: number;
   /** Current time in ms (injectable for tests; defaults to `Date.now()`). */
   now?: number;
+  /**
+   * Refuse a multi-audience token that does not name this client in `azp`, and require a
+   * single `aud` to BE this client (OIDC Core §3.1.3.7 steps 3-5). **On by default.**
+   * `false` restores plain `aud` membership — the pre-2.5 behaviour — for a provider that
+   * legitimately mints multi-audience tokens without an `azp`.
+   */
+  strictAudience?: boolean;
 }
 
 /**
@@ -237,6 +244,21 @@ async function anyKeyVerifies(
 }
 
 /**
+ * The `kid` an `id_token` header names, without verifying anything — the JWKS cache needs
+ * it to decide whether a cached key set can possibly answer, *before* verification runs.
+ *
+ * @param idToken The compact `id_token`.
+ * @returns The `kid`, or `undefined` when the token is malformed or omits one.
+ */
+export function idTokenKid(idToken: string): string | undefined {
+  try {
+    return parseJws(idToken).header.kid;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * `iss` / `aud` / `nonce`, then the time claims: `exp` (required — a token that omits
  * it is rejected, not treated as non-expiring), `nbf`, and `iat` (when present it must
  * not lie in the future — a forged/misclocked token can't claim to be minted later than
@@ -244,12 +266,31 @@ async function anyKeyVerifies(
  */
 function assertIdTokenClaims(claims: IdTokenClaims, options: VerifyIdTokenOptions): void {
   if (claims.iss !== options.issuer) throw new Error("id_token issuer mismatch");
-  const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
-  if (!aud.includes(options.audience)) throw new Error("id_token audience mismatch");
+  assertAudience(claims, options);
   if (options.nonce !== undefined && claims.nonce !== options.nonce) {
     throw new Error("id_token nonce mismatch");
   }
   assertTimeClaims(claims, options);
+}
+
+/**
+ * The audience binding. Membership alone (`aud` *contains* our client id) is the weak
+ * form: a token minted for several relying parties is then usable at ours, which is the
+ * confused-deputy half of OIDC token substitution. So by default denext asks for what
+ * OIDC Core §3.1.3.7 steps 3-5 ask for — a single `aud` must BE our client, a multi-valued
+ * one must carry `azp` naming us, and any `azp` present must name us. `strictAudience:
+ * false` restores the membership check for a provider that can't do better.
+ */
+function assertAudience(claims: IdTokenClaims, options: VerifyIdTokenOptions): void {
+  const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+  if (!aud.includes(options.audience)) throw new Error("id_token audience mismatch");
+  if (options.strictAudience === false) return;
+  if (aud.length > 1 && claims.azp === undefined) {
+    throw new Error("id_token audience is multi-valued without an azp");
+  }
+  if (claims.azp !== undefined && claims.azp !== options.audience) {
+    throw new Error("id_token azp names another client");
+  }
 }
 
 /** The `exp` / `nbf` / `iat` checks (split out to keep each check function small). */

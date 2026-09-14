@@ -471,11 +471,9 @@ Deno.test("id_token binding: wrong issuer / foreign audience / missing nonce are
     Error,
     "nonce",
   );
-  // Documented boundary: a multi-valued `aud` that DOES contain our client id is
-  // accepted (denext enforces membership, not single-aud/`azp` strictness). Noted
-  // in the security posture page (https://denext.dev/docs/security) as accepted
-  // behavior.
-  const multiAud = await mintIdToken({ ...BASE, aud: ["client-123", "another-rp"] });
+  // A multi-valued `aud` containing our client id is no longer enough on its own —
+  // see the `strictAudience` cases below.
+  const multiAud = await mintIdToken({ ...BASE, aud: ["client-123", "another-rp"], azp: BASE.aud });
   const claims = await verifyIdToken({
     idToken: multiAud.token,
     jwks: multiAud.jwks,
@@ -484,4 +482,55 @@ Deno.test("id_token binding: wrong issuer / foreign audience / missing nonce are
     nonce: BASE.nonce,
   });
   assertEquals(claims.sub, "user-1");
+});
+
+// `strictAudience` (default ON) — OIDC Core §3.1.3.7 steps 3-5. Plain `aud` membership
+// lets a token minted for SEVERAL relying parties be replayed at ours (the confused-deputy
+// half of token substitution); the strict form wants the token to name us as the
+// authorized party. This is the row the security guide tracked as an open gap.
+Deno.test("strictAudience: a multi-aud id_token needs an azp naming this client", async () => {
+  const verify = (minted: { token: string; jwks: Jwk[] }, strictAudience?: boolean) =>
+    verifyIdToken({
+      idToken: minted.token,
+      jwks: minted.jwks,
+      issuer: BASE.iss,
+      audience: BASE.aud,
+      nonce: BASE.nonce,
+      strictAudience,
+    });
+
+  // Multi-valued `aud`, no `azp` → refused by default.
+  const noAzp = await mintIdToken({ ...BASE, aud: ["client-123", "another-rp"] });
+  await assertRejects(() => verify(noAzp), Error, "multi-valued without an azp");
+
+  // …and accepted once the IdP names us as the authorized party.
+  const ourAzp = await mintIdToken({
+    ...BASE,
+    aud: ["client-123", "another-rp"],
+    azp: "client-123",
+  });
+  assertEquals((await verify(ourAzp)).sub, "user-1");
+
+  // A foreign `azp` is refused even though `aud` still lists us — the token was minted
+  // FOR the other client, and this is exactly the substitution we must not accept.
+  const foreignAzp = await mintIdToken({
+    ...BASE,
+    aud: ["client-123", "another-rp"],
+    azp: "another-rp",
+  });
+  await assertRejects(() => verify(foreignAzp), Error, "azp names another client");
+
+  // A foreign `azp` on a SINGLE-aud token is refused too (step 5 has no array condition).
+  const singleForeignAzp = await mintIdToken({ ...BASE, azp: "another-rp" });
+  await assertRejects(() => verify(singleForeignAzp), Error, "azp names another client");
+
+  // A single `aud` must BE our client id (unchanged, and unchanged by the escape hatch).
+  const otherAud = await mintIdToken({ ...BASE, aud: "another-rp" });
+  await assertRejects(() => verify(otherAud), Error, "audience mismatch");
+  await assertRejects(() => verify(otherAud, false), Error, "audience mismatch");
+
+  // The escape hatch restores plain membership for an IdP that mints multi-audience
+  // tokens without an `azp`.
+  assertEquals((await verify(noAzp, false)).sub, "user-1");
+  assertEquals((await verify(foreignAzp, false)).sub, "user-1");
 });

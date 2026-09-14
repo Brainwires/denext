@@ -1,15 +1,16 @@
 /**
- * The networked half of the OAuth flow: exchange an authorization `code` for
- * tokens, fetch userinfo, and fetch a provider's JWKS. All requests go through the
- * SSRF-safe `safeFetch`, pinned to the provider's own hosts. In development a
- * provider on `http://localhost` can be permitted with an explicit opt-in (the
- * production `safeFetch` blocks loopback/private addresses).
+ * The networked half of the OAuth flow: exchange an authorization `code` for tokens and
+ * fetch userinfo. All requests go through the SSRF-safe `safeFetch`, pinned to the
+ * provider's own hosts — the endpoints it configured, plus the ones OIDC discovery
+ * resolved for it (see `discovery.ts`). In development a provider on `http://localhost`
+ * can be permitted with an explicit opt-in (the production `safeFetch` blocks
+ * loopback/private addresses). The JWKS fetch lives in `jwks-cache.ts`, because it is
+ * cached.
  *
  * @module
  */
 
 import { safeFetch } from "../safe-fetch.ts";
-import type { Jwk } from "./jwt.ts";
 import type { OAuthProvider } from "./types.ts";
 
 /** A `fetch` used for provider calls (real `safeFetch`, or a dev-insecure variant). */
@@ -19,7 +20,7 @@ export type ProviderFetch = (
 ) => Promise<Response>;
 
 /** The hosts safeFetch may reach for a provider (from its configured endpoints). */
-function providerHosts(provider: OAuthProvider): string[] {
+function providerHosts(provider: OAuthProvider, extraHosts: readonly string[]): string[] {
   const hosts = new Set<string>();
   for (
     const url of [
@@ -37,6 +38,7 @@ function providerHosts(provider: OAuthProvider): string[] {
     }
   }
   for (const h of provider.allowedHosts ?? []) hosts.add(h);
+  for (const h of extraHosts) hosts.add(h);
   return [...hosts];
 }
 
@@ -45,20 +47,46 @@ function providerHosts(provider: OAuthProvider): string[] {
  * or — only when `allowInsecure` is set (development) — plain `fetch` restricted to
  * the same host allowlist, so a localhost provider works without opening SSRF in
  * production.
+ *
+ * @param provider The provider whose configured endpoints seed the host allowlist.
+ * @param allowInsecure Development opt-in permitting `http://localhost` providers.
+ * @param extraHosts Hosts resolved after the fact (OIDC discovery), added to the allowlist.
+ * @returns The pinned fetch to hand the flow helpers.
  */
-export function makeProviderFetch(provider: OAuthProvider, allowInsecure = false): ProviderFetch {
-  const hosts = providerHosts(provider);
+export function makeProviderFetch(
+  provider: OAuthProvider,
+  allowInsecure = false,
+  extraHosts: readonly string[] = [],
+): ProviderFetch {
+  return makeHostPinnedFetch(providerHosts(provider, extraHosts), provider.id, allowInsecure);
+}
+
+/**
+ * The primitive behind {@link makeProviderFetch}: a fetch that may reach these hosts and
+ * nothing else. Discovery uses it directly, pinned to the issuer's host alone — the
+ * document that decides where the client secret is sent must itself come from the issuer.
+ *
+ * @param hosts The exact hosts this fetch may reach.
+ * @param label The provider id, used in the refusal message.
+ * @param allowInsecure Development opt-in: use the platform `fetch` (so `http://localhost`
+ * works) while still enforcing the host allowlist ourselves.
+ * @returns The pinned fetch.
+ */
+export function makeHostPinnedFetch(
+  hosts: readonly string[],
+  label: string,
+  allowInsecure: boolean,
+): ProviderFetch {
+  const allowed = [...hosts];
   if (!allowInsecure) {
-    return (url, init) => safeFetch(url, { ...init, allowedHosts: hosts });
+    return (url, init) => safeFetch(url, { ...init, allowedHosts: allowed });
   }
   return (url, init) => {
     // Dev-only: enforce the same allowlist ourselves, then use the platform fetch
     // (which safeFetch's loopback block would otherwise reject).
     const host = new URL(url).host;
-    if (!hosts.includes(host)) {
-      return Promise.reject(
-        new Error(`auth: host ${host} not permitted for provider ${provider.id}`),
-      );
+    if (!allowed.includes(host)) {
+      return Promise.reject(new Error(`auth: host ${host} not permitted for provider ${label}`));
     }
     return fetch(url, init);
   };
@@ -78,11 +106,16 @@ export interface TokenResponse {
  * Exchange an authorization `code` (+ PKCE verifier) for tokens at the provider's
  * token endpoint.
  *
+ * @param provider The provider (supplies the client credentials).
+ * @param params The code, the PKCE verifier, the byte-stable redirect URI, and the
+ * resolved token endpoint (configured, or from OIDC discovery).
+ * @param doFetch The pinned provider fetch.
+ * @returns The parsed token response.
  * @throws if the endpoint returns a non-2xx or a body with an `error`.
  */
 export async function exchangeCodeForTokens(
   provider: OAuthProvider,
-  params: { code: string; codeVerifier: string; redirectUri: string },
+  params: { code: string; codeVerifier: string; redirectUri: string; tokenUrl: string },
   doFetch: ProviderFetch,
 ): Promise<TokenResponse> {
   const body = new URLSearchParams({
@@ -94,7 +127,7 @@ export async function exchangeCodeForTokens(
     code_verifier: params.codeVerifier,
   }).toString();
 
-  const res = await doFetch(provider.tokenUrl, {
+  const res = await doFetch(params.tokenUrl, {
     method: "POST",
     headers: {
       "content-type": "application/x-www-form-urlencoded",
@@ -128,14 +161,20 @@ async function fetchAuthedJson(
   return await res.json().catch(() => null);
 }
 
-/** Fetch the userinfo profile (OAuth providers without an id_token). */
+/**
+ * Fetch the userinfo profile (OAuth providers without an id_token).
+ *
+ * @param userinfoUrl The resolved userinfo endpoint.
+ * @param accessToken The access token from the exchange.
+ * @param doFetch The pinned provider fetch.
+ * @returns The parsed profile (`{}` when the provider answers with nothing usable).
+ */
 export async function fetchUserInfo(
-  provider: OAuthProvider,
+  userinfoUrl: string,
   accessToken: string,
   doFetch: ProviderFetch,
 ): Promise<Record<string, unknown>> {
-  if (!provider.userinfoUrl) return {};
-  const json = await fetchAuthedJson(provider.userinfoUrl, accessToken, doFetch, "userinfo");
+  const json = await fetchAuthedJson(userinfoUrl, accessToken, doFetch, "userinfo");
   return (json ?? {}) as Record<string, unknown>;
 }
 
@@ -143,6 +182,11 @@ export async function fetchUserInfo(
  * Fetch the account's email list (e.g. GitHub `/user/emails`) so a mapper can select a
  * verified address. Returns `undefined` when the provider has no `userEmailsUrl`;
  * a non-2xx or unparseable response throws (the caller treats it as no verified email).
+ *
+ * @param provider The provider (its `userEmailsUrl` is never part of discovery).
+ * @param accessToken The access token from the exchange.
+ * @param doFetch The pinned provider fetch.
+ * @returns The raw list, or `undefined` when there is no endpoint / no list.
  */
 export async function fetchUserEmails(
   provider: OAuthProvider,
@@ -152,19 +196,4 @@ export async function fetchUserEmails(
   if (!provider.userEmailsUrl) return undefined;
   const json = await fetchAuthedJson(provider.userEmailsUrl, accessToken, doFetch, "user emails");
   return Array.isArray(json) ? json : undefined;
-}
-
-/** Fetch a provider's JWKS keys (for id_token verification). */
-export async function fetchJwks(
-  provider: OAuthProvider,
-  doFetch: ProviderFetch,
-): Promise<Jwk[]> {
-  if (!provider.jwksUrl) return [];
-  const res = await doFetch(provider.jwksUrl, {
-    method: "GET",
-    headers: { "accept": "application/json" },
-  });
-  if (!res.ok) throw new Error(`jwks fetch failed (${res.status})`);
-  const body = await res.json().catch(() => ({})) as { keys?: Jwk[] };
-  return body.keys ?? [];
 }
