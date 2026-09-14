@@ -20,6 +20,7 @@ import {
   createDevState,
   DEV_INSPECT_PATH,
   type DevState,
+  INSPECT_TTL_MS,
   MAX_INSPECT_URLS,
 } from "../src/build/dev-server/state.ts";
 import { defaultLoader } from "../src/server/mod.ts";
@@ -424,8 +425,9 @@ Deno.test("the three failure strings are distinct and each names its own fix", (
   assertStringIncludes(noServer, "no dev server running (`deno task dev`)");
   assertStringIncludes(
     noSnapshot,
-    "open the app in a browser — the DevTools sink has posted nothing yet",
+    "open the app in a browser, then CALL THIS AGAIN — the DevTools sink has posted nothing yet",
   );
+  assertStringIncludes(noSnapshot, "it arms on the first call");
   assert(noServer !== noSnapshot);
 
   const inspect = { snapshot: treeFixture(), ageMs: 100 };
@@ -482,18 +484,34 @@ Deno.test({
 
 // ---- the page-side sink ----------------------------------------------------------------
 
+/** What a `fakeApi` recorded, so a test can assert what the sink did NOT do. */
+interface ApiCalls {
+  /** How many times the sink walked the fiber tree (zero until it is armed). */
+  trees: number;
+  /** Net render-reason holds taken (the sink takes exactly one, and releases it). */
+  reasonHolds: number;
+}
+
 /** An inspector-API stub over a fixed tree, with a manual commit notifier. */
-function fakeApi(tree: InspectNode[]): { api: DenextDevtoolsApi; commit: () => void } {
+function fakeApi(
+  tree: InspectNode[],
+): { api: DenextDevtoolsApi; commit: () => void; calls: ApiCalls } {
   const subs = new Set<() => void>();
+  const calls: ApiCalls = { trees: 0, reasonHolds: 0 };
   let reasonsOn = false;
   const api = asAny({
-    getInspectorTree: () => tree,
+    getInspectorTree: () => {
+      calls.trees++;
+      return tree;
+    },
     getRenderReason: (id: number) =>
       reasonsOn && id === 2 ? { props: ["label"], hooks: [], contexts: [], count: 2 } : null,
     enableRenderReasons: () => {
+      calls.reasonHolds++;
       reasonsOn = true;
     },
     disableRenderReasons: () => {
+      calls.reasonHolds--;
       reasonsOn = false;
     },
     subscribe: (fn: () => void) => {
@@ -501,10 +519,53 @@ function fakeApi(tree: InspectNode[]): { api: DenextDevtoolsApi; commit: () => v
       return () => subs.delete(fn);
     },
   }) as DenextDevtoolsApi;
-  return { api, commit: () => subs.forEach((fn) => fn()) };
+  return { api, commit: () => subs.forEach((fn) => fn()), calls };
 }
 
-/** A component node carrying one raw-bearing state cell, under a host wrapper. */
+/** One POST the sink made. */
+interface SentPost {
+  body: string;
+  keepalive: boolean;
+}
+
+/** A `globalThis.fetch` stand-in: answers the arming probe, records every POST. */
+function stubFetch(armed: boolean): {
+  posts: SentPost[];
+  probes: number;
+  restore: () => void;
+} {
+  const posts: SentPost[] = [];
+  const state = { probes: 0 };
+  const real = globalThis.fetch;
+  globalThis.fetch = ((input: string, init?: RequestInit) => {
+    const url = String(input);
+    if (url.startsWith(`${DEV_INSPECT_PATH}?probe`)) {
+      state.probes++;
+      return Promise.resolve(Response.json({ armed }));
+    }
+    assertEquals(url, DEV_INSPECT_PATH, "the sink posts to the dev server's own path");
+    assertEquals(init?.method, "POST");
+    assertEquals((init?.headers as Record<string, string>)["content-type"], "application/json");
+    posts.push({ body: String(init?.body ?? ""), keepalive: init?.keepalive === true });
+    return Promise.resolve(new Response(null, { status: 204 }));
+  }) as unknown as typeof fetch;
+  return {
+    posts,
+    get probes() {
+      return state.probes;
+    },
+    restore: () => {
+      globalThis.fetch = real;
+    },
+  };
+}
+
+/** UTF-8 byte length — every cap on this path counts bytes, not code units. */
+function bytesOf(s: string): number {
+  return new TextEncoder().encode(s).length;
+}
+
+/** A component node carrying a number cell, a SECRET string cell, and a string context. */
 function inspectTree(count = 1): InspectNode[] {
   const kids: InspectNode[] = [];
   for (let i = 0; i < count; i++) {
@@ -520,6 +581,11 @@ function inspectTree(count = 1): InspectNode[] {
         value: { preview: "7", type: "number", raw: 7 },
         editable: true,
         deps: [{ preview: '"x"', type: "string", raw: "x" }],
+      }, {
+        index: 1,
+        kind: "state",
+        value: { preview: '"hunter2"', type: "string", raw: "hunter2" },
+        editable: true,
       }],
       contexts: [{ name: "Theme", value: { preview: '"dark"', type: "string", raw: "dark" } }],
       children: [],
@@ -548,8 +614,25 @@ Deno.test("buildSnapshot: hosts are spliced out, and every raw value is stripped
   assert(!json.includes('"raw"'), `no raw values survive: ${json.slice(0, 200)}`);
   assertEquals(node.props.preview, "{label}");
   assertEquals(node.hooks[0].value.preview, "7");
-  assertEquals(node.hooks[0].deps?.[0].preview, '"x"');
   assertEquals(node.contexts[0].name, "Theme");
+});
+
+Deno.test("buildSnapshot: string CONTENTS are redacted to a length, everywhere", () => {
+  const { api } = fakeApi(inspectTree());
+  const snapshot = buildSnapshot(api);
+  const json = JSON.stringify(snapshot);
+  // The whole point (PROD-11): a `useState(password)` on a dev page must not leave it.
+  assert(!json.includes("hunter2"), `the state string never leaves the page: ${json}`);
+  assert(!json.includes("dark"), "nor a context string");
+  assert(!json.includes('"x"'), "nor a dep string");
+
+  const node = snapshot.nodes[0];
+  assertEquals(node.hooks[1].value, { preview: "string(7)", type: "string", length: 7 });
+  assertEquals(node.hooks[0].deps?.[0], { preview: "string(1)", type: "string", length: 1 });
+  assertEquals(node.contexts[0].value, { preview: "string(4)", type: "string", length: 4 });
+  // Numbers, booleans and shapes are NOT redacted — they are the useful, non-secret cases.
+  assertEquals(node.hooks[0].value, { preview: "7", type: "number" });
+  assertEquals(node.props, { preview: "{label}", type: "object", size: 1 });
 });
 
 Deno.test("buildSnapshot: past the node cap the tree is cut and flagged truncated", () => {
@@ -557,45 +640,370 @@ Deno.test("buildSnapshot: past the node cap the tree is cut and flagged truncate
   const snapshot = buildSnapshot(api);
   assertEquals(snapshot.truncated, true);
   assert(snapshot.nodes.length <= 2000, `capped at 2000, got ${snapshot.nodes.length}`);
-  assert(JSON.stringify(snapshot).length <= 256 * 1024, "and inside the byte budget");
+  assert(bytesOf(JSON.stringify(snapshot)) <= 256 * 1024, "and inside the byte budget");
+});
+
+Deno.test("buildSnapshot: the byte budget counts UTF-8 bytes, not code units", () => {
+  // Every preview is 3-byte CJK: counting `.length` would let the body run ~3× over the
+  // dev server's 256 KB ceiling and be refused with a 413 the page cannot see.
+  const tree = inspectTree(1200);
+  for (const kid of tree[0].children) kid.props = { preview: "名前".repeat(60), type: "object" };
+  const { api } = fakeApi(tree);
+  const snapshot = buildSnapshot(api);
+  assertEquals(snapshot.truncated, true);
+  assert(
+    bytesOf(JSON.stringify(snapshot)) <= 256 * 1024,
+    `bytes, not code units: ${bytesOf(JSON.stringify(snapshot))}`,
+  );
 });
 
 Deno.test({
-  name: "installInspectSink: a burst of commits posts once, and pagehide flushes",
+  name: "installInspectSink: unarmed, a commit walks NOTHING and re-probes at most every 10s",
   sanitizeOps: false,
   sanitizeResources: false,
 }, async () => {
-  const { api, commit } = fakeApi(inspectTree());
-  const bodies: string[] = [];
-  const realFetch = globalThis.fetch;
-  globalThis.fetch = ((url: string, init?: RequestInit) => {
-    assertEquals(url, DEV_INSPECT_PATH, "the sink posts to the dev server's own path");
-    bodies.push(String(init?.body ?? ""));
-    assertEquals(init?.method, "POST");
-    assertEquals((init?.headers as Record<string, string>)["content-type"], "application/json");
-    assertEquals(init?.keepalive, true);
-    return Promise.resolve(new Response(null, { status: 204 }));
-  }) as unknown as typeof fetch;
+  const { api, commit, calls } = fakeApi(inspectTree(3));
+  const net = stubFetch(false); // the dev server says nobody is reading
   const stop = installInspectSink(api);
   try {
+    await new Promise((r) => setTimeout(r, 20)); // let the install probe settle
     commit();
     commit();
     commit();
-    assertEquals(bodies.length, 0, "the post is trailing-edge, not immediate");
     await new Promise((r) => setTimeout(r, 1700));
-    assertEquals(bodies.length, 1, "three rapid commits coalesce into one post");
-    const snapshot = JSON.parse(bodies[0]) as InspectSnapshot;
-    assertEquals(snapshot.nodes[0].name, "Counter0");
-    assertEquals(snapshot.nodes[0].reason?.count, 2, "the sink turns render reasons on itself");
-    assert(!bodies[0].includes('"raw"'));
-
-    globalThis.dispatchEvent(new Event("pagehide"));
-    assertEquals(bodies.length, 2, "pagehide posts a final snapshot");
+    assertEquals(net.posts.length, 0, "nothing is posted while nobody is reading");
+    assertEquals(calls.trees, 0, "and the fiber tree is never walked (PROD-12)");
+    assertEquals(calls.reasonHolds, 0, "nor is render-reason tracking switched on");
+    assertEquals(net.probes, 1, "three commits inside the 10 s window re-probe zero times");
   } finally {
     stop();
-    globalThis.fetch = realFetch;
+    net.restore();
   }
+});
+
+Deno.test({
+  name: "installInspectSink: armed, it posts at once, then coalesces a burst of commits",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const { api, commit, calls } = fakeApi(inspectTree());
+  const net = stubFetch(true); // an MCP read has happened
+  const stop = installInspectSink(api);
+  try {
+    await new Promise((r) => setTimeout(r, 20));
+    assertEquals(net.posts.length, 1, "arming posts immediately — the reader is waiting");
+    assertEquals(calls.reasonHolds, 1, "and takes exactly ONE render-reason hold");
+
+    commit();
+    commit();
+    commit();
+    assertEquals(net.posts.length, 1, "the post is trailing-edge, not immediate");
+    await new Promise((r) => setTimeout(r, 1700));
+    assertEquals(net.posts.length, 2, "three rapid commits coalesce into one post");
+    const snapshot = JSON.parse(net.posts[1].body) as InspectSnapshot;
+    assertEquals(snapshot.nodes[0].name, "Counter0");
+    assertEquals(snapshot.nodes[0].reason?.count, 2, "the sink turns render reasons on itself");
+    assert(!net.posts[1].body.includes('"raw"'));
+
+    globalThis.dispatchEvent(new Event("pagehide"));
+    assertEquals(net.posts.length, 3, "pagehide posts a final snapshot");
+    assertEquals(net.posts[2].keepalive, true, "which must outlive the page");
+  } finally {
+    stop();
+    net.restore();
+  }
+  assertEquals(calls.reasonHolds, 0, "the disposer releases the sink's hold");
   commit();
   await new Promise((r) => setTimeout(r, 1700));
-  assertEquals(bodies.length, 2, "the disposer unsubscribes");
+  assertEquals(net.posts.length, 3, "the disposer unsubscribes");
+});
+
+Deno.test({
+  name: "installInspectSink: a >64 KiB snapshot is posted WITHOUT keepalive (PROD-7)",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  // A browser rejects a keepalive fetch whose body exceeds 64 KiB, and rejects it
+  // unobservably — so with `keepalive: true` on the throttled post, EVERY page with more
+  // than ~115 components silently delivered nothing at all.
+  const { api, commit } = fakeApi(inspectTree(300));
+  const net = stubFetch(true);
+  const stop = installInspectSink(api);
+  try {
+    await new Promise((r) => setTimeout(r, 20));
+    assertEquals(net.posts.length, 1);
+    const size = bytesOf(net.posts[0].body);
+    assert(size > 64 * 1024, `the fixture must exceed the keepalive ceiling (${size} bytes)`);
+    assert(size < 256 * 1024, `and stay under the server's cap (${size} bytes)`);
+    assertEquals(net.posts[0].keepalive, false, "so the throttled post is NOT keepalive");
+
+    commit();
+    await new Promise((r) => setTimeout(r, 1700));
+    assertEquals(net.posts[1].keepalive, false);
+
+    // The pagehide flush has no such escape: over the ceiling it is skipped, and the last
+    // throttled post stands, rather than being dropped in flight.
+    globalThis.dispatchEvent(new Event("pagehide"));
+    assertEquals(net.posts.length, 2, "an oversized final flush is skipped, not attempted");
+  } finally {
+    stop();
+    net.restore();
+  }
+});
+
+// ---- server: arming, scoping, TTL and forged bodies -------------------------------------
+
+/** GET the read side with a `Referer`, i.e. as a PAGE rather than as the MCP bridge. */
+function readAsPage(
+  handle: (req: Request) => Promise<Response>,
+  referer: string,
+  query = "",
+): Promise<Response> {
+  return handle(
+    new Request(`http://localhost${DEV_INSPECT_PATH}${query}`, {
+      headers: { "sec-fetch-site": "same-origin", referer },
+    }),
+  );
+}
+
+Deno.test({
+  name: "dev-inspect: `?probe=1` answers { armed }, and the first real read arms it",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const dir = await tempApp();
+  try {
+    const { handle, st } = await devHandler(dir);
+    assertEquals(st.devInspectArmed, false, "a fresh dev server is idle");
+    const before = await readSnapshot(handle, "?probe=1");
+    assertEquals(before.status, 200);
+    assertEquals(await before.json(), { armed: false });
+    assertEquals(st.devInspectArmed, false, "a probe is not a read — it never arms");
+
+    // A real read arms, even when it finds nothing: that is exactly the first
+    // `denext_component_tree` call, which tells every page to start snapshotting.
+    assertEquals((await readSnapshot(handle)).status, 404);
+    assertEquals(st.devInspectArmed, true);
+    assertEquals(await (await readSnapshot(handle, "?probe=1")).json(), { armed: true });
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("dev-inspect: DENEXT_DEV_INSPECT=1 arms the dev server from the start", async () => {
+  const dir = await tempApp();
+  const prev = Deno.env.get("DENEXT_DEV_INSPECT");
+  try {
+    Deno.env.set("DENEXT_DEV_INSPECT", "1");
+    const st = createDevState({ paths: await resolveProject(dir), unbundled: false });
+    assertEquals(st.devInspectArmed, true);
+    Deno.env.set("DENEXT_DEV_INSPECT", "0");
+    assertEquals(
+      createDevState({ paths: await resolveProject(dir), unbundled: false }).devInspectArmed,
+      false,
+      "only `1` arms it",
+    );
+  } finally {
+    if (prev === undefined) Deno.env.delete("DENEXT_DEV_INSPECT");
+    else Deno.env.set("DENEXT_DEV_INSPECT", prev);
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test({
+  name: "dev-inspect: a read FROM A PAGE sees only that page's own snapshot",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const dir = await tempApp();
+  try {
+    const { handle } = await devHandler(dir);
+    await postSnapshot(handle, fixtureSnapshot("/login"));
+    await postSnapshot(handle, fixtureSnapshot("/blog/untrusted"));
+
+    // The attack this closes: a script on /blog/<untrusted> reading /login's hook state.
+    const own = await readAsPage(handle, "http://localhost/blog/untrusted");
+    assertEquals(own.status, 200);
+    assertEquals((await own.json()).snapshot.url, "/blog/untrusted");
+
+    const other = await readAsPage(handle, "http://localhost/nothing-here");
+    assertEquals(other.status, 404, "a page with no snapshot of its own gets nothing");
+    await other.body?.cancel();
+
+    const garbage = await readAsPage(handle, "not a url");
+    assertEquals(garbage.status, 404, "an unparseable Referer selects nothing");
+    await garbage.body?.cancel();
+
+    // An explicit `?url=` still selects (the MCP bridge always passes one), and a caller
+    // with no Referer at all is an out-of-process reader and gets the newest.
+    assertEquals(
+      (await (await readAsPage(handle, "http://localhost/blog/untrusted", "?url=/login")).json())
+        .snapshot.url,
+      "/login",
+    );
+    assertEquals(
+      (await (await readSnapshot(handle)).json()).snapshot.url,
+      "/blog/untrusted",
+      "no Referer = the MCP bridge = the most recent page",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test({
+  name: "dev-inspect: a snapshot past the TTL is gone (and evicted)",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const dir = await tempApp();
+  try {
+    const { handle, st } = await devHandler(dir);
+    await postSnapshot(handle, fixtureSnapshot("/stale"));
+    assertEquals(st.devInspect.size, 1);
+    const entry = st.devInspect.get("/stale")!;
+    entry.receivedAt -= INSPECT_TTL_MS + 1000;
+
+    assertEquals((await readSnapshot(handle, "?url=/stale")).status, 404);
+    assertEquals(st.devInspect.size, 0, "and the expired entry is dropped, not just hidden");
+    assertEquals((await readSnapshot(handle)).status, 404);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test({
+  name: "dev-inspect: the content-type guard is an EXACT media-type match",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const dir = await tempApp();
+  try {
+    const { handle, st } = await devHandler(dir);
+    // A substring test would have accepted this: the media type is text/html.
+    const smuggled = await postSnapshot(handle, fixtureSnapshot("/smuggled"), {
+      "content-type": "text/html; profile=application/json",
+    });
+    assertEquals(smuggled.status, 415);
+    assertEquals(st.devInspect.size, 0);
+
+    // Parameters on the real media type are fine (`application/json; charset=utf-8`).
+    const ok = await postSnapshot(handle, fixtureSnapshot("/ok"), {
+      "content-type": "Application/JSON; charset=utf-8",
+    });
+    assertEquals(ok.status, 204);
+    assertEquals(st.devInspect.size, 1);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/** A snapshot-shaped body whose every optional field is forged (SEC-5/SEC-6). */
+function forgedBody(): string {
+  return JSON.stringify({
+    url: "/forged",
+    at: "not a number",
+    truncated: "yes",
+    nodes: [{
+      id: 1,
+      name: "N".repeat(60_000),
+      key: "k".repeat(5_000),
+      badges: [{ evil: true }, "b".repeat(100), 42, null],
+      props: { preview: "p".repeat(5_000), type: "sneaky", size: "big" },
+      hooks: [null, { index: "one", kind: 7, value: 5, deps: "nope", name: {} }],
+      contexts: [7, { name: null, value: null }],
+      source: { file: 123, line: "x" },
+      hooksNamed: "yes",
+      reason: { props: [{}, "label"], hooks: ["zero", 1], contexts: null, count: "many" },
+      children: [],
+    }],
+  });
+}
+
+Deno.test({
+  name: "dev-inspect: a forged snapshot is stored as CLAMPED, rebuilt fields",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const dir = await tempApp();
+  try {
+    const { handle } = await devHandler(dir);
+    assertEquals((await postSnapshot(handle, forgedBody())).status, 204);
+    const body = await (await readSnapshot(handle, "?url=/forged")).json();
+    const node = body.snapshot.nodes[0];
+
+    assertEquals(node.name.length, 200, "a 60 000-character name is cut to 200");
+    assertEquals(node.key.length, 200);
+    assertEquals(node.badges, ["b".repeat(40)], "non-strings dropped, the rest cut to 40");
+    assertEquals(node.props.type, "object", "an unknown value type becomes `object`");
+    assertEquals(node.props.preview.length, 512);
+    assertEquals(node.props.size, undefined, "a non-numeric size is dropped");
+    assertEquals(node.source, undefined, "a source with no string `file` is dropped entirely");
+    assertEquals(node.hooksNamed, undefined, "a non-boolean hooksNamed is dropped");
+    assertEquals(node.reason, {
+      props: ["label"],
+      hooks: [1],
+      contexts: [],
+      count: 0,
+    });
+    assertEquals(node.hooks.length, 2);
+    assertEquals(node.hooks[0], {
+      index: 0,
+      kind: "hook",
+      value: { preview: "", type: "object" },
+      editable: false,
+    });
+    assertEquals(node.hooks[1].index, 1, "a non-numeric index falls back to the position");
+    assertEquals(node.hooks[1].kind, "hook");
+    assertEquals(node.hooks[1].deps, undefined, "a non-array deps is dropped");
+    assertEquals(node.hooks[1].name, undefined);
+    assertEquals(node.contexts[0], { name: "Context", value: { preview: "", type: "object" } });
+    assertEquals(body.snapshot.truncated, false, "a non-boolean `truncated` is false");
+    assert(typeof body.snapshot.at === "number", "a non-numeric `at` becomes the server clock");
+
+    // And the three formatters render it without throwing (they are what an agent reads).
+    const inspect = { snapshot: body.snapshot, ageMs: 10 };
+    assertStringIncludes(componentTreeText(inspect), `[${"b".repeat(40)}]`);
+    assertStringIncludes(whyRenderText(inspect, node.name), "props changed: label");
+    assertStringIncludes(hookStateText(inspect, node.name), "[0] hook = ");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("the MCP formatters never throw on a snapshot of the wrong shape", () => {
+  // Defense in depth: the dev server rebuilds every stored node, but these formatters run
+  // on browser-supplied data and their output goes straight into an agent's context.
+  const junk = asAny({
+    url: 42,
+    at: "x",
+    truncated: 0,
+    nodes: [{
+      id: "one",
+      name: null,
+      key: 7,
+      badges: "memo",
+      props: null,
+      hooks: "none",
+      contexts: null,
+      source: { file: 5, line: "x" },
+      reason: { props: null, hooks: "0", contexts: 3, count: "9" },
+      children: "kids",
+    }, {
+      id: 2,
+      name: "Real",
+      key: null,
+      props: { preview: "{}", type: "object" },
+      hooks: [null, { index: null, value: null, deps: 7 }],
+      contexts: [],
+      children: [],
+    }],
+  }) as InspectSnapshot;
+  const inspect = { snapshot: junk, ageMs: 10 };
+  assertStringIncludes(componentTreeText(inspect), "Real");
+  assertStringIncludes(whyRenderText(inspect, "Real"), "no render reason recorded");
+  assertStringIncludes(hookStateText(inspect, "Real"), "[0] hook = ");
+  assertStringIncludes(hookStateText(inspect, "Real", 9), "no hook at index 9 (it has 2)");
+  // The nameless forged node is still listed (as ""), and nothing threw getting here.
+  assertStringIncludes(componentTreeText(inspect, { filter: "nope" }), "Components present:");
 });

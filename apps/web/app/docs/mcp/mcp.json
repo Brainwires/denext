@@ -320,7 +320,7 @@
     },
     {
       "name": "denext_component_tree",
-      "description": "Show the LIVE component tree of a running dev page — every component with its source location, badges and render count, as the in-page DevTools last pushed it. Use it to see what actually mounted. Requires `deno task dev` to be running AND the app open in a browser (the tree is pushed from the page, so it is a snapshot, and the answer says how old it is).",
+      "description": "Show the LIVE component tree of a running dev page — every component with its source location, badges and render count, as the in-page DevTools last pushed it. Use it to see what actually mounted. Requires `deno task dev` to be running AND the app open in a browser (the tree is pushed from the page, so it is a snapshot, and the answer says how old it is). The page starts pushing only once one of these tools has been called, so the FIRST call on a page may answer 'posted nothing yet' — call it again after the page's next commit.",
       "params": [
         {
           "name": "url",
@@ -356,7 +356,7 @@
     },
     {
       "name": "denext_why_render",
-      "description": "Explain why a component in a running dev page last re-rendered — which props, hooks and contexts changed, and how many renders it has done. Use it to chase a re-render loop or a missing memo. Requires `deno task dev` to be running AND the app open in a browser (the tree is pushed from the page, so it is a snapshot, and the answer says how old it is).",
+      "description": "Explain why a component in a running dev page last re-rendered — which props, hooks and contexts changed, and how many renders it has done. Use it to chase a re-render loop or a missing memo. Requires `deno task dev` to be running AND the app open in a browser (the tree is pushed from the page, so it is a snapshot, and the answer says how old it is). The page starts pushing only once one of these tools has been called, so the FIRST call on a page may answer 'posted nothing yet' — call it again after the page's next commit.",
       "params": [
         {
           "name": "component",
@@ -380,7 +380,7 @@
     },
     {
       "name": "denext_hook_state",
-      "description": "Read a component's live hook cells in a running dev page — each cell's name, the hook that produced it, its current value and its deps. Use it to see the state a component actually holds. Requires `deno task dev` to be running AND the app open in a browser (the tree is pushed from the page, so it is a snapshot, and the answer says how old it is).",
+      "description": "Read a component's live hook cells in a running dev page — each cell's name, the hook that produced it, its current value and its deps. Use it to see the state a component actually holds. Requires `deno task dev` to be running AND the app open in a browser (the tree is pushed from the page, so it is a snapshot, and the answer says how old it is). The page starts pushing only once one of these tools has been called, so the FIRST call on a page may answer 'posted nothing yet' — call it again after the page's next commit.",
       "params": [
         {
           "name": "component",

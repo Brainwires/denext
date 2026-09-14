@@ -204,6 +204,27 @@ Deno.test("metaFooter: a module over the size cap emits no metadata at all", () 
   assertEquals(metaFooter(URL_A, metas), "");
 });
 
+Deno.test("metaFooter: the 16 KB cap counts UTF-8 BYTES, not UTF-16 code units", () => {
+  // A module of CJK component names measures ~3× larger on the wire than in code units.
+  // Counting `.length` let such a module blow past the cap it is supposed to enforce.
+  const metas: Record<string, ComponentDevMeta> = {};
+  for (let i = 0; i < 30; i++) {
+    const name = `名${"前".repeat(200)}${i}`;
+    metas[name] = { name, line: i + 1, column: 1, hooks: [] };
+  }
+  const body = Object.entries(metas)
+    .map(([name, meta]) =>
+      `__dnxMeta(${JSON.stringify(`${URL_A}#${name}`)}, ${JSON.stringify(meta)});`
+    )
+    .join("\n");
+  assert(body.length < MAX_META_BYTES, `under the cap in code units (${body.length})`);
+  assert(
+    encoder.encode(body).length > MAX_META_BYTES,
+    `but over it in UTF-8 bytes (${encoder.encode(body).length})`,
+  );
+  assertEquals(metaFooter(URL_A, metas), "");
+});
+
 Deno.test("metaFooter: DENEXT_DEV_META=0 is a kill switch (registrations are untouched)", () => {
   const metas: Record<string, ComponentDevMeta> = {
     Counter: { name: "Counter", line: 1, column: 1, hooks: [] },

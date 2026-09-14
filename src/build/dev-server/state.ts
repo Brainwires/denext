@@ -82,6 +82,13 @@ export interface DevServerOptions {
 /** How many page URLs keep a posted inspector snapshot before the oldest is evicted. */
 export const MAX_INSPECT_URLS = 8;
 
+/**
+ * How long a posted inspector snapshot is served before it is treated as gone (10 min).
+ * A snapshot is a page's live props, hook cells and contexts; it answers a question an
+ * agent is asking NOW, and there is no reason to keep yesterday's open tab readable.
+ */
+export const INSPECT_TTL_MS = 10 * 60 * 1000;
+
 /** One stored inspector snapshot plus the SERVER clock when it arrived (staleness is ours). */
 export interface InspectSnapshotEntry {
   snapshot: InspectSnapshot;
@@ -201,6 +208,17 @@ export interface DevState {
    * MCP bridge reads: the oldest key is evicted past {@link MAX_INSPECT_URLS}.
    */
   readonly devInspect: Map<string, InspectSnapshotEntry>;
+  /**
+   * Whether any reader has asked for a snapshot (an MCP `denext_component_tree` /
+   * `denext_why_render` / `denext_hook_state`, or any other GET of `DEV_INSPECT_PATH`).
+   *
+   * Pages ask for this with a cheap `?probe=1` GET and walk their fiber tree ONLY once it
+   * is true — a whole-tree walk on every commit costs real time, and on most dev pages
+   * nobody is reading. Sticky for the dev server's lifetime (a reader that asked once will
+   * ask again), and pre-armed by `DENEXT_DEV_INSPECT=1` for a session that wants the very
+   * first read to land.
+   */
+  devInspectArmed: boolean;
 
   /** Monotonic token so a stale `deno check` run is dropped when a newer edit lands. */
   typeCheckToken: number;
@@ -261,6 +279,7 @@ export function createDevState(options: DevServerOptions): DevState {
     reloadClients: new Set(),
     devEvents: new DevEventLog(),
     devInspect: new Map(),
+    devInspectArmed: Deno.env.get("DENEXT_DEV_INSPECT") === "1",
     typeCheckToken: 0,
     load: () => Promise.reject(new Error("denext: dev loader used before startDevServer wired it")),
     tagLoad: () =>

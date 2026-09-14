@@ -12,8 +12,12 @@
 // browser, the third by naming a component that exists — so the failure strings below are
 // deliberately distinct, and the third lists what IS there.
 
-import type { InspectHook, RenderReason } from "../client/devtools-inspect.ts";
-import type { InspectSnapshot, InspectSnapshotNode } from "../client/devtools-inspect-sink.ts";
+import type { RenderReason } from "../client/devtools-inspect.ts";
+import type {
+  InspectSnapshot,
+  InspectSnapshotNode,
+  SnapshotHook,
+} from "../client/devtools-inspect-sink.ts";
 import type { DevInspect, DevInspectMiss } from "./dev-client.ts";
 import type { Tool } from "./tools.ts";
 import { fetchDevInspect } from "./dev-client.ts";
@@ -48,38 +52,69 @@ export function missText(reason: DevInspectMiss, dir: string): string {
     return `no dev server running (\`deno task dev\`) for ${dir} — the DevTools bridge reads ` +
       "the component tree from a RUNNING dev server (it looked for .denext/dev.json).";
   }
-  return "open the app in a browser — the DevTools sink has posted nothing yet. The dev " +
-    "server is running, but the tree is pushed from the page, so a browser has to load a " +
-    "route (any route) before there is anything to inspect.";
+  return "open the app in a browser, then CALL THIS AGAIN — the DevTools sink has posted " +
+    "nothing yet. The dev server is running, but the tree is pushed from the page, and the " +
+    "page only starts pushing once a read like this one has happened (it arms on the first " +
+    "call). So: load a route in a browser, interact with it (or reload), and ask again. " +
+    "`DENEXT_DEV_INSPECT=1 deno task dev` arms it from the start.";
 }
 
 /** `snapshot N.Ns old · <url>`, plus a refresh hint once the tree is stale. */
 function header(inspect: DevInspect): string {
-  const age = `snapshot ${(inspect.ageMs / 1000).toFixed(1)}s old · ${inspect.snapshot.url}`;
+  const age = `snapshot ${(num(inspect.ageMs) / 1000).toFixed(1)}s old · ${
+    text(inspect.snapshot.url)
+  }`;
   return inspect.ageMs > STALE_MS ? `${age} — interact with the page or reload to refresh` : age;
+}
+
+/**
+ * A field that should be a string, however the snapshot arrived. The dev server rebuilds
+ * every stored node from coerced fields, so this is belt-and-braces — but these
+ * formatters run on BROWSER-supplied data and their output goes straight into an agent's
+ * context, so not one of them may throw on a field that is missing or mis-typed.
+ */
+function text(v: unknown): string {
+  return typeof v === "string" ? v : "";
+}
+
+/** A field that should be an array, however the snapshot arrived (see {@link text}). */
+function arr<T>(v: T[] | undefined): T[] {
+  return Array.isArray(v) ? v : [];
+}
+
+/** A field that should be a number, however the snapshot arrived (see {@link text}). */
+function num(v: unknown): number {
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
 
 /** A source location as `app/page.tsx:12`, made relative to `dir` when it is under it. */
 function shortSource(node: InspectSnapshotNode, dir?: string): string {
   const src = node.source;
   if (!src) return "";
-  let file = src.file.startsWith("file://") ? decodeURIComponent(src.file.slice(7)) : src.file;
+  const raw = text(src.file);
+  if (!raw) return "";
+  let file = raw.startsWith("file://") ? decodeURIComponent(raw.slice(7)) : raw;
   if (dir && file.startsWith(dir)) file = file.slice(dir.length).replace(/^\//, "");
-  return `  ${file}${src.line ? `:${src.line}` : ""}`;
+  const line = num(src.line);
+  return `  ${file}${line ? `:${line}` : ""}`;
 }
 
 /** One tree line: `Counter key="a" [memo]  app/counter.tsx:5  ×3`. */
 function nodeLine(node: InspectSnapshotNode, depth: number, dir?: string): string {
-  const key = node.key === null ? "" : ` key=${JSON.stringify(node.key)}`;
-  const badges = node.badges?.length ? ` [${node.badges.join(", ")}]` : "";
-  const renders = node.reason && node.reason.count > 0 ? `  ×${node.reason.count}` : "";
-  return `${"  ".repeat(depth)}${node.name}${key}${badges}${shortSource(node, dir)}${renders}`;
+  const key = typeof node.key === "string" ? ` key=${JSON.stringify(node.key)}` : "";
+  const badgeList = arr(node.badges).map(text).filter((b) => b !== "");
+  const badges = badgeList.length > 0 ? ` [${badgeList.join(", ")}]` : "";
+  const count = num(node.reason?.count);
+  const renders = count > 0 ? `  ×${count}` : "";
+  return `${"  ".repeat(depth)}${text(node.name)}${key}${badges}${
+    shortSource(node, dir)
+  }${renders}`;
 }
 
 /** Whether `node` or any descendant matches the lower-cased `filter`. */
 function subtreeMatches(node: InspectSnapshotNode, filter: string): boolean {
-  return node.name.toLowerCase().includes(filter) ||
-    node.children.some((c) => subtreeMatches(c, filter));
+  return text(node.name).toLowerCase().includes(filter) ||
+    arr(node.children).some((c) => subtreeMatches(c, filter));
 }
 
 /** The walk's remaining line budget. */
@@ -105,7 +140,7 @@ function treeLines(
     }
     budget.left--;
     out.push(nodeLine(node, depth, opts.dir));
-    treeLines(node.children, out, depth + 1, opts, budget);
+    treeLines(arr(node.children), out, depth + 1, opts, budget);
   }
 }
 
@@ -115,14 +150,15 @@ function componentNames(snapshot: InspectSnapshot): string[] {
   const seen = new Set<string>();
   const visit = (nodes: InspectSnapshotNode[]): void => {
     for (const n of nodes) {
-      if (!seen.has(n.name)) {
-        seen.add(n.name);
-        names.push(n.name);
+      const name = text(n.name);
+      if (!seen.has(name)) {
+        seen.add(name);
+        names.push(name);
       }
-      visit(n.children);
+      visit(arr(n.children));
     }
   };
-  visit(snapshot.nodes);
+  visit(arr(snapshot.nodes));
   return names;
 }
 
@@ -145,13 +181,13 @@ function findComponents(
   const partial: InspectSnapshotNode[] = [];
   const visit = (nodes: InspectSnapshotNode[]): void => {
     for (const n of nodes) {
-      const name = n.name.toLowerCase();
+      const name = text(n.name).toLowerCase();
       if (name === want) exact.push(n);
       else if (name.includes(want)) partial.push(n);
-      visit(n.children);
+      visit(arr(n.children));
     }
   };
-  visit(snapshot.nodes);
+  visit(arr(snapshot.nodes));
   return exact.length > 0 ? exact : partial;
 }
 
@@ -167,7 +203,7 @@ export function componentTreeText(inspect: DevInspect, opts: TreeOptions = {}): 
   const filter = opts.filter?.trim().toLowerCase() || undefined;
   const budget: LineBudget = { left: opts.maxNodes ?? DEFAULT_MAX_NODES, cut: false };
   const lines: string[] = [];
-  treeLines(snapshot.nodes, lines, 0, { ...opts, filter }, budget);
+  treeLines(arr(snapshot.nodes), lines, 0, { ...opts, filter }, budget);
   if (lines.length === 0) {
     return `${header(inspect)}\n${
       filter ? noSuchComponent(snapshot, opts.filter ?? "") : "the page rendered no components"
@@ -182,15 +218,16 @@ export function componentTreeText(inspect: DevInspect, opts: TreeOptions = {}): 
 /** One changed-inputs line per dimension that actually changed. */
 function reasonLines(reason: RenderReason, node: InspectSnapshotNode): string[] {
   const lines: string[] = [];
-  if (reason.props.length > 0) lines.push(`  props changed: ${reason.props.join(", ")}`);
-  for (const i of reason.hooks) {
-    const hook = node.hooks[i];
+  const props = arr(reason.props).map(text).filter((p) => p !== "");
+  if (props.length > 0) lines.push(`  props changed: ${props.join(", ")}`);
+  for (const raw of arr(reason.hooks)) {
+    const i = num(raw);
+    const hook = arr(node.hooks)[i];
     const label = hook ? hookLabel(hook) : `hook ${i}`;
     lines.push(`  hook changed: [${i}] ${label}`);
   }
-  if (reason.contexts.length > 0) {
-    lines.push(`  contexts changed: ${reason.contexts.join(", ")}`);
-  }
+  const contexts = arr(reason.contexts).map(text).filter((c) => c !== "");
+  if (contexts.length > 0) lines.push(`  contexts changed: ${contexts.join(", ")}`);
   if (lines.length === 0) lines.push("  no input changed on the last commit (parent re-render)");
   return lines;
 }
@@ -237,7 +274,7 @@ export function whyRenderText(inspect: DevInspect, component: string, dir?: stri
         "page started tracking";
     }
     return [
-      `${head} · rendered ${node.reason.count}× while tracking`,
+      `${head} · rendered ${num(node.reason.count)}× while tracking`,
       ...reasonLines(
         node.reason,
         node,
@@ -247,16 +284,23 @@ export function whyRenderText(inspect: DevInspect, component: string, dir?: stri
 }
 
 /** `count · useState` when the dev metadata named the cell, else the kind label. */
-function hookLabel(hook: InspectHook): string {
-  if (hook.name && hook.hook) return `${hook.name} · ${hook.hook}`;
-  return hook.name || hook.hook || hook.kind;
+function hookLabel(cell: SnapshotHook): string {
+  const hook = cell ?? {} as SnapshotHook;
+  const name = text(hook.name);
+  const from = text(hook.hook);
+  if (name && from) return `${name} · ${from}`;
+  return name || from || text(hook.kind) || "hook";
 }
 
 /** One hook cell as a line: `[0] count · useState = 0  deps [a, b]`. */
-function hookLine(hook: InspectHook): string {
-  const deps = hook.deps ? `  deps [${hook.deps.map((d) => d.preview).join(", ")}]` : "";
+function hookLine(cell: SnapshotHook): string {
+  const hook = cell ?? {} as SnapshotHook; // a posted `hooks: [null]` must not throw
+  const deps = Array.isArray(hook.deps)
+    ? `  deps [${hook.deps.map((d) => text(d?.preview)).join(", ")}]`
+    : "";
   const cleanup = hook.hasCleanup ? "  (has cleanup)" : "";
-  return `  [${hook.index}] ${hookLabel(hook)} = ${hook.value.preview}${deps}${cleanup}`;
+  const value = text(hook.value?.preview);
+  return `  [${num(hook.index)}] ${hookLabel(hook)} = ${value}${deps}${cleanup}`;
 }
 
 /**
@@ -275,11 +319,12 @@ export function hookStateText(
   dir?: string,
 ): string {
   return perMatch(inspect, component, dir, (node, head) => {
-    const cells = index === undefined ? node.hooks : node.hooks.filter((h) => h.index === index);
+    const hooks = arr(node.hooks);
+    const cells = index === undefined ? hooks : hooks.filter((h) => num(h?.index) === index);
     if (cells.length === 0) {
       const what = index === undefined
         ? "no hooks"
-        : `no hook at index ${index} (it has ${node.hooks.length})`;
+        : `no hook at index ${index} (it has ${hooks.length})`;
       return `${head}\n  ${what}`;
     }
     const note = node.hooksNamed === false
@@ -332,9 +377,11 @@ const PAGE_ARGS = {
   dir: { type: "string", description: "Project directory (default: .)" },
 } as const;
 
-/** How every bridge tool's description ends — both preconditions, stated every time. */
+/** How every bridge tool's description ends — every precondition, stated every time. */
 const NEEDS = "Requires `deno task dev` to be running AND the app open in a browser (the tree is " +
-  "pushed from the page, so it is a snapshot, and the answer says how old it is).";
+  "pushed from the page, so it is a snapshot, and the answer says how old it is). The page " +
+  "starts pushing only once one of these tools has been called, so the FIRST call on a page may " +
+  "answer 'posted nothing yet' — call it again after the page's next commit.";
 
 /**
  * The three DevTools bridge tools, registered in the MCP tool table. Each resolves the

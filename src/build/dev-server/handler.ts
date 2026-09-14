@@ -98,7 +98,7 @@ function gatedDevEndpoint(
     case DEV_INSPECT_PATH:
       // POST = the in-page DevTools sink, GET = the MCP bridge's read; nothing else.
       if (request.method === "POST") return devInspectSink(st, request);
-      if (request.method === "GET") return devInspectRead(st, url);
+      if (request.method === "GET") return devInspectRead(st, url, request);
       return new Response("method not allowed", { status: 405, headers: { allow: "GET, POST" } });
     default:
       return null; // gate passed; another dev handler (or the app) serves it
@@ -222,6 +222,9 @@ async function devErrorPageFor(st: DevState, request: Request, res: Response): P
   });
 }
 
+/** Longest `url`/`message` a recorded request event keeps (the log must stay bounded). */
+const MAX_EVENT_TEXT = 2048;
+
 /** The app request, timed and recorded as a `request` event in the black box. */
 async function appResponse(
   st: DevState,
@@ -231,13 +234,16 @@ async function appResponse(
 ): Promise<Response> {
   const started = performance.now();
   const res = await devErrorPageFor(st, request, await appHandler(request));
+  // Clamped: the path is attacker-chosen (any page can fetch a 60 KB URL), the black box
+  // retains thousands of events, and the DevTools Network tab renders every one of them.
+  const path = url.pathname.slice(0, MAX_EVENT_TEXT);
   st.devEvents.record({
     kind: "request",
     ts: Date.now(),
     source: "server",
     level: res.status >= 500 ? "error" : "info",
-    message: `${request.method} ${url.pathname} → ${res.status}`,
-    url: url.pathname,
+    message: `${request.method} ${path} → ${res.status}`,
+    url: path,
     status: res.status,
     durationMs: Math.round(performance.now() - started),
   });

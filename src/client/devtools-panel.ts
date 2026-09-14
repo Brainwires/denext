@@ -62,6 +62,25 @@ export function initialState(): PanelState {
   };
 }
 
+/**
+ * The panel's SINGLE render-reason hold: enabled while it is open, released when it
+ * closes, and never taken twice. `enableRenderReasons` is refcounted (the inspector sink
+ * holds one too), so a hold that is taken or released twice would either pin tracking on
+ * forever or drop the sink's history — hence the flag rather than a bare call pair.
+ *
+ * @param api The inspector API.
+ * @returns A setter: `true` takes the hold, `false` releases it, repeats are no-ops.
+ */
+function reasonHold(api: DenextDevtoolsApi): (want: boolean) => void {
+  let held = false;
+  return (want) => {
+    if (want === held) return;
+    held = want;
+    if (want) api.enableRenderReasons();
+    else api.disableRenderReasons();
+  };
+}
+
 function mount(api: DenextDevtoolsApi, doc: Document): void {
   const { S, S_BADGE } = buildStyles();
   const state = initialState();
@@ -87,18 +106,18 @@ function mount(api: DenextDevtoolsApi, doc: Document): void {
   const picker = createPicker(doc, api, S, state, shell.pickBtn, hl, ctx.selectNode);
   const highlightUpdates = installHighlightUpdates(api, hl);
   const poller = createDataPoller(ctx);
+  const reasons = reasonHold(api); // "why did this render", accrued while inspecting
   const setOpen = (open: boolean): void => {
     state.open = open;
     shell.panel.style.display = open ? "flex" : "none";
     shell.launch.style.display = open ? "none" : "";
+    reasons(open);
     if (open) {
-      api.enableRenderReasons(); // start accruing "why did this render" while inspecting
       highlightUpdates.setEnabled(state.highlight);
       ctx.render();
     } else {
       picker.stop();
       hl.hideHighlight();
-      api.disableRenderReasons();
       highlightUpdates.setEnabled(false);
     }
     poller.sync();

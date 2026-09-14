@@ -680,6 +680,49 @@ Deno.test("inspector: getRenderReason reports what changed and a render count", 
   });
 });
 
+Deno.test("inspector: enableRenderReasons is refcounted — a second holder keeps the history", () => {
+  withDev(true, () => {
+    function HeldThing(): VNode {
+      const [n] = useState(0);
+      return h("div", { "data-n": String(n) });
+    }
+    // Holder A is the inspector sink (it holds for its whole lifetime, so the MCP
+    // `denext_why_render` has a history); holder B is the DevTools panel, opened and
+    // closed. Before the refcount, B's close cleared A's accrued reasons.
+    let nodeId = -1;
+    enableRenderReasons(); // A
+    try {
+      const { doc, container } = makeDom();
+      setDocument(asDoc(doc));
+      createRoot(asEl(container)).render(h(HeldThing, null));
+      flushSync();
+
+      const node = find(getInspectorTree(), "HeldThing")!;
+      nodeId = node.id;
+      const stateIdx = node.hooks.find((hk) => hk.kind === "state")!.index;
+      setHookState(node.id, stateIdx, 5);
+      flushSync();
+      assertEquals(getRenderReason(node.id)!.count, 2, "A has accrued two renders");
+
+      enableRenderReasons(); // B opens the panel — must NOT clear A's history
+      assertEquals(getRenderReason(node.id)!.count, 2, "opening the panel keeps the history");
+      disableRenderReasons(); // B closes it — A still holds, so tracking stays on
+      assertEquals(getRenderReason(node.id)!.count, 2, "closing the panel keeps the history");
+
+      setHookState(node.id, stateIdx, 6);
+      flushSync();
+      assertEquals(getRenderReason(node.id)!.count, 3, "and tracking is still live for A");
+    } finally {
+      disableRenderReasons(); // A releases: the last holder, so tracking really stops
+    }
+    // With every hold released, the NEXT enable is a fresh start: the baseline is re-seeded
+    // from what is mounted, so the accrued count is gone.
+    enableRenderReasons();
+    assertEquals(getRenderReason(nodeId)!.count, 1, "a fresh sole holder clears the history");
+    disableRenderReasons();
+  });
+});
+
 Deno.test("inspector: badges tag memo components and context providers", () => {
   withDev(true, () => {
     const BadgeInner = memo(function BadgeInner(): VNode {

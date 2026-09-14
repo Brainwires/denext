@@ -1023,6 +1023,13 @@ interface FiberSnapshot {
 }
 
 let reasonsEnabled = false;
+/**
+ * How many independent holders want render-reason tracking on. Two of them exist and
+ * overlap: the inspector sink (one hold for its whole lifetime, so `denext_why_render` has
+ * a history) and the panel (one hold while it is open). A refcount is what keeps closing
+ * the panel from clearing the history the sink is still accruing.
+ */
+let reasonHolders = 0;
 const renderReasons = new Map<number, RenderReason>();
 const reasonSnapshots = new Map<number, FiberSnapshot>();
 
@@ -1127,13 +1134,20 @@ function captureRenderReasons(): void {
 }
 
 /**
- * Begin tracking why each component renders — install the commit hook and clear any
- * prior data. The panel enables this when its "why did this render" view is on; the
- * first commit after enabling seeds the baseline (so reasons appear from the next
- * render onward). No-op in production.
+ * Begin tracking why each component renders — install the commit hook and, when tracking
+ * was off, clear any prior data. The panel enables this when its "why did this render"
+ * view is on; the first commit after enabling seeds the baseline (so reasons appear from
+ * the next render onward). No-op in production.
+ *
+ * **Refcounted.** Each caller takes one hold and releases it with exactly one
+ * {@link disableRenderReasons}. Enabling while another holder is already tracking keeps
+ * the accrued history instead of clearing it — otherwise opening and closing the DevTools
+ * panel would wipe what the MCP bridge's `denext_why_render` reports.
  */
 export function enableRenderReasons(): void {
-  if (!isDev() || reasonsEnabled) return;
+  if (!isDev()) return;
+  reasonHolders++;
+  if (reasonsEnabled) return; // another holder is tracking — keep its history
   reasonsEnabled = true;
   renderReasons.clear();
   reasonSnapshots.clear();
@@ -1143,9 +1157,13 @@ export function enableRenderReasons(): void {
   captureRenderReasons();
 }
 
-/** Stop tracking render reasons (and uninstall the commit hook if nothing else needs it). */
+/**
+ * Release one {@link enableRenderReasons} hold. Tracking stops (and the commit hook is
+ * uninstalled if nothing else needs it) only once the LAST holder has released.
+ */
 export function disableRenderReasons(): void {
-  if (!reasonsEnabled) return;
+  if (reasonHolders > 0) reasonHolders--;
+  if (!reasonsEnabled || reasonHolders > 0) return;
   reasonsEnabled = false;
   maybeUninstallCommitObserver();
 }

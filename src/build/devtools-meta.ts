@@ -46,8 +46,11 @@ export interface ComponentDecl {
 
 /** At most this many hooks are recorded per component (a runaway module stays cheap). */
 export const MAX_HOOKS = 64;
-/** A module whose serialised metadata exceeds this many bytes emits none at all. */
+/** A module whose serialised metadata exceeds this many UTF-8 BYTES emits none at all. */
 export const MAX_META_BYTES = 16 * 1024;
+
+/** The cap above counts bytes, not UTF-16 code units (a CJK/emoji name is up to 3× longer). */
+const ENCODER = new TextEncoder();
 
 /** The React/JSX naming rule for a hook call (`useX`, `use2`). */
 const HOOK_RE = /^use[A-Z0-9]/;
@@ -155,8 +158,10 @@ interface RawHook {
 
 /**
  * Every hook call inside `fn`, in source order, each labelled from the declarator that
- * binds its result. A call's own arguments are scanned too (a nested hook call is real,
- * e.g. inside a `useMemo` factory) but they inherit no label.
+ * binds its result. A hook call's own ARGUMENTS are not descended into — a hook nested
+ * inside a `useMemo`/`useCallback` factory is not recorded, because it does not produce a
+ * cell of the enclosing component (it runs, if at all, inside the memoized callback), and
+ * recording it would mis-align the metadata with the runtime's hook list.
  *
  * @param fn The callable node to scan.
  * @param ctx The module's byte-offset context.
@@ -239,7 +244,9 @@ export function metaFooter(sourceUrl: string, metas: Record<string, ComponentDev
       `__dnxMeta(${JSON.stringify(`${sourceUrl}#${name}`)}, ${JSON.stringify(meta)});`
     )
     .join("\n");
-  if (body.length > MAX_META_BYTES) return ""; // a generated/huge module stays uninstrumented
+  // UTF-8 bytes, not `.length`: a module of non-ASCII names measures up to 3× larger on
+  // the wire than in code units, and this cap exists to bound what the dev bundle carries.
+  if (ENCODER.encode(body).length > MAX_META_BYTES) return ""; // a huge module: no metadata
   return `import { registerComponentMeta as __dnxMeta } from "denext/client-runtime";\n` +
     body + "\n";
 }

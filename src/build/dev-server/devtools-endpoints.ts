@@ -8,9 +8,14 @@
 //
 // The third endpoint here is the DevTools → MCP bridge: the in-page inspector POSTs its
 // component tree to `/_denext/dev-inspect` and the MCP tools GET it back. It is the one
-// dev endpoint that STORES browser-supplied structured data, so it is method-, type-,
-// size- and shape-checked before anything is kept, and keeps at most one snapshot per
-// page URL across an 8-URL LRU.
+// dev endpoint that STORES browser-supplied structured data, so it is method-, type- and
+// size-checked, and what it keeps is REBUILT from coerced, clamped fields
+// (./devtools-snapshot.ts) rather than stored as posted. It keeps at most one snapshot per
+// page URL across an 8-URL LRU, for at most `INSPECT_TTL_MS`, and a read from a page (one
+// with a `Referer`) sees only that page's own snapshot.
+//
+// The read side also carries the sink's arming switch: a page walks its fiber tree only
+// once a real read has happened here, and asks with a cheap `?probe=1` GET.
 //
 // Neither read endpoint does any scanning of its own: the cache snapshot is the same public
 // `getCacheStats()` a monitoring hook would read, and the route map is matched against the
@@ -20,7 +25,13 @@
 import { getCacheStats } from "../../server/cache.ts";
 import { routeMapData } from "../../mcp/inspect.ts";
 import { getManifest } from "./manifest.ts";
-import { type DevState, type InspectSnapshotEntry, MAX_INSPECT_URLS } from "./state.ts";
+import {
+  type DevState,
+  INSPECT_TTL_MS,
+  type InspectSnapshotEntry,
+  MAX_INSPECT_URLS,
+} from "./state.ts";
+import { parseSnapshot } from "./devtools-snapshot.ts";
 import type { InspectSnapshot } from "../../client/devtools-inspect-sink.ts";
 
 /** Both payloads are live snapshots — never let a proxy or the browser keep one. */
@@ -84,15 +95,6 @@ export async function devRoutesResponse(st: DevState, url: URL): Promise<Respons
  */
 const MAX_SNAPSHOT_BYTES = 256 * 1024;
 
-/** Server-side re-check of the page's own caps (this is browser-supplied data). */
-const MAX_SNAPSHOT_NODES = 4000;
-
-/** Server-side re-check of the page's depth cap. */
-const MAX_SNAPSHOT_DEPTH = 60;
-
-/** Longest page URL a snapshot may be keyed by. */
-const MAX_SNAPSHOT_URL = 2048;
-
 /** A JSON body read, capped: the text, or null when it ran past `max` bytes. */
 async function readCapped(request: Request, max: number): Promise<string | null> {
   const reader = request.body?.getReader();
@@ -113,45 +115,16 @@ async function readCapped(request: Request, max: number): Promise<string | null>
   return text + decoder.decode();
 }
 
-/** One snapshot node, shape-checked (and counted/depth-limited) before it is stored. */
-function validNode(node: unknown, depth: number, count: { n: number }): boolean {
-  if (depth > MAX_SNAPSHOT_DEPTH || ++count.n > MAX_SNAPSHOT_NODES) return false;
-  if (node === null || typeof node !== "object") return false;
-  const n = node as Record<string, unknown>;
-  if (typeof n.id !== "number" || typeof n.name !== "string") return false;
-  if (n.props === null || typeof n.props !== "object") return false;
-  if (!Array.isArray(n.hooks) || !Array.isArray(n.contexts) || !Array.isArray(n.children)) {
-    return false;
-  }
-  return n.children.every((c) => validNode(c, depth + 1, count));
-}
-
 /**
- * Parse and shape-check a posted snapshot. A body that is not a well-formed snapshot is
- * rejected (the caller drops it silently, as the dev-log sink does) rather than stored:
- * the MCP tools render this straight into an agent's context.
+ * The media type of a `content-type` header — lower-cased, without its parameters.
+ * Matched EXACTLY against `application/json`: a substring test would accept
+ * `text/html; x=application/json`, and this endpoint stores what it is given.
  *
- * @param body The raw request body.
- * @returns The snapshot, or null when the body is malformed or over the server's caps.
+ * @param header The raw header value (or null when absent).
+ * @returns The bare media type, e.g. `application/json`.
  */
-function parseSnapshot(body: string): InspectSnapshot | null {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(body);
-  } catch {
-    return null;
-  }
-  if (raw === null || typeof raw !== "object") return null;
-  const s = raw as Record<string, unknown>;
-  if (typeof s.url !== "string" || !Array.isArray(s.nodes)) return null;
-  const count = { n: 0 };
-  if (!s.nodes.every((n) => validNode(n, 0, count))) return null;
-  return {
-    url: s.url.slice(0, MAX_SNAPSHOT_URL),
-    at: typeof s.at === "number" ? s.at : Date.now(),
-    truncated: s.truncated === true,
-    nodes: s.nodes as InspectSnapshot["nodes"],
-  };
+function mediaType(header: string | null): string {
+  return (header ?? "").split(";")[0].trim().toLowerCase();
 }
 
 /** Store `snapshot` as its URL's latest, evicting the oldest URL past the LRU's size. */
@@ -169,17 +142,17 @@ function storeSnapshot(st: DevState, snapshot: InspectSnapshot): void {
  * `POST /_denext/dev-inspect` — the in-page DevTools sink: record this page's latest
  * component tree so the MCP bridge can read it out-of-process.
  *
- * POST + `application/json` only (405/415 otherwise), body capped at 256 KB (413), and a
- * body that does not parse as a snapshot is DROPPED with a 204 — a dev page must never be
- * taught to log server errors by posting junk.
+ * POST + exactly `application/json` only (405/415 otherwise), body capped at 256 KB (413),
+ * and a body that does not parse as a snapshot is DROPPED with a 204 — a dev page must
+ * never be taught to log server errors by posting junk. What IS stored is rebuilt field by
+ * field by {@link parseSnapshot}, never the posted object.
  *
  * @param st The dev-server state (its {@link DevState.devInspect} LRU is written).
  * @param request The POST request.
  * @returns 204 on accept-or-drop, 415/413 when the request itself is refused.
  */
 export async function devInspectSink(st: DevState, request: Request): Promise<Response> {
-  const type = (request.headers.get("content-type") ?? "").toLowerCase();
-  if (!type.includes("application/json")) {
+  if (mediaType(request.headers.get("content-type")) !== "application/json") {
     return new Response("expected application/json", { status: 415, headers: NO_STORE });
   }
   const declared = Number(request.headers.get("content-length"));
@@ -195,8 +168,16 @@ export async function devInspectSink(st: DevState, request: Request): Promise<Re
   return new Response(null, { status: 204, headers: NO_STORE });
 }
 
+/** Drop every snapshot older than the TTL — a dev page's state is not kept forever. */
+function evictStale(st: DevState, now: number): void {
+  for (const [url, entry] of [...st.devInspect]) {
+    if (now - entry.receivedAt > INSPECT_TTL_MS) st.devInspect.delete(url);
+  }
+}
+
 /** The stored entry for `want` (exact URL, else the newest with that path), or the newest. */
 function pickEntry(st: DevState, want: string | null): InspectSnapshotEntry | undefined {
+  evictStale(st, Date.now());
   if (want === null) {
     let newest: InspectSnapshotEntry | undefined;
     for (const entry of st.devInspect.values()) newest = entry; // insertion = write recency
@@ -212,19 +193,54 @@ function pickEntry(st: DevState, want: string | null): InspectSnapshotEntry | un
 }
 
 /**
+ * Which page's snapshot this GET may see.
+ *
+ * An explicit `?url=` selects one (the MCP bridge always passes it). WITHOUT it, a caller
+ * that is a PAGE — it carries a `Referer` — is scoped to its own path: a dev page must not
+ * be able to read the hook state of another route the developer happens to have open, so
+ * `/blog/<untrusted>` cannot read `/login`'s tree. A caller with no `Referer` is an
+ * out-of-process reader (the MCP bridge, curl) and gets the most recent snapshot.
+ *
+ * @param url The request URL.
+ * @param request The request (read for `Referer`), when the caller has one.
+ * @returns The page URL to select, or null for "the most recent".
+ */
+function readScope(url: URL, request?: Request): string | null {
+  const want = url.searchParams.get("url");
+  if (want !== null) return want;
+  const referer = request?.headers.get("referer");
+  if (!referer) return null;
+  try {
+    const ref = new URL(referer);
+    return ref.pathname + ref.search;
+  } catch {
+    return ""; // an unparseable Referer selects nothing (and matches nothing)
+  }
+}
+
+/**
  * `GET /_denext/dev-inspect` — read back the latest snapshot the page posted, for the MCP
  * component/why-render/hook tools.
  *
- * `?url=` selects a page (exact match, else the newest snapshot with that path); without
- * it the most recently posted snapshot is returned. `ageMs` is measured on the SERVER
- * clock, so a skewed page clock cannot make a stale tree look fresh.
+ * `?probe=1` is the page's lazy-arming probe: it answers `{ armed }` and reads nothing.
+ * Any OTHER GET is a real read, and arms the sink for the dev server's lifetime — that is
+ * what tells pages to start walking their fiber trees at all (see `installInspectSink`).
+ *
+ * Selection is {@link readScope}'s; `ageMs` is measured on the SERVER clock, so a skewed
+ * page clock cannot make a stale tree look fresh, and a snapshot older than
+ * {@link INSPECT_TTL_MS} is gone.
  *
  * @param st The dev-server state.
- * @param url The request URL (its `url` parameter selects the page).
- * @returns `{ snapshot, ageMs }`, or a 404 `{ reason: "no_snapshot" }`.
+ * @param url The request URL (its `url` / `probe` parameters).
+ * @param request The request, when the caller has one (read for `Referer` scoping).
+ * @returns `{ snapshot, ageMs }`, `{ armed }` for a probe, or a 404 `{ reason: "no_snapshot" }`.
  */
-export function devInspectRead(st: DevState, url: URL): Response {
-  const entry = pickEntry(st, url.searchParams.get("url"));
+export function devInspectRead(st: DevState, url: URL, request?: Request): Response {
+  if (url.searchParams.has("probe")) {
+    return Response.json({ armed: st.devInspectArmed }, { headers: NO_STORE });
+  }
+  st.devInspectArmed = true; // a reader exists: pages may start snapshotting
+  const entry = pickEntry(st, readScope(url, request));
   if (!entry) {
     return Response.json({ reason: "no_snapshot" }, { status: 404, headers: NO_STORE });
   }
