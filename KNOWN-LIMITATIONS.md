@@ -11,10 +11,10 @@ Internal differences that **don't** break the surface — denext's own reconcile
 its async SSR renderer, the two-mechanism soft-nav, request-scoped
 `React.cache`, Pages-Router-as-a-plugin, the next-compat build defaults — are
 **design choices, not limitations**, and live in
-[ARCHITECTURE.md](./ARCHITECTURE.md). Places where denext **deliberately behaves
+[the architecture guide](https://denext.dev/docs/architecture). Places where denext **deliberately behaves
 differently** from React/Next — observable, documented, and not going to change —
 are in [KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md). Operational defaults live
-in [DEPLOYMENT.md](./DEPLOYMENT.md).
+in [the deployment guide](https://denext.dev/docs/deploy).
 
 ## React / Next.js surface gaps
 
@@ -225,11 +225,35 @@ four documented bounds of the opt-in:
   to N×. The schema resolves once per process: in `denext dev`, an edit to a schema module needs
   a server restart (Deno's module graph caches it).
 
+### Testing helpers (`denext doctor`, `probeApp`)
+
 - **`denext doctor` / `probeApp` see a crash only as the framework's bare 500.** The
   "no-crash-marker" check matches the 500 fallback body (`Internal Server Error` and nothing
   else) and raw stack frames. A server error that a segment `error.tsx` caught and rendered
   at status 200 — the redacted message inside the boundary's own markup — is a rendered page
   to the probe. Assert on such routes yourself (a `contains` on the expected content).
+
+### Compile-time feature flags (`feature()`)
+
+- **DCE covers some paths, not all — but the value is always correct.** `feature("KEY")`
+  (`denext/feature`) always returns the configured value: the server and every client bundle are
+  seeded with `experimental.features`. **Dead-code elimination** of the untaken branch happens
+  only where the build folds the call: the native App Router's **component (`.tsx`/`.jsx`)**
+  modules, the whole SPA bundle, and dev. On the **compat (drop-in) App Router** path, and for
+  **non-component (`.ts`) modules on the native path**, `feature()` reads the seeded value at
+  runtime and the branch is **not** eliminated (correct, but no byte savings). Only a
+  string-literal argument is foldable; `feature(name)` is always a runtime read. Flag names and
+  their on/off states are embedded in the client bundle (like `NEXT_PUBLIC_*` env vars) — don't
+  encode secrets in flag keys.
+
+### First-party Markdown renderer (`@denext/content-collections/markdown`)
+
+- **Deliberately a subset of CommonMark + GFM, not an engine.** It covers headings (with ids),
+  paragraphs, flat ordered/unordered lists with lazy continuation, fenced code, blockquotes and
+  `> [!NOTE]` callouts (multi-paragraph), GFM pipe tables, inline and reference-style links,
+  emphasis and inline code — and deliberately omits **nested lists, footnotes, images, 4-space
+  indented code and raw-HTML passthrough** (raw HTML is escaped, never passed through). A
+  document that needs those is an `.mdx` entry, compiled at build.
 
 ## DevTools (dev-only)
 
@@ -256,72 +280,43 @@ for the common case).
 
 Implemented for compatibility but tracking still-unstable upstream surfaces, so
 they may change: `unstable_cache` (still `unstable_` in Next 16),
-`unstable_batchedUpdates` (a no-op — see [ARCHITECTURE.md](./ARCHITECTURE.md)),
+`unstable_batchedUpdates` (a no-op — see [the architecture guide](https://denext.dev/docs/architecture)),
 `useMemoCache`/`c` (React Compiler runtime — the compiler hit 1.0 stable; this
 is an internal helper). **Not provided:** Next 16.4 canary's navigation-stage APIs
 (`unstable_navigation` / `unstable_prefetch` from `next/cache`, the "prefetch stage"
 experiment) — an app importing them fails the compat build with "No matching export", which
 is why the `next-app-router-playground` migration bed is pinned before the commit that
-adopted them. **`ViewTransition` honors per-element transitions across
-navigations**: on every soft-nav path (Flight, isomorphic, and full-HTML — the
-iso/HTML paths now await their re-injected entry so the DOM swap happens inside the
-transition), the wrapper stamps real `view-transition-name` on its host child on both
-sides of the swap, so a shared `name` morphs between routes; `enter`/`exit`/`update`/
-`share` become `view-transition-class` (per-type maps resolve against
-`addTransitionType`, which also drives `startViewTransition({ types })`), and the
-route-level cross-fade still applies where the browser supports it. Residual vs React:
-only **navigation** commits are wrapped in a transition — a same-page state change that
-adds/removes/reorders a `<ViewTransition>` (React's list-reorder case) is not animated —
-each `name` must be unique among the elements live at once (two sharing a name make the
-browser skip the transition, as in React / the View Transitions API), and the animation
-itself needs a browser that supports the View Transitions API (it is a no-op elsewhere). **`Activity` does real offscreen scheduling** —
-`mode="hidden"` keeps the subtree mounted-but-hidden (`display:none !important`), preserves its
-state, and tears down its effects, so `mode="visible"` restores the same instances; a
-subtree that mounts hidden is pre-rendered at transition priority. One residual gap vs
-React: a subtree that MOUNTS hidden runs its effects once during that pre-render (and
-keeps them connected while hidden) — React defers a hidden subtree's effects entirely;
-denext only tears effects down on a visible→hidden transition, not a hidden mount.
-A second residual: a hidden `<Activity>` subtree is **not server-rendered** — it emits no
-SSR HTML and is client-mounted-hidden on hydration (so its state/effects behave as above),
-rather than being pre-rendered into the streamed document the way React can.
-**React `taint*` is implemented**:
-`experimental_taintObjectReference` / `experimental_taintUniqueValue` mark a value
-that must never cross the server→client boundary, enforced in the Flight serializer
-(it throws rather than serialize a tainted object or secret string). Defense-in-depth,
-not a substitute for not passing secrets. **Genuinely not implemented by design:**
-Next `taint`. (Next `dynamicIO` isn't a non-goal either — it is the precursor
-of Cache Components, which denext ships as the stable `cacheComponents` opt-in.)
+adopted them.
+
+Residual gaps in the React 19.2 additions (the features themselves are in
+[FEATURES.md](./FEATURES.md)):
+
+- **`ViewTransition`:** only **navigation** commits are wrapped in a transition — a same-page
+  state change that adds/removes/reorders a `<ViewTransition>` (React's list-reorder case) is
+  not animated; each `name` must be unique among the elements live at once (two sharing a
+  name make the browser skip the transition, as in React / the View Transitions API); and the
+  animation needs a browser that supports the View Transitions API (a no-op elsewhere).
+- **`Activity`:** a subtree that MOUNTS hidden runs its effects once during its pre-render
+  (and keeps them connected while hidden) — React defers a hidden subtree's effects entirely;
+  denext only tears effects down on a visible→hidden transition. A hidden subtree is also
+  **not server-rendered** — it emits no SSR HTML and is client-mounted-hidden on hydration,
+  rather than pre-rendered into the streamed document the way React can.
+- **`taint*`:** `experimental_taintObjectReference` / `experimental_taintUniqueValue` are
+  enforced in the Flight serializer (defense-in-depth, not a substitute for not passing
+  secrets); Next's `taint` config is **not implemented by design**. (Next `dynamicIO` isn't a
+  non-goal either — it is the precursor of Cache Components, which denext ships as the stable
+  `cacheComponents` opt-in.)
+- **Legacy provider context** (`childContextTypes` / `getChildContext`) is an intentional
+  non-implementation — React deprecated this pre-`createContext` API, so denext won't chase
+  it. Modern class context (`static contextType`) reaches parity; migrate providers to
+  `createContext`.
 
 ## Migration: Remix runs on the `denext/remix` runtime
 
-`denext migrate --from remix` (also auto-detected) transforms a Remix app to run on
-denext with its **data model intact** — no manual loader inversion. It restructures
-`app/routes/*` → `app/**/page.tsx`+`layout.tsx` (`$param` → `[param]`, `$` →
-`[...splat]`, `_index` → the segment page, pathless `_x` → a `(x)` route group, dotted
-nesting → folders), converts `app/root.tsx` → `app/layout.tsx` (`<Meta/>`/`<Links/>`/
-`<Scripts/>` stripped, `<Outlet/>` → the layout `children`), deletes
-`entry.{server,client}.*`, and **splits each route** into a client component
-(`page.client.tsx`) + a server data module (`page.data.ts`) wired by a generated
-`page.tsx` wrapper — because a `loader` (server) and the component (client) can't share
-one `"use client"` module. `@remix-run/*` imports are remapped to the first-party
-`denext/remix` runtime, which implements Remix's surface on denext primitives:
-`useLoaderData`/`useActionData` (loader run server-side, data across the Flight
-boundary), `<Form>`/`useSubmit` (denext Server Actions), `useNavigate`/`useLocation`/
-`useSearchParams`/`useParams`/`useMatches`, `<Link>`/`<NavLink>`/`<Outlet>`, `defer`/
-`<Await>`, `meta` → `generateMetadata`, and `ErrorBoundary` → `error.tsx`.
-
-`defer`/`<Await>` streams incrementally on the default streaming Flight path: a
-`defer()` promise prop no longer blocks the shell — it leaves a value-hole placeholder
-so first paint flushes immediately (with the `<Await>` fallback), the deferred content
-streams in as its Suspense boundary resolves, and the resolved value is substituted into
-the tail Flight so hydration carries real data (never `{}`). Cross-route `fetcher.submit`
-/`<Form action>` to another **page** route's `action` works too: a page route that has an
-`action` gets a generated `route.ts` POST handler, so a plain POST to the page URL runs
-the action (its URL params threaded from the matched pattern), and denext dispatch serves
-the same segment's GET from `page.tsx`. A redirecting cross-route action is followed as a
-soft navigation.
-
-The nuances worth knowing (reported as review notes, never silently changed):
+`denext migrate --from remix` ports a Remix app onto the first-party `denext/remix` runtime
+with its data model intact — what it does and writes is documented in
+[the Remix migration guide](https://denext.dev/docs/migrating-remix). These are the edges of that
+runtime and transform (reported as review notes, never silently changed):
 
 - **Deferred DATA is whole-at-end, like every denext route.** The `<Await>` _content_
   streams progressively (its Suspense boundary), and first paint is not blocked, but the
@@ -358,33 +353,13 @@ The nuances worth knowing (reported as review notes, never silently changed):
   denext's `mode: "spa"`, and denext prerenders static routes itself); route `+types` typegen is
   type-only, so the app runs without it.
 
-- **Prisma is auto-migrated to the Rust-free Deno client.** An app (Next or Remix)
-  that uses Prisma is wired end-to-end: the schema generator becomes the ESM/Deno
-  `prisma-client` (with `queryCompiler` + `driverAdapters` — no native engine binary),
-  every `@prisma/client` import repoints at the generated client, the driver adapter is
-  injected at each `new PrismaClient()`, and `deno.json` gets the `links` shim + npm pins
-  - a `prisma:setup` task. Run `deno task prisma:setup` once (it bundles denext's
-    `node:sqlite` compat, installs, `prisma generate`s, and `db push`es), then build/run
-    normally — queries go through the better-sqlite3 driver adapter to Deno's built-in
-    SQLite. Two edges: (1) only **runtime** source under `app/`/`src/`/`lib/`/… is
-    rewritten — Node-only tooling that legitimately uses the native client (a `prisma/
-  seed.ts`, Cypress helpers) is deliberately left untouched, so run those under Node or
-    port them; (2) a `new PrismaClient(<non-object-arg>)` is flagged for a one-line manual
-    adapter add (the empty and object-literal forms are wired automatically). Non-SQLite
-    datasources need their own Prisma driver adapter instead of better-sqlite3.
-
-### Compile-time feature flags (`feature()`)
-
-- **DCE covers some paths, not all — but the value is always correct.** `feature("KEY")`
-  (`denext/feature`) always returns the configured value: the server and every client bundle are
-  seeded with `experimental.features`. **Dead-code elimination** of the untaken branch happens
-  only where the build folds the call: the native App Router's **component (`.tsx`/`.jsx`)**
-  modules, the whole SPA bundle, and dev. On the **compat (drop-in) App Router** path, and for
-  **non-component (`.ts`) modules on the native path**, `feature()` reads the seeded value at
-  runtime and the branch is **not** eliminated (correct, but no byte savings). Only a
-  string-literal argument is foldable; `feature(name)` is always a runtime read. Flag names and
-  their on/off states are embedded in the client bundle (like `NEXT_PUBLIC_*` env vars) — don't
-  encode secrets in flag keys.
+- **Prisma auto-migration has two edges.** Only **runtime** source under `app/`/`src/`/
+  `lib/`/… is rewritten to the Deno client — Node-only tooling that legitimately uses the
+  native client (a `prisma/seed.ts`, Cypress helpers) is deliberately left untouched, so run
+  those under Node or port them; and a `new PrismaClient(<non-object-arg>)` is flagged for a
+  one-line manual adapter add (the empty and object-literal forms are wired automatically).
+  Non-SQLite datasources need their own Prisma driver adapter instead of better-sqlite3. The
+  recipe itself is in [the database guide](https://denext.dev/docs/database).
 
 ## Not yet available
 

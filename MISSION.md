@@ -39,8 +39,8 @@ hurt. "Superior" is concrete, and it's the whole job:
    (per-component lazy hydration). Superior isn't only "smaller" — it's "does more."
 4. **One cargo-class tool for all of React.** SPA, App Router, unmodified-Next
    migrations, and desktop — a single binary from `create` to a packaged app, with
-   DX good enough to choose on its own. This is the whole of **2.0**; see
-   [ROADMAP.md](./ROADMAP.md).
+   DX good enough to choose on its own. Shipped as **2.0** (see
+   [FEATURES.md](./FEATURES.md)); [ROADMAP.md](./ROADMAP.md) tracks what remains.
 5. **Honest compatibility as the on-ramp — never the headline.** We reproduce the
    React/Next _surface_ so migration is nearly free, and we **never claim 100%
    parity**. Compat gets people in the door; superiority is why they stay.
@@ -53,9 +53,10 @@ the CVE treadmill) to get in the door; close with the capabilities and the one-t
 DX to make it memorable.
 
 **See also:**
-[ROADMAP.md](./ROADMAP.md) — the pending engineering gap to this mission (the 2.1 cycle) ·
+[ROADMAP.md](./ROADMAP.md) — the pending engineering gap to this mission ·
 [FEATURES.md](./FEATURES.md) — what's already shipped ·
-[ARCHITECTURE.md](./ARCHITECTURE.md) — the deliberate under-the-surface choices ·
+[Architecture](https://denext.dev/docs/architecture) — the deliberate under-the-surface choices ·
 [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) — the honest surface gaps ·
 [KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md) — deliberate behavioral differences ·
-[SECURITY.md](./SECURITY.md) — how to report a vulnerability.
+[POLICIES.md](./POLICIES.md) — the standing engineering guardrails and the security policy
+(how to report a vulnerability).

@@ -9,7 +9,7 @@
     "./types": "./types.ts"
   },
   "imports": {
-    "@denext/denext": "jsr:@denext/denext@^2.4.2",
+    "@denext/denext": "jsr:@denext/denext@^2.4.3",
     "@std/path": "jsr:@std/path@^1.0.0"
   },
   "publish": {

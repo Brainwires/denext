@@ -1,18 +1,31 @@
-# Deploying denext in production
+---
+title: Deployment
+slug: deploy
+lead: denext ships secure, production-minded defaults (graceful drain, request cancellation/timeout, body/cache/prefetch caps, error redaction, correlation ids, opinionated hardening headers, config validation). A few operational responsibilities are yours to configure at the edge/platform — this guide lists them.
+---
 
 denext ships secure, production-minded defaults (graceful drain, request
 cancellation/timeout, body/cache/prefetch caps, error redaction, correlation
 ids, opinionated hardening headers, config validation). A few operational
 responsibilities are **yours** to configure at the edge/platform — they are
 deliberately not baked into the framework so denext stays a thin, fast core.
-This document lists them. See [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md)
-for the threat-by-threat security posture and [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md)
-for behavioral divergences.
+This document lists them. See [the security guide](/docs/security)
+for the threat-by-threat security posture and [the differences guide](/docs/differences)
+for the safe defaults that deliberately differ from Next's.
 
 ## 0. Deploy recipes
 
 `denext build` writes a `.denext/` output; `denext start` serves it. Build in the
 image/CI, then run `start`.
+
+### Static export
+
+If your app is fully static (no per-request data), export it to plain HTML and
+host it anywhere — this very docs site is built that way:
+
+```sh
+deno run -A jsr:@denext/denext/cli export .   # writes out/ — pure HTML, 0 KB JS on static pages
+```
 
 ### Docker
 
@@ -43,6 +56,12 @@ Push the repo and point the entrypoint at `jsr:@denext/denext@^2/cli` with args
 `start .`, or add a build step running `deno task build`. Deno Deploy provides TLS
 and autoscaling; still set a per-instance `maxConcurrency` (§1) and your secrets
 (`SESSION_SECRET`, etc.) as environment variables.
+
+denext's cache defaults to Deno's built-in `node:sqlite` (a local SQLite file),
+but Deno Deploy has no persistent local filesystem, so the cache falls back to a
+per-instance **in-memory** store there. For a cache that is durable and shared
+across edge instances, inject your own `CacheStore` via `cache.store` in
+`denext.config.ts`.
 
 ### Self-host (systemd)
 
@@ -132,32 +151,59 @@ import { safeFetch } from "denext/server";
 const res = await safeFetch(userProvidedUrl);
 ```
 
-For fixed, trusted URLs plain `fetch` is fine.
+That covers link previews, "import from URL", avatar-by-URL, webhooks, and
+anything else where the user names the host: `safeFetch` resolves + validates the
+host, refuses internal addresses, pins the connection (closing DNS rebinding),
+and bounds time and size.
+
+```ts
+import { safeFetch, SafeFetchError } from "denext/server";
+
+try {
+  const res = await safeFetch(userUrl, {
+    allowedHosts: ["*.trusted-cdn.com"], // optional; omit = any public host
+    maxBytes: 5_000_000,
+    signal: AbortSignal.timeout(8000), // or an AbortController's signal
+  });
+} catch (e) {
+  if (e instanceof SafeFetchError) { /* e.code: "blocked-address", … */ }
+}
+```
+
+For fixed, trusted URLs plain `fetch` is fine. Keep using `fetch`/`cachedFetch`
+for your **own** backends (internal services, `localhost`) — those are exactly
+the addresses `safeFetch` deliberately blocks.
 
 ## 4. Redirect helpers
 
-- `redirect()` (control-flow) and the **middleware `redirectResponse()` helper**
-  normalize their target through `safeRedirectLocation`, collapsing
-  protocol-relative escapes (`//host`, `/\host`, …) to a same-origin path.
+- `redirect()` (control-flow), config-driven `redirects()`, and the **middleware
+  `redirectResponse()` helper** normalize their target through
+  `safeRedirectLocation`, collapsing protocol-relative escapes (`//host`,
+  `/\host`, …) to a same-origin path.
 - `safeRedirectLocation` **passes an explicit absolute URL through verbatim**
-  (that is intended — you asked to leave the origin). Do not pass a
+  (that is intended — you asked to leave the origin), so
+  `redirect("https://" + userInput)` is still an open redirect. Do not pass a
   user-controlled absolute URL to a redirect without validating it against your
   own allowlist first.
+- **Don't build a redirect/rewrite destination _host_ from request input.** A
+  config rule like `{ destination: "https://:host/..." }` substitutes a URL param
+  into the host — an open redirect. A `rewrite` to an external host is **not** an
+  SSRF in denext (rewrites re-route by pathname against your local manifest and
+  never proxy), but it is still a misconfiguration. Keep params in the path.
 - `NextResponse.redirect(url)` keeps Next.js's stricter contract: `url` must be
   absolute and a relative string throws.
 
 ## 5. CSP is applied to page responses, not Flight/API/static
 
 denext computes a strict Content-Security-Policy for HTML page responses,
-**buffered and streamed** alike (a streamed page carries the same hash-based
-policy; see §CSP below). **Flight/RSC**
-responses, and **streamed Cache Components / PPR** responses (a cached shell with
-per-request dynamic holes) do not carry a framework-generated CSP — the full
-document isn't known when the first bytes flush. If you rely on CSP for those
-responses, **set it at the edge** (reverse proxy / CDN) with a nonce- or hash-based
-policy you control, or use buffered rendering for the routes that need a framework
-CSP. (A streamed PPR response is already `private, no-store`, so an intermediary
-never shares it.)
+**buffered and streamed** alike — a streamed page and a Cache Components / PPR shell
+with per-request holes carry the same hash-based policy, because the swap runtime is
+a hashed constant and the head's inline styles are hashed before the first byte
+flushes (see the streaming note below). **Flight/RSC** payload responses are not
+HTML documents and carry no framework-generated CSP; neither do API-route or static
+responses. If you want a policy on those, **set it at the edge** (reverse proxy /
+CDN). (A streamed PPR response is `private, no-store`, so an intermediary never
+shares it.)
 
 The framework CSP keeps `script-src 'self'` and never hashes arbitrary inline
 `<script>` output (so injected script can't self-authorize a hash) — denext emits
@@ -183,9 +229,6 @@ export const csp = { scriptSrc: ["https://plausible.io"] }; // strict + this rou
 // export const csp = "off";   // disable CSP for just this route (e.g. an embed)
 // export const csp = "strict"; // force strict here even when the global default is "off"
 ```
-
-Neither API-route nor static-HTML responses carry a framework CSP either — the
-same "set it at the edge" guidance applies.
 
 **Incremental streaming (`streaming`).** **On by default.** A route with a pending
 `<Suspense>` boundary flushes its shell first and streams each boundary as it
@@ -213,6 +256,11 @@ and treats `x-forwarded-proto` as untrusted (so a spoofed `x-forwarded-proto:
 https` will **not** induce HSTS, and the action-CSRF check uses the connection's
 own scheme).
 
+The same rule governs the helpers: **`absoluteUrl`/`requestOrigin` derive the
+origin from the `Host` header** unless you opt in with `trustForwardedHeaders`. A
+client can spoof `Host`, so for a fixed public origin set `canonicalOrigin` — it
+overrides the header and is the robust choice for canonical and `og:image` URLs.
+
 ## 7. Cookies are secure by default
 
 `cookies().set()` defaults to **`httpOnly` + `SameSite=Lax` + `Secure`** (Secure is
@@ -224,7 +272,9 @@ set a cookie the browser's JS must read, opt out explicitly:
 cookies().set("theme", "dark", { httpOnly: false }); // client-readable
 ```
 
-For sessions, prefer the built-in signed-cookie helper instead of hand-rolling:
+For sessions, set a strong `SESSION_SECRET` (≥32 chars; a shorter one warns in
+dev and throws in production) and prefer the built-in signed-cookie helper
+instead of hand-rolling:
 
 ```ts
 import { getSession } from "denext/server";
@@ -251,10 +301,12 @@ to correlate proxy and app logs.
 ## 9. Request logging
 
 Set `DENEXT_LOG=json` for structured (one-JSON-object-per-line) request logs
-suited to log pipelines; any other truthy value (e.g. `DENEXT_LOG=1`) emits a
-compact human-readable line. Logged fields (method, path, status, duration, request id)
-are safe against log forging (the request id is sanitized; JSON output escapes
-control characters).
+suited to log pipelines — each object carries a `statusClass` field (`2xx`,
+`5xx`, …) ready to ingest; any other truthy value (e.g. `DENEXT_LOG=1`) emits a
+compact human-readable one-line-per-request log. Logged fields (method, path,
+status, duration, request id) are safe against log forging (the request id is
+sanitized; JSON output escapes control characters). For a programmatic hook
+instead of (or alongside) the env var, see the `onRequest` callback in §14.
 
 ## 10. Graceful shutdown
 
@@ -311,3 +363,112 @@ Two mitigations, use either or both:
 createApp({ /* … */ cacheKeyParams: ["page", "sort"] });
 // ?page=2&utm_source=x and ?page=2&utm_source=y now share one cached entry.
 ```
+
+## 13. Health & readiness
+
+The production server answers a built-in liveness probe at **`/_denext/health`**
+(GET/HEAD only — other methods get a `405`), meant for load balancers and k8s
+probes. It always returns `200` — the site serves even when the cache backend is
+down, since reads degrade to live renders — and the JSON body reports cache
+reachability so operators aren't blind to an outage:
+
+```json
+{ "status": "ok", "cache": "ok" }
+```
+
+`"cache": "degraded"` means the active cache store failed its probe. If you want
+the same signal on a route of your own (a readiness check with app-level logic),
+`cacheStoreHealthy()` probes the active cache backend **without throwing** —
+expose it on a `/healthz` route:
+
+```ts
+// app/healthz/route.ts
+import { cacheStoreHealthy } from "denext/server";
+export async function GET() {
+  return Response.json({ ok: true, cache: (await cacheStoreHealthy()) ? "ok" : "degraded" });
+}
+```
+
+## 14. Observability
+
+**`onRequest(info)`.** `serve()` / `createApp()` accept an `onRequest(info)`
+callback for per-request logging/metrics — `info` carries `method`, `path`,
+`status`, `durationMs`, and a `requestId` (which is also echoed as the
+`x-request-id` response header on an error, for correlation — §8).
+`requestTimeout` (ms) responds `503` when exceeded (§2).
+
+**Env-var logging.** If you don't need a callback, `DENEXT_LOG=1` gives a compact
+one-line-per-request logger and `DENEXT_LOG=json` a structured object per request
+(with a `statusClass` field) — see §9 for the fields and their log-forging
+guarantees.
+
+**Client-side instrumentation.** A root `instrumentation-client.{ts,tsx,js}`
+(Next's convention) is bundled into every browser entry and runs before the app's
+client code starts — the place for a monitoring/analytics init.
+
+**OpenTelemetry recipe.** Wire `onRequest` to a histogram and `onRequestError`
+(from `instrumentation.ts`) to your tracer/error sink:
+
+```ts
+// instrumentation.ts
+export function onRequestError(err, request, ctx) {
+  tracer.recordException(err, {
+    "http.route": ctx.routePath,
+    "http.url": request.url,
+  });
+}
+// serve.ts
+serve({
+  getManifest,
+  onRequest: (i) =>
+    httpDuration.record(i.durationMs, {
+      "http.method": i.method,
+      "http.status_code": i.status,
+      "http.status_class": `${Math.floor(i.status / 100)}xx`,
+    }),
+});
+```
+
+## 15. Ops runbook
+
+- **Health:** point the load balancer at `/_denext/health`, or expose
+  `cacheStoreHealthy()` on your own `/healthz` route for readiness checks (§13).
+- **Correlate an error:** a `500` returns an `x-request-id` header; grep the logs
+  (`DENEXT_LOG=json`) for that `requestId` to find the full server-side error and
+  digest (§8, §9).
+- **Runaway request:** bounded by `requestTimeout` (default 30s → `503`); the
+  render is signal-aware, so a client disconnect or timeout actually cancels the
+  work (§2).
+- **Graceful shutdown:** on `SIGINT`/`SIGTERM` the server stops accepting
+  connections and drains in-flight requests before exiting — abort the `serve()`
+  signal to trigger it (§10 for the drain deadline).
+- **Cache backend down:** reads/writes are best-effort — requests serve uncached
+  and errors are logged (rate-limited per operation), never surfaced as `500`s.
+
+## 16. App-layer responsibilities
+
+A few things the framework deliberately cannot decide for you:
+
+- **`dangerouslySetInnerHTML` and `metadata.head` emit raw HTML** — never pass
+  unsanitized user/CMS content to them.
+- **Middleware matchers see the locale-stripped path.** Under `i18n`, a
+  `matcher: "/admin/:path*"` fires for `/fr/admin/x` as well as `/admin/x` (the
+  matcher is tested against the path with the locale prefix removed, as in
+  Next.js), so a locale prefix can never route around a path-restricted
+  middleware. `ctx.locale` / `req.nextUrl.locale` carry the peeled locale.
+- **Bound request sizes and rate-limit at your edge/proxy** — denext caps action
+  bodies and image sources, but a proxy-level limit and rate limiting are still
+  the right place for broad DoS protection (§1).
+
+**Run production with least privilege.** The example tasks use `-A` for
+convenience; in production grant only what `denext start` needs — it serves
+prebuilt output and does not bundle, so it never needs `--allow-run`:
+
+```sh
+deno run --allow-net --allow-read=. --allow-env jsr:@denext/denext/cli start .
+```
+
+(Add `--allow-write=.denext` if you want the durable on-disk page cache — §12.)
+`dev`/`build`/`export` re-exec a child bundler; that child inherits the parent's
+actual grants instead of a blanket `-A`, so narrowing the parent narrows the
+child too.

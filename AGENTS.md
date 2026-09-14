@@ -220,7 +220,8 @@ await session.set({ userId: user.id }); // sign in
 **A database (zero-npm, server-only module):**
 
 ```ts
-// lib/db.ts — Deno's built-in SQLite; no install. See DATABASE.md for KV/Postgres.
+// lib/db.ts — Deno's built-in SQLite; no install.
+// KV / Postgres recipes: https://denext.dev/docs/database
 import { DatabaseSync } from "node:sqlite";
 const db = new DatabaseSync(Deno.env.get("DB_PATH") ?? "app.db");
 export const listNotes = () => db.prepare("SELECT * FROM notes").all();
@@ -344,8 +345,8 @@ i18n, images, `cacheComponents`, `streaming`, `live`, `plugins`, `experimental`,
 `addPrepareStep` (codegen the app imports — runs at build AND dev startup, and re-runs on
 `watch`-glob changes in dev), `addTeardown` (dispose on drain), and `addCommand` (contribute a
 CLI verb). Declare it as `plugins: [myPlugin()]`. See
-[PLUGINS.md](./PLUGINS.md) and
-[`examples/plugin-aliases`](./examples/plugin-aliases).
+the [plugin guide](https://denext.dev/docs/plugins) and
+[`examples/plugin-aliases`](https://github.com/Brainwires/denext/tree/main/examples/plugin-aliases).
 
 ## What's different to keep in mind
 
@@ -365,8 +366,8 @@ CLI verb). Declare it as `plugins: [myPlugin()]`. See
   check:fix` auto-fixes formatting + fixable lint, then reports the
   rest. The `denext/*` lint rules (rules-of-hooks, hooks-in-component,
   no-hooks-in-async, directive-placement) are **correctness** rules with **no
-  auto-fix** — resolve them by hand; [CONTRIBUTING.md](./CONTRIBUTING.md) says
-  how.
+  auto-fix** — resolve them by hand;
+  [the contributing guide](https://denext.dev/docs/contributing) says how.
 
 When unsure, write it the Next.js App Router way and change only the imports per
 the map above — that is almost always correct denext.
@@ -394,6 +395,7 @@ denext ships tooling so agents get it right the first time:
   agent's context. Resources: `denext://guide`, `denext://import-map`.
 - **`llms.txt`** — [denext.dev/llms.txt](https://denext.dev/llms.txt) (concise) and
   [llms-full.txt](https://denext.dev/llms-full.txt) (this guide + an API summary).
+- **Docs pages worth pointing an agent at:** the generated [CLI reference](https://denext.dev/docs/cli), [Troubleshooting](https://denext.dev/docs/troubleshooting) (symptom → cause → fix), [Upgrading](https://denext.dev/docs/upgrading) (breaking changes per version) and the [examples index](https://denext.dev/docs/examples).
 
 ---
 

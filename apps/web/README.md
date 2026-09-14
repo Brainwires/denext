@@ -13,16 +13,23 @@ deno task search-index  # out/search-index.json from the exported HTML (+ public
 deno task start         # serve the production build
 ```
 
-When you run `deno task export`, the console reports:
+When you run `deno task export`, the console reports each route it wrote and
+finishes with the total (most of them are the generated `/docs/api/**` reference
+pages):
 
 ```
-26 static route(s) ship no client JS: /docs/auth, /docs/data, …, /
-Exported 26 page(s) to out
+  /docs/testing -> docs/testing/index.html
+  /docs/typed-api -> docs/typed-api/index.html
+  /search -> search/index.html
+  / -> index.html
+
+  Exported 1005 page(s) to out
 ```
 
-and view source on any docs page: no `<script>` at all. `/search` is the one
-route with a bundle — its island fetches `search-index.json` and ranks it in the
-browser.
+1004 of those 1005 pages ship no client JS — view source on any docs page: no
+`<script>` at all (the landing page's one `<script>` is JSON-LD structured data,
+not code). `/search` is the single route with a bundle — its island fetches
+`search-index.json` and ranks it in the browser.
 
 ## Structure
 

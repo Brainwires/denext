@@ -119,7 +119,8 @@ export interface AppConfig {
    * in-process counter — otherwise a slow-reading client could pin slots
    * (slowloris) and long-lived SSE would exhaust the ceiling. Bound streaming-body
    * concurrency and slow-client reads at the edge / load balancer (see
-   * DEPLOYMENT.md); this ceiling **complements**, it does not replace, that.
+   * https://denext.dev/docs/deploy); this ceiling **complements**, it does not
+   * replace, that.
    *
    * Background ISR regeneration (an internal detached task) is exempt. Default: no
    * limit.

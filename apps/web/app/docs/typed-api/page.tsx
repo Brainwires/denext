@@ -112,9 +112,9 @@ try {
           it rides the tag-aware cache — <code>revalidateTag</code> purges it.
         </li>
         <li>
-          <strong>The wire codec.</strong>{" "}
-          A Date, Map, Set or BigInt in a body or response arrives intact; a plain-JSON payload is
-          byte-identical to before.
+          <strong>The wire codec.</strong> A Date, Map, Set, BigInt, URL,{" "}
+          <code>undefined</code>, NaN, ±Infinity or -0 in a body or response arrives intact; a
+          plain-JSON payload is byte-identical to before.
         </li>
       </ul>
 

@@ -1,13 +1,14 @@
-<p align="center">
-  <img src="./assets/app-image.png" alt="denext" width="180">
-</p>
-
-# Migrating a Remix app to denext
+---
+title: Migrating from Remix
+slug: migrating-remix
+lead: denext migrate converts a Remix (or React Router v7 framework-mode) app to denext conventions and keeps its loaders, actions, and hooks running on the denext/remix runtime. Your data model stays as it is; the route tree moves.
+---
 
 This guide covers moving an existing **Remix (v2, or React Router v7 framework
-mode)** application to [denext](./README.md), a from-scratch Next.js-style
-framework for Deno with zero runtime npm dependencies. It reflects what
-`denext migrate --from remix` actually does today, including its honest limits.
+mode)** application to [denext](https://github.com/Brainwires/denext), a
+from-scratch Next.js-style framework for Deno with zero runtime npm
+dependencies. It reflects what `denext migrate --from remix` actually does
+today, including its honest limits.
 
 The short version: **your data model stays as it is.** Loaders and actions keep
 running on the server, `useLoaderData`, `<Form>`, `useFetcher`, sessions, and
@@ -17,9 +18,6 @@ that implements Remix's surface on denext primitives. What moves is the
 conventions and each route module is split into a server half and a client
 half. That transform is automated and reported, so the work is in reviewing
 the report and validating the edges.
-
-The condensed version of this guide is the docs page at
-[denext.dev/docs/migrating-remix](https://denext.dev/docs/migrating-remix).
 
 ---
 
@@ -50,9 +48,10 @@ Two install-shape requirements apply to every migrate path, not only Remix:
 
 Anything in your app that is not Remix-specific (npm React UI libraries, server
 SDKs, databases) follows the same rules as a Next.js migration. Read
-[README-NEXT-MIGRATION.md](./README-NEXT-MIGRATION.md) §1 (the dependency
-probes), §5 (real npm React libraries through the compat build), and §6
-(server-side dependencies on Deno) for that side; this guide does not repeat
+the Next.js migration guide's
+[§1 (the dependency probes)](/docs/migrating#1-before-you-start-is-your-app-a-good-fit),
+[§5 (real npm React libraries through the compat build)](/docs/migrating#5-running-real-npm-react-libraries-next-compat-build),
+and [§6 (server-side dependencies on Deno)](/docs/migrating#6-server-side-dependencies-on-deno) for that side; this guide does not repeat
 them.
 
 ---
@@ -296,11 +295,36 @@ two shapes is emitted:
   `RemixLayout` with id `root`. Its `<Outlet />` keeps working through
   `OutletProvider`.
 
+A root that exports **`Layout`** keeps it: the migrated layout renders `Layout`
+around both the app and the `ErrorBoundary`, as Remix does. The `<html>`,
+`<head>`, and `<body>` attributes it writes reach the **real** document element
+and keep updating after hydration, so a theme class toggled on `<html>` behaves
+as it did. A root `links()` export becomes head tags, and a `meta()` export
+receives its `matches` argument.
+
 `entry.server.*` and `entry.client.*` are deleted; denext provides both
-entries. After the routes are written, every remaining `.ts` / `.tsx` / `.js` /
+entries. Their startup statements are not lost: what `entry.server.tsx` ran
+at module load (an `init()`, a `global.ENV` assignment) becomes a denext
+`instrumentation.ts`, and what `entry.client.tsx` ran (a Sentry init) becomes
+`instrumentation-client.ts`. After the routes are written, every remaining `.ts` / `.tsx` / `.js` /
 `.jsx` file under `app/` (sessions, utils, shared components) has its
 `@remix-run/*` and `react-router` imports remapped too, and the report counts
 how many files that touched.
+
+### 4.7 remix-flat-routes and colocation
+
+The `remix-flat-routes` convention converts too: a `users+/` folder becomes the
+`users` segment, its `_layout.tsx` and `index.tsx` become that segment's
+`layout.tsx` and `page.tsx`, a layout break-out folder (`$username_+`) is
+handled like the flat trailing-`_` form and flagged the same way, and
+`__ignored` files are left out of the route tree.
+
+Colocation survives. A route folder's non-route modules — a `login.server.ts`,
+a component, an image — are moved to `app/_routes/`, which is not a route
+segment, and every import of them is re-based to the new depth. Where one route
+module imported another for a constant, a component, or a type, that import is
+repointed at the module that now holds it after the three-file split, so the
+reference keeps resolving.
 
 ---
 
@@ -318,7 +342,7 @@ names.
 | `react-router`, `react-router-dom`                                                         | `denext/remix`        | covers React Router v7 framework-mode apps                                                                           |
 
 `deno.json` also aliases `react`, `react-dom`, and `react-is` to denext, exactly
-as in [README-NEXT-MIGRATION.md](./README-NEXT-MIGRATION.md) §3, so your own
+as in the Next.js guide's [§3](/docs/migrating#3-project-setup), so your own
 `import { useState } from "react"` and your npm React libraries resolve to the
 single denext React.
 
@@ -359,6 +383,24 @@ single denext React.
   `useRouteLoaderData`, including during the Flight serialization pass.
 - **`ErrorBoundary`** maps to `error.tsx` with `useRouteError` and
   `isRouteErrorResponse`; **`meta`** to `generateMetadata`.
+- **`remix-flat-routes` and colocation**: the `users+/` folder convention,
+  `_layout.tsx` / `index.tsx`, layout break-outs (`$username_+`), and
+  `__ignored` files convert, and colocated modules move to `app/_routes/` with
+  every import re-based (§4.7).
+- **Route-relative links**: `<Link to="new">`, `useNavigate`, and
+  `useResolvedPath` resolve against the route's own pathname, and `..` climbs a
+  route, exactly as in Remix.
+- **The custom server's load context**: a `getLoadContext` becomes a root
+  `load-context.ts` (`defineLoadContext`), so loaders keep reading their
+  `context`. `context.serverBuild` is denext's synthesized Remix `ServerBuild`
+  (`remixServerBuild()`), which is what `@nasa-gcn/remix-seo` reads to generate
+  a sitemap. A value the old server read off the Express request has no
+  equivalent and is left as a `TODO` stub to fill in.
+- **Assets and Tailwind**: `import logo from "./logo.svg"` and a
+  `styles.css?url` import are served under `/_denext/client/assets/`, and a
+  Tailwind v3 stylesheet is compiled through the project's own `tailwindcss`.
+  A Prisma app gets the Rust-free Deno client and has its SQL migrations
+  applied by `deno task prisma:setup` (§8).
 
 ---
 
@@ -385,7 +427,7 @@ The CLI prints up to twelve notes and a count of the rest.
 ## 8. Known limitations
 
 > This is the migration-focused summary. The full statement lives in
-> [KNOWN-LIMITATIONS.md → "Migration: Remix runs on the `denext/remix` runtime"](./KNOWN-LIMITATIONS.md#migration-remix-runs-on-the-denextremix-runtime).
+> [Known limitations → "Migration: Remix runs on the `denext/remix` runtime"](/docs/limitations#migration-remix-runs-on-the-denextremix-runtime).
 
 - **`shouldRevalidate` is honored, and always-revalidate is the default.** On a
   client revalidation (a soft navigation or `useRevalidator`), the client echoes
@@ -423,7 +465,10 @@ The CLI prints up to twelve notes and a count of the rest.
 - **Everything that is not Remix-specific** (the default Content-Security-Policy
   and response headers, uncached `fetch()` by default, class components in npm
   libraries, native addons) is exactly as documented in
-  [README-NEXT-MIGRATION.md](./README-NEXT-MIGRATION.md) §5, §7, and §8.
+  the Next.js migration guide's
+  [§5](/docs/migrating#5-running-real-npm-react-libraries-next-compat-build),
+  [§7](/docs/migrating#7-handling-the-edges), and
+  [§8](/docs/migrating#8-known-limitations).
 
 ---
 
@@ -449,7 +494,8 @@ for real npm React libraries, and the Prisma wiring.
 1. **Commit**, then check the install shape: a real `node_modules` (no Yarn
    PnP), and `--node-modules-dir=none` on the migrate command (§1).
 2. **Probe non-Remix dependencies** with the probes in
-   [README-NEXT-MIGRATION.md](./README-NEXT-MIGRATION.md) §1 so you know your
+   the Next.js migration guide's
+   [§1](/docs/migrating#1-before-you-start-is-your-app-a-good-fit) so you know your
    blockers before touching code.
 3. **Run `denext migrate --from remix`** (§3) and read the review notes (§7).
 4. **Diff `app/`.** Skim one converted route of each kind (a page with a loader,
@@ -463,4 +509,5 @@ for real npm React libraries, and the Prisma wiring.
 8. Write **new** routes the denext way (a Server Component in `page.tsx`)
    alongside the migrated ones; there is no need to convert the old ones.
 
-Contributions and issues welcome. See the main [README](./README.md).
+Contributions and issues welcome. See the main
+[README](https://github.com/Brainwires/denext).

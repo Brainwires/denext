@@ -11,20 +11,25 @@ export default function Routing() {
     <DocsShell
       active="routing"
       title="Routing"
-      lead="File-convention routing under app/ — the same conventions as the Next.js App Router (divergences are listed in KNOWN-LIMITATIONS)."
+      lead="File-convention routing under app/ — the same conventions as the Next.js App Router (deliberate differences are listed in KNOWN-DIFFERENCES, gaps in KNOWN-LIMITATIONS)."
     >
       <h2>Conventions</h2>
       <Code lang="text">
         {`app/
   layout.tsx        root layout (wraps everything)
+  template.tsx      like a layout, but re-mounted on every navigation
   page.tsx          /
   loading.tsx       Suspense fallback for the segment
   error.tsx         error boundary (a "use client" component)
+  global-error.tsx  root error boundary — replaces the whole tree
   not-found.tsx     404 UI
+  forbidden.tsx     403 UI (forbidden())
+  unauthorized.tsx  401 UI (unauthorized())
   blog/
     [slug]/page.tsx /blog/:slug
   api/
-    hello/route.ts  GET/POST/... returning a Response`}
+    hello/route.ts  GET/POST/... returning a Response
+middleware.ts       runs before routing (proxy.ts is the same hook)`}
       </Code>
 
       <h2>Dynamic segments</h2>
@@ -37,11 +42,13 @@ export default async function Post({ params }) {
 }`}
       </Code>
       <p>
-        Catch-all (<code>[...all]</code>), optional catch-all (<code>
-          [[...opt]]
-        </code>), route groups (<code>(group)</code>), parallel routes (<code>
-          @slot
-        </code>), and intercepting routes (<code>(.)</code>) are all supported.
+        Catch-all (<code>[...all]</code>, <code>params.all</code> is an array), optional catch-all
+        {" "}
+        (<code>[[...opt]]</code>), route groups (<code>(group)</code>{" "}
+        — the folder name is omitted from the URL), parallel routes (<code>@slot</code>{" "}
+        — rendered into the layout as a named prop), and intercepting routes (<code>(.)</code>{" "}
+        same level, <code>(..)</code> one level up, <code>(...)</code>{" "}
+        from the root — matched on soft navigation only) are all supported.
       </p>
       <p>
         Parallel-route slots follow Next.js's two rules: on a hard load a slot the URL does not

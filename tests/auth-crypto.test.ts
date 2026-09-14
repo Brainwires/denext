@@ -473,7 +473,8 @@ Deno.test("id_token binding: wrong issuer / foreign audience / missing nonce are
   );
   // Documented boundary: a multi-valued `aud` that DOES contain our client id is
   // accepted (denext enforces membership, not single-aud/`azp` strictness). Noted
-  // in CVE-DEFENSE-GUIDE.md as accepted behavior.
+  // in the security posture page (https://denext.dev/docs/security) as accepted
+  // behavior.
   const multiAud = await mintIdToken({ ...BASE, aud: ["client-123", "another-rp"] });
   const claims = await verifyIdToken({
     idToken: multiAud.token,

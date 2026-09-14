@@ -130,10 +130,10 @@ entry = [
   "examples/spa/bench.ts",
   "examples/drizzle/vendor/**",
   # The Next→denext dependency probes and drop-in verifier: user-run tools documented in
-  # README-NEXT-MIGRATION.md §1 (`deno run -A examples/next-compat-feasibility/probe-*.ts`).
+  # https://denext.dev/docs/migrating (§1) (`deno run -A examples/next-compat-feasibility/probe-*.ts`).
   "examples/next-compat-feasibility/*.ts",
   # The Next→denext dependency probes and drop-in verifier: user-run tools documented in
-  # README-NEXT-MIGRATION.md §1 (`deno run -A examples/next-compat-feasibility/probe-*.ts`).
+  # https://denext.dev/docs/migrating (§1) (`deno run -A examples/next-compat-feasibility/probe-*.ts`).
   "examples/next-compat-feasibility/*.ts",
   # Benchmark roots (`deno task bench*`, `deno bench`), see bench/README.md.
   "bench/run.ts",

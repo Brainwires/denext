@@ -34,7 +34,7 @@
 
 // ── Contract seams ─────────────────────────────────────────────────────────
 // The plugin object and the context its `setup` receives — see the full contract
-// in {@link https://github.com/…/PLUGINS.md | PLUGINS.md}.
+// in {@link https://denext.dev/docs/plugins | the plugin guide}.
 export type {
   DenextPlugin,
   PluginBuildContext,

@@ -8,6 +8,71 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.4.3] - 2026-09-14
+
+### Added
+
+- **The first-party Markdown renderer gained GFM pipe tables and multi-paragraph quotes
+  (`@denext/content-collections` 0.4.0).** Tables (alignment from the delimiter row, optional outer
+  pipes, `\|` escapes, rows padded to the header width) render inside the site's `.table-wrap`; a
+  blank `>` line splits a quote or callout into paragraphs; heading ids now match GitHub's slugs
+  (each space one hyphen). The docs site's `MarkdownDoc` takes a root file's `# H1` as the page title
+  when it has no frontmatter and rewrites relative links to the rendering docs page or the GitHub
+  blob/tree URL — `/docs/contributing` was showing its two tables as literal pipes, an empty `<h1>`,
+  and five 404 links. Groundwork for rendering every root guide on denext.dev from one source.
+- **Docs site: eleven new pages.** A generated [CLI reference](https://denext.dev/docs/cli) (`scripts/gen-cli-reference.ts`, from the command registry, with a drift test) and a generated [examples index](https://denext.dev/docs/examples) (`scripts/gen-examples-index.ts`, from every example's README and config, with a drift test); a [tutorial](https://denext.dev/docs/tutorial) that narrates `examples/notes` end to end with every code block pinned to the example by a test; [Troubleshooting](https://denext.dev/docs/troubleshooting) (symptom → cause → fix, each linking its owner); [Upgrading](https://denext.dev/docs/upgrading) (breaking changes and renamed config keys per minor, linked to the changelog); and narrative pages for shipped features that had none — [Error handling](https://denext.dev/docs/error-handling), [Project layout](https://denext.dev/docs/project-layout), [Internationalization](https://denext.dev/docs/i18n), [Fonts](https://denext.dev/docs/fonts), [Pages Router](https://denext.dev/docs/pages-router) and [Doctor, audit & info](https://denext.dev/docs/doctor-audit). Both generators run in `deno task docs:build`.
+
+### Changed
+
+- **Docs: `POLICIES.md`.** The standing engineering guardrails (zero-npm runtime, honest
+  compatibility, no decorator-metadata stage, no React Native) moved out of `ROADMAP.md` —
+  which lists only work still to do — into a new `POLICIES.md`, together with the security
+  policy (supported versions, private reporting, scope). `SECURITY.md` stays as a short
+  pointer so GitHub's Security tab and existing links keep working. The parity guardrail is
+  reworded: the surface is pursued to the limit; only the _claim_ of 100% is off the table.
+- **Docs consistency pass over every root Markdown file.** Stale claims corrected against
+  the code: the class runtime is an on-demand chunk on every path (README, ARCHITECTURE,
+  README-NEXT-MIGRATION and FEATURES still said the native path always shipped it and that
+  `classComponents` was compat-only); PPR shells carry the streaming CSP (DEPLOYMENT said
+  they didn't); the Node-stream render APIs exist and buffer (ARCHITECTURE said they can't
+  exist); the size factor is ~7× everywhere (ARCHITECTURE said 8–9×); the Pages Router's
+  `router.events` / shallow routing / prefetch / i18n are shipped, not gaps; the plugin
+  contract has six seams; the wire codec's tagged set is listed in full. Placement per the
+  doc taxonomy: the legacy-context non-goal moved from KNOWN-DIFFERENCES to
+  KNOWN-LIMITATIONS; KNOWN-LIMITATIONS' Remix section keeps only the edges (the feature
+  description lives in README-REMIX-MIGRATION), its ViewTransition/Activity/taint entries
+  keep only the residual gaps, the `feature()` and `denext doctor` entries sit under
+  denext-original features; ROADMAP, MISSION and README no longer name a finished release
+  cycle; CONTRIBUTING's release table lists every published package and says a member's
+  changelog is rolled by hand. Links that said "divergences → KNOWN-LIMITATIONS" now point at
+  KNOWN-DIFFERENCES. The same pass over the docs site (`apps/web/app/docs`): the config page's
+  `classComponents` entry and CSP note, the content-collections page (it still said there was no
+  first-party renderer; `renderContent` / `<Content>` shipped in 0.2.0) and its package pin, the
+  graphql pin, the typed-API wire-codec list, the auth page's middleware helper
+  (`redirectResponse`), the migrating page's Tailwind detection and its differences/limitations
+  links, and the plugin seam list.
+- **Docs: one source per topic; the guides now live in the site.** `DEPLOYMENT.md`,
+  `DATABASE.md`, `PLUGINS.md`, `ARCHITECTURE.md`, `README-NEXT-MIGRATION.md`,
+  `README-REMIX-MIGRATION.md` and `CVE-DEFENSE-GUIDE.md` moved into
+  `apps/web/app/docs/<slug>/content.md` and render at denext.dev (`/docs/deploy`,
+  `/docs/database`, `/docs/plugins`, `/docs/architecture`, `/docs/migrating`,
+  `/docs/migrating-remix`, `/docs/security`); the hand-written site pages that duplicated
+  four of them were replaced by the real source after their unique content (static export,
+  `/_denext/health`, the Deno Deploy cache fallback, the Vite/CRA/generic SPA migration
+  path, `--node-modules-dir=none`, `--codemod`, the Remix flat-routes / `Layout` /
+  load-context / route-relative-link / assets bullets) was folded into the guides.
+  `KNOWN-LIMITATIONS.md`, `KNOWN-DIFFERENCES.md`, `FEATURES.md` and `POLICIES.md` stay at
+  the root and are also rendered (`/docs/limitations`, `/docs/differences`,
+  `/docs/features`, `/docs/policies`). The Next migration guide's concurrency section moved
+  to the architecture page. `README.md` is a ~300-line landing page whose documentation
+  links are absolute denext.dev URLs (the relative links to publish-excluded files were
+  already broken on jsr.io); its ops runbook, observability and security-responsibility
+  sections now live in the deployment guide.
+- **Docs: CVE guide log sections retired.** The security page keeps the CVE-class tables,
+  the status paragraph and the two open rows (the deployment-layer CPU/concurrency ceiling;
+  OIDC `id_token` multi-`aud`); the closed "Known Gaps" items and the 22-item backlog were
+  done work — history is in the 0.12.0 and 2.0.0 Security entries.
+
 ## [2.4.2] - 2026-09-13
 
 ### Added
@@ -6535,6 +6600,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.4.3]: https://jsr.io/@denext/denext@2.4.3
 [2.4.2]: https://jsr.io/@denext/denext@2.4.2
 [2.4.1]: https://jsr.io/@denext/denext@2.4.1
 [2.4.0]: https://jsr.io/@denext/denext@2.4.0

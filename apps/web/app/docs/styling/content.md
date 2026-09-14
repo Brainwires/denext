@@ -56,6 +56,10 @@ export default {
 } satisfies DenextConfig;
 ```
 
+denext downloads and runs the Tailwind standalone binary for you; override the
+binary with `TAILWIND_BIN`, or pin a version with `DENEXT_TAILWIND_VERSION`.
+`denext create --tailwind` sets all of this up.
+
 ```tsx
 export default function Card() {
   return <div class="rounded-xl border p-6 shadow">Hello</div>;

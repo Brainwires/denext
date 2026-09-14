@@ -4,10 +4,11 @@
  *
  * Deliberately NOT a full CommonMark engine — it covers the block and inline constructs typical
  * content uses (headings with ids, paragraphs, ordered/unordered lists with lazy continuation,
- * fenced code with a `data-lang`, blockquotes and GitHub-style `> [!NOTE]` callouts, inline and
- * reference-style links, emphasis, inline code, rules). Owning these ~200 lines keeps the zero-npm runtime intact
- * (no marked/remark stack at request time); a document that needs more (tables, footnotes,
- * components) is an `.mdx` entry, compiled at build. Every text run is HTML-escaped before any
+ * fenced code with a `data-lang`, blockquotes and GitHub-style `> [!NOTE]` callouts, GFM pipe
+ * tables, inline and reference-style links, emphasis, inline code, rules). Owning these ~350 lines
+ * keeps the zero-npm runtime intact (no marked/remark stack at request time); a document that
+ * needs more (nested lists, footnotes, images, components) is an `.mdx` entry, compiled at build.
+ * Every text run is HTML-escaped before any
  * markup is emitted and raw HTML in the source is escaped, not passed through; link targets
  * are attribute-escaped and `javascript:`/`vbscript:`/`data:` URLs are dropped.
  *
@@ -50,7 +51,9 @@ function slugify(s: string): string {
     .replace(/<[^>]+>/g, "")
     .replace(/[^\w\s-]/g, "")
     .trim()
-    .replace(/\s+/g, "-");
+    // One hyphen per space, not one per run: GitHub does not collapse runs, so
+    // `## Known Gaps & Residual Risk` anchors as `known-gaps--residual-risk`.
+    .replace(/\s/g, "-");
 }
 
 /** Reference-link definitions (`[label]: url`), keyed by lower-cased label. */
@@ -110,11 +113,106 @@ interface Block {
   next: number;
 }
 
-/** Does a line begin a new block (a list item, fence, heading, quote, or rule)? */
-function startsBlock(l: string): boolean {
+/** A GFM column alignment, from the delimiter row; `""` when the row leaves it unset. */
+type Align = "" | "left" | "center" | "right";
+
+/** A `|` that isn't backslash-escaped — the only kind that splits a table row. */
+const UNESCAPED_PIPE = /(^|[^\\])\|/;
+
+/**
+ * One table row's cells: the optional outer pipes are dropped, an unescaped `|` closes a cell,
+ * and a `\|` escape becomes a literal pipe HERE — before the inline pass, so a code span such as
+ * `` `redirect(url, "push"\|"replace")` `` stays one cell with a real pipe inside the code.
+ */
+function splitRow(line: string): string[] {
+  let s = line.trim();
+  if (s.startsWith("|")) s = s.slice(1);
+  if (/(^|[^\\])\|$/.test(s)) s = s.slice(0, -1);
+  const cells: string[] = [];
+  let cur = "";
+  for (let k = 0; k < s.length; k++) {
+    if (s[k] === "\\" && s[k + 1] === "|") {
+      cur += "|";
+      k++;
+    } else if (s[k] === "|") {
+      cells.push(cur.trim());
+      cur = "";
+    } else {
+      cur += s[k];
+    }
+  }
+  cells.push(cur.trim());
+  return cells;
+}
+
+/**
+ * The per-column alignments of a GFM delimiter row (`| :-- | :-: | --: |`), or null when `line`
+ * is not one. A pipe is required, which is what keeps a `---` rule from reading as a delimiter.
+ */
+function parseAlign(line: string): Align[] | null {
+  if (!line.includes("|")) return null;
+  const aligns: Align[] = [];
+  for (const cell of splitRow(line)) {
+    if (!/^:?-+:?$/.test(cell)) return null;
+    const left = cell.startsWith(":");
+    const right = cell.endsWith(":");
+    aligns.push(left && right ? "center" : right ? "right" : left ? "left" : "");
+  }
+  return aligns;
+}
+
+/**
+ * Does a table start at `i`? A header line with an unescaped pipe, a delimiter row under it, and
+ * the same number of columns in both — the two-line, equal-width guard that keeps prose
+ * containing a pipe from being swallowed as a table.
+ */
+function isTableStart(lines: string[], i: number): boolean {
+  const head = lines[i];
+  if (head === undefined || !UNESCAPED_PIPE.test(head)) return false;
+  const aligns = parseAlign(lines[i + 1] ?? "");
+  return aligns !== null && aligns.length === splitRow(head).length;
+}
+
+/** Does `line` end the table body? (end of input, blank, no pipe, or another block's start) */
+function endsTableBody(line: string | undefined): boolean {
+  if (line === undefined || line.trim() === "" || !UNESCAPED_PIPE.test(line)) return true;
+  return /^```/.test(line) || /^#{1,6}\s/.test(line) || line.startsWith(">");
+}
+
+/** One cell, with the delimiter row's alignment as a class (a class, not `style=`: CSP). */
+function tableCell(tag: "th" | "td", text: string, align: Align, refs: LinkRefs): string {
+  const cls = align === "" ? "" : ` class="align-${align}"`;
+  return `<${tag}${cls}>${renderInline(text, refs)}</${tag}>`;
+}
+
+/** A GFM pipe table starting at `i` (short rows padded, long rows truncated, as in GFM). */
+function parseTable(lines: string[], i: number, refs: LinkRefs): Block {
+  const aligns = parseAlign(lines[i + 1] ?? "") ?? [];
+  const header = splitRow(lines[i]);
+  const head = header.map((c, k) => tableCell("th", c, aligns[k] ?? "", refs)).join("");
+  const rows: string[] = [];
+  let j = i + 2;
+  while (!endsTableBody(lines[j])) {
+    const cells = splitRow(lines[j]).slice(0, header.length);
+    while (cells.length < header.length) cells.push("");
+    rows.push(
+      `<tr>${cells.map((c, k) => tableCell("td", c, aligns[k] ?? "", refs)).join("")}</tr>`,
+    );
+    j++;
+  }
+  const body = `<tbody>${rows.join("")}</tbody>`;
+  return {
+    html: `<div class="table-wrap"><table><thead><tr>${head}</tr></thead>${body}</table></div>`,
+    next: j,
+  };
+}
+
+/** Does the line at `i` begin a new block (a list item, fence, heading, quote, rule, or table)? */
+function startsBlock(lines: string[], i: number): boolean {
+  const l = lines[i];
   return /^\s*(\d+\.|[-*])\s+/.test(l) || /^```/.test(l) ||
     /^#{1,6}\s/.test(l) ||
-    l.startsWith(">") || /^(-{3,}|\*{3,})\s*$/.test(l);
+    l.startsWith(">") || /^(-{3,}|\*{3,})\s*$/.test(l) || isTableStart(lines, i);
 }
 
 /** A fenced code block starting at `i`, or null when `i` isn't a fence. */
@@ -134,6 +232,27 @@ function parseFence(lines: string[], i: number): Block | null {
   };
 }
 
+/**
+ * A quote body as HTML: a blank `>` line separates paragraphs, each wrapped in a `<p>`. A single
+ * paragraph is emitted bare — exactly the pre-tables output, which the site CSS expects.
+ */
+function quoteParagraphs(buf: string[], refs: LinkRefs): string {
+  const paras: string[] = [];
+  let cur: string[] = [];
+  for (const line of buf) {
+    if (line.trim() === "") {
+      if (cur.length > 0) paras.push(cur.join(" ").trim());
+      cur = [];
+    } else {
+      cur.push(line);
+    }
+  }
+  if (cur.length > 0) paras.push(cur.join(" ").trim());
+  const rendered = paras.filter((p) => p !== "").map((p) => renderInline(p, refs));
+  if (rendered.length <= 1) return rendered[0] ?? "";
+  return rendered.map((p) => `<p>${p}</p>`).join("");
+}
+
 /** A blockquote or GitHub-style callout (`> [!NOTE]`) starting at `i`. */
 function parseBlockquote(lines: string[], i: number, refs: LinkRefs): Block {
   const buf: string[] = [];
@@ -145,11 +264,11 @@ function parseBlockquote(lines: string[], i: number, refs: LinkRefs): Block {
   const alert = buf[0]?.match(/^\[!(\w+)\]\s*$/);
   if (alert) {
     const kind = CALLOUT_KINDS[alert[1].toUpperCase()] ?? "note";
-    const inner = renderInline(buf.slice(1).join(" ").trim(), refs);
+    const inner = quoteParagraphs(buf.slice(1), refs);
     return { html: `<aside class="callout ${kind}">${inner}</aside>`, next: j };
   }
   return {
-    html: `<blockquote>${renderInline(buf.join(" ").trim(), refs)}</blockquote>`,
+    html: `<blockquote>${quoteParagraphs(buf, refs)}</blockquote>`,
     next: j,
   };
 }
@@ -166,7 +285,7 @@ function collectItem(
 ): { text: string; next: number } {
   const parts = [lines[i].replace(marker, "").trim()];
   let j = i + 1;
-  while (j < lines.length && lines[j].trim() !== "" && !startsBlock(lines[j])) {
+  while (j < lines.length && lines[j].trim() !== "" && !startsBlock(lines, j)) {
     parts.push(lines[j].trim());
     j++;
   }
@@ -195,7 +314,7 @@ function parseList(lines: string[], i: number, ordered: boolean, refs: LinkRefs)
 function parseParagraph(lines: string[], i: number, refs: LinkRefs): Block {
   const para: string[] = [];
   let j = i;
-  while (j < lines.length && lines[j].trim() !== "" && !startsBlock(lines[j])) {
+  while (j < lines.length && lines[j].trim() !== "" && !startsBlock(lines, j)) {
     para.push(lines[j].trim());
     j++;
   }
@@ -265,6 +384,12 @@ export function renderMarkdown(body: string): string {
     if (fence) {
       out.push(fence.html);
       i = fence.next;
+      continue;
+    }
+    if (isTableStart(lines, i)) {
+      const table = parseTable(lines, i, refs);
+      out.push(table.html);
+      i = table.next;
       continue;
     }
     if (line.startsWith(">")) {

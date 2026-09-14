@@ -162,3 +162,126 @@ Deno.test("renderMarkdown: a `[label]: url` line inside a fence is code, not a d
   assertStringIncludes(html, "<code>[a]: /ok\ncode line</code>");
   assertStringIncludes(html, "<p>[a]</p>");
 });
+
+Deno.test("renderMarkdown: a pipe table becomes a wrapped table with thead and tbody", () => {
+  assertEquals(
+    renderMarkdown("| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |"),
+    `<div class="table-wrap"><table><thead><tr><th>A</th><th>B</th></tr></thead>` +
+      `<tbody><tr><td>1</td><td>2</td></tr><tr><td>3</td><td>4</td></tr></tbody></table></div>`,
+  );
+});
+
+Deno.test("renderMarkdown: the delimiter row sets per-cell alignment classes", () => {
+  const html = renderMarkdown("| l | c | r | n |\n| :-- | :-: | --: | --- |\n| 1 | 2 | 3 | 4 |");
+  assertStringIncludes(html, `<th class="align-left">l</th>`);
+  assertStringIncludes(html, `<th class="align-center">c</th>`);
+  assertStringIncludes(html, `<th class="align-right">r</th>`);
+  assertStringIncludes(html, `<th>n</th>`); // no alignment: no class
+  assertStringIncludes(html, `<td class="align-left">1</td>`);
+  assertStringIncludes(html, `<td class="align-right">3</td>`);
+  assertStringIncludes(html, `<td>4</td>`);
+  assert(!html.includes("style="), "alignment is a class, not an inline style (CSP)");
+});
+
+Deno.test("renderMarkdown: leading and trailing pipes are optional", () => {
+  assertEquals(
+    renderMarkdown("A | B\n--- | ---\n1 | 2"),
+    renderMarkdown("| A | B |\n| --- | --- |\n| 1 | 2 |"),
+  );
+});
+
+Deno.test("renderMarkdown: an escaped \\| is a literal pipe in a cell, not a column break", () => {
+  const html = renderMarkdown("| a | b |\n| --- | --- |\n| x \\| y | z |");
+  assertStringIncludes(html, "<td>x | y</td>");
+  assertStringIncludes(html, "<td>z</td>");
+  assertEquals((html.match(/<td/g) ?? []).length, 2, "still two columns");
+});
+
+Deno.test("renderMarkdown: a code span containing an escaped pipe survives cell splitting", () => {
+  // README-NEXT-MIGRATION.md:85 has exactly this cell.
+  const html = renderMarkdown(
+    '| API | Notes |\n| --- | --- |\n| `redirect(url, "push"\\|"replace")` | ok |',
+  );
+  assertStringIncludes(
+    html,
+    `<td><code>redirect(url, "push"|"replace")</code></td>`,
+  );
+  assertEquals((html.match(/<td/g) ?? []).length, 2);
+});
+
+Deno.test("renderMarkdown: inline markup renders inside table cells", () => {
+  const html = renderMarkdown(
+    "| Name | Link |\n| --- | --- |\n| **bold** `code` | [docs](/docs/routing) |",
+  );
+  assertStringIncludes(html, "<strong>bold</strong> <code>code</code>");
+  assertStringIncludes(html, `<a href="/docs/routing">docs</a>`);
+});
+
+Deno.test("renderMarkdown: a short row is padded and a long row truncated to the header width", () => {
+  const html = renderMarkdown("| a | b | c |\n| --- | --- | --- |\n| 1 |\n| 1 | 2 | 3 | 4 |");
+  assertStringIncludes(html, "<tr><td>1</td><td></td><td></td></tr>");
+  assertStringIncludes(html, "<tr><td>1</td><td>2</td><td>3</td></tr>");
+  assert(!html.includes("<td>4</td>"), "the extra cell is dropped");
+});
+
+Deno.test("renderMarkdown: a table directly after a paragraph line is its own block", () => {
+  const html = renderMarkdown("Some prose.\n| A | B |\n| --- | --- |\n| 1 | 2 |");
+  assertStringIncludes(html, "<p>Some prose.</p>");
+  assertStringIncludes(html, `<div class="table-wrap">`);
+  assert(!html.includes("<p>Some prose. |"), "the table did not join the paragraph");
+});
+
+Deno.test("renderMarkdown: a table directly after a list item ends the list", () => {
+  const html = renderMarkdown("- item\n| A | B |\n| --- | --- |\n| 1 | 2 |");
+  assertStringIncludes(html, "<ul><li>item</li></ul>");
+  assertStringIncludes(html, "<thead><tr><th>A</th><th>B</th></tr></thead>");
+});
+
+Deno.test("renderMarkdown: a paragraph containing a pipe is not a table", () => {
+  assertEquals(
+    renderMarkdown("this | that is prose\nand more"),
+    "<p>this | that is prose and more</p>",
+  );
+  // A `---` rule under a pipe line is still a rule: a delimiter row needs a pipe of its own.
+  assertStringIncludes(renderMarkdown("a | b\n---"), "<hr />");
+});
+
+Deno.test("renderMarkdown: a pipe table inside a fenced block stays code", () => {
+  assertEquals(
+    renderMarkdown("```\n| A | B |\n| --- | --- |\n```"),
+    `<pre class="code"><code>| A | B |\n| --- | --- |</code></pre>`,
+  );
+});
+
+Deno.test("renderMarkdown: a blank > line splits a quote into paragraphs", () => {
+  assertEquals(
+    renderMarkdown("> one\n>\n> two"),
+    "<blockquote><p>one</p><p>two</p></blockquote>",
+  );
+});
+
+Deno.test("renderMarkdown: a callout keeps its paragraphs", () => {
+  assertEquals(
+    renderMarkdown("> [!WARNING]\n> first\n>\n> second"),
+    `<aside class="callout warn"><p>first</p><p>second</p></aside>`,
+  );
+});
+
+Deno.test("renderMarkdown: a single-paragraph quote renders exactly as before", () => {
+  assertEquals(renderMarkdown("> just a quote"), "<blockquote>just a quote</blockquote>");
+  assertEquals(
+    renderMarkdown("> wrapped\n> over two lines"),
+    "<blockquote>wrapped over two lines</blockquote>",
+  );
+  assertEquals(
+    renderMarkdown("> [!NOTE]\n> Just a note."),
+    `<aside class="callout note">Just a note.</aside>`,
+  );
+});
+
+Deno.test("renderMarkdown: heading ids match GitHub for punctuation between spaces", () => {
+  assertEquals(
+    renderMarkdown("## Known Gaps & Residual Risk"),
+    `<h2 id="known-gaps--residual-risk">Known Gaps &amp; Residual Risk</h2>`,
+  );
+});

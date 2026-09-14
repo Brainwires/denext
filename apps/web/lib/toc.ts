@@ -34,7 +34,7 @@ function vnodeText(node: VNodeChildren): string {
 
 /** A URL-safe id from heading text (matches the Markdown renderer's slugify). */
 function slugify(s: string): string {
-  return s.toLowerCase().replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "-");
+  return s.toLowerCase().replace(/[^\w\s-]/g, "").trim().replace(/\s/g, "-");
 }
 
 function walkVNodes(node: VNodeChildren, out: TocItem[]): void {

@@ -5,7 +5,7 @@ is an observable behavior, documented so a port knows what to expect — not a g
 waiting to be closed. A surface that is missing, throwing, or wrong is a
 _limitation_ and lives in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); an
 internal design choice with no observable difference lives in
-[ARCHITECTURE.md](./ARCHITECTURE.md).
+[the architecture guide](https://denext.dev/docs/architecture).
 
 ## React rendering semantics
 
@@ -47,7 +47,6 @@ internal design choice with no observable difference lives in
   what lets a streamed PPR hole or an independently-hydrated island reproduce the server's
   ids without a shared global counter. A user-supplied `identifierPrefix` is concatenated
   verbatim, as in React, so keep it selector-safe too.
-
 - **The root `denext` barrel exports React's function-component surface, not its
   class one.** `Component`, `PureComponent`, `version`, `act` and `useMemoCache`
   live on `denext/react` (and `denext/testing` for `act`); on the root barrel
@@ -89,16 +88,10 @@ internal design choice with no observable difference lives in
   pipeline under the caller's identity (and through the tag-aware cache when `cache` /
   `next` options are passed); outside a request, or to a foreign `base`, it is a fetch.
 - **`json()` from `denext/server` may add an `x-denext-wire: 1` header** when the body
-  carried a Date / Map / Set / BigInt / `undefined` (the wire codec); a plain-JSON body
+  carried a Date / Map / Set / BigInt / URL / `undefined` / NaN / ±Infinity / -0 (the wire
+  codec); a plain-JSON body
   stays byte-identical to `Response.json()`. Third-party consumers of a route that
   returned a previously-lossy value now see `{ "$": … }` tags plus that header.
-
-## Non-goals
-
-- **Legacy provider context** (`childContextTypes` / `getChildContext`) is an
-  **intentional non-goal** — React deprecated this pre-`createContext` API, so
-  denext won't chase it. Modern class context (`static contextType`) reaches
-  parity; migrate providers to `createContext`.
 
 ## Next.js routing and config
 
@@ -125,7 +118,7 @@ internal design choice with no observable difference lives in
 ## Security posture — safe defaults
 
 Deliberate **safe defaults** that differ from Next's, each with a one-line
-opt-in — documented, not surprises. Full checklist in [DEPLOYMENT.md](./DEPLOYMENT.md).
+opt-in — documented, not surprises. Full checklist in [the deployment guide](https://denext.dev/docs/deploy).
 
 - **Strict CSP by default** blocks external `<script>`/stylesheet/`<img>` until
   opted in per route (`csp: "strict" | "off" | {…}`; a route's `csp` export

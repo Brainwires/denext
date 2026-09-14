@@ -4,7 +4,7 @@
 // concurrency) is correct, so the Postgres numbers it reports can be trusted.
 //
 // The actual Postgres-under-load run lives in the example (README) because it
-// needs a real database; DATABASE.md is explicit that networked drivers are
+// needs a real database; https://denext.dev/docs/database is explicit that networked drivers are
 // validated by you, not in denext's CI.
 
 import { assert, assertEquals } from "@std/assert";

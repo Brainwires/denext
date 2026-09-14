@@ -1,5 +1,8 @@
 # denext features
 
+`path:line` citations refer to this repository at `main` — browse them
+at [github.com/Brainwires/denext](https://github.com/Brainwires/denext).
+
 This file has **two parts**:
 
 - **Part 1 — What denext ships**, the master list of supported features by
@@ -12,13 +15,14 @@ This file has **two parts**:
   an honest **[default] / [opt-in] / [capability]** label.
 
 Part 1 answers "can I do X?"; Part 2 answers "why is this better, and where's
-the code?" For behavioral divergences from Next.js see
+the code?" For deliberate behavioral differences from React/Next see
+[KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md), for surface gaps
 [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); for the threat-by-threat
-security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
+security posture see [the CVE-defense guide](https://denext.dev/docs/security).
 
 ---
 
-# Part 1 — What denext ships (by category)
+## Part 1 — What denext ships (by category)
 
 ## Rendering & routing (App Router)
 
@@ -120,7 +124,8 @@ security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
   **identity** (a post-`await` update stays a transition; an unrelated urgent
   update in the pending window keeps its priority) instead of the default time
   window.
-- Class components (`Component`/`PureComponent`) in the next-compat build.
+- Class components (`Component`/`PureComponent`) on every path, through an on-demand
+  runtime chunk (Part 2 §3.2).
 
 ## Data, caching & ISR
 
@@ -194,7 +199,7 @@ security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
 - **`safeFetch`** (SSRF-guarded fetch for untrusted URLs).
 - **Databases**: any DB that runs on Deno works — built-in **`node:sqlite`** and
   **Deno KV** are zero-npm; Postgres/MySQL/Drizzle via standard drivers. See
-  [DATABASE.md](./DATABASE.md), [`examples/notes`](./examples/notes) (SQLite,
+  [the database guide](https://denext.dev/docs/database), [`examples/notes`](./examples/notes) (SQLite,
   single process), and [`examples/postgres-load`](./examples/postgres-load) (a
   networked Postgres pool driven under concurrent load).
 
@@ -319,8 +324,8 @@ Hardened by default — secure cookie defaults, **hash-based CSP** on buffered
 responses, opinionated hardening headers (nosniff, frame-options, HSTS over
 HTTPS), error redaction, correlation ids (`x-request-id`), config validation,
 SSRF-pinned image fetch, and a continuously-run **CVE-defense** probe suite. The
-full mechanism ledger is **Part 2 §1**; the threat-by-threat posture is
-[CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
+full mechanism ledger is **Part 2 §1**; the threat-by-threat posture is in
+[the CVE-defense guide](https://denext.dev/docs/security).
 
 ## Pages Router (opt-in plugin: `@denext/pages-router`)
 
@@ -331,17 +336,15 @@ Full Next.js Pages Router parity as a plugin (`plugins: [pagesRouter()]`):
 - `getServerSideProps`, `getStaticProps` with **build-time SSG** + `revalidate`
   **ISR**, and `getStaticPaths`.
 - `next/head`, CSS / CSS Modules / Tailwind, `pages/api/*` (`(req, res)`).
-- `useRouter`, `Link`, **client hydration + code-split soft navigation**, dev
+- `useRouter` (with `router.events`, shallow routing), `Link` (with prefetch),
+  **client hydration + code-split soft navigation**, i18n locale routing, dev
   Fast Refresh.
-
-The parity gaps (`router.events`, shallow routing, `<Link>` prefetch, i18n
-locale routing) are tracked in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
 
 ## Next.js drop-in (next-compat)
 
 - **`denext migrate`** handles five source families — **Next** App Router,
   **Remix** (`--from remix`: loaders/actions/`Form`/fetchers/`defer` run on the
-  `denext/remix` runtime; see [README-REMIX-MIGRATION.md](./README-REMIX-MIGRATION.md)),
+  `denext/remix` runtime; see [the Remix migration guide](https://denext.dev/docs/migrating-remix)),
   **Vite** React SPA, **CRA**, and **generic React** (auto-detected;
   `--from next|remix|vite|cra|generic` forces it). By default it writes **config
   only** (`package.json` → `deno.json` with react/react-dom/`next/*` aliased;
@@ -364,8 +367,8 @@ locale routing) are tracked in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
 - The full `next/*` surface is aliased (link, image, navigation, headers, cache,
   server, font, script, dynamic, form, og, …).
 
-Details and caveats: [README-NEXT-MIGRATION.md](./README-NEXT-MIGRATION.md) (the
-canonical migration doc).
+Details and caveats: [the Next migration guide](https://denext.dev/docs/migrating)
+(the canonical migration doc).
 
 ## Ecosystem packages (first-party JSR)
 
@@ -422,9 +425,9 @@ cache uses Deno's built-in `node:sqlite`.)
   route's unknown throw is a redacted JSON 500 (`internal` + digest).
 - **Typed route handlers without a schema.** Return `TypedResponse<T>` (and accept a
   `TypedRequest<B>`) from `denext/server` and the generated `.denext/api.ts` still types
-  the call; `json()` additionally carries Date / Map / Set / BigInt through the wire
-  codec (`src/runtime/wire-codec.ts`) — a plain-JSON body stays byte-identical to
-  `Response.json()`.
+  the call; `json()` additionally carries Date / Map / Set / BigInt / URL / `undefined` /
+  NaN / ±Infinity / -0 through the wire codec (`src/runtime/wire-codec.ts`) — a plain-JSON
+  body stays byte-identical to `Response.json()`.
 - **The generated schema infers, it does not spawn.** `.denext/api.ts` imports each route
   module's TYPE (`ModuleEndpoints<typeof Route, Params>`, `src/runtime/api-infer.ts`) —
   no `deno doc`, zero I/O, non-exported local types preserved, catch-alls `string[]`,
@@ -478,10 +481,10 @@ cache uses Deno's built-in `node:sqlite`.)
 - Build via **`deno bundle`** on the native path (`esbuild` on the next-compat /
   SPA-compat path) with **code splitting** (shared runtime chunk), the CSS
   pipeline, and per-route client entries.
-- **Plugin contract** (`DenextPlugin`: the five seams — route-synthesizer,
-  request-handler, build-step, teardown, CLI command) with the public
+- **Plugin contract** (`DenextPlugin`: the six seams — route-synthesizer,
+  request-handler, build-step, prepare-step, teardown, CLI command) with the public
   `@denext/denext/plugin-kit` primitives (bundling, CSS, matchers, `PageCache`,
-  body caps, signed-token helpers). See [PLUGINS.md](./PLUGINS.md) for the
+  body caps, signed-token helpers). See [the plugin guide](https://denext.dev/docs/plugins) for the
   authoring guide; consumed by `@denext/pages-router`, `@denext/react-router`,
   `@denext/htmx`, `@denext/openapi`, `@denext/graphql` and
   [`examples/plugin-aliases`](./examples/plugin-aliases).
@@ -530,7 +533,7 @@ cache uses Deno's built-in `node:sqlite`.)
   optional in-process **`maxConcurrency`** ceiling, body/cache/prefetch caps.
 - **Static export** (`denext export`) for fully-static hosting.
 - Deploy recipes (Docker / Deno Deploy / self-host) in
-  [DEPLOYMENT.md](./DEPLOYMENT.md).
+  [the deployment guide](https://denext.dev/docs/deploy).
 
 ## Zero-npm runtime
 
@@ -542,14 +545,15 @@ shipped runtime.
 
 ---
 
-# Part 2 — Where denext beats React/Next
+## Part 2 — Where denext beats React/Next
 
 Things denext does **better** than the React + Next.js baseline it replaces —
 cleaner, smaller, or more secure. This is the ledger of every genuine
 enhancement (not parity feature), with the mechanism (`file:line`) and an honest
 **default vs. opt-in** label. Parity features (useState, Suspense, App Router
-layouts, `<Image>`, Server Actions, …) live in Part 1, not here. Gaps and
-divergences are tracked in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
+layouts, `<Image>`, Server Actions, …) live in Part 1, not here. Gaps are tracked in
+[KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) and deliberate divergences in
+[KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md).
 
 Legend: **[default]** on out of the box · **[opt-in]** requires a
 flag/config/build path · **[capability]** implemented and exported but not on
@@ -562,7 +566,7 @@ denext's threat model is encoded as executable exploit probes
 `tests/safe-fetch.test.ts`, `tests/hardening.test.ts`,
 `tests/production-hardening.test.ts`). Several defenses below fix Next.js CVE
 classes independently — some before Next patched them. The threat-by-threat map
-is [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
+is in [the CVE-defense guide](https://denext.dev/docs/security).
 
 ### 1.1 Server Actions — CSRF / same-origin **[default]**
 
@@ -843,8 +847,8 @@ default").
   by urgent updates (abandon + restart); tree built off-DOM, committed
   atomically. Default sync lane still runs to completion. —
   `reconciler.ts:865, 903, 973-998, 918-929, 1023, 838, 812`;
-  `src/runtime/hooks.ts:290, 299`. (The migration guide's §10 is the canonical
-  description of the concurrency model.)
+  `src/runtime/hooks.ts:290, 299`. (Canonical description:
+  [the concurrency model](https://denext.dev/docs/architecture#concurrency-fiber-based-time-sliced-and-interruptible).)
 - **Auto-memo compiler / `useMemoCache`** **[opt-in — experimental]** — a
   React-Compiler-style pass lifts JSX elements into `memoValue(...)` for stable
   identity → more bailouts. Client-only and provably SSR-safe (server
@@ -971,14 +975,14 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
 - **Everyday browser-API hooks React/Next don't ship** — SSR-inert and
   feature-detected: `useMediaQuery` (`src/utils/use-media-query.ts`),
   `useLocalStorage` / `useSessionStorage` (`useState`-style Web Storage with JSON
-  - cross-tab sync, hydration-safe — `src/utils/use-storage.ts`),
-    `useEventListener` / `useClickOutside` (declarative DOM listeners, no stale
-    closures — `src/utils/use-dom-events.ts`), `useIntersectionObserver`
-    (`src/utils/use-intersection-observer.ts`), `useWindowSize`
-    (`src/utils/use-window-size.ts`), `useNetworkState`
-    (`src/utils/use-network-state.ts`), `useDebouncedValue`
-    (`src/utils/use-debounced-value.ts`), and `useCopyToClipboard`
-    (`src/utils/use-clipboard.ts`).
+  plus cross-tab sync, hydration-safe — `src/utils/use-storage.ts`),
+  `useEventListener` / `useClickOutside` (declarative DOM listeners, no stale
+  closures — `src/utils/use-dom-events.ts`), `useIntersectionObserver`
+  (`src/utils/use-intersection-observer.ts`), `useWindowSize`
+  (`src/utils/use-window-size.ts`), `useNetworkState`
+  (`src/utils/use-network-state.ts`), `useDebouncedValue`
+  (`src/utils/use-debounced-value.ts`), and `useCopyToClipboard`
+  (`src/utils/use-clipboard.ts`).
 - **OPFS + File System Observer hooks** — read, write, and _live-observe_ the
   Origin Private File System: `useFileSystemObserver` (the generic change
   primitive over any `FileSystemHandle` —
@@ -1034,14 +1038,18 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
 - **`@radix-ui/react-slot` reimplementation** (`Slot`/`Slottable`) with Radix's
   exact `mergeProps` semantics — lets `asChild` resolve to denext without
   Radix's slot package. — `src/compat/slot.ts:41, 88, 107`.
-- **`next-intl` compat, `Intl.*` + first-party** — full ICU MessageFormat:
-  plurals with `offset:`/`#`, selectordinal, select, nested submessages, full
-  `::` number + date-field skeletons, `duration`, and `spellout`/`ordinal` (a
-  first-party number-to-words speller, English built in) — **zero npm deps and
-  zero bundled data** (no `intl-messageformat`). Plus `t.rich()`/`t.markup()`
-  rich-text/markup rendering and **localized `pathnames`** — per-locale URL
-  translation with a locale-prefixing `<Link>`/`useRouter`/`redirect` and a
-  reverse-mapping `getPathname`. — `src/compat/next-intl/icu.ts:1`,
+- **`next-intl` compat, `Intl.*` + first-party** — a first-party ICU
+  MessageFormat implementation covering plurals with `offset:`/`#`,
+  selectordinal, select, nested submessages, `::` number and date-field
+  skeletons, `duration`, and `spellout`/`ordinal` (a number-to-words speller,
+  English built in) — **zero npm deps and zero bundled data** (no
+  `intl-messageformat`). Plus `t.rich()`/`t.markup()` rich-text/markup rendering
+  and **localized `pathnames`** — per-locale URL translation with a
+  locale-prefixing `<Link>`/`useRouter`/`redirect` and a reverse-mapping
+  `getPathname`. It is a common-subset re-implementation, not
+  `intl-messageformat`; the subset edges are in
+  [KNOWN-LIMITATIONS](https://denext.dev/docs/limitations). —
+  `src/compat/next-intl/icu.ts:1`,
   `src/compat/next-intl/index.ts:1`, `src/compat/next-intl/navigation.ts`.
 - **Self-hosted Google fonts (build-time, pure core)** — `selfHostGoogleFont`
   downloads `@font-face` CSS + woff2 and rewrites `src: url()` to local paths
@@ -1108,7 +1116,7 @@ the reconciler. Both are opt-in and tree-shake out of apps that don't use them.
   the socket is shared with `<Live>` and opens only when a live feature mounts.
   — `src/live.ts` exports.
 - _Caveat:_ requires a Flight (RSC) route; the WebSocket transport is a new
-  attack surface tracked in [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
+  attack surface tracked in [the CVE-defense guide](https://denext.dev/docs/security).
 
 ### 4.2 Resumability — zero up-front hydration **[opt-in]**
 
@@ -1155,5 +1163,6 @@ experimental), Part 2 for a genuine advantage over React/Next (mechanism
 `file:line`
 
 - a **[default]/[opt-in]/[capability]** label). Keep the honesty caveats — the
-  goal is an accurate ledger, not marketing. Gaps and divergences belong in
-  [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md), not here.
+  goal is an accurate ledger, not marketing. Gaps belong in
+  [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) and deliberate divergences in
+  [KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md), not here.

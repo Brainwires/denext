@@ -56,7 +56,6 @@ async function* walkHtml(dir: string): AsyncGenerator<string> {
 // the page title + lead, which we DO want).
 const SKIP_TAGS = new Set([
   "NAV",
-  "ASIDE",
   "SCRIPT",
   "STYLE",
   "SVG",
@@ -150,6 +149,86 @@ function defList(el: Element): string {
   return out.filter(Boolean).join("\n");
 }
 
+/** One `<tr>`'s cells → a GFM row (`| a | b |`), with any literal `|` escaped. */
+function tableRow(cells: Element[]): string {
+  const rendered = cells.map((cell) => collapseWs(inline(cell)).trim().replace(/\|/g, "\\|"));
+  return `| ${rendered.join(" | ")} |`;
+}
+
+const ROW_GROUPS = new Set(["THEAD", "TBODY", "TFOOT"]);
+// The GFM delimiter cell for each alignment class the Markdown renderer emits.
+const ALIGNMENTS: ReadonlyArray<readonly [string, string]> = [
+  ["align-center", ":--:"],
+  ["align-right", "--:"],
+  ["align-left", ":--"],
+];
+
+/** Every `<tr>` under a table — direct children and row groups — in document order. */
+function tableRows(el: Element): Element[] {
+  const rows: Element[] = [];
+  for (const c of childNodes(el)) {
+    if (!isEl(c)) continue;
+    if (tag(c) === "TR") rows.push(c);
+    else if (ROW_GROUPS.has(tag(c))) rows.push(...tableRows(c));
+  }
+  return rows;
+}
+
+const rowCells = (row: Element): Element[] =>
+  childNodes(row).filter((c): c is Element => isEl(c) && (tag(c) === "TH" || tag(c) === "TD"));
+
+/** The delimiter row, one cell per header cell, from its `align-*` class (else `---`). */
+const delimiterRow = (header: Element[]): string => {
+  const cells = header.map((cell) =>
+    ALIGNMENTS.find(([name]) => cell.classList?.contains(name))?.[1] ?? "---"
+  );
+  return `| ${cells.join(" | ")} |`;
+};
+
+/** A `<table>` → a GFM table; short rows are padded out to the header's width. */
+function table(el: Element): string {
+  const rows = tableRows(el);
+  const header = rows.length ? rowCells(rows[0]) : [];
+  if (!header.length) return "";
+  const lines = [tableRow(header), delimiterRow(header)];
+  for (const row of rows.slice(1)) {
+    const cells = rowCells(row);
+    const pad = Math.max(0, header.length - cells.length);
+    lines.push(tableRow(cells) + " |".repeat(pad));
+  }
+  return lines.join("\n");
+}
+
+// Callout bodies are usually a run of inline nodes (`<Callout>` renders its children with no
+// wrapping `<p>`), so those are flowed as ONE line rather than one block per child.
+const BLOCK_TAGS = new Set([
+  "P",
+  "UL",
+  "OL",
+  "PRE",
+  "TABLE",
+  "DL",
+  "BLOCKQUOTE",
+  "DIV",
+  "HR",
+]);
+
+/**
+ * A callout `<aside class="callout note|warn">` → a GitHub-style alert blockquote
+ * (`> [!NOTE]` / `> [!WARNING]`). Any other `<aside>` (the shell's "On this page" rail)
+ * stays skipped — see `isCallout`.
+ */
+function callout(el: Element): string {
+  const kind = el.classList?.contains("warn") ? "WARNING" : "NOTE";
+  const hasBlocks = childNodes(el).some((c) => isEl(c) && BLOCK_TAGS.has(tag(c)));
+  const text = hasBlocks ? blocks(el).join("\n\n") : collapseWs(inline(el)).trim();
+  const body = text.split("\n").map((l) => `> ${l}`.trimEnd());
+  return [`> [!${kind}]`, ...body].join("\n");
+}
+
+/** Does this `<aside>` carry a callout class (vs. the TOC rail, which we skip)? */
+const isCallout = (el: Element) => el.classList?.contains("callout") ?? false;
+
 /** Block-level markdown for a container's children, as separate blocks. */
 function blocks(node: Node): string[] {
   const out: string[] = [];
@@ -162,6 +241,10 @@ function blocks(node: Node): string[] {
     if (!isEl(c)) continue;
     const t = tag(c);
     if (SKIP_TAGS.has(t)) continue;
+    if (t === "ASIDE") {
+      if (isCallout(c)) out.push(callout(c));
+      continue; // the docs shell's "On this page" rail is not content
+    }
     if (/^H[1-6]$/.test(t)) {
       out.push("#".repeat(Number(t[1])) + " " + inline(c).trim());
     } else if (t === "P") {
@@ -185,6 +268,8 @@ function blocks(node: Node): string[] {
       );
     } else if (t === "HR") {
       out.push("---");
+    } else if (t === "TABLE") {
+      out.push(table(c));
     } else if (CONTAINERS.has(t)) {
       out.push(...blocks(c)); // recurse into wrappers
     } else {
@@ -215,7 +300,7 @@ function headInjection(url: string, title: string, desc: string): string {
   ].filter(Boolean).join("\n");
 }
 
-function toMarkdown(doc: ReturnType<DOMParser["parseFromString"]>, meta: {
+export function toMarkdown(doc: ReturnType<DOMParser["parseFromString"]>, meta: {
   title: string;
   description: string;
   url: string;
@@ -308,14 +393,16 @@ Sitemap: ${ORIGIN}/sitemap.xml
 
 // ---------- run ----------
 
-const pages: PageInfo[] = [];
-for await (const file of walkHtml(OUT)) {
-  const info = await processPage(file);
-  if (info) pages.push(info);
-}
-await Deno.writeTextFile(`${OUT}/sitemap.xml`, serializeSitemap(pages));
-await Deno.writeTextFile(`${OUT}/robots.txt`, ROBOTS);
+if (import.meta.main) {
+  const pages: PageInfo[] = [];
+  for await (const file of walkHtml(OUT)) {
+    const info = await processPage(file);
+    if (info) pages.push(info);
+  }
+  await Deno.writeTextFile(`${OUT}/sitemap.xml`, serializeSitemap(pages));
+  await Deno.writeTextFile(`${OUT}/robots.txt`, ROBOTS);
 
-console.log(
-  `seo: ${pages.length} pages — canonical+og injected, .md emitted, sitemap.xml + robots.txt written`,
-);
+  console.log(
+    `seo: ${pages.length} pages — canonical+og injected, .md emitted, sitemap.xml + robots.txt written`,
+  );
+}

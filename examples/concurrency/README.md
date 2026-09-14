@@ -50,6 +50,6 @@ The spinner, FPS, and started/committed readouts are driven straight from the
 `requestAnimationFrame` loop (not React state), so they are an honest probe of
 whether the main thread stayed free — not themselves part of the transition.
 
-See [`README-NEXT-MIGRATION.md` §10](../../README-NEXT-MIGRATION.md) for the
-full concurrency model, and `examples/transitions` for the classic typeahead
+See [the concurrency model](https://denext.dev/docs/architecture#concurrency-fiber-based-time-sliced-and-interruptible) for the
+full picture, and `examples/transitions` for the classic typeahead
 variant.

@@ -208,6 +208,37 @@ deno task desktop:package:linux --arch both --appimage`}
         the bundle. There is no code-signing/notarization step on Linux.
       </Callout>
 
+      <h2>Mobile (Capacitor)</h2>
+      <p>
+        The same app ships to iOS and Android through{" "}
+        <a href="https://capacitorjs.com">Capacitor</a>{" "}
+        — like the desktop target, it serves denext's static export (<code>
+          deno task export
+        </code>{" "}
+        → <code>out/</code>). Scaffold both native targets up front:
+      </p>
+      <Code lang="bash">
+        {`deno run -A jsr:@denext/denext/cli create my-app --desktop --capacitor`}
+      </Code>
+      <p>
+        You get a <code>capacitor.config.ts</code> that bundles the export (<code>
+          webDir: "out"
+        </code>) into the native iOS/Android shells, plus the <code>mobile:*</code> tasks:
+      </p>
+      <Code lang="bash">
+        {`deno install                # Capacitor's CLI + platforms are npm packages
+deno task mobile:sync       # export + copy assets into the native projects
+deno task mobile:ios        # open in Xcode
+deno task mobile:android    # open in Android Studio`}
+      </Code>
+      <Callout kind="note">
+        A complete project wired for web + desktop + mobile is{" "}
+        <a href="https://github.com/Brainwires/denext/tree/main/examples/native">
+          <code>examples/native</code>
+        </a>. Native builds are experimental, and the mobile targets need the platform toolchains
+        installed (Xcode for iOS, Android Studio for Android).
+      </Callout>
+
       <h2>Environment variables</h2>
       <ul>
         <li>
