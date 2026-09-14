@@ -7,7 +7,7 @@
 
 import type { ApiMiddleware, ApiMiddlewareInput } from "./define-api.ts";
 import { ApiError } from "./api-error.ts";
-import { auth, hasRole } from "./auth/mod.ts";
+import { hasRole, updateAuthSession } from "./auth/mod.ts";
 import type { AuthSession } from "./auth/types.ts";
 import { clientIp, inMemoryRateLimitStore, type RateLimitStore } from "./auth/rate-limit.ts";
 
@@ -30,6 +30,10 @@ export interface RequireSessionOptions {
  * with a 401 `unauthorized` envelope before any schema runs. With `role`, a signed-in caller
  * who holds none of the listed roles fails with a 403 `forbidden` envelope instead.
  *
+ * An API route owns its response, so this is also a sliding-expiry path: when
+ * `session.updateAge` is configured and the session has aged past it, the session is
+ * re-issued and the refreshed cookie rides the API response (see `updateAuthSession`).
+ *
  * @param options The 401 message, and optionally the required `role`(s).
  * @returns A middleware adding `session: AuthSession` to the handler's `ctx`.
  */
@@ -37,7 +41,7 @@ export function requireSession(
   options: RequireSessionOptions = {},
 ): ApiMiddleware<object, { session: AuthSession }> {
   return async () => {
-    const session = await auth();
+    const session = await updateAuthSession();
     if (!session) {
       throw new ApiError(401, "unauthorized", { message: options.message ?? "Unauthorized" });
     }

@@ -28,9 +28,11 @@
 import type { DenextPlugin } from "../../plugin/mod.ts";
 import { safeRedirectLocation } from "../config.ts";
 import { isProductionEnv, isWeakSecret } from "../session.ts";
-import { resolveAuthOptions } from "./options.ts";
+import { emitAuthEvent } from "./events.ts";
+import { resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
 import { handleAuthRequest } from "./routes.ts";
-import { readAuthSession } from "./session.ts";
+import type { SessionStore } from "./session-store.ts";
+import { readAuthSession, refreshIfStale } from "./session.ts";
 import { isOAuthProvider } from "./types.ts";
 import type { AuthConfig, AuthSession } from "./types.ts";
 
@@ -138,39 +140,46 @@ export function denextAuth(config: AuthConfig): DenextPlugin {
   };
 }
 
-/** The configured session store, or throw: revocation needs server-side sessions. */
-function requireSessionStore(fn: string): NonNullable<AuthConfig["sessionStore"]> {
-  const store = activeConfig ? resolveAuthOptions(activeConfig).sessionStore : undefined;
-  if (!store) {
+/** The resolved options plus the configured store, or throw: revocation needs one. */
+function requireSessionStore(
+  fn: string,
+): { options: ResolvedAuthOptions; store: SessionStore } {
+  const options = activeConfig ? resolveAuthOptions(activeConfig) : undefined;
+  if (!options?.sessionStore) {
     throw new Error(
       `${fn}: no \`sessionStore\` is configured — sessions are stateless signed cookies, ` +
         "which can't be revoked before they expire. Pass `sessionStore` (e.g. " +
         "`sqliteSessionStore()`) to denextAuth to enable revocation.",
     );
   }
-  return store;
+  return { options, store: options.sessionStore };
 }
 
 /**
  * Revoke one server-side session by id (the `sessionId` on an {@link AuthSession}), so
- * its cookie stops authenticating immediately — "sign out this device". Requires
- * `denextAuth({ sessionStore })`; throws when sessions are stateless.
+ * its cookie stops authenticating immediately — "sign out this device". Fires the
+ * `sessionRevoked` event. Requires `denextAuth({ sessionStore })`; throws when sessions
+ * are stateless.
  *
  * @param sessionId The session to end.
  */
 export async function revokeSession(sessionId: string): Promise<void> {
-  await requireSessionStore("revokeSession").delete(sessionId);
+  const { options, store } = requireSessionStore("revokeSession");
+  await store.delete(sessionId);
+  await emitAuthEvent(options, "sessionRevoked", { sessionId });
 }
 
 /**
  * Revoke every server-side session of `userId` — "sign out everywhere", the right call
- * after a password change or a suspected cookie theft. Requires
- * `denextAuth({ sessionStore })`; throws when sessions are stateless.
+ * after a password change or a suspected cookie theft. Fires the `sessionRevoked` event.
+ * Requires `denextAuth({ sessionStore })`; throws when sessions are stateless.
  *
  * @param userId The user whose sessions end.
  */
 export async function revokeAllSessions(userId: string): Promise<void> {
-  await requireSessionStore("revokeAllSessions").deleteByUser(userId);
+  const { options, store } = requireSessionStore("revokeAllSessions");
+  await store.deleteByUser(userId);
+  await emitAuthEvent(options, "sessionRevoked", { userId });
 }
 
 /**
@@ -198,6 +207,30 @@ function currentSession(): Promise<AuthSession | null> {
 export async function auth(): Promise<AuthSession | null> {
   const session = await currentSession();
   return session?.mfaPending ? null : session;
+}
+
+/**
+ * Slide `session` forward when `session.updateAge` says it is stale. Shared by the guards
+ * and {@link updateAuthSession}; the refreshed cookie rides the request's outgoing
+ * headers, so only call it where the response has not been sent yet.
+ */
+function refreshActiveSession(session: AuthSession): Promise<AuthSession> {
+  return activeConfig ? refreshIfStale(activeConfig, session) : Promise.resolve(session);
+}
+
+/**
+ * Read the session **and** slide its expiry forward when `session.updateAge` has elapsed
+ * — the explicit version of what `GET {basePath}/session`, {@link requireAuth} and
+ * `requireSession()` do for you. Call it from a Server Action or a `route.ts` handler
+ * (anywhere the response has not been sent yet); the refreshed cookie rides that
+ * response. In a streamed Server Component use {@link auth} instead — a `Set-Cookie`
+ * written after the headers flush is dropped silently.
+ *
+ * @returns The (possibly refreshed) {@link AuthSession}, or `null` when signed out.
+ */
+export async function updateAuthSession(): Promise<AuthSession | null> {
+  const session = await auth();
+  return session ? await refreshActiveSession(session) : null;
 }
 
 /**
@@ -235,6 +268,11 @@ export interface RequireAuthOptions {
  * factor → `pages.mfa` (or the sign-in page); `role` not held → the sign-in page with
  * `?error=forbidden`; then `callbacks.authorized({ session, request })` — `false` refuses
  * exactly like a missing session, and a returned `Response` is passed through verbatim.
+ *
+ * A request that passes all four also slides the session's expiry forward when
+ * `session.updateAge` is configured — the re-issued cookie is queued on the request and
+ * attached to the response the pipeline finalizes, so "continue" still carries it.
+ *
  * Use in `middleware.ts` (matcher-gated):
  * ```ts
  * export async function middleware(request: Request) {
@@ -261,7 +299,13 @@ export async function requireAuth(
   if (!hasRole(session, options.role)) return refuse(request, options.signInPath, "forbidden");
   const decision = await applyAuthorized(session, request);
   if (decision instanceof Response) return decision;
-  return decision === false ? refuse(request, options.signInPath) : null;
+  if (decision === false) return refuse(request, options.signInPath);
+  // Allowed: slide the expiry forward. Middleware runs inside the request context, so the
+  // re-issued cookie is queued on the outgoing headers and the pipeline attaches it to
+  // whatever response the request ends up producing — the "continue" case needs no
+  // Response of its own.
+  await refreshActiveSession(session);
+  return null;
 }
 
 /**
