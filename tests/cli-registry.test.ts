@@ -34,6 +34,7 @@ Deno.test("registry exposes every first-party verb", () => {
     "start",
     "task",
     "test",
+    "ui",
     "update",
   ]);
 });
@@ -49,7 +50,7 @@ Deno.test("module-loading verbs are flagged loadsModules", () => {
     assert(reg.get(name)?.loadsModules, `${name} should load modules`);
   }
   // Toolchain + scaffold verbs must NOT trigger the module/env re-exec gate.
-  for (const name of ["test", "lint", "fmt", "create", "migrate"]) {
+  for (const name of ["test", "lint", "fmt", "create", "migrate", "ui"]) {
     assert(!reg.get(name)?.loadsModules, `${name} should not load modules`);
   }
 });

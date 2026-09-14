@@ -735,6 +735,50 @@
       ]
     },
     {
+      "name": "ui",
+      "summary": "Open the project management UI in a browser (loopback only)",
+      "usage": "denext ui [dir] [options]",
+      "description": "  denext ui                    Serve the UI for the current project and open it\n  denext ui ./my-app --port 6000\n  denext ui --read-only        Browse without offering any write\n  denext ui --no-open --json   Print { url, port, token } and keep serving\n\n  The UI binds 127.0.0.1 only. The printed URL carries a per-launch 256-bit token that\n  is exchanged once for an HttpOnly, SameSite=Strict cookie; every mutation additionally\n  needs a same-origin Origin and a derived CSRF token.",
+      "flags": [
+        {
+          "name": "port",
+          "type": "number",
+          "valueName": "<port>",
+          "default": 5177,
+          "description": "Port to listen on (default 5177; 0 picks a free one)"
+        },
+        {
+          "name": "no-open",
+          "type": "boolean",
+          "description": "Don't launch a browser"
+        },
+        {
+          "name": "read-only",
+          "type": "boolean",
+          "description": "Refuse every mutation"
+        },
+        {
+          "name": "token",
+          "type": "string",
+          "valueName": "<token>",
+          "description": "Use this session token instead of minting one"
+        },
+        {
+          "name": "ui-dev",
+          "type": "boolean",
+          "description": "Internal: watch src/ui and reload open pages on change"
+        }
+      ],
+      "positionals": [
+        {
+          "name": "dir",
+          "required": false,
+          "variadic": false,
+          "description": "Project directory (default: .)"
+        }
+      ]
+    },
+    {
       "name": "update",
       "summary": "Update dependencies to latest (deno outdated --update)",
       "usage": "denext update [packages] [-- <deno args>]",
@@ -749,5 +793,9 @@
         }
       ]
     }
-  ]
+  ],
+  "projectCommands": {
+    "enumerable": true,
+    "note": "A project can add its own verbs — `commands: [{ name, summary, run }]` in denext.config.ts, or a plugin's `addCommand`. They are resolved from the project's config, so they are not listed here; `denext --help` and `denext completions <shell>` load them (under a 1.5 s budget) and list them under \"Project commands\". A built-in verb always wins a name collision."
+  }
 }
