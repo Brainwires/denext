@@ -15,6 +15,7 @@ import { handleCredentials } from "./routes-credentials.ts";
 import { handleOAuthCallback, handleSignin } from "./routes-oauth.ts";
 import { handleProviders, handleSession, handleSignout } from "./routes-session.ts";
 import { type AuthRouteContext, findProvider, json } from "./routes-shared.ts";
+import { handleCreateToken, handleListTokens, handleRevokeToken } from "./routes-tokens.ts";
 import { isOAuthProvider } from "./types.ts";
 
 /**
@@ -105,6 +106,12 @@ const declaredRoutes: readonly AuthRoute[] = [
   { method: "POST", pattern: "/signout", handler: handleSignout },
   { method: "GET", pattern: "/signin/:provider", handler: handleSignin, limit: "signin-start" },
   { method: "*", pattern: "/callback/:provider", handler: handleCallback },
+  // Bearer API tokens. Cookie session only — these three never read `Authorization`, so a
+  // token can't mint or revoke another one. They answer `null` (→ a plain 404) when no
+  // adapter can store tokens, i.e. when the feature isn't configured at all.
+  { method: "POST", pattern: "/tokens", handler: handleCreateToken },
+  { method: "GET", pattern: "/tokens", handler: handleListTokens },
+  { method: "DELETE", pattern: "/tokens/:id", handler: handleRevokeToken },
 ];
 
 /** The table the dispatcher matches against: every row with its `limit` gate applied. */

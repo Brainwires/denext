@@ -52,16 +52,40 @@ button**. Which operations need it is decided by **which builder each handler us
   `POST /api/login`.
 - `authed.define(...)` → **protected** (locked): the writes `POST`/`PATCH`/`DELETE`.
 
-`authed` is `createApi().use(requireBearer())`, and `requireBearer()` is tagged with
-`documentsSecurity(…, [{ bearerAuth: [] }])` in `lib/auth.ts`. So applying it does two things at
-once: it **enforces** the token (401 otherwise) and **documents** the requirement (the lock). One
-declaration, no repetition, and the doc can't drift from what's enforced.
+`authed` is `createApi().use(requireBearer(authConfig, { scope: "pets:write" }))` — denext's
+**first-party** bearer middleware from `denext/server`, which already carries
+`documentsSecurity(…, [{ bearerAuth: [] }])`. So applying it does two things at once: it
+**enforces** the token (401 without one, 403 without the scope) and **documents** the requirement
+(the lock). One declaration, no repetition, and the doc can't drift from what's enforced.
+
+The tokens themselves are first-party too (`lib/auth.ts`):
+
+```ts
+const { token } = await issueApiToken(authConfig, {
+  userId,
+  name: "swagger-ui",
+  scopes: ["pets:write"],
+  expiresInSeconds: 3600,
+});
+```
+
+`issueApiToken` returns `tok_` + 256 bits of entropy **once** and stores only its SHA-256 in the
+configured `AuthAdapter` (here `inMemoryAuthAdapter()`; use `sqliteAuthAdapter({ path })` to keep
+tokens across restarts). Verification is a hash lookup, and unknown / expired / revoked tokens all
+get the same 401. Inside a protected handler the token's identity is on the context:
+`ctx.token` (id, name, scopes, expiry), `ctx.user` (the adapter user) and `ctx.session` — the same
+shape `requireSession()` provides, so a handler works under either credential.
 
 To use it in `/docs`: expand **`POST /api/login`** → Try it out → send
 `{"username":"demo","password":"denext"}`, copy the `token`, click **Authorize** (top right),
 paste it, and every locked operation now sends `Authorization: Bearer <token>`.
 
-This is a demo store — the credentials and tokens are in-memory, not for production.
+Because `denext.config.ts` also registers `denextAuth(authConfig)`, the management endpoints are
+mounted as well: a **cookie-signed-in** user can `POST /auth/tokens` to mint one, `GET /auth/tokens`
+to list them (redacted) and `DELETE /auth/tokens/:id` to revoke one. Those three never accept a
+bearer token as the credential — a leaked token can't mint or revoke another.
+
+This is a demo store — the account is hardcoded and the adapter is in-memory, not for production.
 
 ## The docs renderer
 

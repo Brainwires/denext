@@ -231,8 +231,8 @@ export interface AuthAdapter {
    * **Atomically** redeem a verification token: delete it and return what it was, or
    * return `undefined` when it is absent (already spent, or never existed). The delete
    * and the read MUST happen as one operation — two concurrent redemptions of the same
-   * token must produce exactly one record. Expiry is the caller's check, so a stale
-   * token is still consumed rather than left to be retried.
+   * token must produce exactly one record. An expired token is consumed too but
+   * resolves `undefined` (fail closed) — it is never left to be retried.
    *
    * @param ref The identifier + token hash + purpose to redeem.
    * @returns The consumed record, or `undefined`.

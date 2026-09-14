@@ -456,6 +456,14 @@ export type {
 } from "./auth/rate-limit.ts";
 // Opt-in revocable sessions (`AuthConfig.sessionStore`): in-memory or node:sqlite.
 export { inMemorySessionStore } from "./auth/session-store.ts";
+export { inMemoryAuthAdapter } from "./auth/memory-adapter.ts";
+export type { InMemoryAuthAdapterOptions } from "./auth/memory-adapter.ts";
+export { sqliteAuthAdapter } from "./auth/sqlite-adapter.ts";
+export type { SqliteAuthAdapterOptions } from "./auth/sqlite-adapter.ts";
+export { requireBearer } from "./auth/bearer.ts";
+export type { BearerContext, RequireBearerOptions } from "./auth/bearer.ts";
+export { issueApiToken, listApiTokens, revokeApiToken, verifyApiToken } from "./auth/api-token.ts";
+export type { IssueApiTokenOptions, IssuedApiToken } from "./auth/api-token.ts";
 export type { InMemorySessionStoreOptions, SessionStore } from "./auth/session-store.ts";
 export { sqliteSessionStore } from "./auth/sqlite-session-store.ts";
 export type { SqliteSessionStoreOptions } from "./auth/sqlite-session-store.ts";

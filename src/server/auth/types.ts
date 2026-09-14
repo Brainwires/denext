@@ -239,8 +239,13 @@ export interface AuthEvents {
   signInFailed?: (payload: {
     /** The provider id the attempt targeted, when known. */
     provider?: string;
-    /** A stable machine-readable reason (`"invalid_credentials"`, `"access_denied"`, …). */
+    /**
+     * A stable machine-readable reason: `"invalid_credentials"`, `"rate_limited"`,
+     * `"access_denied"`, `"account_not_linked"`, or an OAuth failure code.
+     */
     reason: string;
+    /** The client IP the limiter keyed on, when the attempt came through a rate-limited route. */
+    ip?: string;
   }) => Promise<void> | void;
   /** A server-side session was revoked (one device, or everywhere). */
   sessionRevoked?: (payload: {
@@ -373,10 +378,12 @@ export interface AuthConfig {
    */
   dangerouslyAllowInsecureProviders?: boolean;
   /**
-   * Brute-force protection for the Credentials endpoint. ON by default (5 failed
-   * attempts per client IP + identifier per 15 minutes → a generic `429`); tune the
-   * limits, key, or store here, or pass `false` to disable (e.g. you rate-limit at the
-   * edge). The default store is per-process — pass a shared `store` for multi-replica.
+   * Brute-force protection. ON by default: the Credentials endpoint allows 5 failed
+   * attempts per client IP + identifier per 15 minutes, and `/signin/*` allows 20 sign-in
+   * starts per client IP per 15 minutes (`rateLimit.signin`) — both answer a generic `429`.
+   * Tune the limits, key, or store here, or pass `false` to disable both (e.g. you
+   * rate-limit at the edge). The default store is per-process — pass a shared `store` for
+   * multi-replica deployments.
    */
   rateLimit?: RateLimitOptions | false;
   /**

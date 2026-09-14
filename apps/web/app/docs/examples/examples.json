@@ -257,6 +257,7 @@
       "blurb": "@denext/openapi in one app: a tiny pet store defined with defineApi + Zod, which the plugin turns — with no extra annotation — into an OpenAPI 3.1 document at /openapi.json, an interactive Swagger UI…",
       "url": "https://github.com/Brainwires/denext/tree/main/examples/openapi",
       "tags": [
+        "plugin:denextAuth",
         "plugin:openapi",
         "app-router"
       ],
