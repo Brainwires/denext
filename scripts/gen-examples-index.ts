@@ -7,6 +7,13 @@
 //   deno task docs:examples   # regenerate examples.json
 //   deno task docs:build      # regenerate + export the site
 
+// The README title/blurb extractor is shared with `scripts/gen-plugin-catalog.ts`;
+// re-exported so this module stays the single import for the examples-index tests.
+import { readmeSummary } from "./readme-blurb.ts";
+export { plainText, readmeSummary, truncate } from "./readme-blurb.ts";
+
+import { stripComments } from "../src/utils/strip-comments.ts";
+
 const ROOT = new URL("../", import.meta.url).pathname;
 const EXAMPLES_DIR = `${ROOT}examples`;
 export const OUT = `${ROOT}apps/web/app/docs/examples/examples.json`;
@@ -22,18 +29,7 @@ export interface ExampleEntry {
   hasReadme: boolean;
 }
 
-const BLURB_MAX = 200;
-
-/** Strings and template literals survive; `//` and block comments are dropped. */
-const COMMENT_OR_STRING =
-  /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g;
-
-export function stripComments(src: string): string {
-  return src.replace(
-    COMMENT_OR_STRING,
-    (m) => (m.startsWith("//") || m.startsWith("/*") ? "" : m),
-  );
-}
+export { stripComments } from "../src/utils/strip-comments.ts";
 
 /** The text inside `<key>: [ … ]`, bracket-matched, or `null` when the key is absent. */
 export function arrayBody(src: string, key: string): string | null {
@@ -103,44 +99,6 @@ function tagsFor(dir: string): string[] {
   if (exists(`${dir}/pages`)) tags.push("pages-router");
   if (exists(`${dir}/app`) && !tags.includes("spa")) tags.push("app-router");
   return tags;
-}
-
-/** Markdown inline syntax → plain text (links keep their text, emphasis/code lose their marks). */
-export function plainText(md: string): string {
-  return md
-    .replace(/\s+/g, " ")
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/(^|[\s(])[*_]([^*_]+)[*_]/g, "$1$2")
-    .trim();
-}
-
-/** ~200 chars, cut at the last sentence end that fits; otherwise at a word boundary. */
-export function truncate(text: string, max = BLURB_MAX): string {
-  if (text.length <= max) return text;
-  let sentence = -1;
-  for (const m of text.matchAll(/[.!?](?=\s|$)/g)) {
-    if (m.index >= max) break;
-    sentence = m.index;
-  }
-  if (sentence > max / 3) return text.slice(0, sentence + 1);
-  const head = text.slice(0, max);
-  const word = head.lastIndexOf(" ");
-  return `${head.slice(0, word > 0 ? word : max).trimEnd()}…`;
-}
-
-/** The README's first `# H1` and the first paragraph under it, both as plain text. */
-export function readmeSummary(md: string): { title: string; blurb: string } {
-  const h1 = /^#[ \t]+(.+)$/m.exec(md);
-  const title = h1 ? plainText(h1[1]) : "";
-  const rest = h1 ? md.slice(h1.index + h1[0].length) : "";
-  const para = rest
-    .split(/\n\s*\n/)
-    .map((p) => p.trim())
-    .find((p) => p.length > 0 && !/^[#>|<[\]!-]|^```/.test(p));
-  return { title, blurb: para ? truncate(plainText(para)) : "" };
 }
 
 function entryFor(name: string): ExampleEntry {
