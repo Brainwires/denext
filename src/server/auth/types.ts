@@ -5,7 +5,7 @@
  * @module
  */
 
-import type { AdapterAccount, AdapterUser, AuthAdapter } from "./adapter.ts";
+import type { AdapterAccount, AdapterUser, AuthAdapter, VerificationPurpose } from "./adapter.ts";
 import type { Hasher } from "./hasher.ts";
 import type { RateLimitOptions } from "./rate-limit.ts";
 import type { SessionStore } from "./session-store.ts";
@@ -165,8 +165,11 @@ export interface CredentialsProvider {
    * a wrong password alike) and must compare passwords in constant time — store hashes
    * from `hashPassword` and check with `verifyPassword` (both from `denext/server`).
    * Failed attempts are rate-limited by the framework (see `AuthConfig.rateLimit`).
+   *
+   * Optional: without it, the framework verifies against the configured adapter's
+   * credentials group (`getUserByEmail` → `getCredential` → `AuthConfig.hasher`).
    */
-  authorize: (
+  authorize?: (
     credentials: Record<string, string>,
   ) => Promise<AuthUser | null> | AuthUser | null;
 }
@@ -276,6 +279,33 @@ export interface AuthEvents {
      */
     account: Pick<AdapterAccount, "userId" | "provider" | "providerAccountId" | "type">;
   }) => Promise<void> | void;
+  /**
+   * A verification token was delivered through `sendVerificationRequest` (an
+   * email-verification or password-reset email). Fires only for a real send — never for
+   * an unknown address, a throttled request or a failed delivery — and never carries the
+   * token or the link.
+   */
+  verificationRequested?: (payload: {
+    /** The normalised address the token was sent to. */
+    identifier: string;
+    /** Which flow issued it. */
+    purpose: VerificationPurpose;
+    /** When the token expires, epoch seconds. */
+    expiresAt: number;
+  }) => Promise<void> | void;
+  /** A user proved control of their address by redeeming an email-verification token. */
+  emailVerified?: (payload: {
+    /** The user record, with `emailVerified` set. */
+    user: AdapterUser;
+  }) => Promise<void> | void;
+  /**
+   * A user set a new password by redeeming a password-reset token. Their server-side
+   * sessions have already been revoked when this fires (`sessionRevoked` fired too).
+   */
+  passwordReset?: (payload: {
+    /** The user whose password changed. */
+    user: AdapterUser;
+  }) => Promise<void> | void;
 }
 
 /** One auth cookie's name and attributes. */
@@ -341,6 +371,65 @@ export interface VerificationRequestParams {
 export type SendVerificationRequest = (
   params: VerificationRequestParams,
 ) => Promise<void> | void;
+
+/**
+ * The email-token flows' knobs: how long each kind of token lives and which pages the
+ * emailed links open. Every field is optional; lifetimes are in **seconds**, and a
+ * non-finite or non-positive lifetime falls back to its default.
+ */
+export interface AuthEmailConfig {
+  /** How long an email-verification link stays valid, in seconds. Default `86400` (24 hours). */
+  verifyMaxAge?: number;
+  /** How long a password-reset link stays valid, in seconds. Default `3600` (1 hour). */
+  resetMaxAge?: number;
+  /** How long a magic sign-in link stays valid, in seconds. Default `600` (10 minutes). */
+  magicMaxAge?: number;
+  /** How long a one-time code stays valid, in seconds. Default `300` (5 minutes). */
+  otpMaxAge?: number;
+  /** How many digits a one-time code has. Default `6`; clamped to `6..10`. */
+  otpDigits?: number;
+  /**
+   * The same-origin path an email-verification link opens (the link adds `?token=…&email=…`).
+   * Default `{basePath}/verify` — `"/auth/verify"` — the built-in endpoint, which verifies
+   * the address and redirects. Must start with a single `/`.
+   */
+  verifyPath?: string;
+  /**
+   * The same-origin path a password-reset link opens (the link adds `?token=…&email=…`) —
+   * a page YOUR app renders: a form posting `email`, `token` and the new `password` to
+   * `{basePath}/reset/confirm`. Default `{basePath}/reset` — `"/auth/reset"`; the auth
+   * endpoints only claim a POST there, so a GET falls through to e.g.
+   * `app/auth/reset/page.tsx`. Must start with a single `/`.
+   */
+  resetPath?: string;
+}
+
+/** Second-factor (TOTP) policy. Every field is optional; see each default. */
+export interface AuthMfaConfig {
+  /**
+   * Who must present a second factor: `"enrolled"` (the default) asks only users who have
+   * enrolled one; `"always"` asks everyone, sending a user without a factor to enrol
+   * first. Any other value reads as `"enrolled"`.
+   */
+  required?: "enrolled" | "always";
+  /**
+   * The issuer label an authenticator app shows next to the account. Default: the host
+   * name of `canonicalOrigin`, else `"denext"`.
+   */
+  issuer?: string;
+  /**
+   * How many 30-second TOTP steps of clock drift are accepted either side of now.
+   * Default `1` (±30 seconds); clamped to `0..2`.
+   */
+  window?: number;
+  /** How many single-use backup codes enrolment mints. Default `10`; clamped to `0..20`. */
+  backupCodes?: number;
+  /**
+   * How recent, in seconds, a second-factor proof must be for an action that demands a
+   * fresh one (step-up). Default `900` (15 minutes).
+   */
+  freshness?: number;
+}
 
 /** Configuration for {@link ../auth/mod.ts | denextAuth}. */
 export interface AuthConfig {
@@ -443,4 +532,8 @@ export interface AuthConfig {
    * denext ships no mailer; the flows that need one refuse to start without this.
    */
   sendVerificationRequest?: SendVerificationRequest;
+  /** Token lifetimes and link targets for email verification, password reset, magic links and one-time codes. */
+  email?: AuthEmailConfig;
+  /** Second-factor (TOTP) policy. */
+  mfa?: AuthMfaConfig;
 }

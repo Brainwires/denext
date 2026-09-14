@@ -54,6 +54,7 @@ function validateConfig(config: AuthConfig): void {
     );
   }
   validateProviders(config.providers);
+  assertCredentialsVerifiable(config);
   warnOnUndeclaredProxy(config);
   // Resolving validates the 2.5 surface too: an unusable `basePath`, an invalid cookie
   // name, or `session.strategy: "database"` with nowhere to store sessions all throw here
@@ -79,6 +80,36 @@ function validateProviders(providers: AuthConfig["providers"]): void {
     seen.add(p.id);
     if (isOAuthProvider(p)) assertOAuthCredentials(p);
   }
+}
+
+/**
+ * A Credentials provider without `authorize` verifies against the adapter's credentials
+ * group (`getUserByEmail` → `getCredential` → the configured `hasher`), so configuring one
+ * needs an adapter that has that group. Caught here, at config time, instead of as every
+ * login quietly answering `401`.
+ *
+ * @param config The app's auth config.
+ * @throws {Error} Naming the provider and both fixes, when nothing could verify its logins.
+ */
+function assertCredentialsVerifiable(config: AuthConfig): void {
+  const adapter = config.adapter;
+  if (
+    typeof adapter?.getUserByEmail === "function" && typeof adapter.getCredential === "function"
+  ) {
+    return;
+  }
+  const unverifiable = config.providers.find((p) => p.type === "credentials" && !p.authorize);
+  if (!unverifiable) return;
+  throw new Error(
+    `denextAuth: the credentials provider "${unverifiable.id}" has no \`authorize\` and ` +
+      (adapter
+        ? "the configured `adapter` lacks the credentials group (`getUserByEmail` + " +
+          "`getCredential`)"
+        : "no `adapter` is configured") +
+      ", so nothing can verify its logins. Either pass `authorize` to the provider, or " +
+      "configure an `adapter` that implements `getUserByEmail` and `getCredential` (e.g. " +
+      "`sqliteAuthAdapter({ path })`, or `inMemoryAuthAdapter()` in tests).",
+  );
 }
 
 /**
