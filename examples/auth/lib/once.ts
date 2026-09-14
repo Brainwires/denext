@@ -1,4 +1,5 @@
-// A single-use, server-side slot: the "show this exactly once" half of the API-token page.
+// A single-use, server-side slot: the "show this exactly once" half of the API-token page
+// and of the TOTP enrolment (its secret, then its backup codes).
 //
 // `issueApiToken` returns the plaintext once and stores only its SHA-256, so the value has
 // to survive precisely one hop — the Server Action that minted it → the page render that
@@ -18,13 +19,15 @@ const slots = new Map<string, { value: string; expires: number }>();
 
 /**
  * The slot key for a session: the server-side session id when there is one, else the user
- * id — so one user's value can never be read by another's browser.
+ * id — so one user's value can never be read by another's browser. `slot` names which
+ * one-time value it is, so a new API token and a fresh set of backup codes never collide.
  *
  * @param session The signed-in session.
+ * @param slot Which value (default `"token"`, the API-token page's).
  * @returns The key to stash under / take from.
  */
-export function onceKey(session: AuthSession): string {
-  return session.sessionId ?? session.user.id;
+export function onceKey(session: AuthSession, slot = "token"): string {
+  return `${slot}:${session.sessionId ?? session.user.id}`;
 }
 
 /**

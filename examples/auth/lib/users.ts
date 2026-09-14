@@ -22,7 +22,7 @@ import { countUsers, DB_PATH } from "./db.ts";
 const DEMO = { email: "demo@denext.dev", name: "Demo User", password: "password" };
 
 /** The Credentials provider id — also the `provider` of the account row registration links. */
-export const CREDENTIALS = "credentials";
+const CREDENTIALS = "credentials";
 
 /** Where users, accounts, credentials, API tokens and sessions are persisted. */
 export const adapter: AuthAdapter = sqliteAuthAdapter({ path: DB_PATH });
@@ -52,9 +52,10 @@ export function findUser(email: string): Promise<AdapterUser | undefined> {
  *
  * Linking here — rather than letting the first sign-in link by email — is what keeps the
  * flow honest. denext refuses to attach a provider account to a local user on an
- * **unverified** address (that is how account-takeover by email squatting works), and this
- * demo has no mailer to verify one with. Registration knows the link is real, so it makes
- * it; every later sign-in then resolves by account, not by address.
+ * **unverified** address (that is how account-takeover by email squatting works), and a
+ * freshly registered address is not verified yet (see /verify-email). Registration knows
+ * the link is real, so it makes it; every later sign-in then resolves by account, not by
+ * address.
  *
  * @param email The address the account signs in with.
  * @param name The display name (may be empty).

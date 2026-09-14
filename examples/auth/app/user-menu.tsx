@@ -15,6 +15,7 @@ export function UserMenu() {
     <>
       <a href="/dashboard">Dashboard</a>
       <a href="/account/tokens">Tokens</a>
+      <a href="/account/security">Security</a>
       <span class="who">{user.email}</span>
       <button
         type="button"
