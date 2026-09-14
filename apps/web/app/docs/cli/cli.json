@@ -445,13 +445,13 @@
       "name": "mcp",
       "summary": "Run the denext MCP server (stdio) so agents/IDEs can call denext's tooling",
       "usage": "denext mcp [options]",
-      "description": "  denext mcp                     # speak MCP over stdio (configure as an MCP server)\n  denext mcp --disable rag,docs # expose fewer tools to trim the client's context\n\n  Tools: denext_check_snippet, denext_import_map, denext_generate, denext_doctor,\n  denext_codemod, denext_list_routes, denext_dev_logs, denext_render, denext_route_map,\n  denext_search_docs, denext_index_codebase, denext_query_codebase, denext_find_definition,\n  denext_find_references. Resources: denext://guide, denext://import-map.\n\n  --disable takes a comma-separated list of groups (authoring, project, inspect, profile, dev, docs, rag) and/or tool\n  names (with or without the denext_ prefix), e.g. --disable rag,docs or --disable render.",
+      "description": "  denext mcp                     # speak MCP over stdio (configure as an MCP server)\n  denext mcp --disable rag,docs # expose fewer tools to trim the client's context\n\n  Tools: denext_check_snippet, denext_import_map, denext_generate, denext_doctor,\n  denext_codemod, denext_list_routes, denext_dev_logs, denext_render, denext_route_map,\n  denext_search_docs, denext_index_codebase, denext_query_codebase, denext_find_definition,\n  denext_find_references. Resources: denext://guide, denext://import-map.\n\n  --disable takes a comma-separated list of groups (authoring, project, inspect, profile, dev, devtools, docs, rag) and/or tool\n  names (with or without the denext_ prefix), e.g. --disable rag,docs or --disable render.",
       "flags": [
         {
           "name": "disable",
           "type": "string",
           "valueName": "<groups|tools>",
-          "description": "Comma-separated groups (authoring, project, inspect, profile, dev, docs, rag) and/or tool names to hide"
+          "description": "Comma-separated groups (authoring, project, inspect, profile, dev, devtools, docs, rag) and/or tool names to hide"
         }
       ],
       "positionals": []
