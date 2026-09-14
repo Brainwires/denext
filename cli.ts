@@ -27,8 +27,7 @@ import {
   writeMergedModuleConfig,
 } from "./src/build/module-config.ts";
 import { loadEnv } from "./src/server/env.ts";
-import { defaultLoader } from "./src/server/mod.ts";
-import { applyPlugins, getPluginCommands } from "./src/plugin/mod.ts";
+import { COMMAND_LOAD_BUDGET_MS, loadPluginCommands } from "./src/cli/plugin-commands.ts";
 import { VERSION } from "./mod.ts";
 import type { CommandContext, CommandSpec, ParseOutcome } from "./src/cli/command.ts";
 import type { CommandRegistry } from "./src/cli/command.ts";
@@ -225,53 +224,56 @@ function cwdFromArgs(argv: string[]): string {
 }
 
 /**
- * Merge the target project's plugin-contributed CLI verbs into `registry`. Called
- * only when the first parse hit an unknown verb — so plain projects and typos pay a
- * single config read, not a plugin setup. Plugin verbs never override a built-in
- * (core wins). Failures degrade to the original "unknown command" error.
+ * Whether this outcome has to list EVERY verb, which means the project's own verbs
+ * (config `commands:` + plugin `addCommand`) must be merged in before it is printed:
+ * the top-level help table and the shell-completion scripts. A specific command's
+ * help, and every other verb, keep paying nothing.
  */
-async function loadPluginCommands(registry: CommandRegistry, dir: string): Promise<void> {
-  try {
-    const paths = await resolveProject(dir);
-    if (!paths.config?.plugins?.length) return;
-    await applyPlugins({
-      projectRoot: dir,
-      appDir: paths.appDir,
-      config: paths.config,
-      mode: "build",
-      load: defaultLoader,
-    });
-    for (const spec of getPluginCommands()) {
-      if (!registry.get(spec.name)) registry.register(spec);
-    }
-  } catch { /* no plugin verbs available — keep the unknown-command error */ }
+function needsEveryCommand(outcome: ParseOutcome): boolean {
+  if (outcome.kind === "help") return outcome.command === undefined;
+  return outcome.kind === "run" && outcome.command.name === "completions";
 }
+
+/** The footer appended to the help table when eager discovery ran out of budget. */
+const TRUNCATED_HELP_NOTE = `project commands not listed: plugin setup exceeded ${
+  COMMAND_LOAD_BUDGET_MS / 1000
+} s`;
 
 async function main(): Promise<void> {
   const registry = buildRegistry();
   let outcome = registry.parse(Deno.args);
-  // An unknown verb may be one a project plugin contributes — load them and retry.
+  // An unknown verb may be one the project contributes — load them and retry.
   if (outcome.kind === "error" && outcome.message.startsWith("unknown command")) {
     await loadPluginCommands(registry, cwdFromArgs(Deno.args));
     outcome = registry.parse(Deno.args);
   }
+  // Help and completions enumerate the whole verb set, so they load project verbs
+  // up front — under a time budget, since a plugin's `setup` is arbitrary user code.
+  const eager = needsEveryCommand(outcome)
+    ? await loadPluginCommands(registry, cwdFromArgs(Deno.args))
+    : undefined;
 
-  if (outcome.kind !== "run") return printOutcome(registry, outcome);
+  if (outcome.kind !== "run") return printOutcome(registry, outcome, eager?.timedOut === true);
   if (await moduleGate(outcome.command, outcome.ctx)) return;
   await outcome.command.run(outcome.ctx);
 }
 
-/** Print a non-run outcome: the version, help, or a usage error (exit 1). */
+/**
+ * Print a non-run outcome: the version, help, or a usage error (exit 1). `truncated`
+ * says eager project-verb discovery timed out, so the help table is incomplete.
+ */
 function printOutcome(
   registry: CommandRegistry,
   outcome: Exclude<ParseOutcome, { kind: "run" }>,
+  truncated = false,
 ): void {
   if (outcome.kind === "version") {
     console.log(`denext ${VERSION}`);
   } else if (outcome.kind === "help") {
-    console.log(
-      outcome.command ? registry.formatCommandHelp(outcome.command) : registry.formatHelp(VERSION),
-    );
+    const help = outcome.command
+      ? registry.formatCommandHelp(outcome.command)
+      : registry.formatHelp(VERSION);
+    console.log(truncated ? `${help}\n\n${TRUNCATED_HELP_NOTE}` : help);
   } else {
     console.error(
       `denext: ${outcome.message}` +

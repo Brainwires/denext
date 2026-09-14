@@ -39,6 +39,7 @@ export const CONFIG_KEYS = [
   "classComponents",
   "compatibilityMode",
   "plugins",
+  "commands",
 ] as const;
 
 /**

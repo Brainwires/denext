@@ -700,6 +700,43 @@
           "setup"
         ]
       }
+    },
+    "commands": {
+      "description": "Project-local CLI verbs: `denext <name>` runs the entry's `run`, with the same flag parsing, `--help` rendering, and \"did you mean\" suggestions a built-in verb gets. The shorthand for a one-off project script — a plugin (`addCommand`) is only needed when the verb ships as a reusable package.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "description": "The verb, e.g. `\"seed\"` for `denext seed`. Lowercase; `[a-z][a-z0-9-]*`.",
+            "type": "string"
+          },
+          "summary": {
+            "description": "One-line summary shown in `denext --help` under \"Project commands\".",
+            "type": "string"
+          },
+          "usage": {
+            "description": "Optional multi-line detail shown by `denext <name> --help`.",
+            "type": "string"
+          },
+          "flags": {
+            "description": "Declarative flags (parsed, defaulted, and documented like a built-in verb's).",
+            "type": "array"
+          },
+          "positionals": {
+            "description": "Declarative positionals (for help/usage; parsing collects all positionals).",
+            "type": "array"
+          },
+          "run": {
+            "description": "The implementation, handed the parsed invocation."
+          }
+        },
+        "required": [
+          "name",
+          "summary",
+          "run"
+        ]
+      }
     }
   },
   "additionalProperties": false

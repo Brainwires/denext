@@ -393,6 +393,42 @@ function validateFeatures(features: unknown, fail: Fail): void {
   }
 }
 
+/** A project CLI verb name: lowercase, digits and dashes, starting with a letter. */
+const COMMAND_NAME = /^[a-z][a-z0-9-]*$/;
+
+/**
+ * One `commands[i]` entry: a usable verb name, a summary to show in `denext --help`,
+ * and a callable `run`. Nothing here checks for a collision with a built-in verb —
+ * that is not an error: the CLI simply keeps the built-in (core wins) and skips the
+ * entry, so a denext release adding a verb can never break a project's config load.
+ */
+function validateCommand(command: unknown, index: number, seen: Set<string>, fail: Fail): void {
+  const at = `commands[${index}]`;
+  if (typeof command !== "object" || command === null || Array.isArray(command)) {
+    return fail(at, "must be an object with `name`, `summary`, and `run`");
+  }
+  const { name, summary, run } = command as Record<string, unknown>;
+  if (typeof name !== "string" || !COMMAND_NAME.test(name)) {
+    fail(`${at}.name`, "must be a lowercase verb name matching /^[a-z][a-z0-9-]*$/");
+  }
+  if (seen.has(name as string)) {
+    fail(`${at}.name`, `duplicates an earlier \`commands\` entry ("${name}")`);
+  }
+  seen.add(name as string);
+  if (typeof summary !== "string" || !summary) {
+    fail(`${at}.summary`, "must be a non-empty one-line description");
+  }
+  if (typeof run !== "function") fail(`${at}.run`, "must be a function");
+}
+
+/** `commands` is a list of shape-valid, uniquely named project verbs. */
+function validateCommands(commands: unknown, fail: Fail): void {
+  if (commands === undefined) return;
+  if (!Array.isArray(commands)) return fail("commands", "must be an array of command objects");
+  const seen = new Set<string>();
+  commands.forEach((command, i) => validateCommand(command, i, seen, fail));
+}
+
 function validateNestedRequired(config: DenextConfig, fail: Fail): void {
   validateFeatures(config.experimental?.features, fail);
   validateTailwind(config.tailwind, fail);
@@ -411,5 +447,6 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
   validateImageNumerics(config.images, fail);
   validateSecurity(config, fail);
   validateCacheAndEnv(config, fail);
+  validateCommands(config.commands, fail);
   validateNestedRequired(config, fail);
 }

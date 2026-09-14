@@ -6,6 +6,9 @@ import type { I18nConfig } from "./i18n.ts";
 import type { DenextPlugin } from "../plugin/mod.ts";
 import type { CspSetting } from "./segment-config.ts";
 import type { CacheStore } from "./cache.ts";
+// Type-only (erased at runtime) — `src/cli/command.ts` is a dependency-free leaf whose
+// only import is a pure util, so naming it here adds no runtime edge and no cycle.
+import type { CommandContext, FlagSpec, PositionalSpec } from "../cli/command.ts";
 
 /** A URL-path redirect rule (`source` → `destination`). */
 export interface RedirectRule {
@@ -326,6 +329,40 @@ export interface ApiBatchConfig {
   maxTotalResponseBytes?: number;
 }
 
+/**
+ * A project-local CLI verb declared in `denext.config.ts` under
+ * {@link DenextConfig.commands} — the zero-ceremony half of denext's CLI extension
+ * story: no plugin, no `setup`, just an object. It is structurally a CLI
+ * `CommandSpec`, so the same parser, `--help` renderer, and dispatcher run it, and a
+ * verb that outgrows the config can move into a plugin's `addCommand` unchanged.
+ *
+ * ```ts
+ * // denext.config.ts
+ * export default {
+ *   commands: [{
+ *     name: "seed",
+ *     summary: "Load fixture data into the dev database",
+ *     flags: [{ name: "rows", type: "number", default: 100, help: "How many rows" }],
+ *     run: async (ctx) => { await seed(Number(ctx.flags.rows)); },
+ *   }],
+ * };
+ * ```
+ */
+export interface DenextCommand {
+  /** The verb, e.g. `"seed"` for `denext seed`. Lowercase; `[a-z][a-z0-9-]*`. */
+  name: string;
+  /** One-line summary shown in `denext --help` under "Project commands". */
+  summary: string;
+  /** Optional multi-line detail shown by `denext <name> --help`. */
+  usage?: string;
+  /** Declarative flags (parsed, defaulted, and documented like a built-in verb's). */
+  flags?: FlagSpec[];
+  /** Declarative positionals (for help/usage; parsing collects all positionals). */
+  positionals?: PositionalSpec[];
+  /** The implementation, handed the parsed invocation. */
+  run(ctx: CommandContext): void | Promise<void>;
+}
+
 /** Project configuration exported from `denext.config.{ts,js}` (as `default` or named). */
 export interface DenextConfig {
   /**
@@ -534,6 +571,19 @@ export interface DenextConfig {
    * {@linkcode DenextPlugin}. Apps with no plugins pay nothing.
    */
   plugins?: DenextPlugin[];
+  /**
+   * Project-local CLI verbs: `denext <name>` runs the entry's `run`, with the same
+   * flag parsing, `--help` rendering, and "did you mean" suggestions a built-in verb
+   * gets. The shorthand for a one-off project script — a plugin (`addCommand`) is
+   * only needed when the verb ships as a reusable package.
+   *
+   * They are listed under "Project commands" in `denext --help` and in
+   * `denext completions <shell>`. A **built-in verb always wins a name collision**:
+   * an entry named `dev` or `build` is ignored, never shadowing the core verb.
+   * Loading them costs one config read, paid only when the CLI must enumerate every
+   * verb (`--help`, `completions`) or hits a verb it doesn't recognize.
+   */
+  commands?: DenextCommand[];
 }
 
 /** `Strict-Transport-Security` (HSTS) header options. */

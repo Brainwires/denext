@@ -14,8 +14,10 @@
 //     (the spec's multi-line `usage` block). No `subcommands` key is emitted.
 //   - `usage` is a single synthesized invocation line (name + positionals + `[options]`);
 //     `description` is the registry's own multi-line `usage` detail block, when it has one.
-//   - Plugin-contributed verbs (openapi, graphql, content, htmx) are resolved lazily from
-//     a project's config and are deliberately absent.
+//   - Project-contributed verbs (a `commands:` entry in denext.config.ts; plugin verbs
+//     like openapi, graphql, content, htmx) are resolved from a project's config at run
+//     time and are deliberately absent. The `projectCommands` field carries that fact as
+//     data, so the docs page can say so without hard-coding it.
 
 import { GLOBAL_FLAGS } from "../src/cli/command.ts";
 import type { CommandSpec, FlagSpec, PositionalSpec } from "../src/cli/command.ts";
@@ -55,11 +57,35 @@ export interface RefCommand {
   positionals: RefPositional[];
 }
 
+/**
+ * How verbs contributed by the PROJECT being run (a `commands:` entry in
+ * `denext.config.ts`, or a plugin's `addCommand`) relate to this reference: they are
+ * resolved from the project's config at run time, so they are absent here, but the
+ * CLI can enumerate them.
+ */
+export interface RefProjectCommands {
+  /** Whether the CLI lists project verbs in `--help` and shell completions. */
+  enumerable: boolean;
+  /** Prose the docs page renders next to the built-in table. */
+  note: string;
+}
+
 /** The generated document. */
 export interface CliReference {
   globalFlags: RefFlag[];
   commands: RefCommand[];
+  projectCommands: RefProjectCommands;
 }
+
+/** The project-verb note emitted with every reference (data, not a source comment). */
+const PROJECT_COMMANDS: RefProjectCommands = {
+  enumerable: true,
+  note: "A project can add its own verbs — `commands: [{ name, summary, run }]` in " +
+    "denext.config.ts, or a plugin's `addCommand`. They are resolved from the project's " +
+    "config, so they are not listed here; `denext --help` and `denext completions <shell>` " +
+    'load them (under a 1.5 s budget) and list them under "Project commands". A built-in ' +
+    "verb always wins a name collision.",
+};
 
 /** One flag, with a stable key order regardless of which optionals are present. */
 function refFlag(f: FlagSpec): RefFlag {
@@ -114,7 +140,11 @@ export function cliReference(): CliReference {
     .filter((c) => !c.hidden)
     .map(refCommand)
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return { globalFlags: GLOBAL_FLAGS.map(refFlag), commands };
+  return {
+    globalFlags: GLOBAL_FLAGS.map(refFlag),
+    commands,
+    projectCommands: PROJECT_COMMANDS,
+  };
 }
 
 /** The exact bytes committed at {@linkcode CLI_OUT} (the drift test compares against this). */

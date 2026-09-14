@@ -102,8 +102,11 @@ export interface PluginContext {
    * Contribute a first-class CLI verb (a {@linkcode CommandSpec}), so a plugin can
    * extend `denext <command>` — not only the request/route/build seams. The command
    * is discovered when the CLI encounters an unknown verb in a project whose config
-   * lists this plugin; a name that collides with a built-in verb is ignored (core
-   * verbs always win).
+   * lists this plugin, and eagerly (under a time budget) when the CLI has to
+   * enumerate every verb — `denext --help`, `denext completions <shell>`. A name that
+   * collides with a built-in verb is ignored (core verbs always win). The stored spec
+   * is a copy stamped with `source: "plugin"`, which groups it under "Project
+   * commands" in the help table.
    */
   addCommand(command: CommandSpec): void;
   /**
@@ -180,7 +183,9 @@ export async function applyPlugins(base: ApplyPluginsBase): Promise<void> {
       addRequestHandler: (handler) => requestHandlers.push(handler),
       addBuildStep: (step) => buildSteps.push(step),
       addPrepareStep: (step, opts) => prepareSteps.push({ step, watch: opts?.watch ?? [] }),
-      addCommand: (command) => pluginCommands.push(command),
+      // Stamped (on a copy — never mutate the plugin's own object) so the CLI can list
+      // plugin verbs under "Project commands" instead of among the built-ins.
+      addCommand: (command) => pluginCommands.push({ ...command, source: "plugin" }),
       addTeardown: (teardown) => teardowns.push(teardown),
     };
     await plugin.setup(context);
