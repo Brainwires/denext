@@ -29,6 +29,8 @@ import { spaSourceTransformPlugin } from "../src/build/spa-compiler-plugin.ts";
 import type { ProjectPaths } from "../src/build/paths.ts";
 import { encoder, lineIndex, parseModule, positionAt } from "../src/build/swc-ast.ts";
 import { registerFamily } from "../src/client/refresh-runtime.ts";
+import { createUnbundledState } from "../src/build/dev-unbundled/state.ts";
+import { transform } from "../src/build/dev-unbundled/transform.ts";
 import {
   clearComponentMeta,
   componentMetaById,
@@ -36,11 +38,11 @@ import {
   registerComponentMeta,
 } from "../src/client/devtools-meta.ts";
 
-/** The metadata of a source string (the fixture must parse). */
-async function metaOf(src: string): Promise<Record<string, ComponentDevMeta>> {
+/** The metadata of a source string (the fixture must parse), as if it lived at `url`. */
+async function metaOf(src: string, url?: string): Promise<Record<string, ComponentDevMeta>> {
   const parsed = await parseModule(src);
   assert(parsed, "fixture must parse");
-  return collectComponentMeta(parsed);
+  return collectComponentMeta(parsed, url);
 }
 
 // ---- positions --------------------------------------------------------------
@@ -170,6 +172,117 @@ Deno.test("collectComponentMeta: at most MAX_HOOKS hooks are recorded per compon
   assertEquals(metas.Big.hooks[0].name, "v0");
 });
 
+// ---- custom hooks across a module boundary (`from`) -------------------------
+
+const PROFILE_URL = "file:///app/ui/Profile.tsx";
+
+/** A component calling three imported hooks — named, aliased and default — then a primitive. */
+const IMPORTING = [
+  `import { useAuth } from "./auth.ts";`,
+  `import { useA as useAlias } from "../lib/hooks.tsx";`,
+  `import useSession from "./session.ts";`,
+  `export function Profile() {`,
+  `  const user = useAuth();`,
+  `  const { data } = useAlias();`,
+  `  const s = useSession();`,
+  `  const [n] = useState(0);`,
+  `  return null;`,
+  `}`,
+].join("\n");
+
+Deno.test("collectComponentMeta: a relative named import records `from` and the imported name", async () => {
+  const metas = await metaOf(IMPORTING, PROFILE_URL);
+  assertEquals(metas.Profile.hooks[0], {
+    hook: "useAuth",
+    name: "user",
+    line: 5,
+    from: "file:///app/ui/auth.ts",
+  });
+  // The primitive and every non-imported call keep the pre-2.5 shape (no `from` key at all).
+  assertEquals(metas.Profile.hooks[3], { hook: "useState", name: "n", line: 8 });
+  // Without the module's URL there is nothing to resolve against: no call records `from`.
+  const blind = await metaOf(IMPORTING);
+  assert(blind.Profile.hooks.every((hk) => !("from" in hk)), JSON.stringify(blind.Profile));
+});
+
+Deno.test("collectComponentMeta: an aliased import records the IMPORTED name", async () => {
+  const metas = await metaOf(IMPORTING, PROFILE_URL);
+  // `useAlias()` is `useA` in `../lib/hooks.tsx` — the importee's registry key is `#useA`.
+  assertEquals(metas.Profile.hooks[1], {
+    hook: "useA",
+    name: "data",
+    line: 6,
+    from: "file:///app/lib/hooks.tsx",
+  });
+});
+
+Deno.test("collectComponentMeta: a default import records `default`, which the importee aliases", async () => {
+  const metas = await metaOf(IMPORTING, PROFILE_URL);
+  assertEquals(metas.Profile.hooks[2], {
+    hook: "default",
+    name: "s",
+    line: 7,
+    from: "file:///app/ui/session.ts",
+  });
+  // The declaring side: each default-export form of a `use*` hook is ALSO keyed `default`.
+  const body = `{ const [s] = useState(null); return s; }`;
+  for (
+    const src of [
+      `export default function useSession() ${body}`,
+      `function useSession() ${body}\nexport default useSession;`,
+      `function useSession() ${body}\nexport { useSession as default };`,
+    ]
+  ) {
+    const own = await metaOf(src, "file:///app/ui/session.ts");
+    assertEquals(Object.keys(own).sort(), ["default", "useSession"], src);
+    assertEquals(own.default, own.useSession, "the alias carries the declared name");
+    assertStringIncludes(
+      metaFooter(URL_A, own),
+      `__dnxMeta("${URL_A}#default", {"name":"useSession"`,
+    );
+  }
+  // A default-exported COMPONENT is never joined as a hook, so it is not aliased.
+  const page = await metaOf(`export default function Page() { return null; }`, URL_A);
+  assertEquals(Object.keys(page), ["Page"]);
+});
+
+Deno.test("collectComponentMeta: a bare / npm: / jsr: / URL specifier records no `from`", async () => {
+  const src = [
+    `import { useQuery } from "@tanstack/react-query";`,
+    `import { useNpm } from "npm:some-hooks";`,
+    `import { useJsr } from "jsr:@scope/hooks";`,
+    `import { useUrl } from "https://esm.sh/hooks";`,
+    `import { useState } from "denext";`,
+    `export function List() {`,
+    `  const q = useQuery(); const a = useNpm(); const b = useJsr(); const c = useUrl();`,
+    `  const [n] = useState(0);`,
+    `  return null;`,
+    `}`,
+  ].join("\n");
+  const metas = await metaOf(src, PROFILE_URL);
+  assertEquals(metas.List.hooks.map((hk) => hk.hook), [
+    "useQuery",
+    "useNpm",
+    "useJsr",
+    "useUrl",
+    "useState",
+  ]);
+  assert(metas.List.hooks.every((hk) => !("from" in hk)), "naming stops at a package hook");
+});
+
+Deno.test("collectComponentMeta: a namespace import stays opaque (no `from`)", async () => {
+  const src = [
+    `import * as auth from "./auth.ts";`,
+    `import type { useTyped } from "./typed.ts";`,
+    `export function Profile() {`,
+    `  const user = auth.useAuth();`,
+    `  return null;`,
+    `}`,
+  ].join("\n");
+  const metas = await metaOf(src, PROFILE_URL);
+  assertEquals(metas.Profile.hooks, [{ hook: "useAuth", name: "user", line: 4 }]);
+});
+
 // ---- the emitted footer -----------------------------------------------------
 
 const URL_A = "file:///app/Counter.tsx";
@@ -225,6 +338,19 @@ Deno.test("metaFooter: the 16 KB cap counts UTF-8 BYTES, not UTF-16 code units",
   assertEquals(metaFooter(URL_A, metas), "");
 });
 
+Deno.test("metaFooter: `from` URLs count toward the 16 KB cap", () => {
+  const deep = `file:///app/${"nested/".repeat(40)}auth.ts`;
+  const hooks = Array.from({ length: MAX_HOOKS }, (_, i) => ({
+    hook: "useAuth",
+    name: `v${i}`,
+    line: i + 2,
+  }));
+  const plain = { Big: { name: "Big", line: 1, column: 1, hooks } };
+  assert(metaFooter(URL_A, plain) !== "", "the same module without `from` is under the cap");
+  const imported = { Big: { ...plain.Big, hooks: hooks.map((hk) => ({ ...hk, from: deep })) } };
+  assertEquals(metaFooter(URL_A, imported), "");
+});
+
 Deno.test("metaFooter: DENEXT_DEV_META=0 is a kill switch (registrations are untouched)", () => {
   const metas: Record<string, ComponentDevMeta> = {
     Counter: { name: "Counter", line: 1, column: 1, hooks: [] },
@@ -255,6 +381,16 @@ Deno.test("refreshFooter: the metadata sidecar rides next to registerFamily", as
   );
   // Without metadata the footer is byte-for-byte the pre-2.5 one.
   assert(!refreshFooter(URL_A, names).includes("__dnxMeta"));
+});
+
+Deno.test("refreshFooter: a hooks-only module carries the metadata sidecar alone", async () => {
+  const src = `export function useAuth() { const [u] = useState(0); return u; }`;
+  const { names, metas } = collectComponents((await parseModule(src))!, URL_A);
+  assertEquals(names, []);
+  const footer = refreshFooter(URL_A, names, metas);
+  assertStringIncludes(footer, `__dnxMeta("${URL_A}#useAuth",`);
+  assert(!footer.includes("registerFamily"), "no component ⇒ no family registration");
+  assertEquals(refreshFooter(URL_A, [], {}), "", "nothing declared ⇒ no footer at all");
 });
 
 // ---- the dev transform, and the production guard ----------------------------
@@ -303,6 +439,71 @@ Deno.test("spaRefreshPlugin: instruments a component module, leaves an unparseab
       `export function Oops( { const = ; <<<`,
       "an unparseable module is served exactly as written",
     );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/** The `__dnxMeta` family ids a transformed module registers (either transform's output). */
+function registeredIds(code: string): string[] {
+  return [...code.matchAll(/(?:__dnxMeta|registerComponentMeta)\(\s*"([^"]+)"/g)].map((m) => m[1]);
+}
+
+/** The `from` URLs a transformed module's metadata records. */
+function recordedFroms(code: string): string[] {
+  return [...code.matchAll(/"from":\s*"([^"]+)"/g)].map((m) => m[1]);
+}
+
+/** A hooks-only module (with a space and non-ASCII in its path) and a component importing it. */
+async function crossModuleFixture(dir: string): Promise<{ hooks: string; comp: string }> {
+  await Deno.mkdir(join(dir, "my hooks"));
+  const hooks = join(dir, "my hooks", "認証.tsx");
+  const comp = join(dir, "Profile.tsx");
+  await Deno.writeTextFile(
+    hooks,
+    `import { useState } from "denext";\nexport function useAuth() { const [u] = useState(0); return u; }\n`,
+  );
+  await Deno.writeTextFile(
+    comp,
+    `import { useAuth } from "./my hooks/認証.tsx";\nexport function Profile() { const user = useAuth(); return null; }\n`,
+  );
+  return { hooks, comp };
+}
+
+Deno.test("spaRefreshPlugin: an import's `from` is exactly the importee's family-id prefix", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-devtools-from-" });
+  try {
+    const { hooks, comp } = await crossModuleFixture(dir);
+    const load = onLoadOf(spaRefreshPlugin(dir));
+    const [from] = recordedFroms((await load({ path: comp }))!.contents);
+    const hooksOut = (await load({ path: hooks }))!.contents;
+    assertEquals(from, toFileUrl(hooks).href);
+    assertEquals(registeredIds(hooksOut), [`${from}#useAuth`]);
+    assert(!hooksOut.includes("__dnxRegisterFamily("), "a hooks-only module registers no family");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("unbundled transform: an import's `from` is exactly the importee's family-id prefix", async () => {
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-devtools-from-" }));
+  try {
+    const { hooks, comp } = await crossModuleFixture(dir);
+    const st = createUnbundledState({
+      projectDir: dir,
+      appDir: dir,
+      configPath: join(dir, "deno.json"),
+      outDir: join(dir, "out"),
+    });
+    const compOut = await transform(st, comp);
+    const hooksOut = await transform(st, hooks);
+    const [from] = recordedFroms(compOut.code);
+    assertEquals(from, toFileUrl(hooks).href);
+    assertEquals(registeredIds(hooksOut.code), [`${from}#useAuth`]);
+    // The sidecar never makes a hooks-only module an HMR boundary: edits still propagate.
+    assertEquals(compOut.selfAccepting, true);
+    assertEquals(hooksOut.selfAccepting, false);
+    assert(!st.accepting.has(hooks));
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

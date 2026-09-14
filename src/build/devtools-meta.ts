@@ -21,6 +21,7 @@ import {
   collectPatternNames,
   type Ctx,
   forEachChild,
+  isRelativeSpecifier,
   lineIndex,
   type Node,
   type ParsedModule,
@@ -154,6 +155,72 @@ interface RawHook {
   hook: string;
   name: string;
   at: number;
+  /** The declaring module's URL, for a hook bound by a static relative import. */
+  from?: string;
+}
+
+/** Where an imported binding comes from: the module's absolute URL and the exported name. */
+interface ImportBinding {
+  /** The absolute URL of the imported module (`new URL(specifier, moduleUrl)`). */
+  url: string;
+  /** The name the module exports it under (`"default"` for a default import). */
+  imported: string;
+}
+
+/** Local binding name → where a static relative import binds it from. */
+type ImportTable = Map<string, ImportBinding>;
+
+/**
+ * The exported name an import specifier binds, or undefined when it cannot name a hook's
+ * declaring module: a type-only specifier, or a namespace import (`import * as h` —
+ * `h.useX()` stays opaque).
+ */
+function importedName(spec: Node): string | undefined {
+  if (!spec?.local || spec.isTypeOnly) return undefined;
+  if (spec.type === "ImportDefaultSpecifier") return "default";
+  if (spec.type !== "ImportSpecifier") return undefined;
+  return (spec.imported?.value ?? spec.local.value) as string;
+}
+
+/**
+ * The module's static RELATIVE import bindings (`./`, `../`), each resolved against
+ * `moduleUrl` — the same URL form the importee's own Fast Refresh footer keys its family ids
+ * by, so a call's `from` + imported name IS the importee's registry key. A bare, `npm:`,
+ * `jsr:` or URL specifier is not first-party source the dev transforms instrument, so it
+ * binds nothing here (naming stops at such a call, as before).
+ *
+ * @param body The module's top-level statements.
+ * @param moduleUrl The module's `file://` URL, or undefined (⇒ an empty table).
+ * @returns Local name → the imported module's URL and exported name.
+ */
+function importBindings(body: Node[], moduleUrl: string | undefined): ImportTable {
+  const out: ImportTable = new Map();
+  if (!moduleUrl) return out;
+  for (const stmt of body) {
+    if (stmt?.type !== "ImportDeclaration" || stmt.typeOnly) continue;
+    const spec = stmt.source?.value;
+    if (typeof spec !== "string" || !isRelativeSpecifier(spec)) continue;
+    const url = new URL(spec, moduleUrl).href;
+    for (const s of stmt.specifiers ?? []) {
+      const imported = importedName(s);
+      if (imported) out.set(s.local.value as string, { url, imported });
+    }
+  }
+  return out;
+}
+
+/**
+ * The call-site record of one hook call: a callee bound by a static relative import keeps
+ * its IMPORTED name and gains `from` (so `import { useAuth as useA }` records `useAuth`);
+ * anything else — a primitive, a same-module hook, a member callee — keeps its own name.
+ */
+function hookCall(node: Node, label: string, at: number, imports: ImportTable): RawHook | null {
+  const hook = calleeName(node.callee);
+  if (!hook) return null;
+  const bound = node.callee.type === "Identifier" ? imports.get(hook) : undefined;
+  return bound
+    ? { hook: bound.imported, name: label, at, from: bound.url }
+    : { hook, name: label, at };
 }
 
 /**
@@ -165,9 +232,10 @@ interface RawHook {
  *
  * @param fn The callable node to scan.
  * @param ctx The module's byte-offset context.
+ * @param imports The module's relative import bindings ({@link importBindings}).
  * @returns The call sites, ascending by byte offset.
  */
-function hookCalls(fn: Node, ctx: Ctx): RawHook[] {
+function hookCalls(fn: Node, ctx: Ctx, imports: ImportTable): RawHook[] {
   const out: RawHook[] = [];
   const visit = (node: Node, label: string): void => {
     if (!node || typeof node !== "object" || typeof node.type !== "string") return;
@@ -176,8 +244,8 @@ function hookCalls(fn: Node, ctx: Ctx): RawHook[] {
       return;
     }
     if (node.type === "CallExpression") {
-      const hook = calleeName(node.callee);
-      if (hook) out.push({ hook, name: label, at: startOf(ctx, node) });
+      const call = hookCall(node, label, startOf(ctx, node), imports);
+      if (call) out.push(call);
       forEachChild(node, (c) => visit(c, ""));
       return;
     }
@@ -188,31 +256,61 @@ function hookCalls(fn: Node, ctx: Ctx): RawHook[] {
 }
 
 /**
+ * The binding a module default-exports, when it names one: `export default function useX`,
+ * `export default useX;`, or `export { useX as default }`. Undefined otherwise.
+ */
+function defaultExportName(body: Node[]): string | undefined {
+  for (const stmt of body) {
+    if (stmt?.type === "ExportDefaultDeclaration") return stmt.decl?.identifier?.value;
+    if (stmt?.type === "ExportDefaultExpression" && stmt.expression?.type === "Identifier") {
+      return stmt.expression.value;
+    }
+    if (stmt?.type !== "ExportNamedDeclaration" || stmt.source) continue;
+    const spec = (stmt.specifiers ?? []).find((s: Node) => s?.exported?.value === "default");
+    if (spec?.orig?.type === "Identifier") return spec.orig.value;
+  }
+  return undefined;
+}
+
+/**
  * The dev metadata of every tracked declaration in a parsed module, keyed by binding name
  * (the family id's `#` suffix). Lines are 1-based; columns are 1-based UTF-16 code units.
  *
  * Hook names are recorded per call site — a call to a same-module custom hook keeps the
  * hook's own name (`useAuth`), which the runtime registry expands into a breadcrumb by
- * joining on `"<fileUrl>#useAuth"`. A custom hook imported from another module stays opaque.
+ * joining on `"<fileUrl>#useAuth"`. A custom hook bound by a static RELATIVE import also
+ * records `from` (the importee's absolute URL) and its imported name, so the join crosses
+ * the module boundary (`"<importeeUrl>#useAuth"`); a bare/`npm:`/`jsr:`/URL import, a
+ * namespace import and a re-export stay opaque. A default-exported `use*` hook is also
+ * keyed `default`, the name a default import of it records.
  *
  * @param parsed The module parsed by `parseModule()`.
+ * @param moduleUrl The module's `file://` URL (the family id prefix); without it no call
+ *   records `from`.
  * @returns Binding name → its metadata (empty when the module declares nothing tracked).
  */
-export function collectComponentMeta(parsed: ParsedModule): Record<string, ComponentDevMeta> {
+export function collectComponentMeta(
+  parsed: ParsedModule,
+  moduleUrl?: string,
+): Record<string, ComponentDevMeta> {
   const decls = componentDecls(parsed);
   if (decls.length === 0) return {};
   const { ctx } = parsed;
   const index = lineIndex(ctx.bytes);
+  const imports = importBindings(parsed.body, moduleUrl);
   const metas: Record<string, ComponentDevMeta> = {};
   for (const decl of decls) {
     const pos = positionAt(ctx.bytes, index, startOf(ctx, decl.ident));
-    const hooks = hookCalls(decl.fn, ctx).slice(0, MAX_HOOKS).map((h) => ({
+    const hooks = hookCalls(decl.fn, ctx, imports).slice(0, MAX_HOOKS).map((h) => ({
       hook: h.hook,
       name: h.name,
       line: positionAt(ctx.bytes, index, h.at).line,
+      ...(h.from ? { from: h.from } : {}),
     }));
     metas[decl.name] = { name: decl.name, line: pos.line, column: pos.column, hooks };
   }
+  const def = defaultExportName(parsed.body);
+  if (def && HOOK_RE.test(def) && metas[def]) metas.default = metas[def];
   return metas;
 }
 

@@ -57,7 +57,9 @@ async function mtimeOf(abs: string): Promise<number> {
 /**
  * Component detection (best-effort): a module exporting ≥1 component self-accepts and
  * gets the Fast Refresh footer registering each export's family — plus the dev-only
- * DevTools metadata sidecar (source position + hook names). Returns the footer.
+ * DevTools metadata sidecar (source position + hook names). A module of custom hooks only
+ * gets the sidecar alone and stays non-accepting (an edit still propagates to its
+ * importers). Returns the footer.
  */
 async function refreshFooterFor(
   st: UnbundledState,
@@ -67,13 +69,13 @@ async function refreshFooterFor(
   try {
     const source = await Deno.readTextFile(abs);
     const parsed = await parseModule(source);
-    const { names, metas } = parsed ? collectComponents(parsed) : { names: [], metas: {} };
+    const url = toFileUrl(abs).href;
+    const { names, metas } = parsed ? collectComponents(parsed, url) : { names: [], metas: {} };
     if (names.length > 0) {
       entry.selfAccepting = true;
       st.accepting.add(abs);
-      return refreshFooter(toFileUrl(abs).href, names, metas);
-    }
-    st.accepting.delete(abs); // e.g. a component was removed by the edit
+    } else st.accepting.delete(abs); // e.g. a component was removed by the edit
+    return refreshFooter(url, names, metas);
   } catch { /* unreadable/unparsable — no footer, treated as non-accepting */ }
   return "";
 }

@@ -3,8 +3,9 @@
 // The inspector joins a component's build-time metadata (`registerComponentMeta`, emitted
 // by the dev transforms) to its LIVE hook cells by walking both in lockstep: each recorded
 // call consumes exactly the cells `HOOK_CELL_KINDS` says it does. These tests cover the
-// naming rules, the same-module custom-hook expansion, every way the walk aborts — and the
-// drift guard that keeps the table equal to what the dispatcher actually does.
+// naming rules, the custom-hook expansion (same module, and across a static relative import
+// via `HookDevMeta.from`), every way the walk aborts — and the drift guard that keeps the
+// table equal to what the dispatcher actually does.
 
 import { assert, assertEquals } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
@@ -84,6 +85,11 @@ const MODULE = "file:///app/named.tsx";
 /** Register a declaration's metadata under `<MODULE>#<name>` (what the dev footer emits). */
 function meta(name: string, hooks: ComponentDevMeta["hooks"], line = 10): void {
   registerComponentMeta(`${MODULE}#${name}`, { name, line, column: 1, hooks });
+}
+
+/** Register another module's declaration under `<url>#<key>` (its own footer's call). */
+function metaAt(url: string, key: string, hooks: ComponentDevMeta["hooks"], name = key): void {
+  registerComponentMeta(`${url}#${key}`, { name, line: 1, column: 1, hooks });
 }
 
 /** Render `Comp` (registered under `<MODULE>#<name>`) and return its inspector node. */
@@ -172,15 +178,83 @@ Deno.test("named hooks: a same-module custom hook expands with breadcrumbs", () 
   });
 });
 
-Deno.test("named hooks: a cross-module custom hook stops naming for the component", () => {
+// ---- Across a module boundary (`HookDevMeta.from`) -------------------------
+
+const AUTH = "file:///app/lib/auth.ts";
+
+/** `useAuth` in `lib/auth.ts` — the same cells `useApiLike` takes (a state, then an effect). */
+const AUTH_HOOKS: ComponentDevMeta["hooks"] = [
+  { hook: "useState", name: "user", line: 3 },
+  { hook: "useEffect", name: "", line: 4 },
+];
+
+/** `Destructured`'s calls as recorded when its custom hook is imported from `from`. */
+function importedMeta(hook: string, from: string): ComponentDevMeta["hooks"] {
+  return [{ hook, name: "session", line: 21, from }, { hook: "useState", name: "label", line: 22 }];
+}
+
+Deno.test("named hooks: a custom hook names across a static relative import", () => {
   withDev(() => {
-    // Only the component is instrumented — `useApiLike` came from another module, so how
-    // many cells it took is unknowable and every later name would be a guess.
+    meta("Destructured", importedMeta("useAuth", AUTH));
+    metaAt(AUTH, "useAuth", AUTH_HOOKS);
+    // A same-named hook in the CALLER's module is a decoy: `from` decides where to look.
+    meta("useAuth", [{ hook: "useRef", name: "wrong", line: 30 }]);
+    const node = renderNode("Destructured", Destructured);
+    assertEquals(node.hooksNamed, true);
+    assertEquals(node.hooks.map((hk) => hk.name), ["useAuth › user", undefined, "label"]);
+    assertEquals(node.hooks.map((hk) => hk.hook), [
+      "useAuth › useState",
+      "useAuth › useEffect",
+      "useState",
+    ]);
+  });
+});
+
+Deno.test("named hooks: a default import breadcrumbs under the hook's declared name", () => {
+  withDev(() => {
+    meta("Destructured", importedMeta("default", AUTH));
+    metaAt(AUTH, "default", AUTH_HOOKS, "useSession"); // the importee's `#default` alias
+    const node = renderNode("Destructured", Destructured);
+    assertEquals(node.hooksNamed, true);
+    assertEquals(node.hooks[0].name, "useSession › user");
+  });
+});
+
+Deno.test("named hooks: an extensionless import resolves to the importee's real file", () => {
+  withDev(() => {
+    // `import { useAuth } from "./auth"` records `from: …/auth`; the importee is `auth.ts`.
+    meta("Destructured", importedMeta("useAuth", "file:///app/lib/auth"));
+    metaAt(AUTH, "useAuth", AUTH_HOOKS);
+    assertEquals(renderNode("Destructured", Destructured).hooks[0].name, "useAuth › user");
+    // …and a directory import lands on its `index.*`.
+    clearComponentMeta();
+    meta("Destructured", importedMeta("useAuth", "file:///app/hooks"));
+    metaAt("file:///app/hooks/index.ts", "useAuth", AUTH_HOOKS);
+    assertEquals(renderNode("Destructured", Destructured).hooks[0].name, "useAuth › user");
+  });
+});
+
+Deno.test("named hooks: a bare-specifier custom hook stops naming for the component", () => {
+  withDev(() => {
+    // `useApiLike` came from a package (no `from`), and this module declares no such hook:
+    // how many cells it took is unknowable, so every later name would be a guess.
     meta("Destructured", DESTRUCTURED_META);
     const node = renderNode("Destructured", Destructured);
     assertEquals(node.hooksNamed, false);
     assertEquals(node.hooks.map((hk) => hk.name), [undefined, undefined, undefined]);
     assertEquals(node.hooks.map((hk) => hk.kind), ["state", "effect", "state"]);
+  });
+});
+
+Deno.test("named hooks: an importee that has not registered yet leaves kind labels, no throw", () => {
+  withDev(() => {
+    // The component's metadata points at `lib/auth.ts`, whose footer has not run (a
+    // dynamic-import ordering, or a module the transform left uninstrumented): a clean miss.
+    meta("Destructured", importedMeta("useAuth", AUTH));
+    const node = renderNode("Destructured", Destructured);
+    assertEquals(node.hooksNamed, false);
+    assertEquals(node.hooks.map((hk) => hk.kind), ["state", "effect", "state"]);
+    assert(node.hooks.every((hk) => hk.name === undefined && hk.hook === undefined));
   });
 });
 
@@ -231,6 +305,28 @@ Deno.test("named hooks: custom-hook expansion is capped at three levels", () => 
     meta("useD", [{ hook: "useState", name: "x", line: 6 }]);
     const deep = renderNode("OneCell", OneCell);
     assertEquals(deep.hooksNamed, false);
+  });
+});
+
+Deno.test("named hooks: the three-level cap spans modules, each resolving in its own", () => {
+  withDev(() => {
+    const B = "file:///app/lib/b.ts";
+    const C = "file:///app/c.ts";
+    // OneCell → useA (b.ts) → useB (b.ts, same module as useA) → useC (c.ts) → useState.
+    meta("OneCell", [{ hook: "useA", name: "a", line: 2, from: B }]);
+    metaAt(B, "useA", [{ hook: "useB", name: "b", line: 3 }]);
+    metaAt(B, "useB", [{ hook: "useC", name: "c", line: 4, from: C }]);
+    metaAt(C, "useC", [{ hook: "useState", name: "x", line: 5 }]);
+    // Decoy: `useB` has no `from`, so it must resolve in b.ts, NOT the component's module.
+    meta("useB", [{ hook: "useRef", name: "wrong", line: 9 }]);
+    const ok = renderNode("OneCell", OneCell);
+    assertEquals(ok.hooksNamed, true);
+    assertEquals(ok.hooks[0].name, "useA › useB › useC › x");
+
+    // A fourth expansion (useC → useD back in the component's module) is past the cap.
+    metaAt(C, "useC", [{ hook: "useD", name: "d", line: 5, from: MODULE }]);
+    meta("useD", [{ hook: "useState", name: "x", line: 6 }]);
+    assertEquals(renderNode("OneCell", OneCell).hooksNamed, false);
   });
 });
 
