@@ -192,8 +192,9 @@ export interface InspectHook {
   /** Whether an effect cell currently holds a cleanup function (effect/layout). */
   hasCleanup?: boolean;
   /**
-   * The variable the hook call was bound to (`count`), breadcrumbed through same-module
-   * custom-hook expansions (`useAuth › count`). Present only when the dev metadata
+   * The variable the hook call was bound to (`count`), breadcrumbed through custom-hook
+   * expansions (`useAuth › count`) — a hook declared in the same module or bound by a static
+   * relative import, up to three levels deep. Present only when the dev metadata
    * resolved (see {@link InspectNode.hooksNamed}) and the call was bound to something.
    */
   name?: string;

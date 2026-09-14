@@ -537,9 +537,9 @@ function and type is listed in the [API reference](/docs/api).
 - **Cross-module hook naming follows static relative imports only.** A hook
   imported by a bare, `npm:`/`jsr:`, URL or import-map-alias specifier, through a
   namespace import, or re-exported through a barrel still consumed an unknowable
-  number of cells, so the component falls back to kind labels. The extension and
-  `index` lookups only append to the path as written, so `./auth.js` naming an
-  `auth.ts` file stops too. Expansion is capped at three levels, across modules
+  number of cells, so the component falls back to kind labels. A `.js`-style
+  specifier also finds its TypeScript sibling (`./auth.js` naming `auth.ts`).
+  Expansion is capped at three levels, across modules
   or within one.
 - **A conditional hook drops naming for that component** — the metadata and the
   live cells stop lining up, and the panel prefers kind labels over a wrong name.

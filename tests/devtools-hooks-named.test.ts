@@ -552,3 +552,12 @@ function* allElements(root: FakeElement): Generator<FakeElement> {
     yield* allElements(child as FakeElement);
   }
 }
+
+Deno.test("named hooks: a `.js` specifier resolves to the importee's `.ts` file", () => {
+  withDev(() => {
+    // `import { useAuth } from "./auth.js"` — the TypeScript convention — names `auth.ts`.
+    meta("Destructured", importedMeta("useAuth", "file:///app/lib/auth.js"));
+    metaAt(AUTH, "useAuth", AUTH_HOOKS);
+    assertEquals(renderNode("Destructured", Destructured).hooks[0].name, "useAuth › user");
+  });
+});

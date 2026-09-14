@@ -216,6 +216,17 @@ function takeCells(
 }
 
 /**
+ * Every module URL a static relative import may name: the specifier as written, its
+ * TypeScript sibling when it is spelled with a JS extension (`./auth.js` naming `auth.ts`, the
+ * TypeScript convention), then the extension and `index` probes.
+ */
+function moduleCandidates(base: string): string[] {
+  const sibling = base.replace(/\.(m?)js(x?)$/, ".$1ts$2");
+  const typescript = sibling === base ? [] : [sibling];
+  return [base, ...typescript, ...MODULE_PROBES.slice(1).map((probe) => base + probe)];
+}
+
+/**
  * The level a custom-hook call expands into: the hook's registered metadata, looked up in
  * the module that declares it (`from`, else the calling module), breadcrumbed under the
  * hook's declared name. Undefined when that module registered nothing for it — an
@@ -223,12 +234,12 @@ function takeCells(
  */
 function expandCustomHook(entry: HookDevMeta, level: HookLevel): HookLevel | undefined {
   const base = entry.from ?? level.moduleUrl;
-  for (const probe of entry.from ? MODULE_PROBES : [""]) {
-    const nested = metaById.get(`${base}${probe}#${entry.hook}`);
+  for (const moduleUrl of entry.from ? moduleCandidates(base) : [base]) {
+    const nested = metaById.get(`${moduleUrl}#${entry.hook}`);
     if (!nested) continue;
     // The declared name reads better than the imported one for a default import (`default`).
     const label = nested.name || entry.hook;
-    return { hooks: nested.hooks, moduleUrl: base + probe, prefix: level.prefix + label + CRUMB };
+    return { hooks: nested.hooks, moduleUrl, prefix: level.prefix + label + CRUMB };
   }
   return undefined;
 }
