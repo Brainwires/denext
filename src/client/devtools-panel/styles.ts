@@ -14,6 +14,8 @@ export function buildStyles() {
   // Inline style strings (see the module header for why a <style> sheet can't be used).
   const S = {
     ...chromeStyles(MONO, ACCENT),
+    ...tabStripStyles(),
+    ...tableStyles(ACCENT),
     ...layoutStyles(ACCENT),
     ...treeStyles(ACCENT),
     ...detailStyles(CHANGED),
@@ -52,6 +54,35 @@ function chromeStyles(MONO: string, ACCENT: string) {
       `background:#1d2330;color:#e6e9ef;border-radius:6px;padding:3px 7px;border:0;cursor:pointer;font:inherit`,
     close:
       `margin-left:auto;background:none;border:0;color:#8b94a7;cursor:pointer;font-size:15px;line-height:1`,
+  };
+}
+
+/**
+ * The header's scrollable tab strip. Six tabs don't fit a 380 px panel, so the strip
+ * scrolls horizontally (`overflow-x:auto`) and every button refuses to shrink
+ * (`flex:0 0 auto`) instead of being squeezed into an unreadable column of letters.
+ */
+function tabStripStyles() {
+  return {
+    tabStrip: `display:flex;align-items:center;gap:2px;flex:1;min-width:0;overflow-x:auto`,
+    tabItem: `flex:0 0 auto;background:none;border:0;color:#8b94a7;cursor:pointer;` +
+      `padding:3px 7px;border-radius:6px;font:inherit;white-space:nowrap`,
+    tabItemOn: `flex:0 0 auto;background:#1d2330;color:#e6e9ef;border:0;cursor:pointer;` +
+      `padding:3px 7px;border-radius:6px;font:inherit;white-space:nowrap`,
+  };
+}
+
+/** The shared table vocabulary of the data tabs (Network, Cache, Routes). */
+function tableStyles(ACCENT: string) {
+  return {
+    table: `width:100%;border-collapse:collapse;font:inherit`,
+    th: `text-align:left;padding:2px 6px;color:#8b94a7;font-weight:600;white-space:nowrap;` +
+      `border-bottom:1px solid #1a202c`,
+    td: `padding:2px 6px;border-bottom:1px solid #1a202c;vertical-align:top;word-break:break-all`,
+    tdNum: `padding:2px 6px;border-bottom:1px solid #1a202c;text-align:right;` +
+      `white-space:nowrap;color:${ACCENT}`,
+    pill:
+      `display:inline-block;border-radius:999px;padding:0 6px;font-size:10px;white-space:nowrap`,
   };
 }
 
@@ -116,6 +147,9 @@ function detailStyles(CHANGED: string) {
   };
 }
 
+/** The hover/pick highlight overlay's resting fill. */
+const OVERLAY_BG = "rgba(138,162,255,.22)";
+
 /** Profiler commit strip, flamegraph, ranked list, plus the hover overlay + tip. */
 function profilerStyles(MONO: string, ACCENT: string) {
   return {
@@ -132,8 +166,11 @@ function profilerStyles(MONO: string, ACCENT: string) {
     flameRow: `display:flex;width:100%;gap:1px`,
     rank: `display:flex;gap:6px;padding:1px 0;align-items:baseline`,
     rankBar: `height:9px;border-radius:2px;background:${ACCENT};flex:0 0 auto`,
-    overlay:
-      `position:fixed;z-index:2147483000;pointer-events:none;background:rgba(138,162,255,.22);` +
+    // Split out so the highlight-updates flash (picker.ts) can restore the overlay's
+    // resting colours after tinting it, without re-parsing the style string.
+    overlayBg: OVERLAY_BG,
+    overlayBorder: ACCENT,
+    overlay: `position:fixed;z-index:2147483000;pointer-events:none;background:${OVERLAY_BG};` +
       `border:1px solid ${ACCENT};border-radius:2px;display:none`,
     tip: `position:fixed;z-index:2147483000;pointer-events:none;font:11px/1.3 ${MONO};` +
       `color:#0c0e14;background:${ACCENT};border-radius:4px;padding:1px 5px;display:none`,

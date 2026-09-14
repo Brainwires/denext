@@ -12,6 +12,10 @@ import { CLIENT_PREFIX, RELOAD_PATH } from "./shared.ts";
  * stylesheets; `update:<json>` is the per-module HMR frame (unbundled loop).
  */
 export const SPA_DEV_RELOAD = `(function(){
+  // Belt and braces: the generated SPA dev entry sets this first (it must, so the
+  // DevTools panel mounts before the app does), but this script runs on the plain shell
+  // too — a page whose entry failed to load should still report itself as dev.
+  window.__denextDev = true;
   function reload(){ location.reload(); }
   function swapCss(){
     // Re-link every same-origin stylesheet cache-busted (the dev index.css rebuilt
