@@ -692,6 +692,7 @@
     "VerificationRequestParams:interface",
     "VerificationTokenRecord:interface",
     "VerificationTokenRef:interface",
+    "VerifyEmailResult:typeAlias",
     "Viewport:interface",
     "absoluteUrl:function",
     "after:function",

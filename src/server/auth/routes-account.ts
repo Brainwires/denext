@@ -121,11 +121,11 @@ async function handleVerifyEmail(ctx: AuthRouteContext): Promise<Response | null
   } else {
     fields = Object.fromEntries(ctx.url.searchParams);
   }
-  const user = await verifyEmail(ctx.config, {
+  const result = await verifyEmail(ctx.config, {
     email: fields.email ?? "",
     token: fields.token ?? "",
   });
-  return user
+  return result.ok
     ? answer(ctx, 200, { ok: true }, noticePage(ctx.config), { verified: "1" })
     : answer(ctx, 400, { error: "invalid_token" }, errorPage(ctx.config), {
       error: "invalid_token",

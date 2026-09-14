@@ -262,7 +262,8 @@ function resolveMfa(
     issuer: mfaIssuer(mfa.issuer, canonicalOrigin),
     window: clamped(mfa.window, DEFAULT_MFA.window, 0, 2),
     backupCodes: clamped(mfa.backupCodes, DEFAULT_MFA.backupCodes, 0, 20),
-    freshness: lifetime(mfa.freshness, DEFAULT_MFA.freshness),
+    // 0 is meaningful here (every `/mfa/disable` needs a code), so it is clamped, not defaulted.
+    freshness: clamped(mfa.freshness, DEFAULT_MFA.freshness, 0, 365 * 86_400),
   };
 }
 

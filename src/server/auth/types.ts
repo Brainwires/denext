@@ -480,7 +480,8 @@ export interface AuthMfaConfig {
   backupCodes?: number;
   /**
    * How recent, in seconds, a second-factor proof must be for an action that demands a
-   * fresh one (step-up). Default `900` (15 minutes).
+   * fresh one (step-up). Default `900` (15 minutes); clamped to `0..31536000`. `0` means such
+   * an action always asks for a code.
    */
   freshness?: number;
 }

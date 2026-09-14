@@ -587,7 +587,7 @@ already verified, or a value that isn't exactly one address. Opening it hits
 `updateUser`), fires `emailVerified`, and redirects to `pages.verifyRequest` with
 `?verified=1` — or, for a wrong, spent or expired token, to `pages.error` with
 `?error=invalid_token`. `POST {basePath}/verify` takes the same two fields from a form or
-a JSON body, and `verifyEmail(authConfig, { email, token })` is the function underneath.
+a JSON body, and `verifyEmail(authConfig, { email, token })` is the function underneath (it answers `{ ok: true, user }` or `{ ok: false, error: "invalid_token" }`).
 Verifying signs nobody in and leaves the account's password alone — someone else may have
 registered the address, so word the mail so that ignoring it is safe.
 

@@ -253,7 +253,11 @@ Deno.test("verification tokens are scoped by (identifier, purpose)", async () =>
     purpose: "reset",
     ttl: 60,
   });
-  assertEquals(await verifyEmail(config, { email, token }), null, "a reset token verifies nothing");
+  assertEquals(
+    await verifyEmail(config, { email, token }),
+    { ok: false, error: "invalid_token" },
+    "a reset token verifies nothing",
+  );
   assertEquals(
     await redeemVerificationToken(config, { identifier: "other@x.test", purpose: "reset", token }),
     null,
@@ -397,7 +401,8 @@ Deno.test("verifyEmail: register → verify keeps the password the registrant se
   await adapter.setCredential!(id, "scrypt$registered");
   await requestEmailVerification(config, email);
   const verified = await verifyEmail(config, { email, token: sent[0].token });
-  assertEquals(typeof verified?.emailVerified, "number");
+  assert(verified.ok);
+  assertEquals(typeof verified.user.emailVerified, "number");
   assertEquals(await adapter.getCredential!(id), "scrypt$registered");
 });
 
@@ -681,4 +686,11 @@ Deno.test("resetPassword: a never-verified account loses the tokens and TOTP set
   );
   assertEquals(typeof result.user.emailVerified, "number");
   assertNotEquals(await adapter.getCredential!(id), "attacker-hash");
+});
+
+Deno.test("resolveAuthOptions: mfa.freshness 0 is kept (always ask), not replaced by the default", () => {
+  const { config } = setup();
+  assertEquals(resolveAuthOptions({ ...config, mfa: { freshness: 0 } }).mfa.freshness, 0);
+  assertEquals(resolveAuthOptions({ ...config, mfa: { freshness: -5 } }).mfa.freshness, 0);
+  assertEquals(resolveAuthOptions({ ...config, mfa: {} }).mfa.freshness, 900);
 });
