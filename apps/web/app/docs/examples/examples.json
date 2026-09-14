@@ -24,7 +24,7 @@
     {
       "name": "auth",
       "title": "examples/auth — a runnable denextAuth app",
-      "blurb": "The production shape of denext's first-party auth in one small app:",
+      "blurb": "The production shape of denext's first-party auth in one small app, zero npm: Deno's built-in node:sqlite holds everything, and every screen works with JavaScript disabled (tests/auth-example.test.ts…",
       "url": "https://github.com/Brainwires/denext/tree/main/examples/auth",
       "tags": [
         "plugin:denextAuth",

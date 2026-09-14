@@ -14,8 +14,16 @@ export default async function Home({ searchParams }: PageProps) {
         </code>{" "}
         / <code>verifyPassword</code>), locks the login endpoint after repeated failures (<code>
           rateLimit
-        </code>), and keeps sessions in a <code>node:sqlite</code>{" "}
-        store so they can be revoked (<code>sessionStore</code> + <code>revokeAllSessions</code>).
+        </code>), and keeps every durable record — users, linked accounts, credentials, API tokens
+        and sessions — in one <code>node:sqlite</code> file behind <code>sqliteAuthAdapter</code>.
+      </p>
+      <p>
+        Sessions are database-backed (revocable, with a sliding expiry), the user record carries
+        {" "}
+        <code>roles</code> that gate <code>/admin</code>, every sign-in and refusal goes through
+        {" "}
+        <code>events</code>, and a signed-in user can mint <code>Bearer</code>{" "}
+        API tokens for scripts.
       </p>
       {session
         ? (

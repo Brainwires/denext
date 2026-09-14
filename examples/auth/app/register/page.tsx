@@ -34,7 +34,8 @@ export default function RegisterPage({ searchParams }: PageProps) {
         <button type="submit">Register</button>
       </form>
       <p class="hint">
-        The password is stored as a salted scrypt hash — see lib/db.ts.
+        Registration creates the adapter user, links a <code>credentials</code>{" "}
+        account to it and stores the password as a salted scrypt hash — see lib/users.ts.
       </p>
     </section>
   );
