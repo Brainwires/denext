@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.5.0-rc.2] - 2026-09-14
+
 ### Added
 
 - **Auth: password sign-in without an `authorize`.** With an adapter that stores password
@@ -7192,6 +7194,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.5.0-rc.2]: https://jsr.io/@denext/denext@2.5.0-rc.2
 [2.5.0-rc.1]: https://jsr.io/@denext/denext@2.5.0-rc.1
 [2.4.3]: https://jsr.io/@denext/denext@2.4.3
 [2.4.2]: https://jsr.io/@denext/denext@2.4.2
