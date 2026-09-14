@@ -269,7 +269,8 @@ Deno.test("migrate SPA: carries index.html boot content (#root splash + head scr
     assert(config.includes("loading:"), "spa.loading emitted");
     assert(config.includes("boot-shell"), "the splash markup is carried");
     // The theme pre-paint script + theme-color meta are carried to spa.head; the entry
-    // module script, charset/viewport, and title are NOT (the shell emits those itself).
+    // module script, charset, title, and a default-equivalent viewport are NOT (the shell
+    // emits those itself).
     assert(config.includes("head:"), "spa.head emitted");
     assert(config.includes("theme-color"), "head meta carried");
     assert(config.includes("documentElement.style.background"), "pre-paint script carried");
@@ -277,6 +278,39 @@ Deno.test("migrate SPA: carries index.html boot content (#root splash + head scr
       !config.includes('/src/main.tsx\\"></script>'),
       "entry module script not carried into head",
     );
+    assert(!config.includes("width=device-width"), "a default viewport is not carried");
+  } finally {
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});
+
+Deno.test("migrate SPA: carries a non-default viewport (viewport-fit=cover) into spa.head", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_spa_viewport_" });
+  try {
+    await Deno.writeTextFile(
+      join(dir, "package.json"),
+      JSON.stringify({
+        dependencies: { react: "^19.0.0", "react-dom": "^19.0.0", vite: "^5.0.0" },
+      }),
+    );
+    await Deno.writeTextFile(join(dir, "vite.config.ts"), `export default {};\n`);
+    await Deno.mkdir(join(dir, "src"), { recursive: true });
+    await Deno.writeTextFile(join(dir, "src", "main.tsx"), `console.log("app");\n`);
+    // env(safe-area-inset-*) is 0 without viewport-fit=cover, so dropping this viewport
+    // silently breaks an app's iOS safe-area padding.
+    await Deno.writeTextFile(
+      join(dir, "index.html"),
+      `<!doctype html><html><head><meta charset="utf-8" />` +
+        `<meta name="viewport" content="width=device-width, initial-scale=1.0, ` +
+        `viewport-fit=cover, interactive-widget=resizes-content" />` +
+        `<title>My App</title></head><body><div id="root"></div>` +
+        `<script type="module" src="/src/main.tsx"></script></body></html>`,
+    );
+    await migrateProject(dir, {});
+    const config = await Deno.readTextFile(join(dir, "denext.config.ts"));
+    assert(config.includes("head:"), "spa.head emitted for the viewport alone");
+    assert(config.includes("viewport-fit=cover"), "viewport-fit carried");
+    assert(config.includes("interactive-widget=resizes-content"), "interactive-widget carried");
   } finally {
     await Deno.remove(dir, { recursive: true }).catch(() => {});
   }

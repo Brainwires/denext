@@ -1525,8 +1525,9 @@ function pnpUnsupported(dir: string): Error {
 /**
  * Entry module + title from `index.html`, PLUS the boot content a Vite/CRA app puts there:
  * the `#root` inner markup (a splash/spinner shown before the bundle loads) → `spa.loading`,
- * and the `<head>` content minus charset/viewport/title/the entry `<script>` (a theme
- * pre-paint script, boot styles, theme-color/manifest/icon links) → `spa.head`. Carrying
+ * and the `<head>` content minus charset/title/the entry `<script>` (a theme pre-paint
+ * script, boot styles, theme-color/manifest/icon links, a non-default viewport such as
+ * `viewport-fit=cover`) → `spa.head`. Carrying
  * these keeps the migrated SPA's instant first paint instead of a blank screen.
  */
 async function readIndexHtml(
@@ -1601,17 +1602,44 @@ function extractRootInner(html: string, rootId = "root"): string {
   return "";
 }
 
-/** `<head>` inner minus the parts denext's shell emits itself (charset/viewport/title/entry). */
+/**
+ * `<head>` inner minus the parts denext's shell emits itself (charset/title/entry, and a
+ * viewport that asks for nothing beyond the shell's default).
+ */
 function extractBootHead(html: string): string {
   const hm = /<head\b[^>]*>([\s\S]*?)<\/head>/i.exec(html);
   if (!hm) return "";
   return hm[1]
     .replace(/<meta\b[^>]*charset[^>]*>/gi, "")
-    .replace(/<meta\b[^>]*name=["']viewport["'][^>]*>/gi, "")
+    .replace(
+      /<meta\b[^>]*name=["']viewport["'][^>]*>/gi,
+      (tag) => viewportBeyondDefault(tag) ? tag : "",
+    )
     .replace(/<title>[\s\S]*?<\/title>/gi, "")
     .replace(/<script\b[^>]*type=["']module["'][^>]*>[\s\S]*?<\/script>/gi, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+/**
+ * Whether a `<meta name="viewport">` asks for more than the SPA shell's default
+ * (`width=device-width, initial-scale=1`): `viewport-fit=cover` (iOS safe areas),
+ * `interactive-widget`, a zoom lock. Only such a viewport is carried into `spa.head` — the
+ * shell then drops its own default — so a stock Vite viewport adds no noise to the config.
+ */
+function viewportBeyondDefault(tag: string): boolean {
+  const content = /\bcontent=["']([^"']*)["']/i.exec(tag)?.[1] ?? "";
+  const defaults: Record<string, string> = { width: "device-width", "initial-scale": "1" };
+  return content.split(/[,;]/).some((part) => {
+    const [rawKey, rawValue = ""] = part.split("=");
+    const key = rawKey.trim().toLowerCase();
+    if (!key) return false;
+    const expected = defaults[key];
+    if (expected === undefined) return true;
+    const value = rawValue.trim().toLowerCase();
+    const numeric = Number(value);
+    return Number.isNaN(numeric) ? value !== expected : numeric !== Number(expected);
+  });
 }
 
 /** `import.meta.env.*` names used across vite.config + `src/` — the seed for `spa.env`. */

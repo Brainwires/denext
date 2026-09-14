@@ -230,6 +230,8 @@ export interface SpaConfig {
   title?: string;
   /**
    * Extra raw HTML injected into the shell `<head>` (meta tags, preconnect links, …).
+   * A `<meta name="viewport">` here replaces the shell's default
+   * (`width=device-width, initial-scale=1`) — e.g. `viewport-fit=cover` for iOS safe areas.
    *
    * @widget textarea
    */

@@ -8,6 +8,16 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **SPA mode keeps an app's own viewport meta.** `denext migrate` stripped every
+  `<meta name="viewport">` from the source `index.html`, and the SPA shell always emitted
+  `width=device-width, initial-scale=1`, so a migrated app lost `viewport-fit=cover` (every
+  `env(safe-area-inset-*)` resolved to 0 — content under the iOS status bar and home
+  indicator) and `interactive-widget`. Migrate now carries a viewport that asks for more than
+  the default into `spa.head`, and the shell omits its default when `spa.head` has a viewport
+  meta, so exactly one is emitted.
+
 ## [2.5.0-rc.1] - 2026-09-14
 
 ### Added
