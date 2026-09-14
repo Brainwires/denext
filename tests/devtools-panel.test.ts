@@ -291,6 +291,15 @@ Deno.test("panel: the Render-modes tab shows the live boundary waterfall", () =>
         queryAll(body, (e) => e.textContent.includes("revealed @30ms")).length >= 1,
         "the live client reveal time is shown",
       );
+      // The waterfall draws its bar with the same proportionalBar() the Network tab uses
+      // (./ctx.ts): the only boundary is the scale's max, so it fills the 70 px width and
+      // carries no extra in-cell placement style.
+      const bar = queryAll(
+        body,
+        (e) => e.tagName === "DIV" && e.style.cssText.includes("height:9px"),
+      )[0];
+      assertEquals(asAny(bar).style.width, "70px", "the only boundary fills the bar scale");
+      assert(!bar.style.cssText.includes("display:inline-block"), bar.style.cssText);
     });
   } finally {
     if (prevB === undefined) delete gg.__denextBoundaries;

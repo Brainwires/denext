@@ -12,10 +12,12 @@ export function buildStyles() {
   const ACCENT = "#8aa2ff";
   const CHANGED = "#ff9d5c"; // "why did this render" highlight
   // Inline style strings (see the module header for why a <style> sheet can't be used).
+  const table = tableStyles(ACCENT);
   const S = {
     ...chromeStyles(MONO, ACCENT),
     ...tabStripStyles(),
-    ...tableStyles(ACCENT),
+    ...table,
+    ...statusPillStyles(table.pill, ACCENT),
     ...layoutStyles(ACCENT),
     ...treeStyles(ACCENT),
     ...detailStyles(CHANGED),
@@ -83,6 +85,26 @@ function tableStyles(ACCENT: string) {
       `white-space:nowrap;color:${ACCENT}`,
     pill:
       `display:inline-block;border-radius:999px;padding:0 6px;font-size:10px;white-space:nowrap`,
+  };
+}
+
+/**
+ * The HTTP status pill, one finished style per response class: 2xx green, 3xx the panel
+ * accent (blue), 4xx amber, 5xx red, and the panel's dim grey when the status is unknown.
+ * The dark foreground is shared, so a pill reads the same whichever class it lands in.
+ *
+ * @param PILL The base pill style from {@link tableStyles}.
+ * @param ACCENT The panel accent colour (the 3xx background).
+ * @returns The five pill styles, ready to assign as `cssText`.
+ */
+function statusPillStyles(PILL: string, ACCENT: string) {
+  const on = (background: string) => `${PILL};background:${background};color:#0c0e14`;
+  return {
+    pill2xx: on("#5fd48a"),
+    pill3xx: on(ACCENT),
+    pill4xx: on("#f0b45b"),
+    pill5xx: on("#ff6b6b"),
+    pillUnknown: on("#5b647a"),
   };
 }
 

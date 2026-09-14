@@ -4,22 +4,27 @@
 // is a read of `/_denext/dev-state`. SPA dev serves no dev-state endpoint, hence the
 // "App Router only" state the shared placeholder renders.
 //
-// Style note: every colour below is an inline string built inside a function, never a
-// module-scope object literal — see ./styles.ts for why (esbuild retains top-level literals
-// even when the only code using them is dead, silently shipping them to production).
+// Style note: the tab holds no style strings of its own — the status pill's per-class
+// colours live in `statusPillStyles()` in ./styles.ts, built inside a function like every
+// other style group (esbuild retains top-level object literals even when the only code
+// using them is dead, silently shipping them to production).
 
-import { type PanelCtx, type PanelState, refreshDataTab, renderDataPlaceholder } from "./ctx.ts";
+import {
+  type NetworkFilter,
+  type NetworkUi,
+  type PanelCtx,
+  proportionalBar,
+  refreshDataTab,
+  renderDataPlaceholder,
+} from "./ctx.ts";
 import { DEV_STATE_PATH } from "./dev-api.ts";
-import { el } from "./styles.ts";
+import { el, type PanelStyles } from "./styles.ts";
 
 /** How many recent requests the tab keeps (and asks the endpoint for). */
 const MAX_ROWS = 200;
 
 /** How many recent requests the tab asks for (the string form of {@link MAX_ROWS}). */
 const REQUEST_LIMIT = "200";
-
-/** How wide (px) the longest duration bar is drawn. */
-const BAR_WIDTH = 70;
 
 /** One completed request, parsed out of a `kind:"request"` dev event. */
 interface RequestRow {
@@ -33,39 +38,6 @@ interface RequestRow {
   durationMs: number;
   /** Epoch milliseconds when the event was recorded, or 0 when unknown. */
   ts: number;
-}
-
-/** The toolbar's two controls, as the tab reads them back. */
-interface NetworkFilter {
-  /** Lowercased substring the path must contain; empty shows everything. */
-  text: string;
-  /** Whether only responses with status >= 400 are shown. */
-  errorsOnly: boolean;
-}
-
-/**
- * The tab's live DOM + filter, kept across renders.
- *
- * The toolbar is built once and re-appended (rather than rebuilt) on every render so that
- * typing in the filter box doesn't destroy the element being typed into.
- */
-interface NetworkUi {
-  filter: NetworkFilter;
-  toolbar: HTMLElement;
-  box: HTMLInputElement;
-  errBtn: HTMLElement;
-  count: HTMLElement;
-  /** Whether the filter box held focus when the panel last re-rendered underneath it. */
-  focused: boolean;
-}
-
-/**
- * Where {@link NetworkUi} is parked. `PanelState` is owned by ./ctx.ts (another job this
- * wave), so the tab hangs its own slice off the state object under a key it alone uses.
- */
-interface NetworkStateSlot {
-  /** This tab's toolbar + filter, created on first render. */
-  networkUi?: NetworkUi;
 }
 
 /**
@@ -177,8 +149,8 @@ function matchesFilter(row: RequestRow, filter: NetworkFilter): boolean {
  * @returns The live toolbar handle.
  */
 function networkUi(ctx: PanelCtx): NetworkUi {
-  const slot = ctx.state as PanelState & NetworkStateSlot;
-  if (slot.networkUi) return slot.networkUi;
+  const state = ctx.state;
+  if (state.networkUi) return state.networkUi;
   const { doc, S } = ctx;
   const filter: NetworkFilter = { text: "", errorsOnly: false };
   const box = doc.createElement("input") as HTMLInputElement;
@@ -212,7 +184,7 @@ function networkUi(ctx: PanelCtx): NetworkUi {
     filter.errorsOnly = !filter.errorsOnly;
     ctx.render();
   });
-  slot.networkUi = ui;
+  state.networkUi = ui;
   return ui;
 }
 
@@ -262,7 +234,9 @@ function renderRow(ctx: PanelCtx, row: RequestRow, maxMs: number, now: number): 
   if (row.method) request.append(el(doc, "span", S.dim, `${row.method} `));
   request.append(el(doc, "span", S.comp, row.path));
   const duration = el(doc, "td", S.tdNum, `${row.durationMs}ms`);
-  duration.append(proportionalBar(ctx, row.durationMs, maxMs));
+  duration.append(
+    proportionalBar(ctx, row.durationMs, maxMs, "display:inline-block;margin-left:6px"),
+  );
   return el(
     doc,
     "tr",
@@ -282,40 +256,22 @@ function renderRow(ctx: PanelCtx, row: RequestRow, maxMs: number, now: number): 
  * @returns The pill element.
  */
 function statusPill(ctx: PanelCtx, status: number): HTMLElement {
-  const style = `${ctx.S.pill};background:${statusColor(status)};color:#0c0e14`;
-  return el(ctx.doc, "span", style, status === 0 ? "—" : String(status));
+  return el(ctx.doc, "span", statusPillStyle(ctx.S, status), status === 0 ? "—" : String(status));
 }
 
 /**
- * The pill background for a response class: 2xx green, 3xx the panel accent (blue), 4xx
- * amber, 5xx red, anything else the panel's dim grey.
+ * The finished pill style for a response class (see `statusPillStyles` in ./styles.ts).
  *
- * @param status The response status.
- * @returns A CSS colour.
+ * @param S The panel's style table.
+ * @param status The response status, or 0 when unknown.
+ * @returns The pill's inline style.
  */
-function statusColor(status: number): string {
-  if (status >= 500) return "#ff6b6b";
-  if (status >= 400) return "#f0b45b";
-  if (status >= 300) return "#8aa2ff";
-  if (status >= 200) return "#5fd48a";
-  return "#5b647a";
-}
-
-/**
- * A bar whose width is `value`'s share of `max`.
- *
- * The same idiom as the Suspense waterfall in ./render-modes.ts (which should adopt this
- * helper once that file is editable again).
- *
- * @param ctx The mounted panel context.
- * @param value This row's measurement.
- * @param max The largest measurement in the visible set.
- * @returns The bar element.
- */
-function proportionalBar(ctx: PanelCtx, value: number, max: number): HTMLElement {
-  const bar = el(ctx.doc, "div", `${ctx.S.rankBar};display:inline-block;margin-left:6px`);
-  bar.style.width = `${Math.max(3, Math.round((value / (max || 0.0001)) * BAR_WIDTH))}px`;
-  return bar;
+function statusPillStyle(S: PanelStyles["S"], status: number): string {
+  if (status >= 500) return S.pill5xx;
+  if (status >= 400) return S.pill4xx;
+  if (status >= 300) return S.pill3xx;
+  if (status >= 200) return S.pill2xx;
+  return S.pillUnknown;
 }
 
 /**

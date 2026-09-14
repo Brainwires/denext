@@ -27,6 +27,35 @@ export function emptyTabCache<T>(): DevTabCache<T> {
   return { data: null, error: null, loaded: false };
 }
 
+/** The Network tab's two toolbar controls, as the tab reads them back. */
+export interface NetworkFilter {
+  /** Lowercased substring the path must contain; empty shows everything. */
+  text: string;
+  /** Whether only responses with status >= 400 are shown. */
+  errorsOnly: boolean;
+}
+
+/**
+ * The Network tab's live DOM + filter, kept across renders in {@link PanelState}.
+ *
+ * The toolbar is built once and re-appended (rather than rebuilt) on every render so that
+ * typing in the filter box doesn't destroy the element being typed into.
+ */
+export interface NetworkUi {
+  /** The toolbar's current filter state. */
+  filter: NetworkFilter;
+  /** The toolbar element, re-appended on every render. */
+  toolbar: HTMLElement;
+  /** The path-filter input. */
+  box: HTMLInputElement;
+  /** The errors-only toggle. */
+  errBtn: HTMLElement;
+  /** The "n of m requests" counter. */
+  count: HTMLElement;
+  /** Whether the filter box held focus when the panel last re-rendered underneath it. */
+  focused: boolean;
+}
+
 export interface PanelState {
   open: boolean;
   tab: TabId;
@@ -51,6 +80,8 @@ export interface PanelState {
   cache: DevTabCache<unknown>;
   /** Last `/_denext/dev-routes` read (the Routes tab). */
   routes: DevTabCache<unknown>;
+  /** The Network tab's toolbar + filter, created on its first render. */
+  networkUi?: NetworkUi;
   /**
    * Set once any dev endpoint answered "unavailable" — SPA dev serves none of them, so
    * the editor link falls back to a `vscode://` URL and the data tabs say so.
@@ -88,6 +119,33 @@ export function findNode(nodes: InspectNode[], id: number): InspectNode | null {
 /** A detail-pane section heading. */
 export function h4(ctx: PanelCtx, first: boolean, text: string): HTMLElement {
   return el(ctx.doc, "h4", first ? ctx.S.h4First : ctx.S.h4, text);
+}
+
+/** How wide (px) the longest bar of a proportional set is drawn. */
+const BAR_WIDTH = 70;
+
+/**
+ * A bar whose width is `value`'s share of `max`.
+ *
+ * Shared by the waterfalls (./render-modes.ts) and the Network tab's duration column, so
+ * every proportional bar in the panel uses one scale: {@link BAR_WIDTH} px at `max`, a
+ * 3 px floor so a near-zero measurement is still visible, and the `S.rankBar` fill.
+ *
+ * @param ctx The mounted panel context.
+ * @param value This row's measurement.
+ * @param max The largest measurement in the visible set (0 means "nothing measured yet").
+ * @param extra Extra inline style appended to the bar (e.g. inline placement in a cell).
+ * @returns The bar element.
+ */
+export function proportionalBar(
+  ctx: PanelCtx,
+  value: number,
+  max: number,
+  extra = "",
+): HTMLElement {
+  const bar = el(ctx.doc, "div", extra ? `${ctx.S.rankBar};${extra}` : ctx.S.rankBar);
+  bar.style.width = `${Math.max(3, Math.round((value / (max || 0.0001)) * BAR_WIDTH))}px`;
+  return bar;
 }
 
 /**
