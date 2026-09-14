@@ -8,7 +8,31 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`spa.precompress`.** Set `false` to skip the `.gz` siblings a SPA `build`/`export`
+  writes next to client assets — for an export bundled into a native shell (Capacitor) whose
+  webview never requests them. Default `true`.
+
+### Changed
+
+- **`denext create --capacitor` scaffolds Capacitor 8.** `@capacitor/core`, `cli`, `ios` and
+  `android` are pinned to `^8.5.2` (the `mobile:*` tasks run that CLI), and `ios/` and
+  `android/` are no longer gitignored: Capacitor 8 builds iOS with Swift Package Manager and
+  the native projects are meant to be committed. Only their build outputs and the web assets
+  `cap sync` copies in are ignored.
+- **`staticExport` refuses an output dir it must not replace.** Both export paths replace
+  their output directory wholesale, so an `outDir` that is the project root, lies outside the
+  project, or overlaps `app/`, `public/`, `.denext/`, `node_modules/`, `.git/` or the SPA entry
+  now throws before anything is written.
+
 ### Fixed
+
+- **The SPA export replaces `out/` instead of piling builds into it.** It wrote into the
+  existing `out/` and never cleared it, so content-hashed chunks and `.gz` siblings from every
+  earlier build accumulated and shipped in anything that bundles `out/`, such as a Capacitor
+  app. It now builds into `out.staging/` and swaps it in, like the App Router export: `out/`
+  holds exactly the current build, and a failed export leaves the previous one intact.
 
 - **SPA mode keeps an app's own viewport meta.** `denext migrate` stripped every
   `<meta name="viewport">` from the source `index.html`, and the SPA shell always emitted

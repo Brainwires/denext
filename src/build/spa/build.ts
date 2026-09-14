@@ -3,6 +3,7 @@
 import { copy, ensureDir } from "@std/fs";
 import { join } from "@std/path";
 import { prepareDesktopIcon } from "../desktop-icon.ts";
+import { resolveExportOutDir, writeViaStaging } from "../export-pipeline/out-dir.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { bundleSpaInto } from "./bundle.ts";
 import { prodMinify } from "../minify.ts";
@@ -28,9 +29,12 @@ async function bundleAndShell(
   const { hasStyles } = await bundleSpaInto(paths, entryPath, clientDir, prodMinify());
   // Precompress the client chunks (gzip `.gz` siblings) exactly like the App Router build's
   // finalize step, so the prod server serves them with zero per-request CPU — and so
-  // `denext analyze` can report over-the-wire (gzip) sizes for a SPA bundle.
-  const gzCount = await precompressDir(clientDir);
-  if (gzCount > 0) console.log(`  precompressed ${gzCount} client asset(s) -> .gz`);
+  // `denext analyze` can report over-the-wire (gzip) sizes for a SPA bundle. `spa.precompress:
+  // false` skips it for an export bundled into a native shell that never serves them.
+  if (paths.config!.spa!.precompress !== false) {
+    const gzCount = await precompressDir(clientDir);
+    if (gzCount > 0) console.log(`  precompressed ${gzCount} client asset(s) -> .gz`);
+  }
   // Preload the entry's static chunk graph so the browser fetches the runtime in parallel
   // with the entry (Vite parity) rather than discovering it after downloading + parsing.
   const preload = (await collectSpaPreloads(clientDir, ENTRY_FILE))
@@ -95,19 +99,26 @@ async function copyPublic(publicDir: string, outDir: string): Promise<void> {
   }
 }
 
-/** Static export for SPA mode: `out/index.html` + `out/_denext/client/*` + public/. */
+/**
+ * Static export for SPA mode: `out/index.html` + `out/_denext/client/*` + public/. Written
+ * through the same staging swap as the App Router export, so `out/` holds exactly this build
+ * (content-hashed chunks from earlier builds never pile up) and a failed export leaves the
+ * previous one intact.
+ */
 export async function exportSpa(
   paths: ProjectPaths,
   options: { outDir?: string } = {},
 ): Promise<{ outDir: string; pages: number; skipped: string[] }> {
   const { spa, entryPath } = spaEntryPath(paths);
   await assertEntryExists(entryPath);
-  const outDir = join(paths.projectDir, options.outDir ?? "out");
-  const clientOut = join(outDir, "_denext", "client");
-  await ensureDir(clientOut);
-  console.log(`  SPA mode: bundling ${spa.entry} -> _denext/client/${ENTRY_FILE}`);
-  await bundleAndShell(paths, entryPath, clientOut, outDir);
-  await copyPublic(paths.publicDir, outDir);
+  const outDir = resolveExportOutDir(paths, options.outDir);
+  await writeViaStaging(outDir, async (staging) => {
+    const clientOut = join(staging, "_denext", "client");
+    await ensureDir(clientOut);
+    console.log(`  SPA mode: bundling ${spa.entry} -> _denext/client/${ENTRY_FILE}`);
+    await bundleAndShell(paths, entryPath, clientOut, staging);
+    await copyPublic(paths.publicDir, staging);
+  });
   // Prepare the desktop app icon when this is a desktop app (a `desktop.ts` entry, or an
   // explicit `spa.desktop.icon`). Config-driven and done here — in `export`, which the
   // `deno task desktop` chain runs right before `deno desktop` — so editing

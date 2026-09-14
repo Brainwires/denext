@@ -223,14 +223,30 @@ deno task desktop:package:linux --arch both --appimage`}
       <p>
         You get a <code>capacitor.config.ts</code> that bundles the export (<code>
           webDir: "out"
-        </code>) into the native iOS/Android shells, plus the <code>mobile:*</code> tasks:
+        </code>) into the native iOS/Android shells, a <code>package.json</code>{" "}
+        pinning Capacitor 8 (<code>^8.5.2</code>), plus the <code>mobile:*</code>{" "}
+        tasks. Add each platform once, then sync after every change:
       </p>
       <Code lang="bash">
         {`deno install                # Capacitor's CLI + platforms are npm packages
-deno task mobile:sync       # export + copy assets into the native projects
+deno run -A --node-modules-dir npm:@capacitor/cli@^8.5.2 add ios       # once
+deno run -A --node-modules-dir npm:@capacitor/cli@^8.5.2 add android   # once
+deno task mobile:sync       # export, then copy out/ into the native projects
 deno task mobile:ios        # open in Xcode
 deno task mobile:android    # open in Android Studio`}
       </Code>
+      <p>
+        Commit <code>ios/</code> and{" "}
+        <code>android/</code>: Capacitor 8 builds iOS with Swift Package Manager, and the native
+        projects are yours to edit. The scaffolded <code>.gitignore</code>{" "}
+        ignores only their build outputs and the web assets <code>mobile:sync</code>{" "}
+        copies in; Capacitor's own generated <code>.gitignore</code>{" "}
+        files cover the rest. The webview loads files straight from the app bundle, so the export
+        ships no precompressed <code>.gz</code>{" "}
+        siblings — the App Router export never writes them, and a SPA-mode app turns them off with
+        {" "}
+        <code>{"spa: { precompress: false }"}</code>.
+      </p>
       <Callout kind="note">
         A complete project wired for web + desktop + mobile is{" "}
         <a href="https://github.com/Brainwires/denext/tree/main/examples/native">

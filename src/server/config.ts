@@ -282,6 +282,14 @@ export interface SpaConfig {
    * matched requests — HTTP and WebSocket — to the backend. Omit for a backend-less SPA.
    */
   proxy?: SpaProxyConfig;
+  /**
+   * Write a gzip `.gz` sibling next to each compressible client asset at `build` and
+   * `export`, so `denext start` serves `Content-Encoding: gzip` with no per-request CPU.
+   * Default `true`. Set `false` when the export is bundled into a native shell such as
+   * Capacitor, whose iOS/Android webview loads files from the app bundle and never requests
+   * the `.gz` variants, to keep them out of the bundle.
+   */
+  precompress?: boolean;
   /** `deno desktop` packaging settings (used when building the desktop app). */
   desktop?: SpaDesktopConfig;
 }

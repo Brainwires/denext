@@ -261,6 +261,13 @@ await runDesktop({ importMetaUrl: import.meta.url, proxy: config.spa?.proxy });`
         apps pin <code>nodeModulesDir: "manual"</code>), and <code>--icon</code>{" "}
         when an app icon is present. <code>denext migrate --desktop</code> writes this task for you.
       </Callout>
+      <Callout kind="note">
+        <code>denext build</code> and <code>denext export</code> write a gzip <code>.gz</code>{" "}
+        sibling next to each client asset, for <code>denext start</code>{" "}
+        to serve at no per-request cost. A native shell that loads files from its app bundle never
+        requests them — for a Capacitor (iOS/Android) build, set{" "}
+        <code>{"spa: { precompress: false }"}</code> to keep them out of the bundle.
+      </Callout>
       <h3>App icon</h3>
       <p>
         Set <code>spa.desktop.icon</code> in <code>denext.config.ts</code>{" "}

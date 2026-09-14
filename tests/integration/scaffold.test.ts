@@ -169,14 +169,25 @@ Deno.test("scaffoldFiles: capacitor wires config, package.json, and mobile tasks
     'webDir: "out"', // matches denext's static export dir
   );
   const pkg = JSON.parse(files.find((f) => f.path === "package.json")!.content);
-  assert(pkg.devDependencies["@capacitor/cli"], "capacitor cli devDependency");
-  assert(pkg.devDependencies["@capacitor/ios"] && pkg.devDependencies["@capacitor/android"]);
+  // Capacitor 8: the CLI, core and both native platforms on one release range.
+  for (const name of ["cli", "core", "ios", "android"]) {
+    assertEquals(pkg.devDependencies[`@capacitor/${name}`], "^8.5.2", `@capacitor/${name}`);
+  }
   const dj = JSON.parse(files.find((f) => f.path === "deno.json")!.content);
-  assertStringIncludes(dj.tasks["mobile:sync"], "cap");
-  assertStringIncludes(dj.tasks["mobile:ios"], "open ios");
-  const gi = files.find((f) => f.path === ".gitignore")!.content;
-  assertStringIncludes(gi, "node_modules/");
-  assertStringIncludes(gi, "ios/");
+  assertEquals(dj.imports["@capacitor/cli"], "npm:@capacitor/cli@^8.5.2");
+  // mobile:sync exports first, then syncs `out/` with the pinned CLI.
+  assert(dj.tasks["mobile:sync"].startsWith("deno task export && "), dj.tasks["mobile:sync"]);
+  assertStringIncludes(dj.tasks["mobile:sync"], "npm:@capacitor/cli@^8.5.2 sync");
+  assertStringIncludes(dj.tasks["mobile:ios"], "@capacitor/cli@^8.5.2 open ios");
+  assertStringIncludes(dj.tasks["mobile:android"], "@capacitor/cli@^8.5.2 open android");
+  const gi = files.find((f) => f.path === ".gitignore")!.content.split("\n");
+  assert(gi.includes("node_modules/"));
+  // Capacitor 8 (Swift Package Manager) native projects are committed: only their build
+  // outputs and the web assets `cap sync` copies in are ignored, never the whole platform dir.
+  assert(!gi.includes("ios/") && !gi.includes("android/"), "ios/ + android/ stay tracked");
+  assert(gi.includes("ios/App/App/public/"), "synced iOS web assets are ignored");
+  assert(gi.includes("android/app/src/main/assets/public/"), "synced Android web assets ignored");
+  assert(gi.includes("android/app/build/"), "Android build output is ignored");
 });
 
 Deno.test("scaffoldFiles: compatibilityMode adds React + Next import aliases", () => {
