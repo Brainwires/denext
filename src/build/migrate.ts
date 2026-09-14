@@ -1771,6 +1771,23 @@ function tailwindOutputFor(input: string): string {
 }
 
 /**
+ * A key the evaluated next.config reported, made safe to write into a `//` comment: the
+ * config is untrusted input, so a key carrying a line break (including U+2028 / U+2029,
+ * which end a JS line comment too) must not break out of the comment into code.
+ */
+function commentSafe(key: string): string {
+  return JSON.stringify(key).slice(1, -1).replace(
+    /[\u2028\u2029]/g,
+    (c) => `\\u${c.charCodeAt(0).toString(16)}`,
+  );
+}
+
+/** A property key for generated source: a bare identifier as is, anything else quoted. */
+function propertyKey(key: string): string {
+  return /^[A-Za-z_$][\w$]*$/.test(key) ? key : JSON.stringify(key);
+}
+
+/**
  * Per-key guidance for the dropped next.config keys, so a load-bearing key isn't dropped
  * without a pointer to its denext equivalent. Inert keys (no note) are grouped on one line.
  */
@@ -1778,9 +1795,9 @@ function droppedKeyNotes(dropped: string[]): string[] {
   const notes: string[] = [];
   const inert: string[] = [];
   for (const k of dropped) {
-    const note = NEXT_DROP_GUIDANCE[k];
-    if (note) notes.push(`  // ${k}: ${note}`);
-    else inert.push(k);
+    const note = Object.hasOwn(NEXT_DROP_GUIDANCE, k) ? NEXT_DROP_GUIDANCE[k] : undefined;
+    if (note) notes.push(`  // ${commentSafe(k)}: ${note}`);
+    else inert.push(commentSafe(k));
   }
   if (inert.length) notes.push(`  // Dropped (no denext equivalent needed): ${inert.join(", ")}.`);
   return notes;
@@ -1801,7 +1818,9 @@ function nextConfigTranslationLines(next: NextConfigTranslation, bodyLines: stri
     ];
   }
   const notes: string[] = [];
-  for (const [k, v] of Object.entries(next.fields)) bodyLines.push(`  ${k}: ${JSON.stringify(v)},`);
+  for (const [k, v] of Object.entries(next.fields)) {
+    bodyLines.push(`  ${propertyKey(k)}: ${JSON.stringify(v)},`);
+  }
   const ruleEntries = Object.entries(next.rules);
   if (ruleEntries.length) {
     notes.push(`  // redirects/rewrites/headers inlined from ${next.file} at migrate time.`);

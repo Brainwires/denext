@@ -98,7 +98,8 @@ function failure(reason: string, stderr: Uint8Array): NextConfigEvalResult {
 }
 
 /**
- * Read the result back from the child's stdout: the FIRST line behind `marker`, parsed as JSON
+ * Read the result back from the child's stdout: the FIRST line behind the per-run `marker`
+ * (nonce included, so the evaluated config can't print a line that matches), parsed as JSON
  * regardless of the exit code — the config may have printed its result before a plugin's
  * background work crashed the process. Output before the marker line is ignored.
  */
@@ -126,6 +127,11 @@ export async function evalNextConfigProgram(
   const dir = await canonical(options.dir);
   const file = await canonical(resolve(options.dir, options.file));
   const signal = AbortSignal.timeout(timeoutMs);
+  // A per-run nonce on the marker. It exists only in the piped program, which the evaluated
+  // config can't read (no file, no argv, no env), so a config that prints its own marker
+  // line — to plant keys or code in what the caller writes — can't forge the result.
+  const marker = `${options.marker}${crypto.randomUUID()}:`;
+  const program = options.program.replaceAll(options.marker, marker);
   let output: Deno.CommandOutput;
   try {
     const child = new Deno.Command(denoExecutable(), {
@@ -146,7 +152,7 @@ export async function evalNextConfigProgram(
       signal,
     }).spawn();
     const writer = child.stdin.getWriter();
-    await writer.write(new TextEncoder().encode(options.program)).catch(() => {});
+    await writer.write(new TextEncoder().encode(program)).catch(() => {});
     await writer.close().catch(() => {});
     output = await child.output();
   } catch (err) {
@@ -155,7 +161,7 @@ export async function evalNextConfigProgram(
   }
   try {
     // A complete marker line wins even when the deadline fired while the child was exiting.
-    return { ok: true, value: readMarker(output.stdout, options.marker) };
+    return { ok: true, value: readMarker(output.stdout, marker) };
   } catch (err) {
     const why = signal.aborted
       ? `timed out after ${timeoutMs} ms`

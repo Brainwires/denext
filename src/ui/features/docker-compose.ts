@@ -16,7 +16,6 @@
 // service or key the file did not report. A file the model cannot follow (anchors, flow style,
 // several documents, …) is "opaque": shown read-only, next to the regeneration diff.
 
-import { join } from "@std/path";
 import {
   applyComposeEdits,
   type ComposeModel,
@@ -33,7 +32,7 @@ import { Raw, renderView } from "../view.ts";
 import { control, field as labelled, opButton } from "../form/control.ts";
 import { OP_FIELD, parseOp } from "../form/value.ts";
 import type { WidgetOption } from "../form/widget.ts";
-import { UI_CSRF_FIELD, writeFileAtomic } from "../security.ts";
+import { UI_CSRF_FIELD, uiSafeJoin, writeFileAtomic } from "../security.ts";
 
 /** The compose file the editor reads and writes, at the project root. */
 export const COMPOSE_FILE = "docker-compose.yml";
@@ -108,7 +107,9 @@ async function stampOf(text: string): Promise<string> {
 async function readSnapshot(dir: string): Promise<Snapshot> {
   let text: string;
   try {
-    text = await Deno.readTextFile(join(dir, COMPOSE_FILE));
+    // Through the containment gate: a docker-compose.yml symlinked out of the project is
+    // never read into the panel (it reads as absent; a write there is refused too).
+    text = await Deno.readTextFile(await uiSafeJoin(dir, COMPOSE_FILE));
   } catch {
     return { model: null, base: "" };
   }

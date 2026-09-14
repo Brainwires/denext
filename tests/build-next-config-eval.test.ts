@@ -202,3 +202,15 @@ Deno.test("DENEXT_NEXT_EVAL_TIMEOUT_MS sets the default deadline; an explicit ti
     else Deno.env.set("DENEXT_NEXT_EVAL_TIMEOUT_MS", prior);
   }
 });
+
+Deno.test("a config that prints its own marker line can't forge the result (per-run nonce)", async () => {
+  // The config runs before the caller's program and prints a line behind the caller's marker,
+  // hoping to plant keys (or code) in what the caller writes. The real marker carries a
+  // per-run nonce the config never sees, so only the program's own line is read.
+  const forged = JSON.stringify({ planted: "(globalThis.PWNED = Deno.cwd())" });
+  const src = `console.log(${JSON.stringify(MARKER)} + ${JSON.stringify(forged)});\n` +
+    'export default { basePath: "/real" };\n';
+  await withConfig("next.config.mjs", src, async (dir) => {
+    assertEquals(valueOf(await evalIn(dir, "next.config.mjs")), { basePath: "/real" });
+  });
+});
