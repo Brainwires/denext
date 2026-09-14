@@ -35,6 +35,10 @@ export { installActivitySupport } from "./fiber/activity-runtime.ts";
 export { installViewTransitionSupport } from "./fiber/view-transition-runtime.ts";
 // Resumability: the lazily-loaded event-handler reference the qrl transform emits.
 export { capturedScope, type Qrl, qrl } from "../runtime/qrl.ts";
+// Dev DevTools metadata: the per-component source position + hook names the dev
+// transforms' Fast Refresh footer registers (dev only; unreferenced in production, so the
+// registry tree-shakes away).
+export { type ComponentDevMeta, type HookDevMeta, registerComponentMeta } from "./devtools-meta.ts";
 // Dev Fast Refresh: family registration + state-preserving reconcile (dev entries only).
 export {
   enableFastRefresh,

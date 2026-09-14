@@ -22,56 +22,53 @@
 
 import type * as esbuild from "esbuild";
 import { toFileUrl } from "@std/path";
-import { type Node, swcParse } from "./swc-ast.ts";
+import { collectComponentMeta, componentDecls, metaFooter } from "./devtools-meta.ts";
+import type { ComponentDevMeta } from "../client/devtools-meta.ts";
+import { type ParsedModule, parseModule } from "./swc-ast.ts";
 import { firstPartyTsxPlugin } from "./spa-onload.ts";
 
-/** A PascalCase identifier is the React/JSX signal for a component (vs a hook/helper). */
-function isComponentName(name: string | undefined): name is string {
-  return typeof name === "string" && /^[A-Z]/.test(name);
-}
-
-/** True for an initializer that produces a callable (an arrow or function expression). */
-function isCallableInit(init: Node): boolean {
-  return !!init &&
-    (init.type === "ArrowFunctionExpression" || init.type === "FunctionExpression");
+/** A module's Fast Refresh registrations and the DevTools metadata that rides along. */
+export interface ModuleComponents {
+  /** The component-shaped binding names to register as families (components only). */
+  names: string[];
+  /** Dev metadata per tracked declaration — components AND `use*` custom hooks. */
+  metas: Record<string, ComponentDevMeta>;
 }
 
 /**
- * Collect the top-level component-shaped binding names of a parsed module: PascalCase
+ * The top-level component-shaped binding names of a parsed module — PascalCase
  * function/class declarations and PascalCase consts bound to an arrow/function
- * expression, whether or not they are `export`ed. Object/value consts are excluded
- * (only callables are components), so a `const Config = {…}` is never registered.
+ * expression, whether or not they are `export`ed — plus the DevTools metadata of those
+ * and of the module's `use*` custom hooks. Object/value consts are excluded (only
+ * callables are components), so a `const Config = {…}` is never registered.
+ *
+ * Only `names` drives `registerFamily`: a custom hook has no fiber identity, it only
+ * contributes hook-name metadata.
+ *
+ * @param parsed The module parsed by `parseModule()`.
+ * @returns The family names and the per-declaration metadata.
  */
-export function collectComponentNames(moduleAst: Node): string[] {
-  const names: string[] = [];
-  const add = (name: string | undefined) => {
-    if (isComponentName(name) && !names.includes(name)) names.push(name);
+export function collectComponents(parsed: ParsedModule): ModuleComponents {
+  return {
+    names: componentDecls(parsed).filter((d) => d.component).map((d) => d.name),
+    metas: collectComponentMeta(parsed),
   };
-  const fromDecl = (decl: Node): void => {
-    if (!decl || typeof decl !== "object") return;
-    switch (decl.type) {
-      case "FunctionDeclaration":
-      case "ClassDeclaration":
-        add(decl.identifier?.value);
-        return;
-      case "VariableDeclaration":
-        for (const d of decl.declarations ?? []) {
-          if (d?.id?.type === "Identifier" && isCallableInit(d.init)) add(d.id.value);
-        }
-        return;
-    }
-  };
-  for (const stmt of moduleAst?.body ?? []) {
-    if (!stmt || typeof stmt !== "object") continue;
-    if (stmt.type === "ExportDeclaration") fromDecl(stmt.declaration);
-    else if (stmt.type === "ExportDefaultDeclaration") add(stmt.decl?.identifier?.value);
-    else fromDecl(stmt);
-  }
-  return names;
 }
 
-/** The `registerFamily` import + one registration per component, appended to a module. */
-export function refreshFooter(sourceUrl: string, names: string[]): string {
+/**
+ * The `registerFamily` import + one registration per component, appended to a module —
+ * with the DevTools metadata sidecar (`__dnxMeta(id, {…})`) when `metas` is given.
+ *
+ * @param sourceUrl The module's `file://` URL (the family id prefix).
+ * @param names The component names to register.
+ * @param metas Optional dev metadata (omitted ⇒ no sidecar).
+ * @returns The footer source, or `""` when the module has no components.
+ */
+export function refreshFooter(
+  sourceUrl: string,
+  names: string[],
+  metas?: Record<string, ComponentDevMeta>,
+): string {
   if (names.length === 0) return "";
   // Alias the import so it can never shadow (or be shadowed by) a user binding named
   // `registerFamily`. The import is idempotent — ESM allows a module to import the
@@ -83,7 +80,7 @@ export function refreshFooter(sourceUrl: string, names: string[]): string {
   // not fuse onto a trailing `//` comment or expression).
   return `\n\n/* denext Fast Refresh (dev) */\n` +
     `import { registerFamily as __dnxRegisterFamily } from "denext/client-runtime";\n` +
-    regs + "\n";
+    regs + "\n" + (metas ? metaFooter(sourceUrl, metas) : "");
 }
 
 /**
@@ -98,10 +95,10 @@ export function spaRefreshPlugin(projectDir: string): esbuild.Plugin {
   return firstPartyTsxPlugin("denext-spa-fast-refresh", projectDir, async (source, path) => {
     // Parse-and-instrument is best-effort: a parse failure (caught by the shared wrapper)
     // leaves the module as written — those components simply remount on edit.
-    const parse = await swcParse();
-    const ast = await parse(source);
-    const names = collectComponentNames(ast);
+    const parsed = await parseModule(source);
+    if (!parsed) return null; // unparseable/empty → leave unchanged
+    const { names, metas } = collectComponents(parsed);
     if (names.length === 0) return null; // nothing component-shaped → leave unchanged
-    return source + refreshFooter(toFileUrl(path).href, names);
+    return source + refreshFooter(toFileUrl(path).href, names, metas);
   });
 }

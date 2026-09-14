@@ -16,8 +16,8 @@ import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts"
 import { registerFamily, sameFamily } from "../src/client/refresh-runtime.ts";
 import { setFamilyMatch } from "../src/client/vnode-utils.ts";
 import { classifySpaChange, generateSpaEntry } from "../src/build/spa.ts";
-import { collectComponentNames, refreshFooter } from "../src/build/spa-refresh-plugin.ts";
-import { swcParse } from "../src/build/swc-ast.ts";
+import { collectComponents, refreshFooter } from "../src/build/spa-refresh-plugin.ts";
+import { parseModule } from "../src/build/swc-ast.ts";
 import { makeDom } from "./helpers/dom.ts";
 import type { VNode } from "../src/jsx/types.ts";
 
@@ -27,11 +27,11 @@ type Any = any;
 // ---- the transform's component detection -----------------------------------
 
 async function names(src: string): Promise<string[]> {
-  const parse = await swcParse();
-  return collectComponentNames(await parse(src));
+  const parsed = await parseModule(src);
+  return collectComponents(parsed!).names;
 }
 
-Deno.test("collectComponentNames: PascalCase functions/consts/classes, exported or not", async () => {
+Deno.test("collectComponents: PascalCase functions/consts/classes, exported or not", async () => {
   const src = [
     `function Counter() { return null; }`,
     `export function Panel() { return null; }`,
@@ -46,7 +46,7 @@ Deno.test("collectComponentNames: PascalCase functions/consts/classes, exported 
   }
 });
 
-Deno.test("collectComponentNames: excludes hooks, helpers, and value consts", async () => {
+Deno.test("collectComponents: excludes hooks, helpers, and value consts", async () => {
   const src = [
     `function useThing() { return 1; }`, // a hook (lowercase) — not a component
     `const helper = () => 1;`, // lowercase helper
@@ -55,7 +55,10 @@ Deno.test("collectComponentNames: excludes hooks, helpers, and value consts", as
     `function Real() { return null; }`, // the only component
   ].join("\n");
   const found = await names(src);
-  assertEquals(found, ["Real"]);
+  assertEquals(found, ["Real"], "only components are registered as families");
+  // The `use*` hook still contributes DevTools metadata — it is simply never a family.
+  const metas = collectComponents((await parseModule(src))!).metas;
+  assertEquals(Object.keys(metas).sort(), ["Real", "useThing"]);
 });
 
 Deno.test("refreshFooter: emits an aliased import + one registration per component", () => {
