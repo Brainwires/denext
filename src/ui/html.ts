@@ -1,19 +1,23 @@
 // The view layer of `denext ui` — and the contract every feature module implements.
 //
-// Shape (decided in the 2.5 UI design): the UI is server-rendered HTML *strings*, the
-// `packages/openapi/docs-ui.ts` model — no bundler, no TSX, no client framework. Every view is
-// `(props) => string` behind the single {@linkcode renderPage} seam, so a later minor can flip
-// the implementation to TSX + `renderToStringSync` without touching a route.
+// Shape: the UI is server-rendered HTML with no bundler, no client framework and no hydration
+// (the `packages/openapi/docs-ui.ts` model). A view is either an `html` tagged template (a
+// pre-escaped {@linkcode RawHtml} fragment) or an `h()`-built component tree rendered once, synchronously, on the server
+// through `view.ts` — the two nest inside each other (`renderView` / `<Raw>`) while the views
+// flip over one at a time. Every page render goes through the single {@linkcode renderPage} seam.
 //
 // This module also owns the handler contract ({@linkcode UiContext}, {@linkcode UiRoute}) and the
 // navigation list, rather than `routes.ts`, so that `features/*.ts` can depend on it while
-// `routes.ts` depends on the features — one direction, no import cycle.
+// `routes.ts` depends on the features — one direction, no import cycle. The graph below it is
+// one-way too: `html.ts` → `layout.ts` → `view.ts`, and `html.ts` → `view.ts` (shared pieces in `components.ts`).
 
-/** A pre-escaped HTML fragment: interpolating it into {@linkcode html} inserts it verbatim. */
-export interface RawHtml {
-  /** The already-safe markup. */
-  readonly __html: string;
-}
+import type { VNode } from "../jsx/types.ts";
+import type { SseClients } from "../build/sse.ts";
+import { layout, type NavItem } from "./layout.ts";
+import { UI_CSRF_FIELD } from "./security.ts";
+import { type RawHtml, renderView } from "./view.ts";
+
+export type { RawHtml } from "./view.ts";
 
 /**
  * Mark a string as already-safe markup so {@linkcode html} interpolates it verbatim.
@@ -69,9 +73,6 @@ export function toHtml(fragment: RawHtml): string {
 
 // ── the handler contract ─────────────────────────────────────────────────────
 
-import type { SseClients } from "../build/sse.ts";
-import { UI_CSRF_FIELD } from "./security.ts";
-
 /** Everything a feature handler is told about the current request. */
 export interface UiContext {
   /** Absolute path of the project the UI was opened on. */
@@ -82,6 +83,8 @@ export interface UiContext {
   readonly method: string;
   /** `--read-only`: every mutation is refused before it reaches a feature. */
   readonly readOnly: boolean;
+  /** True when JSR discovery is off (`denext ui --offline`); read it as `ctx.offline === true`. */
+  readonly offline?: boolean;
   /** The CSRF token this session's forms must carry. */
   readonly csrf: string;
   /** True for the `/api/*` twin of a feature route (answer with JSON). */
@@ -114,22 +117,8 @@ export interface UiRoute {
   readonly handle: UiHandler;
 }
 
-/** The same-origin stylesheet path (also the route that serves it). */
-export const UI_CSS_PATH = "/_ui/ui.css";
-
-/** The same-origin client-module path (also the route that serves it). */
-export const UI_JS_PATH = "/_ui/ui.js";
-
 /** The broadcast channel path (also the route that serves it). */
 export const UI_EVENTS_PATH = "/_ui/events";
-
-/** One item of the UI's top navigation. */
-export interface NavItem {
-  /** The path it links to. */
-  readonly href: string;
-  /** The label. */
-  readonly label: string;
-}
 
 /** The UI's top navigation, in order. */
 export const UI_NAV: readonly NavItem[] = [
@@ -143,65 +132,32 @@ export const UI_NAV: readonly NavItem[] = [
   { href: "/commands", label: "Commands" },
 ];
 
-// ── the shell ────────────────────────────────────────────────────────────────
+// ── the page seam ────────────────────────────────────────────────────────────
 
-/** Inputs to {@linkcode layout}. */
-export interface LayoutOptions {
-  /** The document title (also the page heading). */
-  readonly title: string;
-  /** The navigation to render. */
-  readonly nav: readonly NavItem[];
-  /** The page body (already-safe markup). */
-  readonly body: RawHtml;
-  /** The session CSRF token, published to `ui.js` as a `<meta>`. */
-  readonly csrf: string;
-  /** The nav href to mark current. */
-  readonly active?: string;
-}
+/** What a view may return: a markup string, an `html` fragment, or a component (VNode) tree. */
+type ViewResult = string | RawHtml | VNode;
 
 /**
- * The full HTML document every UI page is served as: one same-origin stylesheet, one
- * same-origin module, no inline script — clean under `script-src 'self'; style-src 'self'`.
- *
- * @param options Title, navigation, body, CSRF token and the active nav entry.
- * @returns The complete document source.
- */
-export function layout(options: LayoutOptions): string {
-  const nav = options.nav.map((item) =>
-    html`
-      <a href="${item.href}" ${item.href === options.active
-        ? raw(' aria-current="page"')
-        : ""}>${item.label}</a>
-    `
-  );
-  return "<!doctype html>" + toHtml(html`
-    <html lang="en">
-      <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <meta name="denext-csrf" content="${options.csrf}">
-        <title>${options.title} · denext ui</title>
-        <link rel="stylesheet" href="${UI_CSS_PATH}">
-      </head>
-      <body>
-        <header class="topbar"><span class="brand">denext&nbsp;ui</span><nav>${nav}</nav></header>
-        <main id="main">${options.body}</main>
-        <script type="module" src="${UI_JS_PATH}"></script>
-      </body>
-    </html>
-  `);
-}
-
-/**
- * The single indirection every page render goes through, so the rendering strategy is one
- * edit away from changing.
+ * The single indirection every page render goes through. A view may still return a string or
+ * an `html` fragment, or return a component tree (rendered here through `renderView`, synchronously) — so a
+ * view flips from one to the other without touching a route. A view that throws (or an async
+ * component) throws out of this call, which the server answers with its hardened `500`
+ * before any byte of the page is written.
  *
  * @param view A view function.
  * @param props Its props.
  * @returns The rendered document.
  */
-export function renderPage<P>(view: (props: P) => string, props: P): string {
-  return view(props);
+export function renderPage<P>(view: (props: P) => ViewResult, props: P): string {
+  const result = view(props);
+  if (typeof result === "string") return result;
+  if (isRawHtml(result)) return result.__html;
+  return renderView(result).__html;
+}
+
+/** Whether a view's result is an `html` fragment (a VNode never carries `__html`). */
+function isRawHtml(result: RawHtml | VNode): result is RawHtml {
+  return typeof (result as Partial<RawHtml>).__html === "string";
 }
 
 // ── responses ────────────────────────────────────────────────────────────────

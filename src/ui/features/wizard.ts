@@ -22,17 +22,11 @@ import { generateArtifact } from "../../build/generate.ts";
 import { denoJson, scaffoldProject } from "../../build/scaffold.ts";
 import { type DevInfo, readDevInfo } from "../../mcp/dev-client.ts";
 import { FEATURES } from "../../cli/commands/create.ts";
-import {
-  diffHtml,
-  html,
-  jsonResponse,
-  opForm,
-  panelResponder,
-  raw,
-  type RawHtml,
-  type UiContext,
-  type UiHandler,
-} from "../html.ts";
+import { Fragment, h } from "../../jsx/jsx-runtime.ts";
+import type { VNode, VNodeChildren } from "../../jsx/types.ts";
+import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
+import { DiffBlock, Note, OpForm, Out } from "../components.ts";
+import { renderView } from "../view.ts";
 import { broadcast } from "../events.ts";
 import { uiSafeJoin, writeFileAtomic } from "../security.ts";
 import { cliInvocation, runDeno } from "../proc.ts";
@@ -225,7 +219,7 @@ interface StepAction {
   /** The button label. */
   readonly label: string;
   /** Extra hidden/visible fields the form carries. */
-  readonly fields?: RawHtml;
+  readonly fields?: VNodeChildren;
   /** Post somewhere other than `/wizard` (step 8 posts to the kernel's task runner). */
   readonly action?: string;
 }
@@ -240,8 +234,8 @@ interface StepView {
   readonly status: StepStatus;
   /** The one-line summary. */
   readonly summary: string;
-  /** Optional extra markup. */
-  readonly detail?: RawHtml;
+  /** Optional extra content. */
+  readonly detail?: VNodeChildren;
   /** The operations offered. */
   readonly actions: StepAction[];
 }
@@ -270,17 +264,25 @@ const KIND_SUMMARY: Record<ProjectKind, string> = {
 /** Step 1 — what is this directory, and is a dev server already running against it? */
 function stepDetect(s: Survey): StepView {
   const dev = s.dev
-    ? html`<p>Dev server running at <a href="${s.dev.origin}">${s.dev.origin}</a> (pid ${s.dev.pid}).</p>`
-    : html`<p class="note">No dev server is running (no <code>.denext/dev.json</code>).</p>`;
+    ? h("p", null, "Dev server running at ", devLink(s.dev, s.dev.origin), ` (pid ${s.dev.pid}).`)
+    : h(Note, null, "No dev server is running (no ", h("code", null, ".denext/dev.json"), ").");
   return {
     id: "detect",
     title: "Detect the project",
     status: s.kind === "denext" ? "ok" : s.kind === "empty" ? "todo" : "info",
     summary: KIND_SUMMARY[s.kind],
-    detail: html`<p class="mono">${s.dir}</p>
-<p>App directory: ${s.appDir ?? "— none yet"}</p>${dev}`,
+    detail: [
+      h("p", { class: "mono" }, s.dir),
+      h("p", null, `App directory: ${s.appDir ?? "— none yet"}`),
+      dev,
+    ],
     actions: [],
   };
+}
+
+/** A link to the running dev server. */
+function devLink(dev: DevInfo, label: string): VNode {
+  return h("a", { href: dev.origin }, label);
 }
 
 /** Step 2 — is the Deno running the UI new enough for denext? */
@@ -320,9 +322,17 @@ function stepDenoJson(s: Survey): StepView {
 /** Step 4 — are the dependencies in the import map resolved? */
 function stepDeps(s: Survey): StepView {
   const npm = s.nodeModulesDir === "manual"
-    ? html`<p class="note">This project sets <code>nodeModulesDir: "manual"</code>: its npm
-packages come from <code>node_modules</code>, so run your package manager's install
-(<code>npm install</code>) as well.</p>`
+    ? h(
+      Note,
+      null,
+      "This project sets ",
+      h("code", null, 'nodeModulesDir: "manual"'),
+      ": its npm packages come from ",
+      h("code", null, "node_modules"),
+      ", so run your package manager's install (",
+      h("code", null, "npm install"),
+      ") as well.",
+    )
     : undefined;
   return {
     id: "deps",
@@ -346,9 +356,14 @@ function stepEnv(s: Survey): StepView {
     summary: missing.length === 0
       ? `${used.length} variable(s) read across ${scanned} file(s); all of them are declared.`
       : `${missing.length} variable(s) are read but declared nowhere: ${missing.join(", ")}.`,
-    detail: html`<p>Declared in ${files.length > 0 ? files.join(", ") : "no .env file"}: ${
-      declared.length > 0 ? declared.join(", ") : "—"
-    }. Values are never read, and <code>.env</code> is never written.</p>`,
+    detail: h(
+      "p",
+      null,
+      `Declared in ${files.length > 0 ? files.join(", ") : "no .env file"}: `,
+      `${declared.length > 0 ? declared.join(", ") : "—"}. Values are never read, and `,
+      h("code", null, ".env"),
+      " is never written.",
+    ),
     actions: missing.length === 0
       ? []
       : [{ op: "envexample", label: "Write .env.example (preview first)" }],
@@ -376,7 +391,12 @@ const APP_DIR_ACTION: StepAction = { op: "scaffold-page", label: "Create app/pag
 /** Step 7 — the scaffold feature toggles (`denext create`'s own list). */
 function stepFeatures(s: Survey): StepView {
   const boxes = FEATURES.map((f) =>
-    html`<label><input type="checkbox" name="feature.${f.key}"> ${f.label}</label>`
+    h(
+      "label",
+      { key: f.key },
+      h("input", { type: "checkbox", name: `feature.${f.key}` }),
+      ` ${f.label}`,
+    )
   );
   const empty = s.kind === "empty";
   return {
@@ -386,10 +406,10 @@ function stepFeatures(s: Survey): StepView {
     summary: empty
       ? "Pick the features to scaffold into this empty directory."
       : "This project already exists — these are the features `denext create` offers; add them by hand.",
-    detail: empty ? undefined : html`<ul>${FEATURES.map((f) => html`<li>${f.label}</li>`)}</ul>`,
-    actions: empty
-      ? [{ op: "scaffold", label: "Scaffold the project", fields: html`${boxes}` }]
-      : [],
+    detail: empty
+      ? undefined
+      : h("ul", null, FEATURES.map((f) => h("li", { key: f.key }, f.label))),
+    actions: empty ? [{ op: "scaffold", label: "Scaffold the project", fields: boxes }] : [],
   };
 }
 
@@ -403,12 +423,12 @@ function stepTasks(s: Survey): StepView {
     summary: names.length > 0
       ? `${names.length} task(s) declared: ${names.join(", ")}.`
       : "No tasks are declared yet — step 3 adds dev, build and start.",
-    detail: names.length > 0 ? html`<pre class="out"></pre>` : undefined,
+    detail: names.length > 0 ? h(Out, null) : undefined,
     actions: names.map((name) => ({
       op: "task",
       label: `deno task ${name}`,
       action: "/tasks/run",
-      fields: html`<input type="hidden" name="task" value="${name}">`,
+      fields: h("input", { type: "hidden", name: "task", value: name }),
     })),
   };
 }
@@ -422,9 +442,7 @@ function stepFinish(s: Survey): StepView {
     summary: s.dev
       ? `The dev server is up at ${s.dev.origin}.`
       : "Start the dev server; its address appears here once it publishes .denext/dev.json.",
-    detail: s.dev
-      ? html`<p><a href="${s.dev.origin}">Open the app</a></p>`
-      : html`<pre class="out"></pre>`,
+    detail: s.dev ? h("p", null, devLink(s.dev, "Open the app")) : h(Out, null),
     actions: s.dev ? [] : [{ op: "dev", label: "Start denext dev" }],
   };
 }
@@ -746,9 +764,16 @@ function isCheck(value: unknown): value is DoctorCheck {
 
 // ── rendering ────────────────────────────────────────────────────────────────
 
+/** The request context every rendered piece of the wizard needs (token, read-only). */
+interface CtxProps {
+  /** The current request. */
+  readonly ctx: UiContext;
+}
+
 /** One operation, as the real form that works without JavaScript. */
-function actionForm(ctx: UiContext, action: StepAction): RawHtml {
-  return opForm(ctx.csrf, {
+function ActionForm({ ctx, action }: CtxProps & { readonly action: StepAction }): VNode {
+  return h(OpForm, {
+    csrf: ctx.csrf,
     action: action.action ?? "/wizard",
     label: action.label,
     fields: { op: action.op },
@@ -759,56 +784,88 @@ function actionForm(ctx: UiContext, action: StepAction): RawHtml {
 }
 
 /** The result of the operation that was just posted, rendered inside its own step. */
-function renderOutcome(ctx: UiContext, outcome: OpOutcome): RawHtml {
+function Outcome({ ctx, outcome }: CtxProps & { readonly outcome: OpOutcome }): VNode {
   const confirm: StepAction | null = outcome.confirmOp === undefined ? null : {
     op: outcome.confirmOp,
     label: "Apply this change",
-    fields: raw('<input type="hidden" name="confirm" value="1">'),
+    fields: h("input", { type: "hidden", name: "confirm", value: "1" }),
   };
-  return html`<div class="outcome">
-${outcome.message ? html`<p class="note">${outcome.message}</p>` : ""}
-${outcome.diff ? diffHtml(outcome.diff) : ""}
-${confirm ? actionForm(ctx, confirm) : ""}
-${outcome.output ? html`<pre class="out">${outcome.output}</pre>` : ""}
-${outcome.checks ? renderChecks(ctx, outcome.checks) : ""}
-</div>`;
+  return h(
+    "div",
+    { class: "outcome" },
+    outcome.message ? h(Note, null, outcome.message) : null,
+    outcome.diff ? h(DiffBlock, { diff: outcome.diff }) : null,
+    confirm ? h(ActionForm, { ctx, action: confirm }) : null,
+    outcome.output ? h(Out, null, outcome.output) : null,
+    outcome.checks ? h(Checks, { ctx, checks: outcome.checks }) : null,
+  );
 }
 
 /** A doctor report: one line per check, plus the repair offer when the app dir is missing. */
-function renderChecks(ctx: UiContext, checks: DoctorCheck[]): RawHtml {
-  const rows = checks.map((check) =>
-    html`<li><span class="badge">${
-      check.ok ? "ok" : check.critical ? "fail" : "warn"
-    }</span> <strong>${check.name}</strong> — ${check.detail}</li>`
-  );
+function Checks({ ctx, checks }: CtxProps & { readonly checks: DoctorCheck[] }): VNode {
   const needsApp = checks.some((check) => !check.ok && /app dir/i.test(check.name));
-  return html`<ul class="checks">${rows}</ul>${needsApp ? actionForm(ctx, APP_DIR_ACTION) : ""}`;
+  return h(
+    Fragment,
+    null,
+    h("ul", { class: "checks" }, checks.map(checkRow)),
+    needsApp ? h(ActionForm, { ctx, action: APP_DIR_ACTION }) : null,
+  );
+}
+
+/** One doctor check: its verdict pill, its name and its detail. */
+function checkRow(check: DoctorCheck, index: number): VNode {
+  const verdict = check.ok ? "ok" : check.critical ? "fail" : "warn";
+  return h(
+    "li",
+    { key: index },
+    h("span", { class: "badge" }, verdict),
+    " ",
+    h("strong", null, check.name),
+    ` — ${check.detail}`,
+  );
+}
+
+/** What {@linkcode Step} renders: one step's view, its position, and the posted outcome. */
+interface StepProps extends CtxProps {
+  /** The step's zero-based position. */
+  readonly index: number;
+  /** The step's view. */
+  readonly view: StepView;
+  /** The outcome of the operation just posted, when there is one. */
+  readonly outcome?: OpOutcome;
 }
 
 /** One step's `<section>`: heading, status pill, summary, detail, operations, outcome. */
-function renderStep(
-  ctx: UiContext,
-  index: number,
-  view: StepView,
-  outcome?: OpOutcome,
-): RawHtml {
-  return html`<section id="step-${view.id}" class="step">
-<h2>${index + 1}. ${view.title} <span class="badge">${view.status}</span></h2>
-<p class="lead">${view.summary}</p>
-${view.detail ?? ""}
-${view.actions.map((action) => actionForm(ctx, action))}
-${outcome && outcome.step === view.id ? renderOutcome(ctx, outcome) : ""}
-</section>`;
+function Step({ ctx, index, view, outcome }: StepProps): VNode {
+  return h(
+    "section",
+    { id: `step-${view.id}`, class: "step" },
+    h("h2", null, `${index + 1}. ${view.title} `, h("span", { class: "badge" }, view.status)),
+    h("p", { class: "lead" }, view.summary),
+    view.detail ?? null,
+    view.actions.map((action) => h(ActionForm, { key: action.label, ctx, action })),
+    outcome && outcome.step === view.id ? h(Outcome, { ctx, outcome }) : null,
+  );
+}
+
+/** What {@linkcode WizardPanel} renders: the nine step views and the posted outcome. */
+interface WizardProps extends CtxProps {
+  /** The nine step views, in order. */
+  readonly views: StepView[];
+  /** The outcome of the operation just posted, when there is one. */
+  readonly outcome?: OpOutcome;
 }
 
 /** The whole panel: the one `<section id="panel">` `ui.js` swaps, with the nine steps inside. */
-function renderWizard(ctx: UiContext, views: StepView[], outcome?: OpOutcome): RawHtml {
-  return html`<section id="panel" data-panel="Wizard">
-<h1>Setup wizard</h1>
-<p class="lead mono">${ctx.dir}</p>
-${ctx.readOnly ? html`<p class="note">Read-only mode — every write is refused.</p>` : ""}
-${views.map((view, index) => renderStep(ctx, index, view, outcome))}
-</section>`;
+function WizardPanel({ ctx, views, outcome }: WizardProps): VNode {
+  return h(
+    "section",
+    { id: "panel", "data-panel": "Wizard" },
+    h("h1", null, "Setup wizard"),
+    h("p", { class: "lead mono" }, ctx.dir),
+    ctx.readOnly ? h(Note, null, "Read-only mode — every write is refused.") : null,
+    views.map((view, index) => h(Step, { key: view.id, ctx, index, view, outcome })),
+  );
 }
 
 /** The JSON twin of one step. */
@@ -836,7 +893,7 @@ function respond(ctx: UiContext, survey: Survey, outcome?: OpOutcome): Response 
       ...(outcome ? { outcome } : {}),
     }, outcome && !outcome.ok ? 400 : 200);
   }
-  return panelResponse(ctx, renderWizard(ctx, views, outcome));
+  return panelResponse(ctx, renderView(h(WizardPanel, { ctx, views, outcome })));
 }
 
 /** A completed write: `303` back to the step that did it, so a reload never re-posts. */

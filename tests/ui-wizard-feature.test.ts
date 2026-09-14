@@ -162,7 +162,7 @@ Deno.test("a missing dev task previews as a merge that adds only that key", asyn
     const keysOn = (sign: string): string[] =>
       lines
         .filter((l) => l.startsWith(sign) && !l.startsWith(sign.repeat(3)))
-        .flatMap((l) => [...l.matchAll(/&#34;([\w./-]+)&#34;\s*:/g)].map((m) => m[1]));
+        .flatMap((l) => [...l.matchAll(/&quot;([\w./-]+)&quot;\s*:/g)].map((m) => m[1]));
     const introduced = keysOn("+").filter((key) => !keysOn("-").includes(key));
     assertEquals(introduced, ["dev"], `expected only "dev", saw ${introduced.join(", ")}`);
     assertEquals(keysOn("-").filter((key) => !keysOn("+").includes(key)), [], "nothing is lost");

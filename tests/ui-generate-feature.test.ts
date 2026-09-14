@@ -133,7 +133,7 @@ Deno.test("preview lists the planned paths and their contents, and writes nothin
     assertStringIncludes(body, "would be written");
     // The file's real contents are shown, HTML-escaped.
     assertStringIncludes(body, "function DashboardPage(");
-    assertStringIncludes(body, "&#60;section&#62;");
+    assertStringIncludes(body, "&lt;section&gt;");
     assertEquals(await exists(h, "app/dashboard/page.tsx"), false, "preview touches no disk");
     assertEquals(h.exits, []);
   } finally {

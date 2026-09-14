@@ -22,16 +22,12 @@ import {
   type GeneratePreviewFile,
   safeJoin,
 } from "../../build/generate.ts";
-import {
-  html,
-  jsonResponse,
-  panelResponder,
-  raw,
-  type RawHtml,
-  type UiContext,
-  type UiHandler,
-} from "../html.ts";
-import { UI_CSRF_FIELD, uiSafeJoin, uiSafeUnder } from "../security.ts";
+import { Fragment, h } from "../../jsx/jsx-runtime.ts";
+import type { VNode, VNodeChild } from "../../jsx/types.ts";
+import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
+import { CsrfField, Note, Out } from "../components.ts";
+import { renderView } from "../view.ts";
+import { uiSafeJoin, uiSafeUnder } from "../security.ts";
 
 /** One line per kind: what it writes and where. */
 const KIND_LEAD: Record<GenerateKind, string> = {
@@ -257,89 +253,126 @@ const panelResponse = panelResponder("Generate", "/generate");
 
 /** The panel as a full document, or as the bare `<section>` on a fragment request. */
 function page(state: PanelState, ctx: UiContext, status = 200): Response {
-  return panelResponse(ctx, panelSection(state), status);
+  return panelResponse(ctx, renderView(h(GeneratePanel, { state })), status);
 }
 
 // ── views ────────────────────────────────────────────────────────────────────
 
+/** Every view below renders from the one panel state. */
+interface ViewProps {
+  /** The panel state. */
+  readonly state: PanelState;
+}
+
 /** The whole `<section id="panel">` — the piece `ui.js` swaps. */
-function panelSection(state: PanelState): RawHtml {
-  const results = state.preview
-    ? previewView(state)
-    : (state.written?.length || state.skipped?.length)
-    ? resultView(state)
-    : "";
-  return html`
-    <section id="panel" data-panel="Generate">
-      <h1>Generate</h1>
-      <p class="lead">Scaffold a route, boundary, component, API handler, action, task, test or
-        Docker setup into <span class="mono">${state.dir}</span>.</p>
-      ${state.error ? html`<p class="note">denext generate: ${state.error}</p>` : ""}
-      ${formView(state)}
-      ${results}
-    </section>
-  `;
+function GeneratePanel({ state }: ViewProps): VNode {
+  return h(
+    "section",
+    { id: "panel", "data-panel": "Generate" },
+    h("h1", null, "Generate"),
+    h(
+      "p",
+      { class: "lead" },
+      "Scaffold a route, boundary, component, API handler, action, task, test or Docker setup into ",
+      h("span", { class: "mono" }, state.dir),
+      ".",
+    ),
+    state.error ? h(Note, null, `denext generate: ${state.error}`) : null,
+    h(GenerateForm, { state }),
+    results(state),
+  );
+}
+
+/** What follows the form: a preview, the result of a completed write, or nothing. */
+function results(state: PanelState): VNodeChild {
+  if (state.preview) return h(PreviewList, { state });
+  return state.written?.length || state.skipped?.length ? h(ResultList, { state }) : null;
 }
 
 /** The kind picker, the name field and the two submits. */
-function formView(state: PanelState): RawHtml {
-  const options = GENERATE_KINDS.map((kind) =>
-    html`
-      <option value="${kind}" ${kind === state.kind
-        ? raw(" selected")
-        : ""}>${kind} — ${KIND_LEAD[kind]}</option>
-    `
-  );
+function GenerateForm({ state }: ViewProps): VNode {
   const unnamed = state.kind === "middleware";
-  return html`
-    <form method="post" action="/generate">
-      <input type="hidden" name="${UI_CSRF_FIELD}" value="${state.csrf}">
-      <fieldset>
-        <label for="gen-kind">Artifact</label>
-        <select id="gen-kind" name="kind">${options}</select>
-        <label for="gen-name">Name${unnamed ? " (not used by this kind)" : ""}</label>
-        <input id="gen-name" name="name" value="${state.name}" autocomplete="off"
-          placeholder="${NAME_HINT[state.kind] ?? "dashboard/settings"}"${unnamed
-            ? raw(" disabled")
-            : ""}${NO_NAME.has(state.kind) ? "" : raw(" required")}>
-      </fieldset>
-      <button type="submit" name="op" value="preview">Preview</button>
-      <button type="submit" name="op" value="apply" class="ghost"${state.readOnly
-        ? raw(" disabled")
-        : ""}>Write files</button>
-      ${state.readOnly ? html`<p class="note">Read-only mode — writing is refused.</p>` : ""}
-    </form>
-  `;
+  return h(
+    "form",
+    { method: "post", action: "/generate" },
+    h(CsrfField, { csrf: state.csrf }),
+    h(
+      "fieldset",
+      null,
+      h("label", { for: "gen-kind" }, "Artifact"),
+      h(
+        "select",
+        { id: "gen-kind", name: "kind" },
+        GENERATE_KINDS.map((kind) => kindOption(kind, state.kind)),
+      ),
+      h("label", { for: "gen-name" }, unnamed ? "Name (not used by this kind)" : "Name"),
+      h("input", {
+        id: "gen-name",
+        name: "name",
+        value: state.name,
+        autocomplete: "off",
+        placeholder: NAME_HINT[state.kind] ?? "dashboard/settings",
+        disabled: unnamed,
+        required: !NO_NAME.has(state.kind),
+      }),
+    ),
+    h("button", { type: "submit", name: "op", value: "preview" }, "Preview"),
+    h(
+      "button",
+      { type: "submit", name: "op", value: "apply", class: "ghost", disabled: state.readOnly },
+      "Write files",
+    ),
+    state.readOnly ? h(Note, null, "Read-only mode — writing is refused.") : null,
+  );
+}
+
+/** One `<option>` of the kind picker, selected when it is the current kind. */
+function kindOption(kind: GenerateKind, current: GenerateKind): VNode {
+  const selected = kind === current;
+  return h("option", { key: kind, value: kind, selected }, `${kind} — ${KIND_LEAD[kind]}`);
 }
 
 /** Every planned file with its contents, and whether it would be skipped. */
-function previewView(state: PanelState): RawHtml {
+function PreviewList({ state }: ViewProps): VNode {
+  const files = state.preview ?? [];
+  if (files.length === 0) return h(Note, null, "This kind writes nothing here.");
   const skipped = new Set(state.skipped ?? []);
-  const files = (state.preview ?? []).map((file) => {
-    const exists = skipped.has(file.path);
-    return html`
-      <details${exists ? "" : raw(" open")}>
-        <summary><code>${file.path}</code> <span class="badge">${exists
-          ? "exists — would be skipped"
-          : "would be written"}</span></summary>
-        <pre class="out">${file.contents}</pre>
-        </details>
-    `;
-  });
-  if (files.length === 0) return html`<p class="note">This kind writes nothing here.</p>`;
-  return html`<h2>Preview</h2>${files}`;
+  return h(
+    Fragment,
+    null,
+    h("h2", null, "Preview"),
+    files.map((file) => h(PreviewFile, { key: file.path, file, exists: skipped.has(file.path) })),
+  );
+}
+
+/** One planned file: its path, whether it would be written, and its contents. */
+function PreviewFile(
+  { file, exists }: { readonly file: GeneratePreviewFile; readonly exists: boolean },
+): VNode {
+  return h(
+    "details",
+    { open: !exists },
+    h(
+      "summary",
+      null,
+      h("code", null, file.path),
+      " ",
+      h("span", { class: "badge" }, exists ? "exists — would be skipped" : "would be written"),
+    ),
+    h(Out, null, file.contents),
+  );
 }
 
 /** What a completed write did. */
-function resultView(state: PanelState): RawHtml {
-  const items = [
-    ...(state.written ?? []).map((path) => html`<li>+ <code>${path}</code></li>`),
-    ...(state.skipped ?? []).map((path) => html`<li>• exists, skipped: <code>${path}</code></li>`),
-  ];
-  return html`
-    <h2>Result</h2>
-    <ul>${items}</ul>
-  `;
+function ResultList({ state }: ViewProps): VNode {
+  const written = (state.written ?? []).map((path) => resultItem("+ ", path));
+  const skipped = (state.skipped ?? []).map((path) => resultItem("• exists, skipped: ", path));
+  return h(Fragment, null, h("h2", null, "Result"), h("ul", null, written, skipped));
+}
+
+/** One line of the result list: a marker and the project-relative path. */
+function resultItem(marker: string, path: string): VNode {
+  return h("li", { key: marker + path }, marker, h("code", null, path));
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────

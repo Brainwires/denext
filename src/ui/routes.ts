@@ -11,16 +11,14 @@ import {
   html,
   htmlResponse,
   jsonResponse,
-  layout,
   renderPage,
-  UI_CSS_PATH,
   UI_EVENTS_PATH,
-  UI_JS_PATH,
   UI_NAV,
   type UiContext,
   type UiHandler,
   type UiRoute,
 } from "./html.ts";
+import { layout, UI_CSS_PATH, UI_JS_PATH } from "./layout.ts";
 import { UI_CSS } from "./styles.ts";
 import { UI_JS } from "./client.ts";
 import { broadcast, sseProcess } from "./events.ts";
@@ -99,7 +97,7 @@ const CARD_LEAD: Record<string, string> = {
   "/config/next": "Read a compat app's next.config and translate it.",
   "/plugins": "Browse the catalog; add or remove plugins.",
   "/generate": "Scaffold pages, routes, layouts, components, actions.",
-  "/docker": "Regenerate the Dockerfile and compose file with a diff.",
+  "/docker": "Edit docker-compose.yml in place, or regenerate the Docker files with a diff.",
   "/wizard": "Take a fresh clone to a running dev server.",
   "/commands": "Run this project's own denext verbs.",
 };
