@@ -68,8 +68,8 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   (Next-parity, normalized through `safeRedirectLocation`), plus `basePath`,
   `trailingSlash`, and `assetPrefix`.
 - **Typed routes** — `denext build`/`dev` emit `.denext/routes.ts` from the
-  scanned manifest: `Routes` (valid paths, dynamic segments as
-  `` `${string}` ``), `ApiRoutes`, `RouteParams`, and `ParamsOf<R>`. Importing
+  scanned manifest: `Routes` (valid paths, with each dynamic segment typed as a
+  template-literal string), `ApiRoutes`, `RouteParams`, and `ParamsOf<R>`. Importing
   the file registers the routes (via `RegisteredRoutes`), so **`<Link href>` /
   `router.push` / `router.replace` only accept real paths** —
   backward-compatible (`Href` is `string` until you opt in). Once wired, the
@@ -195,8 +195,13 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   `useSession().update()` / `refetchInterval`), **events + logger**
   (`signIn`, `signOut`, `signInFailed`, `sessionRevoked`, `createUser`,
   `linkAccount` — a throwing handler can never change the HTTP result), a
-  configurable **`basePath`** and cookie names, a pluggable **`Hasher`** seam
-  (`scryptHasher()` default), and a `/auth/signin/*` rate limit.
+  configurable **`basePath`** and cookie names, and per-IP rate limits on
+  `/auth/signin/*` (20 per 15 min) and `/auth/session` (60 per min) on top of the
+  per-credential one. A **`Hasher`** seam (`{ hash, verify }`, `scryptHasher()`
+  default) is configurable now and takes effect when the flows that hash a
+  user-known secret land in rc.2; today it is consumed only by `scryptHasher`
+  itself, whose `verify` matches the equal-work rejection to the configured cost —
+  a custom `Hasher` must equalise its own unknown-account work.
 - **`cookies()` / `headers()`** with **secure cookie defaults** (httpOnly,
   SameSite=Lax, Secure over HTTPS).
 - **Signed-cookie sessions**: `getSession()` (HMAC-SHA256, secret rotation) —
@@ -306,16 +311,18 @@ rework (the enhancement rationale + mechanism is in **Part 2 §4**):
   why-each-rendered); real **`file:line:column` source** (from a dev-only pass
   over the same AST Fast Refresh walks) that **opens the file at the line in your
   editor** (`DENEXT_EDITOR`/`VISUAL`/`EDITOR`) + **owner/ancestor stack**; a
-  **Render modes** tab — the server-emitted page verdict (static/dynamic/streamed
-  - page-cache HIT/STALE/MISS), a **real-time per-Suspense-boundary waterfall**,
-    and the client-island hydration timeline; and **Network**, **Cache** and
-    **Routes** tabs (recent requests with status pills and duration bars; the
-    page/data cache counters; the render tree at a path with server/client badges
-    and click-to-editor). Three **MCP tools** — `denext_component_tree`,
-    `denext_why_render`, `denext_hook_state` — read a snapshot the dev page pushes
-    to the dev server, so an agent can inspect the live tree without a browser
-    driver. Typed API for tooling/tests; DCE-clean in production (verified: every
-    dev-only symbol greps to 0 in the prod bundle).
+  **Render modes** tab — the server-emitted page verdict (static, dynamic or
+  streamed, plus page-cache HIT/STALE/MISS), a **real-time per-Suspense-boundary
+  waterfall**, and the client-island hydration timeline; and **Network**,
+  **Cache** and **Routes** tabs (recent requests with status pills and duration
+  bars; the page/data cache counters; the render tree at a path with server/client
+  badges and click-to-editor). Three **MCP tools** — `denext_component_tree`,
+  `denext_why_render`, `denext_hook_state` — read a snapshot the dev page pushes
+  to the dev server, so an agent can inspect the live tree without a browser
+  driver (the page arms its sink on the first such call, string values travel
+  redacted as `string(n)`, a snapshot expires after 10 minutes, and a page can
+  read only its own). Typed API for tooling/tests; DCE-clean in production
+  (verified: every dev-only symbol greps to 0 in the prod bundle).
 - **React DevTools extension** also works: **Components tree**, props, **live
   prop/state editing**, and **element selection** route back through denext's
   reconciler. Its hooks view and Profiler rely on React-internal introspection a
@@ -537,9 +544,10 @@ cache uses Deno's built-in `node:sqlite`.)
   flags `--cwd/--config/--json/--verbose/--quiet`, per-command `--help`, "did
   you mean" suggestions, `denext completions bash|zsh|fish`, and
   plugin-contributed verbs). Verbs: `create`/`init`
-  (`--template default|minimal`), `generate`
-  (routes/components/layouts/**loading**/**error**/**not-found**/api/actions/**middleware**/**task**/test/docker;
-  the engine takes `force`/`dryRun`), `ui` (below),
+  (`--template default|minimal`), `generate` (thirteen kinds: `page`, `route`,
+  `layout`, `loading`, `error`, `not-found`, `component`, `api`, `action`,
+  `middleware`, `task`, `test`, `docker`; the engine takes `force`/`dryRun`),
+  `ui` (below), `commands` (list this project's own verbs; `--json`),
   `dev`, `build`,
   `export` (static), `start`, `test`/`lint`/`fmt`/`check` (over `deno`; `test`
   passes `--watch`/`--coverage` through), `analyze` (build + a per-chunk client
@@ -553,28 +561,36 @@ cache uses Deno's built-in `node:sqlite`.)
   data structurally), `audit` (dependency inventory + zero-npm proof + CycloneDX
   SBOM), `desktop run|build|package`, `migrate`, `codemod`, `mcp` (the agent
   server below), `version`. **A project can add its own verbs two ways**: a
-  `commands: [{ name, summary, flags?, positionals?, run }]` array in
+  `commands: [{ name, summary, usage?, flags?, positionals?, run }]` array in
   `denext.config.ts` (no plugin needed) or a plugin's `addCommand` seam. Both are
-  enumerable — they show under **Project commands** in `denext --help` and in
-  `denext completions`, discovered under a 1.5 s budget — and a built-in verb
-  always wins a name collision.
+  enumerable by **`denext commands [--json]`** — the one verb that imports the
+  project's config, under a 1.5 s discovery budget, always exiting afterwards —
+  and by `denext completions`. `denext --help` deliberately lists only the
+  built-ins and points at `denext commands`, so help evaluates no project code. A
+  built-in verb always wins a name collision.
 - **`denext ui`** — a loopback project-management GUI served by the CLI
-  (`denext ui [dir] --port 5177 --no-open --read-only`): a schema-driven
-  `denext.config.ts` editor (enum selects, add/remove/reorder list editors with a
-  typed sub-form per row, key/value maps, nested groups; a **comment-preserving
-  AST writer** behind a diff-then-confirm step, with code-valued keys kept
-  verbatim as read-only cells and an honest bail when the config's shape is
-  beyond the splicer), a read-and-translate view over a compat app's
-  `next.config.*`, the first-party plugin catalog with add/remove previews, a GUI
-  over every `generate` kind, Docker regenerate-with-diff, a nine-step setup
-  wizard for a fresh clone, and a runner for the project's own verbs.
-  Server-rendered with **zero bundler and full progressive enhancement** (every
-  action works with JavaScript off) behind a six-layer local security model:
-  loopback-only bind, a DNS-rebinding / `Sec-Fetch-Site` host gate, a per-launch
-  256-bit token exchanged for an `HttpOnly; SameSite=Strict` cookie, same-origin
-  - HMAC-derived CSRF on every mutation, realpath-checked path containment, and a
-    strict CSP/COOP/CORP/`no-store` header set. The UI process never loads project
-    modules or the bundler — everything that must runs as a `deno` subprocess.
+  (`denext ui [dir] --port 5177 --no-open --read-only --token <token>`): a
+  schema-driven `denext.config.ts` editor (enum selects, add/remove/reorder list
+  editors with a typed sub-form per row, key/value maps, nested groups; a
+  **comment-preserving AST writer** behind a diff-then-confirm step, which leaves
+  every byte outside the spliced value span alone — comments, imports and plugin
+  factory calls included — keeps code-valued keys verbatim as read-only cells, and
+  bails honestly when the config's shape is beyond the splicer, with the patch to
+  apply by hand whenever one can be computed), a read-and-translate view over a
+  compat app's `next.config.*`, the first-party plugin catalog with add/remove
+  previews, a GUI over every `generate` kind, Docker regenerate-with-diff, a
+  nine-step setup wizard for a fresh clone, and a runner for the project's own
+  verbs. Server-rendered with **zero bundler and full progressive enhancement**
+  (every action works with JavaScript off) behind a six-layer local security
+  model: loopback-only bind, a DNS-rebinding / `Sec-Fetch-Site` host gate, a
+  per-launch 256-bit token exchanged **once** for an `HttpOnly; SameSite=Strict`
+  cookie, same-origin plus HMAC-derived CSRF on every mutation, realpath-checked
+  path containment with atomic `.tmp`+rename writes and a SHA-256 base-version
+  check (a file changed on disk is a 409), and a strict CSP/COOP/CORP/`no-store`
+  header set. **Project code never runs in the UI process** — doctor, tasks,
+  `deno add`, the `next.config` evaluator and even project-verb discovery
+  (`denext commands --json`) are each a `deno` subprocess. The default port falls
+  forward when busy; an explicit `--port` is required exactly.
 - **A generated first-party package catalog** (`src/plugin/catalog.json`): every
   `@denext/*` package's version, `jsr:` range, plugin-or-library kind, factory
   export, CLI verb and option keys, emitted from the packages' own `deno.json` +
@@ -1084,14 +1100,17 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
   CSS loader hook by generating a merged config and re-execing `--config`
   (guarded against infinite re-exec). — `cli.ts:62`.
 - **Port auto-selection** — picks an open port from 3000 when `--port` is
-  omitted; exact port required when given. — `cli.ts:141-142`.
+  omitted (5177 for `denext ui`), falling forward through at most ten; an explicit
+  `--port` is required exactly and fails loudly when taken. — `cli.ts:141-142`;
+  `src/server/serve-utils.ts:164`.
 - **A project-management GUI in the framework — `denext ui` [opt-in].** Next has
   no first-party equivalent (`next.config.js` is hand-edited, `create-next-app`
   is a one-shot scaffolder). denext serves a loopback GUI from the CLI that edits
-  `denext.config.ts` through a **comment-preserving swc-AST splice** — the config
-  keeps its comments, imports and plugin factory calls byte-for-byte, and the
-  writer bails with a copyable patch rather than reformatting a file it can't
-  splice — with widgets derived from the generated JSON Schema, plus plugin
+  `denext.config.ts` through a **comment-preserving swc-AST splice** — outside the
+  value span being replaced the config keeps its comments, imports and plugin
+  factory calls byte for byte, and the writer bails rather than reformatting a
+  file it can't splice (handing back the patch whenever one can be computed) —
+  with widgets derived from the generated JSON Schema, plus plugin
   add/remove, a `generate` GUI, Docker regenerate-with-diff and a setup wizard.
   Server-rendered with no bundler and no JavaScript requirement. —
   `src/cli/commands/ui.ts`, `src/ui/server.ts`, `src/build/config-edit.ts`,
@@ -1099,11 +1118,11 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
 - **Project-local CLI verbs, enumerable [opt-in].** A `commands:` array in
   `denext.config.ts` adds a real `denext <name>` verb with the same flag parsing,
   `--help` and did-you-mean as a built-in, no plugin required; a plugin's
-  `addCommand` does the same. Both are listed under "Project commands" in
-  `denext --help` and in shell completions, discovered under a wall-clock budget
-  that degrades to an honest footer rather than hanging on user code. Next has no
-  CLI-extension seam at all. — `src/server/config.ts:386`;
-  `src/cli/plugin-commands.ts:19`; `src/cli/command.ts:126`.
+  `addCommand` does the same. Both are listed by `denext commands [--json]` and in
+  shell completions, discovered under a wall-clock budget that degrades to an
+  honest notice rather than hanging on user code, and in a process that always
+  exits. Next has no CLI-extension seam at all. — `src/server/config.ts:386`;
+  `src/cli/commands/commands.ts`; `src/cli/plugin-commands.ts:19`.
 
 ### 3.7 Deno-native platform integrations (no native npm addons)
 

@@ -212,6 +212,7 @@ export function NewPost() {
 **Reading cookies / a session (auth):**
 
 ```ts
+import { redirect } from "denext";
 import { auth, cookies, createApi, getSession, requireAuth, requireSession } from "denext/server";
 // cookies are Secure + httpOnly + SameSite=Lax by DEFAULT; pass { httpOnly: false } to opt out.
 const session = await getSession<{ userId: string }>({
@@ -231,7 +232,8 @@ export const GET = createApi().use(requireSession({ role: "admin" })).define(/* 
 Persist users with an adapter (`sqliteAuthAdapter({ path })` on `node:sqlite`, or
 `inMemoryAuthAdapter()`), and gate a machine-to-machine API with
 `requireBearer(authConfig, { scope: "pets:write" })` — it self-documents as `bearerAuth`
-for `@denext/openapi`. Full guide: https://denext.dev/docs/auth
+for `@denext/openapi` (declare the matching `securitySchemes: { bearerAuth: … }` once in the
+`openapi()` options). Full guide: https://denext.dev/docs/auth
 
 **A project-local CLI verb (no plugin):** put it in `denext.config.ts` and run it as a verb.
 
@@ -240,15 +242,19 @@ for `@denext/openapi`. Full guide: https://denext.dev/docs/auth
 export default {
   commands: [{ name: "seed", summary: "Load fixtures", run: (ctx) => seed() }],
 };
-// `denext seed` — same flag parsing, --help and did-you-mean as a built-in; it also shows
-// under "Project commands" in `denext --help` and in `denext completions <shell>`.
+// `denext seed` — same flag parsing, --help and did-you-mean as a built-in. List this
+// project's own verbs with `denext commands [--json]`; they are in shell completions too.
+// `denext --help` shows only the built-ins, because help never imports your config.
 ```
 
 **A GUI over the project:** `denext ui` serves a loopback (127.0.0.1) project-management
-page — schema-driven `denext.config.ts` editing (comment-preserving), plugins, every
-`generate` kind, Docker files, a setup wizard and the project's own verbs. It works with
-JavaScript disabled and never loads the project's modules. Docs:
-https://denext.dev/docs/ui
+page — schema-driven `denext.config.ts` editing (a comment-preserving splice: outside the
+value span it replaces, the file keeps its bytes), plugins, every `generate` kind, Docker
+files, a setup wizard and the project's own verbs. It works with JavaScript disabled, and
+**project code never runs in the UI's process** — every project-touching operation,
+including verb discovery (`denext commands --json`), is a `deno` subprocess.
+`--read-only` prevents writes by the UI, not execution of your config inside that
+discovery child. Docs: https://denext.dev/docs/ui
 
 **A database (zero-npm, server-only module):**
 
@@ -422,7 +428,10 @@ denext ships tooling so agents get it right the first time:
   tree at a path: layouts, boundaries, server/client split), `denext_component_tree` /
   `denext_why_render` / `denext_hook_state` (the LIVE component tree from a running dev
   page — props, named hooks, why a component re-rendered; these need `deno task dev`
-  AND the app open in a browser, and each answer states how stale its snapshot is),
+  AND the app open in a browser, and each answer states how stale its snapshot is. The
+  page starts pushing only once one of them has been called, so the FIRST call may say
+  "posted nothing yet" — call it again after the page's next commit, or start dev with
+  `DENEXT_DEV_INSPECT=1`. String values arrive redacted as `string(n)`),
   `denext_profile` (build
   unminified, serve, and profile a route in headless Chromium — CPU self-time by
   function + heap growth + a leak check; pass `interact` to profile a re-render, `budget`
@@ -793,7 +802,6 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface AuthSession` — The signed (readable, tamper-evident) session payload. Never stores tokens/secrets.
 - `interface AuthSessionConfig` — Session lifetime + storage strategy.
 - `interface AuthUser` — A normalized user profile — the non-sensitive identity denext stores in the session.
-- `type Await<T> = T | Promise<T>` — A value an adapter may return directly or as a promise.
 - `type AwaitableCookieStore = CookieStore & PromiseLike<CookieStore>` — cookies()'s return: usable synchronously AND awaitable (await cookies(), Next 15).
 - `type AwaitableDraftMode = DraftMode & PromiseLike<DraftMode>` — draftMode()'s return: usable synchronously AND awaitable (await draftMode(), Next 15).
 - `type AwaitableHeaders = Headers & PromiseLike<Headers>` — headers()'s return: usable synchronously AND awaitable (await headers(), Next 15).
@@ -961,6 +969,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface MatcherEntry` — Next's object form of a matcher entry: source is the path pattern; has must ALL hold and missing must NONE hold for the middleware to run on a matching path. Conditions are evaluated against the request the middleware would see (after an earlier entry's rewrite).
 - `interface MatchOptions` — Options controlling how matchPage treats intercepting routes.
 - `matchSegments(pattern: Segment[], pathname: string): RouteParams | null` — Attempt to match a request pathname against a parsed pattern. Returns extracted params on success, or null if the pattern doesn't match.
+- `type MaybePromise<T> = T | Promise<T>` — A value an adapter may return directly or as a promise.
 - `interface MdxConfig` — MDX compilation options (see DenextConfig.mdx). Each plugin list is a unified PluggableList: an array whose entries are either a plugin function or a [plugin, options] tuple. Typed loosely (unknown[]) so the public config surface doesn't depend on unified/@mdx-js types; the values are forwarded verbatim to MDX's compile.
 - `type Messages = Record<string, string>` — A flat message catalog for one locale: message key → template string.
 - `interface Metadata` — Page metadata a page or layout module may export as metadata/generateMetadata.
@@ -1170,7 +1179,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface VerificationTokenRecord` — A single-use token proving control of an identifier (an email verification link, a password-reset link, a magic link, a one-time code). Only the **hash** is stored, so a database read never yields a usable token.
 - `interface VerificationTokenRef` — Identifies one verification token (the tuple its uniqueness is scoped by).
 - `verifyApiToken(config: AuthConfig, presented: string): Promise<ApiTokenRecord | null>` — Verify a presented bearer token: hash it, look the hash up (an indexed exact match — no secret is ever compared in-process), and check it is still live.
-- `verifyPassword(password: string, stored: string): Promise<boolean>` — Verify a password against a hash produced by hashPassword. The comparison is constant-time (timingSafeEqual), and a malformed/unsupported stored value — an empty column, a legacy format, a corrupted row — returns false rather than throwing, so an authorize callback can't leak a stack trace or a 500. That rejection still runs a full scrypt derivation, so an unknown account takes as long to reject as a wrong password for a known one (no user-enumeration timing oracle).
+- `verifyPassword(password: string, stored: string, options?: HashPasswordOptions): Promise<boolean>` — Verify a password against a hash produced by hashPassword. The comparison is constant-time (timingSafeEqual), and a malformed/unsupported stored value — an empty column, a legacy format, a corrupted row — returns false rather than throwing, so an authorize callback can't leak a stack trace or a 500. That rejection still runs a full scrypt derivation, so an unknown account takes as long to reject as a wrong password for a known one (no user-enumeration timing oracle).
 - `interface Viewport` — Viewport + theme metadata (Next.js viewport/generateViewport).
 - `interface VNode` — A single virtual DOM node.
 - `type VNodeChild = VNode | string | number | bigint | boolean | null | undefined` — Anything that can appear as a child in JSX.
@@ -1345,9 +1354,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `clearPropOverrides(fiberId: number): boolean` — Drop all live prop overrides on a component and re-render it.
 - `interface CommitSummary` — A recorded commit: its timing and a synthetic flamegraph root.
 - `interface DenextDevtoolsApi` — The window.__denextDevtools surface (and the denext/devtools module API).
-- `disableRenderReasons(): void` — Stop tracking render reasons (and uninstall the commit hook if nothing else needs it).
+- `disableRenderReasons(): void` — Release one enableRenderReasons hold. Tracking stops (and the commit hook is uninstalled if nothing else needs it) only once the LAST holder has released.
 - `dispatchReducer(fiberId: number, hookIndex: number, action: unknown): boolean` — Dispatch an action to a useReducer cell live, driving the component's own dispatch (so the reducer runs and a re-render schedules exactly as the app would). Distinct from setHookState: a reducer's updater expects an *action*, not the next value. Returns whether the cell was found and is a reducer.
-- `enableRenderReasons(): void` — Begin tracking why each component renders — install the commit hook and clear any prior data. The panel enables this when its "why did this render" view is on; the first commit after enabling seeds the baseline (so reasons appear from the next render onward). No-op in production.
+- `enableRenderReasons(): void` — Begin tracking why each component renders — install the commit hook and, when tracking was off, clear any prior data. The panel enables this when its "why did this render" view is on; the first commit after enabling seeds the baseline (so reasons appear from the next render onward). No-op in production.
 - `interface FlameNode` — One node in a commit's flamegraph — a component and the time under it.
 - `getBoundaryTimings(): BoundaryTiming[]` — The per-Suspense-boundary timeline — a LIVE merge of two sources: the swap runtime's real-time reveal marks (window.__denextBoundaries, populated as each hole lands, in dev) and the end-of-stream #__denext_boundary_timing island (authoritative server resolve times, present once the stream finishes). So the panel shows a boundary the instant it reveals (client reveal + the template's data-dnx-ms server time), then settles to the island's rounded server time. Empty in production / on a non-streamed page / before any boundary reveals.
 - `getCommits(): CommitSummary[]` — The recorded commits (oldest first) — one summary per commit. Empty in production.

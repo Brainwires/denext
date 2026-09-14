@@ -208,6 +208,7 @@ export function NewPost() {
 **Reading cookies / a session (auth):**
 
 ```ts
+import { redirect } from "denext";
 import { auth, cookies, createApi, getSession, requireAuth, requireSession } from "denext/server";
 // cookies are Secure + httpOnly + SameSite=Lax by DEFAULT; pass { httpOnly: false } to opt out.
 const session = await getSession<{ userId: string }>({
@@ -227,7 +228,8 @@ export const GET = createApi().use(requireSession({ role: "admin" })).define(/* 
 Persist users with an adapter (`sqliteAuthAdapter({ path })` on `node:sqlite`, or
 `inMemoryAuthAdapter()`), and gate a machine-to-machine API with
 `requireBearer(authConfig, { scope: "pets:write" })` — it self-documents as `bearerAuth`
-for `@denext/openapi`. Full guide: https://denext.dev/docs/auth
+for `@denext/openapi` (declare the matching `securitySchemes: { bearerAuth: … }` once in the
+`openapi()` options). Full guide: https://denext.dev/docs/auth
 
 **A project-local CLI verb (no plugin):** put it in `denext.config.ts` and run it as a verb.
 
@@ -236,15 +238,19 @@ for `@denext/openapi`. Full guide: https://denext.dev/docs/auth
 export default {
   commands: [{ name: "seed", summary: "Load fixtures", run: (ctx) => seed() }],
 };
-// `denext seed` — same flag parsing, --help and did-you-mean as a built-in; it also shows
-// under "Project commands" in `denext --help` and in `denext completions <shell>`.
+// `denext seed` — same flag parsing, --help and did-you-mean as a built-in. List this
+// project's own verbs with `denext commands [--json]`; they are in shell completions too.
+// `denext --help` shows only the built-ins, because help never imports your config.
 ```
 
 **A GUI over the project:** `denext ui` serves a loopback (127.0.0.1) project-management
-page — schema-driven `denext.config.ts` editing (comment-preserving), plugins, every
-`generate` kind, Docker files, a setup wizard and the project's own verbs. It works with
-JavaScript disabled and never loads the project's modules. Docs:
-https://denext.dev/docs/ui
+page — schema-driven `denext.config.ts` editing (a comment-preserving splice: outside the
+value span it replaces, the file keeps its bytes), plugins, every `generate` kind, Docker
+files, a setup wizard and the project's own verbs. It works with JavaScript disabled, and
+**project code never runs in the UI's process** — every project-touching operation,
+including verb discovery (`denext commands --json`), is a `deno` subprocess.
+`--read-only` prevents writes by the UI, not execution of your config inside that
+discovery child. Docs: https://denext.dev/docs/ui
 
 **A database (zero-npm, server-only module):**
 
@@ -418,7 +424,10 @@ denext ships tooling so agents get it right the first time:
   tree at a path: layouts, boundaries, server/client split), `denext_component_tree` /
   `denext_why_render` / `denext_hook_state` (the LIVE component tree from a running dev
   page — props, named hooks, why a component re-rendered; these need `deno task dev`
-  AND the app open in a browser, and each answer states how stale its snapshot is),
+  AND the app open in a browser, and each answer states how stale its snapshot is. The
+  page starts pushing only once one of them has been called, so the FIRST call may say
+  "posted nothing yet" — call it again after the page's next commit, or start dev with
+  `DENEXT_DEV_INSPECT=1`. String values arrive redacted as `string(n)`),
   `denext_profile` (build
   unminified, serve, and profile a route in headless Chromium — CPU self-time by
   function + heap growth + a leak check; pass `interact` to profile a re-render, `budget`

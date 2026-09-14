@@ -855,7 +855,7 @@
             "type": "string"
           },
           "summary": {
-            "description": "One-line summary shown in `denext --help` under \"Project commands\".",
+            "description": "One-line summary shown by `denext commands` under \"Project commands\".",
             "type": "string"
           },
           "usage": {

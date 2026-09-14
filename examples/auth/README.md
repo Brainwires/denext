@@ -25,7 +25,9 @@ disabled (`tests/auth-example.test.ts` drives the app that way in CI).
   `revokeAllSessions`, after which every existing cookie for that user stops
   authenticating immediately. An active session's expiry slides forward at most
   hourly, on the paths that own their response (`GET /auth/session`,
-  `requireAuth`, `requireSession`, `updateAuthSession()`).
+  `requireAuth`, `requireSession`, `updateAuthSession()`) — and the slide is a
+  write-only-if-present `SessionStore.update`, so a sign-out-everywhere racing an
+  in-flight request cannot be undone by it.
 - **Roles** — the adapter user carries `roles`, the session carries them along,
   and `middleware.ts` gates `/admin` with `requireAuth(request, { role: "admin" })`.
   A signed-in account without the role is redirected to `/login?error=forbidden`.

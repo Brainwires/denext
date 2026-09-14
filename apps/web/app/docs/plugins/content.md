@@ -160,11 +160,13 @@ ctx.addTeardown(() => watcher.close());
 ### Seam 5 — contribute a CLI verb
 
 `ctx.addCommand(spec)` registers a first-class `denext` subcommand, so a plugin can
-extend the CLI — not just the request/route/build seams. `spec` is a `CommandSpec`
-(from `@denext/denext/cli/command`): a `name`, one-line `summary`, an optional
-declarative `flags`/`positionals` schema, and a `run(ctx)`. A built-in verb of the same
-name always wins (core can't be shadowed). See [Project commands](#project-commands)
-below for how the verb is discovered and listed.
+extend the CLI — not just the request/route/build seams. `spec` is a `CommandSpec` (from
+`@denext/denext/cli/command`) — the same shape a config `commands:` entry takes:
+`{ name, summary, usage?, flags?, positionals?, run }`. Each declared flag carries
+`{ name, type, help }` (plus optional `alias`, `default`, `valueName`); each positional
+`{ name, help }` (plus optional `required`, `variadic`). A built-in verb of the same name
+always wins (core can't be shadowed). See [Project commands](#project-commands) below for
+how the verb is discovered and listed.
 
 ```ts
 import type { CommandSpec } from "@denext/denext/cli/command";
@@ -182,8 +184,10 @@ ctx.addCommand(greet);
 
 A project can add its own `denext` verbs **two** ways, and they behave identically once
 registered. A plugin uses the `addCommand(spec)` seam above; a project that just wants a
-verb skips the plugin entirely and puts a `commands:` array in `denext.config.ts` — the same
-`CommandSpec` shape, with no `setup` and nothing to install:
+verb skips the plugin entirely and puts a `commands:` array in `denext.config.ts` — the
+same `{ name, summary, usage?, flags?, positionals?, run }` shape, with no `setup` and
+nothing to install. That entry's type is `DenextCommand` (exported from `denext/server`),
+which is structurally the `CommandSpec` a plugin registers:
 
 ```ts
 // denext.config.ts
@@ -192,7 +196,9 @@ export default {
     {
       name: "seed",
       summary: "Load development fixtures",
-      flags: [{ name: "count", type: "number", default: 10, valueName: "<n>" }],
+      flags: [
+        { name: "count", type: "number", default: 10, valueName: "<n>", help: "How many rows" },
+      ],
       run: async (ctx) => await seed(ctx.flags.count as number),
     },
   ],
@@ -200,24 +206,40 @@ export default {
 // `denext seed --count 50`
 ```
 
+`help` is **required** on a flag — it is what `denext seed --help` prints, and a verb with
+undocumented flags is a verb nobody can use.
+
 Either way the verb gets the framework's own flag parsing, `--help`, and "did you mean"
 suggestions — there is no second CLI to learn.
 
-Project verbs are **enumerable**: `denext --help` lists them in a **Project commands**
-section under the built-in table, and `denext completions bash|zsh|fish` includes them, so a
-teammate discovers your verb the same way they discover `denext build`.
+### How they are discovered
 
-Discovery costs one config read, and only when it can matter: when the CLI is asked to
-enumerate every verb (`--help` with no command, `completions`) or when it hits a verb it
-doesn't recognise. Everything else — `denext dev`, `denext build`, a per-command `--help` —
-pays nothing. Because a plugin's `setup` is arbitrary user code, discovery runs under a
-**1.5 s budget**; if it overruns, the registry is left untouched and the help table says
-`project commands not listed: plugin setup exceeded 1.5 s` rather than hanging.
+Listing a project's verbs means importing its `denext.config.ts` and running every plugin
+`setup()` — arbitrary user code, under whatever permissions the CLI holds. Exactly one verb
+does that:
+
+```sh
+denext commands            # core verbs + this project's own, with flags and origins
+denext commands --json     # { core, project, timedOut, error? } for a tool
+```
+
+`denext commands` imports the config, discovers, prints, and **always exits** — a plugin
+`setup()` that leaves a timer or a watcher open can neither delay the listing nor keep the
+process alive. Discovery runs under a **1.5 s budget** (`--timeout <ms>` to change it); a
+budget that elapses or a config that cannot be read degrades to a printed notice and
+`timedOut` / `error` in the JSON, never a hang and never a non-zero exit.
+
+`denext --help` deliberately does **not** enumerate them: help must not evaluate your
+project. Inside a project it prints a single line pointing at `denext commands` (and noting
+that the verbs are in shell completions too), and stops.
+`denext completions bash|zsh|fish` still merges them in under the same budget (a shell can
+only complete a name it was handed) and then exits for the same reason. The
+`denext ui` Commands panel shells out to `denext commands --json` rather than importing
+anything itself.
 
 A built-in verb always wins a name collision, in both directions: you can't shadow
 `denext build`, and a future denext release that adds a verb can't be broken by a project
-that already used the name — the project's verb simply stops being reachable, and `denext ui`'s
-Commands panel shows which verbs the project contributes.
+that already used the name — the project's verb simply stops being reachable.
 
 ## Rendering
 

@@ -11,16 +11,19 @@ and this project adheres to
 ### Added
 
 - **`denext ui` — a loopback project-management GUI served by the CLI.**
-  `denext ui [dir] --port 5177 --no-open --read-only --token <t>` binds `127.0.0.1`, opens a
-  browser, and serves a server-rendered, zero-bundler, progressive-enhancement UI over the
-  project (`--json` prints `{ url, port, token }` and keeps serving; an occupied port falls
-  forward to the next free one). Panels:
+  `denext ui [dir] --port <port> --no-open --read-only --token <token>` binds `127.0.0.1`,
+  opens a browser, and serves a server-rendered, zero-bundler, progressive-enhancement UI
+  over the project (`--json` prints `{ url, port, token }` and keeps serving; the default
+  port 5177 falls forward through at most ten when busy, while an **explicit** `--port` is
+  required exactly). Panels:
   - **Config** — every `denext.config.ts` key rendered from the generated JSON Schema:
     enum selects and segmented controls, typed list-row editors with add / remove / reorder,
     key/value maps, nested groups, union discriminator pickers. Writes go through a
     comment-preserving AST splice behind a diff-then-confirm step, the whole proposed config
     is validated before anything is written, code-valued keys (plugin factory calls, callbacks)
-    are read-only cells preserved verbatim, and a raw-file escape hatch is always one click away.
+    are read-only cells preserved verbatim — a key is classified as data or code as a whole, so
+    `commands` (every entry carries a `run`) is never form-editable — and a raw-file escape
+    hatch is always one click away.
     `/config/next` reads a compat app's `next.config.*` in a bounded subprocess and offers to
     translate what denext honors — denext never loads it at runtime, so the panel is read-only.
   - **Plugins** — the generated first-party catalog with installed state; add/remove previews the
@@ -39,17 +42,29 @@ and this project adheres to
   Six layers guard the local write surface: loopback-only bind; a DNS-rebinding / `Sec-Fetch-Site`
   host gate; a per-launch 256-bit token exchanged once for an `HttpOnly; SameSite=Strict` cookie;
   same-origin plus an HMAC-derived CSRF token on every mutation; realpath-checked path containment;
-  and a strict CSP with `COOP`/`CORP` and `no-store`. The UI process never loads project modules or
-  the bundler — doctor, tasks, `next.config` evaluation and `deno add` all run as `deno`
-  subprocesses. Every action works with JavaScript disabled, and each `/api/*` JSON twin answers
-  the `{ ok, diff, reason }` envelope the HTML path uses.
+  and a strict CSP with `COOP`/`CORP` and `no-store`. **Project code never runs in the UI's
+  privileged process** — doctor, tasks, `next.config` evaluation, `deno add` and even
+  project-verb discovery (`denext commands --json`) are each a `deno` subprocess; `--read-only`
+  prevents writes by the UI, not execution of the project's own config inside that discovery
+  child. Every action works with JavaScript disabled, and every feature path has an `/api/*`
+  JSON twin served by the same handler: the two writers that splice a file (`/api/config`,
+  `/api/plugins`) answer `{ ok, applied, diff }`, and the others answer their own panel's shape
+  (`/api/docker` `{ ok, mode, files }`, `/api/generate` `{ ok, written, skipped, preview }`,
+  `/api/commands` `{ ok, verb, code, output }`); every refusal is `{ ok: false, reason }`.
 - **Project-local CLI verbs without a plugin — `commands:` in `denext.config.ts`.** Declare
-  `{ name, summary, usage?, flags?, positionals?, run }` and run it as `denext <name>`, with the
-  same flag parsing, `--help` and did-you-mean as a built-in. Project verbs (config `commands:`
-  **and** a plugin's `addCommand`) are now enumerable: `denext --help` lists them under
-  **Project commands** and `denext completions <shell>` includes them, discovered under a 1.5 s
-  budget (a plugin `setup` that overruns it gets an honest "project commands not listed" footer
-  instead of a hang). A built-in verb always wins a name collision.
+  `{ name, summary, usage?, flags?, positionals?, run }` (the `DenextCommand` type, structurally
+  the `CommandSpec` a plugin's `addCommand` takes) and run it as `denext <name>`, with the same
+  flag parsing, `--help` and did-you-mean as a built-in. A built-in verb always wins a name
+  collision.
+- **`denext commands [--json] [--timeout <ms>]`** — list every verb this project can run: the
+  built-ins, a plugin's `addCommand` verbs and the config's `commands:` entries, with their flags,
+  positionals and where each came from. It is the **one** verb that imports the project's
+  `denext.config.ts` and runs every plugin `setup()`, under a 1.5 s discovery budget, and it
+  always `Deno.exit`s when it has printed — a `setup` that leaks a timer can neither delay the
+  listing nor keep the process alive. A budget that elapses or a config that cannot be read
+  degrades to a notice (`timedOut` / `error` in `--json`), never a hang and never a non-zero exit.
+  `denext completions <shell>` still enumerates project verbs itself (a shell can only complete a
+  name it was handed) and now exits for the same reason.
 - **A generated first-party package catalog** (`src/plugin/catalog.json`, `deno task gen:plugin-catalog`).
   Built from each `packages/*/deno.json` and README: version, `jsr:` range, plugin-or-library kind,
   factory export, CLI verb and option keys. `denext migrate` now takes its plugin pins from it
@@ -65,7 +80,8 @@ and this project adheres to
 - **Auth: a database adapter.** `AuthAdapter` is the persistence port — users, linked accounts,
   credentials, verification tokens, API tokens and MFA factors, with atomic consume-once methods —
   with two implementations: `inMemoryAuthAdapter()` and `sqliteAuthAdapter()` on Deno's built-in
-  `node:sqlite` (six `auth_` tables). `sqliteAuthAdapter` delegates `sessions` to
+  `node:sqlite` (six `auth_` tables). Every method may be sync or async; the exported alias for
+  that is `MaybePromise<T>`. `sqliteAuthAdapter` delegates `sessions` to
   `sqliteSessionStore` over the same handle, so an existing session database is adopted with no
   migration and nobody is logged out. An adapter never makes sessions stateful on its own — that
   is `session: { strategy: "database" }`.
@@ -100,8 +116,14 @@ and this project adheres to
 - **Auth: configurable base path and cookie names.** `basePath` (default `/auth`) and
   `cookies.session` / `cookies.transaction` (name, `__Host-` prefix, `SameSite`, `Path`). The
   defaults are byte-identical to 2.4.
-- **Auth: a `Hasher` seam** (`scryptHasher()` is the default) so Argon2id or bcrypt can replace scrypt
-  without touching the flow.
+- **Auth: a `Hasher` seam** — `{ hash, verify }` on `denextAuth({ hasher })`, defaulting to
+  `scryptHasher()`, so Argon2id or bcrypt can replace scrypt without touching the flow. It is
+  **configuration only in this release**: nothing calls `hasher.hash` / `hasher.verify` yet (a
+  `credentials` `authorize` callback still does its own check), and the seam is consumed only by
+  `scryptHasher` itself, whose `verify` passes the configured cost through so the equal-work
+  rejection of an unknown account burns the same time a real comparison does. A custom `Hasher`
+  must equalise its own unknown-account work. The flows that drive it — first-party credential
+  storage and hashed MFA backup codes — are scheduled in ROADMAP.md.
 - **Auth: a versioned session payload** (`v: 2`, `issuedAt`, and reserved `mfaPending` / `amr`).
   Cookies minted by older versions keep verifying, and a pending-MFA session fails closed in `auth()`.
 - **Auth: bearer API tokens.** `requireBearer(authConfig, { scope, role })` drops into any
@@ -130,10 +152,19 @@ and this project adheres to
   `registerComponentMeta` is exported from `denext/client-runtime` for the transport; emission is
   capped at 64 hooks and 16 KB per module and killed outright by `DENEXT_DEV_META=0`.
 - **DevTools → MCP: `denext_component_tree`, `denext_why_render`, `denext_hook_state`.** The dev page
-  pushes a snapshot of the live component tree to `POST /_denext/dev-inspect` (throttled, stripped of
-  raw values, capped at 256 KB / 2000 nodes / depth 50, same-origin gated, one snapshot per page URL in
-  an 8-entry LRU) and the three tools read it. Every answer states the snapshot's age; all three need
-  `deno task dev` running **and** the app open in a browser.
+  pushes a snapshot of the live component tree to `POST /_denext/dev-inspect` and the three tools read
+  it. Every answer states the snapshot's age; all three need `deno task dev` running **and** the app
+  open in a browser, and the page pushes only once one of them has armed the dev server
+  (`DENEXT_DEV_INSPECT=1` arms it at startup), so the first call on a fresh session may answer "posted
+  nothing yet".
+
+  This is the first dev endpoint that **stores** browser-supplied structured data, so it is fenced
+  accordingly: dev only, loopback + `Sec-Fetch-Site` gated like every `/_denext/*` endpoint, `POST`
+  with a `content-type` whose media type is exactly `application/json`, a 256 KB cap, every stored
+  node rebuilt field by field from coerced and length-clamped values (never the posted object), raw
+  values stripped and string values redacted to `string(n)`, 2000 nodes / depth 50 as a backstop, at
+  most 8 page URLs (LRU), a 10-minute TTL, and a read from a page scoped to that page's own URL (the
+  MCP bridge selects one with `?url=`).
 - **Docs: a new [Project UI](https://denext.dev/docs/ui) page**, and
   [Auth](https://denext.dev/docs/auth) and [DevTools](https://denext.dev/docs/devtools) rewritten
   from the shipped code.
@@ -143,7 +174,10 @@ and this project adheres to
 - **The generated config schema describes list items, maps and function-returned arrays.**
   `redirects` / `rewrites` / `headers` now carry the rule-array schema (marked
   `x-denext.wrapper: "function"` because the config key is a function returning the array),
-  `Record` fields are marked `x-denext.widget: "map"`, `images.formats` keeps its enum, and
+  `Record` fields become an open object whose `additionalProperties` is the value schema (plus an
+  `x-denext.widget: "map"` marker for other schema consumers — the UI derives its map widget from
+  `additionalProperties` itself; the only `x-denext.widget` it reads is `"textarea"`),
+  `images.formats` keeps its enum, and
   `@minimum` / `@maximum` surface the bounds `config-validate.ts` already enforces — which is what
   lets the UI render a typed widget per field instead of a text box.
 - **With an adapter configured, `session.user.id` is the adapter's user id** (and roles come from the
@@ -157,6 +191,31 @@ and this project adheres to
 - **`denext generate docker` templates moved to `src/build/docker-template.ts`**, shared with the UI's
   Docker panel, and the generated `.dockerignore` now carries the generated-file sentinel line the
   other two already had.
+- **`denext --help` no longer loads project code.** Rendering the help table used to discover the
+  project's verbs eagerly, which means importing `denext.config.ts` and running every plugin
+  `setup()`; a `setup` that leaked an interval kept help from ever exiting. Help now lists the
+  built-ins and prints a one-line pointer at `denext commands` (noting that the verbs are in
+  shell completions too) when the target directory holds a config — a file-existence probe,
+  never an import.
+- **An explicit `denext ui --port` is strict.** The default 5177 still falls forward through at most
+  ten ports; a port you named is a requirement, and a taken one is a clear error instead of a server
+  quietly listening somewhere else.
+- **The DevTools inspector sink arms lazily.** A dev page that nobody is inspecting now walks no
+  fibers and posts nothing (≈21% of commit cost removed on an uninspected page); the first
+  `denext_component_tree` / `denext_why_render` / `denext_hook_state` call arms the dev server and
+  the page starts pushing on its next settled commit. `DENEXT_DEV_INSPECT=1` arms from startup.
+  Render-reason tracking is refcounted between the panel and the sink, so closing the panel no
+  longer wipes the history `denext_why_render` reads.
+- **`verifyPassword(plain, stored, options?)` takes the hashing options.** They are used only for the
+  equal-work rejection of a missing or malformed `stored` value, which must burn the cost THIS
+  deployment hashes at; `scryptHasher` passes its own through. Omitting them on a deployment that
+  raised `cost` makes an unknown account reject measurably faster than a known one.
+- **`Await<T>` is renamed `MaybePromise<T>`** (the adapter contract's sync-or-async alias, exported
+  from `denext/server`).
+- **The `linkAccount` event payload carries identity only** — provider, provider-side id, type,
+  owner. The account row still persists whatever tokens the provider returned; the event no longer
+  hands an access/refresh/id token to an audit sink. **Breaking** for a handler that read tokens off
+  the event: read the stored account back through the adapter instead.
 - **`examples/auth` demonstrates the adapter** (no app-side user table), roles with an `/admin` page,
   OIDC discovery, audit events and bearer tokens (`/account/tokens`, `/api/me`); `examples/openapi`
   drops its hand-rolled bearer middleware for `requireBearer`.
@@ -169,13 +228,70 @@ and this project adheres to
   closes the last open row in [the security guide](https://denext.dev/docs/security).
   `strictAudience: false` restores plain membership for a provider that legitimately mints
   multi-audience tokens without an `azp`.
-- **`GET /auth/signin/*` is rate-limited per client IP** (20 per 15 minutes, `rateLimit.signin`), so an
-  unauthenticated visitor can't make the app mint transaction cookies and outbound provider calls in a
-  loop. `rateLimit: false` disables both limiters.
-- **The DevTools inspector sink is the first dev endpoint that stores browser-supplied structured
-  data**, so it is fenced accordingly: dev only, loopback + `Sec-Fetch-Site` gated like every
-  `/_denext/*` endpoint, `POST` + JSON only, a 256 KB cap, the tree's shape re-validated server-side,
-  and at most 8 page URLs retained.
+- **`GET /auth/signin/*` and `GET /auth/session` are rate-limited per client IP** (20 per 15 minutes,
+  `rateLimit.signin`; 60 per minute, `rateLimit.session`), so an unauthenticated visitor can't make the
+  app mint transaction cookies and outbound provider calls — or verify cookies and read the session
+  store — in a loop. `rateLimit: false` disables all three limiters.
+- **The rate limiters are dependable rather than decorative.** An IPv6 client is normalised and
+  bucketed by **/64** (rotating within one's own prefix buys no fresh budget); the in-memory store
+  never evicts a key that is mid-lockout, and evicts to 90% of the cap in one pass (a flood of fresh
+  keys cannot wash out a lockout, and when every key is locked out the new one is refused); and a
+  request arriving from a private peer with `x-forwarded-for` while `trustForwardedHeaders` is off
+  **skips** the per-IP budgets with one warning instead of collapsing every visitor into one bucket —
+  which made the 21st sign-in an app-wide fifteen-minute outage. Setting `canonicalOrigin` without
+  deciding `trustForwardedHeaders` now warns once at boot for the same reason.
+- **A revoked session could be resurrected by a refresh already in flight.** Sliding expiry wrote the
+  refreshed payload with `create`, an upsert, so a session revoked between a request's read and its
+  refresh came back with a full fresh lifetime — a stolen cookie survived `revokeAllSessions()`.
+  Refresh is now `SessionStore.update` — write only if the record is still there — which sliding
+  expiry therefore **requires**: a custom store without `update` never slides a session forward and
+  warns once.
+- **`dangerouslyAllowInsecureProviders` leaked the client secret across a redirect.** The development
+  fetch let the platform follow redirects, so only the first URL was ever checked against the
+  provider's host allowlist and a token endpoint answering `307` could carry the `client_secret` in
+  the POST body to any host it named. Redirects are now followed by hand with every hop re-checked.
+- **`scryptHasher`'s equal-work rejection burns the configured cost.** An app that raised
+  `scryptHasher({ cost: 2 ** 16 })` stored hashes ~4× slower to check than the dummy work an unknown
+  account paid, so response time was a user-enumeration oracle that grew with the cost (measured 3.4×
+  → 1.1×). `verifyPassword` now takes the same options for that rejection.
+- **`linkAccount` events no longer carry provider tokens** (see _Changed_) — an access or refresh
+  token in an audit line is a credential in a log.
+- **`hasRole(session, [])` and `role: []` fail closed.** An empty list means "no role can satisfy
+  this", not "no requirement"; only an absent `role` is unrestricted.
+- **`POST /auth/tokens` caps a user at 50 live tokens** (`409` past it), so a compromised session
+  cannot mint bearer credentials without bound.
+- **`basePath` refuses a `.` or `..` segment.** A dot is URL-safe, so `"/auth/.."` passed validation
+  while naming a prefix that resolves somewhere else entirely — the handler would have claimed, and
+  the routes advertised, the wrong place.
+- **`signIn` / `signOut` coerce `callbackUrl` to a same-origin path** on the client. These helpers
+  navigate, and a `callbackUrl` is routinely read out of the current query: `javascript:…`,
+  `//evil.test/x` and a foreign absolute are all replaced by the fallback. The server already coerced
+  its half.
+- **`denext ui` read and wrote through symlinks that left the project.** A symlinked
+  `denext.config.ts` was shown in the page and overwritten outside the project, a symlinked `app/`
+  received scaffolds, and an absolute artifact name was silently made relative (`/etc/pwned` →
+  `app/etc/pwned`). Config, plugins, `config/next` and generate now resolve every path — including
+  the absolute paths a planner computed for itself — through a lexical check plus a realpath re-check
+  of the deepest existing ancestor; an absolute name is refused outright.
+- **`denext ui` hardened its local credential and its writes.** The `?t=` handshake is single-use
+  (replaying a copied link from another browser is a `401`; the tab holding the cookie may re-open
+  its own link), an explicit `--token` must be at least 22 characters, every write is a `.tmp` file
+  plus one rename, and each config form carries a SHA-256 of the source it was rendered from so a
+  file changed on disk is a `409` rather than a lost edit (the `/api/config` twin opts out by posting
+  no `_base`). The catch-all `500` is a generic envelope carrying the security headers, never a
+  stack or a path. The generated `docker-compose.yml` — and `examples/postgres-load` — publish
+  Postgres on `127.0.0.1:5432`, not `0.0.0.0`.
+- **`denext ui` discovered project verbs inside its own privileged process.** `GET /commands` imported
+  the project's `denext.config.ts` and ran every plugin `setup()` — six executions for five GETs, even
+  under `--read-only`. Discovery is now one `denext commands --json` child per directory, shared
+  across overlapping requests, with a good listing cached 5 s and a failure never; a module-graph test
+  and a runtime pid check hold the line.
+- **The DevTools inspector sink cannot be used to poison an agent's context.** String values are
+  redacted to `string(n)` (a length, never the characters), every stored node is rebuilt from coerced
+  and length-clamped fields so a forged tree can neither crash a formatter nor inject unbounded text,
+  the `content-type` must be exactly `application/json`, a snapshot expires after 10 minutes, a page
+  can read only its own snapshot (the MCP bridge passes `?url=`), and dev request-log entries are
+  clamped the same way.
 
 ### Fixed
 
@@ -184,6 +300,42 @@ and this project adheres to
 - **The DevTools panel never mounted in SPA dev** — the generated SPA dev entry never set
   `window.__denextDev`, so `installDevtools()` bailed. `DENEXT_DEV_UNBUNDLED=0` on the App Router path
   mounts too.
+- **A component tree over 64 KiB never reached the MCP tools.** The sink posted with `keepalive`,
+  which browsers refuse above 64 KiB and refuse unobservably — so any page past roughly 115
+  components answered `denext_component_tree` with "open the app in a browser" while the app was
+  open. The throttled post drops `keepalive`, the `pagehide` flush uses `sendBeacon` and skips above
+  60 KiB, an oversized snapshot is truncated and flagged rather than dropped, and every byte cap
+  counts UTF-8 bytes.
+- **A `Set-Cookie` written inside a typed-API sub-request was lost.** A batched or in-process client
+  call now carries the child's `Set-Cookie` back onto the parent response, so a sliding session
+  refresh (or a sign-in) inside one survives.
+- **Fifty cold logins made fifty discovery / JWKS fetches.** Concurrent misses for one issuer (or one
+  JWKS URL) now share a single in-flight request, and a discovery document is vetted before it is
+  cached rather than after.
+- **One legacy row pair could make `sqliteAuthAdapter` a permanent 500.** A unique index cannot be
+  created over a table that already violates it (two pre-2.5 users whose emails differ only in case),
+  and the throw failed `initSchema` on every open, so every request re-ran and re-threw it. The
+  failure is now reported **once**, with the query that finds the offending rows, and the adapter runs
+  without that index — uniqueness still enforced by its own check on write.
+- **An `adapter`'s `close()` was never wired up**, so a `sqliteAuthAdapter` kept its file handle for
+  the life of the process. Both a closable session store and a closable adapter are released on
+  server drain through the plugin teardown seam.
+- **A credentials adapter that threw escaped as a raw `500`** with no `signInFailed` at all — a
+  UNIQUE race between two concurrent first sign-ins, or a database that went away, was distinguishable
+  from a wrong password. It is now the same generic `401`, plus a logged exception and
+  `signInFailed { reason: "adapter_error" }`.
+- **`signIn.isNewUser` and `signInFailed.ip` are actually emitted.** Both were declared on the event
+  payloads and never populated; `ip` carries the bucket the limiter counted the attempt against
+  (an IPv6 client as its /64).
+- **One `Ctrl+C` stops `denext ui` with pages open.** The shutdown closes every `/_ui/events` stream
+  before draining, so an open tab's SSE connection no longer pins the server (5 ms, was a 5 s+ hang).
+  A streamed run keeps an 8 KB tail instead of the whole log (a wedged `deno task` retained tens of
+  megabytes), every child dies with the request that started it and with the UI, `deno add`/`deno
+  remove` get a five-minute deadline, only one `denext dev` is spawned at a time, and a config splice
+  whose result no longer parses is refused before it reaches disk.
+- **A plugin discovery cut short by its time budget could make the next one skip a plugin.** Verb
+  discovery is generation-stamped (`pluginGeneration()`), so a superseded run's result can never be
+  applied and a plugin whose `setup` lost one race is still registered by the next.
 
 ### Removed
 
@@ -6820,7 +6972,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
 [0.1.2]: https://jsr.io/@denext/denext@0.1.2
 [0.1.1]: https://jsr.io/@denext/denext@0.1.1
 [0.1.0]: https://jsr.io/@denext/denext@0.1.0
-[Unreleased]: https://github.com/Brainwires/denext/compare/v2.1.0-rc.1...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v2.4.3...development
 [1.4.0]: https://jsr.io/@denext/denext@1.4.0
 [1.3.0]: https://jsr.io/@denext/denext@1.3.0
 [1.2.0]: https://jsr.io/@denext/denext@1.2.0

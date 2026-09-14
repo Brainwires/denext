@@ -128,7 +128,8 @@ fields shipped in rc.1, so none of this invalidates a session):
   identifier is exactly one RFC address and is never split on `,` (the CVE-2022-35924 class),
   which will flip that row in [the security guide](https://denext.dev/docs/security).
 - **TOTP 2FA with a pending-MFA step-up** — RFC 6238 enrol/confirm/disable, hashed backup
-  codes, a replay-guarded step claim, and the eight bypass paths (`auth()`, `requireAuth`,
+  codes (the first flow to actually drive the `Hasher` seam, which rc.1 only configures), a
+  replay-guarded step claim, and the eight bypass paths (`auth()`, `requireAuth`,
   `requireSession`, `GET /session`, Live `authorize`, `requireBearer`, `/auth/tokens`,
   `/mfa/disable` freshness) each gated and each tested.
 
@@ -144,8 +145,8 @@ fields shipped in rc.1, so none of this invalidates a session):
   a textarea widget tag for `spa.head` / `spa.loading`.
 - Share migrate's `next.config` evaluator and its translation table with the UI's
   `config-next.ts` instead of keeping two.
-- Fix the `denext --help <dir>` parser quirk (a bare positional is not read as the project
-  directory — `--cwd=` is the workaround today).
+- Fix the `denext --help <dir>` parser quirk — documented as a limitation with its `--cwd=`
+  workaround in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
 
 **DevTools:**
 
@@ -161,7 +162,8 @@ fields shipped in rc.1, so none of this invalidates a session):
 - **Passkeys / WebAuthn** over the adapter's credential tables.
 - A **`next-auth` compat shim** so a drop-in Next app that imports `next-auth` runs.
 - A standalone **`denext/auth` subpath** (today the surface lives in `denext/server`).
-- **`totpQrSvg()`** — denext ships `totpAuthUri()` only; no QR encoder.
+- **A TOTP URI helper + `totpQrSvg()`** — both arrive with the rc.2 TOTP flow; denext
+  ships neither today.
 - **`activeAuthConfig()`** so `requireBearer`'s first argument becomes optional.
 - **Richer events**: API-token issue/revoke events, a `signInFailed.reason` union, and an
   `AuthEvents.ip` for audit trails.
@@ -174,15 +176,19 @@ fields shipped in rc.1, so none of this invalidates a session):
 - **On-demand snapshot pull** over the reload stream, so the MCP tools can ask for a fresh
   tree instead of reading the last pushed one.
 
-**`denext ui`:** agent support — an MCP front end over the UI's operations. Every mutation
-already answers a `{ ok, diff, reason }` JSON envelope for exactly this, but the surface is a
-3.0 commitment, not a 2.6 one.
-
 **Docs:** align the [deployment guide](https://denext.dev/docs/deploy)'s hand-written
 Dockerfile with what `denext generate docker` emits — the dependency-cache layer, the
 least-privilege run flags, and `PORT` vs `--port` differ today. The guide now points at the
 generator as the source of truth; the remaining work is making the two byte-comparable (a test
 that diffs the guide's fenced block against the template would keep them that way).
+
+## 3.0
+
+- **Agent control of `denext ui`** — an MCP front end over the UI's operations. Every panel
+  already answers a JSON twin built for exactly this (the two file writers answer
+  `{ ok, applied, diff }`; the others answer their own panel's shape — see
+  [the Project UI guide](https://denext.dev/docs/ui)), so the wire would not have to change.
+  Committing to an agent-driveable write surface is a 3.0 decision, not a 2.6 one.
 
 ## Candidate features (from the framework-gap survey)
 

@@ -114,7 +114,7 @@ Every path is relative to `basePath` (default `/auth`).
 
 | Endpoint              | Method      | What it does                                                                       |
 | --------------------- | ----------- | ---------------------------------------------------------------------------------- |
-| `/session`            | GET         | `{ user, expires }` (or nulls). `no-store`. The sliding-expiry path.               |
+| `/session`            | GET         | `{ user, expires }` (or nulls). `no-store`. The sliding-expiry path. Rate-limited. |
 | `/providers`          | GET         | The configured providers' `id` + `type` — never client ids, secrets or endpoints.  |
 | `/signin/:provider`   | GET         | Starts the OAuth flow (PKCE + `state` + `nonce`). Rate-limited per client IP.      |
 | `/callback/:provider` | GET or POST | GET is the OAuth callback; POST is the Credentials one. Any other verb is a `405`. |
@@ -191,9 +191,14 @@ when you configure more than one.
 
 ## OIDC discovery and key caching
 
-Every OIDC preset carries both its documented static endpoints **and**
-`discovery: { issuer }`, so a provider that rotates an endpoint is picked up without a
-denext release. Discovery is a network document that decides where denext sends a client
+Seven presets carry both their documented static endpoints **and** `discovery: { issuer }`
+— `microsoftEntra()`, `apple()`, `gitlab()`, `slack()`, `auth0()`, `okta()` and
+`keycloak()` — so a provider that rotates an endpoint is picked up without a denext
+release, and `oidc()` discovers whenever you give it an issuer and no endpoints.
+`google()` is the OIDC preset that does **not** discover: its endpoints live on a sibling
+host, so they stay pinned (its `issuer` is still checked against the `id_token`'s `iss`).
+`github()`, `discord()` and `facebook()` are plain OAuth with no discovery document at
+all. Discovery is a network document that decides where denext sends a client
 secret and takes signing keys from, so it is treated as hostile until proven otherwise:
 
 - the request is pinned to the **issuer's own host** (on top of the SSRF-safe
@@ -205,13 +210,17 @@ secret and takes signing keys from, so it is treated as hostile until proven oth
   them keeps working when discovery fails — and nothing throws a raw network error into
   the sign-in path: every refusal is a stable code the routes turn into `?error=config`;
 - a successful document is cached per issuer for its `Cache-Control: max-age` (one hour
-  by default, clamped to between one minute and 24 hours); a **failure is never cached**.
+  by default, clamped to between one minute and 24 hours); a **failure is never cached**,
+  and a document is vetted before it is cached, never after;
+- concurrent misses for the same issuer share **one** in-flight request, so fifty cold
+  logins at once are one fetch rather than fifty.
 
 Signing keys are cached on exactly the same terms, per JWKS URL. A key set used to be
 refetched on every single login; now a miss refetches **once** and then throttles to at
 most one attempt per minute per URL — the `kid` that triggers a refetch comes out of an
 attacker-supplied `id_token` header, so an unbounded "refetch on unknown kid" would be a
-free amplifier pointed at the provider. Nothing about verification is weakened: an
+free amplifier pointed at the provider. Concurrent misses for one JWKS URL share a single
+in-flight fetch, the same way discovery does. Nothing about verification is weakened: an
 unsigned or `alg: none` token is still refused no matter how many keys the cache holds.
 
 ### `strictAudience`
@@ -254,10 +263,23 @@ idle one still expires on time. A store-backed session keeps the **same** id (fi
 already prevented by minting a fresh id at login), and a half-authenticated session is
 never extended.
 
+There is **no absolute ceiling**: a session that keeps being used keeps being extended, by
+design. End one with revocation (or a shorter `maxAge`), not by waiting for a cap that
+does not exist.
+
+A store-backed refresh goes through `SessionStore.update` — **write only if the record is
+still there** — never `create`, which is an upsert: a session revoked between this
+request's read and its refresh would otherwise come back with a full fresh lifetime. So
+sliding expiry **requires a store that implements `update`**. One that does not simply
+never slides its sessions forward (they still expire on their original schedule) and says
+so once through the logger.
+
 Only a path that still owns its response can set a cookie. So the refresh happens on
 `GET {basePath}/session`, inside `requireAuth()` and `requireSession()`, and in the
 explicit `updateAuthSession()` — and **never** inside a bare `auth()`, where a
-`Set-Cookie` written after a streamed response has flushed would be dropped silently.
+`Set-Cookie` written after a streamed response has flushed would be dropped silently. A
+`Set-Cookie` written inside a typed-API sub-request (a batched call, an in-process client
+call) is carried back onto the parent response rather than lost with the child.
 
 ```ts
 import { updateAuthSession } from "denext/server";
@@ -286,15 +308,16 @@ await revokeSession(session.sessionId!);
 ```
 
 Both throw when sessions are stateless, rather than pretending to revoke something. Both
-fire the `sessionRevoked` event. A closable store is released on server drain through the
-plugin teardown seam.
+fire the `sessionRevoked` event. Anything holding a resource is released on server drain
+through the plugin teardown seam — a closable session store **and** a closable `adapter`,
+so a `sqliteAuthAdapter` no longer keeps its file handle for the life of the process.
 
 > [!NOTE]
 > A store is per node: `sqliteSessionStore` is a local file and `inMemorySessionStore` a
 > per-process map, so a session created on one replica is invisible to the others.
 > Running several replicas? Point them all at one shared store — implement `SessionStore`
-> (`create` / `get` / `delete` / `deleteByUser`) over Redis or Postgres. Stateless
-> sessions need nothing shared.
+> (`create` / `get` / `delete` / `deleteByUser`, plus `update` for sliding expiry and an
+> optional `close`) over Redis or Postgres. Stateless sessions need nothing shared.
 
 ### The session payload
 
@@ -330,9 +353,10 @@ directory (user data, deliberately not under `.denext/`, which the build owns), 
 
 ### The contract
 
-Every method may be sync or async, timestamps are **epoch seconds** (never `Date`), and
-a miss is `undefined` (never `null`). The users and accounts groups are required;
-everything else is optional and gates the feature that needs it.
+Every method may be sync or async — the exported alias for that is `MaybePromise<T>`
+(renamed from `Await<T>` in 2.5) — timestamps are **epoch seconds** (never `Date`), and a
+miss is `undefined` (never `null`). The users and accounts groups are required; everything
+else is optional and gates the feature that needs it.
 
 | Group               | Methods                                                                                   | Gates                                         |
 | ------------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------- |
@@ -375,6 +399,13 @@ table is missing is added with `ALTER TABLE … ADD COLUMN`, decided by
 `PRAGMA table_info`. There is no migration framework, no column is ever dropped or
 retyped, and a denext upgrade never rewrites your rows — schema changes are additive by
 construction.
+
+A unique index cannot be created over a table that already violates it — an `auth_users`
+populated before 2.5 may hold two rows whose emails differ only in case. That failure is
+**reported once**, with the query that finds the offending rows, and the adapter runs
+without that index; uniqueness is still enforced by the adapter's own check on write.
+(Letting it throw meant every open re-ran and re-threw the schema init, so one legacy row
+pair turned the whole app into a permanent 500.)
 
 The adapter also exposes `sessions`, a `sqliteSessionStore` driven over the **same**
 handle, so one file holds everything. The `sessions` DDL is byte-identical to the
@@ -420,11 +451,22 @@ already has — a user who renamed themselves locally is not renamed back by eve
 With no adapter configured, all of this is a pass-through: the profile the mapper
 produced is the session user.
 
+**Where the provider's tokens go.** With an adapter configured, the account row stores
+whatever the provider returned — access, refresh and id tokens — at rest; that is what an
+adapter is for, and `listAccounts` reads them back. They are deliberately **absent from
+the `linkAccount` event payload**, which carries identity only: an event handler is an
+audit sink, and a credential in an audit line is a leak. (This narrowed the payload — a
+2.4 handler that read tokens off the event must read the stored account instead.)
+
 ## Roles and authorization
 
 Roles live on the session user as `AuthUser.roles?: string[]`. Populate them in
 `callbacks.signIn` / `callbacks.session`, or from an adapter user record. Every check is
 **any-of**, and a check against a session with no roles always refuses.
+
+The empty case fails **closed**: `hasRole(session, [])` and `requireAuth(request,
+{ role: [] })` refuse, because an empty list says "no role can satisfy this", not "no
+requirement". Only an **absent** `role` means unrestricted.
 
 ```ts
 // middleware.ts
@@ -478,18 +520,39 @@ awaited, so an audit row is written before the response is built.
 | `linkAccount`    | `{ user, account }`                      | A provider account was linked to an existing user |
 
 `reason` is a stable machine-readable string an app can route on:
-`"invalid_credentials"`, `"rate_limited"`, `"access_denied"`, `"account_not_linked"`, or
-an OAuth failure code such as `"oauth_failed"`, `"config"` or `"invalid_state"`.
+`"invalid_credentials"`, `"rate_limited"`, `"access_denied"`, `"account_not_linked"`,
+`"adapter_error"` (the persistence step threw — see below), or an OAuth failure code such
+as `"oauth_failed"`, `"config"` or `"invalid_state"`.
+
+Two payload fields the event has always declared are now actually populated. `ip` carries
+the client bucket the limiter counted the attempt against — present on the rate-limited
+routes (the credentials POST and the sign-in start), IPv4 as seen and an IPv6 client as
+its **/64 prefix**, which is what the limiter itself counts — so "one address, many
+failures" is visible to an alerting pipeline. And `signIn` carries `isNewUser: true` when
+that sign-in created the adapter's user record (always `false` without an adapter, which
+creates nothing).
+
+An adapter that throws while persisting a credentials sign-in — a UNIQUE race between two
+concurrent first logins, a database that went away — is contained: the caller gets the
+**same generic `401`** a wrong password gets (answering anything else would disclose that
+the address exists), the exception reaches `logger.error`, and `signInFailed` fires with
+`reason: "adapter_error"`.
 
 **A handler that throws cannot change the HTTP result.** The throw — sync or async — is
 caught and routed to `logger.error`; an event handler can never fail the sign-in it is
 observing.
 
-`logger` has three optional methods, `debug`, `warn` and `error`, and defaults to
-**silence** — auth never writes to the console on its own. It is where the failures the
-flow deliberately swallows resurface: a provider round-trip that failed behind a generic
+`logger` has three optional methods, `debug`, `warn` and `error`. On the **request path**
+it defaults to silence: nothing a sign-in swallows is printed unless you supply a logger.
+It is where those failures resurface — a provider round-trip that failed behind a generic
 `?error=oauth_failed`, an adapter write that threw, a `touchApiToken` a read replica
 refused, an unparseable request body.
+
+Config-time and boot-time problems are **not** routed through it and still print: a
+`canonicalOrigin` with no `trustForwardedHeaders` decision, requests arriving from a local
+peer with `x-forwarded-for` while that flag is off, a `sqliteAuthAdapter` index that could
+not be created, a `strictAudience` refusal. Those are operator warnings about the
+deployment, not per-request noise, and each is printed once per process.
 
 ```ts
 denextAuth({
@@ -517,13 +580,16 @@ denextAuth({
 
 `basePath` gets a leading slash added and a trailing one stripped, and must be one or
 more non-empty URL-safe segments. `"/"` is refused — the handler would then claim every
-request on the site. Client-side, pass the same prefix to `SessionProvider` /
+request on the site — and so is any `.` or `..` segment: a dot is URL-safe, but
+`"/auth/.."` is not a place, and the handler would claim (and the routes advertise) a
+prefix that resolves somewhere else entirely. Client-side, pass the same prefix to `SessionProvider` /
 `signIn` / `signOut` via their `basePath` prop or option.
 
 Two cookies exist: the session cookie (default `__Host-denext_auth`) and the short-lived
 OAuth transaction cookie that carries the PKCE verifier, `state` and `nonce` (default
 `__Host-denext_auth_tx`). The name you configure is the one _before_ the prefix; a name
-must be a valid cookie token (letters, digits, or ``!#$%&'*+-.^_`|~``).
+must be a valid cookie token: letters, digits, or any of the RFC 6265 punctuation
+`!#$%&'*+-.^_` plus a backtick, a pipe and a tilde.
 
 `hostPrefix` is **on by default** and leaving it on is strongly recommended: `__Host-`
 forces `Secure` + `Path=/` + no `Domain`, which is what stops a sibling subdomain reading
@@ -550,13 +616,14 @@ even behind a proxy that omits `x-forwarded-proto`.
 
 ## Rate limiting
 
-Brute-force protection is **on by default**, as two fixed-window limiters built from one
+Brute-force protection is **on by default**, as three fixed-window limiters built from one
 `rateLimit` config:
 
 | Limiter       | Counts                                        | Key                                           | Default       |
 | ------------- | --------------------------------------------- | --------------------------------------------- | ------------- |
 | Credentials   | _Failed_ `POST {basePath}/callback/:provider` | Client IP + submitted identifier, lower-cased | 5 per 15 min  |
 | Sign-in start | _Every_ `GET {basePath}/signin/:provider`     | Client IP                                     | 20 per 15 min |
+| Session read  | _Every_ `GET {basePath}/session`              | Client IP                                     | 60 per minute |
 
 Past the limit the endpoint answers a generic `429` with `Retry-After` — like the generic
 `401`, it never reveals whether the account exists — and a successful credentials sign-in
@@ -566,10 +633,30 @@ counts every hit rather than only failures, because the cost being bounded is th
 done for an unauthenticated caller: minting a PKCE verifier, a `state`, a nonce and a
 signed transaction cookie, plus provider-id probing.
 
+The session-read limiter exists for the same reason: `GET {basePath}/session` is
+unauthenticated work — a cookie verification plus a store read, and possibly a re-issue —
+and 60 per minute is far above any sane `SessionProvider` poll.
+
 The identifier is taken from `email`, `username`, `login` or `identifier`. The client IP
 is the socket peer; behind a proxy set `trustForwardedHeaders: true` so the proxy's
-`x-forwarded-for` (last hop) is used instead — the header is never trusted by default,
-since without a proxy anyone can set it.
+`x-forwarded-for` (last hop, never the first) is used instead — the header is never
+trusted by default, since without a proxy anyone can set it. An IPv6 client is normalised
+and bucketed by **/64**, so a client cannot walk its own prefix for a fresh budget.
+
+Two behaviours worth knowing:
+
+- **An undeclared proxy disables the per-IP budgets rather than sharing one.** When a
+  request arrives from a private or loopback peer carrying `x-forwarded-for` while
+  `trustForwardedHeaders` is off, every visitor looks like the proxy — so the sign-in-start
+  and session-read budgets are skipped for it, with one console warning naming the fix,
+  instead of turning the 21st sign-in site-wide into a fifteen-minute outage. The
+  credentials limiter keeps working, because its key also carries the submitted identifier.
+  Setting `canonicalOrigin` without deciding `trustForwardedHeaders` warns once at boot for
+  the same reason.
+- **The default store never evicts a key mid-lockout.** Past `maxKeys` it drops expired
+  windows and quiet keys (in one pass, down to 90% of the cap), never one that is actually
+  locked out — otherwise flooding fresh keys would clear a lockout. When every tracked key
+  is locked out and the cap is reached, the new key is refused outright.
 
 ```ts
 denextAuth({
@@ -579,17 +666,18 @@ denextAuth({
     windowMs: 10 * 60_000, // default 15 minutes
     keyGenerator: (request, credentials) => (credentials.email ?? "").trim().toLowerCase(),
     signin: { max: 40, windowMs: 15 * 60_000 }, // the sign-in-start limiter
+    session: { max: 120, windowMs: 60_000 }, // the session-read limiter
     store: myRedisRateLimitStore, // RateLimitStore — share counts across replicas
   },
-  // or: rateLimit: false (disables BOTH limiters — you rate-limit at the edge)
+  // or: rateLimit: false (disables ALL THREE — you rate-limit at the edge)
 });
 ```
 
 `max` / `windowMs` / `keyGenerator` belong to the credentials limiter and never apply to
-the sign-in-start one, which is tuned under `signin`. `store` is shared by both (their
-keys are namespaced apart). The default store is a bounded per-process map — fine for a
-single instance, but each replica counts on its own, so pass a shared `store` behind
-several.
+the other two, which are tuned under `signin` and `session`. `store` is shared by all
+three (their keys are namespaced apart). The default store is a bounded per-process map —
+fine for a single instance, but each replica counts on its own, so pass a shared `store`
+behind several.
 
 ## API tokens and `requireBearer`
 
@@ -610,7 +698,11 @@ you" distinguishable from "may you". Scope and role are any-of, and a **scopeles
 satisfies no scope requirement** — scoping an endpoint never silently admits older,
 scopeless tokens. The middleware is pre-tagged with
 `documentsSecurity(…, [{ bearerAuth: [] }])`, so `@denext/openapi` marks every endpoint
-that applies it as secured with nothing written on the definition. Bearer auth **never
+that applies it as secured with nothing written on the definition. What it cannot do is
+describe the scheme: declare the matching
+`securitySchemes: { bearerAuth: { type: "http", scheme: "bearer" } }` **once** in the
+`openapi()` plugin options, or the document references a scheme it never defines (and
+Swagger UI shows no Authorize button). Bearer auth **never
 sets a cookie** and never slides a session forward: a token carries its own credential on
 every call and can't be escalated into a browser session.
 
@@ -626,8 +718,9 @@ export const POST = authed.define({ body: NewPet }, ({ body, ctx }) => add(ctx.u
 ```
 
 The management endpoints are `POST {basePath}/tokens` (mint — returns the plaintext once,
-`201`), `GET {basePath}/tokens` (list, redacted: no hashes, and the plaintext no longer
-exists anywhere) and `DELETE {basePath}/tokens/:id` (revoke). All three are **cookie
+`201`, and a `409` once you already hold 50 live tokens, so a compromised session cannot
+mint credentials without bound), `GET {basePath}/tokens` (list, redacted: no hashes, and
+the plaintext no longer exists anywhere) and `DELETE {basePath}/tokens/:id` (revoke). All three are **cookie
 session only** — they never read the `Authorization` header, so a leaked token can't mint
 another one, widen its own scopes or revoke a sibling — and they require a **complete**
 session, so a first factor alone can't produce a credential that outlives the
@@ -678,6 +771,14 @@ await signIn("credentials", { credentials: { email, password } }); // throws on 
 await signOut({ callbackUrl: "/" });
 ```
 
+A `callbackUrl` handed to `signIn` or `signOut` is coerced to a **same-origin path**
+before anything navigates: these helpers assign it to `location.href` (or hand it to the
+server to reflect back), and a `callbackUrl` is routinely read straight out of the current
+query. An absolute URL on the page's own origin keeps its path, query and hash; a foreign
+absolute, a protocol-relative `//host/…` and a `javascript:` value all fall back to the
+default. The server coerces again — this is the half that guards the purely client-side
+navigation that never reaches it.
+
 A network failure, a non-JSON body or an error status from the session endpoint all read
 as "signed out" rather than throwing into the tree, so the UI degrades to the logged-out
 view instead of unmounting behind an error boundary.
@@ -691,16 +792,35 @@ invalidating existing hashes — and verify in constant time. `verifyPassword` r
 `false` rather than throwing on an empty or malformed value, so an unknown account and a
 wrong password take the same path.
 
-Everything denext hashes that a user knows — a Credentials password, an MFA backup code —
-goes through the `Hasher` seam, so an app can swap the algorithm (Argon2id from a WASM
-package, a KMS-backed peppered hash, a legacy bcrypt column during a migration) without
-touching the auth flow. The default is `scryptHasher()`:
+That equal-work rejection burns real scrypt time, and it has to burn **this deployment's**
+cost. So `verifyPassword(plain, stored, options?)` takes a third argument: pass the same
+`HashPasswordOptions` you hash with. Omit it on a deployment that raised `cost` and an
+unknown account rejects measurably faster than a known one — the user-enumeration oracle
+the dummy work exists to close, reopened.
+
+```ts
+const OPTS = { cost: 2 ** 16 };
+const ok = await verifyPassword(password ?? "", row?.password_hash ?? "", OPTS);
+```
+
+The `Hasher` seam is where that lives: `{ hash, verify }`, defaulting to `scryptHasher()`,
+which passes its own options to both halves so the two costs can never drift apart.
 
 ```ts
 import { scryptHasher } from "denext/server";
 
 denextAuth({ hasher: scryptHasher({ cost: 2 ** 16 }) /* … */ });
 ```
+
+> [!NOTE]
+> In rc.1 the seam is **configured but not yet driven by a flow**. Your `credentials`
+> `authorize` callback does its own password check today (calling `verifyPassword`, or
+> whatever your column holds), and the flows that will call `hasher.hash` / `hasher.verify`
+> themselves — first-party credential storage, hashed MFA backup codes — arrive in rc.2. So
+> `hasher` is forward-compatible configuration: set it now and rc.2 will use it. A custom
+> `Hasher` must also **equalise its own unknown-account work** — that is the one thing
+> `scryptHasher` does for you and a `verify()` that returns early on an empty `stored`
+> does not.
 
 An implementation must compare in constant time and must **not** throw on a malformed
 stored value — return `false`, so a corrupted row can never surface as a 500 or a stack
@@ -802,8 +922,10 @@ client migration, or electing a single leader tab for a shared connection.
   production.
 - **Provider calls are SSRF-safe.** Token, userinfo, JWKS and discovery requests go
   through `safeFetch` (loopback and private addresses refused) _and_ are pinned to the
-  issuer's host. `dangerouslyAllowInsecureProviders` exists for local development only,
-  and warns loudly when set.
+  issuer's host. `dangerouslyAllowInsecureProviders` exists for local development only, and
+  warns loudly when set; even then the host allowlist still applies, and redirects are
+  followed **by hand with every hop re-checked** — otherwise a token endpoint answering
+  `307` could carry the `client_secret` in the POST body to any host it named.
 - **OAuth/OIDC.** Authorization Code with PKCE (S256), a CSRF `state` and a `nonce`;
   `id_token`s verified against the provider's JWKS across the RS/PS/ES families
   (`RS/PS/ES 256/384/512`; `none` and unknown algorithms rejected) plus `iss`, `aud`

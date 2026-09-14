@@ -60,7 +60,9 @@ on every streamed-hole reveal.
   live value on `window.$d`.
 - **Why did this render?** — while the panel is open it accrues render reasons,
   so the props, hooks and contexts that changed on the last commit are marked in
-  the accent colour and the header carries a `rendered ×N` count.
+  the accent colour and the header carries a `rendered ×N` count. Tracking is
+  refcounted between the panel and the MCP sink, so closing and reopening the
+  panel no longer wipes the history `denext_why_render` is reading.
 - **Owner stack** — the component ancestors above the selection, nearest first,
   joined with `←`.
 - **Effect annotations** — an effect/memo/callback/deferred cell shows its `deps`
@@ -292,7 +294,10 @@ The pass is bounded and switchable:
 **Production bundles carry none of it.** The only emitters are the two dev
 transforms, so nothing in a production build references the metadata registry and
 the whole module — whose only module-level work is creating an empty `Map` — is
-tree-shaken away. A test builds an example app and greps the output to prove it.
+tree-shaken away. Two tests hold that line: `tests/devtools-meta.test.ts` runs one
+module through the **production** plugin set and asserts no metadata call comes
+out, and `tests/spa-dev-integration.test.ts` greps a built entry for the dev-only
+symbols.
 
 ## Stock React DevTools
 
@@ -322,7 +327,8 @@ dev server, which keeps the latest snapshot per page URL. Three
 | `denext_hook_state`     | A component's hook cells — each cell's name, the hook that produced it, its value and its deps (`index` for one cell) |
 
 All three take `url` (which page's tree, default: the most recent) and `dir` (the
-project directory). A call and its answer:
+project directory) — the bridge always passes `url` when you name a page, which is
+also how it reads a page other than the newest one. A call and its answer:
 
 ```json
 { "name": "denext_why_render", "arguments": { "component": "Counter" } }
@@ -369,23 +375,45 @@ error:
 | A tree, but no such component  | `no component named "X" in this snapshot. Components present: …`                     |
 
 So both preconditions hold at once: the tools need **`deno task dev` running AND
-the app open in a browser**. The sink runs whether or not you ever open the
-panel — an agent inspecting a page the developer never opened the panel on is the
-normal case.
+the app open in a browser**. You do not have to open the panel — an agent
+inspecting a page the developer never opened the panel on is the normal case.
+
+**The sink arms lazily.** A page that nobody is inspecting walks no fibers and
+posts nothing; the first `denext_component_tree` / `denext_why_render` /
+`denext_hook_state` call arms the dev server, and the page picks that up on its
+next settled commit. So the **first** call on a fresh session may answer
+`the DevTools sink has posted nothing yet` — call it again after the page's next
+commit, or start the server with `DENEXT_DEV_INSPECT=1` to arm it from the very
+beginning. Arming is sticky for the dev server's lifetime.
 
 What gets pushed is deliberately bounded and inert:
 
 - a **trailing throttle** of 1.5 s (a burst of commits produces one post), plus a
-  final post on `pagehide`;
+  final post on `pagehide` — which is skipped above 60 KiB, because a browser
+  refuses a `sendBeacon` / `keepalive` body over 64 KiB unobservably, and the last
+  throttled post stands instead;
 - the tree is cut at depth 50, 2000 components or a 256 KB body, and flagged
-  `truncated` when a cap bit;
+  `truncated` when a cap bit. A body still over the cap after the walk drops root
+  nodes until it fits rather than being abandoned, and every byte cap counts
+  **UTF-8** bytes, not UTF-16 code units;
 - host, text and fragment nodes are spliced out (their component children are
   re-parented), the panel's per-prop override rows are dropped, and every raw
-  value is stripped — only previews travel;
-- the endpoint is POST + `application/json` only, same-origin gated like every
-  `/_denext/*` endpoint, re-validates the shape server-side, refuses an oversized
-  body with a 413, and silently drops a malformed one;
-- at most one snapshot per page URL, across an 8-URL LRU.
+  value is stripped — only previews travel. A **string never travels at all**: its
+  preview is `string(8)`, the length and nothing else, so a token or a password
+  held in a `useState` cell cannot reach an agent's context. Numbers, booleans and
+  object/array shapes survive as previews;
+- the endpoint is POST + exactly `application/json` (a `content-type` whose media
+  type merely _contains_ it is a 415), same-origin gated like every `/_denext/*`
+  endpoint, and refuses an oversized body with a 413. What it stores is **rebuilt
+  field by field** from coerced, length-clamped values — never the posted object —
+  so a forged tree can neither crash a formatter nor inject unbounded text; a body
+  that is not a well-formed snapshot is dropped silently;
+- at most one snapshot per page URL, across an 8-URL LRU, and every snapshot
+  **expires ten minutes** after it arrived;
+- **a page reads only its own snapshot.** A GET that carries a `Referer` — i.e. a
+  request from a dev page — is scoped to that page's own path, so a page at
+  `/blog/<untrusted>` cannot read `/login`'s hook state. The MCP bridge, which has
+  no `Referer`, selects a page with `?url=`.
 
 Every failure path in the page is swallowed: the app never notices the sink
 exists. `denext mcp --disable devtools` hides all three tools when you want the

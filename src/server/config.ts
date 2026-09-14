@@ -386,7 +386,7 @@ export interface ApiBatchConfig {
 export interface DenextCommand {
   /** The verb, e.g. `"seed"` for `denext seed`. Lowercase; `[a-z][a-z0-9-]*`. */
   name: string;
-  /** One-line summary shown in `denext --help` under "Project commands". */
+  /** One-line summary shown by `denext commands` under "Project commands". */
   summary: string;
   /** Optional multi-line detail shown by `denext <name> --help`. */
   usage?: string;
@@ -614,11 +614,12 @@ export interface DenextConfig {
    * gets. The shorthand for a one-off project script — a plugin (`addCommand`) is
    * only needed when the verb ships as a reusable package.
    *
-   * They are listed under "Project commands" in `denext --help` and in
-   * `denext completions <shell>`. A **built-in verb always wins a name collision**:
+   * They are listed under "Project commands" by `denext commands` and included in
+   * `denext completions <shell>` (`denext --help` deliberately imports nothing and
+   * points at `denext commands`). A **built-in verb always wins a name collision**:
    * an entry named `dev` or `build` is ignored, never shadowing the core verb.
    * Loading them costs one config read, paid only when the CLI must enumerate every
-   * verb (`--help`, `completions`) or hits a verb it doesn't recognize.
+   * verb (`commands`, `completions`) or hits a verb it doesn't recognize.
    */
   commands?: DenextCommand[];
 }

@@ -228,10 +228,11 @@ four documented bounds of the opt-in:
 ### First-party auth (`denextAuth`)
 
 - **No mailer.** denext never sends mail. Every flow that needs an outbound message takes
-  your `sendVerificationRequest`; in 2.5 rc.1 that is a type-level seam only — the flows that
-  consume it (password reset, email verification, magic link / email OTP) and TOTP 2FA arrive
-  in rc.2. The session payload already reserves `mfaPending` / `amr`, so those flows will need
-  no cookie migration and will not log anyone out.
+  your `sendVerificationRequest`, which is a type-level seam only today: nothing in the
+  shipped surface consumes it, and neither password reset, email verification, magic link /
+  email OTP nor TOTP 2FA exists yet (they are scheduled in [ROADMAP.md](./ROADMAP.md)). The
+  session payload already reserves `mfaPending` / `amr`, so adopting them later will need no
+  cookie migration and will log nobody out.
 - **No passkeys / WebAuthn, and no `next-auth` compat shim.** A Next app that imports
   `next-auth` does not run under the drop-in; port it to `denextAuth` (both are tracked in
   [ROADMAP.md](./ROADMAP.md)).
@@ -240,12 +241,20 @@ four documented bounds of the opt-in:
   additively (`CREATE TABLE IF NOT EXISTS` + `ALTER TABLE ADD COLUMN`); there is no migration
   framework, so a column can be added but never renamed or dropped for you. TOTP secrets are
   stored in plaintext at rest by construction — TOTP verification needs the shared secret, so
-  protect the database file (backup codes _are_ hashed through the `Hasher`).
+  protect the database file. (`MfaRecord.backupCodeHashes` is specified as hashed and the
+  adapters compare it through a caller-supplied matcher, but nothing hashes or consumes a
+  backup code yet — the MFA flow itself is still to come.)
 - **Sliding refresh only happens where a `Response` is being produced.** `session.updateAge`
   re-issues the cookie on `GET {basePath}/session`, in `requireAuth()` and in
   `requireSession()`. A bare `auth()` inside a streamed Server Component cannot set a cookie
   after the headers are flushed and deliberately does not try — call `updateAuthSession()`
   from a Server Action or route handler instead.
+- **Sliding a store-backed session needs `SessionStore.update`, and never stops sliding.**
+  The refresh is a write-only-if-present `update(id, session)`, so a revoke that raced the
+  request cannot be undone by an upsert; a custom store that does not implement `update`
+  simply never slides its sessions forward (they expire on their original schedule) and warns
+  once. And there is **no absolute session ceiling** — an account in continuous use is
+  extended indefinitely, so end a session with revocation or a shorter `maxAge`.
 - **Both rate limiters count per node** unless you pass a shared `rateLimit.store`; the
   in-memory default is per process.
 - **Account linking refuses unverified-email matches by default** (a deliberate divergence —
@@ -258,6 +267,12 @@ four documented bounds of the opt-in:
   `response_mode=form_post`, a POST callback the router does not serve), and `microsoftEntra`
   requires a specific tenant — the `common` issuer is a template no discovery document can
   verify.
+- **The `Hasher` seam is configured but not yet driven.** `hasher` resolves and is carried
+  on the auth options, and `scryptHasher()` uses it to keep its equal-work rejection at the
+  configured cost — but no flow calls `hasher.hash` / `hasher.verify` today (your
+  `credentials` `authorize` callback does its own check). Setting it now is
+  forward-compatible; a custom implementation must equalise its own unknown-account work, as
+  `scryptHasher` does.
 - **`requireBearer` takes the auth config as its first argument.** There is no ambient
   "current auth config" to read, so every call site passes the same object it passed to
   `denextAuth()`; an `activeAuthConfig()` helper that would make it optional is on the roadmap.
@@ -277,8 +292,19 @@ four documented bounds of the opt-in:
 - **`/config/next` is read-only.** denext never loads `next.config.*` at runtime, so writing to
   it would change nothing; the panel reads it in a bounded subprocess and offers to translate
   what denext honors into `denext.config.ts`.
-- **`--port` falls forward.** An occupied port moves to the next free one rather than failing;
-  read the printed URL (or `--json`) instead of assuming 5177.
+- **The DEFAULT port falls forward.** With no `--port`, an occupied 5177 moves to the next
+  free one (up to ten), so read the printed URL (or `--json`) instead of assuming 5177. An
+  **explicit** `--port` is strict: a taken port is a clear error, never a quiet move.
+- **`denext --help <dir>` does not read the directory.** A bare positional is not taken as
+  the project directory on the help path, so a per-project help table needs `--cwd=<dir>`
+  (a parser quirk tracked in [ROADMAP.md](./ROADMAP.md)). Every verb honours `--cwd=<dir>`,
+  which is the workaround.
+- **`denext --help` does not list a project's own verbs, by design.** Rendering them would
+  mean importing `denext.config.ts` and running every plugin `setup()`; `denext commands`
+  (which the help footer points at) does that in a process that always exits, and shell
+  completions still include them. The UI's Commands panel reads the same subprocess — and
+  **running** a project verb from the panel pays plugin discovery again in its own child, so
+  a slow `setup()` is felt on every run.
 
 ### Desktop & mobile (`denext desktop`, Capacitor)
 
@@ -347,10 +373,16 @@ are listed in [FEATURES.md](./FEATURES.md). Its documented boundaries:
   server.** SPA dev serves none of those endpoints, so those tabs render a named
   "App Router only" state (the panel itself does mount in SPA dev, and its editor
   link falls back to `vscode://`).
-- **The MCP snapshot is push-based.** `denext_component_tree` /
+- **The MCP snapshot is push-based, and armed lazily.** `denext_component_tree` /
   `denext_why_render` / `denext_hook_state` read the last snapshot the dev page
   posted, so they need `deno task dev` running **and** the app open in a browser,
-  and an answer can be seconds stale — every answer states its age.
+  and an answer can be seconds stale — every answer states its age. A page that
+  nobody has inspected posts nothing at all: the first tool call arms the dev
+  server and the page starts pushing on its next settled commit, so that first
+  call may answer "posted nothing yet" (call it again, or start the server with
+  `DENEXT_DEV_INSPECT=1`). Snapshots expire after 10 minutes, a page can read only
+  its own, and string values arrive redacted as `string(n)` — the characters never
+  leave the browser, so a hook holding a token shows a length and nothing else.
 
 The stock **React DevTools** extension also works — Components tree, props, live
 prop/state editing, and element selection all route back through denext's

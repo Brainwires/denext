@@ -210,13 +210,13 @@ reimplement them — see [Known Gaps](#known-gaps--residual-risk).
 
 ## 11. Information disclosure / dev-server exposure
 
-| CVE / Advisory                                        | Description                                                                                                                                                                                                            | Protection Level                                                                                                                                                                                                                                                                                                                                                                                                 |
-| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **CVE-2025-48068**                                    | Dev-server source-code exposure — missing origin verification on the HMR WebSocket + script endpoints lets a malicious page read limited source while `dev` runs. CVSS Low.                                            | ✅ **Protected (tested)** — the dev server serves only fixed `/_denext/*` synthetic endpoints (no arbitrary filesystem read), and the live-reload SSE endpoint (denext uses SSE, not a WebSocket) now refuses cross-origin subscribers; `allowedDevOrigins` mirrors Next.js. `tests/dev-origin.test.ts`.                                                                                                         |
-| **CVE-2025-55183**                                    | Server-Function source-code exposure.                                                                                                                                                                                  | 🟢 **Protected (by design)** — see [§3](#3-react-server-components--flight-protocol-rce-dos-source-leak).                                                                                                                                                                                                                                                                                                        |
-| **CVE-2026-64643**                                    | Unauthenticated disclosure of internal `use server` / `use cache` endpoint IDs, aiding attack chaining. CVSS 6.3.                                                                                                      | ✅ **Protected (tested)** — server-action ids on the wire are opaque hashes of `module#export` (`actionIdFor`, `src/runtime/server-action.ts`), not module paths; dispatch stays a `Map` lookup behind the CSRF check and body caps. `tests/server-reference.test.ts`.                                                                                                                                           |
-| **Dev inspector sink** _(class — new surface in 2.5)_ | The DevTools MCP bridge is the first dev endpoint that **stores** browser-supplied structured data (the component tree the dev page pushes), so a hostile page could try to poison or flood what an agent later reads. | ✅ **Protected (tested)** — `POST /_denext/dev-inspect` exists only in dev, inherits the same loopback + `Sec-Fetch-Site` gate as every `/_denext/*` endpoint (a cross-origin POST is a **403**), accepts `POST` + JSON only, caps the body at 256 KB and re-validates the tree's shape, depth and node count server-side, and retains at most 8 page URLs (LRU). `tests/dev-server-devtools-endpoints.test.ts`. |
-| **`NEXT_PUBLIC_` env leakage** _(class)_              | Server-only env vars accidentally shipped to the client bundle.                                                                                                                                                        | ✅ **Protected** — `filterPublicEnv` is the single producer of client-embedded env values and admits only `NEXT_PUBLIC_` / `DENEXT_PUBLIC_` prefixes; the client reads env solely from the embedded public island. _(Passing a secret as a prop to a client component remains developer responsibility, as in Next.js.)_                                                                                         |
+| CVE / Advisory                                        | Description                                                                                                                                                                                                            | Protection Level                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **CVE-2025-48068**                                    | Dev-server source-code exposure — missing origin verification on the HMR WebSocket + script endpoints lets a malicious page read limited source while `dev` runs. CVSS Low.                                            | ✅ **Protected (tested)** — the dev server serves only fixed `/_denext/*` synthetic endpoints (no arbitrary filesystem read), and the live-reload SSE endpoint (denext uses SSE, not a WebSocket) now refuses cross-origin subscribers; `allowedDevOrigins` mirrors Next.js. `tests/dev-origin.test.ts`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| **CVE-2025-55183**                                    | Server-Function source-code exposure.                                                                                                                                                                                  | 🟢 **Protected (by design)** — see [§3](#3-react-server-components--flight-protocol-rce-dos-source-leak).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| **CVE-2026-64643**                                    | Unauthenticated disclosure of internal `use server` / `use cache` endpoint IDs, aiding attack chaining. CVSS 6.3.                                                                                                      | ✅ **Protected (tested)** — server-action ids on the wire are opaque hashes of `module#export` (`actionIdFor`, `src/runtime/server-action.ts`), not module paths; dispatch stays a `Map` lookup behind the CSRF check and body caps. `tests/server-reference.test.ts`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| **Dev inspector sink** _(class — new surface in 2.5)_ | The DevTools MCP bridge is the first dev endpoint that **stores** browser-supplied structured data (the component tree the dev page pushes), so a hostile page could try to poison or flood what an agent later reads. | ✅ **Protected (tested)** — `POST /_denext/dev-inspect` exists only in dev and inherits the same loopback + `Sec-Fetch-Site` gate as every `/_denext/*` endpoint (a cross-origin POST is a **403**). It accepts `POST` with a `content-type` whose media type is **exactly** `application/json` (415 otherwise — a substring test would have admitted `text/html; x=application/json`), caps the body at 256 KB (413), and **rebuilds every stored node field by field** from coerced, length-clamped values rather than storing what arrived, so a forged tree can neither crash a formatter nor inject unbounded text into an agent's context (the depth/node caps are a backstop behind that). String values are redacted to `string(8)` — a length, never the characters. A snapshot expires after **10 minutes**, at most 8 page URLs are retained (LRU), and a read from a page (one carrying a `Referer`) is scoped to that page's own URL, so one dev page cannot read another route's hook state; the MCP bridge selects a page with `?url=`. Dev request-log entries are clamped the same way. `tests/mcp-devtools.test.ts`. |
+| **`NEXT_PUBLIC_` env leakage** _(class)_              | Server-only env vars accidentally shipped to the client bundle.                                                                                                                                                        | ✅ **Protected** — `filterPublicEnv` is the single producer of client-embedded env values and admits only `NEXT_PUBLIC_` / `DENEXT_PUBLIC_` prefixes; the client reads env solely from the embedded public island. _(Passing a secret as a prop to a client component remains developer responsibility, as in Next.js.)_                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 ### `denext ui` — a local write surface, fenced in six layers
 
@@ -224,14 +224,29 @@ reimplement them — see [Known Gaps](#known-gaps--residual-risk).
 treated as a security surface in its own right. It binds `127.0.0.1` only (there is no
 `--host`); every request passes the same DNS-rebinding / `Sec-Fetch-Site` host gate the
 dev server uses; the printed URL carries a per-launch 256-bit token that is exchanged
-**once** for an `HttpOnly; SameSite=Strict` cookie and then stripped from the query;
-every mutation is a `POST` with a same-origin `Origin` **and** an HMAC-derived CSRF
-token; every path the UI reads or writes goes through a realpath-checked containment
-join; and responses carry a strict CSP with `COOP`/`CORP` and `no-store`. Two further
-properties matter as much as the gates: the UI process **never loads the project's
-modules** — doctor, tasks, `next.config` evaluation and `deno add` all run as `deno`
-subprocesses with array arguments, never a shell string — and every write is previewed
-as a diff before it is applied. `--read-only` refuses all of them.
+**once** for an `HttpOnly; SameSite=Strict` cookie and then stripped from the query — the
+exchange is single-use, so replaying a copied link in another browser is a `401`, and an
+explicit `--token` must be at least 22 characters; every mutation is a `POST` with a
+same-origin `Origin` **and** an HMAC-derived CSRF token; and responses carry a strict CSP
+with `COOP`/`CORP` and `no-store`.
+
+**Containment.** Every project path the UI reads or writes is refused if it is absolute,
+checked lexically, and then re-checked by `realpath`ing the deepest ancestor that exists —
+which is what catches a `denext.config.ts` or an `app/` that is a symlink out of the
+project. The same realpath gate is applied to the absolute paths a planner resolved for
+itself (a `generate` dry run, a Docker plan), because a lexical check alone cannot see
+through a symlinked directory. Every write is a `.tmp` file plus one rename, and a config
+form carries a SHA-256 of the source it was rendered from, so a file that changed on disk
+underneath you is a `409` rather than a lost edit.
+
+**Project code never runs in the UI's privileged process.** Doctor, tasks,
+`next.config` evaluation, `deno add`, **and discovering the project's own CLI verbs**
+(`denext commands --json`) all run as `deno` subprocesses with array arguments, never a
+shell string; a module-graph test and a runtime pid check both hold that line. Note what
+`--read-only` does and does not mean: it refuses every mutation **by the UI**, but it
+cannot stop your own config and plugin `setup()`s from executing inside that short-lived
+discovery child — which is exactly why the child, and not this process, is where they run.
+Every write is previewed as a diff before it is applied.
 
 ## 12. Security response headers / CSP / CORS
 
@@ -290,7 +305,8 @@ ships with its own invariant:
 
 - **API tokens are never recoverable.** A token is `tok_` plus 256 random bits, returned
   **once** at issue and stored only as its SHA-256; verification hashes the presented
-  string and compares in constant time. An absent, unknown, expired or revoked token all
+  string and looks the digest up by index — there is no in-process comparison of a secret,
+  so there is no timing oracle to equalise. An absent, unknown, expired or revoked token all
   produce the same 401 (no oracle), a missing scope or role a 403, and a token with no
   scopes satisfies no scope requirement — so scoping an endpoint can never silently admit
   older, scopeless tokens. Bearer credentials are never accepted on `/auth/*` mutations
@@ -305,12 +321,51 @@ ships with its own invariant:
   `consumeBackupCode` and `claimTotpStep` are specified as **atomic** delete-and-return /
   match-and-remove / claim operations; a non-atomic implementation is documented as a
   replay window, and both first-party adapters implement them atomically.
-- **Sign-in starts are rate-limited.** `GET /auth/signin/:provider` allows 20 per client
-  IP per 15 minutes (`rateLimit.signin`), counted on every hit, so an unauthenticated
-  visitor cannot make the app mint transaction cookies and outbound provider requests in
-  a loop. The credentials limiter (5 per client + identifier per 15 minutes) is unchanged;
-  `rateLimit: false` disables both. Both count per process unless a shared
-  `rateLimit.store` is supplied.
+- **Sign-in starts and session reads are rate-limited.** `GET /auth/signin/:provider`
+  allows 20 per client IP per 15 minutes (`rateLimit.signin`) and `GET /auth/session` 60
+  per minute (`rateLimit.session`), both counted on every hit, so an unauthenticated
+  visitor cannot make the app mint transaction cookies and outbound provider requests — or
+  verify cookies and read the session store — in a loop. The credentials limiter (5 per
+  client + identifier per 15 minutes) is unchanged; `rateLimit: false` disables all of
+  them. They count per process unless a shared `rateLimit.store` is supplied.
+
+  Three properties make the limiter dependable rather than decorative. An IPv6 client is
+  normalised and bucketed by **/64**, so rotating through a client's own prefix does not
+  buy a fresh budget. The in-memory store **never evicts a key that is mid-lockout** — a
+  flood of fresh keys cannot wash out a lockout that is doing its job; when every tracked
+  key is locked out and the cap is reached, the new key is refused instead. And behind a
+  reverse proxy the app has **not** declared (`trustForwardedHeaders` off, a private peer,
+  an `x-forwarded-for` present) the two per-IP budgets are skipped with one warning rather
+  than collapsing every visitor into one bucket — which would have been an app-wide outage
+  on the 21st sign-in. Setting `canonicalOrigin` without `trustForwardedHeaders` now warns
+  once at boot for the same reason.
+- **A revoked session cannot be resurrected by a refresh in flight.** Sliding expiry
+  rewrites a store-backed session through `SessionStore.update` — write-only-if-present —
+  rather than `create`, which is an upsert: a session revoked between this request's read
+  and its refresh stays revoked instead of coming back with a full fresh lifetime. A
+  custom store that does not implement `update` never slides a session forward and says so
+  once, which is the safe direction. Sliding expiry has **no absolute ceiling** by design:
+  an account that keeps being used keeps being extended, so end a session with revocation
+  (or a shorter `maxAge`), not by waiting for a cap that does not exist.
+- **Provider tokens stay out of the event stream.** With an adapter configured, a
+  provider's access / refresh / id tokens **are** persisted on the account row — that is
+  what an adapter is for — but the `linkAccount` event payload carries identity only
+  (provider, provider-side id, type, owner). An event handler is an audit sink, and a
+  credential in an audit line is a leak; a handler that genuinely needs them reads the
+  stored account back through the adapter.
+- **`hasRole` fails closed on an empty requirement.** `hasRole(session, [])` and
+  `requireAuth(request, { role: [] })` refuse: an empty list is "no role can satisfy this",
+  not "no requirement". Only an **absent** `role` means unrestricted.
+- **The client coerces its own redirects.** `signIn` / `signOut` reduce a caller-supplied
+  `callbackUrl` to a same-origin path before navigating — a `callbackUrl` is routinely read
+  out of the current query, so `javascript:…`, `//evil.test/x` and an absolute foreign URL
+  are all replaced by the fallback. The server coerces again; this is the half that guards
+  the purely client-side navigation that never reaches it.
+- **The development escape hatch re-checks every hop.** `dangerouslyAllowInsecureProviders`
+  swaps the SSRF-safe fetch for the platform one so an `http://localhost` provider works,
+  and follows redirects **manually**, re-checking each hop against the provider's host
+  allowlist. Letting the platform follow them meant a token endpoint could answer `307` and
+  carry the `client_secret` in the POST body to any host it named.
 - **Account linking refuses unverified matches.** An OAuth account only links to an
   existing user when both sides' emails are verified; anything else is
   `?error=account_not_linked` unless the provider explicitly sets
