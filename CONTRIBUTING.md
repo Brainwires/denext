@@ -293,6 +293,11 @@ deployed.
   / `enum` members wasm-bindgen emits undocumented. `@denext/effect` and `@denext/graphql` are
   not in the gate: their public types are `npm:effect`'s / `npm:graphql`'s, which
   `deno doc --lint` reads as private.
+- **No JSX syntax in published source.** `src/**` builds components with `h()` in
+  `.ts` files — the `denext ui` views included — never `.tsx`: JSR rewrites the
+  `jsxImportSource` compiler option into a per-file pragma, and the self-mapped
+  `denext` it names would not resolve from `jsr:`.
+  `tests/published-source-no-jsx.test.ts` guards it.
 - **Commits:** stage per file (never `git add -A`); keep the working tree
   buildable.
 
@@ -327,7 +332,11 @@ instead: `deno task docs:cli` (the CLI reference), `deno task docs:examples`
 `src/server/config-keys.generated.ts`) and `deno task gen:plugin-catalog`
 (`src/plugin/catalog.json` — the first-party package catalog the plugins page,
 `denext migrate` and the `denext ui` plugins panel all read; a new `packages/*`
-needs a `"denext": { "catalog": { … } }` block in its `deno.json` to appear).
+needs a `"denext": { "catalog": { … } }` block in its `deno.json` to appear, and a
+plugin package declares `denext.catalog.optionsType` there — the options interface
+the generator embeds as the catalog's `optionsSchema`, failing when it is missing).
+Both generators map TypeScript to JSON Schema through one module,
+`scripts/lib/ts-to-schema.ts`: extend the mapper there, never in a generator.
 Each has a drift test, so a stale artifact fails CI rather than shipping.
 
 ## Repo layout

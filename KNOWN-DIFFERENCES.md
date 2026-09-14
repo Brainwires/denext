@@ -140,6 +140,17 @@ opt-in — documented, not surprises. Full checklist in [the deployment guide](h
   is `?error=account_not_linked` unless the provider opts in with
   `allowDangerousEmailAccountLinking`. The default costs a support ticket; the alternative
   costs an account takeover from any IdP that will mint a token for an unverified address.
+- **`magicLink()` / `emailOtp()` are not next-auth's Email provider.** There is no
+  nodemailer `server` option — denext ships no mailer, so you pass
+  `sendVerificationRequest` — and a one-time-code mode (`emailOtp()`) sits next to the link.
+  Link tokens are stored as a SHA-256 and codes as an HMAC keyed by the auth `secret`;
+  `allowSignUp: false` refuses unknown addresses; a known address, an unknown one and a list
+  (which sends nothing) all get the identical answer; and the redeem is
+  `{basePath}/callback/:provider`, not a route of its own. As in Auth.js, an email sign-in
+  writes no account row — the address on the user record is the identity — but a first
+  email sign-in into an account whose address was never verified first retires the
+  password, TOTP factor, bearer tokens and server-side sessions set up without that proof
+  (pre-account hijacking), which Auth.js does not do.
 - **`id_token` audience validation is strict by default** (`strictAudience`): OIDC Core
   §3.1.3.7 steps 3–5 — a single `aud` must _be_ this client, a multi-valued `aud` needs an
   `azp` naming this client, and a foreign `azp` is refused. Auth.js accepts plain `aud`

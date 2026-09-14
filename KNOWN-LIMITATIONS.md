@@ -227,12 +227,12 @@ four documented bounds of the opt-in:
 
 ### First-party auth (`denextAuth`)
 
-- **No mailer.** denext never sends mail. Every flow that needs an outbound message takes
-  your `sendVerificationRequest`, which is a type-level seam only today: nothing in the
-  shipped surface consumes it, and neither password reset, email verification, magic link /
-  email OTP nor TOTP 2FA exists yet (they are scheduled in [ROADMAP.md](./ROADMAP.md)). The
-  session payload already reserves `mfaPending` / `amr`, so adopting them later will need no
-  cookie migration and will log nobody out.
+- **No mailer.** denext never sends mail: every emailed token — email verification,
+  password reset, a magic link, a one-time code — goes through your
+  `sendVerificationRequest`. Inside a request the message is handed over after the response
+  (`after()`, so the mailer's latency reveals nothing), which makes delivery best-effort on a
+  serverless platform that freezes the isolate once the response is sent; outside a request
+  it is awaited.
 - **No passkeys / WebAuthn, and no `next-auth` compat shim.** A Next app that imports
   `next-auth` does not run under the drop-in; port it to `denextAuth` (both are tracked in
   [ROADMAP.md](./ROADMAP.md)).
@@ -241,9 +241,37 @@ four documented bounds of the opt-in:
   additively (`CREATE TABLE IF NOT EXISTS` + `ALTER TABLE ADD COLUMN`); there is no migration
   framework, so a column can be added but never renamed or dropped for you. TOTP secrets are
   stored in plaintext at rest by construction — TOTP verification needs the shared secret, so
-  protect the database file. (`MfaRecord.backupCodeHashes` is specified as hashed and the
-  adapters compare it through a caller-supplied matcher, but nothing hashes or consumes a
-  backup code yet — the MFA flow itself is still to come.)
+  protect the database file; backup codes are stored only as `hasher` hashes.
+- **The adapter contract has no delete for a password or a second factor.** Disabling TOTP
+  writes an empty, unconfirmed MFA record, and a pre-account-hijacking eviction replaces the
+  password with the hash of a random secret; both read as absent everywhere (optional
+  `deleteCredential?` / `deleteMfa?` are on the roadmap).
+- **`inMemoryAuthAdapter` keeps several live tokens per address and purpose;
+  `sqliteAuthAdapter` keeps one.** In memory, a second link or code for the same address and
+  purpose does not retire the first until that one is used or expires; in SQLite the newer
+  one replaces it.
+- **TOTP is SHA-1 only, and denext renders no QR code.** `verifyTotp` and `totpAuthUri` use
+  SHA-1, 6 digits and 30 seconds — the profile every authenticator app supports.
+  `enrollTotp` returns the `otpauth://` URI: render it with a library of your choice, or
+  show the secret for manual entry (`totpQrSvg` is planned for 2.6).
+- **A GET spends a magic link**, so a mail gateway that pre-fetches links to scan them can
+  burn one before the user clicks — prefer `emailOtp()` where link scanners are common.
+- **A magic link redeemed by GET can sign a victim into an attacker's account** if the
+  victim clicks a link the attacker requested for their own address (login CSRF — the same
+  as Auth.js). Prefer `emailOtp()` where that matters.
+- **Rotating `secret` invalidates the one-time codes in flight** — they are keyed under the
+  current (first) secret, and live for minutes.
+- **Email addresses must be ASCII.** An SMTPUTF8 local part or a non-punycode IDN domain is
+  refused by the emailed flows.
+- **Stateless cookie sessions survive a password reset — and a pre-account-hijacking
+  eviction — until they expire.** Run a `sessionStore` (or `session.strategy: "database"`)
+  so either one signs out every device. A pending second-factor session in a cookie can't be
+  ended early either; it lasts 15 minutes.
+- **`mfa.required: "always"` is trust-on-first-use**: a user with no factor enrolls one
+  during the step-up, so whoever holds the first factor at that moment chooses the second.
+- **No public helper spends the MFA attempt budget from a Server Action.** The `/mfa*`
+  endpoints spend it; a Server Action that calls `verifySecondFactor` or `confirmTotp` must
+  throttle itself (`examples/auth` carries its own limiter).
 - **Sliding refresh only happens where a `Response` is being produced.** `session.updateAge`
   re-issues the cookie on `GET {basePath}/session`, in `requireAuth()` and in
   `requireSession()`. A bare `auth()` inside a streamed Server Component cannot set a cookie
@@ -254,51 +282,67 @@ four documented bounds of the opt-in:
   request cannot be undone by an upsert; a custom store that does not implement `update`
   simply never slides its sessions forward (they expire on their original schedule) and warns
   once. And there is **no absolute session ceiling** — an account in continuous use is
-  extended indefinitely, so end a session with revocation or a shorter `maxAge`.
-- **Both rate limiters count per node** unless you pass a shared `rateLimit.store`; the
+  extended indefinitely, so end a session with revocation or a shorter `maxAge`. Every slide
+  also re-stamps `issuedAt`, so with `session.updateAge > 0`, `/mfa/disable` always needs a
+  code.
+- **All five rate limiters count per node** unless you pass a shared `rateLimit.store`; the
   in-memory default is per process.
 - **Account linking refuses unverified-email matches by default** (a deliberate divergence —
   see [KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md)), and **an adapter does not switch
   sessions to database mode**: it is a persistence port, and `session: { strategy: "database" }`
   is what makes sessions stateful.
-- **`pages.error` / `pages.verifyRequest` are declared but not yet consumed** — setting them
-  type-checks and changes nothing until the rc.2 flows land.
+- **A bad emailed token lands on a different page per flow.** A wrong, spent or expired
+  verification or reset token redirects to `pages.error` (else `pages.verifyRequest`, else
+  `pages.afterSignIn`) with `?error=invalid_token`; a bad magic link or code goes to
+  `pages.error` (else `pages.signIn`) with `?error=Verification`. Set `pages.error` to land
+  both in one place.
 - **Two presets carry provider constraints**: Apple is `openid`-only (name and email require
-  `response_mode=form_post`, a POST callback the router does not serve), and `microsoftEntra`
+  `response_mode=form_post`, a cross-site POST callback that would arrive without the
+  `SameSite=Lax` transaction cookie, so the router does not serve it — tracked in
+  [ROADMAP.md](./ROADMAP.md)), and `microsoftEntra`
   requires a specific tenant — the `common` issuer is a template no discovery document can
   verify.
-- **The `Hasher` seam is configured but not yet driven.** `hasher` resolves and is carried
-  on the auth options, and `scryptHasher()` uses it to keep its equal-work rejection at the
-  configured cost — but no flow calls `hasher.hash` / `hasher.verify` today (your
-  `credentials` `authorize` callback does its own check). Setting it now is
-  forward-compatible; a custom implementation must equalise its own unknown-account work, as
-  `scryptHasher` does.
 - **`requireBearer` takes the auth config as its first argument.** There is no ambient
   "current auth config" to read, so every call site passes the same object it passed to
   `denextAuth()`; an `activeAuthConfig()` helper that would make it optional is on the roadmap.
 
+- **Enrolling TOTP needs only a complete session.** `/auth/mfa/enroll` asks for no fresh
+  password, so a stolen complete session can enrol a factor and lock the owner out at the next
+  sign-in. Requiring recent authentication (a never-slid `authTime`) is planned for 2.6.
+
 ### Project UI (`denext ui`)
 
-- **The compose file is emitted, never parsed.** The Docker panel regenerates
-  `docker-compose.yml` from the templates and diffs the result; it cannot round-trip edits to a
-  hand-written compose file (no YAML parser is involved). A file without the generated-file
-  sentinel is never overwritten.
-- **Plugin options are not yet form-editable.** The catalog knows a plugin's option keys but
-  not their types, so the plugins panel adds and removes plugins — it does not render a form
-  for a plugin's options — and only first-party `@denext/*` packages are listed (there is no
-  JSR-wide plugin discovery).
-- **The UI is not itself a denext app.** It is server-rendered `.ts` behind one `renderPage()`
-  seam precisely so it can become one later; today it ships no bundler and no JSX.
+- **The compose editor owns a closed set of edits**: `image`, `restart`, `ports`,
+  `environment`, `depends_on`, `volumes`, and commenting a service out or back in. A new
+  service, `build`, `networks` and everything else is edited by hand; a long-syntax port or
+  volume (a mapping) can be removed but not rewritten, and a flow-style field
+  (`ports: ["80:80"]`) is refused. A file with anchors, aliases, merge keys, flow-style
+  services, several documents (`---`) or mixed CRLF/LF line endings is **opaque** —
+  read-only, with the regeneration diff. Only `docker-compose.yml` at the project root is
+  discovered; a `compose.yaml` is not.
+- **Third-party plugins get no options form.** Option schemas come from the first-party
+  catalog, generated from denext's own workspace, so a plugin found on JSR is added and wired
+  but its options are set in `denext.config.ts`. A first-party schema expands four
+  interfaces deep.
+- **Code-valued plugin options are read-only.** A callback, a variable, a call, a `{}`
+  schema part (a type the generator could not describe) or a function-wrapped list
+  (openapi's `tags`, `securitySchemes`) renders as a read-only cell. A toggle over an option
+  the config does not set is written only when it is switched on.
+- **A plugin is recognised by its plain import.** `import { openapi as oa } from
+  "@denext/openapi"`, or an import from a full `jsr:` specifier, is not recognised as the
+  catalog's plugin, so it gets no options link.
+- **JSR search needs net permission for both `api.jsr.io` and `jsr.io`.** Without it the
+  panel degrades exactly as under `--offline`; the UI checks the permission and never
+  prompts.
+- **The UI is not itself a denext app.** Its views are server-rendered components built
+  with `h()` in `.ts` files — no bundler, no hydration, no App Router — which is what lets
+  it start instantly with no build.
 - **`/config/next` is read-only.** denext never loads `next.config.*` at runtime, so writing to
   it would change nothing; the panel reads it in a bounded subprocess and offers to translate
   what denext honors into `denext.config.ts`.
 - **The DEFAULT port falls forward.** With no `--port`, an occupied 5177 moves to the next
   free one (up to ten), so read the printed URL (or `--json`) instead of assuming 5177. An
   **explicit** `--port` is strict: a taken port is a clear error, never a quiet move.
-- **`denext --help <dir>` does not read the directory.** A bare positional is not taken as
-  the project directory on the help path, so a per-project help table needs `--cwd=<dir>`
-  (a parser quirk tracked in [ROADMAP.md](./ROADMAP.md)). Every verb honours `--cwd=<dir>`,
-  which is the workaround.
 - **`denext --help` does not list a project's own verbs, by design.** Rendering them would
   mean importing `denext.config.ts` and running every plugin `setup()`; `denext commands`
   (which the help footer points at) does that in a process that always exits, and shell
@@ -356,19 +400,32 @@ Ctrl+Shift+D) as the full-fidelity surface — the six tabs and everything in th
 are listed in [FEATURES.md](./FEATURES.md). Its documented boundaries:
 
 - **Hook names are all-or-nothing per component.** The runtime walks the
-  build-time metadata and the fiber's hook cells in lockstep; any mismatch —
-  conditional hooks, or a custom hook imported from another module — aborts
-  naming for that component, which then shows kind labels and "names unavailable"
-  rather than a plausible-looking wrong name. Custom hooks expand only when they
-  are declared in the **same module** (≤3 levels of breadcrumb).
+  build-time metadata and the fiber's hook cells in lockstep; any mismatch — a
+  conditional hook, or a custom hook the build could not follow — aborts naming
+  for that component, which then shows kind labels and "names unavailable" rather
+  than a plausible-looking wrong name. A custom hook expands when it is declared
+  in the same module or bound by a static relative import (extensionless and
+  `index` imports included), up to 3 levels of breadcrumb across modules. A hook
+  imported by a bare, `npm:`/`jsr:`, URL or import-map-alias specifier, through a
+  namespace import, or re-exported through a barrel still aborts naming for that
+  component (so does `./auth.js` naming an `auth.ts` file).
 - **The "owner stack" is the render-parent chain**, an approximation of React's
   JSX-owner stack (they coincide for the common case); per-element `__source` is
   on the roadmap.
-- **The bundled App Router path has coarser metadata.** With
-  `DENEXT_DEV_UNBUNDLED=0` there is no per-module transform, so component
-  families exist only for route-structural components, carry a module and export
-  but **no line/column**, and no component gets hook names. The default
-  (unbundled) dev loop has all of it.
+- **The bundled App Router path names route files only.** With
+  `DENEXT_DEV_UNBUNDLED=0` (and for a route with an `.mdx`/`.md` page or layout,
+  which always takes that path) the generated route entry carries line, column and
+  hook names for the route-structural components — page, layouts, templates,
+  `loading`, `error`, slot pages; an anonymous `export default` is keyed
+  `#default` — but not for the components those files render, nor for a custom
+  hook they import from another file. The bundled Flight entry carries none.
+  `DENEXT_DEV_META=0` still turns it off, and production entries carry none. The
+  default (unbundled) dev loop covers every module.
+- **A `useDebugValue` label rides the row of the hook cell before the call.** It
+  takes no cell of its own, so a component with no hook cells shows none, and a
+  call placed between two hooks reads under the earlier one. It is dev-only,
+  `format` runs only when the inspector reads it, and the MCP snapshot redacts it
+  like every hook value (strings travel as `string(n)`).
 - **Network, Cache and Routes — and the MCP snapshot — need the App Router dev
   server.** SPA dev serves none of those endpoints, so those tabs render a named
   "App Router only" state (the panel itself does mount in SPA dev, and its editor

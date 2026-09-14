@@ -10,6 +10,120 @@ and this project adheres to
 
 ### Added
 
+- **Auth: password sign-in without an `authorize`.** With an adapter that stores password
+  hashes, `credentials()` needs no callback: the trimmed, lower-cased `email` is looked up
+  with `getUserByEmail` and the `password` checked against `getCredential`'s hash with the
+  configured `hasher` — the first flow to drive the `Hasher` seam rc.1 only configured. Every
+  refusal (a missing field, an unknown address, no password on file, a wrong one) costs
+  exactly one `hasher.verify` and is the same generic `401`, counted by the credentials
+  limiter. The verified record is the session user: no `"credentials"` account row, no
+  `createUser` / `linkAccount`, `amr` is `["pwd"]`. A `credentials()` with no `authorize`
+  and nothing to verify against throws at `denextAuth()` construction instead of answering
+  `401` to every login.
+- **Auth: email verification and password reset.** `requestEmailVerification` /
+  `verifyEmail` / `requestPasswordReset` / `resetPassword` (with `EmailRequestResult` /
+  `ResetPasswordResult`), callable from a Server Action and served as
+  `GET|POST {basePath}/verify`, `POST {basePath}/reset` and `POST {basePath}/reset/confirm`
+  (consume the token, `setCredential`, revoke every server-side session). A row exists only
+  when the adapter has the verification-token group — `/reset*` also needs `setCredential` —
+  and is a plain 404 otherwise; `GET {basePath}/reset` falls through to the app, which is
+  where the emailed link lands. Mail goes through `sendVerificationRequest`, and
+  `pages.verifyRequest` / `pages.error` are now consumed. A new `email` block
+  (`AuthEmailConfig`) sets the lifetimes — verification 24 h, reset 1 h, magic link 10 min,
+  code 5 min — plus `otpDigits` (6–10), `verifyPath` and `resetPath`; new events
+  `verificationRequested`, `emailVerified` and `passwordReset`.
+- **Auth: passwordless sign-in — `magicLink()` and `emailOtp()`.** Two `type: "email"`
+  providers (`EmailProvider`, taking `EmailProviderOptions` `{ id?, name?, allowSignUp? }`)
+  on `{basePath}/callback/:provider`: a single-use link, or a 6–10-digit code the user types.
+  Both run the same sign-in tail as every other first factor — `callbacks.signIn`, the
+  second-factor step-up, `amr` `["email"]` / `["otp"]` — and an unknown address becomes a
+  verified user unless `allowSignUp: false`. `signIn("email", { credentials: { email } })`
+  works with no client change, and `GET {basePath}/providers` lists them with their display
+  `name`. An email provider without `sendVerificationRequest`, or over an adapter missing a
+  method it needs, throws at construction.
+- **Auth: TOTP two-factor with a pending-session step-up.** A user with a confirmed
+  authenticator owes a code at every sign-in, whatever the first factor — password, OAuth /
+  OIDC, magic link or emailed code. The session is minted **pending** (15 minutes, never
+  slid, `null` from `auth()`), `requireAuth` redirects to `pages.mfa` with a `callbackUrl`,
+  and that page reads it with `pendingMfaSession()` and posts `{ code }` — a TOTP or a backup
+  code — to `POST {basePath}/mfa`. Enrollment is `POST {basePath}/mfa/enroll` →
+  `/mfa/confirm` (the backup codes come back once), removal is `/mfa/disable` with a fresh
+  second factor, and the `/mfa*` rows are a 404 unless the adapter implements the whole MFA
+  group. A new `mfa` block (`AuthMfaConfig`: `required` `"enrolled"` | `"always"`, `issuer`,
+  `window`, `backupCodes`, `freshness`) tunes it. `signIn` fires only once the step-up
+  completes; a wrong code fires `signInFailed` with `"invalid_mfa_code"`.
+- **Auth: the rc.2 exports**, all from `denext/server`: `magicLink`, `emailOtp`
+  (+ `EmailProvider`, `EmailProviderOptions`); `requestEmailVerification`, `verifyEmail`,
+  `requestPasswordReset`, `resetPassword` (+ `EmailRequestResult`, `ResetPasswordResult`);
+  `mfaStatus`, `enrollTotp`, `confirmTotp`, `verifySecondFactor`, `disableTotp` (+
+  `MfaStatus`, `TotpEnrollment`, `ConfirmTotpResult`, `MfaMethod`); the RFC 6238 primitives
+  `generateTotpSecret`, `totpAuthUri`, `verifyTotp` (+ `TotpAuthUriOptions`,
+  `TotpVerifyOptions`, `TotpVerifyResult`) — `verifyTotp` is SHA-1 and returns the matched
+  `step` without claiming it; `generateBackupCodes` and `backupCodeMatcher` (+ `BackupCodes`),
+  which hash through the configured `hasher`; `pendingMfaSession`; and `AuthEmailConfig` /
+  `AuthMfaConfig`. `verifySecondFactor` (a TOTP **or** a backup code) and `backupCodeMatcher`
+  (it returns the predicate `consumeBackupCode` takes) were renamed before first publish.
+- **Auth: two more rate limiters.** `rateLimit.verification` — 3 mail requests per address
+  per 15 minutes, one budget across verification, reset, link and code mail — and
+  `rateLimit.mfa` — 5 second-factor checks per user per 5 minutes (an emailed code counts
+  against its address) — each with an IP-wide bucket at ten times its `max`.
+  `rateLimit: false` now disables all five.
+- **`denext ui`: edit `docker-compose.yml` in place.** Every service gets a form — `image`,
+  `restart`, and row editors for `ports`, `environment`, `depends_on` and `volumes` — and a
+  service can be commented out or enabled again. `src/build/compose-edit.ts`
+  (`readCompose` / `applyComposeEdits`) parses with `@std/yaml` only to validate, splices
+  just the lines an edit touches, and re-parses the result against the same change applied
+  to the parsed model — a mismatch is a refusal, never a write — so comments, quoting and
+  every untouched line stay byte for byte. Preview, then confirm, with the `_base` SHA-256
+  (a stale page is a `409`). A file the editor cannot follow line by line is **opaque** and
+  keeps the read-only regeneration view. `GET /api/docker` returns the parsed `model`; a
+  `POST` with `editor: "compose"` takes the closed op set.
+- **`denext ui`: per-plugin option forms.** A wired first-party plugin gets an **Options**
+  link to `/plugins/options?name=<package>` (JSON twin `/api/plugins/options`), a form built
+  from the catalog's `optionsSchema` with the `/config` widgets. The call is read and
+  written by an swc splice (`src/build/call-args-edit.ts`) that never evaluates the config:
+  only the fields you changed are written, code-valued options stay read-only, a call the
+  writer cannot own is an honest `422` with the offending source, and the preview/confirm
+  pair carries `_base`.
+- **`denext ui`: JSR plugin search.** The bottom of `/plugins` searches JSR through a plain
+  `GET` form (`/plugins?q=`, so it works with JavaScript off and under `--read-only`), and a
+  hit is added with `op=add-jsr`: `@scope/name` is checked against JSR's naming rules and the
+  factory export must be an identifier before any request or subprocess, and the version is
+  always the registry's `latest`, read from `jsr.io` in the same request — never from the
+  browser. The UI process's only outbound requests go to `api.jsr.io` and `jsr.io`, with no
+  credentials, no redirects, a five-second deadline and a 64 KiB body cap.
+- **`denext ui --offline`** keeps the UI and every process it starts off the network:
+  denext subprocesses run with `--deny-net`, and operations that need the network or can't
+  be sandboxed are refused with a note. The UI degrades the same way on its own when it does
+  not hold net permission for both JSR hosts.
+- **`denext ui`: the Commands panel runs a verb with its declared flags** — one typed input
+  per flag (a checkbox, a number or a text field by the flag's `type`), each value its own
+  argv element, allowlisted by the verb's own flag names; a positional starting with `-` is
+  refused and reserved global flag names are never offered.
+- **Plugin option schemas in the generated catalog.** Every `kind: "plugin"` package names
+  its options interface in `deno.json` (`denext.catalog.optionsType`), and
+  `gen:plugin-catalog` embeds it as `optionsSchema` — through `scripts/lib/ts-to-schema.ts`,
+  the one TypeScript → JSON Schema mapper `gen:config-schema` now shares, four interfaces
+  deep. The generator fails when a plugin omits `optionsType` or its `configKeys` drift from
+  the schema.
+- **A `@widget textarea` JSDoc tag** for config fields: `spa.head` and `spa.loading` render
+  as textareas in `denext ui`.
+- **DevTools: source and hook names on the bundled App Router dev path.** With
+  `DENEXT_DEV_UNBUNDLED=0` (and for a route with an `.md` / `.mdx` page or layout) the route
+  entry now carries line, column and hook names for the route-structural components — page,
+  layouts, templates, `loading`, `error`, slot pages — with an anonymous `export default`
+  keyed `#default`. It is re-parsed only when a file's mtime changes, `DENEXT_DEV_META=0`
+  still turns it off, and production entries carry none.
+- **DevTools: custom hooks are named across a static relative import.** `HookDevMeta.from`
+  (`denext/client-runtime`) records the module a hook call resolves to, so `useAuth › user`
+  expands when `useAuth` lives in `../lib/auth.ts` — extensionless and `index` imports
+  included, up to three levels across modules — and a hooks-only module now emits
+  metadata too. A bare, `npm:` / `jsr:`, URL or import-map-alias specifier, a namespace
+  import or a barrel re-export still stops naming for that component.
+- **DevTools: `useDebugValue` shows up** — as a `debug: …` row in the panel, in the MCP
+  snapshot and in `denext_hook_state`, via the new `InspectHook.debug` (`denext/devtools`).
+  It takes no hook cell (adding one never resets state under Fast Refresh), is dev-only, and
+  its `format` runs only when the inspector reads it.
 - **`spa.precompress`.** Set `false` to skip the `.gz` siblings a SPA `build`/`export`
   writes next to client assets — for an export bundled into a native shell (Capacitor) whose
   webview never requests them. Default `true`.
@@ -21,9 +135,37 @@ and this project adheres to
   (swipe right to go back: 72 px, horizontal ≥ 1.4× vertical, yields to editing and horizontal
   scrollers) and `SAFE_AREA_CSS`. It talks to Capacitor only through the `window.Capacitor`
   global — no `@capacitor/*` dependency.
+- **Docs:** the [Auth](https://denext.dev/docs/auth) guide gains password sign-in without an
+  `authorize`, email verification and reset, magic links and codes, and TOTP; the
+  [Project UI](https://denext.dev/docs/ui) guide the compose editor, plugin options, JSR
+  search and `--offline`; [DevTools](https://denext.dev/docs/devtools) the bundled path,
+  cross-module hook names and debug values; and
+  [Writing a plugin](https://denext.dev/docs/plugins) the first-party catalog block.
 
 ### Changed
 
+- **`credentials(options?)` — the options, and `authorize`, are optional**
+  (`CredentialsProvider.authorize?`). Existing providers are unaffected.
+- **`AuthProvider` gained a third member, `EmailProvider` (`type: "email"`).** A `switch`
+  over `provider.type` that was exhaustive needs an `"email"` case.
+- **The internal `issueAuthSession(config, user, provider, options?)` takes a trailing
+  options argument** (`mfaPending`, `amr`, `lifetime`); the change is source-compatible.
+  Every first factor — credentials, OAuth / OIDC and the email providers — now ends in one
+  sign-in tail that decides the step-up before minting a session.
+- **`AuthSession.issuedAt` is documented as re-stamped by sliding expiry**, which it always
+  was — so with `session.updateAge > 0`, `/mfa/disable` always needs a code.
+- **Every `denext ui` view is a component.** The panels are server-rendered `h()` components
+  in `.ts` files (`src/ui/view.ts`, `src/ui/components.ts`); the `html` template-string
+  helpers are gone. Published source carries no JSX syntax, so the CLI still runs straight
+  from `jsr:` with no bundler.
+- **`denext migrate` and `denext ui` share one `next.config` evaluator**
+  (`src/build/next-config-eval.ts`: a read-only `deno` child with no net, write or run
+  permission), each keeping its own translation table. `DENEXT_NEXT_EVAL_TIMEOUT_MS` now
+  applies to the UI too.
+- **The config schema describes `commands[].flags` and `positionals` item by item**, and
+  `Record` maps no longer carry `x-denext.widget: "map"` — `"textarea"` is the only
+  `x-denext.widget` value emitted or read.
+- **A project verb with a required positional can be run from the Commands panel.**
 - **`denext create --capacitor` scaffolds Capacitor 8.** `@capacitor/core`, `cli`, `ios` and
   `android` are pinned to `^8.5.2` (the `mobile:*` tasks run that CLI), and `ios/` and
   `android/` are no longer gitignored: Capacitor 8 builds iOS with Swift Package Manager and
@@ -34,14 +176,85 @@ and this project adheres to
   project, or overlaps `app/`, `public/`, `.denext/`, `node_modules/`, `.git/` or the SPA entry
   now throws before anything is written.
 
+### Security
+
+- **Verification tokens are single-use secrets, stored only as hashes.** A link token is
+  256 random bits kept as its SHA-256, scoped to one `(address, purpose)` and consumed
+  atomically, so a wrong token cannot burn the real one and a spent one never works twice; an
+  emailed one-time code is stored as an HMAC-SHA-256 under the auth `secret` over
+  `(purpose, address, code)` — an unkeyed hash of six digits is reversed by trying every
+  value. Links are built only on `canonicalOrigin` in production.
+- **Reset, verification and email sign-in answer the same for every address.** A known
+  address, an unknown one and an invalid one get the same response for comparable work: the
+  send budget is spent before the lookup and, inside a request, the mail is sent after the
+  response (`after()`), so the mailer's latency reveals nothing.
+- **One address, never split — the next-auth CVE-2022-35924 class.** The emailed flows
+  normalise their input to exactly one address; a list (`a@x.com,b@y.com`), a display-name
+  form or anything else sends nothing and gets the generic answer.
+- **Pre-account hijacking is closed.** A first magic-link or one-time-code sign-in into an
+  existing account whose address was never verified retires everything set up without that
+  proof — the password (replaced by the hash of a random secret), any TOTP factor and its
+  backup codes, every bearer API token and every server-side session — before marking the
+  address verified. If any step fails the address stays unverified and the redeem gets the
+  generic failure.
+- **The step-up mints a fresh session.** A pending session is a credential issued before
+  authentication finished, so completing the second factor deletes it (and its store
+  record) and issues a new one — never an in-place upgrade. The `/mfa*` endpoints read only
+  the cookie, so a bearer token can neither step up nor enroll, and the eight bypass paths
+  (`auth()`, `requireAuth`, `requireSession`, `GET /session`, Live `authorize`,
+  `requireBearer`, `POST /auth/tokens`, `/mfa/disable`) are each gated and each tested
+  (`tests/auth-mfa-bypass.test.ts`).
+- **Every second-factor code works once.** A TOTP step is claimed through the adapter's
+  atomic `claimTotpStep` — not even confirm-then-step-up can reuse one — backup codes are
+  stored only as `hasher` hashes and spent atomically, every code check spends the per-user
+  budget (a correct guess can't reset it), and disabling needs a fresh second factor.
+- **A completed password reset revokes every server-side session** of that user.
+- **`denext ui` takes nothing version-shaped from the browser.** `op=add-jsr` validates the
+  `@scope/name` spec and the export identifier before any request or argv, and pins the
+  version the registry reports; the Commands form's argv is allowlisted by the verb's own
+  declared flags.
+
+- A `callbacks.session` that returns a rebuilt object can no longer turn a first-factor-only
+  (MFA-pending) sign-in into a complete session: the framework re-applies `mfaPending`, `amr`,
+  `v`, `issuedAt` and the pending lifetime after the callback runs. The callback may still add
+  `mfaPending`, never remove it.
+- Attempt budgets are counted before they are checked, so a concurrent burst of password,
+  one-time-code or TOTP guesses can no longer all pass the check before any of it is counted.
+  A success refunds its unit on the failure-only budgets. `RateLimitStore` gains an optional
+  `decrement`; a store without it simply keeps the unit.
+- A password reset on an account whose address was never verified now retires what was set up
+  without proof of the mailbox (bearer API tokens, the TOTP factor and backup codes, server-side
+  sessions) and marks the address verified, exactly as a first email sign-in does.
+- An adapter that stores `null` for an unverified address (Auth.js style) is no longer read as
+  verified, which used to skip the pre-account-hijacking defence.
+- `denext migrate` and the `denext ui` next.config panel: a `next.config` that prints its own
+  result line can no longer plant keys or code in the generated `denext.config.ts`. The
+  evaluator's marker carries a per-run nonce, dropped keys are escaped into their comments, and
+  a key that isn't an identifier is quoted.
+- `denext ui`: the Docker panel no longer reads a `Dockerfile`, `docker-compose.yml` or
+  `.dockerignore` that resolves outside the project through a symlink.
+
 ### Fixed
 
+- `denext ui`: a verb run from the Commands panel is stopped when the page goes away or the UI
+  shuts down (it used to keep running).
+- `denextAuth()` refuses `mfa.required: "always"` without an adapter MFA group at construction;
+  it used to accept it and lock every user out at the step-up.
+
+- **`denext --help build` ran `build`.** A help flag before the verb now prints that verb's
+  help and never runs it; `denext --help <dir>` prints the top-level help for that directory
+  instead of erroring; leading global flags (`denext --cwd ./app build`) reach the command;
+  and an unknown flag before the verb is an error instead of being silently ignored.
+- **A `denext ui` textarea dropped a value's leading newline.** HTML discards the first
+  newline after `<textarea>`, so a value starting with one lost it on every round trip; the
+  control now writes a newline ahead of the value.
+- **A CommonJS `next.config` under a symlinked project could not be read** by the
+  evaluator: paths are now `realpath`ed before they become `--allow-read`.
 - **The SPA export replaces `out/` instead of piling builds into it.** It wrote into the
   existing `out/` and never cleared it, so content-hashed chunks and `.gz` siblings from every
   earlier build accumulated and shipped in anything that bundles `out/`, such as a Capacitor
   app. It now builds into `out.staging/` and swaps it in, like the App Router export: `out/`
   holds exactly the current build, and a failed export leaves the previous one intact.
-
 - **SPA mode keeps an app's own viewport meta.** `denext migrate` stripped every
   `<meta name="viewport">` from the source `index.html`, and the SPA shell always emitted
   `width=device-width, initial-scale=1`, so a migrated app lost `viewport-fit=cover` (every
