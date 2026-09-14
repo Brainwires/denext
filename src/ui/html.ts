@@ -1,65 +1,22 @@
 // The view layer of `denext ui` — and the contract every feature module implements.
 //
 // Shape: the UI is server-rendered HTML with no bundler, no client framework and no hydration
-// (the `packages/openapi/docs-ui.ts` model). A view is either an `html` tagged template (a
-// pre-escaped {@linkcode RawHtml} fragment) or an `h()`-built component tree rendered once, synchronously, on the server
-// through `view.ts` — the two nest inside each other (`renderView` / `<Raw>`) while the views
-// flip over one at a time. Every page render goes through the single {@linkcode renderPage} seam.
+// (the `packages/openapi/docs-ui.ts` model). Every view is an `h()`-built component tree,
+// rendered once, synchronously, on the server through `view.ts` into a pre-escaped
+// {@linkcode RawHtml} fragment; the pieces the panels share live in `components.ts`. Every page
+// render goes through the single {@linkcode renderPage} seam.
 //
 // This module also owns the handler contract ({@linkcode UiContext}, {@linkcode UiRoute}) and the
 // navigation list, rather than `routes.ts`, so that `features/*.ts` can depend on it while
 // `routes.ts` depends on the features — one direction, no import cycle. The graph below it is
-// one-way too: `html.ts` → `layout.ts` → `view.ts`, and `html.ts` → `view.ts` (shared pieces in `components.ts`).
+// one-way too: `html.ts` → `layout.ts` → `view.ts`, and `html.ts` → `view.ts`.
 
 import type { VNode } from "../jsx/types.ts";
 import type { SseClients } from "../build/sse.ts";
 import { layout, type NavItem } from "./layout.ts";
-import { UI_CSRF_FIELD } from "./security.ts";
 import { type RawHtml, renderView } from "./view.ts";
 
 export type { RawHtml } from "./view.ts";
-
-/**
- * Mark a string as already-safe markup so {@linkcode html} interpolates it verbatim.
- *
- * @param value Markup the caller vouches for.
- * @returns The fragment wrapper.
- */
-export function raw(value: string): RawHtml {
-  return { __html: value };
-}
-
-/**
- * Escape a value for interpolation into HTML text or a double-quoted attribute.
- *
- * @param value Anything; stringified first.
- * @returns The escaped text.
- */
-export function esc(value: unknown): string {
-  return String(value).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
-}
-
-/**
- * Tagged template for HTML. Interpolated values are escaped unless they are {@linkcode RawHtml};
- * arrays are interpolated element-wise and joined; `null`/`undefined`/`false` render as nothing.
- *
- * @param strings The literal chunks.
- * @param values The interpolated values.
- * @returns The assembled fragment.
- */
-export function html(strings: TemplateStringsArray, ...values: unknown[]): RawHtml {
-  let out = strings[0];
-  for (let i = 0; i < values.length; i++) out += interpolate(values[i]) + strings[i + 1];
-  return { __html: out };
-}
-
-/** One interpolated value as markup (escaped unless raw). */
-function interpolate(value: unknown): string {
-  if (value === null || value === undefined || value === false) return "";
-  if (Array.isArray(value)) return value.map(interpolate).join("");
-  if (typeof value === "object" && "__html" in (value as RawHtml)) return (value as RawHtml).__html;
-  return esc(value);
-}
 
 /**
  * Unwrap a fragment to its markup string.
@@ -134,15 +91,14 @@ export const UI_NAV: readonly NavItem[] = [
 
 // ── the page seam ────────────────────────────────────────────────────────────
 
-/** What a view may return: a markup string, an `html` fragment, or a component (VNode) tree. */
+/** What a view may return: a component (VNode) tree, an already-rendered fragment, or markup. */
 type ViewResult = string | RawHtml | VNode;
 
 /**
- * The single indirection every page render goes through. A view may still return a string or
- * an `html` fragment, or return a component tree (rendered here through `renderView`, synchronously) — so a
- * view flips from one to the other without touching a route. A view that throws (or an async
- * component) throws out of this call, which the server answers with its hardened `500`
- * before any byte of the page is written.
+ * The single indirection every page render goes through. A view returns a component tree
+ * (rendered here through `renderView`, synchronously); an already-rendered fragment or a markup
+ * string passes through untouched. A view that throws (or an async component) throws out of this
+ * call, which the server answers with its hardened `500` before any byte of the page is written.
  *
  * @param view A view function.
  * @param props Its props.
@@ -155,7 +111,7 @@ export function renderPage<P>(view: (props: P) => ViewResult, props: P): string 
   return renderView(result).__html;
 }
 
-/** Whether a view's result is an `html` fragment (a VNode never carries `__html`). */
+/** Whether a view's result is an already-rendered fragment (a VNode has no markup field). */
 function isRawHtml(result: RawHtml | VNode): result is RawHtml {
   return typeof (result as Partial<RawHtml>).__html === "string";
 }
@@ -212,77 +168,4 @@ export function panelResponder(
       status,
     );
   };
-}
-
-/** What one {@linkcode opForm} posts. */
-export interface OpFormOptions {
-  /** The form action (the panel's own path unless the operation posts elsewhere). */
-  readonly action: string;
-  /** The submit button's label. */
-  readonly label: string;
-  /** Hidden fields carried with the operation (`op`, a row name, `confirm`, …). */
-  readonly fields?: Readonly<Record<string, string>>;
-  /** Extra markup inside the form, after the hidden fields. */
-  readonly extra?: RawHtml;
-  /** A class on the `<form>` itself. */
-  readonly className?: string;
-  /** Disable the button (what `--read-only` does to every write). */
-  readonly disabled?: boolean;
-}
-
-/**
- * One operation as a real `<form method="post">` — the CSRF token, the operation's hidden
- * fields and a submit button. Works with JavaScript disabled; `ui.js` upgrades the same form to
- * fetch + panel swap.
- *
- * @param csrf The session CSRF token.
- * @param options Action, label, hidden fields and whether the button is disabled.
- * @returns The form markup.
- */
-export function opForm(csrf: string, options: OpFormOptions): RawHtml {
-  const parts = [hiddenField(UI_CSRF_FIELD, csrf)];
-  for (const [name, value] of Object.entries(options.fields ?? {})) {
-    parts.push(hiddenField(name, value));
-  }
-  if (options.extra) parts.push(toHtml(options.extra));
-  const className = options.className ? ` class="${esc(options.className)}"` : "";
-  const disabled = options.disabled ? " disabled" : "";
-  parts.push(`<button type="submit"${disabled}>${esc(options.label)}</button>`);
-  const open = `<form method="post" action="${esc(options.action)}"${className}>`;
-  return raw([open, ...parts, "</form>"].join("\n"));
-}
-
-/** One hidden input, escaped. */
-function hiddenField(name: string, value: string): string {
-  return `<input type="hidden" name="${esc(name)}" value="${esc(value)}">`;
-}
-
-/**
- * A unified diff as the panels' ordinary `<pre class="out">` block, with each added, removed
- * and hunk-header line wrapped in a class the stylesheet colours (no inline style, no script —
- * the CSP holds).
- *
- * @param diff The unified diff text.
- * @returns The rendered block.
- */
-export function diffHtml(diff: string): RawHtml {
-  const lines = diff.split("\n").map((line) => {
-    const kind = diffClass(line);
-    return kind === "" ? html`${line}` : html`<span class="${kind}">${line}</span>`;
-  });
-  return html`<pre class="out"><code class="diff">${joinLines(lines)}</code></pre>`;
-}
-
-/** The class one diff line gets: an addition, a removal, a hunk header, or nothing. */
-function diffClass(line: string): string {
-  if (line.startsWith("+++") || line.startsWith("---")) return "meta";
-  if (line.startsWith("@@")) return "meta";
-  if (line.startsWith("+")) return "add";
-  if (line.startsWith("-")) return "del";
-  return "";
-}
-
-/** Join rendered lines back with the newlines `split` removed. */
-function joinLines(lines: readonly RawHtml[]): RawHtml {
-  return raw(lines.map(toHtml).join("\n"));
 }

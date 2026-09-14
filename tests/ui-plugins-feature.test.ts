@@ -98,6 +98,22 @@ function config(h: Harness): Promise<string> {
   return Deno.readTextFile(join(h.dir, "denext.config.ts"));
 }
 
+/**
+ * Markup with the renderer's named entity references decoded, so an assertion can quote text as
+ * written. The component views emit `&quot;`/`&#39;`/`&lt;`/`&gt;` where the string views
+ * emitted numeric ones (or none, for quotes in template text) — the same characters to a browser.
+ */
+function normaliseEntities(markup: string): string {
+  return markup.replaceAll("&quot;", '"').replaceAll("&#39;", "'").replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+}
+
+/** One catalogue card's markup: from its anchor to the end of its `<article>`. */
+function card(body: string, name: string): string {
+  const start = body.indexOf(`id="${name}"`);
+  return body.slice(start, body.indexOf("</article>", start));
+}
+
 Deno.test("the catalog renders in two groups with each package's installed state", async () => {
   const h = await ui({
     "denext.config.ts": WIRED_CONFIG,
@@ -120,6 +136,9 @@ Deno.test("the catalog renders in two groups with each package's installed state
     );
     assertStringIncludes(openapiRow, "available");
     assertStringIncludes(openapiRow, ">Add<");
+    // A wired plugin with an options schema links to its options sub-panel; an unwired one does not.
+    assertStringIncludes(card(body, HTMX), `href="/plugins/options?name=%40denext%2Fhtmx"`);
+    assert(!card(body, OPENAPI).includes("/plugins/options"), "openapi is not wired");
     assert(!body.includes("Not implemented yet"), "the panel is implemented");
   } finally {
     await stop(h);
@@ -146,9 +165,12 @@ Deno.test("the JSON twin reports the catalog, the installed set and each row's s
     assertEquals(htmx.factory, "htmx");
     assertEquals(htmx.docs, "https://denext.dev/docs/htmx");
     assertStringIncludes(htmx.spec, "jsr:@denext/htmx@^");
+    assertEquals(htmx.options, "/plugins/options?name=%40denext%2Fhtmx");
     const openapi = payload.catalog.find((row: { name: string }) => row.name === OPENAPI);
     assertEquals(openapi.wired, false);
     assertEquals(openapi.dependency, false);
+    assertEquals(openapi.options, null);
+    assertEquals(payload.jsr.query, "", "no search ran without ?q=");
   } finally {
     await stop(h);
   }
@@ -184,6 +206,37 @@ Deno.test("a confirmed add runs deno add and wires the config", async () => {
     const source = await config(h);
     assertStringIncludes(source, `import { openapi } from "@denext/openapi";`);
     assertStringIncludes(source, "plugins: [openapi(), htmx()]");
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("a confirmed add answered as a fragment shows the outcome — and a failed deno remove", async () => {
+  const h = await ui({ "denext.config.ts": WIRED_CONFIG });
+  try {
+    const ok = await post(
+      h,
+      "/plugins",
+      { name: OPENAPI, op: "add", confirm: "1" },
+      "text/html-fragment",
+    );
+    assertEquals(ok.status, 200);
+    const okText = await ok.text();
+    assertStringIncludes(okText, `Added ${OPENAPI} and updated denext.config.ts.`);
+    assertStringIncludes(okText, "stubbed deno add");
+
+    setProcRunner((): Promise<ProcResult> =>
+      Promise.resolve({ code: 1, stdout: "", stderr: "boom\n", json: () => null })
+    );
+    const failed = await post(
+      h,
+      "/plugins",
+      { name: HTMX, op: "remove", confirm: "1" },
+      "text/html-fragment",
+    );
+    const failedText = await failed.text();
+    assertStringIncludes(failedText, "exited 1.");
+    assert(!failedText.includes("Removed"), "a failed deno remove is not reported as done");
   } finally {
     await stop(h);
   }
@@ -239,11 +292,13 @@ Deno.test("a config whose default export is not an object literal bails with ins
   const factoryConfig = `export default function config() {\n  return { plugins: [] };\n}\n`;
   const h = await ui({ "denext.config.ts": factoryConfig });
   try {
-    const body = await (await post(h, "/plugins", {
-      name: OPENAPI,
-      op: "add",
-      confirm: "1",
-    })).text();
+    const body = normaliseEntities(
+      await (await post(h, "/plugins", {
+        name: OPENAPI,
+        op: "add",
+        confirm: "1",
+      })).text(),
+    );
     assertStringIncludes(body, "not an object literal");
     assertStringIncludes(body, `import { openapi } from "@denext/openapi";`);
     assertStringIncludes(body, "openapi() to the default export");

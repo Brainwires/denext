@@ -25,17 +25,11 @@ import {
   readCompose,
 } from "../../build/compose-edit.ts";
 import { createUnifiedDiff } from "../../build/patch-diff.ts";
-import {
-  diffHtml,
-  esc,
-  html,
-  jsonResponse,
-  opForm,
-  panelResponder,
-  raw,
-  type RawHtml,
-  type UiContext,
-} from "../html.ts";
+import { Fragment, h } from "../../jsx/jsx-runtime.ts";
+import type { VNode, VNodeChild, VNodeChildren } from "../../jsx/types.ts";
+import { jsonResponse, panelResponder, type UiContext } from "../html.ts";
+import { DiffBlock, Note, OpForm, Out, Panel, PreviewLead, Row } from "../components.ts";
+import { Raw, renderView } from "../view.ts";
 import { control, field as labelled, opButton } from "../form/control.ts";
 import { OP_FIELD, parseOp } from "../form/value.ts";
 import type { WidgetOption } from "../form/widget.ts";
@@ -57,7 +51,7 @@ const MAX_OPS = 100;
 /** The restart policies the picker offers (plus "unset", plus a hand-written one). */
 const RESTART_POLICIES: readonly string[] = ["no", "always", "on-failure", "unless-stopped"];
 
-type Raw = Record<string, unknown>;
+type Dict = Record<string, unknown>;
 
 /** A posted field by name: a form field, or a JSON body's scalar; `null` when absent. */
 type Get = (key: string) => string | null;
@@ -99,7 +93,7 @@ interface Outcome {
 }
 
 /** Re-render the whole Docker panel with a refusal notice (the Docker module supplies it). */
-type RefusePanel = (notice: RawHtml, status: number) => Promise<Response>;
+type RefusePanel = (notice: VNode, status: number) => Promise<Response>;
 
 // ── reading ──────────────────────────────────────────────────────────────────
 
@@ -138,7 +132,7 @@ export async function composeJson(
 // ── the request ──────────────────────────────────────────────────────────────
 
 /** Whether `value` is a plain object. */
-function isRecord(value: unknown): value is Raw {
+function isRecord(value: unknown): value is Dict {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -207,7 +201,7 @@ export async function composeSubmit(
   const deny = (reason: string, status: number, diff?: string): Promise<Response> =>
     ctx.json
       ? Promise.resolve(jsonResponse({ ok: false, reason, model: snap.model, diff }, status))
-      : refusePanel(refusalHtml(reason, diff), status);
+      : refusePanel(h(Refusal, { reason, diff }), status);
   if (write && ctx.readOnly) return await deny("read-only", 403);
   const file = editableFile(snap, get(BASE_FIELD) ?? get("base") ?? "");
   if ("reason" in file) return await deny(file.reason, file.status);
@@ -218,7 +212,8 @@ export async function composeSubmit(
   const outcome = outcomeOf(result.source, result.diff, write);
   if (!write) {
     if (ctx.json) return jsonResponse({ ...outcome, base: file.base });
-    return panelResponse(ctx, previewSection(ctx, file.base, ops, outcome));
+    const preview = { csrf: ctx.csrf, readOnly: ctx.readOnly, base: file.base, ops, outcome };
+    return panelResponse(ctx, renderView(h(ComposePreview, preview)));
   }
   if (result.source !== file.text) {
     await writeFileAtomic(ctx.dir, COMPOSE_FILE, result.source);
@@ -369,7 +364,7 @@ function removalOf(button: string, svc: ComposeService): ComposeOp | undefined {
 // ── validation ───────────────────────────────────────────────────────────────
 
 /** One operation's shape checked against one (model-reported) service. */
-type Check = (o: Raw, svc: ComposeService, model: ComposeModel) => ComposeOp | string;
+type Check = (o: Dict, svc: ComposeService, model: ComposeModel) => ComposeOp | string;
 
 /** The closed operation set, each with its checker. */
 const CHECKS: Readonly<Record<string, Check>> = {
@@ -402,7 +397,7 @@ function restartAllowed(value: string, svc: ComposeService): boolean {
 }
 
 /** `set`: `image` (any string, or `null`) / `restart` (a known policy, or `null`). */
-function checkSet(o: Raw, svc: ComposeService): ComposeOp | string {
+function checkSet(o: Dict, svc: ComposeService): ComposeOp | string {
   const { field, value } = o;
   if (field !== "image" && field !== "restart") {
     return `unknown field ${JSON.stringify(field ?? null)} (expected image | restart)`;
@@ -415,7 +410,7 @@ function checkSet(o: Raw, svc: ComposeService): ComposeOp | string {
 }
 
 /** `ports`: add a mapping, or update/remove a row the file has. */
-function checkPorts(o: Raw, svc: ComposeService): ComposeOp | string {
+function checkPorts(o: Dict, svc: ComposeService): ComposeOp | string {
   const { action, index, value } = o;
   const service = svc.name;
   if (action === "add") {
@@ -436,7 +431,7 @@ function checkPorts(o: Raw, svc: ComposeService): ComposeOp | string {
 }
 
 /** `env`: set a variable (new or existing), or delete one the file has. */
-function checkEnv(o: Raw, svc: ComposeService): ComposeOp | string {
+function checkEnv(o: Dict, svc: ComposeService): ComposeOp | string {
   const { action, key, value } = o;
   if (typeof key !== "string") return "an environment operation needs a key";
   const service = svc.name;
@@ -452,7 +447,7 @@ function checkEnv(o: Raw, svc: ComposeService): ComposeOp | string {
 }
 
 /** `dependsOn` / `volumes`: add (a dependency must be another service) or remove a listed one. */
-function checkNamed(o: Raw, svc: ComposeService, model: ComposeModel): ComposeOp | string {
+function checkNamed(o: Dict, svc: ComposeService, model: ComposeModel): ComposeOp | string {
   const op = o.op === "dependsOn" ? "dependsOn" : "volumes";
   const { action, value } = o;
   if (typeof value !== "string" || value === "") return `${op} needs a value`;
@@ -517,48 +512,60 @@ function volumeWarnings(model: ComposeModel): string[] {
 /** The preview page shell (a fragment for `ui.js`, the whole document otherwise). */
 const panelResponse = panelResponder("Docker", "/docker");
 
-/** Each warning as an alert note. */
-function warningsHtml(warnings: readonly string[]): RawHtml[] {
-  return warnings.map((warning) => html`<p class="note" role="alert">${warning}</p>`);
+/** Each warning as an alert note — a warning the reader must see. */
+function Warnings({ warnings }: { readonly warnings: readonly string[] }): VNode {
+  return h(
+    Fragment,
+    null,
+    warnings.map((warning) => h(Note, { key: warning, role: "alert" }, warning)),
+  );
 }
 
 /** A refusal against the panel, with the diff of a splice that failed to read back. */
-function refusalHtml(reason: string, diff?: string): RawHtml {
-  return html`<p class="note" role="alert">denext ui: ${reason}</p>${
-    diff ? html`<p class="lead">The refused edit:</p>${diffHtml(diff)}` : ""
-  }`;
+function Refusal({ reason, diff }: { readonly reason: string; readonly diff?: string }): VNode {
+  return h(
+    Fragment,
+    null,
+    h(Note, { role: "alert" }, `denext ui: ${reason}`),
+    diff ? h("p", { class: "lead" }, "The refused edit:") : null,
+    diff ? h(DiffBlock, { diff }) : null,
+  );
+}
+
+/** Props of {@linkcode ComposePreview}. */
+interface PreviewProps {
+  /** The session CSRF token. */
+  readonly csrf: string;
+  /** `--read-only`: the confirm button is disabled. */
+  readonly readOnly: boolean;
+  /** The stamp of the file the operations were applied to. */
+  readonly base: string;
+  /** The validated operations the confirm form re-posts. */
+  readonly ops: readonly ComposeOp[];
+  /** What applying them in memory produced. */
+  readonly outcome: Outcome;
 }
 
 /** The preview: nothing is written yet; the confirm form re-posts the same operations. */
-function previewSection(
-  ctx: UiContext,
-  base: string,
-  ops: readonly ComposeOp[],
-  outcome: Outcome,
-): RawHtml {
+function ComposePreview({ csrf, readOnly, base, ops, outcome }: PreviewProps): VNode {
   const fields = {
     [EDITOR_FIELD]: EDITOR_VALUE,
     [BASE_FIELD]: base,
     [OPS_FIELD]: JSON.stringify(ops),
     confirm: "1",
   };
-  const confirm = opForm(ctx.csrf, {
-    action: "/docker",
-    label: `Write ${COMPOSE_FILE}`,
-    fields,
-    disabled: ctx.readOnly,
-  });
-  return html`<section id="panel" data-panel="Docker">
-<h1>Edit ${COMPOSE_FILE}</h1>
-<p class="lead">Nothing has been written yet — review the change, then apply it.</p>
-${warningsHtml(outcome.warnings)}
-${
+  const label = `Write ${COMPOSE_FILE}`;
+  return h(
+    Panel,
+    { name: "Docker", title: `Edit ${COMPOSE_FILE}` },
+    h(PreviewLead, null),
+    h(Warnings, { warnings: outcome.warnings }),
+    outcome.diff ? h(DiffBlock, { diff: outcome.diff }) : null,
     outcome.diff
-      ? html`${diffHtml(outcome.diff)}${confirm}`
-      : html`<p class="note">Nothing to change — the file already reads this way.</p>`
-  }
-<p><a href="/docker#compose">Back to the Docker panel</a></p>
-</section>`;
+      ? h(OpForm, { csrf, action: "/docker", label, fields, disabled: readOnly })
+      : h(Note, null, "Nothing to change — the file already reads this way."),
+    h("p", null, h("a", { href: "/docker#compose" }, "Back to the Docker panel")),
+  );
 }
 
 /**
@@ -567,122 +574,209 @@ ${
  *
  * @param ctx The request context (CSRF token, `--read-only`, the `?saved=` notice).
  * @param regenerated What the template would write for the panel's current options.
- * @returns The block's markup.
+ * @returns The block's element tree.
  */
-export async function composeSection(ctx: UiContext, regenerated: string): Promise<RawHtml> {
+export async function composeSection(ctx: UiContext, regenerated: string): Promise<VNode> {
   const snap = await readSnapshot(ctx.dir);
-  let body: RawHtml;
+  return h(
+    Fragment,
+    null,
+    h("h2", { id: "compose" }, `Edit ${COMPOSE_FILE}`),
+    composeBody(ctx, snap, regenerated),
+  );
+}
+
+/** The block under the heading, by what is on disk: nothing, an opaque file, or an editable one. */
+function composeBody(ctx: UiContext, snap: Snapshot, regenerated: string): VNode {
   if (snap.text === undefined) {
-    body = html`<p class="lead">There is no <code>${COMPOSE_FILE}</code> yet — write the Docker
-      files above, then edit its services here.</p>`;
-  } else if (snap.model === null) {
-    body = opaqueView(snap.text, regenerated);
-  } else {
-    body = editorView(ctx, { text: snap.text, model: snap.model, base: snap.base });
+    return h(
+      "p",
+      { class: "lead" },
+      "There is no ",
+      h("code", null, COMPOSE_FILE),
+      " yet — write the Docker files above, then edit its services here.",
+    );
   }
-  return html`<h2 id="compose">Edit ${COMPOSE_FILE}</h2>${body}`;
+  if (snap.model === null) return h(OpaqueFile, { text: snap.text, regenerated });
+  return h(ComposeEditor, { ctx, file: { text: snap.text, model: snap.model, base: snap.base } });
 }
 
 /** An opaque file: read-only, next to what the template would write instead. */
-function opaqueView(text: string, regenerated: string): RawHtml {
+function OpaqueFile(
+  { text, regenerated }: { readonly text: string; readonly regenerated: string },
+): VNode {
   const diff = createUnifiedDiff(text, regenerated, COMPOSE_FILE);
-  return html`
-    <p class="note">This ${COMPOSE_FILE} uses YAML the editor cannot follow line by line
-      (anchors, aliases, merge keys, flow-style services, several documents or mixed line
-      endings), so it is read-only here — edit it by hand. The regeneration diff shows what the
-      template would write instead.</p>
-    <details>
-      <summary>Current file</summary>
-      <pre class="out">${text}</pre>
-    </details>
-    <h3>Regeneration diff</h3>
-    ${diff === "" ? html`<p class="note">Identical to the template.</p>` : diffHtml(diff)}
-  `;
+  return h(
+    Fragment,
+    null,
+    h(
+      Note,
+      null,
+      `This ${COMPOSE_FILE} uses YAML the editor cannot follow line by line (anchors, aliases, ` +
+        "merge keys, flow-style services, several documents or mixed line endings), so it is " +
+        "read-only here — edit it by hand. The regeneration diff shows what the template would " +
+        "write instead.",
+    ),
+    h("details", null, h("summary", null, "Current file"), h(Out, null, text)),
+    h("h3", null, "Regeneration diff"),
+    diff === "" ? h(Note, null, "Identical to the template.") : h(DiffBlock, { diff }),
+  );
+}
+
+/** Props of the views that render one editable file for one request. */
+interface EditorProps {
+  /** The request context (CSRF token, `--read-only`, the `?saved=` notice). */
+  readonly ctx: UiContext;
+  /** The file, parsed. */
+  readonly file: Editable;
 }
 
 /** A parseable file: the notices, then one form per service in source order. */
-function editorView(ctx: UiContext, file: Editable): RawHtml {
+function ComposeEditor({ ctx, file }: EditorProps): VNode {
   const saved = ctx.url.searchParams.get("saved") === EDITOR_VALUE;
   const services = file.model.services;
-  return html`
-    <p class="lead">Edit services in place: only the lines an edit touches change — comments and
-      everything else stay byte for byte. Every change is previewed as a diff first.</p>
-    ${saved ? html`<p class="note">Saved ${COMPOSE_FILE}.</p>` : ""}
-    ${file.model.sentinel
-      ? html`<p class="note">This file still carries the generated-file header, so
-        <strong>Write files</strong> above regenerates it and discards edits made here — delete
-        that first line to keep them.</p>`
-      : ""}
-    ${ctx.readOnly ? html`<p class="note">Read-only mode — editing is refused.</p>` : ""}
-    ${warningsHtml(volumeWarnings(file.model))}
-    ${services.length
-      ? services.map((svc) => serviceForm(ctx, file, svc))
-      : html`<p class="lead">No services.</p>`}
-  `;
+  return h(
+    Fragment,
+    null,
+    h(
+      "p",
+      { class: "lead" },
+      "Edit services in place: only the lines an edit touches change — comments and " +
+        "everything else stay byte for byte. Every change is previewed as a diff first.",
+    ),
+    saved ? h(Note, null, `Saved ${COMPOSE_FILE}.`) : null,
+    file.model.sentinel ? h(SentinelNote, null) : null,
+    ctx.readOnly ? h(Note, null, "Read-only mode — editing is refused.") : null,
+    h(Warnings, { warnings: volumeWarnings(file.model) }),
+    services.length
+      ? services.map((svc) => h(ServiceForm, { key: svc.name, ctx, file, svc }))
+      : h("p", { class: "lead" }, "No services."),
+  );
+}
+
+/** Why an edit made here is lost to the next regeneration while the sentinel is present. */
+function SentinelNote(): VNode {
+  return h(
+    Note,
+    null,
+    "This file still carries the generated-file header, so ",
+    h("strong", null, "Write files"),
+    " above regenerates it and discards edits made here — delete that first line to keep them.",
+  );
 }
 
 /** One service's form: the routing/stamp hidden fields, then its editable or commented body. */
-function serviceForm(ctx: UiContext, file: Editable, svc: ComposeService): RawHtml {
+function ServiceForm(
+  { ctx, file, svc }: EditorProps & { readonly svc: ComposeService },
+): VNode {
   const id = `compose-${svc.name}`;
   const hidden = [
     [UI_CSRF_FIELD, ctx.csrf],
     [EDITOR_FIELD, EDITOR_VALUE],
     ["service", svc.name],
     [BASE_FIELD, file.base],
-  ].map(([name, value]) => control({ tag: "input", type: "hidden", name, value }));
-  const body = svc.commented
-    ? commentedBody(svc, ctx.readOnly)
-    : activeBody(file.model, svc, id, ctx.readOnly);
-  return html`<form method="post" action="/docker" id="${id}" class="step">${hidden}${body}</form>`;
+  ].map(([name, value]) => h("input", { key: name, name, type: "hidden", value }));
+  const disabled = ctx.readOnly;
+  return h(
+    "form",
+    { method: "post", action: "/docker", id, class: "step" },
+    hidden,
+    svc.commented
+      ? h(CommentedService, { svc, disabled })
+      : h(ActiveService, { model: file.model, svc, id, disabled }),
+  );
+}
+
+/** Props of one `op` submit button. */
+interface SubmitProps {
+  /** The operation it posts. */
+  readonly value: string;
+  /** Its label. */
+  readonly label: string;
+  /** Render disabled (`--read-only`). */
+  readonly disabled: boolean;
+  /** The secondary look. */
+  readonly ghost?: boolean;
 }
 
 /** One `op` submit button. */
-function submitButton(value: string, label: string, disabled: boolean, ghost = false): RawHtml {
-  const extra = `${ghost ? ' class="ghost"' : ""}${disabled ? " disabled" : ""}`;
-  const attrs = `type="submit" name="${OP_FIELD}" value="${esc(value)}"${extra}`;
-  return raw(`<button ${attrs}>${esc(label)}</button>`);
+function SubmitButton({ value, label, disabled, ghost }: SubmitProps): VNode {
+  const className = ghost ? "ghost" : undefined;
+  return h("button", { type: "submit", name: OP_FIELD, value, class: className, disabled }, label);
 }
 
 /** The service heading with its buttons (first in the form, so Enter previews). */
-function headRow(svc: ComposeService, badge: string, buttons: readonly RawHtml[]): RawHtml {
-  return html`<div class="row"><h3 class="grow" style="margin:0"><code>${svc.name}</code>
-    <span class="badge">${badge}</span></h3>${buttons}</div>`;
+function HeadRow(
+  { svc, badge, children }: {
+    readonly svc: ComposeService;
+    readonly badge: string;
+    readonly children?: VNodeChildren;
+  },
+): VNode {
+  return h(
+    Row,
+    null,
+    h(
+      "h3",
+      { class: "grow", style: "margin:0" },
+      h("code", null, svc.name),
+      " ",
+      h("span", { class: "badge" }, badge),
+    ),
+    children,
+  );
 }
 
 /** A commented-out service: a summary and the Enable button (the only edit it accepts). */
-function commentedBody(svc: ComposeService, disabled: boolean): RawHtml {
+function CommentedService(
+  { svc, disabled }: { readonly svc: ComposeService; readonly disabled: boolean },
+): VNode {
   const parts = [
     svc.image ? `image ${svc.image}` : "",
     svc.ports.length ? `ports ${svc.ports.join(", ")}` : "",
     svc.environment.length ? `environment ${svc.environment.map((e) => e.key).join(", ")}` : "",
     svc.volumes.length ? `volumes ${svc.volumes.join(", ")}` : "",
   ].filter((part) => part !== "");
-  return html`${
-    headRow(svc, `commented out · line ${svc.line}`, [
-      submitButton("toggle", "Enable", disabled),
-    ])
-  }
-    <p class="lead">${parts.length ? parts.join(" · ") : "An empty service block."}</p>`;
+  return h(
+    Fragment,
+    null,
+    h(
+      HeadRow,
+      { svc, badge: `commented out · line ${svc.line}` },
+      h(SubmitButton, { value: "toggle", label: "Enable", disabled }),
+    ),
+    h("p", { class: "lead" }, parts.length ? parts.join(" · ") : "An empty service block."),
+  );
+}
+
+/** Props of the views that edit one active service. */
+interface ServiceProps {
+  /** The file's model (the dependency picker offers its other services). */
+  readonly model: ComposeModel;
+  /** The service. */
+  readonly svc: ComposeService;
+  /** Render every button disabled (`--read-only`). */
+  readonly disabled: boolean;
 }
 
 /** An active service: image, restart and the four list editors. */
-function activeBody(
-  model: ComposeModel,
-  svc: ComposeService,
-  id: string,
-  disabled: boolean,
-): RawHtml {
-  return html`${
-    headRow(svc, `line ${svc.line}`, [
-      submitButton("apply", "Preview changes", disabled),
-      submitButton("toggle", "Comment out", disabled, true),
-    ])
-  }
-    ${scalarFields(svc, id)}
-    ${portsBlock(svc, disabled)}
-    ${envBlock(svc, disabled)}
-    ${depsBlock(model, svc, disabled)}
-    ${volumesBlock(svc, disabled)}`;
+function ActiveService(props: ServiceProps & { readonly id: string }): VNode {
+  const { svc, id, disabled } = props;
+  return h(
+    Fragment,
+    null,
+    h(
+      HeadRow,
+      { svc, badge: `line ${svc.line}` },
+      h(SubmitButton, { value: "apply", label: "Preview changes", disabled }),
+      h(SubmitButton, { value: "toggle", label: "Comment out", disabled, ghost: true }),
+    ),
+    h(ScalarFields, { svc, id }),
+    h(PortsEditor, { svc, disabled }),
+    h(EnvEditor, { svc, disabled }),
+    h(DepsEditor, { model: props.model, svc, disabled }),
+    h(VolumesEditor, { svc, disabled }),
+  );
 }
 
 /** The picker's choices: unset, the four policies, and the file's own value when it is other. */
@@ -692,8 +786,8 @@ function restartOptions(current: string | undefined): WidgetOption[] {
   return [{ value: "", label: "— unset —" }, ...values.map((value) => ({ value, label: value }))];
 }
 
-/** `image` (text) and `restart` (select). */
-function scalarFields(svc: ComposeService, id: string): RawHtml {
+/** `image` (text) and `restart` (select), through the form renderer's labelled controls. */
+function ScalarFields({ svc, id }: { readonly svc: ComposeService; readonly id: string }): VNode {
   const image = control({
     tag: "input",
     name: "image",
@@ -708,98 +802,121 @@ function scalarFields(svc: ComposeService, id: string): RawHtml {
     value: svc.restart ?? "",
     options: restartOptions(svc.restart),
   });
-  return html`${labelled({ id: `${id}-image`, label: "image", body: image })}${
-    labelled({
-      id: `${id}-restart`,
-      label: "restart",
-      body: restart,
-    })
-  }`;
+  return h(
+    Fragment,
+    null,
+    h(Raw, { html: labelled({ id: `${id}-image`, label: "image", body: image }) }),
+    h(Raw, { html: labelled({ id: `${id}-restart`, label: "restart", body: restart }) }),
+  );
 }
 
-/** One flex row of cells. */
-function row(cells: readonly RawHtml[]): RawHtml {
-  return html`<div class="row">${cells}</div>`;
+/** One text input with an accessible name (the form renderer's control). */
+function textInput(name: string, label: string, value = "", placeholder?: string): VNode {
+  return h(Raw, { html: control({ tag: "input", name, value, placeholder, ariaLabel: label }) });
 }
 
-/** One text input with an accessible name. */
-function textInput(name: string, label: string, value = "", placeholder?: string): RawHtml {
-  return control({ tag: "input", name, value, placeholder, ariaLabel: label });
-}
-
-/** A row's ✕ button — a `remove:<row>:<list>` submit. */
-function removeButton(list: string, at: number, title: string, disabled: boolean): RawHtml {
-  return opButton({ op: "remove", at, list, label: "✕", title, disabled });
+/** A row's ✕ button — a `remove:<row>:<list>` submit (the form renderer's row button). */
+function removeButton(list: string, at: number, title: string, disabled: boolean): VNode {
+  return h(Raw, { html: opButton({ op: "remove", at, list, label: "✕", title, disabled }) });
 }
 
 /** A list editor: its legend, its rows (or "none"), then its add row. */
-function listBlock(legend: string, rows: readonly RawHtml[], add: RawHtml): RawHtml {
-  return html`<fieldset><legend>${legend}</legend>${
-    rows.length ? rows : html`<p class="lead" style="margin:0 0 6px">none</p>`
-  }${add}</fieldset>`;
+function ListEditor(
+  { legend, rows, add }: {
+    readonly legend: string;
+    readonly rows: VNode[];
+    readonly add: VNodeChild;
+  },
+): VNode {
+  return h(
+    "fieldset",
+    null,
+    h("legend", null, legend),
+    rows.length ? rows : h("p", { class: "lead", style: "margin:0 0 6px" }, "none"),
+    add,
+  );
 }
 
 /** `ports`: an editable row per mapping (long syntax is remove-only), plus an add row. */
-function portsBlock(svc: ComposeService, disabled: boolean): RawHtml {
+function PortsEditor({ svc, disabled }: Omit<ServiceProps, "model">): VNode {
   const rows = svc.ports.map((port, i) =>
-    row([
+    h(
+      Row,
+      { key: i },
       isLong(port)
-        ? html`<code class="grow">${port}</code>`
+        ? h("code", { class: "grow" }, port)
         : textInput(`port.${i}`, `Port mapping ${i + 1}`, port),
       removeButton("ports", i, `Remove port ${port}`, disabled),
-    ])
+    )
   );
-  const add = row([textInput("port.new", "New port mapping", "", "add — host:container")]);
-  return listBlock("ports", rows, add);
+  const add = h(Row, null, textInput("port.new", "New port mapping", "", "add — host:container"));
+  return h(ListEditor, { legend: "ports", rows, add });
 }
 
 /** `environment`: a value row per variable, plus a name/value add row. */
-function envBlock(svc: ComposeService, disabled: boolean): RawHtml {
+function EnvEditor({ svc, disabled }: Omit<ServiceProps, "model">): VNode {
   const rows = svc.environment.map((entry, i) =>
-    row([
-      html`<code>${entry.key}</code>`,
+    h(
+      Row,
+      { key: entry.key },
+      h("code", null, entry.key),
       textInput(`env.${i}`, `Value of ${entry.key}`, entry.value),
       removeButton("environment", i, `Remove ${entry.key}`, disabled),
-    ])
+    )
   );
-  const add = row([
+  const add = h(
+    Row,
+    null,
     textInput("env.new.key", "New variable name", "", "add — NAME"),
     textInput("env.new.value", "New variable value", "", "value"),
-  ]);
-  return listBlock(`environment (${svc.envForm} form)`, rows, add);
+  );
+  return h(ListEditor, { legend: `environment (${svc.envForm} form)`, rows, add });
 }
 
 /** `depends_on`: a chip per dependency, plus a select of the other services. */
-function depsBlock(model: ComposeModel, svc: ComposeService, disabled: boolean): RawHtml {
+function DepsEditor({ model, svc, disabled }: ServiceProps): VNode {
   const chips = svc.dependsOn.map((name, i) =>
-    html`<span class="badge"><code>${name}</code> ${
-      removeButton(
-        "depends_on",
-        i,
-        `Stop depending on ${name}`,
-        disabled,
-      )
-    }</span>`
+    h(
+      "span",
+      { key: name, class: "badge" },
+      h("code", null, name),
+      " ",
+      removeButton("depends_on", i, `Stop depending on ${name}`, disabled),
+    )
   );
   const candidates = dependable(model, svc);
   const options: WidgetOption[] = [
     { value: "", label: "— add a dependency —" },
     ...candidates.map((value) => ({ value, label: value })),
   ];
-  const add = candidates.length
-    ? row([control({ tag: "select", name: "dep.new", options, ariaLabel: "Add a dependency" })])
-    : html``;
-  return listBlock("depends_on", chips.length ? [row(chips)] : [], add);
+  const picker = control({
+    tag: "select",
+    name: "dep.new",
+    options,
+    ariaLabel: "Add a dependency",
+  });
+  const add = candidates.length ? h(Row, null, h(Raw, { html: picker })) : null;
+  return h(ListEditor, {
+    legend: "depends_on",
+    rows: chips.length ? [h(Row, null, chips)] : [],
+    add,
+  });
 }
 
 /** `volumes`: a row per mount (remove-only), plus an add row. */
-function volumesBlock(svc: ComposeService, disabled: boolean): RawHtml {
+function VolumesEditor({ svc, disabled }: Omit<ServiceProps, "model">): VNode {
   const rows = svc.volumes.map((volume, i) =>
-    row([
-      html`<code class="grow">${volume}</code>`,
+    h(
+      Row,
+      { key: volume },
+      h("code", { class: "grow" }, volume),
       removeButton("volumes", i, `Remove volume ${volume}`, disabled),
-    ])
+    )
   );
-  const add = row([textInput("volume.new", "New volume", "", "add — ./data:/data or name:/path")]);
-  return listBlock("volumes", rows, add);
+  const add = h(
+    Row,
+    null,
+    textInput("volume.new", "New volume", "", "add — ./data:/data or name:/path"),
+  );
+  return h(ListEditor, { legend: "volumes", rows, add });
 }

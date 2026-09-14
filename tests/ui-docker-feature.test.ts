@@ -169,7 +169,7 @@ Deno.test("the panel prefills the mode detectDockerMode picks, for a server and 
       const detected = await detectDockerMode(h.dir);
       assertEquals(detected, spa ? "static" : "server");
       const body = await (await get(h, "/docker")).text();
-      assertStringIncludes(body, `<option value="${detected}"  selected>`);
+      assertStringIncludes(body, `<option value="${detected}" selected>`);
       assert(!body.includes("Not implemented yet"), "the stub is gone");
       assert(!body.includes("<script>"), "no inline script");
       assertStringIncludes(body, `name="${UI_CSRF_FIELD}"`);
@@ -466,12 +466,19 @@ async function baseOf(h: Harness): Promise<string> {
   return (await (await get(h, "/api/docker")).json()).base;
 }
 
+/** The named references the component renderer writes (`&#39;` and the rest stay numeric). */
+const NAMED_ENTITIES: Record<string, string> = { quot: '"', amp: "&", lt: "<", gt: ">" };
+
 /** The hidden fields of the form that carries `ops` (the preview's confirm form), decoded. */
 function confirmFields(markup: string): Record<string, string> {
   const form = /<form[^>]*>(?:(?!<\/form>)[\s\S])*name="ops"[\s\S]*?<\/form>/.exec(markup);
   assert(form, "the preview carries a confirm form");
   const decode = (text: string) =>
-    text.replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)));
+    text.replace(
+      /&(#\d+|quot|amp|lt|gt);/g,
+      (_, ref: string) =>
+        ref.startsWith("#") ? String.fromCharCode(Number(ref.slice(1))) : NAMED_ENTITIES[ref],
+    );
   const fields: Record<string, string> = {};
   for (const input of form[0].match(/<input\b[^>]*>/g) ?? []) {
     const name = /\bname="([^"]*)"/.exec(input)?.[1];
@@ -599,7 +606,7 @@ Deno.test("compose editor: adding a port previews a diff and writes nothing", as
       "port.new": "9229:9229",
     });
     assertStringIncludes(body, "Nothing has been written yet");
-    assertStringIncludes(body, "+      - &#34;9229:9229&#34;");
+    assertStringIncludes(body, "+      - &quot;9229:9229&quot;");
     assertStringIncludes(body, "Write docker-compose.yml");
     assertEquals(JSON.parse(confirmFields(body).ops), [
       { op: "ports", service: "web", action: "add", value: "9229:9229" },
@@ -675,7 +682,7 @@ Deno.test("compose editor: enabling the commented db service warns about its und
     await Deno.writeTextFile(join(h.dir, COMPOSE), GENERATED);
     const preview = await previewEdit(h, { service: "db", op: "toggle" });
     assertStringIncludes(preview, "+  db:");
-    assertStringIncludes(preview, "named volume &#34;denext-db&#34;");
+    assertStringIncludes(preview, "named volume &quot;denext-db&quot;");
     const res = await post(h, "/docker", confirmFields(preview));
     assertEquals(res.status, 303);
     await res.body?.cancel();
@@ -690,7 +697,7 @@ Deno.test("compose editor: enabling the commented db service warns about its und
     const model = readCompose(after);
     assertEquals(model?.services.map((s) => s.commented), [false, false]);
     const page = await (await get(h, "/docker")).text();
-    assertStringIncludes(page, "named volume &#34;denext-db&#34;");
+    assertStringIncludes(page, "named volume &quot;denext-db&quot;");
   } finally {
     await stop(h);
   }

@@ -28,17 +28,20 @@ import {
   renderCompose,
 } from "../../build/docker-template.ts";
 import { createUnifiedDiff } from "../../build/patch-diff.ts";
+import { Fragment, h } from "../../jsx/jsx-runtime.ts";
+import type { VNode } from "../../jsx/types.ts";
+import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
 import {
-  diffHtml,
-  html,
-  jsonResponse,
-  panelResponder,
-  raw,
-  type RawHtml,
-  type UiContext,
-  type UiHandler,
-} from "../html.ts";
-import { UI_CSRF_FIELD, writeFileAtomic } from "../security.ts";
+  CsrfField,
+  DiffBlock,
+  FileDetails,
+  Note,
+  Panel,
+  type ResultGroup,
+  ResultList,
+} from "../components.ts";
+import { renderView } from "../view.ts";
+import { writeFileAtomic } from "../security.ts";
 import {
   COMPOSE_FILE,
   composeJson,
@@ -112,7 +115,7 @@ interface PanelState {
   /** A refusal to show against the form. */
   readonly error?: string;
   /** A compose-editor refusal (its reason, and the diff of a splice that failed to read back). */
-  readonly notice?: RawHtml;
+  readonly notice?: VNode;
   /** Files a completed write created or regenerated. */
   readonly written?: readonly string[];
   /** Files a completed write refused to touch (hand-edited). */
@@ -229,7 +232,7 @@ async function refuse(
 async function renderPanel(
   ctx: UiContext,
   values: FormValues,
-  refusal: { readonly error?: string; readonly notice?: RawHtml },
+  refusal: { readonly error?: string; readonly notice?: VNode },
   status: number,
 ): Promise<Response> {
   const mode = await effectiveMode(ctx.dir, values);
@@ -274,7 +277,7 @@ const panelResponse = panelResponder("Docker", "/docker");
  */
 async function respond(state: PanelState, ctx: UiContext, status = 200): Promise<Response> {
   const compose = await composeSection(ctx, renderCompose(optionsOf(state.values, state.mode)));
-  return panelResponse(ctx, panelSection(state, compose), status);
+  return panelResponse(ctx, renderView(h(DockerPanel, { state, compose })), status);
 }
 
 // ── options ──────────────────────────────────────────────────────────────────
@@ -373,106 +376,161 @@ function stateOf(file: DockerPlanFile, path: string): FileState {
 
 // ── views ────────────────────────────────────────────────────────────────────
 
+/** Every view below renders from the one panel state. */
+interface ViewProps {
+  /** The panel state. */
+  readonly state: PanelState;
+}
+
 /** The whole `<section id="panel">` — the piece `ui.js` swaps. */
-function panelSection(state: PanelState, compose: RawHtml): RawHtml {
-  const results = (state.written?.length || state.refused?.length) ? resultView(state) : "";
-  return html`
-    <section id="panel" data-panel="Docker">
-      <h1>Docker</h1>
-      <p class="lead">Regenerate <span class="mono">Dockerfile</span>,
-        <span class="mono">docker-compose.yml</span> and <span class="mono">.dockerignore</span>
-        for <span class="mono">${state.dir}</span>. Files you have edited by hand are never
-        overwritten — their diff is shown so you can copy it across, and a compose file's
-        services can be edited in place below.</p>
-      ${state.error ? html`<p class="note">denext ui: ${state.error}</p>` : ""}
-      ${state.notice ?? ""}
-      ${stateView(state)}
-      ${formView(state)}
-      ${state.previewed ? previewView(state) : ""}
-      ${results}
-      ${compose}
-    </section>
-  `;
+function DockerPanel(
+  { state, compose }: { readonly state: PanelState; readonly compose: VNode },
+): VNode {
+  const results = state.written?.length || state.refused?.length;
+  return h(
+    Panel,
+    { name: "Docker", title: "Docker" },
+    h(PanelLead, { dir: state.dir }),
+    state.error ? h(Note, null, `denext ui: ${state.error}`) : null,
+    state.notice ?? null,
+    h(FileStates, { files: state.files }),
+    h(DockerForm, { state }),
+    state.previewed ? h(PreviewList, { files: state.files }) : null,
+    results ? h(ResultList, { groups: resultGroups(state) }) : null,
+    compose,
+  );
+}
+
+/** A file name in the lead, set in the monospace face. */
+function mono(text: string): VNode {
+  return h("span", { class: "mono" }, text);
+}
+
+/** What the panel does, and for which project. */
+function PanelLead({ dir }: { readonly dir: string }): VNode {
+  return h(
+    "p",
+    { class: "lead" },
+    "Regenerate ",
+    mono("Dockerfile"),
+    ", ",
+    mono("docker-compose.yml"),
+    " and ",
+    mono(".dockerignore"),
+    " for ",
+    mono(dir),
+    ". Files you have edited by hand are never overwritten — their diff is shown so you can " +
+      "copy it across, and a compose file's services can be edited in place below.",
+  );
 }
 
 /** The three files and what would happen to each. */
-function stateView(state: PanelState): RawHtml {
-  const rows = state.files.map((file) =>
-    html`<li><code>${file.path}</code> <span class="badge">${STATE_LABEL[file.state]}</span></li>`
+function FileStates({ files }: { readonly files: readonly FileView[] }): VNode {
+  const rows = files.map((file) =>
+    h(
+      "li",
+      { key: file.path },
+      h("code", null, file.path),
+      " ",
+      h("span", { class: "badge" }, STATE_LABEL[file.state]),
+    )
   );
-  return html`
-    <h2>Current files</h2>
-    <ul>${rows}</ul>
-  `;
+  return h(Fragment, null, h("h2", null, "Current files"), h("ul", null, rows));
 }
 
-/** The mode picker, the port, the Deno tag, the Postgres toggle and the two submits. */
-function formView(state: PanelState): RawHtml {
-  const modes = (["server", "static"] as const).map((mode) =>
-    html`
-      <option value="${mode}" ${mode === state.mode
-        ? raw(" selected")
-        : ""}>${MODE_LABEL[mode]}</option>
-    `
+/** The options form: the fields, then the two submits. */
+function DockerForm({ state }: ViewProps): VNode {
+  return h(
+    "form",
+    { method: "post", action: "/docker" },
+    h(CsrfField, { csrf: state.csrf }),
+    h(OptionFields, { state }),
+    h("button", { type: "submit", name: "op", value: "preview" }, "Preview diff"),
+    " ",
+    h(
+      "button",
+      { type: "submit", name: "confirm", value: "1", class: "ghost", disabled: state.readOnly },
+      "Write files",
+    ),
+    state.readOnly ? h(Note, null, "Read-only mode — writing is refused.") : null,
   );
-  return html`
-    <form method="post" action="/docker">
-      <input type="hidden" name="${UI_CSRF_FIELD}" value="${state.csrf}">
-      <fieldset>
-        <label for="dk-mode">Image</label>
-        <select id="dk-mode" name="mode">${modes}</select>
-        <label for="dk-port">Port</label>
-        <input id="dk-port" name="port" type="number" min="1" max="65535"
-          value="${state.values.port || String(DEFAULT_PORT)}">
-        <label for="dk-tag">Deno image tag</label>
-        <input id="dk-tag" name="tag" autocomplete="off"
-          value="${state.values.tag || Deno.version.deno}">
-        <label for="dk-pg">
-          <input id="dk-pg" name="postgres" type="checkbox" value="on"${state.values.postgres
-            ? raw(" checked")
-            : ""}> Include a Postgres service
-        </label>
-      </fieldset>
-      <button type="submit" name="op" value="preview">Preview diff</button>
-      <button type="submit" name="confirm" value="1" class="ghost"${state.readOnly
-        ? raw(" disabled")
-        : ""}>Write files</button>
-      ${state.readOnly ? html`<p class="note">Read-only mode — writing is refused.</p>` : ""}
-    </form>
-  `;
+}
+
+/** The mode picker, the port, the Deno tag and the Postgres toggle. */
+function OptionFields({ state }: ViewProps): VNode {
+  const modes = (["server", "static"] as const).map((mode) =>
+    h("option", { key: mode, value: mode, selected: mode === state.mode }, MODE_LABEL[mode])
+  );
+  return h(
+    "fieldset",
+    null,
+    h("label", { for: "dk-mode" }, "Image"),
+    h("select", { id: "dk-mode", name: "mode" }, modes),
+    h("label", { for: "dk-port" }, "Port"),
+    h("input", {
+      id: "dk-port",
+      name: "port",
+      type: "number",
+      min: "1",
+      max: "65535",
+      value: state.values.port || String(DEFAULT_PORT),
+    }),
+    h("label", { for: "dk-tag" }, "Deno image tag"),
+    h("input", {
+      id: "dk-tag",
+      name: "tag",
+      autocomplete: "off",
+      value: state.values.tag || Deno.version.deno,
+    }),
+    h(
+      "label",
+      { for: "dk-pg" },
+      h("input", {
+        id: "dk-pg",
+        name: "postgres",
+        type: "checkbox",
+        value: "on",
+        checked: state.values.postgres,
+      }),
+      " Include a Postgres service",
+    ),
+  );
 }
 
 /** Every file's unified diff, with the hand-edited ones flagged as refusals. */
-function previewView(state: PanelState): RawHtml {
-  const files = state.files.map((file) => {
-    const edited = file.state === "edited" || file.state === "opaque";
-    const badge = file.diff === undefined
-      ? "no change"
-      : edited
-      ? "will not overwrite — copy the diff"
-      : file.state === "absent"
-      ? "will be created"
-      : "will be regenerated";
-    return html`
-      <details${file.diff === undefined ? "" : raw(" open")}>
-        <summary><code>${file.path}</code> <span class="badge">${badge}</span></summary>
-        ${file.diff === undefined
-          ? html`<p class="note">Identical to what is on disk.</p>`
-          : diffHtml(file.diff)}
-      </details>
-    `;
-  });
-  return html`<h2>Preview</h2>${files}`;
+function PreviewList({ files }: { readonly files: readonly FileView[] }): VNode {
+  return h(
+    Fragment,
+    null,
+    h("h2", null, "Preview"),
+    files.map((file) => h(FilePreview, { key: file.path, file })),
+  );
+}
+
+/** One file of the preview: its path, what the write would do, and its diff. */
+function FilePreview({ file }: { readonly file: FileView }): VNode {
+  return h(
+    FileDetails,
+    { path: file.path, badge: previewBadge(file), open: file.diff !== undefined },
+    file.diff === undefined
+      ? h(Note, null, "Identical to what is on disk.")
+      : h(DiffBlock, { diff: file.diff }),
+  );
+}
+
+/** What a write would do to one file, as its preview badge says. */
+function previewBadge(file: FileView): string {
+  if (file.diff === undefined) return "no change";
+  if (file.state === "edited" || file.state === "opaque") {
+    return "will not overwrite — copy the diff";
+  }
+  return file.state === "absent" ? "will be created" : "will be regenerated";
 }
 
 /** What a completed write did: the regenerated files, then the ones it left alone. */
-function resultView(state: PanelState): RawHtml {
-  const written = (state.written ?? []).map((path) => html`<li>+ <code>${path}</code></li>`);
-  const kept = (state.refused ?? []).map((path) =>
-    html`<li>• hand-edited, left alone: <code>${path}</code></li>`
-  );
-  return html`
-    <h2>Result</h2>
-    <ul>${written}${kept}</ul>
-  `;
+function resultGroups(state: PanelState): ResultGroup[] {
+  return [
+    { marker: "+ ", paths: state.written ?? [] },
+    { marker: "• hand-edited, left alone: ", paths: state.refused ?? [] },
+  ];
 }

@@ -25,17 +25,21 @@
 // `-` — so no field can smuggle in a flag the verb did not declare, least of all `--cwd`.
 
 import { type FlagSpec, GLOBAL_FLAGS, type PositionalSpec } from "../../cli/command.ts";
+import { Fragment, h } from "../../jsx/jsx-runtime.ts";
+import type { VNode } from "../../jsx/types.ts";
+import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
 import {
-  esc,
-  html,
-  jsonResponse,
-  opForm,
-  panelResponder,
-  raw,
-  type RawHtml,
-  type UiContext,
-  type UiHandler,
-} from "../html.ts";
+  Hidden,
+  Input,
+  type InputProps,
+  Note,
+  OpForm,
+  Out,
+  Panel,
+  Row,
+  Table,
+} from "../components.ts";
+import { Raw, renderView } from "../view.ts";
 import { field, opButton } from "../form/control.ts";
 import { applyListOp, OP_FIELD, parseOp } from "../form/value.ts";
 import { broadcast, exitLine, sseProcess } from "../events.ts";
@@ -318,43 +322,16 @@ function heldValues(view: View, info: UiCommandInfo, key: string): string[] | un
   return view.held?.verb === info.name ? view.held.read(key) : undefined;
 }
 
-/** One `<input>` of the run form. */
-interface InputAttrs {
-  readonly type: "text" | "number" | "checkbox" | "hidden";
-  readonly name: string;
-  readonly value: string;
-  readonly id?: string;
-  readonly placeholder?: string;
-  readonly ariaLabel?: string;
-  readonly checked?: boolean;
-  readonly required?: boolean;
-  readonly disabled?: boolean;
-}
-
 /**
- * Render one input by string concatenation, not a tagged template: `deno fmt` reflows `html`
- * templates as markup, and an input's attributes must not acquire newlines because the source
- * was wrapped. Every value is escaped; a `true` attribute renders bare, `false`/`undefined`
- * drops it. A text field carries the argv length cap, a number field any step.
+ * One argument field of the run form: the shared input, with the argv length cap on a text
+ * field and any step on a number field.
  */
-function input(a: InputAttrs): RawHtml {
-  const pairs: readonly (readonly [string, string | boolean | undefined])[] = [
-    ["type", a.type],
-    ["name", a.name],
-    ["value", a.value],
-    ["maxlength", a.type === "text" ? String(MAX_ARG) : undefined],
-    ["step", a.type === "number" ? "any" : undefined],
-    ["id", a.id],
-    ["placeholder", a.placeholder || undefined],
-    ["aria-label", a.ariaLabel],
-    ["checked", a.checked],
-    ["required", a.required],
-    ["disabled", a.disabled],
-  ];
-  const attrs = pairs
-    .filter(([, value]) => value !== undefined && value !== false)
-    .map(([name, value]) => value === true ? ` ${name}` : ` ${name}="${esc(value)}"`);
-  return raw(`<input${attrs.join("")}>`);
+function ArgInput(props: InputProps): VNode {
+  return h(Input, {
+    ...props,
+    maxLength: props.type === "text" ? MAX_ARG : undefined,
+    step: props.type === "number" ? "any" : undefined,
+  });
 }
 
 /** The label a flag's control carries: its long name, and its short alias when it has one. */
@@ -362,100 +339,149 @@ function flagLabel(flag: FlagSpec): string {
   return `--${flag.name}${flag.alias ? `, -${flag.alias}` : ""}`;
 }
 
+/** Props of a boolean flag's control. */
+type SwitchProps = {
+  /** The declared flag. */
+  readonly flag: FlagSpec;
+  /** The checkbox's id (the one its `<label>` points at). */
+  readonly id: string;
+  /** The re-rendered value, when the form is being put back. */
+  readonly held: string | undefined;
+  /** `--read-only`: render disabled. */
+  readonly off: boolean;
+};
+
 /**
  * A boolean flag as a checkbox, after a hidden `false` twin: an unchecked box still posts, so a
  * run can tell "switched off" from "not in the form" — which is what lets a default-on switch be
  * turned off at all.
  */
-function switchControl(
-  flag: FlagSpec,
-  id: string,
-  held: string | undefined,
-  off: boolean,
-): RawHtml {
+function SwitchControl({ flag, id, held, off }: SwitchProps): VNode {
   const key = flagKey(flag.name);
   const checked = held === undefined ? flag.default === true : held === "true";
-  return html`${input({ type: "hidden", name: key, value: "false", disabled: off })}${
-    input({ type: "checkbox", name: key, id, value: "true", checked, disabled: off })
-  }`;
+  return h(
+    Fragment,
+    null,
+    h(Hidden, { name: key, value: "false", disabled: off }),
+    h(Input, { type: "checkbox", name: key, id, value: "true", checked, disabled: off }),
+  );
 }
 
+/** Props of every per-verb piece of the view. */
+type VerbProps = {
+  /** The verb. */
+  readonly info: UiCommandInfo;
+  /** The request's view state. */
+  readonly view: View;
+};
+
 /** One declared flag as a typed control: a checkbox, a number input, or a text input. */
-function flagControl(info: UiCommandInfo, flag: FlagSpec, view: View): RawHtml {
+function FlagControl({ info, flag, view }: VerbProps & { readonly flag: FlagSpec }): VNode {
   const key = flagKey(flag.name);
   const id = `cmd-${info.name}-${key}`;
   const held = heldValues(view, info, key)?.at(-1);
-  const body = flag.type === "boolean" ? switchControl(flag, id, held, view.readOnly) : input({
-    type: flag.type === "number" ? "number" : "text",
-    name: key,
-    id,
-    value: held ?? "",
-    placeholder: flag.default === undefined ? undefined : String(flag.default),
-    disabled: view.readOnly,
+  const body = flag.type === "boolean"
+    ? h(SwitchControl, { flag, id, held, off: view.readOnly })
+    : h(ArgInput, {
+      type: flag.type === "number" ? "number" : "text",
+      name: key,
+      id,
+      value: held ?? "",
+      placeholder: flag.default === undefined ? undefined : String(flag.default),
+      disabled: view.readOnly,
+    });
+  return h(Raw, {
+    html: field({ id, label: flagLabel(flag), help: flag.help, body: renderView(body) }),
   });
-  return field({ id, label: flagLabel(flag), help: flag.help, body });
 }
 
+/** Props of a variadic positional's row editor. */
+type RowsProps = {
+  /** The field every row posts under (`pos:<index>`) — also the list the row buttons edit. */
+  readonly list: string;
+  /** The first row's id (the one the `<label>` points at). */
+  readonly id: string;
+  /** One value per row. */
+  readonly rows: readonly string[];
+  /** `--read-only`: render disabled, with no `+ Add`. */
+  readonly off: boolean;
+};
+
 /** A variadic positional as a row editor: one text input per argument, `✕` per row, `+ Add`. */
-function rowEditor(key: string, id: string, rows: readonly string[], off: boolean): RawHtml {
+function PositionalRows({ list, id, rows, off }: RowsProps): VNode {
   const lines = rows.map((value, at) =>
-    html`<div class="row">${
-      input({
+    h(
+      Row,
+      { key: at },
+      h(ArgInput, {
         type: "text",
-        name: key,
+        name: list,
         id: at === 0 ? id : `${id}-${at}`,
         value,
-        ariaLabel: `${key} ${at + 1}`,
+        ariaLabel: `${list} ${at + 1}`,
         disabled: off,
-      })
-    }${opButton({ op: "remove", at, list: key, label: "✕", title: "Remove", disabled: off })}</div>`
+      }),
+      h(Raw, {
+        html: opButton({ op: "remove", at, list, label: "✕", title: "Remove", disabled: off }),
+      }),
+    )
   );
-  const add = opButton({ op: "add", at: rows.length, list: key, label: "+ Add", title: "Add" });
-  return html`<div>${lines}${off ? "" : add}</div>`;
+  const add = opButton({ op: "add", at: rows.length, list, label: "+ Add", title: "Add" });
+  return h("div", null, lines, off ? null : h(Raw, { html: add }));
 }
 
 /** One declared positional: a text input, or a row editor when it soaks up the rest. */
-function positionalControl(
-  info: UiCommandInfo,
-  spec: PositionalSpec,
-  index: number,
-  view: View,
-): RawHtml {
+function PositionalControl(
+  { info, spec, index, view }: VerbProps & {
+    readonly spec: PositionalSpec;
+    readonly index: number;
+  },
+): VNode {
   const key = posKey(index);
   const id = `cmd-${info.name}-${key}`;
   const held = heldValues(view, info, key);
-  const body = spec.variadic ? rowEditor(key, id, held ?? [""], view.readOnly) : input({
-    type: "text",
-    name: key,
-    id,
-    value: held?.[0] ?? "",
-    required: spec.required,
-    disabled: view.readOnly,
-  });
+  const body = spec.variadic
+    ? h(PositionalRows, { list: key, id, rows: held ?? [""], off: view.readOnly })
+    : h(ArgInput, {
+      type: "text",
+      name: key,
+      id,
+      value: held?.[0] ?? "",
+      required: spec.required,
+      disabled: view.readOnly,
+    });
   const label = spec.variadic ? `${spec.name}…` : spec.name;
-  return field({ id, label, help: spec.help, badge: spec.required ? "required" : undefined, body });
+  const badge = spec.required ? "required" : undefined;
+  return h(Raw, { html: field({ id, label, help: spec.help, badge, body: renderView(body) }) });
 }
 
 /**
  * The implicit-submission target of a form that holds row buttons: Enter in a field activates
  * the form's FIRST submit button, which must be Run, not a row's `✕`.
  */
-const DEFAULT_RUN = raw(
-  '<button type="submit" hidden tabindex="-1" aria-hidden="true">Run</button>',
-);
+function DefaultRun(): VNode {
+  return h(
+    "button",
+    { type: "submit", hidden: true, tabindex: "-1", "aria-hidden": "true" },
+    "Run",
+  );
+}
 
 /** The run form of one verb (a real POST, upgraded to fetch + SSE by ui.js). */
-function runForm(info: UiCommandInfo, view: View): RawHtml {
-  const positionals = info.positionals.map((spec, index) =>
-    positionalControl(info, spec, index, view)
-  );
-  const flags = info.flags.filter(settable).map((flag) => flagControl(info, flag, view));
+function RunForm({ info, view }: VerbProps): VNode {
   const rows = info.positionals.some((spec) => spec.variadic === true);
-  return opForm(view.csrf, {
+  const positionals = info.positionals.map((spec, index) =>
+    h(PositionalControl, { key: posKey(index), info, spec, index, view })
+  );
+  const flags = info.flags.filter(settable).map((flag) =>
+    h(FlagControl, { key: flag.name, info, flag, view })
+  );
+  return h(OpForm, {
+    csrf: view.csrf,
     action: PATH,
     label: "Run",
     fields: { verb: info.name },
-    extra: html`${rows && DEFAULT_RUN}${positionals}${flags}`,
+    extra: [rows ? h(DefaultRun, null) : null, ...positionals, ...flags],
     disabled: view.readOnly,
   });
 }
@@ -496,108 +522,161 @@ const GROUPS: readonly Group[] = [
   },
 ];
 
-/** The flag table of one verb (nothing at all when it declares no flags). */
-function renderFlags(flags: readonly FlagSpec[]): RawHtml {
-  if (flags.length === 0) return html``;
-  const rows = flags.map((flag) =>
-    html`
-      <tr>
-        <td><code>--${flag.name}${flag.alias ? ", -" + flag.alias : ""}${flag.valueName
-          ? " " + flag.valueName
-          : ""}</code></td>
-        <td>${flag.type}</td>
-        <td>${flag.default === undefined ? "" : String(flag.default)}</td>
-        <td>${flag.help}</td>
-      </tr>
-    `
+/** One row of a built-in's flag table. */
+function FlagRow({ flag }: { readonly flag: FlagSpec }): VNode {
+  const signature = `${flagLabel(flag)}${flag.valueName ? ` ${flag.valueName}` : ""}`;
+  return h(
+    "tr",
+    null,
+    h("td", null, h("code", null, signature)),
+    h("td", null, flag.type),
+    h("td", null, flag.default === undefined ? "" : String(flag.default)),
+    h("td", null, flag.help),
   );
-  return html`
-    <table class="table">
-      <thead>
-        <tr>
-          <th>Flag</th>
-          <th>Type</th>
-          <th>Default</th>
-          <th>What it does</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
-  `;
 }
 
-/** The positional list of one verb (nothing at all when it declares none). */
-function renderPositionals(positionals: readonly PositionalSpec[]): RawHtml {
-  if (positionals.length === 0) return html``;
-  return html`<ul class="args">${
-    positionals.map((positional) =>
-      html`<li><code>${positional.name}${positional.variadic ? "…" : ""}</code> — ${positional.help}
-${positional.required ? html`<span class="badge">required</span>` : ""}</li>`
-    )
-  }</ul>`;
+/** The flag table of a built-in verb. */
+function FlagTable({ flags }: { readonly flags: readonly FlagSpec[] }): VNode {
+  return h(Table, {
+    head: ["Flag", "Type", "Default", "What it does"],
+    rows: flags.map((flag) => h(FlagRow, { key: flag.name, flag })),
+  });
+}
+
+/** One positional of a built-in's argument list. */
+function ArgItem({ positional }: { readonly positional: PositionalSpec }): VNode {
+  return h(
+    "li",
+    null,
+    h("code", null, `${positional.name}${positional.variadic ? "…" : ""}`),
+    ` — ${positional.help}`,
+    positional.required ? [" ", h("span", { class: "badge" }, "required")] : null,
+  );
+}
+
+/** A built-in's reference: its argument list, then its flag table (each only when declared). */
+function BuiltinReference({ info }: { readonly info: UiCommandInfo }): VNode {
+  return h(
+    Fragment,
+    null,
+    info.positionals.length === 0 ? null : h(
+      "ul",
+      { class: "args" },
+      info.positionals.map((positional) => h(ArgItem, { key: positional.name, positional })),
+    ),
+    info.flags.length === 0 ? null : h(FlagTable, { flags: info.flags }),
+  );
 }
 
 /**
  * One verb: what it is, and either its run form (a project or plugin verb — one control per
- * declared flag and positional) or, for a built-in, its flag table and argument list.
+ * declared flag and positional) or, for a built-in, its argument list and flag table.
  */
-function renderVerb(info: UiCommandInfo, view: View): RawHtml {
-  const body = offersRun(info)
-    ? runForm(info, view)
-    : html`${renderPositionals(info.positionals)}${renderFlags(info.flags)}`;
-  return html`<article class="verb">
-<h3><code>denext ${info.name}</code> <span class="badge">${info.source}</span></h3>
-<p>${info.summary}</p>
-${info.usage ? html`<pre class="mono">${info.usage}</pre>` : ""}
-${body}</article>`;
+function VerbCard({ info, view }: VerbProps): VNode {
+  return h(
+    "article",
+    { class: "verb" },
+    h(
+      "h3",
+      null,
+      h("code", null, `denext ${info.name}`),
+      " ",
+      h("span", { class: "badge" }, info.source),
+    ),
+    h("p", null, info.summary),
+    info.usage ? h("pre", { class: "mono" }, info.usage) : null,
+    offersRun(info) ? h(RunForm, { info, view }) : h(BuiltinReference, { info }),
+  );
 }
 
+/** Props of one group of verbs. */
+type GroupProps = {
+  /** The group. */
+  readonly group: Group;
+  /** Every discovered verb (the group picks its own). */
+  readonly commands: readonly UiCommandInfo[];
+  /** The request's view state. */
+  readonly view: View;
+};
+
 /** One group: its verbs, or an honest "none" line. */
-function renderGroup(group: Group, commands: readonly UiCommandInfo[], view: View): RawHtml {
+function VerbGroup({ group, commands, view }: GroupProps): VNode {
   const verbs = commands.filter((info) => info.source === group.source);
-  const body = html`<p class="lead">${group.lead}</p>${
+  const body = h(
+    Fragment,
+    null,
+    h("p", { class: "lead" }, group.lead),
     verbs.length === 0
-      ? html`<p class="note">None — this project contributes no ${group.source} verbs.</p>`
-      : verbs.map((info) => renderVerb(info, view))
-  }`;
-  if (!group.collapsed) return html`<h2>${group.title}</h2>${body}`;
-  return html`<details><summary>${group.title} (${verbs.length})</summary>${body}</details>`;
+      ? h(Note, null, `None — this project contributes no ${group.source} verbs.`)
+      : verbs.map((info) => h(VerbCard, { key: info.name, info, view })),
+  );
+  if (!group.collapsed) return h(Fragment, null, h("h2", null, group.title), body);
+  return h("details", null, h("summary", null, `${group.title} (${verbs.length})`), body);
+}
+
+/** The plugin budget ran out: say so, and whether the built-ins survived it. */
+function TimeoutNote({ empty }: { readonly empty: boolean }): VNode {
+  return h(
+    Note,
+    null,
+    `Plugin setup exceeded ${(budgetMs / 1000).toFixed(1)} s — project verbs not listed. `,
+    empty
+      ? [
+        "Discovery itself was cut short; run ",
+        h("code", null, "denext commands"),
+        " in a terminal to see why.",
+      ]
+      : "Built-in verbs are unaffected.",
+  );
 }
 
 /** Whatever cut discovery short, said plainly — never an empty page. */
-function notices(list: UiCommandList): RawHtml {
-  const items: RawHtml[] = [];
-  if (list.timedOut) {
-    items.push(html`
-      <p class="note">Plugin setup exceeded ${(budgetMs / 1000).toFixed(1)} s — project verbs not
-      listed. ${list.commands.length === 0
-        ? html`Discovery itself was cut short; run <code>denext commands</code> in a terminal to
-see why.`
-        : html`Built-in verbs are unaffected.`}</p>
-    `);
-  }
-  if (list.error !== undefined) {
-    items.push(
-      html`<p class="note">denext.config.ts could not be read — project verbs not listed: ${list.error}</p>`,
-    );
-  }
-  return html`${items}`;
+function Notices({ list }: { readonly list: UiCommandList }): VNode {
+  return h(
+    Fragment,
+    null,
+    list.timedOut ? h(TimeoutNote, { empty: list.commands.length === 0 }) : null,
+    list.error === undefined ? null : h(
+      Note,
+      null,
+      `denext.config.ts could not be read — project verbs not listed: ${list.error}`,
+    ),
+  );
 }
 
-/** The panel `<section>` — the piece `ui.js` swaps on a fragment request. */
-function panelSection(
-  list: UiCommandList,
-  view: View,
-  output: readonly string[],
-): RawHtml {
-  return html`<section id="panel" data-panel="Commands">
-<h1>Commands</h1>
-<p class="lead">The verbs this project adds to <code>denext</code> — from denext.config.ts or a
-plugin's addCommand. <a href="${DOCS}">Project commands ↗</a></p>
-${notices(list)}
-${GROUPS.map((group) => renderGroup(group, list.commands, view))}
-<h2>Output</h2>
-<pre class="out">${output.join("\n")}</pre></section>`;
+/** Props of the whole panel. */
+type PanelProps = {
+  /** The discovered verbs. */
+  readonly list: UiCommandList;
+  /** The request's view state. */
+  readonly view: View;
+  /** The finished run's output lines (empty on a plain page load). */
+  readonly output: readonly string[];
+};
+
+/**
+ * The panel `<section>` — the piece `ui.js` swaps. Its one `pre.out` (after the groups) is the
+ * sink `ui.js` streams a run's output into.
+ */
+function CommandsPanel({ list, view, output }: PanelProps): VNode {
+  return h(
+    Panel,
+    { name: "Commands", title: "Commands" },
+    h(
+      "p",
+      { class: "lead" },
+      "The verbs this project adds to ",
+      h("code", null, "denext"),
+      " — from denext.config.ts or a plugin's addCommand. ",
+      h("a", { href: DOCS }, "Project commands ↗"),
+    ),
+    h(Notices, { list }),
+    GROUPS.map((group) =>
+      h(VerbGroup, { key: group.source, group, commands: list.commands, view })
+    ),
+    h("h2", null, "Output"),
+    h(Out, null, output.join("\n")),
+  );
 }
 
 /** The panel's shell: a fragment for `ui.js`, the whole document for a plain navigation. */
@@ -611,7 +690,7 @@ function panelResponse(
   held?: Held,
 ): Response {
   const view: View = { csrf: ctx.csrf, readOnly: ctx.readOnly, held };
-  return respond(ctx, panelSection(list, view, output));
+  return respond(ctx, renderView(h(CommandsPanel, { list, view, output })));
 }
 
 // ── building a run's argv ────────────────────────────────────────────────────

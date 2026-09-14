@@ -7,8 +7,9 @@
 // and passes the origin + CSRF + `--read-only` gates in `server.ts` before arriving here.
 
 import { sseStream } from "../build/sse.ts";
+import { h } from "../jsx/jsx-runtime.ts";
+import type { VNode } from "../jsx/types.ts";
 import {
-  html,
   htmlResponse,
   jsonResponse,
   renderPage,
@@ -18,7 +19,9 @@ import {
   type UiHandler,
   type UiRoute,
 } from "./html.ts";
-import { layout, UI_CSS_PATH, UI_JS_PATH } from "./layout.ts";
+import { layout, type NavItem, UI_CSS_PATH, UI_JS_PATH } from "./layout.ts";
+import { Note, Panel } from "./components.ts";
+import { renderView } from "./view.ts";
 import { UI_CSS } from "./styles.ts";
 import { UI_JS } from "./client.ts";
 import { broadcast, sseProcess } from "./events.ts";
@@ -26,6 +29,7 @@ import { runDeno } from "./proc.ts";
 import { readDenoConfig, taskMap } from "./tasks.ts";
 import { configPanel } from "./features/config.ts";
 import { pluginsPanel } from "./features/plugins.ts";
+import { pluginOptionsPanel } from "./features/plugin-options.ts";
 import { generatePanel } from "./features/generate.ts";
 import { dockerPanel } from "./features/docker.ts";
 import { wizardPanel } from "./features/wizard.ts";
@@ -46,6 +50,7 @@ const FEATURES: readonly FeatureRoute[] = [
   { path: "/config", methods: ["GET", "POST"], handle: configPanel },
   { path: "/config/next", methods: ["GET"], handle: configPanel },
   { path: "/plugins", methods: ["GET", "POST", "DELETE"], handle: pluginsPanel },
+  { path: "/plugins/options", methods: ["GET", "POST"], handle: pluginOptionsPanel },
   { path: "/generate", methods: ["GET", "POST"], handle: generatePanel },
   { path: "/docker", methods: ["GET", "POST"], handle: dockerPanel },
   { path: "/wizard", methods: ["GET", "POST"], handle: wizardPanel },
@@ -102,17 +107,32 @@ const CARD_LEAD: Record<string, string> = {
   "/commands": "Run this project's own denext verbs.",
 };
 
-/** The overview page: where the UI is pointed, and a card per panel. */
-function home(_request: Request, ctx: UiContext): Promise<Response> {
-  const cards = UI_NAV.filter((item) => item.href !== "/").map((item) =>
-    html`<a class="card" href="${item.href}"><strong>${item.label}</strong><span>${
-      CARD_LEAD[item.href] ?? ""
-    }</span></a>`
+/** One overview card: a panel's name, and what it does. */
+function Card({ item }: { readonly item: NavItem }): VNode {
+  return h(
+    "a",
+    { class: "card", href: item.href },
+    h("strong", null, item.label),
+    h("span", null, CARD_LEAD[item.href] ?? ""),
   );
-  const body = html`<section id="panel"><h1>Project</h1>
-<p class="lead mono">${ctx.dir}</p>
-${ctx.readOnly ? html`<p class="note">Read-only mode — every change is refused.</p>` : ""}
-<div class="cards">${cards}</div></section>`;
+}
+
+/** The overview panel: where the UI is pointed, and a card per panel. */
+function Overview({ ctx }: { readonly ctx: UiContext }): VNode {
+  const cards = UI_NAV.filter((item) => item.href !== "/").map((item) =>
+    h(Card, { key: item.href, item })
+  );
+  return h(
+    Panel,
+    { title: "Project" },
+    h("p", { class: "lead mono" }, ctx.dir),
+    ctx.readOnly ? h(Note, null, "Read-only mode — every change is refused.") : null,
+    h("div", { class: "cards" }, cards),
+  );
+}
+
+/** The overview page (always the whole document), or its JSON twin. */
+function home(_request: Request, ctx: UiContext): Promise<Response> {
   if (ctx.json) {
     return Promise.resolve(
       jsonResponse({
@@ -123,6 +143,7 @@ ${ctx.readOnly ? html`<p class="note">Read-only mode — every change is refused
       }),
     );
   }
+  const body = renderView(h(Overview, { ctx }));
   return Promise.resolve(htmlResponse(
     renderPage(layout, { title: "Project", nav: UI_NAV, body, csrf: ctx.csrf, active: "/" }),
   ));

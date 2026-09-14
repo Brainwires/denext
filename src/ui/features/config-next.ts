@@ -16,9 +16,11 @@
 import { readConfigModel } from "../../build/config-edit.ts";
 import { evalNextConfigProgram, LOAD_NEXT_CONFIG } from "../../build/next-config-eval.ts";
 import { CONFIG_FILES } from "../../build/paths.ts";
-import { html, jsonResponse, panelResponder, raw, type RawHtml, type UiContext } from "../html.ts";
-import { UI_CSRF_FIELD } from "../security.ts";
-import { control } from "../form/control.ts";
+import { Fragment, h } from "../../jsx/jsx-runtime.ts";
+import type { VNode } from "../../jsx/types.ts";
+import { jsonResponse, panelResponder, type UiContext } from "../html.ts";
+import { Mono, Note, OpForm, Panel, Table } from "../components.ts";
+import { renderView } from "../view.ts";
 import { loadConfigSchema, resolveAt } from "../form/schema.ts";
 import { widgetFor } from "../form/widget.ts";
 import { encode } from "../form/value.ts";
@@ -199,117 +201,167 @@ async function detect(dir: string): Promise<Compat> {
 
 // ── the views ────────────────────────────────────────────────────────────────
 
-/** One `<table>` with a header row. */
-function table(head: readonly string[], rows: readonly RawHtml[]): RawHtml {
-  return html`
-    <table class="table">
-      <thead>
-        <tr>${head.map((cell) => html`<th>${cell}</th>`)}</tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
-  `;
-}
-
 /** A value, as the compact JSON the table shows. */
 function preview(value: unknown): string {
   const text = JSON.stringify(value ?? null);
   return text.length > 120 ? text.slice(0, 117) + "…" : text;
 }
 
+/** One translatable key: the request (token, read-only), the key and its evaluated value. */
+interface HonoredProps {
+  /** The current request. */
+  readonly ctx: UiContext;
+  /** The next.config key (also the denext config section it lands in). */
+  readonly name: string;
+  /** Its evaluated value. */
+  readonly value: unknown;
+}
+
 /**
  * A "translate this key" button: it posts the evaluated value to `/config` as an ordinary
  * section edit, so the user lands on the same diff-then-confirm preview as any other change.
  */
-function translateForm(ctx: UiContext, key: string, value: unknown): RawHtml {
-  const path = [key];
+function TranslateForm({ ctx, name, value }: HonoredProps): VNode {
+  const path = [name];
   const spec = widgetFor(resolveAt(loadConfigSchema(), path), path, false);
-  const fields = encode(spec, value).map((entry) =>
-    control({ tag: "input", type: "hidden", name: entry.name, value: entry.value })
-  );
-  return html`<form method="post" action="/config?section=${encodeURIComponent(key)}">
-${control({ tag: "input", type: "hidden", name: UI_CSRF_FIELD, value: ctx.csrf })}${fields}
-<button type="submit"${ctx.readOnly ? raw(" disabled") : ""}>Translate</button>
-</form>`;
+  return h(OpForm, {
+    csrf: ctx.csrf,
+    action: `/config?section=${encodeURIComponent(name)}`,
+    label: "Translate",
+    fields: Object.fromEntries(encode(spec, value).map((entry) => [entry.name, entry.value])),
+    disabled: ctx.readOnly,
+  });
 }
 
 /** One honored key: its value, and the button that writes it into the denext config. */
-function honoredRow(ctx: UiContext, key: string, value: unknown): RawHtml {
-  return html`
-    <tr>
-      <td><code class="mono">${key}</code></td>
-      <td><code class="mono">${preview(value)}</code></td>
-      <td>${translateForm(ctx, key, value)}</td>
-    </tr>
-  `;
+function HonoredRow({ ctx, name, value }: HonoredProps): VNode {
+  return h(
+    "tr",
+    null,
+    h("td", null, h(Mono, null, name)),
+    h("td", null, h(Mono, null, preview(value))),
+    h("td", null, h(TranslateForm, { ctx, name, value })),
+  );
 }
 
 /** One dropped key and where its behaviour went instead. */
-function droppedRow(key: string): RawHtml {
-  const note = DROP_NOTES[key];
-  return html`
-    <tr>
-      <td><code class="mono">${key}</code></td>
-      <td>${note === undefined || note === ""
-        ? "no denext equivalent — nothing to port."
-        : note}</td>
-    </tr>
-  `;
+function DroppedRow({ name }: { readonly name: string }): VNode {
+  const note = DROP_NOTES[name];
+  return h(
+    "tr",
+    null,
+    h("td", null, h(Mono, null, name)),
+    h("td", null, note ? note : "no denext equivalent — nothing to port."),
+  );
+}
+
+/** What the evaluated-config views are rendered from. */
+interface ReadProps {
+  /** The current request. */
+  readonly ctx: UiContext;
+  /** What the evaluator found. */
+  readonly read: NextConfigRead;
 }
 
 /** The honored + rules tables (everything this panel can translate). */
-function translatable(ctx: UiContext, read: NextConfigRead): RawHtml {
-  const fields = Object.entries(read.fields).map(([key, value]) => honoredRow(ctx, key, value));
-  const rules = Object.entries(read.rules)
-    .filter(([, value]) => Array.isArray(value))
-    .map(([key, value]) => honoredRow(ctx, key, value));
-  return html`<h2>Honored the same way</h2>
-${
-    fields.length + rules.length === 0
-      ? html`<p class="lead">Nothing in this file maps onto a denext config key.</p>`
-      : table(["key", "value", ""], [...fields, ...rules])
-  }`;
+function Translatable({ ctx, read }: ReadProps): VNode {
+  const rules = Object.entries(read.rules).filter(([, value]) => Array.isArray(value));
+  const rows = [...Object.entries(read.fields), ...rules].map(([name, value]) =>
+    h(HonoredRow, { key: name, ctx, name, value })
+  );
+  return h(
+    Fragment,
+    null,
+    h("h2", null, "Honored the same way"),
+    rows.length === 0
+      ? h("p", { class: "lead" }, "Nothing in this file maps onto a denext config key.")
+      : h(Table, { head: ["key", "value", ""], rows }),
+  );
 }
 
 /** The "no denext equivalent" table. */
-function dropped(read: NextConfigRead): RawHtml {
-  if (read.other.length === 0) return html``;
-  return html`<h2>No denext equivalent</h2>
-${table(["key", "where it went"], read.other.map(droppedRow))}`;
+function Dropped({ names }: { readonly names: readonly string[] }): VNode {
+  const rows = names.map((name) => h(DroppedRow, { key: name, name }));
+  return h(
+    Fragment,
+    null,
+    h("h2", null, "No denext equivalent"),
+    h(Table, { head: ["key", "where it went"], rows }),
+  );
+}
+
+/** A compat app's `next.config.*`: missing, unreadable, or tabled with its translations. */
+function TranslatePreview(
+  { ctx, read }: { readonly ctx: UiContext; readonly read: NextConfigRead | null },
+): VNode {
+  if (read === null) {
+    return h(Note, null, "No ", h(Mono, null, "next.config.*"), " in this project.");
+  }
+  if (read.failed) {
+    return h(
+      Note,
+      null,
+      "Could not evaluate ",
+      h(Mono, null, read.file),
+      " — it may import a dependency that is not installed, take too long, or have side " +
+        "effects. Port it by hand.",
+    );
+  }
+  return h(
+    Fragment,
+    null,
+    h("p", { class: "lead mono" }, read.file),
+    h(Translatable, { ctx, read }),
+    read.other.length > 0 ? h(Dropped, { names: read.other }) : null,
+  );
 }
 
 /** The panel for a project that is not a Next.js compat app. */
-function notCompatBody(): RawHtml {
-  return html`
-    <section id="panel" data-panel="next.config">
-      <h1>next.config</h1>
-      <p class="lead">This project is not a Next.js compat app: nothing here depends on
-    <code class="mono">next</code>, and your denext config does not set
-    <code class="mono">compatibilityMode</code>. Native denext apps configure everything through
-    <a href="/config">denext.config.ts</a>; there is no <code class="mono">next.config</code> to
-    read, and denext would not load one if there were.</p>
-    </section>
-  `;
+function NotCompatView(): VNode {
+  return h(
+    Panel,
+    { name: "next.config", title: "next.config" },
+    h(
+      "p",
+      { class: "lead" },
+      "This project is not a Next.js compat app: nothing here depends on ",
+      h(Mono, null, "next"),
+      ", and your denext config does not set ",
+      h(Mono, null, "compatibilityMode"),
+      ". Native denext apps configure everything through ",
+      h("a", { href: "/config" }, "denext.config.ts"),
+      "; there is no ",
+      h(Mono, null, "next.config"),
+      " to read, and denext would not load one if there were.",
+    ),
+  );
 }
 
 /** The panel for a compat app: what the file says, and what denext will do with it. */
-function readBody(ctx: UiContext, compat: Compat, read: NextConfigRead | null): RawHtml {
-  return html`<section id="panel" data-panel="next.config">
-<h1>next.config</h1>
-<p class="lead">denext never loads <code class="mono">next.config</code> at runtime — the compat
-pipeline rewrites <code class="mono">next/*</code> imports, it does not adopt Next's config
-file. This panel reads it once, here, and offers to translate what denext honors into
-<a href="/config">denext.config.ts</a>. Detected because ${compat.reason}.</p>
-${
-    read === null
-      ? html`<p class="note">No <code class="mono">next.config.*</code> in this project.</p>`
-      : read.failed
-      ? html`<p class="note">Could not evaluate
-<code class="mono">${read.file}</code> — it may import a dependency that is not installed, take
-too long, or have side effects. Port it by hand.</p>`
-      : html`<p class="lead mono">${read.file}</p>${translatable(ctx, read)}${dropped(read)}`
-  }
-</section>`;
+function NextConfigView(
+  { ctx, compat, read }: {
+    readonly ctx: UiContext;
+    readonly compat: Compat;
+    readonly read: NextConfigRead | null;
+  },
+): VNode {
+  return h(
+    Panel,
+    { name: "next.config", title: "next.config" },
+    h(
+      "p",
+      { class: "lead" },
+      "denext never loads ",
+      h(Mono, null, "next.config"),
+      " at runtime — the compat pipeline rewrites ",
+      h(Mono, null, "next/*"),
+      " imports, it does not adopt Next's config file. This panel reads it once, here, and " +
+        "offers to translate what denext honors into ",
+      h("a", { href: "/config" }, "denext.config.ts"),
+      `. Detected because ${compat.reason}.`,
+    ),
+    h(TranslatePreview, { ctx, read }),
+  );
 }
 
 /** The machine view of the panel (the `/api/config/next` payload). */
@@ -341,5 +393,6 @@ export async function nextConfigPanel(_request: Request, ctx: UiContext): Promis
   const compat = await detect(ctx.dir);
   const read = compat.compat && compat.file ? await evaluate(ctx.dir, compat.file) : null;
   if (ctx.json) return jsonResponse({ ok: true, ...payload(compat, read) });
-  return panelResponse(ctx, compat.compat ? readBody(ctx, compat, read) : notCompatBody());
+  const view = compat.compat ? h(NextConfigView, { ctx, compat, read }) : h(NotCompatView, null);
+  return panelResponse(ctx, renderView(view));
 }

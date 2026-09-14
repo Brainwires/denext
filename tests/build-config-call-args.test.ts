@@ -1,5 +1,10 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { type CallArgSet, type CallTarget, setCallArguments } from "../src/build/call-args-edit.ts";
+import {
+  type CallArgSet,
+  type CallTarget,
+  readCallArguments,
+  setCallArguments,
+} from "../src/build/call-args-edit.ts";
 import { parseModule } from "../src/build/swc-ast.ts";
 
 const OPENAPI: CallTarget = { arrayKey: "plugins", callee: "openapi" };
@@ -276,4 +281,83 @@ export default {
     assertEquals(await denoFmt(out), out, out);
     assert(await parseModule(out) !== null, out);
   }
+});
+
+// --- readCallArguments -------------------------------------------------------
+
+Deno.test("readCallArguments: a zero-argument call reads as no options", async () => {
+  assertEquals(await readCallArguments(`export default { plugins: [openapi()] };`, OPENAPI), {
+    ok: true,
+    values: {},
+    codeKeys: [],
+    codeText: {},
+  });
+});
+
+Deno.test("readCallArguments: data options decode; code options are listed with their source", async () => {
+  const src = [
+    `import { openapi } from "@denext/openapi";`,
+    `export default defineConfig({`,
+    `  plugins: [`,
+    `    htmx(),`,
+    `    openapi({`,
+    `      // where the document lives`,
+    `      path: "/spec.json",`,
+    `      info: { title: "API", version: "1" },`,
+    `      servers: [{ url: "https://a.example" }],`,
+    `      docs: false,`,
+    `      toJsonSchema: (schema) => schema,`,
+    `      tags: () => ["a"],`,
+    `      security,`,
+    "      outFile: `out.json`,",
+    `    }),`,
+    `  ],`,
+    `});`,
+  ].join("\n");
+  const read = await readCallArguments(src, OPENAPI);
+  if (!read.ok) throw new Error(read.reason);
+  assertEquals(read.values, {
+    path: "/spec.json",
+    info: { title: "API", version: "1" },
+    servers: [{ url: "https://a.example" }],
+    docs: false,
+  });
+  // A thunk is code here, even though the config writer unwraps one for `redirects`.
+  assertEquals(read.codeKeys, ["toJsonSchema", "tags", "security", "outFile"]);
+  assertEquals(read.codeText.toJsonSchema, "(schema) => schema");
+  assertEquals(read.codeText.security, "security");
+  assertEquals(read.codeText.outFile, "`out.json`");
+});
+
+Deno.test("readCallArguments: refuses exactly the call shapes setCallArguments refuses", async () => {
+  const shapes = [
+    `export default { plugins: [openapi(...args)] };`,
+    `export default { plugins: [openapi({ ...base, a: 1 })] };`,
+    `export default { plugins: [openapi(opts)] };`,
+    `export default { plugins: [openapi({}, extra)] };`,
+    `export default { plugins: [plugins.openapi()] };`,
+    `export default { plugins: [openapi(), openapi({ a: 1 })] };`,
+    `export default { plugins: [htmx()] };`,
+    `export default { plugins: getPlugins() };`,
+    `export default makeConfig();`,
+  ];
+  for (const src of shapes) {
+    const read = await readCallArguments(src, OPENAPI);
+    const write = await setCallArguments(src, OPENAPI, [{ path: ["a"], value: 1 }]);
+    if (read.ok || write.ok) throw new Error(`expected both to refuse: ${src}`);
+    assertEquals(read.reason, write.reason, src);
+    assertEquals(read.snippet, write.snippet, src);
+  }
+});
+
+Deno.test("readCallArguments: what setCallArguments writes reads back", async () => {
+  const src = `export default {\n  plugins: [openapi({ foo: () => 1 })],\n};\n`;
+  const out = await edit(src, [
+    { path: ["info", "title"], value: "API" },
+    { path: ["servers"], value: [{ url: "https://a.example" }] },
+  ]);
+  const read = await readCallArguments(out, OPENAPI);
+  if (!read.ok) throw new Error(read.reason);
+  assertEquals(read.values, { info: { title: "API" }, servers: [{ url: "https://a.example" }] });
+  assertEquals(read.codeKeys, ["foo"]);
 });

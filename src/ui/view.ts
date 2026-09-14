@@ -1,6 +1,6 @@
-// The component substrate of `denext ui`: render a view's VNode tree to the same pre-escaped
-// fragment type the `html` tagged template produces, so the two authoring styles nest inside each
-// other while the feature views flip from strings to components one at a time.
+// The component substrate of `denext ui`: render a view's VNode tree to a pre-escaped fragment
+// ({@linkcode RawHtml}) — what the page seam takes, and what the form renderer's string API
+// (`renderWidget`, `control`, `field`, `opButton`) returns for a panel to embed with `Raw`.
 //
 // Views are built with `h()` from the JSX runtime, in `.ts` files — never JSX syntax. JSR rewrites
 // a package's `compilerOptions.jsxImportSource` into a per-file `@jsxImportSource` pragma resolved
@@ -13,15 +13,14 @@
 // islands and no inline script (the page CSP stays `script-src 'self'`), so a view is rendered
 // once, synchronously, on the server, and nothing about it reaches the client as code.
 //
-// Escaping differs from `html`/`esc` (the renderer emits NAMED references — `&amp;` `&lt;` `&gt;`
-// `&quot;` — and `&#39;`; `esc` emits numeric ones for all five), but the two are equally safe in
-// text and in double-quoted attributes, and a browser decodes both to the same characters.
+// The renderer escapes every text child and attribute value, with NAMED references — `&amp;`
+// `&lt;` `&gt;` `&quot;` — and `&#39;`, safe in text and in double-quoted attributes alike.
 
 import { h } from "../jsx/jsx-runtime.ts";
 import { renderToStringSync } from "../jsx/render-to-string.ts";
 import type { VNode, VNodeChildren } from "../jsx/types.ts";
 
-/** A pre-escaped HTML fragment: interpolating it into `html` inserts it verbatim. */
+/** A pre-escaped HTML fragment: {@linkcode Raw} inserts it into a component tree verbatim. */
 export interface RawHtml {
   /** The already-safe markup. */
   readonly __html: string;
@@ -41,10 +40,9 @@ const RAW_MARKER = new RegExp(`</?${RAW_TAG}>`, "g");
 
 /**
  * Render a component view to a pre-escaped fragment — synchronously, with no hydration markers
- * and no client code. The result nests inside an `html` template
- * (`html\`<div>${renderView(h(X, null))}</div>\``) without being escaped a second time. A
- * throwing component throws out of this call (the UI server answers `500`), and so does an async
- * component: a view must be synchronous.
+ * and no client code. The result nests inside another tree through {@linkcode Raw} without
+ * being escaped a second time. A throwing component throws out of this call (the UI server
+ * answers `500`), and so does an async component: a view must be synchronous.
  *
  * Always render UI views through this function (or `renderPage`), never the renderer directly —
  * it is what removes {@linkcode Raw}'s wrapper.
@@ -57,16 +55,17 @@ export function renderView(node: VNodeChildren): RawHtml {
 }
 
 /**
- * Insert already-escaped markup into a component tree verbatim — how an `html` fragment (or the
- * output of `esc`, `opForm`, `diffHtml`, …) nests inside a component view while the views flip
- * over. A `RawHtml` placed directly as a child is NOT rendered as markup; wrap it in `Raw`.
+ * Insert already-escaped markup into a component tree verbatim — how a fragment the form
+ * renderer's string API returned (`renderWidget`, `control`, `field`, `opButton`) nests inside a
+ * component view. A `RawHtml` placed directly as a child is NOT rendered as markup; wrap it in
+ * `Raw`.
  *
- * **TRUSTED MARKUP ONLY.** `html` must be the output of the `html` tag, `esc`, or another view
- * helper that escaped every interpolated value — never user or project text. Anything passed
- * here reaches the page unescaped; put untrusted text in a child or an attribute instead, where
- * the renderer escapes it.
+ * **TRUSTED MARKUP ONLY.** The markup must be the output of {@linkcode renderView} (or a form
+ * renderer call built on it), or a literal the caller wrote — never user or project text.
+ * Anything passed here reaches the page unescaped; put untrusted text in a child or an attribute
+ * instead, where the renderer escapes it.
  *
- * @param props `html`: the trusted fragment (or trusted markup string) to insert.
+ * @param props The trusted fragment (or trusted markup string) to insert.
  * @returns The element that renders it (its marker wrapper is removed by {@linkcode renderView}).
  */
 export function Raw({ html }: { readonly html: RawHtml | string }): VNode {

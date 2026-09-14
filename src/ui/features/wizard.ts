@@ -25,7 +25,7 @@ import { FEATURES } from "../../cli/commands/create.ts";
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChildren } from "../../jsx/types.ts";
 import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
-import { DiffBlock, Note, OpForm, Out } from "../components.ts";
+import { DiffBlock, Hidden, Note, OpForm, Out, Panel } from "../components.ts";
 import { renderView } from "../view.ts";
 import { broadcast } from "../events.ts";
 import { uiSafeJoin, writeFileAtomic } from "../security.ts";
@@ -788,7 +788,7 @@ function Outcome({ ctx, outcome }: CtxProps & { readonly outcome: OpOutcome }): 
   const confirm: StepAction | null = outcome.confirmOp === undefined ? null : {
     op: outcome.confirmOp,
     label: "Apply this change",
-    fields: h("input", { type: "hidden", name: "confirm", value: "1" }),
+    fields: h(Hidden, { name: "confirm", value: "1" }),
   };
   return h(
     "div",
@@ -859,9 +859,8 @@ interface WizardProps extends CtxProps {
 /** The whole panel: the one `<section id="panel">` `ui.js` swaps, with the nine steps inside. */
 function WizardPanel({ ctx, views, outcome }: WizardProps): VNode {
   return h(
-    "section",
-    { id: "panel", "data-panel": "Wizard" },
-    h("h1", null, "Setup wizard"),
+    Panel,
+    { name: "Wizard", title: "Setup wizard" },
     h("p", { class: "lead mono" }, ctx.dir),
     ctx.readOnly ? h(Note, null, "Read-only mode — every write is refused.") : null,
     views.map((view, index) => h(Step, { key: view.id, ctx, index, view, outcome })),

@@ -6,7 +6,7 @@
 // The handler is driven directly with a hand-built context — the kernel's own gates (origin,
 // CSRF, read-only, method) are `tests/ui-server.test.ts`'s subject, not this file's.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import type { SseClients } from "../src/build/sse.ts";
 import type { UiContext } from "../src/ui/html.ts";
@@ -231,6 +231,60 @@ Deno.test("the raw escape hatch refuses a file that no longer parses as a config
     });
     assertEquals(ok.status, 303);
     assertStringIncludes(await onDisk(dir), '"/raw"');
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/** The five references the page's renderer may emit, back to their characters. */
+const ENTITIES: Record<string, string> = {
+  "&amp;": "&",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&quot;": '"',
+  "&#39;": "'",
+};
+
+/**
+ * The raw editor's `<textarea>` content as a browser parses and posts it back: the ONE newline
+ * the HTML parser drops right after the start tag removed, entities decoded.
+ */
+function textareaText(body: string): string {
+  const content = body.match(/<textarea name="raw"[^>]*>([\s\S]*?)<\/textarea>/)?.[1] ?? "";
+  return content.replace(/^\n/, "").replace(/&(?:amp|lt|gt|quot|#39);/g, (ref) => ENTITIES[ref]);
+}
+
+Deno.test("the raw editor carries the file byte for byte, markup characters included", async () => {
+  const source = CONFIG.replace("// the legacy URLs", `// <b>a & b</b> "quoted" 'single' &amp;`);
+  const dir = await project(source);
+  try {
+    const body = await (await call(dir, "/config")).text();
+    assert(!body.includes("<b>a & b</b>"), "the file's markup is escaped, never live");
+    const text = textareaText(body);
+    assertEquals(text, source);
+
+    // Posting the textarea straight back is a no-op, not a diff.
+    const res = await call(dir, "/config?raw=1", { form: { raw: text } });
+    assertEquals(res.status, 200);
+    assertStringIncludes(await res.text(), "No change — the file already says this.");
+    assertEquals(await onDisk(dir), source);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("the raw editor keeps a file's leading blank lines through the textarea", async () => {
+  const source = "\n\n" + CONFIG;
+  const dir = await project(source);
+  try {
+    const body = await (await call(dir, "/config")).text();
+    // The newline the parser drops after `<textarea>`, then the file's own two.
+    assertMatch(body, /<textarea name="raw"[^>]*>\n\n\nimport /);
+    const text = textareaText(body);
+    assertEquals(text, source);
+    const res = await call(dir, "/config?raw=1", { form: { raw: text } });
+    assertStringIncludes(await res.text(), "No change — the file already says this.");
+    assertEquals(await onDisk(dir), source);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

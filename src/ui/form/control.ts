@@ -3,10 +3,19 @@
 // than thirteen near-identical markup blocks, and so "every value is escaped" is one claim to
 // audit rather than thirteen.
 //
+// Each piece is a component (`Control`, `Field`, `OpButton`) built with `h()` — the renderer in
+// `render.ts` composes them directly, so a nested widget never round-trips through a string —
+// and each has a string twin (`control`, `field`, `opButton`) that renders the component at the
+// boundary for the panels that embed the form renderer through `Raw`. The string renderer escapes
+// every text child and attribute value, and writes attributes in prop order, so the markup is
+// stable however `deno fmt` wraps the source.
+//
 // Layout uses inline `style=` attributes where `src/ui/styles.ts` has no class: the UI's CSP
 // sets `style-src-attr 'unsafe-inline'` for exactly this (it still forbids inline `<style>`).
 
-import { esc, html, raw, type RawHtml } from "../html.ts";
+import { Fragment, h } from "../../jsx/jsx-runtime.ts";
+import type { VNode, VNodeChildren } from "../../jsx/types.ts";
+import { Raw, type RawHtml, renderView } from "../view.ts";
 import { OP_FIELD } from "./value.ts";
 import type { WidgetOption } from "./widget.ts";
 
@@ -40,69 +49,94 @@ export interface ControlAttrs {
   readonly ariaLabel?: string;
 }
 
-/** One attribute pair: `undefined`/`false` drops it, `true` renders it bare. */
-type Attr = readonly [string, string | number | boolean | undefined];
-
-/** Serialise attribute pairs, escaping every value. */
-function attrs(pairs: readonly Attr[]): string {
-  let out = "";
-  for (const [name, value] of pairs) {
-    if (value === undefined || value === false) continue;
-    out += value === true ? ` ${name}` : ` ${name}="${esc(value)}"`;
-  }
-  return out;
+/** The attributes every control shares, in the order they render (`undefined`/`false` drop). */
+function commonProps(attrs: ControlAttrs) {
+  return {
+    name: attrs.name,
+    id: attrs.id,
+    "aria-label": attrs.ariaLabel,
+    disabled: attrs.disabled ?? false,
+  };
 }
 
 /**
- * One element, assembled by string concatenation rather than a tagged template, so the markup a
- * widget emits is stable: `deno fmt` reflows template literals, and a form field's attributes
- * must not acquire newlines because the source was wrapped.
+ * A `<textarea>`: the value is its text content, passed as the child so it round-trips byte
+ * for byte (the renderer escapes it; a browser decodes it back to the same characters).
+ *
+ * The content always opens with one newline: the HTML parser drops exactly one newline directly
+ * after a `<textarea>` start tag, so without it a value that itself begins with a newline (a
+ * config file opening on a blank line, an `spa.head` snippet) would lose it on every submit.
+ * This is the one place a textarea is emitted — the raw config editor renders through it too.
  */
-function tag(name: string, pairs: readonly Attr[], body?: string): string {
-  const open = `<${name}${attrs(pairs)}>`;
-  return body === undefined ? open : `${open}${body}</${name}>`;
+function textareaElement(attrs: ControlAttrs): VNode {
+  return h(
+    "textarea",
+    {
+      ...commonProps(attrs),
+      rows: attrs.rows ?? 4,
+      placeholder: attrs.placeholder,
+      style: "width:100%",
+    },
+    "\n" + (attrs.value ?? ""),
+  );
 }
 
 /**
- * Render one control. Every widget in `render.ts` bottoms out here, so escaping, the disabled
- * flag and the element vocabulary are decided exactly once.
+ * A `<select>`. Each option states `selected` itself rather than the `<select>` carrying a
+ * `value`, so an absent value selects the `""` option ("— unset —") exactly as it always has.
+ */
+function selectElement(attrs: ControlAttrs): VNode {
+  const current = attrs.value ?? "";
+  const options = (attrs.options ?? []).map((option, index) =>
+    h(
+      "option",
+      { key: index, value: option.value, selected: option.value === current },
+      option.label,
+    )
+  );
+  return h("select", commonProps(attrs), options);
+}
+
+/** An `<input>` of any type. */
+function inputElement(attrs: ControlAttrs): VNode {
+  return h("input", {
+    ...commonProps(attrs),
+    type: attrs.type ?? "text",
+    value: attrs.value ?? "",
+    min: attrs.min,
+    max: attrs.max,
+    placeholder: attrs.placeholder,
+    checked: attrs.checked ?? false,
+  });
+}
+
+/** The element vocabulary: one builder per control tag. */
+const ELEMENTS: Record<ControlAttrs["tag"], (attrs: ControlAttrs) => VNode> = {
+  input: inputElement,
+  select: selectElement,
+  textarea: textareaElement,
+};
+
+/**
+ * One control. Every widget in `render.ts` bottoms out here, so escaping, the disabled flag and
+ * the element vocabulary are decided exactly once.
+ *
+ * @param attrs The control description.
+ * @returns The control element.
+ */
+export function Control(attrs: ControlAttrs): VNode {
+  return ELEMENTS[attrs.tag](attrs);
+}
+
+/**
+ * Render one control. The string twin of {@linkcode Control}, for panels that embed it through
+ * `Raw`.
  *
  * @param spec The control description.
  * @returns The control markup.
  */
 export function control(spec: ControlAttrs): RawHtml {
-  const common: Attr[] = [
-    ["name", spec.name],
-    ["id", spec.id],
-    ["aria-label", spec.ariaLabel],
-    ["disabled", spec.disabled ?? false],
-  ];
-  if (spec.tag === "textarea") {
-    const pairs = [...common, ["rows", spec.rows ?? 4], ["placeholder", spec.placeholder], [
-      "style",
-      "width:100%",
-    ]] as Attr[];
-    return raw(tag("textarea", pairs, esc(spec.value ?? "")));
-  }
-  if (spec.tag === "select") {
-    const options = (spec.options ?? []).map((option) =>
-      tag(
-        "option",
-        [["value", option.value], ["selected", option.value === (spec.value ?? "")]],
-        esc(option.label),
-      )
-    );
-    return raw(tag("select", common, options.join("")));
-  }
-  return raw(tag("input", [
-    ...common,
-    ["type", spec.type ?? "text"],
-    ["value", spec.value ?? ""],
-    ["min", spec.min],
-    ["max", spec.max],
-    ["placeholder", spec.placeholder],
-    ["checked", spec.checked ?? false],
-  ]));
+  return renderView(h(Control, { ...spec }));
 }
 
 /** The label, help text and validation message around one control. */
@@ -121,29 +155,45 @@ export interface FieldOptions {
   readonly body: RawHtml;
 }
 
+/** {@linkcode Field}'s props: {@linkcode FieldOptions} with the control as children. */
+type FieldProps = Omit<FieldOptions, "body"> & { readonly children?: VNodeChildren };
+
 /**
- * Wrap a control in its label, help text and validation message.
+ * A control wrapped in its label, help text and validation message.
+ *
+ * @param props The field description; `children` is the control (or group of controls).
+ * @returns The field element.
+ */
+export function Field(props: FieldProps): VNode {
+  return h(
+    "div",
+    { style: "margin:0 0 14px", id: `${props.id}--field` },
+    h(
+      "label",
+      { for: props.id },
+      props.label,
+      props.badge ? h(Fragment, null, " ", h("span", { class: "badge" }, props.badge)) : null,
+    ),
+    props.children,
+    props.help
+      ? h("p", { class: "lead", style: "margin:4px 0 0;font-size:13px" }, props.help)
+      : null,
+    props.error
+      ? h("p", { class: "note", role: "alert", style: "margin:6px 0 0" }, props.error)
+      : null,
+  );
+}
+
+/**
+ * Wrap a control in its label, help text and validation message. The string twin of
+ * {@linkcode Field}.
  *
  * @param options The field description.
  * @returns The field markup.
  */
 export function field(options: FieldOptions): RawHtml {
-  return html`
-    <div style="margin:0 0 14px" id="${options.id}--field">
-      <label for="${options.id}">${options.label}${options.badge
-        ? html`
-          <span class="badge">${options.badge}</span>
-        `
-        : ""}</label>
-      ${options.body}
-      ${options.help
-        ? html`<p class="lead" style="margin:4px 0 0;font-size:13px">${options.help}</p>`
-        : ""}
-      ${options.error
-        ? html`<p class="note" role="alert" style="margin:6px 0 0">${options.error}</p>`
-        : ""}
-    </div>
-  `;
+  const { body, ...rest } = options;
+  return renderView(h(Field, { ...rest }, h(Raw, { html: body })));
 }
 
 /** One row-operation button (`↑`, `↓`, `✕`, `+ Add`). */
@@ -169,19 +219,29 @@ export interface OpButtonOptions {
  * The operation, the row and the list travel in the button's single `value` (a button can only
  * post one name/value pair); `parseOp` in `value.ts` reads them back.
  *
+ * @param props The button description.
+ * @returns The button element.
+ */
+export function OpButton(props: OpButtonOptions): VNode {
+  return h("button", {
+    type: "submit",
+    class: "ghost",
+    name: OP_FIELD,
+    value: `${props.op}:${props.at}:${props.list}`,
+    title: props.title,
+    "aria-label": props.title,
+    formnovalidate: true,
+    disabled: props.disabled ?? false,
+    style: "padding:2px 8px",
+  }, props.label);
+}
+
+/**
+ * One list-operation submit button. The string twin of {@linkcode OpButton}.
+ *
  * @param options The button description.
  * @returns The button markup.
  */
 export function opButton(options: OpButtonOptions): RawHtml {
-  return raw(tag("button", [
-    ["type", "submit"],
-    ["class", "ghost"],
-    ["name", OP_FIELD],
-    ["value", `${options.op}:${options.at}:${options.list}`],
-    ["title", options.title],
-    ["aria-label", options.title],
-    ["formnovalidate", true],
-    ["disabled", options.disabled ?? false],
-    ["style", "padding:2px 8px"],
-  ], esc(options.label)));
+  return renderView(h(OpButton, { ...options }));
 }

@@ -25,7 +25,7 @@ import {
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChild } from "../../jsx/types.ts";
 import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
-import { CsrfField, Note, Out } from "../components.ts";
+import { CsrfField, FileDetails, Note, Out, Panel, ResultList } from "../components.ts";
 import { renderView } from "../view.ts";
 import { uiSafeJoin, uiSafeUnder } from "../security.ts";
 
@@ -267,9 +267,8 @@ interface ViewProps {
 /** The whole `<section id="panel">` — the piece `ui.js` swaps. */
 function GeneratePanel({ state }: ViewProps): VNode {
   return h(
-    "section",
-    { id: "panel", "data-panel": "Generate" },
-    h("h1", null, "Generate"),
+    Panel,
+    { name: "Generate", title: "Generate" },
     h(
       "p",
       { class: "lead" },
@@ -286,7 +285,13 @@ function GeneratePanel({ state }: ViewProps): VNode {
 /** What follows the form: a preview, the result of a completed write, or nothing. */
 function results(state: PanelState): VNodeChild {
   if (state.preview) return h(PreviewList, { state });
-  return state.written?.length || state.skipped?.length ? h(ResultList, { state }) : null;
+  if (!state.written?.length && !state.skipped?.length) return null;
+  return h(ResultList, {
+    groups: [
+      { marker: "+ ", paths: state.written ?? [] },
+      { marker: "• exists, skipped: ", paths: state.skipped ?? [] },
+    ],
+  });
 }
 
 /** The kind picker, the name field and the two submits. */
@@ -349,30 +354,8 @@ function PreviewList({ state }: ViewProps): VNode {
 function PreviewFile(
   { file, exists }: { readonly file: GeneratePreviewFile; readonly exists: boolean },
 ): VNode {
-  return h(
-    "details",
-    { open: !exists },
-    h(
-      "summary",
-      null,
-      h("code", null, file.path),
-      " ",
-      h("span", { class: "badge" }, exists ? "exists — would be skipped" : "would be written"),
-    ),
-    h(Out, null, file.contents),
-  );
-}
-
-/** What a completed write did. */
-function ResultList({ state }: ViewProps): VNode {
-  const written = (state.written ?? []).map((path) => resultItem("+ ", path));
-  const skipped = (state.skipped ?? []).map((path) => resultItem("• exists, skipped: ", path));
-  return h(Fragment, null, h("h2", null, "Result"), h("ul", null, written, skipped));
-}
-
-/** One line of the result list: a marker and the project-relative path. */
-function resultItem(marker: string, path: string): VNode {
-  return h("li", { key: marker + path }, marker, h("code", null, path));
+  const badge = exists ? "exists — would be skipped" : "would be written";
+  return h(FileDetails, { path: file.path, badge, open: !exists }, h(Out, null, file.contents));
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────

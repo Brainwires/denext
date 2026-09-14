@@ -7,6 +7,8 @@
 // serialiser and object-splice primitives it reuses: only the argument list's interior (for a
 // zero-argument call) or one option's span is replaced, every other byte stays where it is,
 // and a call shape the writer cannot edit safely is an honest {@linkcode EditResult} refusal.
+// {@linkcode readCallArguments} is the read half: the same locator and the same refusals, so a
+// call the panel can show is exactly a call the writer can edit.
 
 import {
   bail,
@@ -18,6 +20,7 @@ import {
   objectDeleteEdits,
   objectSetEdits,
   objectSlots,
+  readConfigModel,
   renderValue,
   scopeOf,
   scopeSlot,
@@ -25,7 +28,7 @@ import {
   type SpliceOutcome,
   unwrap,
 } from "./config-edit.ts";
-import { applyEdits, type Ctx, type Edit, endOf, type Node, startOf } from "./swc-ast.ts";
+import { applyEdits, type Ctx, type Edit, endOf, type Node, startOf, txt } from "./swc-ast.ts";
 
 /** Columns reserved after an inserted options object for the `)` and `]` that close it. */
 const CLOSERS = 2;
@@ -47,6 +50,19 @@ export interface CallArgSet {
   /** The value to write (plain data), or `undefined` to delete the key. */
   value: unknown | undefined;
 }
+
+/** What {@linkcode readCallArguments} found in a factory call's options object. */
+export type CallArgsRead =
+  | {
+    ok: true;
+    /** Every option whose value is a data literal, decoded. */
+    values: Record<string, unknown>;
+    /** Options whose value is code (a function, a variable, a call), in source order. */
+    codeKeys: string[];
+    /** The verbatim source of each code-valued option, keyed like {@linkcode codeKeys}. */
+    codeText: Record<string, string>;
+  }
+  | { ok: false; reason: string; snippet?: string };
 
 // --- locating the call ------------------------------------------------------
 
@@ -297,4 +313,47 @@ export async function setCallArguments(
   const { ctx, call, obj } = found;
   if (!obj) return await commit(source, ctx, insertOptions(ctx, call, sets), CONFIG_LABEL);
   return await setEach(source, target, sets, { ctx, call, obj });
+}
+
+/**
+ * Read the options a factory call in the config's `plugins` array is given — the read half of
+ * {@linkcode setCallArguments}, with the same locator and the same refusals (no `plugins` array
+ * literal, no direct call or an ambiguous one, a member callee, spread or non-literal
+ * arguments, a spreading options object), so a call this reads is a call the writer can edit.
+ *
+ * A zero-argument call reads as `{}`. Each top-level option whose value is a data literal
+ * (string, number, boolean, null, and arrays/objects of those) is decoded into `values`; any
+ * other value — a function, a thunk, an identifier, a call, a template literal — is code the
+ * writer will not regenerate, so it is listed in `codeKeys` with its source in `codeText`.
+ *
+ * @param source The `denext.config.ts` source.
+ * @param target Which call to read: the array's key and the factory's local name.
+ * @returns The decoded options and the code-valued keys, or an honest refusal.
+ */
+export async function readCallArguments(
+  source: string,
+  target: CallTarget,
+): Promise<CallArgsRead> {
+  const found = await locateCall(source, target);
+  if (!found.ok) {
+    const result = found.result;
+    return result.ok
+      ? { ok: false, reason: "the call could not be read" }
+      : { ok: false, reason: result.reason, snippet: result.snippet };
+  }
+  const values: Record<string, unknown> = {};
+  const codeKeys: string[] = [];
+  const codeText: Record<string, string> = {};
+  // The options object, re-read as a config object: `readConfigModel` already knows which
+  // members are data literals and which are code, with the same decoder `setConfigValue` uses.
+  const text = found.obj ? txt(found.ctx, found.obj) : "{}";
+  const model = await readConfigModel(`export default ${text};\n`);
+  for (const [key, info] of Object.entries(model.keys)) {
+    if (info.kind === "editable" && info.wrapper === undefined) values[key] = info.value;
+    else {
+      codeKeys.push(key);
+      codeText[key] = info.text;
+    }
+  }
+  return { ok: true, values, codeKeys, codeText };
 }

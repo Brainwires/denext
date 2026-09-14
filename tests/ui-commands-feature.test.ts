@@ -390,6 +390,49 @@ Deno.test("with JavaScript off the run answers with the panel and the captured o
   });
 });
 
+Deno.test("a built-in lists its arguments and flags, and project text is escaped", async () => {
+  const builtin: UiCommandInfo = {
+    name: "serve",
+    source: "core",
+    summary: "Serve it",
+    flags: [{
+      name: "port",
+      alias: "p",
+      type: "number",
+      default: 3000,
+      valueName: "N",
+      help: "Which port",
+    }],
+    positionals: [{ name: "dir", help: "The root", required: true, variadic: true }],
+    runnable: false,
+  };
+  const hostile: UiCommandInfo = {
+    ...GREET,
+    summary: '<script>alert("x")</script>',
+    usage: "a < b & c",
+  };
+  const document = JSON.stringify(
+    { core: [builtin], project: [hostile], timedOut: false },
+    null,
+    2,
+  );
+  await withProject(document, async (dir) => {
+    const res = await commandsPanel(new Request("http://127.0.0.1/commands"), ctx(dir));
+    const body = await res.text();
+    assertStringIncludes(
+      body,
+      '<ul class="args"><li><code>dir…</code> — The root <span class="badge">required</span></li></ul>',
+    );
+    assertStringIncludes(
+      body,
+      "<td><code>--port, -p N</code></td><td>number</td><td>3000</td><td>Which port</td>",
+    );
+    assertEquals(body.includes("<script>alert"), false, "a verb's summary is text, never markup");
+    assertStringIncludes(body, "<p>&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;</p>");
+    assertStringIncludes(body, '<pre class="mono">a &lt; b &amp; c</pre>');
+  });
+});
+
 Deno.test("parseListing lifts the document out of the child's combined output", () => {
   const doc = listing([GREET]);
   const parsed = parseListing(`Download https://jsr.io/@std/path\n${doc}\n`);
