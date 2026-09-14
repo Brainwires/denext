@@ -15,6 +15,7 @@
 
 import { dirname, join, relative, resolve, toFileUrl } from "@std/path";
 import { anyExists, exists, firstExisting } from "./migrate-fs.ts";
+import { evalNextConfigProgram, LOAD_NEXT_CONFIG } from "./next-config-eval.ts";
 import { parse as parseJsonc } from "@std/jsonc";
 import { readFrameworkJson } from "./bundle.ts";
 import { appendGitignore } from "./gitignore.ts";
@@ -745,32 +746,23 @@ const NEXT_DROP_GUIDANCE: Record<string, string> = {
 /** The set of drop keys (derived from {@link NEXT_DROP_GUIDANCE}). */
 const NEXT_DROP_KEYS = new Set(Object.keys(NEXT_DROP_GUIDANCE));
 
-/**
- * The evaluator program run as a SUBPROCESS in the app's own directory, so the config's
- * npm plugin imports (`@next/mdx`, …) and `next` resolve from the app's node_modules — not
- * denext's module graph. It imports the resolved default export, copies the honored literal
- * fields, CALLS `redirects`/`rewrites`/`headers` and inlines their resolved arrays (a
- * function can't be serialized; its result can, and denext's config takes the same shape),
- * lists dropped keys, and prints one JSON line. `import(Deno.args[0])`.
- */
-/**
- * Max time to spend evaluating an app's next.config before falling back to hand-port. Read at USE
- * time (not module load) and env-tunable (`DENEXT_NEXT_EVAL_TIMEOUT_MS`) so a CPU-starved run —
- * e.g. the migrate fixture test under the parallel gate — doesn't hit the abort and silently drop
- * to the raw port (which yields a different, golden-mismatching config); production keeps 15 s.
- */
-function nextEvalTimeoutMs(): number {
-  return Number(Deno.env.get("DENEXT_NEXT_EVAL_TIMEOUT_MS")) || 15_000;
-}
+/** The line prefix {@link NEXT_EVAL_PROGRAM} prints its JSON result behind. */
+const NEXT_EVAL_MARKER = "__DENEXT_NEXT_CONFIG__";
 
+/**
+ * The evaluator program run as a SUBPROCESS in the app's own directory (through the shared
+ * bounded evaluator, `next-config-eval.ts`), so the config's npm plugin imports (`@next/mdx`,
+ * …) and `next` resolve from the app's node_modules — not denext's module graph. It imports
+ * the resolved default export, copies the honored literal fields, CALLS
+ * `redirects`/`rewrites`/`headers` and inlines their resolved arrays (a function can't be
+ * serialized; its result can, and denext's config takes the same shape), lists dropped keys,
+ * and prints one JSON line.
+ */
 const NEXT_EVAL_PROGRAM = `
 const PASS = ${JSON.stringify(NEXT_PASSTHROUGH_KEYS)};
 const RULES = ${JSON.stringify(NEXT_RULE_FNS)};
 const DROP = ${JSON.stringify([...NEXT_DROP_KEYS])};
-const mod = await import(Deno.args[0]);
-let cfg = mod?.default ?? mod;
-if (typeof cfg === "function") cfg = await cfg();
-cfg = await cfg;
+${LOAD_NEXT_CONFIG}
 const out = { fields: {}, rules: {}, dropped: [] };
 if (cfg && typeof cfg === "object") {
   for (const k of PASS) if (cfg[k] !== undefined) out.fields[k] = cfg[k];
@@ -781,7 +773,7 @@ if (cfg && typeof cfg === "object") {
   }
   for (const k of Object.keys(cfg)) if (DROP.includes(k)) out.dropped.push(k);
 }
-console.log("__DENEXT_NEXT_CONFIG__" + JSON.stringify(out));
+console.log(${JSON.stringify(NEXT_EVAL_MARKER)} + JSON.stringify(out));
 // Exit NOW: a config wrapper (fumadocs-mdx's createMDX, a plugin spawning a watcher) may keep
 // the event loop alive or crash asynchronously after the config object was already handed
 // over — that must not turn a successful evaluation into a failed one.
@@ -834,55 +826,26 @@ async function hasMdxPluginWiring(configFile: string): Promise<boolean> {
 /**
  * Evaluate the config in a bounded subprocess. A side-effectful next.config (a watcher, a
  * DB connect, an unresolved top-level await) would otherwise hang `denext migrate` forever;
- * on timeout the child is aborted and the caller falls back to the hand-port path (raw:true).
+ * on timeout (`DENEXT_NEXT_EVAL_TIMEOUT_MS`, default 15 s — widened by the migrate fixture
+ * test so a CPU-starved gate doesn't silently drop to the golden-mismatching raw port) the
+ * child is killed and the caller falls back to the hand-port path (raw:true).
  */
 async function evalNextConfig(
   dir: string,
   file: string,
   base: NextConfigTranslation,
 ): Promise<NextConfigTranslation> {
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), nextEvalTimeoutMs());
-  try {
-    // Least privilege: the config is the app's own code but it is run on the migrating
-    // machine — it may read its project + env (what a real `next build` sees), not write,
-    // spawn, or reach the network.
-    const cmd = new Deno.Command(Deno.execPath(), {
-      args: [
-        "run",
-        "--no-prompt",
-        `--allow-read=${dir}`,
-        "--allow-env",
-        "--allow-sys",
-        "-",
-        toFileUrl(join(dir, file)).href,
-      ],
-      cwd: dir,
-      stdin: "piped",
-      stdout: "piped",
-      stderr: "null",
-      signal: ctl.signal,
-    });
-    const child = cmd.spawn();
-    const w = child.stdin.getWriter();
-    await w.write(new TextEncoder().encode(NEXT_EVAL_PROGRAM));
-    await w.close();
-    const { stdout } = await child.output();
-    // The result line is marker-prefixed and read regardless of the exit code: the config
-    // may have been printed before a plugin's background work crashed the process.
-    const line = new TextDecoder().decode(stdout).split("\n")
-      .find((l) => l.startsWith("__DENEXT_NEXT_CONFIG__"));
-    if (!line) return { ...base, raw: true };
-    const parsed = JSON.parse(line.slice("__DENEXT_NEXT_CONFIG__".length)) as Pick<
-      NextConfigTranslation,
-      "fields" | "rules" | "dropped"
-    >;
-    return { ...base, ...parsed };
-  } catch {
-    return { ...base, raw: true };
-  } finally {
-    clearTimeout(timer);
-  }
+  const result = await evalNextConfigProgram({
+    dir,
+    file,
+    program: NEXT_EVAL_PROGRAM,
+    marker: NEXT_EVAL_MARKER,
+  });
+  if (!result.ok) return { ...base, raw: true };
+  return {
+    ...base,
+    ...(result.value as Pick<NextConfigTranslation, "fields" | "rules" | "dropped">),
+  };
 }
 
 /**

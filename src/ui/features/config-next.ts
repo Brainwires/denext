@@ -2,9 +2,10 @@
 //
 // denext NEVER loads `next.config` at runtime: the drop-in path rewrites `next/*` imports, it
 // does not adopt Next's config file. Editing that file would therefore change nothing, so this
-// panel is read-only by construction — it evaluates the config in a bounded subprocess (the
-// same shape `denext migrate` uses: the app's own directory, so its npm plugin imports resolve,
-// with read/env/sys and nothing else), then shows three tables: what denext honors under the
+// panel is read-only by construction — it evaluates the config through the same bounded
+// subprocess evaluator `denext migrate` uses (`build/next-config-eval.ts`: the app's own
+// directory, so its npm plugin imports resolve, with read/env/sys and nothing else, under
+// `DENEXT_NEXT_EVAL_TIMEOUT_MS`), then shows three tables: what denext honors under the
 // same name, the `redirects`/`rewrites`/`headers` thunks it can inline, and the keys that have
 // no denext equivalent, each with a one-line pointer.
 //
@@ -12,8 +13,8 @@
 // ordinary section edit, so the translation lands in the one diff-then-confirm path that every
 // other config change goes through.
 
-import { toFileUrl } from "@std/path";
 import { readConfigModel } from "../../build/config-edit.ts";
+import { evalNextConfigProgram, LOAD_NEXT_CONFIG } from "../../build/next-config-eval.ts";
 import { CONFIG_FILES } from "../../build/paths.ts";
 import { html, jsonResponse, panelResponder, raw, type RawHtml, type UiContext } from "../html.ts";
 import { UI_CSRF_FIELD } from "../security.ts";
@@ -21,7 +22,6 @@ import { control } from "../form/control.ts";
 import { loadConfigSchema, resolveAt } from "../form/schema.ts";
 import { widgetFor } from "../form/widget.ts";
 import { encode } from "../form/value.ts";
-import { runDeno } from "../proc.ts";
 import { uiSafeJoin } from "../security.ts";
 
 /** The `next.config.*` names, in the order Next itself resolves them. */
@@ -55,15 +55,12 @@ const DROP_NOTES: Record<string, string> = {
   productionBrowserSourceMaps: "",
 };
 
-/** How long the evaluator may run before the child is aborted and the panel says so. */
-const EVAL_TIMEOUT_MS = 15_000;
-
 /** The line prefix the evaluator's result is printed behind. */
 const RESULT_MARKER = "__DENEXT_UI_NEXT_CONFIG__";
 
 /**
- * The evaluator, piped to `deno run -` as a subprocess rooted at the app dir (so the program
- * never exists as a file or a `data:` URL). It imports the config, unwraps a
+ * The evaluator program, piped to `deno run -` by the shared bounded evaluator (so it never
+ * exists as a file or a `data:` URL). It imports the config, unwraps a
  * function/promise form, CALLS the rule thunks (a function cannot be serialised; its result
  * can), and prints one marker line. It exits explicitly: a config wrapper may keep the event
  * loop alive or crash asynchronously long after it handed the object over.
@@ -71,10 +68,7 @@ const RESULT_MARKER = "__DENEXT_UI_NEXT_CONFIG__";
 const EVAL_PROGRAM = `
 const HONORED = ${JSON.stringify(HONORED_KEYS)};
 const RULES = ${JSON.stringify(RULE_KEYS)};
-const mod = await import(Deno.args[0]);
-let cfg = mod?.default ?? mod;
-if (typeof cfg === "function") cfg = await cfg();
-cfg = await cfg;
+${LOAD_NEXT_CONFIG}
 const out = { fields: {}, rules: {}, other: [] };
 if (cfg && typeof cfg === "object") {
   for (const key of Object.keys(cfg)) {
@@ -113,22 +107,14 @@ function unreadable(file: string): NextConfigRead {
 /** Evaluate `next.config.*` in a bounded, least-privilege subprocess. */
 const evalNextConfig: NextConfigEvaluator = async (dir, file) => {
   try {
-    const result = await runDeno([
-      "run",
-      "--no-prompt",
-      `--allow-read=${dir}`,
-      "--allow-env",
-      "--allow-sys",
-      "-",
-      toFileUrl(await uiSafeJoin(dir, file)).href,
-    ], {
-      cwd: dir,
-      stdin: EVAL_PROGRAM,
-      signal: AbortSignal.timeout(EVAL_TIMEOUT_MS),
+    const result = await evalNextConfigProgram({
+      dir,
+      file: await uiSafeJoin(dir, file), // the containment gate: a symlink out is refused
+      program: EVAL_PROGRAM,
+      marker: RESULT_MARKER,
     });
-    const line = result.stdout.split("\n").find((l) => l.startsWith(RESULT_MARKER));
-    if (!line) return unreadable(file);
-    return { file, failed: false, ...JSON.parse(line.slice(RESULT_MARKER.length)) };
+    if (!result.ok) return unreadable(file);
+    return { file, failed: false, ...(result.value as Omit<NextConfigRead, "file" | "failed">) };
   } catch {
     return unreadable(file);
   }
