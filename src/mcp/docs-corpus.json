@@ -1986,7 +1986,7 @@
       "title": "useDebugValue",
       "module": "denext",
       "url": "/docs/api/denext/useDebugValue",
-      "text": "useDebugValue useDebugValue<T>(_value: T, _format?: (value: T) => unknown): void Label a custom hook's value for React DevTools. A no-op at runtime (React itself only invokes it when DevTools is attached), provided for API compatibility. The value to display. Optional formatter, applied lazily by DevTools only.",
+      "text": "useDebugValue useDebugValue<T>(value: T, format?: (value: T) => unknown): void Label a custom hook's value for the DevTools inspector. In development on the client the value is recorded against the rendering component — without taking a hook cell, so adding or removing a call never shifts hook state (Fast Refresh keeps it) — and shown on the hook row it follows in the panel, denext_hook_state and the MCP snapshot. format is never called during render: the inspector applies it lazily, only when it reads the value. In production and during server rendering this is a no-op. The value to display. Optional formatter, applied lazily by the inspector only.",
       "denextOnly": false
     },
     {
@@ -3453,7 +3453,7 @@
       "title": "credentials",
       "module": "denext/server",
       "url": "/docs/api/denext-server/credentials",
-      "text": "credentials credentials(options: CredentialsOptions): CredentialsProvider An email/password (or any custom) credentials provider. The authorize callback and an optional provider id. The configured credentials provider.",
+      "text": "credentials credentials(options?: CredentialsOptions): CredentialsProvider An email/password (or any custom) credentials provider. The optional authorize callback and provider id. The configured credentials provider.",
       "denextOnly": true
     },
     {
@@ -7692,7 +7692,7 @@
       "title": "useDebugValue",
       "module": "denext/client",
       "url": "/docs/api/denext-client/useDebugValue",
-      "text": "useDebugValue useDebugValue<T>(_value: T, _format?: (value: T) => unknown): void Label a custom hook's value for React DevTools. A no-op at runtime (React itself only invokes it when DevTools is attached), provided for API compatibility. The value to display. Optional formatter, applied lazily by DevTools only.",
+      "text": "useDebugValue useDebugValue<T>(value: T, format?: (value: T) => unknown): void Label a custom hook's value for the DevTools inspector. In development on the client the value is recorded against the rendering component — without taking a hook cell, so adding or removing a call never shifts hook state (Fast Refresh keeps it) — and shown on the hook row it follows in the panel, denext_hook_state and the MCP snapshot. format is never called during render: the inspector applies it lazily, only when it reads the value. In production and during server rendering this is a no-op. The value to display. Optional formatter, applied lazily by the inspector only.",
       "denextOnly": false
     },
     {

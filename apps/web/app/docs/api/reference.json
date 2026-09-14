@@ -2906,17 +2906,17 @@
           "name": "useDebugValue",
           "slug": "useDebugValue",
           "kind": "function",
-          "signature": "useDebugValue<T>(_value: T, _format?: (value: T) => unknown): void",
-          "doc": "Label a custom hook's value for React DevTools. A no-op at runtime (React itself only invokes it when DevTools is attached), provided for API compatibility.",
-          "docFull": "Label a custom hook's value for React DevTools. A no-op at runtime (React itself\nonly invokes it when DevTools is attached), provided for API compatibility.",
+          "signature": "useDebugValue<T>(value: T, format?: (value: T) => unknown): void",
+          "doc": "Label a custom hook's value for the DevTools inspector. In development on the client the value is recorded against the rendering component — without taking a hook cell, so adding or removing a call never shifts hook state (Fast Refresh keeps it) — and shown on the hook row it follows in the panel, denext_hook_state and the MCP snapshot. format is never called during render: the inspector applies it lazily, only when it reads the value. In production and during server rendering this is a no-op.",
+          "docFull": "Label a custom hook's value for the DevTools inspector. In development on the client\nthe value is recorded against the rendering component — without taking a hook cell, so\nadding or removing a call never shifts hook state (Fast Refresh keeps it) — and shown\non the hook row it follows in the panel, `denext_hook_state` and the MCP snapshot.\n`format` is never called during render: the inspector applies it lazily, only when it\nreads the value. In production and during server rendering this is a no-op.",
           "params": [
             {
-              "name": "_value",
+              "name": "value",
               "doc": "The value to display."
             },
             {
-              "name": "_format",
-              "doc": "Optional formatter, applied lazily by DevTools only."
+              "name": "format",
+              "doc": "Optional formatter, applied lazily by the inspector only."
             }
           ],
           "returns": "",
@@ -5131,13 +5131,13 @@
           "name": "credentials",
           "slug": "credentials",
           "kind": "function",
-          "signature": "credentials(options: CredentialsOptions): CredentialsProvider",
+          "signature": "credentials(options?: CredentialsOptions): CredentialsProvider",
           "doc": "An email/password (or any custom) credentials provider.",
           "docFull": "An email/password (or any custom) credentials provider.",
           "params": [
             {
               "name": "options",
-              "doc": "The authorize callback and an optional provider id."
+              "doc": "The optional authorize callback and provider id."
             }
           ],
           "returns": "The configured credentials provider.",
@@ -11438,17 +11438,17 @@
           "name": "useDebugValue",
           "slug": "useDebugValue",
           "kind": "function",
-          "signature": "useDebugValue<T>(_value: T, _format?: (value: T) => unknown): void",
-          "doc": "Label a custom hook's value for React DevTools. A no-op at runtime (React itself only invokes it when DevTools is attached), provided for API compatibility.",
-          "docFull": "Label a custom hook's value for React DevTools. A no-op at runtime (React itself\nonly invokes it when DevTools is attached), provided for API compatibility.",
+          "signature": "useDebugValue<T>(value: T, format?: (value: T) => unknown): void",
+          "doc": "Label a custom hook's value for the DevTools inspector. In development on the client the value is recorded against the rendering component — without taking a hook cell, so adding or removing a call never shifts hook state (Fast Refresh keeps it) — and shown on the hook row it follows in the panel, denext_hook_state and the MCP snapshot. format is never called during render: the inspector applies it lazily, only when it reads the value. In production and during server rendering this is a no-op.",
+          "docFull": "Label a custom hook's value for the DevTools inspector. In development on the client\nthe value is recorded against the rendering component — without taking a hook cell, so\nadding or removing a call never shifts hook state (Fast Refresh keeps it) — and shown\non the hook row it follows in the panel, `denext_hook_state` and the MCP snapshot.\n`format` is never called during render: the inspector applies it lazily, only when it\nreads the value. In production and during server rendering this is a no-op.",
           "params": [
             {
-              "name": "_value",
+              "name": "value",
               "doc": "The value to display."
             },
             {
-              "name": "_format",
-              "doc": "Optional formatter, applied lazily by DevTools only."
+              "name": "format",
+              "doc": "Optional formatter, applied lazily by the inspector only."
             }
           ],
           "returns": "",
