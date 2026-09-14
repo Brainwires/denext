@@ -337,3 +337,75 @@ Deno.test("the handler itself refuses an apply in read-only mode (403, no write)
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+// ── containment: the plan, not just the name ─────────────────────────────────
+
+/** Whether an absolute path exists. */
+async function onDisk(path: string): Promise<boolean> {
+  try {
+    await Deno.stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** A JSON-twin POST against the panel, with the kernel's context already assembled. */
+function genPost(dir: string, fields: Record<string, string>): Promise<Response> {
+  const form = new FormData();
+  for (const [name, value] of Object.entries(fields)) form.set(name, value);
+  const ctx: UiContext = {
+    dir,
+    url: new URL("http://127.0.0.1/api/generate"),
+    method: "POST",
+    readOnly: false,
+    csrf: "csrf",
+    json: true,
+    fragment: false,
+    form,
+    events: new Set(),
+  };
+  return generatePanel(new Request("http://127.0.0.1/api/generate"), ctx);
+}
+
+Deno.test("an `app/` that is a symlink out of the project refuses the write", async () => {
+  const outside = await Deno.makeTempDir({ prefix: "denext_gen_out_" });
+  const dir = await Deno.makeTempDir({ prefix: "denext_gen_link_" });
+  const exit = stubExit();
+  try {
+    await Deno.writeTextFile(join(dir, "deno.json"), "{}");
+    await Deno.symlink(outside, join(dir, "app"));
+
+    const res = await genPost(dir, { kind: "page", name: "pwned", op: "apply" });
+    assertEquals(res.status, 400);
+    assertStringIncludes((await res.json()).reason, "outside the project");
+    assertEquals(await onDisk(join(outside, "pwned", "page.tsx")), false);
+
+    // The preview is refused on the same plan, so nothing is even shown.
+    const preview = await genPost(dir, { kind: "page", name: "pwned", op: "preview" });
+    assertEquals(preview.status, 400);
+    await preview.body?.cancel();
+    assertEquals(exit.calls, []);
+  } finally {
+    exit.restore();
+    await Deno.remove(dir, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
+  }
+});
+
+Deno.test("an absolute name is refused, not silently made relative", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_gen_abs_" });
+  const exit = stubExit();
+  try {
+    await Deno.writeTextFile(join(dir, "deno.json"), "{}");
+    await Deno.mkdir(join(dir, "app"), { recursive: true });
+    const res = await genPost(dir, { kind: "page", name: "/etc/pwned", op: "preview" });
+    assertEquals(res.status, 400);
+    assertStringIncludes((await res.json()).reason, "absolute path");
+    assertEquals(await onDisk(join(dir, "app", "etc")), false);
+    assertEquals(exit.calls, []);
+  } finally {
+    exit.restore();
+    await Deno.remove(dir, { recursive: true });
+  }
+});

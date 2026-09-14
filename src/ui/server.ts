@@ -1,16 +1,18 @@
 // The `denext ui` server kernel: bind loopback, run every request through the security chain,
 // then dispatch it against the route table.
 //
-// Hard rule of this process: it never imports the user's modules. Everything that needs the
-// project evaluated (`doctor --json`, `deno task`, `deno add`) goes out through
-// `src/ui/proc.ts` as a subprocess — which is also what keeps the bundler out of this module
-// graph (`tests/ui-server.test.ts` asserts it, via `deno info`).
+// Hard rule of this process: it never imports the user's modules. EVERYTHING project-related —
+// `doctor --json`, `deno task`, `deno add`, and the project's own CLI verbs (`denext commands
+// --json`) — goes out through `src/ui/proc.ts` as a `deno` subprocess, so no config, plugin
+// `setup()`, or app dependency is ever evaluated inside this privileged server. That is also
+// what keeps the bundler out of this module graph (`tests/ui-server.test.ts` asserts both, via
+// `deno info` and a runtime pid check).
 
 import { fromFileUrl } from "@std/path";
 import type { SseClients } from "../build/sse.ts";
 import { displayHost, serveWithPortFallback } from "../server/serve-utils.ts";
 import { jsonResponse, type UiContext } from "./html.ts";
-import { broadcast } from "./events.ts";
+import { broadcast, closeAll } from "./events.ts";
 import { UI_ROUTES } from "./routes.ts";
 import {
   applySecurityHeaders,
@@ -31,6 +33,12 @@ export interface UiServerOptions {
   readonly dir: string;
   /** First port to try (default {@linkcode DEFAULT_UI_PORT}); `0` picks a free one. */
   readonly port?: number;
+  /**
+   * The port is an explicit requirement (the user passed `--port`): fail with a clear error when
+   * it is taken instead of quietly serving on the next one up. Without it the default port falls
+   * forward through at most ten ports.
+   */
+  readonly strictPort?: boolean;
   /** An explicit session token (`--token`); a fresh 256-bit one is minted when omitted. */
   readonly token?: string;
   /** `--read-only`: refuse every mutation with a `403`. */
@@ -43,7 +51,7 @@ export interface UiServerOptions {
 
 /** A running UI server. */
 export interface UiServer {
-  /** The URL to open, carrying the one-time `?t=` handshake. */
+  /** The URL to open, carrying the single-use `?t=` handshake. */
   readonly url: string;
   /** The bound port. */
   readonly port: number;
@@ -72,12 +80,14 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
   const events: SseClients = new Set();
   const controller = new AbortController();
   options.signal?.addEventListener("abort", () => controller.abort(), { once: true });
+  controller.signal.addEventListener("abort", () => closeAll(events), { once: true });
   const server = serveWithPortFallback({
     port: options.port ?? DEFAULT_UI_PORT,
     hostname: "127.0.0.1",
+    strict: options.strictPort === true,
     signal: controller.signal,
     onListen: () => {},
-  }, (request) => handleUiRequest(request, session, events, options));
+  }, (request) => handleUiRequest(request, session, events, controller.signal, options));
   const addr = server.addr as Deno.NetAddr;
   const url = `http://${displayHost(addr.hostname)}:${addr.port}/?t=${session.token}`;
   if (options.uiDev) watchUiSources(events, controller.signal);
@@ -95,32 +105,49 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
 }
 
 /**
- * The security chain, then table dispatch. Ordered so that a cross-origin or rebound-DNS caller
- * is refused (403) *before* the session token is ever consulted, and an unauthenticated caller
- * (401) before any route runs.
+ * Every request, with nothing able to escape as a bare 500: a thrown handler, and a malformed
+ * `Host` that `new URL` itself rejects, both come back as the hardened `{ ok: false }` envelope.
+ * The detail goes to the server's own stderr — a local page is not the place to echo a stack, a
+ * path, or whatever a filesystem error decided to say.
  */
 async function handleUiRequest(
   request: Request,
   session: UiSession,
   events: SseClients,
+  signal: AbortSignal,
+  options: UiServerOptions,
+): Promise<Response> {
+  try {
+    return await dispatch(request, session, events, signal, options);
+  } catch (error) {
+    console.error("denext ui:", error instanceof Error ? (error.stack ?? error.message) : error);
+    return refuse(500, "internal error");
+  }
+}
+
+/**
+ * The security chain, then table dispatch. Ordered so that a cross-origin or rebound-DNS caller
+ * is refused (403) *before* the session token is ever consulted, and an unauthenticated caller
+ * (401) before any route runs.
+ */
+async function dispatch(
+  request: Request,
+  session: UiSession,
+  events: SseClients,
+  signal: AbortSignal,
   options: UiServerOptions,
 ): Promise<Response> {
   const url = new URL(request.url);
   if (!uiOriginAllowed(request, url)) return refuse(403, "forbidden origin");
-  const exchanged = handshake(url, session);
+  const exchanged = handshake(request, url, session);
   if (exchanged) return applySecurityHeaders(exchanged);
   if (!authorized(request, session)) return refuse(401, "unauthorized");
   const route = UI_ROUTES[url.pathname];
   if (!route) return refuse(404, "not found");
   if (!route.methods.includes(request.method)) return refuse(405, "method not allowed");
-  const ctx = await buildContext(request, url, session, events, options);
+  const ctx = await buildContext(request, url, session, events, signal, options);
   if ("refusal" in ctx) return ctx.refusal;
-  try {
-    return applySecurityHeaders(await route.handle(request, ctx.ctx));
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return refuse(500, detail);
-  }
+  return applySecurityHeaders(await route.handle(request, ctx.ctx));
 }
 
 /** Whether `method` changes state (and therefore passes the read-only + CSRF gates). */
@@ -137,6 +164,7 @@ async function buildContext(
   url: URL,
   session: UiSession,
   events: SseClients,
+  signal: AbortSignal,
   options: UiServerOptions,
 ): Promise<{ ctx: UiContext } | { refusal: Response }> {
   const mutating = isMutation(request.method);
@@ -158,6 +186,7 @@ async function buildContext(
       form,
       body,
       events,
+      signal,
     },
   };
 }

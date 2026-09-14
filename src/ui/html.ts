@@ -94,6 +94,13 @@ export interface UiContext {
   readonly body?: unknown;
   /** The `/_ui/events` subscribers, for pushing progress to every open page. */
   readonly events: SseClients;
+  /**
+   * The UI server's shutdown signal. Every child process a feature spawns is handed this (alone
+   * or combined with a per-request deadline), so Ctrl+C takes the `deno task` and the wizard's
+   * `denext dev` with it instead of leaving them running. Absent when a caller (a unit test)
+   * built the context by hand.
+   */
+  readonly signal?: AbortSignal;
 }
 
 /** A feature route handler. */

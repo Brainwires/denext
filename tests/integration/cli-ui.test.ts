@@ -9,7 +9,9 @@
 // What it covers: the 401 before the handshake · the `?t=` → cookie exchange · every page,
 // asset and `/api/*` twin · the hardened header set · the three mutation refusals (no CSRF,
 // cross-site, rebound Host) · a config write that changes exactly one value · a `generate`
-// write · a Docker diff preview · `--read-only` · SIGTERM draining the port.
+// write · a Docker diff preview · `--read-only` · SIGTERM draining the port, including with a
+// browser tab still holding `/_ui/events` open · an explicit `--port` being required exactly ·
+// a too-short `--token` refused at startup.
 
 import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
@@ -468,6 +470,69 @@ Deno.test("`denext ui` serves, guards and writes over real HTTP", async (t) => {
     await t.step("docker previews a diff without writing", () => checkDockerPreview(ui));
   } finally {
     await stopUi(launch);
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("SIGTERM exits promptly with a browser tab holding /_ui/events open", async () => {
+  const dir = await project();
+  const launch = await spawnUi(dir);
+  const ui = session(launch, dir);
+  try {
+    await handshake(ui);
+    // A real page keeps this stream open for the life of the tab. Before the SSE controllers
+    // were closed on abort, `Deno.serve` never finished draining and one Ctrl+C looked hung.
+    const events = await authed(ui, "/_ui/events");
+    const reader = events.body!.getReader();
+    await reader.read(); // the `retry:` frame — the subscription is live
+
+    const started = performance.now();
+    launch.proc.kill("SIGTERM");
+    const status = await withTimeout(
+      launch.proc.status,
+      SHUTDOWN_TIMEOUT_MS,
+      "the server to drain after SIGTERM with an open SSE stream",
+    );
+    assertEquals(status.code, 0, "a signalled `denext ui` exits cleanly");
+    assert(
+      performance.now() - started < SHUTDOWN_TIMEOUT_MS,
+      "one SIGTERM is enough — no second signal needed",
+    );
+    await reader.cancel().catch(() => {});
+    assert(await portFree(launch.port), "the port is released");
+  } finally {
+    await stopUi(launch);
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("an explicit --port is required exactly, and a short --token is refused", async () => {
+  const dir = await project();
+  const held = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  const taken = (held.addr as Deno.NetAddr).port;
+  try {
+    const busy = await new Deno.Command(Deno.execPath(), {
+      args: ["run", "-A", CLI, "ui", dir, "--no-open", "--json", "--port", String(taken)],
+      cwd: ROOT,
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    assert(busy.code !== 0, "an explicit --port that is taken fails instead of falling forward");
+    assertStringIncludes(
+      new TextDecoder().decode(busy.stderr),
+      `port ${taken} is already in use`,
+    );
+
+    const short = await new Deno.Command(Deno.execPath(), {
+      args: ["run", "-A", CLI, "ui", dir, "--no-open", "--json", "--port", "0", "--token", "tiny"],
+      cwd: ROOT,
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    assert(short.code !== 0, "a guessable --token is refused at startup");
+    assertStringIncludes(new TextDecoder().decode(short.stderr), "--token must be at least");
+  } finally {
+    held.close();
     await Deno.remove(dir, { recursive: true });
   }
 });

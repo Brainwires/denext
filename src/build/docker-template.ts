@@ -173,7 +173,12 @@ export function renderDockerfile(options: DockerOptions): string {
     : dockerfileServerSource(options);
 }
 
-/** The Postgres service, written once — commented out when it is only an example. */
+/**
+ * The Postgres service, written once — commented out when it is only an example. Its port is
+ * published to `127.0.0.1` rather than every interface: a compose file is routinely run on a
+ * laptop on a café network, and a database whose credentials are the literal `denext:denext`
+ * must not be reachable from it. Change the prefix deliberately if you want it exposed.
+ */
 const DB_SERVICE = `  db:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -184,7 +189,7 @@ const DB_SERVICE = `  db:
     volumes:
       - denext-db:/var/lib/postgresql/data
     ports:
-      - "5432:5432"`;
+      - "127.0.0.1:5432:5432"`;
 
 /** The named volume the Postgres service keeps its data in. */
 const DB_VOLUMES = `volumes:

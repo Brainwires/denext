@@ -39,6 +39,7 @@ import {
 } from "../html.ts";
 import { broadcast, sseProcess } from "../events.ts";
 import { runDeno } from "../proc.ts";
+import { uiSafeJoin, writeFileAtomic } from "../security.ts";
 
 /** The fields of a `src/plugin/catalog.json` row this panel reads. */
 interface CatalogRow {
@@ -96,10 +97,14 @@ interface ProjectState {
   readonly deps: readonly string[];
 }
 
-/** The text of `path`, or `null` when it does not exist (or cannot be read). */
-async function readText(path: string): Promise<string | null> {
+/**
+ * The text of `dir/name`, or `null` when it does not exist, cannot be read, or is a symlink
+ * whose target leaves the project — {@linkcode uiSafeJoin} refuses that, so neither the catalogue
+ * view nor the writer can be pointed at a file outside the directory the UI was opened on.
+ */
+async function readText(dir: string, name: string): Promise<string | null> {
   try {
-    return await Deno.readTextFile(path);
+    return await Deno.readTextFile(await uiSafeJoin(dir, name));
   } catch {
     return null;
   }
@@ -108,7 +113,7 @@ async function readText(path: string): Promise<string | null> {
 /** The bare specifiers declared in the project's `deno.json` / `deno.jsonc` import map. */
 async function readDeps(dir: string): Promise<string[]> {
   for (const name of ["deno.json", "deno.jsonc"]) {
-    const text = await readText(join(dir, name));
+    const text = await readText(dir, name);
     if (text === null) continue;
     try {
       const imports = (parseJsonc(text) as { imports?: Record<string, unknown> } | null)?.imports;
@@ -127,9 +132,9 @@ async function readDeps(dir: string): Promise<string[]> {
 async function readProject(dir: string): Promise<ProjectState> {
   const deps = await readDeps(dir);
   for (const name of CONFIG_FILES) {
-    const configPath = join(dir, name);
-    const source = await readText(configPath);
+    const source = await readText(dir, name);
     if (source === null) continue;
+    const configPath = join(dir, name);
     return { configPath, configName: name, source, wired: listPlugins(source), deps };
   }
   const configName = CONFIG_FILES[0];
@@ -284,12 +289,18 @@ interface ApplyOutcome {
   readonly output: string;
 }
 
-/** Write the plan's config text, if it has any. */
-async function writeConfig(plan: Plan): Promise<boolean> {
+/**
+ * Write the plan's config text, if it has any — contained and atomically (`.tmp` + rename), so a
+ * symlinked config is never followed out of the project and a crash cannot truncate the file.
+ */
+async function writeConfig(dir: string, plan: Plan): Promise<boolean> {
   if (plan.nextSource === null) return false;
-  await Deno.writeTextFile(plan.configPath, plan.nextSource);
+  await writeFileAtomic(dir, plan.configName, plan.nextSource);
   return true;
 }
+
+/** How long `deno add` / `deno remove` gets before the child is killed. */
+const DEPENDENCY_TIMEOUT_MS = 300_000;
 
 /**
  * Apply a plan. `remove` unwires first, so a failed dependency removal still leaves a consistent
@@ -297,19 +308,28 @@ async function writeConfig(plan: Plan): Promise<boolean> {
  *
  * @param plan The computed change.
  * @param dir The project directory (the child's cwd).
+ * @param signal Aborts the `deno` child (the UI shutting down, or the page disconnecting); it is
+ *   combined with a five-minute deadline, so a registry that never answers is not a wedged child.
  * @param onLine Called per output line; enables the streaming mode.
  * @returns The child's exit code, whether the config was written, and the captured output.
  */
 async function applyPlan(
   plan: Plan,
   dir: string,
+  signal?: AbortSignal,
   onLine?: (line: string) => void,
 ): Promise<ApplyOutcome> {
   const unwireFirst = plan.op === "remove";
-  let wrote = unwireFirst ? await writeConfig(plan) : false;
-  const result = await proc([...plan.command], { cwd: dir, onLine });
-  if (!unwireFirst && result.code === 0) wrote = await writeConfig(plan);
+  let wrote = unwireFirst ? await writeConfig(dir, plan) : false;
+  const result = await proc([...plan.command], { cwd: dir, onLine, signal: deadline(signal) });
+  if (!unwireFirst && result.code === 0) wrote = await writeConfig(dir, plan);
   return { code: result.code, wrote, output: (result.stdout + result.stderr).trim() };
+}
+
+/** The dependency child's abort signal: the caller's, bounded by the five-minute deadline. */
+function deadline(signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(DEPENDENCY_TIMEOUT_MS);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
 // ── the views ────────────────────────────────────────────────────────────────
@@ -499,8 +519,14 @@ function preview(ctx: UiContext, plan: Plan, state: ProjectState): Response {
 }
 
 /** The confirmed POST: run it, then answer with the refreshed catalogue (or a `303` for no-JS). */
-async function apply(ctx: UiContext, plan: Plan): Promise<Response> {
-  const outcome = await applyPlan(plan, ctx.dir);
+async function apply(ctx: UiContext, plan: Plan, before: ProjectState): Promise<Response> {
+  let outcome: ApplyOutcome;
+  try {
+    outcome = await applyPlan(plan, ctx.dir, ctx.signal);
+  } catch (error) {
+    const why = error instanceof Error ? error.message : String(error);
+    return refusal(ctx, before, `${plan.op} failed: ${why}`, 403);
+  }
   broadcast(ctx.events, { type: "plugins-changed", name: plan.entry.name });
   const state = await readProject(ctx.dir);
   if (ctx.json) {
@@ -526,12 +552,13 @@ async function apply(ctx: UiContext, plan: Plan): Promise<Response> {
 /** The confirmed POST, streamed: the `deno` child's output as it arrives. */
 function streamApply(ctx: UiContext, plan: Plan): Response {
   return sseProcess(
-    async (line) => {
-      const outcome = await applyPlan(plan, ctx.dir, line);
+    async (line, signal) => {
+      const outcome = await applyPlan(plan, ctx.dir, signal, line);
       return { code: outcome.code, note: outcome.wrote ? `wrote ${plan.configName}` : undefined };
     },
     {
       prelude: [`$ deno ${plan.command.join(" ")}`],
+      signal: ctx.signal,
       settled: () => broadcast(ctx.events, { type: "plugins-changed", name: plan.entry.name }),
     },
   );
@@ -547,7 +574,7 @@ async function mutate(request: Request, ctx: UiContext, state: ProjectState): Pr
   if (op === null) return refusal(ctx, state, `unknown operation "${field(ctx, "op")}"`, 400);
   const plan = OPS[op](entry, state);
   if (!confirmed(ctx) || plan.bailed) return preview(ctx, plan, state);
-  return wantsStream(request) ? streamApply(ctx, plan) : await apply(ctx, plan);
+  return wantsStream(request) ? streamApply(ctx, plan) : await apply(ctx, plan, state);
 }
 
 /**

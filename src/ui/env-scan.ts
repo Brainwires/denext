@@ -100,13 +100,46 @@ function inside(ranges: number[][], index: number): boolean {
 }
 
 /**
+ * How long one scan stays reusable. The walk is the most expensive thing `GET /wizard` does
+ * (a second or more on a large tree) and a page render asks for it more than once, so a result
+ * is held briefly — long enough for one interaction, short enough that an edit made while the
+ * page is open is still picked up on the next reload.
+ */
+const SCAN_TTL_MS = 2_000;
+
+/** The last scan, keyed by project directory and that directory's own mtime. */
+let lastScan: { key: string; at: number; scan: EnvScan } | null = null;
+
+/**
  * Scan a project for the environment variables it reads and compare them with what its
  * `.env` files declare. No project module is imported and no value is read.
+ *
+ * Memoised for {@linkcode SCAN_TTL_MS} per directory — see {@linkcode SCAN_TTL_MS}.
  *
  * @param dir The project directory.
  * @returns The used / declared / missing name sets.
  */
 export async function scanEnvUsage(dir: string): Promise<EnvScan> {
+  const key = await scanKey(dir);
+  const now = Date.now();
+  if (lastScan && lastScan.key === key && now - lastScan.at < SCAN_TTL_MS) return lastScan.scan;
+  const scan = await walkEnvUsage(dir);
+  lastScan = { key, at: Date.now(), scan };
+  return scan;
+}
+
+/** The cache key: the directory, plus its own mtime so an added or removed entry invalidates. */
+async function scanKey(dir: string): Promise<string> {
+  try {
+    const stat = await Deno.stat(dir);
+    return `${dir}\u0000${stat.mtime?.getTime() ?? 0}`;
+  } catch {
+    return `${dir}\u0000?`;
+  }
+}
+
+/** The uncached scan. */
+async function walkEnvUsage(dir: string): Promise<EnvScan> {
   const used = new Set<string>();
   let scanned = 0;
   try {

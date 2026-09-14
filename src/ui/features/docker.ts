@@ -33,7 +33,7 @@ import {
   type UiContext,
   type UiHandler,
 } from "../html.ts";
-import { UI_CSRF_FIELD, uiSafeJoin } from "../security.ts";
+import { UI_CSRF_FIELD, writeFileAtomic } from "../security.ts";
 
 /** The port the form suggests (and the templates' own default). */
 const DEFAULT_PORT = 3000;
@@ -165,9 +165,9 @@ async function submitPanel(ctx: UiContext): Promise<Response> {
 
 /**
  * Write every file the plan may touch — absent, or still carrying the sentinel — and report the
- * hand-edited ones it refused. Each path goes back through {@linkcode uiSafeJoin} (lexical plus a
- * realpath re-check) even though the three names are constants: containment is checked at the
- * write, never assumed from the caller.
+ * hand-edited ones it refused. Each path goes back through {@linkcode writeFileAtomic}, which
+ * re-checks containment (lexical plus a realpath re-check) even though the three names are
+ * constants, and writes through a `.tmp` + rename so a reader never sees half a Dockerfile.
  */
 async function applyPlan(
   dir: string,
@@ -181,7 +181,7 @@ async function applyPlan(
       refused.push(rel);
       continue;
     }
-    await Deno.writeTextFile(await uiSafeJoin(dir, rel), file.contents);
+    await writeFileAtomic(dir, rel, file.contents);
     written.push(rel);
   }
   return { written, refused };

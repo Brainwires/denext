@@ -34,7 +34,7 @@ import {
   type UiHandler,
 } from "../html.ts";
 import { broadcast } from "../events.ts";
-import { uiSafeJoin } from "../security.ts";
+import { uiSafeJoin, writeFileAtomic } from "../security.ts";
 import { cliInvocation, runDeno } from "../proc.ts";
 import { envExampleSource, type EnvScan, scanEnvUsage } from "../env-scan.ts";
 import { type DenoConfigFile, readDenoConfig, taskMap } from "../tasks.ts";
@@ -499,7 +499,7 @@ async function opDenoJson(ctx: UiContext, s: Survey, form: FormData): Promise<Op
       confirmOp: "denojson",
     };
   }
-  await Deno.writeTextFile(await safe(ctx.dir, name), next);
+  await writeFileAtomic(ctx.dir, name, next);
   return { step: "denojson", ok: true, redirect: true, message: `${name} updated.` };
 }
 
@@ -520,7 +520,7 @@ async function mergeDenoJson(source: string, missing: string[][]): Promise<strin
 async function opInstall(ctx: UiContext): Promise<OpOutcome> {
   const run = await runDeno(["install"], {
     cwd: ctx.dir,
-    signal: AbortSignal.timeout(300_000),
+    signal: withShutdown(ctx, AbortSignal.timeout(300_000)),
   });
   return {
     step: "deps",
@@ -547,7 +547,7 @@ async function opEnvExample(ctx: UiContext, s: Survey, form: FormData): Promise<
       confirmOp: "envexample",
     };
   }
-  await Deno.writeTextFile(path, next);
+  await writeFileAtomic(ctx.dir, ".env.example", next);
   return { step: "env", ok: true, redirect: true, message: ".env.example written." };
 }
 
@@ -630,30 +630,55 @@ function opStartDev(ctx: UiContext, s: Survey): Promise<OpOutcome> {
       message: `Already running at ${s.dev.origin}.`,
     });
   }
-  startDevServer(ctx);
+  const started = startDevServer(ctx);
   return Promise.resolve({
     step: "finish",
     ok: true,
     redirect: true,
-    message: "Starting denext dev — its output is streaming to this page.",
+    message: started
+      ? "Starting denext dev — its output is streaming to this page."
+      : "denext dev is already starting — its output is streaming to this page.",
   });
 }
+
+/**
+ * The projects this process has already started a `denext dev` for. Two quick POSTs (a
+ * double-click, or a no-JS submit the user repeated) would otherwise race two dev servers onto
+ * the same project, the second one falling forward onto a different port.
+ */
+const devStarting = new Set<string>();
 
 /**
  * Spawn `denext dev` (the framework's own `cli.ts`, in whatever scheme denext itself runs
  * under), stream its output to every open UI page, and announce the address as soon as the
  * dev server publishes `.denext/dev.json`. Deliberately not awaited: the request returns
  * immediately and the page follows the SSE channel.
+ *
+ * The child is tied to the UI's own shutdown signal, so Ctrl+C on `denext ui` takes the dev
+ * server with it rather than leaving it running with nothing to stop it.
+ *
+ * @param ctx The request context.
+ * @returns Whether a dev server was started (`false` when one is already coming up).
  */
-function startDevServer(ctx: UiContext): void {
+function startDevServer(ctx: UiContext): boolean {
+  if (devStarting.has(ctx.dir)) return false;
+  devStarting.add(ctx.dir);
   const push = (event: unknown): void => broadcast(ctx.events, event);
   runDeno([...cliInvocation(), "dev", ctx.dir], {
     cwd: ctx.dir,
     onLine: (line) => push({ type: "dev-output", line }),
+    signal: ctx.signal,
   })
     .then((run) => push({ type: "dev-exit", code: run.code }))
-    .catch((error) => push({ type: "dev-output", line: `denext dev failed: ${reason(error)}` }));
+    .catch((error) => push({ type: "dev-output", line: `denext dev failed: ${reason(error)}` }))
+    .finally(() => devStarting.delete(ctx.dir));
   pollDevInfo(ctx.dir, push).catch(() => {/* the UI shut down */});
+  return true;
+}
+
+/** A per-request deadline, widened to also fire when the UI server itself shuts down. */
+function withShutdown(ctx: UiContext, deadline: AbortSignal): AbortSignal {
+  return ctx.signal ? AbortSignal.any([ctx.signal, deadline]) : deadline;
 }
 
 /** Poll `.denext/dev.json` for at most 30 s, then push the address it published. */

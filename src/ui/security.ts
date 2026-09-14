@@ -9,18 +9,20 @@
 //                      list, which the UI has no concept of) because
 //                      `src/build/dev-server/dev-endpoints.ts` transitively imports esbuild and
 //                      `denext ui` must never load the bundler.
-//   3. session token — a per-launch 256-bit token handed over once in `?t=` and exchanged for an
-//                      `HttpOnly; SameSite=Strict` cookie ({@linkcode handshake}); every request
-//                      without it is a 401 ({@linkcode authorized}).
+//   3. session token — a per-launch 256-bit token handed over ONCE in `?t=` and exchanged for an
+//                      `HttpOnly; SameSite=Strict` cookie ({@linkcode handshake}); the query token
+//                      is single-use, so a leaked link is not a second way in, and every request
+//                      without the cookie is a 401 ({@linkcode authorized}).
 //   4. CSRF          — a mutation additionally needs `verifyOrigin` plus a token derived as
 //                      HMAC-SHA256(sessionToken, "csrf") ({@linkcode checkCsrf}).
-//   5. containment   — {@linkcode uiSafeJoin} for every project-relative path (lexical + realpath).
+//   5. containment   — {@linkcode uiSafeJoin} / {@linkcode uiSafeUnder} for every project path
+//                      (lexical + realpath), and {@linkcode writeFileAtomic} for every write.
 //   6. headers       — {@linkcode applySecurityHeaders}: strict CSP, COOP/CORP, no-referrer,
 //                      no-store.
 //
 // `--read-only` refuses every mutation before any of it runs.
 
-import { isAbsolute, relative, resolve } from "@std/path";
+import { dirname, isAbsolute, relative, resolve } from "@std/path";
 import { verifyOrigin } from "../server/origin-check.ts";
 
 /** The cookie the session token is parked in after the `?t=` handshake. */
@@ -47,12 +49,25 @@ const UI_HEADERS: readonly (readonly [string, string])[] = [
   ["x-content-type-options", "nosniff"],
 ];
 
+/**
+ * The shortest `--token` the UI accepts: 22 base64url characters, i.e. at least 128 bits of
+ * entropy when the caller generated it properly. A shorter one would be a guessable local
+ * credential, so the launch is refused rather than quietly weakened.
+ */
+export const MIN_UI_TOKEN_LENGTH = 22;
+
 /** One launch's credentials. */
 export interface UiSession {
   /** The 256-bit bearer token (base64url) handed over in `?t=` and stored in the cookie. */
   readonly token: string;
   /** The CSRF token derived from it; every mutation must present this. */
   readonly csrf: string;
+  /**
+   * Whether the `?t=` query token has already been exchanged for the cookie. The handshake is
+   * single-use: once spent, a `?t=` from a caller that does not already hold the session cookie
+   * is refused, so the token left behind in a shell history or an `open` argv cannot be replayed.
+   */
+  handshakeSpent: boolean;
 }
 
 /**
@@ -60,10 +75,17 @@ export interface UiSession {
  *
  * @param token An explicit `--token`; a fresh 256-bit token is generated when omitted.
  * @returns The session token and its derived CSRF token.
+ * @throws When an explicit token is shorter than {@linkcode MIN_UI_TOKEN_LENGTH}.
  */
 export async function createUiSession(token?: string): Promise<UiSession> {
+  if (token !== undefined && token.length > 0 && token.length < MIN_UI_TOKEN_LENGTH) {
+    throw new Error(
+      `denext: --token must be at least ${MIN_UI_TOKEN_LENGTH} characters ` +
+        "(base64url, \u2265 128 bits of entropy) \u2014 omit it to have one minted for you.",
+    );
+  }
   const value = token && token.length > 0 ? token : newToken();
-  return { token: value, csrf: await deriveCsrf(value) };
+  return { token: value, csrf: await deriveCsrf(value), handshakeSpent: false };
 }
 
 /**
@@ -159,19 +181,27 @@ function loopbackHost(hostname: string): boolean {
  * and 302 to the same path **without** the query, so the secret never survives in the address
  * bar, `document.referrer`, history, or a copied link.
  *
+ * The exchange is **single-use**. Once it has run, a `?t=` is honoured only for a caller that
+ * already holds the session cookie (the same tab re-opening its own link), so the token that is
+ * left behind in `open`'s argv, a shell history or a copied URL cannot be replayed into a second
+ * session for the server's lifetime.
+ *
+ * @param request The incoming request (its cookie decides whether a spent token is still its own).
  * @param url The parsed request URL.
- * @param session The launch credentials.
- * @returns The redirect, or `null` when the request carried no `?t=` to exchange.
+ * @param session The launch credentials (spent by a successful exchange).
+ * @returns The redirect, the 401 for a wrong or replayed token, or `null` when there was no `?t=`.
  */
-export function handshake(url: URL, session: UiSession): Response | null {
+export function handshake(request: Request, url: URL, session: UiSession): Response | null {
   const presented = url.searchParams.get("t");
   if (presented === null) return null;
-  if (!constantTimeEqual(presented, session.token)) {
+  const correct = constantTimeEqual(presented, session.token);
+  if (!correct || (session.handshakeSpent && !authorized(request, session))) {
     return new Response(JSON.stringify({ ok: false, reason: "unauthorized" }), {
       status: 401,
       headers: { "content-type": "application/json; charset=utf-8" },
     });
   }
+  session.handshakeSpent = true;
   const clean = new URL(url.href);
   clean.searchParams.delete("t");
   const location = clean.pathname + (clean.search === "?" ? "" : clean.search);
@@ -241,14 +271,61 @@ export function checkCsrf(
  * @throws When the path escapes the project (a `denext:`-prefixed error).
  */
 export async function uiSafeJoin(root: string, rel: string): Promise<string> {
-  const base = resolve(root);
   if (isAbsolute(rel)) throw escapeError(rel);
-  const target = resolve(base, rel);
+  return await contained(root, resolve(resolve(root), rel), rel);
+}
+
+/**
+ * The same containment gate for a path that is **already absolute** — the paths a planner
+ * (`generateArtifact`'s dry run, a Docker plan) computed for itself. A lexical check alone would
+ * pass `<root>/app/x` even when `app` is a symlink out of the project, so the realpath re-check
+ * is what actually decides.
+ *
+ * @param root The project directory.
+ * @param path The absolute path to check.
+ * @returns `path`, guaranteed to resolve inside `root`.
+ * @throws When it escapes the project (a `denext:`-prefixed error).
+ */
+export async function uiSafeUnder(root: string, path: string): Promise<string> {
+  return await contained(root, resolve(path), path);
+}
+
+/** Lexical containment, then a realpath re-check of the deepest existing ancestor. */
+async function contained(root: string, target: string, label: string): Promise<string> {
+  const base = resolve(root);
   const r = relative(base, target);
-  if (r === ".." || r.startsWith(".." + "/") || r.startsWith(".." + "\\")) throw escapeError(rel);
+  if (r === ".." || r.startsWith(".." + "/") || r.startsWith(".." + "\\")) throw escapeError(label);
   const realBase = await Deno.realPath(base);
-  if (!within(await realPathOfNearest(target), realBase)) throw escapeError(rel);
+  if (!within(await realPathOfNearest(target), realBase)) throw escapeError(label);
   return target;
+}
+
+/**
+ * Write a project file the way a crash-safe editor does: a sibling `.tmp` file, then one
+ * `Deno.rename` over the target. The reader of a config or a compose file therefore never sees a
+ * half-written document, and a failed write leaves the previous bytes exactly as they were.
+ *
+ * The path goes through {@linkcode uiSafeJoin} first, and the rename replaces a *symlink* rather
+ * than following it — so an in-project link never becomes a write to whatever it points at.
+ *
+ * @param root The project directory.
+ * @param rel The project-relative path to write.
+ * @param text The file's new contents.
+ * @returns The absolute path written.
+ * @throws When the path escapes the project, or the write itself fails.
+ */
+export async function writeFileAtomic(root: string, rel: string, text: string): Promise<string> {
+  const path = await uiSafeJoin(root, rel);
+  const temp = `${path}.${crypto.randomUUID().slice(0, 8)}.tmp`;
+  try {
+    await Deno.mkdir(dirname(path), { recursive: true });
+    await Deno.writeTextFile(temp, text);
+    await Deno.rename(temp, path);
+  } catch (error) {
+    await Deno.remove(temp).catch(() => {/* never written, or already renamed */});
+    throw error;
+  }
+  return path;
 }
 
 /** The realpath of `path`, or of its nearest existing ancestor when it does not exist yet. */

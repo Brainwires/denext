@@ -135,7 +135,8 @@ ${ctx.readOnly ? html`<p class="note">Read-only mode — every change is refused
 /**
  * Run one `deno task` and stream its output back as SSE frames. The task name is never trusted:
  * it must appear in the project's own `deno.json`/`deno.jsonc` `tasks` map, and it is passed as
- * an argv element — never through a shell.
+ * an argv element — never through a shell. The child is tied to the stream: it dies when the
+ * page disconnects and when the UI server shuts down, so no task is left running as an orphan.
  */
 async function runTask(request: Request, ctx: UiContext): Promise<Response> {
   const name = String(ctx.form?.get("task") ?? new URL(request.url).searchParams.get("task") ?? "");
@@ -144,8 +145,12 @@ async function runTask(request: Request, ctx: UiContext): Promise<Response> {
     return jsonResponse({ ok: false, reason: `unknown task "${name}"`, tasks }, 400);
   }
   return sseProcess(
-    async (line) => (await runDeno(["task", name], { cwd: ctx.dir, onLine: line })).code,
-    { settled: () => broadcast(ctx.events, { type: "task-done", task: name }) },
+    async (line, signal) =>
+      (await runDeno(["task", name], { cwd: ctx.dir, onLine: line, signal })).code,
+    {
+      signal: ctx.signal,
+      settled: () => broadcast(ctx.events, { type: "task-done", task: name }),
+    },
   );
 }
 

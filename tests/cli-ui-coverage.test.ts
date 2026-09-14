@@ -99,7 +99,15 @@ Deno.test("the verb is declared as a non-module-loading, loopback-only GUI", () 
   assertEquals(uiCommand.loadsModules, false);
   const flags = (uiCommand.flags ?? []).map((f) => f.name).sort();
   assertEquals(flags, ["no-open", "port", "read-only", "token", "ui-dev"]);
-  assertEquals((uiCommand.flags ?? []).find((f) => f.name === "port")?.default, DEFAULT_UI_PORT);
+  assertEquals(
+    (uiCommand.flags ?? []).find((f) => f.name === "port")?.default,
+    undefined,
+    "--port carries no default, so an explicit one is distinguishable and enforced strictly",
+  );
+  assertStringIncludes(
+    (uiCommand.flags ?? []).find((f) => f.name === "port")?.help ?? "",
+    String(DEFAULT_UI_PORT),
+  );
   assert(!uiCommand.usage?.includes("--host"), "the UI never offers a non-loopback bind");
 });
 

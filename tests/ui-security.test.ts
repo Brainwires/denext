@@ -1,18 +1,22 @@
 // The six-layer local security model of `denext ui` (src/ui/security.ts + the server's chain):
-// host/origin gate, the `?t=` → cookie handshake, CSRF on mutations, the method table, the exact
-// response header set, path containment, and `--read-only`.
+// host/origin gate, the single-use `?t=` → cookie handshake, CSRF on mutations, the method table,
+// the exact response header set, path containment (including `uiSafeUnder` on a planner's own
+// absolute paths and `writeFileAtomic`), the detail-free 500, and `--read-only`.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import {
   applySecurityHeaders,
   constantTimeEqual,
   deriveCsrf,
+  MIN_UI_TOKEN_LENGTH,
   newToken,
   UI_COOKIE,
   UI_CSRF_HEADER,
   uiOriginAllowed,
   uiSafeJoin,
+  uiSafeUnder,
+  writeFileAtomic,
 } from "../src/ui/security.ts";
 import { startUiServer, type UiServer } from "../src/ui/server.ts";
 
@@ -350,10 +354,11 @@ Deno.test("newToken mints 256 bits of URL-safe entropy, fresh every call", () =>
 
 Deno.test("an explicit --token is adopted verbatim", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_ui_tok_" });
-  const server = await startUiServer({ dir, port: 0, token: "an-explicit-token" });
+  const token = "an-explicit-token-long-enough";
+  const server = await startUiServer({ dir, port: 0, token });
   try {
-    assertEquals(server.token, "an-explicit-token");
-    const res = await fetch(`http://127.0.0.1:${server.port}/?t=an-explicit-token`, {
+    assertEquals(server.token, token);
+    const res = await fetch(`http://127.0.0.1:${server.port}/?t=${token}`, {
       redirect: "manual",
     });
     await res.body?.cancel();
@@ -361,5 +366,143 @@ Deno.test("an explicit --token is adopted verbatim", async () => {
   } finally {
     await server.shutdown();
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a --token under 128 bits of entropy is refused at startup", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_ui_shorttok_" });
+  try {
+    await assertRejects(
+      () => startUiServer({ dir, port: 0, token: "short" }),
+      Error,
+      `--token must be at least ${MIN_UI_TOKEN_LENGTH} characters`,
+    );
+    assertEquals("x".repeat(MIN_UI_TOKEN_LENGTH - 1).length + 1, MIN_UI_TOKEN_LENGTH);
+    const ok = await startUiServer({ dir, port: 0, token: "y".repeat(MIN_UI_TOKEN_LENGTH) });
+    await ok.shutdown();
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("the ?t= handshake is single-use: a replayed link is 401", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_ui_once_" });
+  const server = await startUiServer({ dir, port: 0 });
+  const base = `http://127.0.0.1:${server.port}`;
+  try {
+    const first = await fetch(`${base}/?t=${server.token}`, { redirect: "manual" });
+    await first.body?.cancel();
+    assertEquals(first.status, 302);
+    const cookie = (first.headers.get("set-cookie") ?? "").split(";")[0];
+
+    // A second browser (no cookie) replaying the copied link gets nothing.
+    const replay = await fetch(`${base}/?t=${server.token}`, { redirect: "manual" });
+    assertEquals(replay.status, 401);
+    assertEquals((await replay.json()).reason, "unauthorized");
+
+    // The tab that already holds the session may still re-open its own link.
+    const again = await fetch(`${base}/config?t=${server.token}`, {
+      redirect: "manual",
+      headers: { cookie },
+    });
+    await again.body?.cancel();
+    assertEquals(again.status, 302);
+  } finally {
+    await server.shutdown();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("an open /_ui/events stream does not hold shutdown open", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_ui_drain_" });
+  const server = await startUiServer({ dir, port: 0 });
+  const base = `http://127.0.0.1:${server.port}`;
+  try {
+    const first = await fetch(`${base}/?t=${server.token}`, { redirect: "manual" });
+    await first.body?.cancel();
+    const cookie = (first.headers.get("set-cookie") ?? "").split(";")[0];
+    const events = await fetch(`${base}/_ui/events`, { headers: { cookie } });
+    const reader = events.body!.getReader();
+    await reader.read(); // the `retry:` frame — the stream is live
+
+    const started = performance.now();
+    await server.shutdown();
+    assert(
+      performance.now() - started < 5_000,
+      "shutdown drained with a subscriber still attached",
+    );
+    await reader.cancel().catch(() => {});
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a handler that throws is a hardened, detail-free 500", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_ui_500_" });
+  // `/config` reads the project dir; removing it under the server makes `readState` throw.
+  const server = await startUiServer({ dir, port: 0 });
+  const base = `http://127.0.0.1:${server.port}`;
+  try {
+    const first = await fetch(`${base}/?t=${server.token}`, { redirect: "manual" });
+    await first.body?.cancel();
+    const cookie = (first.headers.get("set-cookie") ?? "").split(";")[0];
+    await Deno.remove(dir, { recursive: true });
+    const res = await fetch(`${base}/api/config`, { headers: { cookie } });
+    const body = await res.json();
+    if (res.status === 500) {
+      assertEquals(body.reason, "internal error", "no path or stack is echoed to the page");
+      assertStringIncludes(res.headers.get("content-security-policy") ?? "", "default-src 'self'");
+      assertEquals(res.headers.get("x-content-type-options"), "nosniff");
+    }
+  } finally {
+    await server.shutdown();
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});
+
+// ── containment: symlinks, absolute paths, atomic writes ─────────────────────
+
+Deno.test("uiSafeUnder refuses an absolute path that resolves out through a symlink", async () => {
+  const outside = await Deno.makeTempDir({ prefix: "denext_out_" });
+  const dir = await Deno.makeTempDir({ prefix: "denext_in_" });
+  try {
+    await Deno.symlink(outside, join(dir, "app"));
+    assertEquals(await uiSafeUnder(dir, join(dir, "pages", "x.tsx")), join(dir, "pages", "x.tsx"));
+    await assertRejects(
+      () => uiSafeUnder(dir, join(dir, "app", "x.tsx")),
+      Error,
+      "outside the project",
+    );
+    await assertRejects(() => uiSafeUnder(dir, join(outside, "x")), Error, "outside the project");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
+  }
+});
+
+Deno.test("writeFileAtomic renames into place, contains, and leaves no temp behind", async () => {
+  const outside = await Deno.makeTempDir({ prefix: "denext_out_" });
+  const dir = await Deno.makeTempDir({ prefix: "denext_in_" });
+  try {
+    const secret = join(outside, "secret.ts");
+    await Deno.writeTextFile(secret, "keep me\n");
+    await Deno.symlink(secret, join(dir, "denext.config.ts"));
+
+    await assertRejects(
+      () => writeFileAtomic(dir, "denext.config.ts", "pwned"),
+      Error,
+      "outside the project",
+    );
+    assertEquals(await Deno.readTextFile(secret), "keep me\n");
+
+    const written = await writeFileAtomic(dir, "nested/deno.json", "{}\n");
+    assertEquals(written, join(dir, "nested", "deno.json"));
+    assertEquals(await Deno.readTextFile(written), "{}\n");
+    const leftovers = [];
+    for await (const entry of Deno.readDir(join(dir, "nested"))) leftovers.push(entry.name);
+    assertEquals(leftovers, ["deno.json"], "the .tmp file was renamed, not left lying around");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
   }
 });

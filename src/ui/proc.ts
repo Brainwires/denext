@@ -8,6 +8,14 @@
 
 import { denoExecutable, frameworkFileUrl } from "../build/bundle.ts";
 
+/**
+ * How much of a *streamed* run's output is kept in memory. A streaming caller consumes every
+ * line as it arrives through `onLine`, so buffering the whole thing again only costs memory —
+ * a wedged `deno task` used to retain tens of megabytes. The last few KB are still kept, so a
+ * caller that wants a closing excerpt has one.
+ */
+const STREAM_TAIL_CHARS = 8192;
+
 /** Options for {@linkcode runDeno}. */
 export interface RunDenoOptions {
   /** Working directory for the child (normally the project dir). */
@@ -40,9 +48,9 @@ export function cliInvocation(): string[] {
 export interface ProcResult {
   /** The child's exit code. */
   readonly code: number;
-  /** Everything it wrote to stdout. */
+  /** Everything it wrote to stdout (the last {@linkcode STREAM_TAIL_CHARS} for a streamed run). */
   readonly stdout: string;
-  /** Everything it wrote to stderr. */
+  /** Everything it wrote to stderr (the last {@linkcode STREAM_TAIL_CHARS} for a streamed run). */
   readonly stderr: string;
   /**
    * `stdout` parsed as JSON — how the UI consumes `denext doctor --json` and friends.
@@ -54,8 +62,10 @@ export interface ProcResult {
 
 /**
  * Run `deno <args>` in `opts.cwd` and collect its output. With `onLine`, stdout and stderr are
- * decoded and delivered line by line as they arrive (what the task runner streams over SSE);
- * without it the child is simply awaited.
+ * decoded and delivered line by line as they arrive (what the task runner streams over SSE) and
+ * only a bounded tail is retained; without it the child is simply awaited and everything kept.
+ * `opts.signal` is handed to the child, so aborting it — a client that disconnected, or the UI
+ * server shutting down — kills the process rather than orphaning it.
  *
  * @param args The `deno` argv (e.g. `["task", "test"]`), never shell-interpreted.
  * @param opts Working directory, streaming sink, abort signal, extra env.
@@ -72,14 +82,46 @@ export async function runDeno(args: string[], opts: RunDenoOptions): Promise<Pro
     signal: opts.signal,
   }).spawn();
   if (opts.stdin !== undefined) await writeStdin(child, opts.stdin);
-  const stdout: string[] = [];
-  const stderr: string[] = [];
+  const streaming = opts.onLine !== undefined;
+  const stdout = sinkOf(streaming);
+  const stderr = sinkOf(streaming);
   await Promise.all([
     pump(child.stdout, stdout, opts.onLine),
     pump(child.stderr, stderr, opts.onLine),
   ]);
   const { code } = await child.status;
-  return result(code, stdout.join(""), stderr.join(""));
+  return result(code, stdout.text(), stderr.text());
+}
+
+/** Where one child stream's decoded text is collected. */
+interface Sink {
+  /** Append one decoded chunk. */
+  push(text: string): void;
+  /** Everything collected (the tail, for a streamed run). */
+  text(): string;
+}
+
+/**
+ * A capture sink: every chunk for a plain run, a bounded tail for a streamed one.
+ *
+ * @param streaming Whether the caller is already consuming the output line by line.
+ * @returns The sink.
+ */
+function sinkOf(streaming: boolean): Sink {
+  const parts: string[] = [];
+  let length = 0;
+  return {
+    push(text: string): void {
+      parts.push(text);
+      length += text.length;
+      while (streaming && parts.length > 1 && length - parts[0].length >= STREAM_TAIL_CHARS) {
+        length -= (parts.shift() as string).length;
+      }
+    },
+    text(): string {
+      return parts.join("");
+    },
+  };
 }
 
 /** Feed the child its program, then close the pipe so it stops reading. */
@@ -108,7 +150,7 @@ function result(code: number, stdout: string, stderr: string): ProcResult {
 /** Decode one child stream into `sink`, emitting complete lines to `onLine` as they arrive. */
 async function pump(
   stream: ReadableStream<Uint8Array>,
-  sink: string[],
+  sink: Sink,
   onLine?: (line: string) => void,
 ): Promise<void> {
   const decoder = new TextDecoder();

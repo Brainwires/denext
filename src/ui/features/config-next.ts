@@ -12,7 +12,7 @@
 // ordinary section edit, so the translation lands in the one diff-then-confirm path that every
 // other config change goes through.
 
-import { join, toFileUrl } from "@std/path";
+import { toFileUrl } from "@std/path";
 import { readConfigModel } from "../../build/config-edit.ts";
 import { CONFIG_FILES } from "../../build/paths.ts";
 import { html, jsonResponse, panelResponder, raw, type RawHtml, type UiContext } from "../html.ts";
@@ -22,6 +22,7 @@ import { loadConfigSchema, resolveAt } from "../form/schema.ts";
 import { widgetFor } from "../form/widget.ts";
 import { encode } from "../form/value.ts";
 import { runDeno } from "../proc.ts";
+import { uiSafeJoin } from "../security.ts";
 
 /** The `next.config.*` names, in the order Next itself resolves them. */
 const NEXT_CONFIGS = ["next.config.ts", "next.config.mjs", "next.config.js", "next.config.cjs"];
@@ -119,7 +120,7 @@ const evalNextConfig: NextConfigEvaluator = async (dir, file) => {
       "--allow-env",
       "--allow-sys",
       "-",
-      toFileUrl(join(dir, file)).href,
+      toFileUrl(await uiSafeJoin(dir, file)).href,
     ], {
       cwd: dir,
       stdin: EVAL_PROGRAM,
@@ -159,9 +160,18 @@ interface Compat {
   readonly file: string | null;
 }
 
+/** The text of `dir/name`, or `null` — via the containment gate, so a symlink out is refused. */
+async function readContained(dir: string, name: string): Promise<string | null> {
+  try {
+    return await Deno.readTextFile(await uiSafeJoin(dir, name));
+  } catch {
+    return null;
+  }
+}
+
 /** Whether the project's `package.json` depends on `next`. */
 async function dependsOnNext(dir: string): Promise<boolean> {
-  const text = await Deno.readTextFile(join(dir, "package.json")).catch(() => null);
+  const text = await readContained(dir, "package.json");
   if (text === null) return false;
   try {
     const pkg = JSON.parse(text) as Record<string, Record<string, string> | undefined>;
@@ -174,7 +184,7 @@ async function dependsOnNext(dir: string): Promise<boolean> {
 /** Whether the denext config opts into the compat pipeline. */
 async function usesCompatMode(dir: string): Promise<boolean> {
   for (const name of CONFIG_FILES) {
-    const text = await Deno.readTextFile(join(dir, name)).catch(() => null);
+    const text = await readContained(dir, name);
     if (text === null) continue;
     const info = (await readConfigModel(text)).keys.compatibilityMode;
     return info !== undefined && info.value !== false;
@@ -186,7 +196,8 @@ async function usesCompatMode(dir: string): Promise<boolean> {
 async function detect(dir: string): Promise<Compat> {
   let file: string | null = null;
   for (const name of NEXT_CONFIGS) {
-    if (await Deno.stat(join(dir, name)).then(() => true).catch(() => false)) {
+    const path = await uiSafeJoin(dir, name).catch(() => null);
+    if (path !== null && await Deno.stat(path).then(() => true).catch(() => false)) {
       file = name;
       break;
     }

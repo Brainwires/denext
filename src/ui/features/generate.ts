@@ -9,8 +9,12 @@
 // This module never calls the CLI verb: `src/cli/commands/generate.ts` reports bad input by
 // printing and calling `Deno.exit`, which would take the whole UI server down. Every refusal
 // here is a `400`/`403` response instead.
+//
+// Containment is checked on the PLAN, not on the name: a write always runs the dry run first and
+// puts every path it resolved through `uiSafeUnder`, so an `app/` that is a symlink out of the
+// project is refused even though the name itself was innocent. An absolute name is refused too.
 
-import { relative } from "@std/path";
+import { isAbsolute, relative } from "@std/path";
 import {
   GENERATE_KINDS,
   generateArtifact,
@@ -27,7 +31,7 @@ import {
   type UiContext,
   type UiHandler,
 } from "../html.ts";
-import { UI_CSRF_FIELD, uiSafeJoin } from "../security.ts";
+import { UI_CSRF_FIELD, uiSafeJoin, uiSafeUnder } from "../security.ts";
 
 /** One line per kind: what it writes and where. */
 const KIND_LEAD: Record<GenerateKind, string> = {
@@ -129,15 +133,16 @@ function showPanel(ctx: UiContext): Response {
 async function submitPanel(ctx: UiContext): Promise<Response> {
   const requested = field(ctx, "kind");
   const kind = asKind(requested);
-  const name = field(ctx, "name").trim().replace(/^[\\/]+|[\\/]+$/g, "");
+  const typed = field(ctx, "name").trim();
+  const name = typed.replace(/^[\\/]+|[\\/]+$/g, "");
   if (kind === null) return refuse(ctx, "page", name, `unknown kind "${requested}"`, 400);
-  const problem = await checkName(ctx.dir, kind, name);
+  const problem = await checkName(ctx.dir, kind, typed, name);
   if (problem) return refuse(ctx, kind, name, problem, 400);
   const apply = field(ctx, "op") === "apply";
   if (apply && ctx.readOnly) return refuse(ctx, kind, name, "read-only", 403);
   let result;
   try {
-    result = await generateArtifact(ctx.dir, kind, name, { dryRun: !apply });
+    result = await plan(ctx.dir, kind, name, apply);
   } catch (error) {
     return refuse(ctx, kind, name, error instanceof Error ? error.message : String(error), 400);
   }
@@ -156,16 +161,30 @@ async function submitPanel(ctx: UiContext): Promise<Response> {
 }
 
 /**
- * Is this name safe to scaffold under? Runs both containment checks: the engine's lexical
- * {@linkcode safeJoin} and the kernel's {@linkcode uiSafeJoin} (lexical plus a realpath
- * re-check, so a symlink inside the project cannot point the writer out of it).
+ * Is this name safe to scaffold under? The name AS TYPED is refused when it is absolute — the
+ * leading separator used to be stripped, so `/etc/pwned` quietly became `app/etc/pwned` — and
+ * the stripped form then runs both containment checks: the engine's lexical
+ * {@linkcode safeJoin} and the kernel's {@linkcode uiSafeJoin} (lexical plus a realpath re-check).
+ *
+ * The name alone is not the whole story — the engine expands it into `app/<name>/…`, and `app`
+ * itself could be a symlink — so {@linkcode plan} re-checks every path the run would write.
+ *
+ * @param dir The project directory.
+ * @param kind The artifact kind.
+ * @param typed The name exactly as the form posted it.
+ * @param name The same name with leading/trailing separators stripped.
+ * @returns The refusal, or `null` when the name is acceptable.
  */
 async function checkName(
   dir: string,
   kind: GenerateKind,
+  typed: string,
   name: string,
 ): Promise<string | null> {
   if (!name) return NO_NAME.has(kind) ? null : `missing name for "${kind}"`;
+  if (isAbsolute(typed) || typed.startsWith("/") || typed.startsWith("\\")) {
+    return `"${typed}" is an absolute path — name an artifact relative to the project.`;
+  }
   try {
     safeJoin(dir, name);
     await uiSafeJoin(dir, name);
@@ -173,6 +192,31 @@ async function checkName(
     return error instanceof Error ? error.message : String(error);
   }
   return null;
+}
+
+/**
+ * Plan the run, check containment of every path it resolved, and only then write. The dry run is
+ * the same planner the write uses, so what is checked is exactly what would land — and a `app`
+ * (or `app/x`) that is a symlink pointing out of the project is caught here rather than by the
+ * name check, which only ever sees the name.
+ *
+ * @param dir The project directory.
+ * @param kind The artifact kind.
+ * @param name The route/component name.
+ * @param apply Whether to write (a preview stops after the plan).
+ * @returns The dry run's plan, or the result of the write.
+ * @throws When any planned path resolves outside the project.
+ */
+async function plan(
+  dir: string,
+  kind: GenerateKind,
+  name: string,
+  apply: boolean,
+): Promise<Awaited<ReturnType<typeof generateArtifact>>> {
+  const dry = await generateArtifact(dir, kind, name, { dryRun: true });
+  for (const file of dry.preview ?? []) await uiSafeUnder(dir, file.path);
+  if (!apply) return dry;
+  return await generateArtifact(dir, kind, name, {});
 }
 
 /** A refusal: the JSON envelope on the API twin, the panel with an error note otherwise. */

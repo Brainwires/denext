@@ -408,3 +408,79 @@ Deno.test("/config/next reports a config it could not evaluate instead of guessi
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+// ── containment and lost updates ─────────────────────────────────────────────
+
+Deno.test("a denext.config.ts symlinked out of the project is neither read nor written", async () => {
+  const outside = await Deno.makeTempDir({ prefix: "denext_cfg_out_" });
+  const dir = await Deno.makeTempDir({ prefix: "denext_cfg_link_" });
+  try {
+    const secret = join(outside, "credentials.ts");
+    await Deno.writeTextFile(secret, "export default { AWS_SECRET: 'AKIA-not-yours' };\n");
+    await Deno.symlink(secret, join(dir, "denext.config.ts"));
+
+    const payload = await (await call(dir, "/api/config")).json();
+    assertEquals(payload.file, null, "the linked file is not treated as this project's config");
+    assert(!JSON.stringify(payload).includes("AKIA-not-yours"), "nothing outside leaks in");
+
+    const write = await call(dir, "/config?raw=1", {
+      form: { raw: "export default { basePath: '/pwned' };\n", confirm: "1" },
+    });
+    assertEquals(write.status, 403);
+    await write.body?.cancel();
+    assertEquals(
+      await Deno.readTextFile(secret),
+      "export default { AWS_SECRET: 'AKIA-not-yours' };\n",
+      "the file outside the project is untouched",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
+  }
+});
+
+Deno.test("a write against a stale _base is a 409 and changes nothing", async () => {
+  const dir = await project();
+  try {
+    const page = await (await call(dir, "/config")).text();
+    const base = page.match(/name="_base"[^>]*value="([0-9a-f]{64})"/)?.[1];
+    assert(base, "every form carries the source's SHA-256 as _base");
+
+    // Someone edits the file in a real editor while the page is open.
+    const edited = CONFIG.replace('basePath: "/docs"', 'basePath: "/edited-elsewhere"');
+    await Deno.writeTextFile(join(dir, "denext.config.ts"), edited);
+
+    const res = await call(dir, "/config?section=basePath", {
+      form: { ...fieldsFor("basePath", "/mine"), _base: base, confirm: "1" },
+    });
+    assertEquals(res.status, 409);
+    assertStringIncludes(await res.text(), "changed on disk");
+    assertEquals(await onDisk(dir), edited, "the editor's version survived");
+
+    // Re-rendering hands out the fresh stamp, and the same write then applies.
+    const fresh = (await (await call(dir, "/config")).text())
+      .match(/name="_base"[^>]*value="([0-9a-f]{64})"/)?.[1];
+    assert(fresh && fresh !== base);
+    const ok = await call(dir, "/config?section=basePath", {
+      form: { ...fieldsFor("basePath", "/mine"), _base: fresh, confirm: "1" },
+    });
+    await ok.body?.cancel();
+    assertStringIncludes(await onDisk(dir), 'basePath: "/mine"');
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("the /api twin, which posts no _base, opts out of the base-version check", async () => {
+  const dir = await project();
+  try {
+    const res = await call(dir, "/api/config?section=basePath", {
+      form: { ...fieldsFor("basePath", "/api-written"), confirm: "1" },
+    });
+    assertEquals(res.status, 200);
+    assertEquals((await res.json()).applied, true);
+    assertStringIncludes(await onDisk(dir), 'basePath: "/api-written"');
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

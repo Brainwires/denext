@@ -130,6 +130,13 @@ Deno.test("the compose file's Postgres service is commented out unless it is ask
   assertStringIncludes(on, `      - "8080:8080"`);
   assertStringIncludes(on, "  db:\n    image: postgres:16-alpine");
   assertStringIncludes(on, "      - DATABASE_URL=postgres://denext:denext@db:5432/denext");
+  assertStringIncludes(
+    on,
+    `      - "127.0.0.1:5432:5432"`,
+    "the database is published to loopback, not to every interface the host is on",
+  );
+  assert(!on.includes(`- "5432:5432"`), "no all-interfaces publish for postgres");
+  assertStringIncludes(off, `  #     - "127.0.0.1:5432:5432"`, "the example is bound too");
   assertStringIncludes(on, "    depends_on:\n      - db");
   assertStringIncludes(on, "volumes:\n  denext-db:");
   assert(!on.includes("# Example Postgres service"), "the example is replaced, not duplicated");

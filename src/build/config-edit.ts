@@ -709,10 +709,24 @@ function resolvePath(
 
 // --- result helpers ---------------------------------------------------------
 
-/** Apply edits and package them as a successful {@linkcode EditResult}. */
-function commit(source: string, ctx: Ctx, edits: Edit[], label: string): EditResult {
+/**
+ * Apply edits and package them as a successful {@linkcode EditResult} — after re-parsing the
+ * spliced result. Every splice here is byte surgery over an AST, so a bug in an offset would
+ * otherwise hand the caller a file that no longer parses; re-parsing costs one more `swc` pass
+ * per write and turns that class of bug into an honest refusal.
+ */
+async function commit(
+  source: string,
+  ctx: Ctx,
+  edits: Edit[],
+  label: string,
+): Promise<EditResult> {
   const next = applyEdits(ctx.bytes, edits);
-  return { ok: true, source: next, diff: diffOf(source, next, label) };
+  const diff = diffOf(source, next, label);
+  if (next !== source && await parseModule(next) === null) {
+    return bail("the edited source no longer parses — denext refuses to write it", "", diff);
+  }
+  return { ok: true, source: next, diff };
 }
 
 /** A refusal, optionally carrying the patch the user would have to apply by hand. */
@@ -823,7 +837,7 @@ export async function setConfigValue(
   if (!at.ok) return at.result;
   const { ctx, ref } = at;
   const outcome = setAt(ctx, ref, value, {});
-  if (outcome.ok) return commit(source, ctx, outcome.edits, CONFIG_LABEL);
+  if (outcome.ok) return await commit(source, ctx, outcome.edits, CONFIG_LABEL);
   const slot = ref.slot;
   const patch = slot
     ? diffOf(
@@ -850,7 +864,7 @@ export async function deleteConfigValue(source: string, path: string[]): Promise
   const { slot, parent } = ref;
   if (!slot) return bail(`\`${path.join(".")}\` is not set`, "");
   const edit = deleteEdit(ctx, slot, isLastMember(ctx, parent, slot));
-  return commit(source, ctx, [edit], CONFIG_LABEL);
+  return await commit(source, ctx, [edit], CONFIG_LABEL);
 }
 
 // --- array list editing -----------------------------------------------------
@@ -1002,7 +1016,12 @@ function renderPreservedArray(
 }
 
 /** Rewrite an existing array literal under `ops`. */
-function spliceArray(ctx: Ctx, source: string, arr: Node, ops: ArrayOp[]): EditResult {
+async function spliceArray(
+  ctx: Ctx,
+  source: string,
+  arr: Node,
+  ops: ArrayOp[],
+): Promise<EditResult> {
   const units = arrayUnits(ctx, arr);
   if (!units) {
     return bail("the array has holes, which denext will not rewrite", snippetOf(ctx, arr));
@@ -1021,17 +1040,17 @@ function spliceArray(ctx: Ctx, source: string, arr: Node, ops: ArrayOp[]): EditR
     return bail("an element separator could not be read safely", snippetOf(ctx, arr));
   }
   const edit: Edit = { start: startOf(ctx, arr), end: endOf(ctx, arr), text: next };
-  return commit(source, ctx, [edit], CONFIG_LABEL);
+  return await commit(source, ctx, [edit], CONFIG_LABEL);
 }
 
 /** Create a missing key as an array literal (optionally wrapped in `() => …`). */
-function insertArray(
+async function insertArray(
   ctx: Ctx,
   source: string,
   ref: PathRef,
   ops: ArrayOp[],
   opts: ArrayOpsOptions,
-): EditResult {
+): Promise<EditResult> {
   const applied = applyOps(0, ops);
   if (!applied.ok) return bail(applied.reason, "");
   const values = applied.items.map((it) => it.kind === "new" ? it.value : null);
@@ -1040,7 +1059,7 @@ function insertArray(
     const body = renderValue(values, indent, wrap ? column + 6 : column, false);
     return wrap ? `() => ${body}` : body;
   };
-  return commit(
+  return await commit(
     source,
     ctx,
     [ref.insert(ref.key, nestRender(ref.rest, render, false))],
@@ -1074,7 +1093,7 @@ export async function applyArrayOps(
   const at = await locatePath(source, path);
   if (!at.ok) return at.result;
   const { ctx, ref } = at;
-  if (!ref.slot) return insertArray(ctx, source, ref, ops, opts);
+  if (!ref.slot) return await insertArray(ctx, source, ref, ops, opts);
   const arr = arrayLiteralOf(ref.slot.value);
   if (!arr) {
     return bail(
@@ -1082,5 +1101,5 @@ export async function applyArrayOps(
       snippetOf(ctx, ref.slot.value),
     );
   }
-  return spliceArray(ctx, source, arr, ops);
+  return await spliceArray(ctx, source, arr, ops);
 }

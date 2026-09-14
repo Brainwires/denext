@@ -17,6 +17,13 @@
 // The rule this module inherits from the kernel: the project's config is never *evaluated*. It
 // is read as text and spliced by `src/build/config-edit.ts`, which keeps every byte — comments
 // included — that the edit did not touch.
+//
+// Two guarantees around the file itself. Containment: the config is located, read and written
+// through `uiSafeJoin`/`writeFileAtomic`, so a `denext.config.ts` that is a symlink out of the
+// project is neither shown nor overwritten, and every write is a `.tmp` + rename. Concurrency:
+// every form carries `_base`, a SHA-256 of the source it was rendered from, and a POST whose
+// stamp no longer matches the file on disk is a `409` — an edit made in a real editor (or a
+// second tab) is never silently lost. A caller that posts no `_base` opts out.
 
 import { join } from "@std/path";
 import {
@@ -43,7 +50,7 @@ import {
   type UiContext,
   type UiHandler,
 } from "../html.ts";
-import { UI_CSRF_FIELD } from "../security.ts";
+import { UI_CSRF_FIELD, uiSafeJoin, writeFileAtomic } from "../security.ts";
 import { control } from "../form/control.ts";
 import { loadConfigSchema, resolveAt, type SchemaNode } from "../form/schema.ts";
 import { widgetFor, type WidgetSpec } from "../form/widget.ts";
@@ -67,6 +74,13 @@ const EMPTY_CONFIG = "export default {\n};\n";
 /** The one top-level key this panel shows but never writes (the plugin manager owns it). */
 const MANAGED_KEY = "plugins";
 
+/**
+ * The hidden field every form carries: a SHA-256 of the config source the form was rendered
+ * from. A POST whose `_base` no longer matches the file on disk is refused with a `409` instead
+ * of silently overwriting whatever an editor (or a second UI tab) wrote in the meantime.
+ */
+const BASE_FIELD = "_base";
+
 /** Fields the editor posts for its own bookkeeping, which are never config values. */
 const CONTROL_FIELDS: ReadonlySet<string> = new Set([
   UI_CSRF_FIELD,
@@ -75,6 +89,7 @@ const CONTROL_FIELDS: ReadonlySet<string> = new Set([
   "clear",
   "section",
   "raw",
+  BASE_FIELD,
 ]);
 
 // ── the project's current config ─────────────────────────────────────────────
@@ -112,27 +127,59 @@ interface ConfigState {
   readonly exists: boolean;
   /** Its source (empty when it does not exist). */
   readonly source: string;
+  /** The SHA-256 of that source, posted back as `_base` so a lost update is caught. */
+  readonly base: string;
   /** The module shape `readConfigModel` recognised. */
   readonly form: string;
   /** Every top-level key, schema order first. */
   readonly sections: readonly Section[];
 }
 
-/** The text of `path`, or `null` when it does not exist (or cannot be read). */
-async function readText(path: string): Promise<string | null> {
+/**
+ * The text of `dir/name`, or `null` when it does not exist, cannot be read, or is a symlink
+ * pointing out of the project — {@linkcode uiSafeJoin} refuses that last case, so a
+ * `denext.config.ts` linked at `~/.aws/credentials` never reaches the page (nor the writer).
+ */
+async function readText(dir: string, name: string): Promise<string | null> {
   try {
-    return await Deno.readTextFile(path);
+    return await Deno.readTextFile(await uiSafeJoin(dir, name));
   } catch {
     return null;
   }
 }
 
+/**
+ * The optimistic-concurrency stamp for one config source: a SHA-256, hex, of its bytes.
+ *
+ * @param source The file's text (`""` when there is no file yet).
+ * @returns The hex digest.
+ */
+async function baseStamp(source: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(source) as BufferSource,
+  );
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Whether a POST is writing against the file it was rendered from. A request that carries no
+ * `_base` (the `/api/config` twin, or a script) opts out and is allowed through unchecked.
+ *
+ * @param ctx The request context.
+ * @param state The config as it stands on disk right now.
+ * @returns `true` when the write may proceed.
+ */
+async function baseMatches(ctx: UiContext, state: ConfigState): Promise<boolean> {
+  const posted = postedField(ctx, BASE_FIELD);
+  return posted === "" || posted === await baseStamp(state.source);
+}
+
 /** Locate the project's config file: the first name that exists, else where one would go. */
 async function locateConfig(dir: string): Promise<{ path: string; name: string; source: string }> {
   for (const name of CONFIG_FILES) {
-    const path = join(dir, name);
-    const source = await readText(path);
-    if (source !== null) return { path, name, source };
+    const source = await readText(dir, name);
+    if (source !== null) return { path: join(dir, name), name, source };
   }
   return { path: join(dir, CONFIG_FILES[0]), name: CONFIG_FILES[0], source: "" };
 }
@@ -180,7 +227,15 @@ async function readState(dir: string): Promise<ConfigState> {
   const sections = [...Object.keys(properties), ...extra].map((key) =>
     classify(key, properties[key], model.keys[key])
   );
-  return { path, name, exists: source !== "", source, form: model.form, sections };
+  return {
+    path,
+    name,
+    exists: source !== "",
+    source,
+    base: await baseStamp(source),
+    form: model.form,
+    sections,
+  };
 }
 
 /** The section a key names, or `undefined` when the key is not one the panel knows. */
@@ -423,11 +478,17 @@ Open <code class="mono">${state.path}</code> in your editor to change it.</p>`;
 }
 
 /** The form for an editable section: the widget tree, Save, and Clear when the key is set. */
-function sectionForm(ctx: UiContext, section: Section, feedback?: Feedback): RawHtml {
+function sectionForm(
+  ctx: UiContext,
+  base: string,
+  section: Section,
+  feedback?: Feedback,
+): RawHtml {
   const value = feedback ? feedback.value : section.value;
   const spec = section.spec;
   if (!spec) return html``;
   return html`<form method="post" action="${sectionAction(section.key)}">
+${hidden(BASE_FIELD, base)}
 ${renderWidget(spec, value, { csrf: ctx.csrf, readOnly: ctx.readOnly, errors: feedback?.errors })}
 <button type="submit"${ctx.readOnly ? raw(" disabled") : ""}>Save</button>
 ${
@@ -461,7 +522,7 @@ function sectionHtml(
 the config array and the import map in step.</p>${codeCell(state, section)}`
           : section.kind === "readonly"
           ? codeCell(state, section)
-          : sectionForm(ctx, section, mine ? feedback : undefined)}
+          : sectionForm(ctx, state.base, section, mine ? feedback : undefined)}
         </details>
   `;
 }
@@ -474,7 +535,7 @@ function rawSection(ctx: UiContext, state: ConfigState): RawHtml {
       <p class="lead">The escape hatch: the whole file, saved only when it still parses as a denext
     config. Everything above edits one key and preserves the rest byte for byte.</p>
       <form method="post" action="/config?raw=1">
-    ${hidden(UI_CSRF_FIELD, ctx.csrf)}
+    ${hidden(UI_CSRF_FIELD, ctx.csrf)}${hidden(BASE_FIELD, state.base)}
     ${control({
       tag: "textarea",
       name: "raw",
@@ -539,6 +600,8 @@ interface Pending {
   readonly action: string;
   /** The hidden fields that re-post exactly this change. */
   readonly fields: RawHtml;
+  /** The SHA-256 of the source this change was computed against. */
+  readonly base: string;
   /** The unified diff of what will be written. */
   readonly diff: string;
   /** A message shown above the diff (a bail's reason, a "no change" note). */
@@ -559,7 +622,9 @@ ${pending.diff ? diffHtml(pending.diff) : ""}
 ${
     pending.ok
       ? html`<form method="post" action="${pending.action}">
-${hidden(UI_CSRF_FIELD, ctx.csrf)}${pending.fields}${hidden("confirm", "1")}
+${hidden(UI_CSRF_FIELD, ctx.csrf)}${hidden(BASE_FIELD, pending.base)}${pending.fields}${
+        hidden("confirm", "1")
+      }
 <button type="submit"${ctx.readOnly ? raw(" disabled") : ""}>Confirm</button>
 </form>`
       : ""
@@ -584,14 +649,23 @@ function refuse(ctx: UiContext, state: ConfigState, reason: string, status: numb
   );
 }
 
-/** Write the new source, tell every open page, and send the browser back to the section. */
+/**
+ * Write the new source, tell every open page, and send the browser back to the section. The
+ * write goes through {@linkcode writeFileAtomic}: contained (never through a symlink that leaves
+ * the project) and a `.tmp` + rename, so a reader never sees a half-written config.
+ */
 async function write(
   ctx: UiContext,
   state: ConfigState,
   source: string,
   anchor: string,
 ): Promise<Response> {
-  await Deno.writeTextFile(state.path, source);
+  try {
+    await writeFileAtomic(ctx.dir, state.name, source);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return refuse(ctx, state, `${state.name} could not be written: ${reason}`, 403);
+  }
   const next = await readState(ctx.dir);
   if (ctx.json) return jsonResponse({ ok: true, applied: true, file: next.name });
   const notice = html`<p class="note">Wrote ${next.name}.</p>`;
@@ -657,7 +731,7 @@ function invalid(
 }
 
 /** The preview (or the writer's refusal) for one planned section write. */
-function sectionPreview(ctx: UiContext, plan: Plan): Response {
+function sectionPreview(ctx: UiContext, state: ConfigState, plan: Plan): Response {
   const { section, result } = plan;
   if (ctx.json) {
     return jsonResponse(
@@ -679,6 +753,7 @@ function sectionPreview(ctx: UiContext, plan: Plan): Response {
     previewBody(ctx, {
       title: `Config · ${section.key}`,
       action: sectionAction(section.key),
+      base: state.base,
       fields,
       diff: result.ok ? result.diff : (result.diff ?? ""),
       notes: result.ok
@@ -690,7 +765,7 @@ function sectionPreview(ctx: UiContext, plan: Plan): Response {
           <pre class="out">${result.snippet}</pre>
         `,
       ok: result.ok && result.diff !== "",
-      body: sectionForm(ctx, { ...section, present: true }, {
+      body: sectionForm(ctx, state.base, { ...section, present: true }, {
         key: section.key,
         value: plan.next,
         errors: {},
@@ -712,8 +787,8 @@ async function writeSection(
   const plan = await buildPlan(state, section, posted.value, request);
   const error = validationError(proposedConfig(state, section.key, plan.next), state.name);
   if (error) return invalid(ctx, state, section.key, plan.next, error);
-  if (!plan.result.ok || plan.result.diff === "") return sectionPreview(ctx, plan);
-  if (!confirmed(ctx)) return sectionPreview(ctx, plan);
+  if (!plan.result.ok || plan.result.diff === "") return sectionPreview(ctx, state, plan);
+  if (!confirmed(ctx)) return sectionPreview(ctx, state, plan);
   return await write(ctx, state, plan.result.source, section.key);
 }
 
@@ -740,6 +815,7 @@ async function writeRaw(ctx: UiContext, state: ConfigState): Promise<Response> {
     previewBody(ctx, {
       title: `Config · ${state.name}`,
       action: "/config?raw=1",
+      base: state.base,
       fields: hidden("raw", source),
       diff,
       ok: diff !== "",
@@ -761,6 +837,7 @@ async function writeCreate(ctx: UiContext, state: ConfigState): Promise<Response
     previewBody(ctx, {
       title: `Create ${state.name}`,
       action: "/config?create=1",
+      base: state.base,
       fields: html``,
       diff,
       ok: true,
@@ -790,6 +867,15 @@ function payload(state: ConfigState, schema: boolean): Record<string, unknown> {
 /** Dispatch one mutation: the raw file, the create offer, or one section. */
 async function mutate(ctx: UiContext, state: ConfigState): Promise<Response> {
   if (ctx.readOnly) return refuse(ctx, state, "read-only", 403);
+  if (!await baseMatches(ctx, state)) {
+    return refuse(
+      ctx,
+      state,
+      `${state.name} changed on disk since this form was rendered — nothing was written. ` +
+        "Review the current file below and re-apply your change.",
+      409,
+    );
+  }
   const params = ctx.url.searchParams;
   if (params.get("raw") === "1") return await writeRaw(ctx, state);
   if (params.get("create") === "1") return await writeCreate(ctx, state);
