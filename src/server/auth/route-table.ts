@@ -23,47 +23,15 @@ import {
 import { handleCredentials } from "./routes-credentials.ts";
 import { handleOAuthCallback, handleSignin } from "./routes-oauth.ts";
 import { handleProviders, handleSession, handleSignout } from "./routes-session.ts";
-import { type AuthRouteContext, findProvider, json } from "./routes-shared.ts";
+import {
+  type AuthRoute,
+  type AuthRouteContext,
+  type AuthRouteLimit,
+  findProvider,
+  json,
+} from "./routes-shared.ts";
 import { handleCreateToken, handleListTokens, handleRevokeToken } from "./routes-tokens.ts";
 import { isOAuthProvider } from "./types.ts";
-
-/**
- * The method a row answers. `"*"` claims the path for every method and decides the
- * answer itself — `/callback/:provider` needs it, because which verb is allowed depends
- * on the provider's type (a GET is the OAuth callback, a POST the credentials one) and
- * anything else must be a `405`, not a fall-through.
- */
-export type AuthRouteMethod = "GET" | "POST" | "DELETE" | "*";
-
-/** One endpoint. */
-export interface AuthRoute {
-  /** The HTTP method this row answers, or `"*"` for "every method, handler decides". */
-  method: AuthRouteMethod;
-  /**
-   * The path pattern relative to `basePath`, with a leading slash. A `:name` segment
-   * captures one non-empty, percent-decodable segment into `ctx.params.name`.
-   */
-  pattern: string;
-  /**
-   * A dispatch-level rate-limit gate to put in front of the handler, if any.
-   * `"signin-start"` is the per-client-IP budget for starting a sign-in (20 hits per
-   * 15 minutes by default; `rateLimit.signin`), `"session-read"` the one for reading the
-   * session (60 per minute; `rateLimit.session`). Declaring them here rather than inside
-   * the handlers keeps the limits visible in the one place the endpoint set is declared —
-   * and keeps the route modules free of limiter plumbing.
-   */
-  limit?: AuthRouteLimit;
-  /**
-   * Answer the request.
-   *
-   * @param ctx The route context (request, config, resolved options, URL, params).
-   * @returns The response, or `null` to fall through to the rest of the app.
-   */
-  handler(ctx: AuthRouteContext): Promise<Response | null> | Response | null;
-}
-
-/** Which dispatch-level per-IP budget a row is gated by. */
-export type AuthRouteLimit = "signin-start" | "session-read";
 
 /** The limiter and key builder behind one {@link AuthRouteLimit}. */
 const LIMITS: Record<AuthRouteLimit, {

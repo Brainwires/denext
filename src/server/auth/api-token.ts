@@ -23,6 +23,7 @@
  */
 
 import type { ApiTokenRecord, AuthAdapter } from "./adapter.ts";
+import { sha256Hex } from "./hash.ts";
 import { randomToken } from "./oauth.ts";
 import { resolveAuthOptions } from "./options.ts";
 import type { AuthConfig } from "./types.ts";
@@ -65,17 +66,6 @@ export interface IssuedApiToken {
   token: string;
   /** The row that was stored (carrying the hash, never the plaintext). */
   record: ApiTokenRecord;
-}
-
-/**
- * SHA-256 of the presented token, hex-encoded — the only form that ever reaches storage.
- * The full string is hashed, `tok_` prefix included, so a stored hash can't be computed
- * from a truncated secret either.
- */
-async function hashApiToken(presented: string): Promise<string> {
-  const bytes = new TextEncoder().encode(presented);
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes as BufferSource));
-  return Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /**
@@ -149,7 +139,9 @@ export async function issueApiToken(
     id: crypto.randomUUID(),
     userId: options.userId,
     name: options.name,
-    tokenHash: await hashApiToken(token),
+    // The full string is hashed, `tok_` prefix included, so a stored hash can't be
+    // computed from a truncated secret either.
+    tokenHash: await sha256Hex(token),
     createdAt: now,
     expiresAt,
     scopes: options.scopes ? [...options.scopes] : undefined,
@@ -190,7 +182,7 @@ export async function verifyApiToken(
 ): Promise<ApiTokenRecord | null> {
   const adapter = apiTokenAdapter(config);
   if (!adapter || !presented) return null;
-  const record = await adapter.getApiTokenByHash(await hashApiToken(presented));
+  const record = await adapter.getApiTokenByHash(await sha256Hex(presented));
   if (!record) return null;
   // The adapter contract already hides revoked/expired rows; re-checking here means a
   // third-party adapter that forgets to can't turn a dead token into a live session.
