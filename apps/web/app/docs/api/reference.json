@@ -4516,6 +4516,18 @@
           "denextOnly": true
         },
         {
+          "name": "AuthEmailConfig",
+          "slug": "AuthEmailConfig",
+          "kind": "interface",
+          "signature": "interface AuthEmailConfig",
+          "doc": "The email-token flows' knobs: how long each kind of token lives and which pages the emailed links open. Every field is optional; lifetimes are in **seconds**, and a non-finite or non-positive lifetime falls back to its default.",
+          "docFull": "The email-token flows' knobs: how long each kind of token lives and which pages the\nemailed links open. Every field is optional; lifetimes are in **seconds**, and a\nnon-finite or non-positive lifetime falls back to its default.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "AuthEvents",
           "slug": "AuthEvents",
           "kind": "interface",
@@ -4534,6 +4546,18 @@
           "signature": "interface AuthLogger",
           "doc": "Where the framework logs; every method is optional and defaults to silence.",
           "docFull": "Where the framework logs; every method is optional and defaults to silence.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "AuthMfaConfig",
+          "slug": "AuthMfaConfig",
+          "kind": "interface",
+          "signature": "interface AuthMfaConfig",
+          "doc": "Second-factor (TOTP) policy. Every field is optional; see each default.",
+          "docFull": "Second-factor (TOTP) policy. Every field is optional; see each default.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -4642,6 +4666,39 @@
           "signature": "type AwaitableHeaders = Headers & PromiseLike<Headers>",
           "doc": "headers()'s return: usable synchronously AND awaitable (await headers(), Next 15).",
           "docFull": "`headers()`'s return: usable synchronously AND awaitable (`await headers()`, Next 15).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "backupCodeMatcher",
+          "slug": "backupCodeMatcher",
+          "kind": "function",
+          "signature": "backupCodeMatcher(hasher: Hasher, code: string): (hash: string) => Promise<boolean>",
+          "doc": "Build the matches predicate the adapter's consumeBackupCode walks the stored hashes with. The presented code is normalised (spaces and hyphens stripped, lowercased); a malformed one yields a predicate that matches nothing — yet still runs one hasher.verify per stored hash, so a garbage submission costs what a wrong code does.",
+          "docFull": "Build the `matches` predicate the adapter's `consumeBackupCode` walks the stored hashes\nwith. The presented code is normalised (spaces and hyphens stripped, lowercased); a\nmalformed one yields a predicate that matches nothing — yet still runs one\n`hasher.verify` per stored hash, so a garbage submission costs what a wrong code does.",
+          "params": [
+            {
+              "name": "hasher",
+              "doc": "The auth Hasher the codes were hashed with."
+            },
+            {
+              "name": "code",
+              "doc": "The code the user typed."
+            }
+          ],
+          "returns": "A predicate resolving true only when code is the one hash was made from.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "BackupCodes",
+          "slug": "BackupCodes",
+          "kind": "interface",
+          "signature": "interface BackupCodes",
+          "doc": "A fresh set of backup codes: show codes once, store only hashes.",
+          "docFull": "A fresh set of backup codes: show `codes` once, store only `hashes`.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -5022,6 +5079,43 @@
           "denextOnly": true
         },
         {
+          "name": "confirmTotp",
+          "slug": "confirmTotp",
+          "kind": "function",
+          "signature": "confirmTotp(config: AuthConfig, user: AuthUser, code: string): Promise<ConfirmTotpResult>",
+          "doc": "Confirm a pending enrolment with a code from the authenticator app. On success the factor is marked confirmed and mfa.backupCodes backup codes are minted — returned here in plaintext exactly once, and stored only as hashes. The code's step is claimed, so it can't then be replayed at the step-up.",
+          "docFull": "Confirm a pending enrolment with a code from the authenticator app. On success the\nfactor is marked confirmed and `mfa.backupCodes` backup codes are minted — returned\nhere in plaintext exactly once, and stored only as hashes. The code's step is claimed,\nso it can't then be replayed at the step-up.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The app's auth config."
+            },
+            {
+              "name": "user",
+              "doc": "The user confirming."
+            },
+            {
+              "name": "code",
+              "doc": "The code the user typed."
+            }
+          ],
+          "returns": "{ ok: true, backupCodes }, or { ok: false } for a wrong or replayed code, no pending enrolment, or an already-confirmed factor.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ConfirmTotpResult",
+          "slug": "ConfirmTotpResult",
+          "kind": "typeAlias",
+          "signature": "type ConfirmTotpResult = object | object",
+          "doc": "The outcome of confirmTotp: on success, the plaintext backup codes — the only time they exist anywhere; show them to the user once.",
+          "docFull": "The outcome of {@linkcode confirmTotp}: on success, the plaintext backup codes — the\nonly time they exist anywhere; show them to the user once.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "connection",
           "slug": "connection",
           "kind": "function",
@@ -5378,6 +5472,27 @@
           "denextOnly": true
         },
         {
+          "name": "disableTotp",
+          "slug": "disableTotp",
+          "kind": "function",
+          "signature": "disableTotp(config: AuthConfig, userId: string): Promise<void>",
+          "doc": "Remove a user's TOTP factor and backup codes. A no-op for a user who never enrolled. Callers must have proved a fresh factor first — see the /mfa/disable endpoint.",
+          "docFull": "Remove a user's TOTP factor and backup codes. A no-op for a user who never enrolled.\nCallers must have proved a fresh factor first — see the `/mfa/disable` endpoint.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The app's auth config."
+            },
+            {
+              "name": "userId",
+              "doc": "The user."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "discord",
           "slug": "discord",
           "kind": "function",
@@ -5460,6 +5575,80 @@
           "docFull": "Backing store for server-minted draft tokens. Draft mode is \"on\" only when the\nrequest cookie holds a token this server issued via `enable()`; a forged or\nguessed value is not in the store, so it cannot turn draft mode on.\n\nThe default store is in-memory (per-process, resets on restart). A\nmulti-instance deployment can inject a store backed by a shared cache\n(Redis/KV) via {@linkcode setDraftTokenStore} so a token minted on one\ninstance is honored on another. The store is synchronous to keep\n{@linkcode draftMode}'s `isEnabled` synchronous; back an async store with a\nsynchronously-readable cache, or mint signed/stateless tokens instead.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "emailOtp",
+          "slug": "emailOtp",
+          "kind": "function",
+          "signature": "emailOtp(options?: EmailProviderOptions): EmailProvider",
+          "doc": "Passwordless sign-in by **one-time code**: POST {basePath}/callback/email-otp with { email } mails a numeric code (email.otpDigits, default 6; valid 5 minutes by default, email.otpMaxAge); posting { email, code } to the same endpoint signs the user in. Wrong codes count against a failure budget (5 per 5 minutes per address).",
+          "docFull": "Passwordless sign-in by **one-time code**: `POST {basePath}/callback/email-otp` with\n`{ email }` mails a numeric code (`email.otpDigits`, default 6; valid 5 minutes by\ndefault, `email.otpMaxAge`); posting `{ email, code }` to the same endpoint signs the\nuser in. Wrong codes count against a failure budget (5 per 5 minutes per address).",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The provider id, display name and sign-up policy."
+            }
+          ],
+          "returns": "The configured provider (id: \"email-otp\", mode: \"otp\").",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "EmailProvider",
+          "slug": "EmailProvider",
+          "kind": "interface",
+          "signature": "interface EmailProvider",
+          "doc": "A passwordless **email** provider: magicLink() mails a single-use sign-in link, emailOtp() a one-time numeric code. Both deliver through AuthConfig.sendVerificationRequest and need an adapter with the verification-token group plus getUserByEmail / createUser / updateUser.",
+          "docFull": "A passwordless **email** provider: `magicLink()` mails a single-use sign-in link,\n`emailOtp()` a one-time numeric code. Both deliver through\n{@link AuthConfig.sendVerificationRequest} and need an adapter with the\nverification-token group plus `getUserByEmail` / `createUser` / `updateUser`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "EmailProviderOptions",
+          "slug": "EmailProviderOptions",
+          "kind": "interface",
+          "signature": "interface EmailProviderOptions",
+          "doc": "Options for magicLink and emailOtp.",
+          "docFull": "Options for {@linkcode magicLink} and {@linkcode emailOtp}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "EmailRequestResult",
+          "slug": "EmailRequestResult",
+          "kind": "interface",
+          "signature": "interface EmailRequestResult",
+          "doc": "What a verification or reset request reports — never whether the address exists.",
+          "docFull": "What a verification or reset request reports — never whether the address exists.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "enrollTotp",
+          "slug": "enrollTotp",
+          "kind": "function",
+          "signature": "enrollTotp(config: AuthConfig, user: AuthUser): Promise<TotpEnrollment | null>",
+          "doc": "Start a TOTP enrolment: mint a secret, store it **unconfirmed**, and return it with the provisioning URI (issuer mfa.issuer, account user.email ?? user.id). An earlier unconfirmed enrolment is replaced; a CONFIRMED factor is not — disable it first.",
+          "docFull": "Start a TOTP enrolment: mint a secret, store it **unconfirmed**, and return it with the\nprovisioning URI (issuer `mfa.issuer`, account `user.email ?? user.id`). An earlier\nunconfirmed enrolment is replaced; a CONFIRMED factor is not — disable it first.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The app's auth config."
+            },
+            {
+              "name": "user",
+              "doc": "The user enrolling."
+            }
+          ],
+          "returns": "The secret and URI, or null when the user already has a confirmed factor.",
           "examples": [],
           "denextOnly": true
         },
@@ -5741,6 +5930,44 @@
           "docFull": "The form fields of a submission as a plain object (the default `input` shape).",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "generateBackupCodes",
+          "slug": "generateBackupCodes",
+          "kind": "function",
+          "signature": "generateBackupCodes(hasher: Hasher, count?: number): Promise<BackupCodes>",
+          "doc": "Generate a set of unique backup codes and hash each through hasher. The hash covers the normalised form (no hyphen, lowercase), so a user may type a code with or without the hyphen, in any case.",
+          "docFull": "Generate a set of unique backup codes and hash each through `hasher`. The hash covers\nthe normalised form (no hyphen, lowercase), so a user may type a code with or without\nthe hyphen, in any case.",
+          "params": [
+            {
+              "name": "hasher",
+              "doc": "The auth Hasher (ResolvedAuthOptions.hasher)."
+            },
+            {
+              "name": "count",
+              "doc": "How many codes, clamped to 0–20. Default 10."
+            }
+          ],
+          "returns": "The plaintext codes and their hashes.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "generateTotpSecret",
+          "slug": "generateTotpSecret",
+          "kind": "function",
+          "signature": "generateTotpSecret(bytes?: number): string",
+          "doc": "Generate a fresh TOTP secret: bytes of CSPRNG output as unpadded, uppercase RFC 4648 base32 — the form authenticator apps expect.",
+          "docFull": "Generate a fresh TOTP secret: `bytes` of CSPRNG output as unpadded, uppercase RFC 4648\nbase32 — the form authenticator apps expect.",
+          "params": [
+            {
+              "name": "bytes",
+              "doc": "Secret length in bytes; at least 20 (160 bits). Default 20."
+            }
+          ],
+          "returns": "The base32 secret (32 characters at the default length).",
           "examples": [],
           "denextOnly": true
         },
@@ -6776,6 +7003,23 @@
           "denextOnly": true
         },
         {
+          "name": "magicLink",
+          "slug": "magicLink",
+          "kind": "function",
+          "signature": "magicLink(options?: EmailProviderOptions): EmailProvider",
+          "doc": "Passwordless sign-in by **magic link**: POST {basePath}/callback/email with { email } mails a single-use link (10 minutes by default, email.magicMaxAge); opening it signs the user in. The link is consumed by its GET, so a mail gateway that pre-fetches links can spend it — prefer emailOtp where link scanners are common.",
+          "docFull": "Passwordless sign-in by **magic link**: `POST {basePath}/callback/email` with `{ email }`\nmails a single-use link (10 minutes by default, `email.magicMaxAge`); opening it signs\nthe user in. The link is consumed by its GET, so a mail gateway that pre-fetches links\ncan spend it — prefer {@linkcode emailOtp} where link scanners are common.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The provider id, display name and sign-up policy."
+            }
+          ],
+          "returns": "The configured provider (id: \"email\", mode: \"magic\").",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "makeTranslate",
           "slug": "makeTranslate",
           "kind": "function",
@@ -6896,12 +7140,57 @@
           "denextOnly": true
         },
         {
+          "name": "MfaMethod",
+          "slug": "MfaMethod",
+          "kind": "typeAlias",
+          "signature": "type MfaMethod = totp | bcp",
+          "doc": "A second factor a step-up can be completed with: a TOTP code, or a backup code.",
+          "docFull": "A second factor a step-up can be completed with: a TOTP code, or a backup code.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "MfaRecord",
           "slug": "MfaRecord",
           "kind": "interface",
           "signature": "interface MfaRecord",
           "doc": "A user's TOTP factor plus their single-use backup codes.",
           "docFull": "A user's TOTP factor plus their single-use backup codes.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "mfaStatus",
+          "slug": "mfaStatus-fn",
+          "kind": "function",
+          "signature": "mfaStatus(config: AuthConfig, userId: string): Promise<MfaStatus>",
+          "doc": "A user's second-factor state — for an account-settings page.",
+          "docFull": "A user's second-factor state — for an account-settings page.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The app's auth config."
+            },
+            {
+              "name": "userId",
+              "doc": "The user."
+            }
+          ],
+          "returns": "Whether a factor is enrolled and confirmed, and how many backup codes remain.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "MfaStatus",
+          "slug": "MfaStatus-iface",
+          "kind": "interface",
+          "signature": "interface MfaStatus",
+          "doc": "A user's second-factor state, as mfaStatus reports it.",
+          "docFull": "A user's second-factor state, as {@linkcode mfaStatus} reports it.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -7421,6 +7710,18 @@
             }
           ],
           "returns": "The resolved locale and the pathname to route with.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "pendingMfaSession",
+          "slug": "pendingMfaSession",
+          "kind": "function",
+          "signature": "pendingMfaSession(): Promise<AuthSession | null>",
+          "doc": "The current request's session **only while it still owes a second factor** — null for a complete session, and for none. For the app's pages.mfa page: render the code form (or, under mfa.required: \"always\" for a user with no factor yet, the enrolment step) when this returns a session, and redirect onward when it doesn't.",
+          "docFull": "The current request's session **only while it still owes a second factor** — `null`\nfor a complete session, and for none. For the app's `pages.mfa` page: render the code\nform (or, under `mfa.required: \"always\"` for a user with no factor yet, the enrolment\nstep) when this returns a session, and redirect onward when it doesn't.\n\nA pending session grants nothing: {@link auth} and every guard still read it as signed\nout, and it is never slid forward. It is short-lived, and the step-up replaces it with\na fresh session rather than upgrading it.",
+          "params": [],
+          "returns": "The pending AuthSession, or null.",
           "examples": [],
           "denextOnly": true
         },
@@ -7953,6 +8254,27 @@
           "denextOnly": true
         },
         {
+          "name": "requestEmailVerification",
+          "slug": "requestEmailVerification",
+          "kind": "function",
+          "signature": "requestEmailVerification(config: AuthConfig, userOrEmail: Pick<AdapterUser, email> | string): Promise<EmailRequestResult>",
+          "doc": "Email a verification link to a user (or an address). The link opens email.verifyPath (default {basePath}/verify, which verifies and redirects).",
+          "docFull": "Email a verification link to a user (or an address). The link opens\n`email.verifyPath` (default `{basePath}/verify`, which verifies and redirects).\n\nResolves normally — sending nothing — for an address with no account, an\nalready-verified one, or a value that isn't exactly one address. Throws only for a\nmisconfiguration: no `sendVerificationRequest`, or an adapter without the\nverification-token group.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The app's auth config."
+            },
+            {
+              "name": "userOrEmail",
+              "doc": "The user record (its email is used) or the address."
+            }
+          ],
+          "returns": "Whether the request was throttled.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "RequestErrorContext",
           "slug": "RequestErrorContext",
           "kind": "interface",
@@ -8006,6 +8328,27 @@
             }
           ],
           "returns": "The origin, e.g. https://example.com.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "requestPasswordReset",
+          "slug": "requestPasswordReset",
+          "kind": "function",
+          "signature": "requestPasswordReset(config: AuthConfig, email: string): Promise<EmailRequestResult>",
+          "doc": "Email a password-reset link. The link opens email.resetPath (default {basePath}/reset) — a page your app renders, posting email, token and password to {basePath}/reset/confirm (or calling resetPassword).",
+          "docFull": "Email a password-reset link. The link opens `email.resetPath` (default\n`{basePath}/reset`) — a page your app renders, posting `email`, `token` and `password`\nto `{basePath}/reset/confirm` (or calling {@linkcode resetPassword}).\n\nResolves normally for an address with no account — with no mail, and comparable work —\nso a caller can't learn which addresses have accounts. Throws only for a\nmisconfiguration: no `sendVerificationRequest`, or an adapter without the\nverification-token group and `setCredential`.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The app's auth config."
+            },
+            {
+              "name": "email",
+              "doc": "The submitted address (exactly one; a list sends nothing)."
+            }
+          ],
+          "returns": "Whether the request was throttled — the same for known and unknown addresses.",
           "examples": [],
           "denextOnly": true
         },
@@ -8111,6 +8454,39 @@
           "signature": "resetCacheStats(): void",
           "doc": "Reset the cache-activity counters (tests / a fresh monitoring window).",
           "docFull": "Reset the cache-activity counters (tests / a fresh monitoring window).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "resetPassword",
+          "slug": "resetPassword",
+          "kind": "function",
+          "signature": "resetPassword(config: AuthConfig, input: object): Promise<ResetPasswordResult>",
+          "doc": "Redeem a password-reset token and set a new password: the configured hasher hashes it, adapter.setCredential stores it, and every server-side session of the user is revoked. Fires passwordReset (after sessionRevoked).",
+          "docFull": "Redeem a password-reset token and set a new password: the configured `hasher` hashes it,\n`adapter.setCredential` stores it, and every server-side session of the user is revoked.\nFires `passwordReset` (after `sessionRevoked`).\n\nThe password is checked (8–1024 characters) **before** the token is touched, so a\nrefused password leaves the link usable.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The app's auth config."
+            },
+            {
+              "name": "input",
+              "doc": "The address, the presented token and the new password."
+            }
+          ],
+          "returns": "{ ok: true, user }, or { ok: false, error }. Throws only when the adapter lacks the verification-token group or setCredential.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ResetPasswordResult",
+          "slug": "ResetPasswordResult",
+          "kind": "typeAlias",
+          "signature": "type ResetPasswordResult = object | object",
+          "doc": "What resetPassword reports.",
+          "docFull": "What {@linkcode resetPassword} reports.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -9418,6 +9794,71 @@
           "denextOnly": true
         },
         {
+          "name": "totpAuthUri",
+          "slug": "totpAuthUri",
+          "kind": "function",
+          "signature": "totpAuthUri(options: TotpAuthUriOptions): string",
+          "doc": "Build the otpauth://totp/… provisioning URI (Google Authenticator key-URI format) to render as a QR code or a link. The label is Issuer:account with each part percent-encoded (so a : inside either part can't forge the separator), and every query value is percent-encoded too (a space is %20, never +).",
+          "docFull": "Build the `otpauth://totp/…` provisioning URI (Google Authenticator key-URI format) to\nrender as a QR code or a link. The label is `Issuer:account` with each part\npercent-encoded (so a `:` inside either part can't forge the separator), and every\nquery value is percent-encoded too (a space is `%20`, never `+`).",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The secret, labels and code parameters."
+            }
+          ],
+          "returns": "The URI, e.g. otpauth://totp/Acme:ada%40example.com?secret=…&issuer=Acme&algorithm=SHA1&digits=6&period=30.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TotpAuthUriOptions",
+          "slug": "TotpAuthUriOptions",
+          "kind": "interface",
+          "signature": "interface TotpAuthUriOptions",
+          "doc": "Options for totpAuthUri.",
+          "docFull": "Options for {@linkcode totpAuthUri}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TotpEnrollment",
+          "slug": "TotpEnrollment",
+          "kind": "interface",
+          "signature": "interface TotpEnrollment",
+          "doc": "A fresh, unconfirmed TOTP enrolment, as enrollTotp returns it.",
+          "docFull": "A fresh, unconfirmed TOTP enrolment, as {@linkcode enrollTotp} returns it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TotpVerifyOptions",
+          "slug": "TotpVerifyOptions",
+          "kind": "interface",
+          "signature": "interface TotpVerifyOptions",
+          "doc": "Options for verifyTotp.",
+          "docFull": "Options for {@linkcode verifyTotp}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TotpVerifyResult",
+          "slug": "TotpVerifyResult",
+          "kind": "typeAlias",
+          "signature": "type TotpVerifyResult = object | object",
+          "doc": "The outcome of verifyTotp: on a match, the time step the code belongs to — hand it to the adapter's claimTotpStep so the same code can't be presented twice.",
+          "docFull": "The outcome of {@linkcode verifyTotp}: on a match, the time step the code belongs to —\nhand it to the adapter's `claimTotpStep` so the same code can't be presented twice.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "TranslateFn",
           "slug": "TranslateFn",
           "kind": "typeAlias",
@@ -9671,6 +10112,27 @@
           "denextOnly": true
         },
         {
+          "name": "verifyEmail",
+          "slug": "verifyEmail",
+          "kind": "function",
+          "signature": "verifyEmail(config: AuthConfig, input: object): Promise<AdapterUser | null>",
+          "doc": "Redeem an email-verification token and mark the address verified (emailVerified, epoch seconds, through adapter.updateUser). Fires emailVerified.",
+          "docFull": "Redeem an email-verification token and mark the address verified (`emailVerified`,\nepoch seconds, through `adapter.updateUser`). Fires `emailVerified`.\n\nUnlike a first magic-link / one-time-code sign-in, this does **not** retire the\naccount's password or revoke its sessions. In the normal register → verify → sign-in\nflow the password was set by the very person now proving the mailbox, so wiping it\nwould break that flow; and verifying signs nobody in, so the mailbox owner gains no\naccess here. The residual risk is a victim confirming an account someone else\nregistered with their address — it then counts as verified (a later OAuth sign-in with\nthat address links to it) — so word the mail to say that ignoring it is safe.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The app's auth config."
+            },
+            {
+              "name": "input",
+              "doc": "The address and the presented token."
+            }
+          ],
+          "returns": "The updated user, or null for any failure (wrong, spent or expired token; an address whose account is gone). Throws only when the adapter lacks the token group.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "verifyPassword",
           "slug": "verifyPassword",
           "kind": "function",
@@ -9695,6 +10157,56 @@
           "examples": [
             "```ts\ncredentials({\n  authorize: async ({ email, password }) => {\n    const row = findUser(email); // may be undefined — verify still does full work\n    const ok = await verifyPassword(password ?? \"\", row?.password_hash ?? \"\");\n    return ok && row ? { id: String(row.id), email: row.email } : null;\n  },\n})\n```"
           ],
+          "denextOnly": true
+        },
+        {
+          "name": "verifySecondFactor",
+          "slug": "verifySecondFactor",
+          "kind": "function",
+          "signature": "verifySecondFactor(config: AuthConfig, userId: string, code: string): Promise<MfaMethod | null>",
+          "doc": "Check a second-factor code for a user with a confirmed factor: first as a TOTP code (claiming its step — a replay is refused), else as a backup code (spent on a match).",
+          "docFull": "Check a second-factor code for a user with a confirmed factor: first as a TOTP code\n(claiming its step — a replay is refused), else as a backup code (spent on a match).",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The app's auth config."
+            },
+            {
+              "name": "userId",
+              "doc": "The user."
+            },
+            {
+              "name": "code",
+              "doc": "The code the user typed (TOTP digits or a backup code, hyphen optional)."
+            }
+          ],
+          "returns": "\"totp\" or \"bcp\" for the method that verified, or null.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "verifyTotp",
+          "slug": "verifyTotp",
+          "kind": "function",
+          "signature": "verifyTotp(secret: string, code: string, options?: TotpVerifyOptions): Promise<TotpVerifyResult>",
+          "doc": "Verify a TOTP code (RFC 6238 over RFC 4226 HOTP, HMAC-SHA-1) against a base32 secret, accepting any step within ±window of the current one. Whitespace in the code is stripped (\"123 456\"); anything else malformed — non-digits, the wrong length, a secret that isn't base32 — is { ok: false }, never a throw. Every candidate step is computed and compared in constant time; the loop never exits early on a match.",
+          "docFull": "Verify a TOTP code (RFC 6238 over RFC 4226 HOTP, HMAC-SHA-1) against a base32 secret,\naccepting any step within ±`window` of the current one. Whitespace in the code is\nstripped (`\"123 456\"`); anything else malformed — non-digits, the wrong length, a\nsecret that isn't base32 — is `{ ok: false }`, never a throw. Every candidate step is\ncomputed and compared in constant time; the loop never exits early on a match.\n\nThis does NOT stop replay: pass the returned `step` to the adapter's `claimTotpStep`.",
+          "params": [
+            {
+              "name": "secret",
+              "doc": "The user's base32 secret (padding, spaces and case are tolerated)."
+            },
+            {
+              "name": "code",
+              "doc": "The code the user typed."
+            },
+            {
+              "name": "options",
+              "doc": "Window, clock and code parameters."
+            }
+          ],
+          "returns": "{ ok: true, step } for the first (earliest) matching step, else { ok: false }.",
+          "examples": [],
           "denextOnly": true
         },
         {

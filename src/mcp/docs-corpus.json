@@ -3025,6 +3025,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/AuthEmailConfig",
+      "kind": "interface",
+      "title": "AuthEmailConfig",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/AuthEmailConfig",
+      "text": "AuthEmailConfig interface AuthEmailConfig The email-token flows' knobs: how long each kind of token lives and which pages the emailed links open. Every field is optional; lifetimes are in **seconds**, and a non-finite or non-positive lifetime falls back to its default.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/AuthEvents",
       "kind": "interface",
       "title": "AuthEvents",
@@ -3040,6 +3049,15 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/AuthLogger",
       "text": "AuthLogger interface AuthLogger Where the framework logs; every method is optional and defaults to silence.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/AuthMfaConfig",
+      "kind": "interface",
+      "title": "AuthMfaConfig",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/AuthMfaConfig",
+      "text": "AuthMfaConfig interface AuthMfaConfig Second-factor (TOTP) policy. Every field is optional; see each default.",
       "denextOnly": true
     },
     {
@@ -3121,6 +3139,24 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/AwaitableHeaders",
       "text": "AwaitableHeaders type AwaitableHeaders = Headers & PromiseLike<Headers> headers()'s return: usable synchronously AND awaitable (await headers(), Next 15).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/backupCodeMatcher",
+      "kind": "function",
+      "title": "backupCodeMatcher",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/backupCodeMatcher",
+      "text": "backupCodeMatcher backupCodeMatcher(hasher: Hasher, code: string): (hash: string) => Promise<boolean> Build the matches predicate the adapter's consumeBackupCode walks the stored hashes with. The presented code is normalised (spaces and hyphens stripped, lowercased); a malformed one yields a predicate that matches nothing — yet still runs one hasher.verify per stored hash, so a garbage submission costs what a wrong code does. The auth Hasher the codes were hashed with. The code the user typed. A predicate resolving true only when code is the one hash was made from.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/BackupCodes",
+      "kind": "interface",
+      "title": "BackupCodes",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/BackupCodes",
+      "text": "BackupCodes interface BackupCodes A fresh set of backup codes: show codes once, store only hashes.",
       "denextOnly": true
     },
     {
@@ -3376,6 +3412,24 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/confirmTotp",
+      "kind": "function",
+      "title": "confirmTotp",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/confirmTotp",
+      "text": "confirmTotp confirmTotp(config: AuthConfig, user: AuthUser, code: string): Promise<ConfirmTotpResult> Confirm a pending enrolment with a code from the authenticator app. On success the factor is marked confirmed and mfa.backupCodes backup codes are minted — returned here in plaintext exactly once, and stored only as hashes. The code's step is claimed, so it can't then be replayed at the step-up. The app's auth config. The user confirming. The code the user typed. { ok: true, backupCodes }, or { ok: false } for a wrong or replayed code, no pending enrolment, or an already-confirmed factor.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/ConfirmTotpResult",
+      "kind": "typeAlias",
+      "title": "ConfirmTotpResult",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ConfirmTotpResult",
+      "text": "ConfirmTotpResult type ConfirmTotpResult = object | object The outcome of confirmTotp: on success, the plaintext backup codes — the only time they exist anywhere; show them to the user once.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/connection",
       "kind": "function",
       "title": "connection",
@@ -3610,6 +3664,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/disableTotp",
+      "kind": "function",
+      "title": "disableTotp",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/disableTotp",
+      "text": "disableTotp disableTotp(config: AuthConfig, userId: string): Promise<void> Remove a user's TOTP factor and backup codes. A no-op for a user who never enrolled. Callers must have proved a fresh factor first — see the /mfa/disable endpoint. The app's auth config. The user.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/discord",
       "kind": "function",
       "title": "discord",
@@ -3661,6 +3724,51 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/DraftTokenStore",
       "text": "DraftTokenStore interface DraftTokenStore Backing store for server-minted draft tokens. Draft mode is \"on\" only when the request cookie holds a token this server issued via enable(); a forged or guessed value is not in the store, so it cannot turn draft mode on. The default store is in-memory (per-process, resets on restart). A multi-instance deployment can inject a store backed by a shared cache (Redis/KV) via setDraftTokenStore so a token minted on one instance is honored on another. The store is synchronous to keep draftMode's isEnabled synchronous; back an async store with a synchronously-readable cache, or mint signed/stateless tokens instead.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/emailOtp",
+      "kind": "function",
+      "title": "emailOtp",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/emailOtp",
+      "text": "emailOtp emailOtp(options?: EmailProviderOptions): EmailProvider Passwordless sign-in by **one-time code**: POST {basePath}/callback/email-otp with { email } mails a numeric code (email.otpDigits, default 6; valid 5 minutes by default, email.otpMaxAge); posting { email, code } to the same endpoint signs the user in. Wrong codes count against a failure budget (5 per 5 minutes per address). The provider id, display name and sign-up policy. The configured provider (id: \"email-otp\", mode: \"otp\").",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/EmailProvider",
+      "kind": "interface",
+      "title": "EmailProvider",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/EmailProvider",
+      "text": "EmailProvider interface EmailProvider A passwordless **email** provider: magicLink() mails a single-use sign-in link, emailOtp() a one-time numeric code. Both deliver through AuthConfig.sendVerificationRequest and need an adapter with the verification-token group plus getUserByEmail / createUser / updateUser.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/EmailProviderOptions",
+      "kind": "interface",
+      "title": "EmailProviderOptions",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/EmailProviderOptions",
+      "text": "EmailProviderOptions interface EmailProviderOptions Options for magicLink and emailOtp.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/EmailRequestResult",
+      "kind": "interface",
+      "title": "EmailRequestResult",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/EmailRequestResult",
+      "text": "EmailRequestResult interface EmailRequestResult What a verification or reset request reports — never whether the address exists.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/enrollTotp",
+      "kind": "function",
+      "title": "enrollTotp",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/enrollTotp",
+      "text": "enrollTotp enrollTotp(config: AuthConfig, user: AuthUser): Promise<TotpEnrollment | null> Start a TOTP enrolment: mint a secret, store it **unconfirmed**, and return it with the provisioning URI (issuer mfa.issuer, account user.email ?? user.id). An earlier unconfirmed enrolment is replaced; a CONFIRMED factor is not — disable it first. The app's auth config. The user enrolling. The secret and URI, or null when the user already has a confirmed factor.",
       "denextOnly": true
     },
     {
@@ -3868,6 +3976,24 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/FormFields",
       "text": "FormFields type FormFields = Record<string, FormDataEntryValue> The form fields of a submission as a plain object (the default input shape).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/generateBackupCodes",
+      "kind": "function",
+      "title": "generateBackupCodes",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/generateBackupCodes",
+      "text": "generateBackupCodes generateBackupCodes(hasher: Hasher, count?: number): Promise<BackupCodes> Generate a set of unique backup codes and hash each through hasher. The hash covers the normalised form (no hyphen, lowercase), so a user may type a code with or without the hyphen, in any case. The auth Hasher (ResolvedAuthOptions.hasher). How many codes, clamped to 0–20. Default 10. The plaintext codes and their hashes.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/generateTotpSecret",
+      "kind": "function",
+      "title": "generateTotpSecret",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/generateTotpSecret",
+      "text": "generateTotpSecret generateTotpSecret(bytes?: number): string Generate a fresh TOTP secret: bytes of CSPRNG output as unpadded, uppercase RFC 4648 base32 — the form authenticator apps expect. Secret length in bytes; at least 20 (160 bits). Default 20. The base32 secret (32 characters at the default length).",
       "denextOnly": true
     },
     {
@@ -4546,6 +4672,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/magicLink",
+      "kind": "function",
+      "title": "magicLink",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/magicLink",
+      "text": "magicLink magicLink(options?: EmailProviderOptions): EmailProvider Passwordless sign-in by **magic link**: POST {basePath}/callback/email with { email } mails a single-use link (10 minutes by default, email.magicMaxAge); opening it signs the user in. The link is consumed by its GET, so a mail gateway that pre-fetches links can spend it — prefer emailOtp where link scanners are common. The provider id, display name and sign-up policy. The configured provider (id: \"email\", mode: \"magic\").",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/makeTranslate",
       "kind": "function",
       "title": "makeTranslate",
@@ -4636,12 +4771,39 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/MfaMethod",
+      "kind": "typeAlias",
+      "title": "MfaMethod",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/MfaMethod",
+      "text": "MfaMethod type MfaMethod = totp | bcp A second factor a step-up can be completed with: a TOTP code, or a backup code.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/MfaRecord",
       "kind": "interface",
       "title": "MfaRecord",
       "module": "denext/server",
       "url": "/docs/api/denext-server/MfaRecord",
       "text": "MfaRecord interface MfaRecord A user's TOTP factor plus their single-use backup codes.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/mfaStatus-fn",
+      "kind": "function",
+      "title": "mfaStatus",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/mfaStatus-fn",
+      "text": "mfaStatus mfaStatus(config: AuthConfig, userId: string): Promise<MfaStatus> A user's second-factor state — for an account-settings page. The app's auth config. The user. Whether a factor is enrolled and confirmed, and how many backup codes remain.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/MfaStatus-iface",
+      "kind": "interface",
+      "title": "MfaStatus",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/MfaStatus-iface",
+      "text": "MfaStatus interface MfaStatus A user's second-factor state, as mfaStatus reports it.",
       "denextOnly": true
     },
     {
@@ -5005,6 +5167,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/pendingMfaSession",
+      "kind": "function",
+      "title": "pendingMfaSession",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/pendingMfaSession",
+      "text": "pendingMfaSession pendingMfaSession(): Promise<AuthSession | null> The current request's session **only while it still owes a second factor** — null for a complete session, and for none. For the app's pages.mfa page: render the code form (or, under mfa.required: \"always\" for a user with no factor yet, the enrolment step) when this returns a session, and redirect onward when it doesn't. A pending session grants nothing: auth and every guard still read it as signed out, and it is never slid forward. It is short-lived, and the step-up replaces it with a fresh session rather than upgrading it. The pending AuthSession, or null.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/permanentRedirect",
       "kind": "function",
       "title": "permanentRedirect",
@@ -5356,6 +5527,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/requestEmailVerification",
+      "kind": "function",
+      "title": "requestEmailVerification",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/requestEmailVerification",
+      "text": "requestEmailVerification requestEmailVerification(config: AuthConfig, userOrEmail: Pick<AdapterUser, email> | string): Promise<EmailRequestResult> Email a verification link to a user (or an address). The link opens email.verifyPath (default {basePath}/verify, which verifies and redirects). Resolves normally — sending nothing — for an address with no account, an already-verified one, or a value that isn't exactly one address. Throws only for a misconfiguration: no sendVerificationRequest, or an adapter without the verification-token group. The app's auth config. The user record (its email is used) or the address. Whether the request was throttled.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/RequestErrorContext",
       "kind": "interface",
       "title": "RequestErrorContext",
@@ -5389,6 +5569,15 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/requestOrigin",
       "text": "requestOrigin requestOrigin(request: Request, opts?: OriginOptions): string The public origin (scheme://host) for request. Resolution order: canonicalOrigin (if set) → forwarded headers (only when trustForwardedHeaders is set) → the Host header → the request URL. Only the first value of a comma-separated forwarded header is used. The incoming request. Origin-resolution options (defaults ignore forwarded headers). The origin, e.g. https://example.com.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/requestPasswordReset",
+      "kind": "function",
+      "title": "requestPasswordReset",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/requestPasswordReset",
+      "text": "requestPasswordReset requestPasswordReset(config: AuthConfig, email: string): Promise<EmailRequestResult> Email a password-reset link. The link opens email.resetPath (default {basePath}/reset) — a page your app renders, posting email, token and password to {basePath}/reset/confirm (or calling resetPassword). Resolves normally for an address with no account — with no mail, and comparable work — so a caller can't learn which addresses have accounts. Throws only for a misconfiguration: no sendVerificationRequest, or an adapter without the verification-token group and setCredential. The app's auth config. The submitted address (exactly one; a list sends nothing). Whether the request was throttled — the same for known and unknown addresses.",
       "denextOnly": true
     },
     {
@@ -5452,6 +5641,24 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/resetCacheStats",
       "text": "resetCacheStats resetCacheStats(): void Reset the cache-activity counters (tests / a fresh monitoring window).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/resetPassword",
+      "kind": "function",
+      "title": "resetPassword",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/resetPassword",
+      "text": "resetPassword resetPassword(config: AuthConfig, input: object): Promise<ResetPasswordResult> Redeem a password-reset token and set a new password: the configured hasher hashes it, adapter.setCredential stores it, and every server-side session of the user is revoked. Fires passwordReset (after sessionRevoked). The password is checked (8–1024 characters) **before** the token is touched, so a refused password leaves the link usable. The app's auth config. The address, the presented token and the new password. { ok: true, user }, or { ok: false, error }. Throws only when the adapter lacks the verification-token group or setCredential.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/ResetPasswordResult",
+      "kind": "typeAlias",
+      "title": "ResetPasswordResult",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ResetPasswordResult",
+      "text": "ResetPasswordResult type ResetPasswordResult = object | object What resetPassword reports.",
       "denextOnly": true
     },
     {
@@ -6328,6 +6535,51 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/totpAuthUri",
+      "kind": "function",
+      "title": "totpAuthUri",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/totpAuthUri",
+      "text": "totpAuthUri totpAuthUri(options: TotpAuthUriOptions): string Build the otpauth://totp/… provisioning URI (Google Authenticator key-URI format) to render as a QR code or a link. The label is Issuer:account with each part percent-encoded (so a : inside either part can't forge the separator), and every query value is percent-encoded too (a space is %20, never +). The secret, labels and code parameters. The URI, e.g. otpauth://totp/Acme:ada%40example.com?secret=…&issuer=Acme&algorithm=SHA1&digits=6&period=30.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/TotpAuthUriOptions",
+      "kind": "interface",
+      "title": "TotpAuthUriOptions",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/TotpAuthUriOptions",
+      "text": "TotpAuthUriOptions interface TotpAuthUriOptions Options for totpAuthUri.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/TotpEnrollment",
+      "kind": "interface",
+      "title": "TotpEnrollment",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/TotpEnrollment",
+      "text": "TotpEnrollment interface TotpEnrollment A fresh, unconfirmed TOTP enrolment, as enrollTotp returns it.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/TotpVerifyOptions",
+      "kind": "interface",
+      "title": "TotpVerifyOptions",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/TotpVerifyOptions",
+      "text": "TotpVerifyOptions interface TotpVerifyOptions Options for verifyTotp.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/TotpVerifyResult",
+      "kind": "typeAlias",
+      "title": "TotpVerifyResult",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/TotpVerifyResult",
+      "text": "TotpVerifyResult type TotpVerifyResult = object | object The outcome of verifyTotp: on a match, the time step the code belongs to — hand it to the adapter's claimTotpStep so the same code can't be presented twice.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/TranslateFn",
       "kind": "typeAlias",
       "title": "TranslateFn",
@@ -6490,12 +6742,39 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/verifyEmail",
+      "kind": "function",
+      "title": "verifyEmail",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/verifyEmail",
+      "text": "verifyEmail verifyEmail(config: AuthConfig, input: object): Promise<AdapterUser | null> Redeem an email-verification token and mark the address verified (emailVerified, epoch seconds, through adapter.updateUser). Fires emailVerified. Unlike a first magic-link / one-time-code sign-in, this does **not** retire the account's password or revoke its sessions. In the normal register → verify → sign-in flow the password was set by the very person now proving the mailbox, so wiping it would break that flow; and verifying signs nobody in, so the mailbox owner gains no access here. The residual risk is a victim confirming an account someone else registered with their address — it then counts as verified (a later OAuth sign-in with that address links to it) — so word the mail to say that ignoring it is safe. The app's auth config. The address and the presented token. The updated user, or null for any failure (wrong, spent or expired token; an address whose account is gone). Throws only when the adapter lacks the token group.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/verifyPassword",
       "kind": "function",
       "title": "verifyPassword",
       "module": "denext/server",
       "url": "/docs/api/denext-server/verifyPassword",
       "text": "verifyPassword verifyPassword(password: string, stored: string, options?: HashPasswordOptions): Promise<boolean> Verify a password against a hash produced by hashPassword. The comparison is constant-time (timingSafeEqual), and a malformed/unsupported stored value — an empty column, a legacy format, a corrupted row — returns false rather than throwing, so an authorize callback can't leak a stack trace or a 500. That rejection still runs a full scrypt derivation, so an unknown account takes as long to reject as a wrong password for a known one (no user-enumeration timing oracle). The submitted plaintext password. The stored scrypt$… string. The cost this deployment hashes at — pass the SAME options hashPassword was given (scryptHasher does). It is used only for the equal-work rejection of a missing/malformed stored value: a real comparison always uses the parameters embedded in the stored string. Omitting it on a deployment that raised the cost makes an unknown account reject measurably faster than a known one. true only when the password matches.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/verifySecondFactor",
+      "kind": "function",
+      "title": "verifySecondFactor",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/verifySecondFactor",
+      "text": "verifySecondFactor verifySecondFactor(config: AuthConfig, userId: string, code: string): Promise<MfaMethod | null> Check a second-factor code for a user with a confirmed factor: first as a TOTP code (claiming its step — a replay is refused), else as a backup code (spent on a match). The app's auth config. The user. The code the user typed (TOTP digits or a backup code, hyphen optional). \"totp\" or \"bcp\" for the method that verified, or null.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/verifyTotp",
+      "kind": "function",
+      "title": "verifyTotp",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/verifyTotp",
+      "text": "verifyTotp verifyTotp(secret: string, code: string, options?: TotpVerifyOptions): Promise<TotpVerifyResult> Verify a TOTP code (RFC 6238 over RFC 4226 HOTP, HMAC-SHA-1) against a base32 secret, accepting any step within ±window of the current one. Whitespace in the code is stripped (\"123 456\"); anything else malformed — non-digits, the wrong length, a secret that isn't base32 — is { ok: false }, never a throw. Every candidate step is computed and compared in constant time; the loop never exits early on a match. This does NOT stop replay: pass the returned step to the adapter's claimTotpStep. The user's base32 secret (padding, spaces and case are tolerated). The code the user typed. Window, clock and code parameters. { ok: true, step } for the first (earliest) matching step, else { ok: false }.",
       "denextOnly": true
     },
     {
