@@ -8,8 +8,11 @@
 // hand-edited file (sentinel deleted, or never generated) is never clobbered — the same
 // never-clobber honesty `denext migrate` applies with its own generated-file marker.
 //
-// Build-time only; never imported by a shipped bundle. No YAML parser is involved: the compose
-// file is emitted, never parsed (a round-trip edit of a hand-written compose file is 2.5 rc.2).
+// Build-time only; never imported by a shipped bundle. This module only EMITS: it never parses
+// a compose file. Editing an existing one in place (keeping its comments and every line an edit
+// does not touch) is `compose-edit.ts`'s job, which the UI panel's compose editor calls — a
+// regeneration and a round-trip edit are two separate paths, and only the first comes through
+// here. (`compose-scan.ts` imports this module's sentinel check, so the dependency runs one way.)
 
 import { join } from "@std/path";
 

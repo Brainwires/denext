@@ -11,16 +11,21 @@
 // anyway, so the change can be copied across by hand — the honest bail the config writer and
 // `denext migrate` both take.
 //
-// rc.1 emits the compose file; it never parses one. Options are re-applied by regenerating, not
-// by round-tripping YAML (that needs a YAML parser — 2.5 rc.2).
+// Regenerating re-applies the options by re-rendering the templates. An existing
+// `docker-compose.yml` is ALSO editable in place, service by service, below the form: that
+// round-trip editor lives in `docker-compose.ts` (its POSTs carry `editor=compose` and are
+// routed there), and it splices lines through `src/build/compose-edit.ts` rather than
+// regenerating. A compose file the editor cannot follow is "opaque" and stays read-only.
 
 import { relative } from "@std/path";
+import { readCompose } from "../../build/compose-edit.ts";
 import {
   detectDockerMode,
   type DockerMode,
   type DockerOptions,
   dockerPlan,
   type DockerPlanFile,
+  renderCompose,
 } from "../../build/docker-template.ts";
 import { createUnifiedDiff } from "../../build/patch-diff.ts";
 import {
@@ -34,6 +39,13 @@ import {
   type UiHandler,
 } from "../html.ts";
 import { UI_CSRF_FIELD, writeFileAtomic } from "../security.ts";
+import {
+  COMPOSE_FILE,
+  composeJson,
+  composeSection,
+  composeSubmit,
+  isComposeSubmit,
+} from "./docker-compose.ts";
 
 /** The port the form suggests (and the templates' own default). */
 const DEFAULT_PORT = 3000;
@@ -44,21 +56,26 @@ const MODE_LABEL: Record<DockerMode, string> = {
   static: "static — `deno task export` + a file server (SPA)",
 };
 
-/** How a generated file compares to what is on disk. */
-type FileState = "absent" | "generated" | "edited";
+/**
+ * How a generated file compares to what is on disk. `edited` is hand-edited (no sentinel) — for
+ * the compose file that also means the editor can follow it; `opaque` is a hand-edited compose
+ * file the editor cannot follow (anchors, flow style, …), shown read-only.
+ */
+type FileState = "absent" | "generated" | "edited" | "opaque";
 
 /** What each state means, next to the file's name. */
 const STATE_LABEL: Record<FileState, string> = {
   absent: "not present — will be created",
   generated: "generated — safe to regenerate",
   edited: "hand-edited — will not be overwritten",
+  opaque: "hand-edited, YAML the editor cannot follow — read-only, will not be overwritten",
 };
 
 /** One of the three files, as the panel and the JSON twin report it. */
 interface FileView {
   /** Project-relative path. */
   readonly path: string;
-  /** Absent, still generated, or hand-edited. */
+  /** Absent, still generated, hand-edited, or (compose only) hand-edited and opaque. */
   readonly state: FileState;
   /** The unified diff from the current file to the regenerated one (omitted when identical). */
   readonly diff?: string;
@@ -94,6 +111,8 @@ interface PanelState {
   readonly previewed: boolean;
   /** A refusal to show against the form. */
   readonly error?: string;
+  /** A compose-editor refusal (its reason, and the diff of a splice that failed to read back). */
+  readonly notice?: RawHtml;
   /** Files a completed write created or regenerated. */
   readonly written?: readonly string[];
   /** Files a completed write refused to touch (hand-edited). */
@@ -102,7 +121,8 @@ interface PanelState {
 
 /**
  * Serve the Docker panel: the current state plus the options form on `GET`, a diff preview or a
- * sentinel-guarded write on `POST`, and the machine twin of both on `/api/docker`.
+ * sentinel-guarded write on `POST` (a compose-editor preview or write when the POST carries
+ * `editor=compose`), and the machine twin of both on `/api/docker`.
  */
 export const dockerPanel: UiHandler = (
   _request: Request,
@@ -117,8 +137,8 @@ async function showPanel(ctx: UiContext): Promise<Response> {
   const values = formValues((key) => params.get(key) ?? "");
   const mode = await effectiveMode(ctx.dir, values);
   const files = viewOf(ctx.dir, await dockerPlan(ctx.dir, optionsOf(values, mode)), false);
-  if (ctx.json) return jsonResponse({ ok: true, mode, files });
-  return respond({
+  if (ctx.json) return jsonResponse({ ok: true, mode, files, ...await composeJson(ctx.dir) });
+  return await respond({
     dir: ctx.dir,
     values,
     mode,
@@ -133,6 +153,13 @@ async function showPanel(ctx: UiContext): Promise<Response> {
 
 /** `POST`: validate the options, then diff (default) or write (`confirm=1`). */
 async function submitPanel(ctx: UiContext): Promise<Response> {
+  if (isComposeSubmit(ctx)) {
+    const defaults = formValues(() => "");
+    return await composeSubmit(
+      ctx,
+      (notice, status) => renderPanel(ctx, defaults, { notice }, status),
+    );
+  }
   const values = formValues((key) => field(ctx, key));
   let options: DockerOptions;
   try {
@@ -154,7 +181,7 @@ async function submitPanel(ctx: UiContext): Promise<Response> {
   };
   if (!write) {
     if (ctx.json) return jsonResponse({ ok: true, mode: options.mode, files });
-    return respond({ ...state, previewed: true }, ctx);
+    return await respond({ ...state, previewed: true }, ctx);
   }
   const { written, refused } = await applyPlan(ctx.dir, plan);
   if (ctx.json) {
@@ -195,9 +222,19 @@ async function refuse(
   status: number,
 ): Promise<Response> {
   if (ctx.json) return jsonResponse({ ok: false, reason }, status);
+  return await renderPanel(ctx, values, { error: reason }, status);
+}
+
+/** The panel in its resting state (no preview), with a refusal shown against it. */
+async function renderPanel(
+  ctx: UiContext,
+  values: FormValues,
+  refusal: { readonly error?: string; readonly notice?: RawHtml },
+  status: number,
+): Promise<Response> {
   const mode = await effectiveMode(ctx.dir, values);
   const files = viewOf(ctx.dir, await dockerPlan(ctx.dir, optionsOf(values, mode)), false);
-  return respond(
+  return await respond(
     {
       dir: ctx.dir,
       values,
@@ -206,7 +243,7 @@ async function refuse(
       readOnly: ctx.readOnly,
       csrf: ctx.csrf,
       previewed: false,
-      error: reason,
+      ...refusal,
     },
     ctx,
     status,
@@ -233,10 +270,11 @@ const panelResponse = panelResponder("Docker", "/docker");
 
 /**
  * Answer with the panel — the whole document, or only the `<section>` when `ui.js` asked for a
- * fragment to swap in place.
+ * fragment to swap in place. The compose editor block is read fresh from disk each time.
  */
-function respond(state: PanelState, ctx: UiContext, status = 200): Response {
-  return panelResponse(ctx, panelSection(state), status);
+async function respond(state: PanelState, ctx: UiContext, status = 200): Promise<Response> {
+  const compose = await composeSection(ctx, renderCompose(optionsOf(state.values, state.mode)));
+  return panelResponse(ctx, panelSection(state, compose), status);
 }
 
 // ── options ──────────────────────────────────────────────────────────────────
@@ -320,20 +358,23 @@ function viewOf(
 ): FileView[] {
   return plan.map((file) => {
     const path = relative(dir, file.path) || file.path;
-    const state: FileState = file.existing === undefined
-      ? "absent"
-      : file.generated
-      ? "generated"
-      : "edited";
+    const state = stateOf(file, path);
     const diff = withDiff ? createUnifiedDiff(file.existing ?? "", file.contents, path) : "";
     return diff === "" ? { path, state } : { path, state, diff };
   });
 }
 
+/** One planned file's state; a hand-edited compose file is `opaque` when the editor bails. */
+function stateOf(file: DockerPlanFile, path: string): FileState {
+  if (file.existing === undefined) return "absent";
+  if (file.generated) return "generated";
+  return path === COMPOSE_FILE && readCompose(file.existing) === null ? "opaque" : "edited";
+}
+
 // ── views ────────────────────────────────────────────────────────────────────
 
 /** The whole `<section id="panel">` — the piece `ui.js` swaps. */
-function panelSection(state: PanelState): RawHtml {
+function panelSection(state: PanelState, compose: RawHtml): RawHtml {
   const results = (state.written?.length || state.refused?.length) ? resultView(state) : "";
   return html`
     <section id="panel" data-panel="Docker">
@@ -341,12 +382,15 @@ function panelSection(state: PanelState): RawHtml {
       <p class="lead">Regenerate <span class="mono">Dockerfile</span>,
         <span class="mono">docker-compose.yml</span> and <span class="mono">.dockerignore</span>
         for <span class="mono">${state.dir}</span>. Files you have edited by hand are never
-        overwritten — their diff is shown so you can copy it across.</p>
+        overwritten — their diff is shown so you can copy it across, and a compose file's
+        services can be edited in place below.</p>
       ${state.error ? html`<p class="note">denext ui: ${state.error}</p>` : ""}
+      ${state.notice ?? ""}
       ${stateView(state)}
       ${formView(state)}
       ${state.previewed ? previewView(state) : ""}
       ${results}
+      ${compose}
     </section>
   `;
 }
@@ -401,7 +445,7 @@ function formView(state: PanelState): RawHtml {
 /** Every file's unified diff, with the hand-edited ones flagged as refusals. */
 function previewView(state: PanelState): RawHtml {
   const files = state.files.map((file) => {
-    const edited = file.state === "edited";
+    const edited = file.state === "edited" || file.state === "opaque";
     const badge = file.diff === undefined
       ? "no change"
       : edited
