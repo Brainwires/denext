@@ -17,6 +17,7 @@ ignoreDependencies = [
   "@std/http", # deno.json: jsr:@std/http@^1.0.0 — std HTTP (file-server, etc.)
   "@std/fs", # deno.json: jsr:@std/fs@^1.0.0
   "@std/encoding", # deno.json: jsr:@std/encoding@^1.0.0
+  "@std/yaml", # deno.json: jsr:@std/yaml@^1.0.0 — compose round-trip parse (src/build/compose-edit.ts)
   "sass", # deno.json: npm:sass@^1.80.0 — optional .scss support
   "ws", # deno.json: npm:ws@^8 — dev proxy WebSocket relay
   # Workspace packages and examples import the published framework by its JSR name
