@@ -204,7 +204,10 @@ export function handshake(request: Request, url: URL, session: UiSession): Respo
   session.handshakeSpent = true;
   const clean = new URL(url.href);
   clean.searchParams.delete("t");
-  const location = clean.pathname + (clean.search === "?" ? "" : clean.search);
+  // One leading slash: a request for `//evil.example/` would otherwise answer with a
+  // protocol-relative `Location` that leaves the loopback origin.
+  const path = "/" + clean.pathname.replace(/^\/+/, "");
+  const location = path + (clean.search === "?" ? "" : clean.search);
   const headers = new Headers({ location });
   headers.append(
     "set-cookie",

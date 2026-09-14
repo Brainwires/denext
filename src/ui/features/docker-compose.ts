@@ -217,7 +217,13 @@ export async function composeSubmit(
     return panelResponse(ctx, renderView(h(ComposePreview, preview)));
   }
   if (result.source !== file.text) {
-    await writeFileAtomic(ctx.dir, COMPOSE_FILE, result.source);
+    try {
+      await writeFileAtomic(ctx.dir, COMPOSE_FILE, result.source);
+    } catch (err) {
+      // A symlink out of the project, a permission error, a read-only filesystem: a refusal
+      // at the panel (like the plugin-options writer), never a bare 500.
+      return await deny(`could not write ${COMPOSE_FILE}: ${(err as Error).message}`, 403);
+    }
   }
   if (ctx.json) return jsonResponse(outcome);
   return new Response(null, {

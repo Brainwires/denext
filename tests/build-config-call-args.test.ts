@@ -361,3 +361,19 @@ Deno.test("readCallArguments: what setCallArguments writes reads back", async ()
   assertEquals(read.values, { info: { title: "API" }, servers: [{ url: "https://a.example" }] });
   assertEquals(read.codeKeys, ["foo"]);
 });
+
+Deno.test("setCallArguments: reserved keys and values that aren't plain JSON are refused", async () => {
+  const cases = [
+    { path: ["__proto__"], value: { polluted: true } },
+    { path: ["info", "constructor"], value: 1 },
+    { path: ["n"], value: Number.NaN },
+    { path: ["when"], value: new Date(0) },
+    { path: ["deep"], value: { ok: 1, fn: () => 1 } },
+    { path: ["list"], value: [1, undefined] },
+    { path: ["nested"], value: JSON.parse('{"__proto__": {"x": 1}}') },
+  ];
+  for (const set of cases) {
+    const r = await refusal("export default { plugins: [openapi()] };", [set]);
+    assertStringIncludes(r.reason, "not plain JSON data", set.path.join("."));
+  }
+});

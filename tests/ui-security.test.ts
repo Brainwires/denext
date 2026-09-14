@@ -506,3 +506,17 @@ Deno.test("writeFileAtomic renames into place, contains, and leaves no temp behi
     await Deno.remove(outside, { recursive: true });
   }
 });
+
+Deno.test("the handshake never answers with a protocol-relative Location", async () => {
+  const s = await ui();
+  try {
+    const res = await fetch(`${s.base}//evil.example/x?t=${s.server.token}`, {
+      redirect: "manual",
+    });
+    await res.body?.cancel();
+    assertEquals(res.status, 302);
+    assertEquals(res.headers.get("location"), "/evil.example/x");
+  } finally {
+    await stop(s);
+  }
+});
