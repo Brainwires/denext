@@ -11,8 +11,21 @@ import {
 } from "../../build/scaffold.ts";
 import { multiSelect } from "../../build/multi-select.ts";
 
-/** Feature toggles offered at scaffold time (flag pre-selects; TTY multi-select otherwise). */
-const FEATURES: Array<{ key: string; flag: string; label: string }> = [
+/** One scaffold-time feature toggle: the option it sets, its flag, and its label. */
+export interface ScaffoldFeature {
+  /** The {@link ScaffoldOptions} key it turns on (`compatibility` → `compatibilityMode`). */
+  readonly key: string;
+  /** The `denext create` flag that pre-selects it. */
+  readonly flag: string;
+  /** The human-readable label shown in the picker (and in `denext ui`'s wizard). */
+  readonly label: string;
+}
+
+/**
+ * Feature toggles offered at scaffold time (flag pre-selects; TTY multi-select otherwise).
+ * Exported so `denext ui`'s setup wizard offers exactly the same list as the CLI.
+ */
+export const FEATURES: readonly ScaffoldFeature[] = [
   { key: "tailwind", flag: "tailwind", label: "Tailwind CSS" },
   { key: "srcDir", flag: "src-dir", label: "src/ directory layout" },
   {
@@ -113,7 +126,7 @@ function selectFeatures(ctx: CommandContext): Set<string> {
   if (ctx.flags.yes === true || !Deno.stdin.isTerminal()) return selected;
   return multiSelect(
     "  Select features  (↑/↓ move · space toggle · enter confirm)",
-    FEATURES,
+    [...FEATURES],
     selected,
   );
 }
