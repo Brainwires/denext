@@ -8,8 +8,18 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- `AuthSession.authTime`: when the user last authenticated (sign-in, or a second-factor
+  step-up), in epoch seconds. Sliding expiry never moves it, unlike `issuedAt`.
+
 ### Security
 
+- `POST {basePath}/mfa/enroll` from a complete session needs a recent sign-in: `authTime`
+  within `mfa.freshness`, and at least five minutes. Otherwise it answers
+  `403 { error: "reauth_required" }`. A stolen long-lived session can no longer set up a
+  factor of its own and lock the owner out. An app that calls `enrollTotp()` from its own
+  Server Action should check `session.authTime` the same way, as `examples/auth` now does.
 - `denext export`: the output-directory guard compares real locations (symlinks resolved, case
   folded where the filesystem ignores it, inodes matched), so `outDir: ".GIT"` on a
   case-insensitive disk can no longer select and wipe `.git`, and a symlinked or non-directory
@@ -25,6 +35,9 @@ and this project adheres to
 
 ### Changed
 
+- `POST {basePath}/mfa/disable`'s no-code shortcut (the session's own step-up within
+  `mfa.freshness`) is measured from `authTime`, so it works with sliding expiry on as well; it
+  used to be void whenever `session.updateAge > 0`.
 - `verifyEmail()` answers `{ ok: true, user }` or `{ ok: false, error: "invalid_token" }`
   (`VerifyEmailResult`, exported from `denext/server`) — the shape `resetPassword()` has —
   instead of `AdapterUser | null`, so later failure reasons can be added without a breaking
