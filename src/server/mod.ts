@@ -393,10 +393,40 @@ export {
 // First-party auth: OAuth 2.0 / OIDC (+ Credentials) on signed-cookie sessions.
 // `denextAuth(config)` is a plugin (add to `plugins` in denext.config); it
 // auto-mounts `/auth/*`. Read the session anywhere with `auth()`.
-export { auth, denextAuth, requireAuth, revokeAllSessions, revokeSession } from "./auth/mod.ts";
+export {
+  auth,
+  denextAuth,
+  requireAuth,
+  revokeAllSessions,
+  revokeSession,
+  updateAuthSession,
+} from "./auth/mod.ts";
 export type { RequireAuthOptions } from "./auth/mod.ts";
-export { credentials, github, google, oidc } from "./auth/providers.ts";
-export type { CredentialsOptions, OAuthClientOptions, OidcOptions } from "./auth/providers.ts";
+export {
+  apple,
+  auth0,
+  credentials,
+  discord,
+  facebook,
+  github,
+  gitlab,
+  google,
+  keycloak,
+  microsoftEntra,
+  oidc,
+  okta,
+  slack,
+} from "./auth/providers.ts";
+export type {
+  Auth0Options,
+  CredentialsOptions,
+  GitLabOptions,
+  KeycloakOptions,
+  MicrosoftEntraOptions,
+  OAuthClientOptions,
+  OidcOptions,
+  OktaOptions,
+} from "./auth/providers.ts";
 // Password hashing for the Credentials provider (salted scrypt via node:crypto).
 export { hashPassword, verifyPassword } from "./auth/password.ts";
 export type { HashPasswordOptions } from "./auth/password.ts";

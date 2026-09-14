@@ -4,12 +4,19 @@
  * is always the same generic `401` (never a user-enumeration oracle), and the body is
  * read through the shared size/stall cap.
  *
+ * Every outcome is observable without changing it: a completed sign-in fires `signIn`, a
+ * refusal fires `signInFailed` with a stable `reason`, and anything this module swallows
+ * (a provider `authorize()` that threw, an unparseable body) is routed to the configured
+ * logger instead of vanishing. Neither an event handler nor the logger can alter the HTTP
+ * answer — see {@link ./events.ts | emitAuthEvent}.
+ *
  * @module
  */
 
 import { bufferedRequest, readCappedBody, STALLED, TOO_LARGE } from "../body.ts";
+import { emitAuthEvent } from "./events.ts";
 import {
-  createRateLimiter,
+  credentialsLimiter,
   defaultRateLimitKey,
   IP_BUCKET_FACTOR,
   ipBucketKey,
@@ -25,33 +32,46 @@ import {
   wantsJson,
 } from "./routes-shared.ts";
 import { issueAuthSession } from "./session.ts";
-import type { AuthConfig, AuthUser, CredentialsProvider } from "./types.ts";
+import type { AuthUser, CredentialsProvider } from "./types.ts";
 
 /** The most a credentials POST body may carry (a login form is a few hundred bytes). */
 const MAX_CREDENTIALS_BYTES = 64 * 1024;
 
-// One limiter per config object (the plugin hands the same `config` to every request),
-// created lazily so an app that opts out (`rateLimit: false`) allocates nothing.
-const limiters = new WeakMap<AuthConfig, RateLimiter | null>();
+/**
+ * Why a credentials attempt was refused, as `signInFailed` reports it. Stable strings —
+ * an app routes on them (alerting on `"rate_limited"`, counting `"invalid_credentials"`).
+ */
+type FailureReason = "invalid_credentials" | "rate_limited" | "access_denied";
 
-/** The credentials brute-force limiter for this config, or `null` when disabled. */
-function credentialsLimiter(config: AuthConfig): RateLimiter | null {
-  let limiter = limiters.get(config);
-  if (limiter === undefined) {
-    limiter = config.rateLimit === false ? null : createRateLimiter(config.rateLimit ?? {});
-    limiters.set(config, limiter);
-  }
-  return limiter;
+/**
+ * Fire `signInFailed` for a refused attempt. The response is decided by the caller and is
+ * never affected: `emitAuthEvent` swallows a throwing handler into the logger.
+ */
+function emitFailure(
+  ctx: AuthRouteContext,
+  provider: string,
+  reason: FailureReason,
+): Promise<void> {
+  return emitAuthEvent(ctx.options, "signInFailed", { provider, reason });
 }
 
-/** Run `authorize`, treating a throw as a rejection (never a 500 that leaks details). */
+/**
+ * Run `authorize`, treating a throw as a rejection (never a 500 that leaks details) — but
+ * report it, so a broken user lookup is visible to the app instead of looking to every
+ * caller like a wrong password.
+ */
 async function authorizeCredentials(
+  ctx: AuthRouteContext,
   provider: CredentialsProvider,
   creds: Record<string, string>,
 ): Promise<AuthUser | null> {
   try {
     return await provider.authorize(creds);
-  } catch {
+  } catch (error) {
+    ctx.options.logger.error(
+      `denextAuth: the "${provider.id}" provider's authorize() threw; treating it as a refusal`,
+      error,
+    );
     return null;
   }
 }
@@ -88,7 +108,7 @@ export async function handleCredentials(
 ): Promise<Response> {
   if (!isSameOrigin(ctx.request, ctx.config)) return json({ error: "forbidden" }, 403);
 
-  const creds = await readCredentials(ctx.request);
+  const creds = await readCredentials(ctx);
   const limiter = credentialsLimiter(ctx.config);
   // Two buckets: the app's key (IP + identifier by default) and an IP-wide one, so varying
   // the identifier / identifier field per attempt can't dodge the limiter.
@@ -97,22 +117,28 @@ export async function handleCredentials(
     ? (await limiter.lockedOut(key)) ?? (await limiter.lockedOut(ipKey, IP_BUCKET_FACTOR))
     : null;
   if (retryAfter !== null) {
+    await emitFailure(ctx, provider.id, "rate_limited");
     return json({ error: "too many attempts" }, 429, { "retry-after": String(retryAfter) });
   }
 
-  const user = await authorizeCredentials(provider, creds);
+  const user = await authorizeCredentials(ctx, provider, creds);
   if (!user) {
     await limiter?.fail(key);
     await limiter?.fail(ipKey);
+    await emitFailure(ctx, provider.id, "invalid_credentials");
     // Generic failure — never reveal whether the account exists.
     return json({ error: "invalid credentials" }, 401);
   }
   await limiter?.succeed(key);
 
   const approved = await applySignInCallback(ctx.config, user, provider.id);
-  if (!approved) return json({ error: "access denied" }, 403);
+  if (!approved) {
+    await emitFailure(ctx, provider.id, "access_denied");
+    return json({ error: "access denied" }, 403);
+  }
 
   await issueAuthSession(ctx.config, approved, provider.id);
+  await emitAuthEvent(ctx.options, "signIn", { user: approved, provider: provider.id });
   if (wantsJson(ctx.request)) return json({ ok: true, user: approved });
   const callbackUrl = typeof creds.callbackUrl === "string" ? creds.callbackUrl : undefined;
   return redirect(afterSignIn(ctx.config, callbackUrl));
@@ -124,19 +150,31 @@ export async function handleCredentials(
  * values survive — a JSON body's nested objects/arrays never reach `authorize`, which
  * expects `Record<string, string>` and may hand a value straight to a query.
  *
- * @param request The credentials POST.
+ * An unusable body is `{}` (which `authorize` then refuses), never a `500`; the reason is
+ * logged, at `debug` for a capped body (routine hostile traffic) and at `error` for a
+ * parse failure.
+ *
+ * @param ctx The route context (its request is read; its logger hears about a bad body).
  * @returns The string-valued fields, or `{}` when the body is unusable.
  */
-async function readCredentials(request: Request): Promise<Record<string, string>> {
+async function readCredentials(ctx: AuthRouteContext): Promise<Record<string, string>> {
+  const { request, options } = ctx;
   const type = request.headers.get("content-type") ?? "";
   try {
     const bytes = await readCappedBody(request, MAX_CREDENTIALS_BYTES);
-    if (bytes === TOO_LARGE || bytes === STALLED) return {};
+    if (bytes === TOO_LARGE || bytes === STALLED) {
+      options.logger.debug("denextAuth: refused a credentials body", {
+        reason: bytes === TOO_LARGE ? "too_large" : "stalled",
+        maxBytes: MAX_CREDENTIALS_BYTES,
+      });
+      return {};
+    }
     const capped = bufferedRequest(request, bytes);
     return type.includes("application/json")
       ? stringFields(await capped.json())
       : stringFields(Object.fromEntries(await capped.formData()));
-  } catch {
+  } catch (error) {
+    options.logger.error("denextAuth: could not parse the credentials body", error);
     return {};
   }
 }

@@ -1,11 +1,18 @@
 /**
- * Brute-force protection for the Credentials sign-in endpoint: a fixed-window failure
- * counter keyed by client (IP + submitted identifier by default). After `max` failed
- * attempts in a window the endpoint answers a generic `429` until the window ends; a
- * successful sign-in resets the key. The counter lives in a pluggable
- * {@linkcode RateLimitStore} — the in-memory default is per-process (fine for a single
- * instance; back it with a shared store when running several replicas, otherwise each
- * replica counts on its own).
+ * Brute-force protection for the sign-in endpoints: fixed-window counters in a pluggable
+ * {@linkcode RateLimitStore}. Two limiters are built from one `rateLimit` config and
+ * share this module's factory:
+ *
+ * - the **credentials** limiter counts *failed* `POST {basePath}/callback/:provider`
+ *   attempts per client (IP + submitted identifier by default), 5 per 15 minutes;
+ * - the **sign-in-start** limiter counts *every* `GET {basePath}/signin/:provider` per
+ *   client IP, 20 per 15 minutes, so an unauthenticated visitor can't make the app mint
+ *   PKCE/state transactions (or probe provider ids) without bound.
+ *
+ * Past the limit the endpoint answers a generic `429` with `Retry-After` until the window
+ * ends; a successful credentials sign-in resets its key. The in-memory default store is
+ * per-process (fine for a single instance; back it with a shared `store` when running
+ * several replicas, otherwise each replica counts on its own).
  *
  * @module
  */
@@ -56,6 +63,18 @@ export interface RateLimitOptions {
   keyGenerator?: (request: Request, credentials: Record<string, string>) => string;
   /** A shared store (Redis, SQL, …) instead of the per-process in-memory default. */
   store?: RateLimitStore;
+  /**
+   * Tune the **sign-in-start** limiter — the per-IP budget for `GET
+   * {basePath}/signin/:provider`, which is counted on every hit rather than only on
+   * failures. `max`/`windowMs`/`keyGenerator` above belong to the credentials limiter and
+   * never apply here; `store` is shared by both (their keys are namespaced apart).
+   */
+  signin?: {
+    /** Sign-in starts allowed per client IP per window before a `429`. Default 20. */
+    max?: number;
+    /** Window length in ms. Default 15 minutes. */
+    windowMs?: number;
+  };
 }
 
 /** A configured limiter (what the credentials route drives). */
@@ -72,6 +91,8 @@ export interface RateLimiter {
 }
 
 const DEFAULT_MAX = 5;
+/** Sign-in starts one client IP may make per window before a `429`. */
+const DEFAULT_SIGNIN_MAX = 20;
 const DEFAULT_WINDOW_MS = 15 * 60_000;
 const DEFAULT_MAX_KEYS = 10_000;
 /** Which submitted field names the default key treats as "the account identifier". */
@@ -196,6 +217,19 @@ export function defaultRateLimitKey(
 }
 
 /**
+ * The sign-in-START lockout bucket for `request` — the client IP alone, namespaced away
+ * from the credentials keys. The identifier can't take part: `GET /signin/:provider`
+ * carries no credentials, only a provider id an attacker chooses freely.
+ *
+ * @param request The incoming sign-in-start request.
+ * @param options Whether a fronting proxy's `x-forwarded-for` may be trusted.
+ * @returns The limiter key.
+ */
+export function signinStartKey(request: Request, options: RateLimitKeyOptions = {}): string {
+  return `signin|${clientIp(request, options)}`;
+}
+
+/**
  * Build a {@linkcode RateLimiter} from the config options (defaults: 5 failures per
  * 15 minutes, in-memory store).
  *
@@ -219,4 +253,72 @@ export function createRateLimiter(options: RateLimitOptions = {}): RateLimiter {
       await store.reset(key);
     },
   };
+}
+
+/**
+ * The slice of `AuthConfig` the limiters read. Kept structural so this module never
+ * imports the config type (which imports {@linkcode RateLimitOptions} from here).
+ */
+export interface RateLimitConfig {
+  /** The app's `rateLimit` config, or `false` to disable BOTH limiters. */
+  rateLimit?: RateLimitOptions | false;
+  /** Whether a fronting proxy's `x-forwarded-for` may be believed. */
+  trustForwardedHeaders?: boolean;
+}
+
+/** The two limiters one auth config drives; `null` where `rateLimit: false` disabled them. */
+interface ConfigLimiters {
+  /** Failed credentials attempts. */
+  credentials: RateLimiter | null;
+  /** Sign-in-start hits. */
+  signinStart: RateLimiter | null;
+}
+
+// One pair per config object (the plugin hands the same `config` to every request), built
+// lazily so an app that opts out (`rateLimit: false`) allocates no stores at all.
+const limiters = new WeakMap<RateLimitConfig, ConfigLimiters>();
+
+/** Build both limiters for a config — one factory, two budgets, one (optional) shared store. */
+function buildLimiters(config: RateLimitConfig): ConfigLimiters {
+  if (config.rateLimit === false) return { credentials: null, signinStart: null };
+  const options = config.rateLimit ?? {};
+  return {
+    credentials: createRateLimiter(options),
+    signinStart: createRateLimiter({
+      max: options.signin?.max ?? DEFAULT_SIGNIN_MAX,
+      windowMs: options.signin?.windowMs ?? DEFAULT_WINDOW_MS,
+      store: options.store,
+    }),
+  };
+}
+
+/** The memoised limiter pair for `config`. */
+function limitersFor(config: RateLimitConfig): ConfigLimiters {
+  let pair = limiters.get(config);
+  if (!pair) {
+    pair = buildLimiters(config);
+    limiters.set(config, pair);
+  }
+  return pair;
+}
+
+/**
+ * The credentials brute-force limiter for an auth config.
+ *
+ * @param config The app's auth config.
+ * @returns The limiter, or `null` when `rateLimit: false` disabled it.
+ */
+export function credentialsLimiter(config: RateLimitConfig): RateLimiter | null {
+  return limitersFor(config).credentials;
+}
+
+/**
+ * The sign-in-start limiter for an auth config: 20 hits per client IP per 15 minutes by
+ * default, tunable with `rateLimit.signin`.
+ *
+ * @param config The app's auth config.
+ * @returns The limiter, or `null` when `rateLimit: false` disabled it.
+ */
+export function signinStartLimiter(config: RateLimitConfig): RateLimiter | null {
+  return limitersFor(config).signinStart;
 }

@@ -76,6 +76,16 @@ export type { ActionResult, TypedAction } from "../runtime/define-action.ts";
 export { createResource, Suspense, SuspenseList, use } from "../runtime/suspense.ts";
 export type { SuspenseListProps, SuspenseProps } from "../runtime/suspense.ts";
 export { dynamic } from "../runtime/dynamic.ts";
+
+// First-party auth: the client half of `denextAuth` (also exported from the root `denext`).
+export { SessionProvider, signIn, signOut, useSession } from "./auth.ts";
+export type {
+  ClientSession,
+  SessionProviderProps,
+  SessionUser,
+  SignInOptions,
+  SignOutOptions,
+} from "./auth.ts";
 export type { DynamicLoader, DynamicOptions } from "../runtime/dynamic.ts";
 export { ErrorBoundary, forbidden, notFound, unauthorized } from "../runtime/error-boundary.ts";
 export type { ErrorBoundaryProps, ErrorFallbackProps } from "../runtime/error-boundary.ts";
