@@ -216,6 +216,7 @@ export {
   type ApiBatchConfig,
   type CacheConfig,
   type CompiledPattern,
+  type DenextCommand,
   type DenextConfig,
   type ExperimentalConfig,
   type HeaderRule,
@@ -399,6 +400,22 @@ export type { CredentialsOptions, OAuthClientOptions, OidcOptions } from "./auth
 // Password hashing for the Credentials provider (salted scrypt via node:crypto).
 export { hashPassword, verifyPassword } from "./auth/password.ts";
 export type { HashPasswordOptions } from "./auth/password.ts";
+// The hashing seam: swap scrypt for Argon2id/bcrypt without touching the auth flow.
+export { scryptHasher } from "./auth/hasher.ts";
+export type { Hasher } from "./auth/hasher.ts";
+// The persistence port: users, linked accounts, credentials, tokens, MFA factors.
+export type {
+  AdapterAccount,
+  AdapterAccountRef,
+  AdapterUser,
+  ApiTokenRecord,
+  AuthAdapter,
+  Await,
+  MfaRecord,
+  VerificationPurpose,
+  VerificationTokenRecord,
+  VerificationTokenRef,
+} from "./auth/adapter.ts";
 // Brute-force protection for the credentials endpoint (`AuthConfig.rateLimit`).
 export { inMemoryRateLimitStore } from "./auth/rate-limit.ts";
 export type {
@@ -415,12 +432,19 @@ export type { SqliteSessionStoreOptions } from "./auth/sqlite-session-store.ts";
 export type {
   AuthCallbacks,
   AuthConfig,
+  AuthCookieConfig,
+  AuthEvents,
+  AuthLogger,
+  AuthorizedCallbackInput,
   AuthProvider,
   AuthSession,
+  AuthSessionConfig,
   AuthUser,
   CredentialsProvider,
   OAuthProvider,
   ProfileInput,
+  SendVerificationRequest,
+  VerificationRequestParams,
 } from "./auth/types.ts";
 
 // Metadata file conventions (sitemap.ts / robots.ts / manifest.ts / favicon.ico).
