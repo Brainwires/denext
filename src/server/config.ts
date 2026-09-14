@@ -154,6 +154,8 @@ export interface ImagesConfig {
   /**
    * Minimum seconds to cache an optimized image (`Cache-Control: max-age`). Mirrors
    * Next.js `images.minimumCacheTTL`. Defaults to `14400` (4 hours).
+   *
+   * @minimum 0
    */
   minimumCacheTTL?: number;
   /**
@@ -166,6 +168,8 @@ export interface ImagesConfig {
   /**
    * Max redirect hops to follow for a remote source, each re-validated (matches
    * Next.js `images.maximumRedirects`). Defaults to `3`; `0` disables redirects.
+   *
+   * @minimum 0
    */
   maximumRedirects?: number;
   /**
@@ -307,9 +311,17 @@ export interface CacheConfig {
   store?: "sqlite" | "memory" | CacheStore;
   /** SQLite store file path (default `.denext/cache.db`). */
   path?: string;
-  /** Max rows in the durable data cache before FIFO eviction (default 1000). */
+  /**
+   * Max rows in the durable data cache before FIFO eviction (default 1000).
+   *
+   * @minimum 1
+   */
   maxDataEntries?: number;
-  /** Max rows in the durable page (ISR) cache before FIFO eviction (default 1000). */
+  /**
+   * Max rows in the durable page (ISR) cache before FIFO eviction (default 1000).
+   *
+   * @minimum 1
+   */
   maxPageEntries?: number;
 }
 
@@ -317,15 +329,38 @@ export interface CacheConfig {
 export interface ApiBatchConfig {
   /** Serve the endpoint at all (default true; `false` → 404). */
   enabled?: boolean;
-  /** Max items per batch (default 20, at most 100). */
+  /**
+   * Max items per batch (default 20, at most 100).
+   *
+   * @minimum 1
+   * @maximum 100
+   */
   maxItems?: number;
-  /** Max batch request body in bytes (default 1 MiB). */
+  /**
+   * Max batch request body in bytes (default 1 MiB).
+   *
+   * @minimum 1
+   */
   maxBodyBytes?: number;
-  /** Items run concurrently per batch (default 4). */
+  /**
+   * Items run concurrently per batch (default 4).
+   *
+   * @minimum 1
+   * @maximum 64
+   */
   concurrency?: number;
-  /** Max bytes of one item's response body carried back (default 4 MiB; over → a 500 item). */
+  /**
+   * Max bytes of one item's response body carried back (default 4 MiB; over → a 500 item).
+   *
+   * @minimum 1
+   */
   maxItemResponseBytes?: number;
-  /** Max bytes of ALL items' response bodies together (default 16 MiB; over → the rest are 500 items). */
+  /**
+   * Max bytes of ALL items' response bodies together (default 16 MiB; over → the rest are
+   * 500 items).
+   *
+   * @minimum 1
+   */
   maxTotalResponseBytes?: number;
 }
 
@@ -498,6 +533,8 @@ export interface DenextConfig {
    * The request-body cap for route handlers (`route.ts`), in bytes — default 1 MiB. A route
    * raises or lifts its own with `export const maxBodyBytes = N | false`; a `defineApi`
    * endpoint with `maxBodyBytes` in its definition overrides both. Over the cap → 413.
+   *
+   * @minimum 1
    */
   apiMaxBodyBytes?: number;
   /**
@@ -588,7 +625,11 @@ export interface DenextConfig {
 
 /** `Strict-Transport-Security` (HSTS) header options. */
 export interface HstsConfig {
-  /** `max-age` in seconds (how long browsers pin HTTPS). Default `31536000` (1 year). */
+  /**
+   * `max-age` in seconds (how long browsers pin HTTPS). Default `31536000` (1 year).
+   *
+   * @minimum 0
+   */
   maxAge?: number;
   /** Add `includeSubDomains` (applies HSTS to every subdomain — enable only when all are HTTPS). */
   includeSubDomains?: boolean;

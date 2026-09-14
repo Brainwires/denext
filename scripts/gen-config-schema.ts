@@ -20,9 +20,22 @@
 //   keyword string/boolean/number → `type`; string/boolean/number literal → `enum`;
 //   a union of literals → one `enum`, a union of mappable members → `anyOf`; arrays →
 //   `type: array` (+ `items`); a locally declared interface → `type: object` with its
-//   properties (recursively); a local type alias → its target. Anything else (functions,
-//   imported types, generics) keeps only its JSDoc `description` — the schema never
-//   claims a shape the type doesn't spell out.
+//   properties (recursively); a local type alias → its target. Anything else (imported
+//   types, conditional/intersection types) keeps only its JSDoc `description` — the
+//   schema never claims a shape the type doesn't spell out.
+//   Three shapes the config surface leans on are described too, each carrying an
+//   `x-denext` marker so a form renderer can tell them from a plain array/object:
+//     * a THUNK whose return type resolves to `T[]` (`redirects: () => RedirectRule[] |
+//       Promise<RedirectRule[]>`) → that array's schema + `x-denext.wrapper: "function"`.
+//       Any other function type (`commands[].run`, `live.*`) still maps to `{}`.
+//     * the standard generics `Array`/`ReadonlyArray` (→ array), `Promise`/`Readonly`
+//       (→ unwrapped), `Partial` (→ unwrapped, nothing required).
+//     * a MAP — `Record<K, V>`, a mapped type, or an inline index signature → an open
+//       `type: object` whose `additionalProperties` is the value schema, plus
+//       `x-denext.widget: "map"`.
+//   `default` / `minimum` / `maximum` are emitted only from explicit `@default`,
+//   `@minimum` and `@maximum` JSDoc tags (added where config-validate.ts enforces that
+//   exact bound); nothing is ever inferred from a type or a prose description.
 //   `additionalProperties: false` is set exactly where the runtime WARNS on unknown keys
 //   (the root and `experimental`); nested objects are left open, as the loader passes
 //   them through untouched. Descriptions are the first JSDoc paragraph, verbatim except
@@ -52,12 +65,18 @@ export interface DocType {
   repr?: string;
   value?: unknown;
 }
+/** One JSDoc tag as `deno doc --json` reports it (custom tags arrive verbatim). */
+export interface DocTag {
+  kind: string;
+  /** The raw tag text (e.g. `"@minimum 1"`) for tags deno doc doesn't model. */
+  value?: string;
+}
 /** An interface property (or method) as `deno doc --json` reports it. */
 export interface DocProp {
   name: string;
   optional?: boolean;
   tsType?: DocType;
-  jsDoc?: { doc?: string };
+  jsDoc?: { doc?: string; tags?: DocTag[] };
   location?: { line?: number };
 }
 /** One declaration of a documented symbol. */
@@ -151,21 +170,100 @@ function unionSchema(t: DocType, ctx: SchemaContext): Schema {
   return { anyOf: members };
 }
 
+/** The denext-specific annotation keyword (an `x-` extension; validators ignore it). */
+const EXT = "x-denext";
+
 /** `X[]` → `type: array` with `items` when the element type maps. */
 function arraySchema(t: DocType, ctx: SchemaContext): Schema {
-  const items = tsTypeToSchema(t.value as DocType, ctx);
+  return elementSchema(t.value as DocType, ctx);
+}
+
+/** The array schema for element type `el` (`items` is omitted when the element is opaque). */
+function elementSchema(el: DocType | undefined, ctx: SchemaContext): Schema {
+  const items = tsTypeToSchema(el, ctx);
   return Object.keys(items).length ? { type: "array", items } : { type: "array" };
 }
 
+/**
+ * A map (`Record<K, V>`, a mapped type, an index signature) → an open object whose values
+ * all share one schema. The `x-denext.widget` marker tells a form renderer to offer
+ * key/value rows rather than a fixed set of fields; `additionalProperties: {}` honestly
+ * says "any value" when the value type itself doesn't map.
+ */
+function mapSchema(value: DocType | undefined, ctx: SchemaContext): Schema {
+  return {
+    type: "object",
+    additionalProperties: tsTypeToSchema(value, ctx),
+    [EXT]: { widget: "map" },
+  };
+}
+
+/** `Partial<T>` → `T`'s schema with nothing required (the members all became optional). */
+function partialSchema(target: DocType | undefined, ctx: SchemaContext): Schema {
+  const { required: _dropped, ...rest } = tsTypeToSchema(target, ctx);
+  return rest;
+}
+
+/**
+ * The standard generics the config surface uses, resolved BEFORE the local-symbol lookup:
+ * without these a `Record`/`Array`/`Promise` reference would fall through as an opaque
+ * builtin and the field would keep only its description.
+ */
+const GENERIC_SCHEMAS: Record<string, (args: DocType[], ctx: SchemaContext) => Schema> = {
+  Array: (args, ctx) => elementSchema(args[0], ctx),
+  ReadonlyArray: (args, ctx) => elementSchema(args[0], ctx),
+  Promise: (args, ctx) => tsTypeToSchema(args[0], ctx),
+  Readonly: (args, ctx) => tsTypeToSchema(args[0], ctx),
+  Record: (args, ctx) => mapSchema(args[1], ctx),
+  Partial: (args, ctx) => partialSchema(args[0], ctx),
+};
+
 /** A reference to a LOCAL interface/alias expands; imported/builtin refs stay open. */
 function typeRefSchema(t: DocType, ctx: SchemaContext): Schema {
-  const { typeName, resolution } = t.value as {
+  const { typeName, resolution, typeParams } = t.value as {
     typeName: string;
     resolution?: { kind: string };
+    typeParams?: DocType[];
   };
+  const generic = GENERIC_SCHEMAS[typeName];
+  if (generic) return generic(typeParams ?? [], ctx);
   // Local refs expand; an imported ref expands too when its declaration was docced into the
   // table (see CONFIG_TYPE_SOURCES); anything else (builtins, foreign packages) stays open.
   if (resolution?.kind === "local" || ctx.table.has(typeName)) return namedSchema(typeName, ctx);
+  return {};
+}
+
+/** An object type literal; an index signature additionally makes it an open map. */
+function typeLiteralSchema(t: DocType, ctx: SchemaContext): Schema {
+  const { properties, indexSignatures } = t.value as {
+    properties?: DocProp[];
+    indexSignatures?: { tsType?: DocType }[];
+  };
+  const index = indexSignatures?.[0];
+  if (!index) return propsSchema(properties, ctx);
+  const named = properties?.length ? propsSchema(properties, ctx) : {};
+  return { ...named, ...mapSchema(index.tsType, ctx) };
+}
+
+/** A function return type, with union members flattened (`A[] | Promise<A[]>` → two). */
+function returnedTypes(t: DocType | undefined): DocType[] {
+  if (!t) return [];
+  return t.kind === "union" ? (t.value as DocType[]).flatMap(returnedTypes) : [t];
+}
+
+/**
+ * A function-typed field. `redirects`/`rewrites`/`headers` are thunks returning the rule
+ * array denext resolves once at startup, so the schema describes THAT array (marked
+ * `x-denext.wrapper: "function"`, so a writer knows to wrap the literal in `() => …`).
+ * Every other function type — a handler like `commands[].run` or the `live.*` hooks —
+ * has no serialisable shape and stays unconstrained.
+ */
+function fnSchema(t: DocType, ctx: SchemaContext): Schema {
+  const returns = (t.value as { tsType?: DocType } | undefined)?.tsType;
+  for (const member of returnedTypes(returns)) {
+    const schema = tsTypeToSchema(member, ctx);
+    if (schema.type === "array") return { ...schema, [EXT]: { wrapper: "function" } };
+  }
   return {};
 }
 
@@ -175,7 +273,9 @@ const SCHEMA_BY_KIND: Record<string, (t: DocType, ctx: SchemaContext) => Schema>
   union: unionSchema,
   array: arraySchema,
   typeRef: typeRefSchema,
-  typeLiteral: (t, ctx) => propsSchema((t.value as { properties?: DocProp[] }).properties, ctx),
+  typeLiteral: typeLiteralSchema,
+  mapped: (t, ctx) => mapSchema((t.value as { tsType?: DocType }).tsType, ctx),
+  fnOrConstructor: fnSchema,
 };
 
 /** Map one `deno doc` type node to a JSON Schema fragment (`{}` = unconstrained). */
@@ -193,6 +293,35 @@ function namedSchema(name: string, ctx: SchemaContext): Schema {
   return {};
 }
 
+/** JSDoc tags that map 1:1 onto a JSON Schema keyword. */
+const CONSTRAINT_TAGS = ["default", "minimum", "maximum"] as const;
+
+/**
+ * The JSON Schema keywords a property's `@default` / `@minimum` / `@maximum` JSDoc tags
+ * spell out. Nothing is inferred: a bound reaches the schema only when the source states
+ * it (and, by house rule, only where `config-validate.ts` already enforces it), so the
+ * schema can never claim a constraint the runtime does not apply. A tag whose body is not
+ * a JSON literal is ignored rather than guessed at.
+ *
+ * @param tags The property's JSDoc tags, as `deno doc --json` reports them.
+ * @returns A schema fragment with the recognized keywords (empty when there are none).
+ */
+export function constraints(tags: DocTag[] | undefined): Schema {
+  const out: Schema = {};
+  for (const tag of tags ?? []) {
+    const match = /^@([a-z]+)\s+(\S.*)$/.exec(String(tag.value ?? "").trim());
+    if (!match) continue;
+    const [, name, body] = match;
+    if (!CONSTRAINT_TAGS.includes(name as (typeof CONSTRAINT_TAGS)[number])) continue;
+    try {
+      out[name] = JSON.parse(body.trim());
+    } catch {
+      // Not a JSON literal (`@default the request's origin`) — describe nothing.
+    }
+  }
+  return out;
+}
+
 /** `{ type: "object", properties, required? }` from a property list (open by default). */
 function propsSchema(props: DocProp[] | undefined, ctx: SchemaContext): Schema {
   const properties: Record<string, Schema> = {};
@@ -202,6 +331,7 @@ function propsSchema(props: DocProp[] | undefined, ctx: SchemaContext): Schema {
     properties[p.name] = {
       ...(desc ? { description: desc } : {}),
       ...tsTypeToSchema(p.tsType, ctx),
+      ...constraints(p.jsDoc?.tags),
     };
     if (!p.optional) required.push(p.name); // deno doc omits the flag on required members
   }

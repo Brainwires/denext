@@ -39,7 +39,14 @@
           "type": "string"
         },
         "env": {
-          "description": "Compile-time `import.meta.env` values (the SPA analogue of a Vite `define` block). Each `{ KEY: \"value\" }` replaces `import.meta.env.KEY` with the literal `\"value\"` at build time — the way a Vite app reads `import.meta.env.VITE_*`. Only applied when the app builds through the next-compat (esbuild) pipeline (i.e. it uses npm React); a denext-native SPA has no `import.meta.env`."
+          "description": "Compile-time `import.meta.env` values (the SPA analogue of a Vite `define` block). Each `{ KEY: \"value\" }` replaces `import.meta.env.KEY` with the literal `\"value\"` at build time — the way a Vite app reads `import.meta.env.VITE_*`. Only applied when the app builds through the next-compat (esbuild) pipeline (i.e. it uses npm React); a denext-native SPA has no `import.meta.env`.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "x-denext": {
+            "widget": "map"
+          }
         },
         "csp": {
           "description": "Content-Security-Policy for the generated shell. A client-only React SPA (Vite/CRA and denext alike) ships no CSP by default — it's the app's/host's call — so this is **opt-in**: - unset / `\"off\"` — no CSP (default). - `\"strict\"` — denext's strict policy (`default-src 'self'`, `script-src 'self'`, `object-src 'none'`, `base-uri 'self'`, `img/font 'self' data:`, and `style-src-attr 'unsafe-inline'` so React `style={{}}` keeps working). - a CspSetting object — that strict policy plus your global opt-ins (e.g. `{ connectSrc: [\"https://api.example.com\"] }` for your API host).",
@@ -152,7 +159,12 @@
           ]
         },
         "messages": {
-          "description": "Optional message catalogs keyed by locale, powering `useTranslations()`. The active locale's catalog is provided to the render and embedded in the hydration payload. Server components may also load catalogs directly."
+          "description": "Optional message catalogs keyed by locale, powering `useTranslations()`. The active locale's catalog is provided to the render and embedded in the hydration payload. Server components may also load catalogs directly.",
+          "type": "object",
+          "additionalProperties": {},
+          "x-denext": {
+            "widget": "map"
+          }
         },
         "hreflang": {
           "description": "Automatically emit `<link rel=\"alternate\" hreflang>` alternates (one per locale, plus `x-default`) and a per-locale canonical for every page. On by default when i18n is configured; set `false` to opt out. A page that sets its own `alternates.languages` always takes precedence over the generated set.",
@@ -209,16 +221,115 @@
       "type": "string"
     },
     "redirects": {
-      "description": "Declarative redirects, evaluated once at startup."
+      "description": "Declarative redirects, evaluated once at startup.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "description": "Path pattern to match, with `:name` and `:name*` params (e.g. `/old/:slug`).",
+            "type": "string"
+          },
+          "destination": {
+            "description": "Where to send the client; may reference `:name` params from `source`.",
+            "type": "string"
+          },
+          "permanent": {
+            "description": "`true` → 308 (permanent); otherwise 307 (temporary).",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "source",
+          "destination"
+        ]
+      },
+      "x-denext": {
+        "wrapper": "function"
+      }
     },
     "rewrites": {
-      "description": "Declarative rewrites, evaluated once at startup."
+      "description": "Declarative rewrites, evaluated once at startup.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "description": "Path pattern to match, with `:name` params.",
+            "type": "string"
+          },
+          "destination": {
+            "description": "The path to route as instead; may reference `:name` params.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "destination"
+        ]
+      },
+      "x-denext": {
+        "wrapper": "function"
+      }
     },
     "headers": {
-      "description": "Declarative response headers, evaluated once at startup."
+      "description": "Declarative response headers, evaluated once at startup.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "description": "Path pattern to match, with `:name` params.",
+            "type": "string"
+          },
+          "headers": {
+            "description": "Header name/value pairs to add to matching responses.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "key",
+                "value"
+              ]
+            }
+          }
+        },
+        "required": [
+          "source",
+          "headers"
+        ]
+      },
+      "x-denext": {
+        "wrapper": "function"
+      }
     },
     "scheduledTasks": {
-      "description": "Cron schedules for background tasks: a map of a 5-field cron expression to the task name(s) to run on it (a task is `tasks/<name>.ts` exporting `defineTask(...)`). Registered at server startup via `Deno.cron` when the runtime exposes it (Deno Deploy, or `--unstable-cron`) and a dependency-free minute-tick scheduler otherwise. A task may also declare its own `schedule`."
+      "description": "Cron schedules for background tasks: a map of a 5-field cron expression to the task name(s) to run on it (a task is `tasks/<name>.ts` exporting `defineTask(...)`). Registered at server startup via `Deno.cron` when the runtime exposes it (Deno Deploy, or `--unstable-cron`) and a dependency-free minute-tick scheduler otherwise. A task may also declare its own `schedule`.",
+      "type": "object",
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "x-denext": {
+        "widget": "map"
+      }
     },
     "images": {
       "description": "Image-optimization config. Remote sources are refused by default (local-only, SSRF-safe); allowlist hosts here to enable optimizing remote images.",
@@ -307,14 +418,23 @@
         },
         "minimumCacheTTL": {
           "description": "Minimum seconds to cache an optimized image (`Cache-Control: max-age`). Mirrors Next.js `images.minimumCacheTTL`. Defaults to `14400` (4 hours).",
-          "type": "number"
+          "type": "number",
+          "minimum": 0
         },
         "formats": {
-          "description": "Output formats the endpoint may negotiate from the request `Accept` header, in preference order (matches Next.js `images.formats`). Include `\"image/avif\"` to enable AVIF (falls back to WebP when the client doesn't accept AVIF). Defaults to `[\"image/webp\"]`."
+          "description": "Output formats the endpoint may negotiate from the request `Accept` header, in preference order (matches Next.js `images.formats`). Include `\"image/avif\"` to enable AVIF (falls back to WebP when the client doesn't accept AVIF). Defaults to `[\"image/webp\"]`.",
+          "type": "array",
+          "items": {
+            "enum": [
+              "image/webp",
+              "image/avif"
+            ]
+          }
         },
         "maximumRedirects": {
           "description": "Max redirect hops to follow for a remote source, each re-validated (matches Next.js `images.maximumRedirects`). Defaults to `3`; `0` disables redirects.",
-          "type": "number"
+          "type": "number",
+          "minimum": 0
         },
         "dangerouslyAllowLocalIP": {
           "description": "**Dangerous.** Allow remote sources that resolve to loopback/private/link-local addresses, disabling the SSRF address guard for the image optimizer (Next.js 16 `images.dangerouslyAllowLocalIP`). Only enable in a trusted, isolated network where the optimizer cannot reach internal services. Defaults to `false`.",
@@ -357,7 +477,12 @@
           "type": "array"
         },
         "remarkRehypeOptions": {
-          "description": "Options forwarded to MDX's `remark-rehype` bridge (`remarkRehypeOptions`)."
+          "description": "Options forwarded to MDX's `remark-rehype` bridge (`remarkRehypeOptions`).",
+          "type": "object",
+          "additionalProperties": {},
+          "x-denext": {
+            "widget": "map"
+          }
         },
         "providerImportSource": {
           "description": "MDX `providerImportSource` (module exporting `useMDXComponents`), if used.",
@@ -424,11 +549,13 @@
         },
         "maxDataEntries": {
           "description": "Max rows in the durable data cache before FIFO eviction (default 1000).",
-          "type": "number"
+          "type": "number",
+          "minimum": 1
         },
         "maxPageEntries": {
           "description": "Max rows in the durable page (ISR) cache before FIFO eviction (default 1000).",
-          "type": "number"
+          "type": "number",
+          "minimum": 1
         }
       }
     },
@@ -440,7 +567,8 @@
           "properties": {
             "maxAge": {
               "description": "`max-age` in seconds (how long browsers pin HTTPS). Default `31536000` (1 year).",
-              "type": "number"
+              "type": "number",
+              "minimum": 0
             },
             "includeSubDomains": {
               "description": "Add `includeSubDomains` (applies HSTS to every subdomain — enable only when all are HTTPS).",
@@ -608,29 +736,37 @@
         },
         "maxItems": {
           "description": "Max items per batch (default 20, at most 100).",
-          "type": "number"
+          "type": "number",
+          "minimum": 1,
+          "maximum": 100
         },
         "maxBodyBytes": {
           "description": "Max batch request body in bytes (default 1 MiB).",
-          "type": "number"
+          "type": "number",
+          "minimum": 1
         },
         "concurrency": {
           "description": "Items run concurrently per batch (default 4).",
-          "type": "number"
+          "type": "number",
+          "minimum": 1,
+          "maximum": 64
         },
         "maxItemResponseBytes": {
           "description": "Max bytes of one item's response body carried back (default 4 MiB; over → a 500 item).",
-          "type": "number"
+          "type": "number",
+          "minimum": 1
         },
         "maxTotalResponseBytes": {
           "description": "Max bytes of ALL items' response bodies together (default 16 MiB; over → the rest are 500 items).",
-          "type": "number"
+          "type": "number",
+          "minimum": 1
         }
       }
     },
     "apiMaxBodyBytes": {
       "description": "The request-body cap for route handlers (`route.ts`), in bytes — default 1 MiB. A route raises or lifts its own with `export const maxBodyBytes = N | false`; a `defineApi` endpoint with `maxBodyBytes` in its definition overrides both. Over the cap → 413.",
-      "type": "number"
+      "type": "number",
+      "minimum": 1
     },
     "nodeResolve": {
       "description": "denext's tolerant node_modules resolver for the compat (npm-React) build — default ON.",
@@ -656,7 +792,14 @@
           "type": "boolean"
         },
         "features": {
-          "description": "Compile-time feature flags. `feature(\"KEY\")` (from `denext/feature`) always returns the configured value — the server and every client bundle are seeded with this map — and a call with a string-literal KEY is additionally folded to a literal where the build can, so the bundler dead-code-eliminates the untaken branch (gated code costs zero bytes when off). A key not listed reads `false`. Experimental while the fold's coverage widens: DCE covers the native App Router's component (`.tsx`/`.jsx`) modules, the SPA bundle, and dev; the compat drop-in App Router path and non-component modules on the native path read the seeded value without DCE."
+          "description": "Compile-time feature flags. `feature(\"KEY\")` (from `denext/feature`) always returns the configured value — the server and every client bundle are seeded with this map — and a call with a string-literal KEY is additionally folded to a literal where the build can, so the bundler dead-code-eliminates the untaken branch (gated code costs zero bytes when off). A key not listed reads `false`. Experimental while the fold's coverage widens: DCE covers the native App Router's component (`.tsx`/`.jsx`) modules, the SPA bundle, and dev; the compat drop-in App Router path and non-component modules on the native path read the seeded value without DCE.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "boolean"
+          },
+          "x-denext": {
+            "widget": "map"
+          }
         },
         "nodeResolve": {
           "type": "boolean"
