@@ -235,19 +235,24 @@ export class CommandRegistry {
 
   /**
    * Parse a full argv (as in `Deno.args`) into an actionable {@linkcode ParseOutcome}.
-   * Resolves the leading verb, then parses the remainder against that command's flag
-   * schema merged with {@linkcode GLOBAL_FLAGS}. `--help`/`-h` and `--version`/`-v`
-   * are recognized before and after the verb.
+   * Resolves the leading verb — the first bare token, skipping the value of a valued
+   * {@linkcode GLOBAL_FLAGS} entry (`--cwd <dir>`) — then parses every other token against
+   * that command's flag schema merged with {@linkcode GLOBAL_FLAGS}, so a global flag may
+   * sit before the verb. `--help`/`-h` and `--version`/`-v` are recognized before and after
+   * the verb; a help flag BEFORE the verb never runs it: `denext --help build` is build's
+   * help, and a leading token that is not a verb (`denext --help ./app`) is top-level help.
    */
   parse(argv: string[]): ParseOutcome {
-    const verb = argv.find((a) => !a.startsWith("-"));
-    if (verb === undefined) return bareOutcome(argv);
-    if (verb === "version") return { kind: "version" };
-    // Everything after the verb token is the command's argv.
-    const rest = argv.slice(argv.indexOf(verb) + 1);
+    const at = verbIndex(argv);
+    if (at < 0) return bareOutcome(argv);
+    const verb = argv[at];
+    const leading = argv.slice(0, at);
+    const after = argv.slice(at + 1);
+    if (leading.some(isHelpFlag)) return { kind: "help", command: this.get(verb) };
+    if (verb === "version" || leading.some(isVersionFlag)) return { kind: "version" };
     if (verb === "help") {
-      const topic = rest.find((a) => !a.startsWith("-"));
-      return { kind: "help", command: topic ? this.get(topic) : undefined };
+      const topic = verbIndex(after);
+      return { kind: "help", command: topic < 0 ? undefined : this.get(after[topic]) };
     }
     const command = this.get(verb);
     if (!command) {
@@ -258,13 +263,17 @@ export class CommandRegistry {
         suggestion: near ? `denext ${near}` : undefined,
       };
     }
-    return parseCommandArgv(command, rest);
+    // The command's argv is every token but the verb — leading global flags included.
+    return parseCommandArgv(command, [...leading, ...after]);
   }
 
   /**
-   * Render the top-level help (verb table + global flags). Verbs carrying a non-core
-   * {@linkcode CommandSpec.source} — plugin verbs and `denext.config.ts` `commands:`
-   * entries, which the CLI merges in before printing help — are listed in their own
+   * Render the top-level help (verb table + global flags) for the verbs registered so
+   * far. The CLI's `denext --help` never imports the project to discover its verbs, so
+   * the table it prints lists only the built-ins; inside a denext project the CLI appends
+   * a footer pointing at `denext commands`, which lists them. A verb carrying a non-core
+   * {@linkcode CommandSpec.source} — a plugin verb or a `denext.config.ts` `commands:`
+   * entry, present only when a caller registered it first — is listed in its own
    * "Project commands" section under the built-in table.
    */
   formatHelp(version: string): string {
@@ -327,12 +336,36 @@ function flagsHelp(flags: readonly FlagSpec[]): string[] {
   });
 }
 
+/** The `--name` of every global flag that takes a value (its next token is not a verb). */
+const GLOBAL_VALUE_FLAGS: ReadonlySet<string> = new Set(
+  GLOBAL_FLAGS.filter((f) => f.type !== "boolean").map((f) => `--${f.name}`),
+);
+
+/**
+ * Index of the first bare token in `argv` — the verb — or -1 when there is none. The
+ * separate value of a valued global flag (`--cwd <dir>`) is skipped, not taken as the verb.
+ */
+function verbIndex(argv: readonly string[]): number {
+  for (let i = 0; i < argv.length; i++) {
+    if (!argv[i].startsWith("-")) return i;
+    if (GLOBAL_VALUE_FLAGS.has(argv[i])) i++;
+  }
+  return -1;
+}
+
+/** Whether a token asks for help (`--help` / `-h`). */
+function isHelpFlag(tok: string): boolean {
+  return tok === "--help" || tok === "-h";
+}
+
+/** Whether a token asks for the version (`--version` / `-v`). */
+function isVersionFlag(tok: string): boolean {
+  return tok === "--version" || tok === "-v";
+}
+
 /** No verb at all: a bare `--version`/`-v` prints the version; anything else is help. */
 function bareOutcome(argv: string[]): ParseOutcome {
-  if (argv.includes("--version") || argv.includes("-v")) {
-    return { kind: "version" };
-  }
-  return { kind: "help" };
+  return argv.some(isVersionFlag) ? { kind: "version" } : { kind: "help" };
 }
 
 /** A command's flag schema merged with the global flags, indexed by long name and alias. */
@@ -377,7 +410,7 @@ function parseCommandArgv(command: CommandSpec, rest: string[]): ParseOutcome {
         out.passthrough.push(...rest.slice(i + 1));
         break;
       }
-      if (tok === "--help" || tok === "-h") return { kind: "help", command };
+      if (isHelpFlag(tok)) return { kind: "help", command };
       const consumed = parseToken(command, index, out, rest, i);
       if (typeof consumed !== "number") return consumed; // an error outcome
       i += consumed;

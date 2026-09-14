@@ -811,6 +811,6 @@
   ],
   "projectCommands": {
     "enumerable": true,
-    "note": "A project can add its own verbs — `commands: [{ name, summary, run }]` in denext.config.ts, or a plugin's `addCommand`. They are resolved from the project's config, so they are not listed here; `denext --help` and `denext completions <shell>` load them (under a 1.5 s budget) and list them under \"Project commands\". A built-in verb always wins a name collision."
+    "note": "A project can add its own verbs — `commands: [{ name, summary, run }]` in denext.config.ts, or a plugin's `addCommand`. They are resolved from the project's config, so they are not listed here. `denext --help` lists only the built-in verbs — it never imports the project — and inside a denext project it ends with \"Project verbs: run `denext commands` (they are also in shell completions).\" `denext commands` and `denext completions <shell>` load them (under a 1.5 s budget). A built-in verb always wins a name collision."
   }
 }

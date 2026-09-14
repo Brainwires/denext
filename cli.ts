@@ -30,7 +30,7 @@ import { loadEnv } from "./src/server/env.ts";
 import { loadPluginCommands } from "./src/cli/plugin-commands.ts";
 import { VERSION } from "./mod.ts";
 import type { CommandContext, CommandSpec, ParseOutcome } from "./src/cli/command.ts";
-import type { CommandRegistry } from "./src/cli/command.ts";
+import { type CommandRegistry, GLOBAL_FLAGS } from "./src/cli/command.ts";
 import { buildRegistry } from "./src/cli/register.ts";
 import { projectDir, SHUTDOWN_SIGNALS } from "./src/cli/shared.ts";
 
@@ -224,6 +224,21 @@ function cwdFromArgs(argv: string[]): string {
 }
 
 /**
+ * The directory whose denext config decides top-level help's project footer: the `--cwd`
+ * global when given, else the first bare token that is not a verb (`denext --help ./app` —
+ * on the help path the parser leaves such a token for this), else the process cwd. The
+ * separate value of a valued global flag (`--config <path>`) is never taken as the dir.
+ */
+function helpDirFromArgs(argv: string[], isVerb: (name: string) => boolean): string {
+  if (argv.some((a) => a === "--cwd" || a.startsWith("--cwd="))) return cwdFromArgs(argv);
+  const valued = new Set(
+    GLOBAL_FLAGS.filter((f) => f.type !== "boolean").map((f) => `--${f.name}`),
+  );
+  const dir = argv.find((a, i) => !a.startsWith("-") && !valued.has(argv[i - 1]) && !isVerb(a));
+  return dir === undefined ? Deno.cwd() : resolve(dir);
+}
+
+/**
  * Whether this outcome has to list EVERY verb NAME, which means the project's own verbs
  * (config `commands:` + plugin `addCommand`) must be merged in before it is printed. Only the
  * shell-completion scripts do: a shell can only complete a name it was handed.
@@ -270,8 +285,9 @@ async function main(): Promise<void> {
   if (needsEveryCommand(outcome)) await loadPluginCommands(registry, cwdFromArgs(Deno.args));
 
   if (outcome.kind !== "run") {
+    const isVerb = (name: string) => name === "help" || registry.get(name) !== undefined;
     const note = outcome.kind === "help" && outcome.command === undefined &&
-      await hasDenextConfig(cwdFromArgs(Deno.args));
+      await hasDenextConfig(helpDirFromArgs(Deno.args, isVerb));
     return printOutcome(registry, outcome, note);
   }
   if (await moduleGate(outcome.command, outcome.ctx)) return;
