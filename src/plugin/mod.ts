@@ -145,6 +145,13 @@ const teardowns: PluginTeardown[] = [];
 // process-global and otherwise leaks across in-process runs).
 const synthDisposers: (() => void)[] = [];
 const applied = new Set<string>();
+/**
+ * Bumped by {@linkcode resetPlugins}. An `applyPlugins` run that started under an older
+ * generation abandons itself instead of marking names or storing verbs: a discovery that
+ * was cut off by a time budget must not be able to make the NEXT discovery skip a plugin
+ * whose `setup` it never finished.
+ */
+let generation = 0;
 
 /** The per-pipeline facts a {@linkcode PluginContext} is built from. */
 export interface ApplyPluginsBase {
@@ -170,7 +177,9 @@ export interface ApplyPluginsBase {
  */
 export async function applyPlugins(base: ApplyPluginsBase): Promise<void> {
   const plugins = base.config.plugins ?? [];
+  const startedUnder = generation;
   for (const plugin of plugins) {
+    if (startedUnder !== generation) return; // superseded by a resetPlugins() — stale run
     if (applied.has(plugin.name)) continue;
     applied.add(plugin.name);
     const context: PluginContext = {
@@ -185,7 +194,9 @@ export async function applyPlugins(base: ApplyPluginsBase): Promise<void> {
       addPrepareStep: (step, opts) => prepareSteps.push({ step, watch: opts?.watch ?? [] }),
       // Stamped (on a copy — never mutate the plugin's own object) so the CLI can list
       // plugin verbs under "Project commands" instead of among the built-ins.
-      addCommand: (command) => pluginCommands.push({ ...command, source: "plugin" }),
+      addCommand: (command) => {
+        if (startedUnder === generation) pluginCommands.push({ ...command, source: "plugin" });
+      },
       addTeardown: (teardown) => teardowns.push(teardown),
     };
     await plugin.setup(context);
@@ -322,4 +333,5 @@ export function resetPlugins(): void {
   for (const dispose of synthDisposers) dispose();
   synthDisposers.length = 0;
   applied.clear();
+  generation++;
 }
