@@ -824,3 +824,42 @@ Deno.test("read-only renders the run form disabled and still refuses the run", a
     assertEquals(run.runs, []);
   });
 });
+
+// ── --offline ────────────────────────────────────────────────────────────────
+
+Deno.test("--offline: discovery and every run start --deny-net --cached-only; online argv is unchanged", async () => {
+  await withProject(listing([GREET]), async (dir) => {
+    const seen: string[][] = [];
+    setCommandRunner(stubRunner(["ran"], 0, seen));
+    const post = (offline: boolean) =>
+      commandsPanel(
+        new Request("http://127.0.0.1/api/commands", { method: "POST" }),
+        ctx(dir, { offline, json: true, method: "POST", form: runBody("greet") }),
+      );
+    assertEquals((await (await post(true)).json()).ok, true);
+    assertEquals(seen.map((argv) => argv.slice(0, 4)), [
+      ["run", "-A", "--deny-net", "--cached-only"],
+      ["run", "-A", "--deny-net", "--cached-only"],
+    ]);
+    assertEquals(seen.map((argv) => argv[5]), ["commands", "greet"], "one discovery, one run");
+
+    seen.length = 0;
+    assertEquals((await (await post(false)).json()).ok, true);
+    assertEquals(seen.length, 2, "the online listing is its own cache entry, discovered afresh");
+    for (const argv of seen) {
+      assertEquals(argv.slice(0, 2), ["run", "-A"]);
+      assertStringIncludes(argv[2], "cli.ts");
+      assert(!argv.includes("--deny-net") && !argv.includes("--cached-only"), argv.join(" "));
+    }
+  });
+});
+
+Deno.test("--offline: the panel says every verb runs without the network", async () => {
+  await withProject(listing([GREET]), async (dir) => {
+    const page = async (offline: boolean) =>
+      await (await commandsPanel(new Request("http://127.0.0.1/commands"), ctx(dir, { offline })))
+        .text();
+    assertStringIncludes(await page(true), "every verb runs with --deny-net --cached-only");
+    assert(!(await page(false)).includes("--deny-net"));
+  });
+});

@@ -35,7 +35,7 @@ export default {
 
 async function ui(
   files: Record<string, string>,
-  options: { readOnly?: boolean } = {},
+  options: { readOnly?: boolean; offline?: boolean } = {},
 ): Promise<Harness> {
   const dir = await Deno.makeTempDir({ prefix: "denext_ui_plugins_" });
   for (const [name, body] of Object.entries(files)) {
@@ -391,5 +391,40 @@ Deno.test("a denext.config.ts symlinked out of the project is never read or rewr
   } finally {
     await stop(h);
     await Deno.remove(outside, { recursive: true });
+  }
+});
+
+Deno.test("--offline refuses every catalog add and remove with a 503, preview included", async () => {
+  const h = await ui({ "denext.config.ts": WIRED_CONFIG }, { offline: true });
+  try {
+    const attempts: Record<string, string>[] = [
+      { name: OPENAPI, op: "add" },
+      { name: OPENAPI, op: "add", confirm: "1" },
+      { name: HTMX, op: "remove" },
+      { name: HTMX, op: "remove", confirm: "1" },
+    ];
+    for (const fields of attempts) {
+      const res = await post(h, "/api/plugins", fields);
+      assertEquals(res.status, 503, JSON.stringify(fields));
+      assertStringIncludes((await res.json()).reason, "is unavailable — the UI runs --offline");
+    }
+    const unknown = await post(h, "/api/plugins", { name: "@acme/nope", op: "add" });
+    assertEquals(
+      unknown.status,
+      400,
+      "a name outside the catalog is still a 400: validation first",
+    );
+    await unknown.body?.cancel();
+
+    const page = await post(h, "/plugins", { name: HTMX, op: "remove" });
+    assertEquals(page.status, 503);
+    const body = normaliseEntities(await page.text());
+    assertStringIncludes(body, "deno remove is unavailable — the UI runs --offline");
+    assertStringIncludes(body, "Offline — add and remove are refused");
+    assertStringIncludes(card(body, OPENAPI), " disabled", "the Add button renders disabled");
+    assertEquals(h.ran, [], "no deno add or deno remove ran");
+    assertEquals(await config(h), WIRED_CONFIG, "nothing was written");
+  } finally {
+    await stop(h);
   }
 });

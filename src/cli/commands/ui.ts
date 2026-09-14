@@ -43,7 +43,10 @@ export function uiBanner(
   return `\n  denext ui  ▸  ${dir}\n` +
     `  ${url}\n` +
     (modes.readOnly ? "  read-only — every change is refused\n" : "") +
-    (modes.offline ? "  offline — no JSR plugin search; the UI makes no network requests\n" : "") +
+    (modes.offline
+      ? "  offline — nothing the UI starts reaches the network; deno task, denext dev and\n" +
+        "  plugin add/remove are refused\n"
+      : "") +
     "  The link carries a single-use token; it is exchanged for a session cookie and then\n" +
     "  refused, so the URL in your shell history is not a second way in.\n" +
     `  Ctrl+C to stop.\n`;
@@ -62,7 +65,8 @@ function uiPort(ctx: CommandContext): number | undefined {
 
 /**
  * The {@linkcode startUiServer} options a parsed `denext ui` invocation asks for — `--offline`
- * among them, which turns JSR plugin discovery off (it combines freely with `--read-only`).
+ * among them, which keeps the UI and every process it starts off the network (it combines freely
+ * with `--read-only`).
  *
  * @param ctx The parsed command line.
  * @param signal The shutdown signal (SIGINT/SIGTERM, or a test's own).
@@ -88,7 +92,7 @@ export const uiCommand: CommandSpec = {
   usage: "  denext ui                    Serve the UI for the current project and open it\n" +
     "  denext ui ./my-app --port 6000   That exact port, or a clear error if it is taken\n" +
     "  denext ui --read-only        Browse without offering any write\n" +
-    "  denext ui --offline          No JSR plugin search; the UI makes no network requests\n" +
+    "  denext ui --offline          Keep the UI and every process it starts off the network\n" +
     "  denext ui --no-open --json   Print { url, port, token } and keep serving\n\n" +
     "  The UI binds 127.0.0.1 only. The printed URL carries a per-launch 256-bit token that\n" +
     "  is exchanged ONCE for an HttpOnly, SameSite=Strict cookie — the query token is then\n" +
@@ -110,7 +114,9 @@ export const uiCommand: CommandSpec = {
     {
       name: "offline",
       type: "boolean",
-      help: "Never reach the network: no JSR plugin search (combines with --read-only)",
+      help: "Never reach the network: no JSR search; denext verbs and doctor run with " +
+        "--deny-net --cached-only, deno install with --cached-only; deno task, denext dev and " +
+        "plugin add/remove are refused (combines with --read-only)",
     },
     {
       name: "token",

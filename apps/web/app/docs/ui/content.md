@@ -12,7 +12,7 @@ nothing installed, and binds loopback only.
 denext ui                    # serve the current project and open a browser
 denext ui ./my-app --port 6000
 denext ui --read-only        # browse; every mutation is refused
-denext ui --offline          # no JSR plugin search; the UI makes no network requests
+denext ui --offline          # nothing the UI starts reaches the network
 denext ui --no-open --json   # print { url, port, token } and keep serving
 ```
 
@@ -23,16 +23,16 @@ tab's SSE connection cannot hold the drain.
 
 ## Flags
 
-| Flag              | Default | What it does                                                                    |
-| ----------------- | ------- | ------------------------------------------------------------------------------- |
-| `[dir]`           | `.`     | The project directory to manage                                                 |
-| `--port <port>`   | `5177`  | Port to listen on. `0` picks a free one                                         |
-| `--no-open`       | off     | Don't launch a browser — print the URL instead                                  |
-| `--read-only`     | off     | Refuse every mutation with a `403` before it runs                               |
-| `--offline`       | off     | Never reach the network: JSR plugin search is off (combines with `--read-only`) |
-| `--token <token>` | minted  | Use this session token instead of a fresh 256-bit one (at least 22 characters)  |
-| `--ui-dev`        | off     | Internal: watch `src/ui` and reload open pages on change (a checkout only)      |
-| `--json` (global) | off     | Print `{ url, port, token }` as one JSON line, then keep serving                |
+| Flag              | Default | What it does                                                                                                      |
+| ----------------- | ------- | ----------------------------------------------------------------------------------------------------------------- |
+| `[dir]`           | `.`     | The project directory to manage                                                                                   |
+| `--port <port>`   | `5177`  | Port to listen on. `0` picks a free one                                                                           |
+| `--no-open`       | off     | Don't launch a browser — print the URL instead                                                                    |
+| `--read-only`     | off     | Refuse every mutation with a `403` before it runs                                                                 |
+| `--offline`       | off     | Nothing the UI starts reaches the network — see [Working offline](#working-offline) (combines with `--read-only`) |
+| `--token <token>` | minted  | Use this session token instead of a fresh 256-bit one (at least 22 characters)                                    |
+| `--ui-dev`        | off     | Internal: watch `src/ui` and reload open pages on change (a checkout only)                                        |
+| `--json` (global) | off     | Print `{ url, port, token }` as one JSON line, then keep serving                                                  |
 
 **The port is a requirement when you name one.** Left to the default, `5177` falls
 forward through at most ten ports when it is busy and the URL it prints says which one it
@@ -119,7 +119,8 @@ where it runs.
 `https://api.jsr.io` and `https://jsr.io`. Each request carries no credentials, refuses every
 redirect, has a five-second deadline that also covers reading the body, and reads at most
 64 KiB of `application/json`; what comes back is normalised and escaped like any other
-untrusted text. `denext ui --offline` turns it off, and so does a process that does not
+untrusted text. `denext ui --offline` turns it off (and keeps every process the UI starts off
+the network too — see [Working offline](#working-offline)), and so does a process that does not
 already hold net permission for both hosts — the UI queries that permission and never
 prompts for it. The page's CSP is unchanged: the browser still talks only to the UI
 (`connect-src 'self'`), and the registry is called by the server.
@@ -140,6 +141,28 @@ failed write leaves the previous bytes exactly as they were.
 > `127.0.0.1:5177`, and the session cookie is the only thing between them and a write. The
 > token is 256 bits and is never printed except on your own terminal, but if you don't
 > control every account on the box, run `denext ui --read-only`, or don't run it at all.
+
+### Working offline
+
+`denext ui --offline` keeps the UI **and every process it starts** off the network. The UI's
+own JSR search is off, the denext-CLI children it starts are sandboxed, and an operation no
+flag can sandbox is refused:
+
+| Operation                                             | Under `--offline`                                                                                                                                    |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| JSR plugin search, a JSR add                          | The search box renders disabled with a note; `op=add-jsr` is a `503`                                                                                 |
+| The commands listing, a verb run, the wizard's doctor | Runs as `deno run -A --deny-net --cached-only …`: no socket (a deny flag wins over `-A`, and it covers listening too) and no module download         |
+| The wizard's `deno install`                           | Runs as `deno install --cached-only`: a fully cached project installs; anything else fails without fetching                                          |
+| `deno task` (the wizard's Tasks step)                 | Refused with a `503` — a task is arbitrary shell, and no flag can keep it off the network                                                            |
+| The wizard's "Start denext dev"                       | Refused with a `503` — a dev server needs net permission to listen                                                                                   |
+| Plugin add and remove                                 | Refused with a `503`, preview included — `deno add` needs the registry, and `deno remove` can re-resolve the remaining dependencies over the network |
+
+`--cached-only` is there because the net permission does not govern Deno's module loader: a
+child denied net would still download an uncached import. A refused control renders disabled
+with a short note, and the `503` (`{ ok: false, reason }` from a JSON twin) is the real gate.
+What needs no network — the config editor, `generate`, Docker, the wizard's file writes —
+works as usual. `--offline` combines with `--read-only`; a mutation under both is the
+read-only `403`.
 
 ## Configuration editor
 
@@ -348,10 +371,11 @@ streamed `deno` log.
 A third-party plugin gets no options form: option schemas come from the first-party catalog,
 which is generated from denext's own workspace. Set its options in `denext.config.ts`.
 
-**Offline.** `denext ui --offline` keeps the UI off the network: the search box renders
-disabled with a note, nothing is fetched, and `op=add-jsr` is a `503`. It combines with
-`--read-only`. The UI degrades the same way on its own when the process does not hold net
-permission for both `api.jsr.io` and `jsr.io` — it checks the permission and never prompts.
+**Offline.** Under `denext ui --offline` the search box renders disabled with a note, nothing
+is fetched, and `op=add-jsr` is a `503` — as is a catalog add or remove (see
+[Working offline](#working-offline)). Search degrades the same way on its own when the process
+does not hold net permission for both `api.jsr.io` and `jsr.io` — it checks the permission and
+never prompts.
 
 ## Generate
 
@@ -468,8 +492,10 @@ change as a unified diff and only writes on an explicit confirm.
 | Finish                | Whether the dev server is up                                                                                                      | Starts `denext dev` and waits for it to publish its address                                                               |
 
 Nothing in the wizard imports a project module: detection is filesystem probing, and
-doctor, `deno install` and `denext dev` all run as subprocesses. See
-[Doctor & audit](/docs/doctor-audit) for what the checks mean.
+doctor, `deno install` and `denext dev` all run as subprocesses. Under `--offline`, doctor
+runs without net, `deno install` runs `--cached-only`, and the Tasks and Finish buttons are
+disabled ([Working offline](#working-offline)). See [Doctor & audit](/docs/doctor-audit) for
+what the checks mean.
 
 ## Project commands
 
@@ -537,7 +563,9 @@ spawned. A JSON client posts the same names as keys:
 `{ "verb": "seed", "flag:rows": 5, "pos:0": "users" }`.
 
 Running a verb is a mutation — a verb may write anything — so it is refused under
-`--read-only`, and it pays plugin discovery again in its own child.
+`--read-only`, and it pays plugin discovery again in its own child. Under `--offline` both
+children — the listing and every run — start with `--deny-net --cached-only`, so a verb that
+needs the network fails rather than reaching it.
 
 ## Working without JavaScript
 

@@ -26,6 +26,7 @@ import { UI_CSS } from "./styles.ts";
 import { UI_JS } from "./client.ts";
 import { broadcast, sseProcess } from "./events.ts";
 import { runDeno } from "./proc.ts";
+import { OFFLINE_REFUSALS, OFFLINE_STATUS } from "./offline.ts";
 import { readDenoConfig, taskMap } from "./tasks.ts";
 import { configPanel } from "./features/config.ts";
 import { pluginsPanel } from "./features/plugins.ts";
@@ -107,6 +108,11 @@ const CARD_LEAD: Record<string, string> = {
   "/commands": "Run this project's own denext verbs.",
 };
 
+/** What the overview says under `--offline`. */
+const OFFLINE_OVERVIEW = "Offline mode — nothing the UI starts reaches the network: denext " +
+  "verbs run with --deny-net --cached-only, and deno task, denext dev and plugin add/remove " +
+  "are refused.";
+
 /** One overview card: a panel's name, and what it does. */
 function Card({ item }: { readonly item: NavItem }): VNode {
   return h(
@@ -127,6 +133,7 @@ function Overview({ ctx }: { readonly ctx: UiContext }): VNode {
     { title: "Project" },
     h("p", { class: "lead mono" }, ctx.dir),
     ctx.readOnly ? h(Note, null, "Read-only mode — every change is refused.") : null,
+    ctx.offline === true ? h(Note, null, OFFLINE_OVERVIEW) : null,
     h("div", { class: "cards" }, cards),
   );
 }
@@ -156,12 +163,17 @@ function home(_request: Request, ctx: UiContext): Promise<Response> {
  * it must appear in the project's own `deno.json`/`deno.jsonc` `tasks` map, and it is passed as
  * an argv element — never through a shell. The child is tied to the stream: it dies when the
  * page disconnects and when the UI server shuts down, so no task is left running as an orphan.
+ * Under `--offline` a declared task is refused with a `503`: a task is arbitrary shell, and no
+ * flag can keep it off the network.
  */
 async function runTask(request: Request, ctx: UiContext): Promise<Response> {
   const name = String(ctx.form?.get("task") ?? new URL(request.url).searchParams.get("task") ?? "");
   const tasks = await projectTasks(ctx.dir);
   if (!tasks.includes(name)) {
     return jsonResponse({ ok: false, reason: `unknown task "${name}"`, tasks }, 400);
+  }
+  if (ctx.offline === true) {
+    return jsonResponse({ ok: false, reason: OFFLINE_REFUSALS.task }, OFFLINE_STATUS);
   }
   return sseProcess(
     async (line, signal) =>

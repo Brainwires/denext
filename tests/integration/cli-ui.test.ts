@@ -15,8 +15,9 @@
 // that writes nothing, a confirm that adds exactly one key with the leading comment intact, a
 // stale `_base` refused with 409) · the compose editor (an edit that moves only the port line; an
 // unparseable file shown read-only and its edit refused with 400) · `--offline` (the JSR search
-// box disabled, the offline JSON shape, no connection reaching a trap proxy) · the Commands
-// panel's flags form (the argv a project verb receives carries exactly the declared flags).
+// box disabled, the offline JSON shape, a verb run holding no net, `deno task` refused with a
+// 503, no connection reaching a trap proxy) · the Commands panel's flags form (the argv a
+// project verb receives carries exactly the declared flags).
 
 import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
@@ -839,12 +840,19 @@ async function checkOnlineSearch(ui: Ui, trap: NetTrap): Promise<void> {
   assert(trap.hits > 0, "the trap saw the search — so a zero under --offline means something");
 }
 
-/** A verb run from the panel under `--offline` must not hold `net` permission. */
+/** A verb run from the panel under `--offline` holds no `net` permission (`--deny-net` wins). */
 async function checkOfflineChildNet(ui: Ui): Promise<void> {
   const res = await send(ui, "/api/commands", { verb: "net-state" });
   const output: string[] = JSON.parse(res.text).output ?? [];
   const line = output.find((entry) => entry.startsWith("NET "));
-  assertMatch(line ?? output.join("\n"), /^NET (prompt|denied)$/);
+  assertMatch(line ?? output.join("\n"), /^NET denied$/);
+}
+
+/** `deno task` under `--offline`: a declared task is refused with a `503` and never spawned. */
+async function checkOfflineTask(ui: Ui): Promise<void> {
+  const res = await send(ui, "/api/tasks/run", { task: "hello" });
+  assertEquals(res.status, 503);
+  assertStringIncludes(JSON.parse(res.text).reason, "the UI runs --offline");
 }
 
 /** The run form is typed from the verb's declared flags. */
@@ -1021,17 +1029,12 @@ Deno.test("`--offline` disables JSR search and reaches no network", async (t) =>
         "the search box is disabled; the twin reports offline",
         () => checkOfflineSearch(ui),
       );
+      await t.step(
+        "a UI subprocess under --offline holds no net permission",
+        () => checkOfflineChildNet(ui),
+      );
+      await t.step("deno task is refused with a 503", () => checkOfflineTask(ui));
       await t.step("nothing reached the network", () => assertEquals(trap.hits, 0));
-      // BUG — ignored until fixed: every UI subprocess is spawned through `cliInvocation()`
-      // (src/ui/proc.ts), which is always `run -A …`, and `--offline` is never plumbed into
-      // `runDeno`. So a verb run from the Commands panel (and `denext commands --json`, and the
-      // plugin manager's `deno add`) still holds `net` under `--offline` — this prints
-      // "NET granted". The flag's contract is "never reach the network".
-      await t.step({
-        name: "a UI subprocess under --offline holds no net permission",
-        ignore: true,
-        fn: () => checkOfflineChildNet(ui),
-      });
     });
     await withUi({ env }, async (ui) => {
       await handshake(ui);

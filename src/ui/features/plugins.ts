@@ -14,7 +14,8 @@
 // dependency step is a `src/ui/proc.ts` subprocess, the config edit is pure string surgery), and a
 // name that came from the browser is never interpolated into a command — it must be one of the
 // catalog's own names (or, for `op=add-jsr`, a package name JSR's own rules accept, at the version
-// the registry reports), and the argv is an array.
+// the registry reports), and the argv is an array. Under `denext ui --offline` every add and
+// remove is refused with a `503` before anything runs (`../offline.ts`).
 
 import { parse as parseJsonc } from "@std/jsonc";
 import { join } from "@std/path";
@@ -37,6 +38,7 @@ import { DiffBlock, Mono, Note, OpForm, Out, Panel, PreviewLead } from "../compo
 import { renderView } from "../view.ts";
 import { broadcast, sseProcess } from "../events.ts";
 import { runDeno } from "../proc.ts";
+import { OFFLINE_REFUSALS, OFFLINE_STATUS } from "../offline.ts";
 import { uiSafeJoin, writeFileAtomic } from "../security.ts";
 import type { SchemaNode } from "../form/schema.ts";
 import {
@@ -408,7 +410,8 @@ function PluginForm(
     readonly label: string;
   },
 ): VNode {
-  return h(OpForm, { csrf: ctx.csrf, action: "/plugins", label, fields, disabled: ctx.readOnly });
+  const disabled = ctx.readOnly || ctx.offline === true;
+  return h(OpForm, { csrf: ctx.csrf, action: "/plugins", label, fields, disabled });
 }
 
 /** The docs link, the spec and — for a wired plugin with an options schema — the options link. */
@@ -489,6 +492,10 @@ function ThirdParty({ plugins }: { readonly plugins: readonly ConfiguredPlugin[]
   );
 }
 
+/** What the panel says under `--offline`, where every add and remove renders disabled. */
+const OFFLINE_NOTE = "Offline — add and remove are refused: deno add needs the registry, and " +
+  "deno remove can re-resolve the remaining dependencies over the network.";
+
 /** The whole catalogue panel: the two groups, the third-party plugins and JSR discovery. */
 function PluginsPanel(
   { ctx, state, discovery, notice }: {
@@ -513,6 +520,7 @@ function PluginsPanel(
       " command and a diff of your config before anything is written.",
     ),
     ctx.readOnly ? h(Note, null, "Read-only mode — add and remove are refused.") : null,
+    ctx.offline === true ? h(Note, null, OFFLINE_NOTE) : null,
     notice ?? null,
     h("h2", null, "Plugins"),
     group("plugin"),
@@ -768,7 +776,11 @@ async function mutateJsr(request: Request, ctx: UiContext, state: ProjectState) 
   return await run(request, ctx, planAdd(target, state), state);
 }
 
-/** A mutation: validate the name against the catalogue, plan it, then preview or apply it. */
+/**
+ * A mutation: validate the name against the catalogue, plan it, then preview or apply it. Under
+ * `--offline` a valid add or remove is refused with a `503` — preview included — before anything
+ * runs: `deno add` needs the registry, and `deno remove` can re-resolve the rest over the network.
+ */
 async function mutate(request: Request, ctx: UiContext, state: ProjectState): Promise<Response> {
   if (ctx.readOnly) return await refusal(ctx, state, "read-only", 403);
   if (postedField(ctx, "op") === "add-jsr") return await mutateJsr(request, ctx, state);
@@ -779,6 +791,7 @@ async function mutate(request: Request, ctx: UiContext, state: ProjectState): Pr
   if (op === null) {
     return await refusal(ctx, state, `unknown operation "${postedField(ctx, "op")}"`, 400);
   }
+  if (ctx.offline === true) return await refusal(ctx, state, OFFLINE_REFUSALS[op], OFFLINE_STATUS);
   return await run(request, ctx, OPS[op](catalogTarget(entry), state), state);
 }
 

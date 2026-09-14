@@ -5,7 +5,7 @@
 // Everything runs against a real server on loopback, driven the way a browser with JavaScript
 // disabled would drive it: real form posts, `303` back to the step anchor.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { startUiServer, type UiServer } from "../src/ui/server.ts";
 import { deriveCsrf, UI_COOKIE, UI_CSRF_HEADER } from "../src/ui/security.ts";
@@ -38,7 +38,7 @@ interface Harness {
 /** Start the UI on a temp dir, optionally seeded with files. */
 async function ui(
   files: Record<string, string> = {},
-  opts: { readOnly?: boolean } = {},
+  opts: { readOnly?: boolean; offline?: boolean } = {},
 ): Promise<Harness> {
   const dir = await Deno.makeTempDir({ prefix: "denext_ui_wizard_" });
   for (const [path, content] of Object.entries(files)) {
@@ -46,7 +46,7 @@ async function ui(
     await Deno.mkdir(join(abs, ".."), { recursive: true });
     await Deno.writeTextFile(abs, content);
   }
-  const server = await startUiServer({ dir, port: 0, readOnly: opts.readOnly });
+  const server = await startUiServer({ dir, port: 0, ...opts });
   return {
     server,
     dir,
@@ -429,3 +429,72 @@ async function exists(path: string): Promise<boolean> {
     return false;
   }
 }
+
+// ── --offline ────────────────────────────────────────────────────────────────
+
+/** The JSON outcome of one wizard operation. */
+async function outcomeOf(h: Harness, op: string): Promise<{ ok: boolean; message: string }> {
+  return (await (await post(h, { op }, "/api/wizard")).json()).outcome;
+}
+
+Deno.test("--offline refuses denext dev and every task with a 503, and renders them disabled", async () => {
+  const h = await ui({ "deno.json": DENO_JSON_WITHOUT_DEV }, { offline: true });
+  try {
+    const dev = await post(h, { op: "dev" }, "/api/wizard");
+    assertEquals(dev.status, 503);
+    const { outcome } = await dev.json();
+    assertEquals([outcome.ok, outcome.step], [false, "finish"]);
+    assertStringIncludes(outcome.message, "a dev server needs net permission to listen");
+
+    const task = await post(h, { task: "build" }, "/tasks/run");
+    assertEquals(task.status, 503, "a declared task is refused, not spawned");
+    assertStringIncludes((await task.json()).reason, "a task is arbitrary shell");
+
+    const page = await post(h, { op: "dev" });
+    assertEquals(page.status, 503, "the no-JS answer carries the same status");
+    const body = await page.text();
+    assertStringIncludes(body, "denext dev is unavailable — the UI runs --offline");
+    assertStringIncludes(body, "deno task is unavailable — the UI runs --offline");
+    assertMatch(body, /<button[^>]*\sdisabled[^>]*>deno task build<\/button>/);
+    assertMatch(body, /<button[^>]*\sdisabled[^>]*>Start denext dev<\/button>/);
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("online, the task and dev buttons stay live and carry no offline note", async () => {
+  const h = await ui({ "deno.json": DENO_JSON_WITHOUT_DEV });
+  try {
+    const body = await (await fetch(`${h.base}/wizard`, { headers: h.headers })).text();
+    assertMatch(body, /<button type="submit">deno task build<\/button>/);
+    assertMatch(body, /<button type="submit">Start denext dev<\/button>/);
+    assert(!body.includes("--offline"));
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("--offline runs doctor through a no-net child and deno install --cached-only", async () => {
+  const seen: boolean[] = [];
+  setDoctorRunner((_dir, offline) => {
+    seen.push(offline);
+    return Promise.resolve([{ name: "config", ok: true, detail: "found", critical: true }]);
+  });
+  const online = await ui({ "deno.json": "{}\n" });
+  const offline = await ui({ "deno.json": "{}\n" }, { offline: true });
+  try {
+    await outcomeOf(online, "doctor");
+    await outcomeOf(offline, "doctor");
+    assertEquals(seen, [false, true], "the doctor runner is told when to deny net");
+    // A real `deno install` of a project with nothing to fetch — offline, it is --cached-only.
+    assertEquals((await outcomeOf(online, "install")).message, "deno install finished.");
+    assertEquals(
+      (await outcomeOf(offline, "install")).message,
+      "deno install --cached-only finished.",
+    );
+  } finally {
+    setDoctorRunner(null);
+    await stop(online);
+    await stop(offline);
+  }
+});

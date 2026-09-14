@@ -23,6 +23,9 @@
 // server from the REFRESHED listing: a field the verb does not declare is never read, every
 // value is its own argv element (array args, never a shell), and a positional may not start with
 // `-` — so no field can smuggle in a flag the verb did not declare, least of all `--cwd`.
+//
+// Under `denext ui --offline` both children — discovery and every run — start with `--deny-net
+// --cached-only` after `-A` (`proc.ts`): a verb can neither open a socket nor download a module.
 
 import { type FlagSpec, GLOBAL_FLAGS, type PositionalSpec } from "../../cli/command.ts";
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";
@@ -50,6 +53,10 @@ const PATH = "/commands";
 
 /** Where the two extension seams are documented. */
 const DOCS = "https://denext.dev/docs/plugins#project-commands";
+
+/** What the panel says under `--offline`. */
+const OFFLINE_NOTE = "Offline — every verb runs with --deny-net --cached-only: it can neither " +
+  "open a socket nor download a module.";
 
 /**
  * How long the whole discovery subprocess may take before the panel gives up on it. Generous
@@ -200,14 +207,14 @@ function flatten(listing: CommandListing): UiCommandList {
 }
 
 /**
- * Spawn `denext commands --json` against `dir` and read its listing back. Never rejects: a
- * child that cannot start, times out, or prints nothing parsable degrades to an empty list
- * with an honest reason, which the panel renders as a notice.
+ * Spawn `denext commands --json` against `dir` (without net when `offline`) and read its listing
+ * back. Never rejects: a child that cannot start, times out, or prints nothing parsable degrades
+ * to an empty list with an honest reason, which the panel renders as a notice.
  */
-async function discover(dir: string): Promise<UiCommandList> {
+async function discover(dir: string, offline: boolean): Promise<UiCommandList> {
   const lines: string[] = [];
   const argv = [
-    ...cliInvocation(),
+    ...cliInvocation({ offline }),
     "commands",
     "--json",
     "--timeout",
@@ -245,18 +252,20 @@ function cacheable(list: UiCommandList): boolean {
  * for {@linkcode LIST_TTL_MS}; a timeout or a failure is never cached.
  *
  * @param dir The project directory.
+ * @param offline `denext ui --offline`: the discovery child runs `--deny-net --cached-only`.
  * @returns The verb list, plus whether discovery was cut short by the budget or a bad config.
  */
-export function listCommands(dir: string): Promise<UiCommandList> {
-  const cached = listCache.get(dir);
+export function listCommands(dir: string, offline = false): Promise<UiCommandList> {
+  const key = `${offline}:${dir}`;
+  const cached = listCache.get(key);
   if (cached && Date.now() - cached.at < LIST_TTL_MS) return Promise.resolve(cached.list);
-  const pending = inFlight.get(dir);
+  const pending = inFlight.get(key);
   if (pending) return pending;
-  const started = discover(dir).then((list) => {
-    if (cacheable(list)) listCache.set(dir, { at: Date.now(), list });
+  const started = discover(dir, offline).then((list) => {
+    if (cacheable(list)) listCache.set(key, { at: Date.now(), list });
     return list;
-  }).finally(() => inFlight.delete(dir));
-  inFlight.set(dir, started);
+  }).finally(() => inFlight.delete(key));
+  inFlight.set(key, started);
   return started;
 }
 
@@ -313,6 +322,8 @@ interface View {
   readonly csrf: string;
   /** `--read-only`: every run control renders disabled. */
   readonly readOnly: boolean;
+  /** `--offline`: every run is started without net, and the panel says so. */
+  readonly offline: boolean;
   /** The values to re-render one verb's form with, if any. */
   readonly held?: Held;
 }
@@ -671,6 +682,7 @@ function CommandsPanel({ list, view, output }: PanelProps): VNode {
       h("a", { href: DOCS }, "Project commands ↗"),
     ),
     h(Notices, { list }),
+    view.offline ? h(Note, null, OFFLINE_NOTE) : null,
     GROUPS.map((group) =>
       h(VerbGroup, { key: group.source, group, commands: list.commands, view })
     ),
@@ -689,7 +701,12 @@ function panelResponse(
   output: readonly string[],
   held?: Held,
 ): Response {
-  const view: View = { csrf: ctx.csrf, readOnly: ctx.readOnly, held };
+  const view: View = {
+    csrf: ctx.csrf,
+    readOnly: ctx.readOnly,
+    offline: ctx.offline === true,
+    held,
+  };
   return respond(ctx, renderView(h(CommandsPanel, { list, view, output })));
 }
 
@@ -781,20 +798,21 @@ function positionalArgs(specs: readonly PositionalSpec[], read: Read): string[] 
 
 /**
  * A run's argv, from the REFRESHED listing's declaration of `info` — never from the browser's
- * idea of which flags exist: a field the verb does not declare is simply never read.
+ * idea of which flags exist: a field the verb does not declare is simply never read. Under
+ * `offline` the child runs `--deny-net --cached-only`.
  */
-function runArgv(info: UiCommandInfo, dir: string, read: Read): string[] {
+function runArgv(info: UiCommandInfo, dir: string, read: Read, offline: boolean): string[] {
   const flags = info.flags.filter(settable).flatMap((flag) =>
     flagArgs(flag, read(flagKey(flag.name)))
   );
   const positionals = positionalArgs(info.positionals, read);
-  return [...cliInvocation(), info.name, "--cwd", dir, ...flags, ...positionals];
+  return [...cliInvocation({ offline }), info.name, "--cwd", dir, ...flags, ...positionals];
 }
 
 /** The run's argv, or the 422 that names the field it refused. */
-function argvOrRefusal(info: UiCommandInfo, dir: string, read: Read): string[] | Response {
+function argvOrRefusal(ctx: UiContext, info: UiCommandInfo, read: Read): string[] | Response {
   try {
-    return runArgv(info, dir, read);
+    return runArgv(info, ctx.dir, read, ctx.offline === true);
   } catch (error) {
     if (!(error instanceof FieldError)) throw error;
     return jsonResponse({ ok: false, reason: error.message, field: error.field }, 422);
@@ -861,7 +879,7 @@ function editRows(ctx: UiContext, info: UiCommandInfo, list: UiCommandList, read
  */
 function streamRun(ctx: UiContext, verb: string, argv: string[]): Response {
   return sseProcess(
-    (line) => runner(argv, { cwd: ctx.dir, onLine: line }),
+    (line, signal) => runner(argv, { cwd: ctx.dir, onLine: line, signal }),
     { settled: (code) => code !== null && announce(ctx, verb, code) },
   );
 }
@@ -875,7 +893,11 @@ async function runVerb(
 ): Promise<Response> {
   if (ctx.fragment) return streamRun(ctx, info.name, argv);
   const output: string[] = [];
-  const code = await runner(argv, { cwd: ctx.dir, onLine: (line) => output.push(line) });
+  const code = await runner(argv, {
+    cwd: ctx.dir,
+    onLine: (line) => output.push(line),
+    signal: ctx.signal,
+  });
   announce(ctx, info.name, code);
   if (ctx.json) return jsonResponse({ ok: code === 0, verb: info.name, code, output });
   return panelResponse(ctx, list, [...output, exitLine(code)]);
@@ -891,11 +913,11 @@ async function handleRun(ctx: UiContext): Promise<Response> {
   }
   const read = readerOf(ctx);
   const verb = read("verb")[0] ?? "";
-  const list = await listCommands(ctx.dir);
+  const list = await listCommands(ctx.dir, ctx.offline === true);
   const info = list.commands.find((candidate) => candidate.name === verb);
   if (info === undefined || !offersRun(info)) return refused(verb, info, list);
   if (read(OP_FIELD).length > 0) return editRows(ctx, info, list, read);
-  const argv = argvOrRefusal(info, ctx.dir, read);
+  const argv = argvOrRefusal(ctx, info, read);
   if (argv instanceof Response) return argv;
   return await runVerb(ctx, info, list, argv);
 }
@@ -906,7 +928,7 @@ export const commandsPanel: UiHandler = async (
   ctx: UiContext,
 ): Promise<Response> => {
   if (ctx.method === "POST") return await handleRun(ctx);
-  const list = await listCommands(ctx.dir);
+  const list = await listCommands(ctx.dir, ctx.offline === true);
   if (!ctx.json) return panelResponse(ctx, list, []);
   return jsonResponse({
     ok: true,

@@ -9,7 +9,9 @@
 // Hard rule of the UI process, obeyed here: no project module is ever imported. Detection is
 // filesystem probing (never `resolveProject`, which evaluates `denext.config.ts` — see the
 // module note below); `denext doctor`, `deno install` and `denext dev` all run as
-// subprocesses through {@linkcode runDeno}; `deno.json` and `.env*` are read as data.
+// subprocesses through {@linkcode runDeno}; `deno.json` and `.env*` are read as data. Under
+// `denext ui --offline`, doctor runs `--deny-net --cached-only`, `deno install` runs
+// `--cached-only`, and `denext dev` and the task buttons are refused (`../offline.ts`).
 //
 // Everything works with JavaScript disabled: every operation is a real `<form method="post">`,
 // a completed write answers `303` back to `/wizard#step-<id>`, and a preview re-renders the
@@ -30,6 +32,7 @@ import { renderView } from "../view.ts";
 import { broadcast } from "../events.ts";
 import { uiSafeJoin, writeFileAtomic } from "../security.ts";
 import { cliInvocation, runDeno } from "../proc.ts";
+import { OFFLINE_REFUSALS, OFFLINE_STATUS } from "../offline.ts";
 import { envExampleSource, type EnvScan, scanEnvUsage } from "../env-scan.ts";
 import { type DenoConfigFile, readDenoConfig, taskMap } from "../tasks.ts";
 
@@ -222,6 +225,8 @@ interface StepAction {
   readonly fields?: VNodeChildren;
   /** Post somewhere other than `/wizard` (step 8 posts to the kernel's task runner). */
   readonly action?: string;
+  /** Why `--offline` refuses it (its button renders disabled, with this note); absent otherwise. */
+  readonly offline?: string;
 }
 
 /** What one step renders as. */
@@ -429,6 +434,7 @@ function stepTasks(s: Survey): StepView {
       label: `deno task ${name}`,
       action: "/tasks/run",
       fields: h("input", { type: "hidden", name: "task", value: name }),
+      offline: OFFLINE_REFUSALS.task,
     })),
   };
 }
@@ -443,7 +449,7 @@ function stepFinish(s: Survey): StepView {
       ? `The dev server is up at ${s.dev.origin}.`
       : "Start the dev server; its address appears here once it publishes .denext/dev.json.",
     detail: s.dev ? h("p", null, devLink(s.dev, "Open the app")) : h(Out, null),
-    actions: s.dev ? [] : [{ op: "dev", label: "Start denext dev" }],
+    actions: s.dev ? [] : [{ op: "dev", label: "Start denext dev", offline: OFFLINE_REFUSALS.dev }],
   };
 }
 
@@ -479,6 +485,8 @@ interface OpOutcome {
   readonly checks?: DoctorCheck[];
   /** Whether the write completed (answer `303`, re-render otherwise). */
   readonly redirect?: boolean;
+  /** The status to answer with instead of the default (a refusal under `--offline` is a `503`). */
+  readonly status?: number;
 }
 
 /** An operation implementation. */
@@ -534,16 +542,21 @@ async function mergeDenoJson(source: string, missing: string[][]): Promise<strin
   return current;
 }
 
-/** Step 4's operation: `deno install`, as a subprocess with a deadline. */
+/**
+ * Step 4's operation: `deno install`, as a subprocess with a deadline. Under `--offline` it runs
+ * `--cached-only`, which installs a fully cached project and fails — without fetching — otherwise.
+ */
 async function opInstall(ctx: UiContext): Promise<OpOutcome> {
-  const run = await runDeno(["install"], {
+  const args = ctx.offline === true ? ["install", "--cached-only"] : ["install"];
+  const run = await runDeno(args, {
     cwd: ctx.dir,
     signal: withShutdown(ctx, AbortSignal.timeout(300_000)),
   });
+  const command = `deno ${args.join(" ")}`;
   return {
     step: "deps",
     ok: run.code === 0,
-    message: run.code === 0 ? "deno install finished." : `deno install exited ${run.code}.`,
+    message: run.code === 0 ? `${command} finished.` : `${command} exited ${run.code}.`,
     output: tail(run.stdout + run.stderr),
   };
 }
@@ -581,7 +594,7 @@ async function readOrNull(path: string): Promise<string | null> {
 /** Step 6's operation: the doctor report, through the (injectable) subprocess runner. */
 async function opDoctor(ctx: UiContext): Promise<OpOutcome> {
   try {
-    const checks = await doctorRunner(ctx.dir);
+    const checks = await doctorRunner(ctx.dir, ctx.offline === true);
     const failed = checks.filter((c) => !c.ok).length;
     return {
       step: "doctor",
@@ -638,8 +651,19 @@ async function opScaffold(ctx: UiContext, s: Survey, form: FormData): Promise<Op
   }
 }
 
-/** Step 9's operation: start `denext dev` in the background and stream it to every open page. */
+/**
+ * Step 9's operation: start `denext dev` in the background and stream it to every open page.
+ * Refused under `--offline` with a `503`: a dev server needs net permission to listen.
+ */
 function opStartDev(ctx: UiContext, s: Survey): Promise<OpOutcome> {
+  if (ctx.offline === true) {
+    return Promise.resolve({
+      step: "finish",
+      ok: false,
+      status: OFFLINE_STATUS,
+      message: OFFLINE_REFUSALS.dev,
+    });
+  }
   if (s.dev !== null) {
     return Promise.resolve({
       step: "finish",
@@ -723,8 +747,8 @@ function reason(error: unknown): string {
 
 // ── the doctor seam ──────────────────────────────────────────────────────────
 
-/** Runs `denext doctor` for a project and returns its checks. */
-export type DoctorRunner = (dir: string) => Promise<DoctorCheck[]>;
+/** Runs `denext doctor` for a project (with no net when `offline`) and returns its checks. */
+export type DoctorRunner = (dir: string, offline: boolean) => Promise<DoctorCheck[]>;
 
 /** The active runner (the subprocess, unless a test injected a fixture). */
 let doctorRunner: DoctorRunner = runDoctorSubprocess;
@@ -743,10 +767,12 @@ export function setDoctorRunner(runner: DoctorRunner | null): void {
 /**
  * Run `denext doctor --json` as a subprocess. `doctor` is a `loadsModules` verb — it resolves
  * the project's config and probes its routes — so it must never run inside the UI process.
+ * Under `--offline` the child runs `--deny-net --cached-only` (the probe is in-process, so no
+ * check needs a socket).
  */
-async function runDoctorSubprocess(dir: string): Promise<DoctorCheck[]> {
+async function runDoctorSubprocess(dir: string, offline: boolean): Promise<DoctorCheck[]> {
   const run = await runDeno(
-    [...cliInvocation(), "doctor", "--json", "--cwd", dir],
+    [...cliInvocation({ offline }), "doctor", "--json", "--cwd", dir],
     { cwd: dir, signal: AbortSignal.timeout(120_000) },
   );
   const parsed = run.json();
@@ -779,7 +805,7 @@ function ActionForm({ ctx, action }: CtxProps & { readonly action: StepAction })
     fields: { op: action.op },
     extra: action.fields,
     className: "op",
-    disabled: ctx.readOnly,
+    disabled: ctx.readOnly || (ctx.offline === true && action.offline !== undefined),
   });
 }
 
@@ -835,8 +861,12 @@ interface StepProps extends CtxProps {
   readonly outcome?: OpOutcome;
 }
 
-/** One step's `<section>`: heading, status pill, summary, detail, operations, outcome. */
+/**
+ * One step's `<section>`: heading, status pill, summary, detail, operations (and, under
+ * `--offline`, why one of them is disabled), outcome.
+ */
 function Step({ ctx, index, view, outcome }: StepProps): VNode {
+  const refused = ctx.offline === true ? view.actions.find((action) => action.offline) : undefined;
   return h(
     "section",
     { id: `step-${view.id}`, class: "step" },
@@ -844,6 +874,7 @@ function Step({ ctx, index, view, outcome }: StepProps): VNode {
     h("p", { class: "lead" }, view.summary),
     view.detail ?? null,
     view.actions.map((action) => h(ActionForm, { key: action.label, ctx, action })),
+    refused?.offline ? h(Note, null, refused.offline) : null,
     outcome && outcome.step === view.id ? h(Outcome, { ctx, outcome }) : null,
   );
 }
@@ -890,9 +921,9 @@ function respond(ctx: UiContext, survey: Survey, outcome?: OpOutcome): Response 
       kind: survey.kind,
       steps: views.map(jsonStep),
       ...(outcome ? { outcome } : {}),
-    }, outcome && !outcome.ok ? 400 : 200);
+    }, outcome?.status ?? (outcome && !outcome.ok ? 400 : 200));
   }
-  return panelResponse(ctx, renderView(h(WizardPanel, { ctx, views, outcome })));
+  return panelResponse(ctx, renderView(h(WizardPanel, { ctx, views, outcome })), outcome?.status);
 }
 
 /** A completed write: `303` back to the step that did it, so a reload never re-posts. */
