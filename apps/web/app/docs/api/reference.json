@@ -5083,8 +5083,8 @@
           "slug": "confirmTotp",
           "kind": "function",
           "signature": "confirmTotp(config: AuthConfig, user: AuthUser, code: string): Promise<ConfirmTotpResult>",
-          "doc": "Confirm a pending enrolment with a code from the authenticator app. On success the factor is marked confirmed and mfa.backupCodes backup codes are minted — returned here in plaintext exactly once, and stored only as hashes. The code's step is claimed, so it can't then be replayed at the step-up.",
-          "docFull": "Confirm a pending enrolment with a code from the authenticator app. On success the\nfactor is marked confirmed and `mfa.backupCodes` backup codes are minted — returned\nhere in plaintext exactly once, and stored only as hashes. The code's step is claimed,\nso it can't then be replayed at the step-up.",
+          "doc": "Confirm a pending enrollment with a code from the authenticator app. On success the factor is marked confirmed and mfa.backupCodes backup codes are minted — returned here in plaintext exactly once, and stored only as hashes. The code's step is claimed, so it can't then be replayed at the step-up.",
+          "docFull": "Confirm a pending enrollment with a code from the authenticator app. On success the\nfactor is marked confirmed and `mfa.backupCodes` backup codes are minted — returned\nhere in plaintext exactly once, and stored only as hashes. The code's step is claimed,\nso it can't then be replayed at the step-up.",
           "params": [
             {
               "name": "config",
@@ -5099,7 +5099,7 @@
               "doc": "The code the user typed."
             }
           ],
-          "returns": "{ ok: true, backupCodes }, or { ok: false } for a wrong or replayed code, no pending enrolment, or an already-confirmed factor.",
+          "returns": "{ ok: true, backupCodes }, or { ok: false } for a wrong or replayed code, no pending enrollment, or an already-confirmed factor.",
           "examples": [],
           "denextOnly": true
         },
@@ -5636,8 +5636,8 @@
           "slug": "enrollTotp",
           "kind": "function",
           "signature": "enrollTotp(config: AuthConfig, user: AuthUser): Promise<TotpEnrollment | null>",
-          "doc": "Start a TOTP enrolment: mint a secret, store it **unconfirmed**, and return it with the provisioning URI (issuer mfa.issuer, account user.email ?? user.id). An earlier unconfirmed enrolment is replaced; a CONFIRMED factor is not — disable it first.",
-          "docFull": "Start a TOTP enrolment: mint a secret, store it **unconfirmed**, and return it with the\nprovisioning URI (issuer `mfa.issuer`, account `user.email ?? user.id`). An earlier\nunconfirmed enrolment is replaced; a CONFIRMED factor is not — disable it first.",
+          "doc": "Start a TOTP enrollment: mint a secret, store it **unconfirmed**, and return it with the provisioning URI (issuer mfa.issuer, account user.email ?? user.id). An earlier unconfirmed enrollment is replaced; a CONFIRMED factor is not — disable it first.",
+          "docFull": "Start a TOTP enrollment: mint a secret, store it **unconfirmed**, and return it with the\nprovisioning URI (issuer `mfa.issuer`, account `user.email ?? user.id`). An earlier\nunconfirmed enrollment is replaced; a CONFIRMED factor is not — disable it first.",
           "params": [
             {
               "name": "config",
@@ -7718,8 +7718,8 @@
           "slug": "pendingMfaSession",
           "kind": "function",
           "signature": "pendingMfaSession(): Promise<AuthSession | null>",
-          "doc": "The current request's session **only while it still owes a second factor** — null for a complete session, and for none. For the app's pages.mfa page: render the code form (or, under mfa.required: \"always\" for a user with no factor yet, the enrolment step) when this returns a session, and redirect onward when it doesn't.",
-          "docFull": "The current request's session **only while it still owes a second factor** — `null`\nfor a complete session, and for none. For the app's `pages.mfa` page: render the code\nform (or, under `mfa.required: \"always\"` for a user with no factor yet, the enrolment\nstep) when this returns a session, and redirect onward when it doesn't.\n\nA pending session grants nothing: {@link auth} and every guard still read it as signed\nout, and it is never slid forward. It is short-lived, and the step-up replaces it with\na fresh session rather than upgrading it.",
+          "doc": "The current request's session **only while it still owes a second factor** — null for a complete session, and for none. For the app's pages.mfa page: render the code form (or, under mfa.required: \"always\" for a user with no factor yet, the enrollment step) when this returns a session, and redirect onward when it doesn't.",
+          "docFull": "The current request's session **only while it still owes a second factor** — `null`\nfor a complete session, and for none. For the app's `pages.mfa` page: render the code\nform (or, under `mfa.required: \"always\"` for a user with no factor yet, the enrollment\nstep) when this returns a session, and redirect onward when it doesn't.\n\nA pending session grants nothing: {@link auth} and every guard still read it as signed\nout, and it is never slid forward. It is short-lived, and the step-up replaces it with\na fresh session rather than upgrading it.",
           "params": [],
           "returns": "The pending AuthSession, or null.",
           "examples": [],
@@ -9827,8 +9827,8 @@
           "slug": "TotpEnrollment",
           "kind": "interface",
           "signature": "interface TotpEnrollment",
-          "doc": "A fresh, unconfirmed TOTP enrolment, as enrollTotp returns it.",
-          "docFull": "A fresh, unconfirmed TOTP enrolment, as {@linkcode enrollTotp} returns it.",
+          "doc": "A fresh, unconfirmed TOTP enrollment, as enrollTotp returns it.",
+          "docFull": "A fresh, unconfirmed TOTP enrollment, as {@linkcode enrollTotp} returns it.",
           "params": [],
           "returns": "",
           "examples": [],

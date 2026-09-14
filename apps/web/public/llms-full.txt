@@ -233,7 +233,12 @@ Persist users with an adapter (`sqliteAuthAdapter({ path })` on `node:sqlite`, o
 `inMemoryAuthAdapter()`), and gate a machine-to-machine API with
 `requireBearer(authConfig, { scope: "pets:write" })` — it self-documents as `bearerAuth`
 for `@denext/openapi` (declare the matching `securitySchemes: { bearerAuth: … }` once in the
-`openapi()` options). Full guide: https://denext.dev/docs/auth
+`openapi()` options). `credentials()` with no `authorize` verifies against the adapter
+(`getUserByEmail` + `getCredential` + the hasher). Passwordless: `providers: [magicLink(),
+emailOtp()]` plus `sendVerificationRequest` (denext ships no mailer). Second factor: an
+enrolled user's sign-in comes back pending; your `pages.mfa` page renders when
+`pendingMfaSession()` returns a session and posts `{ code }` to `/auth/mfa`; enrollment is
+`/auth/mfa/enroll` → `/auth/mfa/confirm`. Full guide: https://denext.dev/docs/auth
 
 **A project-local CLI verb (no plugin):** put it in `denext.config.ts` and run it as a verb.
 
@@ -249,12 +254,18 @@ export default {
 
 **A GUI over the project:** `denext ui` serves a loopback (127.0.0.1) project-management
 page — schema-driven `denext.config.ts` editing (a comment-preserving splice: outside the
-value span it replaces, the file keeps its bytes), plugins, every `generate` kind, Docker
-files, a setup wizard and the project's own verbs. It works with JavaScript disabled, and
+value span it replaces, the file keeps its bytes), plugins with per-plugin option forms and
+JSR search, every `generate` kind, Docker files plus in-place `docker-compose.yml` editing, a
+setup wizard and the project's own verbs. It works with JavaScript disabled, and
 **project code never runs in the UI's process** — every project-touching operation,
 including verb discovery (`denext commands --json`), is a `deno` subprocess.
 `--read-only` prevents writes by the UI, not execution of your config inside that
-discovery child. Docs: https://denext.dev/docs/ui
+discovery child. `--offline` keeps the UI and every process it starts off the network.
+Docs: https://denext.dev/docs/ui
+
+**A Capacitor shell:** `denext/mobile` (client-only) — `isNativeShell()`, `useAppResume`,
+`openExternal`, `useKeyboardInset`, `useBackSwipe`, `SAFE_AREA_CSS`. It talks to Capacitor
+through `window.Capacitor`, so no `@capacitor/*` import. Docs: https://denext.dev/docs/desktop
 
 **A database (zero-npm, server-only module):**
 
@@ -837,7 +848,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface CompiledPattern` — A source pattern compiled to a matcher with its capture keys.
 - `type Component<P> = (props: P & object) => VNode | Promise<VNode>` — A component is a function that receives props and returns a renderable node.
 - `composeMiddleware(entries: MiddlewareEntry[], moduleConfig?: MiddlewareConfig): MiddlewareRunner` — Compose an ordered list of entries into a single MiddlewareRunner.
-- `confirmTotp(config: AuthConfig, user: AuthUser, code: string): Promise<ConfirmTotpResult>` — Confirm a pending enrolment with a code from the authenticator app. On success the factor is marked confirmed and mfa.backupCodes backup codes are minted — returned here in plaintext exactly once, and stored only as hashes. The code's step is claimed, so it can't then be replayed at the step-up.
+- `confirmTotp(config: AuthConfig, user: AuthUser, code: string): Promise<ConfirmTotpResult>` — Confirm a pending enrollment with a code from the authenticator app. On success the factor is marked confirmed and mfa.backupCodes backup codes are minted — returned here in plaintext exactly once, and stored only as hashes. The code's step is claimed, so it can't then be replayed at the step-up.
 - `type ConfirmTotpResult = object | object` — The outcome of confirmTotp: on success, the plaintext backup codes — the only time they exist anywhere; show them to the user once.
 - `connection(): Promise<void>` — connection() (Next.js) — an explicit dynamic-rendering signal. Awaiting it marks the current render as dynamic (per-request), opting the route out of static generation/caching, without reading any specific request data (unlike cookies()/headers()). Resolves once the runtime is ready to handle the request; outside a request it resolves immediately.
 - `cookies(): AwaitableCookieStore` — Access the current request's cookies (reads incoming, writes Set-Cookie).
@@ -876,7 +887,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface EmailProvider` — A passwordless **email** provider: magicLink() mails a single-use sign-in link, emailOtp() a one-time numeric code. Both deliver through AuthConfig.sendVerificationRequest and need an adapter with the verification-token group plus getUserByEmail / createUser / updateUser.
 - `interface EmailProviderOptions` — Options for magicLink and emailOtp.
 - `interface EmailRequestResult` — What a verification or reset request reports — never whether the address exists.
-- `enrollTotp(config: AuthConfig, user: AuthUser): Promise<TotpEnrollment | null>` — Start a TOTP enrolment: mint a secret, store it **unconfirmed**, and return it with the provisioning URI (issuer mfa.issuer, account user.email ?? user.id). An earlier unconfirmed enrolment is replaced; a CONFIRMED factor is not — disable it first.
+- `enrollTotp(config: AuthConfig, user: AuthUser): Promise<TotpEnrollment | null>` — Start a TOTP enrollment: mint a secret, store it **unconfirmed**, and return it with the provisioning URI (issuer mfa.issuer, account user.email ?? user.id). An earlier unconfirmed enrollment is replaced; a CONFIRMED factor is not — disable it first.
 - `type ErrorSpec = number | object` — How a declared error code maps to HTTP: a status, or a status with a default message.
 - `interface ExperimentalConfig` — Opt-in experimental features, set under experimental in denext.config.ts. Each is off by default. A feature lives here only while it is genuinely **incomplete** — being new is not enough — so shipped, complete capabilities (streaming, Live, islands, resumability, SPA mode, Cache Components) are top-level config, not here.
 - `facebook(options: OAuthClientOptions): OAuthProvider` — Facebook (OAuth 2.0, Graph API v19.0). The Graph /me response carries no verification flag, so the mapped user's emailVerified is always undefined, and Facebook may omit the email entirely (an account registered with a phone number, or a revoked permission).
@@ -1032,7 +1043,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `parsePattern(pattern: string): Segment[]` — Parse a route pattern like "blog/[slug]" into an ordered segment list.
 - `interface PeeledLocale` — The result of peeling a locale prefix off a pathname.
 - `peelLocale(pathname: string, i18n: I18nConfig | undefined, host?: string): PeeledLocale` — Peel a leading locale segment off pathname. If the first path segment is a configured locale it is stripped and returned; otherwise the default locale is used and the pathname is returned unchanged.
-- `pendingMfaSession(): Promise<AuthSession | null>` — The current request's session **only while it still owes a second factor** — null for a complete session, and for none. For the app's pages.mfa page: render the code form (or, under mfa.required: "always" for a user with no factor yet, the enrolment step) when this returns a session, and redirect onward when it doesn't.
+- `pendingMfaSession(): Promise<AuthSession | null>` — The current request's session **only while it still owes a second factor** — null for a complete session, and for none. For the app's pages.mfa page: render the code form (or, under mfa.required: "always" for a user with no factor yet, the enrollment step) when this returns a session, and redirect onward when it doesn't.
 - `permanentRedirect(url: Href | parenthesized, type?: RedirectType): never` — Throw to issue a permanent (308) redirect to url.
 - `interface PluginBuildContext` — Context passed to a PluginBuildStep.
 - `type PluginBuildStep = (context: PluginBuildContext) => void | Promise<void>` — A build-time step that emits the plugin's client bundles/assets into outDir.
@@ -1186,7 +1197,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `TOO_LARGE: Symbol` — Sentinel returned by readCappedBody when the body exceeds the cap.
 - `totpAuthUri(options: TotpAuthUriOptions): string` — Build the otpauth://totp/… provisioning URI (Google Authenticator key-URI format) to render as a QR code or a link. The label is Issuer:account with each part percent-encoded (so a : inside either part can't forge the separator), and every query value is percent-encoded too (a space is %20, never +).
 - `interface TotpAuthUriOptions` — Options for totpAuthUri.
-- `interface TotpEnrollment` — A fresh, unconfirmed TOTP enrolment, as enrollTotp returns it.
+- `interface TotpEnrollment` — A fresh, unconfirmed TOTP enrollment, as enrollTotp returns it.
 - `interface TotpVerifyOptions` — Options for verifyTotp.
 - `type TotpVerifyResult = object | object` — The outcome of verifyTotp: on a match, the time step the code belongs to — hand it to the adapter's claimTotpStep so the same code can't be presented twice.
 - `type TranslateFn = (key: string, vars?: TranslationVars) => string` — A translation function: look up key and interpolate any {var} placeholders.
