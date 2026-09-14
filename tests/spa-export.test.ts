@@ -2,9 +2,11 @@
 // src/build/export-pipeline/out-dir.ts): a re-export leaves exactly the new build in `out/`
 // (no stale content-hashed chunk from an earlier one), a failed export leaves the previous
 // `out/` intact, an output dir whose replacement would destroy project files is refused
-// (on the App Router path too), and `spa.precompress: false` ships no `.gz` siblings.
+// (on the App Router and Pages Router paths too, by real location: case variants on a
+// case-insensitive filesystem and symlinks are resolved), and `spa.precompress: false` ships
+// no `.gz` siblings.
 
-import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import { walk } from "@std/fs";
 import { basename, join, relative } from "@std/path";
 import { staticExport } from "../src/build/export.ts";
@@ -145,7 +147,7 @@ Deno.test({
   }
 });
 
-Deno.test("resolveExportOutDir: refuses a dir the export must not replace wholesale", () => {
+Deno.test("resolveExportOutDir: refuses a dir the export must not replace wholesale", async () => {
   const paths = {
     projectDir: "/proj",
     appDir: "/proj/app",
@@ -153,11 +155,11 @@ Deno.test("resolveExportOutDir: refuses a dir the export must not replace wholes
     outDir: "/proj/.denext",
     config: { mode: "spa", spa: { entry: "./src/main.tsx" } },
   } as unknown as ProjectPaths;
-  assertEquals(resolveExportOutDir(paths), "/proj/out");
-  assertEquals(resolveExportOutDir(paths, "build/web"), "/proj/build/web");
+  assertEquals(await resolveExportOutDir(paths), "/proj/out");
+  assertEquals(await resolveExportOutDir(paths, "build/web"), "/proj/build/web");
   // A name that merely STARTS like a protected path (or like `..`) is its own directory.
-  assertEquals(resolveExportOutDir(paths, "app-out"), "/proj/app-out");
-  assertEquals(resolveExportOutDir(paths, "..out"), "/proj/..out");
+  assertEquals(await resolveExportOutDir(paths, "app-out"), "/proj/app-out");
+  assertEquals(await resolveExportOutDir(paths, "..out"), "/proj/..out");
   const refused: Array<[string, string]> = [
     [".", "the project root"],
     ["", "the project root"],
@@ -172,7 +174,199 @@ Deno.test("resolveExportOutDir: refuses a dir the export must not replace wholes
     [".git", "overlaps the project's .git"],
   ];
   for (const [outDir, reason] of refused) {
-    assertThrows(() => resolveExportOutDir(paths, outDir), Error, reason, `outDir "${outDir}"`);
+    await assertRejects(
+      () => resolveExportOutDir(paths, outDir),
+      Error,
+      reason,
+      `outDir "${outDir}"`,
+    );
+  }
+});
+
+/** True when the filesystem holding the temp dir ignores case (APFS / NTFS defaults). */
+async function tempFsIgnoresCase(): Promise<boolean> {
+  const dir = await Deno.makeTempDir({ prefix: "denext_case_probe_" });
+  try {
+    await Deno.writeTextFile(join(dir, "case-probe"), "");
+    return await exists(join(dir, "CASE-PROBE"));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+}
+
+const CASE_INSENSITIVE = await tempFsIgnoresCase();
+
+/** A throwaway project on disk with a `.git/HEAD` and `app/page.tsx` to protect. */
+async function guardedProject(): Promise<{ dir: string; paths: ProjectPaths }> {
+  const dir = await Deno.makeTempDir({ prefix: "denext_out_guard_" });
+  await Deno.mkdir(join(dir, ".git"));
+  await Deno.writeTextFile(join(dir, ".git", "HEAD"), "ref: refs/heads/main\n");
+  await Deno.mkdir(join(dir, "app"));
+  await Deno.writeTextFile(join(dir, "app", "page.tsx"), "export default () => null;\n");
+  await Deno.writeTextFile(join(dir, "deno.json"), "{}\n");
+  const paths = {
+    projectDir: dir,
+    appDir: join(dir, "app"),
+    publicDir: join(dir, "public"),
+    outDir: join(dir, ".denext"),
+    config: null,
+  } as unknown as ProjectPaths;
+  return { dir, paths };
+}
+
+Deno.test({
+  name: "resolveExportOutDir: case variants of protected dirs are refused (case-insensitive FS)",
+  // On a case-sensitive filesystem `.GIT` really is a different directory from `.git`.
+  ignore: !CASE_INSENSITIVE,
+}, async () => {
+  const { dir, paths } = await guardedProject();
+  try {
+    // `.git` and `app/` exist (real path + inode match); `public/`, `node_modules/` and
+    // `.denext/` do not (the case-folded spelling alone must catch those).
+    const refused: Array<[string, string]> = [
+      [".GIT", "overlaps the project's .git"],
+      [".Git", "overlaps the project's .git"],
+      [".GIT/hooks", "overlaps the project's .git"],
+      ["APP", "overlaps the project's app"],
+      ["App/nested", "overlaps the project's app"],
+      ["PUBLIC", "overlaps the project's public"],
+      ["Node_Modules", "overlaps the project's node_modules"],
+      [".DENEXT", "overlaps the project's .denext"],
+    ];
+    for (const [outDir, reason] of refused) {
+      await assertRejects(
+        () => resolveExportOutDir(paths, outDir),
+        Error,
+        reason,
+        `outDir "${outDir}"`,
+      );
+    }
+    assertEquals(await resolveExportOutDir(paths, "OUT"), join(dir, "OUT"));
+    assert(await exists(join(dir, ".git", "HEAD")), ".git is untouched");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test({
+  name: 'staticExport: outDir ".GIT" is refused and .git survives (case-insensitive FS)',
+  ignore: !CASE_INSENSITIVE,
+  ...bundling,
+}, async () => {
+  const dir = await spaFixture();
+  try {
+    await Deno.mkdir(join(dir, ".git"));
+    await Deno.writeTextFile(join(dir, ".git", "HEAD"), "ref: refs/heads/main\n");
+    const before = await filesUnder(dir);
+    await assertRejects(() => staticExport(dir, { outDir: ".GIT" }), Error, "the project's .git");
+    assertEquals(await filesUnder(dir), before, "nothing was written or removed");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("resolveExportOutDir: symlinks are compared by where they really lead", async () => {
+  const { dir, paths } = await guardedProject();
+  const outside = await Deno.makeTempDir({ prefix: "denext_out_guard_outside_" });
+  try {
+    const link = (name: string, to: string) => Deno.symlink(to, join(dir, name), { type: "dir" });
+    await link("to-root", dir);
+    await link("to-git", join(dir, ".git"));
+    await link("to-outside", outside);
+    await link("dangling", join(dir, "nowhere"));
+    await Deno.mkdir(join(dir, "build"));
+    await link("to-build", join(dir, "build"));
+    const refused: Array<[string, string]> = [
+      // The target itself is a link: the swap would act on the link, so it is refused outright.
+      ["to-root", "is a symlink"],
+      ["to-git", "is a symlink"],
+      // A symlinked parent that lands the target inside a protected dir or outside the project.
+      ["to-git/out", "overlaps the project's .git"],
+      ["to-root/.git", "overlaps the project's .git"],
+      ["to-root/app/out", "overlaps the project's app"],
+      ["to-outside/out", "outside the project"],
+      ["dangling/out", "cannot be resolved"],
+      // An existing file is not a dedicated output directory.
+      ["deno.json", "not a directory"],
+    ];
+    for (const [outDir, reason] of refused) {
+      await assertRejects(
+        () => resolveExportOutDir(paths, outDir),
+        Error,
+        reason,
+        `outDir "${outDir}"`,
+      );
+    }
+    // A symlinked parent that resolves to a safe dir inside the project is fine; the lexical
+    // path comes back, as before.
+    assertEquals(await resolveExportOutDir(paths, "to-build/web"), join(dir, "to-build", "web"));
+    assertEquals(await resolveExportOutDir(paths), join(dir, "out"));
+    assert(await exists(join(dir, ".git", "HEAD")), ".git is untouched");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
+  }
+});
+
+/** A throwaway Pages Router project (a `pages/` tree, no `app/`) with a `.git` to protect. */
+async function pagesFixture(): Promise<string> {
+  const dir = await Deno.makeTempDir({ prefix: "denext_pages_export_" });
+  await Deno.writeTextFile(join(dir, "deno.json"), DENO_JSON);
+  await Deno.mkdir(join(dir, "pages"));
+  await Deno.writeTextFile(
+    join(dir, "pages", "index.tsx"),
+    "export default function Home() {\n  return <p>hi</p>;\n}\n",
+  );
+  await Deno.mkdir(join(dir, "public"));
+  await Deno.writeTextFile(join(dir, "public", "kept.txt"), "kept");
+  await Deno.mkdir(join(dir, ".git"));
+  await Deno.writeTextFile(join(dir, ".git", "HEAD"), "ref: refs/heads/main\n");
+  return dir;
+}
+
+Deno.test({
+  name: "staticExport (Pages Router): an unsafe outDir is refused before anything is removed",
+  ...bundling,
+}, async () => {
+  const dir = await pagesFixture();
+  try {
+    await Deno.symlink(join(dir, ".git"), join(dir, "to-git"), { type: "dir" });
+    const before = await filesUnder(dir);
+    const refused: Array<[string, string]> = [
+      [".", "the project root"],
+      [".git", "overlaps the project's .git"],
+      ["to-git", "is a symlink"],
+      ["to-git/out", "overlaps the project's .git"],
+      ["public", "overlaps the project's public"],
+      ...(CASE_INSENSITIVE ? [[".GIT", "overlaps the project's .git"] as [string, string]] : []),
+    ];
+    for (const [outDir, reason] of refused) {
+      await assertRejects(() => staticExport(dir, { outDir }), Error, reason, `outDir "${outDir}"`);
+    }
+    assertEquals(await filesUnder(dir), before, "nothing was written or removed");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test({
+  name: "staticExport (Pages Router): out/ is replaced through the staging swap",
+  ...bundling,
+}, async () => {
+  const dir = await pagesFixture();
+  const out = join(dir, "out");
+  try {
+    const first = await staticExport(dir);
+    assertEquals(first.outDir, out);
+    assertEquals(await filesUnder(out), ["kept.txt"], "public/ lands at the site root");
+    await Deno.remove(join(dir, "public", "kept.txt"));
+    await Deno.writeTextFile(join(dir, "public", "added.txt"), "added");
+    await staticExport(dir);
+    assertEquals(await filesUnder(out), ["added.txt"], "nothing from the earlier export lingers");
+    assert(!(await exists(join(dir, "out.staging"))), "no staging dir left behind");
+    assert(!(await exists(join(dir, "out.prev"))), "no previous-export dir left behind");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
   }
 });
 
