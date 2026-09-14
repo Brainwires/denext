@@ -323,7 +323,6 @@ export async function runPluginTeardown(): Promise<void> {
   teardowns.length = 0;
 }
 
-/** Clear all plugin registrations. For tests that register plugins in-process. */
 /**
  * The current plugin-registry generation — bumped by every {@linkcode resetPlugins}. A caller
  * that resets, then does slow work before {@linkcode applyPlugins} (e.g. importing the
@@ -336,6 +335,7 @@ export function pluginGeneration(): number {
   return generation;
 }
 
+/** Clear all plugin registrations (and bump the generation). For tests that register plugins in-process. */
 export function resetPlugins(): void {
   requestHandlers.length = 0;
   buildSteps.length = 0;
