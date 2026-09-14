@@ -7,7 +7,7 @@
 > pillars in [MISSION.md](./MISSION.md); the standing engineering guardrails and the
 > security policy in [POLICIES.md](./POLICIES.md).
 >
-> `development` is **2.4.2** (the version line `deno task bump` rewrites). The 2.4 line
+> `development` is **2.4.3** (the version line `deno task bump` rewrites). The 2.4 line
 > has shipped — the first-party build-time codecs on JSR, `denext openapi types`, the
 > TanStack Router example, the migration-bed nightly. What remains is the last
 > build-time-purity item, the TanStack Start depth of the router plugins, and the

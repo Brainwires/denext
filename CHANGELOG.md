@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.4.3] - 2026-09-14
+
 ### Added
 
 - **The first-party Markdown renderer gained GFM pipe tables and multi-paragraph quotes
@@ -6598,6 +6600,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.4.3]: https://jsr.io/@denext/denext@2.4.3
 [2.4.2]: https://jsr.io/@denext/denext@2.4.2
 [2.4.1]: https://jsr.io/@denext/denext@2.4.1
 [2.4.0]: https://jsr.io/@denext/denext@2.4.0
