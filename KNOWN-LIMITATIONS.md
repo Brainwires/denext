@@ -408,7 +408,7 @@ are listed in [FEATURES.md](./FEATURES.md). Its documented boundaries:
   `index` imports included), up to 3 levels of breadcrumb across modules. A hook
   imported by a bare, `npm:`/`jsr:`, URL or import-map-alias specifier, through a
   namespace import, or re-exported through a barrel still aborts naming for that
-  component (so does `./auth.js` naming an `auth.ts` file).
+  component.
 - **The "owner stack" is the render-parent chain**, an approximation of React's
   JSX-owner stack (they coincide for the common case); per-element `__source` is
   on the roadmap.

@@ -8,6 +8,34 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Security
+
+- `denext export`: the output-directory guard compares real locations (symlinks resolved, case
+  folded where the filesystem ignores it, inodes matched), so `outDir: ".GIT"` on a
+  case-insensitive disk can no longer select and wipe `.git`, and a symlinked or non-directory
+  target is refused. The Pages Router export now writes through the same guarded staging swap
+  instead of deleting its output directory unchecked.
+- `denext ui`: the token handshake redirects with a single leading slash, so a `//host/…` path
+  can't produce a protocol-relative `Location`; a bare carriage return in a streamed output
+  line is flattened like a newline, so it can't start a new SSE field.
+- `denext ui`: the compose editor treats a file holding U+2028, U+2029 or NEL as read-only (a
+  YAML parser and a line splicer disagree on those), and the plugin-options writer refuses
+  `__proto__` / `constructor` / `prototype` keys and values that aren't plain JSON (`NaN`,
+  functions, `Date`s) instead of silently coercing them.
+
+### Fixed
+
+- The next.config evaluator (`denext migrate` and the `denext ui` next.config panel) reads a
+  CommonJS `next.config.js` (`module.exports`) and calls a function-form config the way Next.js
+  does, `(phase, { defaultConfig })`.
+- `denext ui` compose editor: removing a field's last entry keeps the comment lines inside it;
+  enabling a commented-out service with a blank line inside enables all of it; a failed write is
+  a refusal at the panel instead of a bare 500.
+- DevTools: a custom hook imported as `./auth.js` from `auth.ts` (the TypeScript convention) is
+  named across the import.
+- `denextAuth`: deciding whether a sign-in owes a second factor reads the MFA record the way
+  every other MFA check does (a confirmed record that still holds a secret).
+
 ## [2.5.0-rc.2] - 2026-09-14
 
 ### Added
