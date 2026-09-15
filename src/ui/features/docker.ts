@@ -57,7 +57,7 @@ const MODE_LABEL: Record<DockerMode, string> = {
 /**
  * How a generated file compares to what is on disk. `edited` is hand-edited (no sentinel) — for
  * the compose file that also means the editor can follow it; `opaque` is a hand-edited compose
- * file the editor cannot follow (anchors, flow style, …), shown read-only.
+ * file the editor cannot follow (several documents, a flow-style `services:`, …), shown read-only.
  */
 type FileState = "absent" | "generated" | "edited" | "opaque";
 

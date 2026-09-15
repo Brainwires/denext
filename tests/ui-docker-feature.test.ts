@@ -440,6 +440,8 @@ services:
 
 /** A compose file the editor cannot follow (an anchor + a merge key). */
 const ANCHORED = "x-base: &base\n  image: nginx\nservices:\n  web:\n    <<: *base\n";
+/** Two YAML documents in one file — a shape the editor cannot follow. */
+const OPAQUE = "services:\n  web:\n    image: a\n---\nservices:\n  b:\n    image: y\n";
 
 /** The compose file on disk. */
 function composeOnDisk(h: Harness): Promise<string> {
@@ -557,7 +559,7 @@ Deno.test("compose editor: a hand-written file without the sentinel is 'edited' 
 Deno.test("compose editor: an opaque file is read-only with the regeneration diff; edits are 400", async () => {
   const h = await ui();
   try {
-    await Deno.writeTextFile(join(h.dir, COMPOSE), ANCHORED);
+    await Deno.writeTextFile(join(h.dir, COMPOSE), OPAQUE);
     const payload = await (await get(h, "/api/docker")).json();
     assertEquals(payload.files[1].state, "opaque");
     assertEquals(payload.model, null);
@@ -567,7 +569,7 @@ Deno.test("compose editor: an opaque file is read-only with the regeneration dif
       body,
       "YAML the editor cannot follow — read-only, will not be overwritten",
     );
-    assertStringIncludes(body, "cannot follow line by line");
+    assertStringIncludes(body, "cannot follow it line by line: the file does not parse");
     assertStringIncludes(body, "Regeneration diff");
     assertStringIncludes(body, `+${DOCKER_SENTINEL}`);
     assert(!body.includes('id="compose-web"'), "no edit form for an opaque file");
@@ -586,7 +588,30 @@ Deno.test("compose editor: an opaque file is read-only with the regeneration dif
     });
     assertEquals(json.status, 400);
     assertEquals((await json.json()).ok, false);
-    assertEquals(await composeOnDisk(h), ANCHORED);
+    assertEquals(await composeOnDisk(h), OPAQUE);
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("compose editor: a merge key's fields are shown as inherited, and a set overrides them", async () => {
+  const h = await ui();
+  try {
+    await Deno.writeTextFile(join(h.dir, COMPOSE), ANCHORED);
+    const body = await (await get(h, "/docker")).text();
+    assertStringIncludes(body, 'id="compose-web"');
+    assertStringIncludes(body, "takes image from its merge key (&lt;&lt;)");
+    const json = await postJson(h, "/api/docker", {
+      editor: "compose",
+      ops: [{ op: "set", service: "web", field: "image", value: "caddy" }],
+      confirm: true,
+    });
+    assertEquals(json.status, 200);
+    assertEquals((await json.json()).model.services[0].image, "caddy");
+    assertEquals(
+      await composeOnDisk(h),
+      "x-base: &base\n  image: nginx\nservices:\n  web:\n    image: caddy\n    <<: *base\n",
+    );
   } finally {
     await stop(h);
   }

@@ -6,21 +6,21 @@
 // sequence item per head line, its value on that line or on deeper lines below it — and hands
 // back line spans the editor splices. It never decides meaning on its own: the editor
 // cross-checks every span against the parsed document, and a file this reading cannot follow
-// (flow style, anchors, several documents) is reported as opaque rather than guessed at.
+// (several documents, a flow-style top level) is reported as opaque rather than guessed at.
+// Anchors, aliases and merge keys are followed: a service or field whose value an alias or a
+// merge key supplies is located as such, and the editor decides what an edit to it may do.
 //
 // Build-time only; never imported by a shipped bundle.
 
 import { parse } from "@std/yaml";
 import { isGeneratedDockerFile } from "./docker-template.ts";
 
-/** A file as lines, remembering its line ending and final newline so a rejoin is byte-exact. */
+/** A file as lines, each with the break that ended it, so a rejoin is byte-exact. */
 export interface Doc {
-  /** The file's lines, without their line endings. */
+  /** The file's lines, without their line breaks. */
   readonly lines: string[];
-  /** The line ending the file uses (`"\n"` or `"\r\n"`). */
-  readonly eol: string;
-  /** Whether the file ends with a line ending. */
-  readonly finalNewline: boolean;
+  /** The break after each line: `"\n"`, `"\r\n"` or `"\r"` (`""` after a last line without one). */
+  readonly eols: string[];
 }
 
 /** A run of lines, `[start, end)` as 0-based line indices. */
@@ -58,19 +58,31 @@ export interface CommentedBlock extends Span {
   value: Record<string, unknown>;
 }
 
-/** A bare mapping key, a `"double"`- or a `'single'`-quoted one, then `:` and a space or EOL. */
+/**
+ * A bare mapping key (or the merge key `<<`), a `"double"`- or a `'single'`-quoted one, then `:`
+ * and a space or EOL.
+ */
 const KEY =
-  /^(?:"((?:[^"\\]|\\.)*)"|'((?:[^']|'')*)'|([A-Za-z0-9_$./][\w$./-]*))[ \t]*:(?=[ \t]|$)/;
+  /^(?:"((?:[^"\\]|\\.)*)"|'((?:[^']|'')*)'|(<<|[A-Za-z0-9_$./][\w$./-]*))[ \t]*:(?=[ \t]|$)/;
 /** A block-sequence item indicator. */
 const ITEM = /^-(?=[ \t]|$)/;
 /** A YAML document marker (`---` / `...`) at column 0. */
 const DOC_MARKER = /^(?:---|\.\.\.)(?:[ \t]|$)/;
-/** An anchor (`&a`) or alias (`*a`) where a YAML node may start. */
-const NODE_PROPERTY = /(?:^|:[ \t]+|-[ \t]+|[[{,][ \t]*)[&*][^\s,[\]{}]/;
-/** A merge key. */
-const MERGE_KEY = /<<[ \t]*:/;
-/** Quoted scalars, blanked before the syntax gate looks for anchors and merge keys. */
+/** A document marker with nothing after it but a comment — a line a splice can pass over. */
+const BARE_MARKER = /^(?:---|\.\.\.)[ \t]*(?:#.*)?$/;
+/** Node properties — anchors (`&a`) and tags (`!t`) — that may precede a node on its line. */
+const PROPERTIES = /^(?:[&!]\S*[ \t]*)*/;
+/** An anchor's name where a YAML node may start (quoted scalars and comments blanked first). */
+const ANCHOR = /(?:^|[\s:[{,-])&([\w.-]+)/;
+/** Quoted scalars, blanked before a line is searched for syntax. */
 const QUOTED = /"(?:[^"\\]|\\.)*"|'(?:[^']|'')*'/g;
+/**
+ * Compose's own tags (`!reset`, `!override`), which a generic YAML parser refuses. They are
+ * blanked (same length, so every column stays put) before the file is parsed.
+ */
+const COMPOSE_TAG = /(^|[\s[{,:-])!(?:reset|override)(?=[\s,\]}]|$)/g;
+/** A line break: CRLF, LF, or a lone CR — every break a YAML parser splits a line at. */
+const BREAK = /\r\n|\r|\n/g;
 
 /**
  * Whether `value` is a plain YAML mapping (not a sequence, not null).
@@ -83,26 +95,55 @@ export function isMapping(value: unknown): value is Record<string, unknown> {
     !(value instanceof Date);
 }
 
-/** Split a file into lines — or null when CRLF and LF are mixed (no exact rejoin). */
-function splitDoc(text: string): Doc | null {
-  const crlf = text.split("\r\n").length - 1;
-  const lf = text.split("\n").length - 1;
-  if (crlf !== 0 && crlf !== lf) return null;
-  const eol = crlf ? "\r\n" : "\n";
-  const finalNewline = text.endsWith("\n");
-  const body = finalNewline ? text.slice(0, -eol.length) : text;
-  return { lines: body === "" && !finalNewline ? [] : body.split(eol), eol, finalNewline };
+/** Split a file into lines at every break a YAML parser sees, keeping each break. */
+function splitDoc(text: string): Doc {
+  const lines: string[] = [];
+  const eols: string[] = [];
+  let from = 0;
+  for (const m of text.matchAll(BREAK)) {
+    lines.push(text.slice(from, m.index));
+    eols.push(m[0]);
+    from = m.index + m[0].length;
+  }
+  if (from < text.length) {
+    lines.push(text.slice(from));
+    eols.push("");
+  }
+  return { lines, eols };
+}
+
+/** The break a new line gets at `at`: its neighbour's, else the file's first, else LF. */
+function breakAt(doc: Doc, at: number): string {
+  return doc.eols[at - 1] || doc.eols[at] || doc.eols.find((eol) => eol !== "") || "\n";
 }
 
 /**
- * Join lines back into a file with `doc`'s line ending and final-newline state.
+ * Replace `remove` lines at `at` with `insert` and rejoin the file. A replaced line keeps the
+ * break it had, a new line takes its neighbour's, and the file keeps its final-newline state —
+ * so a file that mixes line endings stays exactly as mixed outside the lines an edit touched.
  *
- * @param doc The file the lines came from.
- * @param lines The (edited) lines.
+ * @param doc The file.
+ * @param at First line replaced.
+ * @param remove How many lines are replaced.
+ * @param insert The lines put in their place (without breaks).
  * @returns The file's new contents.
  */
-export function joinDoc(doc: Doc, lines: readonly string[]): string {
-  return lines.join(doc.eol) + (doc.finalNewline && lines.length ? doc.eol : "");
+export function spliceDoc(
+  doc: Doc,
+  at: number,
+  remove: number,
+  insert: readonly string[],
+): string {
+  const fill = breakAt(doc, at);
+  const kept = doc.eols.slice(at, at + remove);
+  const lines = [...doc.lines];
+  const eols = [...doc.eols];
+  lines.splice(at, remove, ...insert);
+  eols.splice(at, remove, ...insert.map((_, k) => kept[k] ?? ""));
+  const last = lines.length - 1;
+  const bare = doc.eols.at(-1) === "";
+  const end = (i: number) => (i === last && bare ? "" : eols[i] || fill);
+  return lines.map((line, i) => line + end(i)).join("");
 }
 
 /** The number of leading spaces on a line. */
@@ -111,14 +152,14 @@ function indentOf(line: string): number {
 }
 
 /**
- * Whether a line carries no YAML content: blank, or only a comment.
+ * Whether a line carries no YAML content: blank, only a comment, or a bare document marker.
  *
  * @param line One line.
  * @returns Whether the line is blank or a comment.
  */
 export function isInert(line: string): boolean {
   const t = line.trim();
-  return t === "" || t.startsWith("#");
+  return t === "" || t.startsWith("#") || BARE_MARKER.test(line);
 }
 
 /** The column the value starts at: past `headEnd` and the whitespace after it. */
@@ -165,16 +206,43 @@ export function itemHead(line: string, indent: number): Head | null {
 }
 
 /**
- * Whether a head line carries no inline value (only, at most, a comment) — its value, if any,
- * is the block on the lines below.
+ * A head line's inline value, past any anchor or tag: `""` or a comment when the value (if
+ * any) is the block on the lines below.
+ *
+ * @param line The head line.
+ * @param head Its parsed head.
+ * @returns The rest of the line after the node properties.
+ */
+export function inlineValue(line: string, head: Head): string {
+  return line.slice(head.valueCol).replace(PROPERTIES, "");
+}
+
+/**
+ * Whether a head line carries no inline value (only, at most, an anchor, a tag and a comment) —
+ * its value, if any, is the block on the lines below.
  *
  * @param line The head line.
  * @param head Its parsed head.
  * @returns Whether the rest of the line is empty or a comment.
  */
 export function restEmpty(line: string, head: Head): boolean {
-  const rest = line.slice(head.valueCol);
+  const rest = inlineValue(line, head);
   return rest === "" || rest.startsWith("#");
+}
+
+/**
+ * The first anchor (`&name`) the lines define, outside quoted scalars and comments.
+ *
+ * @param lines Some of the file's lines.
+ * @returns The anchor's name, or null when the lines define none.
+ */
+export function anchorIn(lines: readonly string[]): string | null {
+  for (const line of lines) {
+    if (isInert(line)) continue;
+    const m = ANCHOR.exec(line.replace(QUOTED, '""').replace(/(^|\s)#.*$/, ""));
+    if (m) return m[1];
+  }
+  return null;
 }
 
 /**
@@ -238,6 +306,34 @@ export function scanBlock(
   return out;
 }
 
+/**
+ * Blank Compose's own tags so a generic YAML parser reads the file (see {@linkcode COMPOSE_TAG}):
+ * `!reset null` parses as `null`, `!override [x]` as `[x]`.
+ */
+function blankComposeTags(text: string): string {
+  if (!text.includes("!")) return text;
+  const masked = text.replace(QUOTED, (q) => "\0".repeat(q.length));
+  let out = "";
+  let from = 0;
+  for (const m of masked.matchAll(COMPOSE_TAG)) {
+    const at = m.index + m[1].length;
+    const length = m[0].length - m[1].length;
+    out += text.slice(from, at) + " ".repeat(length);
+    from = at + length;
+  }
+  return out + text.slice(from);
+}
+
+/**
+ * Parse a compose file (or a block of one) the way the editor reads it: Compose's tags blanked.
+ *
+ * @param text YAML text.
+ * @returns The parsed value (throws on a syntax error).
+ */
+function parseCompose(text: string): unknown {
+  return parse(blankComposeTags(text));
+}
+
 /** Index mapping entries by key, refusing a key written twice. */
 function toMap(entries: Entry[] | string): Map<string, Entry> | string {
   if (typeof entries === "string") return entries;
@@ -250,19 +346,12 @@ function toMap(entries: Entry[] | string): Map<string, Entry> | string {
 }
 
 /**
- * Refuse what a line splice cannot follow: document markers (several documents) and anchors,
- * aliases and merge keys (one edit could change several places at once).
+ * Refuse a document marker that carries content (`--- {…}`). A bare one can only open or close
+ * the single document the parser already accepted, so the scan passes over it.
  */
 function syntaxGate(lines: readonly string[]): string | null {
-  for (let i = 0; i < lines.length; i++) {
-    if (DOC_MARKER.test(lines[i])) return `line ${i + 1} is a YAML document marker`;
-    if (isInert(lines[i])) continue;
-    const code = lines[i].trim().replace(QUOTED, '""').replace(/(^|\s)#.*$/, "");
-    if (NODE_PROPERTY.test(code) || MERGE_KEY.test(code)) {
-      return `line ${i + 1} uses a YAML anchor, alias or merge key`;
-    }
-  }
-  return null;
+  const at = lines.findIndex((line) => DOC_MARKER.test(line) && !BARE_MARKER.test(line));
+  return at === -1 ? null : `line ${at + 1} puts content on a YAML document marker`;
 }
 
 /**
@@ -296,7 +385,7 @@ function blockValue(
 ): Record<string, unknown> | null {
   const text = block.map((l) => uncommentLine(l, indent).slice(indent)).join("\n");
   try {
-    const value = parse(text);
+    const value = parseCompose(text);
     if (!isMapping(value) || Object.keys(value).length !== 1) return null;
     return isMapping(value[name]) ? value[name] : null;
   } catch {
@@ -391,6 +480,14 @@ export interface ComposeService {
   profiles: string[];
   /** Whether the service is written out as comments (only `toggleService` applies to it). */
   commented: boolean;
+  /** Fields the service takes from a merge key (`<<`) rather than writing them itself. */
+  inherited: string[];
+  /**
+   * How an active service's value is written when it is not a block mapping: an alias of
+   * another node (`web: *base`) or a flow mapping (`web: { image: x }`). The first edit
+   * rewrites it as a block mapping.
+   */
+  inline?: "alias" | "flow";
   /** 1-based line of the service's `name:` line (`# name:` when commented). */
   line: number;
 }
@@ -409,8 +506,12 @@ export interface ComposeModel {
 
 /** An active service's lines: its entry under `services:` plus its fields by key. */
 export interface Service extends Entry {
+  /** Its fields by key (empty for an inline service); `<<` is a merge key. */
   fields: Map<string, Entry>;
+  /** The column its fields start at. */
   fieldIndent: number;
+  /** Set when its value is not a block mapping (see {@linkcode ComposeService.inline}). */
+  inline?: "alias" | "flow";
 }
 
 /** A compose file read both ways — parsed, and located line by line. */
@@ -435,7 +536,6 @@ const LINE_SEPARATORS = new RegExp(`[${String.fromCharCode(0x2028, 0x2029, 0x85)
  */
 export function load(text: string): State | string {
   const doc = splitDoc(text);
-  if (doc === null) return "the file mixes CRLF and LF line endings";
   // A YAML parser treats U+2028 / U+2029 / NEL as line breaks where a line splicer (and a
   // reader of the panel) does not, so a crafted file could hide a key or a whole service from
   // the editor that docker still runs. Such a file is read-only.
@@ -444,7 +544,7 @@ export function load(text: string): State | string {
   }
   let raw: unknown;
   try {
-    raw = parse(text);
+    raw = parseCompose(text);
   } catch (e) {
     return `the file does not parse as YAML: ${String((e as Error).message).split("\n")[0]}`;
   }
@@ -462,10 +562,14 @@ function shapeGate(raw: unknown): string | null {
   return bad ? `service "${bad[0]}" is not a mapping` : null;
 }
 
-/** Whether a scan found exactly the keys the parse did. */
+/**
+ * Whether a scan found exactly the keys the parse did. Behind a merge key (`<<`) the parse also
+ * holds the keys the merge supplied, so there the scan's own keys only have to be among them.
+ */
 function sameKeys(found: Map<string, Entry>, raw: Raw): boolean {
-  const keys = Object.keys(raw);
-  return keys.length === found.size && keys.every((k) => found.has(k));
+  const own = [...found.keys()].filter((key) => key !== "<<");
+  if (!own.every((key) => Object.hasOwn(raw, key))) return false;
+  return found.has("<<") || own.length === Object.keys(raw).length;
 }
 
 /** Locate `services:`, every active service and field, and the commented services. */
@@ -513,17 +617,26 @@ function scanServices(
   if (!sameKeys(found, raw)) return "the services could not be located line by line";
   const out = new Map<string, Service>();
   for (const [name, e] of found) {
-    const fields = restEmpty(lines[e.start], e)
-      ? toMap(scanBlock(lines, e.start + 1, e.end, keyHead, true))
-      : `service "${name}" is written in flow style`;
-    if (typeof fields === "string") return fields;
-    if (!sameKeys(fields, raw[name] as Raw)) {
-      return `the fields of service "${name}" could not be located line by line`;
-    }
-    const first = fields.values().next().value;
-    out.set(name, { ...e, fields, fieldIndent: first ? first.indent : e.indent + 2 });
+    const service = serviceAt(lines, name, e, raw[name] as Raw);
+    if (typeof service === "string") return service;
+    out.set(name, service);
   }
   return out;
+}
+
+/** One active service located: its fields, or — an alias or a flow mapping — just its lines. */
+function serviceAt(lines: readonly string[], name: string, e: Entry, raw: Raw): Service | string {
+  if (!restEmpty(lines[e.start], e)) {
+    const inline = inlineValue(lines[e.start], e).startsWith("*") ? "alias" : "flow";
+    return { ...e, fields: new Map(), fieldIndent: e.indent + 2, inline };
+  }
+  const fields = toMap(scanBlock(lines, e.start + 1, e.end, keyHead, true));
+  if (typeof fields === "string") return fields;
+  if (!sameKeys(fields, raw)) {
+    return `the fields of service "${name}" could not be located line by line`;
+  }
+  const first = fields.values().next().value;
+  return { ...e, fields, fieldIndent: first ? first.indent : e.indent + 2 };
 }
 
 /** A parsed scalar as text; a mapping or sequence as its JSON. */
@@ -566,8 +679,17 @@ export function envEntries(env: unknown): { key: string; value: string }[] {
   });
 }
 
+/** How an active service came to hold its fields: what a merge key supplied, and its form. */
+type Provenance = Pick<ComposeService, "inherited" | "inline">;
+
 /** One service's model entry. */
-function describe(name: string, v: Raw, commented: boolean, index: number): ComposeService {
+function describe(
+  name: string,
+  v: Raw,
+  commented: boolean,
+  index: number,
+  provenance: Provenance,
+): ComposeService {
   return {
     name,
     ...(isScalar(v.image) ? { image: text(v.image) } : {}),
@@ -582,7 +704,16 @@ function describe(name: string, v: Raw, commented: boolean, index: number): Comp
     profiles: texts(v.profiles),
     commented,
     line: index + 1,
+    ...provenance,
   };
+}
+
+/** Where an active service's fields come from (see {@linkcode Provenance}). */
+function provenanceOf(service: Service, raw: Raw): Provenance {
+  const inherited = service.fields.has("<<")
+    ? Object.keys(raw).filter((key) => !service.fields.has(key))
+    : [];
+  return service.inline ? { inherited, inline: service.inline } : { inherited };
 }
 
 /**
@@ -593,9 +724,12 @@ function describe(name: string, v: Raw, commented: boolean, index: number): Comp
  */
 export function toModel(state: State): ComposeModel {
   const services = (state.raw.services ?? {}) as Raw;
-  const active = [...state.services.values()]
-    .map((s) => describe(s.key, services[s.key] as Raw, false, s.start));
-  const commented = state.commented.map((c) => describe(c.name, c.value, true, c.start));
+  const active = [...state.services.values()].map((s) => {
+    const raw = services[s.key] as Raw;
+    return describe(s.key, raw, false, s.start, provenanceOf(s, raw));
+  });
+  const commented = state.commented
+    .map((c) => describe(c.name, c.value, true, c.start, { inherited: [] }));
   return {
     sentinel: isGeneratedDockerFile(state.text),
     services: [...active, ...commented].sort((a, b) => a.line - b.line),

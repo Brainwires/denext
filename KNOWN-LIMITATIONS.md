@@ -310,9 +310,12 @@ four documented bounds of the opt-in:
   out or back in. A new service, a mapping `build:` (context, dockerfile, args), a long-form
   `networks:` and everything else is edited by hand; a long-syntax port or
   volume (a mapping) can be removed but not rewritten, and a flow-style field
-  (`ports: ["80:80"]`) is refused. A file with anchors, aliases, merge keys, flow-style
-  services, several documents (`---`) or mixed CRLF/LF line endings is **opaque** —
-  read-only, with the regeneration diff.
+  (`ports: ["80:80"]`) is refused. A file holding several YAML documents, or whose `services:`
+  is written in flow style, is **opaque**: it is read-only, with the reason and the regeneration
+  diff.
+- **A field a service takes from a merge key (`<<`) can be overridden but not deleted.**
+  Setting it writes an override into the service. Removing it would need Compose's `!reset`
+  tag, which the editor does not write.
 - **A third-party plugin's options form needs a published schema.** A JSR plugin gets one
   only if its package publishes `denext.catalog.optionsSchema` in its `deno.json` (or
   `jsr.json`). The UI reads it from `jsr.io` for the version `deno.lock` resolved — so not

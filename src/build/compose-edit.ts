@@ -12,29 +12,34 @@
 //   3. SPLICE only the lines one operation touches, then RE-PARSE the result and compare it with
 //      the same change applied to the parsed model — a mismatch is a refusal, never a write.
 //
-// The operation set is closed: image, restart, ports, environment, depends_on, volumes, and
-// commenting a whole service out or back in. Every other byte of the file is left as it was.
+// The operation set is closed: image, restart, build, ports, environment, depends_on, volumes,
+// networks, and commenting a whole service out or back in. Every other byte of the file is left
+// as it was — except a service written as an alias or a flow mapping, which its first edit
+// rewrites as a block mapping, and a field an alias or a merge key supplied, which an edit
+// writes out as the service's own copy.
 //
 // Build-time only; never imported by a shipped bundle.
 
-import { parse } from "@std/yaml";
 import type { EditResult } from "./config-edit.ts";
+import { emitEntry, yamlScalar } from "./compose-emit.ts";
 import { createUnifiedDiff } from "./patch-diff.ts";
 import {
+  anchorIn,
   commentLine,
   type ComposeModel,
   type Entry,
   envEntries,
+  inlineValue,
   isInert,
   isMapping,
   itemHead,
-  joinDoc,
   keyHead,
   load,
   restEmpty,
   scanBlock,
   type Service,
   type Span,
+  spliceDoc,
   type State,
   texts,
   toModel,
@@ -47,10 +52,8 @@ export type { ComposeModel, ComposeService } from "./compose-scan.ts";
 const LABEL = "docker-compose.yml";
 /** How much of the file a refusal to read it quotes back. */
 const SNIPPET_MAX = 200;
-/** Words a YAML 1.1 reader (older compose tooling) takes for a boolean or null. */
-const YAML11_WORDS = /^(?:y|n|yes|no|on|off|true|false|null|~)$/i;
-/** Text a YAML reader may take for a number (or, in YAML 1.1, a sexagesimal `5432:5432`). */
-const NUMBER_LIKE = /^[-+.]?\d/;
+/** Anchors an inline value starts with — kept when the value is rewritten. */
+const LEADING_ANCHORS = /^(?:&\S+[ \t]+)*/;
 /** An environment variable name this editor writes. */
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_.-]*$/;
 /**
@@ -92,9 +95,19 @@ export type ComposeOp =
   /** Comment an active service block out, or uncomment a commented one, byte for byte. */
   | { op: "toggleService"; service: string };
 
+/**
+ * What {@linkcode applyComposeEdits} answers: the new contents and one diff — plus `notes`, when
+ * an edit also changed another node that repeats the edited one through an alias or a merge
+ * key — or a refusal.
+ */
+export type ComposeEditResult =
+  | { ok: true; source: string; diff: string; notes: string[] }
+  | Refusal;
+
 // --- internal types ---------------------------------------------------------
 
 type Raw = Record<string, unknown>;
+type Refusal = Extract<EditResult, { ok: false }>;
 type SetOp = Extract<ComposeOp, { op: "set" }>;
 type PortsOp = Extract<ComposeOp, { op: "ports" }>;
 type EnvOp = Extract<ComposeOp, { op: "env" }>;
@@ -129,19 +142,41 @@ interface Children {
   indent: number;
 }
 
+/**
+ * A field whose value an alias (`ports: *shared`) or the service's merge key supplies: an edit
+ * gives the service its own copy, written out whole.
+ */
+interface Whole {
+  whole: true;
+  /** The field's own line, when it has one (an alias); absent for an inherited field. */
+  field?: Entry;
+}
+
 // --- reading ----------------------------------------------------------------
 
 /**
  * Read a compose file into the model the Docker panel renders.
  *
  * @param text The file's contents.
- * @returns The model, or null when the file is opaque — it does not parse, is not a mapping of
- * service mappings, or uses syntax a line splice cannot follow (anchors, aliases, merge keys,
- * flow-style services, several documents, mixed line endings).
+ * @returns The model, or null when the file is opaque — it does not parse (several documents do
+ * not), is not a mapping of service mappings, or uses syntax a line splice cannot follow (a
+ * flow-style `services:`, a document marker carrying content, a Unicode line separator).
  */
 export function readCompose(text: string): ComposeModel | null {
+  return inspectCompose(text).model;
+}
+
+/**
+ * Read a compose file into the panel's model, or say why the editor cannot follow it.
+ *
+ * @param text The file's contents.
+ * @returns The model, or `model: null` and the reason the file is opaque.
+ */
+export function inspectCompose(
+  text: string,
+): { model: ComposeModel; reason?: undefined } | { model: null; reason: string } {
   const state = load(text);
-  return typeof state === "string" ? null : toModel(state);
+  return typeof state === "string" ? { model: null, reason: state } : { model: toModel(state) };
 }
 
 // --- writing ----------------------------------------------------------------
@@ -153,27 +188,29 @@ export function readCompose(text: string): ComposeModel | null {
  * @param text The compose file's current contents.
  * @param ops The edits, in order.
  * @param label The file name the diff is labelled with (default `docker-compose.yml`).
- * @returns The new contents and one unified diff for the whole call, or an honest refusal
- * (an opaque file, an unknown or commented-out service, a flow-style or long-syntax field, a
- * duplicate entry, or an edit that would not read back as intended).
+ * @returns The new contents, one unified diff for the whole call and notes on what else an
+ * alias carried an edit to — or an honest refusal (an opaque file, an unknown or commented-out
+ * service, a flow-style or long-syntax field, a duplicate entry, or an edit that would not read
+ * back as intended).
  */
 export function applyComposeEdits(
   text: string,
   ops: ComposeOp[],
   label: string = LABEL,
-): EditResult {
+): ComposeEditResult {
   let state = load(text);
   if (typeof state === "string") return bail(state, text.slice(0, SNIPPET_MAX));
+  const notes: string[] = [];
   for (const op of ops) {
-    const next = step(state, op);
+    const next = step(state, op, notes);
     if ("ok" in next) return next;
     state = next;
   }
-  return { ok: true, source: state.text, diff: diffOf(text, state.text, label) };
+  return { ok: true, source: state.text, diff: diffOf(text, state.text, label), notes };
 }
 
 /** A refusal, optionally carrying the patch the edit would have made. */
-function bail(reason: string, snippet: string, diff?: string): EditResult {
+function bail(reason: string, snippet: string, diff?: string): Refusal {
   return diff ? { ok: false, reason, snippet, diff } : { ok: false, reason, snippet };
 }
 
@@ -187,25 +224,127 @@ function commentedOf(state: State): Record<string, unknown> {
   return Object.fromEntries(state.commented.map((c) => [c.name, structuredClone(c.value)]));
 }
 
+/**
+ * A deep copy that shares nothing. The parser hands an alias the anchored node itself, so a
+ * copy that kept that sharing would let an expectation "change" every alias of a node at once —
+ * exactly what the read-back must catch.
+ *
+ * @param value A parsed YAML value.
+ * @returns The same value, every mapping and sequence its own.
+ */
+function detach<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(detach) as T;
+  if (value instanceof Date) return new Date(value.getTime()) as T;
+  if (!isMapping(value)) return value;
+  return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, detach(v)])) as T;
+}
+
+/** The active service an operation targets, if any. */
+function targetOf(state: State, op: ComposeOp): Service | undefined {
+  return state.services.get(op.service);
+}
+
 /** Apply one operation and prove it: the result must re-read as exactly the intended change. */
-function step(state: State, op: ComposeOp): State | EditResult {
-  const change = plan(state, op);
+function step(state: State, op: ComposeOp, notes: string[]): State | Refusal {
+  const ready = normalized(state, op);
+  if ("ok" in ready) return ready;
+  const change = plan(ready, op);
   if (typeof change === "string") return bail(change, JSON.stringify(op));
-  const lines = [...state.doc.lines];
-  lines.splice(change.at, change.remove, ...change.insert);
-  const next = joinDoc(state.doc, lines);
-  const want: Expected = { raw: structuredClone(state.raw), commented: commentedOf(state) };
+  return commit(ready, change, op, notes);
+}
+
+/** Splice one planned change in and re-read it; the new state, or a refusal carrying its diff. */
+function commit(state: State, change: Change, op: ComposeOp, notes: string[]): State | Refusal {
+  const next = spliceDoc(state.doc, change.at, change.remove, change.insert);
+  const want: Expected = { raw: detach(state.raw), commented: commentedOf(state) };
   change.expect(want);
   const reread = load(next);
-  if (
-    typeof reread === "string" || !deepEqual(reread.raw, want.raw) ||
-    !deepEqual(commentedOf(reread), want.commented)
-  ) {
-    const reason = "the edited file does not read back as the requested change — denext " +
-      "refuses to write it";
-    return bail(reason, JSON.stringify(op), diffOf(state.text, next));
+  const carried = typeof reread === "string" ? null : readsBack(state, change, op, reread, want);
+  if (carried === null) {
+    return bail(mismatchReason(state, change, op), JSON.stringify(op), diffOf(state.text, next));
   }
-  return reread;
+  notes.push(...carried);
+  return reread as State;
+}
+
+/** A parsed document's services (none when `services:` is empty). */
+function servicesOf(raw: Raw): Raw {
+  return isMapping(raw.services) ? raw.services : {};
+}
+
+/** The keys whose values differ between two mappings. */
+function differing(a: Raw, b: Raw): string[] {
+  return [...new Set([...Object.keys(a), ...Object.keys(b)])]
+    .filter((key) => !deepEqual(a[key], b[key]));
+}
+
+/** Whether a splice stays inside one service's lines. */
+function within(change: Splice, span: Span): boolean {
+  return change.at >= span.start && change.at + change.remove <= span.end;
+}
+
+/**
+ * Whether the edited file reads back as the intended change: `[]` when it does exactly, a note
+ * when an alias or a merge key also carries the change elsewhere, null when it does not.
+ *
+ * The note is sound because the splice stayed inside the target service: every other line is
+ * unchanged, so anything else that reads differently now repeats part of that service through
+ * an alias or a merge key — the file's own meaning, which the note names.
+ */
+function readsBack(
+  state: State,
+  change: Change,
+  op: ComposeOp,
+  reread: State,
+  want: Expected,
+): string[] | null {
+  if (!deepEqual(commentedOf(reread), want.commented)) return null;
+  if (deepEqual(reread.raw, want.raw)) return [];
+  const svc = targetOf(state, op);
+  if (!svc || !within(change, svc)) return null;
+  const [got, exp] = [servicesOf(reread.raw), servicesOf(want.raw)];
+  if (!deepEqual(got[svc.key], exp[svc.key])) return null;
+  const others = differing(got, exp).map((name) => `service "${name}"`);
+  const top = differing(reread.raw, want.raw).filter((key) => key !== "services");
+  const also = [...others, ...top.map((key) => `"${key}"`)].join(", ");
+  return [
+    `this edit to "${svc.key}" also changes ${also}, which repeats part of it through an alias ` +
+    "or a merge key",
+  ];
+}
+
+/** Why a planned change was refused at the read-back, naming an anchor or merge key it met. */
+function mismatchReason(state: State, change: Change, op: ComposeOp): string {
+  const reason = "the edited file does not read back as the requested change — denext refuses " +
+    "to write it";
+  const anchor = anchorIn(state.doc.lines.slice(change.at, change.at + change.remove));
+  if (anchor !== null) return `${reason} (it rewrites the anchor &${anchor})`;
+  const svc = targetOf(state, op);
+  return svc?.fields.has("<<")
+    ? `${reason} (the merge key (<<) of "${svc.key}" supplies part of its value)`
+    : reason;
+}
+
+/**
+ * Before an edit to a service written as an alias (`web: *base`) or a flow mapping, rewrite it
+ * as a block mapping of the same value — proved by the same read-back — so the edit can splice
+ * its fields. An alias becomes the service's own copy; its head line's comment is kept.
+ */
+function normalized(state: State, op: ComposeOp): State | Refusal {
+  const svc = targetOf(state, op);
+  if (!svc?.inline) return state;
+  const value = rawService(state.raw, svc.key);
+  if (Object.keys(value).length === 0) {
+    return bail(
+      `service "${svc.key}" is an empty mapping — add a field by hand`,
+      JSON.stringify(op),
+    );
+  }
+  const line = state.doc.lines[svc.start];
+  const tail = commentTail(line.slice(svc.valueCol)) ?? "";
+  const insert = emitEntry(svc.key, value, svc.indent, { head: line.slice(0, svc.headEnd), tail });
+  const change: Change = { at: svc.start, remove: svc.end - svc.start, insert, expect: () => {} };
+  return commit(state, change, op, []);
 }
 
 /** Plan one operation against the current file. */
@@ -239,26 +378,6 @@ function deepEqual(a: unknown, b: unknown): boolean {
   const keys = Object.keys(a);
   return keys.length === Object.keys(b).length &&
     keys.every((k) => Object.hasOwn(b, k) && deepEqual((a as Raw)[k], (b as Raw)[k]));
-}
-
-/** Whether `value` survives as itself when written as a plain (unquoted) YAML scalar. */
-function plainReadsBack(value: string): boolean {
-  if (value === "" || value !== value.trim() || /[\r\n\t]/.test(value)) return false;
-  try {
-    const back = parse(`k: ${value}`);
-    return isMapping(back) && back.k === value;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * A string as a YAML scalar: plain when every YAML reader keeps it a string, else
- * double-quoted (JSON's escapes are valid YAML double-quoted escapes).
- */
-function yamlScalar(value: string): string {
-  const plain = !YAML11_WORDS.test(value) && !NUMBER_LIKE.test(value) && plainReadsBack(value);
-  return plain ? value : JSON.stringify(value);
 }
 
 // --- splices ----------------------------------------------------------------
@@ -302,7 +421,8 @@ function commentTail(rest: string): string | null {
 
 /**
  * Replace an entry's value with the scalar `text`: in place on its head line when the value is
- * inline (an inline comment is kept), else the whole entry becomes `lead + text`.
+ * inline (an anchor it opens with and an inline comment are kept), else the whole entry becomes
+ * `lead + text`.
  */
 function rewrite(
   lines: readonly string[],
@@ -318,11 +438,14 @@ function rewrite(
     };
   }
   const line = lines[entry.start];
-  const tail = commentTail(line.slice(entry.valueCol));
+  const rest = line.slice(entry.valueCol);
+  const anchors = LEADING_ANCHORS.exec(rest)![0];
+  const tail = commentTail(rest.slice(anchors.length));
   if (tail === null) {
     return `line ${entry.start + 1} carries a value denext cannot rewrite in place`;
   }
-  return { at: entry.start, remove: 1, insert: [line.slice(0, entry.headEnd) + " " + text + tail] };
+  const head = line.slice(0, entry.headEnd) + " " + anchors;
+  return { at: entry.start, remove: 1, insert: [head + text + tail] };
 }
 
 /** The line a missing `key` field is created at (see {@linkcode ANCHORS}). */
@@ -371,22 +494,28 @@ function fieldExpect<T extends unknown[] | Raw>(
   };
 }
 
-/** Locate a block list/mapping field's children, refusing flow style and the other form. */
+/**
+ * Locate a block list/mapping field's children, refusing flow style and the other form. A field
+ * an alias or the merge key supplies is {@linkcode Whole}: the edit writes the service a copy.
+ */
 function childrenOf(
   state: State,
   svc: Service,
   key: string,
   form: "list" | "map",
-): Children | string {
+): Children | Whole | string {
   const field = svc.fields.get(key);
-  if (!field) return { items: [], indent: svc.fieldIndent + 2 };
-  const lines = state.doc.lines;
   const value = rawService(state.raw, svc.key)[key];
-  if (!restEmpty(lines[field.start], field)) {
-    return `${key} of "${svc.key}" is written in flow style — edit it by hand`;
-  }
-  if (value !== null && (form === "list") !== Array.isArray(value)) {
+  if (value !== undefined && value !== null && (form === "list") !== Array.isArray(value)) {
     return `${key} of "${svc.key}" is not written as a ${form} — edit it by hand`;
+  }
+  if (!field) {
+    return value === undefined ? { items: [], indent: svc.fieldIndent + 2 } : { whole: true };
+  }
+  const lines = state.doc.lines;
+  if (!restEmpty(lines[field.start], field)) {
+    if (inlineValue(lines[field.start], field).startsWith("*")) return { whole: true, field };
+    return `${key} of "${svc.key}" is written in flow style — edit it by hand`;
   }
   const head = form === "list" ? itemHead : keyHead;
   const items = scanBlock(lines, field.start + 1, field.end, head, form === "map");
@@ -395,6 +524,30 @@ function childrenOf(
     return `the entries of ${key} in "${svc.key}" could not be located line by line`;
   }
   return { field, items, indent: items.length ? items[0].indent : field.indent + 2 };
+}
+
+/**
+ * Give a service its own copy of a field an alias or its merge key supplied, holding `value`:
+ * the alias line is replaced (its comment kept), an inherited field is written as an override.
+ */
+function ownCopy(
+  state: State,
+  svc: Service,
+  key: string,
+  field: Entry | undefined,
+  value: unknown,
+): Change {
+  const expect = (want: Expected) => {
+    rawService(want.raw, svc.key)[key] = detach(value);
+  };
+  if (!field) {
+    const insert = emitEntry(key, value, svc.fieldIndent);
+    return { at: afterFields(svc, key), remove: 0, insert, expect };
+  }
+  const line = state.doc.lines[field.start];
+  const tail = commentTail(line.slice(field.valueCol)) ?? "";
+  const insert = emitEntry(key, value, field.indent, { head: line.slice(0, field.headEnd), tail });
+  return { at: field.start, remove: field.end - field.start, insert, expect };
 }
 
 /** Append one child line (`body` is the line without its indentation), creating the field. */
@@ -445,8 +598,10 @@ function setScalar(state: State, op: SetOp): Change | string {
     else s[op.field] = op.value;
   };
   if (op.value === null) {
-    return field
-      ? { ...cut(field), expect }
+    if (field) return { ...cut(field), expect };
+    return Object.hasOwn(rawService(state.raw, op.service), op.field)
+      ? `${op.field} of "${op.service}" comes from its merge key (<<) — set a value to override ` +
+        "it, or edit the anchor by hand"
       : `service "${op.service}" has no ${op.field} to delete`;
   }
   if (typeof op.value !== "string" || op.value === "") return `${op.field} needs a non-empty value`;
@@ -456,20 +611,32 @@ function setScalar(state: State, op: SetOp): Change | string {
   return { at: afterFields(svc, op.field), remove: 0, insert, expect };
 }
 
+/** Apply a list edit to a parsed list in place; false when it names an entry the list lacks. */
+function applyListEdit(list: unknown[], edit: ListEdit): boolean {
+  if (edit.kind === "add") list.push(edit.value);
+  else if (!(edit.index in list)) return false;
+  else if (edit.kind === "remove") list.splice(edit.index, 1);
+  else list[edit.index] = edit.value;
+  return true;
+}
+
 /** Append, drop or replace one entry of a block list field. */
 function editList(state: State, service: string, key: string, edit: ListEdit): Change | string {
   const svc = serviceOf(state, service);
   if (typeof svc === "string") return svc;
   const ch = childrenOf(state, svc, key, "list");
   if (typeof ch === "string") return ch;
+  const missing = `${key} of "${service}" has no entry #${"index" in edit ? edit.index : ""}`;
+  if ("whole" in ch) {
+    const list = detach(rawService(state.raw, service)[key] as unknown[]);
+    return applyListEdit(list, edit) ? ownCopy(state, svc, key, ch.field, list) : missing;
+  }
   const expect = fieldExpect(service, key, (): unknown[] => [], (list) => {
-    if (edit.kind === "add") list.push(edit.value);
-    else if (edit.kind === "remove") list.splice(edit.index, 1);
-    else list[edit.index] = edit.value;
+    applyListEdit(list, edit);
   });
   if (edit.kind === "add") return { ...append(svc, key, ch, "- " + edit.text), expect };
   const item = ch.items[edit.index];
-  if (!item) return `${key} of "${service}" has no entry #${edit.index}`;
+  if (!item) return missing;
   if (edit.kind === "remove") return { ...dropChild(state.doc.lines, ch, item), expect };
   return withExpect(rewrite(state.doc.lines, item, edit.text, "- "), expect);
 }
@@ -549,14 +716,25 @@ function envList(state: State, op: EnvOp, env: unknown[]): Change | string {
   return editList(state, op.service, "environment", edit);
 }
 
+/** Apply an env edit to a parsed `KEY: value` mapping in place. */
+function applyEnvEdit(env: Raw, op: EnvOp): void {
+  if (op.action === "delete") delete env[op.key];
+  else env[op.key] = op.value;
+}
+
 /** `env` against a `KEY: value` mapping (also how a missing `environment:` is created). */
 function envMap(state: State, svc: Service, op: EnvOp): Change | string {
   const ch = childrenOf(state, svc, "environment", "map");
   if (typeof ch === "string") return ch;
+  if ("whole" in ch) {
+    const env = detach(rawService(state.raw, op.service).environment as Raw);
+    if (op.action === "delete" && !Object.hasOwn(env, op.key)) return noEnv(op);
+    applyEnvEdit(env, op);
+    return ownCopy(state, svc, "environment", ch.field, env);
+  }
   const entry = ch.items.find((e) => e.key === op.key);
   const expect = fieldExpect(op.service, "environment", (): Raw => ({}), (env) => {
-    if (op.action === "delete") delete env[op.key];
-    else env[op.key] = op.value;
+    applyEnvEdit(env, op);
   });
   if (op.action === "delete") {
     return entry ? { ...dropChild(state.doc.lines, ch, entry), expect } : noEnv(op);

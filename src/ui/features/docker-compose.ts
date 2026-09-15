@@ -10,17 +10,19 @@
 // still the one the page was rendered from (`_base`, a SHA-256), re-applies the same operations
 // and writes only when they still apply.
 //
-// The operation set is compose-edit's closed one (image, restart, ports, environment, depends_on,
-// volumes, commenting a service out / back in). Every posted service name, variable key, list
-// index and dependency is checked against the parsed model first — the editor never writes a
-// service or key the file did not report. A file the model cannot follow (anchors, flow style,
-// several documents, …) is "opaque": shown read-only, next to the regeneration diff.
+// The operation set is compose-edit's closed one (image, restart, build, ports, environment,
+// depends_on, volumes, networks, commenting a service out / back in). Every posted service name,
+// variable key, list index and dependency is checked against the parsed model first — the editor
+// never writes a service or key the file did not report. A file the model cannot follow (several
+// documents, a flow-style `services:`, …) is "opaque": shown read-only, with the reason, next to
+// the regeneration diff.
 
 import {
   applyComposeEdits,
   type ComposeModel,
   type ComposeOp,
   type ComposeService,
+  inspectCompose,
   readCompose,
 } from "../../build/compose-edit.ts";
 import { createUnifiedDiff } from "../../build/patch-diff.ts";
@@ -61,6 +63,8 @@ interface Snapshot {
   readonly text?: string;
   /** The parsed model (`null` when the file is absent or opaque). */
   readonly model: ComposeModel | null;
+  /** Why the editor cannot follow the file (an opaque one only). */
+  readonly reason?: string;
   /** SHA-256 hex of the contents (`""` when there is no file). */
   readonly base: string;
 }
@@ -115,7 +119,9 @@ async function readSnapshot(dir: string): Promise<Snapshot> {
   } catch {
     return { name, model: null, base: "" };
   }
-  return { name, text, model: readCompose(text), base: await stampOf(text) };
+  const { model, reason } = inspectCompose(text);
+  const base = await stampOf(text);
+  return reason === undefined ? { name, text, model, base } : { name, text, model, reason, base };
 }
 
 /**
@@ -172,7 +178,7 @@ function editableFile(snap: Snapshot, base: string): Editable | Blocked {
   }
   if (snap.model === null) {
     return {
-      reason: `${snap.name} uses YAML the editor cannot follow — it is read-only here`,
+      reason: `${snap.name} is read-only here — the editor cannot follow it: ${snap.reason}`,
       status: 400,
     };
   }
@@ -212,7 +218,7 @@ export async function composeSubmit(
   if (typeof ops === "string") return await deny(ops, 400);
   const result = applyComposeEdits(file.text, ops, file.name);
   if (!result.ok) return await deny(result.reason, 400, result.diff);
-  const outcome = outcomeOf(result.source, result.diff, write);
+  const outcome = outcomeOf(result.source, result.diff, write, result.notes);
   if (!write) {
     if (ctx.json) return jsonResponse({ ...outcome, base: file.base });
     const preview = {
@@ -263,10 +269,14 @@ async function writeCompose(
   }
 }
 
-/** What a preview or a write of `source` reports. */
-function outcomeOf(source: string, diff: string, applied: boolean): Outcome {
+/**
+ * What a preview or a write of `source` reports: the edit's own notes (what an alias carried it
+ * to) first, then what `docker compose up` would refuse.
+ */
+function outcomeOf(source: string, diff: string, applied: boolean, notes: string[]): Outcome {
   const model = readCompose(source);
-  const warnings = model ? [...volumeWarnings(model), ...networkWarnings(model)] : [];
+  const refusals = model ? [...volumeWarnings(model), ...networkWarnings(model)] : [];
+  const warnings = [...notes, ...refusals];
   return diff
     ? { ok: true, applied, model, warnings, diff }
     : { ok: true, applied, model, warnings };
@@ -673,18 +683,22 @@ function composeBody(ctx: UiContext, snap: Snapshot, regenerated: string): VNode
       " yet — write the Docker files above, then edit its services here.",
     );
   }
-  if (snap.model === null) return h(OpaqueFile, { name: snap.name, text: snap.text, regenerated });
+  if (snap.model === null) {
+    const reason = snap.reason ?? "";
+    return h(OpaqueFile, { name: snap.name, text: snap.text, reason, regenerated });
+  }
   return h(ComposeEditor, {
     ctx,
     file: { name: snap.name, text: snap.text, model: snap.model, base: snap.base },
   });
 }
 
-/** An opaque file: read-only, next to what the template would write instead. */
+/** An opaque file: read-only, with the reason, next to what the template would write instead. */
 function OpaqueFile(
-  { name, text, regenerated }: {
+  { name, text, reason, regenerated }: {
     readonly name: string;
     readonly text: string;
+    readonly reason: string;
     readonly regenerated: string;
   },
 ): VNode {
@@ -695,10 +709,8 @@ function OpaqueFile(
     h(
       Note,
       null,
-      `This ${name} uses YAML the editor cannot follow line by line (anchors, aliases, ` +
-        "merge keys, flow-style services, several documents or mixed line endings), so it is " +
-        "read-only here — edit it by hand. The regeneration diff shows what the template would " +
-        "write instead.",
+      `This ${name} is read-only here — the editor cannot follow it line by line: ${reason}. ` +
+        "Edit it by hand; the regeneration diff shows what the template would write instead.",
     ),
     h("details", null, h("summary", null, "Current file"), h(Out, null, text)),
     h("h3", null, "Regeneration diff"),
@@ -854,6 +866,7 @@ function ActiveService(props: ServiceProps & { readonly id: string }): VNode {
       h(SubmitButton, { value: "apply", label: "Preview changes", disabled }),
       h(SubmitButton, { value: "toggle", label: "Comment out", disabled, ghost: true }),
     ),
+    provenanceNote(svc),
     h(ScalarFields, { svc, id }),
     h(PortsEditor, { svc, disabled }),
     h(EnvEditor, { svc, disabled }),
@@ -875,6 +888,26 @@ function ActiveService(props: ServiceProps & { readonly id: string }): VNode {
       disabled,
     }),
   );
+}
+
+/**
+ * Where a service's fields come from when the file does not spell them out in the service: a
+ * merge key, an alias of another service, or a flow mapping — and what an edit does about it.
+ */
+function provenanceNote(svc: ComposeService): VNode | null {
+  const parts: string[] = [];
+  if (svc.inherited.length) {
+    parts.push(
+      `takes ${svc.inherited.join(", ")} from its merge key (<<) — a value set here overrides it`,
+    );
+  }
+  if (svc.inline === "alias") {
+    parts.push("is an alias of another service — the first edit gives it its own copy");
+  }
+  if (svc.inline === "flow") {
+    parts.push("is written in flow style — the first edit rewrites it in block style");
+  }
+  return parts.length ? h("p", { class: "lead" }, `This service ${parts.join("; ")}.`) : null;
 }
 
 /** The picker's choices: unset, the four policies, and the file's own value when it is other. */

@@ -27,6 +27,23 @@ and this project adheres to
   plugin is active yet where it runs, it looks the config up on the first request.
 - `denext ui`'s compose editor edits `build` (a context path) and `networks` (add and remove,
   with a warning for a network the top-level `networks:` doesn't declare).
+- `denext ui`'s compose editor follows more of the YAML real compose files use; each of these
+  used to make the whole file read-only:
+  - Line endings: a file mixing LF, CRLF and lone CR is editable, and every line keeps the
+    ending it had.
+  - Document markers: a single document may open with `---` and close with `...`.
+  - Compose's `!reset` and `!override` tags are read.
+  - Anchors, aliases and merge keys:
+    - A service lists the fields it takes from a merge key (`<<`), and setting one writes an
+      override.
+    - Editing a list or map that an alias or a merge key supplies gives the service its own
+      copy.
+    - A service written as an alias or a flow mapping is rewritten as a block mapping by its
+      first edit.
+    - Editing a node that an alias repeats elsewhere is allowed, and the preview names what
+      else changes.
+
+  A file that is still opaque now says why.
 - `denext ui`: a JSR plugin that publishes `denext.catalog.optionsSchema` (a JSON Schema) in its
   `deno.json` or `jsr.json` gets an options form, like the first-party ones, linked from the
   Plugins panel's Third-party list. The UI reads the file from `jsr.io` for the version

@@ -465,11 +465,28 @@ was rendered from: a stale one is a `409` and writes nothing. Every service, var
 and dependency a request names is checked against the parsed file first, so the editor never
 writes one the file did not report (a `400` otherwise).
 
-A file the editor cannot follow line by line is **opaque**, and gets the regeneration view it
-always had: the file shown read-only next to the regeneration diff, with no edit form. That is
-a file that does not parse, whose top level or `services:` is not a block mapping, or that uses
-anchors, aliases or merge keys, flow-style services, several documents (`---`), or mixed CRLF
-and LF line endings.
+Anchors, aliases and merge keys are followed:
+
+- A service lists the fields it takes from a merge key (`<<`), and setting one writes an
+  override into the service.
+- Editing a list or map that an alias (`ports: *shared`) or a merge key supplies gives the
+  service its own copy of it, with the edit applied.
+- A service written as an alias (`web2: *web`) or as a flow mapping (`web: { image: x }`) is
+  rewritten as a block mapping by its first edit.
+- Editing a node that an alias repeats elsewhere is allowed, and the preview names what else it
+  changes.
+
+Every line keeps the line ending it had, so a file that mixes LF and CRLF stays exactly as mixed.
+A single document may open with `---` and close with `...`, and Compose's `!reset` and
+`!override` tags are read.
+
+A file the editor cannot follow line by line is **opaque**. It gets the regeneration view it
+always had: the file shown read-only next to the regeneration diff, with no edit form, and the
+reason. That is a file that:
+
+- does not parse (two YAML documents in one file do not);
+- has a top level or `services:` that is not a block mapping;
+- puts content on a document marker (`--- {…}`).
 
 A file that still carries the sentinel is editable as well, with a note: **Write files**
 regenerates it and discards edits made here, so delete the header line to keep them.
@@ -659,13 +676,13 @@ above.
 
 ## What it does not do yet
 
-| Not yet                      | Why                                                                                                                                                                                                                 |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Compose edits beyond the set | The editor owns `image`, `restart`, `build`, `ports`, `environment`, `depends_on`, `volumes`, `networks` and commenting a service out or in; anything else — a new service, `build`, `networks` — is edited by hand |
-| YAML the editor can't follow | Anchors, aliases, merge keys, flow-style services, several documents and mixed line endings make the file opaque: read-only, with the regeneration diff                                                             |
-| Code-valued options          | A callback, a variable, a `{}` schema part or a function-wrapped list is shown read-only, never rewritten                                                                                                           |
-| Agent / MCP control          | Deferred; every panel already answers a JSON twin so it can be added without changing the wire                                                                                                                      |
-| A denext app                 | The UI is server-rendered components built with `h()` — no bundler, no hydration — not an App Router app, which is what lets it start instantly with no build                                                       |
+| Not yet                      | Why                                                                                                                                                                                                                |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Compose edits beyond the set | The editor owns `image`, `restart`, `build`, `ports`, `environment`, `depends_on`, `volumes`, `networks` and commenting a service out or in; anything else — a new service, a mapping `build:` — is edited by hand |
+| YAML the editor can't follow | Several YAML documents in one file, or a flow-style `services:`, make the file opaque: read-only, with the reason and the regeneration diff                                                                        |
+| Code-valued options          | A callback, a variable, a `{}` schema part or a function-wrapped list is shown read-only, never rewritten                                                                                                          |
+| Agent / MCP control          | Deferred; every panel already answers a JSON twin so it can be added without changing the wire                                                                                                                     |
+| A denext app                 | The UI is server-rendered components built with `h()` — no bundler, no hydration — not an App Router app, which is what lets it start instantly with no build                                                      |
 
 ## See also
 

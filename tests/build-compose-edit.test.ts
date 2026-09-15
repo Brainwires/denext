@@ -75,16 +75,145 @@ Deno.test("readCompose: unsupported shapes are opaque (null)", () => {
       "- a\n- b\n", // top level is a list
       "services:\n  - web\n", // services is a list
       "services:\n  web: nginx\n", // service is a scalar
-      "x-common: &c\n  image: a\nservices:\n  web:\n    <<: *c\n", // anchors + merge keys
-      "services:\n  web:\n    image: &i nginx\n", // an anchor alone
       "services: { web: { image: a } }\n", // flow-style services
-      "services:\n  web: { image: a }\n", // flow-style service
       "services:\n  a:\n    image: x\n---\nservices:\n  b:\n    image: y\n", // multi-document
       "services:\n  web:\n    image: [unclosed\n", // does not parse
-      "services:\r\n  web:\n    image: x\r\n", // mixed line endings
+      "--- {services: {web: {image: a}}}\n", // content on a document marker
       "volumes: {}\n", // no services
     ]
   ) assertEquals(readCompose(text), null, text);
+});
+
+Deno.test("mixed line endings: each line keeps its break; a new line takes its neighbour's", () => {
+  const text = 'services:\r\n  web:\n    image: a\r\n    ports:\n      - "1:1"\r\n';
+  assert(readCompose(text), "a file mixing CRLF and LF is editable");
+  assertEquals(
+    edit(text, [{ op: "ports", service: "web", action: "add", value: "2:2" }]),
+    text + '      - "2:2"\r\n',
+  );
+  assertEquals(
+    edit(text, [{ op: "set", service: "web", field: "image", value: "b" }]),
+    text.replace("image: a", "image: b"),
+  );
+  // a lone CR is a line break to a YAML parser, so it is one to the editor too
+  const cr = "services:\r  web:\r    image: a\r";
+  assertEquals(
+    edit(cr, [{ op: "set", service: "web", field: "restart", value: "always" }]),
+    "services:\r  web:\r    image: a\r    restart: always\r",
+  );
+});
+
+Deno.test("a single document may open with --- and close with ...", () => {
+  const text = "--- # compose\nservices:\n  web:\n    image: a\n...\n";
+  assert(readCompose(text));
+  assertEquals(
+    edit(text, [
+      { op: "set", service: "web", field: "image", value: "b" },
+      { op: "set", service: "web", field: "restart", value: "always" },
+    ]),
+    "--- # compose\nservices:\n  web:\n    image: b\n    restart: always\n...\n",
+  );
+});
+
+const MERGED = [
+  "x-base: &base",
+  "  image: nginx",
+  "  restart: always",
+  "services:",
+  "  web:",
+  "    <<: *base",
+  "    ports:",
+  '      - "80:80"',
+  "  api:",
+  "    <<: *base",
+  "",
+].join("\n");
+
+Deno.test("merge keys: a service shows what it inherits; setting a field overrides it", () => {
+  const web = readCompose(MERGED)!.services[0];
+  assertEquals([web.image, web.restart, web.inherited], ["nginx", "always", ["image", "restart"]]);
+  const next = edit(MERGED, [{ op: "set", service: "api", field: "image", value: "node" }]);
+  assertStringIncludes(next, "  api:\n    image: node\n    <<: *base\n");
+  assertEquals(readCompose(next)!.services.map((s) => s.image), ["nginx", "node"]);
+  assertMatch(
+    refusal(MERGED, [{ op: "set", service: "api", field: "image", value: null }]),
+    /merge key/,
+  );
+});
+
+Deno.test("an aliased or inherited list gets the service's own copy when edited", () => {
+  const text = 'x-ports: &ports\n  - "80:80"\nservices:\n  web:\n    ports: *ports # shared\n' +
+    "  api:\n    ports: *ports\n";
+  const next = edit(text, [{ op: "ports", service: "web", action: "add", value: "443:443" }]);
+  assertStringIncludes(
+    next,
+    '  web:\n    ports: # shared\n      - "80:80"\n      - "443:443"\n  api:\n    ports: *ports\n',
+  );
+  assertEquals(readCompose(next)!.services.map((s) => s.ports), [["80:80", "443:443"], ["80:80"]]);
+  const env = 'x-env: &env\n  environment:\n    A: "1"\nservices:\n  web:\n    <<: *env\n' +
+    "    image: x\n";
+  const out = edit(env, [{ op: "env", service: "web", action: "set", key: "B", value: "2" }]);
+  assertEquals(readCompose(out)!.services[0].environment, [
+    { key: "A", value: "1" },
+    { key: "B", value: "2" },
+  ]);
+  assertEquals(
+    readCompose(edit(env, [{ op: "env", service: "web", action: "delete", key: "A" }]))!
+      .services[0].environment,
+    [],
+  );
+});
+
+Deno.test("editing an anchored node that an alias repeats says so in a note", () => {
+  const text = "services:\n  base:\n    image: &img nginx\n  web:\n    image: *img\n";
+  const r = applyComposeEdits(text, [
+    { op: "set", service: "base", field: "image", value: "caddy" },
+  ]);
+  assert(r.ok);
+  assertStringIncludes(r.source, "    image: &img caddy\n");
+  assertEquals(readCompose(r.source)!.services.map((s) => s.image), ["caddy", "caddy"]);
+  assertEquals(r.notes.length, 1);
+  assertStringIncludes(r.notes[0], 'service "web"');
+  const own = edit(text, [{ op: "set", service: "web", field: "image", value: "node" }]);
+  assertEquals(readCompose(own)!.services.map((s) => s.image), ["nginx", "node"]);
+  const plain = applyComposeEdits(GEN, [
+    { op: "set", service: "web", field: "image", value: "x" },
+  ]);
+  assert(plain.ok);
+  assertEquals(plain.notes, []);
+});
+
+Deno.test("a flow-style or aliased service is rewritten in block style by its first edit", () => {
+  const flow = 'services:\n  web: { image: a, ports: ["80:80"] } # front\n  db:\n    image: pg\n';
+  assertEquals(readCompose(flow)!.services[0].inline, "flow");
+  assertEquals(
+    edit(flow, [{ op: "set", service: "web", field: "image", value: "b" }]),
+    'services:\n  web: # front\n    image: b\n    ports:\n      - "80:80"\n  db:\n    image: pg\n',
+  );
+  const alias = "services:\n  web: &web\n    image: a\n  web2: *web\n";
+  assertEquals(readCompose(alias)!.services[1].inline, "alias");
+  assertEquals(
+    edit(alias, [{ op: "set", service: "web2", field: "image", value: "b" }]),
+    "services:\n  web: &web\n    image: a\n  web2:\n    image: b\n",
+  );
+  assertMatch(
+    refusal("services:\n  web: {}\n", [{ op: "set", service: "web", field: "image", value: "x" }]),
+    /empty mapping/,
+  );
+});
+
+Deno.test("Compose's !reset and !override tags parse, and a field carrying one is editable", () => {
+  const text = 'services:\n  web:\n    image: !reset null\n    ports: !override\n      - "80:80"\n';
+  const web = readCompose(text)!.services[0];
+  assertEquals([web.image, web.ports], [undefined, ["80:80"]]);
+  const next = edit(text, [
+    { op: "set", service: "web", field: "image", value: "nginx" },
+    { op: "ports", service: "web", action: "add", value: "443:443" },
+  ]);
+  assertStringIncludes(
+    next,
+    '    image: nginx\n    ports: !override\n      - "80:80"\n      - "443:443"\n',
+  );
 });
 
 Deno.test("set image: one line changes; comments and neighbours are byte-identical", () => {
