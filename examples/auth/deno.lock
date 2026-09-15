@@ -41,14 +41,14 @@
       "jsr:@denext/avif@0.1.2": {},
       "jsr:@denext/content-collections@0.4.0": {
         "dependencies": [
-          "jsr:@denext/denext@^2.5.0-rc.4",
+          "jsr:@denext/denext@^2.5.0-rc.5",
           "jsr:@std/front-matter@1",
           "jsr:@std/fs@1",
           "jsr:@std/path@1",
           "jsr:@std/yaml@1"
         ]
       },
-      "jsr:@denext/denext@2.5.0-rc.4": {
+      "jsr:@denext/denext@2.5.0-rc.5": {
         "dependencies": [
           "jsr:@astral/astral@~0.5.3",
           "jsr:@denext/lightningcss@^1.0.0-rc.72",
@@ -72,13 +72,13 @@
       },
       "jsr:@denext/effect@0.1.0": {
         "dependencies": [
-          "jsr:@denext/denext@^2.5.0-rc.4",
+          "jsr:@denext/denext@^2.5.0-rc.5",
           "npm:effect@^3.22.0"
         ]
       },
       "jsr:@denext/graphql@0.2.0": {
         "dependencies": [
-          "jsr:@denext/denext@^2.5.0-rc.4",
+          "jsr:@denext/denext@^2.5.0-rc.5",
           "jsr:@std/path@1",
           "npm:graphql-yoga@^5.10.0",
           "npm:graphql@^16.9.0"
@@ -86,7 +86,7 @@
       },
       "jsr:@denext/htmx@2.0.11": {
         "dependencies": [
-          "jsr:@denext/denext@^2.5.0-rc.4",
+          "jsr:@denext/denext@^2.5.0-rc.5",
           "jsr:@std/path@1"
         ]
       },
@@ -94,20 +94,20 @@
       "jsr:@denext/og@0.1.1": {},
       "jsr:@denext/openapi@0.3.0": {
         "dependencies": [
-          "jsr:@denext/denext@^2.5.0-rc.4",
+          "jsr:@denext/denext@^2.5.0-rc.5",
           "jsr:@std/path@1"
         ]
       },
       "jsr:@denext/pages-router@0.10.0": {
         "dependencies": [
-          "jsr:@denext/denext@^2.5.0-rc.4",
+          "jsr:@denext/denext@^2.5.0-rc.5",
           "jsr:@std/path@1"
         ]
       },
       "jsr:@denext/photon@0.3.6": {},
       "jsr:@denext/react-router@0.1.1": {
         "dependencies": [
-          "jsr:@denext/denext@^2.5.0-rc.4",
+          "jsr:@denext/denext@^2.5.0-rc.5",
           "jsr:@std/fs@1",
           "jsr:@std/path@1"
         ]
