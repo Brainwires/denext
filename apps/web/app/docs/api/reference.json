@@ -486,6 +486,18 @@
           "denextOnly": true
         },
         {
+          "name": "CredentialsSignInResult",
+          "slug": "CredentialsSignInResult",
+          "kind": "interface",
+          "signature": "interface CredentialsSignInResult",
+          "doc": "What a credentials sign-in resolves; a refused sign-in rejects instead.",
+          "docFull": "What a `credentials` sign-in resolves; a refused sign-in rejects instead.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "CSSProperties",
           "slug": "CSSProperties",
           "kind": "interface",
@@ -2384,7 +2396,7 @@
           "name": "signIn",
           "slug": "signIn",
           "kind": "function",
-          "signature": "signIn(provider: string, options?: SignInOptions): Promise<unknown>",
+          "signature": "signIn(provider: string, options: SignInOptions & object): Promise<CredentialsSignInResult>",
           "doc": "Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with redirect: false, resolves with the URL it would have gone to); for a Credentials provider (pass credentials) it POSTs and resolves with the result.",
           "docFull": "Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with\n`redirect: false`, resolves with the URL it would have gone to); for a Credentials\nprovider (pass `credentials`) it POSTs and resolves with the result.",
           "params": [
@@ -3746,7 +3758,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 2.5.0-rc.4",
+          "signature": "VERSION: 2.5.0-rc.5",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -5082,7 +5094,7 @@
           "name": "confirmTotp",
           "slug": "confirmTotp",
           "kind": "function",
-          "signature": "confirmTotp(config: AuthConfig, user: AuthUser, code: string): Promise<ConfirmTotpResult>",
+          "signature": "confirmTotp(config: AuthConfig, input: object): Promise<ConfirmTotpResult>",
           "doc": "Confirm a pending enrollment with a code from the authenticator app. On success the factor is marked confirmed and mfa.backupCodes backup codes are minted — returned here in plaintext exactly once, and stored only as hashes. The code's step is claimed, so it can't then be replayed at the step-up.",
           "docFull": "Confirm a pending enrollment with a code from the authenticator app. On success the\nfactor is marked confirmed and `mfa.backupCodes` backup codes are minted — returned\nhere in plaintext exactly once, and stored only as hashes. The code's step is claimed,\nso it can't then be replayed at the step-up.",
           "params": [
@@ -5091,15 +5103,11 @@
               "doc": "The app's auth config."
             },
             {
-              "name": "user",
-              "doc": "The user confirming."
-            },
-            {
-              "name": "code",
-              "doc": "The code the user typed."
+              "name": "input",
+              "doc": "The user confirming, and the code they typed."
             }
           ],
-          "returns": "{ ok: true, backupCodes }, or { ok: false } for a wrong or replayed code, no pending enrollment, or an already-confirmed factor.",
+          "returns": "{ ok: true, backupCodes }, or { ok: false, error }.",
           "examples": [],
           "denextOnly": true
         },
@@ -5108,8 +5116,8 @@
           "slug": "ConfirmTotpResult",
           "kind": "typeAlias",
           "signature": "type ConfirmTotpResult = object | object",
-          "doc": "The outcome of confirmTotp: on success, the plaintext backup codes — the only time they exist anywhere; show them to the user once.",
-          "docFull": "The outcome of {@linkcode confirmTotp}: on success, the plaintext backup codes — the\nonly time they exist anywhere; show them to the user once.",
+          "doc": "The outcome of confirmTotp: on success, the plaintext backup codes — the only time they exist anywhere; show them to the user once. \"invalid_code\": a wrong or replayed code. \"not_pending\": no enrollment awaits confirmation (none started, already confirmed, or replaced meanwhile).",
+          "docFull": "The outcome of {@linkcode confirmTotp}: on success, the plaintext backup codes — the\nonly time they exist anywhere; show them to the user once. `\"invalid_code\"`: a wrong or\nreplayed code. `\"not_pending\"`: no enrollment awaits confirmation (none started, already\nconfirmed, or replaced meanwhile).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -5622,8 +5630,8 @@
         {
           "name": "EmailRequestResult",
           "slug": "EmailRequestResult",
-          "kind": "interface",
-          "signature": "interface EmailRequestResult",
+          "kind": "typeAlias",
+          "signature": "type EmailRequestResult = object | object",
           "doc": "What a verification or reset request reports — never whether the address exists.",
           "docFull": "What a verification or reset request reports — never whether the address exists.",
           "params": [],
@@ -5635,20 +5643,32 @@
           "name": "enrollTotp",
           "slug": "enrollTotp",
           "kind": "function",
-          "signature": "enrollTotp(config: AuthConfig, user: AuthUser): Promise<TotpEnrollment | null>",
+          "signature": "enrollTotp(config: AuthConfig, session: AuthSession): Promise<EnrollTotpResult>",
           "doc": "Start a TOTP enrollment: mint a secret, store it **unconfirmed**, and return it with the provisioning URI (issuer mfa.issuer, account user.email ?? user.id). An earlier unconfirmed enrollment is replaced; a CONFIRMED factor is not — disable it first.",
-          "docFull": "Start a TOTP enrollment: mint a secret, store it **unconfirmed**, and return it with the\nprovisioning URI (issuer `mfa.issuer`, account `user.email ?? user.id`). An earlier\nunconfirmed enrollment is replaced; a CONFIRMED factor is not — disable it first.",
+          "docFull": "Start a TOTP enrollment: mint a secret, store it **unconfirmed**, and return it with the\nprovisioning URI (issuer `mfa.issuer`, account `user.email ?? user.id`). An earlier\nunconfirmed enrollment is replaced; a CONFIRMED factor is not — disable it first.\n\nFrom a complete session this needs a recent sign-in (`session.authTime` within\n`mfa.freshness`, five minutes at least), exactly as `POST {basePath}/mfa/enroll` does: a\nstolen long-lived session must not set up a factor of its own and lock the owner out. A\npending session (`mfa.required: \"always\"`) is minutes old and may enroll.",
           "params": [
             {
               "name": "config",
               "doc": "The app's auth config."
             },
             {
-              "name": "user",
-              "doc": "The user enrolling."
+              "name": "session",
+              "doc": "The enrolling user's session (auth(), or pendingMfaSession())."
             }
           ],
-          "returns": "The secret and URI, or null when the user already has a confirmed factor.",
+          "returns": "{ ok: true, secret, uri }, or { ok: false, error }.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "EnrollTotpResult",
+          "slug": "EnrollTotpResult",
+          "kind": "typeAlias",
+          "signature": "type EnrollTotpResult = parenthesized | object",
+          "doc": "The outcome of enrollTotp: the fresh secret and its URI, or why none was minted — \"already_enrolled\" (a confirmed factor exists; disable it first) or \"reauth_required\" (a complete session that didn't sign in recently).",
+          "docFull": "The outcome of {@linkcode enrollTotp}: the fresh secret and its URI, or why none was minted\n— `\"already_enrolled\"` (a confirmed factor exists; disable it first) or `\"reauth_required\"`\n(a complete session that didn't sign in recently).",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         },
@@ -7180,7 +7200,7 @@
               "doc": "The user."
             }
           ],
-          "returns": "Whether a factor is enrolled and confirmed, and how many backup codes remain.",
+          "returns": "Whether a confirmed factor is on file, whether an enrollment awaits confirmation, and how many backup codes remain.",
           "examples": [],
           "denextOnly": true
         },
@@ -8464,8 +8484,8 @@
           "slug": "resetPassword",
           "kind": "function",
           "signature": "resetPassword(config: AuthConfig, input: object): Promise<ResetPasswordResult>",
-          "doc": "Redeem a password-reset token and set a new password: the configured hasher hashes it, adapter.setCredential stores it, and every server-side session of the user is revoked. Fires passwordReset (after sessionRevoked).",
-          "docFull": "Redeem a password-reset token and set a new password: the configured `hasher` hashes it,\n`adapter.setCredential` stores it, and every server-side session of the user is revoked.\nFires `passwordReset` (after `sessionRevoked`).\n\nThe password is checked (8–1024 characters) **before** the token is touched, so a\nrefused password leaves the link usable.",
+          "doc": "Redeem a password-reset token and set a new password: the configured hasher hashes it, adapter.setCredential stores it, and every server-side session and bearer API token of the user is revoked — a reset is how an owner takes an account back, so nothing a thief minted with a stolen session survives it. Fires passwordReset (after sessionRevoked).",
+          "docFull": "Redeem a password-reset token and set a new password: the configured `hasher` hashes it,\n`adapter.setCredential` stores it, and every server-side session and bearer API token of\nthe user is revoked — a reset is how an owner takes an account back, so nothing a thief\nminted with a stolen session survives it. Fires `passwordReset` (after `sessionRevoked`).\n\nThe password is checked (8–1024 characters) **before** the token is touched, so a\nrefused password leaves the link usable.",
           "params": [
             {
               "name": "config",
@@ -9006,6 +9026,18 @@
           "examples": [
             "const sp = searchParamsRecord(new URLSearchParams(\"a=1&a=2&b=x\"));\nsp.a;      // [\"1\", \"2\"]\nsp.b;      // \"x\"\nsp.raw.get(\"b\"); // \"x\""
           ],
+          "denextOnly": true
+        },
+        {
+          "name": "SecondFactorResult",
+          "slug": "SecondFactorResult",
+          "kind": "typeAlias",
+          "signature": "type SecondFactorResult = object | object",
+          "doc": "The outcome of verifySecondFactor: the method that verified, or why nothing did — \"invalid_code\" (wrong, replayed or spent) or \"not_enrolled\" (no confirmed factor).",
+          "docFull": "The outcome of {@linkcode verifySecondFactor}: the method that verified, or why nothing did\n— `\"invalid_code\"` (wrong, replayed or spent) or `\"not_enrolled\"` (no confirmed factor).",
+          "params": [],
+          "returns": "",
+          "examples": [],
           "denextOnly": true
         },
         {
@@ -10175,7 +10207,7 @@
           "name": "verifySecondFactor",
           "slug": "verifySecondFactor",
           "kind": "function",
-          "signature": "verifySecondFactor(config: AuthConfig, userId: string, code: string): Promise<MfaMethod | null>",
+          "signature": "verifySecondFactor(config: AuthConfig, input: object): Promise<SecondFactorResult>",
           "doc": "Check a second-factor code for a user with a confirmed factor: first as a TOTP code (claiming its step — a replay is refused), else as a backup code (spent on a match).",
           "docFull": "Check a second-factor code for a user with a confirmed factor: first as a TOTP code\n(claiming its step — a replay is refused), else as a backup code (spent on a match).",
           "params": [
@@ -10184,15 +10216,11 @@
               "doc": "The app's auth config."
             },
             {
-              "name": "userId",
-              "doc": "The user."
-            },
-            {
-              "name": "code",
-              "doc": "The code the user typed (TOTP digits or a backup code, hyphen optional)."
+              "name": "input",
+              "doc": "The user, and the code they typed (TOTP digits or a backup code, hyphen optional)."
             }
           ],
-          "returns": "\"totp\" or \"bcp\" for the method that verified, or null.",
+          "returns": "{ ok: true, method } (\"totp\" or \"bcp\"), or { ok: false, error }.",
           "examples": [],
           "denextOnly": true
         },
@@ -10648,6 +10676,18 @@
           "returns": "",
           "examples": [],
           "denextOnly": false
+        },
+        {
+          "name": "CredentialsSignInResult",
+          "slug": "CredentialsSignInResult",
+          "kind": "interface",
+          "signature": "interface CredentialsSignInResult",
+          "doc": "What a credentials sign-in resolves; a refused sign-in rejects instead.",
+          "docFull": "What a `credentials` sign-in resolves; a refused sign-in rejects instead.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "dynamic",
@@ -11638,7 +11678,7 @@
           "name": "signIn",
           "slug": "signIn",
           "kind": "function",
-          "signature": "signIn(provider: string, options?: SignInOptions): Promise<unknown>",
+          "signature": "signIn(provider: string, options: SignInOptions & object): Promise<CredentialsSignInResult>",
           "doc": "Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with redirect: false, resolves with the URL it would have gone to); for a Credentials provider (pass credentials) it POSTs and resolves with the result.",
           "docFull": "Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with\n`redirect: false`, resolves with the URL it would have gone to); for a Credentials\nprovider (pass `credentials`) it POSTs and resolves with the result.",
           "params": [

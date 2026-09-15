@@ -503,6 +503,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `createElement`
 - `createRef<T>(): object` — React.createRef — create a mutable ref object { current: null } (used by class components and imperative code).
 - `createResource<T>(factory: () => Promise<T>): () => T` — A tiny cache for turning an async factory into a stable, suspense-friendly resource. Reading it either returns the value or suspends.
+- `interface CredentialsSignInResult` — What a credentials sign-in resolves; a refused sign-in rejects instead.
 - `interface CSSProperties` — Inline style object (permissive).
 - `denextImageLoader(options: unknown): string` — The default ImageLoader: points at denext's /_denext/image endpoint, which resizes + re-encodes (webp/avif) the source image. Used automatically unless an image is unoptimized; also available to pass explicitly.
 - `type DependencyList = typeOperator` — A useEffect/useMemo dependency array.
@@ -651,7 +652,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type SetStateAction<S> = S | parenthesized` — The updater passed to a state setter (a value or a function of the previous).
 - `type SetStoredValue<T> = (value: T | parenthesized) => void` — A useState-style setter that also accepts an updater function.
 - `interface Signal<T>` — A reactive box holding a single serializable value.
-- `signIn(provider: string, options?: SignInOptions): Promise<unknown>` — Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with redirect: false, resolves with the URL it would have gone to); for a Credentials provider (pass credentials) it POSTs and resolves with the result.
+- `signIn(provider: string, options: SignInOptions & object): Promise<CredentialsSignInResult>` — Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with redirect: false, resolves with the URL it would have gone to); for a Credentials provider (pass credentials) it POSTs and resolves with the result.
 - `interface SignInOptions` — Options for signIn.
 - `signOut(options?: SignOutOptions): Promise<void>` — Sign out (same-origin POST to {basePath}/signout), then navigate to callbackUrl.
 - `interface SignOutOptions` — Options for signOut.
@@ -746,7 +747,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type (a returned Response carries no body type).
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 2.5.0-rc.4` — The denext framework version.
+- `VERSION: 2.5.0-rc.5` — The denext framework version.
 - `ViewTransition(props: object): VNode` — React.ViewTransition (experimental) — the client-driven view-transition wrapper. It is transparent (no DOM node of its own) and carries its config by stamping the DNX_VT_ATTR attribute onto its **single host child** (a DOM attribute survives server rendering AND the Flight boundary, unlike a VNode marker). Around a soft navigation the import-gated marking runtime finds these elements and applies real view-transition-name (and view-transition-class from enter/exit/update/share), so a name shared across routes morphs one element into the other. **Route-level** transitions apply regardless: a soft navigation commits inside document.startViewTransition where the browser supports it (see withViewTransition in src/client/navigation.ts). Without the gated runtime, or for a wrapper whose child isn't a single element (nothing to mark), it is a plain passthrough.
 - `interface VNode` — A single virtual DOM node.
 - `type VNodeChild = VNode | string | number | bigint | boolean | null | undefined` — Anything that can appear as a child in JSX.
@@ -850,8 +851,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface CompiledPattern` — A source pattern compiled to a matcher with its capture keys.
 - `type Component<P> = (props: P & object) => VNode | Promise<VNode>` — A component is a function that receives props and returns a renderable node.
 - `composeMiddleware(entries: MiddlewareEntry[], moduleConfig?: MiddlewareConfig): MiddlewareRunner` — Compose an ordered list of entries into a single MiddlewareRunner.
-- `confirmTotp(config: AuthConfig, user: AuthUser, code: string): Promise<ConfirmTotpResult>` — Confirm a pending enrollment with a code from the authenticator app. On success the factor is marked confirmed and mfa.backupCodes backup codes are minted — returned here in plaintext exactly once, and stored only as hashes. The code's step is claimed, so it can't then be replayed at the step-up.
-- `type ConfirmTotpResult = object | object` — The outcome of confirmTotp: on success, the plaintext backup codes — the only time they exist anywhere; show them to the user once.
+- `confirmTotp(config: AuthConfig, input: object): Promise<ConfirmTotpResult>` — Confirm a pending enrollment with a code from the authenticator app. On success the factor is marked confirmed and mfa.backupCodes backup codes are minted — returned here in plaintext exactly once, and stored only as hashes. The code's step is claimed, so it can't then be replayed at the step-up.
+- `type ConfirmTotpResult = object | object` — The outcome of confirmTotp: on success, the plaintext backup codes — the only time they exist anywhere; show them to the user once. "invalid_code": a wrong or replayed code. "not_pending": no enrollment awaits confirmation (none started, already confirmed, or replaced meanwhile).
 - `connection(): Promise<void>` — connection() (Next.js) — an explicit dynamic-rendering signal. Awaiting it marks the current render as dynamic (per-request), opting the route out of static generation/caching, without reading any specific request data (unlike cookies()/headers()). Resolves once the runtime is ready to handle the request; outside a request it resolves immediately.
 - `cookies(): AwaitableCookieStore` — Access the current request's cookies (reads incoming, writes Set-Cookie).
 - `interface CookieSetOptions` — Options accepted when setting a cookie.
@@ -888,8 +889,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `emailOtp(options?: EmailProviderOptions): EmailProvider` — Passwordless sign-in by **one-time code**: POST {basePath}/callback/email-otp with { email } mails a numeric code (email.otpDigits, default 6; valid 5 minutes by default, email.otpMaxAge); posting { email, code } to the same endpoint signs the user in. Wrong codes count against a failure budget (5 per 5 minutes per address).
 - `interface EmailProvider` — A passwordless **email** provider: magicLink() mails a single-use sign-in link, emailOtp() a one-time numeric code. Both deliver through AuthConfig.sendVerificationRequest and need an adapter with the verification-token group plus getUserByEmail / createUser / updateUser.
 - `interface EmailProviderOptions` — Options for magicLink and emailOtp.
-- `interface EmailRequestResult` — What a verification or reset request reports — never whether the address exists.
-- `enrollTotp(config: AuthConfig, user: AuthUser): Promise<TotpEnrollment | null>` — Start a TOTP enrollment: mint a secret, store it **unconfirmed**, and return it with the provisioning URI (issuer mfa.issuer, account user.email ?? user.id). An earlier unconfirmed enrollment is replaced; a CONFIRMED factor is not — disable it first.
+- `type EmailRequestResult = object | object` — What a verification or reset request reports — never whether the address exists.
+- `enrollTotp(config: AuthConfig, session: AuthSession): Promise<EnrollTotpResult>` — Start a TOTP enrollment: mint a secret, store it **unconfirmed**, and return it with the provisioning URI (issuer mfa.issuer, account user.email ?? user.id). An earlier unconfirmed enrollment is replaced; a CONFIRMED factor is not — disable it first.
+- `type EnrollTotpResult = parenthesized | object` — The outcome of enrollTotp: the fresh secret and its URI, or why none was minted — "already_enrolled" (a confirmed factor exists; disable it first) or "reauth_required" (a complete session that didn't sign in recently).
 - `type ErrorSpec = number | object` — How a declared error code maps to HTTP: a status, or a status with a default message.
 - `interface ExperimentalConfig` — Opt-in experimental features, set under experimental in denext.config.ts. Each is off by default. A feature lives here only while it is genuinely **incomplete** — being new is not enough — so shipped, complete capabilities (streaming, Live, islands, resumability, SPA mode, Cache Components) are top-level config, not here.
 - `facebook(options: OAuthClientOptions): OAuthProvider` — Facebook (OAuth 2.0, Graph API v19.0). The Graph /me response carries no verification flag, so the mapped user's emailVerified is always undefined, and Facebook may omit the email entirely (an account registered with a phone number, or a revoked permission).
@@ -1098,7 +1100,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `requireSession(options?: RequireSessionOptions): ApiMiddleware<object, object>` — Require a signed-in viewer (denext auth): extends the context with { session }, or fails with a 401 unauthorized envelope before any schema runs. With role, a signed-in caller who holds none of the listed roles fails with a 403 forbidden envelope instead.
 - `interface RequireSessionOptions` — Options for requireSession.
 - `resetCacheStats(): void` — Reset the cache-activity counters (tests / a fresh monitoring window).
-- `resetPassword(config: AuthConfig, input: object): Promise<ResetPasswordResult>` — Redeem a password-reset token and set a new password: the configured hasher hashes it, adapter.setCredential stores it, and every server-side session of the user is revoked. Fires passwordReset (after sessionRevoked).
+- `resetPassword(config: AuthConfig, input: object): Promise<ResetPasswordResult>` — Redeem a password-reset token and set a new password: the configured hasher hashes it, adapter.setCredential stores it, and every server-side session and bearer API token of the user is revoked — a reset is how an owner takes an account back, so nothing a thief minted with a stolen session survives it. Fires passwordReset (after sessionRevoked).
 - `type ResetPasswordResult = object | object` — What resetPassword reports.
 - `resolveCacheLife(profile: string | CacheLifeProfile): CacheLifeProfile` — Resolve a cacheLife argument — a built-in/custom profile name or an inline profile object — to a concrete CacheLifeProfile. An unknown name falls back to the default profile. Missing fields inherit from default.
 - `type ResolvedMetadata = Metadata` — The merged metadata of the segments ABOVE the current one (what parent resolves to).
@@ -1137,6 +1139,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `scryptHasher(options?: HashPasswordOptions): Hasher` — The default Hasher: salted **scrypt** through node:crypto, encoded as scrypt$N=…,r=…,p=…$salt$hash. Pass it explicitly to raise the cost: ``ts denextAuth({ hasher: scryptHasher({ cost: 2 ** 16 }), … }) `` Hashes stay self-describing, so raising the cost never invalidates existing ones.
 - `type SearchParams = object` — Next.js's searchParams record: repeated keys become arrays, absent keys undefined.
 - `searchParamsRecord(usp: URLSearchParams, raw?: URLSearchParams): SearchParams & object` — Next.js's searchParams record for a query string, with the underlying URLSearchParams reachable as the non-enumerable raw property (raw may be a read-tracking wrapper of usp; the record itself is built from the plain usp).
+- `type SecondFactorResult = object | object` — The outcome of verifySecondFactor: the method that verified, or why nothing did — "invalid_code" (wrong, replayed or spent) or "not_enrolled" (no confirmed factor).
 - `interface Segment` — A single parsed route pattern segment.
 - `interface SegmentConfig` — The resolved route segment configuration for a module.
 - `interface SegmentConfigExports` — Optional route-segment-config exports a module may declare.
@@ -1223,7 +1226,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `verifyEmail(config: AuthConfig, input: object): Promise<VerifyEmailResult>` — Redeem an email-verification token and mark the address verified (emailVerified, epoch seconds, through adapter.updateUser). Fires emailVerified.
 - `type VerifyEmailResult = object | object` — What verifyEmail reports.
 - `verifyPassword(password: string, stored: string, options?: HashPasswordOptions): Promise<boolean>` — Verify a password against a hash produced by hashPassword. The comparison is constant-time (timingSafeEqual), and a malformed/unsupported stored value — an empty column, a legacy format, a corrupted row — returns false rather than throwing, so an authorize callback can't leak a stack trace or a 500. That rejection still runs a full scrypt derivation, so an unknown account takes as long to reject as a wrong password for a known one (no user-enumeration timing oracle).
-- `verifySecondFactor(config: AuthConfig, userId: string, code: string): Promise<MfaMethod | null>` — Check a second-factor code for a user with a confirmed factor: first as a TOTP code (claiming its step — a replay is refused), else as a backup code (spent on a match).
+- `verifySecondFactor(config: AuthConfig, input: object): Promise<SecondFactorResult>` — Check a second-factor code for a user with a confirmed factor: first as a TOTP code (claiming its step — a replay is refused), else as a backup code (spent on a match).
 - `verifyTotp(secret: string, code: string, options?: TotpVerifyOptions): Promise<TotpVerifyResult>` — Verify a TOTP code (RFC 6238 over RFC 4226 HOTP, HMAC-SHA-1) against a base32 secret, accepting any step within ±window of the current one. Whitespace in the code is stripped ("123 456"); anything else malformed — non-digits, the wrong length, a secret that isn't base32 — is { ok: false }, never a throw. Every candidate step is computed and compared in constant time; the loop never exits early on a match.
 - `interface Viewport` — Viewport + theme metadata (Next.js viewport/generateViewport).
 - `interface VNode` — A single virtual DOM node.
@@ -1260,6 +1263,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `createPortal(children: VNodeChild, container: Element, key?: string | null): VNode` — Render children into a different DOM container while keeping their place in the component and context tree. Backs react-dom's createPortal.
 - `createResource<T>(factory: () => Promise<T>): () => T` — A tiny cache for turning an async factory into a stable, suspense-friendly resource. Reading it either returns the value or suspends.
 - `createRoot(container: Element, options?: RootOptions): Root` — Mount vnode into container, creating fresh DOM.
+- `interface CredentialsSignInResult` — What a credentials sign-in resolves; a refused sign-in rejects instead.
 - `dynamic<P>(loader: DynamicLoader<P>, options?: DynamicOptions<P>): Component<P>` — Lazily load a component. Returns a component you can render immediately; its target module is imported on first render (as its own bundle chunk) and shown once resolved, with loading displayed meanwhile.
 - `type DynamicLoader<P> = parenthesized | parenthesized` — A loader returning a module (whose default is the component) or the component.
 - `interface DynamicOptions<P>` — Options for dynamic.
@@ -1336,7 +1340,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SessionProviderProps` — Props for SessionProvider.
 - `interface SessionUser` — The signed-in user exposed to the client (non-sensitive fields only).
 - `setApiInvalidationSource(source: ApiInvalidationSource | null): void` — Install the transport that delivers tag invalidations to useApi({ tags }) (the Live client does this in configureLive / useApiLive).
-- `signIn(provider: string, options?: SignInOptions): Promise<unknown>` — Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with redirect: false, resolves with the URL it would have gone to); for a Credentials provider (pass credentials) it POSTs and resolves with the result.
+- `signIn(provider: string, options: SignInOptions & object): Promise<CredentialsSignInResult>` — Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with redirect: false, resolves with the URL it would have gone to); for a Credentials provider (pass credentials) it POSTs and resolves with the result.
 - `interface SignInOptions` — Options for signIn.
 - `signOut(options?: SignOutOptions): Promise<void>` — Sign out (same-origin POST to {basePath}/signout), then navigate to callbackUrl.
 - `interface SignOutOptions` — Options for signOut.
