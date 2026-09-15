@@ -8,6 +8,13 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Security
+
+- The next.config evaluator (`denext migrate`, the `denext ui` next.config panel) runs with
+  `--no-remote`: an evaluated config can still import the project's own files and its
+  `node_modules` packages, but no longer code from a registry or a URL (not even the hosts
+  Deno allows imports from by default).
+
 ### Fixed
 
 - `denext export`: a staging swap that fails to move the new output into place puts the
