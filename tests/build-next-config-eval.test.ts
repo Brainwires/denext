@@ -234,3 +234,13 @@ Deno.test("calls a function-form config the way Next.js does: (phase, { defaultC
     });
   });
 });
+
+Deno.test("a config that imports a remote module is refused, not fetched (--no-remote)", async () => {
+  // deno.land is on Deno's default import allow-list, so only --no-remote stops this fetch
+  // (an arbitrary host is already refused by the import permission).
+  const src = 'import x from "https://deno.land/std@0.224.0/fmt/colors.ts";\n' +
+    "export default { basePath: String(x) };\n";
+  await withConfig("next.config.mjs", src, async (dir) => {
+    assertMatch(reasonOf(await evalIn(dir, "next.config.mjs")), /remote|no-remote/i);
+  });
+});
