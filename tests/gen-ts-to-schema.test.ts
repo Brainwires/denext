@@ -283,3 +283,17 @@ Deno.test("committed catalog: every plugin row carries a schema covering its con
     }
   }
 });
+
+Deno.test("mapper: a self-referencing type alias expands once, then stops (no stack overflow)", async () => {
+  const table = await docOf(`/** Holds a tree. */
+export interface Holder {
+  /** The root. */
+  root?: Tree;
+}
+/** A node. */
+export type Tree = { value?: string; children?: Tree[] };
+`);
+  const root = props(interfaceSchema("Holder", { table, stack: [] })).root;
+  assertEquals(props(root).value.type, "string");
+  assertEquals(props(root).children.type, "array", "the recursive reference stays open");
+});

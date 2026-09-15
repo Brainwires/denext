@@ -278,7 +278,11 @@ function namedSchema(name: string, ctx: SchemaContext): Schema {
   if (!decl || ctx.stack.includes(name)) return {};
   if (ctx.maxDepth !== undefined && ctx.stack.length >= ctx.maxDepth) return {};
   if (decl.kind === "interface") return interfaceSchema(name, ctx);
-  if (decl.kind === "typeAlias") return tsTypeToSchema(decl.def?.tsType, ctx);
+  // An alias joins the cycle guard like an interface does: `type Tree = { children: Tree[] }`
+  // would otherwise expand itself until the stack overflows.
+  if (decl.kind === "typeAlias") {
+    return tsTypeToSchema(decl.def?.tsType, { ...ctx, stack: [...ctx.stack, name] });
+  }
   return {};
 }
 

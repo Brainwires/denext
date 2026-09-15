@@ -8,6 +8,24 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.5.0-rc.4] - 2026-09-15
+
+### Security
+
+- The next.config evaluator (`denext migrate`, the `denext ui` next.config panel) runs with
+  `--no-remote`: an evaluated config can still import the project's own files and its
+  `node_modules` packages, but no longer code from a registry or a URL (not even the hosts
+  Deno allows imports from by default).
+
+### Fixed
+
+- `denext export`: a staging swap that fails to move the new output into place puts the
+  previous output back; it used to leave no output directory at all.
+- DevTools (bundled dev path): a route file deleted since it was cached no longer keeps its
+  entry in the dev server's route-metadata cache.
+- The TS→JSON-Schema mapper behind the config schema and the plugin catalog no longer recurses
+  until the stack overflows on a self-referencing type alias.
+
 ## [2.5.0-rc.3] - 2026-09-14
 
 ### Added
@@ -7255,6 +7273,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.5.0-rc.4]: https://jsr.io/@denext/denext@2.5.0-rc.4
 [2.5.0-rc.3]: https://jsr.io/@denext/denext@2.5.0-rc.3
 [2.5.0-rc.2]: https://jsr.io/@denext/denext@2.5.0-rc.2
 [2.5.0-rc.1]: https://jsr.io/@denext/denext@2.5.0-rc.1

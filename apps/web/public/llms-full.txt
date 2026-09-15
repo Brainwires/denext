@@ -238,7 +238,8 @@ for `@denext/openapi` (declare the matching `securitySchemes: { bearerAuth: … 
 emailOtp()]` plus `sendVerificationRequest` (denext ships no mailer). Second factor: an
 enrolled user's sign-in comes back pending; your `pages.mfa` page renders when
 `pendingMfaSession()` returns a session and posts `{ code }` to `/auth/mfa`; enrollment is
-`/auth/mfa/enroll` → `/auth/mfa/confirm`. Full guide: https://denext.dev/docs/auth
+`/auth/mfa/enroll` → `/auth/mfa/confirm` (from a complete session it needs a recent sign-in,
+`session.authTime`). Full guide: https://denext.dev/docs/auth
 
 **A project-local CLI verb (no plugin):** put it in `denext.config.ts` and run it as a verb.
 
@@ -254,8 +255,9 @@ export default {
 
 **A GUI over the project:** `denext ui` serves a loopback (127.0.0.1) project-management
 page — schema-driven `denext.config.ts` editing (a comment-preserving splice: outside the
-value span it replaces, the file keeps its bytes), plugins with per-plugin option forms and
-JSR search, every `generate` kind, Docker files plus in-place `docker-compose.yml` editing, a
+value span it replaces, the file keeps its bytes), plugins with option forms for the
+first-party ones and JSR search, every `generate` kind, Docker files plus in-place
+`docker-compose.yml` editing, a
 setup wizard and the project's own verbs. It works with JavaScript disabled, and
 **project code never runs in the UI's process** — every project-touching operation,
 including verb discovery (`denext commands --json`), is a `deno` subprocess.
@@ -744,7 +746,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type (a returned Response carries no body type).
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 2.5.0-rc.3` — The denext framework version.
+- `VERSION: 2.5.0-rc.4` — The denext framework version.
 - `ViewTransition(props: object): VNode` — React.ViewTransition (experimental) — the client-driven view-transition wrapper. It is transparent (no DOM node of its own) and carries its config by stamping the DNX_VT_ATTR attribute onto its **single host child** (a DOM attribute survives server rendering AND the Flight boundary, unlike a VNode marker). Around a soft navigation the import-gated marking runtime finds these elements and applies real view-transition-name (and view-transition-class from enter/exit/update/share), so a name shared across routes morphs one element into the other. **Route-level** transitions apply regardless: a soft navigation commits inside document.startViewTransition where the browser supports it (see withViewTransition in src/client/navigation.ts). Without the gated runtime, or for a wrapper whose child isn't a single element (nothing to mark), it is a plain passthrough.
 - `interface VNode` — A single virtual DOM node.
 - `type VNodeChild = VNode | string | number | bigint | boolean | null | undefined` — Anything that can appear as a child in JSX.

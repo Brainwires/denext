@@ -144,6 +144,10 @@ export async function evalNextConfigProgram(
         // `"type": "module"` package.json is the common Next.js shape; without detection it
         // fails with "module is not defined".
         "--unstable-detect-cjs",
+        // No remote modules: an evaluated config can still import the project's own files and
+        // its node_modules packages, but not code from a registry or a URL (not even the hosts
+        // Deno allows imports from by default).
+        "--no-remote",
         `--allow-read=${dir}`,
         "--allow-env",
         "--allow-sys",
