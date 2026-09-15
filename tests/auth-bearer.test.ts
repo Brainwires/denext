@@ -517,3 +517,12 @@ Deno.test("/auth/tokens and /auth/mfa: an adapter failure is logged and answered
   }
   assertEquals(errors.length, 3, "each failure reached the auth logger");
 });
+
+Deno.test("requireBearer({ scope: [] }) is unsatisfiable, like role: []", async () => {
+  // A computed requirement that came out empty must not admit every live token.
+  const { config, adapter } = setup();
+  const userId = await makeUser(adapter);
+  const scoped = await issueApiToken(config, { userId, scopes: ["pets:read"] });
+  const denied = await refusal(requireBearer(config, { scope: [] }), `Bearer ${scoped.token}`);
+  assertEquals([denied?.status, denied?.code], [403, "forbidden"]);
+});

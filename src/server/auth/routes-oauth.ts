@@ -82,6 +82,25 @@ async function refuse(
 }
 
 /**
+ * A provider's `?error=` as a reason code. Anyone can craft a callback URL, so only a
+ * protocol-shaped code (`access_denied`, `login_required`) reaches the sign-in page's
+ * `?error=` and `signInFailed.reason`; free text reads `"oauth_failed"` and is logged.
+ *
+ * @param ctx The route context.
+ * @param providerId The provider the callback is for.
+ * @param raw The `error` query parameter as received.
+ * @returns The reason code to report.
+ */
+function providerErrorCode(ctx: AuthRouteContext, providerId: string, raw: string): string {
+  if (/^[a-z_]{1,64}$/.test(raw)) return raw;
+  ctx.options.logger.warn(`denextAuth: provider "${providerId}" returned an unrecognised error`, {
+    provider: providerId,
+    error: raw.slice(0, 200),
+  });
+  return "oauth_failed";
+}
+
+/**
  * How the endpoints are resolved for this request: through OIDC discovery when the
  * provider names an issuer, with the dev insecure opt-in passed through and a discovery
  * failure that fell back to the provider's pinned URLs reported to the logger.
@@ -167,7 +186,9 @@ export async function handleOAuthCallback(
   provider: OAuthProvider,
 ): Promise<Response> {
   const providerError = ctx.url.searchParams.get("error");
-  if (providerError) return await refuse(ctx, provider.id, providerError);
+  if (providerError) {
+    return await refuse(ctx, provider.id, providerErrorCode(ctx, provider.id, providerError));
+  }
 
   const tx = await readTx(ctx);
   await clearTx(ctx);
