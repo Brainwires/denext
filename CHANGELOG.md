@@ -8,6 +8,11 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- `denext ui`'s compose editor edits `build` (a context path) and `networks` (add and remove,
+  with a warning for a network the top-level `networks:` doesn't declare).
+
 ### Fixed
 
 - `denext ui`: a refused Commands run (an unknown or built-in verb, a bad flag or argument

@@ -879,3 +879,28 @@ Deno.test("dockerPlan regenerates an existing compose.yml rather than adding a d
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("compose editor: a build field and a network row post through; an undeclared network warns", async () => {
+  const h = await ui();
+  try {
+    await Deno.writeTextFile(join(h.dir, COMPOSE), GENERATED);
+    const page = await (await get(h, "/docker")).text();
+    assertStringIncludes(page, 'name="build"');
+    assertStringIncludes(page, 'name="network.new"');
+    const body = await previewEdit(h, {
+      service: "web",
+      op: "apply",
+      build: "./app",
+      "network.new": "backend",
+    });
+    assertStringIncludes(body, "+    networks:");
+    assertStringIncludes(body, "+      - backend");
+    assertStringIncludes(body, "does not declare it");
+    assertEquals(JSON.parse(confirmFields(body).ops), [
+      { op: "set", service: "web", field: "build", value: "./app" },
+      { op: "networks", service: "web", action: "add", value: "backend" },
+    ]);
+  } finally {
+    await stop(h);
+  }
+});

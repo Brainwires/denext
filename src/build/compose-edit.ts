@@ -67,8 +67,11 @@ const ANCHORS: Readonly<Record<string, readonly string[]>> = {
 
 /** One edit. {@linkcode applyComposeEdits} applies a list of them in order, all or nothing. */
 export type ComposeOp =
-  /** Set `image`/`restart` (created when absent), or delete it with `value: null`. */
-  | { op: "set"; service: string; field: "image" | "restart"; value: string | null }
+  /**
+   * Set `image`/`restart`/`build` (created when absent), or delete it with `value: null`.
+   * `build` is a context path; a service whose `build:` is a mapping is refused.
+   */
+  | { op: "set"; service: string; field: "image" | "restart" | "build"; value: string | null }
   /** Append a `"host:container"` mapping, or remove/replace the entry at `index`. */
   | {
     op: "ports";
@@ -79,8 +82,13 @@ export type ComposeOp =
   }
   /** Set (add or overwrite) or delete one variable, in the form the service already uses. */
   | { op: "env"; service: string; action: "set" | "delete"; key: string; value?: string }
-  /** Add or remove one `depends_on` / `volumes` list entry, matched by its text. */
-  | { op: "dependsOn" | "volumes"; service: string; action: "add" | "remove"; value: string }
+  /** Add or remove one `depends_on` / `volumes` / `networks` list entry, matched by its text. */
+  | {
+    op: "dependsOn" | "volumes" | "networks";
+    service: string;
+    action: "add" | "remove";
+    value: string;
+  }
   /** Comment an active service block out, or uncomment a commented one, byte for byte. */
   | { op: "toggleService"; service: string };
 
@@ -90,7 +98,7 @@ type Raw = Record<string, unknown>;
 type SetOp = Extract<ComposeOp, { op: "set" }>;
 type PortsOp = Extract<ComposeOp, { op: "ports" }>;
 type EnvOp = Extract<ComposeOp, { op: "env" }>;
-type NamedOp = Extract<ComposeOp, { op: "dependsOn" | "volumes" }>;
+type NamedOp = Extract<ComposeOp, { op: "dependsOn" | "volumes" | "networks" }>;
 
 /** Replace `remove` lines at `at` with `insert`. */
 interface Splice {
@@ -211,6 +219,7 @@ function plan(state: State, op: ComposeOp): Change | string {
       return editEnv(state, op);
     case "dependsOn":
     case "volumes":
+    case "networks":
       return editNamed(state, op);
     case "toggleService":
       return toggle(state, op.service);
@@ -425,6 +434,11 @@ function setScalar(state: State, op: SetOp): Change | string {
   const svc = serviceOf(state, op.service);
   if (typeof svc === "string") return svc;
   const field = svc.fields.get(op.field);
+  if (
+    op.field === "build" && field && typeof rawService(state.raw, op.service).build !== "string"
+  ) {
+    return `build of "${op.service}" is a mapping — edit it by hand`;
+  }
   const expect = (want: Expected) => {
     const s = rawService(want.raw, op.service);
     if (op.value === null) delete s[op.field];
@@ -480,7 +494,7 @@ function editPorts(state: State, op: PortsOp): Change | string {
 
 /** `dependsOn` / `volumes`: add or remove one list entry, matched by its text. */
 function editNamed(state: State, op: NamedOp): Change | string {
-  const key = op.op === "dependsOn" ? "depends_on" : "volumes";
+  const key = op.op === "dependsOn" ? "depends_on" : op.op;
   const svc = serviceOf(state, op.service);
   if (typeof svc === "string") return svc;
   const ch = childrenOf(state, svc, key, "list");

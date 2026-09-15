@@ -266,7 +266,7 @@ async function writeCompose(
 /** What a preview or a write of `source` reports. */
 function outcomeOf(source: string, diff: string, applied: boolean): Outcome {
   const model = readCompose(source);
-  const warnings = model ? volumeWarnings(model) : [];
+  const warnings = model ? [...volumeWarnings(model), ...networkWarnings(model)] : [];
   return diff
     ? { ok: true, applied, model, warnings, diff }
     : { ok: true, applied, model, warnings };
@@ -325,12 +325,18 @@ function formOps(get: Get, model: ComposeModel): ComposeOp[] | string {
 /** `image` / `restart`: set when changed, delete when cleared. */
 function scalarEdits(get: Get, svc: ComposeService): ComposeOp[] {
   const ops: ComposeOp[] = [];
-  for (const field of ["image", "restart"] as const) {
+  for (const field of ["image", "restart", "build"] as const) {
     const posted = get(field)?.trim();
-    if (posted === undefined || posted === (svc[field] ?? "")) continue;
+    if (posted === undefined || posted === scalarOf(svc, field)) continue;
     ops.push({ op: "set", service: svc.name, field, value: posted === "" ? null : posted });
   }
   return ops;
+}
+
+/** A scalar field's current text (`""` when unset; a mapping `build:` never matches a post). */
+function scalarOf(svc: ComposeService, field: "image" | "restart" | "build"): string {
+  if (field !== "build") return svc[field] ?? "";
+  return typeof svc.build === "string" ? svc.build : "";
 }
 
 /** A port row whose text changed (long-syntax rows are remove-only). */
@@ -363,7 +369,20 @@ function additions(get: Get, svc: ComposeService): ComposeOp[] {
   if (dependency) ops.push({ op: "dependsOn", service, action: "add", value: dependency });
   const volume = get("volume.new")?.trim();
   if (volume) ops.push({ op: "volumes", service, action: "add", value: volume });
+  const network = get("network.new")?.trim();
+  if (network) ops.push({ op: "networks", service, action: "add", value: network });
   return ops;
+}
+
+/** The remover for a named list: the row's text, removed by value. */
+function namedRemover(
+  op: "dependsOn" | "volumes" | "networks",
+  list: (svc: ComposeService) => readonly string[],
+): (svc: ComposeService, at: number) => ComposeOp | undefined {
+  return (svc, at) => {
+    const value = list(svc)[at];
+    return value === undefined ? undefined : { op, service: svc.name, action: "remove", value };
+  };
 }
 
 /** How a row-removal button (`remove:<row>:<list>`) becomes an operation, per list. */
@@ -378,18 +397,9 @@ const REMOVERS: Readonly<
     const entry = svc.environment[at];
     return entry && { op: "env", service: svc.name, action: "delete", key: entry.key };
   },
-  depends_on: (svc, at) => {
-    const value = svc.dependsOn[at];
-    return value === undefined
-      ? undefined
-      : { op: "dependsOn", service: svc.name, action: "remove", value };
-  },
-  volumes: (svc, at) => {
-    const value = svc.volumes[at];
-    return value === undefined
-      ? undefined
-      : { op: "volumes", service: svc.name, action: "remove", value };
-  },
+  depends_on: namedRemover("dependsOn", (svc) => svc.dependsOn),
+  volumes: namedRemover("volumes", (svc) => svc.volumes),
+  networks: namedRemover("networks", (svc) => svc.networks),
 };
 
 /** The operation a row-removal button names, or `undefined` for anything else. */
@@ -411,6 +421,7 @@ const CHECKS: Readonly<Record<string, Check>> = {
   env: checkEnv,
   dependsOn: checkNamed,
   volumes: checkNamed,
+  networks: checkNamed,
   toggleService: (_o, svc) => ({ op: "toggleService", service: svc.name }),
 };
 
@@ -434,11 +445,17 @@ function restartAllowed(value: string, svc: ComposeService): boolean {
     /^on-failure:\d+$/.test(value);
 }
 
-/** `set`: `image` (any string, or `null`) / `restart` (a known policy, or `null`). */
+/**
+ * `set`: `image` (any string, or `null`) / `restart` (a known policy, or `null`) / `build` (a
+ * context path, or `null`; not over a mapping `build:`).
+ */
 function checkSet(o: Dict, svc: ComposeService): ComposeOp | string {
   const { field, value } = o;
-  if (field !== "image" && field !== "restart") {
-    return `unknown field ${JSON.stringify(field ?? null)} (expected image | restart)`;
+  if (field !== "image" && field !== "restart" && field !== "build") {
+    return `unknown field ${JSON.stringify(field ?? null)} (expected image | restart | build)`;
+  }
+  if (field === "build" && svc.build !== undefined && typeof svc.build !== "string") {
+    return `build of "${svc.name}" is a mapping — edit it by hand`;
   }
   if (value !== null && typeof value !== "string") return `${field} needs a string or null`;
   if (field === "restart" && value !== null && !restartAllowed(value, svc)) {
@@ -484,12 +501,16 @@ function checkEnv(o: Dict, svc: ComposeService): ComposeOp | string {
     : `setting ${key} needs a value`;
 }
 
-/** `dependsOn` / `volumes`: add (a dependency must be another service) or remove a listed one. */
+/**
+ * `dependsOn` / `volumes` / `networks`: add (a dependency must be another service) or remove a
+ * listed one.
+ */
 function checkNamed(o: Dict, svc: ComposeService, model: ComposeModel): ComposeOp | string {
-  const op = o.op === "dependsOn" ? "dependsOn" : "volumes";
+  const op = o.op === "dependsOn" || o.op === "networks" ? o.op : "volumes";
   const { action, value } = o;
   if (typeof value !== "string" || value === "") return `${op} needs a value`;
-  const listed = (op === "dependsOn" ? svc.dependsOn : svc.volumes).includes(value);
+  const lists = { dependsOn: svc.dependsOn, volumes: svc.volumes, networks: svc.networks };
+  const listed = lists[op].includes(value);
   if (action === "remove") {
     return listed
       ? { op, service: svc.name, action, value }
@@ -521,6 +542,21 @@ function namedSource(entry: string): string | null {
   if (isLong(entry) || colon <= 0) return null;
   const source = entry.slice(0, colon);
   return /^[.~/$]/.test(source) ? null : source;
+}
+
+/**
+ * Networks an active service joins that the top-level `networks:` does not declare (the implicit
+ * `default` excepted) — `docker compose up` refuses such a file.
+ */
+function networkWarnings(model: ComposeModel): string[] {
+  return model.services.flatMap((svc) =>
+    svc.commented ? [] : svc.networks
+      .filter((network) => network !== "default" && !model.networks.includes(network))
+      .map((network) =>
+        `service "${svc.name}" joins the network "${network}", but the top-level networks: ` +
+        `does not declare it — add "networks:" with "${network}:" before running docker compose.`
+      )
+  );
 }
 
 /**
@@ -822,7 +858,22 @@ function ActiveService(props: ServiceProps & { readonly id: string }): VNode {
     h(PortsEditor, { svc, disabled }),
     h(EnvEditor, { svc, disabled }),
     h(DepsEditor, { model: props.model, svc, disabled }),
-    h(VolumesEditor, { svc, disabled }),
+    h(EntryListEditor, {
+      list: "volumes",
+      entries: svc.volumes,
+      addField: "volume.new",
+      noun: "volume",
+      placeholder: "add — ./data:/data or name:/path",
+      disabled,
+    }),
+    h(EntryListEditor, {
+      list: "networks",
+      entries: svc.networks,
+      addField: "network.new",
+      noun: "network",
+      placeholder: "add — a network name",
+      disabled,
+    }),
   );
 }
 
@@ -854,7 +905,23 @@ function ScalarFields({ svc, id }: { readonly svc: ComposeService; readonly id: 
     null,
     h(Raw, { html: labelled({ id: `${id}-image`, label: "image", body: image }) }),
     h(Raw, { html: labelled({ id: `${id}-restart`, label: "restart", body: restart }) }),
+    h(BuildField, { svc, id }),
   );
+}
+
+/** `build` as a context path; a mapping `build:` (context, dockerfile, args …) is left to hand edits. */
+function BuildField({ svc, id }: { readonly svc: ComposeService; readonly id: string }): VNode {
+  if (svc.build !== undefined && typeof svc.build !== "string") {
+    return h(Note, null, "build: is a mapping (context, dockerfile, args …) — edit it by hand.");
+  }
+  const body = control({
+    tag: "input",
+    name: "build",
+    id: `${id}-build`,
+    value: svc.build ?? "",
+    placeholder: "optional — a build context path, e.g. .",
+  });
+  return h(Raw, { html: labelled({ id: `${id}-build`, label: "build", body }) });
 }
 
 /** One text input with an accessible name (the form renderer's control). */
@@ -951,19 +1018,33 @@ function DepsEditor({ model, svc, disabled }: ServiceProps): VNode {
 }
 
 /** `volumes`: a row per mount (remove-only), plus an add row. */
-function VolumesEditor({ svc, disabled }: Omit<ServiceProps, "model">): VNode {
-  const rows = svc.volumes.map((volume, i) =>
+/** Props of {@linkcode EntryListEditor}. */
+interface EntryListProps {
+  /** The field it edits (also the remove buttons' list name). */
+  readonly list: "volumes" | "networks";
+  /** The service's entries, in order. */
+  readonly entries: readonly string[];
+  /** The add row's field name. */
+  readonly addField: string;
+  /** What one entry is called, for labels. */
+  readonly noun: string;
+  /** The add row's placeholder. */
+  readonly placeholder: string;
+  /** `--read-only`. */
+  readonly disabled: boolean;
+}
+
+/** A list of plain entries (`volumes`, `networks`): a remove button per row and an add row. */
+function EntryListEditor(props: EntryListProps): VNode {
+  const { list, entries, addField, noun, placeholder, disabled } = props;
+  const rows = entries.map((entry, i) =>
     h(
       Row,
-      { key: volume },
-      h("code", { class: "grow" }, volume),
-      removeButton("volumes", i, `Remove volume ${volume}`, disabled),
+      { key: entry },
+      h("code", { class: "grow" }, entry),
+      removeButton(list, i, `Remove ${noun} ${entry}`, disabled),
     )
   );
-  const add = h(
-    Row,
-    null,
-    textInput("volume.new", "New volume", "", "add — ./data:/data or name:/path"),
-  );
-  return h(ListEditor, { legend: "volumes", rows, add });
+  const add = h(Row, null, textInput(addField, `New ${noun}`, "", placeholder));
+  return h(ListEditor, { legend: list, rows, add });
 }

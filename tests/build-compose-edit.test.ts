@@ -352,3 +352,36 @@ Deno.test("a Unicode line separator makes the file opaque, and an edit can't wri
   assertEquals(readCompose(`services:\n  web:\n    image: web${nel}\n`), null);
   refusal(GEN, [{ op: "set", service: "web", field: "image", value: `a${ls}b` }]);
 });
+
+Deno.test("networks: add and remove by value; a long-form mapping is refused", () => {
+  const next = edit(GEN, [{ op: "networks", service: "web", action: "add", value: "backend" }]);
+  assertEquals(readCompose(next)!.services[0].networks, ["backend"]);
+  assertEquals(
+    edit(next, [{ op: "networks", service: "web", action: "remove", value: "backend" }]),
+    GEN,
+  );
+  const long = "services:\n  web:\n    image: nginx\n    networks:\n      backend:\n" +
+    "        aliases:\n          - api\n";
+  assertEquals(readCompose(long)!.services[0].networks, ["backend"]);
+  assertMatch(
+    refusal(long, [{ op: "networks", service: "web", action: "add", value: "front" }]),
+    /not written as a list/,
+  );
+});
+
+Deno.test("set build: replace a context path, insert one, delete it, refuse a mapping build", () => {
+  const replaced = edit(GEN, [{ op: "set", service: "web", field: "build", value: "./app" }]);
+  assertEquals(readCompose(replaced)!.services[0].build, "./app");
+  const inserted = edit("services:\n  web:\n    image: nginx\n", [
+    { op: "set", service: "web", field: "build", value: "./app" },
+  ]);
+  assertEquals(readCompose(inserted)!.services[0].build, "./app");
+  const cleared = edit(GEN, [{ op: "set", service: "web", field: "build", value: null }]);
+  assertEquals(readCompose(cleared)!.services[0].build, undefined);
+  const mapped =
+    "services:\n  web:\n    build:\n      context: .\n      dockerfile: Dockerfile.prod\n";
+  assertMatch(
+    refusal(mapped, [{ op: "set", service: "web", field: "build", value: "." }]),
+    /mapping/,
+  );
+});

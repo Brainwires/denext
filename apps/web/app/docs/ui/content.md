@@ -431,8 +431,11 @@ never-clobber honesty `denext migrate` and the config writer apply.
 
 Below the regeneration form, every service in the compose file gets its own form, in
 source order: `image` (text), `restart` (`no`, `always`, `on-failure`, `unless-stopped`, or the
-file's own value — `on-failure:<n>` is accepted too), and row editors for `ports`,
-`environment`, `depends_on` (a picker of the file's other services) and `volumes`. A service
+file's own value — `on-failure:<n>` is accepted too), `build` (a context path — a mapping
+`build:` is left to hand edits), and row editors for `ports`,
+`environment`, `depends_on` (a picker of the file's other services), `volumes` and `networks`
+(one the top-level `networks:` doesn't declare gets a warning, like an undeclared named
+volume). A service
 can be commented out, and a commented-out block — the Postgres example the generated file
 carries, say — can be enabled again; enabling is the only edit a commented service accepts.
 
@@ -651,14 +654,14 @@ above.
 
 ## What it does not do yet
 
-| Not yet                      | Why                                                                                                                                                                                            |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Compose edits beyond the set | The editor owns `image`, `restart`, `ports`, `environment`, `depends_on`, `volumes` and commenting a service out or in; anything else — a new service, `build`, `networks` — is edited by hand |
-| YAML the editor can't follow | Anchors, aliases, merge keys, flow-style services, several documents and mixed line endings make the file opaque: read-only, with the regeneration diff                                        |
-| Third-party plugin options   | Option schemas come from the first-party catalog, so a JSR plugin gets no options form; set its options in `denext.config.ts`                                                                  |
-| Code-valued options          | A callback, a variable, a `{}` schema part or a function-wrapped list is shown read-only, never rewritten                                                                                      |
-| Agent / MCP control          | Deferred; every panel already answers a JSON twin so it can be added without changing the wire                                                                                                 |
-| A denext app                 | The UI is server-rendered components built with `h()` — no bundler, no hydration — not an App Router app, which is what lets it start instantly with no build                                  |
+| Not yet                      | Why                                                                                                                                                                                                                 |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Compose edits beyond the set | The editor owns `image`, `restart`, `build`, `ports`, `environment`, `depends_on`, `volumes`, `networks` and commenting a service out or in; anything else — a new service, `build`, `networks` — is edited by hand |
+| YAML the editor can't follow | Anchors, aliases, merge keys, flow-style services, several documents and mixed line endings make the file opaque: read-only, with the regeneration diff                                                             |
+| Third-party plugin options   | Option schemas come from the first-party catalog, so a JSR plugin gets no options form; set its options in `denext.config.ts`                                                                                       |
+| Code-valued options          | A callback, a variable, a `{}` schema part or a function-wrapped list is shown read-only, never rewritten                                                                                                           |
+| Agent / MCP control          | Deferred; every panel already answers a JSON twin so it can be added without changing the wire                                                                                                                      |
+| A denext app                 | The UI is server-rendered components built with `h()` — no bundler, no hydration — not an App Router app, which is what lets it start instantly with no build                                                       |
 
 ## See also
 

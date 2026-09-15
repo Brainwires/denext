@@ -385,6 +385,8 @@ export interface ComposeService {
   volumes: string[];
   /** Services `depends_on:` names (the list, or the long form's keys). */
   dependsOn: string[];
+  /** `networks:` the service joins (the list, or the long form's keys). */
+  networks: string[];
   /** `profiles:` entries. */
   profiles: string[];
   /** Whether the service is written out as comments (only `toggleService` applies to it). */
@@ -401,6 +403,8 @@ export interface ComposeModel {
   services: ComposeService[];
   /** Top-level named volumes. */
   volumes: string[];
+  /** The top-level `networks:` keys. */
+  networks: string[];
 }
 
 /** An active service's lines: its entry under `services:` plus its fields by key. */
@@ -574,6 +578,7 @@ function describe(name: string, v: Raw, commented: boolean, index: number): Comp
     envForm: Array.isArray(v.environment) ? "list" : "map",
     volumes: texts(v.volumes),
     dependsOn: isMapping(v.depends_on) ? Object.keys(v.depends_on) : texts(v.depends_on),
+    networks: isMapping(v.networks) ? Object.keys(v.networks) : texts(v.networks),
     profiles: texts(v.profiles),
     commented,
     line: index + 1,
@@ -595,5 +600,6 @@ export function toModel(state: State): ComposeModel {
     sentinel: isGeneratedDockerFile(state.text),
     services: [...active, ...commented].sort((a, b) => a.line - b.line),
     volumes: isMapping(state.raw.volumes) ? Object.keys(state.raw.volumes) : [],
+    networks: isMapping(state.raw.networks) ? Object.keys(state.raw.networks) : [],
   };
 }

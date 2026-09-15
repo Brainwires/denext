@@ -311,9 +311,10 @@ four documented bounds of the opt-in:
 
 ### Project UI (`denext ui`)
 
-- **The compose editor owns a closed set of edits**: `image`, `restart`, `ports`,
-  `environment`, `depends_on`, `volumes`, and commenting a service out or back in. A new
-  service, `build`, `networks` and everything else is edited by hand; a long-syntax port or
+- **The compose editor owns a closed set of edits**: `image`, `restart`, `build` (a context
+  path), `ports`, `environment`, `depends_on`, `volumes`, `networks`, and commenting a service
+  out or back in. A new service, a mapping `build:` (context, dockerfile, args), a long-form
+  `networks:` and everything else is edited by hand; a long-syntax port or
   volume (a mapping) can be removed but not rewritten, and a flow-style field
   (`ports: ["80:80"]`) is refused. A file with anchors, aliases, merge keys, flow-style
   services, several documents (`---`) or mixed CRLF/LF line endings is **opaque** —
