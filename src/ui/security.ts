@@ -17,7 +17,7 @@
 //                      HMAC-SHA256(sessionToken, "csrf") ({@linkcode checkCsrf}).
 //   5. containment   — {@linkcode uiSafeJoin} / {@linkcode uiSafeUnder} for every project path
 //                      (lexical + realpath), and {@linkcode writeFileAtomic} for every write.
-//   6. headers       — {@linkcode applySecurityHeaders}: strict CSP, COOP/CORP, no-referrer,
+//   6. headers       — {@linkcode applySecurityHeaders}: strict CSP, COOP/CORP, same-origin referrer,
 //                      no-store.
 //
 // `--read-only` refuses every mutation before any of it runs.
@@ -42,7 +42,9 @@ const UI_HEADERS: readonly (readonly [string, string])[] = [
     "style-src-attr 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; " +
     "object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
   ],
-  ["referrer-policy", "no-referrer"],
+  // same-origin, not no-referrer: under no-referrer a no-JS form POST carries `Origin: null`,
+  // which the origin check refuses. Cross-origin requests still get no referrer.
+  ["referrer-policy", "same-origin"],
   ["cross-origin-opener-policy", "same-origin"],
   ["cross-origin-resource-policy", "same-origin"],
   ["cache-control", "no-store"],

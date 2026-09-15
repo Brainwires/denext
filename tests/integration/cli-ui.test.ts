@@ -607,7 +607,7 @@ async function checkHeaders(ui: Ui): Promise<void> {
     assertStringIncludes(csp, "script-src 'self'");
     assertStringIncludes(csp, "object-src 'none'");
     assertStringIncludes(csp, "frame-ancestors 'none'");
-    assertEquals(res.headers.get("referrer-policy"), "no-referrer");
+    assertEquals(res.headers.get("referrer-policy"), "same-origin");
     assertEquals(res.headers.get("cross-origin-opener-policy"), "same-origin");
     assertEquals(res.headers.get("cross-origin-resource-policy"), "same-origin");
     assertEquals(res.headers.get("cache-control"), "no-store");

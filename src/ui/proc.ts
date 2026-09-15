@@ -160,6 +160,9 @@ function result(code: number, stdout: string, stderr: string): ProcResult {
 }
 
 /** Decode one child stream into `sink`, emitting complete lines to `onLine` as they arrive. */
+/** Longest partial line {@link pump} holds for `onLine` before delivering it as is. */
+const MAX_PENDING_LINE = 64 * 1024;
+
 async function pump(
   stream: ReadableStream<Uint8Array>,
   sink: Sink,
@@ -175,6 +178,12 @@ async function pump(
     const lines = pending.split("\n");
     pending = lines.pop() ?? "";
     for (const line of lines) onLine(line);
+    // A child that never prints a newline (a \r progress bar, one huge blob) would otherwise
+    // be held whole until it exits: past the cap the partial line goes out as a line.
+    if (pending.length > MAX_PENDING_LINE) {
+      onLine(pending);
+      pending = "";
+    }
   }
   if (onLine && pending.length > 0) onLine(pending);
 }

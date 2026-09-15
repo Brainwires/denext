@@ -39,7 +39,7 @@ import { renderView } from "../view.ts";
 import { broadcast, sseProcess } from "../events.ts";
 import { runDeno } from "../proc.ts";
 import { OFFLINE_REFUSALS, OFFLINE_STATUS } from "../offline.ts";
-import { uiSafeJoin, writeFileAtomic } from "../security.ts";
+import { StaleWriteError, uiSafeJoin, writeFileAtomic } from "../security.ts";
 import type { SchemaNode } from "../form/schema.ts";
 import {
   discover,
@@ -244,6 +244,12 @@ interface Plan {
   readonly configName: string;
   /** The config text to write, or `null` when this plan changes no config. */
   readonly nextSource: string | null;
+  /**
+   * The config text the plan was computed from (`null`: no config yet). The write refuses
+   * when the file no longer holds it — `deno add` can take minutes, and an edit made
+   * meanwhile must not be overwritten.
+   */
+  readonly baseSource: string | null;
   /** The unified diff of that change (empty when there is none). */
   readonly diff: string;
   /** The default export is not an object literal — the user must wire it by hand. */
@@ -281,6 +287,7 @@ function planAdd(target: Target, state: ProjectState): Plan {
     command: ["add", names.addSpec],
     configPath: state.configPath,
     configName: state.configName,
+    baseSource: state.source,
   };
   if (target.kind !== "plugin") {
     return { ...base, ...NO_CONFIG, note: "A library: only the dependency is added." };
@@ -310,6 +317,7 @@ function planRemove(target: Target, state: ProjectState): Plan {
     command: ["remove", names.importSpec],
     configPath: state.configPath,
     configName: state.configName,
+    baseSource: state.source,
   };
   if (state.source === null) {
     return {
@@ -350,7 +358,8 @@ interface ApplyOutcome {
  */
 async function writeConfig(dir: string, plan: Plan): Promise<boolean> {
   if (plan.nextSource === null) return false;
-  await writeFileAtomic(dir, plan.configName, plan.nextSource);
+  const guard = plan.baseSource === null ? {} : { unchangedFrom: plan.baseSource };
+  await writeFileAtomic(dir, plan.configName, plan.nextSource, guard);
   return true;
 }
 
@@ -711,6 +720,11 @@ async function apply(ctx: UiContext, plan: Plan, before: ProjectState): Promise<
   try {
     outcome = await applyPlan(plan, ctx.dir, ctx.signal);
   } catch (error) {
+    if (error instanceof StaleWriteError) {
+      const stale = `${plan.configName} changed on disk since this plan was made — it was not ` +
+        "rewritten. Review the current file and apply again.";
+      return await refusal(ctx, await readProject(ctx.dir), stale, 409);
+    }
     const why = error instanceof Error ? error.message : String(error);
     return await refusal(ctx, before, `${plan.op} failed: ${why}`, 403);
   }

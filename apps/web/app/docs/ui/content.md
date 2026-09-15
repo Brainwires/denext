@@ -55,7 +55,7 @@ it only ever listens on `127.0.0.1`. Six layers, all in
 | Session token           | A per-launch 256-bit token, handed over once in `?t=` and exchanged for an `HttpOnly; SameSite=Strict` cookie      |
 | CSRF                    | Every mutation needs a same-origin `Origin`/`Referer` plus a token derived as `HMAC-SHA256(sessionToken, "csrf")`  |
 | Containment             | Every project path goes through `uiSafeJoin` / `uiSafeUnder` — see below                                           |
-| Headers                 | A strict CSP plus COOP, CORP, `no-referrer`, `no-store`, `nosniff` on every response                               |
+| Headers                 | A strict CSP plus COOP, CORP, a `same-origin` referrer policy, `no-store`, `nosniff` on every response             |
 
 **Why no `--host`.** A project GUI that writes files is a remote-code-execution surface
 by construction: it edits `denext.config.ts`, scaffolds modules, and spawns `deno`. There
@@ -92,7 +92,7 @@ form-action 'self'; frame-ancestors 'none'
 No inline script, no third-party script or style, no remote fetch, no plugins, no
 framing, and a form cannot post anywhere but back to the UI. The one client module is
 served same-origin from `/_ui/ui.js`, and the stylesheet from `/_ui/ui.css`. Alongside it:
-`referrer-policy: no-referrer`, `cross-origin-opener-policy: same-origin`,
+`referrer-policy: same-origin`, `cross-origin-opener-policy: same-origin`,
 `cross-origin-resource-policy: same-origin`, `cache-control: no-store`,
 `x-content-type-options: nosniff`.
 
