@@ -259,6 +259,15 @@ export interface AuthAdapter {
    */
   setCredential?(userId: string, hash: string): MaybePromise<void>;
 
+  /**
+   * Remove a user's password hash (optional). A pre-account-hijacking eviction uses it to retire
+   * a password set before the address was proven; without it the hash is overwritten with one of
+   * a random secret instead. Removing a password the user doesn't have is not an error.
+   *
+   * @param userId The owner.
+   */
+  deleteCredential?(userId: string): MaybePromise<void>;
+
   // ---- API tokens (optional) -----------------------------------------------
 
   /**
@@ -315,6 +324,16 @@ export interface AuthAdapter {
    * @param record The factor to store.
    */
   setMfa?(record: MfaRecord): MaybePromise<void>;
+
+  /**
+   * Remove a user's TOTP factor and backup codes (optional). `disableTotp` and the
+   * pre-account-hijacking eviction use it; without it they write an empty, unconfirmed record,
+   * which reads as "not enrolled" everywhere. Removing a factor the user doesn't have is not an
+   * error.
+   *
+   * @param userId The owner.
+   */
+  deleteMfa?(userId: string): MaybePromise<void>;
 
   /**
    * **Atomically** spend one backup code. Backup codes are stored salted-and-hashed, so

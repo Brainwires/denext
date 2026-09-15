@@ -397,9 +397,9 @@ else is optional and gates the feature that needs it.
 | Users (required)    | `createUser`, `getUser`, `getUserByEmail`, `getUserByAccount`, `updateUser`               | Adapter-backed sign-in at all                       |
 | Accounts (required) | `linkAccount` — plus optional `unlinkAccount`, `listAccounts`                             | Account linking                                     |
 | Verification tokens | `createVerificationToken`, `useVerificationToken`                                         | Email verification, reset, magic links, email codes |
-| Credentials         | `getCredential`, `setCredential`                                                          | `credentials()` without `authorize`, password reset |
+| Credentials         | `getCredential`, `setCredential`, optional `deleteCredential`                             | `credentials()` without `authorize`, password reset |
 | API tokens          | `createApiToken`, `getApiTokenByHash`, `touchApiToken`, `revokeApiToken`, `listApiTokens` | Bearer tokens and `/auth/tokens`                    |
-| MFA                 | `getMfa`, `setMfa`, `consumeBackupCode`, `claimTotpStep`                                  | TOTP two-factor and backup codes                    |
+| MFA                 | `getMfa`, `setMfa`, `consumeBackupCode`, `claimTotpStep`, optional `deleteMfa`            | TOTP two-factor and backup codes                    |
 | Sessions, lifecycle | `sessions?: SessionStore`, `close?()`                                                     | `session.strategy: "database"`, drain               |
 
 Three methods are **consume-once** and must be atomic against concurrent callers — a
@@ -717,8 +717,8 @@ link and `["otp"]` for a code.
 someone who never proved the mailbox — possibly an attacker who registered the victim's
 address with a password and is waiting for the victim to sign in by email. So before a
 first email sign-in marks that address verified, everything set up without the proof is
-retired: the password (replaced with the hash of a random secret — the adapter contract has
-no delete), any TOTP factor and its backup codes, every bearer API token and every
+retired: the password (deleted, or — with an adapter that has no `deleteCredential` — replaced
+with the hash of a random secret), any TOTP factor and its backup codes, every bearer API token and every
 server-side session (`sessionRevoked`); then `emailVerified` fires. If any step fails, the
 address stays unverified and the redeem gets the generic failure. An account that was
 already verified keeps all of it. A stateless cookie session can't be revoked and lives
@@ -853,9 +853,9 @@ failures, so a correct guess can't reset the counter.
 second factor: a `code` that verifies now, or — with no code — a session whose own step-up
 (`amr` `totp` / `bcp`) is at most `mfa.freshness` seconds old, measured from `authTime`, so
 it holds with sliding expiry on too. A session issued before 2.5.0-rc.3 has no `authTime`
-and, while sliding is on, must send a code. Anything else is a `403`. Disabling writes an empty,
-unconfirmed record in the user's place (the adapter's MFA group has no delete), which reads
-as "not enrolled" everywhere. `disableTotp(authConfig, userId)` does the same with no
+and, while sliding is on, must send a code. Anything else is a `403`. Disabling deletes the factor
+(`deleteMfa`; with an adapter that lacks it, an empty unconfirmed record takes its place and
+reads as "not enrolled" everywhere). `disableTotp(authConfig, userId)` does the same with no
 freshness check — gate it yourself.
 
 For a settings page, `mfaStatus(authConfig, userId)` answers

@@ -278,9 +278,13 @@ export async function verifySecondFactor(
  * @throws {Error} When the adapter has no MFA group.
  */
 export async function disableTotp(config: AuthConfig, userId: string): Promise<void> {
-  const adapter = requireMfaAdapter(resolveAuthOptions(config), "disableTotp");
+  const options = resolveAuthOptions(config);
+  const adapter = requireMfaAdapter(options, "disableTotp");
   if (!(await adapter.getMfa(userId))) return;
-  await adapter.setMfa({ userId, secret: "", backupCodeHashes: [] });
+  // Delete when the adapter can; else an empty, unconfirmed record reads as "not enrolled".
+  const remove = options.adapter?.deleteMfa;
+  if (remove) await remove.call(options.adapter, userId);
+  else await adapter.setMfa({ userId, secret: "", backupCodeHashes: [] });
 }
 
 /**

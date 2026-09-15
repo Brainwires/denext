@@ -10,6 +10,10 @@ and this project adheres to
 
 ### Added
 
+- Optional adapter methods `deleteCredential(userId)` and `deleteMfa(userId)`, implemented by
+  both first-party adapters. Disabling TOTP and a pre-account-hijacking eviction now delete the
+  factor or password instead of writing a placeholder; an adapter without them keeps the old
+  overwrite.
 - `spendMfaAttempt(config, { userId, request? })` (`denext/server`): spends one attempt from the
   user's MFA budget — the one the `/mfa*` endpoints spend — so a Server Action that checks a code
   with `verifySecondFactor` or `confirmTotp` is throttled the same way. `examples/auth` drops its

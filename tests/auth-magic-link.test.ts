@@ -610,12 +610,13 @@ Deno.test("an already-verified account keeps its password and its sessions throu
   assert(!h.events.includes("emailVerified"));
 });
 
-Deno.test("an adapter that can read a password but not replace it fails the first email sign-in closed", async () => {
+Deno.test("an adapter that can read a password but neither replace nor delete it fails the first email sign-in closed", async () => {
   const base = inMemoryAuthAdapter();
   const errors: string[] = [];
   const h = setup(emailOtp(), { logger: { error: (message) => void errors.push(message) } }, {
     ...base,
     setCredential: undefined,
+    deleteCredential: undefined,
   });
   const user = await base.createUser({ email: "stuck@x.test" });
   await base.setCredential!(user.id, "scrypt$anything");
@@ -654,7 +655,7 @@ Deno.test("pre-account hijacking: a TOTP factor enrolled on the unverified accou
   assertEquals(location(victim.res).pathname, "/home", "no MFA step: straight to afterSignIn");
   const session = await sessionOf(h, victim.ctx);
   assertEquals([session?.user.id, session?.mfaPending], [id, undefined]);
-  assertEquals(await h.adapter.getMfa!(id), { userId: id, secret: "", backupCodeHashes: [] });
+  assertEquals(await h.adapter.getMfa!(id), undefined, "the factor is deleted, not blanked");
   assertEquals(await mfaStatus(h.config, id), {
     enrolled: false,
     pendingConfirmation: false,

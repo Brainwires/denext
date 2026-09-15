@@ -488,6 +488,12 @@ async function retirePassword(
   userId: string,
 ): Promise<void> {
   if (!(await adapter.getCredential?.(userId))) return;
+  // Delete when the adapter can; else overwrite with the hash of a random secret below.
+  const remove = options.adapter?.deleteCredential;
+  if (remove) {
+    await remove.call(options.adapter, userId);
+    return;
+  }
   if (!adapter.setCredential) {
     throw new Error(
       "denextAuth: the adapter implements `getCredential` but not `setCredential`, so the " +

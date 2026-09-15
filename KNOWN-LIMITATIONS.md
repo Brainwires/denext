@@ -242,10 +242,10 @@ four documented bounds of the opt-in:
   framework, so a column can be added but never renamed or dropped for you. TOTP secrets are
   stored in plaintext at rest by construction — TOTP verification needs the shared secret, so
   protect the database file; backup codes are stored only as `hasher` hashes.
-- **The adapter contract has no delete for a password or a second factor.** Disabling TOTP
-  writes an empty, unconfirmed MFA record, and a pre-account-hijacking eviction replaces the
-  password with the hash of a random secret; both read as absent everywhere (optional
-  `deleteCredential?` / `deleteMfa?` are on the roadmap).
+- **An adapter without `deleteCredential` / `deleteMfa` overwrites instead of deleting.**
+  Disabling TOTP then writes an empty, unconfirmed MFA record, and a pre-account-hijacking
+  eviction replaces the password with the hash of a random secret; both read as absent
+  everywhere. Both first-party adapters implement the deletes.
 - **`inMemoryAuthAdapter` keeps several live tokens per address and purpose;
   `sqliteAuthAdapter` keeps one.** In memory, a second link or code for the same address and
   purpose does not retire the first until that one is used or expires; in SQLite the newer

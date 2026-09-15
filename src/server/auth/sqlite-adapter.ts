@@ -573,7 +573,7 @@ function verificationMethods(
 /** Password-hash storage for the Credentials provider. */
 function credentialMethods(
   state: SqliteState,
-): Pick<AuthAdapter, "getCredential" | "setCredential"> {
+): Pick<AuthAdapter, "getCredential" | "setCredential" | "deleteCredential"> {
   return {
     getCredential(userId) {
       const row = one(
@@ -585,6 +585,9 @@ function credentialMethods(
     },
     setCredential(userId, hash) {
       put(state.db(), "auth_credentials", { user_id: userId, password_hash: hash });
+    },
+    deleteCredential(userId) {
+      state.db().exec("DELETE FROM auth_credentials WHERE user_id = ?", [userId]);
     },
   };
 }
@@ -653,7 +656,7 @@ async function firstMatch(
 /** The TOTP factor group, including the two consume-once guards. */
 function mfaMethods(
   state: SqliteState,
-): Pick<AuthAdapter, "getMfa" | "setMfa" | "consumeBackupCode" | "claimTotpStep"> {
+): Pick<AuthAdapter, "getMfa" | "setMfa" | "deleteMfa" | "consumeBackupCode" | "claimTotpStep"> {
   const read = (userId: string): MfaRecord | undefined => {
     const row = one(state.db(), "SELECT * FROM auth_mfa WHERE user_id = ?", [userId]);
     return row && fromRow(MFA_MAP, row);
@@ -662,6 +665,9 @@ function mfaMethods(
     getMfa: read,
     setMfa(record) {
       put(state.db(), "auth_mfa", toRow(MFA_MAP, record));
+    },
+    deleteMfa(userId) {
+      state.db().exec("DELETE FROM auth_mfa WHERE user_id = ?", [userId]);
     },
     async consumeBackupCode(userId, matches) {
       // The comparison is the caller's (scrypt), so the read-match-write cannot be one

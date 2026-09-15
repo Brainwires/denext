@@ -131,9 +131,7 @@ guardrail; both are build-time.
   closing link-scanner burns and login CSRF.
 - **`totpQrSvg()`** — a dependency-free QR renderer for the `otpauth://` URI `enrollTotp` /
   `totpAuthUri` return (2.5 ships the URI, not the picture).
-- **Optional adapter `deleteCredential?` / `deleteMfa?`**, so disabling TOTP and a
-  pre-account-hijacking eviction delete instead of overwrite (today: an empty, unconfirmed
-  MFA record and a password hash of a random secret).
+
 - **Richer events**: API-token issue/revoke events, a `signInFailed.reason` union, and an
   `AuthEvents.ip` for audit trails.
 
