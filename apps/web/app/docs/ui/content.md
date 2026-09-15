@@ -121,8 +121,8 @@ redirect, has a five-second deadline that also covers reading the body, and read
 64 KiB of `application/json`; what comes back is normalised and escaped like any other
 untrusted text. `denext ui --offline` turns it off (and keeps every process the UI starts off
 the network too — see [Working offline](#working-offline)), and so does a process that does not
-already hold net permission for both hosts — the UI queries that permission and never
-prompts for it. The page's CSP is unchanged: the browser still talks only to the UI
+already hold net permission for the host a request needs (`api.jsr.io` to search, `jsr.io` to
+add a package) — the UI queries that permission and never prompts for it. The page's CSP is unchanged: the browser still talks only to the UI
 (`connect-src 'self'`), and the registry is called by the server.
 
 **How containment is enforced.** A path the browser named is refused outright when it is
@@ -374,8 +374,8 @@ which is generated from denext's own workspace. Set its options in `denext.confi
 **Offline.** Under `denext ui --offline` the search box renders disabled with a note, nothing
 is fetched, and `op=add-jsr` is a `503` — as is a catalog add or remove (see
 [Working offline](#working-offline)). Search degrades the same way on its own when the process
-does not hold net permission for both `api.jsr.io` and `jsr.io` — it checks the permission and
-never prompts.
+does not hold net permission for `api.jsr.io`, and adding a JSR package when it lacks `jsr.io` —
+the UI checks the permission and never prompts.
 
 ## Generate
 

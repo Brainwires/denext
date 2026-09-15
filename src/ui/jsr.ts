@@ -21,8 +21,6 @@
 const API_ORIGIN = "https://api.jsr.io";
 /** The JSR registry origin (`GET /@scope/name/meta.json`). */
 const REGISTRY_ORIGIN = "https://jsr.io";
-/** The hosts {@linkcode jsrAvailable} requires `--allow-net` for. */
-const JSR_HOSTS = ["api.jsr.io", "jsr.io"] as const;
 /** Largest response body read, in bytes; a larger one is cancelled mid-stream. */
 const MAX_BODY_BYTES = 64 * 1024;
 /** Per-request deadline in milliseconds (connect + headers + body). */
@@ -112,27 +110,36 @@ export function isJsrSpec(spec: string): boolean {
   return SPEC_RE.test(spec);
 }
 
+/** What a JSR request is for: a search, or a package's registry metadata and files. */
+type JsrPurpose = "search" | "registry";
+
+/** The one host each purpose reaches. */
+const HOST_FOR: Readonly<Record<JsrPurpose, string>> = {
+  search: "api.jsr.io",
+  registry: "jsr.io",
+};
+
 /**
- * Whether JSR discovery may run: never under `denext ui --offline`, and only when this process
- * already holds `--allow-net` for both `api.jsr.io` and `jsr.io`. It only *queries* permissions —
- * it never prompts, so a UI started without net access simply shows no search.
+ * Whether a JSR request for `purpose` may run: never under `denext ui --offline`, and only when
+ * this process already holds `--allow-net` for the one host it reaches — `api.jsr.io` to search,
+ * `jsr.io` for a package's metadata and files. It only *queries* permissions — it never prompts,
+ * so a UI started without net access simply shows no search.
  *
  * @param ctx The request context (only `offline` is read).
+ * @param purpose What the request is for.
  * @param permissions The permission API (injected by tests; `Deno.permissions` otherwise).
- * @returns `true` when both JSR hosts are `"granted"` and the UI is not offline.
+ * @returns `true` when that host is `"granted"` and the UI is not offline.
  */
 export async function jsrAvailable(
   ctx: { readonly offline?: boolean },
+  purpose: JsrPurpose,
   permissions: {
     query(desc: Deno.NetPermissionDescriptor): Promise<{ readonly state: Deno.PermissionState }>;
   } = Deno.permissions,
 ): Promise<boolean> {
   if (ctx.offline === true) return false;
   try {
-    for (const host of JSR_HOSTS) {
-      if ((await permissions.query({ name: "net", host })).state !== "granted") return false;
-    }
-    return true;
+    return (await permissions.query({ name: "net", host: HOST_FOR[purpose] })).state === "granted";
   } catch {
     return false;
   }

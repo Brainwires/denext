@@ -64,7 +64,8 @@ const RESERVED: ReadonlySet<string> = new Set(
 
 /** Why the box has no search behind it. */
 const UNAVAILABLE =
-  "JSR search is unavailable — the UI runs --offline, or has no net permission for jsr.io.";
+  "JSR search is unavailable — the UI runs --offline, or has no net permission for " +
+  "api.jsr.io (to search) or jsr.io (to add a package).";
 
 /** What the discovery box renders from. */
 export interface Discovery {
@@ -84,7 +85,7 @@ export interface Discovery {
  * @returns Availability, the query, and the search outcome when one ran.
  */
 export async function discover(ctx: UiContext): Promise<Discovery> {
-  const available = await jsrAvailable(ctx);
+  const available = await jsrAvailable(ctx, "search");
   const query = ctx.method === "GET" ? (ctx.url.searchParams.get("q") ?? "").trim() : "";
   if (!available || query === "") return { available, query };
   const result = await client.search(query, { limit: SEARCH_LIMIT, signal: ctx.signal });
@@ -156,7 +157,7 @@ export async function resolveJsrAdd(
   const factory = exportName === "" ? defaultExport(spec) : exportName;
   const bad = badExport(factory);
   if (bad !== null) return refused(400, `bad factory export: ${bad}`);
-  if (!await jsrAvailable(ctx)) return refused(503, UNAVAILABLE);
+  if (!await jsrAvailable(ctx, "registry")) return refused(503, UNAVAILABLE);
   const [scope, name] = spec.slice(1).split("/");
   const meta = await client.meta(scope, name, { signal: ctx.signal });
   if (!meta.ok) return refused(502, `JSR lookup for ${spec} failed: ${meta.reason}`);

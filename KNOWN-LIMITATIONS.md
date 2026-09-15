@@ -327,9 +327,9 @@ four documented bounds of the opt-in:
   schema part (a type the generator could not describe) or a function-wrapped list
   (openapi's `tags`, `securitySchemes`) renders as a read-only cell. A toggle over an option
   the config does not set is written only when it is switched on.
-- **JSR search needs net permission for both `api.jsr.io` and `jsr.io`.** Without it the
-  panel degrades exactly as under `--offline`; the UI checks the permission and never
-  prompts.
+- **JSR search and adding a JSR package each need net permission for their host** —
+  `api.jsr.io` to search, `jsr.io` to read a package's metadata. Without it that half of the
+  panel degrades as under `--offline`; the UI only checks the permission, never prompts.
 - **`/config/next` is read-only.** denext never loads `next.config.*` at runtime, so writing to
   it would change nothing; the panel reads it in a bounded subprocess and offers to translate
   what denext honors into `denext.config.ts`.

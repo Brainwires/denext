@@ -340,7 +340,7 @@ Deno.test("isJsrSpec follows JSR's scope (2-20) and package-name (2-58) rules", 
   for (const spec of rejected) assert(!isJsrSpec(spec), `rejects ${JSON.stringify(spec)}`);
 });
 
-Deno.test("jsrAvailable: never offline, never without granted net for both JSR hosts, never prompts", async () => {
+Deno.test("jsrAvailable: never offline, never without granted net for the one host a purpose needs, never prompts", async () => {
   const perms = (api: Deno.PermissionState, registry: Deno.PermissionState) => {
     const asked: string[] = [];
     const states: Record<string, Deno.PermissionState> = { "api.jsr.io": api, "jsr.io": registry };
@@ -353,17 +353,19 @@ Deno.test("jsrAvailable: never offline, never without granted net for both JSR h
     };
   };
   const offline = perms("granted", "granted");
-  assertEquals(await jsrAvailable({ offline: true }, offline), false);
+  assertEquals(await jsrAvailable({ offline: true }, "search", offline), false);
   assertEquals(offline.asked, [], "offline does not even ask");
-  const granted = perms("granted", "granted");
-  assertEquals(await jsrAvailable({}, granted), true);
-  assertEquals(granted.asked, ["api.jsr.io", "jsr.io"]);
-  assertEquals(await jsrAvailable({ offline: false }, perms("granted", "granted")), true);
-  assertEquals(await jsrAvailable({}, perms("prompt", "prompt")), false);
-  assertEquals(await jsrAvailable({}, perms("denied", "granted")), false);
-  assertEquals(await jsrAvailable({}, perms("granted", "prompt")), false);
+  const search = perms("granted", "denied");
+  assertEquals(await jsrAvailable({}, "search", search), true);
+  assertEquals(search.asked, ["api.jsr.io"], "a search needs only api.jsr.io");
+  const registry = perms("denied", "granted");
+  assertEquals(await jsrAvailable({ offline: false }, "registry", registry), true);
+  assertEquals(registry.asked, ["jsr.io"], "the registry needs only jsr.io");
+  assertEquals(await jsrAvailable({}, "search", perms("denied", "granted")), false);
+  assertEquals(await jsrAvailable({}, "registry", perms("granted", "prompt")), false);
+  assertEquals(await jsrAvailable({}, "search", perms("prompt", "prompt")), false);
   const broken = { query: () => Promise.reject(new Error("no permission API")) };
-  assertEquals(await jsrAvailable({}, broken), false);
+  assertEquals(await jsrAvailable({}, "search", broken), false);
 });
 
 Deno.test("denext ui --offline reaches the server options and the banner, alongside --read-only", () => {

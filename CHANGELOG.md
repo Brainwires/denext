@@ -13,6 +13,11 @@ and this project adheres to
 - `denext ui`'s compose editor edits `build` (a context path) and `networks` (add and remove,
   with a warning for a network the top-level `networks:` doesn't declare).
 
+### Changed
+
+- `denext ui` checks JSR net permission per operation: a search needs only `api.jsr.io`, adding
+  a JSR package only `jsr.io`. Either used to need both.
+
 ### Fixed
 
 - `denext ui`: a refused Commands run (an unknown or built-in verb, a bad flag or argument
