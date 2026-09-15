@@ -214,16 +214,24 @@ export async function freshStagingDir(finalOutDir: string): Promise<string> {
 
 /**
  * Swap a finished staging dir into place: the previous output (if any) is renamed aside,
- * the staging dir takes its name, and the old one is removed.
+ * the staging dir takes its name, and the old one is removed. When the staging dir can't be
+ * moved into place, the previous output is renamed back, so a failed swap never leaves the
+ * site without its last good export.
  *
  * @param stagingDir The complete new output.
  * @param finalOutDir The directory it replaces.
+ * @throws When the staging dir can't take the output's place (the previous output restored).
  */
 export async function swapStagingDir(stagingDir: string, finalOutDir: string): Promise<void> {
   const previous = `${finalOutDir}.prev`;
   await Deno.remove(previous, { recursive: true }).catch(() => {});
   const had = await Deno.rename(finalOutDir, previous).then(() => true, () => false);
-  await Deno.rename(stagingDir, finalOutDir);
+  try {
+    await Deno.rename(stagingDir, finalOutDir);
+  } catch (error) {
+    if (had) await Deno.rename(previous, finalOutDir).catch(() => {});
+    throw error;
+  }
   if (had) await Deno.remove(previous, { recursive: true }).catch(() => {});
 }
 

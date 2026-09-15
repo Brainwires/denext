@@ -10,7 +10,7 @@ import { assert, assertEquals, assertRejects } from "@std/assert";
 import { walk } from "@std/fs";
 import { basename, join, relative } from "@std/path";
 import { staticExport } from "../src/build/export.ts";
-import { resolveExportOutDir } from "../src/build/export-pipeline/out-dir.ts";
+import { resolveExportOutDir, swapStagingDir } from "../src/build/export-pipeline/out-dir.ts";
 import type { ProjectPaths } from "../src/build/paths.ts";
 
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
@@ -411,5 +411,20 @@ Deno.test({
     await Deno.remove(dir, { recursive: true });
     await Deno.remove(sibling, { recursive: true }).catch(() => {});
     await Deno.remove(appProject, { recursive: true });
+  }
+});
+
+Deno.test("swapStagingDir: a failed swap puts the previous output back", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_swap_" });
+  try {
+    const out = join(dir, "out");
+    await Deno.mkdir(out);
+    await Deno.writeTextFile(join(out, "index.html"), "previous");
+    // A staging dir that isn't there makes the second rename fail after `out` moved aside.
+    await assertRejects(() => swapStagingDir(join(dir, "missing.staging"), out));
+    assertEquals(await Deno.readTextFile(join(out, "index.html")), "previous");
+    assertEquals([...Deno.readDirSync(dir)].map((e) => e.name), ["out"], "no .prev left behind");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
   }
 });
