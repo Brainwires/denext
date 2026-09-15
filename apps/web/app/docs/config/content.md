@@ -272,8 +272,9 @@ mappable members and a single `enum` for a union of literals, and `minimum` /
 `maximum` from explicit `@minimum` / `@maximum` tags where `config-validate.ts`
 enforces that exact bound. Two `x-denext` markers tell a form renderer what a
 plain array or object cannot: `wrapper: "function"` on a key written as a thunk
-around its data (`redirects: () => RedirectRule[]`), and `widget: "map"` on an
-open object. What it deliberately does **not** claim is a shape the type does
+around its data (`redirects: () => RedirectRule[]`), and `widget: "textarea"` on a
+string tagged `@widget textarea` (`spa.head`, `spa.loading`). A map has no marker: a renderer
+recognises one by its `additionalProperties`. What it deliberately does **not** claim is a shape the type does
 not spell out — an imported, conditional or intersection type keeps only its
 JSDoc description, and a function type other than a data thunk maps to `{}`
 (which is what makes `commands[].run` and the Live callbacks read as opaque).

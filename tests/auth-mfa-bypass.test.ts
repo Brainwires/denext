@@ -377,7 +377,7 @@ Deno.test("bypass 8 — POST /auth/mfa/disable from a pending cookie, even with 
   const disable = await post(app, "/auth/mfa/disable", cookie, { code });
   assertEquals(await answer(disable), [403, { error: "forbidden" }]);
   assertEquals(setMfa.calls, 0);
-  assertEquals((await mfaStatus(app.config, app.userId)).confirmed, true);
+  assertEquals((await mfaStatus(app.config, app.userId)).enrolled, true);
   const step = await post(app, "/auth/mfa", cookie, { code });
   assertEquals((await answer(step))[0], 200, "the refusal never checked (or spent) the code");
 });

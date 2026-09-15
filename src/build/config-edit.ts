@@ -27,6 +27,7 @@ import {
   type Ctx,
   type Edit,
   endOf,
+  matchLineEndings,
   type Node,
   parseModule,
   startOf,
@@ -723,7 +724,7 @@ export async function commit(
   edits: Edit[],
   label: string,
 ): Promise<EditResult> {
-  const next = applyEdits(ctx.bytes, edits);
+  const next = applyEdits(ctx.bytes, matchLineEndings(source, edits));
   const diff = diffOf(source, next, label);
   if (next !== source && await parseModule(next) === null) {
     return bail("the edited source no longer parses — denext refuses to write it", "", diff);

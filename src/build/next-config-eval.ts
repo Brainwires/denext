@@ -111,10 +111,39 @@ function readMarker(stdout: Uint8Array, marker: string): unknown {
   return JSON.parse(line.slice(marker.length));
 }
 
+/** Variables the evaluator keeps besides `NEXT_PUBLIC_*`: the mode, and where Deno's cache is. */
+const PASSED_ENV = new Set([
+  "NODE_ENV",
+  "HOME",
+  "DENO_DIR",
+  "XDG_CACHE_HOME",
+  "USERPROFILE",
+  "LOCALAPPDATA",
+  "APPDATA",
+  "SystemRoot",
+  "TEMP",
+  "TMP",
+  "TMPDIR",
+]);
+
+/**
+ * The evaluator's whole environment. The child starts from an empty one: the user's shell
+ * may hold secrets, and a config needs only Next's public variables, the mode, and the
+ * variables Deno uses to find its cache.
+ */
+function evalEnv(): Record<string, string> {
+  const env: Record<string, string> = { NO_COLOR: "1" }; // a quotable stderr excerpt, free of ANSI escapes
+  for (const [key, value] of Object.entries(Deno.env.toObject())) {
+    if (PASSED_ENV.has(key) || key.startsWith("NEXT_PUBLIC_")) env[key] = value;
+  }
+  return env;
+}
+
 /**
  * Evaluate an app's `next.config.*` with a caller-supplied program in a bounded,
  * least-privilege `deno run -` subprocess (`--allow-read=<dir> --allow-env --allow-sys`, no
- * prompt, no write/run/net). A side-effectful config — a watcher, a DB connect, an unresolved
+ * prompt, no write/run/net, no downloads, and an environment cleared down to Next's own public
+ * variables). A side-effectful config — a watcher, a DB connect, an unresolved
  * top-level await — would otherwise hang the caller forever: at the deadline the child is
  * killed and awaited, so it never outlives the call.
  *
@@ -144,10 +173,14 @@ export async function evalNextConfigProgram(
         // `"type": "module"` package.json is the common Next.js shape; without detection it
         // fails with "module is not defined".
         "--unstable-detect-cjs",
-        // No remote modules: an evaluated config can still import the project's own files and
-        // its node_modules packages, but not code from a registry or a URL (not even the hosts
-        // Deno allows imports from by default).
+        // No remote modules and no downloads: an evaluated config can import the project's own
+        // files and the packages already in its node_modules, nothing from a registry or a URL.
+        // npm resolution runs outside the permission sandbox, so --no-remote alone doesn't stop
+        // an `npm:` import (an .npmrc can point it at any host, carrying data in the name);
+        // --cached-only and a manual node_modules dir do.
         "--no-remote",
+        "--cached-only",
+        "--node-modules-dir=manual",
         `--allow-read=${dir}`,
         "--allow-env",
         "--allow-sys",
@@ -155,7 +188,8 @@ export async function evalNextConfigProgram(
         toFileUrl(file).href,
       ],
       cwd: dir,
-      env: { NO_COLOR: "1" }, // a quotable stderr excerpt, free of ANSI escapes
+      clearEnv: true,
+      env: evalEnv(),
       stdin: "piped",
       stdout: "piped",
       stderr: "piped",

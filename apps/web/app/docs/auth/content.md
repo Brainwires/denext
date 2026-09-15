@@ -130,7 +130,7 @@ Every path is relative to `basePath` (default `/auth`).
 | `/signin/:provider`   | GET         | Starts the OAuth flow (PKCE + `state` + `nonce`). Rate-limited per client IP.                                                                                        |
 | `/callback/:provider` | GET or POST | By provider type: GET is the OAuth callback and the magic-link click; POST is the Credentials sign-in and the email send / redeem. A verb the type lacks is a `405`. |
 | `/signout`            | POST        | Clears the cookie (and the store record). Same-origin only.                                                                                                          |
-| `/tokens`             | POST, GET   | Mint / list bearer API tokens. Cookie session only.                                                                                                                  |
+| `/tokens`             | POST, GET   | Mint / list bearer API tokens. Cookie session only; minting needs a recent sign-in.                                                                                  |
 | `/tokens/:id`         | DELETE      | Revoke one of your own tokens. Cookie session only.                                                                                                                  |
 | `/verify`             | GET, POST   | Redeem an email-verification token — the emailed link (GET) or a form / JSON body.                                                                                   |
 | `/reset`              | POST        | Request a password-reset link. One answer for every address.                                                                                                         |
@@ -629,7 +629,8 @@ The functions take the same config object you passed to `denextAuth()`, like
 - **No existence oracle.** A reset request answers the same for every address —
   `{ ok: true }`, or a `303` to `pages.verifyRequest` with `?sent=1` — and an unknown
   address still does comparable work (the token hashing and one adapter round-trip) but
-  gets no mail. The functions resolve `{ throttled: false }` alike and throw only for a
+  gets no mail. The functions resolve `{ ok: true }` alike (`{ ok: false, error: "throttled",
+  retryAfter }` once the budget is spent) and throw only for a
   misconfiguration (no mailer, an adapter without the group); `POST /reset` with no mailer
   still answers `200` and reports through `logger.error`.
 - **Throttled before the lookup.** Every send spends the per-address budget — 3 per 15
@@ -757,20 +758,23 @@ denextAuth({
 answer JSON only: a secret never rides a redirect) or the same functions in a Server
 Action:
 
-1. `POST {basePath}/mfa/enroll` / `enrollTotp(authConfig, user)` mints a 160-bit secret,
-   stores it **unconfirmed**, and returns `{ secret, uri }` — the base32 secret for manual
+1. `POST {basePath}/mfa/enroll` / `enrollTotp(authConfig, session)` mints a 160-bit secret,
+   stores it **unconfirmed**, and returns `{ ok: true, secret, uri }` — the base32 secret for manual
    entry and the `otpauth://totp/…` URI (SHA-1, 6 digits, 30 seconds; the account label is
    the user's email, else their id) to render as a QR code. Enrolling again replaces an
-   unconfirmed enrollment; a confirmed factor is a `409` (`null` from the function) until it
+   unconfirmed enrollment; a confirmed factor is a `409` (`error: "already_enrolled"` from the
+   function) until it
    is disabled. From a complete session the route also needs a recent sign-in (`authTime`
    within `mfa.freshness`, five minutes at least) and answers
    `403 { error: "reauth_required" }` otherwise, so a stolen session can't enroll a factor of
-   its own. The function doesn't check; a Server Action that calls it should compare
-   `session.authTime` itself.
-2. `POST {basePath}/mfa/confirm` with `{ code }` / `confirmTotp(authConfig, user, code)`
+   its own. The function applies the same rule and answers `{ ok: false, error:
+   "reauth_required" }`, so a Server Action gets it for free.
+2. `POST {basePath}/mfa/confirm` with `{ code }` / `confirmTotp(authConfig, { user, code })`
    checks a first code from the app, marks the factor confirmed and returns
    `{ ok: true, backupCodes }` — `mfa.backupCodes` single-use codes formatted `xxxxx-xxxxx`,
-   in plaintext **exactly once**, stored only as `hasher` hashes. Show them then.
+   in plaintext **exactly once**, stored only as `hasher` hashes. Show them then. A failure is
+   `{ ok: false, error: "invalid_code" }` (wrong or replayed) or `"not_pending"` (nothing to
+   confirm).
 
 ```ts
 "use server";
@@ -779,12 +783,14 @@ import { authConfig } from "../lib/auth-config.ts";
 
 export async function startEnrollment() {
   const session = await auth();
-  return session ? await enrollTotp(authConfig, session.user) : null; // { secret, uri } | null
+  // { ok: true, secret, uri } | { ok: false, error: "already_enrolled" | "reauth_required" }
+  return session ? await enrollTotp(authConfig, session) : null;
 }
 
 export async function confirmEnrollment(code: string) {
   const session = await auth();
-  return session ? await confirmTotp(authConfig, session.user, code) : { ok: false };
+  // { ok: true, backupCodes } | { ok: false, error: "invalid_code" | "not_pending" }
+  return session ? await confirmTotp(authConfig, { user: session.user, code }) : null;
 }
 ```
 
@@ -796,7 +802,8 @@ minted **pending**: it lasts 15 minutes (never more than `maxAge`), is never sli
 and `auth()` returns `null` for it — so `requireAuth` redirects to `pages.mfa` (else the
 sign-in page) with a `callbackUrl`, `requireSession` answers `401`, Live `authorize` and
 Server Actions refuse, and `/tokens` mints nothing. `GET {basePath}/session` answers
-`{ user: null, mfa: "required" }`, which `useSession()` reports as `"mfa-required"`. The
+`{ user: null, expires: null, mfa: "required" }`, which `useSession()` reports as
+`"mfa-required"`. The
 sign-in itself answers `{ ok: true, mfa: "required" }` to a JSON client or redirects to
 `pages.mfa`, and `signIn` fires only once the step-up completes. Your `pages.mfa` page
 reads the pending session with `pendingMfaSession()` and posts the code:
@@ -850,9 +857,10 @@ as "not enrolled" everywhere. `disableTotp(authConfig, userId)` does the same wi
 freshness check — gate it yourself.
 
 For a settings page, `mfaStatus(authConfig, userId)` answers
-`{ enrolled, confirmed, backupCodesRemaining }`, and
-`verifySecondFactor(authConfig, userId, code)` checks a code (claiming or spending it) and
-answers `"totp"`, `"bcp"` or `null`. The RFC 6238 primitives underneath are exported too:
+`{ enrolled, pendingConfirmation, backupCodesRemaining }` (`enrolled` means a confirmed factor,
+as in `mfa.required: "enrolled"`), and `verifySecondFactor(authConfig, { userId, code })`
+checks a code (claiming or spending it) and answers `{ ok: true, method: "totp" | "bcp" }` or
+`{ ok: false, error: "invalid_code" | "not_enrolled" }`. The RFC 6238 primitives underneath are exported too:
 `generateTotpSecret()`, `totpAuthUri({ secret, account, issuer })`,
 `verifyTotp(secret, code, { window })` — which returns the matched `step` and does **not**
 stop a replay, so claim it — plus `generateBackupCodes(hasher, count)` and
@@ -1036,13 +1044,13 @@ with `?reset=1`, and a refused step-up code goes back to `mfa` with
 Brute-force protection is **on by default**, as five fixed-window limiters built from one
 `rateLimit` config:
 
-| Limiter       | Counts                                                                                                       | Key                                                       | Default       |
-| ------------- | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------- | ------------- |
-| Credentials   | _Failed_ `POST {basePath}/callback/:provider`                                                                | Client IP + submitted identifier, lower-cased             | 5 per 15 min  |
-| Sign-in start | _Every_ `GET {basePath}/signin/:provider`                                                                    | Client IP                                                 | 20 per 15 min |
-| Session read  | _Every_ `GET {basePath}/session`                                                                             | Client IP                                                 | 60 per minute |
-| Email sends   | _Every_ mail request — `/reset`, an email-provider send, `requestEmailVerification` / `requestPasswordReset` | Submitted address, plus client IP at 10×                  | 3 per 15 min  |
-| Second factor | _Every_ code check on `/mfa`, `/mfa/confirm`, `/mfa/disable`; _failed_ email-code and magic-link redeems     | User id (email codes: the address), plus client IP at 10× | 5 per 5 min   |
+| Limiter       | Counts                                                                                                       | Key                                                       | Default        |
+| ------------- | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------- | -------------- |
+| Credentials   | _Failed_ `POST {basePath}/callback/:provider`                                                                | Client IP + submitted identifier, lower-cased             | 5 per 15 min   |
+| Sign-in start | _Every_ `GET {basePath}/signin/:provider`                                                                    | Client IP                                                 | 100 per 15 min |
+| Session read  | _Every_ `GET {basePath}/session`                                                                             | Client IP                                                 | 300 per minute |
+| Email sends   | _Every_ mail request — `/reset`, an email-provider send, `requestEmailVerification` / `requestPasswordReset` | Submitted address, plus client IP at 10×                  | 3 per 15 min   |
+| Second factor | _Every_ code check on `/mfa`, `/mfa/confirm`, `/mfa/disable`; _failed_ email-code and magic-link redeems     | User id (email codes: the address), plus client IP at 10× | 5 per 5 min    |
 
 Past the limit the endpoint answers a generic `429` with `Retry-After` — like the generic
 `401`, it never reveals whether the account exists — and a successful credentials sign-in
@@ -1054,7 +1062,9 @@ signed transaction cookie, plus provider-id probing.
 
 The session-read limiter exists for the same reason: `GET {basePath}/session` is
 unauthenticated work — a cookie verification plus a store read, and possibly a re-issue —
-and 60 per minute is far above any sane `SessionProvider` poll.
+and 300 per minute leaves room for many users behind one address (an office NAT). A `429`
+never signs anyone out: `SessionProvider` keeps the session it knew and waits out `Retry-After`
+before its next focus or interval refetch.
 
 The two newer budgets count per **subject**. The send budget is spent before the address is
 looked up, so a throttled unknown address answers exactly like a throttled real one, and an

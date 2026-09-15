@@ -8,6 +8,88 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.5.0-rc.5] - 2026-09-15
+
+### Security
+
+- The next.config evaluator (`denext migrate`, the `denext ui` next.config panel) starts from
+  an empty environment (only `NODE_ENV`, `NEXT_PUBLIC_*` and the variables Deno needs to find
+  its cache pass through) and downloads nothing (`--cached-only`, a manual `node_modules`).
+  npm resolution runs outside Deno's permission sandbox, so a repository's `.npmrc` could aim
+  an `npm:` import at a host of its choosing and carry a shell secret out in the package name;
+  `--no-remote` alone did not stop that. This also keeps `denext ui --offline` true for this
+  child.
+- `POST {basePath}/tokens` needs a recent sign-in (`authTime` within `mfa.freshness`, five
+  minutes at least), as `/mfa/enroll` does; otherwise it answers
+  `403 { error: "reauth_required" }`. `resetPassword()` now also revokes the user's bearer API
+  tokens along with their sessions. A stolen session could mint a token that outlived both
+  the session and the owner's password reset.
+- `requireBearer({ scope: [] })` refuses every token, as `role: []` does; an empty scope list
+  used to admit every live token.
+- The MCP live tools (`denext_dev_logs`, `denext_component_tree`, …) only talk to a loopback
+  http(s) origin read from `.denext/dev.json`, rebuilt from its parts: a committed or planted
+  file can no longer point them at another host.
+- An OAuth callback's `?error=` reaches the sign-in page and `signInFailed.reason` only when it
+  is a protocol-shaped code (`access_denied`); free text reads `oauth_failed` and is logged, so
+  a crafted link can't put its own message on the sign-in page.
+
+### Added
+
+- `DENEXT_UI_DISCOVERY_TIMEOUT_MS`: the deadline, in milliseconds, for `denext ui`'s Commands
+  discovery child (default 8000). On a heavily loaded machine that child can miss the
+  default, and the panel then lists no project verbs.
+
+### Changed
+
+- **Breaking (since rc.2):** the auth API settles on one shape before 2.5.0. The config comes
+  first, then a single identifier as a positional argument or anything more as an options
+  object, and a failure is `{ ok: false, error }`, as `verifyEmail()` and `resetPassword()`
+  already answer.
+  - `enrollTotp(config, session)` (was `(config, user)`) answers `EnrollTotpResult`, not
+    `TotpEnrollment | null`, and enforces the recent-sign-in rule its route does
+    (`error: "reauth_required"`).
+  - `confirmTotp(config, { user, code })` (was positional) fails with
+    `error: "invalid_code" | "not_pending"`.
+  - `verifySecondFactor(config, { userId, code })` (was positional) answers
+    `SecondFactorResult` (`{ ok: true, method }`), not `MfaMethod | null`.
+  - `verifyTotp()` fails with `error: "invalid_code"`.
+  - `MfaStatus` is `{ enrolled, pendingConfirmation, backupCodesRemaining }`: `enrolled` now
+    means a confirmed factor, as `mfa.required: "enrolled"` does, and `confirmed` is gone.
+  - `requestPasswordReset()` / `requestEmailVerification()` resolve
+    `{ ok: true } | { ok: false, error: "throttled", retryAfter }` (was `{ throttled,
+    retryAfter? }`).
+- `signIn()` is typed by overload: a `credentials` sign-in resolves `CredentialsSignInResult`
+  (`{ ok: true, user?, mfa? }`), any other the sign-in URL. It was `Promise<unknown>`.
+- The default auth rate limits leave room for many users behind one IP: sign-in starts allow
+  100 per IP per 15 minutes (was 20), session reads 300 per IP per minute (was 60). Both limits
+  are new in 2.5; tune them with `rateLimit.signin` / `rateLimit.session`.
+
+### Fixed
+
+- `useSession()`: a `429`, a server error or a network failure no longer reads as "signed
+  out". `SessionProvider` keeps the session it knew (only a first load that learns nothing
+  shows the logged-out view), and a `429`'s `Retry-After` pauses its focus and interval
+  refetches. Users sharing one IP (an office NAT) could flip to the logged-out UI once the
+  per-IP session-read budget ran out.
+- The SQLite auth adapter, session store and cache set a 5 s `busy_timeout`: a second writer
+  (a seed script, `denext task`) makes a request wait instead of failing at once with
+  "database is locked".
+- The `/mfa*` and `/tokens` endpoints log an adapter or store failure and answer
+  `503 { error: "unavailable" }` instead of a bare `500`.
+- The 50-live-token cap on `POST {basePath}/tokens` holds under concurrent requests (per
+  process).
+- `denext ui` sends `referrer-policy: same-origin` (was `no-referrer`). Under `no-referrer` a
+  browser sends `Origin: null` on a form POST, so with JavaScript off every panel form failed
+  the origin check.
+- `denext ui`: the Plugins panel's config write (after `deno add`, which can take minutes) and
+  the wizard's `deno.json` / `.env.example` writes refuse when the file changed on disk since
+  it was read, like the config, plugin-options and compose writers.
+- `denext ui` config edits keep a CRLF file CRLF; inserted lines used a bare LF.
+- `denext ui` streams a child's output that never prints a newline in 64 KiB pieces instead of
+  holding it until the child exits.
+- A mistyped 6-digit code at the second-factor step no longer runs the password hasher once per
+  stored backup code.
+
 ## [2.5.0-rc.4] - 2026-09-15
 
 ### Security
@@ -58,10 +140,10 @@ and this project adheres to
 - `POST {basePath}/mfa/disable`'s no-code shortcut (the session's own step-up within
   `mfa.freshness`) is measured from `authTime`, so it works with sliding expiry on as well; it
   used to be void whenever `session.updateAge > 0`.
-- `verifyEmail()` answers `{ ok: true, user }` or `{ ok: false, error: "invalid_token" }`
+- **Breaking (since rc.2):** `verifyEmail()` answers `{ ok: true, user }` or `{ ok: false, error: "invalid_token" }`
   (`VerifyEmailResult`, exported from `denext/server`) — the shape `resetPassword()` has —
   instead of `AdapterUser | null`, so later failure reasons can be added without a breaking
-  change.
+  change. A truthiness check (`if (await verifyEmail(…))`) now always passes: test `result.ok`.
 
 ### Fixed
 
@@ -294,7 +376,6 @@ and this project adheres to
   `@scope/name` spec and the export identifier before any request or argv, and pins the
   version the registry reports; the Commands form's argv is allowlisted by the verb's own
   declared flags.
-
 - A `callbacks.session` that returns a rebuilt object can no longer turn a first-factor-only
   (MFA-pending) sign-in into a complete session: the framework re-applies `mfaPending`, `amr`,
   `v`, `issuedAt` and the pending lifetime after the callback runs. The callback may still add
@@ -321,7 +402,6 @@ and this project adheres to
   shuts down (it used to keep running).
 - `denextAuth()` refuses `mfa.required: "always"` without an adapter MFA group at construction;
   it used to accept it and lock every user out at the step-up.
-
 - **`denext --help build` ran `build`.** A help flag before the verb now prints that verb's
   help and never runs it; `denext --help <dir>` prints the top-level help for that directory
   instead of erroring; leading global flags (`denext --cwd ./app build`) reach the command;
@@ -461,9 +541,11 @@ and this project adheres to
   `scryptHasher` itself, whose `verify` passes the configured cost through so the equal-work
   rejection of an unknown account burns the same time a real comparison does. A custom `Hasher`
   must equalise its own unknown-account work. The flows that drive it — first-party credential
-  storage and hashed MFA backup codes — are scheduled in ROADMAP.md.
+  storage and hashed MFA backup codes — are scheduled in ROADMAP.md. (Superseded in rc.2: the
+  default credentials `authorize`, password reset and backup codes all drive it now.)
 - **Auth: a versioned session payload** (`v: 2`, `issuedAt`, and reserved `mfaPending` / `amr`).
   Cookies minted by older versions keep verifying, and a pending-MFA session fails closed in `auth()`.
+  (rc.2 fills both reserved fields.)
 - **Auth: bearer API tokens.** `requireBearer(authConfig, { scope, role })` drops into any
   `createApi()` chain: one identical 401 for an absent, unknown, expired or revoked token, 403 for a
   missing scope or role, a scopeless token satisfies no scope requirement, it never sets a cookie,
@@ -480,7 +562,7 @@ and this project adheres to
     already walks; the detail pane's Source row opens the file at the line through the dev server's
     editor endpoint (`DENEXT_EDITOR` / `VISUAL` / `EDITOR`, with the `vscode://` fallback in SPA dev).
   - **Named hooks** — `count · useState` instead of `useState`, with same-module custom hooks expanded
-    as breadcrumbs; naming is all-or-nothing per component, so a mismatch degrades to kind labels
+    as breadcrumbs (rc.2 extends this across static relative imports); naming is all-or-nothing per component, so a mismatch degrades to kind labels
     rather than lying.
   - **Network** — the dev server's recent requests with status pills, duration bars and filters.
   - **Cache** — the page/data cache counters, from `/_denext/dev-cache`.
@@ -513,7 +595,7 @@ and this project adheres to
   `redirects` / `rewrites` / `headers` now carry the rule-array schema (marked
   `x-denext.wrapper: "function"` because the config key is a function returning the array),
   `Record` fields become an open object whose `additionalProperties` is the value schema (plus an
-  `x-denext.widget: "map"` marker for other schema consumers — the UI derives its map widget from
+  `x-denext.widget: "map"` marker for other schema consumers, removed again in rc.2 — the UI derives its map widget from
   `additionalProperties` itself; the only `x-denext.widget` it reads is `"textarea"`),
   `images.formats` keeps its enum, and
   `@minimum` / `@maximum` surface the bounds `config-validate.ts` already enforces — which is what
@@ -7273,6 +7355,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.5.0-rc.5]: https://jsr.io/@denext/denext@2.5.0-rc.5
 [2.5.0-rc.4]: https://jsr.io/@denext/denext@2.5.0-rc.4
 [2.5.0-rc.3]: https://jsr.io/@denext/denext@2.5.0-rc.3
 [2.5.0-rc.2]: https://jsr.io/@denext/denext@2.5.0-rc.2

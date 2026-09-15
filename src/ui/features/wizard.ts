@@ -30,7 +30,7 @@ import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "..
 import { DiffBlock, Hidden, Note, OpForm, Out, Panel } from "../components.ts";
 import { renderView } from "../view.ts";
 import { broadcast } from "../events.ts";
-import { uiSafeJoin, writeFileAtomic } from "../security.ts";
+import { StaleWriteError, uiSafeJoin, writeFileAtomic } from "../security.ts";
 import { cliInvocation, runDeno } from "../proc.ts";
 import { OFFLINE_REFUSALS, OFFLINE_STATUS } from "../offline.ts";
 import { envExampleSource, type EnvScan, scanEnvUsage } from "../env-scan.ts";
@@ -525,7 +525,9 @@ async function opDenoJson(ctx: UiContext, s: Survey, form: FormData): Promise<Op
       confirmOp: "denojson",
     };
   }
-  await writeFileAtomic(ctx.dir, name, next);
+  const base = s.deno === null ? null : current;
+  const stale = await writeUnlessChanged(ctx, "denojson", name, next, base);
+  if (stale) return stale;
   return { step: "denojson", ok: true, redirect: true, message: `${name} updated.` };
 }
 
@@ -578,8 +580,31 @@ async function opEnvExample(ctx: UiContext, s: Survey, form: FormData): Promise<
       confirmOp: "envexample",
     };
   }
-  await writeFileAtomic(ctx.dir, ".env.example", next);
+  const stale = await writeUnlessChanged(ctx, "env", ".env.example", next, current);
+  if (stale) return stale;
   return { step: "env", ok: true, redirect: true, message: ".env.example written." };
+}
+
+/**
+ * Write `rel` only while it still holds `base` (the text this request read), when it had
+ * one. An edit made on disk in between refuses the step instead of being overwritten.
+ */
+async function writeUnlessChanged(
+  ctx: UiContext,
+  step: OpOutcome["step"],
+  rel: string,
+  next: string,
+  base: string | null,
+): Promise<OpOutcome | null> {
+  try {
+    await writeFileAtomic(ctx.dir, rel, next, base === null ? {} : { unchangedFrom: base });
+    return null;
+  } catch (error) {
+    if (!(error instanceof StaleWriteError)) throw error;
+    const message = `${rel} changed on disk while this step ran — nothing was written. ` +
+      "Review the change again.";
+    return { step, ok: false, message };
+  }
 }
 
 /** A file's text, or `null` when it does not exist. */

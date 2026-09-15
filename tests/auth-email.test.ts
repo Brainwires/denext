@@ -345,7 +345,7 @@ Deno.test("a failing mailer is logged, never thrown, and fires no verificationRe
     events: { verificationRequested: (payload) => void requested.push(payload) },
   });
   const { email } = await makeUser(adapter);
-  assertEquals(await requestPasswordReset(config, email), { throttled: false });
+  assertEquals(await requestPasswordReset(config, email), { ok: true });
   assertEquals(errors.length, 1);
   assert(!errors[0].includes("token="), "the log line carries no link");
   assertEquals(requested.length, 0);
@@ -693,4 +693,21 @@ Deno.test("resolveAuthOptions: mfa.freshness 0 is kept (always ask), not replace
   assertEquals(resolveAuthOptions({ ...config, mfa: { freshness: 0 } }).mfa.freshness, 0);
   assertEquals(resolveAuthOptions({ ...config, mfa: { freshness: -5 } }).mfa.freshness, 0);
   assertEquals(resolveAuthOptions({ ...config, mfa: {} }).mfa.freshness, 900);
+});
+
+Deno.test("resetPassword: a verified account's bearer API tokens are revoked too", async () => {
+  // A reset is how an owner takes an account back: a token minted with a stolen session
+  // must not outlive it.
+  const { config, adapter, sent } = setup();
+  const { id, email } = await makeUser(adapter);
+  await adapter.updateUser({ id, emailVerified: Math.floor(Date.now() / 1000) });
+  await issueApiToken(config, { userId: id, name: "minted with a stolen session" });
+  await requestPasswordReset(config, email);
+  const result = await resetPassword(config, {
+    email,
+    token: sent[0].token,
+    password: "correct horse",
+  });
+  assert(result.ok);
+  assertEquals(await adapter.listApiTokens!(id), [], "a reset ends every bearer token");
 });

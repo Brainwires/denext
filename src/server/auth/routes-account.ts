@@ -156,7 +156,7 @@ async function handleResetRequest(ctx: AuthRouteContext): Promise<Response | nul
       adapter,
       send,
     });
-    if (result.throttled) {
+    if (!result.ok) {
       return json({ error: "too many attempts" }, 429, {
         "retry-after": String(result.retryAfter),
       });

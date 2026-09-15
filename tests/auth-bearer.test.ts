@@ -470,3 +470,59 @@ Deno.test("/auth/tokens: a per-user cap bounds how many live tokens one session 
   assertEquals(gone.status, 200);
   assertEquals((await mint())!.status, 201);
 });
+
+Deno.test("/auth/tokens: minting needs a recent sign-in — a stale session gets reauth_required", async () => {
+  // A token outlives every session and survives revokeAllSessions(), so an old (possibly
+  // stolen) session must not be able to turn itself into one.
+  const { config, adapter } = setup();
+  const userId = await makeUser(adapter);
+  const cookie = await sessionCookie(config, { id: userId, email: "dev@x.test" });
+  const realNow = Date.now;
+  Date.now = () => realNow() + 16 * 60_000; // past the 15-minute freshness window
+  try {
+    const stale = (await call(config, "/auth/tokens", { method: "POST", cookie }))!;
+    assertEquals(stale.status, 403);
+    assertEquals(await stale.json(), { error: "reauth_required" });
+    assertEquals(await adapter.listApiTokens!(userId), [], "nothing was minted");
+  } finally {
+    Date.now = realNow;
+  }
+  assertEquals((await call(config, "/auth/tokens", { method: "POST", cookie }))!.status, 201);
+});
+
+Deno.test("/auth/tokens: concurrent mints can't overrun the live-token cap", async () => {
+  const { config, adapter } = setup();
+  const userId = await makeUser(adapter);
+  const cookie = await sessionCookie(config, { id: userId, email: "dev@x.test" });
+  for (let i = 0; i < 48; i++) await issueApiToken(config, { userId });
+  const burst = await Promise.all(
+    Array.from({ length: 6 }, () => call(config, "/auth/tokens", { method: "POST", cookie })),
+  );
+  assertEquals(burst.map((res) => res!.status).sort(), [201, 201, 409, 409, 409, 409]);
+  assertEquals((await adapter.listApiTokens!(userId)).length, 50);
+});
+
+Deno.test("/auth/tokens and /auth/mfa: an adapter failure is logged and answered 503, not a bare 500", async () => {
+  const errors: string[] = [];
+  const { config, adapter } = setup({ logger: { error: (message) => void errors.push(message) } });
+  const userId = await makeUser(adapter);
+  const cookie = await sessionCookie(config, { id: userId, email: "dev@x.test" });
+  adapter.listApiTokens = () => Promise.reject(new Error("database is locked"));
+  adapter.getMfa = () => Promise.reject(new Error("database is locked"));
+  const calls = [["/auth/tokens", "POST"], ["/auth/tokens", "GET"], ["/auth/mfa/enroll", "POST"]];
+  for (const [path, method] of calls) {
+    const res = (await call(config, path, { method, cookie }))!;
+    assertEquals(res.status, 503, `${method} ${path}`);
+    assertEquals(await res.json(), { error: "unavailable" });
+  }
+  assertEquals(errors.length, 3, "each failure reached the auth logger");
+});
+
+Deno.test("requireBearer({ scope: [] }) is unsatisfiable, like role: []", async () => {
+  // A computed requirement that came out empty must not admit every live token.
+  const { config, adapter } = setup();
+  const userId = await makeUser(adapter);
+  const scoped = await issueApiToken(config, { userId, scopes: ["pets:read"] });
+  const denied = await refusal(requireBearer(config, { scope: [] }), `Bearer ${scoped.token}`);
+  assertEquals([denied?.status, denied?.code], [403, "forbidden"]);
+});

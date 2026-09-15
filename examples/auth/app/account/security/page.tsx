@@ -110,8 +110,8 @@ function Disabled({ status }: { status: MfaStatus }) {
   return (
     <>
       <p>
-        Two-factor authentication is <strong>off</strong>.{" "}
-        {status.enrolled && "An enrolment was started but never confirmed — start again."}
+        Two-factor authentication is <strong>off</strong>. {status.pendingConfirmation &&
+          "An enrolment was started but never confirmed — start again."}
       </p>
       <form action={startEnrolment} method="post">
         <button type="submit">Set up an authenticator app</button>
@@ -122,7 +122,7 @@ function Disabled({ status }: { status: MfaStatus }) {
 
 /** The factor's state: on (with the off switch), part-way through enrolling, or off. */
 function Factor({ status, enrolment }: { status: MfaStatus; enrolment?: TotpEnrollment }) {
-  if (status.confirmed) return <Enabled status={status} />;
+  if (status.enrolled) return <Enabled status={status} />;
   return enrolment ? <Enrolment enrolment={enrolment} /> : <Disabled status={status} />;
 }
 

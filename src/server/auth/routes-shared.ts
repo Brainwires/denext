@@ -49,9 +49,9 @@ export interface AuthRoute {
   pattern: string;
   /**
    * A dispatch-level rate-limit gate to put in front of the handler, if any.
-   * `"signin-start"` is the per-client-IP budget for starting a sign-in (20 hits per
+   * `"signin-start"` is the per-client-IP budget for starting a sign-in (100 hits per
    * 15 minutes by default; `rateLimit.signin`), `"session-read"` the one for reading the
-   * session (60 per minute; `rateLimit.session`). Declaring them here rather than inside
+   * session (300 per minute; `rateLimit.session`). Declaring them here rather than inside
    * the handlers keeps the limits visible in the one place the endpoint set is declared —
    * and keeps the route modules free of limiter plumbing.
    */
@@ -298,4 +298,24 @@ export async function readTx(ctx: AuthRouteContext): Promise<Transaction | null>
 export async function clearTx(ctx: AuthRouteContext): Promise<void> {
   const session = await getSession<Transaction>(txSessionOptions(ctx));
   session.clear();
+}
+
+/**
+ * Wrap a route handler so an adapter or store failure is logged and answered with a generic
+ * `503 { error: "unavailable" }`, instead of escaping as a bare `500` that leaves nothing in
+ * the auth log.
+ *
+ * @param what What the handler does, for the log line (e.g. `"minting an API token"`).
+ * @param handler The handler to guard.
+ * @returns The guarded handler; `null` (not this endpoint) and every answer pass through.
+ */
+export function contained(what: string, handler: AuthRoute["handler"]): AuthRoute["handler"] {
+  return async (ctx) => {
+    try {
+      return await handler(ctx);
+    } catch (error) {
+      ctx.options.logger.error(`denextAuth: ${what} failed`, error);
+      return json({ error: "unavailable" }, 503);
+    }
+  };
 }

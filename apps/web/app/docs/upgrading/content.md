@@ -26,20 +26,48 @@ links back to the release that introduced it.
 
 ## Upgrading to 2.5
 
-2.5 is in release candidates; this section covers rc.1 and rc.2.
+2.5 is in release candidates; this section covers every rc so far.
+
+- **The TOTP and email-request functions answer `{ ok, … }` unions.**
+  `enrollTotp(config, session)` (was `(config, user)`) answers
+  `{ ok: true, secret, uri }` or `{ ok: false, error }` and refuses a complete
+  session that didn't sign in recently. `confirmTotp(config, { user, code })` and
+  `verifySecondFactor(config, { userId, code })` take an options object; the
+  latter answers `{ ok: true, method }` instead of the method or `null`.
+  `requestPasswordReset()` / `requestEmailVerification()` answer `{ ok: true }` or
+  `{ ok: false, error: "throttled", retryAfter }` instead of `{ throttled }`. A
+  truthiness check on an old nullable result now always passes — test `.ok`.
+  ([2.5.0-rc.5](/docs/changelog#250-rc5---2026-09-15))
+- **`MfaStatus.enrolled` now means a confirmed factor, and `confirmed` is gone.**
+  Read `pendingConfirmation` for an enrollment that was started but not
+  confirmed. ([2.5.0-rc.5](/docs/changelog#250-rc5---2026-09-15))
+- **Minting an API token needs a recent sign-in.** `POST /auth/tokens` from an
+  older session answers `403 { error: "reauth_required" }`; sign in again first.
+  ([2.5.0-rc.5](/docs/changelog#250-rc5---2026-09-15))
+- **`verifyEmail()` answers `{ ok: true, user }` / `{ ok: false, error }`**
+  instead of the user or `null`: `if (await verifyEmail(…))` now always passes —
+  test `result.ok`. ([2.5.0-rc.3](/docs/changelog#250-rc3---2026-09-14))
+- **`useSession().status` can be `"mfa-required"`.** An exhaustive `switch` or a
+  `Record<status, …>` needs the new member.
+  ([2.5.0-rc.2](/docs/changelog#250-rc2---2026-09-14))
+- **`denextAuth` rate-limits sign-in starts and session reads by default** — 100
+  per client IP per 15 minutes and 300 per minute. A load test, or many users
+  behind one address, can meet a `429`; `SessionProvider` keeps its session
+  through one. Tune `rateLimit.signin` / `rateLimit.session`, or turn every
+  limiter off with `rateLimit: false`. ([2.5](/docs/changelog))
 
 - **A help flag before the verb prints help instead of running the verb.**
   `denext --help build` used to run a build; it now prints `build`'s help. A
   script that relied on it runs `denext build`. An unknown flag before the verb
-  is now an error instead of being silently ignored. ([2.5.0-rc.2](/docs/changelog))
+  is now an error instead of being silently ignored. ([2.5.0-rc.2](/docs/changelog#250-rc2---2026-09-14))
 - **`AuthProvider` has a third member, `EmailProvider` (`type: "email"`).** An
   exhaustive `switch` over `provider.type` needs an `"email"` case.
   `credentials()`'s `authorize` became optional and the internal
   `issueAuthSession` gained a trailing options argument — both source-compatible,
-  nothing to change. ([2.5.0-rc.2](/docs/changelog))
+  nothing to change. ([2.5.0-rc.2](/docs/changelog#250-rc2---2026-09-14))
 - **The config schema no longer emits `x-denext.widget: "map"`.** Only a tool
   reading `denext.config.schema.json` is affected: detect a map from its
-  `additionalProperties`. ([2.5.0-rc.2](/docs/changelog))
+  `additionalProperties`. ([2.5.0-rc.2](/docs/changelog#250-rc2---2026-09-14))
 - **The `linkAccount` event carries identity only** — provider, provider-side id,
   type and owner. A handler that read provider tokens off it reads the stored
   account back through the adapter.

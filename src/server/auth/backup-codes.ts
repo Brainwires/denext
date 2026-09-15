@@ -76,6 +76,17 @@ export function backupCodeMatcher(
 }
 
 /**
+ * Whether `code` could be a backup code at all once normalised — 10 characters of the code
+ * alphabet. A mistyped 6-digit TOTP code can't, so a caller may skip the per-hash walk.
+ *
+ * @param code The code the user typed.
+ * @returns `true` when the code is backup-code shaped.
+ */
+export function isBackupCodeShaped(code: string): boolean {
+  return NORMALISED_CODE.test(normaliseBackupCode(code));
+}
+
+/**
  * Normalise a presented code: drop whitespace and hyphens, lowercase.
  *
  * @param input The raw input (possibly not a string at runtime).

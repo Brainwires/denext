@@ -46,15 +46,32 @@ export interface DevStateResponse {
  * Read `<dir>/.denext/dev.json`, the address a running dev server published.
  *
  * @param dir The project directory.
- * @returns The dev-server info, or null when no dev server is running (no file).
+ * @returns The dev-server info, or null when no dev server is running (no file) or the file
+ *   names anything but a loopback http(s) origin.
  */
 export async function readDevInfo(dir: string): Promise<DevInfo | null> {
   try {
     const info = JSON.parse(await Deno.readTextFile(join(dir, ".denext", "dev.json")));
-    return typeof info?.origin === "string" ? info as DevInfo : null;
+    const origin = loopbackOrigin(info?.origin);
+    return origin ? { ...info, origin } as DevInfo : null;
   } catch {
     return null;
   }
+}
+
+/** The hosts a dev server's published origin can name (it rewrites `0.0.0.0` to loopback). */
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+
+/**
+ * The origin a `dev.json` names, only when it is a loopback http(s) address — rebuilt from its
+ * parts, so no path, query or fragment rides along. A dev server only ever writes one of those;
+ * anything else is a committed or planted file pointing the MCP tools at another host.
+ */
+function loopbackOrigin(value: unknown): string | null {
+  if (typeof value !== "string" || !URL.canParse(value)) return null;
+  const url = new URL(value);
+  const web = url.protocol === "http:" || url.protocol === "https:";
+  return web && LOOPBACK_HOSTS.has(url.hostname) ? url.origin : null;
 }
 
 /**

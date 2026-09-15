@@ -44,23 +44,20 @@ function codeOf(formData: FormData): string {
   return String(formData.get("code") ?? "").trim();
 }
 
-/**
- * Signed in within the last 15 minutes. `authTime` never moves with sliding expiry, so a
- * stolen long-lived session can't pass for a recent sign-in.
- */
-function recentSignIn(session: { authTime?: number }): boolean {
-  return session.authTime !== undefined && Date.now() / 1000 - session.authTime <= 15 * 60;
-}
-
 /** Start an enrolment: a fresh secret, stored UNCONFIRMED, shown on the next render. */
 export async function startEnrolment(): Promise<void> {
   const session = await signedIn(PAGE);
-  // The /auth/mfa/enroll route insists on a recent sign-in; a Server Action that calls
-  // enrollTotp() directly checks it itself.
-  if (!recentSignIn(session)) redirect(`/login?error=reauth&callbackUrl=${PAGE}`);
-  const enrolment = await enrollTotp(authConfig, session.user);
-  if (!enrolment) redirect(`${PAGE}?error=enrolled`);
-  stashOnce(onceKey(session, "totp"), JSON.stringify(enrolment));
+  // enrollTotp() refuses a session that didn't sign in recently, as /auth/mfa/enroll does.
+  const enrolment = await enrollTotp(authConfig, session);
+  if (!enrolment.ok) {
+    redirect(
+      enrolment.error === "reauth_required"
+        ? `/login?error=reauth&callbackUrl=${PAGE}`
+        : `${PAGE}?error=enrolled`,
+    );
+  }
+  const { secret, uri } = enrolment;
+  stashOnce(onceKey(session, "totp"), JSON.stringify({ secret, uri }));
   redirect(`${PAGE}?step=confirm`);
 }
 
@@ -68,7 +65,7 @@ export async function startEnrolment(): Promise<void> {
 export async function confirmEnrolment(formData: FormData): Promise<void> {
   const session = await signedIn(PAGE);
   if (await overBudget(session.user.id)) redirect(`${PAGE}?error=throttled`);
-  const result = await confirmTotp(authConfig, session.user, codeOf(formData));
+  const result = await confirmTotp(authConfig, { user: session.user, code: codeOf(formData) });
   if (!result.ok) redirect(`${PAGE}?error=confirm`);
   stashOnce(onceKey(session, "backup"), JSON.stringify(result.backupCodes));
   redirect(`${PAGE}?confirmed=1`);
@@ -78,7 +75,8 @@ export async function confirmEnrolment(formData: FormData): Promise<void> {
 export async function disableTwoFactor(formData: FormData): Promise<void> {
   const session = await signedIn(PAGE);
   if (await overBudget(session.user.id)) redirect(`${PAGE}?error=throttled`);
-  if (!await verifySecondFactor(authConfig, session.user.id, codeOf(formData))) {
+  const code = codeOf(formData);
+  if (!(await verifySecondFactor(authConfig, { userId: session.user.id, code })).ok) {
     redirect(`${PAGE}?error=code`);
   }
   await disableTotp(authConfig, session.user.id);

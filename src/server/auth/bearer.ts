@@ -80,7 +80,9 @@ function bearerToken(request: Request): string {
 function anyOf(held: string[] | undefined, required: string | string[] | undefined): boolean {
   if (required === undefined) return true;
   const list = Array.isArray(required) ? required : [required];
-  return list.length === 0 || (!!held && list.some((r) => held.includes(r)));
+  // An empty list is unsatisfiable, as `role: []` is: a computed requirement that came out
+  // empty must not admit every token.
+  return list.length > 0 && !!held && list.some((r) => held.includes(r));
 }
 
 /**

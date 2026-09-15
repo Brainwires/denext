@@ -9,9 +9,9 @@
 >
 > `development` is on the **2.5 rc series** (the version line `deno task bump` rewrites).
 > rc.1 carried `denext ui`, the auth flexibility cut + database adapter + bearer tokens, and
-> the DevTools completeness pass; rc.2 carries the emailed auth flows and TOTP two-factor, the
-> rest of the `denext ui` list and the last three DevTools items — all in
-> [CHANGELOG.md](./CHANGELOG.md). What remains is the 2.6 candidates, the last
+> the DevTools completeness pass; rc.2 added the emailed auth flows and TOTP two-factor, the
+> rest of the `denext ui` list and the last three DevTools items; rc.3 onwards is hardening —
+> all in [CHANGELOG.md](./CHANGELOG.md). What remains is the 2.6 candidates, the last
 > build-time-purity item, the TanStack Start depth of the router plugins, and the
 > unscheduled candidates. Items target the next minor unless marked otherwise; this file is
 > rewritten each cycle.
@@ -130,7 +130,7 @@ guardrail; both are build-time.
 - **An optional magic-link confirm page**: the GET renders a form that POSTs the token,
   closing link-scanner burns and login CSRF.
 - **`totpQrSvg()`** — a dependency-free QR renderer for the `otpauth://` URI `enrollTotp` /
-  `totpAuthUri` return (rc.2 ships the URI, not the picture).
+  `totpAuthUri` return (2.5 ships the URI, not the picture).
 - **Optional adapter `deleteCredential?` / `deleteMfa?`**, so disabling TOTP and a
   pre-account-hijacking eviction delete instead of overwrite (today: an empty, unconfirmed
   MFA record and a password hash of a random secret).

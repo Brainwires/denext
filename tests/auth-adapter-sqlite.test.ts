@@ -339,3 +339,11 @@ Deno.test("sqliteAuthAdapter: a closed adapter refuses to reopen the file", asyn
   );
   await adapter.close?.(); // still idempotent
 });
+
+Deno.test("sqliteAuthAdapter: the handle waits out a second writer (busy_timeout) instead of failing at once", async () => {
+  const { open, sql } = recordingHandle();
+  const adapter = sqliteAuthAdapter({ path: "/virtual/auth.db", openDb: open });
+  await adapter.createUser({ email: "busy@x.test" });
+  assert(sql.some((s) => /PRAGMA busy_timeout = \d+/.test(s)), "busy_timeout is set on open");
+  await adapter.close?.();
+});

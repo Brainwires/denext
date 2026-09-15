@@ -92,22 +92,41 @@ function stateFrom(data: SessionResponse | null): SessionState {
   return { user, status: user ? "authenticated" : "unauthenticated" };
 }
 
+const SIGNED_OUT: SessionState = { user: null, status: "unauthenticated" };
+
+/** How long to hold ambient refetches after a `429` that names no `Retry-After`. */
+const DEFAULT_RETRY_AFTER_MS = 60_000;
+
 /**
- * Fetch the session endpoint. A network failure, a non-JSON body or an error status all
- * read as "signed out" rather than throwing into the tree — the UI degrades to the
- * logged-out view instead of unmounting behind an error boundary.
+ * What one `{basePath}/session` fetch established: the session, or nothing at all — a
+ * `429`, a server error, a network failure or a non-JSON body says nothing about who is
+ * signed in — plus how long to hold off ambient refetches.
  */
-async function fetchSession(basePath: string): Promise<SessionState> {
+type SessionFetch = { state: SessionState } | { state: null; holdMs: number };
+
+/**
+ * Fetch the session endpoint without ever throwing into the tree. A `4xx` other than
+ * `429` (no auth mounted at `basePath`) reads as signed out.
+ */
+async function fetchSession(basePath: string): Promise<SessionFetch> {
   try {
     const res = await fetch(`${basePath}/session`, {
       headers: { accept: "application/json" },
       credentials: "same-origin",
     });
-    if (!res.ok) return { user: null, status: "unauthenticated" };
-    return stateFrom(await res.json() as SessionResponse);
+    if (res.status === 429) return { state: null, holdMs: retryAfterMs(res) };
+    if (res.status >= 500) return { state: null, holdMs: 0 };
+    if (!res.ok) return { state: SIGNED_OUT };
+    return { state: stateFrom(await res.json() as SessionResponse) };
   } catch {
-    return { user: null, status: "unauthenticated" };
+    return { state: null, holdMs: 0 };
   }
+}
+
+/** A `429`'s `Retry-After` (delta-seconds) in milliseconds, or the one-minute default. */
+function retryAfterMs(res: Response): number {
+  const seconds = Number(res.headers.get("retry-after"));
+  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : DEFAULT_RETRY_AFTER_MS;
 }
 
 /** Props for {@link SessionProvider}. */
@@ -141,32 +160,65 @@ export interface SessionProviderProps {
 export function SessionProvider(props: SessionProviderProps): VNode {
   const basePath = props.basePath ?? DEFAULT_BASE_PATH;
   const seeded = props.session !== undefined;
-  const [state, setState] = useState<SessionState>(
+  const { state, update, ambientUpdate } = useSessionState(
+    basePath,
     seeded
       ? { user: props.session ?? null, status: props.session ? "authenticated" : "unauthenticated" }
       : LOADING,
   );
-  // Guards every setState: a refetch in flight when the provider unmounts must not write.
-  const mounted = useRef(true);
-  useEffect(() => () => {
-    mounted.current = false;
-  }, []);
-
-  const update: () => Promise<ClientSession> = useCallback(async () => {
-    const next = await fetchSession(basePath);
-    if (mounted.current) setState(next);
-    return { ...next, update };
-  }, [basePath]);
 
   useEffect(() => {
     if (seeded || typeof fetch === "undefined") return;
     void update();
   }, [update]);
 
-  useRefetchTriggers(update, props.refetchInterval ?? 0, props.refetchOnWindowFocus !== false);
+  useRefetchTriggers(
+    ambientUpdate,
+    props.refetchInterval ?? 0,
+    props.refetchOnWindowFocus !== false,
+  );
 
   const value = useMemo<ClientSession>(() => ({ ...state, update }), [state, update]);
   return h(SessionContext, { value }, props.children);
+}
+
+/**
+ * The provider's session state, `update()` (an explicit refetch) and the entry point the
+ * focus/interval triggers use. A fetch that learns nothing keeps what was known — only a
+ * first load with nothing known degrades to the logged-out view — and a `429` holds the
+ * ambient refetches for its `Retry-After`; an explicit `update()` always asks.
+ */
+function useSessionState(basePath: string, initial: SessionState): {
+  state: SessionState;
+  update: () => Promise<ClientSession>;
+  ambientUpdate: () => void;
+} {
+  const [state, setState] = useState<SessionState>(initial);
+  // Guards every setState: a refetch in flight when the provider unmounts must not write.
+  const mounted = useRef(true);
+  useEffect(() => () => {
+    mounted.current = false;
+  }, []);
+  const latest = useRef(state);
+  latest.current = state;
+  const holdUntil = useRef(0);
+
+  const update: () => Promise<ClientSession> = useCallback(async () => {
+    const fetched = await fetchSession(basePath);
+    let next: SessionState;
+    if (fetched.state === null) {
+      holdUntil.current = Date.now() + fetched.holdMs;
+      next = latest.current.status === "loading" ? SIGNED_OUT : latest.current;
+    } else {
+      next = fetched.state;
+    }
+    if (mounted.current) setState(next);
+    return { ...next, update };
+  }, [basePath]);
+  const ambientUpdate = useCallback(() => {
+    if (Date.now() >= holdUntil.current) void update();
+  }, [update]);
+  return { state, update, ambientUpdate };
 }
 
 /**
@@ -174,19 +226,19 @@ export function SessionProvider(props: SessionProviderProps): VNode {
  * Both are browser-only and unsubscribe on unmount or when their setting changes.
  */
 function useRefetchTriggers(
-  update: () => Promise<ClientSession>,
+  update: () => void,
   interval: number,
   onFocus: boolean,
 ): void {
   useEffect(() => {
     if (!(interval > 0)) return;
-    const id = setInterval(() => void update(), interval);
+    const id = setInterval(update, interval);
     return () => clearInterval(id);
   }, [update, interval]);
 
   useEffect(() => {
     if (!onFocus || typeof addEventListener === "undefined") return;
-    const listener = () => void update();
+    const listener = () => update();
     addEventListener("focus", listener);
     return () => removeEventListener("focus", listener);
   }, [update, onFocus]);
@@ -239,6 +291,16 @@ function sameOriginPath(requested: string | undefined, fallback: string): string
   return requested;
 }
 
+/** What a `credentials` sign-in resolves; a refused sign-in rejects instead. */
+export interface CredentialsSignInResult {
+  /** Always `true`. */
+  ok: true;
+  /** The signed-in user, when the sign-in completed. */
+  user?: SessionUser;
+  /** `"required"` when the user still owes a second factor (the session is pending). */
+  mfa?: "required";
+}
+
 /** Options for {@link signIn}. */
 export interface SignInOptions {
   /**
@@ -271,7 +333,23 @@ export interface SignInOptions {
  * @param options {@link SignInOptions}.
  * @returns The credentials result, or the sign-in URL for the redirect flow.
  */
-export function signIn(provider: string, options: SignInOptions = {}): Promise<unknown> {
+export function signIn(
+  provider: string,
+  options: SignInOptions & { credentials: Record<string, string> },
+): Promise<CredentialsSignInResult>;
+/**
+ * Start a redirect sign-in with an OAuth/OIDC provider: navigate to it (unless
+ * `redirect: false`) and resolve the sign-in URL.
+ *
+ * @param provider The provider id.
+ * @param options Where to return afterwards, `redirect: false`, a custom `basePath`.
+ * @returns The `{basePath}/signin/:provider` URL.
+ */
+export function signIn(provider: string, options?: SignInOptions): Promise<string>;
+export function signIn(
+  provider: string,
+  options: SignInOptions = {},
+): Promise<CredentialsSignInResult | string> {
   const basePath = options.basePath ?? DEFAULT_BASE_PATH;
   const callbackUrl = sameOriginPath(options.callbackUrl, currentUrl());
   if (options.credentials) {
@@ -290,7 +368,7 @@ async function submitCredentials(
   provider: string,
   credentials: Record<string, string>,
   callbackUrl: string,
-): Promise<unknown> {
+): Promise<CredentialsSignInResult> {
   const res = await fetch(`${basePath}/callback/${encodeURIComponent(provider)}`, {
     method: "POST",
     headers: {
@@ -303,7 +381,7 @@ async function submitCredentials(
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((data as { error?: string }).error ?? "sign in failed");
-  return data;
+  return data as CredentialsSignInResult;
 }
 
 /** Options for {@link signOut}. */

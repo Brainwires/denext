@@ -316,6 +316,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext/CredentialsSignInResult",
+      "kind": "interface",
+      "title": "CredentialsSignInResult",
+      "module": "denext",
+      "url": "/docs/api/denext/CredentialsSignInResult",
+      "text": "CredentialsSignInResult interface CredentialsSignInResult What a credentials sign-in resolves; a refused sign-in rejects instead.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext/CSSProperties",
       "kind": "interface",
       "title": "CSSProperties",
@@ -1653,7 +1662,7 @@
       "title": "signIn",
       "module": "denext",
       "url": "/docs/api/denext/signIn",
-      "text": "signIn signIn(provider: string, options?: SignInOptions): Promise<unknown> Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with redirect: false, resolves with the URL it would have gone to); for a Credentials provider (pass credentials) it POSTs and resolves with the result. The provider id (e.g. \"google\", \"credentials\"). SignInOptions. The credentials result, or the sign-in URL for the redirect flow.",
+      "text": "signIn signIn(provider: string, options: SignInOptions & object): Promise<CredentialsSignInResult> Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with redirect: false, resolves with the URL it would have gone to); for a Credentials provider (pass credentials) it POSTs and resolves with the result. The provider id (e.g. \"google\", \"credentials\"). SignInOptions. The credentials result, or the sign-in URL for the redirect flow.",
       "denextOnly": true
     },
     {
@@ -2508,7 +2517,7 @@
       "title": "VERSION",
       "module": "denext",
       "url": "/docs/api/denext/VERSION",
-      "text": "VERSION VERSION: 2.5.0-rc.4 The denext framework version.",
+      "text": "VERSION VERSION: 2.5.0-rc.5 The denext framework version.",
       "denextOnly": true
     },
     {
@@ -3417,7 +3426,7 @@
       "title": "confirmTotp",
       "module": "denext/server",
       "url": "/docs/api/denext-server/confirmTotp",
-      "text": "confirmTotp confirmTotp(config: AuthConfig, user: AuthUser, code: string): Promise<ConfirmTotpResult> Confirm a pending enrollment with a code from the authenticator app. On success the factor is marked confirmed and mfa.backupCodes backup codes are minted — returned here in plaintext exactly once, and stored only as hashes. The code's step is claimed, so it can't then be replayed at the step-up. The app's auth config. The user confirming. The code the user typed. { ok: true, backupCodes }, or { ok: false } for a wrong or replayed code, no pending enrollment, or an already-confirmed factor.",
+      "text": "confirmTotp confirmTotp(config: AuthConfig, input: object): Promise<ConfirmTotpResult> Confirm a pending enrollment with a code from the authenticator app. On success the factor is marked confirmed and mfa.backupCodes backup codes are minted — returned here in plaintext exactly once, and stored only as hashes. The code's step is claimed, so it can't then be replayed at the step-up. The app's auth config. The user confirming, and the code they typed. { ok: true, backupCodes }, or { ok: false, error }.",
       "denextOnly": true
     },
     {
@@ -3426,7 +3435,7 @@
       "title": "ConfirmTotpResult",
       "module": "denext/server",
       "url": "/docs/api/denext-server/ConfirmTotpResult",
-      "text": "ConfirmTotpResult type ConfirmTotpResult = object | object The outcome of confirmTotp: on success, the plaintext backup codes — the only time they exist anywhere; show them to the user once.",
+      "text": "ConfirmTotpResult type ConfirmTotpResult = object | object The outcome of confirmTotp: on success, the plaintext backup codes — the only time they exist anywhere; show them to the user once. \"invalid_code\": a wrong or replayed code. \"not_pending\": no enrollment awaits confirmation (none started, already confirmed, or replaced meanwhile).",
       "denextOnly": true
     },
     {
@@ -3755,11 +3764,11 @@
     },
     {
       "id": "api:denext-server/EmailRequestResult",
-      "kind": "interface",
+      "kind": "typeAlias",
       "title": "EmailRequestResult",
       "module": "denext/server",
       "url": "/docs/api/denext-server/EmailRequestResult",
-      "text": "EmailRequestResult interface EmailRequestResult What a verification or reset request reports — never whether the address exists.",
+      "text": "EmailRequestResult type EmailRequestResult = object | object What a verification or reset request reports — never whether the address exists.",
       "denextOnly": true
     },
     {
@@ -3768,7 +3777,16 @@
       "title": "enrollTotp",
       "module": "denext/server",
       "url": "/docs/api/denext-server/enrollTotp",
-      "text": "enrollTotp enrollTotp(config: AuthConfig, user: AuthUser): Promise<TotpEnrollment | null> Start a TOTP enrollment: mint a secret, store it **unconfirmed**, and return it with the provisioning URI (issuer mfa.issuer, account user.email ?? user.id). An earlier unconfirmed enrollment is replaced; a CONFIRMED factor is not — disable it first. The app's auth config. The user enrolling. The secret and URI, or null when the user already has a confirmed factor.",
+      "text": "enrollTotp enrollTotp(config: AuthConfig, session: AuthSession): Promise<EnrollTotpResult> Start a TOTP enrollment: mint a secret, store it **unconfirmed**, and return it with the provisioning URI (issuer mfa.issuer, account user.email ?? user.id). An earlier unconfirmed enrollment is replaced; a CONFIRMED factor is not — disable it first. From a complete session this needs a recent sign-in (session.authTime within mfa.freshness, five minutes at least), exactly as POST {basePath}/mfa/enroll does: a stolen long-lived session must not set up a factor of its own and lock the owner out. A pending session (mfa.required: \"always\") is minutes old and may enroll. The app's auth config. The enrolling user's session (auth(), or pendingMfaSession()). { ok: true, secret, uri }, or { ok: false, error }.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/EnrollTotpResult",
+      "kind": "typeAlias",
+      "title": "EnrollTotpResult",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/EnrollTotpResult",
+      "text": "EnrollTotpResult type EnrollTotpResult = parenthesized | object The outcome of enrollTotp: the fresh secret and its URI, or why none was minted — \"already_enrolled\" (a confirmed factor exists; disable it first) or \"reauth_required\" (a complete session that didn't sign in recently).",
       "denextOnly": true
     },
     {
@@ -4794,7 +4812,7 @@
       "title": "mfaStatus",
       "module": "denext/server",
       "url": "/docs/api/denext-server/mfaStatus-fn",
-      "text": "mfaStatus mfaStatus(config: AuthConfig, userId: string): Promise<MfaStatus> A user's second-factor state — for an account-settings page. The app's auth config. The user. Whether a factor is enrolled and confirmed, and how many backup codes remain.",
+      "text": "mfaStatus mfaStatus(config: AuthConfig, userId: string): Promise<MfaStatus> A user's second-factor state — for an account-settings page. The app's auth config. The user. Whether a confirmed factor is on file, whether an enrollment awaits confirmation, and how many backup codes remain.",
       "denextOnly": true
     },
     {
@@ -5649,7 +5667,7 @@
       "title": "resetPassword",
       "module": "denext/server",
       "url": "/docs/api/denext-server/resetPassword",
-      "text": "resetPassword resetPassword(config: AuthConfig, input: object): Promise<ResetPasswordResult> Redeem a password-reset token and set a new password: the configured hasher hashes it, adapter.setCredential stores it, and every server-side session of the user is revoked. Fires passwordReset (after sessionRevoked). The password is checked (8–1024 characters) **before** the token is touched, so a refused password leaves the link usable. The app's auth config. The address, the presented token and the new password. { ok: true, user }, or { ok: false, error }. Throws only when the adapter lacks the verification-token group or setCredential.",
+      "text": "resetPassword resetPassword(config: AuthConfig, input: object): Promise<ResetPasswordResult> Redeem a password-reset token and set a new password: the configured hasher hashes it, adapter.setCredential stores it, and every server-side session and bearer API token of the user is revoked — a reset is how an owner takes an account back, so nothing a thief minted with a stolen session survives it. Fires passwordReset (after sessionRevoked). The password is checked (8–1024 characters) **before** the token is touched, so a refused password leaves the link usable. The app's auth config. The address, the presented token and the new password. { ok: true, user }, or { ok: false, error }. Throws only when the adapter lacks the verification-token group or setCredential.",
       "denextOnly": true
     },
     {
@@ -5992,6 +6010,15 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/searchParamsRecord",
       "text": "searchParamsRecord searchParamsRecord(usp: URLSearchParams, raw?: URLSearchParams): SearchParams & object Next.js's searchParams record for a query string, with the underlying URLSearchParams reachable as the non-enumerable raw property (raw may be a read-tracking wrapper of usp; the record itself is built from the plain usp).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/SecondFactorResult",
+      "kind": "typeAlias",
+      "title": "SecondFactorResult",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/SecondFactorResult",
+      "text": "SecondFactorResult type SecondFactorResult = object | object The outcome of verifySecondFactor: the method that verified, or why nothing did — \"invalid_code\" (wrong, replayed or spent) or \"not_enrolled\" (no confirmed factor).",
       "denextOnly": true
     },
     {
@@ -6774,7 +6801,7 @@
       "title": "verifySecondFactor",
       "module": "denext/server",
       "url": "/docs/api/denext-server/verifySecondFactor",
-      "text": "verifySecondFactor verifySecondFactor(config: AuthConfig, userId: string, code: string): Promise<MfaMethod | null> Check a second-factor code for a user with a confirmed factor: first as a TOTP code (claiming its step — a replay is refused), else as a backup code (spent on a match). The app's auth config. The user. The code the user typed (TOTP digits or a backup code, hyphen optional). \"totp\" or \"bcp\" for the method that verified, or null.",
+      "text": "verifySecondFactor verifySecondFactor(config: AuthConfig, input: object): Promise<SecondFactorResult> Check a second-factor code for a user with a confirmed factor: first as a TOTP code (claiming its step — a replay is refused), else as a backup code (spent on a match). The app's auth config. The user, and the code they typed (TOTP digits or a backup code, hyphen optional). { ok: true, method } (\"totp\" or \"bcp\"), or { ok: false, error }.",
       "denextOnly": true
     },
     {
@@ -7073,6 +7100,15 @@
       "url": "/docs/api/denext-client/createRoot",
       "text": "createRoot createRoot(container: Element, options?: RootOptions): Root Mount vnode into container, creating fresh DOM.",
       "denextOnly": false
+    },
+    {
+      "id": "api:denext-client/CredentialsSignInResult",
+      "kind": "interface",
+      "title": "CredentialsSignInResult",
+      "module": "denext/client",
+      "url": "/docs/api/denext-client/CredentialsSignInResult",
+      "text": "CredentialsSignInResult interface CredentialsSignInResult What a credentials sign-in resolves; a refused sign-in rejects instead.",
+      "denextOnly": true
     },
     {
       "id": "api:denext-client/dynamic",
@@ -7764,7 +7800,7 @@
       "title": "signIn",
       "module": "denext/client",
       "url": "/docs/api/denext-client/signIn",
-      "text": "signIn signIn(provider: string, options?: SignInOptions): Promise<unknown> Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with redirect: false, resolves with the URL it would have gone to); for a Credentials provider (pass credentials) it POSTs and resolves with the result. The provider id (e.g. \"google\", \"credentials\"). SignInOptions. The credentials result, or the sign-in URL for the redirect flow.",
+      "text": "signIn signIn(provider: string, options: SignInOptions & object): Promise<CredentialsSignInResult> Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with redirect: false, resolves with the URL it would have gone to); for a Credentials provider (pass credentials) it POSTs and resolves with the result. The provider id (e.g. \"google\", \"credentials\"). SignInOptions. The credentials result, or the sign-in URL for the redirect flow.",
       "denextOnly": true
     },
     {

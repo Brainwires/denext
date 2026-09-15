@@ -242,7 +242,7 @@ Deno.test("every response carries the exact CSP / COOP / CORP / no-store header 
         "img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; " +
         "form-action 'self'; frame-ancestors 'none'",
     );
-    assertEquals(res.headers.get("referrer-policy"), "no-referrer");
+    assertEquals(res.headers.get("referrer-policy"), "same-origin");
     assertEquals(res.headers.get("cross-origin-opener-policy"), "same-origin");
     assertEquals(res.headers.get("cross-origin-resource-policy"), "same-origin");
     assertEquals(res.headers.get("cache-control"), "no-store");

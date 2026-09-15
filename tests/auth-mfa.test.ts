@@ -171,16 +171,21 @@ async function pendingSignIn(h: Harness): Promise<string> {
   return cookie;
 }
 
+/** A complete session that signed in just now — what enrollTotp()'s recent-sign-in rule wants. */
+function freshSession(user: AuthSession["user"]): AuthSession {
+  const now = Math.floor(Date.now() / 1000);
+  return { user, provider: "credentials", expiresAt: now + 3600, authTime: now };
+}
+
 /** Enrol + confirm the harness user (the confirm spends the step before now). */
 async function enrol(h: Harness): Promise<{ secret: string; backupCodes: string[] }> {
   const user = { id: h.userId, email: EMAIL };
-  const enrolment = await enrollTotp(h.config, user);
-  assert(enrolment, "enrolment started");
-  const confirmed = await confirmTotp(
-    h.config,
+  const enrolment = await enrollTotp(h.config, freshSession(user));
+  assert(enrolment.ok, "enrolment started");
+  const confirmed = await confirmTotp(h.config, {
     user,
-    await totpAt(enrolment.secret, nowStep() - 1),
-  );
+    code: await totpAt(enrolment.secret, nowStep() - 1),
+  });
   assert(confirmed.ok, "enrolment confirmed");
   return { secret: enrolment.secret, backupCodes: confirmed.backupCodes };
 }
@@ -190,16 +195,20 @@ async function enrol(h: Harness): Promise<{ secret: string; backupCodes: string[
 Deno.test("enrollTotp → confirmTotp: confirmedAt flips, N backup codes come back once, stored hashed", async () => {
   const h = await setup({ mfa: { window: 2, backupCodes: 3 } });
   const user = { id: h.userId, email: EMAIL };
-  const enrolment = (await enrollTotp(h.config, user))!;
+  const enrolment = await enrollTotp(h.config, freshSession(user));
+  assert(enrolment.ok);
   assertMatch(enrolment.uri, /^otpauth:\/\/totp\/app\.test:grace%40x\.test\?secret=[A-Z2-7]{32}&/);
   assertEquals(await mfaStatus(h.config, h.userId), {
-    enrolled: true,
-    confirmed: false,
+    enrolled: false,
+    pendingConfirmation: true,
     backupCodesRemaining: 0,
   });
   assertEquals((await h.adapter.getMfa!(h.userId))?.confirmedAt, undefined);
 
-  const result = await confirmTotp(h.config, user, await totpAt(enrolment.secret, nowStep()));
+  const result = await confirmTotp(h.config, {
+    user,
+    code: await totpAt(enrolment.secret, nowStep()),
+  });
   assert(result.ok);
   assertEquals(result.backupCodes.length, 3);
   const record = (await h.adapter.getMfa!(h.userId))!;
@@ -209,18 +218,30 @@ Deno.test("enrollTotp → confirmTotp: confirmedAt flips, N backup codes come ba
     assert(!record.backupCodeHashes.some((hash) => hash.includes(code.replace("-", ""))));
   }
   assertEquals((await mfaStatus(h.config, h.userId)).backupCodesRemaining, 3);
-  assertEquals(await enrollTotp(h.config, user), null, "a confirmed factor is not replaced");
-  assertEquals(await confirmTotp(h.config, user, "123456"), { ok: false }, "no second confirm");
+  assertEquals(
+    await enrollTotp(h.config, freshSession(user)),
+    { ok: false, error: "already_enrolled" },
+    "a confirmed factor is not replaced",
+  );
+  assertEquals(
+    await confirmTotp(h.config, { user, code: "123456" }),
+    { ok: false, error: "not_pending" },
+    "no second confirm",
+  );
 });
 
 Deno.test("confirmTotp: a wrong code is refused and the enrolment stays unconfirmed", async () => {
   const h = await setup();
   const user = { id: h.userId, email: EMAIL };
-  const enrolment = (await enrollTotp(h.config, user))!;
+  const enrolment = await enrollTotp(h.config, freshSession(user));
+  assert(enrolment.ok);
   const wrong = await totpAt(enrolment.secret, nowStep() + 10);
-  assertEquals(await confirmTotp(h.config, user, wrong), { ok: false });
+  assertEquals(await confirmTotp(h.config, { user, code: wrong }), {
+    ok: false,
+    error: "invalid_code",
+  });
   assertEquals((await h.adapter.getMfa!(h.userId))?.confirmedAt, undefined);
-  assertEquals((await mfaStatus(h.config, h.userId)).confirmed, false);
+  assertEquals((await mfaStatus(h.config, h.userId)).enrolled, false);
   assertEquals(await mfaPendingFor(resolveAuthOptions(h.config), user), false);
 });
 
@@ -396,7 +417,7 @@ Deno.test("POST /mfa/disable from a pending session is 403 and never calls setMf
   const enrolAttempt = await post(h.config, "/mfa/enroll", { cookie: pending });
   assertEquals(enrolAttempt.res!.status, 403, "a pending session enrols only under 'always'");
   assertEquals(writes, 0);
-  assertEquals((await mfaStatus(h.config, h.userId)).confirmed, true);
+  assertEquals((await mfaStatus(h.config, h.userId)).enrolled, true);
 });
 
 Deno.test("POST /mfa/disable needs a fresh factor: refused without one, accepted with a valid code", async () => {
@@ -410,7 +431,7 @@ Deno.test("POST /mfa/disable needs a fresh factor: refused without one, accepted
     body: { code: await totpAt(secret, nowStep() + 10) },
   });
   assertEquals(wrong.res!.status, 403);
-  assertEquals((await mfaStatus(h.config, h.userId)).confirmed, true);
+  assertEquals((await mfaStatus(h.config, h.userId)).enrolled, true);
 
   const ok = await post(h.config, "/mfa/disable", {
     cookie,
@@ -419,7 +440,7 @@ Deno.test("POST /mfa/disable needs a fresh factor: refused without one, accepted
   assertEquals(ok.res!.status, 200);
   assertEquals(await mfaStatus(h.config, h.userId), {
     enrolled: false,
-    confirmed: false,
+    pendingConfirmation: false,
     backupCodesRemaining: 0,
   });
   const user = { id: h.userId, email: EMAIL };
@@ -491,7 +512,7 @@ Deno.test("without the adapter's MFA group nobody is pending and every /mfa* row
     const sent = await post(h.config, route.pattern, { cookie, body: { code: "123456" } });
     assertEquals(sent.res, null, `${route.pattern} does not exist`);
   }
-  await assertRejects(() => enrollTotp(h.config, user), Error, "no MFA group");
+  await assertRejects(() => enrollTotp(h.config, freshSession(user)), Error, "no MFA group");
 });
 
 // ---- pendingMfaSession() ---------------------------------------------------------
@@ -538,4 +559,17 @@ Deno.test("POST /mfa/enroll from a complete session needs a recent sign-in, else
   const fresh = await post(h.config, "/mfa/enroll", { cookie });
   assertEquals(fresh.res!.status, 200);
   assert((await fresh.res!.json()).secret, "a recent sign-in may enroll");
+});
+
+Deno.test("enrollTotp: a complete session needs a recent sign-in, as the route does", async () => {
+  const h = await setup();
+  const user = { id: h.userId, email: EMAIL };
+  const stale = { ...freshSession(user), authTime: Math.floor(Date.now() / 1000) - 3600 };
+  assertEquals(await enrollTotp(h.config, stale), { ok: false, error: "reauth_required" });
+  assertEquals((await mfaStatus(h.config, h.userId)).pendingConfirmation, false, "nothing stored");
+  const pending: AuthSession = { ...stale, mfaPending: true };
+  assert(
+    (await enrollTotp(h.config, pending)).ok,
+    "a pending session is minutes old and may enroll",
+  );
 });

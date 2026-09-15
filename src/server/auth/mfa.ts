@@ -20,7 +20,7 @@
  */
 
 import type { AuthAdapter, MfaRecord } from "./adapter.ts";
-import { backupCodeMatcher, generateBackupCodes } from "./backup-codes.ts";
+import { backupCodeMatcher, generateBackupCodes, isBackupCodeShaped } from "./backup-codes.ts";
 import { emitAuthEvent } from "./events.ts";
 import { resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
 import type { AuthRouteContext } from "./routes-shared.ts";
@@ -38,10 +38,13 @@ export type MfaMethod = "totp" | "bcp";
 
 /** A user's second-factor state, as {@linkcode mfaStatus} reports it. */
 export interface MfaStatus {
-  /** A TOTP secret is on file (confirmed or not). */
+  /**
+   * A confirmed TOTP factor is on file, so sign-in asks for it — what `mfa.required:
+   * "enrolled"` means by enrolled.
+   */
   enrolled: boolean;
-  /** The enrollment was confirmed with a code — sign-in now asks for the second factor. */
-  confirmed: boolean;
+  /** An enrollment was started (a secret is on file) but not yet confirmed with a code. */
+  pendingConfirmation: boolean;
   /** Unspent backup codes (`0` when not enrolled). */
   backupCodesRemaining: number;
 }
@@ -55,10 +58,31 @@ export interface TotpEnrollment {
 }
 
 /**
- * The outcome of {@linkcode confirmTotp}: on success, the plaintext backup codes — the
- * only time they exist anywhere; show them to the user once.
+ * The outcome of {@linkcode enrollTotp}: the fresh secret and its URI, or why none was minted
+ * — `"already_enrolled"` (a confirmed factor exists; disable it first) or `"reauth_required"`
+ * (a complete session that didn't sign in recently).
  */
-export type ConfirmTotpResult = { ok: true; backupCodes: string[] } | { ok: false };
+export type EnrollTotpResult =
+  | ({ ok: true } & TotpEnrollment)
+  | { ok: false; error: "already_enrolled" | "reauth_required" };
+
+/**
+ * The outcome of {@linkcode confirmTotp}: on success, the plaintext backup codes — the
+ * only time they exist anywhere; show them to the user once. `"invalid_code"`: a wrong or
+ * replayed code. `"not_pending"`: no enrollment awaits confirmation (none started, already
+ * confirmed, or replaced meanwhile).
+ */
+export type ConfirmTotpResult =
+  | { ok: true; backupCodes: string[] }
+  | { ok: false; error: "invalid_code" | "not_pending" };
+
+/**
+ * The outcome of {@linkcode verifySecondFactor}: the method that verified, or why nothing did
+ * — `"invalid_code"` (wrong, replayed or spent) or `"not_enrolled"` (no confirmed factor).
+ */
+export type SecondFactorResult =
+  | { ok: true; method: MfaMethod }
+  | { ok: false; error: "invalid_code" | "not_enrolled" };
 
 /**
  * Whether signing `user` in must stop at a pending session that still owes a second
@@ -122,14 +146,18 @@ function isConfirmed(record: MfaRecord | undefined): record is MfaRecord {
  *
  * @param config The app's auth config.
  * @param userId The user.
- * @returns Whether a factor is enrolled and confirmed, and how many backup codes remain.
+ * @returns Whether a confirmed factor is on file, whether an enrollment awaits
+ * confirmation, and how many backup codes remain.
  */
 export async function mfaStatus(config: AuthConfig, userId: string): Promise<MfaStatus> {
   const record = await resolveAuthOptions(config).adapter?.getMfa?.(userId);
-  if (!record?.secret) return { enrolled: false, confirmed: false, backupCodesRemaining: 0 };
+  if (!record?.secret) {
+    return { enrolled: false, pendingConfirmation: false, backupCodesRemaining: 0 };
+  }
+  const confirmed = record.confirmedAt !== undefined;
   return {
-    enrolled: true,
-    confirmed: record.confirmedAt !== undefined,
+    enrolled: confirmed,
+    pendingConfirmation: !confirmed,
     backupCodesRemaining: record.backupCodeHashes.length,
   };
 }
@@ -139,22 +167,31 @@ export async function mfaStatus(config: AuthConfig, userId: string): Promise<Mfa
  * provisioning URI (issuer `mfa.issuer`, account `user.email ?? user.id`). An earlier
  * unconfirmed enrollment is replaced; a CONFIRMED factor is not — disable it first.
  *
+ * From a complete session this needs a recent sign-in (`session.authTime` within
+ * `mfa.freshness`, five minutes at least), exactly as `POST {basePath}/mfa/enroll` does: a
+ * stolen long-lived session must not set up a factor of its own and lock the owner out. A
+ * pending session (`mfa.required: "always"`) is minutes old and may enroll.
+ *
  * @param config The app's auth config.
- * @param user The user enrolling.
- * @returns The secret and URI, or `null` when the user already has a confirmed factor.
+ * @param session The enrolling user's session (`auth()`, or `pendingMfaSession()`).
+ * @returns `{ ok: true, secret, uri }`, or `{ ok: false, error }`.
  * @throws {Error} When the adapter has no MFA group.
  */
 export async function enrollTotp(
   config: AuthConfig,
-  user: AuthUser,
-): Promise<TotpEnrollment | null> {
+  session: AuthSession,
+): Promise<EnrollTotpResult> {
   const options = resolveAuthOptions(config);
   const adapter = requireMfaAdapter(options, "enrollTotp");
-  if (isConfirmed(await adapter.getMfa(user.id))) return null;
+  if (!session.mfaPending && !recentlyAuthenticated(options, session)) {
+    return { ok: false, error: "reauth_required" };
+  }
+  const user = session.user;
+  if (isConfirmed(await adapter.getMfa(user.id))) return { ok: false, error: "already_enrolled" };
   const secret = generateTotpSecret();
   await adapter.setMfa({ userId: user.id, secret, backupCodeHashes: [] });
   const account = user.email ?? user.id;
-  return { secret, uri: totpAuthUri({ secret, account, issuer: options.mfa.issuer }) };
+  return { ok: true, secret, uri: totpAuthUri({ secret, account, issuer: options.mfa.issuer }) };
 }
 
 /**
@@ -178,27 +215,27 @@ async function claimTotp(
  * so it can't then be replayed at the step-up.
  *
  * @param config The app's auth config.
- * @param user The user confirming.
- * @param code The code the user typed.
- * @returns `{ ok: true, backupCodes }`, or `{ ok: false }` for a wrong or replayed code,
- * no pending enrollment, or an already-confirmed factor.
+ * @param input The user confirming, and the code they typed.
+ * @returns `{ ok: true, backupCodes }`, or `{ ok: false, error }`.
  * @throws {Error} When the adapter has no MFA group.
  */
 export async function confirmTotp(
   config: AuthConfig,
-  user: AuthUser,
-  code: string,
+  input: { user: AuthUser; code: string },
 ): Promise<ConfirmTotpResult> {
+  const { user, code } = input;
   const options = resolveAuthOptions(config);
   const adapter = requireMfaAdapter(options, "confirmTotp");
   const record = await adapter.getMfa(user.id);
-  if (!record?.secret || record.confirmedAt !== undefined) return { ok: false };
-  if (!await claimTotp(options, adapter, record, code)) return { ok: false };
+  if (!record?.secret || record.confirmedAt !== undefined) {
+    return { ok: false, error: "not_pending" };
+  }
+  if (!await claimTotp(options, adapter, record, code)) return { ok: false, error: "invalid_code" };
   const { codes, hashes } = await generateBackupCodes(options.hasher, options.mfa.backupCodes);
   // Re-read: the claim just advanced `lastStep`, which the write below must keep — and an
   // enrollment replaced meanwhile must not be confirmed with the old secret's code.
   const current = await adapter.getMfa(user.id);
-  if (current?.secret !== record.secret) return { ok: false };
+  if (current?.secret !== record.secret) return { ok: false, error: "not_pending" };
   const confirmedAt = Math.floor(Date.now() / 1000);
   await adapter.setMfa({ ...current, confirmedAt, backupCodeHashes: hashes });
   return { ok: true, backupCodes: codes };
@@ -209,22 +246,25 @@ export async function confirmTotp(
  * (claiming its step — a replay is refused), else as a backup code (spent on a match).
  *
  * @param config The app's auth config.
- * @param userId The user.
- * @param code The code the user typed (TOTP digits or a backup code, hyphen optional).
- * @returns `"totp"` or `"bcp"` for the method that verified, or `null`.
+ * @param input The user, and the code they typed (TOTP digits or a backup code, hyphen
+ * optional).
+ * @returns `{ ok: true, method }` (`"totp"` or `"bcp"`), or `{ ok: false, error }`.
  */
 export async function verifySecondFactor(
   config: AuthConfig,
-  userId: string,
-  code: string,
-): Promise<MfaMethod | null> {
+  input: { userId: string; code: string },
+): Promise<SecondFactorResult> {
+  const { userId, code } = input;
   const options = resolveAuthOptions(config);
   const adapter = mfaAdapter(options);
   const record = await adapter?.getMfa(userId);
-  if (!adapter || !isConfirmed(record)) return null;
-  if (await claimTotp(options, adapter, record, code)) return "totp";
+  if (!adapter || !isConfirmed(record)) return { ok: false, error: "not_enrolled" };
+  if (await claimTotp(options, adapter, record, code)) return { ok: true, method: "totp" };
+  // A code that can't be a backup code (a mistyped 6-digit TOTP) skips the walk: it would run
+  // the hasher once per stored code and could never match.
+  if (!isBackupCodeShaped(code)) return { ok: false, error: "invalid_code" };
   const spent = await adapter.consumeBackupCode(userId, backupCodeMatcher(options.hasher, code));
-  return spent ? "bcp" : null;
+  return spent ? { ok: true, method: "bcp" } : { ok: false, error: "invalid_code" };
 }
 
 /**

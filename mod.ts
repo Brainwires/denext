@@ -406,6 +406,7 @@ export type {
 export { SessionProvider, signIn, signOut, useSession } from "./src/client/auth.ts";
 export type {
   ClientSession,
+  CredentialsSignInResult,
   SessionProviderProps,
   SessionUser,
   SignInOptions,
@@ -417,4 +418,4 @@ export type {
 export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "./src/runtime/public-env.ts";
 
 /** The denext framework version. */
-export const VERSION = "2.5.0-rc.4";
+export const VERSION = "2.5.0-rc.5";

@@ -81,6 +81,7 @@ export { dynamic } from "../runtime/dynamic.ts";
 export { SessionProvider, signIn, signOut, useSession } from "./auth.ts";
 export type {
   ClientSession,
+  CredentialsSignInResult,
   SessionProviderProps,
   SessionUser,
   SignInOptions,

@@ -144,9 +144,15 @@ type Table = "data" | "pages";
 
 /** Apply the cache's pragmas and create/upgrade the schema on a freshly opened handle. */
 function initSchema(d: SqliteDb): void {
-  // WAL + NORMAL: the standard high-throughput settings for a regenerable cache. Either
-  // may be refused (e.g. :memory:) — keep the default journal / FULL sync then.
-  for (const pragma of ["PRAGMA journal_mode = WAL", "PRAGMA synchronous = NORMAL"]) {
+  // A 5 s busy timeout, so a second writer waits instead of failing at once with "database
+  // is locked"; then WAL + NORMAL, the standard high-throughput settings for a regenerable
+  // cache. Either may be refused (e.g. :memory:) — keep the default journal / FULL sync then.
+  const pragmas = [
+    "PRAGMA busy_timeout = 5000",
+    "PRAGMA journal_mode = WAL",
+    "PRAGMA synchronous = NORMAL",
+  ];
+  for (const pragma of pragmas) {
     try {
       d.exec(pragma);
     } catch { /* keep the default */ }

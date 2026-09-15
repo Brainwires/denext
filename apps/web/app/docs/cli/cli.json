@@ -347,7 +347,7 @@
       "aliases": [
         "g"
       ],
-      "summary": "Scaffold a route, boundary, component, api, action, middleware, or task into an app",
+      "summary": "Scaffold a route, boundary, component, API route, action, middleware, task, test or Docker setup into an app",
       "usage": "denext generate <kind> [name] [dir]",
       "description": "  denext generate page dashboard/settings\n  denext generate layout dashboard\n  denext generate loading dashboard # app/dashboard/loading.tsx (root if no path)\n  denext generate error dashboard   # app/dashboard/error.tsx (Client Component)\n  denext generate not-found         # app/not-found.tsx\n  denext generate component UserCard\n  denext generate api users\n  denext generate action createPost\n  denext generate middleware        # middleware.ts (beside app/)\n  denext generate task cleanup      # tasks/cleanup.ts (defineTask)\n  denext generate test UserCard     # tests/UserCard.test.tsx (denext/testing)\n  denext generate docker            # Dockerfile + docker-compose.yml + .dockerignore\n  denext generate docker spa        # force the static/SPA image (else auto-detected)",
       "flags": [],
