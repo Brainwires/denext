@@ -59,11 +59,25 @@ const OFFLINE_NOTE = "Offline — every verb runs with --deny-net --cached-only:
   "open a socket nor download a module.";
 
 /**
- * How long the whole discovery subprocess may take before the panel gives up on it. Generous
- * next to {@linkcode DEFAULT_BUDGET_MS}: the child pays Deno's own cold start before it even
- * begins importing the project's config.
+ * How long the whole discovery subprocess may take by default before the panel gives up on it.
+ * Generous next to {@linkcode DEFAULT_BUDGET_MS}: the child pays Deno's own cold start before
+ * it even begins importing the project's config.
  */
 const DISCOVERY_BUDGET_MS = 8000;
+
+/**
+ * The discovery deadline in force: `DENEXT_UI_DISCOVERY_TIMEOUT_MS` when it is a positive
+ * integer (a slow or heavily loaded machine — the end-to-end suite sets it), else
+ * {@linkcode DISCOVERY_BUDGET_MS}. Without env permission the default applies.
+ */
+function discoveryDeadlineMs(): number {
+  let raw: string | undefined;
+  try {
+    raw = Deno.env.get("DENEXT_UI_DISCOVERY_TIMEOUT_MS");
+  } catch { /* no env permission */ }
+  const ms = Number(raw);
+  return Number.isInteger(ms) && ms > 0 ? ms : DISCOVERY_BUDGET_MS;
+}
 
 /** The plugin-setup budget handed to the child, matching the CLI's own default. */
 const DEFAULT_BUDGET_MS = 1500;
@@ -226,7 +240,7 @@ async function discover(dir: string, offline: boolean): Promise<UiCommandList> {
     await runner(argv, {
       cwd: dir,
       onLine: (line) => lines.push(line),
-      signal: AbortSignal.timeout(DISCOVERY_BUDGET_MS),
+      signal: AbortSignal.timeout(discoveryDeadlineMs()),
     });
   } catch {
     return { commands: [], timedOut: true };

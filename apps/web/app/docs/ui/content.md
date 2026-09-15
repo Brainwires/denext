@@ -536,7 +536,8 @@ project directory, parsed and rendered. Overlapping page loads share a single ch
 concurrent `/api/commands` calls spawn one subprocess, not eight), a **successful** listing
 is reused for five seconds, and a timeout or a failure is never cached — the next request
 tries again. A child that cannot start, overruns its budget, or prints nothing parsable
-becomes a notice on the panel, never an empty page with no explanation.
+becomes a notice on the panel, never an empty page with no explanation. The whole discovery
+child gets 8 seconds; `DENEXT_UI_DISCOVERY_TIMEOUT_MS` raises that on a slow or busy machine.
 
 `denext --help` does **not** list them — it refuses to import your project to render a help
 table, and prints a one-line pointer at `denext commands` instead when it sees a config.

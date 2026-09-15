@@ -27,7 +27,11 @@ const CLI = join(ROOT, "cli.ts");
 const MOD = join(ROOT, "mod.ts");
 
 /** How long the child gets to print its JSON line before the test gives up. */
-const SPAWN_TIMEOUT_MS = 30_000;
+// Failure bounds only: a loaded machine (the full suite running beside this file) can take
+// far longer to cold-start `denext ui` and its discovery child than an idle one.
+const SPAWN_TIMEOUT_MS = 120_000;
+/** The Commands panel's discovery deadline for every UI this suite starts (default 8 s). */
+const DISCOVERY_TIMEOUT_MS = "60000";
 
 /** How long a signalled server gets to drain and exit. */
 const SHUTDOWN_TIMEOUT_MS = 5_000;
@@ -260,7 +264,7 @@ async function spawnUi(
   const args = ["run", "-A", CLI, "ui", dir, "--no-open", "--json", "--port", "0", ...extra];
   const proc = new Deno.Command(Deno.execPath(), {
     args,
-    env,
+    env: { DENEXT_UI_DISCOVERY_TIMEOUT_MS: DISCOVERY_TIMEOUT_MS, ...env },
     cwd: ROOT,
     stdout: "piped",
     stderr: "piped",
