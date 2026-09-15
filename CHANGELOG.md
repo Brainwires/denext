@@ -31,6 +31,12 @@ and this project adheres to
   is a protocol-shaped code (`access_denied`); free text reads `oauth_failed` and is logged, so
   a crafted link can't put its own message on the sign-in page.
 
+### Added
+
+- `DENEXT_UI_DISCOVERY_TIMEOUT_MS`: the deadline, in milliseconds, for `denext ui`'s Commands
+  discovery child (default 8000). On a heavily loaded machine that child can miss the
+  default, and the panel then lists no project verbs.
+
 ### Changed
 
 - **Breaking (since rc.2):** the auth API settles on one shape before 2.5.0. The config comes
