@@ -55,7 +55,10 @@ async function cachedCalls(
   parse: Parse,
 ): Promise<string> {
   const mtimeMs = await mtimeOf(file);
-  if (mtimeMs === null) return "";
+  if (mtimeMs === null) {
+    cache.delete(file); // deleted since it was cached: don't keep its footer around
+    return "";
+  }
   const hit = cache.get(file);
   if (hit && hit.mtimeMs === mtimeMs) return hit.footer;
   const footer = await fileCalls(file, parse);
