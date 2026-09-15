@@ -807,7 +807,7 @@ async function checkOpaqueCompose(ui: Ui): Promise<void> {
   assertEquals(compose?.state, "opaque");
   assertEquals(twin.model, null);
   const html = await getText(ui, "/docker");
-  assertStringIncludes(html, "uses YAML the editor cannot follow line by line");
+  assertStringIncludes(html, "the editor cannot follow it line by line: the file does not parse");
   assertEquals(inputTags(html, "editor").length, 0, "an opaque file gets no editor form");
 
   const edit = {
