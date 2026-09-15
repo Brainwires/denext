@@ -20,7 +20,7 @@
  */
 
 import type { AuthAdapter, MfaRecord } from "./adapter.ts";
-import { backupCodeMatcher, generateBackupCodes } from "./backup-codes.ts";
+import { backupCodeMatcher, generateBackupCodes, isBackupCodeShaped } from "./backup-codes.ts";
 import { emitAuthEvent } from "./events.ts";
 import { resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
 import type { AuthRouteContext } from "./routes-shared.ts";
@@ -223,6 +223,9 @@ export async function verifySecondFactor(
   const record = await adapter?.getMfa(userId);
   if (!adapter || !isConfirmed(record)) return null;
   if (await claimTotp(options, adapter, record, code)) return "totp";
+  // A code that can't be a backup code (a mistyped 6-digit TOTP) skips the walk: it would run
+  // the hasher once per stored code and could never match.
+  if (!isBackupCodeShaped(code)) return null;
   const spent = await adapter.consumeBackupCode(userId, backupCodeMatcher(options.hasher, code));
   return spent ? "bcp" : null;
 }

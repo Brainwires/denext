@@ -10,7 +10,11 @@ import {
   type TotpVerifyResult,
   verifyTotp,
 } from "../src/server/auth/totp.ts";
-import { backupCodeMatcher, generateBackupCodes } from "../src/server/auth/backup-codes.ts";
+import {
+  backupCodeMatcher,
+  generateBackupCodes,
+  isBackupCodeShaped,
+} from "../src/server/auth/backup-codes.ts";
 import { type Hasher, scryptHasher } from "../src/server/auth/hasher.ts";
 
 /** RFC 6238 Appendix B: the ASCII seed "12345678901234567890", base32. */
@@ -339,4 +343,12 @@ Deno.test("backup codes round-trip through the real scrypt Hasher", async () => 
   assert(hashes.every((h) => h.startsWith("scrypt$")));
   assertEquals(await backupCodeMatcher(hasher, codes[1].toUpperCase())(hashes[1]), true);
   assertEquals(await backupCodeMatcher(hasher, codes[1])(hashes[0]), false);
+});
+
+Deno.test("isBackupCodeShaped: only 10 code-alphabet characters qualify, so a TOTP code skips the walk", () => {
+  assertEquals(isBackupCodeShaped("abcde-fghjk"), true);
+  assertEquals(isBackupCodeShaped(" ABCDE FGHJK "), true, "normalised first");
+  assertEquals(isBackupCodeShaped("123456"), false, "a 6-digit TOTP code");
+  assertEquals(isBackupCodeShaped("abcde-fghj1"), false, "1 is not in the alphabet");
+  assertEquals(isBackupCodeShaped(""), false);
 });
