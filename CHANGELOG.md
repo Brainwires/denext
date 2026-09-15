@@ -132,10 +132,10 @@ and this project adheres to
 - `POST {basePath}/mfa/disable`'s no-code shortcut (the session's own step-up within
   `mfa.freshness`) is measured from `authTime`, so it works with sliding expiry on as well; it
   used to be void whenever `session.updateAge > 0`.
-- `verifyEmail()` answers `{ ok: true, user }` or `{ ok: false, error: "invalid_token" }`
+- **Breaking (since rc.2):** `verifyEmail()` answers `{ ok: true, user }` or `{ ok: false, error: "invalid_token" }`
   (`VerifyEmailResult`, exported from `denext/server`) — the shape `resetPassword()` has —
   instead of `AdapterUser | null`, so later failure reasons can be added without a breaking
-  change.
+  change. A truthiness check (`if (await verifyEmail(…))`) now always passes: test `result.ok`.
 
 ### Fixed
 
@@ -368,7 +368,6 @@ and this project adheres to
   `@scope/name` spec and the export identifier before any request or argv, and pins the
   version the registry reports; the Commands form's argv is allowlisted by the verb's own
   declared flags.
-
 - A `callbacks.session` that returns a rebuilt object can no longer turn a first-factor-only
   (MFA-pending) sign-in into a complete session: the framework re-applies `mfaPending`, `amr`,
   `v`, `issuedAt` and the pending lifetime after the callback runs. The callback may still add
@@ -395,7 +394,6 @@ and this project adheres to
   shuts down (it used to keep running).
 - `denextAuth()` refuses `mfa.required: "always"` without an adapter MFA group at construction;
   it used to accept it and lock every user out at the step-up.
-
 - **`denext --help build` ran `build`.** A help flag before the verb now prints that verb's
   help and never runs it; `denext --help <dir>` prints the top-level help for that directory
   instead of erroring; leading global flags (`denext --cwd ./app build`) reach the command;
@@ -535,9 +533,11 @@ and this project adheres to
   `scryptHasher` itself, whose `verify` passes the configured cost through so the equal-work
   rejection of an unknown account burns the same time a real comparison does. A custom `Hasher`
   must equalise its own unknown-account work. The flows that drive it — first-party credential
-  storage and hashed MFA backup codes — are scheduled in ROADMAP.md.
+  storage and hashed MFA backup codes — are scheduled in ROADMAP.md. (Superseded in rc.2: the
+  default credentials `authorize`, password reset and backup codes all drive it now.)
 - **Auth: a versioned session payload** (`v: 2`, `issuedAt`, and reserved `mfaPending` / `amr`).
   Cookies minted by older versions keep verifying, and a pending-MFA session fails closed in `auth()`.
+  (rc.2 fills both reserved fields.)
 - **Auth: bearer API tokens.** `requireBearer(authConfig, { scope, role })` drops into any
   `createApi()` chain: one identical 401 for an absent, unknown, expired or revoked token, 403 for a
   missing scope or role, a scopeless token satisfies no scope requirement, it never sets a cookie,
@@ -554,7 +554,7 @@ and this project adheres to
     already walks; the detail pane's Source row opens the file at the line through the dev server's
     editor endpoint (`DENEXT_EDITOR` / `VISUAL` / `EDITOR`, with the `vscode://` fallback in SPA dev).
   - **Named hooks** — `count · useState` instead of `useState`, with same-module custom hooks expanded
-    as breadcrumbs; naming is all-or-nothing per component, so a mismatch degrades to kind labels
+    as breadcrumbs (rc.2 extends this across static relative imports); naming is all-or-nothing per component, so a mismatch degrades to kind labels
     rather than lying.
   - **Network** — the dev server's recent requests with status pills, duration bars and filters.
   - **Cache** — the page/data cache counters, from `/_denext/dev-cache`.
@@ -587,7 +587,7 @@ and this project adheres to
   `redirects` / `rewrites` / `headers` now carry the rule-array schema (marked
   `x-denext.wrapper: "function"` because the config key is a function returning the array),
   `Record` fields become an open object whose `additionalProperties` is the value schema (plus an
-  `x-denext.widget: "map"` marker for other schema consumers — the UI derives its map widget from
+  `x-denext.widget: "map"` marker for other schema consumers, removed again in rc.2 — the UI derives its map widget from
   `additionalProperties` itself; the only `x-denext.widget` it reads is `"textarea"`),
   `images.formats` keeps its enum, and
   `@minimum` / `@maximum` surface the bounds `config-validate.ts` already enforces — which is what

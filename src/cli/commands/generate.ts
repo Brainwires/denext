@@ -50,7 +50,8 @@ function generateTarget(
 
 export const generateCommand: CommandSpec = {
   name: "generate",
-  summary: "Scaffold a route, boundary, component, api, action, middleware, or task into an app",
+  summary:
+    "Scaffold a route, boundary, component, API route, action, middleware, task, test or Docker setup into an app",
   aliases: ["g"],
   loadsModules: false, // pure codegen — no user-module load / re-exec needed
   usage: "  denext generate page dashboard/settings\n" +

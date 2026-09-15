@@ -199,6 +199,85 @@ export const csp = { scriptSrc: ["https://plausible.io"] };
 See [Configuration](/docs/config) → Security for the app-wide `csp` setting and
 [Deploying](/docs/deploy) § 5 for what CSP does and does not cover.
 
+## `403 { "error": "reauth_required" }` from `/auth/mfa/enroll` or `/auth/tokens`
+
+**Cause.** Setting up a second factor and minting an API token both need a recent
+sign-in: the session's `authTime` within `mfa.freshness` (five minutes at least).
+A long-lived session, or one issued before 2.5.0-rc.3 (which has no `authTime`),
+doesn't qualify, so a stolen cookie can't enroll a factor or mint a credential of
+its own. `enrollTotp()` answers `{ ok: false, error: "reauth_required" }` for the
+same reason.
+
+**Fix.** Send the user through sign-in again, then retry.
+
+See [Authentication](/docs/auth).
+
+## `?error=account_not_linked` after an OAuth sign-in
+
+**Cause.** The provider's email matches an existing account, and one side of that
+match (the account's stored address, or the address the provider asserts) isn't
+verified. denext won't attach a provider to an account it can't prove belongs to
+the same person.
+
+**Fix.** Have the user sign in the way they registered and verify the address,
+then sign in with the provider. `allowDangerousEmailAccountLinking` on the
+provider skips the check; set it only for a provider that verifies every address
+itself.
+
+## `?error=oauth_failed` or `?error=config` on the sign-in page
+
+**Cause.** `oauth_failed`: the token exchange or profile fetch failed, or the
+provider answered with an error denext doesn't recognise. `config`: the provider
+is misconfigured. A provider's own protocol code (`access_denied`,
+`login_required`) passes through as is.
+
+**Fix.** Read the `denextAuth` line in the `logger` output, or subscribe to
+`events.signInFailed`, which carries the same reason.
+
+## `denext ui`: a page answers `401` in another browser or after a restart
+
+**Cause.** `denext ui` signs a browser in with the one-time token in the URL it
+prints; the cookie that token sets belongs to that browser and that launch. A
+bookmark, or a second browser, has no cookie.
+
+**Fix.** Open the full URL `denext ui` printed (with `?t=…`), or start it with
+`--token <t>` to reuse a token of your choice.
+
+## `denext ui`: `409` "changed on disk"
+
+**Cause.** A file the panel was about to write changed after the panel read it —
+your editor, another tab, a `git checkout`. The UI refuses rather than overwrite
+that edit.
+
+**Fix.** Reload the panel, review the current file, and apply the change again.
+
+## `denext ui`: `503` under `--offline`
+
+**Cause.** The operation needs the network (`deno task`, starting `denext dev`,
+`plugin add` / `remove`), and `--offline` keeps the UI and everything it starts
+off it.
+
+**Fix.** Restart `denext ui` without `--offline` for that step.
+
+## DevTools shows hook kinds, not names ("names unavailable (conditional hooks?)")
+
+**Cause.** Hook names come from the source and are matched, in order, to the hooks
+the component actually ran. A hook called conditionally or after an early return
+breaks that match, so the panel shows kind labels (`useState`, `useEffect`)
+instead of guessing.
+
+**Fix.** Move the hook above the condition, which is also what the
+`denext/rules-of-hooks` lint rule asks for.
+
+## An MCP DevTools tool says the page "posted nothing yet"
+
+**Cause.** An open page starts pushing its component tree to the dev server only
+after the first `denext_component_tree`, `denext_why_render` or
+`denext_hook_state` call.
+
+**Fix.** Call the tool again after the page's next render, or start
+`deno task dev` with `DENEXT_DEV_INSPECT=1` so pages push from the start.
+
 ## Still stuck?
 
 Run [`denext doctor`](/docs/doctor-audit) first — it checks your Deno version,

@@ -249,7 +249,9 @@ four documented bounds of the opt-in:
 - **`inMemoryAuthAdapter` keeps several live tokens per address and purpose;
   `sqliteAuthAdapter` keeps one.** In memory, a second link or code for the same address and
   purpose does not retire the first until that one is used or expires; in SQLite the newer
-  one replaces it.
+  one replaces it. So in SQLite, asking again cancels a link or code already in someone's
+  inbox (within the send budget); in memory, every code in flight stays guessable until it
+  expires.
 - **TOTP is SHA-1 only, and denext renders no QR code.** `verifyTotp` and `totpAuthUri` use
   SHA-1, 6 digits and 30 seconds — the profile every authenticator app supports.
   `enrollTotp` returns the `otpauth://` URI: render it with a library of your choice, or
@@ -303,12 +305,9 @@ four documented bounds of the opt-in:
 - **`requireBearer` takes the auth config as its first argument.** There is no ambient
   "current auth config" to read, so every call site passes the same object it passed to
   `denextAuth()`; an `activeAuthConfig()` helper that would make it optional is on the roadmap.
-
-- **`enrollTotp()` doesn't check for a recent sign-in; the route does.** `/auth/mfa/enroll`
-  refuses a complete session whose `authTime` is older than `mfa.freshness` (five minutes at
-  least) with `reauth_required`. A Server Action that calls `enrollTotp()` directly should
-  check `session.authTime` itself, as `examples/auth` does. A session issued before
-  2.5.0-rc.3 carries no `authTime`, so the route asks it to sign in again.
+- **A session issued before 2.5.0-rc.3 has no `authTime`.** Enrolling a factor (the route or
+  `enrollTotp()`) and minting an API token both need a recent sign-in, so such a session is
+  asked to sign in again.
 
 ### Project UI (`denext ui`)
 
@@ -334,15 +333,9 @@ four documented bounds of the opt-in:
 - **JSR search needs net permission for both `api.jsr.io` and `jsr.io`.** Without it the
   panel degrades exactly as under `--offline`; the UI checks the permission and never
   prompts.
-- **The UI is not itself a denext app.** Its views are server-rendered components built
-  with `h()` in `.ts` files — no bundler, no hydration, no App Router — which is what lets
-  it start instantly with no build.
 - **`/config/next` is read-only.** denext never loads `next.config.*` at runtime, so writing to
   it would change nothing; the panel reads it in a bounded subprocess and offers to translate
   what denext honors into `denext.config.ts`.
-- **The DEFAULT port falls forward.** With no `--port`, an occupied 5177 moves to the next
-  free one (up to ten), so read the printed URL (or `--json`) instead of assuming 5177. An
-  **explicit** `--port` is strict: a taken port is a clear error, never a quiet move.
 - **`denext --help` does not list a project's own verbs, by design.** Rendering them would
   mean importing `denext.config.ts` and running every plugin `setup()`; `denext commands`
   (which the help footer points at) does that in a process that always exits, and shell

@@ -349,16 +349,16 @@ surface, so each ships with its own invariant:
   generically. A stateless cookie session opened earlier cannot be revoked and lives until
   it expires — run a `sessionStore`.
 - **Resets and codes close what they open.** A completed password reset revokes every
-  server-side session of that user. A second-factor code works once: a TOTP step is claimed
+  server-side session and bearer API token of that user. A second-factor code works once: a TOTP step is claimed
   through `claimTotpStep` (not even confirm-then-step-up can reuse it), backup codes are
   stored only as `hasher` hashes and spent through `consumeBackupCode`, and every code check
   spends the per-user budget, so a correct guess cannot reset it.
 - **Sign-in starts and session reads are rate-limited.** `GET /auth/signin/:provider`
-  allows 20 per client IP per 15 minutes (`rateLimit.signin`) and `GET /auth/session` 60
+  allows 100 per client IP per 15 minutes (`rateLimit.signin`) and `GET /auth/session` 300
   per minute (`rateLimit.session`), both counted on every hit, so an unauthenticated
   visitor cannot make the app mint transaction cookies and outbound provider requests — or
   verify cookies and read the session store — in a loop. The credentials limiter (5 per
-  client + identifier per 15 minutes) is unchanged; rc.2 adds a send budget (3 per address
+  client + identifier per 15 minutes) is unchanged; 2.5 adds a send budget (3 per address
   per 15 minutes) and a second-factor budget (5 per user per 5 minutes), each with an
   IP-wide bucket at ten times that, and `rateLimit: false` disables all five. They count per process unless a shared `rateLimit.store` is supplied.
 

@@ -130,7 +130,7 @@ Every path is relative to `basePath` (default `/auth`).
 | `/signin/:provider`   | GET         | Starts the OAuth flow (PKCE + `state` + `nonce`). Rate-limited per client IP.                                                                                        |
 | `/callback/:provider` | GET or POST | By provider type: GET is the OAuth callback and the magic-link click; POST is the Credentials sign-in and the email send / redeem. A verb the type lacks is a `405`. |
 | `/signout`            | POST        | Clears the cookie (and the store record). Same-origin only.                                                                                                          |
-| `/tokens`             | POST, GET   | Mint / list bearer API tokens. Cookie session only.                                                                                                                  |
+| `/tokens`             | POST, GET   | Mint / list bearer API tokens. Cookie session only; minting needs a recent sign-in.                                                                                  |
 | `/tokens/:id`         | DELETE      | Revoke one of your own tokens. Cookie session only.                                                                                                                  |
 | `/verify`             | GET, POST   | Redeem an email-verification token — the emailed link (GET) or a form / JSON body.                                                                                   |
 | `/reset`              | POST        | Request a password-reset link. One answer for every address.                                                                                                         |
@@ -802,7 +802,8 @@ minted **pending**: it lasts 15 minutes (never more than `maxAge`), is never sli
 and `auth()` returns `null` for it — so `requireAuth` redirects to `pages.mfa` (else the
 sign-in page) with a `callbackUrl`, `requireSession` answers `401`, Live `authorize` and
 Server Actions refuse, and `/tokens` mints nothing. `GET {basePath}/session` answers
-`{ user: null, mfa: "required" }`, which `useSession()` reports as `"mfa-required"`. The
+`{ user: null, expires: null, mfa: "required" }`, which `useSession()` reports as
+`"mfa-required"`. The
 sign-in itself answers `{ ok: true, mfa: "required" }` to a JSON client or redirects to
 `pages.mfa`, and `signIn` fires only once the step-up completes. Your `pages.mfa` page
 reads the pending session with `pendingMfaSession()` and posts the code:
