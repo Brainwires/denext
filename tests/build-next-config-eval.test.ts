@@ -214,3 +214,23 @@ Deno.test("a config that prints its own marker line can't forge the result (per-
     assertEquals(valueOf(await evalIn(dir, "next.config.mjs")), { basePath: "/real" });
   });
 });
+
+Deno.test("evaluates a CommonJS next.config.js (module.exports, no package.json type)", async () => {
+  const src = 'module.exports = { basePath: "/cjs-js", trailingSlash: true };\n';
+  await withConfig("next.config.js", src, async (dir) => {
+    assertEquals(valueOf(await evalIn(dir, "next.config.js")), {
+      basePath: "/cjs-js",
+      trailingSlash: true,
+    });
+  });
+});
+
+Deno.test("calls a function-form config the way Next.js does: (phase, { defaultConfig })", async () => {
+  const src = "export default (phase, { defaultConfig }) => " +
+    '({ basePath: typeof defaultConfig === "object" ? "/" + phase : "/missing" });\n';
+  await withConfig("next.config.mjs", src, async (dir) => {
+    assertEquals(valueOf(await evalIn(dir, "next.config.mjs")), {
+      basePath: "/phase-production-build",
+    });
+  });
+});

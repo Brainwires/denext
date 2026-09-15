@@ -361,3 +361,31 @@ Deno.test("readCallArguments: what setCallArguments writes reads back", async ()
   assertEquals(read.values, { info: { title: "API" }, servers: [{ url: "https://a.example" }] });
   assertEquals(read.codeKeys, ["foo"]);
 });
+
+Deno.test("setCallArguments: reserved keys and values that aren't plain JSON are refused", async () => {
+  const cases = [
+    { path: ["__proto__"], value: { polluted: true } },
+    { path: ["info", "constructor"], value: 1 },
+    { path: ["n"], value: Number.NaN },
+    { path: ["when"], value: new Date(0) },
+    { path: ["deep"], value: { ok: 1, fn: () => 1 } },
+    { path: ["list"], value: [1, undefined] },
+    { path: ["nested"], value: JSON.parse('{"__proto__": {"x": 1}}') },
+  ];
+  for (const set of cases) {
+    const r = await refusal("export default { plugins: [openapi()] };", [set]);
+    assertStringIncludes(r.reason, "not plain JSON data", set.path.join("."));
+  }
+});
+
+Deno.test("setCallArguments: a leading byte-order mark survives the splice", async () => {
+  const bom = String.fromCharCode(0xfeff);
+  const result = await setCallArguments(
+    `${bom}export default { plugins: [openapi()] };\n`,
+    OPENAPI,
+    [{ path: ["a"], value: 1 }],
+  );
+  assert(result.ok, result.ok ? "" : result.reason);
+  assert(result.source.startsWith(bom), "the BOM is still the first character");
+  assertStringIncludes(result.source, "a: 1");
+});

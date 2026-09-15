@@ -479,7 +479,7 @@ export {
   resetPassword,
   verifyEmail,
 } from "./auth/email.ts";
-export type { EmailRequestResult, ResetPasswordResult } from "./auth/email.ts";
+export type { EmailRequestResult, ResetPasswordResult, VerifyEmailResult } from "./auth/email.ts";
 // The TOTP second factor: the flows behind `{basePath}/mfa*` and their RFC 6238 primitives.
 export { confirmTotp, disableTotp, enrollTotp, mfaStatus, verifySecondFactor } from "./auth/mfa.ts";
 export type { ConfirmTotpResult, MfaMethod, MfaStatus, TotpEnrollment } from "./auth/mfa.ts";

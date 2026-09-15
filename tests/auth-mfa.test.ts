@@ -440,7 +440,9 @@ Deno.test("POST /mfa/disable accepts the session's own recent step-up; sliding e
   assert(!hasFreshFactor(options, session, (session.issuedAt! + 901) * 1000), "past freshness");
   assert(!hasFreshFactor(options, { ...session, amr: ["pwd"] }), "no second factor in amr");
   const sliding = resolveAuthOptions({ ...h.config, session: { updateAge: 60 } });
-  assert(!hasFreshFactor(sliding, session), "a slide re-stamps issuedAt, so it can't count");
+  assert(hasFreshFactor(sliding, session), "authTime never moves with a slide, so it still counts");
+  const legacy = { ...session, authTime: undefined };
+  assert(!hasFreshFactor(sliding, legacy), "a session without authTime can't count while sliding");
 
   const { res } = await post(h.config, "/mfa/disable", { cookie: stepped.cookie });
   assertEquals(res!.status, 200);
@@ -516,4 +518,24 @@ Deno.test("pendingMfaSession(): the pending session for the /mfa page, null once
   const [after, complete] = await onPage(done.cookie);
   assertEquals([after, complete?.user.id], [null, h.userId]);
   assertEquals(await onPage(undefined), [null, null]);
+});
+
+Deno.test("POST /mfa/enroll from a complete session needs a recent sign-in, else reauth_required", async () => {
+  const h = await setup();
+  const { cookie } = await passwordSignIn(h); // not enrolled yet, so the session is complete
+  assert(cookie, "a complete session cookie");
+  const session = (await readSession(h.config, cookie))!;
+  assertEquals(typeof session.authTime, "number", "sign-in stamps authTime");
+  const realNow = Date.now;
+  Date.now = () => realNow() + 16 * 60_000; // past the 15-minute freshness window
+  try {
+    const stale = await post(h.config, "/mfa/enroll", { cookie });
+    assertEquals(stale.res!.status, 403);
+    assertEquals(await stale.res!.json(), { error: "reauth_required" });
+  } finally {
+    Date.now = realNow;
+  }
+  const fresh = await post(h.config, "/mfa/enroll", { cookie });
+  assertEquals(fresh.res!.status, 200);
+  assert((await fresh.res!.json()).secret, "a recent sign-in may enroll");
 });

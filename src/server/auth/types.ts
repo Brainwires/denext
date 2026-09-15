@@ -61,10 +61,17 @@ export interface AuthSession {
    * time sliding expiry (`session.updateAge`) re-issues the session — a slide re-stamps
    * `issuedAt` along with `expiresAt`. With sliding on it is therefore the time of the
    * last slide, not of the sign-in, so an age measured from it (the `mfa.freshness` rule)
-   * says nothing about when a factor was proven. Absent on a v1 payload, where readers
-   * infer `expiresAt - maxAge`.
+   * says nothing about when a factor was proven (that is `authTime`). Absent on a v1
+   * payload, where readers infer `expiresAt - maxAge`.
    */
   issuedAt?: number;
+  /**
+   * When the user last authenticated, epoch seconds: set at sign-in and again at a
+   * second-factor step-up, and never moved by sliding expiry. It, not `issuedAt`, says how
+   * recently a factor was proven: the `mfa.freshness` rule for `/mfa/disable`, and the recent
+   * sign-in `/mfa/enroll` asks for. Absent on a session issued before 2.5.0-rc.3.
+   */
+  authTime?: number;
   /**
    * Set while the user has passed the first factor but not yet the second. A pending
    * session **fails closed**: `auth()` reports `null` for it, so every guard built on
@@ -480,7 +487,8 @@ export interface AuthMfaConfig {
   backupCodes?: number;
   /**
    * How recent, in seconds, a second-factor proof must be for an action that demands a
-   * fresh one (step-up). Default `900` (15 minutes).
+   * fresh one (step-up). Default `900` (15 minutes); clamped to `0..31536000`. `0` means such
+   * an action always asks for a code.
    */
   freshness?: number;
 }

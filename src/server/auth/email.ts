@@ -65,6 +65,21 @@ export interface EmailRequestResult {
   retryAfter?: number;
 }
 
+/** What {@linkcode verifyEmail} reports. */
+export type VerifyEmailResult =
+  | {
+    /** The address is verified. */
+    ok: true;
+    /** The user whose address was verified. */
+    user: AdapterUser;
+  }
+  | {
+    /** Nothing changed: a wrong, spent or expired token, or an address whose account is gone. */
+    ok: false;
+    /** Why. */
+    error: "invalid_token";
+  };
+
 /** What {@linkcode resetPassword} reports. */
 export type ResetPasswordResult =
   | {
@@ -354,13 +369,14 @@ export async function requestEmailVerification(
  *
  * @param config The app's auth config.
  * @param input The address and the presented token.
- * @returns The updated user, or `null` for any failure (wrong, spent or expired token; an
- * address whose account is gone). Throws only when the adapter lacks the token group.
+ * @returns `{ ok: true, user }` with the verified user, or `{ ok: false, error:
+ * "invalid_token" }` for any failure (a wrong, spent or expired token; an address whose
+ * account is gone). Throws only when the adapter lacks the token group.
  */
 export async function verifyEmail(
   config: AuthConfig,
   input: { email: string; token: string },
-): Promise<AdapterUser | null> {
+): Promise<VerifyEmailResult> {
   const adapter = requireFlowAdapter(config, "email", "verifyEmail");
   const record = await redeemVerificationToken(config, {
     identifier: input.email,
@@ -368,12 +384,12 @@ export async function verifyEmail(
     token: input.token,
   });
   const user = record ? await adapter.getUserByEmail(record.identifier) : undefined;
-  if (!user) return null;
+  if (!user) return { ok: false, error: "invalid_token" };
   const verified = isVerified(user.emailVerified)
     ? user
     : await adapter.updateUser({ id: user.id, emailVerified: nowSeconds() });
   await emitAuthEvent(resolveAuthOptions(config), "emailVerified", { user: verified });
-  return verified;
+  return { ok: true, user: verified };
 }
 
 /**

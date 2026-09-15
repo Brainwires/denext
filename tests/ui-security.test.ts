@@ -11,6 +11,7 @@ import {
   deriveCsrf,
   MIN_UI_TOKEN_LENGTH,
   newToken,
+  StaleWriteError,
   UI_COOKIE,
   UI_CSRF_HEADER,
   uiOriginAllowed,
@@ -504,5 +505,42 @@ Deno.test("writeFileAtomic renames into place, contains, and leaves no temp behi
   } finally {
     await Deno.remove(dir, { recursive: true });
     await Deno.remove(outside, { recursive: true });
+  }
+});
+
+Deno.test("the handshake never answers with a protocol-relative Location", async () => {
+  const s = await ui();
+  try {
+    const res = await fetch(`${s.base}//evil.example/x?t=${s.server.token}`, {
+      redirect: "manual",
+    });
+    await res.body?.cancel();
+    assertEquals(res.status, 302);
+    assertEquals(res.headers.get("location"), "/evil.example/x");
+  } finally {
+    await stop(s);
+  }
+});
+
+Deno.test("writeFileAtomic: unchangedFrom refuses a file that changed since it was read", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_ui_stale_" });
+  try {
+    await Deno.writeTextFile(join(dir, "a.txt"), "one");
+    await writeFileAtomic(dir, "a.txt", "two", { unchangedFrom: "one" });
+    assertEquals(await Deno.readTextFile(join(dir, "a.txt")), "two");
+    await assertRejects(
+      () => writeFileAtomic(dir, "a.txt", "three", { unchangedFrom: "one" }),
+      StaleWriteError,
+    );
+    assertEquals(await Deno.readTextFile(join(dir, "a.txt")), "two", "nothing was written");
+    assertEquals([...Deno.readDirSync(dir)].map((e) => e.name), ["a.txt"], "no .tmp left");
+    await writeFileAtomic(dir, "new.txt", "x", { unchangedFrom: "" });
+    assertEquals(
+      await Deno.readTextFile(join(dir, "new.txt")),
+      "x",
+      "an absent file reads as empty",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
   }
 });

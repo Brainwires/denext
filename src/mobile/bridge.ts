@@ -130,13 +130,13 @@ function asBrowserPlugin(plugin: unknown): BrowserPlugin | undefined {
  *   `window.open` to the OS (Safari, Mail, Phone); Android routes it to an intent.
  *
  * Only `http:`, `https:`, `mailto:` and `tel:` URLs are accepted. Anything else, including
- * `javascript:`, `data:`, `file:` and relative URLs, is refused **synchronously** with a
- * `TypeError` before anything opens. The vetted, normalized `URL.href` is what gets opened.
+ * `javascript:`, `data:`, `file:` and relative URLs, is refused before anything opens: the
+ * promise rejects with a `TypeError`. The vetted, normalized `URL.href` is what gets opened.
  *
  * @param url An absolute `http:`, `https:`, `mailto:` or `tel:` URL.
- * @returns A promise that settles once the URL has been handed off. It rejects if the
- * `Browser` plugin rejects, or when there is no `window` (SSR).
- * @throws {TypeError} Synchronously, for a relative URL or a disallowed scheme.
+ * @returns A promise that settles once the URL has been handed off. It rejects with a
+ * `TypeError` for a relative URL or a disallowed scheme, if the `Browser` plugin rejects, or
+ * when there is no `window` (SSR).
  * @example
  * ```tsx
  * "use client";
@@ -147,15 +147,16 @@ function asBrowserPlugin(plugin: unknown): BrowserPlugin | undefined {
  * }
  * ```
  */
-export function openExternal(url: string): Promise<void> {
+export async function openExternal(url: string): Promise<void> {
+  // async: a refused URL (a bad scheme, an unparseable string) is a rejection like every
+  // other failure here, never a synchronous throw from a function that returns a promise.
   const target = externalUrl(url);
   const browser = isWebScheme(target.protocol)
     ? asBrowserPlugin(shellPlugin("Browser"))
     : undefined;
-  if (browser) return browser.open({ url: target.href });
+  if (browser) return await browser.open({ url: target.href });
   if (typeof globalThis.open !== "function") {
-    return Promise.reject(new Error("openExternal: no window to open from (called during SSR?)"));
+    throw new Error("openExternal: no window to open from (called during SSR?)");
   }
   globalThis.open(target.href, "_blank", "noopener,noreferrer");
-  return Promise.resolve();
 }

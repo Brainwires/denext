@@ -304,7 +304,10 @@ function blockValue(
   }
 }
 
-/** One past the last line from `from` on that carries `nested` (a commented, deeper line). */
+/**
+ * One past the last line from `from` on that carries `nested` (a commented, deeper line),
+ * running through blank lines that the block continues after.
+ */
 function commentRunEnd(
   lines: readonly string[],
   from: number,
@@ -312,8 +315,20 @@ function commentRunEnd(
   nested: string,
   covered: (line: number) => boolean,
 ): number {
+  const open = (i: number) => i < to && !covered(i);
   let j = from;
-  while (j < to && !covered(j) && lines[j].startsWith(nested)) j++;
+  while (open(j)) {
+    if (lines[j].startsWith(nested)) {
+      j++;
+      continue;
+    }
+    // A blank line inside a commented service belongs to it when the block carries on
+    // after it; otherwise enabling the service would uncomment only its first half.
+    let k = j;
+    while (open(k) && lines[k].trim() === "") k++;
+    if (k === j || !open(k) || !lines[k].startsWith(nested)) break;
+    j = k;
+  }
   return j;
 }
 
@@ -405,6 +420,9 @@ export interface State {
   indent: number;
 }
 
+/** U+2028, U+2029 and NEL: line breaks to a YAML parser, but not to a line splicer. */
+const LINE_SEPARATORS = new RegExp(`[${String.fromCharCode(0x2028, 0x2029, 0x85)}]`);
+
 /**
  * Parse, gate and locate a compose file.
  *
@@ -414,6 +432,12 @@ export interface State {
 export function load(text: string): State | string {
   const doc = splitDoc(text);
   if (doc === null) return "the file mixes CRLF and LF line endings";
+  // A YAML parser treats U+2028 / U+2029 / NEL as line breaks where a line splicer (and a
+  // reader of the panel) does not, so a crafted file could hide a key or a whole service from
+  // the editor that docker still runs. Such a file is read-only.
+  if (LINE_SEPARATORS.test(text)) {
+    return "the file holds a Unicode line separator (U+2028, U+2029 or NEL)";
+  }
   let raw: unknown;
   try {
     raw = parse(text);

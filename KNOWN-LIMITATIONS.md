@@ -282,9 +282,7 @@ four documented bounds of the opt-in:
   request cannot be undone by an upsert; a custom store that does not implement `update`
   simply never slides its sessions forward (they expire on their original schedule) and warns
   once. And there is **no absolute session ceiling** — an account in continuous use is
-  extended indefinitely, so end a session with revocation or a shorter `maxAge`. Every slide
-  also re-stamps `issuedAt`, so with `session.updateAge > 0`, `/mfa/disable` always needs a
-  code.
+  extended indefinitely, so end a session with revocation or a shorter `maxAge`.
 - **All five rate limiters count per node** unless you pass a shared `rateLimit.store`; the
   in-memory default is per process.
 - **Account linking refuses unverified-email matches by default** (a deliberate divergence —
@@ -306,9 +304,11 @@ four documented bounds of the opt-in:
   "current auth config" to read, so every call site passes the same object it passed to
   `denextAuth()`; an `activeAuthConfig()` helper that would make it optional is on the roadmap.
 
-- **Enrolling TOTP needs only a complete session.** `/auth/mfa/enroll` asks for no fresh
-  password, so a stolen complete session can enrol a factor and lock the owner out at the next
-  sign-in. Requiring recent authentication (a never-slid `authTime`) is planned for 2.6.
+- **`enrollTotp()` doesn't check for a recent sign-in; the route does.** `/auth/mfa/enroll`
+  refuses a complete session whose `authTime` is older than `mfa.freshness` (five minutes at
+  least) with `reauth_required`. A Server Action that calls `enrollTotp()` directly should
+  check `session.authTime` itself, as `examples/auth` does. A session issued before
+  2.5.0-rc.3 carries no `authTime`, so the route asks it to sign in again.
 
 ### Project UI (`denext ui`)
 
@@ -408,7 +408,7 @@ are listed in [FEATURES.md](./FEATURES.md). Its documented boundaries:
   `index` imports included), up to 3 levels of breadcrumb across modules. A hook
   imported by a bare, `npm:`/`jsr:`, URL or import-map-alias specifier, through a
   namespace import, or re-exported through a barrel still aborts naming for that
-  component (so does `./auth.js` naming an `auth.ts` file).
+  component.
 - **The "owner stack" is the render-parent chain**, an approximation of React's
   JSX-owner stack (they coincide for the common case); per-element `__source` is
   on the roadmap.

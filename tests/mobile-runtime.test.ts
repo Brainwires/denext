@@ -2,13 +2,7 @@
 // visualViewport or PointerEvent, so each test installs minimal stubs on globalThis
 // (a plain EventTarget-like `Target`) and restores whatever was there afterwards.
 
-import {
-  assert,
-  assertEquals,
-  assertRejects,
-  assertStringIncludes,
-  assertThrows,
-} from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { makeDom } from "./helpers/dom.ts";
@@ -165,9 +159,9 @@ function nativeWithBrowser() {
   return { calls, ...openRecorder({ Capacitor: nativeCap(browser) }) };
 }
 
-Deno.test("openExternal: refuses javascript:, data:, file:, relative and other URLs synchronously", async () => {
+Deno.test("openExternal: rejects javascript:, data:, file:, relative and other URLs", async () => {
   const { opened, win } = openRecorder();
-  await withGlobals(win, () => {
+  await withGlobals(win, async () => {
     for (
       const url of [
         "javascript:alert(1)",
@@ -180,7 +174,7 @@ Deno.test("openExternal: refuses javascript:, data:, file:, relative and other U
         "",
       ]
     ) {
-      assertThrows(() => openExternal(url), TypeError, "openExternal", url);
+      await assertRejects(() => openExternal(url), TypeError, "openExternal", url);
     }
   });
   assertEquals(opened.length, 0, "nothing was opened");

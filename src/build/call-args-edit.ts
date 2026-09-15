@@ -51,6 +51,33 @@ export interface CallArgSet {
   value: unknown | undefined;
 }
 
+/** Keys an options object must never be given: they reach the prototype, not an own key. */
+const RESERVED_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+/**
+ * Whether `value` is plain JSON data that reads back as written: `null`, a string, a boolean,
+ * a finite number, or arrays / plain objects of those with no reserved key. `NaN`, `Infinity`,
+ * a function, a `Date`, a class instance or an `undefined` array slot would be silently
+ * coerced by the renderer, so they are refused instead.
+ */
+function isPlainData(value: unknown): boolean {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (Array.isArray(value)) return value.every((v) => v !== undefined && isPlainData(v));
+  if (typeof value !== "object") return false;
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) return false;
+  return Object.entries(value).every(([k, v]) => !RESERVED_KEYS.has(k) && isPlainData(v));
+}
+
+/** The first set that names a reserved key or carries a value that isn't plain data. */
+function unwritableSet(sets: CallArgSet[]): CallArgSet | undefined {
+  return sets.find((s) =>
+    s.path.some((key) => RESERVED_KEYS.has(key)) ||
+    (s.value !== undefined && !isPlainData(s.value))
+  );
+}
+
 /** What {@linkcode readCallArguments} found in a factory call's options object. */
 export type CallArgsRead =
   | {
@@ -308,6 +335,13 @@ export async function setCallArguments(
   sets: CallArgSet[],
 ): Promise<EditResult> {
   if (sets.some((s) => s.path.length === 0)) return bail("an empty key path cannot be edited", "");
+  const unwritable = unwritableSet(sets);
+  if (unwritable) {
+    return bail(
+      `\`${unwritable.path.join(".")}\` names a reserved key or is not plain JSON data`,
+      "",
+    );
+  }
   const found = await locateCall(source, target);
   if (!found.ok) return found.result;
   const { ctx, call, obj } = found;

@@ -47,7 +47,9 @@ export interface Edit {
 }
 
 export const encoder = new TextEncoder();
-const decoder = new TextDecoder();
+// ignoreBOM: a config that starts with a byte-order mark keeps it through a splice (the
+// default decoder silently strips it from every rewritten file).
+const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
 
 /**
  * Apply non-overlapping edits whose offsets are UTF-8 *byte* positions (swc spans

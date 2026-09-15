@@ -204,7 +204,10 @@ export function handshake(request: Request, url: URL, session: UiSession): Respo
   session.handshakeSpent = true;
   const clean = new URL(url.href);
   clean.searchParams.delete("t");
-  const location = clean.pathname + (clean.search === "?" ? "" : clean.search);
+  // One leading slash: a request for `//evil.example/` would otherwise answer with a
+  // protocol-relative `Location` that leaves the loopback origin.
+  const path = "/" + clean.pathname.replace(/^\/+/, "");
+  const location = path + (clean.search === "?" ? "" : clean.search);
   const headers = new Headers({ location });
   headers.append(
     "set-cookie",
@@ -300,6 +303,26 @@ async function contained(root: string, target: string, label: string): Promise<s
   return target;
 }
 
+/** A write refused because the file changed after the caller read it (a lost update averted). */
+export class StaleWriteError extends Error {
+  /**
+   * @param rel The project-relative path that changed.
+   */
+  constructor(readonly rel: string) {
+    super(`${rel} changed on disk since it was read — nothing was written`);
+    this.name = "StaleWriteError";
+  }
+}
+
+/** Options for {@linkcode writeFileAtomic}. */
+export interface WriteFileAtomicOptions {
+  /**
+   * The text the caller based its edit on. When the file no longer holds exactly this just
+   * before the rename, nothing is written and {@linkcode StaleWriteError} is thrown.
+   */
+  readonly unchangedFrom?: string;
+}
+
 /**
  * Write a project file the way a crash-safe editor does: a sibling `.tmp` file, then one
  * `Deno.rename` over the target. The reader of a config or a compose file therefore never sees a
@@ -308,18 +331,34 @@ async function contained(root: string, target: string, label: string): Promise<s
  * The path goes through {@linkcode uiSafeJoin} first, and the rename replaces a *symlink* rather
  * than following it — so an in-project link never becomes a write to whatever it points at.
  *
+ * With `options.unchangedFrom`, the file is re-read just before the rename and the write is
+ * refused ({@linkcode StaleWriteError}) unless it still holds exactly that text — so a change
+ * made elsewhere after the caller's own stale-check (the `_base` stamp) is a refusal, not a
+ * lost update. An absent file reads as `""`.
+ *
  * @param root The project directory.
  * @param rel The project-relative path to write.
  * @param text The file's new contents.
+ * @param options `unchangedFrom`: the text the caller based its edit on.
  * @returns The absolute path written.
- * @throws When the path escapes the project, or the write itself fails.
+ * @throws When the path escapes the project, the file changed since `unchangedFrom` was read
+ * ({@linkcode StaleWriteError}), or the write itself fails.
  */
-export async function writeFileAtomic(root: string, rel: string, text: string): Promise<string> {
+export async function writeFileAtomic(
+  root: string,
+  rel: string,
+  text: string,
+  options: WriteFileAtomicOptions = {},
+): Promise<string> {
   const path = await uiSafeJoin(root, rel);
   const temp = `${path}.${crypto.randomUUID().slice(0, 8)}.tmp`;
   try {
     await Deno.mkdir(dirname(path), { recursive: true });
     await Deno.writeTextFile(temp, text);
+    if (options.unchangedFrom !== undefined) {
+      const current = await Deno.readTextFile(path).catch(() => "");
+      if (current !== options.unchangedFrom) throw new StaleWriteError(rel);
+    }
     await Deno.rename(temp, path);
   } catch (error) {
     await Deno.remove(temp).catch(() => {/* never written, or already renamed */});

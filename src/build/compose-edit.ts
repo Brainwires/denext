@@ -397,9 +397,20 @@ function append(svc: Service, key: string, ch: Children, body: string): Splice {
   return { at: last ? last.end : ch.field.start + 1, remove: 0, insert: [line] };
 }
 
-/** Remove one child — or the whole field when it is the only one. */
-function dropChild(ch: Children, item: Entry): Splice {
-  return ch.items.length === 1 && ch.field ? cut(ch.field) : cut(item);
+/**
+ * Remove one child — or the whole field when it is the only one. Comment lines inside the
+ * field's span (a commented-out sibling entry, a note) are the user's, not the entry's, so they
+ * stay where they were when the emptied field goes.
+ */
+function dropChild(lines: readonly string[], ch: Children, item: Entry): Splice {
+  const field = ch.field;
+  if (ch.items.length !== 1 || !field) return cut(item);
+  const kept: string[] = [];
+  for (let n = field.start + 1; n < field.end; n++) {
+    const outside = n < item.start || n >= item.end;
+    if (outside && lines[n].trim().startsWith("#")) kept.push(lines[n]);
+  }
+  return { ...cut(field), insert: kept };
 }
 
 // --- operations -------------------------------------------------------------
@@ -440,7 +451,7 @@ function editList(state: State, service: string, key: string, edit: ListEdit): C
   if (edit.kind === "add") return { ...append(svc, key, ch, "- " + edit.text), expect };
   const item = ch.items[edit.index];
   if (!item) return `${key} of "${service}" has no entry #${edit.index}`;
-  if (edit.kind === "remove") return { ...dropChild(ch, item), expect };
+  if (edit.kind === "remove") return { ...dropChild(state.doc.lines, ch, item), expect };
   return withExpect(rewrite(state.doc.lines, item, edit.text, "- "), expect);
 }
 
@@ -528,7 +539,9 @@ function envMap(state: State, svc: Service, op: EnvOp): Change | string {
     if (op.action === "delete") delete env[op.key];
     else env[op.key] = op.value;
   });
-  if (op.action === "delete") return entry ? { ...dropChild(ch, entry), expect } : noEnv(op);
+  if (op.action === "delete") {
+    return entry ? { ...dropChild(state.doc.lines, ch, entry), expect } : noEnv(op);
+  }
   const text = yamlScalar(String(op.value));
   if (entry) return withExpect(rewrite(state.doc.lines, entry, text, `${op.key}: `), expect);
   return { ...append(svc, "environment", ch, `${op.key}: ${text}`), expect };

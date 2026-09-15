@@ -110,8 +110,8 @@ export interface IssueAuthSessionOptions {
  * callback shapes the session's DATA; it never decides whether the session is complete. A
  * callback that rebuilds the object instead of spreading it would otherwise drop
  * `mfaPending` and turn a first-factor-only sign-in into a complete session. It may ADD
- * `mfaPending` (fail closed), never remove it; `v`, `issuedAt` and `amr` are always the
- * minted ones; a pending session never outlives its short lifetime; and an expiry the
+ * `mfaPending` (fail closed), never remove it; `v`, `issuedAt`, `authTime` and `amr` are
+ * always the minted ones; a pending session never outlives its short lifetime; and an expiry the
  * callback dropped or mangled is restored, so a session never becomes never-expiring or
  * store-rejected.
  *
@@ -127,6 +127,7 @@ function sealOwnedFields(result: AuthSession, minted: AuthSession): AuthSession 
     ...rest,
     v: minted.v,
     issuedAt: minted.issuedAt,
+    authTime: minted.authTime,
     expiresAt: minted.mfaPending ? Math.min(expiresAt, minted.expiresAt) : expiresAt,
   };
   if (pending) sealed.mfaPending = true;
@@ -159,6 +160,7 @@ export async function issueAuthSession(
     expiresAt: now + lifetime,
     v: 2,
     issuedAt: now,
+    authTime: now,
   };
   if (issue.mfaPending) payload.mfaPending = true;
   if (issue.amr?.length) payload.amr = [...issue.amr];

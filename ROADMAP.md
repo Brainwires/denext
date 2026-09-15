@@ -134,9 +134,6 @@ guardrail; both are build-time.
 - **Optional adapter `deleteCredential?` / `deleteMfa?`**, so disabling TOTP and a
   pre-account-hijacking eviction delete instead of overwrite (today: an empty, unconfirmed
   MFA record and a password hash of a random secret).
-- **A never-slid `authTime` on the session payload.** Sliding expiry re-stamps `issuedAt`, so
-  with `session.updateAge > 0` `/mfa/disable` can never take its `amr`-based freshness
-  shortcut and always needs a code.
 - **A public helper that spends the MFA attempt budget from a Server Action.** The limiter the
   `/mfa*` endpoints spend is internal, so an action calling `verifySecondFactor` or
   `confirmTotp` throttles itself (`examples/auth` carries its own).

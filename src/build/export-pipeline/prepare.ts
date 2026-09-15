@@ -12,7 +12,12 @@ import { dirExists, setupPlugins } from "../pipeline-shared.ts";
 import { exportSpa } from "../spa.ts";
 import { createUseCacheLoader } from "../use-cache-loader.ts";
 import type { ExportContext, StaticExportOptions, StaticExportResult } from "./context.ts";
-import { freshStagingDir, resolveExportOutDir, swapStagingDir } from "./out-dir.ts";
+import {
+  freshStagingDir,
+  resolveExportOutDir,
+  swapStagingDir,
+  writeViaStaging,
+} from "./out-dir.ts";
 
 /** Copy `src` into `dest` when `src` is a directory. */
 async function copyDirIfPresent(src: string, dest: string): Promise<void> {
@@ -38,11 +43,16 @@ async function countHtml(dir: string): Promise<number> {
  * Only pages that can be fully prerendered are emitted (as with `next export`); pages
  * needing a request (`getServerSideProps`, API routes, or a dynamic page without
  * `getStaticPaths`) are served by `denext start` instead — a note is printed for those.
+ *
+ * `out/` is written through the same guarded staging swap as the other exports: the target
+ * is validated before anything runs, and a failed export leaves the previous one intact.
  */
 async function exportPagesRouter(
   paths: ProjectPaths,
   options: StaticExportOptions,
 ): Promise<StaticExportResult> {
+  // Validate the target first: the swap below replaces it wholesale.
+  const outDir = await resolveExportOutDir(paths, options.outDir);
   await setupPlugins(paths, "export");
   await runPluginPrepareSteps({
     projectRoot: paths.projectDir,
@@ -56,14 +66,13 @@ async function exportPagesRouter(
     outDir: paths.outDir,
     config: paths.config ?? {},
   });
-  const outDir = join(paths.projectDir, options.outDir ?? "out");
-  await Deno.remove(outDir, { recursive: true }).catch(() => {});
-  await ensureDir(outDir);
-  // Prerendered HTML (+ props.json for soft-nav) → site root; client bundles →
-  // `_denext/pages/` (matches the `PAGES_PREFIX` in the HTML); `public/` → site root.
-  await copyDirIfPresent(join(paths.outDir, "pages-static"), outDir);
-  await copyDirIfPresent(join(paths.outDir, "pages-client"), join(outDir, "_denext", "pages"));
-  await copyDirIfPresent(paths.publicDir, outDir);
+  await writeViaStaging(outDir, async (staging) => {
+    // Prerendered HTML (+ props.json for soft-nav) → site root; client bundles →
+    // `_denext/pages/` (matches the `PAGES_PREFIX` in the HTML); `public/` → site root.
+    await copyDirIfPresent(join(paths.outDir, "pages-static"), staging);
+    await copyDirIfPresent(join(paths.outDir, "pages-client"), join(staging, "_denext", "pages"));
+    await copyDirIfPresent(paths.publicDir, staging);
+  });
   return { outDir, pages: await countHtml(outDir), skipped: [] };
 }
 
@@ -101,7 +110,7 @@ export async function prepareExport(
   options: StaticExportOptions,
 ): Promise<ExportContext> {
   // Validate the target first: the swap in `finishExport` replaces it wholesale.
-  const finalOutDir = resolveExportOutDir(paths, options.outDir);
+  const finalOutDir = await resolveExportOutDir(paths, options.outDir);
   await setupPlugins(paths, "export");
   await runPluginPrepareSteps({
     projectRoot: paths.projectDir,

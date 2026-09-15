@@ -70,9 +70,12 @@ export interface SseProcessOptions {
   readonly settled?: (code: number | null) => void;
 }
 
-/** One SSE `data:` frame; a line break inside a line would end the frame, so it is flattened. */
+/**
+ * One SSE `data:` frame. Any line break inside the line (CRLF, a bare CR, or LF — the SSE
+ * parser ends a line at each) would end the frame or start a new field, so it is flattened.
+ */
 function frameOf(line: string): string {
-  return `data: ${line.replace(/\r?\n/g, " ")}\n\n`;
+  return `data: ${line.replace(/\r\n|\r|\n/g, " ")}\n\n`;
 }
 
 /**

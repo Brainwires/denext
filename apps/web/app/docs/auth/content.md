@@ -136,7 +136,7 @@ Every path is relative to `basePath` (default `/auth`).
 | `/reset`              | POST        | Request a password-reset link. One answer for every address.                                                                                                         |
 | `/reset/confirm`      | POST        | `{ email, token, password }`: set the new password.                                                                                                                  |
 | `/mfa`                | POST        | Finish a pending sign-in with a TOTP or backup code.                                                                                                                 |
-| `/mfa/enroll`         | POST        | Start a TOTP enrollment: `{ secret, uri }`.                                                                                                                          |
+| `/mfa/enroll`         | POST        | Start a TOTP enrollment: `{ secret, uri }`. A complete session must have signed in recently, else `403 reauth_required`.                                             |
 | `/mfa/confirm`        | POST        | Confirm the enrollment; the backup codes come back once.                                                                                                             |
 | `/mfa/disable`        | POST        | Remove the factor, given a fresh second factor.                                                                                                                      |
 
@@ -352,7 +352,8 @@ so a `sqliteAuthAdapter` no longer keeps its file handle for the life of the pro
 ### The session payload
 
 Sessions issued now carry `v: 2`, `issuedAt` (epoch seconds — re-stamped by every slide,
-so with sliding expiry on it is the last re-issue, not the sign-in) and `amr` (RFC 8176
+so with sliding expiry on it is the last re-issue, not the sign-in), `authTime` (epoch
+seconds of the last sign-in or second-factor step-up, which a slide never moves) and `amr` (RFC 8176
 authentication-method references) alongside `user`, `provider` and `expiresAt`, plus
 `mfaPending` while a second factor is still owed. `amr` records how the user got in: `pwd`
 (a password), `ext` (an OAuth / OIDC provider), `email` (a magic link) or `otp` (an emailed
@@ -587,7 +588,7 @@ already verified, or a value that isn't exactly one address. Opening it hits
 `updateUser`), fires `emailVerified`, and redirects to `pages.verifyRequest` with
 `?verified=1` — or, for a wrong, spent or expired token, to `pages.error` with
 `?error=invalid_token`. `POST {basePath}/verify` takes the same two fields from a form or
-a JSON body, and `verifyEmail(authConfig, { email, token })` is the function underneath.
+a JSON body, and `verifyEmail(authConfig, { email, token })` is the function underneath (it answers `{ ok: true, user }` or `{ ok: false, error: "invalid_token" }`).
 Verifying signs nobody in and leaves the account's password alone — someone else may have
 registered the address, so word the mail so that ignoring it is safe.
 
@@ -761,7 +762,11 @@ Action:
    entry and the `otpauth://totp/…` URI (SHA-1, 6 digits, 30 seconds; the account label is
    the user's email, else their id) to render as a QR code. Enrolling again replaces an
    unconfirmed enrollment; a confirmed factor is a `409` (`null` from the function) until it
-   is disabled.
+   is disabled. From a complete session the route also needs a recent sign-in (`authTime`
+   within `mfa.freshness`, five minutes at least) and answers
+   `403 { error: "reauth_required" }` otherwise, so a stolen session can't enroll a factor of
+   its own. The function doesn't check; a Server Action that calls it should compare
+   `session.authTime` itself.
 2. `POST {basePath}/mfa/confirm` with `{ code }` / `confirmTotp(authConfig, user, code)`
    checks a first code from the app, marks the factor confirmed and returns
    `{ ok: true, backupCodes }` — `mfa.backupCodes` single-use codes formatted `xxxxx-xxxxx`,
@@ -837,9 +842,9 @@ failures, so a correct guess can't reset the counter.
 
 **Disabling.** `POST {basePath}/mfa/disable` needs a complete session **and** a fresh
 second factor: a `code` that verifies now, or — with no code — a session whose own step-up
-(`amr` `totp` / `bcp`) is at most `mfa.freshness` seconds old. That shortcut never applies
-with sliding expiry on: every slide re-stamps `issuedAt`, so with `session.updateAge > 0`
-the caller must always send a code. Anything else is a `403`. Disabling writes an empty,
+(`amr` `totp` / `bcp`) is at most `mfa.freshness` seconds old, measured from `authTime`, so
+it holds with sliding expiry on too. A session issued before 2.5.0-rc.3 has no `authTime`
+and, while sliding is on, must send a code. Anything else is a `403`. Disabling writes an empty,
 unconfirmed record in the user's place (the adapter's MFA group has no delete), which reads
 as "not enrolled" everywhere. `disableTotp(authConfig, userId)` does the same with no
 freshness check — gate it yourself.

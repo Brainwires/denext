@@ -28,7 +28,9 @@ const REASON_EXCERPT_CHARS = 200;
 export const LOAD_NEXT_CONFIG = `
 const mod = await import(Deno.args[0]);
 let cfg = mod?.default ?? mod;
-if (typeof cfg === "function") cfg = await cfg();
+// Called the way Next.js calls it, (phase, { defaultConfig }): a config that destructures
+// its second argument must not throw.
+if (typeof cfg === "function") cfg = await cfg("phase-production-build", { defaultConfig: {} });
 cfg = await cfg;
 `;
 
@@ -138,6 +140,10 @@ export async function evalNextConfigProgram(
       args: [
         "run",
         "--no-prompt",
+        // A `next.config.js` written as CommonJS (`module.exports = …`) with no
+        // `"type": "module"` package.json is the common Next.js shape; without detection it
+        // fails with "module is not defined".
+        "--unstable-detect-cjs",
         `--allow-read=${dir}`,
         "--allow-env",
         "--allow-sys",

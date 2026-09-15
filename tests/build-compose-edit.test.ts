@@ -312,3 +312,43 @@ Deno.test("a failing op fails the whole call and leaves the text unchanged", () 
   assertEquals(before, GEN);
   assertMatch(refusal("- a\n", [{ op: "toggleService", service: "web" }]), /not a mapping/);
 });
+
+Deno.test("toggleService: a commented service with a blank line inside is enabled whole", () => {
+  const text = [
+    "services:",
+    "  web:",
+    "    image: web",
+    "  # db:",
+    "  #   image: postgres",
+    "",
+    "  #   restart: always",
+    "",
+  ].join("\n");
+  const on = edit(text, [{ op: "toggleService", service: "db" }]);
+  const db = readCompose(on)!.services.find((s) => s.name === "db")!;
+  assertEquals([db.commented, db.image, db.restart], [false, "postgres", "always"]);
+});
+
+Deno.test("removing a field's only entry keeps the commented siblings inside it", () => {
+  const text = [
+    "services:",
+    "  web:",
+    "    image: web",
+    "    ports:",
+    '      - "3000:3000"',
+    '      # - "9229:9229"',
+    "    restart: always",
+    "",
+  ].join("\n");
+  const out = edit(text, [{ op: "ports", service: "web", action: "remove", index: 0 }]);
+  assertStringIncludes(out, '# - "9229:9229"');
+  assert(!out.includes("ports:"), "the emptied field is gone");
+  assertEquals(readCompose(out)!.services[0].restart, "always");
+});
+
+Deno.test("a Unicode line separator makes the file opaque, and an edit can't write one", () => {
+  const [ls, nel] = [String.fromCharCode(0x2028), String.fromCharCode(0x85)];
+  assertEquals(readCompose(`services:\n  web:\n    image: "a${ls}b"\n`), null);
+  assertEquals(readCompose(`services:\n  web:\n    image: web${nel}\n`), null);
+  refusal(GEN, [{ op: "set", service: "web", field: "image", value: `a${ls}b` }]);
+});

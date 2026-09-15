@@ -111,7 +111,7 @@ export async function exportSpa(
 ): Promise<{ outDir: string; pages: number; skipped: string[] }> {
   const { spa, entryPath } = spaEntryPath(paths);
   await assertEntryExists(entryPath);
-  const outDir = resolveExportOutDir(paths, options.outDir);
+  const outDir = await resolveExportOutDir(paths, options.outDir);
   await writeViaStaging(outDir, async (staging) => {
     const clientOut = join(staging, "_denext", "client");
     await ensureDir(clientOut);

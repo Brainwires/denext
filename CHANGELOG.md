@@ -8,6 +8,67 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.5.0-rc.3] - 2026-09-14
+
+### Added
+
+- `AuthSession.authTime`: when the user last authenticated (sign-in, or a second-factor
+  step-up), in epoch seconds. Sliding expiry never moves it, unlike `issuedAt`.
+
+### Security
+
+- `POST {basePath}/mfa/enroll` from a complete session needs a recent sign-in: `authTime`
+  within `mfa.freshness`, and at least five minutes. Otherwise it answers
+  `403 { error: "reauth_required" }`. A stolen long-lived session can no longer set up a
+  factor of its own and lock the owner out. An app that calls `enrollTotp()` from its own
+  Server Action should check `session.authTime` the same way, as `examples/auth` now does.
+- `denext export`: the output-directory guard compares real locations (symlinks resolved, case
+  folded where the filesystem ignores it, inodes matched), so `outDir: ".GIT"` on a
+  case-insensitive disk can no longer select and wipe `.git`, and a symlinked or non-directory
+  target is refused. The Pages Router export now writes through the same guarded staging swap
+  instead of deleting its output directory unchecked.
+- `denext ui`: the token handshake redirects with a single leading slash, so a `//host/…` path
+  can't produce a protocol-relative `Location`; a bare carriage return in a streamed output
+  line is flattened like a newline, so it can't start a new SSE field.
+- `denext ui`: the compose editor treats a file holding U+2028, U+2029 or NEL as read-only (a
+  YAML parser and a line splicer disagree on those), and the plugin-options writer refuses
+  `__proto__` / `constructor` / `prototype` keys and values that aren't plain JSON (`NaN`,
+  functions, `Date`s) instead of silently coercing them.
+
+### Changed
+
+- `POST {basePath}/mfa/disable`'s no-code shortcut (the session's own step-up within
+  `mfa.freshness`) is measured from `authTime`, so it works with sliding expiry on as well; it
+  used to be void whenever `session.updateAge > 0`.
+- `verifyEmail()` answers `{ ok: true, user }` or `{ ok: false, error: "invalid_token" }`
+  (`VerifyEmailResult`, exported from `denext/server`) — the shape `resetPassword()` has —
+  instead of `AdapterUser | null`, so later failure reasons can be added without a breaking
+  change.
+
+### Fixed
+
+- Config writes (`denext ui`, `denext plugin add`) keep a leading byte-order mark; it was
+  silently dropped from every rewritten `denext.config.ts`.
+- `denext/mobile`: `openExternal()` rejects for a refused URL instead of throwing
+  synchronously from a function that returns a promise.
+- SPA dev: the first-party Fast Refresh plugin no longer treats a sibling directory whose name
+  starts with the project's (`/app-2` next to `/app`) as project source.
+- `denextAuth`: `mfa.freshness: 0` is kept (every action that demands a fresh second factor
+  asks for a code) instead of silently becoming the 900-second default.
+- `denext ui`: a confirmed config, plugin-options or compose write re-reads the file just
+  before the atomic rename and answers `409` if it changed after the form's stamp was checked,
+  instead of silently replacing a concurrent edit.
+- The next.config evaluator (`denext migrate` and the `denext ui` next.config panel) reads a
+  CommonJS `next.config.js` (`module.exports`) and calls a function-form config the way Next.js
+  does, `(phase, { defaultConfig })`.
+- `denext ui` compose editor: removing a field's last entry keeps the comment lines inside it;
+  enabling a commented-out service with a blank line inside enables all of it; a failed write is
+  a refusal at the panel instead of a bare 500.
+- DevTools: a custom hook imported as `./auth.js` from `auth.ts` (the TypeScript convention) is
+  named across the import.
+- `denextAuth`: deciding whether a sign-in owes a second factor reads the MFA record the way
+  every other MFA check does (a confirmed record that still holds a secret).
+
 ## [2.5.0-rc.2] - 2026-09-14
 
 ### Added
@@ -7194,6 +7255,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.5.0-rc.3]: https://jsr.io/@denext/denext@2.5.0-rc.3
 [2.5.0-rc.2]: https://jsr.io/@denext/denext@2.5.0-rc.2
 [2.5.0-rc.1]: https://jsr.io/@denext/denext@2.5.0-rc.1
 [2.4.3]: https://jsr.io/@denext/denext@2.4.3

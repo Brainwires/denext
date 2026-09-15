@@ -75,8 +75,10 @@ export async function mfaPendingFor(
   user: AuthUser,
 ): Promise<boolean> {
   if (options.mfa.required === "always") return true;
-  const record = await options.adapter?.getMfa?.(user.id);
-  return record?.confirmedAt !== undefined;
+  // The same test every MFA check uses: a confirmed record that still holds a secret. An
+  // adapter whose `setMfa` merges fields could keep `confirmedAt` on a disabled (secret-less)
+  // record, which must not leave that user pending forever.
+  return isConfirmed(await options.adapter?.getMfa?.(user.id));
 }
 
 /** The adapter when it implements the whole MFA group, else `undefined`. */
@@ -241,12 +243,11 @@ export async function disableTotp(config: AuthConfig, userId: string): Promise<v
 
 /**
  * Whether `session` carries a second-factor proof recent enough for a sensitive action:
- * its `amr` includes `totp` or `bcp` and it was established at most `mfa.freshness`
- * seconds ago.
+ * its `amr` includes `totp` or `bcp` and it authenticated at most `mfa.freshness` seconds
+ * ago — measured from `authTime`, which sliding expiry never moves.
  *
- * With sliding expiry on (`session.updateAge > 0`) this is always `false`: a slide
- * re-stamps `issuedAt`, so a session slid forward long after its step-up would otherwise
- * look freshly proven — the caller must present a code instead.
+ * A session issued before 2.5.0-rc.3 has no `authTime`; it is measured from `issuedAt`
+ * instead, and never counts with sliding expiry on (a slide re-stamps `issuedAt`).
  *
  * @param options The resolved auth options.
  * @param session A complete session.
@@ -258,10 +259,35 @@ export function hasFreshFactor(
   session: AuthSession,
   nowMs: number = Date.now(),
 ): boolean {
-  if (options.updateAge > 0 || session.issuedAt === undefined) return false;
+  const provedAt = session.authTime ?? (options.updateAge > 0 ? undefined : session.issuedAt);
+  if (provedAt === undefined) return false;
   const proved = (session.amr ?? []).some((method) => method === "totp" || method === "bcp");
-  const age = Math.floor(nowMs / 1000) - session.issuedAt;
+  const age = Math.floor(nowMs / 1000) - provedAt;
   return proved && age >= 0 && age <= options.mfa.freshness;
+}
+
+/** The shortest window `/mfa/enroll` allows, so `mfa.freshness: 0` can't make enrolling impossible. */
+const ENROLL_MIN_WINDOW = 300;
+
+/**
+ * Whether `session` signed in recently enough to set up its own second factor: its
+ * `authTime` is at most `mfa.freshness` seconds old (never less than five minutes). Without
+ * this a stolen session could enroll a factor, locking the owner out at the next sign-in. A
+ * session issued before 2.5.0-rc.3 carries no `authTime` and does not count.
+ *
+ * @param options The resolved auth options.
+ * @param session A complete session.
+ * @param nowMs The clock, in epoch ms (injectable for tests).
+ * @returns `true` when the sign-in is recent.
+ */
+export function recentlyAuthenticated(
+  options: ResolvedAuthOptions,
+  session: AuthSession,
+  nowMs: number = Date.now(),
+): boolean {
+  if (session.authTime === undefined) return false;
+  const age = Math.floor(nowMs / 1000) - session.authTime;
+  return age >= 0 && age <= Math.max(options.mfa.freshness, ENROLL_MIN_WINDOW);
 }
 
 /**

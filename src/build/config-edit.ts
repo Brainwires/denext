@@ -34,7 +34,9 @@ import {
 import { createUnifiedDiff } from "./patch-diff.ts";
 import { stripComments } from "../utils/strip-comments.ts";
 
-const decoder = new TextDecoder();
+// ignoreBOM: a config that starts with a byte-order mark keeps it through a splice (the
+// default decoder silently strips it from every rewritten file).
+const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
 
 /** deno fmt's line width (`deno.json` → `fmt.lineWidth`): serialised values stay inside it. */
 const MAX_WIDTH = 100;
