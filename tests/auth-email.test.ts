@@ -711,3 +711,15 @@ Deno.test("resetPassword: a verified account's bearer API tokens are revoked too
   assert(result.ok);
   assertEquals(await adapter.listApiTokens!(id), [], "a reset ends every bearer token");
 });
+
+Deno.test("normalizeEmailIdentifier: an IDN domain becomes punycode; a non-ASCII local part is still refused", () => {
+  assertEquals(normalizeEmailIdentifier("Ada@Bücher.de"), "ada@xn--bcher-kva.de");
+  assertEquals(normalizeEmailIdentifier("ada@münchen.example"), "ada@xn--mnchen-3ya.example");
+  assertEquals(
+    normalizeEmailIdentifier("adä@example.com"),
+    null,
+    "SMTPUTF8 local parts stay refused",
+  );
+  assertEquals(normalizeEmailIdentifier("ada@bü/cher.de"), null, "no path smuggled into the host");
+  assertEquals(normalizeEmailIdentifier("a@bücher.de,b@x.com"), null, "still one address");
+});

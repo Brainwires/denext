@@ -1438,5 +1438,6 @@ What the first-party auth layer still does not do — the full ledger is
 - **No public helper spends the MFA attempt budget from a Server Action.** The endpoints
   spend it; a Server Action calling `verifySecondFactor` or `confirmTotp` must throttle
   itself.
-- **Email addresses must be ASCII**: an SMTPUTF8 local part or a non-punycode IDN domain is
-  refused by the emailed flows.
+- **An email address's local part must be ASCII**: the emailed flows refuse an SMTPUTF8 local
+  part. An internationalised domain is accepted and carried in its punycode form
+  (`ada@bücher.de` is `ada@xn--bcher-kva.de`).

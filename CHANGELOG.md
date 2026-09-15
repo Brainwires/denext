@@ -27,6 +27,9 @@ and this project adheres to
 
 ### Changed
 
+- The emailed auth flows accept an internationalised email domain (`ada@bücher.de`),
+  normalised to its punycode form (`ada@xn--bcher-kva.de`); an SMTPUTF8 local part is still
+  refused.
 - `denext ui` checks JSR net permission per operation: a search needs only `api.jsr.io`, adding
   a JSR package only `jsr.io`. Either used to need both.
 

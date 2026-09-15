@@ -263,8 +263,8 @@ four documented bounds of the opt-in:
   as Auth.js). Prefer `emailOtp()` where that matters.
 - **Rotating `secret` invalidates the one-time codes in flight** — they are keyed under the
   current (first) secret, and live for minutes.
-- **Email addresses must be ASCII.** An SMTPUTF8 local part or a non-punycode IDN domain is
-  refused by the emailed flows.
+- **An email address's local part must be ASCII.** The emailed flows refuse an SMTPUTF8 local
+  part; an internationalised domain is accepted and used in its punycode form.
 - **Stateless cookie sessions survive a password reset — and a pre-account-hijacking
   eviction — until they expire.** Run a `sessionStore` (or `session.strategy: "database"`)
   so either one signs out every device. A pending second-factor session in a cookie can't be
