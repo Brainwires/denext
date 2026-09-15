@@ -137,7 +137,6 @@ guardrail; both are build-time.
 - **A public helper that spends the MFA attempt budget from a Server Action.** The limiter the
   `/mfa*` endpoints spend is internal, so an action calling `verifySecondFactor` or
   `confirmTotp` throttles itself (`examples/auth` carries its own).
-- **`activeAuthConfig()`** so `requireBearer`'s first argument becomes optional.
 - **Richer events**: API-token issue/revoke events, a `signInFailed.reason` union, and an
   `AuthEvents.ip` for audit trails.
 

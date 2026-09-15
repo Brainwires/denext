@@ -3,6 +3,8 @@
 // tag), and the `/auth/tokens` management endpoints (cookie session only, MFA-pending
 // refused, own-tokens-only revocation).
 
+import { credentials } from "../src/server/auth/providers.ts";
+import { activeAuthConfig, denextAuth } from "../src/server/auth/mod.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import {
   createRequestContext,
@@ -524,5 +526,16 @@ Deno.test("requireBearer({ scope: [] }) is unsatisfiable, like role: []", async 
   const userId = await makeUser(adapter);
   const scoped = await issueApiToken(config, { userId, scopes: ["pets:read"] });
   const denied = await refusal(requireBearer(config, { scope: [] }), `Bearer ${scoped.token}`);
+  assertEquals([denied?.status, denied?.code], [403, "forbidden"]);
+});
+
+Deno.test("requireBearer({ scope }) reads the active config denextAuth() was built with", async () => {
+  const { config, adapter } = setup({ providers: [credentials()] });
+  denextAuth(config);
+  assertEquals(activeAuthConfig(), config);
+  const userId = await makeUser(adapter);
+  const scoped = await issueApiToken(config, { userId, scopes: ["pets:read"] });
+  assert(await callMiddleware(requireBearer({ scope: "pets:read" }), `Bearer ${scoped.token}`));
+  const denied = await refusal(requireBearer({ scope: "admin" }), `Bearer ${scoped.token}`);
   assertEquals([denied?.status, denied?.code], [403, "forbidden"]);
 });

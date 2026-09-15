@@ -10,6 +10,9 @@ and this project adheres to
 
 ### Added
 
+- `activeAuthConfig()` (`denext/server`): the config `denextAuth()` was built with.
+  `requireBearer({ scope, role })` uses it, so the config argument is optional; when no auth
+  plugin is active yet where it runs, it looks the config up on the first request.
 - `denext ui`'s compose editor edits `build` (a context path) and `networks` (add and remove,
   with a warning for a network the top-level `networks:` doesn't declare).
 - `denext ui`: a JSR plugin that publishes `denext.catalog.optionsSchema` (a JSON Schema) in its

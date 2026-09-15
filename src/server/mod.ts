@@ -394,6 +394,7 @@ export {
 // `denextAuth(config)` is a plugin (add to `plugins` in denext.config); it
 // auto-mounts `/auth/*`. Read the session anywhere with `auth()`.
 export {
+  activeAuthConfig,
   auth,
   denextAuth,
   pendingMfaSession,

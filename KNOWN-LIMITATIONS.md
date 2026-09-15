@@ -302,9 +302,6 @@ four documented bounds of the opt-in:
   [ROADMAP.md](./ROADMAP.md)), and `microsoftEntra`
   requires a specific tenant — the `common` issuer is a template no discovery document can
   verify.
-- **`requireBearer` takes the auth config as its first argument.** There is no ambient
-  "current auth config" to read, so every call site passes the same object it passed to
-  `denextAuth()`; an `activeAuthConfig()` helper that would make it optional is on the roadmap.
 - **A session issued before 2.5.0-rc.3 has no `authTime`.** Enrolling a factor (the route or
   `enrollTotp()`) and minting an API token both need a recent sign-in, so such a session is
   asked to sign in again.

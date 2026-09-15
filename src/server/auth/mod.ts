@@ -42,6 +42,34 @@ import type { AuthConfig, AuthSession } from "./types.ts";
 // import). `auth()` reads it so a Server Component / middleware needs no handle.
 let activeConfig: AuthConfig | null = null;
 
+/**
+ * The auth config `denextAuth()` was built with — the one `auth()` and the auth endpoints use.
+ * Server code that needs the config itself (`requireBearer`, `issueApiToken`,
+ * `requestPasswordReset`, …) can read it here instead of importing its own copy.
+ *
+ * @returns The active config.
+ * @throws {Error} When no `denextAuth()` plugin has been created in this process.
+ */
+export function activeAuthConfig(): AuthConfig {
+  if (activeConfig === null) {
+    throw new Error(
+      "activeAuthConfig: no denextAuth() plugin has been created — add it to plugins in " +
+        "denext.config.ts, or pass the auth config explicitly",
+    );
+  }
+  return activeConfig;
+}
+
+/**
+ * The active config, or `null` before `denextAuth()` has run — for a helper that can wait until
+ * its first request to find it.
+ *
+ * @returns The active config, or `null`.
+ */
+export function peekActiveAuthConfig(): AuthConfig | null {
+  return activeConfig;
+}
+
 let warnedNoOrigin = false;
 
 function validateConfig(config: AuthConfig): void {

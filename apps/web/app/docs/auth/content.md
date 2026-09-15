@@ -1127,7 +1127,8 @@ behind several.
 the SHA-256 (hex) of the full presented string, so a database read yields nothing usable
 and verification is an indexed exact-match lookup rather than an in-process comparison —
 there is no timing oracle to equalise.
-`requireBearer(authConfig, { scope, role })` is the `createApi()` middleware that
+`requireBearer(authConfig, { scope, role })` — or `requireBearer({ scope, role })`, which reads
+the config `denextAuth()` was built with (`activeAuthConfig()`) — is the `createApi()` middleware that
 authenticates `Authorization: Bearer tok_…` and extends the handler's context with
 `{ token, user, session }`, where `session` has the same shape `requireSession()`
 provides — so a handler written against `ctx.session.user.id` works under either

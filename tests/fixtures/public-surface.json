@@ -698,6 +698,7 @@
     "VerifyEmailResult:typeAlias",
     "Viewport:interface",
     "absoluteUrl:function",
+    "activeAuthConfig:function",
     "after:function",
     "apiDefinitionOf:function",
     "apiErrorResponse:function",
