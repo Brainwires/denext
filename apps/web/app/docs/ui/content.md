@@ -618,7 +618,9 @@ spawned. A JSON client posts the same names as keys:
 `{ "verb": "seed", "flag:rows": 5, "pos:0": "users" }`.
 
 Running a verb is a mutation — a verb may write anything — so it is refused under
-`--read-only`, and it pays plugin discovery again in its own child. Under `--offline` both
+`--read-only`. Each run is its own `deno` child, which costs the same plugin discovery as
+running the verb in your terminal: the panel never runs your code in the UI's process, every run
+starts from fresh module state, and a run can be cancelled by killing that child. Under `--offline` both
 children — the listing and every run — start with `--deny-net --cached-only`, so a verb that
 needs the network fails rather than reaching it.
 

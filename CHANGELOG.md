@@ -71,6 +71,10 @@ and this project adheres to
 
 ### Changed
 
+- Decided: `/config/next` being read-only (denext never loads `next.config.*`), and a project
+  verb costing plugin discovery in its own child, are how those features work rather than gaps.
+  Both moved out of KNOWN-LIMITATIONS into the
+  [Project UI guide](https://denext.dev/docs/ui).
 - The emailed auth flows accept an internationalised email domain (`ada@bücher.de`),
   normalised to its punycode form (`ada@xn--bcher-kva.de`); an SMTPUTF8 local part is still
   refused.
