@@ -325,9 +325,8 @@ four documented bounds of the opt-in:
   under `--offline` — and keeps only the keys the form reads. A first-party schema is
   generated from the package's types and expands four interfaces deep.
 - **Code-valued plugin options are read-only.** A callback, a variable, a call, a `{}`
-  schema part (a type the generator could not describe) or a function-wrapped list
-  (openapi's `tags`, `securitySchemes`) renders as a read-only cell. A toggle over an option
-  the config does not set is written only when it is switched on.
+  schema part (a type the generator could not describe, like the values of openapi's
+  `securitySchemes`) or a function-wrapped list (openapi's `tags`) renders as a read-only cell.
 - **JSR search and adding a JSR package each need net permission for their host** —
   `api.jsr.io` to search, `jsr.io` to read a package's metadata. Without it that half of the
   panel degrades as under `--offline`; the UI only checks the permission, never prompts.
