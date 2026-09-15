@@ -3746,7 +3746,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 2.5.0-rc.2",
+          "signature": "VERSION: 2.5.0-rc.3",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -10115,7 +10115,7 @@
           "name": "verifyEmail",
           "slug": "verifyEmail",
           "kind": "function",
-          "signature": "verifyEmail(config: AuthConfig, input: object): Promise<AdapterUser | null>",
+          "signature": "verifyEmail(config: AuthConfig, input: object): Promise<VerifyEmailResult>",
           "doc": "Redeem an email-verification token and mark the address verified (emailVerified, epoch seconds, through adapter.updateUser). Fires emailVerified.",
           "docFull": "Redeem an email-verification token and mark the address verified (`emailVerified`,\nepoch seconds, through `adapter.updateUser`). Fires `emailVerified`.\n\nUnlike a first magic-link / one-time-code sign-in, this does **not** retire the\naccount's password or revoke its sessions. In the normal register → verify → sign-in\nflow the password was set by the very person now proving the mailbox, so wiping it\nwould break that flow; and verifying signs nobody in, so the mailbox owner gains no\naccess here. The residual risk is a victim confirming an account someone else\nregistered with their address — it then counts as verified (a later OAuth sign-in with\nthat address links to it) — so word the mail to say that ignoring it is safe.",
           "params": [
@@ -10128,7 +10128,19 @@
               "doc": "The address and the presented token."
             }
           ],
-          "returns": "The updated user, or null for any failure (wrong, spent or expired token; an address whose account is gone). Throws only when the adapter lacks the token group.",
+          "returns": "{ ok: true, user } with the verified user, or { ok: false, error: \"invalid_token\" } for any failure (a wrong, spent or expired token; an address whose account is gone). Throws only when the adapter lacks the token group.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "VerifyEmailResult",
+          "slug": "VerifyEmailResult",
+          "kind": "typeAlias",
+          "signature": "type VerifyEmailResult = object | object",
+          "doc": "What verifyEmail reports.",
+          "docFull": "What {@linkcode verifyEmail} reports.",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         },
@@ -14059,14 +14071,14 @@
           "kind": "function",
           "signature": "openExternal(url: string): Promise<void>",
           "doc": "Open a URL outside the app.",
-          "docFull": "Open a URL outside the app.\n\n- Inside the native shell, an http(s) URL opens in the in-app browser of the\n  `@capacitor/browser` plugin when it is installed natively (read from\n  `Capacitor.Plugins.Browser`; no JS import of the plugin is needed).\n- Otherwise, including `mailto:`/`tel:` and on the web, it calls\n  `window.open(url, \"_blank\", \"noopener,noreferrer\")`. The iOS shell hands a\n  `window.open` to the OS (Safari, Mail, Phone); Android routes it to an intent.\n\nOnly `http:`, `https:`, `mailto:` and `tel:` URLs are accepted. Anything else, including\n`javascript:`, `data:`, `file:` and relative URLs, is refused **synchronously** with a\n`TypeError` before anything opens. The vetted, normalized `URL.href` is what gets opened.",
+          "docFull": "Open a URL outside the app.\n\n- Inside the native shell, an http(s) URL opens in the in-app browser of the\n  `@capacitor/browser` plugin when it is installed natively (read from\n  `Capacitor.Plugins.Browser`; no JS import of the plugin is needed).\n- Otherwise, including `mailto:`/`tel:` and on the web, it calls\n  `window.open(url, \"_blank\", \"noopener,noreferrer\")`. The iOS shell hands a\n  `window.open` to the OS (Safari, Mail, Phone); Android routes it to an intent.\n\nOnly `http:`, `https:`, `mailto:` and `tel:` URLs are accepted. Anything else, including\n`javascript:`, `data:`, `file:` and relative URLs, is refused before anything opens: the\npromise rejects with a `TypeError`. The vetted, normalized `URL.href` is what gets opened.",
           "params": [
             {
               "name": "url",
               "doc": "An absolute http:, https:, mailto: or tel: URL."
             }
           ],
-          "returns": "A promise that settles once the URL has been handed off. It rejects if the Browser plugin rejects, or when there is no window (SSR).",
+          "returns": "A promise that settles once the URL has been handed off. It rejects with a TypeError for a relative URL or a disallowed scheme, if the Browser plugin rejects, or when there is no window (SSR).",
           "examples": [
             "```tsx\n\"use client\";\nimport { openExternal } from \"denext/mobile\";\n\nexport function DocsLink() {\n  return <button type=\"button\" onClick={() => openExternal(\"https://denext.dev/docs\")}>Docs</button>;\n}\n```"
           ],
