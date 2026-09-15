@@ -631,3 +631,79 @@ Deno.test("registry: metadata joins a live component type through its family id"
     clearComponentMeta();
   }
 });
+
+Deno.test("collectComponentMeta: an import-map alias records `from` through the resolver", async () => {
+  const src = [
+    `import { useAuth } from "@/hooks/auth.ts";`,
+    `export function Profile() {`,
+    `  const user = useAuth();`,
+    `  return null;`,
+    `}`,
+  ].join("\n");
+  const resolve = (spec: string) =>
+    spec === "@/hooks/auth.ts" ? "file:///app/src/hooks/auth.ts" : undefined;
+  const metas = collectComponentMeta((await parseModule(src))!, PROFILE_URL, resolve);
+  assertEquals(metas.Profile.hooks[0], {
+    hook: "useAuth",
+    name: "user",
+    line: 3,
+    from: "file:///app/src/hooks/auth.ts",
+  });
+});
+
+Deno.test("collectComponentMeta: a barrel's named hook re-exports become aliases (not components, not export *)", async () => {
+  const src = [
+    `export { useAuth } from "./use-auth.ts";`,
+    `export { useA as useAlias } from "./a.ts";`,
+    `export { Button } from "./button.tsx";`,
+    `export * from "./star.ts";`,
+  ].join("\n");
+  const metas = collectComponentMeta((await parseModule(src))!, "file:///app/hooks/index.ts");
+  assertEquals(metas, {
+    useAuth: {
+      name: "useAuth",
+      line: 0,
+      column: 0,
+      hooks: [],
+      aliasOf: "file:///app/hooks/use-auth.ts#useAuth",
+    },
+    useAlias: {
+      name: "useAlias",
+      line: 0,
+      column: 0,
+      hooks: [],
+      aliasOf: "file:///app/hooks/a.ts#useA",
+    },
+  });
+});
+
+Deno.test("unbundled transform: a hook imported through an import-map alias records the aliased module", async () => {
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-devtools-alias-" }));
+  try {
+    await Deno.mkdir(join(dir, "src"), { recursive: true });
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({ imports: { "@/": "./src/" } }),
+    );
+    const hooks = join(dir, "src", "auth.ts");
+    await Deno.writeTextFile(
+      hooks,
+      `import { useState } from "denext";\nexport function useAuth() {\n  const [user] = useState(null);\n  return user;\n}\n`,
+    );
+    const comp = join(dir, "profile.tsx");
+    await Deno.writeTextFile(
+      comp,
+      `import { useAuth } from "@/auth.ts";\nexport function Profile() {\n  const user = useAuth();\n  return <p>{String(user)}</p>;\n}\n`,
+    );
+    const st = createUnbundledState({
+      projectDir: dir,
+      appDir: dir,
+      configPath: join(dir, "deno.json"),
+      outDir: join(dir, "out"),
+    });
+    const compOut = await transform(st, comp);
+    assertEquals(recordedFroms(compOut.code), [toFileUrl(hooks).href]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

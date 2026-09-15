@@ -53,11 +53,37 @@ export async function resolveFirstParty(
   spec: string,
   importerAbs: string,
 ): Promise<string | null> {
+  return resolveWith(await ensureAliases(st), spec, importerAbs);
+}
+
+/**
+ * A synchronous twin of {@link resolveFirstParty} for one importer: the alias table is loaded
+ * once up front, so a pass that walks an AST without awaiting (the DevTools metadata) can
+ * resolve each import-map alias as it meets it.
+ *
+ * @param st The unbundled dev state.
+ * @param importerAbs The importing module's absolute path.
+ * @returns A resolver from a specifier to an absolute first-party path, or `null`.
+ */
+export async function firstPartyResolver(
+  st: UnbundledState,
+  importerAbs: string,
+): Promise<(spec: string) => string | null> {
+  const aliases = await ensureAliases(st);
+  return (spec) => resolveWith(aliases, spec, importerAbs);
+}
+
+/** {@link resolveFirstParty} against an already loaded alias table. */
+function resolveWith(
+  aliases: Array<[string, string]>,
+  spec: string,
+  importerAbs: string,
+): string | null {
   let hit: string | null = null;
   if (spec === "." || spec === ".." || spec.startsWith("./") || spec.startsWith("../")) {
     hit = probeSourceFile(resolve(dirname(importerAbs), spec));
   } else {
-    for (const [key, absDir] of await ensureAliases(st)) {
+    for (const [key, absDir] of aliases) {
       if (spec === key.slice(0, -1) || spec.startsWith(key)) {
         hit = probeSourceFile(resolve(absDir, spec.slice(key.length)));
         break;

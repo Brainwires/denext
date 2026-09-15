@@ -43,6 +43,12 @@ export interface ComponentDevMeta {
   column: number;
   /** The hook calls the declaration makes, in source order. */
   hooks: HookDevMeta[];
+  /**
+   * For a barrel's named re-export (`export { useAuth } from "./auth.ts"`): the declaring
+   * module's registry key (`"<fileUrl>#useAuth"`). Such a record makes no calls of its own; a
+   * custom-hook expansion follows it one hop.
+   */
+  aliasOf?: string;
 }
 
 /** Family id (`<fileUrl>#<Name>`) → the declaration's dev metadata. */
@@ -235,11 +241,33 @@ function moduleCandidates(base: string): string[] {
 function expandCustomHook(entry: HookDevMeta, level: HookLevel): HookLevel | undefined {
   const base = entry.from ?? level.moduleUrl;
   for (const moduleUrl of entry.from ? moduleCandidates(base) : [base]) {
-    const nested = metaById.get(`${moduleUrl}#${entry.hook}`);
-    if (!nested) continue;
+    const found = followAlias(metaById.get(`${moduleUrl}#${entry.hook}`), moduleUrl);
+    if (!found) continue;
     // The declared name reads better than the imported one for a default import (`default`).
-    const label = nested.name || entry.hook;
-    return { hooks: nested.hooks, moduleUrl, prefix: level.prefix + label + CRUMB };
+    const label = found.meta.name || entry.hook;
+    return {
+      hooks: found.meta.hooks,
+      moduleUrl: found.moduleUrl,
+      prefix: level.prefix + label + CRUMB,
+    };
+  }
+  return undefined;
+}
+
+/**
+ * A registry hit, following a barrel's re-export alias one hop to the declaring module (whose
+ * URL may still need the extension / `index` probe). A second alias is not followed.
+ */
+function followAlias(
+  meta: ComponentDevMeta | undefined,
+  moduleUrl: string,
+): { meta: ComponentDevMeta; moduleUrl: string } | undefined {
+  if (!meta?.aliasOf) return meta && { meta, moduleUrl };
+  const hash = meta.aliasOf.lastIndexOf("#");
+  const name = meta.aliasOf.slice(hash + 1);
+  for (const candidate of moduleCandidates(meta.aliasOf.slice(0, hash))) {
+    const hit = metaById.get(`${candidate}#${name}`);
+    if (hit && !hit.aliasOf) return { meta: hit, moduleUrl: candidate };
   }
   return undefined;
 }

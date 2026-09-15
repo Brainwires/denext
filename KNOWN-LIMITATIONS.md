@@ -389,9 +389,10 @@ are listed in [FEATURES.md](./FEATURES.md). Its documented boundaries:
   for that component, which then shows kind labels and "names unavailable" rather
   than a plausible-looking wrong name. A custom hook expands when it is declared
   in the same module or bound by a static relative import (extensionless and
-  `index` imports included), up to 3 levels of breadcrumb across modules. A hook
-  imported by a bare, `npm:`/`jsr:`, URL or import-map-alias specifier, through a
-  namespace import, or re-exported through a barrel still aborts naming for that
+  `index` imports included) or — in the default dev loop — by an import-map alias,
+  or re-exported by name through a barrel (one level), up to 3 levels of breadcrumb across modules. A hook
+  imported by a bare, `npm:`/`jsr:`, URL specifier (or, in SPA mode, an import-map
+  alias), through a namespace import, or through a barrel's `export *` still aborts naming for that
   component.
 - **The "owner stack" is the render-parent chain**, an approximation of React's
   JSX-owner stack (they coincide for the common case); per-element `__source` is

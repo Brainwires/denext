@@ -561,3 +561,21 @@ Deno.test("named hooks: a `.js` specifier resolves to the importee's `.ts` file"
     assertEquals(renderNode("Destructured", Destructured).hooks[0].name, "useAuth › user");
   });
 });
+
+Deno.test("named hooks: a hook re-exported through a barrel breadcrumbs from its declaring module", () => {
+  withDev(() => {
+    const barrel = "file:///app/lib/index.ts";
+    const alias = (to: string) => ({ name: "useAuth", line: 0, column: 0, hooks: [], aliasOf: to });
+    meta("Destructured", importedMeta("useAuth", barrel));
+    registerComponentMeta(`${barrel}#useAuth`, alias(`${AUTH}#useAuth`));
+    metaAt(AUTH, "useAuth", AUTH_HOOKS);
+    assertEquals(renderNode("Destructured", Destructured).hooks[0].name, "useAuth › user");
+    // One hop only: a barrel that re-exports another barrel's re-export stays opaque.
+    clearComponentMeta();
+    meta("Destructured", importedMeta("useAuth", barrel));
+    registerComponentMeta(`${barrel}#useAuth`, alias("file:///app/lib/inner.ts#useAuth"));
+    registerComponentMeta("file:///app/lib/inner.ts#useAuth", alias(`${AUTH}#useAuth`));
+    metaAt(AUTH, "useAuth", AUTH_HOOKS);
+    assertEquals(renderNode("Destructured", Destructured).hooksNamed, false);
+  });
+});

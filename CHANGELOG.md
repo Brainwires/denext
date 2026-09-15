@@ -10,6 +10,10 @@ and this project adheres to
 
 ### Added
 
+- DevTools names a custom hook imported through an import-map alias (`@/hooks/auth.ts`, in the
+  default dev loop) and one re-exported by name through a barrel
+  (`export { useAuth } from "./auth.ts"`, one level); `export *` and SPA-mode aliases still
+  stop naming.
 - Optional adapter methods `deleteCredential(userId)` and `deleteMfa(userId)`, implemented by
   both first-party adapters. Disabling TOTP and a pre-account-hijacking eviction now delete the
   factor or password instead of writing a placeholder; an adapter without them keeps the old

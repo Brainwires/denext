@@ -172,6 +172,21 @@ interface ImportBinding {
 type ImportTable = Map<string, ImportBinding>;
 
 /**
+ * Maps a non-relative import specifier — an import-map alias such as `@/hooks/auth.ts` — to the
+ * first-party module's `file://` URL, or `undefined` when it is not first-party source.
+ */
+export type SpecifierResolver = (specifier: string) => string | undefined;
+
+/** The importee's URL: a relative specifier against the module, else the resolver's answer. */
+function importeeUrl(
+  spec: string,
+  moduleUrl: string,
+  resolve: SpecifierResolver | undefined,
+): string | undefined {
+  return isRelativeSpecifier(spec) ? new URL(spec, moduleUrl).href : resolve?.(spec);
+}
+
+/**
  * The exported name an import specifier binds, or undefined when it cannot name a hook's
  * declaring module: a type-only specifier, or a namespace import (`import * as h` —
  * `h.useX()` stays opaque).
@@ -192,16 +207,21 @@ function importedName(spec: Node): string | undefined {
  *
  * @param body The module's top-level statements.
  * @param moduleUrl The module's `file://` URL, or undefined (⇒ an empty table).
+ * @param resolve Maps an import-map alias to its first-party module's URL (optional).
  * @returns Local name → the imported module's URL and exported name.
  */
-function importBindings(body: Node[], moduleUrl: string | undefined): ImportTable {
+function importBindings(
+  body: Node[],
+  moduleUrl: string | undefined,
+  resolve?: SpecifierResolver,
+): ImportTable {
   const out: ImportTable = new Map();
   if (!moduleUrl) return out;
   for (const stmt of body) {
     if (stmt?.type !== "ImportDeclaration" || stmt.typeOnly) continue;
     const spec = stmt.source?.value;
-    if (typeof spec !== "string" || !isRelativeSpecifier(spec)) continue;
-    const url = new URL(spec, moduleUrl).href;
+    const url = typeof spec === "string" ? importeeUrl(spec, moduleUrl, resolve) : undefined;
+    if (!url) continue;
     for (const s of stmt.specifiers ?? []) {
       const imported = importedName(s);
       if (imported) out.set(s.local.value as string, { url, imported });
@@ -281,23 +301,30 @@ function defaultExportName(body: Node[]): string | undefined {
  * hook's own name (`useAuth`), which the runtime registry expands into a breadcrumb by
  * joining on `"<fileUrl>#useAuth"`. A custom hook bound by a static RELATIVE import also
  * records `from` (the importee's absolute URL) and its imported name, so the join crosses
- * the module boundary (`"<importeeUrl>#useAuth"`); a bare/`npm:`/`jsr:`/URL import, a
- * namespace import and a re-export stay opaque. A default-exported `use*` hook is also
+ * the module boundary (`"<importeeUrl>#useAuth"`), and so does one bound by an import-map alias
+ * the `resolve` hook maps to first-party source. A barrel's named re-export of a hook
+ * (`export { useAuth } from "./auth.ts"`) is recorded as an alias to the declaring module, which
+ * the runtime follows one hop. A bare/`npm:`/`jsr:`/URL import, a namespace import and
+ * `export *` stay opaque. A default-exported `use*` hook is also
  * keyed `default`, the name a default import of it records.
  *
  * @param parsed The module parsed by `parseModule()`.
  * @param moduleUrl The module's `file://` URL (the family id prefix); without it no call
  *   records `from`.
+ * @param resolve Maps an import-map alias to its first-party module's URL, so a hook imported
+ *   that way records `from` too (optional).
  * @returns Binding name → its metadata (empty when the module declares nothing tracked).
  */
 export function collectComponentMeta(
   parsed: ParsedModule,
   moduleUrl?: string,
+  resolve?: SpecifierResolver,
 ): Record<string, ComponentDevMeta> {
+  const aliases = reExportAliases(parsed.body, moduleUrl, resolve);
   const decls = componentDecls(parsed);
-  if (decls.length === 0) return {};
-  const scan = scanOf(parsed, moduleUrl);
-  const metas: Record<string, ComponentDevMeta> = {};
+  if (decls.length === 0) return aliases;
+  const scan = scanOf(parsed, moduleUrl, resolve);
+  const metas: Record<string, ComponentDevMeta> = { ...aliases };
   for (const decl of decls) metas[decl.name] = declMeta(scan, decl.name, decl.ident, decl.fn);
   const def = defaultExportName(parsed.body);
   if (def && HOOK_RE.test(def) && metas[def]) metas.default = metas[def];
@@ -311,9 +338,64 @@ interface MetaScan {
   imports: ImportTable;
 }
 
-function scanOf(parsed: ParsedModule, moduleUrl: string | undefined): MetaScan {
+function scanOf(
+  parsed: ParsedModule,
+  moduleUrl: string | undefined,
+  resolve?: SpecifierResolver,
+): MetaScan {
   const { ctx } = parsed;
-  return { ctx, index: lineIndex(ctx.bytes), imports: importBindings(parsed.body, moduleUrl) };
+  const imports = importBindings(parsed.body, moduleUrl, resolve);
+  return { ctx, index: lineIndex(ctx.bytes), imports };
+}
+
+/** One `name` / `name as alias` entry of an `export { … } from`, or undefined. */
+function reExportPair(spec: Node): { imported: string; exported: string } | undefined {
+  if (spec?.type !== "ExportSpecifier" || spec.isTypeOnly) return undefined;
+  const imported = spec.orig?.value;
+  const exported = spec.exported?.value ?? imported;
+  return typeof imported === "string" && typeof exported === "string"
+    ? { imported, exported }
+    : undefined;
+}
+
+/**
+ * A barrel's hook-shaped named re-exports — `export { useAuth } from "./auth.ts"`,
+ * `export { useA as useAlias } from "@/hooks.ts"` — each as an alias record pointing at the
+ * declaring module's registry key. One level: the target's own re-exports are not followed,
+ * and `export *` names nothing here.
+ */
+function reExportAliases(
+  body: Node[],
+  moduleUrl: string | undefined,
+  resolve: SpecifierResolver | undefined,
+): Record<string, ComponentDevMeta> {
+  const out: Record<string, ComponentDevMeta> = {};
+  if (!moduleUrl) return out;
+  for (const stmt of body) {
+    const url = reExportSource(stmt, moduleUrl, resolve);
+    if (url) addAliases(out, url, stmt.specifiers ?? []);
+  }
+  return out;
+}
+
+/** The module a value re-export (`export { … } from "…"`) reads from, or undefined. */
+function reExportSource(
+  stmt: Node,
+  moduleUrl: string,
+  resolve: SpecifierResolver | undefined,
+): string | undefined {
+  if (stmt?.type !== "ExportNamedDeclaration" || stmt.typeOnly) return undefined;
+  const spec = stmt.source?.value;
+  return typeof spec === "string" ? importeeUrl(spec, moduleUrl, resolve) : undefined;
+}
+
+/** One alias record per hook-shaped name a re-export lists, pointing into `url`. */
+function addAliases(out: Record<string, ComponentDevMeta>, url: string, specifiers: Node[]): void {
+  for (const pair of specifiers.map(reExportPair)) {
+    if (!pair || !HOOK_RE.test(pair.exported)) continue;
+    const aliasOf = `${url}#${pair.imported}`;
+    out[pair.exported] = { name: pair.exported, line: 0, column: 0, hooks: [], aliasOf };
+  }
 }
 
 /** The metadata of one callable: `at` is the node reported as its position, `fn` is scanned. */

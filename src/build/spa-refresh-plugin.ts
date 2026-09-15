@@ -22,7 +22,12 @@
 
 import type * as esbuild from "esbuild";
 import { toFileUrl } from "@std/path";
-import { collectComponentMeta, componentDecls, metaFooter } from "./devtools-meta.ts";
+import {
+  collectComponentMeta,
+  componentDecls,
+  metaFooter,
+  type SpecifierResolver,
+} from "./devtools-meta.ts";
 import type { ComponentDevMeta } from "../client/devtools-meta.ts";
 import { type ParsedModule, parseModule } from "./swc-ast.ts";
 import { firstPartyTsxPlugin } from "./spa-onload.ts";
@@ -48,12 +53,18 @@ export interface ModuleComponents {
  * @param parsed The module parsed by `parseModule()`.
  * @param sourceUrl The module's `file://` URL — resolves the `from` of a custom hook bound
  *   by a static relative import (omitted ⇒ such calls stay opaque).
+ * @param resolve Maps a non-relative specifier (an import-map alias) to its first-party
+ *   module's URL, so a hook imported that way is named too (omitted ⇒ such calls stay opaque).
  * @returns The family names and the per-declaration metadata.
  */
-export function collectComponents(parsed: ParsedModule, sourceUrl?: string): ModuleComponents {
+export function collectComponents(
+  parsed: ParsedModule,
+  sourceUrl?: string,
+  resolve?: SpecifierResolver,
+): ModuleComponents {
   return {
     names: componentDecls(parsed).filter((d) => d.component).map((d) => d.name),
-    metas: collectComponentMeta(parsed, sourceUrl),
+    metas: collectComponentMeta(parsed, sourceUrl, resolve),
   };
 }
 
