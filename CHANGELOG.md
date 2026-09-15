@@ -17,6 +17,32 @@ and this project adheres to
   an `npm:` import at a host of its choosing and carry a shell secret out in the package name;
   `--no-remote` alone did not stop that. This also keeps `denext ui --offline` true for this
   child.
+- `POST {basePath}/tokens` needs a recent sign-in (`authTime` within `mfa.freshness`, five
+  minutes at least), as `/mfa/enroll` does; otherwise it answers
+  `403 { error: "reauth_required" }`. `resetPassword()` now also revokes the user's bearer API
+  tokens along with their sessions. A stolen session could mint a token that outlived both
+  the session and the owner's password reset.
+
+### Changed
+
+- The default auth rate limits leave room for many users behind one IP: sign-in starts allow
+  100 per IP per 15 minutes (was 20), session reads 300 per IP per minute (was 60). Both limits
+  are new in 2.5; tune them with `rateLimit.signin` / `rateLimit.session`.
+
+### Fixed
+
+- `useSession()`: a `429`, a server error or a network failure no longer reads as "signed
+  out". `SessionProvider` keeps the session it knew (only a first load that learns nothing
+  shows the logged-out view), and a `429`'s `Retry-After` pauses its focus and interval
+  refetches. Users sharing one IP (an office NAT) could flip to the logged-out UI once the
+  per-IP session-read budget ran out.
+- The SQLite auth adapter, session store and cache set a 5 s `busy_timeout`: a second writer
+  (a seed script, `denext task`) makes a request wait instead of failing at once with
+  "database is locked".
+- The `/mfa*` and `/tokens` endpoints log an adapter or store failure and answer
+  `503 { error: "unavailable" }` instead of a bare `500`.
+- The 50-live-token cap on `POST {basePath}/tokens` holds under concurrent requests (per
+  process).
 
 ## [2.5.0-rc.4] - 2026-09-15
 
