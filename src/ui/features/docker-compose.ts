@@ -1,4 +1,4 @@
-// `/docker` → the compose editor: round-trip edits of an existing `docker-compose.yml`, service
+// `/docker` → the compose editor: round-trip edits of an existing compose file, service
 // by service, through `src/build/compose-edit.ts` — never through a regeneration.
 //
 // Every service gets its own real `<form method="post" action="/docker">` (the Docker panel's own
@@ -33,9 +33,7 @@ import { control, field as labelled, opButton } from "../form/control.ts";
 import { OP_FIELD, parseOp } from "../form/value.ts";
 import type { WidgetOption } from "../form/widget.ts";
 import { StaleWriteError, UI_CSRF_FIELD, uiSafeJoin, writeFileAtomic } from "../security.ts";
-
-/** The compose file the editor reads and writes, at the project root. */
-export const COMPOSE_FILE = "docker-compose.yml";
+import { DEFAULT_COMPOSE_FILE, findComposeFile } from "../../build/docker-template.ts";
 
 /** The hidden field that routes a Docker-panel POST to the compose editor… */
 const EDITOR_FIELD = "editor";
@@ -57,6 +55,8 @@ type Get = (key: string) => string | null;
 
 /** The compose file as it stands on disk, read once per request. */
 interface Snapshot {
+  /** Its name: the one Docker Compose would pick, else the name a new one gets. */
+  readonly name: string;
   /** Its contents (`undefined` when there is none). */
   readonly text?: string;
   /** The parsed model (`null` when the file is absent or opaque). */
@@ -67,6 +67,7 @@ interface Snapshot {
 
 /** A snapshot the editor may act on: present and parseable. */
 interface Editable {
+  readonly name: string;
   readonly text: string;
   readonly model: ComposeModel;
   readonly base: string;
@@ -105,15 +106,16 @@ async function stampOf(text: string): Promise<string> {
 
 /** Read the compose file, its model and its stamp. */
 async function readSnapshot(dir: string): Promise<Snapshot> {
+  const name = (await findComposeFile(dir)) ?? DEFAULT_COMPOSE_FILE;
   let text: string;
   try {
-    // Through the containment gate: a docker-compose.yml symlinked out of the project is
-    // never read into the panel (it reads as absent; a write there is refused too).
-    text = await Deno.readTextFile(await uiSafeJoin(dir, COMPOSE_FILE));
+    // Through the containment gate: a compose file symlinked out of the project is never read
+    // into the panel (it reads as absent; a write there is refused too).
+    text = await Deno.readTextFile(await uiSafeJoin(dir, name));
   } catch {
-    return { model: null, base: "" };
+    return { name, model: null, base: "" };
   }
-  return { text, model: readCompose(text), base: await stampOf(text) };
+  return { name, text, model: readCompose(text), base: await stampOf(text) };
 }
 
 /**
@@ -164,24 +166,24 @@ export function isComposeSubmit(ctx: UiContext): boolean {
 function editableFile(snap: Snapshot, base: string): Editable | Blocked {
   if (snap.text === undefined) {
     return {
-      reason: `there is no ${COMPOSE_FILE} to edit — write the Docker files first`,
+      reason: `there is no ${snap.name} to edit — write the Docker files first`,
       status: 400,
     };
   }
   if (snap.model === null) {
     return {
-      reason: `${COMPOSE_FILE} uses YAML the editor cannot follow — it is read-only here`,
+      reason: `${snap.name} uses YAML the editor cannot follow — it is read-only here`,
       status: 400,
     };
   }
   if (base !== "" && base !== snap.base) {
     return {
-      reason: `${COMPOSE_FILE} changed on disk since this page was rendered — nothing was ` +
+      reason: `${snap.name} changed on disk since this page was rendered — nothing was ` +
         "written. Reload the page and re-apply your change.",
       status: 409,
     };
   }
-  return { text: snap.text, model: snap.model, base: snap.base };
+  return { name: snap.name, text: snap.text, model: snap.model, base: snap.base };
 }
 
 /**
@@ -208,17 +210,24 @@ export async function composeSubmit(
   if ("reason" in file) return await deny(file.reason, file.status);
   const ops = requestedOps(ctx, get, file.model);
   if (typeof ops === "string") return await deny(ops, 400);
-  const result = applyComposeEdits(file.text, ops);
+  const result = applyComposeEdits(file.text, ops, file.name);
   if (!result.ok) return await deny(result.reason, 400, result.diff);
   const outcome = outcomeOf(result.source, result.diff, write);
   if (!write) {
     if (ctx.json) return jsonResponse({ ...outcome, base: file.base });
-    const preview = { csrf: ctx.csrf, readOnly: ctx.readOnly, base: file.base, ops, outcome };
+    const preview = {
+      name: file.name,
+      csrf: ctx.csrf,
+      readOnly: ctx.readOnly,
+      base: file.base,
+      ops,
+      outcome,
+    };
     return panelResponse(ctx, renderView(h(ComposePreview, preview)));
   }
   const refused = result.source === file.text
     ? null
-    : await writeCompose(ctx, file.text, result.source);
+    : await writeCompose(ctx, file.name, file.text, result.source);
   if (refused) return await deny(refused.reason, refused.status);
   if (ctx.json) return jsonResponse(outcome);
   return new Response(null, {
@@ -236,20 +245,21 @@ export async function composeSubmit(
  */
 async function writeCompose(
   ctx: UiContext,
+  name: string,
   base: string,
   source: string,
 ): Promise<{ reason: string; status: number } | null> {
   try {
-    await writeFileAtomic(ctx.dir, COMPOSE_FILE, source, { unchangedFrom: base });
+    await writeFileAtomic(ctx.dir, name, source, { unchangedFrom: base });
     return null;
   } catch (err) {
     return err instanceof StaleWriteError
       ? {
-        reason: `${COMPOSE_FILE} changed on disk while this edit was being applied — ` +
+        reason: `${name} changed on disk while this edit was being applied — ` +
           "nothing was written.",
         status: 409,
       }
-      : { reason: `could not write ${COMPOSE_FILE}: ${(err as Error).message}`, status: 403 };
+      : { reason: `could not write ${name}: ${(err as Error).message}`, status: 403 };
   }
 }
 
@@ -487,7 +497,7 @@ function checkNamed(o: Dict, svc: ComposeService, model: ComposeModel): ComposeO
   }
   if (action !== "add") return `unknown ${op} action ${JSON.stringify(action ?? null)}`;
   if (op === "dependsOn" && !dependable(model, svc).includes(value)) {
-    return `"${value}" is not another service in ${COMPOSE_FILE}`;
+    return `"${value}" is not another service in the compose file`;
   }
   return { op, service: svc.name, action, value };
 }
@@ -562,6 +572,8 @@ function Refusal({ reason, diff }: { readonly reason: string; readonly diff?: st
 
 /** Props of {@linkcode ComposePreview}. */
 interface PreviewProps {
+  /** The compose file's name. */
+  readonly name: string;
   /** The session CSRF token. */
   readonly csrf: string;
   /** `--read-only`: the confirm button is disabled. */
@@ -575,17 +587,17 @@ interface PreviewProps {
 }
 
 /** The preview: nothing is written yet; the confirm form re-posts the same operations. */
-function ComposePreview({ csrf, readOnly, base, ops, outcome }: PreviewProps): VNode {
+function ComposePreview({ name, csrf, readOnly, base, ops, outcome }: PreviewProps): VNode {
   const fields = {
     [EDITOR_FIELD]: EDITOR_VALUE,
     [BASE_FIELD]: base,
     [OPS_FIELD]: JSON.stringify(ops),
     confirm: "1",
   };
-  const label = `Write ${COMPOSE_FILE}`;
+  const label = `Write ${name}`;
   return h(
     Panel,
-    { name: "Docker", title: `Edit ${COMPOSE_FILE}` },
+    { name: "Docker", title: `Edit ${name}` },
     h(PreviewLead, null),
     h(Warnings, { warnings: outcome.warnings }),
     outcome.diff ? h(DiffBlock, { diff: outcome.diff }) : null,
@@ -609,7 +621,7 @@ export async function composeSection(ctx: UiContext, regenerated: string): Promi
   return h(
     Fragment,
     null,
-    h("h2", { id: "compose" }, `Edit ${COMPOSE_FILE}`),
+    h("h2", { id: "compose" }, `Edit ${snap.name}`),
     composeBody(ctx, snap, regenerated),
   );
 }
@@ -621,26 +633,33 @@ function composeBody(ctx: UiContext, snap: Snapshot, regenerated: string): VNode
       "p",
       { class: "lead" },
       "There is no ",
-      h("code", null, COMPOSE_FILE),
+      h("code", null, snap.name),
       " yet — write the Docker files above, then edit its services here.",
     );
   }
-  if (snap.model === null) return h(OpaqueFile, { text: snap.text, regenerated });
-  return h(ComposeEditor, { ctx, file: { text: snap.text, model: snap.model, base: snap.base } });
+  if (snap.model === null) return h(OpaqueFile, { name: snap.name, text: snap.text, regenerated });
+  return h(ComposeEditor, {
+    ctx,
+    file: { name: snap.name, text: snap.text, model: snap.model, base: snap.base },
+  });
 }
 
 /** An opaque file: read-only, next to what the template would write instead. */
 function OpaqueFile(
-  { text, regenerated }: { readonly text: string; readonly regenerated: string },
+  { name, text, regenerated }: {
+    readonly name: string;
+    readonly text: string;
+    readonly regenerated: string;
+  },
 ): VNode {
-  const diff = createUnifiedDiff(text, regenerated, COMPOSE_FILE);
+  const diff = createUnifiedDiff(text, regenerated, name);
   return h(
     Fragment,
     null,
     h(
       Note,
       null,
-      `This ${COMPOSE_FILE} uses YAML the editor cannot follow line by line (anchors, aliases, ` +
+      `This ${name} uses YAML the editor cannot follow line by line (anchors, aliases, ` +
         "merge keys, flow-style services, several documents or mixed line endings), so it is " +
         "read-only here — edit it by hand. The regeneration diff shows what the template would " +
         "write instead.",
@@ -672,7 +691,7 @@ function ComposeEditor({ ctx, file }: EditorProps): VNode {
       "Edit services in place: only the lines an edit touches change — comments and " +
         "everything else stay byte for byte. Every change is previewed as a diff first.",
     ),
-    saved ? h(Note, null, `Saved ${COMPOSE_FILE}.`) : null,
+    saved ? h(Note, null, `Saved ${file.name}.`) : null,
     file.model.sentinel ? h(SentinelNote, null) : null,
     ctx.readOnly ? h(Note, null, "Read-only mode — editing is refused.") : null,
     h(Warnings, { warnings: volumeWarnings(file.model) }),

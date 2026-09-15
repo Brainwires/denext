@@ -831,3 +831,51 @@ Deno.test("compose editor: the JSON twin previews, then applies, and returns the
     await stop(h);
   }
 });
+
+Deno.test("compose editor: a compose.yaml is found, edited in place, and named everywhere", async () => {
+  const h = await ui();
+  try {
+    await Deno.writeTextFile(join(h.dir, "compose.yaml"), GENERATED);
+    const preview = await previewEdit(h, { service: "web", op: "apply", "port.new": "9229:9229" });
+    assertStringIncludes(preview, "Write compose.yaml");
+    assertStringIncludes(preview, "a/compose.yaml");
+    const res = await post(h, "/docker", confirmFields(preview));
+    assertEquals(res.status, 303);
+    await res.body?.cancel();
+    assertStringIncludes(await Deno.readTextFile(join(h.dir, "compose.yaml")), '- "9229:9229"');
+    const created = await Deno.stat(join(h.dir, COMPOSE)).then(() => true, () => false);
+    assertEquals(created, false, "no docker-compose.yml appears next to it");
+    const page = await (await get(h, "/docker?saved=compose")).text();
+    assertStringIncludes(page, "Saved compose.yaml.");
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("compose editor: with two compose files, compose.yaml wins, as it does for Docker Compose", async () => {
+  const h = await ui();
+  try {
+    await Deno.writeTextFile(join(h.dir, "compose.yaml"), HAND);
+    await Deno.writeTextFile(join(h.dir, COMPOSE), GENERATED);
+    const page = await (await get(h, "/docker")).text();
+    assertStringIncludes(page, "Edit compose.yaml");
+    assertStringIncludes(page, "redis:7");
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("dockerPlan regenerates an existing compose.yml rather than adding a docker-compose.yml", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_ui_docker_plan_" });
+  try {
+    await Deno.writeTextFile(join(dir, "compose.yml"), GENERATED);
+    const plan = await dockerPlan(dir, { mode: "server" });
+    assertEquals(plan.map((file) => file.path.slice(dir.length + 1)), [
+      "Dockerfile",
+      "compose.yml",
+      ".dockerignore",
+    ]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

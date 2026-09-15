@@ -19,6 +19,10 @@ and this project adheres to
   another name (`import { openapi as oa }`) or from a full `jsr:` specifier. Adding one used to
   insert an `openapi()` call no import binds (or a duplicate import), removing one reported it
   as not wired, and the panel offered it no options form.
+- `denext ui` and `denext generate docker` find a compose file under any name Docker Compose
+  accepts — `compose.yaml`, `compose.yml`, `docker-compose.yaml`, `docker-compose.yml`, in that
+  precedence. The Docker panel edits and regenerates that file, and neither writes a second
+  `docker-compose.yml` next to it; only `docker-compose.yml` used to be found.
 
 ## [2.5.0-rc.5] - 2026-09-15
 

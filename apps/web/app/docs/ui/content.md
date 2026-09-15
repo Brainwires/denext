@@ -392,9 +392,11 @@ exactly: the kinds that take no name here are the kinds that take no name there.
 
 ## Docker
 
-`/docker` does two things with the Docker files: it **regenerates** `Dockerfile`,
-`docker-compose.yml` and `.dockerignore` from a few options, and it **edits** an existing
-`docker-compose.yml` in place, service by service.
+`/docker` does two things with the Docker files: it **regenerates** `Dockerfile`, the compose
+file and `.dockerignore` from a few options, and it **edits** an existing compose file in
+place, service by service. The compose file is the one Docker Compose would pick —
+`compose.yaml`, `compose.yml`, `docker-compose.yaml`, then `docker-compose.yml` — and a new one
+is written as `docker-compose.yml`.
 
 ### Regenerating
 
@@ -408,12 +410,12 @@ machine and from nowhere else on the network.
 Every file is shown with its state and a per-file unified diff against what is on disk
 before anything is written:
 
-| State       | Meaning                                                                                          |
-| ----------- | ------------------------------------------------------------------------------------------------ |
-| `absent`    | Not present — will be created                                                                    |
-| `generated` | Still carries the generated-file sentinel — safe to regenerate                                   |
-| `edited`    | Hand-edited — will not be overwritten                                                            |
-| `opaque`    | A hand-edited `docker-compose.yml` the editor cannot follow — read-only, will not be overwritten |
+| State       | Meaning                                                                                  |
+| ----------- | ---------------------------------------------------------------------------------------- |
+| `absent`    | Not present — will be created                                                            |
+| `generated` | Still carries the generated-file sentinel — safe to regenerate                           |
+| `edited`    | Hand-edited — will not be overwritten                                                    |
+| `opaque`    | A hand-edited compose file the editor cannot follow — read-only, will not be overwritten |
 
 The sentinel is a header comment every generated file carries:
 
@@ -425,9 +427,9 @@ A file without it was written or edited by a human, so a write refuses to touch 
 shows you its diff anyway, so the change can be copied across by hand. That is the same
 never-clobber honesty `denext migrate` and the config writer apply.
 
-### Editing `docker-compose.yml` in place
+### Editing the compose file in place
 
-Below the regeneration form, every service in `docker-compose.yml` gets its own form, in
+Below the regeneration form, every service in the compose file gets its own form, in
 source order: `image` (text), `restart` (`no`, `always`, `on-failure`, `unless-stopped`, or the
 file's own value — `on-failure:<n>` is accepted too), and row editors for `ports`,
 `environment`, `depends_on` (a picker of the file's other services) and `volumes`. A service
@@ -462,8 +464,7 @@ anchors, aliases or merge keys, flow-style services, several documents (`---`), 
 and LF line endings.
 
 A file that still carries the sentinel is editable as well, with a note: **Write files**
-regenerates it and discards edits made here, so delete the header line to keep them. Only
-`docker-compose.yml` at the project root is discovered — a `compose.yaml` is not.
+regenerates it and discards edits made here, so delete the header line to keep them.
 
 `GET /api/docker` returns the parsed `model` (`null` for a missing or opaque file) and its
 `base` alongside the regeneration view. A compose edit on the twin is a `POST` with
@@ -654,7 +655,6 @@ above.
 | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Compose edits beyond the set | The editor owns `image`, `restart`, `ports`, `environment`, `depends_on`, `volumes` and commenting a service out or in; anything else — a new service, `build`, `networks` — is edited by hand |
 | YAML the editor can't follow | Anchors, aliases, merge keys, flow-style services, several documents and mixed line endings make the file opaque: read-only, with the regeneration diff                                        |
-| Other compose file names     | Only `docker-compose.yml` at the project root is discovered — not `compose.yaml`                                                                                                               |
 | Third-party plugin options   | Option schemas come from the first-party catalog, so a JSR plugin gets no options form; set its options in `denext.config.ts`                                                                  |
 | Code-valued options          | A callback, a variable, a `{}` schema part or a function-wrapped list is shown read-only, never rewritten                                                                                      |
 | Agent / MCP control          | Deferred; every panel already answers a JSON twin so it can be added without changing the wire                                                                                                 |

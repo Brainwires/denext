@@ -317,8 +317,7 @@ four documented bounds of the opt-in:
   volume (a mapping) can be removed but not rewritten, and a flow-style field
   (`ports: ["80:80"]`) is refused. A file with anchors, aliases, merge keys, flow-style
   services, several documents (`---`) or mixed CRLF/LF line endings is **opaque** —
-  read-only, with the regeneration diff. Only `docker-compose.yml` at the project root is
-  discovered; a `compose.yaml` is not.
+  read-only, with the regeneration diff.
 - **Third-party plugins get no options form.** Option schemas come from the first-party
   catalog, generated from denext's own workspace, so a plugin found on JSR is added and wired
   but its options are set in `denext.config.ts`. A first-party schema expands four

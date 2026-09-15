@@ -144,11 +144,16 @@ export function readCompose(text: string): ComposeModel | null {
  *
  * @param text The compose file's current contents.
  * @param ops The edits, in order.
+ * @param label The file name the diff is labelled with (default `docker-compose.yml`).
  * @returns The new contents and one unified diff for the whole call, or an honest refusal
  * (an opaque file, an unknown or commented-out service, a flow-style or long-syntax field, a
  * duplicate entry, or an edit that would not read back as intended).
  */
-export function applyComposeEdits(text: string, ops: ComposeOp[]): EditResult {
+export function applyComposeEdits(
+  text: string,
+  ops: ComposeOp[],
+  label: string = LABEL,
+): EditResult {
   let state = load(text);
   if (typeof state === "string") return bail(state, text.slice(0, SNIPPET_MAX));
   for (const op of ops) {
@@ -156,7 +161,7 @@ export function applyComposeEdits(text: string, ops: ComposeOp[]): EditResult {
     if ("ok" in next) return next;
     state = next;
   }
-  return { ok: true, source: state.text, diff: diffOf(text, state.text) };
+  return { ok: true, source: state.text, diff: diffOf(text, state.text, label) };
 }
 
 /** A refusal, optionally carrying the patch the edit would have made. */
@@ -165,8 +170,8 @@ function bail(reason: string, snippet: string, diff?: string): EditResult {
 }
 
 /** The unified diff of a proposed write, labelled the way `git diff` labels one. */
-function diffOf(before: string, after: string): string {
-  return createUnifiedDiff(before, after, `a/${LABEL}`, `b/${LABEL}`);
+function diffOf(before: string, after: string, label: string = LABEL): string {
+  return createUnifiedDiff(before, after, `a/${label}`, `b/${label}`);
 }
 
 /** The commented services by name (a fresh copy). */
