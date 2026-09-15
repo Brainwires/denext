@@ -291,6 +291,16 @@ function sameOriginPath(requested: string | undefined, fallback: string): string
   return requested;
 }
 
+/** What a `credentials` sign-in resolves; a refused sign-in rejects instead. */
+export interface CredentialsSignInResult {
+  /** Always `true`. */
+  ok: true;
+  /** The signed-in user, when the sign-in completed. */
+  user?: SessionUser;
+  /** `"required"` when the user still owes a second factor (the session is pending). */
+  mfa?: "required";
+}
+
 /** Options for {@link signIn}. */
 export interface SignInOptions {
   /**
@@ -323,7 +333,23 @@ export interface SignInOptions {
  * @param options {@link SignInOptions}.
  * @returns The credentials result, or the sign-in URL for the redirect flow.
  */
-export function signIn(provider: string, options: SignInOptions = {}): Promise<unknown> {
+export function signIn(
+  provider: string,
+  options: SignInOptions & { credentials: Record<string, string> },
+): Promise<CredentialsSignInResult>;
+/**
+ * Start a redirect sign-in with an OAuth/OIDC provider: navigate to it (unless
+ * `redirect: false`) and resolve the sign-in URL.
+ *
+ * @param provider The provider id.
+ * @param options Where to return afterwards, `redirect: false`, a custom `basePath`.
+ * @returns The `{basePath}/signin/:provider` URL.
+ */
+export function signIn(provider: string, options?: SignInOptions): Promise<string>;
+export function signIn(
+  provider: string,
+  options: SignInOptions = {},
+): Promise<CredentialsSignInResult | string> {
   const basePath = options.basePath ?? DEFAULT_BASE_PATH;
   const callbackUrl = sameOriginPath(options.callbackUrl, currentUrl());
   if (options.credentials) {
@@ -342,7 +368,7 @@ async function submitCredentials(
   provider: string,
   credentials: Record<string, string>,
   callbackUrl: string,
-): Promise<unknown> {
+): Promise<CredentialsSignInResult> {
   const res = await fetch(`${basePath}/callback/${encodeURIComponent(provider)}`, {
     method: "POST",
     headers: {
@@ -355,7 +381,7 @@ async function submitCredentials(
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((data as { error?: string }).error ?? "sign in failed");
-  return data;
+  return data as CredentialsSignInResult;
 }
 
 /** Options for {@link signOut}. */

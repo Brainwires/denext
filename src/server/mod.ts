@@ -482,7 +482,14 @@ export {
 export type { EmailRequestResult, ResetPasswordResult, VerifyEmailResult } from "./auth/email.ts";
 // The TOTP second factor: the flows behind `{basePath}/mfa*` and their RFC 6238 primitives.
 export { confirmTotp, disableTotp, enrollTotp, mfaStatus, verifySecondFactor } from "./auth/mfa.ts";
-export type { ConfirmTotpResult, MfaMethod, MfaStatus, TotpEnrollment } from "./auth/mfa.ts";
+export type {
+  ConfirmTotpResult,
+  EnrollTotpResult,
+  MfaMethod,
+  MfaStatus,
+  SecondFactorResult,
+  TotpEnrollment,
+} from "./auth/mfa.ts";
 export { generateTotpSecret, totpAuthUri, verifyTotp } from "./auth/totp.ts";
 export type { TotpAuthUriOptions, TotpVerifyOptions, TotpVerifyResult } from "./auth/totp.ts";
 export { backupCodeMatcher, generateBackupCodes } from "./auth/backup-codes.ts";

@@ -176,7 +176,7 @@ Deno.test("signIn({ credentials }) POSTs to the callback endpoint and resolves w
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
     calls.push({ url: String(input), body: JSON.parse(String(init?.body)) });
     return Promise.resolve(
-      new Response(JSON.stringify({ ok: true, url: "/" }), {
+      new Response(JSON.stringify({ ok: true, user: { id: "u1" } }), {
         headers: { "content-type": "application/json" },
       }),
     );
@@ -186,7 +186,7 @@ Deno.test("signIn({ credentials }) POSTs to the callback endpoint and resolves w
       credentials: { email: "a@x.test", password: "pw" },
       callbackUrl: "/next",
     });
-    assertEquals(result, { ok: true, url: "/" });
+    assertEquals(result, { ok: true, user: { id: "u1" } });
     assertEquals(calls[0].url, "/auth/callback/credentials");
     assertEquals(calls[0].body, { email: "a@x.test", password: "pw", callbackUrl: "/next" });
   } finally {

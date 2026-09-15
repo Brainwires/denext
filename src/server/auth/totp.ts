@@ -60,7 +60,9 @@ export interface TotpVerifyOptions {
  * The outcome of {@linkcode verifyTotp}: on a match, the time step the code belongs to —
  * hand it to the adapter's `claimTotpStep` so the same code can't be presented twice.
  */
-export type TotpVerifyResult = { ok: true; step: number } | { ok: false };
+export type TotpVerifyResult =
+  | { ok: true; step: number }
+  | { ok: false; error: "invalid_code" };
 
 /**
  * Generate a fresh TOTP secret: `bytes` of CSPRNG output as unpadded, uppercase RFC 4648
@@ -129,7 +131,7 @@ export async function verifyTotp(
   const { window, now, digits, period } = resolveVerifyOptions(options);
   const key = decodeSecret(secret);
   const presented = normaliseCode(code, digits);
-  if (!key || presented === undefined) return { ok: false };
+  if (!key || presented === undefined) return { ok: false, error: "invalid_code" };
   const hmacKey = await crypto.subtle.importKey(
     "raw",
     key,
@@ -145,7 +147,7 @@ export async function verifyTotp(
     const equal = timingSafeEqual(expected, presented);
     if (equal && matched === undefined) matched = step;
   }
-  return matched === undefined ? { ok: false } : { ok: true, step: matched };
+  return matched === undefined ? { ok: false, error: "invalid_code" } : { ok: true, step: matched };
 }
 
 const encoder = new TextEncoder();

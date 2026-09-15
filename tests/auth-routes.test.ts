@@ -286,7 +286,14 @@ Deno.test("POST /auth/mfa/enroll from a complete session answers { secret, uri }
 Deno.test("an enrolled user's sign-in is pending, and POST /auth/mfa refuses a wrong code", async () => {
   const app = await mount();
   const user = (await app.adapter.getUserByEmail(EMAIL))!;
-  const enrolment = (await enrollTotp(app.config, { id: user.id, email: EMAIL }))!;
+  const now = Math.floor(Date.now() / 1000);
+  const session = { user: { id: user.id, email: EMAIL }, provider: "credentials" };
+  const enrolment = await enrollTotp(app.config, {
+    ...session,
+    expiresAt: now + 60,
+    authTime: now,
+  });
+  if (!enrolment.ok) throw new Error(enrolment.error);
   await app.adapter.setMfa!({
     userId: user.id,
     secret: enrolment.secret,

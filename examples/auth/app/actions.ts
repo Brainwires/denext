@@ -59,5 +59,5 @@ export async function signOutEverywhere(): Promise<void> {
 export async function sendVerificationEmail(): Promise<void> {
   const session = await signedIn("/verify-email");
   const result = await requestEmailVerification(authConfig, session.user.email ?? "");
-  redirect(result.throttled ? "/verify-email?error=throttled" : "/verify-email?sent=1");
+  redirect(result.ok ? "/verify-email?sent=1" : "/verify-email?error=throttled");
 }

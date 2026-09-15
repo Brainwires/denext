@@ -58,12 +58,22 @@ export type EmailFlowAdapter =
   & Partial<Pick<AuthAdapter, "setCredential">>;
 
 /** What a verification or reset request reports — never whether the address exists. */
-export interface EmailRequestResult {
-  /** `true` when the address's (or the client's) send budget is spent; nothing was sent. */
-  throttled: boolean;
-  /** Seconds until the budget refills, when throttled. */
-  retryAfter?: number;
-}
+export type EmailRequestResult =
+  | {
+    /**
+     * Accepted: the mail went out if the address has an account — an unknown address gets the
+     * same answer, so the result never says whether it is registered.
+     */
+    ok: true;
+  }
+  | {
+    /** Nothing was sent. */
+    ok: false;
+    /** The address's (or the client's) send budget is spent. */
+    error: "throttled";
+    /** Seconds until the budget refills. */
+    retryAfter: number;
+  };
 
 /** What {@linkcode verifyEmail} reports. */
 export type VerifyEmailResult =
@@ -104,7 +114,7 @@ const MIN_PASSWORD_LENGTH = 8;
 /** The longest one — bounds the hashing work a single request can ask for. */
 const MAX_PASSWORD_LENGTH = 1024;
 /** Returned whenever a request went through (sent, or deliberately not). */
-const NOT_THROTTLED: EmailRequestResult = { throttled: false };
+const ACCEPTED: EmailRequestResult = { ok: true };
 /** Configs already warned that a revocation could not reach their stateless sessions. */
 const warnedStateless = new WeakSet<AuthConfig>();
 
@@ -275,7 +285,7 @@ export async function sendThrottled(
   const origin = linkOrigin(config, input.request);
   const keys = subjectBucketKeys("verify", input.identifier, input.request, config);
   const retryAfter = await consumeHitBudget(verificationLimiter(config), keys);
-  if (retryAfter !== null) return { throttled: true, retryAfter };
+  if (retryAfter !== null) return { ok: false, error: "throttled", retryAfter };
   const user = await input.adapter.getUserByEmail(input.identifier);
   if (!input.shouldSend(user)) {
     const tokenHash = await sha256Hex(randomToken(32));
@@ -284,10 +294,10 @@ export async function sendThrottled(
       purpose: input.purpose,
       tokenHash,
     });
-    return NOT_THROTTLED;
+    return ACCEPTED;
   }
   await deliver(resolveAuthOptions(config), input.send, await input.issue(origin));
-  return NOT_THROTTLED;
+  return ACCEPTED;
 }
 
 /**
@@ -350,7 +360,7 @@ export async function requestEmailVerification(
   const identifier = normalizeEmailIdentifier(
     typeof userOrEmail === "string" ? userOrEmail : userOrEmail.email,
   );
-  if (!identifier) return NOT_THROTTLED;
+  if (!identifier) return ACCEPTED;
   const request = currentContext()?.request;
   return await startEmailFlow(config, { flow: "email", identifier, request, adapter, send });
 }
@@ -413,7 +423,7 @@ export async function requestPasswordReset(
   const adapter = requireFlowAdapter(config, "reset", "requestPasswordReset");
   const send = requireMailer(config, "requestPasswordReset");
   const identifier = normalizeEmailIdentifier(email);
-  if (!identifier) return NOT_THROTTLED;
+  if (!identifier) return ACCEPTED;
   const request = currentContext()?.request;
   return await startEmailFlow(config, { flow: "reset", identifier, request, adapter, send });
 }

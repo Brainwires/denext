@@ -406,6 +406,7 @@ export type {
 export { SessionProvider, signIn, signOut, useSession } from "./src/client/auth.ts";
 export type {
   ClientSession,
+  CredentialsSignInResult,
   SessionProviderProps,
   SessionUser,
   SignInOptions,

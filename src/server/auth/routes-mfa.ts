@@ -45,7 +45,6 @@ import {
   enrollTotp,
   hasFreshFactor,
   hasMfaAdapter,
-  recentlyAuthenticated,
   verifySecondFactor,
 } from "./mfa.ts";
 import { clientIpBucket, consumeHitBudget, mfaLimiter, subjectBucketKeys } from "./rate-limit.ts";
@@ -173,15 +172,15 @@ async function handleStepUp(ctx: AuthRouteContext): Promise<Response | null> {
   const limited = await spendAttempt(ctx, session);
   if (limited) return limited;
   const { code, callbackUrl } = await readMfaFields(ctx);
-  const method = await verifySecondFactor(ctx.config, session.user.id, code);
+  const result = await verifySecondFactor(ctx.config, { userId: session.user.id, code });
   const asJson = wantsJson(ctx.request);
-  if (!method) {
+  if (!result.ok) {
     await emitMfaFailure(ctx, session, "invalid_mfa_code");
     return asJson
       ? invalidCode()
       : redirect(mfaStepLocation(ctx, callbackUrl, "CredentialsSignin"));
   }
-  const fresh = await completeStepUp(ctx, session, method);
+  const fresh = await completeStepUp(ctx, session, result.method);
   return asJson
     ? json({ ok: true, user: fresh.user })
     : redirect(afterSignIn(ctx.config, callbackUrl));
@@ -191,13 +190,13 @@ async function handleStepUp(ctx: AuthRouteContext): Promise<Response | null> {
 async function handleEnroll(ctx: AuthRouteContext): Promise<Response | null> {
   const session = await mfaCaller(ctx, mayEnrol(ctx));
   if (!session || session instanceof Response) return session;
-  // A complete session must have signed in recently: a stolen one must not be able to set
-  // up a factor of its own and lock the owner out. (A pending session is minutes old.)
-  if (!session.mfaPending && !recentlyAuthenticated(ctx.options, session)) {
-    return json({ error: "reauth_required" }, 403);
-  }
-  const enrollment = await enrollTotp(ctx.config, session.user);
-  return enrollment ? json(enrollment) : json({ error: "already enrolled" }, 409);
+  // enrollTotp() refuses a complete session that didn't sign in recently: a stolen one
+  // must not set up a factor of its own and lock the owner out.
+  const result = await enrollTotp(ctx.config, session);
+  if (result.ok) return json({ secret: result.secret, uri: result.uri });
+  return result.error === "reauth_required"
+    ? json({ error: "reauth_required" }, 403)
+    : json({ error: "already enrolled" }, 409);
 }
 
 /**
@@ -209,7 +208,8 @@ async function handleConfirm(ctx: AuthRouteContext): Promise<Response | null> {
   if (!session || session instanceof Response) return session;
   const limited = await spendAttempt(ctx, session);
   if (limited) return limited;
-  const result = await confirmTotp(ctx.config, session.user, (await readMfaFields(ctx)).code);
+  const { code } = await readMfaFields(ctx);
+  const result = await confirmTotp(ctx.config, { user: session.user, code });
   if (!result.ok) return invalidCode();
   if (!session.mfaPending) return json({ ok: true, backupCodes: result.backupCodes });
   const fresh = await completeStepUp(ctx, session, "totp");
@@ -228,7 +228,7 @@ async function freshFactor(
   if (!code) return hasFreshFactor(ctx.options, session);
   const limited = await spendAttempt(ctx, session);
   if (limited) return limited;
-  return (await verifySecondFactor(ctx.config, session.user.id, code)) !== null;
+  return (await verifySecondFactor(ctx.config, { userId: session.user.id, code })).ok;
 }
 
 /** `POST {basePath}/mfa/disable` — remove the factor, given a fresh second factor. */

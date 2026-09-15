@@ -345,7 +345,7 @@ Deno.test("a failing mailer is logged, never thrown, and fires no verificationRe
     events: { verificationRequested: (payload) => void requested.push(payload) },
   });
   const { email } = await makeUser(adapter);
-  assertEquals(await requestPasswordReset(config, email), { throttled: false });
+  assertEquals(await requestPasswordReset(config, email), { ok: true });
   assertEquals(errors.length, 1);
   assert(!errors[0].includes("token="), "the log line carries no link");
   assertEquals(requested.length, 0);

@@ -269,7 +269,7 @@ async function sendSignInEmail(
           : codeMessage(ctx, identifier, origin),
     })
     : undefined;
-  if (result?.throttled) return tooManyAttempts(result.retryAfter ?? 1);
+  if (result && !result.ok) return tooManyAttempts(result.retryAfter);
   return wantsJson(ctx.request)
     ? json({ ok: true })
     : redirect(pageWith(ctx.config, noticePage(ctx.config), { sent: "1" }));

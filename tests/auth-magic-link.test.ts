@@ -632,8 +632,10 @@ Deno.test("pre-account hijacking: a TOTP factor enrolled on the unverified accou
   const h = setup(magicLink());
   const id = await withPassword(h, "victim@x.test", ATTACKER_PASSWORD);
   // The attacker enrols a factor, then confirms it (written directly: no TOTP clock here).
-  const enrolment = await enrollTotp(h.config, { id, email: "victim@x.test" });
-  assert(enrolment, "the unverified account accepted an enrolment");
+  const now = Math.floor(Date.now() / 1000);
+  const attacker = { user: { id, email: "victim@x.test" }, provider: "credentials" };
+  const enrolment = await enrollTotp(h.config, { ...attacker, expiresAt: now + 60, authTime: now });
+  assert(enrolment.ok, "the unverified account accepted an enrolment");
   const { codes, hashes } = await generateBackupCodes(resolveAuthOptions(h.config).hasher, 2);
   await h.adapter.setMfa!({
     secret: enrolment.secret,
@@ -642,8 +644,8 @@ Deno.test("pre-account hijacking: a TOTP factor enrolled on the unverified accou
     confirmedAt: 1,
   });
   assertEquals(
-    await verifySecondFactor(h.config, id, codes[0]),
-    "bcp",
+    await verifySecondFactor(h.config, { userId: id, code: codes[0] }),
+    { ok: true, method: "bcp" },
     "the factor works, unproven",
   );
 
@@ -655,12 +657,12 @@ Deno.test("pre-account hijacking: a TOTP factor enrolled on the unverified accou
   assertEquals(await h.adapter.getMfa!(id), { userId: id, secret: "", backupCodeHashes: [] });
   assertEquals(await mfaStatus(h.config, id), {
     enrolled: false,
-    confirmed: false,
+    pendingConfirmation: false,
     backupCodesRemaining: 0,
   }, "the attacker's TOTP secret no longer verifies anything");
   assertEquals(
-    await verifySecondFactor(h.config, id, codes[1]),
-    null,
+    await verifySecondFactor(h.config, { userId: id, code: codes[1] }),
+    { ok: false, error: "not_enrolled" },
     "nor its unspent backup code",
   );
   assertEquals(h.events, ["emailVerified", "signIn"]);

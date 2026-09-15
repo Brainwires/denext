@@ -92,7 +92,10 @@ Deno.test("verifyTotp: the 6-digit code is the low six digits of the RFC vector"
     const result = await verifyTotp(RFC_SECRET, code.slice(2), { now: seconds * 1000, window: 0 });
     assert(result.ok, `T=${seconds}`);
     const wrong = String((Number(code.slice(2)) + 1) % 1e6).padStart(6, "0");
-    assertEquals(await verifyTotp(RFC_SECRET, wrong, { now: seconds * 1000 }), { ok: false });
+    assertEquals(await verifyTotp(RFC_SECRET, wrong, { now: seconds * 1000 }), {
+      ok: false,
+      error: "invalid_code",
+    });
   }
 });
 
@@ -113,7 +116,7 @@ Deno.test("base32 decode: verifyTotp keys on the RFC 4648 vectors, unpadded", as
     }, b32);
   }
   // The empty secret is no key at all.
-  assertEquals(await verifyTotp("", "000000", { now: T0 }), { ok: false });
+  assertEquals(await verifyTotp("", "000000", { now: T0 }), { ok: false, error: "invalid_code" });
 });
 
 Deno.test("verifyTotp tolerates padding, lowercase and spaces in the secret", async () => {
@@ -138,7 +141,7 @@ Deno.test("verifyTotp window:1 accepts ±1 step and rejects ±2", async () => {
     const result = await verifyTotp(RFC_SECRET, code, { now: T0 });
     const expected: TotpVerifyResult = Math.abs(offset) <= 1
       ? { ok: true, step: step + offset }
-      : { ok: false };
+      : { ok: false, error: "invalid_code" };
     assertEquals(result, expected, `offset ${offset}`);
   }
 });
@@ -179,7 +182,7 @@ Deno.test("verifyTotp: a malformed code is { ok: false }, never a throw", async 
   for (const bad of malformed) {
     assertEquals(
       await verifyTotp(RFC_SECRET, bad as string, { now: T0 }),
-      { ok: false },
+      { ok: false, error: "invalid_code" },
       String(bad),
     );
   }
@@ -198,7 +201,11 @@ Deno.test("verifyTotp: a malformed secret is { ok: false }, never a throw", asyn
       null as unknown as string,
     ]
   ) {
-    assertEquals(await verifyTotp(bad, "123456", { now: T0 }), { ok: false }, String(bad));
+    assertEquals(
+      await verifyTotp(bad, "123456", { now: T0 }),
+      { ok: false, error: "invalid_code" },
+      String(bad),
+    );
   }
 });
 
