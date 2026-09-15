@@ -12,8 +12,10 @@
 //   3. SPLICE only the lines one operation touches, then RE-PARSE the result and compare it with
 //      the same change applied to the parsed model — a mismatch is a refusal, never a write.
 //
-// The operation set is closed: image, restart, build, ports, environment, depends_on, volumes,
-// networks, and commenting a whole service out or back in. Every other byte of the file is left
+// The operation set is closed: adding and removing a service; image, restart and build (a
+// context path, or a mapping's context / dockerfile / target / args); ports and volumes (a
+// long-syntax entry key by key); environment; depends_on with its conditions; networks;
+// commenting a whole service out or back in; and the top-level volume / network declarations. Every other byte of the file is left
 // as it was — except a service written as an alias or a flow mapping, which its first edit
 // rewrites as a block mapping, and a field an alias or a merge key supplied, which an edit
 // writes out as the service's own copy.
@@ -29,6 +31,7 @@ import {
   type Children,
   childrenOf,
   commentTail,
+  countOf,
   cut,
   deepEqual,
   deleteKey,
@@ -40,6 +43,7 @@ import {
   type FlowField,
   flowRemove,
   flowUpdate,
+  type MapNode,
   mapNode,
   pad,
   rawService,
@@ -47,6 +51,7 @@ import {
   type Scalar,
   serviceOf,
   servicesOf,
+  setEntry,
   setKey,
   type Splice,
   withExpect,
@@ -81,6 +86,15 @@ export const DEPENDS_CONDITIONS = [
 
 /** One of {@linkcode DEPENDS_CONDITIONS}. */
 export type DependsCondition = typeof DEPENDS_CONDITIONS[number];
+
+/** The keys of a mapping `build:` this editor writes. */
+export const BUILD_KEYS = ["context", "dockerfile", "target"] as const;
+
+/** One of {@linkcode BUILD_KEYS}. */
+export type BuildKey = typeof BUILD_KEYS[number];
+
+/** A service, volume or network name Compose accepts. */
+const NAME = /^[a-zA-Z0-9._-]+$/;
 
 /** A key of a long-syntax port or volume entry this editor writes. */
 const ENTRY_KEY = /^[a-z_][a-z0-9_]*$/;
@@ -141,7 +155,20 @@ export type ComposeOp =
    */
   | { op: "condition"; service: string; value: string; condition: DependsCondition }
   /** Comment an active service block out, or uncomment a commented one, byte for byte. */
-  | { op: "toggleService"; service: string };
+  | { op: "toggleService"; service: string }
+  /** Add a service — an image, a build context, or both — after the last one. */
+  | { op: "addService"; service: string; image?: string; build?: string }
+  /** Remove an active service no other service depends on, or a commented-out block. */
+  | { op: "removeService"; service: string }
+  /**
+   * Set (a string) or delete (`null`) a key of a mapping `build:`. A context-path `build:` is
+   * rewritten as a mapping (`context` kept) when another key is set.
+   */
+  | { op: "build"; service: string; key: BuildKey; value: string | null }
+  /** Set or delete one build argument (`build.args`), in the form the file writes them. */
+  | { op: "buildArg"; service: string; action: "set" | "delete"; key: string; value?: string }
+  /** Declare or drop a top-level named volume or network. */
+  | { op: "declare"; kind: "volumes" | "networks"; action: "add" | "remove"; name: string };
 
 /**
  * What {@linkcode applyComposeEdits} answers: the new contents and one diff — plus `notes`, when
@@ -162,6 +189,11 @@ type EnvOp = Extract<ComposeOp, { op: "env" }>;
 type NamedOp = Extract<ComposeOp, { op: "dependsOn" | "volumes" | "networks" }>;
 type EntryOp = Extract<ComposeOp, { op: "entry" }>;
 type ConditionOp = Extract<ComposeOp, { op: "condition" }>;
+type AddServiceOp = Extract<ComposeOp, { op: "addService" }>;
+type RemoveServiceOp = Extract<ComposeOp, { op: "removeService" }>;
+type BuildOp = Extract<ComposeOp, { op: "build" }>;
+type BuildArgOp = Extract<ComposeOp, { op: "buildArg" }>;
+type DeclareOp = Extract<ComposeOp, { op: "declare" }>;
 
 /** One list edit resolved to positions. */
 type ListEdit =
@@ -243,7 +275,7 @@ function commentedOf(state: State): Record<string, unknown> {
 
 /** The active service an operation targets, if any. */
 function targetOf(state: State, op: ComposeOp): Service | undefined {
-  return state.services.get(op.service);
+  return "service" in op ? state.services.get(op.service) : undefined;
 }
 
 /** Apply one operation and prove it: the result must re-read as exactly the intended change. */
@@ -328,6 +360,7 @@ function mismatchReason(state: State, change: Change, op: ComposeOp): string {
  * its fields. An alias becomes the service's own copy; its head line's comment is kept.
  */
 function normalized(state: State, op: ComposeOp): State | Refusal {
+  if (op.op === "declare" || op.op === "addService") return state;
   if (state.servicesInline) {
     const services = servicesOf(state.raw);
     if (Object.keys(services).length === 0) {
@@ -363,27 +396,36 @@ function blockRewrite(state: State, entry: Entry, value: unknown): Change {
 
 /** Plan one operation against the current file. */
 function plan(state: State, op: ComposeOp): Change | string {
-  switch (op.op) {
-    case "set":
-      return setScalar(state, op);
-    case "ports":
-      return editPorts(state, op);
-    case "env":
-      return editEnv(state, op);
-    case "dependsOn":
-    case "volumes":
-    case "networks":
-      return editNamed(state, op);
-    case "entry":
-      return editEntry(state, op);
-    case "condition":
-      return setCondition(state, op);
-    case "toggleService":
-      return toggle(state, op.service);
-    default:
-      return `unknown compose operation ${JSON.stringify((op as { op?: unknown }).op)}`;
+  const kind: unknown = op.op;
+  if (typeof kind !== "string" || !Object.hasOwn(PLANNERS, kind)) {
+    return `unknown compose operation ${JSON.stringify(kind ?? null)}`;
   }
+  return (PLANNERS[op.op] as (state: State, op: ComposeOp) => Change | string)(state, op);
 }
+
+/** Plans one operation of kind `K`. */
+type Planner<K extends ComposeOp["op"]> = (
+  state: State,
+  op: Extract<ComposeOp, { op: K }>,
+) => Change | string;
+
+/** Each operation's planner. */
+const PLANNERS: { readonly [K in ComposeOp["op"]]: Planner<K> } = {
+  set: (state, op) => setScalar(state, op),
+  ports: (state, op) => editPorts(state, op),
+  env: (state, op) => editEnv(state, op),
+  dependsOn: (state, op) => editNamed(state, op),
+  volumes: (state, op) => editNamed(state, op),
+  networks: (state, op) => editNamed(state, op),
+  entry: (state, op) => editEntry(state, op),
+  condition: (state, op) => setCondition(state, op),
+  toggleService: (state, op) => toggle(state, op.service),
+  addService: (state, op) => addService(state, op),
+  removeService: (state, op) => removeService(state, op),
+  build: (state, op) => editBuild(state, op),
+  buildArg: (state, op) => editBuildArg(state, op),
+  declare: (state, op) => declare(state, op),
+};
 
 // --- operations -------------------------------------------------------------
 
@@ -391,12 +433,10 @@ function plan(state: State, op: ComposeOp): Change | string {
 function setScalar(state: State, op: SetOp): Change | string {
   const svc = serviceOf(state, op.service);
   if (typeof svc === "string") return svc;
-  const field = svc.fields.get(op.field);
-  if (
-    op.field === "build" && field && typeof rawService(state.raw, op.service).build !== "string"
-  ) {
-    return `build of "${op.service}" is a mapping — edit it by hand`;
+  if (op.field === "build" && isMapping(rawService(state.raw, op.service).build)) {
+    return editBuild(state, { op: "build", service: op.service, key: "context", value: op.value });
   }
+  const field = svc.fields.get(op.field);
   const expect = (want: Expected) => {
     const s = rawService(want.raw, op.service);
     if (op.value === null) delete s[op.field];
@@ -658,13 +698,18 @@ function conditionChange(state: State, svc: Service, op: ConditionOp, next: Raw)
   return withExpect(setKey(state.doc.lines, node, "condition", op.condition), expect);
 }
 
-/** `env`: dispatch on the form the service's `environment:` is written in. */
-function editEnv(state: State, op: EnvOp): Change | string {
+/** The service a KEY=value edit targets, once its name and value are ones this editor writes. */
+function varService(state: State, op: EnvOp | BuildArgOp, noun: string): Service | string {
   if (typeof op.key !== "string" || !ENV_KEY.test(op.key)) {
-    return `${JSON.stringify(op.key)} is not an environment variable name denext writes`;
+    return `${JSON.stringify(op.key)} is not ${noun} denext writes`;
   }
   if (op.action === "set" && typeof op.value !== "string") return `setting ${op.key} needs a value`;
-  const svc = serviceOf(state, op.service);
+  return serviceOf(state, op.service);
+}
+
+/** `env`: dispatch on the form the service's `environment:` is written in. */
+function editEnv(state: State, op: EnvOp): Change | string {
+  const svc = varService(state, op, "an environment variable name");
   if (typeof svc === "string") return svc;
   const env = rawService(state.raw, op.service).environment;
   return Array.isArray(env) ? envList(state, op, env) : envMap(state, svc, op);
@@ -770,4 +815,277 @@ function commentService(state: State, svc: Service): Change | string {
   };
   const insert = lines.map((l) => commentLine(l, state.indent));
   return { at: svc.start, remove: lines.length, insert, expect };
+}
+
+// --- services -----------------------------------------------------------------
+
+/** Why a service cannot be added under `name`, or null when it can. */
+function newServiceRefusal(state: State, name: unknown): string | null {
+  if (typeof name !== "string" || !NAME.test(name)) {
+    return `${JSON.stringify(name)} is not a service name Compose accepts`;
+  }
+  if (state.services.has(name)) return `a service named "${name}" already exists`;
+  return state.commented.some((c) => c.name === name)
+    ? `a commented-out "${name}" exists — enable it instead`
+    : null;
+}
+
+/** A new service's fields: its image and build context, at least one of them. */
+function newService(op: AddServiceOp): Raw | string {
+  const value: Raw = {};
+  for (const key of ["image", "build"] as const) {
+    const given = op[key];
+    if (given === undefined || given === "") continue;
+    if (typeof given !== "string") return `${key} needs a string`;
+    value[key] = given;
+  }
+  return Object.keys(value).length ? value : "a new service needs an image or a build context";
+}
+
+/**
+ * Where a new service goes: after the last service (or commented-out one), at the services'
+ * indentation, its fields as deep as the file nests them — after a blank line when the file
+ * separates its services with one.
+ */
+function serviceInsert(state: State, name: string, value: Raw): Splice {
+  const spans: Span[] = [...state.services.values(), ...state.commented];
+  const lines = state.doc.lines;
+  const at = spans.length ? Math.max(...spans.map((s) => s.end)) : state.region.start;
+  const spaced = spans.some((s) =>
+    s.start > state.region.start && lines[s.start - 1].trim() === ""
+  );
+  const first = [...state.services.values()].find((s) => !s.inline);
+  const step = first ? Math.max(1, first.fieldIndent - first.indent) : 2;
+  const fields = Object.entries(value)
+    .map(([key, text]) => pad(state.indent + step) + `${key}: ${yamlScalar(String(text))}`);
+  const insert = [pad(state.indent) + yamlKey(name) + ":", ...fields];
+  return { at, remove: 0, insert: spaced ? ["", ...insert] : insert };
+}
+
+/** `addService`: a new service with an image, a build context, or both. */
+function addService(state: State, op: AddServiceOp): Change | string {
+  const refusal = newServiceRefusal(state, op.service);
+  if (refusal) return refusal;
+  const value = newService(op);
+  if (typeof value === "string") return value;
+  const expect = (want: Expected) => {
+    want.raw.services = { ...servicesOf(want.raw), [op.service]: detach(value) };
+  };
+  if (!state.servicesInline) return { ...serviceInsert(state, op.service, value), expect };
+  const services = { ...servicesOf(state.raw), [op.service]: value };
+  return { ...blockRewrite(state, state.servicesInline, services), expect };
+}
+
+/** The other services that depend on `name`. */
+function dependents(state: State, name: string): string[] {
+  const services = servicesOf(state.raw);
+  return Object.keys(services).filter((other) =>
+    other !== name && namesOf((services[other] as Raw).depends_on).includes(name)
+  );
+}
+
+/**
+ * Cut a service's lines, with one blank line around it when it sits between blank lines (or a
+ * blank line and the end), so the file's spacing stays as it was.
+ */
+function cutBlock(lines: readonly string[], span: Span): Splice {
+  const before = span.start > 0 && lines[span.start - 1].trim() === "";
+  const after = span.end < lines.length && lines[span.end].trim() === "";
+  if (before && (after || span.end >= lines.length)) return cut({ ...span, start: span.start - 1 });
+  return cut(!before && after ? { ...span, end: span.end + 1 } : span);
+}
+
+/** `removeService`: an active service nothing depends on, or a commented-out block. */
+function removeService(state: State, op: RemoveServiceOp): Change | string {
+  const svc = state.services.get(op.service);
+  if (svc) {
+    const users = dependents(state, op.service);
+    if (users.length) {
+      return `service "${users[0]}" depends on "${op.service}" — remove that dependency first`;
+    }
+    const expect = (want: Expected) => {
+      const services = servicesOf(want.raw);
+      delete services[op.service];
+      want.raw.services = Object.keys(services).length ? services : null;
+    };
+    return { ...cutBlock(state.doc.lines, svc), expect };
+  }
+  const block = state.commented.find((c) => c.name === op.service);
+  if (!block) return `no service named "${op.service}"`;
+  const expect = (want: Expected) => {
+    delete want.commented[op.service];
+  };
+  return { ...cutBlock(state.doc.lines, block), expect };
+}
+
+// --- build ------------------------------------------------------------------
+
+/**
+ * Write a service's new mapping `build:`: through its mapping node in place, or — a context
+ * path, an alias, one a merge key supplies — as the service's own mapping.
+ */
+function buildChange(
+  state: State,
+  svc: Service,
+  next: Raw,
+  inPlace: (node: MapNode) => Splice | string,
+): Change | string {
+  const field = svc.fields.get("build");
+  const current = rawService(state.raw, svc.key).build;
+  const node = field && isMapping(current) ? mapNode(state.doc.lines, field, current) : null;
+  if (!node) return writeField(state, svc, "build", field, next);
+  return withExpect(inPlace(node), (want) => {
+    rawService(want.raw, svc.key).build = detach(next);
+  });
+}
+
+/** `build` against a context-path (or absent) `build:`: a context is a plain set. */
+function buildFromPath(state: State, svc: Service, op: BuildOp, current: unknown): Change | string {
+  if (op.key === "context") {
+    return setScalar(state, { op: "set", service: op.service, field: "build", value: op.value });
+  }
+  if (op.value === null) return `build of "${op.service}" has no ${op.key}`;
+  const next = { context: typeof current === "string" ? current : ".", [op.key]: op.value };
+  return writeField(state, svc, "build", svc.fields.get("build"), next);
+}
+
+/** `build`: set or delete one key of a mapping `build:`. */
+function editBuild(state: State, op: BuildOp): Change | string {
+  const svc = serviceOf(state, op.service);
+  if (typeof svc === "string") return svc;
+  if (!(BUILD_KEYS as readonly unknown[]).includes(op.key)) {
+    return `unknown build key ${JSON.stringify(op.key)} (expected ${BUILD_KEYS.join(" | ")})`;
+  }
+  if (op.value !== null && (typeof op.value !== "string" || op.value === "")) {
+    return `build ${op.key} needs a non-empty value`;
+  }
+  const current = rawService(state.raw, op.service).build;
+  if (!isMapping(current)) return buildFromPath(state, svc, op, current);
+  if (op.value === null && !Object.hasOwn(current, op.key)) {
+    return `build of "${op.service}" has no ${op.key}`;
+  }
+  const next = detach(current);
+  if (op.value === null) delete next[op.key];
+  else next[op.key] = op.value;
+  const lines = state.doc.lines;
+  const value = op.value;
+  return buildChange(
+    state,
+    svc,
+    next,
+    (node) =>
+      value === null
+        ? deleteKey(lines, node, op.key, `build of "${op.service}"`)
+        : setKey(lines, node, op.key, value),
+  );
+}
+
+/** Build args with one variable set or deleted, in the form they are written (a new set: a mapping). */
+function withArg(args: unknown, op: BuildArgOp): Raw | string[] | string {
+  const missing = `the build args of "${op.service}" have no ${op.key}`;
+  if (Array.isArray(args)) {
+    const list = texts(args);
+    const at = envEntries(list).findIndex((e) => e.key === op.key);
+    if (op.action === "delete") return at === -1 ? missing : list.filter((_, i) => i !== at);
+    const item = `${op.key}=${op.value}`;
+    return at === -1 ? [...list, item] : list.map((text, i) => (i === at ? item : text));
+  }
+  const map: Raw = isMapping(args) ? detach(args) : {};
+  if (op.action === "delete" && !Object.hasOwn(map, op.key)) return missing;
+  if (op.action === "delete") delete map[op.key];
+  else map[op.key] = op.value;
+  return map;
+}
+
+/** `buildArg`: set or delete one build argument, writing a mapping `build:` when needed. */
+function editBuildArg(state: State, op: BuildArgOp): Change | string {
+  const svc = varService(state, op, "a build argument name");
+  if (typeof svc === "string") return svc;
+  const build = rawService(state.raw, op.service).build;
+  const args = withArg(isMapping(build) ? build.args : undefined, op);
+  if (typeof args === "string") return args;
+  const next: Raw = isMapping(build)
+    ? detach(build)
+    : { context: typeof build === "string" ? build : "." };
+  if (countOf(args)) next.args = args;
+  else delete next.args;
+  const lines = state.doc.lines;
+  return buildChange(
+    state,
+    svc,
+    next,
+    (node) =>
+      countOf(args)
+        ? setEntry(lines, node, "args", args)
+        : deleteKey(lines, node, "args", `build of "${op.service}"`),
+  );
+}
+
+// --- declarations -------------------------------------------------------------
+
+/** Whether a service's volume entry mounts the named volume `name`. */
+function mountsVolume(entry: unknown, name: string): boolean {
+  if (typeof entry === "string") return entry.split(":")[0] === name;
+  return isMapping(entry) && entry.source === name;
+}
+
+/** The first active service that uses the named volume or network `name`. */
+function userOf(state: State, kind: "volumes" | "networks", name: string): string | undefined {
+  const services = servicesOf(state.raw);
+  return Object.keys(services).find((svc) => {
+    const value = (services[svc] as Raw)[kind];
+    if (kind === "networks") return namesOf(value).includes(name);
+    return Array.isArray(value) && value.some((entry) => mountsVolume(entry, name));
+  });
+}
+
+/**
+ * A new top-level entry, after everything the file already holds — the commented-out services
+ * included, since a key written above them would cut them out of the services region — and
+ * after a blank line when the file spaces its top-level keys.
+ */
+function topInsert(state: State, body: string[]): Splice {
+  const entries = [...state.top.values()];
+  const lines = state.doc.lines;
+  const at = Math.max(...entries.map((e) => e.end), ...state.commented.map((c) => c.end));
+  const spaced = entries.some((e) => e.start > 0 && lines[e.start - 1].trim() === "");
+  return { at, remove: 0, insert: spaced ? ["", ...body] : body };
+}
+
+/** The splice declaring or dropping one name in a top-level `volumes:` / `networks:`. */
+function declareSplice(state: State, op: DeclareOp, next: Raw): Splice | string {
+  const entry = state.top.get(op.kind);
+  if (!entry) return topInsert(state, emitEntry(op.kind, next, 0));
+  if (Object.keys(next).length === 0) return cut(entry);
+  const lines = state.doc.lines;
+  const node = mapNode(lines, entry, state.raw[op.kind]);
+  if (!node || node.kind === "flow") return blockRewrite(state, entry, next);
+  return op.action === "add"
+    ? setEntry(lines, node, op.name, null)
+    : deleteKey(lines, node, op.name, `the top-level ${op.kind}:`);
+}
+
+/** `declare`: declare or drop a top-level named volume or network. */
+function declare(state: State, op: DeclareOp): Change | string {
+  if (op.kind !== "volumes" && op.kind !== "networks") {
+    return `unknown declaration ${JSON.stringify(op.kind)} (expected volumes | networks)`;
+  }
+  if (typeof op.name !== "string" || !NAME.test(op.name)) {
+    return `${JSON.stringify(op.name)} is not a name Compose accepts`;
+  }
+  const current = state.raw[op.kind];
+  const listed = isMapping(current) && Object.hasOwn(current, op.name);
+  if (op.action === "add" && listed) return `the top-level ${op.kind}: already declares ${op.name}`;
+  if (op.action === "remove" && !listed) {
+    return `the top-level ${op.kind}: does not declare ${op.name}`;
+  }
+  const user = op.action === "remove" ? userOf(state, op.kind, op.name) : undefined;
+  if (user) return `service "${user}" still uses ${op.name} — remove it there first`;
+  const next: Raw = isMapping(current) ? detach(current) : {};
+  if (op.action === "add") next[op.name] = null;
+  else delete next[op.name];
+  return withExpect(declareSplice(state, op, next), (want) => {
+    if (Object.keys(next).length) want.raw[op.kind] = detach(next);
+    else delete want.raw[op.kind];
+  });
 }

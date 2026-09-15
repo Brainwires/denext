@@ -5,7 +5,7 @@
 //
 // Build-time only; never imported by a shipped bundle.
 
-import { emitEntry, flowScalar, yamlKey, yamlScalar } from "./compose-emit.ts";
+import { emitEntry, flowScalar, flowText, yamlKey, yamlScalar } from "./compose-emit.ts";
 import { type Flow, readFlow } from "./compose-flow.ts";
 import {
   type Entry,
@@ -199,7 +199,7 @@ export function rawService(raw: Raw, name: string): Raw {
 }
 
 /** How many children a parsed field value has. */
-function countOf(v: unknown): number {
+export function countOf(v: unknown): number {
   if (Array.isArray(v)) return v.length;
   return isMapping(v) ? Object.keys(v).length : 0;
 }
@@ -491,4 +491,33 @@ export function deleteKey(
   if (!next) return `${key} of ${where} opens its line and cannot be removed in place`;
   const line = lines[entry.start].slice(0, entry.indent) + lines[next.start].slice(next.indent);
   return { at: entry.start, remove: next.start + 1 - entry.start, insert: [line] };
+}
+
+/**
+ * Set one key of a mapping node to a whole value (a collection, or null): its lines replaced —
+ * its head as written and its comment kept — or the key appended.
+ *
+ * @param lines The file's lines.
+ * @param node The mapping.
+ * @param key The key.
+ * @param value Its new parsed value.
+ * @returns The splice.
+ */
+export function setEntry(
+  lines: readonly string[],
+  node: MapNode,
+  key: string,
+  value: unknown,
+): Splice {
+  if (node.kind === "flow") {
+    const item = `${yamlKey(key)}: ${flowText(value)}`;
+    const at = node.keys.indexOf(key);
+    return at === -1 ? flowAdd(node.flow, item) : flowUpdate(node.flow, at, item);
+  }
+  const entry = node.keys.get(key);
+  if (!entry) return { at: node.end, remove: 0, insert: emitEntry(key, value, node.indent) };
+  const line = lines[entry.start];
+  const tail = commentTail(line.slice(entry.valueCol)) ?? "";
+  const insert = emitEntry(key, value, entry.indent, { head: line.slice(0, entry.headEnd), tail });
+  return { at: entry.start, remove: entry.end - entry.start, insert };
 }

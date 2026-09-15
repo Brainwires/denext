@@ -638,6 +638,67 @@ Deno.test("compose editor: a long-syntax port's keys and a dependency's conditio
   }
 });
 
+Deno.test("compose editor: services are added and removed, and names declared, through the forms", async () => {
+  const h = await ui();
+  try {
+    await Deno.writeTextFile(join(h.dir, COMPOSE), GENERATED);
+    const page = await (await get(h, "/docker")).text();
+    assertStringIncludes(page, 'id="compose-new-service"');
+    assertStringIncludes(page, 'id="compose-declarations"');
+    assertStringIncludes(page, 'name="build.dockerfile"');
+    const added = await previewEdit(h, {
+      op: "addService",
+      "new.name": "cache",
+      "new.image": "redis:7",
+    });
+    assertStringIncludes(added, "+  cache:");
+    assertEquals(JSON.parse(confirmFields(added).ops), [
+      { op: "addService", service: "cache", image: "redis:7" },
+    ]);
+    const declared = await previewEdit(h, {
+      scope: "top",
+      op: "apply",
+      "declare.volumes.new": "data",
+    });
+    assertStringIncludes(declared, "+volumes:");
+    assertStringIncludes(declared, "+  data:");
+    const built = await previewEdit(h, {
+      service: "web",
+      op: "apply",
+      "build.dockerfile": "Dockerfile.prod",
+    });
+    assertStringIncludes(built, "+      dockerfile: Dockerfile.prod");
+    // Every operation is checked against the file as it stands, so a service is added and
+    // removed in two requests, not one.
+    const json = await postJson(h, "/api/docker", {
+      editor: "compose",
+      ops: [
+        { op: "addService", service: "cache", image: "redis:7" },
+        { op: "declare", kind: "networks", action: "add", name: "backend" },
+      ],
+      confirm: true,
+    });
+    assertEquals(json.status, 200);
+    assertStringIncludes(await composeOnDisk(h), "networks:\n  backend:\n");
+    const dropped = await postJson(h, "/api/docker", {
+      editor: "compose",
+      ops: [{ op: "removeService", service: "cache" }],
+      confirm: true,
+    });
+    assertEquals(dropped.status, 200);
+    const disk = await composeOnDisk(h);
+    assertStringIncludes(disk, "networks:\n  backend:\n");
+    assert(!disk.includes("cache:"), "the added service was removed again");
+    const refused = await postJson(h, "/api/docker", {
+      editor: "compose",
+      ops: [{ op: "declare", kind: "volumes", action: "remove", name: "nope" }],
+    });
+    assertEquals(refused.status, 400);
+  } finally {
+    await stop(h);
+  }
+});
+
 Deno.test("compose editor: a merge key's fields are shown as inherited, and a set overrides them", async () => {
   const h = await ui();
   try {

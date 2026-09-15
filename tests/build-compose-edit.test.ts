@@ -274,6 +274,120 @@ Deno.test("a flow-style services: is rewritten as block mappings by the first ed
   );
 });
 
+Deno.test("addService / removeService: added after the last service, removed whole", () => {
+  const added = edit(GEN_PG, [{ op: "addService", service: "cache", image: "redis:7" }]);
+  const cache = readCompose(added)!.services.at(-1)!;
+  assertEquals([cache.name, cache.image, cache.commented], ["cache", "redis:7", false]);
+  assertEquals(edit(added, [{ op: "removeService", service: "cache" }]), GEN_PG);
+  assertMatch(refusal(GEN_PG, [{ op: "removeService", service: "db" }]), /depends on "db"/);
+  assertMatch(
+    refusal(GEN_PG, [{ op: "addService", service: "web", image: "x" }]),
+    /already exists/,
+  );
+  assertMatch(
+    refusal(GEN, [{ op: "addService", service: "db", image: "x" }]),
+    /commented-out "db" exists/,
+  );
+  assertMatch(
+    refusal(GEN_PG, [{ op: "addService", service: "bad name", image: "x" }]),
+    /not a service name/,
+  );
+  assertMatch(refusal(GEN_PG, [{ op: "addService", service: "x" }]), /image or a build/);
+  assertEquals(
+    edit("services:\n", [{ op: "addService", service: "web", image: "nginx", build: "." }]),
+    "services:\n  web:\n    image: nginx\n    build: .\n",
+  );
+  assertEquals(
+    edit("services: {}\n", [{ op: "addService", service: "web", image: "nginx" }]),
+    "services:\n  web:\n    image: nginx\n",
+  );
+  const noDb = readCompose(edit(GEN, [{ op: "removeService", service: "db" }]))!;
+  assertEquals(noDb.services.map((s) => s.name), ["web"]);
+  const lone = edit("services:\n  web:\n    image: x\n", [{ op: "removeService", service: "web" }]);
+  assertEquals(lone, "services:\n");
+});
+
+Deno.test("build: a context path becomes a mapping when another key is set; a mapping edits in place", () => {
+  const mapped = edit(GEN, [
+    { op: "build", service: "web", key: "dockerfile", value: "Dockerfile.prod" },
+  ]);
+  assertStringIncludes(mapped, "    build:\n      context: .\n      dockerfile: Dockerfile.prod\n");
+  assertStringIncludes(
+    edit(mapped, [{ op: "build", service: "web", key: "target", value: "prod" }]),
+    "      dockerfile: Dockerfile.prod\n      target: prod\n",
+  );
+  const moved = edit(mapped, [{ op: "set", service: "web", field: "build", value: "./app" }]);
+  assertStringIncludes(moved, "      context: ./app\n      dockerfile: Dockerfile.prod\n");
+  assertEquals(
+    readCompose(edit(mapped, [{ op: "build", service: "web", key: "dockerfile", value: null }]))!
+      .services[0].build,
+    { context: "." },
+  );
+  assertMatch(
+    refusal(GEN, [{ op: "build", service: "web", key: "dockerfile", value: null }]),
+    /has no dockerfile/,
+  );
+  assertMatch(
+    refusal(GEN, [{ op: "build", service: "web", key: "network" as "target", value: "x" }]),
+    /unknown build key/,
+  );
+});
+
+Deno.test("buildArg: args are set and deleted in the form the file writes them", () => {
+  assertStringIncludes(
+    edit(GEN, [{
+      op: "buildArg",
+      service: "web",
+      action: "set",
+      key: "NODE_VERSION",
+      value: "22",
+    }]),
+    '    build:\n      context: .\n      args:\n        NODE_VERSION: "22"\n',
+  );
+  const list = "services:\n  web:\n    build:\n      context: .\n      args:\n        - A=1\n";
+  assertStringIncludes(
+    edit(list, [{ op: "buildArg", service: "web", action: "set", key: "B", value: "2" }]),
+    "      args:\n        - A=1\n        - B=2\n",
+  );
+  assertEquals(
+    edit(list, [{ op: "buildArg", service: "web", action: "delete", key: "A" }]),
+    "services:\n  web:\n    build:\n      context: .\n",
+  );
+  assertMatch(
+    refusal(list, [{ op: "buildArg", service: "web", action: "delete", key: "Z" }]),
+    /have no Z/,
+  );
+});
+
+Deno.test("declare: top-level volumes and networks are declared and dropped", () => {
+  const text = "services:\n  web:\n    image: x\n    volumes:\n      - data:/data\n";
+  const declared = edit(text, [{ op: "declare", kind: "volumes", action: "add", name: "data" }]);
+  assertEquals(declared, text + "volumes:\n  data:\n");
+  assertEquals(readCompose(declared)!.volumes, ["data"]);
+  const two = edit(declared, [{ op: "declare", kind: "volumes", action: "add", name: "cache" }]);
+  assertEquals(two, text + "volumes:\n  data:\n  cache:\n");
+  assertEquals(
+    edit(two, [{ op: "declare", kind: "volumes", action: "remove", name: "cache" }]),
+    declared,
+  );
+  assertMatch(
+    refusal(two, [{ op: "declare", kind: "volumes", action: "remove", name: "data" }]),
+    /still uses data/,
+  );
+  assertEquals(
+    edit(declared, [
+      { op: "volumes", service: "web", action: "remove", value: "data:/data" },
+      { op: "declare", kind: "volumes", action: "remove", name: "data" },
+    ]),
+    "services:\n  web:\n    image: x\n",
+  );
+  const spaced = "services:\n  web:\n    image: x\n\nvolumes:\n  data:\n";
+  assertEquals(
+    edit(spaced, [{ op: "declare", kind: "networks", action: "add", name: "front" }]),
+    spaced + "\nnetworks:\n  front:\n",
+  );
+});
+
 Deno.test("Compose's !reset and !override tags parse, and a field carrying one is editable", () => {
   const text = 'services:\n  web:\n    image: !reset null\n    ports: !override\n      - "80:80"\n';
   const web = readCompose(text)!.services[0];
@@ -685,7 +799,7 @@ Deno.test("condition: a short depends_on list is rewritten in the long form; a l
   );
 });
 
-Deno.test("set build: replace a context path, insert one, delete it, refuse a mapping build", () => {
+Deno.test("set build: replace a context path, insert one, delete it; a mapping build sets its context", () => {
   const replaced = edit(GEN, [{ op: "set", service: "web", field: "build", value: "./app" }]);
   assertEquals(readCompose(replaced)!.services[0].build, "./app");
   const inserted = edit("services:\n  web:\n    image: nginx\n", [
@@ -696,8 +810,8 @@ Deno.test("set build: replace a context path, insert one, delete it, refuse a ma
   assertEquals(readCompose(cleared)!.services[0].build, undefined);
   const mapped =
     "services:\n  web:\n    build:\n      context: .\n      dockerfile: Dockerfile.prod\n";
-  assertMatch(
-    refusal(mapped, [{ op: "set", service: "web", field: "build", value: "." }]),
-    /mapping/,
+  assertStringIncludes(
+    edit(mapped, [{ op: "set", service: "web", field: "build", value: "./app" }]),
+    "    build:\n      context: ./app\n      dockerfile: Dockerfile.prod\n",
   );
 });

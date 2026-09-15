@@ -436,16 +436,22 @@ never-clobber honesty `denext migrate` and the config writer apply.
 
 Below the regeneration form, every service in the compose file gets its own form, in
 source order: `image` (text), `restart` (`no`, `always`, `on-failure`, `unless-stopped`, or the
-file's own value — `on-failure:<n>` is accepted too), `build` (a context path — a mapping
-`build:` is left to hand edits), and row editors for `ports`,
+file's own value — `on-failure:<n>` is accepted too), `build` (its context path, plus a
+`dockerfile` and a `target` — setting either writes a mapping `build:` — and a row editor for
+the build args), and row editors for `ports`,
 `environment`, `depends_on` (a picker of the file's other services, and for each dependency the
 `condition` it waits for), `volumes` and `networks` (one the top-level `networks:` doesn't
 declare gets a warning, like an undeclared named volume). A long-syntax port or volume (a
 mapping such as `target: 80` / `published: "8080"`) is edited key by key: a text input per key
 the form knows, and a picker where Compose fixes the choices (`protocol`, `mode`, `type`,
-`read_only`). Keys it doesn't know are kept as written. A service
-can be commented out, and a commented-out block — the Postgres example the generated file
-carries, say — can be enabled again; enabling is the only edit a commented service accepts.
+`read_only`). Keys it doesn't know are kept as written.
+
+A service can be removed (refused while another service depends on it) or commented out. A
+commented-out block — the Postgres example the generated file carries, say — can be enabled
+again or removed, and those are the only edits it accepts. Below the services, **Add a service**
+takes a name and an image, a build context or both. **Named volumes and networks** declares and
+drops the top-level `volumes:` and `networks:` entries; dropping one a service still uses is
+refused.
 
 Nothing is regenerated. [`src/build/compose-edit.ts`](https://github.com/Brainwires/denext/blob/main/src/build/compose-edit.ts)
 parses the file with `@std/yaml` to validate it, locates each service and field line by line
@@ -463,8 +469,8 @@ flow-style `services:` is rewritten as block mappings by the first edit.
 Each submit is one edit set for one service — every field that differs from the file, every
 filled add row, and the button you pressed — and it takes the usual two steps. The first
 `POST` answers with the unified diff, plus a warning when an enabled service mounts a named
-volume that the top-level `volumes:` does not declare (`docker compose up` refuses such a
-file). The confirm re-posts the same operations — never the edited text — re-reads the file,
+volume or joins a network that the top-level `volumes:` or `networks:` does not declare
+(`docker compose up` refuses such a file). The confirm re-posts the same operations — never the edited text — re-reads the file,
 and writes only when they still apply. Both carry `_base`, the SHA-256 of the file the page
 was rendered from: a stale one is a `409` and writes nothing. Every service, variable, row
 and dependency a request names is checked against the parsed file first, so the editor never
@@ -509,7 +515,11 @@ write. The ops come from a closed set:
 - `condition`;
 - `volumes`;
 - `networks`;
-- `toggleService`.
+- `toggleService`;
+- `addService` and `removeService`;
+- `build`: a mapping `build:`'s `context`, `dockerfile` or `target`;
+- `buildArg`;
+- `declare`: a top-level volume or network.
 
 Deployment targets, images and platform notes are in the [deployment guide](/docs/deploy).
 
@@ -690,13 +700,13 @@ above.
 
 ## What it does not do yet
 
-| Not yet                      | Why                                                                                                                                                                                                                |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Compose edits beyond the set | The editor owns `image`, `restart`, `build`, `ports`, `environment`, `depends_on`, `volumes`, `networks` and commenting a service out or in; anything else — a new service, a mapping `build:` — is edited by hand |
-| YAML the editor can't follow | Several YAML documents in one file make the file opaque: read-only, with the reason and the regeneration diff                                                                                                      |
-| Code-valued options          | A callback, a variable, a `{}` schema part or a function-wrapped list is shown read-only, never rewritten                                                                                                          |
-| Agent / MCP control          | Deferred; every panel already answers a JSON twin so it can be added without changing the wire                                                                                                                     |
-| A denext app                 | The UI is server-rendered components built with `h()` — no bundler, no hydration — not an App Router app, which is what lets it start instantly with no build                                                      |
+| Not yet                      | Why                                                                                                                                                           |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Compose edits beyond the set | A service field outside the editor's set — `command`, `healthcheck`, `labels`, `env_file`, `deploy` and the rest — is edited by hand                          |
+| YAML the editor can't follow | Several YAML documents in one file make the file opaque: read-only, with the reason and the regeneration diff                                                 |
+| Code-valued options          | A callback, a variable, a `{}` schema part or a function-wrapped list is shown read-only, never rewritten                                                     |
+| Agent / MCP control          | Deferred; every panel already answers a JSON twin so it can be added without changing the wire                                                                |
+| A denext app                 | The UI is server-rendered components built with `h()` — no bundler, no hydration — not an App Router app, which is what lets it start instantly with no build |
 
 ## See also
 

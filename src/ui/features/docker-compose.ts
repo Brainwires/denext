@@ -10,9 +10,11 @@
 // still the one the page was rendered from (`_base`, a SHA-256), re-applies the same operations
 // and writes only when they still apply.
 //
-// The operation set is compose-edit's closed one (image, restart, build, ports, environment,
-// depends_on and its conditions, volumes, networks, the keys of a long-syntax port or volume,
-// commenting a service out / back in). Every posted service name,
+// The operation set is compose-edit's closed one: adding and removing a service; image,
+// restart and build (a context path, or a mapping's context / dockerfile / target / args);
+// ports and volumes (a long-syntax entry key by key); environment; depends_on and its
+// conditions; networks; commenting a service out / back in; the top-level volume and network
+// declarations. Every posted service name,
 // variable key, list index and dependency is checked against the parsed model first — the editor
 // never writes a service or key the file did not report. A file the model cannot follow (several
 // documents, a document marker carrying content, …) is "opaque": shown read-only, with the
@@ -20,6 +22,8 @@
 
 import {
   applyComposeEdits,
+  BUILD_KEYS,
+  type BuildKey,
   type ComposeModel,
   type ComposeOp,
   type ComposeService,
@@ -360,13 +364,17 @@ function requestedOps(ctx: UiContext, get: Get, model: ComposeModel): ComposeOp[
  * page showed. The Enable/Comment-out button is its own operation.
  */
 function formOps(get: Get, model: ComposeModel): ComposeOp[] | string {
+  const button = get(OP_FIELD) ?? "apply";
+  if (button === "addService") return [newServiceOp(get)];
+  if (get("scope") === "top") return declarationOps(get, model, button);
   const name = get("service") ?? "";
   const svc = model.services.find((s) => s.name === name);
   if (!svc) return `unknown service ${JSON.stringify(name)}`;
-  const button = get(OP_FIELD) ?? "apply";
   if (button === "toggle") return [{ op: "toggleService", service: svc.name }];
+  if (button === "removeService") return [{ op: "removeService", service: svc.name }];
   const ops = [
     ...scalarEdits(get, svc),
+    ...buildEdits(get, svc),
     ...portEdits(get, svc),
     ...entryEdits(get, svc),
     ...envEdits(get, svc),
@@ -389,10 +397,87 @@ function scalarEdits(get: Get, svc: ComposeService): ComposeOp[] {
   return ops;
 }
 
-/** A scalar field's current text (`""` when unset; a mapping `build:` never matches a post). */
+/** A scalar field's current text (`""` when unset; `build` is the build context). */
 function scalarOf(svc: ComposeService, field: "image" | "restart" | "build"): string {
   if (field !== "build") return svc[field] ?? "";
-  return typeof svc.build === "string" ? svc.build : "";
+  if (typeof svc.build === "string") return svc.build;
+  return isRecord(svc.build) ? textOf(svc.build.context) : "";
+}
+
+/** A service's build args as name/value pairs, from either form (none without a mapping). */
+function argsOf(build: unknown): { key: string; value: string }[] {
+  const args = isRecord(build) ? build.args : undefined;
+  if (isRecord(args)) {
+    return Object.entries(args).map(([key, value]) => ({ key, value: textOf(value) }));
+  }
+  if (!Array.isArray(args)) return [];
+  return args.map((item) => {
+    const text = textOf(item);
+    const eq = text.indexOf("=");
+    return eq === -1
+      ? { key: text, value: "" }
+      : { key: text.slice(0, eq), value: text.slice(eq + 1) };
+  });
+}
+
+/** A mapping `build:`'s dockerfile / target and build args whose posted value changed. */
+function buildEdits(get: Get, svc: ComposeService): ComposeOp[] {
+  const mapping = isRecord(svc.build) ? svc.build : {};
+  const service = svc.name;
+  const ops: ComposeOp[] = [];
+  for (const key of ["dockerfile", "target"] as const) {
+    const posted = get(`build.${key}`)?.trim();
+    if (posted === undefined || posted === textOf(mapping[key])) continue;
+    ops.push({ op: "build", service, key, value: posted === "" ? null : posted });
+  }
+  argsOf(svc.build).forEach((entry, i) => {
+    const value = get(`build.arg.${i}`);
+    if (value !== null && value !== entry.value) {
+      ops.push({ op: "buildArg", service, action: "set", key: entry.key, value });
+    }
+  });
+  const key = get("build.arg.new.key")?.trim();
+  if (key) {
+    ops.push({
+      op: "buildArg",
+      service,
+      action: "set",
+      key,
+      value: get("build.arg.new.value") ?? "",
+    });
+  }
+  return ops;
+}
+
+/** The add-a-service form's operation. */
+function newServiceOp(get: Get): ComposeOp {
+  const image = get("new.image")?.trim();
+  const build = get("new.build")?.trim();
+  return {
+    op: "addService",
+    service: get("new.name")?.trim() ?? "",
+    ...(image ? { image } : {}),
+    ...(build ? { build } : {}),
+  };
+}
+
+/** The declarations form: every filled add row, then the pressed ✕ (`remove:<row>:top.<kind>`). */
+function declarationOps(get: Get, model: ComposeModel, button: string): ComposeOp[] | string {
+  const ops: ComposeOp[] = [];
+  for (const kind of ["volumes", "networks"] as const) {
+    const name = get(`declare.${kind}.new`)?.trim();
+    if (name) ops.push({ op: "declare", kind, action: "add", name });
+  }
+  if (button === "apply") return ops;
+  const parsed = parseOp(button);
+  const kind = parsed?.list === "top.volumes" || parsed?.list === "top.networks"
+    ? (parsed.list.slice(4) as "volumes" | "networks")
+    : null;
+  const name = kind && parsed ? model[kind][parsed.at] : undefined;
+  if (kind === null || name === undefined) {
+    return `unknown compose operation ${JSON.stringify(button)}`;
+  }
+  return [...ops, { op: "declare", kind, action: "remove", name }];
 }
 
 /** A parsed value as a form field's text (`""` when absent). */
@@ -499,6 +584,10 @@ const REMOVERS: Readonly<
   depends_on: namedRemover("dependsOn", (svc) => svc.dependsOn),
   volumes: namedRemover("volumes", (svc) => svc.volumes),
   networks: namedRemover("networks", (svc) => svc.networks),
+  "build.args": (svc, at) => {
+    const entry = argsOf(svc.build)[at];
+    return entry && { op: "buildArg", service: svc.name, action: "delete", key: entry.key };
+  },
 };
 
 /** The operation a row-removal button names, or `undefined` for anything else. */
@@ -523,8 +612,18 @@ const CHECKS: Readonly<Record<string, Check>> = {
   networks: checkNamed,
   entry: checkEntry,
   condition: checkCondition,
+  build: checkBuild,
+  buildArg: checkBuildArg,
   toggleService: (_o, svc) => ({ op: "toggleService", service: svc.name }),
+  removeService: (_o, svc) => ({ op: "removeService", service: svc.name }),
 };
+
+/** Operations that name no existing service, each with its checker. */
+const FILE_CHECKS: Readonly<Record<string, (o: Dict, model: ComposeModel) => ComposeOp | string>> =
+  {
+    addService: checkAddService,
+    declare: checkDeclare,
+  };
 
 /**
  * Validate one posted operation against the model: a known operation, on a service the file
@@ -533,6 +632,9 @@ const CHECKS: Readonly<Record<string, Check>> = {
  */
 function checkOp(value: unknown, model: ComposeModel): ComposeOp | string {
   if (!isRecord(value)) return "a compose operation must be an object";
+  if (typeof value.op === "string" && Object.hasOwn(FILE_CHECKS, value.op)) {
+    return FILE_CHECKS[value.op](value, model);
+  }
   const op = typeof value.op === "string" && Object.hasOwn(CHECKS, value.op) ? value.op : "";
   if (op === "") return `unknown compose operation ${JSON.stringify(value.op ?? null)}`;
   const svc = model.services.find((s) => s.name === value.service);
@@ -554,9 +656,6 @@ function checkSet(o: Dict, svc: ComposeService): ComposeOp | string {
   const { field, value } = o;
   if (field !== "image" && field !== "restart" && field !== "build") {
     return `unknown field ${JSON.stringify(field ?? null)} (expected image | restart | build)`;
-  }
-  if (field === "build" && svc.build !== undefined && typeof svc.build !== "string") {
-    return `build of "${svc.name}" is a mapping — edit it by hand`;
   }
   if (value !== null && typeof value !== "string") return `${field} needs a string or null`;
   if (field === "restart" && value !== null && !restartAllowed(value, svc)) {
@@ -627,6 +726,72 @@ function checkNamed(o: Dict, svc: ComposeService, model: ComposeModel): ComposeO
   return isCondition(o.condition)
     ? { op, service: svc.name, action, value, condition: o.condition }
     : `unknown condition ${JSON.stringify(o.condition)}`;
+}
+
+/** `build`: a key of a mapping `build:`, set to a string or cleared. */
+function checkBuild(o: Dict, svc: ComposeService): ComposeOp | string {
+  const { key, value } = o;
+  if (!(BUILD_KEYS as readonly unknown[]).includes(key)) {
+    return `unknown build key ${JSON.stringify(key ?? null)} (expected ${BUILD_KEYS.join(" | ")})`;
+  }
+  if (value !== null && typeof value !== "string") {
+    return `build ${String(key)} needs a string or null`;
+  }
+  return { op: "build", service: svc.name, key: key as BuildKey, value };
+}
+
+/** `buildArg`: set a build argument (new or listed), or delete a listed one. */
+function checkBuildArg(o: Dict, svc: ComposeService): ComposeOp | string {
+  const { action, key, value } = o;
+  if (typeof key !== "string") return "a build argument operation needs a key";
+  const service = svc.name;
+  if (action === "delete") {
+    return argsOf(svc.build).some((entry) => entry.key === key)
+      ? { op: "buildArg", service, action, key }
+      : `the build args of "${service}" have no ${key}`;
+  }
+  if (action !== "set") return `unknown buildArg action ${JSON.stringify(action ?? null)}`;
+  return typeof value === "string"
+    ? { op: "buildArg", service, action, key, value }
+    : `setting ${key} needs a value`;
+}
+
+/** `addService`: a name the file does not use yet, with an optional image and build context. */
+function checkAddService(o: Dict, model: ComposeModel): ComposeOp | string {
+  const { service, image, build } = o;
+  if (typeof service !== "string" || service === "") return "a new service needs a name";
+  if (model.services.some((s) => s.name === service)) {
+    return `a service named "${service}" already exists`;
+  }
+  if (
+    (image !== undefined && typeof image !== "string") ||
+    (build !== undefined && typeof build !== "string")
+  ) {
+    return "a new service's image and build are strings";
+  }
+  return {
+    op: "addService",
+    service,
+    ...(image ? { image } : {}),
+    ...(build ? { build } : {}),
+  };
+}
+
+/** `declare`: declare a new top-level volume or network, or drop one the file declares. */
+function checkDeclare(o: Dict, model: ComposeModel): ComposeOp | string {
+  const { kind, action, name } = o;
+  if (kind !== "volumes" && kind !== "networks") {
+    return `unknown declaration ${JSON.stringify(kind ?? null)} (expected volumes | networks)`;
+  }
+  if (typeof name !== "string" || name === "") return `a ${kind} declaration needs a name`;
+  if (action === "remove") {
+    return model[kind].includes(name)
+      ? { op: "declare", kind, action, name }
+      : `the top-level ${kind}: does not declare ${name}`;
+  }
+  return action === "add"
+    ? { op: "declare", kind, action, name }
+    : `unknown declare action ${JSON.stringify(action ?? null)}`;
 }
 
 /** Whether a posted value is one of the conditions Compose defines. */
@@ -723,7 +888,8 @@ function networkWarnings(model: ComposeModel): string[] {
       .filter((network) => network !== "default" && !model.networks.includes(network))
       .map((network) =>
         `service "${svc.name}" joins the network "${network}", but the top-level networks: ` +
-        `does not declare it — add "networks:" with "${network}:" before running docker compose.`
+        `does not declare it — declare it under "Named volumes and networks" before running ` +
+        "docker compose."
       )
   );
 }
@@ -742,7 +908,7 @@ function volumeWarnings(model: ComposeModel): string[] {
       if (source === null || model.volumes.includes(source)) continue;
       warnings.push(
         `service "${svc.name}" mounts the named volume "${source}", but the top-level ` +
-          `volumes: does not declare it — add (or uncomment) "volumes:" with "${source}:" ` +
+          `volumes: does not declare it — declare it under "Named volumes and networks" ` +
           "before running docker compose.",
       );
     }
@@ -901,10 +1067,91 @@ function ComposeEditor({ ctx, file }: EditorProps): VNode {
     saved ? h(Note, null, `Saved ${file.name}.`) : null,
     file.model.sentinel ? h(SentinelNote, null) : null,
     ctx.readOnly ? h(Note, null, "Read-only mode — editing is refused.") : null,
-    h(Warnings, { warnings: volumeWarnings(file.model) }),
+    h(Warnings, { warnings: [...volumeWarnings(file.model), ...networkWarnings(file.model)] }),
     services.length
       ? services.map((svc) => h(ServiceForm, { key: svc.name, ctx, file, svc }))
       : h("p", { class: "lead" }, "No services."),
+    h(AddServiceForm, { ctx, file }),
+    h(DeclarationsForm, { ctx, file }),
+  );
+}
+
+/** The routing and stamp fields every compose-editor form carries, plus its own. */
+function hiddenFields(ctx: UiContext, file: Editable, extra: readonly string[][] = []): VNode[] {
+  return [
+    [UI_CSRF_FIELD, ctx.csrf],
+    [EDITOR_FIELD, EDITOR_VALUE],
+    [BASE_FIELD, file.base],
+    ...extra,
+  ].map(([name, value]) => h("input", { key: name, name, type: "hidden", value }));
+}
+
+/** One labelled text input of a form (the form renderer's controls). */
+function labelledInput(
+  id: string,
+  name: string,
+  label: string,
+  value: string,
+  placeholder: string,
+): VNode {
+  const body = control({ tag: "input", name, id, value, placeholder });
+  return h(Raw, { key: name, html: labelled({ id, label, body }) });
+}
+
+/** A new service: a name plus an image, a build context, or both. */
+function AddServiceForm({ ctx, file }: EditorProps): VNode {
+  const id = "compose-new-service";
+  return h(
+    "form",
+    { method: "post", action: "/docker", id, class: "step" },
+    hiddenFields(ctx, file),
+    h(
+      Row,
+      null,
+      h("h3", { class: "grow", style: "margin:0" }, "Add a service"),
+      h(SubmitButton, {
+        value: "addService",
+        label: "Preview new service",
+        disabled: ctx.readOnly,
+      }),
+    ),
+    labelledInput(`${id}-name`, "new.name", "name", "", "e.g. cache"),
+    labelledInput(`${id}-image`, "new.image", "image", "", "e.g. redis:7"),
+    labelledInput(`${id}-build`, "new.build", "build", "", "or a build context, e.g. ./worker"),
+  );
+}
+
+/** The top-level named volumes and networks: a ✕ per declaration and an add row for each. */
+function DeclarationsForm({ ctx, file }: EditorProps): VNode {
+  const disabled = ctx.readOnly;
+  const list = (kind: "volumes" | "networks", noun: string) => {
+    const rows = file.model[kind].map((name, i) =>
+      h(
+        Row,
+        { key: name },
+        h("code", { class: "grow" }, name),
+        removeButton(`top.${kind}`, i, `Drop the ${noun} ${name}`, disabled),
+      )
+    );
+    const add = h(
+      Row,
+      null,
+      textInput(`declare.${kind}.new`, `New ${noun}`, "", `declare — a ${noun} name`),
+    );
+    return h(ListEditor, { legend: `top-level ${kind}:`, rows, add });
+  };
+  return h(
+    "form",
+    { method: "post", action: "/docker", id: "compose-declarations", class: "step" },
+    hiddenFields(ctx, file, [["scope", "top"]]),
+    h(
+      Row,
+      null,
+      h("h3", { class: "grow", style: "margin:0" }, "Named volumes and networks"),
+      h(SubmitButton, { value: "apply", label: "Preview changes", disabled }),
+    ),
+    list("volumes", "volume"),
+    list("networks", "network"),
   );
 }
 
@@ -924,12 +1171,7 @@ function ServiceForm(
   { ctx, file, svc }: EditorProps & { readonly svc: ComposeService },
 ): VNode {
   const id = `compose-${svc.name}`;
-  const hidden = [
-    [UI_CSRF_FIELD, ctx.csrf],
-    [EDITOR_FIELD, EDITOR_VALUE],
-    ["service", svc.name],
-    [BASE_FIELD, file.base],
-  ].map(([name, value]) => h("input", { key: name, name, type: "hidden", value }));
+  const hidden = hiddenFields(ctx, file, [["service", svc.name]]);
   const disabled = ctx.readOnly;
   return h(
     "form",
@@ -998,6 +1240,7 @@ function CommentedService(
       HeadRow,
       { svc, badge: `commented out · line ${svc.line}` },
       h(SubmitButton, { value: "toggle", label: "Enable", disabled }),
+      h(SubmitButton, { value: "removeService", label: "Remove", disabled, ghost: true }),
     ),
     h("p", { class: "lead" }, parts.length ? parts.join(" · ") : "An empty service block."),
   );
@@ -1024,9 +1267,10 @@ function ActiveService(props: ServiceProps & { readonly id: string }): VNode {
       { svc, badge: `line ${svc.line}` },
       h(SubmitButton, { value: "apply", label: "Preview changes", disabled }),
       h(SubmitButton, { value: "toggle", label: "Comment out", disabled, ghost: true }),
+      h(SubmitButton, { value: "removeService", label: "Remove", disabled, ghost: true }),
     ),
     provenanceNote(svc),
-    h(ScalarFields, { svc, id }),
+    h(ScalarFields, { svc, id, disabled }),
     h(PortsEditor, { svc, id, disabled }),
     h(EnvEditor, { svc, disabled }),
     h(DepsEditor, { model: props.model, svc, disabled }),
@@ -1079,7 +1323,13 @@ function restartOptions(current: string | undefined): WidgetOption[] {
 }
 
 /** `image` (text) and `restart` (select), through the form renderer's labelled controls. */
-function ScalarFields({ svc, id }: { readonly svc: ComposeService; readonly id: string }): VNode {
+function ScalarFields(
+  { svc, id, disabled }: {
+    readonly svc: ComposeService;
+    readonly id: string;
+    readonly disabled: boolean;
+  },
+): VNode {
   const image = control({
     tag: "input",
     name: "image",
@@ -1099,23 +1349,55 @@ function ScalarFields({ svc, id }: { readonly svc: ComposeService; readonly id: 
     null,
     h(Raw, { html: labelled({ id: `${id}-image`, label: "image", body: image }) }),
     h(Raw, { html: labelled({ id: `${id}-restart`, label: "restart", body: restart }) }),
-    h(BuildField, { svc, id }),
+    h(BuildEditor, { svc, id, disabled }),
   );
 }
 
-/** `build` as a context path; a mapping `build:` (context, dockerfile, args …) is left to hand edits. */
-function BuildField({ svc, id }: { readonly svc: ComposeService; readonly id: string }): VNode {
-  if (svc.build !== undefined && typeof svc.build !== "string") {
-    return h(Note, null, "build: is a mapping (context, dockerfile, args …) — edit it by hand.");
-  }
-  const body = control({
-    tag: "input",
-    name: "build",
-    id: `${id}-build`,
-    value: svc.build ?? "",
-    placeholder: "optional — a build context path, e.g. .",
-  });
-  return h(Raw, { html: labelled({ id: `${id}-build`, label: "build", body }) });
+/**
+ * `build`: the context, the Dockerfile and target (setting either writes a mapping `build:`),
+ * and a row editor for the build args.
+ */
+function BuildEditor(
+  { svc, id, disabled }: {
+    readonly svc: ComposeService;
+    readonly id: string;
+    readonly disabled: boolean;
+  },
+): VNode {
+  const mapping = isRecord(svc.build) ? svc.build : {};
+  return h(
+    Fragment,
+    null,
+    labelledInput(
+      `${id}-build`,
+      "build",
+      "build",
+      scalarOf(svc, "build"),
+      "optional — a build context path, e.g. .",
+    ),
+    labelledInput(
+      `${id}-dockerfile`,
+      "build.dockerfile",
+      "dockerfile",
+      textOf(mapping.dockerfile),
+      "optional — e.g. Dockerfile.prod",
+    ),
+    labelledInput(
+      `${id}-target`,
+      "build.target",
+      "target",
+      textOf(mapping.target),
+      "optional — a build stage",
+    ),
+    h(VarsEditor, {
+      legend: "build args",
+      entries: argsOf(svc.build),
+      prefix: "build.arg",
+      list: "build.args",
+      noun: "build argument ",
+      disabled,
+    }),
+  );
 }
 
 /** One text input with an accessible name (the form renderer's control). */
@@ -1218,22 +1500,54 @@ function PortsEditor(
 
 /** `environment`: a value row per variable, plus a name/value add row. */
 function EnvEditor({ svc, disabled }: Omit<ServiceProps, "model">): VNode {
-  const rows = svc.environment.map((entry, i) =>
+  return h(VarsEditor, {
+    legend: `environment (${svc.envForm} form)`,
+    entries: svc.environment,
+    prefix: "env",
+    list: "environment",
+    noun: "",
+    disabled,
+  });
+}
+
+/** Props of {@linkcode VarsEditor}. */
+interface VarsProps {
+  /** The fieldset's legend. */
+  readonly legend: string;
+  /** The pairs, in order. */
+  readonly entries: readonly { key: string; value: string }[];
+  /** The form-field prefix (`env`, `build.arg`). */
+  readonly prefix: string;
+  /** The remove buttons' list name. */
+  readonly list: string;
+  /** What one pair is called, for labels (`""` for an environment variable). */
+  readonly noun: string;
+  /** `--read-only`. */
+  readonly disabled: boolean;
+}
+
+/**
+ * A KEY = value row editor: the name, an editable value and a ✕ per pair, then a name/value add
+ * row. `environment` and a build's `args` are both written this way.
+ */
+function VarsEditor({ legend, entries, prefix, list, noun, disabled }: VarsProps): VNode {
+  const rows = entries.map((entry, i) =>
     h(
       Row,
       { key: entry.key },
       h("code", null, entry.key),
-      textInput(`env.${i}`, `Value of ${entry.key}`, entry.value),
-      removeButton("environment", i, `Remove ${entry.key}`, disabled),
+      textInput(`${prefix}.${i}`, `Value of ${noun}${entry.key}`, entry.value),
+      removeButton(list, i, `Remove ${noun}${entry.key}`, disabled),
     )
   );
+  const named = noun === "" ? "variable " : noun;
   const add = h(
     Row,
     null,
-    textInput("env.new.key", "New variable name", "", "add — NAME"),
-    textInput("env.new.value", "New variable value", "", "value"),
+    textInput(`${prefix}.new.key`, `New ${named}name`, "", "add — NAME"),
+    textInput(`${prefix}.new.value`, `New ${named}value`, "", "value"),
   );
-  return h(ListEditor, { legend: `environment (${svc.envForm} form)`, rows, add });
+  return h(ListEditor, { legend, rows, add });
 }
 
 /** `depends_on`: a chip per dependency, plus a select of the other services. */
