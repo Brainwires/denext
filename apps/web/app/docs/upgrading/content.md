@@ -37,13 +37,13 @@ links back to the release that introduced it.
   `requestPasswordReset()` / `requestEmailVerification()` answer `{ ok: true }` or
   `{ ok: false, error: "throttled", retryAfter }` instead of `{ throttled }`. A
   truthiness check on an old nullable result now always passes — test `.ok`.
-  ([Unreleased](/docs/changelog))
+  ([2.5.0-rc.5](/docs/changelog#250-rc5---2026-09-15))
 - **`MfaStatus.enrolled` now means a confirmed factor, and `confirmed` is gone.**
   Read `pendingConfirmation` for an enrollment that was started but not
-  confirmed. ([Unreleased](/docs/changelog))
+  confirmed. ([2.5.0-rc.5](/docs/changelog#250-rc5---2026-09-15))
 - **Minting an API token needs a recent sign-in.** `POST /auth/tokens` from an
   older session answers `403 { error: "reauth_required" }`; sign in again first.
-  ([Unreleased](/docs/changelog))
+  ([2.5.0-rc.5](/docs/changelog#250-rc5---2026-09-15))
 - **`verifyEmail()` answers `{ ok: true, user }` / `{ ok: false, error }`**
   instead of the user or `null`: `if (await verifyEmail(…))` now always passes —
   test `result.ok`. ([2.5.0-rc.3](/docs/changelog#250-rc3---2026-09-14))
