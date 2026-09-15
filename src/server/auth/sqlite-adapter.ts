@@ -261,7 +261,9 @@ function createIndex(db: SqliteDb, spec: TableSpec, index: IndexSpec): void {
 /** Bring a handle up to the current schema (idempotent) and set the usual WAL pragmas. */
 function initSchema(db: SqliteDb): void {
   try {
-    db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL");
+    // busy_timeout first: a second writer (a seed script, `denext task`) waits instead of
+    // failing at once with "database is locked", even when WAL is refused.
+    db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL");
   } catch { /* a handle that refuses pragmas keeps its defaults */ }
   for (const spec of SCHEMA) reconcileTable(db, spec);
 }
