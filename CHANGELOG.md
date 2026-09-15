@@ -33,6 +33,25 @@ and this project adheres to
 
 ### Changed
 
+- **Breaking (since rc.2):** the auth API settles on one shape before 2.5.0. The config comes
+  first, then a single identifier as a positional argument or anything more as an options
+  object, and a failure is `{ ok: false, error }`, as `verifyEmail()` and `resetPassword()`
+  already answer.
+  - `enrollTotp(config, session)` (was `(config, user)`) answers `EnrollTotpResult`, not
+    `TotpEnrollment | null`, and enforces the recent-sign-in rule its route does
+    (`error: "reauth_required"`).
+  - `confirmTotp(config, { user, code })` (was positional) fails with
+    `error: "invalid_code" | "not_pending"`.
+  - `verifySecondFactor(config, { userId, code })` (was positional) answers
+    `SecondFactorResult` (`{ ok: true, method }`), not `MfaMethod | null`.
+  - `verifyTotp()` fails with `error: "invalid_code"`.
+  - `MfaStatus` is `{ enrolled, pendingConfirmation, backupCodesRemaining }`: `enrolled` now
+    means a confirmed factor, as `mfa.required: "enrolled"` does, and `confirmed` is gone.
+  - `requestPasswordReset()` / `requestEmailVerification()` resolve
+    `{ ok: true } | { ok: false, error: "throttled", retryAfter }` (was `{ throttled,
+    retryAfter? }`).
+- `signIn()` is typed by overload: a `credentials` sign-in resolves `CredentialsSignInResult`
+  (`{ ok: true, user?, mfa? }`), any other the sign-in URL. It was `Promise<unknown>`.
 - The default auth rate limits leave room for many users behind one IP: sign-in starts allow
   100 per IP per 15 minutes (was 20), session reads 300 per IP per minute (was 60). Both limits
   are new in 2.5; tune them with `rateLimit.signin` / `rateLimit.session`.
