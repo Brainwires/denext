@@ -9,7 +9,7 @@
  *   client IP, 20 per 15 minutes, so an unauthenticated visitor can't make the app mint
  *   PKCE/state transactions (or probe provider ids) without bound;
  * - the **session-read** limiter counts every `GET {basePath}/session` per client IP,
- *   60 per minute (`rateLimit.session`), so the unauthenticated poll endpoint can't be
+ *   300 per minute (`rateLimit.session`), so the unauthenticated poll endpoint can't be
  *   turned into free cookie-verification + store-read work;
  * - the **verification** limiter counts every outbound-token request (a password-reset,
  *   email-verification, sign-in link or one-time-code send) per address, 3 per 15 minutes (`rateLimit.verification`),
@@ -106,19 +106,19 @@ export interface RateLimitOptions {
   };
   /**
    * Tune the **session-read** limiter — the per-IP budget for `GET {basePath}/session`,
-   * counted on every hit. Default 60 per minute, which is far above any sane
+   * counted on every hit. Default 300 per minute, which is far above any sane
    * `SessionProvider` poll and still bounds an unauthenticated flood. Like `signin`, it
    * shares `store` and ignores `max`/`windowMs`/`keyGenerator`.
    */
   session?: {
-    /** Session reads allowed per client IP per window before a `429`. Default 60. */
+    /** Session reads allowed per client IP per window before a `429`. Default 300. */
     max?: number;
     /** Window length in ms. Default 1 minute. */
     windowMs?: number;
   };
   /**
-   * Tune the **verification** limiter — outbound-token requests (password-reset and
-   * email-verification sends), counted on every request for an address whether or not
+   * Tune the **verification** limiter — outbound-token requests (password-reset,
+   * email-verification, magic-link and one-time-code sends), counted on every request for an address whether or not
    * the address has an account, so a throttled unknown address answers exactly like a
    * throttled known one. The IP-wide bucket allows `IP_BUCKET_FACTOR` (10)× `max`. Shares
    * `store`; ignores the credentials `max`/`windowMs`/`keyGenerator`.
@@ -166,9 +166,9 @@ export interface RateLimiter {
 
 const DEFAULT_MAX = 5;
 /** Sign-in starts one client IP may make per window before a `429`. */
-const DEFAULT_SIGNIN_MAX = 20;
+const DEFAULT_SIGNIN_MAX = 100;
 /** Session reads one client IP may make per window before a `429`. */
-const DEFAULT_SESSION_MAX = 60;
+const DEFAULT_SESSION_MAX = 300;
 const DEFAULT_WINDOW_MS = 15 * 60_000;
 /** The session-read limiter's window: a minute, not the sign-in quarter-hour. */
 const DEFAULT_SESSION_WINDOW_MS = 60_000;
@@ -407,7 +407,7 @@ export function signinStartKey(request: Request, options: RateLimitKeyOptions = 
  * The session-READ bucket for `request` — the client IP alone, namespaced away from both
  * other budgets. `GET {basePath}/session` is unauthenticated and does real work (a cookie
  * verification, a store read, and on a stale session a re-issue), so it gets its own,
- * looser budget: 60 hits per client per minute by default, tunable with `rateLimit.session`.
+ * looser budget: 300 hits per client per minute by default, tunable with `rateLimit.session`.
  *
  * @param request The incoming session request.
  * @param options Whether a fronting proxy's `x-forwarded-for` may be trusted.
@@ -544,7 +544,7 @@ export function credentialsLimiter(config: RateLimitConfig): RateLimiter | null 
 }
 
 /**
- * The sign-in-start limiter for an auth config: 20 hits per client IP per 15 minutes by
+ * The sign-in-start limiter for an auth config: 100 hits per client IP per 15 minutes by
  * default, tunable with `rateLimit.signin`.
  *
  * @param config The app's auth config.
@@ -555,7 +555,7 @@ export function signinStartLimiter(config: RateLimitConfig): RateLimiter | null 
 }
 
 /**
- * The session-read limiter for an auth config: 60 hits per client IP per minute by
+ * The session-read limiter for an auth config: 300 hits per client IP per minute by
  * default, tunable with `rateLimit.session`.
  *
  * @param config The app's auth config.

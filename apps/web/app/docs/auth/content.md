@@ -1036,13 +1036,13 @@ with `?reset=1`, and a refused step-up code goes back to `mfa` with
 Brute-force protection is **on by default**, as five fixed-window limiters built from one
 `rateLimit` config:
 
-| Limiter       | Counts                                                                                                       | Key                                                       | Default       |
-| ------------- | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------- | ------------- |
-| Credentials   | _Failed_ `POST {basePath}/callback/:provider`                                                                | Client IP + submitted identifier, lower-cased             | 5 per 15 min  |
-| Sign-in start | _Every_ `GET {basePath}/signin/:provider`                                                                    | Client IP                                                 | 20 per 15 min |
-| Session read  | _Every_ `GET {basePath}/session`                                                                             | Client IP                                                 | 60 per minute |
-| Email sends   | _Every_ mail request — `/reset`, an email-provider send, `requestEmailVerification` / `requestPasswordReset` | Submitted address, plus client IP at 10×                  | 3 per 15 min  |
-| Second factor | _Every_ code check on `/mfa`, `/mfa/confirm`, `/mfa/disable`; _failed_ email-code and magic-link redeems     | User id (email codes: the address), plus client IP at 10× | 5 per 5 min   |
+| Limiter       | Counts                                                                                                       | Key                                                       | Default        |
+| ------------- | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------- | -------------- |
+| Credentials   | _Failed_ `POST {basePath}/callback/:provider`                                                                | Client IP + submitted identifier, lower-cased             | 5 per 15 min   |
+| Sign-in start | _Every_ `GET {basePath}/signin/:provider`                                                                    | Client IP                                                 | 100 per 15 min |
+| Session read  | _Every_ `GET {basePath}/session`                                                                             | Client IP                                                 | 300 per minute |
+| Email sends   | _Every_ mail request — `/reset`, an email-provider send, `requestEmailVerification` / `requestPasswordReset` | Submitted address, plus client IP at 10×                  | 3 per 15 min   |
+| Second factor | _Every_ code check on `/mfa`, `/mfa/confirm`, `/mfa/disable`; _failed_ email-code and magic-link redeems     | User id (email codes: the address), plus client IP at 10× | 5 per 5 min    |
 
 Past the limit the endpoint answers a generic `429` with `Retry-After` — like the generic
 `401`, it never reveals whether the account exists — and a successful credentials sign-in
@@ -1054,7 +1054,9 @@ signed transaction cookie, plus provider-id probing.
 
 The session-read limiter exists for the same reason: `GET {basePath}/session` is
 unauthenticated work — a cookie verification plus a store read, and possibly a re-issue —
-and 60 per minute is far above any sane `SessionProvider` poll.
+and 300 per minute leaves room for many users behind one address (an office NAT). A `429`
+never signs anyone out: `SessionProvider` keeps the session it knew and waits out `Retry-After`
+before its next focus or interval refetch.
 
 The two newer budgets count per **subject**. The send budget is spent before the address is
 looked up, so a throttled unknown address answers exactly like a throttled real one, and an

@@ -210,3 +210,62 @@ Deno.test("signIn/signOut: a foreign or javascript: callbackUrl is coerced to a 
   assertEquals(await target("data:text/html,<script>"), "/", "any other scheme too");
   assertEquals(await target("dashboard"), "/", "an unrooted value is not guessed at");
 });
+
+/** Stub `fetch` with one `Response` (or rejection) per call; returns the calls + a restore. */
+function stubResponses(
+  answer: (call: number) => Response | Promise<Response>,
+): { urls: string[]; restore: () => void } {
+  const urls: string[] = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = ((input: RequestInfo | URL) => {
+    urls.push(String(input));
+    return Promise.resolve(answer(urls.length));
+  }) as typeof fetch;
+  return { urls, restore: () => void (globalThis.fetch = real) };
+}
+
+const signedIn = (): Response => Response.json({ user: { id: "u1" } });
+
+Deno.test("a 429 keeps the signed-in state, and focus refetches wait out Retry-After", async () => {
+  const fetched = stubResponses((n) =>
+    n === 1 ? signedIn() : new Response("{}", { status: 429, headers: { "retry-after": "60" } })
+  );
+  const screen = await renderProvider();
+  try {
+    await screen.findByText("authenticated:u1");
+    const next = await latest!.update(); // an explicit update() still asks
+    assertEquals(next.status, "authenticated", "a 429 says nothing about who is signed in");
+    await screen.findByText("authenticated:u1");
+    const before = fetched.urls.length;
+    dispatchEvent(new Event("focus"));
+    await new Promise((r) => setTimeout(r, 20));
+    assertEquals(fetched.urls.length, before, "focus held off for Retry-After");
+  } finally {
+    await screen.unmount();
+    fetched.restore();
+  }
+});
+
+Deno.test("a server or network error keeps what was known; a first load that learns nothing reads signed out", async () => {
+  const fetched = stubResponses((n) => n === 1 ? signedIn() : new Response("", { status: 503 }));
+  const screen = await renderProvider();
+  try {
+    await screen.findByText("authenticated:u1");
+    assertEquals((await latest!.update()).status, "authenticated");
+    dispatchEvent(new Event("focus")); // a 5xx holds nothing back: focus still refetches
+    await waitFor(() => assertEquals(fetched.urls.length, 3));
+    await screen.findByText("authenticated:u1");
+  } finally {
+    await screen.unmount();
+    fetched.restore();
+  }
+
+  const down = stubResponses(() => Promise.reject(new TypeError("network down")));
+  const first = await renderProvider();
+  try {
+    await first.findByText("unauthenticated:-");
+  } finally {
+    await first.unmount();
+    down.restore();
+  }
+});

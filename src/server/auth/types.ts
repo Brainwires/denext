@@ -508,10 +508,11 @@ export interface AuthConfig {
    */
   canonicalOrigin?: string;
   /**
-   * The app runs behind a proxy/load balancer that sets `x-forwarded-for`, so the
-   * credentials rate limiter may key on that header's LAST hop (the one the proxy
-   * appended). Off by default — without a proxy the header is attacker-controlled, and
-   * the limiter keys on the socket peer instead. Mirrors the server-level option.
+   * The app runs behind a proxy/load balancer that sets `x-forwarded-for`, so every
+   * per-IP rate-limit budget (and `signInFailed`'s `ip`) may key on that header's LAST hop
+   * (the one the proxy appended). Off by default — without a proxy the header is
+   * attacker-controlled, and the limiters key on the socket peer instead. Mirrors the
+   * server-level option.
    */
   trustForwardedHeaders?: boolean;
   /** Optional sign-in/session callbacks. */
@@ -543,9 +544,13 @@ export interface AuthConfig {
    */
   dangerouslyAllowInsecureProviders?: boolean;
   /**
-   * Brute-force protection. ON by default: the Credentials endpoint allows 5 failed
-   * attempts per client IP + identifier per 15 minutes, and `/signin/*` allows 20 sign-in
-   * starts per client IP per 15 minutes (`rateLimit.signin`) — both answer a generic `429`.
+   * Brute-force protection. ON by default, with five budgets that each answer a generic `429`:
+   * credentials, 5 failed attempts per client IP + identifier per 15 minutes; sign-in starts
+   * (`/signin/*`), 100 per client IP per 15 minutes (`rateLimit.signin`); session reads
+   * (`GET /session`), 300 per client IP per minute (`rateLimit.session`); emailed tokens
+   * (verification, reset, magic link, one-time code), 3 sends per address per 15 minutes
+   * (`rateLimit.verification`); second factors, 5 attempts per user per 5 minutes
+   * (`rateLimit.mfa`).
    * Tune the limits, key, or store here, or pass `false` to disable every limiter (e.g. you
    * rate-limit at the edge). The default store is per-process — pass a shared `store` for
    * multi-replica deployments.

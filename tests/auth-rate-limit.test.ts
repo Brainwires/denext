@@ -333,9 +333,9 @@ async function signinStatuses(
   return out;
 }
 
-Deno.test("signin-start: 20 starts per IP pass, the 21st is a 429 with Retry-After", async () => {
+Deno.test("signin-start: 100 starts per IP pass, the 101st is a 429 with Retry-After", async () => {
   const config = signinConfig();
-  const statuses = await signinStatuses(config, 20, "203.0.113.10");
+  const statuses = await signinStatuses(config, 100, "203.0.113.10");
   assertEquals(new Set(statuses), new Set([303]), "the whole default budget redirects to the IdP");
   const locked = (await signinStart(config, "203.0.113.10"))!;
   assertEquals(locked.status, 429);
@@ -386,7 +386,7 @@ Deno.test("signin-start: the lockout lifts when the window expires", async () =>
 });
 
 Deno.test("signin-start: the two budgets are separate — exhausting one leaves the other", async () => {
-  // `max: 2` is the CREDENTIALS budget; sign-in-start keeps its own (default 20).
+  // `max: 2` is the CREDENTIALS budget; sign-in-start keeps its own (default 100).
   const withBoth: AuthConfig = {
     ...limitedConfig({ rateLimit: { max: 2, windowMs: 60_000 } }),
     providers: [...limitedConfig().providers, ...signinConfig().providers],
