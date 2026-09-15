@@ -335,9 +335,9 @@ single keys set, changed or deleted in place.
   is a `409` and writes nothing.
 
 A plugin that is not catalogued with an options schema, or not wired into the config, is a
-`404`. The panel knows a plugin is wired by its import — `import { openapi } from
-"@denext/openapi"` — so an aliased import (`import { openapi as oa } …`) or one from a full
-`jsr:` specifier is not recognised and gets no options link. The JSON twin, `/api/plugins/options?name=…`, reads
+`404`. The panel knows a plugin is wired by its import: a plain
+`import { openapi } from "@denext/openapi"`, an aliased one (`import { openapi as oa } …`, whose
+options are then written into `oa(…)`) or one from a full `jsr:` specifier. The JSON twin, `/api/plugins/options?name=…`, reads
 `{ ok, name, callee, values, codeKeys, schema }` and takes `sets: [{ path, value }]` (a set
 with no `value` deletes the key), plus `confirm: true` to write.
 
@@ -656,7 +656,6 @@ above.
 | YAML the editor can't follow | Anchors, aliases, merge keys, flow-style services, several documents and mixed line endings make the file opaque: read-only, with the regeneration diff                                        |
 | Other compose file names     | Only `docker-compose.yml` at the project root is discovered — not `compose.yaml`                                                                                                               |
 | Third-party plugin options   | Option schemas come from the first-party catalog, so a JSR plugin gets no options form; set its options in `denext.config.ts`                                                                  |
-| Aliased plugin imports       | `import { openapi as oa }`, or an import from a full `jsr:` specifier, is not recognised as the catalog's plugin, so it gets no options link                                                   |
 | Code-valued options          | A callback, a variable, a `{}` schema part or a function-wrapped list is shown read-only, never rewritten                                                                                      |
 | Agent / MCP control          | Deferred; every panel already answers a JSON twin so it can be added without changing the wire                                                                                                 |
 | A denext app                 | The UI is server-rendered components built with `h()` — no bundler, no hydration — not an App Router app, which is what lets it start instantly with no build                                  |

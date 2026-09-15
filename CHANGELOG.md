@@ -15,6 +15,10 @@ and this project adheres to
   submitted values kept. It answered raw JSON, which replaced the page when JavaScript was off.
   The Plugins panel intro no longer calls its list "the first-party catalog" (JSR search lists
   third-party packages too).
+- `denext plugin add` / `remove` and the Plugins panel recognise a plugin imported under
+  another name (`import { openapi as oa }`) or from a full `jsr:` specifier. Adding one used to
+  insert an `openapi()` call no import binds (or a duplicate import), removing one reported it
+  as not wired, and the panel offered it no options form.
 
 ## [2.5.0-rc.5] - 2026-09-15
 

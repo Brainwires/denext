@@ -327,9 +327,6 @@ four documented bounds of the opt-in:
   schema part (a type the generator could not describe) or a function-wrapped list
   (openapi's `tags`, `securitySchemes`) renders as a read-only cell. A toggle over an option
   the config does not set is written only when it is switched on.
-- **A plugin is recognised by its plain import.** `import { openapi as oa } from
-  "@denext/openapi"`, or an import from a full `jsr:` specifier, is not recognised as the
-  catalog's plugin, so it gets no options link.
 - **JSR search needs net permission for both `api.jsr.io` and `jsr.io`.** Without it the
   panel degrades exactly as under `--offline`; the UI checks the permission and never
   prompts.

@@ -28,6 +28,7 @@ import {
   ejectPlugin,
   injectPlugin,
   listPlugins,
+  normalizeSpec,
   type PluginNames,
   resolvePluginNames,
 } from "../../build/plugin-install.ts";
@@ -154,8 +155,9 @@ export async function readProject(dir: string): Promise<ProjectState> {
 
 /** Whether a wired `plugins` entry is this catalogue row's factory. */
 function matches(plugin: ConfiguredPlugin, entry: CatalogRow): boolean {
-  return plugin.importSpec === entry.name ||
-    (plugin.importSpec === null && entry.factory !== undefined && plugin.factory === entry.factory);
+  // An aliased binding (`openapi as oa`) or a `jsr:` specifier names the same package.
+  if (plugin.importSpec !== null) return normalizeSpec(plugin.importSpec) === entry.name;
+  return entry.factory !== undefined && plugin.imported === entry.factory;
 }
 
 /**

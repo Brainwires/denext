@@ -550,3 +550,24 @@ Deno.test("--read-only still searches (a GET) but refuses both adds and every op
     await stop(h);
   }
 });
+
+Deno.test("a plugin imported under another name gets its options form, written through the alias", async () => {
+  const aliased = CONFIG.replace("import { openapi } from", "import { openapi as oa } from")
+    .replace("plugins: [openapi(", "plugins: [oa(");
+  const h = await ui({ "denext.config.ts": aliased });
+  try {
+    const res = await get(h, OPTIONS);
+    assertEquals(res.status, 200);
+    assertStringIncludes(
+      await res.text(),
+      'name="o.path" id="f-o-path" type="text" value="/spec.json"',
+    );
+    const done = await previewThenConfirm(h, { ...UNTOUCHED, "o.path": "/api.json" });
+    assert(done.status < 400, `confirm answered ${done.status}`);
+    const source = await config(h);
+    assertStringIncludes(source, 'oa({ path: "/api.json"');
+    assert(!source.includes("openapi("), "no call under the exported name");
+  } finally {
+    await stop(h);
+  }
+});
