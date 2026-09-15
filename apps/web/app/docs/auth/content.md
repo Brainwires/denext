@@ -794,8 +794,10 @@ export async function confirmEnrollment(code: string) {
 }
 ```
 
-Unlike the endpoints, the functions spend no attempt budget, so a Server Action that checks
-codes must throttle itself (`examples/auth` carries its own limiter for exactly this).
+Unlike the endpoints, the functions spend no attempt budget, so a Server Action that checks a
+code spends one first with `spendMfaAttempt(authConfig, { userId })` — the same per-user budget
+the `/mfa*` endpoints spend (`rateLimit.mfa`), answering `{ ok: true }` or
+`{ ok: false, error: "rate_limited", retryAfter }`. `examples/auth` does exactly this.
 
 **The step-up.** When a first factor succeeds for a user who owes a code, the session is
 minted **pending**: it lasts 15 minutes (never more than `maxAge`), is never slid forward,

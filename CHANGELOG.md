@@ -10,6 +10,10 @@ and this project adheres to
 
 ### Added
 
+- `spendMfaAttempt(config, { userId, request? })` (`denext/server`): spends one attempt from the
+  user's MFA budget — the one the `/mfa*` endpoints spend — so a Server Action that checks a code
+  with `verifySecondFactor` or `confirmTotp` is throttled the same way. `examples/auth` drops its
+  own limiter for it.
 - `activeAuthConfig()` (`denext/server`): the config `denextAuth()` was built with.
   `requireBearer({ scope, role })` uses it, so the config argument is optional; when no auth
   plugin is active yet where it runs, it looks the config up on the first request.

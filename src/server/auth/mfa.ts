@@ -23,6 +23,8 @@ import type { AuthAdapter, MfaRecord } from "./adapter.ts";
 import { backupCodeMatcher, generateBackupCodes, isBackupCodeShaped } from "./backup-codes.ts";
 import { emitAuthEvent } from "./events.ts";
 import { resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
+import { consumeHitBudget, mfaLimiter, subjectBucketKeys } from "./rate-limit.ts";
+import { currentContext } from "../request-context.ts";
 import type { AuthRouteContext } from "./routes-shared.ts";
 import { issueAuthSession } from "./session.ts";
 import { generateTotpSecret, totpAuthUri, verifyTotp } from "./totp.ts";
@@ -357,4 +359,33 @@ export async function completeStepUp(
     isNewUser: false,
   });
   return fresh;
+}
+
+/** The outcome of {@linkcode spendMfaAttempt}. */
+export type MfaAttemptResult =
+  | { ok: true }
+  | { ok: false; error: "rate_limited"; retryAfter: number };
+
+/**
+ * Spend one second-factor attempt from the user's MFA budget — the one the
+ * `POST {basePath}/mfa*` endpoints spend — before a Server Action checks a code with
+ * {@linkcode verifySecondFactor} or {@linkcode confirmTotp}, which spend nothing themselves.
+ * Every attempt counts, right or wrong, so a correct guess never resets the count. The per-user
+ * budget is `rateLimit.mfa` (5 per 5 minutes by default), and the client IP's bucket counts too
+ * when a request is in scope. Pass the config you passed to `denextAuth()` so the endpoints and
+ * your actions share one budget.
+ *
+ * @param config The app's auth config.
+ * @param input The user, and optionally the request (default: the one being handled).
+ * @returns `{ ok: true }` — check the code — or `{ ok: false, error: "rate_limited", retryAfter }`
+ *   with the seconds until the budget refills.
+ */
+export async function spendMfaAttempt(
+  config: AuthConfig,
+  input: { userId: string; request?: Request },
+): Promise<MfaAttemptResult> {
+  const request = input.request ?? currentContext()?.request;
+  const keys = subjectBucketKeys("mfa", input.userId, request, config);
+  const retryAfter = await consumeHitBudget(mfaLimiter(config), keys);
+  return retryAfter === null ? { ok: true } : { ok: false, error: "rate_limited", retryAfter };
 }

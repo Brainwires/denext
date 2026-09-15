@@ -271,9 +271,6 @@ four documented bounds of the opt-in:
   ended early either; it lasts 15 minutes.
 - **`mfa.required: "always"` is trust-on-first-use**: a user with no factor enrolls one
   during the step-up, so whoever holds the first factor at that moment chooses the second.
-- **No public helper spends the MFA attempt budget from a Server Action.** The `/mfa*`
-  endpoints spend it; a Server Action that calls `verifySecondFactor` or `confirmTotp` must
-  throttle itself (`examples/auth` carries its own limiter).
 - **Sliding refresh only happens where a `Response` is being produced.** `session.updateAge`
   re-issues the cookie on `GET {basePath}/session`, in `requireAuth()` and in
   `requireSession()`. A bare `auth()` inside a streamed Server Component cannot set a cookie
