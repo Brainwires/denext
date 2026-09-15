@@ -8,6 +8,14 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- `denext ui`: a refused Commands run (an unknown or built-in verb, a bad flag or argument
+  value, `--read-only`) answers a form post with the panel, the reason as an alert and the
+  submitted values kept. It answered raw JSON, which replaced the page when JavaScript was off.
+  The Plugins panel intro no longer calls its list "the first-party catalog" (JSR search lists
+  third-party packages too).
+
 ## [2.5.0-rc.5] - 2026-09-15
 
 ### Security

@@ -524,7 +524,8 @@ function PluginsPanel(
     h(
       "p",
       { class: "lead" },
-      "The first-party catalog. Adding or removing one previews the exact ",
+      "The first-party plugins, and any JSR package you search for below. Adding or removing one ",
+      "previews the exact ",
       h("code", null, "deno"),
       " command and a diff of your config before anything is written.",
     ),
