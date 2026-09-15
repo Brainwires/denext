@@ -8,6 +8,16 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Security
+
+- The next.config evaluator (`denext migrate`, the `denext ui` next.config panel) starts from
+  an empty environment (only `NODE_ENV`, `NEXT_PUBLIC_*` and the variables Deno needs to find
+  its cache pass through) and downloads nothing (`--cached-only`, a manual `node_modules`).
+  npm resolution runs outside Deno's permission sandbox, so a repository's `.npmrc` could aim
+  an `npm:` import at a host of its choosing and carry a shell secret out in the package name;
+  `--no-remote` alone did not stop that. This also keeps `denext ui --offline` true for this
+  child.
+
 ## [2.5.0-rc.4] - 2026-09-15
 
 ### Security
