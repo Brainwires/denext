@@ -234,7 +234,8 @@ for `@denext/openapi` (declare the matching `securitySchemes: { bearerAuth: … 
 emailOtp()]` plus `sendVerificationRequest` (denext ships no mailer). Second factor: an
 enrolled user's sign-in comes back pending; your `pages.mfa` page renders when
 `pendingMfaSession()` returns a session and posts `{ code }` to `/auth/mfa`; enrollment is
-`/auth/mfa/enroll` → `/auth/mfa/confirm`. Full guide: https://denext.dev/docs/auth
+`/auth/mfa/enroll` → `/auth/mfa/confirm` (from a complete session it needs a recent sign-in,
+`session.authTime`). Full guide: https://denext.dev/docs/auth
 
 **A project-local CLI verb (no plugin):** put it in `denext.config.ts` and run it as a verb.
 
@@ -250,8 +251,9 @@ export default {
 
 **A GUI over the project:** `denext ui` serves a loopback (127.0.0.1) project-management
 page — schema-driven `denext.config.ts` editing (a comment-preserving splice: outside the
-value span it replaces, the file keeps its bytes), plugins with per-plugin option forms and
-JSR search, every `generate` kind, Docker files plus in-place `docker-compose.yml` editing, a
+value span it replaces, the file keeps its bytes), plugins with option forms for the
+first-party ones and JSR search, every `generate` kind, Docker files plus in-place
+`docker-compose.yml` editing, a
 setup wizard and the project's own verbs. It works with JavaScript disabled, and
 **project code never runs in the UI's process** — every project-touching operation,
 including verb discovery (`denext commands --json`), is a `deno` subprocess.
