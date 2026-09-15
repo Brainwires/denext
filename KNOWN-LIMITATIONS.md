@@ -308,11 +308,9 @@ four documented bounds of the opt-in:
 - **The compose editor owns a closed set of edits**: `image`, `restart`, `build` (a context
   path), `ports`, `environment`, `depends_on`, `volumes`, `networks`, and commenting a service
   out or back in. A new service, a mapping `build:` (context, dockerfile, args), a long-form
-  `networks:` and everything else is edited by hand; a long-syntax port or
-  volume (a mapping) can be removed but not rewritten, and a flow-style field
-  (`ports: ["80:80"]`) is refused. A file holding several YAML documents, or whose `services:`
-  is written in flow style, is **opaque**: it is read-only, with the reason and the regeneration
-  diff.
+  `networks:` and everything else is edited by hand, and a long-syntax port or volume (a
+  mapping) can be removed but not rewritten. A file holding several YAML documents is
+  **opaque**: it is read-only, with the reason and the regeneration diff.
 - **A field a service takes from a merge key (`<<`) can be overridden but not deleted.**
   Setting it writes an override into the service. Removing it would need Compose's `!reset`
   tag, which the editor does not write.

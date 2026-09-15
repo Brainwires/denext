@@ -452,8 +452,9 @@ parsed model — a mismatch is a refusal, never a write. Comments, blank lines, 
 every untouched line stay byte for byte. `environment` keeps the form it was written in (a
 `- KEY=value` list or a `KEY: value` map); a new port mapping is always double-quoted
 (`5432:5432` unquoted is a number to a YAML 1.1 reader); a long-syntax port or volume (a
-mapping) can be removed but not rewritten; a flow-style field (`ports: ["80:80"]`) is refused
-with "edit it by hand".
+mapping) can be removed but not rewritten. A flow-style field (`ports: ["80:80"]`,
+`environment: { A: "1" }`) is edited in place and keeps its style, even across lines; a
+flow-style `services:` is rewritten as block mappings by the first edit.
 
 Each submit is one edit set for one service — every field that differs from the file, every
 filled add row, and the button you pressed — and it takes the usual two steps. The first
@@ -485,7 +486,7 @@ always had: the file shown read-only next to the regeneration diff, with no edit
 reason. That is a file that:
 
 - does not parse (two YAML documents in one file do not);
-- has a top level or `services:` that is not a block mapping;
+- has a top level that is not a mapping, or a `services:` that is not a mapping of services;
 - puts content on a document marker (`--- {…}`).
 
 A file that still carries the sentinel is editable as well, with a note: **Write files**
@@ -679,7 +680,7 @@ above.
 | Not yet                      | Why                                                                                                                                                                                                                |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Compose edits beyond the set | The editor owns `image`, `restart`, `build`, `ports`, `environment`, `depends_on`, `volumes`, `networks` and commenting a service out or in; anything else — a new service, a mapping `build:` — is edited by hand |
-| YAML the editor can't follow | Several YAML documents in one file, or a flow-style `services:`, make the file opaque: read-only, with the reason and the regeneration diff                                                                        |
+| YAML the editor can't follow | Several YAML documents in one file make the file opaque: read-only, with the reason and the regeneration diff                                                                                                      |
 | Code-valued options          | A callback, a variable, a `{}` schema part or a function-wrapped list is shown read-only, never rewritten                                                                                                          |
 | Agent / MCP control          | Deferred; every panel already answers a JSON twin so it can be added without changing the wire                                                                                                                     |
 | A denext app                 | The UI is server-rendered components built with `h()` — no bundler, no hydration — not an App Router app, which is what lets it start instantly with no build                                                      |

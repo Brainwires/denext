@@ -14,8 +14,8 @@
 // depends_on, volumes, networks, commenting a service out / back in). Every posted service name,
 // variable key, list index and dependency is checked against the parsed model first — the editor
 // never writes a service or key the file did not report. A file the model cannot follow (several
-// documents, a flow-style `services:`, …) is "opaque": shown read-only, with the reason, next to
-// the regeneration diff.
+// documents, a document marker carrying content, …) is "opaque": shown read-only, with the
+// reason, next to the regeneration diff.
 
 import {
   applyComposeEdits,

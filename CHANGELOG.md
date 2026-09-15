@@ -33,6 +33,9 @@ and this project adheres to
     ending it had.
   - Document markers: a single document may open with `---` and close with `...`.
   - Compose's `!reset` and `!override` tags are read.
+  - Flow style: a flow-style field (`ports: ["80:80"]`, `environment: { A: "1" }`) is edited
+    in place and keeps its style, even across lines, and a flow-style `services:` is rewritten
+    as block mappings by its first edit.
   - Anchors, aliases and merge keys:
     - A service lists the fields it takes from a merge key (`<<`), and setting one writes an
       override.

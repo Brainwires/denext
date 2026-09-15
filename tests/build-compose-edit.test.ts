@@ -75,7 +75,6 @@ Deno.test("readCompose: unsupported shapes are opaque (null)", () => {
       "- a\n- b\n", // top level is a list
       "services:\n  - web\n", // services is a list
       "services:\n  web: nginx\n", // service is a scalar
-      "services: { web: { image: a } }\n", // flow-style services
       "services:\n  a:\n    image: x\n---\nservices:\n  b:\n    image: y\n", // multi-document
       "services:\n  web:\n    image: [unclosed\n", // does not parse
       "--- {services: {web: {image: a}}}\n", // content on a document marker
@@ -199,6 +198,79 @@ Deno.test("a flow-style or aliased service is rewritten in block style by its fi
   assertMatch(
     refusal("services:\n  web: {}\n", [{ op: "set", service: "web", field: "image", value: "x" }]),
     /empty mapping/,
+  );
+});
+
+Deno.test("flow-style lists are edited in place and keep their style", () => {
+  const text = "services:\n  web:\n    image: x\n" +
+    '    ports: ["80:80", "443:443"] # web\n    depends_on: [db]\n' +
+    "  db:\n    image: pg\n  cache:\n    image: redis\n";
+  const line3 = (ops: ComposeOp[]) => edit(text, ops).split("\n")[3];
+  assertEquals(
+    line3([{ op: "ports", service: "web", action: "add", value: "8080:8080" }]),
+    '    ports: ["80:80", "443:443", "8080:8080"] # web',
+  );
+  assertEquals(
+    line3([{ op: "ports", service: "web", action: "remove", index: 0 }]),
+    '    ports: ["443:443"] # web',
+  );
+  assertEquals(
+    line3([{ op: "ports", service: "web", action: "remove", index: 1 }]),
+    '    ports: ["80:80"] # web',
+  );
+  assertEquals(
+    line3([{ op: "ports", service: "web", action: "update", index: 1, value: "8443:443" }]),
+    '    ports: ["80:80", "8443:443"] # web',
+  );
+  assertStringIncludes(
+    edit(text, [{ op: "dependsOn", service: "web", action: "add", value: "cache" }]),
+    "    depends_on: [db, cache]\n",
+  );
+  const gone = edit(text, [{ op: "dependsOn", service: "web", action: "remove", value: "db" }]);
+  assert(!gone.includes("depends_on"), "the emptied flow field goes");
+  assertEquals(
+    edit("services:\n  web:\n    image: x\n    volumes: []\n", [
+      { op: "volumes", service: "web", action: "add", value: "./data:/data" },
+    ]),
+    "services:\n  web:\n    image: x\n    volumes: [./data:/data]\n",
+  );
+});
+
+Deno.test("a flow list over several lines keeps its layout", () => {
+  const text = "services:\n  web:\n    image: x\n    ports: [\n" +
+    '      "80:80", # http\n      "443:443"\n      ]\n    restart: always\n';
+  assertEquals(
+    edit(text, [{ op: "ports", service: "web", action: "add", value: "8080:8080" }]),
+    text.replace('"443:443"\n', '"443:443", "8080:8080"\n'),
+  );
+  const out = edit(text, [{ op: "ports", service: "web", action: "remove", index: 1 }]);
+  const web = readCompose(out)!.services[0];
+  assertEquals([web.ports, web.restart], [["80:80"], "always"]);
+});
+
+Deno.test("a flow-style environment mapping is edited in place", () => {
+  const text = 'services:\n  web:\n    image: x\n    environment: { A: "1", B: x }\n';
+  assertEquals(
+    edit(text, [{ op: "env", service: "web", action: "set", key: "B", value: "z" }]),
+    text.replace("B: x", "B: z"),
+  );
+  assertEquals(
+    edit(text, [{ op: "env", service: "web", action: "set", key: "C", value: "3" }]),
+    text.replace("B: x }", 'B: x, C: "3" }'),
+  );
+  assertEquals(
+    edit(text, [{ op: "env", service: "web", action: "delete", key: "A" }]),
+    text.replace('A: "1", ', ""),
+  );
+});
+
+Deno.test("a flow-style services: is rewritten as block mappings by the first edit", () => {
+  const text = "services: { web: { image: a }, db: { image: pg } } # all\nvolumes: {}\n";
+  const model = readCompose(text)!;
+  assertEquals(model.services.map((s) => [s.name, s.inline]), [["web", "flow"], ["db", "flow"]]);
+  assertEquals(
+    edit(text, [{ op: "set", service: "web", field: "image", value: "b" }]),
+    "services: # all\n  web:\n    image: b\n  db:\n    image: pg\nvolumes: {}\n",
   );
 });
 

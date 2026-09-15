@@ -42,8 +42,13 @@ export function yamlScalar(value: string): string {
   return plain ? value : JSON.stringify(value);
 }
 
-/** A mapping key: plain when it cannot be read as anything else, else double-quoted. */
-function yamlKey(key: string): string {
+/**
+ * A mapping key: plain when it cannot be read as anything else, else double-quoted.
+ *
+ * @param key The key.
+ * @returns Its YAML text.
+ */
+export function yamlKey(key: string): string {
   return PLAIN_KEY.test(key) && !YAML11_WORDS.test(key) ? key : JSON.stringify(key);
 }
 
@@ -109,4 +114,15 @@ function emitItem(value: unknown, indent: number): string[] {
   if (!isBlock(value)) return [dash + (value === null ? " null" : inlineText(value))];
   const lines = blockLines(value, indent + 2);
   return [dash + " " + lines[0].slice(indent + 2), ...lines.slice(1)];
+}
+
+/**
+ * A string as a scalar inside a flow collection: plain only where {@linkcode yamlScalar} would
+ * write it plain and it holds no flow indicator (`,` `[` `]` `{` `}`), else double-quoted.
+ *
+ * @param value The string to write.
+ * @returns Its YAML text.
+ */
+export function flowScalar(value: string): string {
+  return /[,[\]{}]/.test(value) ? JSON.stringify(value) : yamlScalar(value);
 }

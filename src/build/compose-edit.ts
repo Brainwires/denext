@@ -21,7 +21,8 @@
 // Build-time only; never imported by a shipped bundle.
 
 import type { EditResult } from "./config-edit.ts";
-import { emitEntry, yamlScalar } from "./compose-emit.ts";
+import { emitEntry, flowScalar, yamlKey, yamlScalar } from "./compose-emit.ts";
+import { type Flow, readFlow } from "./compose-flow.ts";
 import { createUnifiedDiff } from "./patch-diff.ts";
 import {
   anchorIn,
@@ -131,9 +132,9 @@ type Change = Splice & { expect: (want: Expected) => void };
 
 /** One list edit resolved to positions. */
 type ListEdit =
-  | { kind: "add"; value: string; text: string }
+  | { kind: "add"; value: string; quote?: boolean }
   | { kind: "remove"; index: number }
-  | { kind: "update"; index: number; value: string; text: string };
+  | { kind: "update"; index: number; value: string; quote?: boolean };
 
 /** A service field's children (list items or mapping entries), located line by line. */
 interface Children {
@@ -152,6 +153,13 @@ interface Whole {
   field?: Entry;
 }
 
+/** A field written as a flow collection: its lines joined with LF, and where its items sit. */
+interface FlowField {
+  field: Entry;
+  text: string;
+  flow: Flow;
+}
+
 // --- reading ----------------------------------------------------------------
 
 /**
@@ -160,7 +168,7 @@ interface Whole {
  * @param text The file's contents.
  * @returns The model, or null when the file is opaque — it does not parse (several documents do
  * not), is not a mapping of service mappings, or uses syntax a line splice cannot follow (a
- * flow-style `services:`, a document marker carrying content, a Unicode line separator).
+ * document marker carrying content, a Unicode line separator).
  */
 export function readCompose(text: string): ComposeModel | null {
   return inspectCompose(text).model;
@@ -331,6 +339,13 @@ function mismatchReason(state: State, change: Change, op: ComposeOp): string {
  * its fields. An alias becomes the service's own copy; its head line's comment is kept.
  */
 function normalized(state: State, op: ComposeOp): State | Refusal {
+  if (state.servicesInline) {
+    const services = servicesOf(state.raw);
+    if (Object.keys(services).length === 0) {
+      return bail("`services:` is an empty mapping — add a service by hand", JSON.stringify(op));
+    }
+    return commit(state, blockRewrite(state, state.servicesInline, services), op, []);
+  }
   const svc = targetOf(state, op);
   if (!svc?.inline) return state;
   const value = rawService(state.raw, svc.key);
@@ -340,11 +355,21 @@ function normalized(state: State, op: ComposeOp): State | Refusal {
       JSON.stringify(op),
     );
   }
-  const line = state.doc.lines[svc.start];
-  const tail = commentTail(line.slice(svc.valueCol)) ?? "";
-  const insert = emitEntry(svc.key, value, svc.indent, { head: line.slice(0, svc.headEnd), tail });
-  const change: Change = { at: svc.start, remove: svc.end - svc.start, insert, expect: () => {} };
-  return commit(state, change, op, []);
+  return commit(state, blockRewrite(state, svc, value), op, []);
+}
+
+/**
+ * Rewrite one entry as block YAML of `value` (its parsed value), keeping its head as written and
+ * its head line's comment. The change it plans is no change to what the file says.
+ */
+function blockRewrite(state: State, entry: Entry, value: unknown): Change {
+  const line = state.doc.lines[entry.start];
+  const keep = {
+    head: line.slice(0, entry.headEnd),
+    tail: commentTail(line.slice(entry.valueCol)),
+  };
+  const insert = emitEntry(entry.key, value, entry.indent, { ...keep, tail: keep.tail ?? "" });
+  return { at: entry.start, remove: entry.end - entry.start, insert, expect: () => {} };
 }
 
 /** Plan one operation against the current file. */
@@ -503,7 +528,7 @@ function childrenOf(
   svc: Service,
   key: string,
   form: "list" | "map",
-): Children | Whole | string {
+): Children | Whole | FlowField | string {
   const field = svc.fields.get(key);
   const value = rawService(state.raw, svc.key)[key];
   if (value !== undefined && value !== null && (form === "list") !== Array.isArray(value)) {
@@ -515,7 +540,8 @@ function childrenOf(
   const lines = state.doc.lines;
   if (!restEmpty(lines[field.start], field)) {
     if (inlineValue(lines[field.start], field).startsWith("*")) return { whole: true, field };
-    return `${key} of "${svc.key}" is written in flow style — edit it by hand`;
+    return flowField(lines, field, countOf(value)) ??
+      `${key} of "${svc.key}" is written in a flow style denext cannot follow — edit it by hand`;
   }
   const head = form === "list" ? itemHead : keyHead;
   const items = scanBlock(lines, field.start + 1, field.end, head, form === "map");
@@ -524,6 +550,52 @@ function childrenOf(
     return `the entries of ${key} in "${svc.key}" could not be located line by line`;
   }
   return { field, items, indent: items.length ? items[0].indent : field.indent + 2 };
+}
+
+/** A flow-style field located: null when its collection does not close where the field ends. */
+function flowField(lines: readonly string[], field: Entry, count: number): FlowField | null {
+  const text = lines.slice(field.start, field.end).join("\n");
+  const head = lines[field.start];
+  const flow = readFlow(text, head.length - inlineValue(head, field).length);
+  if (!flow || flow.items.length !== count) return null;
+  return text.slice(flow.close + 1).split("\n").every(isInert) ? { field, text, flow } : null;
+}
+
+/** Replace `[from, to)` of a flow field's text and splice its lines back in. */
+function flowSplice(ch: FlowField, from: number, to: number, insert: string): Splice {
+  const text = ch.text.slice(0, from) + insert + ch.text.slice(to);
+  return { at: ch.field.start, remove: ch.field.end - ch.field.start, insert: text.split("\n") };
+}
+
+/** Append an item after the last one, or into an empty collection. */
+function flowAdd(ch: FlowField, item: string): Splice {
+  const { open, close, items } = ch.flow;
+  const last = items.at(-1);
+  if (last) return flowSplice(ch, last.end, last.end, ", " + item);
+  const blank = ch.text.slice(open + 1, close).trim() === "";
+  return flowSplice(ch, open + 1, blank ? close : open + 1, item);
+}
+
+/** Drop one item with the comma that separates it — the whole field when it is the only one. */
+function flowRemove(lines: readonly string[], ch: FlowField, index: number): Splice {
+  const { items } = ch.flow;
+  if (items.length === 1) return dropFlowField(lines, ch);
+  return index < items.length - 1
+    ? flowSplice(ch, items[index].start, items[index + 1].start, "")
+    : flowSplice(ch, items[index - 1].end, items[index].end, "");
+}
+
+/** Replace one item's text. */
+function flowUpdate(ch: FlowField, index: number, item: string): Splice {
+  const { start, end } = ch.flow.items[index];
+  return flowSplice(ch, start, end, item);
+}
+
+/** Remove an emptied flow field, keeping the comment lines below its closing bracket. */
+function dropFlowField(lines: readonly string[], ch: FlowField): Splice {
+  const closeLine = ch.field.start + (ch.text.slice(0, ch.flow.close).match(/\n/g)?.length ?? 0);
+  const kept = lines.slice(closeLine + 1, ch.field.end).filter((l) => l.trim().startsWith("#"));
+  return { ...cut(ch.field), insert: kept };
 }
 
 /**
@@ -620,7 +692,36 @@ function applyListEdit(list: unknown[], edit: ListEdit): boolean {
   return true;
 }
 
-/** Append, drop or replace one entry of a block list field. */
+/** How a list entry is written: double-quoted when it asks to be, else as plain as reads back. */
+function entryText(edit: { value: string; quote?: boolean }, flow: boolean): string {
+  if (edit.quote) return JSON.stringify(edit.value);
+  return flow ? flowScalar(edit.value) : yamlScalar(edit.value);
+}
+
+/** A block list edit's splice; null when it names an entry the list lacks. */
+function blockListSplice(
+  lines: readonly string[],
+  svc: Service,
+  key: string,
+  ch: Children,
+  edit: ListEdit,
+): Splice | string | null {
+  if (edit.kind === "add") return append(svc, key, ch, "- " + entryText(edit, false));
+  const item = ch.items[edit.index];
+  if (!item) return null;
+  if (edit.kind === "remove") return dropChild(lines, ch, item);
+  return rewrite(lines, item, entryText(edit, false), "- ");
+}
+
+/** A flow list edit's splice, in place; null when it names an entry the list lacks. */
+function flowListSplice(lines: readonly string[], ch: FlowField, edit: ListEdit): Splice | null {
+  if (edit.kind === "add") return flowAdd(ch, entryText(edit, true));
+  if (!(edit.index in ch.flow.items)) return null;
+  if (edit.kind === "remove") return flowRemove(lines, ch, edit.index);
+  return flowUpdate(ch, edit.index, entryText(edit, true));
+}
+
+/** Append, drop or replace one entry of a list field (block, flow, or an alias's own copy). */
 function editList(state: State, service: string, key: string, edit: ListEdit): Change | string {
   const svc = serviceOf(state, service);
   if (typeof svc === "string") return svc;
@@ -634,11 +735,11 @@ function editList(state: State, service: string, key: string, edit: ListEdit): C
   const expect = fieldExpect(service, key, (): unknown[] => [], (list) => {
     applyListEdit(list, edit);
   });
-  if (edit.kind === "add") return { ...append(svc, key, ch, "- " + edit.text), expect };
-  const item = ch.items[edit.index];
-  if (!item) return missing;
-  if (edit.kind === "remove") return { ...dropChild(state.doc.lines, ch, item), expect };
-  return withExpect(rewrite(state.doc.lines, item, edit.text, "- "), expect);
+  const lines = state.doc.lines;
+  const splice = "flow" in ch
+    ? flowListSplice(lines, ch, edit)
+    : blockListSplice(lines, svc, key, ch, edit);
+  return splice === null ? missing : withExpect(splice, expect);
 }
 
 /** `ports`: mappings are always double-quoted (`"5432:5432"` is a number to YAML 1.1). */
@@ -649,12 +750,11 @@ function editPorts(state: State, op: PortsOp): Change | string {
   }
   if (typeof op.value !== "string" || op.value.trim() === "") return "a port mapping needs a value";
   const value = op.value;
-  const text = JSON.stringify(value);
   if (op.action === "add") {
-    return editList(state, op.service, "ports", { kind: "add", value, text });
+    return editList(state, op.service, "ports", { kind: "add", value, quote: true });
   }
   if (op.action === "update") {
-    return editList(state, op.service, "ports", { kind: "update", index, value, text });
+    return editList(state, op.service, "ports", { kind: "update", index, value, quote: true });
   }
   return `unknown ports action ${JSON.stringify(op.action)}`;
 }
@@ -674,11 +774,7 @@ function editNamed(state: State, op: NamedOp): Change | string {
       : editList(state, op.service, key, { kind: "remove", index });
   }
   if (index !== -1) return `${key} of "${op.service}" already lists ${op.value}`;
-  return editList(state, op.service, key, {
-    kind: "add",
-    value: op.value,
-    text: yamlScalar(op.value),
-  });
+  return editList(state, op.service, key, { kind: "add", value: op.value });
 }
 
 /** `env`: dispatch on the form the service's `environment:` is written in. */
@@ -709,10 +805,7 @@ function envList(state: State, op: EnvOp, env: unknown[]): Change | string {
       : editList(state, op.service, "environment", { kind: "remove", index });
   }
   const value = `${op.key}=${op.value}`;
-  const text = yamlScalar(value);
-  const edit: ListEdit = index === -1
-    ? { kind: "add", value, text }
-    : { kind: "update", index, value, text };
+  const edit: ListEdit = index === -1 ? { kind: "add", value } : { kind: "update", index, value };
   return editList(state, op.service, "environment", edit);
 }
 
@@ -732,16 +825,33 @@ function envMap(state: State, svc: Service, op: EnvOp): Change | string {
     applyEnvEdit(env, op);
     return ownCopy(state, svc, "environment", ch.field, env);
   }
-  const entry = ch.items.find((e) => e.key === op.key);
   const expect = fieldExpect(op.service, "environment", (): Raw => ({}), (env) => {
     applyEnvEdit(env, op);
   });
+  if ("flow" in ch) return envFlow(state, ch, op, expect);
+  const entry = ch.items.find((e) => e.key === op.key);
   if (op.action === "delete") {
     return entry ? { ...dropChild(state.doc.lines, ch, entry), expect } : noEnv(op);
   }
   const text = yamlScalar(String(op.value));
   if (entry) return withExpect(rewrite(state.doc.lines, entry, text, `${op.key}: `), expect);
   return { ...append(svc, "environment", ch, `${op.key}: ${text}`), expect };
+}
+
+/** `env` against a flow mapping (`{ A: "1", B: x }`), in place. */
+function envFlow(
+  state: State,
+  ch: FlowField,
+  op: EnvOp,
+  expect: Change["expect"],
+): Change | string {
+  const env = rawService(state.raw, op.service).environment;
+  const index = Object.keys(isMapping(env) ? env : {}).indexOf(op.key);
+  if (op.action === "delete") {
+    return index === -1 ? noEnv(op) : { ...flowRemove(state.doc.lines, ch, index), expect };
+  }
+  const item = `${yamlKey(op.key)}: ${flowScalar(String(op.value))}`;
+  return { ...(index === -1 ? flowAdd(ch, item) : flowUpdate(ch, index, item)), expect };
 }
 
 /** `toggleService`: comment an active service out, or a commented one back in. */

@@ -523,6 +523,11 @@ export interface State {
   commented: CommentedBlock[];
   /** The services' indentation (where a commented service's `# ` sits). */
   indent: number;
+  /**
+   * The `services:` entry, when its value is a flow mapping (or an alias) rather than a block
+   * one: every service then shares its lines, and the first edit rewrites it as block mappings.
+   */
+  servicesInline?: Entry;
 }
 
 /** U+2028, U+2029 and NEL: line breaks to a YAML parser, but not to a line splicer. */
@@ -578,11 +583,10 @@ function locate(text: string, doc: Doc, raw: Raw): State | string {
   const top = toMap(scanBlock(lines, 0, lines.length, keyHead, true));
   if (typeof top === "string") return top;
   const entry = top.get("services");
-  if (
-    !entry || entry.indent !== 0 || !sameKeys(top, raw) || !restEmpty(lines[entry.start], entry)
-  ) {
-    return "`services:` is not a block mapping denext can locate line by line";
+  if (!entry || entry.indent !== 0 || !sameKeys(top, raw)) {
+    return "`services:` is not a mapping denext can locate line by line";
   }
+  if (!restEmpty(lines[entry.start], entry)) return inlineServices(text, doc, raw, entry);
   const services = scanServices(lines, entry, (raw.services ?? {}) as Raw);
   if (typeof services === "string") return services;
   const later = [...top.values()].map((e) => e.start).filter((s) => s > entry.start);
@@ -595,6 +599,15 @@ function locate(text: string, doc: Doc, raw: Raw): State | string {
   const commented = findCommented(lines, entry.start + 1, regionEnd, indent, covered)
     .filter((c) => !services.has(c.name));
   return { text, doc, raw, services, commented, indent };
+}
+
+/** `services:` written as a flow mapping (or an alias): every service shares its lines. */
+function inlineServices(text: string, doc: Doc, raw: Raw, entry: Entry): State {
+  const services = new Map<string, Service>();
+  for (const name of Object.keys(isMapping(raw.services) ? raw.services : {})) {
+    services.set(name, { ...entry, key: name, fields: new Map(), fieldIndent: 4, inline: "flow" });
+  }
+  return { text, doc, raw, services, commented: [], indent: 2, servicesInline: entry };
 }
 
 /** The services' indentation when none is active: the first indented comment's, else 2. */
