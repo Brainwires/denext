@@ -8,6 +8,15 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- `denext export`: a staging swap that fails to move the new output into place puts the
+  previous output back; it used to leave no output directory at all.
+- DevTools (bundled dev path): a route file deleted since it was cached no longer keeps its
+  entry in the dev server's route-metadata cache.
+- The TS→JSON-Schema mapper behind the config schema and the plugin catalog no longer recurses
+  until the stack overflows on a self-referencing type alias.
+
 ## [2.5.0-rc.3] - 2026-09-14
 
 ### Added
