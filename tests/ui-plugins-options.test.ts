@@ -13,6 +13,7 @@ import { startUiServer, type UiServer } from "../src/ui/server.ts";
 import { deriveCsrf, UI_COOKIE, UI_CSRF_HEADER } from "../src/ui/security.ts";
 import { setProcRunner } from "../src/ui/features/plugins.ts";
 import { setJsrClient } from "../src/ui/features/plugin-search.ts";
+import { sanitizeOptionsSchema } from "../src/ui/features/third-party-options.ts";
 import type { ProcResult, RunDenoOptions } from "../src/ui/proc.ts";
 import type { JsrMetaResult, JsrSearchResult } from "../src/ui/jsr.ts";
 
@@ -569,5 +570,114 @@ Deno.test("a plugin imported under another name gets its options form, written t
     assert(!source.includes("openapi("), "no call under the exported name");
   } finally {
     await stop(h);
+  }
+});
+
+// ── third-party plugins: a published options schema ─────────────────────────
+
+const COOL = `/plugins/options?name=${encodeURIComponent("@acme/cool")}`;
+const COOL_CONFIG = `import { cool } from "jsr:@acme/cool@^1.0.0";\n` +
+  `export default { plugins: [cool({ mode: "a" })] };\n`;
+const COOL_LOCK = JSON.stringify({
+  version: "5",
+  specifiers: { "jsr:@acme/cool@^1.0.0": "1.4.2" },
+});
+const COOL_SCHEMA = {
+  type: "object",
+  properties: {
+    mode: { type: "string", enum: ["a", "b"], description: "<b>Which</b> mode" },
+    depth: { type: "number", minimum: 1, maximum: 5 },
+  },
+};
+
+/** Stub the registry's config call; returns the `@scope/name@version`s it was asked for. */
+function publishes(schema: unknown): string[] {
+  const asked: string[] = [];
+  setJsrClient({
+    meta: () => Promise.resolve({ ok: true, latest: "9.9.9" }),
+    config: (scope, name, version) => {
+      asked.push(`@${scope}/${name}@${version}`);
+      const value = schema === undefined
+        ? { name }
+        : { denext: { catalog: { optionsSchema: schema } } };
+      return Promise.resolve({ ok: true, value });
+    },
+  });
+  return asked;
+}
+
+Deno.test("sanitizeOptionsSchema keeps only the keys the form reads, checked and bounded", () => {
+  const cleaned = sanitizeOptionsSchema({
+    type: "object",
+    $ref: "#/nope",
+    properties: { mode: { type: "string", enum: ["a"], onclick: "x" } },
+  });
+  assertEquals(cleaned, { type: "object", properties: { mode: { type: "string", enum: ["a"] } } });
+  assertEquals(
+    sanitizeOptionsSchema(
+      JSON.parse('{"type":"object","properties":{"__proto__":{"type":"string"}}}'),
+    ),
+    null,
+  );
+  assertEquals(
+    sanitizeOptionsSchema({ type: "string" }),
+    null,
+    "the root must be an object with properties",
+  );
+  assertEquals(sanitizeOptionsSchema({ type: "object", properties: { a: { enum: [{}] } } }), null);
+  let deep: Record<string, unknown> = { type: "string" };
+  for (let i = 0; i < 10; i++) deep = { type: "object", properties: { a: deep } };
+  assertEquals(sanitizeOptionsSchema(deep), null, "too deep");
+});
+
+Deno.test("a wired JSR plugin that publishes an options schema gets a form, written through its call", async () => {
+  const h = await ui({ "denext.config.ts": COOL_CONFIG, "deno.lock": COOL_LOCK });
+  const asked = publishes(COOL_SCHEMA);
+  try {
+    const res = await get(h, COOL);
+    assertEquals(res.status, 200);
+    const body = await res.text();
+    assertStringIncludes(body, 'type="radio" value="a" checked');
+    assert(!body.includes("<b>Which</b>"), "a published description is escaped");
+    assertEquals(asked, ["@acme/cool@1.4.2"], "the lockfile's version, not the latest");
+
+    const preview = await post(h, COOL, { "o.mode": "b" });
+    assertEquals(preview.status, 200);
+    const text = await preview.text();
+    const done = await post(h, COOL, {
+      sets: hiddenValue(text, "sets"),
+      _base: hiddenValue(text, "_base"),
+      confirm: "1",
+    });
+    assert(done.status < 400, `confirm answered ${done.status}`);
+    assertStringIncludes(await config(h), 'cool({ mode: "b" })');
+
+    const panel = await (await get(h, "/plugins")).text();
+    assertStringIncludes(panel, `href="${COOL.replace("?", "?")}"`);
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("a JSR plugin that publishes nothing is a 404; offline it is a 503", async () => {
+  const bare =
+    `import { bare } from "jsr:@acme/bare@^1.0.0";\nexport default { plugins: [bare()] };\n`;
+  const h = await ui({ "denext.config.ts": bare });
+  publishes(undefined);
+  try {
+    const res = await get(h, `/api/plugins/options?name=${encodeURIComponent("@acme/bare")}`);
+    assertEquals(res.status, 404);
+    assertStringIncludes((await res.json()).reason, "publishes no denext.catalog.optionsSchema");
+  } finally {
+    await stop(h);
+  }
+  const off = await ui({ "denext.config.ts": COOL_CONFIG }, { offline: true });
+  publishes(COOL_SCHEMA);
+  try {
+    const res = await get(off, `/api/plugins/options?name=${encodeURIComponent("@acme/cool")}`);
+    assertEquals(res.status, 503);
+    assertStringIncludes((await res.json()).reason, "cannot reach");
+  } finally {
+    await stop(off);
   }
 });

@@ -282,7 +282,8 @@ generated from the workspace packages themselves (name, version, caret-pinned `j
 spec, the factory export, the CLI verb it contributes, its README's first paragraph cut to
 200 characters, and each plugin's options schema)
 — next to what this project already has wired into `denext.config.ts` and pinned in
-`deno.json`. A wired plugin the catalog does not know is listed under **Third-party**.
+`deno.json`. A wired plugin the catalog does not know is listed under **Third-party**, with an
+**Options** link when it comes from a JSR package.
 
 Adding is `deno add jsr:@denext/<pkg>@^<version>` plus the config wiring through the same
 import-preserving injector `denext plugin add` uses; removing is the inverse, ending in
@@ -368,8 +369,12 @@ be reached, or answers with anything but a valid version, is a `502`; a UI that 
 JSR answers `503`. From there it is the catalog's path — preview, confirm, `303` or a
 streamed `deno` log.
 
-A third-party plugin gets no options form: option schemas come from the first-party catalog,
-which is generated from denext's own workspace. Set its options in `denext.config.ts`.
+A third-party JSR plugin gets an options form when its package publishes one — a
+`denext.catalog.optionsSchema` (a plain JSON Schema) in its `deno.json` or `jsr.json`; see
+[Publishing an options schema](/docs/plugins#publishing-an-options-schema). The UI reads that
+file from `jsr.io` for the version `deno.lock` resolved (else the latest), keeps only the keys
+the form reads, and caches it for five minutes. Offline, or for a package that publishes none,
+its options stay in `denext.config.ts`.
 
 **Offline.** Under `denext ui --offline` the search box renders disabled with a note, nothing
 is fetched, and `op=add-jsr` is a `503` — as is a catalog add or remove (see
@@ -658,7 +663,6 @@ above.
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Compose edits beyond the set | The editor owns `image`, `restart`, `build`, `ports`, `environment`, `depends_on`, `volumes`, `networks` and commenting a service out or in; anything else — a new service, `build`, `networks` — is edited by hand |
 | YAML the editor can't follow | Anchors, aliases, merge keys, flow-style services, several documents and mixed line endings make the file opaque: read-only, with the regeneration diff                                                             |
-| Third-party plugin options   | Option schemas come from the first-party catalog, so a JSR plugin gets no options form; set its options in `denext.config.ts`                                                                                       |
 | Code-valued options          | A callback, a variable, a `{}` schema part or a function-wrapped list is shown read-only, never rewritten                                                                                                           |
 | Agent / MCP control          | Deferred; every panel already answers a JSON twin so it can be added without changing the wire                                                                                                                      |
 | A denext app                 | The UI is server-rendered components built with `h()` — no bundler, no hydration — not an App Router app, which is what lets it start instantly with no build                                                       |

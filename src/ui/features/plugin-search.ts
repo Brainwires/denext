@@ -15,6 +15,7 @@ import type { VNode } from "../../jsx/types.ts";
 import { Input, Note, OpForm } from "../components.ts";
 import type { UiContext } from "../html.ts";
 import {
+  fetchJsrConfig,
   fetchJsrMeta,
   isJsrSpec,
   jsrAvailable,
@@ -29,10 +30,12 @@ interface JsrClient {
   readonly search: typeof searchJsr;
   /** One package's latest version. */
   readonly meta: typeof fetchJsrMeta;
+  /** One package's published config (where it declares an options schema). */
+  readonly config: typeof fetchJsrConfig;
 }
 
 /** The live registry client. */
-const LIVE: JsrClient = { search: searchJsr, meta: fetchJsrMeta };
+const LIVE: JsrClient = { search: searchJsr, meta: fetchJsrMeta, config: fetchJsrConfig };
 
 /** The client every search and every `add-jsr` goes through. */
 let client: JsrClient = LIVE;
@@ -46,6 +49,16 @@ let client: JsrClient = LIVE;
  */
 export function setJsrClient(stub?: Partial<JsrClient>): void {
   client = { ...LIVE, ...stub };
+}
+
+/**
+ * The JSR client in force. The options panel reads published schemas through it, so the suite's
+ * stub covers those requests too.
+ *
+ * @returns The current client.
+ */
+export function jsrClient(): JsrClient {
+  return client;
 }
 
 /** How many hits one search shows. */

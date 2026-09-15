@@ -15,6 +15,10 @@
 // still apply. Both carry `_base`, a SHA-256 of the source the form was rendered from, so an edit
 // made elsewhere in the meantime is a `409` rather than a lost update.
 
+import { normalizeSpec } from "../../build/plugin-install.ts";
+import { publishedOptionsSchema } from "./third-party-options.ts";
+import { jsrClient } from "./plugin-search.ts";
+import { isJsrSpec, jsrAvailable } from "../jsr.ts";
 import { encodeHex } from "@std/encoding/hex";
 import {
   type CallArgSet,
@@ -121,39 +125,111 @@ async function stamp(source: string): Promise<string> {
   return encodeHex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
 }
 
-/**
- * The target for `name`: a catalogued plugin with an options schema, wired into the config (its
- * callee is whatever identifier the `plugins` array calls it by) — or why there is none.
- */
-async function locate(
+/** Where a request's plugin is, or why it has no options form (with the status to answer). */
+type Located = { ok: true; target: OptionsTarget } | { ok: false; reason: string; status: number };
+
+/** A refusal to locate. */
+function missing(reason: string, status = 404): Located {
+  return { ok: false, reason, status };
+}
+
+/** The refusal for a plugin that is not in the `plugins` array. */
+function notWired(state: ProjectState, name: string): Located {
+  return missing(
+    `${name} is not wired into ${state.configName} — add it on the Plugins panel first`,
+  );
+}
+
+/** The target over `schema`, calling the plugin by `callee` in `source`. */
+async function targetFor(
   state: ProjectState,
-  name: string,
-): Promise<{ ok: true; target: OptionsTarget } | { ok: false; reason: string }> {
+  source: string,
+  entry: CatalogRow,
+  schema: SchemaNode,
+  callee: string,
+): Promise<Located> {
+  const call = { arrayKey: "plugins" as const, callee };
+  const base = await stamp(source);
+  return { ok: true, target: { entry, schema, call, configName: state.configName, source, base } };
+}
+
+/**
+ * The target for `name`: a catalogued plugin with an options schema, or a wired JSR plugin that
+ * publishes one (`denext.catalog.optionsSchema`), called by whatever identifier the `plugins`
+ * array uses — or why there is none.
+ */
+async function locate(ctx: UiContext, state: ProjectState, name: string): Promise<Located> {
   const entry = CATALOG_ROWS.find((row) => row.name === name);
+  if (entry === undefined && isJsrSpec(name)) return await publishedTarget(ctx, state, name);
   if (!entry?.optionsSchema) {
     const shown = JSON.stringify(name.slice(0, 80));
-    return {
-      ok: false,
-      reason: `no options schema for ${shown} — no catalogued plugin has that name`,
-    };
+    return missing(`no options schema for ${shown} — no catalogued plugin has that name`);
   }
   const wired = wiredAs(state, entry);
-  if (!wired || state.source === null) {
-    return {
-      ok: false,
-      reason:
-        `${entry.name} is not wired into ${state.configName} — add it on the Plugins panel first`,
-    };
+  if (!wired || state.source === null) return notWired(state, entry.name);
+  return await targetFor(state, state.source, entry, entry.optionsSchema, wired.factory);
+}
+
+/** A wired JSR plugin the catalog doesn't know, over the options schema it publishes. */
+async function publishedTarget(
+  ctx: UiContext,
+  state: ProjectState,
+  spec: string,
+): Promise<Located> {
+  const wired = state.wired.find((plugin) =>
+    plugin.importSpec !== null && normalizeSpec(plugin.importSpec) === spec
+  );
+  if (!wired || state.source === null) return notWired(state, spec);
+  if (!await jsrAvailable(ctx, "registry")) {
+    return missing(
+      `${spec} publishes its options schema on jsr.io, which this UI cannot reach (--offline, ` +
+        "or no net permission for jsr.io)",
+      503,
+    );
   }
-  const target: OptionsTarget = {
-    entry,
-    schema: entry.optionsSchema,
-    call: { arrayKey: "plugins", callee: wired.factory },
-    configName: state.configName,
-    source: state.source,
-    base: await stamp(state.source),
+  const published = await publishedOptionsSchema(ctx.dir, spec, jsrClient(), {
+    signal: ctx.signal,
+  });
+  if (!published.ok) return missing(published.reason);
+  const entry: CatalogRow = {
+    name: spec,
+    version: published.version,
+    spec: `jsr:${spec}@^${published.version}`,
+    kind: "plugin",
+    factory: wired.imported,
+    blurb: "",
   };
-  return { ok: true, target };
+  return await targetFor(state, state.source, entry, published.schema, wired.factory);
+}
+
+/** Wired plugins imported from a JSR package the catalog doesn't know — each may publish a schema. */
+function publishedCandidates(state: ProjectState): string[] {
+  const specs = state.wired
+    .map((plugin) => plugin.importSpec === null ? "" : normalizeSpec(plugin.importSpec))
+    .filter((spec) => isJsrSpec(spec) && !CATALOG_ROWS.some((row) => row.name === spec));
+  return [...new Set(specs)];
+}
+
+/** The wired JSR plugins the catalog doesn't know: each form comes from the schema it publishes. */
+function PublishedList({ specs }: { readonly specs: readonly string[] }): VNode {
+  if (specs.length === 0) return h(Fragment, null);
+  return h(
+    Fragment,
+    null,
+    h("h2", null, "Third-party"),
+    h(
+      "p",
+      { class: "lead" },
+      "Wired JSR plugins. A package that publishes ",
+      h("code", null, "denext.catalog.optionsSchema"),
+      " gets a form built from it, read from jsr.io.",
+    ),
+    h(
+      "ul",
+      null,
+      specs.map((spec) => h("li", { key: spec }, h("a", { href: optionsHref(spec) }, spec))),
+    ),
+  );
 }
 
 // ── the form over the schema ─────────────────────────────────────────────────
@@ -432,6 +508,7 @@ function IndexView({ state }: { readonly state: ProjectState }): VNode {
         )
       ),
     ),
+    h(PublishedList, { specs: publishedCandidates(state) }),
   );
 }
 
@@ -704,7 +781,13 @@ function index(ctx: UiContext, state: ProjectState): Response {
     wired: wiredAs(state, entry) !== undefined,
     href: optionsHref(entry.name),
   }));
-  return jsonResponse({ ok: true, plugins });
+  const published = publishedCandidates(state).map((name) => ({
+    name,
+    wired: true,
+    href: optionsHref(name),
+    published: true,
+  }));
+  return jsonResponse({ ok: true, plugins: [...plugins, ...published] });
 }
 
 /** Whether the request only reads. */
@@ -729,8 +812,8 @@ export const pluginOptionsPanel: UiHandler = async (
   const state = await readProject(ctx.dir);
   const name = ctx.url.searchParams.get("name") ?? "";
   if (name === "" && isRead(ctx)) return index(ctx, state);
-  const located = await locate(state, name);
-  if (!located.ok) return refuse(ctx, "Plugin options", located.reason, 404);
+  const located = await locate(ctx, state, name);
+  if (!located.ok) return refuse(ctx, "Plugin options", located.reason, located.status);
   const { target } = located;
   const reading = await readCallArguments(target.source, target.call);
   if (!reading.ok) return bailed(ctx, target, reading);

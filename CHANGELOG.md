@@ -12,6 +12,11 @@ and this project adheres to
 
 - `denext ui`'s compose editor edits `build` (a context path) and `networks` (add and remove,
   with a warning for a network the top-level `networks:` doesn't declare).
+- `denext ui`: a JSR plugin that publishes `denext.catalog.optionsSchema` (a JSON Schema) in its
+  `deno.json` or `jsr.json` gets an options form, like the first-party ones, linked from the
+  Plugins panel's Third-party list. The UI reads the file from `jsr.io` for the version
+  `deno.lock` resolved (else the latest), keeps only the schema keys the form reads — checked
+  and size-bounded — and never loads remote code.
 
 ### Changed
 

@@ -319,10 +319,11 @@ four documented bounds of the opt-in:
   (`ports: ["80:80"]`) is refused. A file with anchors, aliases, merge keys, flow-style
   services, several documents (`---`) or mixed CRLF/LF line endings is **opaque** —
   read-only, with the regeneration diff.
-- **Third-party plugins get no options form.** Option schemas come from the first-party
-  catalog, generated from denext's own workspace, so a plugin found on JSR is added and wired
-  but its options are set in `denext.config.ts`. A first-party schema expands four
-  interfaces deep.
+- **A third-party plugin's options form needs a published schema.** A JSR plugin gets one
+  only if its package publishes `denext.catalog.optionsSchema` in its `deno.json` (or
+  `jsr.json`). The UI reads it from `jsr.io` for the version `deno.lock` resolved — so not
+  under `--offline` — and keeps only the keys the form reads. A first-party schema is
+  generated from the package's types and expands four interfaces deep.
 - **Code-valued plugin options are read-only.** A callback, a variable, a call, a `{}`
   schema part (a type the generator could not describe) or a function-wrapped list
   (openapi's `tags`, `securitySchemes`) renders as a read-only cell. A toggle over an option

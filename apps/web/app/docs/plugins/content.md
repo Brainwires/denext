@@ -387,9 +387,44 @@ cannot drift from the factory's real type. A library declares none of `factory`,
 That schema is what [`denext ui`](/docs/ui#plugin-options) builds a wired plugin's options
 form from: the same widgets as the config editor, each option's JSDoc as its help text (so
 document the interface you export), writes spliced into the factory call one key at a time,
-and code-valued options left read-only. The catalog covers denext's own workspace only — a
-third-party plugin found through the UI's JSR search is wired as a zero-argument call and gets
-no options form.
+and code-valued options left read-only. The catalog covers denext's own workspace only; a
+third-party plugin can publish a schema of its own, below.
+
+### Publishing an options schema
+
+A plugin on JSR can give `denext ui` an options form of its own. Publish a plain JSON Schema of
+its factory's options as `denext.catalog.optionsSchema` in the package's `deno.json` (or
+`jsr.json`), and keep that file in the published package:
+
+```jsonc
+// deno.json of @acme/cool (excerpt)
+{
+  "name": "@acme/cool",
+  "version": "1.4.2",
+  "exports": "./mod.ts",
+  "denext": {
+    "catalog": {
+      "optionsSchema": {
+        "type": "object",
+        "properties": {
+          "mode": { "type": "string", "enum": ["a", "b"], "description": "Which mode to run in." },
+          "depth": { "type": "number", "minimum": 1, "maximum": 5 }
+        }
+      }
+    }
+  }
+}
+```
+
+When a project wires the plugin — a plain import, an aliased one or a full `jsr:` specifier — the
+Plugins panel links an options form built from that schema. The UI reads the file from `jsr.io`
+for the version the project's `deno.lock` resolved (else the latest), through the same pinned,
+size-capped client as the JSR search, and never loads code. It keeps only what the form reads —
+`type`, `description`, `minimum`/`maximum`, `required`, `enum`, `properties`, `items`, `anyOf`,
+`additionalProperties` and `x-denext.widget: "textarea"` — and refuses a schema whose root is not
+an object with `properties`, one nested deeper than six levels or larger than 400 nodes, and a
+property name that is not a plain identifier (the form writes option names into the factory
+call).
 
 ## Complete examples
 

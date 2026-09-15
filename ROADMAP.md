@@ -143,9 +143,6 @@ guardrail; both are build-time.
 
 **`denext ui`:**
 
-- **Third-party plugin option schemas.** Options forms come only from the first-party
-  catalog; a JSR plugin found by the search is added and wired, but its options are set by
-  hand.
 - **Export the UI's form components** (`FormField`, `Control`, `Field`, `OpButton`, `Widget`)
   and retire the form renderer's remaining string API.
 

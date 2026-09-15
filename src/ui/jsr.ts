@@ -191,6 +191,40 @@ export async function fetchJsrMeta(
   return { ok: true, latest: meta.latest };
 }
 
+/** A package's published `deno.json` (else `jsr.json`) at one version, parsed. */
+export type JsrConfigResult = { readonly ok: true; readonly value: unknown } | JsrFailure;
+
+/**
+ * Read a package's published config at `version` — `deno.json`, else `jsr.json`
+ * (`GET https://jsr.io/@scope/name/<version>/deno.json`), the file a plugin declares its
+ * `denext.catalog` block in.
+ *
+ * @param scope The scope, without the `@`.
+ * @param name The package name.
+ * @param version The exact version.
+ * @param opts An abort `signal`, an injected `fetch`.
+ * @returns The parsed file, or `{ ok: false }` — an invalid name or version is refused without
+ *   any request.
+ */
+export async function fetchJsrConfig(
+  scope: string,
+  name: string,
+  version: string,
+  opts: JsrRequestOptions = {},
+): Promise<JsrConfigResult> {
+  if (!isJsrSpec(`@${scope}/${name}`) || !isVersion(version)) {
+    return failure("invalid package name or version");
+  }
+  const base = `/@${encodeURIComponent(scope)}/${encodeURIComponent(name)}/${
+    encodeURIComponent(version)
+  }/`;
+  for (const file of ["deno.json", "jsr.json"]) {
+    const fetched = await getJson(new URL(base + file, REGISTRY_ORIGIN), opts);
+    if (fetched.ok || fetched.reason !== "HTTP 404") return fetched;
+  }
+  return failure("the package publishes no deno.json or jsr.json");
+}
+
 // ── the bounded request ──────────────────────────────────────────────────────
 
 /** GET `url` as JSON under every bound in the header comment; never throws. */
