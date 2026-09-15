@@ -438,9 +438,12 @@ Below the regeneration form, every service in the compose file gets its own form
 source order: `image` (text), `restart` (`no`, `always`, `on-failure`, `unless-stopped`, or the
 file's own value — `on-failure:<n>` is accepted too), `build` (a context path — a mapping
 `build:` is left to hand edits), and row editors for `ports`,
-`environment`, `depends_on` (a picker of the file's other services), `volumes` and `networks`
-(one the top-level `networks:` doesn't declare gets a warning, like an undeclared named
-volume). A service
+`environment`, `depends_on` (a picker of the file's other services, and for each dependency the
+`condition` it waits for), `volumes` and `networks` (one the top-level `networks:` doesn't
+declare gets a warning, like an undeclared named volume). A long-syntax port or volume (a
+mapping such as `target: 80` / `published: "8080"`) is edited key by key: a text input per key
+the form knows, and a picker where Compose fixes the choices (`protocol`, `mode`, `type`,
+`read_only`). Keys it doesn't know are kept as written. A service
 can be commented out, and a commented-out block — the Postgres example the generated file
 carries, say — can be enabled again; enabling is the only edit a commented service accepts.
 
@@ -451,8 +454,9 @@ touches, then re-parses the result and compares it with the same change applied 
 parsed model — a mismatch is a refusal, never a write. Comments, blank lines, quoting and
 every untouched line stay byte for byte. `environment` keeps the form it was written in (a
 `- KEY=value` list or a `KEY: value` map); a new port mapping is always double-quoted
-(`5432:5432` unquoted is a number to a YAML 1.1 reader); a long-syntax port or volume (a
-mapping) can be removed but not rewritten. A flow-style field (`ports: ["80:80"]`,
+(`5432:5432` unquoted is a number to a YAML 1.1 reader). A long-form `depends_on` or
+`networks:` (a mapping) gains and loses entries in that form, and choosing a `condition` on a
+short `depends_on` list rewrites it in the long form. A flow-style field (`ports: ["80:80"]`,
 `environment: { A: "1" }`) is edited in place and keeps its style, even across lines; a
 flow-style `services:` is rewritten as block mappings by the first edit.
 
@@ -494,9 +498,18 @@ regenerates it and discards edits made here, so delete the header line to keep t
 
 `GET /api/docker` returns the parsed `model` (`null` for a missing or opaque file) and its
 `base` alongside the regeneration view. A compose edit on the twin is a `POST` with
-`editor: "compose"` and `ops` — from the closed set `set` (`image` / `restart`), `ports`,
-`env`, `dependsOn`, `volumes` and `toggleService`, at most 100 per request — plus `base` and
-`confirm: true` to write.
+`editor: "compose"` and `ops`, at most 100 per request, plus `base` and `confirm: true` to
+write. The ops come from a closed set:
+
+- `set`: `image`, `restart` or `build`;
+- `ports`;
+- `entry`: one key of a long-syntax port or volume;
+- `env`;
+- `dependsOn`, optionally with a `condition`;
+- `condition`;
+- `volumes`;
+- `networks`;
+- `toggleService`.
 
 Deployment targets, images and platform notes are in the [deployment guide](/docs/deploy).
 

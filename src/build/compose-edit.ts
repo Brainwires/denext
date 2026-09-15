@@ -21,8 +21,37 @@
 // Build-time only; never imported by a shipped bundle.
 
 import type { EditResult } from "./config-edit.ts";
-import { emitEntry, flowScalar, yamlKey, yamlScalar } from "./compose-emit.ts";
-import { type Flow, readFlow } from "./compose-flow.ts";
+import { emitEntry, flowScalar, flowText, yamlKey, yamlScalar } from "./compose-emit.ts";
+import {
+  afterFields,
+  append,
+  type Change,
+  type Children,
+  childrenOf,
+  commentTail,
+  cut,
+  deepEqual,
+  deleteKey,
+  detach,
+  dropChild,
+  type Expected,
+  fieldExpect,
+  flowAdd,
+  type FlowField,
+  flowRemove,
+  flowUpdate,
+  mapNode,
+  pad,
+  rawService,
+  rewrite,
+  type Scalar,
+  serviceOf,
+  servicesOf,
+  setKey,
+  type Splice,
+  withExpect,
+  writeField,
+} from "./compose-splice.ts";
 import { createUnifiedDiff } from "./patch-diff.ts";
 import {
   anchorIn,
@@ -30,14 +59,8 @@ import {
   type ComposeModel,
   type Entry,
   envEntries,
-  inlineValue,
-  isInert,
   isMapping,
-  itemHead,
-  keyHead,
   load,
-  restEmpty,
-  scanBlock,
   type Service,
   type Span,
   spliceDoc,
@@ -49,23 +72,25 @@ import {
 
 export type { ComposeModel, ComposeService } from "./compose-scan.ts";
 
+/** What a long-form dependency may wait for, the first being what a short one means. */
+export const DEPENDS_CONDITIONS = [
+  "service_started",
+  "service_healthy",
+  "service_completed_successfully",
+] as const;
+
+/** One of {@linkcode DEPENDS_CONDITIONS}. */
+export type DependsCondition = typeof DEPENDS_CONDITIONS[number];
+
+/** A key of a long-syntax port or volume entry this editor writes. */
+const ENTRY_KEY = /^[a-z_][a-z0-9_]*$/;
+
 /** The file name compose diffs are labelled with. */
 const LABEL = "docker-compose.yml";
 /** How much of the file a refusal to read it quotes back. */
 const SNIPPET_MAX = 200;
-/** Anchors an inline value starts with — kept when the value is rewritten. */
-const LEADING_ANCHORS = /^(?:&\S+[ \t]+)*/;
 /** An environment variable name this editor writes. */
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_.-]*$/;
-/**
- * Where a missing field is created: after the last of these fields that is present (after the
- * `name:` line when none is); a field not listed goes after the service's last field.
- */
-const ANCHORS: Readonly<Record<string, readonly string[]>> = {
-  image: [],
-  ports: ["image", "build"],
-  environment: ["image", "build", "ports"],
-};
 
 // --- public types -----------------------------------------------------------
 
@@ -86,13 +111,35 @@ export type ComposeOp =
   }
   /** Set (add or overwrite) or delete one variable, in the form the service already uses. */
   | { op: "env"; service: string; action: "set" | "delete"; key: string; value?: string }
-  /** Add or remove one `depends_on` / `volumes` / `networks` list entry, matched by its text. */
+  /**
+   * Add or remove one `depends_on` / `volumes` / `networks` entry, matched by its text (a
+   * long-form mapping's key). A dependency added with a `condition` other than
+   * `service_started` is written in the long form.
+   */
   | {
     op: "dependsOn" | "volumes" | "networks";
     service: string;
     action: "add" | "remove";
     value: string;
+    condition?: DependsCondition;
   }
+  /**
+   * Set (a scalar) or delete (`value: null`) one key of a long-syntax `ports` / `volumes`
+   * entry — a mapping such as `{ target: 80, published: "8080" }`.
+   */
+  | {
+    op: "entry";
+    service: string;
+    field: "ports" | "volumes";
+    index: number;
+    key: string;
+    value: Scalar | null;
+  }
+  /**
+   * Set the `condition` a dependency waits for; a short `depends_on` list is rewritten in the
+   * long form (every other dependency keeping `service_started`).
+   */
+  | { op: "condition"; service: string; value: string; condition: DependsCondition }
   /** Comment an active service block out, or uncomment a commented one, byte for byte. */
   | { op: "toggleService"; service: string };
 
@@ -113,52 +160,14 @@ type SetOp = Extract<ComposeOp, { op: "set" }>;
 type PortsOp = Extract<ComposeOp, { op: "ports" }>;
 type EnvOp = Extract<ComposeOp, { op: "env" }>;
 type NamedOp = Extract<ComposeOp, { op: "dependsOn" | "volumes" | "networks" }>;
-
-/** Replace `remove` lines at `at` with `insert`. */
-interface Splice {
-  at: number;
-  remove: number;
-  insert: string[];
-}
-
-/** What the file must read back as once an edit is applied. */
-interface Expected {
-  raw: Raw;
-  commented: Record<string, unknown>;
-}
-
-/** One operation, planned: its splice plus the same change applied to the parsed model. */
-type Change = Splice & { expect: (want: Expected) => void };
+type EntryOp = Extract<ComposeOp, { op: "entry" }>;
+type ConditionOp = Extract<ComposeOp, { op: "condition" }>;
 
 /** One list edit resolved to positions. */
 type ListEdit =
   | { kind: "add"; value: string; quote?: boolean }
   | { kind: "remove"; index: number }
   | { kind: "update"; index: number; value: string; quote?: boolean };
-
-/** A service field's children (list items or mapping entries), located line by line. */
-interface Children {
-  field?: Entry;
-  items: Entry[];
-  indent: number;
-}
-
-/**
- * A field whose value an alias (`ports: *shared`) or the service's merge key supplies: an edit
- * gives the service its own copy, written out whole.
- */
-interface Whole {
-  whole: true;
-  /** The field's own line, when it has one (an alias); absent for an inherited field. */
-  field?: Entry;
-}
-
-/** A field written as a flow collection: its lines joined with LF, and where its items sit. */
-interface FlowField {
-  field: Entry;
-  text: string;
-  flow: Flow;
-}
 
 // --- reading ----------------------------------------------------------------
 
@@ -232,21 +241,6 @@ function commentedOf(state: State): Record<string, unknown> {
   return Object.fromEntries(state.commented.map((c) => [c.name, structuredClone(c.value)]));
 }
 
-/**
- * A deep copy that shares nothing. The parser hands an alias the anchored node itself, so a
- * copy that kept that sharing would let an expectation "change" every alias of a node at once —
- * exactly what the read-back must catch.
- *
- * @param value A parsed YAML value.
- * @returns The same value, every mapping and sequence its own.
- */
-function detach<T>(value: T): T {
-  if (Array.isArray(value)) return value.map(detach) as T;
-  if (value instanceof Date) return new Date(value.getTime()) as T;
-  if (!isMapping(value)) return value;
-  return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, detach(v)])) as T;
-}
-
 /** The active service an operation targets, if any. */
 function targetOf(state: State, op: ComposeOp): Service | undefined {
   return state.services.get(op.service);
@@ -273,11 +267,6 @@ function commit(state: State, change: Change, op: ComposeOp, notes: string[]): S
   }
   notes.push(...carried);
   return reread as State;
-}
-
-/** A parsed document's services (none when `services:` is empty). */
-function servicesOf(raw: Raw): Raw {
-  return isMapping(raw.services) ? raw.services : {};
 }
 
 /** The keys whose values differ between two mappings. */
@@ -385,271 +374,15 @@ function plan(state: State, op: ComposeOp): Change | string {
     case "volumes":
     case "networks":
       return editNamed(state, op);
+    case "entry":
+      return editEntry(state, op);
+    case "condition":
+      return setCondition(state, op);
     case "toggleService":
       return toggle(state, op.service);
     default:
       return `unknown compose operation ${JSON.stringify((op as { op?: unknown }).op)}`;
   }
-}
-
-/** Structural equality of parsed YAML values (mapping key order ignored). */
-function deepEqual(a: unknown, b: unknown): boolean {
-  if (Object.is(a, b)) return true;
-  if (a instanceof Date || b instanceof Date) {
-    return a instanceof Date && b instanceof Date && a.getTime() === b.getTime();
-  }
-  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
-  if (Array.isArray(a) !== Array.isArray(b)) return false;
-  const keys = Object.keys(a);
-  return keys.length === Object.keys(b).length &&
-    keys.every((k) => Object.hasOwn(b, k) && deepEqual((a as Raw)[k], (b as Raw)[k]));
-}
-
-// --- splices ----------------------------------------------------------------
-
-/** `n` spaces. */
-function pad(n: number): string {
-  return " ".repeat(n);
-}
-
-/** Delete a span. */
-function cut(span: Span): Splice {
-  return { at: span.start, remove: span.end - span.start, insert: [] };
-}
-
-/** Attach the expected change to a splice (a refusal passes through). */
-function withExpect(splice: Splice | string, expect: Change["expect"]): Change | string {
-  return typeof splice === "string" ? splice : { ...splice, expect };
-}
-
-/** Whether an entry's value continues on content lines below its head. */
-function hasContent(lines: readonly string[], entry: Entry): boolean {
-  return lines.slice(entry.start + 1, entry.end).some((l) => !isInert(l));
-}
-
-/** Where an inline scalar value ends: past a quoted scalar, or before a ` #` comment. */
-function valueEnd(rest: string): number {
-  const quoted = /^(?:"(?:[^"\\]|\\.)*"|'(?:[^']|'')*')/.exec(rest);
-  if (quoted) return quoted[0].length;
-  if (rest.startsWith("#")) return 0;
-  const hash = rest.search(/[ \t]#/);
-  return hash === -1 ? rest.length : hash;
-}
-
-/** The trailing comment an inline value carries (kept by a rewrite), or null for anything else. */
-function commentTail(rest: string): string | null {
-  const tail = rest.slice(valueEnd(rest));
-  if (tail.trim() === "") return "";
-  if (!tail.trim().startsWith("#")) return null;
-  return /^\s/.test(tail) ? tail : " " + tail;
-}
-
-/**
- * Replace an entry's value with the scalar `text`: in place on its head line when the value is
- * inline (an anchor it opens with and an inline comment are kept), else the whole entry becomes
- * `lead + text`.
- */
-function rewrite(
-  lines: readonly string[],
-  entry: Entry,
-  text: string,
-  lead: string,
-): Splice | string {
-  if (hasContent(lines, entry)) {
-    return {
-      at: entry.start,
-      remove: entry.end - entry.start,
-      insert: [pad(entry.indent) + lead + text],
-    };
-  }
-  const line = lines[entry.start];
-  const rest = line.slice(entry.valueCol);
-  const anchors = LEADING_ANCHORS.exec(rest)![0];
-  const tail = commentTail(rest.slice(anchors.length));
-  if (tail === null) {
-    return `line ${entry.start + 1} carries a value denext cannot rewrite in place`;
-  }
-  const head = line.slice(0, entry.headEnd) + " " + anchors;
-  return { at: entry.start, remove: 1, insert: [head + text + tail] };
-}
-
-/** The line a missing `key` field is created at (see {@linkcode ANCHORS}). */
-function afterFields(svc: Service, key: string): number {
-  const anchors = Object.hasOwn(ANCHORS, key) ? ANCHORS[key] : null;
-  let at = svc.start + 1;
-  for (const [k, f] of svc.fields) {
-    if (anchors === null || anchors.includes(k)) at = Math.max(at, f.end);
-  }
-  return at;
-}
-
-/** The active service `name`, or why an edit cannot target it. */
-function serviceOf(state: State, name: string): Service | string {
-  const svc = state.services.get(name);
-  if (svc) return svc;
-  return state.commented.some((c) => c.name === name)
-    ? `service "${name}" is commented out — enable it first`
-    : `no service named "${name}"`;
-}
-
-/** A service's mapping inside a parsed document. */
-function rawService(raw: Raw, name: string): Raw {
-  return (raw.services as Raw)[name] as Raw;
-}
-
-/** How many children a parsed field value has. */
-function countOf(v: unknown): number {
-  if (Array.isArray(v)) return v.length;
-  return isMapping(v) ? Object.keys(v).length : 0;
-}
-
-/** An expectation that mutates one field's value, dropping the field when it ends up empty. */
-function fieldExpect<T extends unknown[] | Raw>(
-  service: string,
-  key: string,
-  empty: () => T,
-  mutate: (value: T) => void,
-): Change["expect"] {
-  return (want) => {
-    const s = rawService(want.raw, service);
-    const value = (s[key] ?? empty()) as T;
-    mutate(value);
-    if (countOf(value)) s[key] = value;
-    else delete s[key];
-  };
-}
-
-/**
- * Locate a block list/mapping field's children, refusing flow style and the other form. A field
- * an alias or the merge key supplies is {@linkcode Whole}: the edit writes the service a copy.
- */
-function childrenOf(
-  state: State,
-  svc: Service,
-  key: string,
-  form: "list" | "map",
-): Children | Whole | FlowField | string {
-  const field = svc.fields.get(key);
-  const value = rawService(state.raw, svc.key)[key];
-  if (value !== undefined && value !== null && (form === "list") !== Array.isArray(value)) {
-    return `${key} of "${svc.key}" is not written as a ${form} — edit it by hand`;
-  }
-  if (!field) {
-    return value === undefined ? { items: [], indent: svc.fieldIndent + 2 } : { whole: true };
-  }
-  const lines = state.doc.lines;
-  if (!restEmpty(lines[field.start], field)) {
-    if (inlineValue(lines[field.start], field).startsWith("*")) return { whole: true, field };
-    return flowField(lines, field, countOf(value)) ??
-      `${key} of "${svc.key}" is written in a flow style denext cannot follow — edit it by hand`;
-  }
-  const head = form === "list" ? itemHead : keyHead;
-  const items = scanBlock(lines, field.start + 1, field.end, head, form === "map");
-  if (typeof items === "string") return items;
-  if (items.length !== countOf(value)) {
-    return `the entries of ${key} in "${svc.key}" could not be located line by line`;
-  }
-  return { field, items, indent: items.length ? items[0].indent : field.indent + 2 };
-}
-
-/** A flow-style field located: null when its collection does not close where the field ends. */
-function flowField(lines: readonly string[], field: Entry, count: number): FlowField | null {
-  const text = lines.slice(field.start, field.end).join("\n");
-  const head = lines[field.start];
-  const flow = readFlow(text, head.length - inlineValue(head, field).length);
-  if (!flow || flow.items.length !== count) return null;
-  return text.slice(flow.close + 1).split("\n").every(isInert) ? { field, text, flow } : null;
-}
-
-/** Replace `[from, to)` of a flow field's text and splice its lines back in. */
-function flowSplice(ch: FlowField, from: number, to: number, insert: string): Splice {
-  const text = ch.text.slice(0, from) + insert + ch.text.slice(to);
-  return { at: ch.field.start, remove: ch.field.end - ch.field.start, insert: text.split("\n") };
-}
-
-/** Append an item after the last one, or into an empty collection. */
-function flowAdd(ch: FlowField, item: string): Splice {
-  const { open, close, items } = ch.flow;
-  const last = items.at(-1);
-  if (last) return flowSplice(ch, last.end, last.end, ", " + item);
-  const blank = ch.text.slice(open + 1, close).trim() === "";
-  return flowSplice(ch, open + 1, blank ? close : open + 1, item);
-}
-
-/** Drop one item with the comma that separates it — the whole field when it is the only one. */
-function flowRemove(lines: readonly string[], ch: FlowField, index: number): Splice {
-  const { items } = ch.flow;
-  if (items.length === 1) return dropFlowField(lines, ch);
-  return index < items.length - 1
-    ? flowSplice(ch, items[index].start, items[index + 1].start, "")
-    : flowSplice(ch, items[index - 1].end, items[index].end, "");
-}
-
-/** Replace one item's text. */
-function flowUpdate(ch: FlowField, index: number, item: string): Splice {
-  const { start, end } = ch.flow.items[index];
-  return flowSplice(ch, start, end, item);
-}
-
-/** Remove an emptied flow field, keeping the comment lines below its closing bracket. */
-function dropFlowField(lines: readonly string[], ch: FlowField): Splice {
-  const closeLine = ch.field.start + (ch.text.slice(0, ch.flow.close).match(/\n/g)?.length ?? 0);
-  const kept = lines.slice(closeLine + 1, ch.field.end).filter((l) => l.trim().startsWith("#"));
-  return { ...cut(ch.field), insert: kept };
-}
-
-/**
- * Give a service its own copy of a field an alias or its merge key supplied, holding `value`:
- * the alias line is replaced (its comment kept), an inherited field is written as an override.
- */
-function ownCopy(
-  state: State,
-  svc: Service,
-  key: string,
-  field: Entry | undefined,
-  value: unknown,
-): Change {
-  const expect = (want: Expected) => {
-    rawService(want.raw, svc.key)[key] = detach(value);
-  };
-  if (!field) {
-    const insert = emitEntry(key, value, svc.fieldIndent);
-    return { at: afterFields(svc, key), remove: 0, insert, expect };
-  }
-  const line = state.doc.lines[field.start];
-  const tail = commentTail(line.slice(field.valueCol)) ?? "";
-  const insert = emitEntry(key, value, field.indent, { head: line.slice(0, field.headEnd), tail });
-  return { at: field.start, remove: field.end - field.start, insert, expect };
-}
-
-/** Append one child line (`body` is the line without its indentation), creating the field. */
-function append(svc: Service, key: string, ch: Children, body: string): Splice {
-  const line = pad(ch.indent) + body;
-  if (!ch.field) {
-    return {
-      at: afterFields(svc, key),
-      remove: 0,
-      insert: [pad(svc.fieldIndent) + key + ":", line],
-    };
-  }
-  const last = ch.items[ch.items.length - 1];
-  return { at: last ? last.end : ch.field.start + 1, remove: 0, insert: [line] };
-}
-
-/**
- * Remove one child — or the whole field when it is the only one. Comment lines inside the
- * field's span (a commented-out sibling entry, a note) are the user's, not the entry's, so they
- * stay where they were when the emptied field goes.
- */
-function dropChild(lines: readonly string[], ch: Children, item: Entry): Splice {
-  const field = ch.field;
-  if (ch.items.length !== 1 || !field) return cut(item);
-  const kept: string[] = [];
-  for (let n = field.start + 1; n < field.end; n++) {
-    const outside = n < item.start || n >= item.end;
-    if (outside && lines[n].trim().startsWith("#")) kept.push(lines[n]);
-  }
-  return { ...cut(field), insert: kept };
 }
 
 // --- operations -------------------------------------------------------------
@@ -730,7 +463,7 @@ function editList(state: State, service: string, key: string, edit: ListEdit): C
   const missing = `${key} of "${service}" has no entry #${"index" in edit ? edit.index : ""}`;
   if ("whole" in ch) {
     const list = detach(rawService(state.raw, service)[key] as unknown[]);
-    return applyListEdit(list, edit) ? ownCopy(state, svc, key, ch.field, list) : missing;
+    return applyListEdit(list, edit) ? writeField(state, svc, key, ch.field, list) : missing;
   }
   const expect = fieldExpect(service, key, (): unknown[] => [], (list) => {
     applyListEdit(list, edit);
@@ -764,17 +497,165 @@ function editNamed(state: State, op: NamedOp): Change | string {
   const key = op.op === "dependsOn" ? "depends_on" : op.op;
   const svc = serviceOf(state, op.service);
   if (typeof svc === "string") return svc;
-  const ch = childrenOf(state, svc, key, "list");
-  if (typeof ch === "string") return ch;
   if (typeof op.value !== "string" || op.value === "") return `${key} needs a value`;
-  const index = texts(rawService(state.raw, op.service)[key]).indexOf(op.value);
-  if (op.action === "remove") {
-    return index === -1
-      ? `${key} of "${op.service}" does not list ${op.value}`
-      : editList(state, op.service, key, { kind: "remove", index });
+  const value = rawService(state.raw, op.service)[key];
+  const names = namesOf(value);
+  const index = names.indexOf(op.value);
+  if (op.action === "remove" && index === -1) {
+    return `${key} of "${op.service}" does not list ${op.value}`;
   }
-  if (index !== -1) return `${key} of "${op.service}" already lists ${op.value}`;
+  if (op.action === "add" && index !== -1) {
+    return `${key} of "${op.service}" already lists ${op.value}`;
+  }
+  if (isMapping(value)) return editNamedMap(state, svc, key, op, index);
+  if (op.action === "remove") return editList(state, op.service, key, { kind: "remove", index });
+  const condition = op.condition ?? DEPENDS_CONDITIONS[0];
+  if (condition !== DEPENDS_CONDITIONS[0]) {
+    const long = longDependsOn([...names, op.value], { [op.value]: condition });
+    return writeField(state, svc, key, svc.fields.get(key), long);
+  }
   return editList(state, op.service, key, { kind: "add", value: op.value });
+}
+
+/** A `depends_on` / `networks` value's names: the list's entries, or the long form's keys. */
+function namesOf(value: unknown): string[] {
+  return isMapping(value) ? Object.keys(value) : texts(value);
+}
+
+/** A short `depends_on` list in the long form, each entry with its condition. */
+function longDependsOn(names: string[], conditions: Record<string, DependsCondition>): Raw {
+  return Object.fromEntries(
+    names.map((name) => [name, { condition: conditions[name] ?? DEPENDS_CONDITIONS[0] }]),
+  );
+}
+
+/** What a new long-form entry holds: a dependency's condition; a network nothing (null). */
+function longEntryOf(key: string, op: NamedOp): Raw | null {
+  return key === "depends_on" ? { condition: op.condition ?? DEPENDS_CONDITIONS[0] } : null;
+}
+
+/** Add or remove one key of a long-form (`name: {…}`) `depends_on` / `networks`. */
+function editNamedMap(
+  state: State,
+  svc: Service,
+  key: string,
+  op: NamedOp,
+  index: number,
+): Change | string {
+  const ch = childrenOf(state, svc, key, "map");
+  if (typeof ch === "string") return ch;
+  const entry = longEntryOf(key, op);
+  const mutate = (map: Raw) => {
+    if (op.action === "add") map[op.value] = detach(entry);
+    else delete map[op.value];
+  };
+  if ("whole" in ch) {
+    const map = detach(rawService(state.raw, op.service)[key] as Raw);
+    mutate(map);
+    return writeField(state, svc, key, ch.field, map);
+  }
+  const expect = fieldExpect(op.service, key, (): Raw => ({}), mutate);
+  const lines = state.doc.lines;
+  if ("flow" in ch) {
+    const item = `${yamlKey(op.value)}: ${flowText(entry)}`;
+    return { ...(op.action === "add" ? flowAdd(ch, item) : flowRemove(lines, ch, index)), expect };
+  }
+  if (op.action === "add") {
+    return { ...append(svc, key, ch, emitEntry(op.value, entry, 0)), expect };
+  }
+  return { ...dropChild(lines, ch, ch.items[index]), expect };
+}
+
+/** The long-syntax entry an `entry` op edits, with the entry as it must read afterwards. */
+function entryTarget(
+  state: State,
+  op: EntryOp,
+): { svc: Service; list: unknown[]; next: Raw; where: string } | string {
+  const svc = serviceOf(state, op.service);
+  if (typeof svc === "string") return svc;
+  if (typeof op.key !== "string" || !ENTRY_KEY.test(op.key)) {
+    return `${JSON.stringify(op.key)} is not a key denext writes`;
+  }
+  const list = rawService(state.raw, op.service)[op.field];
+  const item = Array.isArray(list) ? list[op.index] : undefined;
+  const where = `${op.field} entry #${op.index} of "${op.service}"`;
+  if (item === undefined) return `${op.field} of "${op.service}" has no entry #${op.index}`;
+  if (!isMapping(item)) return `${where} is not a long-syntax (mapping) entry`;
+  if (op.value !== null && !["string", "number", "boolean"].includes(typeof op.value)) {
+    return `${op.key} needs a string, number, boolean or null`;
+  }
+  const next = detach(item);
+  if (op.value === null) delete next[op.key];
+  else next[op.key] = op.value;
+  return { svc, list: list as unknown[], next, where };
+}
+
+/** `entry`: set or delete one key of a long-syntax port or volume, in place. */
+function editEntry(state: State, op: EntryOp): Change | string {
+  const target = entryTarget(state, op);
+  if (typeof target === "string") return target;
+  const { svc, list, next, where } = target;
+  const ch = childrenOf(state, svc, op.field, "list");
+  if (typeof ch === "string") return ch;
+  if ("whole" in ch) {
+    return writeField(
+      state,
+      svc,
+      op.field,
+      ch.field,
+      list.map((v, i) => i === op.index ? next : v),
+    );
+  }
+  const expect = (want: Expected) => {
+    (rawService(want.raw, op.service)[op.field] as unknown[])[op.index] = detach(next);
+  };
+  if ("flow" in ch) return { ...flowUpdate(ch, op.index, flowText(next)), expect };
+  const node = mapNode(state.doc.lines, ch.items[op.index], list[op.index]);
+  if (!node) return `${where} is written in a way denext cannot edit in place — edit it by hand`;
+  const splice = op.value === null
+    ? deleteKey(state.doc.lines, node, op.key, where)
+    : setKey(state.doc.lines, node, op.key, op.value);
+  return withExpect(splice, expect);
+}
+
+/** `condition`: set what one dependency waits for, writing a short list in the long form. */
+function setCondition(state: State, op: ConditionOp): Change | string {
+  const svc = serviceOf(state, op.service);
+  if (typeof svc === "string") return svc;
+  if (!DEPENDS_CONDITIONS.includes(op.condition)) {
+    return `unknown condition ${JSON.stringify(op.condition)}`;
+  }
+  const value = rawService(state.raw, op.service).depends_on;
+  const names = namesOf(value);
+  if (!names.includes(op.value)) return `depends_on of "${op.service}" does not list ${op.value}`;
+  if (!isMapping(value)) {
+    const long = longDependsOn(names, { [op.value]: op.condition });
+    return writeField(state, svc, "depends_on", svc.fields.get("depends_on"), long);
+  }
+  const current = value[op.value];
+  const next: Raw = { ...(isMapping(current) ? detach(current) : {}), condition: op.condition };
+  return conditionChange(state, svc, op, next);
+}
+
+/** Write one long-form dependency's new settings: in place, or as the service's own copy. */
+function conditionChange(state: State, svc: Service, op: ConditionOp, next: Raw): Change | string {
+  const value = rawService(state.raw, op.service).depends_on as Raw;
+  const ch = childrenOf(state, svc, "depends_on", "map");
+  if (typeof ch === "string") return ch;
+  if ("whole" in ch) {
+    return writeField(state, svc, "depends_on", ch.field, { ...detach(value), [op.value]: next });
+  }
+  const expect = (want: Expected) => {
+    (rawService(want.raw, op.service).depends_on as Raw)[op.value] = detach(next);
+  };
+  if ("flow" in ch) {
+    const at = Object.keys(value).indexOf(op.value);
+    return { ...flowUpdate(ch, at, `${yamlKey(op.value)}: ${flowText(next)}`), expect };
+  }
+  const entry = ch.items.find((e) => e.key === op.value)!;
+  const node = mapNode(state.doc.lines, entry, value[op.value]);
+  if (!node) return `the "${op.value}" dependency is written in a way denext cannot edit in place`;
+  return withExpect(setKey(state.doc.lines, node, "condition", op.condition), expect);
 }
 
 /** `env`: dispatch on the form the service's `environment:` is written in. */
@@ -823,7 +704,7 @@ function envMap(state: State, svc: Service, op: EnvOp): Change | string {
     const env = detach(rawService(state.raw, op.service).environment as Raw);
     if (op.action === "delete" && !Object.hasOwn(env, op.key)) return noEnv(op);
     applyEnvEdit(env, op);
-    return ownCopy(state, svc, "environment", ch.field, env);
+    return writeField(state, svc, "environment", ch.field, env);
   }
   const expect = fieldExpect(op.service, "environment", (): Raw => ({}), (env) => {
     applyEnvEdit(env, op);

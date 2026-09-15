@@ -594,6 +594,50 @@ Deno.test("compose editor: an opaque file is read-only with the regeneration dif
   }
 });
 
+Deno.test("compose editor: a long-syntax port's keys and a dependency's condition post through", async () => {
+  const h = await ui();
+  try {
+    const text = "services:\n  web:\n    image: x\n    ports:\n      - target: 80\n" +
+      '        published: "8080"\n    depends_on:\n      - db\n  db:\n    image: pg\n';
+    await Deno.writeTextFile(join(h.dir, COMPOSE), text);
+    const body = await (await get(h, "/docker")).text();
+    assertStringIncludes(body, 'name="port.0.published"');
+    assertStringIncludes(body, 'name="dep.0.condition"');
+    const res = await post(h, "/docker", {
+      editor: "compose",
+      service: "web",
+      op: "apply",
+      "port.0.target": "80",
+      "port.0.published": "9090",
+      "dep.0.condition": "service_healthy",
+    });
+    assertEquals(res.status, 200);
+    const preview = await res.text();
+    assertStringIncludes(preview, "9090");
+    assertStringIncludes(preview, "condition: service_healthy");
+    const bad = await postJson(h, "/api/docker", {
+      editor: "compose",
+      ops: [{ op: "entry", service: "web", field: "ports", index: 0, key: "target", value: "x" }],
+    });
+    assertEquals(bad.status, 400);
+    assertStringIncludes((await bad.json()).reason, "target needs a integer value");
+    const json = await postJson(h, "/api/docker", {
+      editor: "compose",
+      ops: [
+        { op: "entry", service: "web", field: "ports", index: 0, key: "published", value: "9090" },
+        { op: "condition", service: "web", value: "db", condition: "service_healthy" },
+      ],
+      confirm: true,
+    });
+    assertEquals(json.status, 200);
+    const disk = await composeOnDisk(h);
+    assertStringIncludes(disk, '        published: "9090"\n');
+    assertStringIncludes(disk, "      db:\n        condition: service_healthy\n");
+  } finally {
+    await stop(h);
+  }
+});
+
 Deno.test("compose editor: a merge key's fields are shown as inherited, and a set overrides them", async () => {
   const h = await ui();
   try {

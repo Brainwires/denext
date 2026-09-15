@@ -126,3 +126,21 @@ function emitItem(value: unknown, indent: number): string[] {
 export function flowScalar(value: string): string {
   return /[,[\]{}]/.test(value) ? JSON.stringify(value) : yamlScalar(value);
 }
+
+/**
+ * A parsed value as flow YAML on one line — `{ condition: service_healthy }`, `[a, b]` — for
+ * an item written into a flow collection.
+ *
+ * @param value The parsed value.
+ * @returns Its flow text.
+ */
+export function flowText(value: unknown): string {
+  if (value === null || value === undefined) return "null";
+  if (Array.isArray(value)) return `[${value.map(flowText).join(", ")}]`;
+  if (isMapping(value)) {
+    const entries = Object.entries(value).map(([k, v]) => `${yamlKey(k)}: ${flowText(v)}`);
+    return `{${entries.join(", ")}}`;
+  }
+  if (typeof value === "string") return flowScalar(value);
+  return value instanceof Date ? value.toISOString() : String(value);
+}

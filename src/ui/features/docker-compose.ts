@@ -11,7 +11,8 @@
 // and writes only when they still apply.
 //
 // The operation set is compose-edit's closed one (image, restart, build, ports, environment,
-// depends_on, volumes, networks, commenting a service out / back in). Every posted service name,
+// depends_on and its conditions, volumes, networks, the keys of a long-syntax port or volume,
+// commenting a service out / back in). Every posted service name,
 // variable key, list index and dependency is checked against the parsed model first — the editor
 // never writes a service or key the file did not report. A file the model cannot follow (several
 // documents, a document marker carrying content, …) is "opaque": shown read-only, with the
@@ -22,6 +23,8 @@ import {
   type ComposeModel,
   type ComposeOp,
   type ComposeService,
+  DEPENDS_CONDITIONS,
+  type DependsCondition,
   inspectCompose,
   readCompose,
 } from "../../build/compose-edit.ts";
@@ -30,7 +33,7 @@ import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChild, VNodeChildren } from "../../jsx/types.ts";
 import { jsonResponse, panelResponder, type UiContext } from "../html.ts";
 import { DiffBlock, Note, OpForm, Out, Panel, PreviewLead, Row } from "../components.ts";
-import { Raw, renderView } from "../view.ts";
+import { Raw, type RawHtml, renderView } from "../view.ts";
 import { control, field as labelled, opButton } from "../form/control.ts";
 import { OP_FIELD, parseOp } from "../form/value.ts";
 import type { WidgetOption } from "../form/widget.ts";
@@ -49,6 +52,43 @@ const OPS_FIELD = "ops";
 const MAX_OPS = 100;
 /** The restart policies the picker offers (plus "unset", plus a hand-written one). */
 const RESTART_POLICIES: readonly string[] = ["no", "always", "on-failure", "unless-stopped"];
+
+/** How a long-syntax entry's key is written. */
+type KeyType = "string" | "integer" | "boolean";
+
+/** The keys of a long-syntax port or volume the form edits, with how each is written. */
+const LONG_KEYS: Readonly<Record<"ports" | "volumes", Readonly<Record<string, KeyType>>>> = {
+  ports: {
+    target: "integer",
+    published: "string",
+    host_ip: "string",
+    protocol: "string",
+    mode: "string",
+    name: "string",
+    app_protocol: "string",
+  },
+  volumes: {
+    type: "string",
+    source: "string",
+    target: "string",
+    read_only: "boolean",
+    consistency: "string",
+  },
+};
+/** Keys a long-syntax entry cannot do without — clearing one is refused. */
+const REQUIRED_KEYS: Readonly<Record<"ports" | "volumes", readonly string[]>> = {
+  ports: ["target"],
+  volumes: ["type", "target"],
+};
+/** Keys offered as a picker, with the choices Compose defines. */
+const LONG_CHOICES: Readonly<Record<string, readonly string[]>> = {
+  protocol: ["tcp", "udp"],
+  mode: ["host", "ingress"],
+  type: ["bind", "volume", "tmpfs", "npipe", "cluster"],
+  read_only: ["true", "false"],
+};
+/** The form-field prefix of a long entry's keys (`port.0.target`), by field. */
+const LONG_PREFIX = { ports: "port", volumes: "volume" } as const;
 
 type Dict = Record<string, unknown>;
 
@@ -325,7 +365,13 @@ function formOps(get: Get, model: ComposeModel): ComposeOp[] | string {
   if (!svc) return `unknown service ${JSON.stringify(name)}`;
   const button = get(OP_FIELD) ?? "apply";
   if (button === "toggle") return [{ op: "toggleService", service: svc.name }];
-  const ops = [...scalarEdits(get, svc), ...portEdits(get, svc), ...envEdits(get, svc)];
+  const ops = [
+    ...scalarEdits(get, svc),
+    ...portEdits(get, svc),
+    ...entryEdits(get, svc),
+    ...envEdits(get, svc),
+    ...conditionEdits(get, svc),
+  ];
   ops.push(...additions(get, svc));
   if (button === "apply") return ops;
   const removal = removalOf(button, svc);
@@ -349,7 +395,50 @@ function scalarOf(svc: ComposeService, field: "image" | "restart" | "build"): st
   return typeof svc.build === "string" ? svc.build : "";
 }
 
-/** A port row whose text changed (long-syntax rows are remove-only). */
+/** A parsed value as a form field's text (`""` when absent). */
+function textOf(value: unknown): string {
+  return value === undefined || value === null ? "" : String(value);
+}
+
+/** Every key of a long-syntax port or volume row whose posted value differs from the file. */
+function entryEdits(get: Get, svc: ComposeService): ComposeOp[] {
+  return (["ports", "volumes"] as const).flatMap((field) =>
+    svc[field].flatMap((entry, index) =>
+      isLong(entry) ? longRowEdits(get, svc.name, field, index, JSON.parse(entry)) : []
+    )
+  );
+}
+
+/** One long-syntax row's changed keys, as posted text (`checkOp` types them). */
+function longRowEdits(
+  get: Get,
+  service: string,
+  field: "ports" | "volumes",
+  index: number,
+  entry: Dict,
+): ComposeOp[] {
+  return Object.keys(LONG_KEYS[field]).flatMap((key): ComposeOp[] => {
+    const posted = get(`${LONG_PREFIX[field]}.${index}.${key}`)?.trim();
+    if (posted === undefined || posted === textOf(entry[key])) return [];
+    return [{ op: "entry", service, field, index, key, value: posted }];
+  });
+}
+
+/** Every dependency whose posted condition differs from the file's. */
+function conditionEdits(get: Get, svc: ComposeService): ComposeOp[] {
+  return svc.dependsOn.flatMap((name, i): ComposeOp[] => {
+    const posted = get(`dep.${i}.condition`);
+    if (posted === null || posted === (svc.conditions[name] ?? DEPENDS_CONDITIONS[0])) return [];
+    return [{
+      op: "condition",
+      service: svc.name,
+      value: name,
+      condition: posted as DependsCondition,
+    }];
+  });
+}
+
+/** A short-syntax port row whose text changed. */
 function portEdits(get: Get, svc: ComposeService): ComposeOp[] {
   return svc.ports.flatMap((port, index): ComposeOp[] => {
     const value = get(`port.${index}`)?.trim();
@@ -432,6 +521,8 @@ const CHECKS: Readonly<Record<string, Check>> = {
   dependsOn: checkNamed,
   volumes: checkNamed,
   networks: checkNamed,
+  entry: checkEntry,
+  condition: checkCondition,
   toggleService: (_o, svc) => ({ op: "toggleService", service: svc.name }),
 };
 
@@ -530,7 +621,75 @@ function checkNamed(o: Dict, svc: ComposeService, model: ComposeModel): ComposeO
   if (op === "dependsOn" && !dependable(model, svc).includes(value)) {
     return `"${value}" is not another service in the compose file`;
   }
-  return { op, service: svc.name, action, value };
+  if (op !== "dependsOn" || o.condition === undefined) {
+    return { op, service: svc.name, action, value };
+  }
+  return isCondition(o.condition)
+    ? { op, service: svc.name, action, value, condition: o.condition }
+    : `unknown condition ${JSON.stringify(o.condition)}`;
+}
+
+/** Whether a posted value is one of the conditions Compose defines. */
+function isCondition(value: unknown): value is DependsCondition {
+  return (DEPENDS_CONDITIONS as readonly unknown[]).includes(value);
+}
+
+/** `condition`: a dependency the service lists, and a condition Compose defines. */
+function checkCondition(o: Dict, svc: ComposeService): ComposeOp | string {
+  const { value, condition } = o;
+  if (typeof value !== "string" || !svc.dependsOn.includes(value)) {
+    return `depends_on of "${svc.name}" does not list ${JSON.stringify(value ?? null)}`;
+  }
+  if (!isCondition(condition)) return `unknown condition ${JSON.stringify(condition ?? null)}`;
+  return { op: "condition", service: svc.name, value, condition };
+}
+
+/** A posted whole number (a number, or a run of digits), or undefined. */
+function integerOf(value: unknown): number | undefined {
+  const n = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value;
+  return typeof n === "number" && Number.isSafeInteger(n) && n >= 0 ? n : undefined;
+}
+
+/** A posted boolean (a boolean, or the words `true` / `false`), or undefined. */
+function booleanOf(value: unknown): boolean | undefined {
+  if (value === true || value === "true") return true;
+  return value === false || value === "false" ? false : undefined;
+}
+
+/** A posted key value as the type the key is written as; undefined when it is not one. */
+function coerceKey(value: unknown, type: KeyType): string | number | boolean | null | undefined {
+  if (value === null || value === "") return null;
+  if (type === "integer") return integerOf(value);
+  if (type === "boolean") return booleanOf(value);
+  return typeof value === "string" ? value : undefined;
+}
+
+/** The long-syntax field and entry an `entry` op names, when the service has them. */
+function longField(o: Dict, svc: ComposeService): "ports" | "volumes" | string {
+  const field = o.field === "ports" || o.field === "volumes" ? o.field : null;
+  if (field === null) {
+    return `unknown entry field ${JSON.stringify(o.field ?? null)} (expected ports | volumes)`;
+  }
+  const { index } = o;
+  const entry = typeof index === "number" ? svc[field][index] : undefined;
+  if (!Number.isInteger(index) || entry === undefined || !isLong(entry)) {
+    return `${field} of "${svc.name}" has no long-syntax entry #${String(index)}`;
+  }
+  return field;
+}
+
+/** `entry`: a key the form knows, on a long-syntax entry the file has, typed as that key is. */
+function checkEntry(o: Dict, svc: ComposeService): ComposeOp | string {
+  const field = longField(o, svc);
+  if (field !== "ports" && field !== "volumes") return field;
+  const key = typeof o.key === "string" && Object.hasOwn(LONG_KEYS[field], o.key) ? o.key : null;
+  if (key === null) return `unknown ${field} key ${JSON.stringify(o.key ?? null)}`;
+  const value = coerceKey(o.value, LONG_KEYS[field][key]);
+  if (value === undefined) return `${key} needs a ${LONG_KEYS[field][key]} value`;
+  if (value === null && REQUIRED_KEYS[field].includes(key)) {
+    return `${key} is required in a long-syntax ${field} entry`;
+  }
+  return { op: "entry", service: svc.name, field, index: o.index as number, key, value };
 }
 
 /** The services `svc` may be made to depend on: every other one it does not list yet. */
@@ -868,7 +1027,7 @@ function ActiveService(props: ServiceProps & { readonly id: string }): VNode {
     ),
     provenanceNote(svc),
     h(ScalarFields, { svc, id }),
-    h(PortsEditor, { svc, disabled }),
+    h(PortsEditor, { svc, id, disabled }),
     h(EnvEditor, { svc, disabled }),
     h(DepsEditor, { model: props.model, svc, disabled }),
     h(EntryListEditor, {
@@ -877,6 +1036,7 @@ function ActiveService(props: ServiceProps & { readonly id: string }): VNode {
       addField: "volume.new",
       noun: "volume",
       placeholder: "add — ./data:/data or name:/path",
+      id,
       disabled,
     }),
     h(EntryListEditor, {
@@ -885,6 +1045,7 @@ function ActiveService(props: ServiceProps & { readonly id: string }): VNode {
       addField: "network.new",
       noun: "network",
       placeholder: "add — a network name",
+      id,
       disabled,
     }),
   );
@@ -984,17 +1145,72 @@ function ListEditor(
   );
 }
 
-/** `ports`: an editable row per mapping (long syntax is remove-only), plus an add row. */
-function PortsEditor({ svc, disabled }: Omit<ServiceProps, "model">): VNode {
-  const rows = svc.ports.map((port, i) =>
+/** Props of {@linkcode LongEntry}. */
+interface LongEntryProps {
+  /** The field the entry belongs to. */
+  readonly field: "ports" | "volumes";
+  /** Its position in the field. */
+  readonly index: number;
+  /** The entry as parsed. */
+  readonly entry: Dict;
+  /** The service form's id (control ids derive from it). */
+  readonly id: string;
+  /** `--read-only`. */
+  readonly disabled: boolean;
+}
+
+/** A key picker's choices: unset, Compose's, and the file's own value when it is other. */
+function choiceOptions(choices: readonly string[], current: string): WidgetOption[] {
+  const values = current !== "" && !choices.includes(current) ? [...choices, current] : choices;
+  return [{ value: "", label: "— unset —" }, ...values.map((value) => ({ value, label: value }))];
+}
+
+/** One key's control: a picker where Compose fixes the choices, else a text input. */
+function longControl(name: string, id: string, key: string, current: unknown): RawHtml {
+  const value = textOf(current);
+  const choices = LONG_CHOICES[key];
+  if (!choices) return control({ tag: "input", name, id, value, placeholder: "unset" });
+  return control({ tag: "select", name, id, value, options: choiceOptions(choices, value) });
+}
+
+/**
+ * A long-syntax port or volume row: a labelled control per key the form knows, the keys it does
+ * not know named as kept (a write never touches them), and the row's ✕.
+ */
+function LongEntry({ field, index, entry, id, disabled }: LongEntryProps): VNode {
+  const prefix = LONG_PREFIX[field];
+  const controls = Object.keys(LONG_KEYS[field]).map((key) => {
+    const cid = `${id}-${prefix}-${index}-${key}`;
+    const body = longControl(`${prefix}.${index}.${key}`, cid, key, entry[key]);
+    return h(Raw, { key, html: labelled({ id: cid, label: key, body }) });
+  });
+  const kept = Object.keys(entry).filter((key) => !Object.hasOwn(LONG_KEYS[field], key));
+  return h(
+    Row,
+    { key: index },
     h(
-      Row,
-      { key: i },
-      isLong(port)
-        ? h("code", { class: "grow" }, port)
-        : textInput(`port.${i}`, `Port mapping ${i + 1}`, port),
-      removeButton("ports", i, `Remove port ${port}`, disabled),
-    )
+      "div",
+      { class: "grow" },
+      controls,
+      kept.length ? h(Note, null, `Kept as written: ${kept.join(", ")}.`) : null,
+    ),
+    removeButton(field, index, `Remove ${prefix} entry ${index + 1}`, disabled),
+  );
+}
+
+/** `ports`: an editable row per mapping (a long-syntax one key by key), plus an add row. */
+function PortsEditor(
+  { svc, id, disabled }: Omit<ServiceProps, "model"> & { readonly id: string },
+): VNode {
+  const rows = svc.ports.map((port, i) =>
+    isLong(port)
+      ? h(LongEntry, { key: i, field: "ports", index: i, entry: JSON.parse(port), id, disabled })
+      : h(
+        Row,
+        { key: i },
+        textInput(`port.${i}`, `Port mapping ${i + 1}`, port),
+        removeButton("ports", i, `Remove port ${port}`, disabled),
+      )
   );
   const add = h(Row, null, textInput("port.new", "New port mapping", "", "add — host:container"));
   return h(ListEditor, { legend: "ports", rows, add });
@@ -1028,6 +1244,8 @@ function DepsEditor({ model, svc, disabled }: ServiceProps): VNode {
       { key: name, class: "badge" },
       h("code", null, name),
       " ",
+      conditionPicker(svc, name, i),
+      " ",
       removeButton("depends_on", i, `Stop depending on ${name}`, disabled),
     )
   );
@@ -1050,7 +1268,24 @@ function DepsEditor({ model, svc, disabled }: ServiceProps): VNode {
   });
 }
 
-/** `volumes`: a row per mount (remove-only), plus an add row. */
+/**
+ * What one dependency waits for: Compose's conditions, plus the file's own value when it is
+ * other. Choosing one on a short `depends_on` list rewrites it in the long form.
+ */
+function conditionPicker(svc: ComposeService, name: string, i: number): VNode {
+  const current = svc.conditions[name] ?? DEPENDS_CONDITIONS[0];
+  const options: WidgetOption[] = DEPENDS_CONDITIONS.map((value) => ({ value, label: value }));
+  if (!isCondition(current)) options.push({ value: current, label: current });
+  const html = control({
+    tag: "select",
+    name: `dep.${i}.condition`,
+    value: current,
+    options,
+    ariaLabel: `Condition for ${name}`,
+  });
+  return h(Raw, { html });
+}
+
 /** Props of {@linkcode EntryListEditor}. */
 interface EntryListProps {
   /** The field it edits (also the remove buttons' list name). */
@@ -1063,20 +1298,27 @@ interface EntryListProps {
   readonly noun: string;
   /** The add row's placeholder. */
   readonly placeholder: string;
+  /** The service form's id (a long-syntax volume's control ids derive from it). */
+  readonly id: string;
   /** `--read-only`. */
   readonly disabled: boolean;
 }
 
-/** A list of plain entries (`volumes`, `networks`): a remove button per row and an add row. */
+/**
+ * A list of plain entries (`volumes`, `networks`): a remove button per row and an add row. A
+ * long-syntax volume is edited key by key.
+ */
 function EntryListEditor(props: EntryListProps): VNode {
-  const { list, entries, addField, noun, placeholder, disabled } = props;
+  const { list, entries, addField, noun, placeholder, id, disabled } = props;
   const rows = entries.map((entry, i) =>
-    h(
-      Row,
-      { key: entry },
-      h("code", { class: "grow" }, entry),
-      removeButton(list, i, `Remove ${noun} ${entry}`, disabled),
-    )
+    list === "volumes" && isLong(entry)
+      ? h(LongEntry, { key: entry, field: list, index: i, entry: JSON.parse(entry), id, disabled })
+      : h(
+        Row,
+        { key: entry },
+        h("code", { class: "grow" }, entry),
+        removeButton(list, i, `Remove ${noun} ${entry}`, disabled),
+      )
   );
   const add = h(Row, null, textInput(addField, `New ${noun}`, "", placeholder));
   return h(ListEditor, { legend: list, rows, add });

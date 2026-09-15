@@ -443,7 +443,7 @@ Deno.test("duplicate keys and unknown or commented services are refused", () => 
   );
 });
 
-Deno.test("dependsOn / volumes: add and remove by value; long form refused", () => {
+Deno.test("dependsOn / volumes: add and remove by value, in the short or the long form", () => {
   const next = edit(GEN_PG, [
     { op: "dependsOn", service: "web", action: "add", value: "cache" },
     { op: "volumes", service: "web", action: "add", value: "./data:/data" },
@@ -465,9 +465,10 @@ Deno.test("dependsOn / volumes: add and remove by value; long form refused", () 
   const long =
     "services:\n  web:\n    image: x\n    depends_on:\n      db:\n        condition: service_healthy\n  db:\n    image: y\n";
   assertEquals(readCompose(long)!.services[0].dependsOn, ["db"]);
-  assertMatch(
-    refusal(long, [{ op: "dependsOn", service: "web", action: "remove", value: "db" }]),
-    /edit it by hand/,
+  assertEquals(readCompose(long)!.services[0].conditions, { db: "service_healthy" });
+  assertEquals(
+    edit(long, [{ op: "dependsOn", service: "web", action: "remove", value: "db" }]),
+    "services:\n  web:\n    image: x\n  db:\n    image: y\n",
   );
 });
 
@@ -554,7 +555,7 @@ Deno.test("a Unicode line separator makes the file opaque, and an edit can't wri
   refusal(GEN, [{ op: "set", service: "web", field: "image", value: `a${ls}b` }]);
 });
 
-Deno.test("networks: add and remove by value; a long-form mapping is refused", () => {
+Deno.test("networks: add and remove by value; the long form gains and loses keys", () => {
   const next = edit(GEN, [{ op: "networks", service: "web", action: "add", value: "backend" }]);
   assertEquals(readCompose(next)!.services[0].networks, ["backend"]);
   assertEquals(
@@ -564,9 +565,123 @@ Deno.test("networks: add and remove by value; a long-form mapping is refused", (
   const long = "services:\n  web:\n    image: nginx\n    networks:\n      backend:\n" +
     "        aliases:\n          - api\n";
   assertEquals(readCompose(long)!.services[0].networks, ["backend"]);
+  const added = edit(long, [{ op: "networks", service: "web", action: "add", value: "front" }]);
+  assertEquals(added, long + "      front:\n");
+  assertEquals(readCompose(added)!.services[0].networks, ["backend", "front"]);
+  assertEquals(
+    edit(added, [{ op: "networks", service: "web", action: "remove", value: "front" }]),
+    long,
+  );
+});
+
+Deno.test("entry: a long-syntax port's keys are set, added and deleted in place", () => {
+  const text = [
+    "services:",
+    "  web:",
+    "    image: x",
+    "    ports:",
+    "      - target: 80 # container",
+    '        published: "8080"',
+    "        protocol: tcp",
+    '      - "443:443"',
+    "",
+  ].join("\n");
+  const port = (key: string, value: string | number | null): ComposeOp => ({
+    op: "entry",
+    service: "web",
+    field: "ports",
+    index: 0,
+    key,
+    value,
+  });
+  const set = edit(text, [port("published", "9090")]);
+  assertEquals(changedLines(text, set), [5]);
+  assertStringIncludes(set, '        published: "9090"\n');
+  assertStringIncludes(edit(text, [port("target", 81)]), "      - target: 81 # container\n");
+  assertStringIncludes(
+    edit(text, [port("mode", "host")]),
+    "        protocol: tcp\n        mode: host\n",
+  );
+  const dropped = edit(text, [port("target", null)]);
+  assertStringIncludes(dropped, '      - published: "8080"\n        protocol: tcp\n');
+  assertEquals(readCompose(dropped)!.services[0].ports[0], '{"published":"8080","protocol":"tcp"}');
   assertMatch(
-    refusal(long, [{ op: "networks", service: "web", action: "add", value: "front" }]),
-    /not written as a list/,
+    refusal(text, [{ ...port("target", 1), index: 1 } as ComposeOp]),
+    /not a long-syntax/,
+  );
+  assertMatch(refusal(text, [port("Bad Key", 1)]), /not a key/);
+  assertMatch(refusal(text, [port("name", null)]), /has no name/);
+});
+
+Deno.test("entry: a flow-style entry, an entry inside a flow list, and a boolean key", () => {
+  const text = "services:\n  web:\n    image: x\n    volumes:\n" +
+    "      - { type: bind, source: ./d, target: /d }\n" +
+    '    ports: [{ target: 80, published: "8080" }]\n';
+  assertStringIncludes(
+    edit(text, [
+      { op: "entry", service: "web", field: "volumes", index: 0, key: "read_only", value: true },
+    ]),
+    "      - { type: bind, source: ./d, target: /d, read_only: true }\n",
+  );
+  assertStringIncludes(
+    edit(text, [
+      { op: "entry", service: "web", field: "ports", index: 0, key: "published", value: "9090" },
+    ]),
+    '    ports: [{target: 80, published: "9090"}]\n',
+  );
+});
+
+Deno.test("condition: a short depends_on list is rewritten in the long form; a long one in place", () => {
+  const short = "services:\n  web:\n    image: x\n    depends_on:\n      - db\n      - cache\n" +
+    "  db:\n    image: pg\n  cache:\n    image: redis\n";
+  const long = edit(short, [
+    { op: "condition", service: "web", value: "db", condition: "service_healthy" },
+  ]);
+  assertStringIncludes(
+    long,
+    "    depends_on:\n      db:\n        condition: service_healthy\n" +
+      "      cache:\n        condition: service_started\n",
+  );
+  const again = edit(long, [
+    {
+      op: "condition",
+      service: "web",
+      value: "cache",
+      condition: "service_completed_successfully",
+    },
+  ]);
+  assertEquals(changedLines(long, again).length, 1);
+  assertEquals(readCompose(again)!.services[0].conditions, {
+    db: "service_healthy",
+    cache: "service_completed_successfully",
+  });
+  const bare =
+    "services:\n  web:\n    image: x\n    depends_on:\n      db:\n  db:\n    image: pg\n";
+  assertStringIncludes(
+    edit(bare, [{ op: "condition", service: "web", value: "db", condition: "service_healthy" }]),
+    "      db:\n        condition: service_healthy\n",
+  );
+  assertStringIncludes(
+    edit(short, [
+      { op: "dependsOn", service: "web", action: "remove", value: "cache" },
+      {
+        op: "dependsOn",
+        service: "web",
+        action: "add",
+        value: "cache",
+        condition: "service_healthy",
+      },
+    ]),
+    "      cache:\n        condition: service_healthy",
+  );
+  assertMatch(
+    refusal(short, [{
+      op: "condition",
+      service: "web",
+      value: "nope",
+      condition: "service_healthy",
+    }]),
+    /does not list/,
   );
 });
 

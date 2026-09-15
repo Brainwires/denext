@@ -474,6 +474,8 @@ export interface ComposeService {
   volumes: string[];
   /** Services `depends_on:` names (the list, or the long form's keys). */
   dependsOn: string[];
+  /** The `condition` each long-form dependency sets (one without is `service_started`). */
+  conditions: Record<string, string>;
   /** `networks:` the service joins (the list, or the long form's keys). */
   networks: string[];
   /** `profiles:` entries. */
@@ -713,12 +715,23 @@ function describe(
     envForm: Array.isArray(v.environment) ? "list" : "map",
     volumes: texts(v.volumes),
     dependsOn: isMapping(v.depends_on) ? Object.keys(v.depends_on) : texts(v.depends_on),
+    conditions: conditionsOf(v.depends_on),
     networks: isMapping(v.networks) ? Object.keys(v.networks) : texts(v.networks),
     profiles: texts(v.profiles),
     commented,
     line: index + 1,
     ...provenance,
   };
+}
+
+/** The condition each long-form dependency sets. */
+function conditionsOf(dependsOn: unknown): Record<string, string> {
+  if (!isMapping(dependsOn)) return {};
+  return Object.fromEntries(
+    Object.entries(dependsOn).flatMap(([name, value]) =>
+      isMapping(value) && typeof value.condition === "string" ? [[name, value.condition]] : []
+    ),
+  );
 }
 
 /** Where an active service's fields come from (see {@linkcode Provenance}). */

@@ -47,6 +47,11 @@ and this project adheres to
       else changes.
 
   A file that is still opaque now says why.
+- `denext ui`'s compose editor edits a long-syntax port or volume key by key (`target`,
+  `published`, `protocol`, …), with a picker where Compose fixes the choices; keys it doesn't
+  know are kept. It also adds and removes entries of a long-form `depends_on` or `networks:`,
+  and sets the `condition` a dependency waits for, rewriting a short `depends_on` list in the
+  long form. Each of these used to be refused.
 - `denext ui`: a JSR plugin that publishes `denext.catalog.optionsSchema` (a JSON Schema) in its
   `deno.json` or `jsr.json` gets an options form, like the first-party ones, linked from the
   Plugins panel's Third-party list. The UI reads the file from `jsr.io` for the version
