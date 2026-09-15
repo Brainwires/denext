@@ -53,6 +53,7 @@ import {
   afterSignIn,
   type AuthRoute,
   type AuthRouteContext,
+  contained,
   isSameOrigin,
   json,
   redirect,
@@ -243,11 +244,20 @@ async function handleDisable(ctx: AuthRouteContext): Promise<Response | null> {
 
 /**
  * The MFA rows, relative to `basePath`. Each is same-origin gated and spends the per-user
- * MFA budget itself wherever it checks a code, so none carries a dispatch-level `limit`.
+ * MFA budget itself wherever it checks a code, so none carries a dispatch-level `limit`; an
+ * adapter failure is logged and answered `503` ({@link contained}).
  */
 export const mfaRoutes: AuthRoute[] = [
-  { method: "POST", pattern: "/mfa", handler: handleStepUp },
-  { method: "POST", pattern: "/mfa/enroll", handler: handleEnroll },
-  { method: "POST", pattern: "/mfa/confirm", handler: handleConfirm },
-  { method: "POST", pattern: "/mfa/disable", handler: handleDisable },
+  {
+    method: "POST",
+    pattern: "/mfa",
+    handler: contained("the second-factor step-up", handleStepUp),
+  },
+  { method: "POST", pattern: "/mfa/enroll", handler: contained("TOTP enrollment", handleEnroll) },
+  {
+    method: "POST",
+    pattern: "/mfa/confirm",
+    handler: contained("TOTP confirmation", handleConfirm),
+  },
+  { method: "POST", pattern: "/mfa/disable", handler: contained("disabling TOTP", handleDisable) },
 ];

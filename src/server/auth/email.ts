@@ -561,8 +561,9 @@ export async function markVerified(
 
 /**
  * Redeem a password-reset token and set a new password: the configured `hasher` hashes it,
- * `adapter.setCredential` stores it, and every server-side session of the user is revoked.
- * Fires `passwordReset` (after `sessionRevoked`).
+ * `adapter.setCredential` stores it, and every server-side session and bearer API token of
+ * the user is revoked — a reset is how an owner takes an account back, so nothing a thief
+ * minted with a stolen session survives it. Fires `passwordReset` (after `sessionRevoked`).
  *
  * The password is checked (8–1024 characters) **before** the token is touched, so a
  * refused password leaves the link usable.
@@ -592,7 +593,10 @@ export async function resetPassword(
   const wasVerified = isVerified(user.emailVerified);
   const owner = await markVerified(config, options, adapter, user);
   await adapter.setCredential!(user.id, await options.hasher.hash(input.password));
-  if (wasVerified) await revokeUserSessions(config, options, user.id);
+  if (wasVerified) {
+    await revokeUserSessions(config, options, user.id);
+    await revokeApiTokens(adapter, user.id);
+  }
   await emitAuthEvent(options, "passwordReset", { user: owner });
   return { ok: true, user: owner };
 }

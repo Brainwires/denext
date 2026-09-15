@@ -39,6 +39,7 @@ import {
   type AuthRoute,
   type AuthRouteContext,
   type AuthRouteLimit,
+  contained,
   findProvider,
   json,
 } from "./routes-shared.ts";
@@ -169,9 +170,17 @@ const declaredRoutes: readonly AuthRoute[] = [
   // Bearer API tokens. Cookie session only — these three never read `Authorization`, so a
   // token can't mint or revoke another one. They answer `null` (→ a plain 404) when no
   // adapter can store tokens, i.e. when the feature isn't configured at all.
-  { method: "POST", pattern: "/tokens", handler: handleCreateToken },
-  { method: "GET", pattern: "/tokens", handler: handleListTokens },
-  { method: "DELETE", pattern: "/tokens/:id", handler: handleRevokeToken },
+  {
+    method: "POST",
+    pattern: "/tokens",
+    handler: contained("minting an API token", handleCreateToken),
+  },
+  { method: "GET", pattern: "/tokens", handler: contained("listing API tokens", handleListTokens) },
+  {
+    method: "DELETE",
+    pattern: "/tokens/:id",
+    handler: contained("revoking an API token", handleRevokeToken),
+  },
   // Email verification + password reset: GET/POST `/verify`, POST `/reset`, POST
   // `/reset/confirm` (the link click carries the per-IP `"session-read"` gate). They
   // answer `null` without an adapter that has the verification-token group.
