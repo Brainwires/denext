@@ -589,10 +589,14 @@ tries again. A child that cannot start, overruns its budget, or prints nothing p
 becomes a notice on the panel, never an empty page with no explanation. The whole discovery
 child gets 8 seconds; `DENEXT_UI_DISCOVERY_TIMEOUT_MS` raises that on a slow or busy machine.
 
-`denext --help` does **not** list them — it refuses to import your project to render a help
-table, and prints a one-line pointer at `denext commands` instead when it sees a config.
-`denext completions bash|zsh|fish` still enumerates them (a shell can only complete a name
-it was handed) under the same 1.5 s budget, then exits. **A built-in verb always wins a
+`denext --help` lists them too, and still imports nothing: `denext commands` records what it
+found in `.denext/commands.json`, with a fingerprint of `denext.config.*`, `deno.json` and
+`deno.lock`, and help prints that listing while the fingerprint holds. Before the first run — or
+once one of those files changes — help prints a one-line pointer at `denext commands` instead.
+A plugin that changes which verbs it contributes without any of those files changing is the one
+case a listing can be stale, so the footer under it says where it came from.
+`denext completions bash|zsh|fish` enumerates them live instead (a shell can only complete a
+name it was handed) under the same 1.5 s budget, then exits. **A built-in verb always wins a
 name collision** — a `commands:` entry named `dev` is ignored, never shadowing the core
 verb.
 

@@ -33,6 +33,7 @@ import type { CommandContext, CommandSpec, ParseOutcome } from "./src/cli/comman
 import { type CommandRegistry, GLOBAL_FLAGS } from "./src/cli/command.ts";
 import { buildRegistry } from "./src/cli/register.ts";
 import { projectDir, SHUTDOWN_SIGNALS } from "./src/cli/shared.ts";
+import { type ProjectVerb, readCommandCache } from "./src/cli/command-cache.ts";
 
 /**
  * The `--allow-*` flags to give a re-exec child: mirror the parent's coarse
@@ -246,16 +247,45 @@ function helpDirFromArgs(argv: string[], isVerb: (name: string) => boolean): str
  * `--help` deliberately does NOT. Discovering project verbs means importing the project's
  * `denext.config.ts` and running every plugin `setup()` — arbitrary user code, under whatever
  * permissions the CLI holds — which is far too much to ask of `denext --help`, and a `setup`
- * that leaks a handle would keep help from ever exiting. Help prints
- * {@linkcode PROJECT_HELP_NOTE} instead and `denext commands` does the discovery.
+ * that leaks a handle would keep help from ever exiting. Help lists what the last
+ * `denext commands` run recorded instead ({@linkcode projectHelp}), and points there when
+ * there is no listing it can trust.
  */
 function needsEveryCommand(outcome: ParseOutcome): boolean {
   return outcome.kind === "run" && outcome.command.name === "completions";
 }
 
-/** The footer `--help` prints, in place of a verb list it refuses to import the project for. */
+/** The footer `--help` prints when it has no listing it can trust. */
 const PROJECT_HELP_NOTE =
   "Project verbs: run `denext commands` (they are also in shell completions).";
+
+/** The footer `--help` prints under the verbs it listed, so their age is never a surprise. */
+const PROJECT_LISTED_NOTE =
+  "Project commands are what `denext commands` last found here; run it again after " +
+  "changing a plugin.";
+
+/** What top-level help says about the project's own verbs. */
+interface ProjectHelp {
+  /** The verbs to list (none when there is no listing to trust). */
+  verbs: ProjectVerb[];
+  /** The footer under the help text. */
+  note: string;
+}
+
+/**
+ * The project's own verbs for top-level help: the last discovery's listing, when the files it
+ * read have not changed since. Never imports the project — a file probe and a JSON read.
+ *
+ * @param dir The directory help was asked about.
+ * @returns The verbs and the footer, or null when it is not a denext project.
+ */
+async function projectHelp(dir: string): Promise<ProjectHelp | null> {
+  if (!await hasDenextConfig(dir)) return null;
+  const verbs = await readCommandCache(dir);
+  return verbs === null || verbs.length === 0
+    ? { verbs: [], note: PROJECT_HELP_NOTE }
+    : { verbs, note: PROJECT_LISTED_NOTE };
+}
 
 /**
  * Whether `dir` holds a denext config — a file-existence probe, never an import, so
@@ -286,31 +316,32 @@ async function main(): Promise<void> {
 
   if (outcome.kind !== "run") {
     const isVerb = (name: string) => name === "help" || registry.get(name) !== undefined;
-    const note = outcome.kind === "help" && outcome.command === undefined &&
-      await hasDenextConfig(helpDirFromArgs(Deno.args, isVerb));
-    return printOutcome(registry, outcome, note);
+    const project = outcome.kind === "help" && outcome.command === undefined
+      ? await projectHelp(helpDirFromArgs(Deno.args, isVerb))
+      : null;
+    return printOutcome(registry, outcome, project);
   }
   if (await moduleGate(outcome.command, outcome.ctx)) return;
   await outcome.command.run(outcome.ctx);
 }
 
 /**
- * Print a non-run outcome: the version, help, or a usage error (exit 1). `projectNote`
- * says the target directory is a denext project, so the help table — which lists only the
- * built-ins — points at `denext commands` for the verbs this project adds.
+ * Print a non-run outcome: the version, help, or a usage error (exit 1). `project` is the
+ * target directory's own verbs and the footer under them — null when it is not a denext
+ * project, and then help is the built-in table alone.
  */
 function printOutcome(
   registry: CommandRegistry,
   outcome: Exclude<ParseOutcome, { kind: "run" }>,
-  projectNote = false,
+  project: ProjectHelp | null = null,
 ): void {
   if (outcome.kind === "version") {
     console.log(`denext ${VERSION}`);
   } else if (outcome.kind === "help") {
     const help = outcome.command
       ? registry.formatCommandHelp(outcome.command)
-      : registry.formatHelp(VERSION);
-    console.log(projectNote ? `${help}\n\n${PROJECT_HELP_NOTE}` : help);
+      : registry.formatHelp(VERSION, project?.verbs ?? []);
+    console.log(project && !outcome.command ? `${help}\n\n${project.note}` : help);
   } else {
     console.error(
       `denext: ${outcome.message}` +

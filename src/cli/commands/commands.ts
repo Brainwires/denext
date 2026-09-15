@@ -7,7 +7,8 @@
 // already does, in a short-lived CLI process the user started on purpose. The two callers that
 // used to do that work themselves no longer do:
 //
-//   * `denext --help` lists only the built-ins and points here, so help imports nothing.
+//   * `denext --help` imports nothing: it lists what THIS verb last found, from the cache
+//     it writes, and points here when there is no listing to trust.
 //   * `denext ui` shells out to THIS verb as a `deno` subprocess, so project code never runs
 //     inside the UI's privileged server (see `src/ui/features/commands.ts`).
 //
@@ -24,6 +25,7 @@ import type {
   FlagSpec,
   PositionalSpec,
 } from "../command.ts";
+import { writeCommandCache } from "../command-cache.ts";
 import { COMMAND_LOAD_BUDGET_MS, loadPluginCommands } from "../plugin-commands.ts";
 import { projectDir } from "../shared.ts";
 
@@ -177,6 +179,16 @@ export function makeCommandsCommand(reg: CommandRegistry): CommandSpec {
       const dir = projectDir(ctx);
       const timeoutMs = budgetOf(ctx);
       const listing = await listAllCommands(reg, dir, timeoutMs);
+      // A complete listing is what `denext --help` prints; a degraded one is not recorded.
+      if (!listing.timedOut && listing.error === undefined) {
+        await writeCommandCache(
+          dir,
+          listing.project.map(({ name, summary }) => ({
+            name,
+            summary,
+          })),
+        );
+      }
       if (ctx.global.json) console.log(JSON.stringify(listing, null, 2));
       else printHuman(listing, dir, timeoutMs);
       // A plugin `setup()` that left a timer, a watcher or a listener open would otherwise

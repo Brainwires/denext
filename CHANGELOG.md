@@ -63,6 +63,12 @@ and this project adheres to
   `deno.lock` resolved (else the latest), keeps only the schema keys the form reads — checked
   and size-bounded — and never loads remote code.
 
+- `denext --help` lists a project's own verbs, without importing the project: `denext commands`
+  records what it found in `.denext/commands.json`, fingerprinted against `denext.config.*`,
+  `deno.json` and `deno.lock`, and help prints that listing while the fingerprint holds. Before
+  any run of that verb, or once one of those files changes, help points at `denext commands` as
+  it always did.
+
 ### Changed
 
 - The emailed auth flows accept an internationalised email domain (`ada@bücher.de`),

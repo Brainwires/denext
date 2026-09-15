@@ -205,3 +205,12 @@ Deno.test("--timeout overrides the discovery budget and is reported in the notic
     assertEquals(codes, [0]);
   });
 });
+
+Deno.test("the verb records a complete listing for --help, and a degraded one not at all", async () => {
+  await withProject(SEED_CONFIG, async (dir) => {
+    await invoke(dir);
+    const cache = JSON.parse(await Deno.readTextFile(join(dir, ".denext", "commands.json")));
+    assertEquals(cache.verbs, [{ name: "seed", summary: "load fixture data" }]);
+    assertEquals(typeof cache.fingerprint, "string");
+  });
+});

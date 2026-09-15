@@ -337,12 +337,6 @@ four documented bounds of the opt-in:
 - **`/config/next` is read-only.** denext never loads `next.config.*` at runtime, so writing to
   it would change nothing; the panel reads it in a bounded subprocess and offers to translate
   what denext honors into `denext.config.ts`.
-- **`denext --help` does not list a project's own verbs, by design.** Rendering them would
-  mean importing `denext.config.ts` and running every plugin `setup()`; `denext commands`
-  (which the help footer points at) does that in a process that always exits, and shell
-  completions still include them. The UI's Commands panel reads the same subprocess — and
-  **running** a project verb from the panel pays plugin discovery again in its own child, so
-  a slow `setup()` is felt on every run.
 
 ### Desktop & mobile (`denext desktop`, Capacitor)
 

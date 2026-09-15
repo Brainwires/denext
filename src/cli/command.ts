@@ -13,6 +13,7 @@
 // the toolchain in. (`edit-distance` is a pure, zero-dependency leaf util.)
 
 import { editDistance } from "../utils/edit-distance.ts";
+import type { ProjectVerb } from "./command-cache.ts";
 
 /** The value kind a flag carries. A `boolean` flag is a bare presence switch. */
 export type FlagType = "boolean" | "string" | "number";
@@ -268,24 +269,33 @@ export class CommandRegistry {
   }
 
   /**
-   * Render the top-level help (verb table + global flags) for the verbs registered so
-   * far. The CLI's `denext --help` never imports the project to discover its verbs, so
-   * the table it prints lists only the built-ins; inside a denext project the CLI appends
-   * a footer pointing at `denext commands`, which lists them. A verb carrying a non-core
-   * {@linkcode CommandSpec.source} — a plugin verb or a `denext.config.ts` `commands:`
-   * entry, present only when a caller registered it first — is listed in its own
-   * "Project commands" section under the built-in table.
+   * Render the top-level help (verb table + global flags) for the verbs registered so far,
+   * plus `project` — the verbs a project contributes, which the CLI reads from the last
+   * discovery's cache rather than importing the project for. A registered verb carrying a
+   * non-core {@linkcode CommandSpec.source} (a plugin verb or a config entry) joins them,
+   * and a name the registry already has is never repeated.
+   *
+   * @param version The version to print.
+   * @param project The project's own verbs, when any are known.
+   * @returns The help text.
    */
-  formatHelp(version: string): string {
+  formatHelp(version: string, project: readonly ProjectVerb[] = []): string {
     const visible = this.#canonical.filter((c) => !c.hidden);
-    const width = Math.max(...visible.map((c) => label(c).length)) + 3;
-    const table = (specs: CommandSpec[]) =>
-      specs.map((c) => `${label(c).padEnd(width)}${c.summary}`).join("\n");
-    const project = visible.filter(isProjectSourced);
-    const projectSection = project.length === 0 ? "" : `\n\nProject commands:\n${table(project)}`;
+    const rows = (specs: CommandSpec[]) =>
+      specs.map((c) => ({ label: label(c), summary: c.summary }));
+    const builtIns = rows(visible.filter((c) => !isProjectSourced(c)));
+    const own = [
+      ...rows(visible.filter(isProjectSourced)),
+      ...project.filter((verb) => this.get(verb.name) === undefined)
+        .map((verb) => ({ label: verb.name, summary: verb.summary })),
+    ];
+    const width = Math.max(...[...builtIns, ...own].map((row) => row.label.length)) + 3;
+    const table = (list: { label: string; summary: string }[]) =>
+      list.map((row) => `${row.label.padEnd(width)}${row.summary}`).join("\n");
+    const projectSection = own.length === 0 ? "" : `\n\nProject commands:\n${table(own)}`;
     return `denext ${version} — one power tool for all of React\n\n` +
       `Usage: denext <command> [options]\n\n` +
-      `Commands:\n${table(visible.filter((c) => !isProjectSourced(c)))}${projectSection}\n\n` +
+      `Commands:\n${table(builtIns)}${projectSection}\n\n` +
       `Global options:\n${globalFlagsHelp()}\n\n` +
       `Run \`denext <command> --help\` for command-specific options.`;
   }
