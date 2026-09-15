@@ -22,6 +22,14 @@ and this project adheres to
   `403 { error: "reauth_required" }`. `resetPassword()` now also revokes the user's bearer API
   tokens along with their sessions. A stolen session could mint a token that outlived both
   the session and the owner's password reset.
+- `requireBearer({ scope: [] })` refuses every token, as `role: []` does; an empty scope list
+  used to admit every live token.
+- The MCP live tools (`denext_dev_logs`, `denext_component_tree`, …) only talk to a loopback
+  http(s) origin read from `.denext/dev.json`, rebuilt from its parts: a committed or planted
+  file can no longer point them at another host.
+- An OAuth callback's `?error=` reaches the sign-in page and `signInFailed.reason` only when it
+  is a protocol-shaped code (`access_denied`); free text reads `oauth_failed` and is logged, so
+  a crafted link can't put its own message on the sign-in page.
 
 ### Changed
 
@@ -43,6 +51,17 @@ and this project adheres to
   `503 { error: "unavailable" }` instead of a bare `500`.
 - The 50-live-token cap on `POST {basePath}/tokens` holds under concurrent requests (per
   process).
+- `denext ui` sends `referrer-policy: same-origin` (was `no-referrer`). Under `no-referrer` a
+  browser sends `Origin: null` on a form POST, so with JavaScript off every panel form failed
+  the origin check.
+- `denext ui`: the Plugins panel's config write (after `deno add`, which can take minutes) and
+  the wizard's `deno.json` / `.env.example` writes refuse when the file changed on disk since
+  it was read, like the config, plugin-options and compose writers.
+- `denext ui` config edits keep a CRLF file CRLF; inserted lines used a bare LF.
+- `denext ui` streams a child's output that never prints a newline in 64 KiB pieces instead of
+  holding it until the child exits.
+- A mistyped 6-digit code at the second-factor step no longer runs the password hasher once per
+  stored backup code.
 
 ## [2.5.0-rc.4] - 2026-09-15
 
