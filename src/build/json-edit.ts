@@ -11,7 +11,7 @@
 // Reading goes through `@std/jsonc`, which understands comments and trailing commas.
 
 import { parse as parseJsonc } from "@std/jsonc";
-import { applyEdits, type Ctx, type Node, parseModule } from "./swc-ast.ts";
+import { applyEdits, type Ctx, matchLineEndings, type Node, parseModule } from "./swc-ast.ts";
 import {
   type EditResult,
   objectDeleteEdits,
@@ -58,7 +58,7 @@ async function parseDocument(source: string): Promise<Document | null> {
 /** Apply a splice outcome to the wrapped source, unwrapping the parentheses again. */
 function finish(source: string, doc: Document, outcome: SpliceOutcome): EditResult {
   if (!outcome.ok) return { ok: false, reason: outcome.reason, snippet: outcome.snippet };
-  const next = applyEdits(doc.ctx.bytes, outcome.edits).slice(1, -1);
+  const next = applyEdits(doc.ctx.bytes, matchLineEndings(source, outcome.edits)).slice(1, -1);
   return {
     ok: true,
     source: next,

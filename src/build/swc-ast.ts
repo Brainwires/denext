@@ -56,6 +56,19 @@ const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
  * are byte offsets, which differ from JS string indices whenever the source has
  * multi-byte characters). Splicing happens in byte space, then decodes back.
  */
+/**
+ * Give `edits` the line endings of `source`: in a CRLF file every newline an edit inserts
+ * becomes CRLF too, so a splice never leaves the file with mixed endings.
+ *
+ * @param source The text being edited.
+ * @param edits The splices to apply to it.
+ * @returns `edits`, with their newlines matched to the file's.
+ */
+export function matchLineEndings(source: string, edits: Edit[]): Edit[] {
+  if (!source.includes("\r\n")) return edits;
+  return edits.map((edit) => ({ ...edit, text: edit.text.replace(/\r?\n/g, "\r\n") }));
+}
+
 export function applyEdits(bytes: Uint8Array, edits: Edit[]): string {
   const sorted = [...edits].sort((a, b) => a.start - b.start || (a.order ?? 0) - (b.order ?? 0));
   const parts: Uint8Array[] = [];

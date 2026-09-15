@@ -278,3 +278,16 @@ Deno.test("setConfigValue: the diff is a real unified diff of the write", async 
     "@@ -1,7 +1,7 @@",
   ]);
 });
+
+Deno.test("setConfigValue: a CRLF config gets CRLF in everything the splice inserts", async () => {
+  const src = 'export default {\r\n  basePath: "/a",\r\n};\r\n';
+  const bareLf = /(?<!\r)\n/;
+  const nested = await setConfigValue(src, ["images", "remotePatterns"], [{
+    hostname: "cdn.example",
+  }]);
+  if (!nested.ok) throw new Error(nested.reason);
+  assertEquals(bareLf.test(nested.source), false, "a nested insert adds no bare LF");
+  const top = await setConfigValue(src, ["i18n"], { locales: ["en"], defaultLocale: "en" });
+  if (!top.ok) throw new Error(top.reason);
+  assertEquals(bareLf.test(top.source), false, "a new top-level key adds no bare LF");
+});
