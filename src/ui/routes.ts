@@ -10,16 +10,15 @@ import { sseStream } from "../build/sse.ts";
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode } from "../jsx/types.ts";
 import {
-  htmlResponse,
   jsonResponse,
-  renderPage,
+  panelResponder,
   UI_EVENTS_PATH,
   UI_NAV,
   type UiContext,
   type UiHandler,
   type UiRoute,
 } from "./html.ts";
-import { layout, type NavItem, UI_CSS_PATH, UI_JS_PATH } from "./layout.ts";
+import { type NavItem, UI_CSS_PATH, UI_JS_PATH } from "./layout.ts";
 import { Note, Panel } from "./components.ts";
 import { renderView } from "./view.ts";
 import { UI_CSS } from "./styles.ts";
@@ -141,7 +140,17 @@ function Overview({ ctx }: { readonly ctx: UiContext }): VNode {
   );
 }
 
-/** The overview page (always the whole document), or its JSON twin. */
+/**
+ * The overview's responder — the same one every other panel answers through.
+ *
+ * It used to render the whole document unconditionally, alone among the panels. That was
+ * invisible until `ui.js` began swapping panels in place: a nav click to the overview fetched an
+ * ENTIRE document, `swapPanel` dug the `<section id="panel">` back out of it, and the page looked
+ * right while shipping a shell nobody used and carrying no title for the tab to take.
+ */
+const homeResponse = panelResponder("Project", "/");
+
+/** The overview page, the bare panel for a swap, or its JSON twin. */
 function home(_request: Request, ctx: UiContext): Promise<Response> {
   if (ctx.json) {
     return Promise.resolve(
@@ -153,18 +162,7 @@ function home(_request: Request, ctx: UiContext): Promise<Response> {
       }),
     );
   }
-  const body = renderView(h(Overview, { ctx }));
-  return Promise.resolve(htmlResponse(
-    renderPage(layout, {
-      title: "Project",
-      nav: UI_NAV,
-      body,
-      csrf: ctx.csrf,
-      active: "/",
-      readOnly: ctx.readOnly,
-      offline: ctx.offline,
-    }),
-  ));
+  return Promise.resolve(homeResponse(ctx, renderView(h(Overview, { ctx }))));
 }
 
 // ── `/tasks/run` ─────────────────────────────────────────────────────────────

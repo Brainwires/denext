@@ -763,6 +763,18 @@ returned fragment is parsed with `DOMParser` and adopted as nodes — untrusted 
 never assigned to `innerHTML`. Long-running work (a `deno task`, a `deno add`, `denext
 dev`) streams over SSE at `/_ui/events`.
 
+**Navigation, when JavaScript is on.** A click on a same-origin link — the sidebar, a panel's
+tabs, a filter — is taken over: the panel is fetched as a fragment, swapped in place, and the
+address updated with `history.pushState`, so Back and Forward work and no page is ever rebuilt.
+The fragment is only the `<section id="panel">`, so the two things that live outside it are
+carried separately: `aria-current` moves to the sidebar entry for the path now on screen, and the
+document title rides along in an `x-ui-title` header (URI-encoded, because a header is a byte
+string and a title is not always latin-1). Anything the browser should own is declined — a
+modified click, a new tab, a download, a cross-origin address, a jump to an anchor on this same
+page — and a response that is not a panel hands the address straight back to the browser, so the
+enhancement can never strand you on a page that will not move. With JavaScript off these are
+ordinary links, and every one of them still works.
+
 **How the views are built.** Every panel is a component tree built with `h()` from denext's
 own JSX runtime, in plain `.ts` modules, and rendered once to a string on the server. That
 changes nothing on the wire: there is still no client bundle, no hydration and no island,

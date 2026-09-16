@@ -15,6 +15,13 @@ export const UI_CSS_PATH = "/_ui/ui.css";
 /** The same-origin client-module path (also the route that serves it). */
 export const UI_JS_PATH = "/_ui/ui.js";
 
+/**
+ * The suffix every UI document title carries. Exported because `ui.js` swaps panels without a
+ * navigation and has to set `document.title` itself — one spelling, used by the shell and by the
+ * header the fragment response carries, so the two can never drift apart.
+ */
+export const UI_TITLE_SUFFIX = " · denext ui";
+
 /** One item of the UI's top navigation. */
 export interface NavItem {
   /** The path it links to. */
@@ -63,7 +70,7 @@ export function layout(options: LayoutOptions): VNode {
         h("meta", { charset: "utf-8" }),
         h("meta", { name: "viewport", content: "width=device-width, initial-scale=1" }),
         h("meta", { name: "denext-csrf", content: options.csrf }),
-        h("title", null, options.title, " · denext ui"),
+        h("title", null, options.title, UI_TITLE_SUFFIX),
         h("link", { rel: "stylesheet", href: UI_CSS_PATH }),
       ),
       h(

@@ -8,7 +8,7 @@
 // the server keeps exactly one rendering path. Untrusted text is never assigned to `innerHTML`:
 // the fragment the server rendered is parsed with `DOMParser` and adopted as nodes.
 
-import { UI_EVENTS_PATH } from "./html.ts";
+import { UI_EVENTS_PATH, UI_TITLE_HEADER } from "./html.ts";
 import { UI_CSRF_FIELD, UI_CSRF_HEADER } from "./security.ts";
 
 /** The client module served at `/_ui/ui.js`. */
@@ -16,6 +16,7 @@ export const UI_JS = `// denext ui — progressive enhancement (served same-orig
 const CSRF_HEADER = ${JSON.stringify(UI_CSRF_HEADER)};
 const CSRF_FIELD = ${JSON.stringify(UI_CSRF_FIELD)};
 const EVENTS = ${JSON.stringify(UI_EVENTS_PATH)};
+const TITLE_HEADER = ${JSON.stringify(UI_TITLE_HEADER)};
 const csrf = document.querySelector('meta[name="denext-csrf"]')?.content ?? "";
 
 /** Replace the current panel with a server-rendered fragment (parsed, never innerHTML'd). */
@@ -142,6 +143,74 @@ async function submit(form, submitter) {
     form.closest("#panel")?.prepend(note);
   }
 }
+
+/**
+ * Whether this click is one the enhancement may take over. Anything a browser would do
+ * specially — a new tab, a download, a cross-origin address, a modified click — is left alone,
+ * so the link keeps behaving like a link.
+ */
+function enhanceable(link, event) {
+  if (event.defaultPrevented || event.button !== 0) return false;
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return false;
+  if (!link || !link.getAttribute("href")) return false;
+  if (link.target || link.hasAttribute("download")) return false;
+  const url = new URL(link.href);
+  if (url.origin !== location.origin) return false;
+  // A jump within this same page is the browser's job, not ours.
+  if (url.pathname === location.pathname && url.search === location.search && url.hash) {
+    return false;
+  }
+  return true;
+}
+
+/** Move aria-current to the sidebar link for whatever path is on screen now. */
+function markCurrent() {
+  for (const link of document.querySelectorAll(".sidebar nav a")) {
+    if (new URL(link.href).pathname === location.pathname) {
+      link.setAttribute("aria-current", "page");
+    } else {
+      link.removeAttribute("aria-current");
+    }
+  }
+}
+
+/**
+ * Put a same-origin panel on screen without a navigation. Anything unexpected — a failed
+ * request, a response that is not a panel — hands the address back to the browser, so the
+ * enhancement can never strand someone on a page that will not move.
+ */
+async function show(href, push) {
+  let response;
+  try {
+    response = await fetch(href, { headers: { accept: "text/html-fragment" } });
+  } catch {
+    location.href = href;
+    return;
+  }
+  const type = response.headers.get("content-type") || "";
+  if (!response.ok || type.indexOf("text/html") === -1) {
+    location.href = href;
+    return;
+  }
+  const title = response.headers.get(TITLE_HEADER);
+  swapPanel(await response.text());
+  if (push) history.pushState(null, "", href);
+  markCurrent();
+  if (title) document.title = decodeURIComponent(title);
+  if (push) globalThis.scrollTo(0, 0);
+}
+
+document.addEventListener("click", (event) => {
+  const link = event.target?.closest?.("a[href]");
+  if (!enhanceable(link, event)) return;
+  event.preventDefault();
+  show(link.href, true).catch((error) => console.error("denext ui:", error));
+});
+
+// Back and forward: the browser has already changed the address, so only the panel is behind.
+globalThis.addEventListener("popstate", () => {
+  show(location.href, false).catch((error) => console.error("denext ui:", error));
+});
 
 document.addEventListener("submit", (event) => {
   const form = event.target;

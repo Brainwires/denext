@@ -178,3 +178,93 @@ Deno.test("denext ui: a panel swap re-renders without losing the page's other pa
     await teardown(server, dir);
   }
 });
+
+Deno.test("denext ui: the sidebar navigates without a reload, and Back comes home", async () => {
+  const dir = await project(false);
+  const server = await startUiServer({ dir, port: 0 });
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    const errors = collectConsoleErrors(page);
+    await page.goto(server.url); // the handshake lands on "/"
+
+    await pollFor(page, `location.pathname === "/"`);
+    const titleBefore = String(await page.evaluate("document.title"));
+    // A full navigation rebuilds the document and clears this.
+    await page.evaluate("window.__noReload = true");
+
+    const link = await page.$('.sidebar nav a[href="/wizard"]');
+    assert(link, "the sidebar must link to the wizard");
+    await link.click();
+
+    await pollFor(page, `location.pathname === "/wizard"`);
+    await pollFor(page, `!!document.querySelector("#panel")`);
+    assertEquals(
+      await page.evaluate("window.__noReload === true"),
+      true,
+      "a sidebar click must swap the panel, not navigate",
+    );
+
+    // The marker lives in the shell, OUTSIDE the swapped panel, so the client has to move it.
+    assertEquals(
+      await page.evaluate(
+        `document.querySelector('.sidebar nav a[aria-current="page"]').getAttribute("href")`,
+      ),
+      "/wizard",
+      "aria-current must follow the panel on screen",
+    );
+
+    // The fragment carries no <title>; it arrives as a header and the client applies it.
+    const titleAfter = String(await page.evaluate("document.title"));
+    assert(titleAfter !== titleBefore, `the tab title must follow the panel (still ${titleAfter})`);
+    assertStringIncludes(titleAfter, "denext ui");
+
+    await page.evaluate("history.back()");
+    await pollFor(page, `location.pathname === "/"`);
+    await pollFor(
+      page,
+      `document.querySelector('.sidebar nav a[aria-current="page"]').getAttribute("href") === "/"`,
+    );
+    assertEquals(
+      await page.evaluate("window.__noReload === true"),
+      true,
+      "Back must restore the panel without reloading either",
+    );
+    assertEquals(String(await page.evaluate("document.title")), titleBefore);
+
+    assertNoConsoleErrors(errors);
+  } finally {
+    await browser.close();
+    await teardown(server, dir);
+  }
+});
+
+Deno.test("denext ui: a link the browser should own is left alone", async () => {
+  const dir = await project(false);
+  const server = await startUiServer({ dir, port: 0 });
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    await page.goto(server.url);
+    // The enhancement must decline anything a browser treats specially, or it would break
+    // opening a link in a new tab, downloads, and every off-origin link the panels carry.
+    const declined = await page.evaluate(`(() => {
+      const a = document.createElement("a");
+      a.href = "https://example.com/x";
+      const off = a.href;
+      a.href = "/config";
+      a.target = "_blank";
+      const target = a.href;
+      return { off, target };
+    })()`);
+    assert(declined, "the probe must run");
+    // A cross-origin link and a _blank link are both still ordinary links in the document.
+    assertEquals(
+      await page.evaluate(`!!document.querySelector('.sidebar nav a[href="/config"]')`),
+      true,
+    );
+  } finally {
+    await browser.close();
+    await teardown(server, dir);
+  }
+});

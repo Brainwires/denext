@@ -13,7 +13,7 @@
 
 import type { VNode } from "../jsx/types.ts";
 import type { SseClients } from "../build/sse.ts";
-import { layout, type NavItem } from "./layout.ts";
+import { layout, type NavItem, UI_TITLE_SUFFIX } from "./layout.ts";
 import { type RawHtml, renderView } from "./view.ts";
 
 export type { RawHtml } from "./view.ts";
@@ -77,6 +77,9 @@ export interface UiRoute {
 /** The broadcast channel path (also the route that serves it). */
 export const UI_EVENTS_PATH = "/_ui/events";
 
+/** The header a fragment response names its document title in (URI-encoded). */
+export const UI_TITLE_HEADER = "x-ui-title";
+
 /** The UI's top navigation, in order. */
 export const UI_NAV: readonly NavItem[] = [
   { href: "/", label: "Overview" },
@@ -139,10 +142,14 @@ export function jsonResponse(body: unknown, status = 200): Response {
  * @param status HTTP status (default 200).
  * @returns The response.
  */
-export function htmlResponse(markup: string, status = 200): Response {
+export function htmlResponse(
+  markup: string,
+  status = 200,
+  headers: Record<string, string> = {},
+): Response {
   return new Response(markup, {
     status,
-    headers: { "content-type": "text/html; charset=utf-8" },
+    headers: { "content-type": "text/html; charset=utf-8", ...headers },
   });
 }
 
@@ -165,7 +172,16 @@ export function panelResponder(
   active: string,
 ): (ctx: UiContext, body: RawHtml, status?: number, viewTitle?: string) => Response {
   return (ctx: UiContext, body: RawHtml, status = 200, viewTitle?: string): Response => {
-    if (ctx.fragment) return htmlResponse(toHtml(body), status);
+    if (ctx.fragment) {
+      // A fragment is the bare panel: it carries no <title>, and `ui.js` swaps it without a
+      // navigation, so the tab would keep naming the panel the user just left. The title rides
+      // along as a header instead of as markup, because the shell document is pinned byte-exact
+      // by a golden test. URI-encoded: a header is a byte string, and a title is not always
+      // latin-1.
+      return htmlResponse(toHtml(body), status, {
+        [UI_TITLE_HEADER]: encodeURIComponent((viewTitle ?? title) + UI_TITLE_SUFFIX),
+      });
+    }
     return htmlResponse(
       renderPage(layout, {
         title: viewTitle ?? title,
