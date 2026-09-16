@@ -576,10 +576,17 @@ Two kinds of entry are flagged **never fires**, because the scheduler skips them
 nothing more than a log line: a malformed cron expression, and a schedule naming a task that is
 not defined. Times are UTC, which is what `Deno.cron` and the userland scheduler both use.
 
-Scheduling a task from here checks the expression against the tasks that exist and then hands the
-write to the [configuration editor](#configuration-editor) — `scheduledTasks` has one writer, with
-one diff-then-confirm and one stale-file check, and a second would be a second set of those
-guarantees to keep in step. See [Scheduled tasks](/docs/tasks) for the feature itself.
+The config half is editable here: one row per schedule — the expression, the task it runs, and a
+box that drops it — plus a blank row to add another. Every expression is parsed before anything is
+written and every task name is checked against the tasks that actually exist, so a schedule that
+could never fire is refused rather than saved. The write is the same one the
+[configuration editor](#configuration-editor) performs: `setConfigValue` splices the key, you get
+a unified diff to review, and only a confirm writes — atomically, and refused with a `409` if the
+file changed since the form was rendered.
+
+Removing every schedule is its own button. An empty form is refused instead, because a dropped
+field or a stale tab would otherwise read as "delete them all". See
+[Scheduled tasks](/docs/tasks) for the feature itself.
 
 ## Project commands
 
@@ -704,7 +711,7 @@ describes what its panel does, it does not flatten every panel into one shape:
 | ---------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
 | `/api/config`          | `{ ok, file, form, keys, schema? }`                                                   | `{ ok, applied, diff }` (a write adds `file`)                                                    |
 | `/api/config/next`     | `{ ok, … }` the read next.config view                                                 | — (read-only)                                                                                    |
-| `/api/config/cron`     | `{ ok, tasks, schedules, configScheduled, denoCron }`                                 | `{ ok, applied: false, scheduledTasks, next }` — the value to POST to `/api/config`              |
+| `/api/config/cron`     | `{ ok, tasks, schedules, configScheduled, denoCron }`                                 | `{ ok, applied, diff, scheduledTasks }` — the diff-then-confirm envelope                         |
 | `/api/plugins`         | `{ ok, installed, catalog, config, jsr }`                                             | `{ ok, applied, diff, name, op, command, bailed, … }`                                            |
 | `/api/plugins/options` | `{ ok, name, callee, values, codeKeys, schema }` (`{ ok, plugins }` with no `?name=`) | `{ ok, applied, diff, values }`                                                                  |
 | `/api/generate`        | `{ ok, kinds }`                                                                       | `{ ok, written, skipped, preview? }`                                                             |

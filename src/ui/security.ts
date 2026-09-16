@@ -23,6 +23,7 @@
 // `--read-only` refuses every mutation before any of it runs.
 
 import { dirname, isAbsolute, relative, resolve } from "@std/path";
+import { encodeHex } from "@std/encoding/hex";
 import { verifyOrigin } from "../server/origin-check.ts";
 
 /** The cookie the session token is parked in after the `?t=` handshake. */
@@ -294,6 +295,41 @@ export function checkCsrf(
 export async function uiSafeJoin(root: string, rel: string): Promise<string> {
   if (isAbsolute(rel)) throw escapeError(rel);
   return await contained(root, resolve(resolve(root), rel), rel);
+}
+
+/**
+ * The text of `root/rel`, or `null` when it does not exist, cannot be read, or is a symlink whose
+ * target leaves the project.
+ *
+ * The containment gate is the point: every panel that shows a project file — the config editor,
+ * the plugin manager, the cron tab — reads it through here, so a `denext.config.ts` symlinked at
+ * `~/.aws/credentials` reaches neither the page nor the writer. A missing file is `null` rather
+ * than a throw, because "the project has no config yet" is an ordinary state for these panels.
+ *
+ * @param root The project directory.
+ * @param rel The project-relative file name.
+ * @returns Its text, or `null`.
+ */
+export async function readContained(root: string, rel: string): Promise<string | null> {
+  try {
+    return await Deno.readTextFile(await uiSafeJoin(root, rel));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The optimistic-concurrency stamp for one file's text: its SHA-256, hex.
+ *
+ * Every editing form carries this as `_base`, and the write is refused when the file on disk no
+ * longer matches — so an edit made in a real editor (or a second tab) is never silently lost.
+ *
+ * @param source The file's text (`""` when there is no file yet).
+ * @returns The hex digest.
+ */
+export async function stampOf(source: string): Promise<string> {
+  const bytes = new TextEncoder().encode(source) as BufferSource;
+  return encodeHex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
 }
 
 /**

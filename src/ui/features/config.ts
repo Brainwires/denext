@@ -55,7 +55,13 @@ import {
   PreviewLead,
 } from "../components.ts";
 import { Raw, renderView } from "../view.ts";
-import { StaleWriteError, UI_CSRF_FIELD, uiSafeJoin, writeFileAtomic } from "../security.ts";
+import {
+  readContained,
+  StaleWriteError,
+  stampOf,
+  UI_CSRF_FIELD,
+  writeFileAtomic,
+} from "../security.ts";
 import { loadConfigSchema, resolveAt, type SchemaNode } from "../form/schema.ts";
 import { widgetFor, type WidgetSpec } from "../form/widget.ts";
 import { readWidget, renderWidget } from "../form/render.ts";
@@ -151,33 +157,6 @@ interface ConfigState {
 }
 
 /**
- * The text of `dir/name`, or `null` when it does not exist, cannot be read, or is a symlink
- * pointing out of the project — {@linkcode uiSafeJoin} refuses that last case, so a
- * `denext.config.ts` linked at `~/.aws/credentials` never reaches the page (nor the writer).
- */
-async function readText(dir: string, name: string): Promise<string | null> {
-  try {
-    return await Deno.readTextFile(await uiSafeJoin(dir, name));
-  } catch {
-    return null;
-  }
-}
-
-/**
- * The optimistic-concurrency stamp for one config source: a SHA-256, hex, of its bytes.
- *
- * @param source The file's text (`""` when there is no file yet).
- * @returns The hex digest.
- */
-async function baseStamp(source: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(source) as BufferSource,
-  );
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-/**
  * Whether a POST is writing against the file it was rendered from. A request that carries no
  * `_base` (the `/api/config` twin, or a script) opts out and is allowed through unchecked.
  *
@@ -187,13 +166,13 @@ async function baseStamp(source: string): Promise<string> {
  */
 async function baseMatches(ctx: UiContext, state: ConfigState): Promise<boolean> {
   const posted = postedField(ctx, BASE_FIELD);
-  return posted === "" || posted === await baseStamp(state.source);
+  return posted === "" || posted === await stampOf(state.source);
 }
 
 /** Locate the project's config file: the first name that exists, else where one would go. */
 async function locateConfig(dir: string): Promise<{ path: string; name: string; source: string }> {
   for (const name of CONFIG_FILES) {
-    const source = await readText(dir, name);
+    const source = await readContained(dir, name);
     if (source !== null) return { path: join(dir, name), name, source };
   }
   return { path: join(dir, CONFIG_FILES[0]), name: CONFIG_FILES[0], source: "" };
@@ -247,7 +226,7 @@ async function readState(dir: string): Promise<ConfigState> {
     name,
     exists: source !== "",
     source,
-    base: await baseStamp(source),
+    base: await stampOf(source),
     form: model.form,
     sections,
   };

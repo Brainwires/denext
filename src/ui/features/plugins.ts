@@ -41,7 +41,7 @@ import { renderView } from "../view.ts";
 import { broadcast, sseProcess } from "../events.ts";
 import { runDeno } from "../proc.ts";
 import { OFFLINE_REFUSALS, OFFLINE_STATUS } from "../offline.ts";
-import { StaleWriteError, uiSafeJoin, writeFileAtomic } from "../security.ts";
+import { readContained, StaleWriteError, writeFileAtomic } from "../security.ts";
 import type { SchemaNode } from "../form/schema.ts";
 import {
   discover,
@@ -110,23 +110,10 @@ export interface ProjectState {
   readonly deps: readonly string[];
 }
 
-/**
- * The text of `dir/name`, or `null` when it does not exist, cannot be read, or is a symlink
- * whose target leaves the project — {@linkcode uiSafeJoin} refuses that, so neither the catalogue
- * view nor the writer can be pointed at a file outside the directory the UI was opened on.
- */
-async function readText(dir: string, name: string): Promise<string | null> {
-  try {
-    return await Deno.readTextFile(await uiSafeJoin(dir, name));
-  } catch {
-    return null;
-  }
-}
-
 /** The bare specifiers declared in the project's `deno.json` / `deno.jsonc` import map. */
 async function readDeps(dir: string): Promise<string[]> {
   for (const name of ["deno.json", "deno.jsonc"]) {
-    const text = await readText(dir, name);
+    const text = await readContained(dir, name);
     if (text === null) continue;
     try {
       const imports = (parseJsonc(text) as { imports?: Record<string, unknown> } | null)?.imports;
@@ -145,7 +132,7 @@ async function readDeps(dir: string): Promise<string[]> {
 export async function readProject(dir: string): Promise<ProjectState> {
   const deps = await readDeps(dir);
   for (const name of CONFIG_FILES) {
-    const source = await readText(dir, name);
+    const source = await readContained(dir, name);
     if (source === null) continue;
     const configPath = join(dir, name);
     return { configPath, configName: name, source, wired: listPlugins(source), deps };

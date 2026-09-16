@@ -5,9 +5,84 @@
 // child); what is unit-tested here is the logic that would be expensive to reach that way — a
 // sparse schedule's horizon, and the noise a child writes around its document.
 
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { join } from "@std/path";
+import type { SseClients } from "../src/build/sse.ts";
+import type { UiContext } from "../src/ui/html.ts";
 import { parseJsonDocument } from "../src/ui/child-json.ts";
-import { nextRuns } from "../src/ui/features/config-cron.ts";
+import { cronPanel, nextRuns } from "../src/ui/features/config-cron.ts";
+
+/** A project with a denext config, a tasks/ directory, and an app — enough for discovery. */
+async function project(
+  config: string,
+  tasks: Record<string, string> = {},
+): Promise<string> {
+  const dir = await Deno.makeTempDir({ prefix: "denext_ui_cron_" });
+  const mod = new URL("../mod.ts", import.meta.url).pathname;
+  const root = new URL("../", import.meta.url).pathname;
+  await Deno.writeTextFile(
+    join(dir, "deno.json"),
+    JSON.stringify({ imports: { denext: mod, "denext/": root } }),
+  );
+  await Deno.writeTextFile(join(dir, "denext.config.ts"), config);
+  await Deno.mkdir(join(dir, "app"), { recursive: true });
+  await Deno.writeTextFile(join(dir, "app/page.tsx"), "export default () => null;\n");
+  for (const [name, body] of Object.entries(tasks)) {
+    await Deno.mkdir(join(dir, "tasks"), { recursive: true });
+    await Deno.writeTextFile(join(dir, `tasks/${name}.ts`), body);
+  }
+  return dir;
+}
+
+/** A `defineTask` module, optionally declaring its own schedule. */
+function task(extra = ""): string {
+  const server = new URL("../src/server/tasks.ts", import.meta.url).href;
+  return `import { defineTask } from "${server}";\n` +
+    `export default defineTask({ handler: () => {}, ${extra} });\n`;
+}
+
+/** One request against the panel, with the kernel's context already assembled. */
+async function call(
+  dir: string,
+  init: {
+    form?: Record<string, string>;
+    rows?: Array<[string, string]>;
+    readOnly?: boolean;
+    query?: string;
+  } = {},
+): Promise<Response> {
+  const url = new URL(`http://127.0.0.1:5177/config/cron${init.query ?? ""}`);
+  const posting = init.form !== undefined || init.rows !== undefined;
+  const form = posting ? new FormData() : undefined;
+  for (const [cron, name] of init.rows ?? []) {
+    form?.append("cron", cron);
+    form?.append("task", name);
+  }
+  for (const [key, value] of Object.entries(init.form ?? {})) form?.set(key, value);
+  const ctx: UiContext = {
+    dir,
+    url,
+    method: posting ? "POST" : "GET",
+    readOnly: init.readOnly === true,
+    csrf: "csrf-token",
+    json: false,
+    fragment: false,
+    form,
+    events: new Set() as SseClients,
+  };
+  return await cronPanel(new Request(url, { method: ctx.method }), ctx);
+}
+
+/** The `_base` stamp the editor rendered, which a write has to post back. */
+function stampIn(markup: string): string {
+  return /name="_base" value="([0-9a-f]{64})"/.exec(markup)?.[1] ?? "";
+}
+
+/** The value the preview's confirm form carries. */
+function carriedIn(markup: string): string {
+  return (/name="value" value="([^"]*)"/.exec(markup)?.[1] ?? "")
+    .replaceAll("&quot;", '"').replaceAll("&amp;", "&");
+}
 
 Deno.test("a child's JSON document survives the noise Deno writes around it", () => {
   const doc = '{\n  "tasks": [],\n  "denoCron": false\n}';
@@ -45,4 +120,146 @@ Deno.test("a sparse schedule still resolves, and a malformed one yields nothing"
   // A malformed expression never fires, so there is nothing to show.
   assertEquals(nextRuns("99 * * * *", 3, from), []);
   assertEquals(nextRuns("* * *", 3, from), []);
+});
+
+// ── the editor ───────────────────────────────────────────────────────────────
+//
+// These spawn one real discovery child each (`denext task --list --json`), which is what makes
+// the panel honest about which schedules exist — so they cost about a second apiece.
+
+const CONFIG = `export default {
+  // this comment must survive every write
+  basePath: "/app",
+  scheduledTasks: { "0 3 * * *": "cleanup" },
+};
+`;
+
+Deno.test("the editor renders one row per schedule, not a raw key/value map", async () => {
+  const dir = await project(CONFIG, { cleanup: task(), digest: task() });
+  try {
+    const body = await (await call(dir)).text();
+    // Two rows: the one the config declares, plus the blank one that adds another.
+    assertEquals((body.match(/name="cron"/g) ?? []).length, 2);
+    assertStringIncludes(body, 'value="0 3 * * *"');
+    assertStringIncludes(body, "<option");
+    assert(stampIn(body).length === 64, "the form carries the file's stamp");
+    // The generic schema widget's spelling must not be what this page shows.
+    assert(!body.includes("~key") && !body.includes("~branch"), "no raw map editor");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("an edit previews a diff, writes nothing, then confirms exactly that", async () => {
+  const dir = await project(CONFIG, { cleanup: task(), digest: task() });
+  const file = join(dir, "denext.config.ts");
+  try {
+    const base = stampIn(await (await call(dir)).text());
+    const preview = await (await call(dir, {
+      rows: [["0 5 * * *", "cleanup"], ["0 0 * * 1", "digest"]],
+      form: { _base: base, intent: "save" },
+    })).text();
+    assertStringIncludes(preview, "0 5 * * *");
+    assertEquals(await Deno.readTextFile(file), CONFIG, "a preview writes nothing");
+
+    const applied = await call(dir, {
+      form: { value: carriedIn(preview), confirm: "1", intent: "save", _base: base },
+    });
+    assertEquals(applied.status, 303);
+    await applied.body?.cancel();
+    const after = await Deno.readTextFile(file);
+    assertStringIncludes(after, '"0 5 * * *": "cleanup"');
+    assertStringIncludes(after, '"0 0 * * 1": "digest"');
+    assertStringIncludes(after, "// this comment must survive every write");
+    assertStringIncludes(after, 'basePath: "/app"');
+
+    // The write redirects with `?saved=1`, and the page it lands on has to SAY so — otherwise it
+    // looks identical to the one the form was submitted from and the write reads as a no-op.
+    assertEquals(applied.headers.get("location"), "/config/cron?saved=1");
+    const landed = await (await call(dir, { query: "?saved=1" })).text();
+    assertStringIncludes(landed, "Saved denext.config.ts.");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a schedule that could never fire is refused, not saved", async () => {
+  const dir = await project(CONFIG, { cleanup: task() });
+  try {
+    const base = stampIn(await (await call(dir)).text());
+    const bad = await call(dir, {
+      rows: [["99 * * * *", "cleanup"]],
+      form: { _base: base, intent: "save" },
+    });
+    assertEquals(bad.status, 422);
+    assertStringIncludes(await bad.text(), "out of range");
+
+    // The scheduler skips a schedule naming a task it cannot find; writing one is no service.
+    const missing = await call(dir, {
+      rows: [["0 3 * * *", "nope"]],
+      form: { _base: base, intent: "save" },
+    });
+    assertEquals(missing.status, 422);
+    assertStringIncludes(await missing.text(), "no task named");
+    assertEquals(await Deno.readTextFile(join(dir, "denext.config.ts")), CONFIG);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("silence never deletes: only the button that says so removes every schedule", async () => {
+  const dir = await project(CONFIG, { cleanup: task() });
+  const file = join(dir, "denext.config.ts");
+  try {
+    const base = stampIn(await (await call(dir)).text());
+    // A POST naming no action at all.
+    assertEquals((await call(dir, { form: { _base: base } })).status, 400);
+    // And one that says "save" but carries no rows, against a config that has some.
+    const empty = await call(dir, { form: { _base: base, intent: "save" } });
+    assertEquals(empty.status, 400);
+    assertStringIncludes(await empty.text(), "Remove all schedules");
+    assertEquals(await Deno.readTextFile(file), CONFIG, "nothing was written");
+
+    const cleared = await call(dir, { form: { _base: base, intent: "clear", confirm: "1" } });
+    assertEquals(cleared.status, 303);
+    await cleared.body?.cancel();
+    const after = await Deno.readTextFile(file);
+    assert(!after.includes("scheduledTasks"), "the key is removed, not left as `{}`");
+    assertStringIncludes(after, 'basePath: "/app"', "every other key is untouched");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a write against a file that moved underneath the form is a 409", async () => {
+  const dir = await project(CONFIG, { cleanup: task() });
+  const file = join(dir, "denext.config.ts");
+  try {
+    const base = stampIn(await (await call(dir)).text());
+    await Deno.writeTextFile(file, 'export default { basePath: "/elsewhere" };\n');
+    const stale = await call(dir, {
+      rows: [["0 5 * * *", "cleanup"]],
+      form: { _base: base, intent: "save" },
+    });
+    assertEquals(stale.status, 409);
+    assertStringIncludes(await stale.text(), "changed on disk");
+    assertStringIncludes(await Deno.readTextFile(file), "/elsewhere", "the other edit stands");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("--read-only refuses the write before anything is computed", async () => {
+  const dir = await project(CONFIG, { cleanup: task() });
+  try {
+    const refused = await call(dir, {
+      rows: [["0 5 * * *", "cleanup"]],
+      form: { intent: "save" },
+      readOnly: true,
+    });
+    assertEquals(refused.status, 403);
+    assertEquals(await Deno.readTextFile(join(dir, "denext.config.ts")), CONFIG);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

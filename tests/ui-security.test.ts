@@ -11,7 +11,9 @@ import {
   deriveCsrf,
   MIN_UI_TOKEN_LENGTH,
   newToken,
+  readContained,
   StaleWriteError,
+  stampOf,
   UI_COOKIE,
   UI_CSRF_HEADER,
   uiOriginAllowed,
@@ -360,6 +362,41 @@ Deno.test("uiSafeJoin rejects .., absolute paths, and a symlink escaping the roo
     await Deno.remove(root, { recursive: true });
     await Deno.remove(outside, { recursive: true });
   }
+});
+
+Deno.test("readContained reads inside the project and refuses an escape", async () => {
+  // Every panel that shows a project file goes through this, so the containment gate is the
+  // whole point: a config symlinked at something private must reach neither page nor writer.
+  const root = await Deno.makeTempDir({ prefix: "denext_ui_read_" });
+  const outside = await Deno.makeTempDir({ prefix: "denext_ui_read_out_" });
+  try {
+    await Deno.writeTextFile(join(root, "denext.config.ts"), "export default {};\n");
+    await Deno.writeTextFile(join(outside, "secret.txt"), "AKIA-not-yours");
+    await Deno.symlink(outside, join(root, "escape"));
+
+    assertEquals(await readContained(root, "denext.config.ts"), "export default {};\n");
+    // A missing file is `null`, not a throw: "this project has no config yet" is ordinary.
+    assertEquals(await readContained(root, "nothing.ts"), null);
+    // And an escape reads as absent rather than leaking the file.
+    assertEquals(await readContained(root, "escape/secret.txt"), null);
+    assertEquals(await readContained(root, "../secret.txt"), null);
+    assertEquals(await readContained(root, join(outside, "secret.txt")), null);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
+  }
+});
+
+Deno.test("stampOf is a stable SHA-256 that changes with a single byte", async () => {
+  // The `_base` stamp is what makes a lost update a 409 rather than a silent overwrite, so it
+  // has to be deterministic and sensitive to any edit at all.
+  const source = 'export default { basePath: "/app" };\n';
+  const stamp = await stampOf(source);
+  assertEquals(stamp.length, 64, "SHA-256, hex");
+  assert(/^[0-9a-f]{64}$/.test(stamp));
+  assertEquals(await stampOf(source), stamp, "the same bytes stamp the same");
+  assert(await stampOf(source + " ") !== stamp, "one added byte changes it");
+  assertEquals((await stampOf("")).length, 64, "a project with no config still stamps");
 });
 
 Deno.test("applySecurityHeaders never allows inline script", () => {
