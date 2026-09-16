@@ -200,6 +200,23 @@ Deno.test("an invalid value is a 422 with the validator's message against its fi
   }
 });
 
+Deno.test("a section form tracks edits: Save waits, and Clear is named for what it does", async () => {
+  const dir = await project();
+  try {
+    const body = await (await call(dir, "/config")).text();
+    // `ui.js` disables Save until something changes and adds Discard; the server must not
+    // render Save disabled, or a browser with JavaScript off could never save at all.
+    assertStringIncludes(body, 'data-dirty-track="1"');
+    assert(!/<button type="submit"[^>]*disabled[^>]*>Save</.test(body), "Save ships enabled");
+    // The destructive submit says what it removes, rather than reading like "clear the field".
+    assertStringIncludes(body, ">Remove key<");
+    assertStringIncludes(body, 'title="Delete basePath from the config"');
+    assert(!body.includes(">Clear<"), "the old label is gone");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("a config shape the writer cannot own bails honestly, and writes nothing", async () => {
   const source = 'const config = { basePath: "/x" };\nexport default config;\n';
   const dir = await project(source);

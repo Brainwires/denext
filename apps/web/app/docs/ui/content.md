@@ -239,6 +239,14 @@ to overwrite code shows the patch it would have written; a module whose shape th
 does not recognise at all has nothing to diff against, so it shows the reason and the head
 of the file instead.
 
+Each section's form carries three controls. **Save** is inert until you actually change
+something: `ui.js` snapshots the form when the page renders and wakes Save on the first edit,
+adding a **Discard** button beside it that puts the section back the way the server rendered it.
+**Remove key** is a submit, not a form reset — it deletes that key from the config, which is why
+it only appears when the key is set (it was called "Clear", which read like "clear the field").
+With JavaScript off none of the tracking runs and Save simply works, so the server never renders
+it disabled; under `--read-only` every one of them is disabled regardless.
+
 Every write is two steps, and both run the whole _proposed_ config through
 `validateDenextConfig`:
 

@@ -72,6 +72,11 @@ and this project adheres to
 
 ### Changed
 
+- `denext ui`'s config editor tracks whether a section actually changed: Save is inert until you
+  edit something, and a Discard button appears beside it to put the section back the way it was.
+  `Clear` is now `Remove key`, which is what it always did — it deletes the key from the config,
+  it does not clear the form. With JavaScript off none of this applies and Save simply works, so
+  the server never renders it disabled; `--read-only` still disables everything.
 - Decided: `/config/next` being read-only (denext never loads `next.config.*`), and a project
   verb costing plugin discovery in its own child, are how those features work rather than gaps.
   Both moved out of KNOWN-LIMITATIONS into the

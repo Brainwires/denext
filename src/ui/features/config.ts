@@ -524,7 +524,11 @@ interface EditableProps {
   readonly feedback?: Feedback;
 }
 
-/** The form for an editable section: the widget tree, Save, and Clear when the key is set. */
+/**
+ * The form for an editable section: the widget tree, Save, and — when the key is set — Remove
+ * key, which deletes it from the config (it is a submit, not a form reset; `ui.js` adds a
+ * Discard button beside Save once the form is dirty).
+ */
 function EditableField({ ctx, base, section, spec, feedback }: EditableProps): VNode {
   const value = feedback ? feedback.value : section.value;
   const widgets = renderWidget(spec, value, {
@@ -534,12 +538,19 @@ function EditableField({ ctx, base, section, spec, feedback }: EditableProps): V
   });
   const clear = h(
     "button",
-    { type: "submit", class: "ghost", name: "clear", value: "1", disabled: ctx.readOnly },
-    "Clear",
+    {
+      type: "submit",
+      class: "ghost",
+      name: "clear",
+      value: "1",
+      title: `Delete ${section.key} from the config`,
+      disabled: ctx.readOnly,
+    },
+    "Remove key",
   );
   return h(
     "form",
-    { method: "post", action: sectionAction(section.key) },
+    { method: "post", action: sectionAction(section.key), "data-dirty-track": "1" },
     hidden(BASE_FIELD, base),
     h(Raw, { html: widgets }),
     h("button", { type: "submit", disabled: ctx.readOnly }, "Save"),

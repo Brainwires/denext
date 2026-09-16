@@ -28,6 +28,7 @@ function swapPanel(markup) {
     return;
   }
   current.replaceWith(document.adoptNode(next));
+  trackAll();
 }
 
 /** Stream a task's output into the panel's <pre class="out"> as it arrives. */
@@ -51,6 +52,67 @@ async function streamInto(response, sink) {
     }
   }
 }
+
+/**
+ * Dirty tracking for a form that asked for it (\`data-dirty-track\`): Save is inert until
+ * something actually changes, and a Discard button appears beside it to put the form back.
+ * With JavaScript off none of this runs and Save simply works, which is why the server never
+ * renders it disabled. A button the server disabled (--read-only) is never touched.
+ */
+function saveOf(form) {
+  return form.querySelector('button[type="submit"]:not([name])');
+}
+
+/** Take a pristine snapshot of one form: Save off until an edit. */
+function track(form) {
+  if (form.dataset.tracking === "1") return;
+  const save = saveOf(form);
+  if (!save || save.disabled) return;
+  form.dataset.tracking = "1";
+  save.dataset.pristine = "1";
+  save.disabled = true;
+}
+
+/** Put a form back the way the server rendered it. */
+function discard(form) {
+  form.reset();
+  delete form.dataset.dirty;
+  const save = saveOf(form);
+  if (save && save.dataset.pristine === "1") save.disabled = true;
+  form.querySelector("[data-discard]")?.remove();
+}
+
+/** The first edit in a tracked form: Save wakes up, and Discard appears next to it. */
+function markDirty(target) {
+  const form = target?.closest?.("form[data-dirty-track]");
+  if (!form || form.dataset.tracking !== "1" || form.dataset.dirty === "1") return;
+  form.dataset.dirty = "1";
+  const save = saveOf(form);
+  if (save && save.dataset.pristine === "1") save.disabled = false;
+  if (!save || form.querySelector("[data-discard]")) return;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "ghost";
+  button.setAttribute("data-discard", "1");
+  button.title = "Put this section back the way it was";
+  button.textContent = "Discard";
+  save.after(document.createTextNode(" "), button);
+}
+
+/** Snapshot every tracked form on the page (again after each panel swap). */
+function trackAll() {
+  for (const form of document.querySelectorAll("form[data-dirty-track]")) track(form);
+}
+
+document.addEventListener("input", (event) => markDirty(event.target));
+document.addEventListener("change", (event) => markDirty(event.target));
+document.addEventListener("click", (event) => {
+  const button = event.target?.closest?.("[data-discard]");
+  const form = button?.closest("form");
+  if (!form) return;
+  event.preventDefault();
+  discard(form);
+});
 
 /** Submit one enhanced form; the submitter carries a list row's op field, so it is included. */
 async function submit(form, submitter) {
@@ -133,6 +195,8 @@ const FRAMES = {
   "dev-exit": (payload) => appendOut("\u2014 exited " + payload.code),
   "dev-ready": (payload) => devReady(payload.url ?? ""),
 };
+
+trackAll();
 
 const events = new EventSource(EVENTS);
 events.addEventListener("message", (event) => {
