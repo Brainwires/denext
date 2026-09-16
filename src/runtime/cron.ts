@@ -94,6 +94,162 @@ export function parseCron(expr: string): CronExpr {
   };
 }
 
+/** Weekday names, indexed by the day-of-week numbers `parseCron` normalises to. */
+const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/** `7` → `07`, for a wall-clock time. */
+function pad(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+/** "3rd", "21st" — for a day of the month. */
+function ordinal(n: number): string {
+  const tens = n % 100;
+  if (tens >= 11 && tens <= 13) return `${n}th`;
+  return `${n}${["th", "st", "nd", "rd"][n % 10] ?? "th"}`;
+}
+
+/** "a, b and c" — an English list. */
+function and(parts: string[]): string {
+  if (parts.length <= 1) return parts[0] ?? "";
+  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+}
+
+/** Whether a field matches everything in its domain. */
+function isAny(field: Set<number>, size: number): boolean {
+  return field.size >= size;
+}
+
+/**
+ * A cron expression in plain English — "every day at 03:30 UTC".
+ *
+ * Describes what the expression MATCHES, not how it was written: `parseCron` keeps each field as
+ * the set of values it fires on, so a step expression and the equivalent comma list are the
+ * same schedule and are described the same way. That is the more useful answer anyway — it
+ * says what will happen, not how someone spelled it.
+ *
+ * Only shapes that can be stated exactly are stated. Anything else gets a truthful summary
+ * rather than invented English: a description that is confidently wrong is worse than one that
+ * admits the expression is unusual, which is the same reason a schedule that can never fire is
+ * refused rather than saved.
+ *
+ * Times are UTC, matching `Deno.cron` and the userland scheduler — and matching how the panel
+ * already prints next-run times, so one page never carries two time vocabularies.
+ *
+ * @param expr The 5-field expression.
+ * @returns The description, or `null` when the expression is malformed.
+ */
+export function describeCron(expr: string): string | null {
+  let c: CronExpr;
+  try {
+    c = parseCron(expr);
+  } catch {
+    return null;
+  }
+  const anyMinute = isAny(c.minute, 60);
+  const anyHour = isAny(c.hour, 24);
+  const anyDom = isAny(c.dom, 31);
+  const anyMonth = isAny(c.month, 12);
+  const anyDow = isAny(c.dow, 7);
+
+  // Vixie OR semantics: with BOTH day fields restricted it fires if EITHER matches. Rendering
+  // that as "and" would be plainly wrong, so it is said as "or".
+  const day = dayPhrase(c, anyDom, anyDow);
+  if (day === null) return unusual(c);
+
+  const month = anyMonth ? "" : ` in ${and([...c.month].sort((a, b) => a - b).map(monthName))}`;
+
+  const when = timePhrase(c, anyMinute, anyHour);
+  if (when === null) return unusual(c);
+  const where = day === "" ? "" : ` ${day}`;
+  // "every minute" reads as a whole clause already; a bare list of clock times does not, so it
+  // takes "every day" when no day is named.
+  return when.standalone
+    ? `${when.text}${where}${month}`.trim()
+    : `${day === "" ? "every day" : day} ${when.text}${month}`.trim();
+}
+
+/** A time phrase, and whether it already reads as a whole clause without a day in front. */
+interface TimePhrase {
+  /** The phrase itself. */
+  readonly text: string;
+  /** True when it needs no day subject ("every minute"). */
+  readonly standalone: boolean;
+}
+
+/**
+ * How often within a day the expression fires, or `null` when that is too irregular to state.
+ *
+ * Split out of {@linkcode describeCron} because these four mutually exclusive shapes were most of
+ * its branching, and each is easier to read — and to be sure of — on its own.
+ *
+ * @param c The parsed expression.
+ * @param anyMinute Whether every minute matches.
+ * @param anyHour Whether every hour matches.
+ * @returns The phrase, or `null` to fall back to a truthful summary.
+ */
+function timePhrase(c: CronExpr, anyMinute: boolean, anyHour: boolean): TimePhrase | null {
+  if (anyMinute && anyHour) return { text: "every minute", standalone: true };
+  if (anyMinute) {
+    const hours = and([...c.hour].sort((a, b) => a - b).map((h) => `${pad(h)}:00`));
+    const plural = c.hour.size === 1 ? "hour" : "hours";
+    return { text: `every minute of the ${hours} ${plural} (UTC)`, standalone: true };
+  }
+  if (anyHour) {
+    const mins = and([...c.minute].sort((a, b) => a - b).map((m) => `:${pad(m)}`));
+    return { text: `every hour at ${mins} (UTC)`, standalone: true };
+  }
+  // Past a handful of distinct firing times, listing them stops being a description.
+  if (c.minute.size * c.hour.size > 8) return null;
+  const times: string[] = [];
+  for (const h of [...c.hour].sort((a, b) => a - b)) {
+    for (const m of [...c.minute].sort((a, b) => a - b)) times.push(`${pad(h)}:${pad(m)}`);
+  }
+  return { text: `at ${and(times)} UTC`, standalone: false };
+}
+
+/** The day part of a description, or `null` when it cannot be stated plainly. */
+function dayPhrase(c: CronExpr, anyDom: boolean, anyDow: boolean): string | null {
+  if (anyDom && anyDow) return "";
+  if (c.domAndDowRestricted) {
+    // Both restricted: Vixie fires on EITHER, which no short phrase states cleanly.
+    return null;
+  }
+  if (!anyDow) {
+    const days = [...c.dow].sort((a, b) => a - b).map((d) => `${DAYS[d]}s`);
+    return `on ${and(days)}`;
+  }
+  const dates = [...c.dom].sort((a, b) => a - b).map(ordinal);
+  return `on the ${and(dates)}`;
+}
+
+/** The honest answer for an expression too irregular to state in a sentence. */
+function unusual(c: CronExpr): string {
+  const parts = [
+    `${c.minute.size} minute${c.minute.size === 1 ? "" : "s"}`,
+    `${c.hour.size} hour${c.hour.size === 1 ? "" : "s"}`,
+  ];
+  return `a custom schedule — ${and(parts)} per day. See the next runs below.`;
+}
+
+/** Month names, 1-indexed as cron writes them. */
+function monthName(m: number): string {
+  return [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+  ][m - 1] ?? String(m);
+}
+
 /** Validate a cron string, returning an error message or null. */
 export function cronError(expr: string): string | null {
   try {
