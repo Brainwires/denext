@@ -505,3 +505,66 @@ Deno.test("with history off there is no result column to mislead anyone", async 
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("presets fill the expression in, rather than competing with it", async () => {
+  const dir = await project(CONFIG, { cleanup: task() });
+  try {
+    const plain = await (await call(dir)).text();
+    assertStringIncludes(plain, "Start from a common schedule");
+    assertEquals((plain.match(/preset=/g) ?? []).length, 5, "one link per preset");
+    assert(/name="cron" value=""/.test(plain), "the add row starts empty");
+
+    const daily = await (await call(dir, { query: "?preset=0%203%20*%20*%20*" })).text();
+    assert(/name="cron" value="0 3 \* \* \*"/.test(daily), "the preset fills the field");
+    // The same describer the schedules table uses, so the editor says what it will save.
+    assertStringIncludes(daily, "every day at 03:00 UTC");
+    // The one you are already on is not a link back to itself.
+    assertStringIncludes(daily, "<strong>Daily</strong>");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("only a known preset is accepted, so nothing arbitrary reaches the field", async () => {
+  const dir = await project(CONFIG, { cleanup: task() });
+  try {
+    const junk = await (await call(dir, {
+      query: "?preset=%3Cscript%3Ealert(1)%3C%2Fscript%3E",
+    })).text();
+    assert(/name="cron" value=""/.test(junk), "an unknown preset leaves the row empty");
+    assert(!junk.includes("alert(1)"), "and nothing is reflected into the page");
+
+    // A valid expression that is not one of the five is still not a preset.
+    const other = await (await call(dir, { query: "?preset=7%207%20*%20*%20*" })).text();
+    assert(/name="cron" value=""/.test(other), "only the offered presets fill the field");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("the editor row explains a valid expression and refuses a broken one", async () => {
+  const dir = await project(
+    `export default {
+  scheduledTasks: { "0 8 * * 1": "cleanup" },
+};
+`,
+    { cleanup: task() },
+  );
+  try {
+    const body = await (await call(dir)).text();
+    // An existing row describes what it does...
+    assertStringIncludes(body, "on Mondays at 08:00 UTC");
+    // ...and the blank add row describes nothing, because there is nothing to describe.
+    const rowCount = (body.match(/name="cron"/g) ?? []).length;
+    assertEquals(rowCount, 2, "one configured row plus the add row");
+
+    // A malformed expression gets the error, not a description.
+    const bad = await (await call(dir, {
+      rows: [["99 * * * *", "cleanup"]],
+      form: { _base: stampIn(body), intent: "save" },
+    })).text();
+    assertStringIncludes(bad, "out of range");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

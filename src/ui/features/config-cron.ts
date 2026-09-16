@@ -64,6 +64,22 @@ const DOCS = "https://denext.dev/docs/tasks";
 const STALE_BASE = "changed on disk since this form was rendered — nothing was written. " +
   "Reload the tab and re-apply your change.";
 
+/**
+ * Common schedules, offered as a starting point.
+ *
+ * Links rather than controls, on purpose. A preset, a builder and a free-text box would be three
+ * inputs producing one value, and with JavaScript off nothing keeps them in step — so a preset
+ * navigates, the server fills the expression in, and there is only ever one field that decides
+ * what gets written.
+ */
+const PRESETS: ReadonlyArray<{ readonly label: string; readonly cron: string }> = [
+  { label: "Every minute", cron: "* * * * *" },
+  { label: "Hourly", cron: "0 * * * *" },
+  { label: "Daily", cron: "0 3 * * *" },
+  { label: "Weekly", cron: "0 3 * * 1" },
+  { label: "Monthly", cron: "0 3 1 * *" },
+];
+
 /** The config key this panel edits. */
 const KEY = "scheduledTasks";
 
@@ -675,6 +691,52 @@ function CronPanel(
   );
 }
 
+/**
+ * The expression a `?preset=` asks to start from, or `""`.
+ *
+ * Only a KNOWN preset is accepted. The value is escaped on render either way, but matching
+ * against the table means the parameter can never put arbitrary text into a form field — and the
+ * feature needs nothing more than the five it offers.
+ *
+ * @param ctx The request context.
+ * @returns The preset's expression, or `""` when none was asked for.
+ */
+function presetOf(ctx: UiContext): string {
+  const asked = ctx.url.searchParams.get("preset") ?? "";
+  return PRESETS.some((p) => p.cron === asked) ? asked : "";
+}
+
+/**
+ * The preset strip: links that fill the expression in, rather than controls that fight the field.
+ *
+ * Rendered outside the form, so nothing here can disturb dirty-tracking or the unnamed-submit
+ * contract the editor depends on.
+ *
+ * @param props `active`: the preset currently filled in, when one is.
+ * @returns The strip.
+ */
+function Presets({ active }: { readonly active: string }): VNode {
+  return h(
+    "p",
+    { class: "lead" },
+    "Start from a common schedule: ",
+    PRESETS.map((preset, index) =>
+      h(
+        Fragment,
+        { key: preset.cron },
+        index === 0 ? null : " · ",
+        preset.cron === active ? h("strong", null, preset.label) : h("a", {
+          href: `/config/cron?preset=${encodeURIComponent(preset.cron)}`,
+          // Derived, never hand-written: a description that drifts from its expression is the
+          // exact failure the describer exists to prevent.
+          title: describeCron(preset.cron) ?? preset.cron,
+        }, preset.label),
+      )
+    ),
+    ". Each one fills the expression below, which you can then edit.",
+  );
+}
+
 /** A task picker, or a plain text field when discovery found no tasks to pick from. */
 function TaskField(
   { id, value, names }: {
@@ -707,6 +769,7 @@ function ScheduleFields(
 ): VNode {
   const id = `cron-${index}`;
   const bad = cron === "" ? null : cronError(cron);
+  const said = bad === null && cron !== "" ? describeCron(cron) : null;
   return h(
     "div",
     { class: "field" },
@@ -729,6 +792,7 @@ function ScheduleFields(
       ),
     ),
     bad === null ? null : h("p", { class: "note field-error", role: "alert" }, bad),
+    said === null ? null : h("p", { class: "lead flush-sm" }, said),
   );
 }
 
@@ -745,6 +809,7 @@ function ScheduleEditor(
 ): VNode {
   const names = state.tasks.map((task) => task.name);
   const rows = configRows(state.configScheduled);
+  const preset = presetOf(ctx);
   return h(
     Fragment,
     null,
@@ -755,6 +820,7 @@ function ScheduleEditor(
       "The schedules your denext config declares. A change is previewed as a diff before ",
       "anything is written, and every other byte of the file — comments included — is kept.",
     ),
+    h(Presets, { active: preset }),
     h(
       "form",
       { method: "post", action: "/config/cron", "data-dirty-track": "1" },
@@ -769,7 +835,7 @@ function ScheduleEditor(
           names,
         })
       ),
-      h(ScheduleFields, { key: "new", index: rows.length, cron: "", task: "", names }),
+      h(ScheduleFields, { key: "new", index: rows.length, cron: preset, task: "", names }),
       // The ordinary submit is UNNAMED so `ui.js` recognises it as this form's Save and can hold
       // it inert until something actually changes; its intent rides in a hidden field. The
       // destructive one is named, and a named submitter's value wins over the hidden field.
