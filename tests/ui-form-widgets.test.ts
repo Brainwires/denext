@@ -127,6 +127,7 @@ Deno.test("every top-level config key maps to the widget its type deserves", () 
     rewrites: "list-of-forms",
     headers: "list-of-forms",
     scheduledTasks: "map",
+    tasks: "group",
     images: "group",
     tailwind: "group",
     mdx: "group",

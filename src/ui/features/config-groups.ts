@@ -47,7 +47,7 @@ const GROUP_KEYS: Record<ConfigGroup, readonly string[]> = {
     "mdx",
   ],
   security: ["csp", "hsts", "publicEnv", "apiBatch", "apiMaxBodyBytes"],
-  data: ["cache", "scheduledTasks"],
+  data: ["cache", "scheduledTasks", "tasks"],
   advanced: ["experimental", "nodeResolve", "compatibilityMode", "plugins", "commands"],
 };
 

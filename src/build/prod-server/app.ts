@@ -112,7 +112,7 @@ export async function createProdApp(
   await runRegister(instrumentation);
   // Discover tasks/ and register cron schedules (Deno.cron on Deploy, else a userland tick). The
   // scheduler lives for the server process (created once here); the disposer is not retained.
-  await bootScheduledTasks(paths.projectDir, paths.config ?? undefined);
+  await bootScheduledTasks(paths.projectDir, paths.config ?? undefined, paths.outDir);
   const rules = await resolveConfigRules(paths.config);
   await resolveDefaultCacheStore(
     paths.config?.cache?.path

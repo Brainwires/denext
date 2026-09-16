@@ -332,6 +332,21 @@
         ]
       }
     },
+    "tasks": {
+      "description": "Scheduled/background task behaviour. Currently run history, which is off unless asked for.",
+      "type": "object",
+      "properties": {
+        "history": {
+          "description": "Record every task run — scheduled and on demand — to `.denext/tasks.db`, so `denext ui`'s Cron panel can show last status, success/failure counts and a recent-run feed.",
+          "type": "boolean"
+        },
+        "historyMaxRuns": {
+          "description": "Runs kept per task before the oldest are dropped (default 500).",
+          "type": "number",
+          "minimum": 1
+        }
+      }
+    },
     "images": {
       "description": "Image-optimization config. Remote sources are refused by default (local-only, SSRF-safe); allowlist hosts here to enable optimizing remote images.",
       "type": "object",

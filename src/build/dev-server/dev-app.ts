@@ -58,7 +58,7 @@ function startInstrumentation(st: DevState): void {
     // server was started with --unstable-cron). The scheduler lives for the dev-server process;
     // `startInstrumentation` runs once per process (no in-process reboot), so the disposer is
     // intentionally not retained.
-    await bootScheduledTasks(st.paths.projectDir, st.paths.config ?? undefined);
+    await bootScheduledTasks(st.paths.projectDir, st.paths.config ?? undefined, st.paths.outDir);
     // Plugin prepare steps (codegen the app imports — e.g. content-collections types + store):
     // set plugins up once (idempotent; the first getManifest is a no-op then) and run them so the
     // generated inputs exist before the first request. A no-op when no plugin registered one.

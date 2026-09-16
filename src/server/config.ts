@@ -341,6 +341,28 @@ export interface CacheConfig {
   maxPageEntries?: number;
 }
 
+/** Scheduled/background task behaviour ({@link DenextConfig.tasks}). */
+export interface TasksConfig {
+  /**
+   * Record every task run — scheduled and on demand — to `.denext/tasks.db`, so `denext ui`'s
+   * Cron panel can show last status, success/failure counts and a recent-run feed.
+   *
+   * Off unless set: denext writes no run history unasked. Once on, recording can never fail or
+   * delay a run — a read-only filesystem or a locked file degrades to no history instead.
+   */
+  history?: boolean;
+  /**
+   * Runs kept per task before the oldest are dropped (default 500).
+   *
+   * Per task rather than overall, so a task running every minute cannot evict a daily task's
+   * history. A task running more often than roughly every 20 minutes fills this inside a week,
+   * so raise it for such a task if its counts should cover the whole window.
+   *
+   * @minimum 1
+   */
+  historyMaxRuns?: number;
+}
+
 /** Limits for the typed-API batch endpoint (`POST /_denext/api-batch`). */
 export interface ApiBatchConfig {
   /** Serve the endpoint at all (default true; `false` → 404). */
@@ -455,6 +477,14 @@ export interface DenextConfig {
    * ```
    */
   scheduledTasks?: Record<string, string | string[]>;
+  /**
+   * Scheduled/background task behaviour. Currently run history, which is off unless asked for.
+   *
+   * ```ts
+   * tasks: { history: true }
+   * ```
+   */
+  tasks?: TasksConfig;
   /**
    * Image-optimization config. Remote sources are refused by default (local-only,
    * SSRF-safe); allowlist hosts here to enable optimizing remote images.

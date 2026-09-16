@@ -348,6 +348,13 @@ function validateCacheAndEnv(config: DenextConfig, fail: Fail): void {
   }
 }
 
+/** `tasks.historyMaxRuns` is a finite whole number >= 1. */
+function validateTasks(tasks: DenextConfig["tasks"], fail: Fail): void {
+  if (tasks?.historyMaxRuns !== undefined) {
+    num(fail, "tasks.historyMaxRuns", tasks.historyMaxRuns, { int: true, min: 1 });
+  }
+}
+
 /** `tailwind.input`/`output` are required non-empty path strings. */
 function validateTailwind(tailwind: unknown, fail: Fail): void {
   if (tailwind === undefined) return;
@@ -447,6 +454,7 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
   validateImageNumerics(config.images, fail);
   validateSecurity(config, fail);
   validateCacheAndEnv(config, fail);
+  validateTasks(config.tasks, fail);
   validateCommands(config.commands, fail);
   validateNestedRequired(config, fail);
 }

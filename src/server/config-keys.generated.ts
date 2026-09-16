@@ -22,6 +22,7 @@ export const CONFIG_KEYS = [
   "rewrites",
   "headers",
   "scheduledTasks",
+  "tasks",
   "images",
   "tailwind",
   "mdx",

@@ -17,6 +17,9 @@ import { statSync } from "node:fs";
 import { openSqliteFile, type SqliteDb } from "./sqlite-cache.ts";
 import type { TaskRunRecord } from "./tasks.ts";
 
+/** The history database, inside `ProjectPaths.outDir` — the filename is spelled once, here. */
+export const TASK_HISTORY_DB = "tasks.db";
+
 /** Runs kept per task before the oldest are dropped. */
 const DEFAULT_MAX_RUNS = 500;
 
