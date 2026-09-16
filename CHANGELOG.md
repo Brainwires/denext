@@ -62,7 +62,6 @@ and this project adheres to
   Plugins panel's Third-party list. The UI reads the file from `jsr.io` for the version
   `deno.lock` resolved (else the latest), keeps only the schema keys the form reads — checked
   and size-bounded — and never loads remote code.
-
 - `denext --help` lists a project's own verbs, without importing the project: `denext commands`
   records what it found in `.denext/commands.json`, fingerprinted against `denext.config.*`,
   `deno.json` and `deno.lock`, and help prints that listing while the fingerprint holds. Before
