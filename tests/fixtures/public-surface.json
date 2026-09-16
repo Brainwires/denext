@@ -676,6 +676,7 @@
     "Task:interface",
     "TaskContext:interface",
     "TaskDefinition:interface",
+    "TasksConfig:interface",
     "ThemeColorDescriptor:interface",
     "TotpAuthUriOptions:interface",
     "TotpEnrollment:interface",

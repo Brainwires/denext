@@ -237,6 +237,7 @@ export {
   type SpaDesktopConfig,
   type SpaProxyConfig,
   type TailwindConfig,
+  type TasksConfig,
 } from "./config.ts";
 export { defineConfig } from "./define-config.ts";
 
