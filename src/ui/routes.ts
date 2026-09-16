@@ -100,7 +100,6 @@ export const UI_ROUTES: Record<string, UiRoute> = buildRoutes();
 /** What each card on the overview says. */
 const CARD_LEAD: Record<string, string> = {
   "/config": "Edit denext.config.ts through schema-driven widgets.",
-  "/config/next": "Read a compat app's next.config and translate it.",
   "/plugins": "Browse the catalog; add or remove plugins.",
   "/generate": "Scaffold pages, routes, layouts, components, actions.",
   "/docker": "Edit docker-compose.yml in place, or regenerate the Docker files with a diff.",

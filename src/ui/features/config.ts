@@ -70,7 +70,7 @@ import {
   parseFieldName,
   parseOp,
 } from "../form/value.ts";
-import { nextConfigPanel } from "./config-next.ts";
+import { ConfigTabs, isCompatApp, nextConfigPanel } from "./config-next.ts";
 
 /** The file the editor offers to create when the project has no denext config at all. */
 const EMPTY_CONFIG = "export default {\n};\n";
@@ -680,12 +680,16 @@ interface PanelOptions {
 
 /** The whole editor: one collapsible section per top-level key, then the escape hatch. */
 function ConfigPanel(
-  { ctx, state, options }: StateProps & { readonly options: PanelOptions },
+  { ctx, state, options, compat }: StateProps & {
+    readonly options: PanelOptions;
+    readonly compat: boolean;
+  },
 ): VNode {
   const { notice, feedback } = options;
   return h(
     Panel,
     { name: "Config", title: "Config" },
+    h(ConfigTabs, { active: "/config", compat }),
     h(
       "p",
       { class: "lead" },
@@ -762,14 +766,27 @@ function PreviewPanel(
 /** Wrap a panel section as a fragment (the `ui.js` swap) or as the full document. */
 const panelResponse = panelResponder("Config", "/config");
 
-/** The editor page, with an optional notice above the sections and a refused submit's feedback. */
-function editorResponse(
+/**
+ * The editor page, with an optional notice above the sections and a refused submit's feedback.
+ *
+ * Whether the `next.config` tab is offered is resolved HERE rather than passed in, because every
+ * render of this panel goes through this one function — a plain `GET`, a refusal, a `422`, a
+ * read-only `403`, a `ui.js` fragment swap. Threading it from the handler meant the POST paths
+ * rendered without it and a compat app's tab vanished mid-edit, so the panel is left with no way
+ * to spell the wrong answer.
+ */
+async function editorResponse(
   ctx: UiContext,
   state: ConfigState,
   options: PanelOptions = {},
   status?: number,
-): Response {
-  return panelResponse(ctx, renderView(h(ConfigPanel, { ctx, state, options })), status);
+): Promise<Response> {
+  const compat = await isCompatApp(ctx.dir);
+  return panelResponse(
+    ctx,
+    renderView(h(ConfigPanel, { ctx, state, options, compat })),
+    status,
+  );
 }
 
 /** A preview page, as the fragment or the whole document. */
@@ -778,7 +795,12 @@ function previewResponse(ctx: UiContext, pending: Pending, status?: number): Res
 }
 
 /** A refusal, in whichever shape the caller asked for. */
-function refuse(ctx: UiContext, state: ConfigState, reason: string, status: number): Response {
+function refuse(
+  ctx: UiContext,
+  state: ConfigState,
+  reason: string,
+  status: number,
+): Response | Promise<Response> {
   if (ctx.json) return jsonResponse({ ok: false, reason }, status);
   return editorResponse(ctx, state, { notice: h(Note, null, reason) }, status);
 }
@@ -808,7 +830,7 @@ async function write(
   const next = await readState(ctx.dir);
   if (ctx.json) return jsonResponse({ ok: true, applied: true, file: next.name });
   const notice = h(Note, null, `Wrote ${next.name}.`);
-  if (ctx.fragment) return editorResponse(ctx, next, { notice });
+  if (ctx.fragment) return await editorResponse(ctx, next, { notice });
   return new Response(null, { status: 303, headers: { location: `/config#${anchor}` } });
 }
 
@@ -862,7 +884,7 @@ function invalid(
   key: string,
   value: unknown,
   error: FieldError,
-): Response {
+): Response | Promise<Response> {
   if (ctx.json) return jsonResponse({ ok: false, reason: error.message, field: error.field }, 422);
   const feedback: Feedback = { key, value, errors: { [error.field]: error.message } };
   const notice = h(Note, { role: "alert" }, error.message);
@@ -1065,7 +1087,7 @@ export const configPanel: UiHandler = async (
     if (ctx.json) {
       return jsonResponse({ ok: true, ...payload(state, ctx.url.searchParams.has("schema")) });
     }
-    return editorResponse(ctx, state);
+    return await editorResponse(ctx, state);
   }
   return await mutate(ctx, state);
 };

@@ -165,6 +165,28 @@ h2 { font-size: var(--text-lg); margin: 28px 0 var(--space-2); }
 .step { border-top: 1px solid var(--border); padding-top: var(--space-2); margin: 0 0 22px; }
 .step h2 { margin-top: var(--space-1); }
 
+/* A panel's tab strip: the same vocabulary as the top nav, seated on a rule. */
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: 0 0 var(--space-5);
+  border-bottom: 1px solid var(--border);
+}
+.tabs a {
+  color: var(--muted-foreground);
+  text-decoration: none;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.tabs a:hover { color: var(--foreground); }
+.tabs a[aria-current="page"] {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+  font-weight: 600;
+}
+
 /* ── controls ──────────────────────────────────────────────────────────── */
 fieldset {
   border: 1px solid var(--border);

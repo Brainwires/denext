@@ -40,6 +40,47 @@ export function Note(
   return h("p", { class: "note", role }, children);
 }
 
+/** One entry of a {@linkcode Tabs} strip. */
+export interface TabItem {
+  /** Where the tab goes — a real URL, so it works with JavaScript disabled. */
+  readonly href: string;
+  /** The tab's label. */
+  readonly label: string;
+}
+
+/**
+ * A tab strip: ordinary links, marked `aria-current="page"` on the active one, exactly as the
+ * top navigation is. Nothing here is a widget — a tab is a URL the server renders a panel for,
+ * so the strip works with scripting off and each tab is linkable, bookmarkable and reloadable.
+ *
+ * Two shapes use it: a strip of distinct routes (`/config` beside `/config/next`), and a strip
+ * of one route's views (`/docker?tab=services`). Both are just hrefs; the caller decides which
+ * one is `active` rather than the component guessing from a URL it cannot see.
+ *
+ * @param props `items`: the tabs in order; `active`: the href to mark current; `label`: the
+ *   accessible name of the strip (several panels can carry one).
+ * @returns The navigation element.
+ */
+export function Tabs(
+  { items, active, label }: {
+    readonly items: readonly TabItem[];
+    readonly active: string;
+    readonly label: string;
+  },
+): VNode {
+  return h(
+    "nav",
+    { class: "tabs", "aria-label": label },
+    items.map((item) =>
+      h("a", {
+        key: item.href,
+        href: item.href,
+        "aria-current": item.href === active ? "page" : undefined,
+      }, item.label)
+    ),
+  );
+}
+
 /**
  * The lead every two-step write's preview page opens with.
  *

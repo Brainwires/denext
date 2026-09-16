@@ -393,6 +393,46 @@ Deno.test("an unknown or managed section is refused before anything is computed"
   }
 });
 
+Deno.test("the Config tab strip offers next.config only for a compat app, on every render", async () => {
+  // `next.config` is a VIEW of this project's configuration, so it is a tab on /config rather
+  // than a seventh item in the top navigation. Two things have to hold: a native app is never
+  // offered a tab that would only say "there is nothing here", and a compat app keeps the tab
+  // on EVERY render — a refusal and a 422 render the panel just as a GET does, and threading
+  // the compat flag from the handler once left those POST paths rendering without it.
+  const native = await project();
+  try {
+    const body = await (await call(native, "/config")).text();
+    assertStringIncludes(body, 'href="/config"');
+    assert(!body.includes('href="/config/next"'), "a native app is offered no next.config tab");
+  } finally {
+    await Deno.remove(native, { recursive: true });
+  }
+
+  const compat = await project();
+  try {
+    await Deno.writeTextFile(
+      join(compat, "package.json"),
+      '{ "dependencies": { "next": "15.0.0" } }',
+    );
+    for (
+      const [label, init] of [
+        ["a plain GET", {}],
+        ["a read-only refusal", { readOnly: true, form: { section: "basePath" } }],
+        ["an unknown section", { form: { section: "nope" } }],
+      ] as const
+    ) {
+      const res = await call(compat, "/config", init);
+      assertStringIncludes(
+        await res.text(),
+        'href="/config/next"',
+        `the next.config tab is missing on ${label} (${res.status})`,
+      );
+    }
+  } finally {
+    await Deno.remove(compat, { recursive: true });
+  }
+});
+
 // ── /config/next ─────────────────────────────────────────────────────────────
 
 Deno.test("/config/next says plainly that a native denext app has no next.config", async () => {

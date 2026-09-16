@@ -19,7 +19,7 @@ import { CONFIG_FILES } from "../../build/paths.ts";
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode } from "../../jsx/types.ts";
 import { jsonResponse, panelResponder, type UiContext } from "../html.ts";
-import { Mono, Note, OpForm, Panel, Table } from "../components.ts";
+import { Mono, Note, OpForm, Panel, Table, Tabs } from "../components.ts";
 import { renderView } from "../view.ts";
 import { loadConfigSchema, resolveAt } from "../form/schema.ts";
 import { widgetFor } from "../form/widget.ts";
@@ -180,6 +180,40 @@ async function usesCompatMode(dir: string): Promise<boolean> {
   return false;
 }
 
+/**
+ * Whether the project at `dir` is a Next.js compat app — the one fact `/config` needs to decide
+ * whether to offer its `next.config` tab. A native denext app has no `next.config` to read, so
+ * the tab would lead somewhere that exists only to say "there is nothing here".
+ *
+ * Lives here, beside {@linkcode detect}, because the dependency runs `config.ts` →
+ * `config-next.ts` and must keep running that way.
+ *
+ * @param dir The project directory.
+ * @returns Whether the compat pipeline applies.
+ */
+export async function isCompatApp(dir: string): Promise<boolean> {
+  return (await detect(dir)).compat;
+}
+
+/**
+ * The Config panel's tab strip. `next.config` is a VIEW of this project's configuration, not a
+ * separate destination — which is why it is a tab here rather than a seventh item in the top
+ * navigation. It appears only for a compat app; a native one sees a single-tab strip.
+ *
+ * Both tabs are real routes, so each is linkable and works with scripting off.
+ *
+ * @param props `active`: the href to mark current; `compat`: whether to offer the next.config tab.
+ * @returns The strip.
+ */
+export function ConfigTabs({ active, compat }: {
+  readonly active: string;
+  readonly compat: boolean;
+}): VNode {
+  const items = [{ href: "/config", label: "denext.config" }];
+  if (compat) items.push({ href: "/config/next", label: "next.config" });
+  return h(Tabs, { items, active, label: "Configuration views" });
+}
+
 /** Decide whether this is a compat app, and find its `next.config.*`. */
 async function detect(dir: string): Promise<Compat> {
   let file: string | null = null;
@@ -320,7 +354,10 @@ function TranslatePreview(
 function NotCompatView(): VNode {
   return h(
     Panel,
-    { name: "next.config", title: "next.config" },
+    { name: "next.config", title: "Config" },
+    // Reached by visiting `/config/next` directly: a native app is offered no such tab, so the
+    // strip here shows only the tab that does exist rather than one marked current-but-absent.
+    h(ConfigTabs, { active: "/config/next", compat: false }),
     h(
       "p",
       { class: "lead" },
@@ -347,7 +384,8 @@ function NextConfigView(
 ): VNode {
   return h(
     Panel,
-    { name: "next.config", title: "next.config" },
+    { name: "next.config", title: "Config" },
+    h(ConfigTabs, { active: "/config/next", compat: true }),
     h(
       "p",
       { class: "lead" },

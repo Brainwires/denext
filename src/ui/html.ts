@@ -81,7 +81,6 @@ export const UI_EVENTS_PATH = "/_ui/events";
 export const UI_NAV: readonly NavItem[] = [
   { href: "/", label: "Overview" },
   { href: "/config", label: "Config" },
-  { href: "/config/next", label: "next.config" },
   { href: "/plugins", label: "Plugins" },
   { href: "/generate", label: "Generate" },
   { href: "/docker", label: "Docker" },
