@@ -2,7 +2,7 @@
 // every widget kind, list buttons move rows without JavaScript, out-of-range numbers are
 // reported rather than clamped, and nothing a config file contains can escape into markup.
 
-import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
+import { assert, assertEquals, assertMatch, assertStringIncludes, assertThrows } from "@std/assert";
 import {
   loadConfigSchema,
   MAP_SEGMENT,
@@ -343,8 +343,10 @@ function parsedTextarea(markup: string, name: string): string {
 Deno.test("a textarea keeps a value's leading newlines through render and parse", () => {
   const value = '\n\n<meta name="x">\n';
   const markup = toHtml(control({ tag: "textarea", name: "t", value }));
-  // The one newline the parser eats, then the value's own two.
-  assertStringIncludes(markup, 'style="width:100%">\n\n\n&lt;meta');
+  // The one newline the parser eats, then the value's own two — anchored on the end of the start
+  // tag rather than on whichever attribute happens to come last, so restyling a control cannot
+  // fail this. What is being pinned is that NOTHING sits between `>` and the value's newlines.
+  assertMatch(markup, /<textarea [^>]*>\n\n\n&lt;meta/);
   assertEquals(parsedTextarea(markup, "t"), value);
   // The same through a schema-driven textarea widget, and back through the form codec.
   const spec = specAt("spa", "head");
