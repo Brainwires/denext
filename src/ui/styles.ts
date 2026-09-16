@@ -261,6 +261,38 @@ button.destructive { background: var(--destructive); border-color: var(--destruc
 .op-group { display: inline-flex; gap: var(--space-1); }
 .group-body { padding: var(--space-2) 0 0 var(--space-3); }
 .group-summary { cursor: pointer; font-weight: 600; }
+
+/* ── disclosure ────────────────────────────────────────────────────────── */
+/* A summary's text lines up with its own description and with every other block
+   in the panel; the triangle hangs in the gutter beside it. The browser's own
+   marker is in-flow, which pushed every key name ~16px right of the column it
+   belongs to — its description, its note and its code cell all started further
+   left than its name did. Flex also centres the badge, which sat 2px low next to
+   the bold name at the inline default. */
+details > summary {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  list-style: none;
+}
+/* Safari draws its own marker and ignores list-style. */
+details > summary::-webkit-details-marker { display: none; }
+details > summary::before {
+  content: "";
+  position: absolute;
+  left: -13px;
+  top: 50%;
+  width: 0;
+  height: 0;
+  border-left: 5px solid currentColor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transform: translateY(-50%);
+  opacity: 0.55;
+}
+details[open] > summary::before { transform: translateY(-50%) rotate(90deg); }
 .group-note { font-size: var(--text-sm); }
 .pad-box { padding: 10px var(--space-3); }
 .flush { margin: 0; }
