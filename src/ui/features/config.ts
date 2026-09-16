@@ -84,6 +84,7 @@ import {
   type ConfigGroup,
   configMatchNote,
   DEFAULT_GROUP,
+  GROUP_LABEL,
   groupHref,
   groupOf,
   isConfigGroup,
@@ -801,6 +802,7 @@ async function editorResponse(
       compat,
     })),
     status,
+    `Config · ${GROUP_LABEL[group]}`,
   );
 }
 

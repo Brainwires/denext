@@ -1041,3 +1041,32 @@ Deno.test("compose editor: a build field and a network row post through; an unde
     await stop(h);
   }
 });
+
+Deno.test("each Docker tab names itself in the title; a fragment still carries none", async () => {
+  const h = await ui();
+  try {
+    // All three tabs of this one panel rendered "Docker · denext ui", so two of them open
+    // side by side in a browser were indistinguishable.
+    const titles: string[] = [];
+    for (const tab of ["files", "services", "names"]) {
+      const body = await (await get(h, `/docker?tab=${tab}`)).text();
+      titles.push(/<title>([^<]*)<\/title>/.exec(body)?.[1] ?? "");
+    }
+    assertEquals(titles, [
+      "Docker · Files · denext ui",
+      "Docker · Services · denext ui",
+      "Docker · Names · denext ui",
+    ]);
+
+    // `ui.js` swaps one `<section>`: the per-view title must not turn that into a document.
+    const fragment = await (await fetch(`${h.base}/docker?tab=services`, {
+      headers: { cookie: `${UI_COOKIE}=${h.server.token}`, accept: "text/html-fragment" },
+    })).text();
+    assert(
+      !fragment.includes("<title>"),
+      `a fragment must stay a section: ${fragment.slice(0, 90)}`,
+    );
+  } finally {
+    await stop(h);
+  }
+});

@@ -154,16 +154,19 @@ export function htmlResponse(markup: string, status = 200): Response {
  *
  * @param title The panel's title (the document title, and its heading in the tab bar).
  * @param active The nav href to mark current — the panel's own HTML path.
- * @returns The `(ctx, body, status?) => Response` the module answers every HTML request with.
+ * @returns The `(ctx, body, status?, viewTitle?) => Response` the module answers every HTML
+ *   request with. A tabbed panel passes `viewTitle` to name the view it is actually showing
+ *   (`Docker · Services`), so two of its tabs open side by side are told apart in the browser;
+ *   panels with one view pass nothing and keep the bound title.
  */
 export function panelResponder(
   title: string,
   active: string,
-): (ctx: UiContext, body: RawHtml, status?: number) => Response {
-  return (ctx: UiContext, body: RawHtml, status = 200): Response => {
+): (ctx: UiContext, body: RawHtml, status?: number, viewTitle?: string) => Response {
+  return (ctx: UiContext, body: RawHtml, status = 200, viewTitle?: string): Response => {
     if (ctx.fragment) return htmlResponse(toHtml(body), status);
     return htmlResponse(
-      renderPage(layout, { title, nav: UI_NAV, body, csrf: ctx.csrf, active }),
+      renderPage(layout, { title: viewTitle ?? title, nav: UI_NAV, body, csrf: ctx.csrf, active }),
       status,
     );
   };

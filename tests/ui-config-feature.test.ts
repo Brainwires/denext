@@ -601,3 +601,23 @@ Deno.test("the /api twin, which posts no _base, opts out of the base-version che
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("each Config view names itself in the document title", async () => {
+  const dir = await project();
+  try {
+    // The five groups all rendered "Config · denext ui", so a browser could not tell two open
+    // views of this panel apart. The label is what ships, not the group key.
+    const titles: string[] = [];
+    for (const group of ["routing", "security", "advanced"]) {
+      const body = await (await call(dir, `/config?group=${group}`)).text();
+      titles.push(/<title>([^<]*)<\/title>/.exec(body)?.[1] ?? "");
+    }
+    assertEquals(titles, [
+      "Config · Routing · denext ui",
+      "Config · Security · denext ui",
+      "Config · Advanced · denext ui",
+    ]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

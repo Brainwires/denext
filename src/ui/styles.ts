@@ -268,6 +268,8 @@ form.op { display: inline-block; margin: var(--space-1) var(--space-2) var(--spa
   border-bottom: 1px solid var(--border);
 }
 .table th { color: var(--muted-foreground); font-weight: 600; }
+/* Zebra before hover: equal specificity (0,2,2), so source order is what keeps hover winning. */
+.table tbody tr:nth-child(even) { background: color-mix(in srgb, var(--muted) 45%, transparent); }
 .table tbody tr:hover { background: var(--muted); }
 .row { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; }
 .row.top { align-items: flex-start; }

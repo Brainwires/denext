@@ -333,7 +333,12 @@ async function respond(state: PanelState, ctx: UiContext, status = 200): Promise
   const compose = tab === "files"
     ? null
     : await composeSection(ctx, renderCompose(optionsOf(state.values, state.mode)), tab);
-  return panelResponse(ctx, renderView(h(DockerPanel, { state, compose, tab })), status);
+  return panelResponse(
+    ctx,
+    renderView(h(DockerPanel, { state, compose, tab })),
+    status,
+    `Docker · ${TAB_LABEL[tab]}`,
+  );
 }
 
 // ── options ──────────────────────────────────────────────────────────────────
