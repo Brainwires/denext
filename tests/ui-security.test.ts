@@ -267,6 +267,26 @@ Deno.test("refusals are hardened too", async () => {
   }
 });
 
+Deno.test("a browser's own navigation completes the token handshake", async () => {
+  const s = await ui();
+  try {
+    // What Chrome sends when `denext ui` hands it the printed URL: no initiator at all.
+    const browser = { "sec-fetch-site": "none", "sec-fetch-mode": "navigate" };
+    const res = await fetch(`${s.base}/?t=${s.server.token}`, {
+      headers: browser,
+      redirect: "manual",
+    });
+    assertEquals(res.status, 302, "the token is exchanged, not refused");
+    const cookie = (res.headers.get("set-cookie") ?? "").split(";")[0];
+    assert(cookie.startsWith(UI_COOKIE), "the session cookie is set");
+    const page = await fetch(`${s.base}/`, { headers: { ...browser, cookie } });
+    assertEquals(page.status, 200, "and the page it redirects to renders");
+    assertStringIncludes(await page.text(), "<title>Project · denext ui</title>");
+  } finally {
+    await stop(s);
+  }
+});
+
 // ── unit-level ───────────────────────────────────────────────────────────────
 
 Deno.test("uiOriginAllowed: loopback hosts, Sec-Fetch-Site, Origin fallback", () => {
@@ -277,6 +297,13 @@ Deno.test("uiOriginAllowed: loopback hosts, Sec-Fetch-Site, Origin fallback", ()
   assert(uiOriginAllowed(req({ "sec-fetch-site": "same-origin" }), url));
   assert(!uiOriginAllowed(req({ "sec-fetch-site": "cross-site" }), url));
   assert(!uiOriginAllowed(req({ "sec-fetch-site": "same-site" }), url));
+  // `none` is the user opening the printed URL — the one shape every browser's first load has.
+  assert(uiOriginAllowed(req({ "sec-fetch-site": "none" }), url), "a user-opened URL is read");
+  const post = new Request("http://127.0.0.1:5177/", {
+    method: "POST",
+    headers: { "sec-fetch-site": "none" },
+  });
+  assert(!uiOriginAllowed(post, url), "a mutation must come from the UI's own page");
   assert(!uiOriginAllowed(req({}), new URL("http://evil.test:5177/")));
   assert(uiOriginAllowed(req({}), new URL("http://localhost:5177/")));
   assert(uiOriginAllowed(req({}), new URL("http://[::1]:5177/")));

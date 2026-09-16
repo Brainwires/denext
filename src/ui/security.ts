@@ -160,7 +160,12 @@ export function constantTimeEqual(a: string, b: string): boolean {
 export function uiOriginAllowed(request: Request, url: URL): boolean {
   if (!loopbackHost(url.hostname)) return false;
   const site = request.headers.get("sec-fetch-site");
-  if (site) return site === "same-origin";
+  // `none` is a navigation the user started themselves: the printed URL handed to the browser
+  // launcher, typed, or opened from a bookmark. No other site's page can produce it — a
+  // page-initiated request is `same-origin`, `same-site` or `cross-site` — so it is safe to READ
+  // the UI with, and it is how every browser asks for the first page. A mutation still has to
+  // come from the UI's own page (`same-origin`), and passes the CSRF gate besides.
+  if (site) return site === "same-origin" || (site === "none" && !isMutation(request.method));
   const origin = request.headers.get("origin");
   if (!origin) return true; // curl / tests — no ambient-credential risk
   try {
@@ -168,6 +173,17 @@ export function uiOriginAllowed(request: Request, url: URL): boolean {
   } catch {
     return false; // malformed Origin
   }
+}
+
+/**
+ * Whether `method` changes state, and therefore passes the read-only, origin and CSRF gates
+ * that a read does not.
+ *
+ * @param method An HTTP method.
+ * @returns Whether it is anything but a read.
+ */
+export function isMutation(method: string): boolean {
+  return method !== "GET" && method !== "HEAD";
 }
 
 /** Whether `hostname` (possibly a bracketed IPv6 literal) names the loopback interface. */

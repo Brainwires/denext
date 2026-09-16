@@ -84,6 +84,14 @@ and this project adheres to
 
 ### Fixed
 
+- `denext ui` opens in a browser again. Its origin gate accepted only
+  `Sec-Fetch-Site: same-origin`, but a browser sends `none` for the navigation that starts a
+  session — the printed URL handed to the launcher, typed, or opened from a bookmark — so the
+  first load was refused with `{"ok":false,"reason":"forbidden origin"}`, the token handshake
+  never ran, and no session could be established. A user-initiated navigation is now read; a
+  mutation still has to come from the UI's own page and pass the CSRF gate. Present since the UI
+  landed in 2.5.0-rc.1: curl sends no fetch-metadata header and the end-to-end suite drives the
+  server with `fetch`, so every test passed while no browser could open the UI.
 - `denext ui`: a refused Commands run (an unknown or built-in verb, a bad flag or argument
   value, `--read-only`) answers a form post with the panel, the reason as an alert and the
   submitted values kept. It answered raw JSON, which replaced the page when JavaScript was off.

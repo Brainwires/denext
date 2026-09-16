@@ -20,6 +20,7 @@ import {
   checkCsrf,
   createUiSession,
   handshake,
+  isMutation,
   uiOriginAllowed,
   type UiSession,
 } from "./security.ts";
@@ -155,11 +156,6 @@ async function dispatch(
   const ctx = await buildContext(request, url, session, events, signal, options);
   if ("refusal" in ctx) return ctx.refusal;
   return applySecurityHeaders(await route.handle(request, ctx.ctx));
-}
-
-/** Whether `method` changes state (and therefore passes the read-only + CSRF gates). */
-function isMutation(method: string): boolean {
-  return method !== "GET" && method !== "HEAD";
 }
 
 /**
