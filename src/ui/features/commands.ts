@@ -45,6 +45,7 @@ import {
 } from "../components.ts";
 import { Raw, renderView } from "../view.ts";
 import { matchesTerms, matchNote } from "../filter.ts";
+import { parseJsonDocument } from "../child-json.ts";
 import { field, opButton } from "../form/control.ts";
 import { applyListOp, OP_FIELD, parseOp } from "../form/value.ts";
 import { broadcast, exitLine, sseProcess } from "../events.ts";
@@ -201,16 +202,7 @@ export interface CommandListing {
  * @returns The parsed listing, or `null` when there was no parsable document.
  */
 export function parseListing(output: string): CommandListing | null {
-  const lines = output.split("\n").map((line) => line.replace(/\r$/, ""));
-  const open = lines.indexOf("{");
-  const close = lines.lastIndexOf("}");
-  if (open < 0 || close < open) return null;
-  try {
-    const parsed = JSON.parse(lines.slice(open, close + 1).join("\n"));
-    return parsed !== null && typeof parsed === "object" ? parsed as CommandListing : null;
-  } catch {
-    return null;
-  }
+  return parseJsonDocument<CommandListing>(output);
 }
 
 /** Built-ins first, then the project's own verbs — the order the panel and the JSON twin use. */

@@ -555,6 +555,32 @@ runs without net, `deno install` runs `--cached-only`, and the Tasks and Finish 
 disabled ([Working offline](#working-offline)). See [Doctor & audit](/docs/doctor-audit) for
 what the checks mean.
 
+## Cron
+
+`/config/cron` is the Config panel's Cron tab: every cron schedule this project registers at
+server startup, when each next fires, and which of them will not fire at all.
+
+A schedule reaches the scheduler from one of two places, and the tab is explicit about which:
+
+| Source                                          | Shown | Editable                                        |
+| ----------------------------------------------- | ----- | ----------------------------------------------- |
+| `scheduledTasks` in `denext.config.ts`          | yes   | yes — through the `scheduledTasks` editor       |
+| `schedule:` inside a task's `defineTask({ … })` | yes   | no — it is code, and the UI never rewrites code |
+
+The listing comes from one subprocess (`denext task --list --json`), never from this process:
+listing tasks means importing the project's task modules. The child returns the schedule
+`collectSchedules` computes — the same function the server calls at boot — so the tab shows what
+will really happen rather than re-deriving the merge.
+
+Two kinds of entry are flagged **never fires**, because the scheduler skips them at startup with
+nothing more than a log line: a malformed cron expression, and a schedule naming a task that is
+not defined. Times are UTC, which is what `Deno.cron` and the userland scheduler both use.
+
+Scheduling a task from here checks the expression against the tasks that exist and then hands the
+write to the [configuration editor](#configuration-editor) — `scheduledTasks` has one writer, with
+one diff-then-confirm and one stale-file check, and a second would be a second set of those
+guarantees to keep in step. See [Scheduled tasks](/docs/tasks) for the feature itself.
+
 ## Project commands
 
 `/commands` lists every verb available in this project — built-ins, verbs a plugin
@@ -662,6 +688,7 @@ the browser and a machine client exercise identical code:
 | `/`                | `GET` `HEAD`          | `/api/overview`        |
 | `/config`          | `GET` `POST`          | `/api/config`          |
 | `/config/next`     | `GET`                 | `/api/config/next`     |
+| `/config/cron`     | `GET` `POST`          | `/api/config/cron`     |
 | `/plugins`         | `GET` `POST` `DELETE` | `/api/plugins`         |
 | `/plugins/options` | `GET` `POST`          | `/api/plugins/options` |
 | `/generate`        | `GET` `POST`          | `/api/generate`        |
@@ -677,6 +704,7 @@ describes what its panel does, it does not flatten every panel into one shape:
 | ---------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
 | `/api/config`          | `{ ok, file, form, keys, schema? }`                                                   | `{ ok, applied, diff }` (a write adds `file`)                                                    |
 | `/api/config/next`     | `{ ok, … }` the read next.config view                                                 | — (read-only)                                                                                    |
+| `/api/config/cron`     | `{ ok, tasks, schedules, configScheduled, denoCron }`                                 | `{ ok, applied: false, scheduledTasks, next }` — the value to POST to `/api/config`              |
 | `/api/plugins`         | `{ ok, installed, catalog, config, jsr }`                                             | `{ ok, applied, diff, name, op, command, bailed, … }`                                            |
 | `/api/plugins/options` | `{ ok, name, callee, values, codeKeys, schema }` (`{ ok, plugins }` with no `?name=`) | `{ ok, applied, diff, values }`                                                                  |
 | `/api/generate`        | `{ ok, kinds }`                                                                       | `{ ok, written, skipped, preview? }`                                                             |

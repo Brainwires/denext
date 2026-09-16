@@ -217,6 +217,9 @@ export function ConfigTabs({ active, compat }: {
     href: groupHref(group),
     label: GROUP_LABEL[group],
   }));
+  // Cron is a view OF this config — `scheduledTasks` is one of its keys — so it is a tab here
+  // rather than a top-level panel, where it would also collide with `/tasks/run` (`deno task`).
+  items.push({ href: "/config/cron", label: "Cron" });
   if (compat) items.push({ href: "/config/next", label: "next.config" });
   return h(Tabs, { items, active, label: "Configuration views" });
 }

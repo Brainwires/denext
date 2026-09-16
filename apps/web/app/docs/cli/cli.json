@@ -711,7 +711,7 @@
       "name": "task",
       "summary": "Run a background task by name, or list them (--list)",
       "usage": "denext task [name] [options]",
-      "description": "denext task <name> [--payload '<json>']\ndenext task --list",
+      "description": "denext task <name> [--payload '<json>']\ndenext task --list [--json]",
       "flags": [
         {
           "name": "list",

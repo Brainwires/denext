@@ -50,6 +50,7 @@ interface FeatureRoute {
 const FEATURES: readonly FeatureRoute[] = [
   { path: "/config", methods: ["GET", "POST"], handle: configPanel },
   { path: "/config/next", methods: ["GET"], handle: configPanel },
+  { path: "/config/cron", methods: ["GET", "POST"], handle: configPanel },
   { path: "/plugins", methods: ["GET", "POST", "DELETE"], handle: pluginsPanel },
   { path: "/plugins/options", methods: ["GET", "POST"], handle: pluginOptionsPanel },
   { path: "/generate", methods: ["GET", "POST"], handle: generatePanel },

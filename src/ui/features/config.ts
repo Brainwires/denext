@@ -72,6 +72,7 @@ import {
   parseOp,
 } from "../form/value.ts";
 import { ConfigTabs, isCompatApp, nextConfigPanel } from "./config-next.ts";
+import { cronPanel } from "./config-cron.ts";
 import {
   type ConfigGroup,
   configMatchNote,
@@ -1121,6 +1122,7 @@ export const configPanel: UiHandler = async (
   ctx: UiContext,
 ): Promise<Response> => {
   if (ctx.url.pathname.endsWith("/config/next")) return await nextConfigPanel(request, ctx);
+  if (ctx.url.pathname.endsWith("/config/cron")) return await cronPanel(request, ctx);
   const state = await readState(ctx.dir);
   if (ctx.method === "GET" || ctx.method === "HEAD") {
     if (ctx.json) {
