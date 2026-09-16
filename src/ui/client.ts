@@ -106,6 +106,9 @@ function trackAll() {
   for (const form of document.querySelectorAll("form[data-dirty-track]")) track(form);
 }
 
+/** The newest panel asked for, so a slow answer can never land on top of a newer one. */
+let showSeq = 0;
+
 /** The newest preview asked for, so a slow answer can never land on top of a newer one. */
 let previewSeq = 0;
 let previewTimer = null;
@@ -215,7 +218,8 @@ function markCurrent() {
  * request, a response that is not a panel — hands the address back to the browser, so the
  * enhancement can never strand someone on a page that will not move.
  */
-async function show(href, push) {
+async function show(href, push, keepFocus) {
+  const seq = ++showSeq;
   let response;
   try {
     response = await fetch(href, { headers: { accept: "text/html-fragment" } });
@@ -228,8 +232,27 @@ async function show(href, push) {
     location.href = href;
     return;
   }
+  // A search the registry answered slowly must not replace a newer one's results.
+  if (seq !== showSeq) return;
   const title = response.headers.get(TITLE_HEADER);
-  swapPanel(await response.text());
+  const markup = await response.text();
+  if (seq !== showSeq) return;
+  // A filter box is typed in while its own results are replaced, so put the caret back where it
+  // was: the panel around it is swapped wholesale, and the field is part of what is swapped.
+  const focused = keepFocus ? document.activeElement : null;
+  const restore = focused && focused.name
+    ? { name: focused.name, start: focused.selectionStart, end: focused.selectionEnd }
+    : null;
+  swapPanel(markup);
+  if (restore) {
+    const again = document.querySelector('#panel [name="' + restore.name + '"]');
+    if (again) {
+      again.focus();
+      try {
+        again.setSelectionRange(restore.start, restore.end);
+      } catch { /* not a field with a caret */ }
+    }
+  }
   if (push) history.pushState(null, "", href);
   markCurrent();
   if (title) document.title = decodeURIComponent(title);
@@ -251,7 +274,17 @@ globalThis.addEventListener("popstate", () => {
 document.addEventListener("submit", (event) => {
   const form = event.target;
   if (!(form instanceof HTMLFormElement)) return;
-  if ((form.method || "get").toLowerCase() !== "post") return;
+  if ((form.method || "get").toLowerCase() !== "post") {
+    // A GET form — the ?q= filters, the plugin search — is a link the person assembled, so it
+    // goes the same way a nav click does. The filtering itself stays on the server: matchesTerms
+    // is the only implementation of how a query matches, and a copy here could only disagree.
+    const url = new URL(form.action, location.href);
+    url.search = new URLSearchParams(new FormData(form)).toString();
+    event.preventDefault();
+    show(url.pathname + url.search, true, true)
+      .catch((error) => console.error("denext ui:", error));
+    return;
+  }
   event.preventDefault();
   submit(form, event.submitter).catch((error) => console.error("denext ui:", error));
 });

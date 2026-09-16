@@ -327,3 +327,53 @@ Deno.test("denext ui: the cron preview follows what you type, without taking the
     await Deno.remove(dir, { recursive: true }).catch(() => {});
   }
 });
+
+Deno.test("denext ui: filtering swaps the results in place and gives the box back", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_ui_e2e_" });
+  await Deno.writeTextFile(
+    join(dir, "deno.json"),
+    JSON.stringify({ imports: { denext: "jsr:@denext/denext@^2" } }),
+  );
+  await Deno.writeTextFile(join(dir, "denext.config.ts"), "export default {};\n");
+  const server = await startUiServer({ dir, port: 0 });
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    const errors = collectConsoleErrors(page);
+    await page.goto(server.url);
+    await page.goto(`${new URL(server.url).origin}/config`);
+
+    await pollFor(page, `!!document.querySelector("form.filter")`);
+    await page.evaluate("window.__noReload = true");
+
+    const box = await page.$("form.filter input");
+    assert(box, "the config panel must offer a filter box");
+    await box.click();
+    await box.type("base");
+
+    // A GET form is a link someone assembled: it goes the same way a nav click does.
+    await page.evaluate(`document.querySelector("form.filter").requestSubmit()`);
+    await pollFor(page, `location.search.indexOf("base") !== -1`);
+
+    assertEquals(
+      await page.evaluate("window.__noReload === true"),
+      true,
+      "filtering must swap the panel, not navigate",
+    );
+
+    // Unlike the cron preview, this swaps the WHOLE panel — the box included — so the caret has
+    // to be put back, or a second keystroke would land somewhere else entirely.
+    await pollFor(page, `document.activeElement === document.querySelector("form.filter input")`);
+    assertEquals(
+      await page.evaluate(`document.querySelector("form.filter input").value`),
+      "base",
+      "the filter box must come back with the query still in it",
+    );
+
+    assertNoConsoleErrors(errors);
+  } finally {
+    await browser.close();
+    await server.shutdown();
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});

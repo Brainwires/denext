@@ -784,6 +784,12 @@ page — and a response that is not a panel hands the address straight back to t
 enhancement can never strand you on a page that will not move. With JavaScript off these are
 ordinary links, and every one of them still works.
 
+A search or filter box is the same idea with fields attached: submitting one builds its `?q=`
+address and swaps the results in place instead of navigating. That swap replaces the whole panel —
+the box included — so the caret is put back where it was, and a second keystroke lands where you
+expect it to. The filtering itself stays on the server: `matchesTerms` is the only implementation
+of how a query matches, and a copy in the client module could only ever come to disagree with it.
+
 **How the views are built.** Every panel is a component tree built with `h()` from denext's
 own JSX runtime, in plain `.ts` modules, and rendered once to a string on the server. That
 changes nothing on the wire: there is still no client bundle, no hydration and no island,
