@@ -320,11 +320,14 @@ function verificationMethods(
 /** Password-hash storage for the Credentials provider. */
 function credentialMethods(
   state: MemoryState,
-): Pick<AuthAdapter, "getCredential" | "setCredential"> {
+): Pick<AuthAdapter, "getCredential" | "setCredential" | "deleteCredential"> {
   return {
     getCredential: (userId) => state.credentials.get(userId),
     setCredential(userId, hash) {
       state.credentials.set(userId, hash);
+    },
+    deleteCredential(userId) {
+      state.credentials.delete(userId);
     },
   };
 }
@@ -377,8 +380,11 @@ function apiTokenMethods(
 /** The TOTP factor group, including the two consume-once guards. */
 function mfaMethods(
   state: MemoryState,
-): Pick<AuthAdapter, "getMfa" | "setMfa" | "consumeBackupCode" | "claimTotpStep"> {
+): Pick<AuthAdapter, "getMfa" | "setMfa" | "deleteMfa" | "consumeBackupCode" | "claimTotpStep"> {
   return {
+    deleteMfa(userId) {
+      state.mfa.delete(userId);
+    },
     getMfa(userId) {
       const record = state.mfa.get(userId);
       return record && { ...record, backupCodeHashes: [...record.backupCodeHashes] };

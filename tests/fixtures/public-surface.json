@@ -301,6 +301,7 @@
     "GlobalFlags:interface",
     "ParseOutcome:typeAlias",
     "PositionalSpec:interface",
+    "ProjectVerb:interface",
     "suggest:function"
   ],
   "denext/plugin-kit": [
@@ -546,6 +547,7 @@
     "MdxConfig:interface",
     "Messages:typeAlias",
     "Metadata:interface",
+    "MfaAttemptResult:typeAlias",
     "MfaMethod:typeAlias",
     "MfaRecord:interface",
     "MfaStatus:interface",
@@ -698,6 +700,7 @@
     "VerifyEmailResult:typeAlias",
     "Viewport:interface",
     "absoluteUrl:function",
+    "activeAuthConfig:function",
     "after:function",
     "apiDefinitionOf:function",
     "apiErrorResponse:function",
@@ -841,6 +844,7 @@
     "setChannelTransport:function",
     "slack:function",
     "specificity:function",
+    "spendMfaAttempt:function",
     "sqliteAuthAdapter:function",
     "sqliteCacheStore:function",
     "sqliteSessionStore:function",

@@ -162,12 +162,14 @@ cap, and each level resolves a same-module call in its own module. A module that
 declares only hooks (a `useCart.ts` with no component) still emits its metadata, so
 there is something to join against.
 
-Naming still stops at a hook imported by a bare specifier (a package, `npm:`,
-`jsr:`, or an import-map alias such as `@/lib/auth`), a URL, or through a namespace
-import (`import * as auth`, then `auth.useAuth()`), and at a hook re-exported
-through a barrel: `export { useAuth } from "./auth"` sends the lookup to the
-barrel, which declares nothing. An importee that has not registered yet — one
-behind a dynamic `import()` — is the same clean miss, never a wrong name.
+In the default dev loop an import-map alias (`@/lib/auth`) resolves exactly as the dev server
+resolves the import, and a barrel that re-exports a hook by name
+(`export { useAuth } from "./auth"`) sends the lookup on to the declaring module — one hop; a
+barrel of a barrel stops. Naming still stops at a hook imported by a bare specifier (a package,
+`npm:`, `jsr:`), a URL, through a namespace import (`import * as auth`, then
+`auth.useAuth()`) or a barrel's `export *`, and at an import-map alias in SPA mode. An importee
+that has not registered yet — one behind a dynamic `import()` — is the same clean miss, never a
+wrong name.
 
 #### Debug values
 
@@ -535,8 +537,8 @@ function and type is listed in the [API reference](/docs/api).
   They coincide for the common case; a component passed as `children` through a
   wrapper is reported under the wrapper that rendered it.
 - **Cross-module hook naming follows static relative imports only.** A hook
-  imported by a bare, `npm:`/`jsr:`, URL or import-map-alias specifier, through a
-  namespace import, or re-exported through a barrel still consumed an unknowable
+  imported by a bare, `npm:`/`jsr:`, URL specifier (or, in SPA mode, an import-map
+  alias), through a namespace import, or through a barrel's `export *` still consumed an unknowable
   number of cells, so the component falls back to kind labels. A `.js`-style
   specifier also finds its TypeScript sibling (`./auth.js` naming `auth.ts`).
   Expansion is capped at three levels, across modules

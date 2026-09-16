@@ -1,4 +1,4 @@
-// `--help` placement and the help footer's directory. A help flag BEFORE the verb used to
+// `--help` placement, the verbs help lists, and the footer's directory. A help flag BEFORE the verb used to
 // be dropped with everything else ahead of the verb — so `denext --help build` RAN build —
 // and a bare directory after `--help` was read as an unknown verb. The parser now resolves
 // both to help, skips a valued global flag's value when finding the verb, and the CLI picks
@@ -146,4 +146,55 @@ Deno.test("an unknown verb still exits 1 with a did-you-mean", async () => {
     assertStringIncludes(res.err, 'unknown command "buidl"');
     assertStringIncludes(res.err, "Did you mean `denext build`?");
   });
+});
+
+Deno.test("--help lists the verbs the last `denext commands` run found, while they hold", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_help_verbs_" });
+  try {
+    await Deno.writeTextFile(join(dir, "deno.json"), "{}");
+    await Deno.writeTextFile(
+      join(dir, "denext.config.ts"),
+      'export default { commands: [{ name: "seed", summary: "Load fixtures", run: () => {} }] };\n',
+    );
+    // Before any discovery, help points at the verb that does it.
+    const cold = await runCli(["--help", dir]);
+    assertStringIncludes(cold.out, FOOTER);
+    assert(!cold.out.includes("Load fixtures"), "nothing is listed before a discovery");
+
+    const listed = await runCli(["commands", "--cwd", dir]);
+    assertEquals(listed.code, 0, listed.err);
+    const cache = JSON.parse(await Deno.readTextFile(join(dir, ".denext", "commands.json")));
+    assertEquals(cache.verbs, [{ name: "seed", summary: "Load fixtures" }]);
+
+    const warm = await runCli(["--help", dir]);
+    assertEquals(warm.code, 0, warm.err);
+    assertStringIncludes(warm.out, "Project commands:");
+    assertStringIncludes(warm.out, "seed");
+    assertStringIncludes(warm.out, "Load fixtures");
+    assertStringIncludes(warm.out, "what `denext commands` last found here");
+
+    // A change to a file the verb set depends on makes the listing untrustworthy again.
+    await Deno.writeTextFile(join(dir, "deno.json"), '{ "tasks": {} }');
+    const stale = await runCli(["--help", dir]);
+    assert(!stale.out.includes("Load fixtures"), "a stale listing is not printed");
+    assertStringIncludes(stale.out, FOOTER);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a project verb never shadows a built-in in the help table", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_help_shadow_" });
+  try {
+    await Deno.writeTextFile(join(dir, "deno.json"), "{}");
+    await Deno.writeTextFile(
+      join(dir, "denext.config.ts"),
+      'export default { commands: [{ name: "dev", summary: "Mine", run: () => {} }] };\n',
+    );
+    await runCli(["commands", "--cwd", dir]);
+    const res = await runCli(["--help", dir]);
+    assert(!res.out.includes("Mine"), "a built-in's name is never listed as a project verb");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

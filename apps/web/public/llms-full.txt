@@ -231,7 +231,8 @@ export const GET = createApi().use(requireSession({ role: "admin" })).define(/* 
 
 Persist users with an adapter (`sqliteAuthAdapter({ path })` on `node:sqlite`, or
 `inMemoryAuthAdapter()`), and gate a machine-to-machine API with
-`requireBearer(authConfig, { scope: "pets:write" })` — it self-documents as `bearerAuth`
+`requireBearer({ scope: "pets:write" })` (it reads the config `denextAuth()` was built with;
+pass `authConfig` first to be explicit) — it self-documents as `bearerAuth`
 for `@denext/openapi` (declare the matching `securitySchemes: { bearerAuth: … }` once in the
 `openapi()` options). `credentials()` with no `authorize` verifies against the adapter
 (`getUserByEmail` + `getCredential` + the hasher). Passwordless: `providers: [magicLink(),
@@ -747,7 +748,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type (a returned Response carries no body type).
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 2.5.0-rc.5` — The denext framework version.
+- `VERSION: 2.5.0-rc.6` — The denext framework version.
 - `ViewTransition(props: object): VNode` — React.ViewTransition (experimental) — the client-driven view-transition wrapper. It is transparent (no DOM node of its own) and carries its config by stamping the DNX_VT_ATTR attribute onto its **single host child** (a DOM attribute survives server rendering AND the Flight boundary, unlike a VNode marker). Around a soft navigation the import-gated marking runtime finds these elements and applies real view-transition-name (and view-transition-class from enter/exit/update/share), so a name shared across routes morphs one element into the other. **Route-level** transitions apply regardless: a soft navigation commits inside document.startViewTransition where the browser supports it (see withViewTransition in src/client/navigation.ts). Without the gated runtime, or for a wrapper whose child isn't a single element (nothing to mark), it is a plain passthrough.
 - `interface VNode` — A single virtual DOM node.
 - `type VNodeChild = VNode | string | number | bigint | boolean | null | undefined` — Anything that can appear as a child in JSX.
@@ -764,6 +765,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ActionHandlerOptions` — Options for handleAction.
 - `type ActionResult<Out> = object | object` — The result an action returns: ok carries the typed handler output, else an error.
 - `class ActionValidationError` — Throw this from an input parser (or a handler) to return per-field form errors.
+- `activeAuthConfig(): AuthConfig` — The auth config denextAuth() was built with — the one auth() and the auth endpoints use. Server code that needs the config itself (requireBearer, issueApiToken, requestPasswordReset, …) can read it here instead of importing its own copy.
 - `interface AdapterAccount` — A provider account linked to an AdapterUser.
 - `interface AdapterAccountRef` — Identifies one linked provider account.
 - `interface AdapterUser` — A user record as the adapter stores it. id is the identity session.user.id carries.
@@ -1003,6 +1005,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface MdxConfig` — MDX compilation options (see DenextConfig.mdx). Each plugin list is a unified PluggableList: an array whose entries are either a plugin function or a [plugin, options] tuple. Typed loosely (unknown[]) so the public config surface doesn't depend on unified/@mdx-js types; the values are forwarded verbatim to MDX's compile.
 - `type Messages = Record<string, string>` — A flat message catalog for one locale: message key → template string.
 - `interface Metadata` — Page metadata a page or layout module may export as metadata/generateMetadata.
+- `type MfaAttemptResult = object | object` — The outcome of spendMfaAttempt.
 - `type MfaMethod = totp | bcp` — A second factor a step-up can be completed with: a TOTP code, or a backup code.
 - `interface MfaRecord` — A user's TOTP factor plus their single-use backup codes.
 - `mfaStatus(config: AuthConfig, userId: string): Promise<MfaStatus>` — A user's second-factor state — for an account-settings page.
@@ -1174,6 +1177,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SpaDesktopConfig` — deno desktop packaging settings under SpaConfig.desktop.
 - `interface SpaProxyConfig` — Reverse-proxy configuration for SPA serving — the SPA analogue of a Vite dev server's server.proxy. The client talks to its own origin and denext relays matched requests (HTTP + WebSocket) to a separate backend.
 - `specificity(pattern: Segment[]): number` — Specificity score for ordering routes: more specific (static) patterns should be tried before less specific (dynamic/catch-all) ones. Higher wins. Position-blind (a sum) — prefer compareSpecificity for ordering.
+- `spendMfaAttempt(config: AuthConfig, input: object): Promise<MfaAttemptResult>` — Spend one second-factor attempt from the user's MFA budget — the one the POST {basePath}/mfa* endpoints spend — before a Server Action checks a code with verifySecondFactor or confirmTotp, which spend nothing themselves. Every attempt counts, right or wrong, so a correct guess never resets the count. The per-user budget is rateLimit.mfa (5 per 5 minutes by default), and the client IP's bucket counts too when a request is in scope. Pass the config you passed to denextAuth() so the endpoints and your actions share one budget.
 - `sqliteAuthAdapter(options?: SqliteAuthAdapterOptions): AuthAdapter` — Build the durable AuthAdapter on Deno's built-in node:sqlite: every method group (users, accounts, verification tokens, credentials, API tokens, MFA) plus a sessions store over the **same** database handle and an idempotent close().
 - `interface SqliteAuthAdapterOptions` — Options for sqliteAuthAdapter.
 - `sqliteCacheStore(options?: SqliteCacheStoreOptions): CacheStore` — A CacheStore backed by Deno's built-in node:sqlite. Durable across restarts, zero-npm, no unstable flag — denext's default durable store for single-node deployments (for multi-replica, point every instance at one shared store via setCacheStore). Size-bounded: FIFO eviction past SqliteCacheStoreOptions.maxDataEntries/maxPageEntries, plus a throttled sweep of hard-expired rows.
@@ -1551,4 +1555,5 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface GlobalFlags` — Global flags recognized on every command, parsed out before command flags.
 - `type ParseOutcome = object | object | object | object` — The outcome of parsing an argv against the registry.
 - `interface PositionalSpec` — A declarative positional argument on a CommandSpec.
+- `interface ProjectVerb` — One verb a project contributes, as CommandRegistry.formatHelp lists it.
 - `suggest(input: string, candidates: typeOperator): string | undefined` — The closest name in candidates to input within a small edit-distance threshold (scaled to the input length), or undefined when nothing is close — powering "did you mean" hints for both unknown verbs and unknown flags.

@@ -281,6 +281,31 @@ async function readIfPresent(projectDir: string, path: string): Promise<string |
   }
 }
 
+/** The compose file names Docker Compose looks for, in its own order of precedence. */
+export const COMPOSE_FILE_NAMES: readonly string[] = [
+  "compose.yaml",
+  "compose.yml",
+  "docker-compose.yaml",
+  "docker-compose.yml",
+];
+
+/** The name a new compose file is written under (the one `denext generate docker` has always used). */
+export const DEFAULT_COMPOSE_FILE = "docker-compose.yml";
+
+/**
+ * The compose file a project already has, by Docker Compose's precedence — a symlink out of the
+ * project doesn't count — or `null` when it has none.
+ *
+ * @param projectDir The project root.
+ * @returns The file's name, relative to `projectDir`, or `null`.
+ */
+export async function findComposeFile(projectDir: string): Promise<string | null> {
+  for (const name of COMPOSE_FILE_NAMES) {
+    if (await readIfPresent(projectDir, join(projectDir, name)) !== undefined) return name;
+  }
+  return null;
+}
+
 /**
  * What a Docker (re)generation would write at the project root, next to what is there now —
  * the single plan both `denext generate docker` and the UI panel act on, so a preview and a
@@ -296,7 +321,8 @@ export async function dockerPlan(
 ): Promise<DockerPlanFile[]> {
   const rendered: readonly (readonly [string, string])[] = [
     ["Dockerfile", renderDockerfile(options)],
-    ["docker-compose.yml", renderCompose(options)],
+    // An existing compose file under any of Docker Compose's names is the one regenerated.
+    [(await findComposeFile(projectDir)) ?? DEFAULT_COMPOSE_FILE, renderCompose(options)],
     [".dockerignore", renderDockerignore()],
   ];
   const plan: DockerPlanFile[] = [];

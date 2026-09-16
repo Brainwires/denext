@@ -227,7 +227,8 @@ export const GET = createApi().use(requireSession({ role: "admin" })).define(/* 
 
 Persist users with an adapter (`sqliteAuthAdapter({ path })` on `node:sqlite`, or
 `inMemoryAuthAdapter()`), and gate a machine-to-machine API with
-`requireBearer(authConfig, { scope: "pets:write" })` — it self-documents as `bearerAuth`
+`requireBearer({ scope: "pets:write" })` (it reads the config `denextAuth()` was built with;
+pass `authConfig` first to be explicit) — it self-documents as `bearerAuth`
 for `@denext/openapi` (declare the matching `securitySchemes: { bearerAuth: … }` once in the
 `openapi()` options). `credentials()` with no `authorize` verifies against the adapter
 (`getUserByEmail` + `getCredential` + the hasher). Passwordless: `providers: [magicLink(),

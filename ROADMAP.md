@@ -131,21 +131,12 @@ guardrail; both are build-time.
   closing link-scanner burns and login CSRF.
 - **`totpQrSvg()`** — a dependency-free QR renderer for the `otpauth://` URI `enrollTotp` /
   `totpAuthUri` return (2.5 ships the URI, not the picture).
-- **Optional adapter `deleteCredential?` / `deleteMfa?`**, so disabling TOTP and a
-  pre-account-hijacking eviction delete instead of overwrite (today: an empty, unconfirmed
-  MFA record and a password hash of a random secret).
-- **A public helper that spends the MFA attempt budget from a Server Action.** The limiter the
-  `/mfa*` endpoints spend is internal, so an action calling `verifySecondFactor` or
-  `confirmTotp` throttles itself (`examples/auth` carries its own).
-- **`activeAuthConfig()`** so `requireBearer`'s first argument becomes optional.
+
 - **Richer events**: API-token issue/revoke events, a `signInFailed.reason` union, and an
   `AuthEvents.ip` for audit trails.
 
 **`denext ui`:**
 
-- **Third-party plugin option schemas.** Options forms come only from the first-party
-  catalog; a JSR plugin found by the search is added and wired, but its options are set by
-  hand.
 - **Export the UI's form components** (`FormField`, `Control`, `Field`, `OpButton`, `Widget`)
   and retire the form renderer's remaining string API.
 

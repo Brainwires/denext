@@ -340,6 +340,8 @@ interface View {
   readonly offline: boolean;
   /** The values to re-render one verb's form with, if any. */
   readonly held?: Held;
+  /** A refusal to announce at the top of the panel (a form post with JavaScript off). */
+  readonly notice?: string;
 }
 
 /** The values a re-rendered control shows, or `undefined` on a fresh page. */
@@ -696,6 +698,7 @@ function CommandsPanel({ list, view, output }: PanelProps): VNode {
       h("a", { href: DOCS }, "Project commands ↗"),
     ),
     h(Notices, { list }),
+    view.notice === undefined ? null : h(Note, { role: "alert" }, view.notice),
     view.offline ? h(Note, null, OFFLINE_NOTE) : null,
     GROUPS.map((group) =>
       h(VerbGroup, { key: group.source, group, commands: list.commands, view })
@@ -714,14 +717,31 @@ function panelResponse(
   list: UiCommandList,
   output: readonly string[],
   held?: Held,
+  refused?: { readonly notice: string; readonly status: number },
 ): Response {
   const view: View = {
     csrf: ctx.csrf,
     readOnly: ctx.readOnly,
     offline: ctx.offline === true,
     held,
+    notice: refused?.notice,
   };
-  return respond(ctx, renderView(h(CommandsPanel, { list, view, output })));
+  return respond(ctx, renderView(h(CommandsPanel, { list, view, output })), refused?.status);
+}
+
+/**
+ * A refused run. The JSON twin gets `{ ok: false, … }`; a form post (JavaScript off) gets the
+ * panel back with the reason as an alert, the same status, and the submitted values kept.
+ */
+function refusal(
+  ctx: UiContext,
+  list: UiCommandList,
+  status: number,
+  body: { readonly reason: string } & Record<string, unknown>,
+  held?: Held,
+): Response {
+  if (ctx.json) return jsonResponse({ ok: false, ...body }, status);
+  return panelResponse(ctx, list, [], held, { notice: body.reason, status });
 }
 
 // ── building a run's argv ────────────────────────────────────────────────────
@@ -824,12 +844,18 @@ function runArgv(info: UiCommandInfo, dir: string, read: Read, offline: boolean)
 }
 
 /** The run's argv, or the 422 that names the field it refused. */
-function argvOrRefusal(ctx: UiContext, info: UiCommandInfo, read: Read): string[] | Response {
+function argvOrRefusal(
+  ctx: UiContext,
+  info: UiCommandInfo,
+  list: UiCommandList,
+  read: Read,
+): string[] | Response {
   try {
     return runArgv(info, ctx.dir, read, ctx.offline === true);
   } catch (error) {
     if (!(error instanceof FieldError)) throw error;
-    return jsonResponse({ ok: false, reason: error.message, field: error.field }, 422);
+    const body = { reason: error.message, field: error.field };
+    return refusal(ctx, list, 422, body, { verb: info.name, read });
   }
 }
 
@@ -861,14 +887,18 @@ function announce(ctx: UiContext, verb: string, code: number): void {
 }
 
 /** The 400 for a verb the panel offers no run form: unknown, or a built-in. */
-function refused(verb: string, info: UiCommandInfo | undefined, list: UiCommandList): Response {
-  return jsonResponse({
-    ok: false,
+function refused(
+  ctx: UiContext,
+  verb: string,
+  info: UiCommandInfo | undefined,
+  list: UiCommandList,
+): Response {
+  return refusal(ctx, list, 400, {
     reason: info === undefined
       ? `unknown command "${verb}"`
       : `"${verb}" is a built-in verb — run it from your terminal`,
     runnable: list.commands.filter(offersRun).map((c) => c.name),
-  }, 400);
+  });
 }
 
 /** Whether `list` names a variadic positional of `info` — the only lists a row button edits. */
@@ -880,7 +910,7 @@ function editsRows(info: UiCommandInfo, list: string): boolean {
 function editRows(ctx: UiContext, info: UiCommandInfo, list: UiCommandList, read: Read): Response {
   const request = parseOp(read(OP_FIELD)[0] ?? "");
   if (request === undefined || !editsRows(info, request.list)) {
-    return jsonResponse({ ok: false, reason: "unknown row operation" }, 400);
+    return refusal(ctx, list, 400, { reason: "unknown row operation" }, { verb: info.name, read });
   }
   const rows = applyListOp(read(request.list), request.op, request.at, "");
   const held: Read = (key) => key === request.list ? rows : read(key);
@@ -922,16 +952,16 @@ async function runVerb(
  * the argv from the verb's declared flags and positionals and run it.
  */
 async function handleRun(ctx: UiContext): Promise<Response> {
-  if (ctx.readOnly) {
-    return jsonResponse({ ok: false, reason: "read-only — running a verb may write" }, 403);
-  }
   const read = readerOf(ctx);
-  const verb = read("verb")[0] ?? "";
   const list = await listCommands(ctx.dir, ctx.offline === true);
+  if (ctx.readOnly) {
+    return refusal(ctx, list, 403, { reason: "read-only — running a verb may write" });
+  }
+  const verb = read("verb")[0] ?? "";
   const info = list.commands.find((candidate) => candidate.name === verb);
-  if (info === undefined || !offersRun(info)) return refused(verb, info, list);
+  if (info === undefined || !offersRun(info)) return refused(ctx, verb, info, list);
   if (read(OP_FIELD).length > 0) return editRows(ctx, info, list, read);
-  const argv = argvOrRefusal(ctx, info, read);
+  const argv = argvOrRefusal(ctx, info, list, read);
   if (argv instanceof Response) return argv;
   return await runVerb(ctx, info, list, argv);
 }

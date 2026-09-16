@@ -20,6 +20,7 @@
 import { relative } from "@std/path";
 import { readCompose } from "../../build/compose-edit.ts";
 import {
+  COMPOSE_FILE_NAMES,
   detectDockerMode,
   type DockerMode,
   type DockerOptions,
@@ -42,13 +43,7 @@ import {
 } from "../components.ts";
 import { renderView } from "../view.ts";
 import { writeFileAtomic } from "../security.ts";
-import {
-  COMPOSE_FILE,
-  composeJson,
-  composeSection,
-  composeSubmit,
-  isComposeSubmit,
-} from "./docker-compose.ts";
+import { composeJson, composeSection, composeSubmit, isComposeSubmit } from "./docker-compose.ts";
 
 /** The port the form suggests (and the templates' own default). */
 const DEFAULT_PORT = 3000;
@@ -62,7 +57,7 @@ const MODE_LABEL: Record<DockerMode, string> = {
 /**
  * How a generated file compares to what is on disk. `edited` is hand-edited (no sentinel) — for
  * the compose file that also means the editor can follow it; `opaque` is a hand-edited compose
- * file the editor cannot follow (anchors, flow style, …), shown read-only.
+ * file the editor cannot follow (several documents, …), shown read-only.
  */
 type FileState = "absent" | "generated" | "edited" | "opaque";
 
@@ -371,7 +366,9 @@ function viewOf(
 function stateOf(file: DockerPlanFile, path: string): FileState {
   if (file.existing === undefined) return "absent";
   if (file.generated) return "generated";
-  return path === COMPOSE_FILE && readCompose(file.existing) === null ? "opaque" : "edited";
+  return COMPOSE_FILE_NAMES.includes(path) && readCompose(file.existing) === null
+    ? "opaque"
+    : "edited";
 }
 
 // ── views ────────────────────────────────────────────────────────────────────
@@ -414,7 +411,7 @@ function PanelLead({ dir }: { readonly dir: string }): VNode {
     "Regenerate ",
     mono("Dockerfile"),
     ", ",
-    mono("docker-compose.yml"),
+    "the compose file",
     " and ",
     mono(".dockerignore"),
     " for ",

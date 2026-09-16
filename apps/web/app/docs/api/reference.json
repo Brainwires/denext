@@ -3758,7 +3758,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 2.5.0-rc.5",
+          "signature": "VERSION: 2.5.0-rc.6",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -3961,6 +3961,18 @@
             }
           ],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "activeAuthConfig",
+          "slug": "activeAuthConfig",
+          "kind": "function",
+          "signature": "activeAuthConfig(): AuthConfig",
+          "doc": "The auth config denextAuth() was built with — the one auth() and the auth endpoints use. Server code that needs the config itself (requireBearer, issueApiToken, requestPasswordReset, …) can read it here instead of importing its own copy.",
+          "docFull": "The auth config `denextAuth()` was built with — the one `auth()` and the auth endpoints use.\nServer code that needs the config itself (`requireBearer`, `issueApiToken`,\n`requestPasswordReset`, …) can read it here instead of importing its own copy.",
+          "params": [],
+          "returns": "The active config.",
           "examples": [],
           "denextOnly": true
         },
@@ -7160,6 +7172,18 @@
           "denextOnly": true
         },
         {
+          "name": "MfaAttemptResult",
+          "slug": "MfaAttemptResult",
+          "kind": "typeAlias",
+          "signature": "type MfaAttemptResult = object | object",
+          "doc": "The outcome of spendMfaAttempt.",
+          "docFull": "The outcome of {@linkcode spendMfaAttempt}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "MfaMethod",
           "slug": "MfaMethod",
           "kind": "typeAlias",
@@ -9482,6 +9506,27 @@
           "docFull": "Specificity score for ordering routes: more specific (static) patterns\nshould be tried before less specific (dynamic/catch-all) ones. Higher wins.\nPosition-blind (a sum) — prefer {@linkcode compareSpecificity} for ordering.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "spendMfaAttempt",
+          "slug": "spendMfaAttempt",
+          "kind": "function",
+          "signature": "spendMfaAttempt(config: AuthConfig, input: object): Promise<MfaAttemptResult>",
+          "doc": "Spend one second-factor attempt from the user's MFA budget — the one the POST {basePath}/mfa* endpoints spend — before a Server Action checks a code with verifySecondFactor or confirmTotp, which spend nothing themselves. Every attempt counts, right or wrong, so a correct guess never resets the count. The per-user budget is rateLimit.mfa (5 per 5 minutes by default), and the client IP's bucket counts too when a request is in scope. Pass the config you passed to denextAuth() so the endpoints and your actions share one budget.",
+          "docFull": "Spend one second-factor attempt from the user's MFA budget — the one the\n`POST {basePath}/mfa*` endpoints spend — before a Server Action checks a code with\n{@linkcode verifySecondFactor} or {@linkcode confirmTotp}, which spend nothing themselves.\nEvery attempt counts, right or wrong, so a correct guess never resets the count. The per-user\nbudget is `rateLimit.mfa` (5 per 5 minutes by default), and the client IP's bucket counts too\nwhen a request is in scope. Pass the config you passed to `denextAuth()` so the endpoints and\nyour actions share one budget.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The app's auth config."
+            },
+            {
+              "name": "input",
+              "doc": "The user, and optionally the request (default: the one being handled)."
+            }
+          ],
+          "returns": "{ ok: true } — check the code — or { ok: false, error: \"rate_limited\", retryAfter } with the seconds until the budget refills.",
           "examples": [],
           "denextOnly": true
         },
@@ -14307,6 +14352,18 @@
           "signature": "interface PositionalSpec",
           "doc": "A declarative positional argument on a CommandSpec.",
           "docFull": "A declarative positional argument on a {@linkcode CommandSpec}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ProjectVerb",
+          "slug": "ProjectVerb",
+          "kind": "interface",
+          "signature": "interface ProjectVerb",
+          "doc": "One verb a project contributes, as CommandRegistry.formatHelp lists it.",
+          "docFull": "One verb a project contributes, as {@linkcode CommandRegistry.formatHelp} lists it.",
           "params": [],
           "returns": "",
           "examples": [],

@@ -265,6 +265,17 @@ const CREDENTIAL_CASES: Record<string, Case> = {
     assertEquals(await get.call(adapter, user.id), "scrypt$second");
     assertEquals(await get.call(adapter, "someone-else"), undefined);
   },
+  "deleteCredential removes the password, and removing a missing one is fine": async (adapter) => {
+    const get = adapter.getCredential;
+    const set = adapter.setCredential;
+    const del = adapter.deleteCredential;
+    assert(get && set && del, "both first-party adapters implement the optional delete");
+    const user = await adapter.createUser({ email: "ada@x.test" });
+    await set.call(adapter, user.id, "scrypt$first");
+    await del.call(adapter, user.id);
+    assertEquals(await get.call(adapter, user.id), undefined);
+    await del.call(adapter, user.id);
+  },
 };
 
 // ---- API tokens ------------------------------------------------------------
@@ -337,6 +348,17 @@ const API_TOKEN_CASES: Record<string, Case> = {
 // ---- MFA -------------------------------------------------------------------
 
 const MFA_CASES: Record<string, Case> = {
+  "deleteMfa removes the factor, and removing a missing one is fine": async (adapter) => {
+    const get = adapter.getMfa;
+    const set = adapter.setMfa;
+    const del = adapter.deleteMfa;
+    assert(get && set && del, "both first-party adapters implement the optional delete");
+    const user = await adapter.createUser({ email: "ada@x.test" });
+    await set.call(adapter, { userId: user.id, secret: "S", backupCodeHashes: ["h1"] });
+    await del.call(adapter, user.id);
+    assertEquals(await get.call(adapter, user.id), undefined);
+    await del.call(adapter, user.id);
+  },
   "setMfa / getMfa round-trip, and setMfa replaces": async (adapter) => {
     const get = adapter.getMfa;
     const set = adapter.setMfa;

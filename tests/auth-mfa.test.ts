@@ -16,6 +16,7 @@ import {
   hasFreshFactor,
   mfaPendingFor,
   mfaStatus,
+  spendMfaAttempt,
 } from "../src/server/auth/mfa.ts";
 import { auth, denextAuth, pendingMfaSession } from "../src/server/auth/mod.ts";
 import { resolveAuthOptions } from "../src/server/auth/options.ts";
@@ -572,4 +573,19 @@ Deno.test("enrollTotp: a complete session needs a recent sign-in, as the route d
     (await enrollTotp(h.config, pending)).ok,
     "a pending session is minutes old and may enroll",
   );
+});
+
+Deno.test("spendMfaAttempt spends the same per-user budget the /mfa endpoints do", async () => {
+  const h = await setup();
+  await enrol(h);
+  for (let i = 0; i < 5; i++) {
+    assertEquals(await spendMfaAttempt(h.config, { userId: h.userId }), { ok: true });
+  }
+  const refused = await spendMfaAttempt(h.config, { userId: h.userId });
+  assert(!refused.ok && refused.error === "rate_limited" && refused.retryAfter > 0);
+  const step = await post(h.config, "/mfa", {
+    cookie: await pendingSignIn(h),
+    body: { code: "123456" },
+  });
+  assertEquals(step.res!.status, 429, "the endpoint sees the budget the action spent");
 });

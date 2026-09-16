@@ -14,7 +14,7 @@ import {
   confirmTotp,
   disableTotp,
   enrollTotp,
-  inMemoryRateLimitStore,
+  spendMfaAttempt,
   verifySecondFactor,
 } from "denext/server";
 import { authConfig } from "../../../lib/auth-config.ts";
@@ -25,18 +25,12 @@ import { signedIn } from "../../../lib/session.ts";
 const PAGE = "/account/security";
 
 /**
- * Code checks per user per window. As on the /auth/mfa endpoints EVERY attempt counts,
- * right or wrong, so a correct guess never resets the count — a stolen session can't
- * brute-force its way to turning the factor off.
+ * Spend one code attempt from the user's MFA budget — the same one the /auth/mfa endpoints
+ * spend. EVERY attempt counts, right or wrong, so a correct guess never resets the count and a
+ * stolen session can't brute-force its way to turning the factor off. `true` once it is gone.
  */
-const MAX_ATTEMPTS = 5;
-const WINDOW_MS = 5 * 60_000;
-const attempts = inMemoryRateLimitStore({ lockoutAt: MAX_ATTEMPTS });
-
-/** Spend one code attempt for `userId`; `true` once the window's budget is gone. */
 async function overBudget(userId: string): Promise<boolean> {
-  const window = await attempts.increment(`totp|${userId}`, WINDOW_MS);
-  return window.count > MAX_ATTEMPTS;
+  return !(await spendMfaAttempt(authConfig, { userId })).ok;
 }
 
 /** The submitted code ("" when absent). */

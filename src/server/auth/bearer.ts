@@ -25,7 +25,7 @@ import { type ApiMiddleware, documentsSecurity } from "../define-api.ts";
 import type { AdapterUser, ApiTokenRecord } from "./adapter.ts";
 import { isVerified } from "./adapter-link.ts";
 import { requireApiTokenAdapter, verifyApiToken } from "./api-token.ts";
-import { hasRole } from "./mod.ts";
+import { activeAuthConfig, hasRole, peekActiveAuthConfig } from "./mod.ts";
 import { resolveAuthOptions } from "./options.ts";
 import type { AuthConfig, AuthSession } from "./types.ts";
 
@@ -130,6 +130,11 @@ function bearerSession(
   };
 }
 
+/** An auth config (it always carries its signing `secret`), as opposed to bearer options. */
+function isAuthConfig(value: unknown): value is AuthConfig {
+  return typeof value === "object" && value !== null && "secret" in value;
+}
+
 /**
  * Require a valid bearer API token (denext auth): verifies `Authorization: Bearer tok_…`,
  * loads the token's user, and extends the handler's context with
@@ -159,11 +164,36 @@ function bearerSession(
  */
 export function requireBearer(
   config: AuthConfig,
-  options: RequireBearerOptions = {},
+  options?: RequireBearerOptions,
+): ApiMiddleware<object, BearerContext>;
+/**
+ * Require a valid bearer API token against the active auth config — the one `denextAuth()` was
+ * built with (see {@linkcode activeAuthConfig}) — so a route needs no handle on it:
+ * `createApi().use(requireBearer({ scope: "pets:write" }))`. When no auth plugin is active yet
+ * where this runs, the config is looked up on the first request, which fails with a clear error
+ * if there is still none.
+ *
+ * @param options Optional `scope` / `role` requirements and the refusal messages.
+ * @returns A middleware adding `{ token, user, session }` to the handler's `ctx`.
+ */
+export function requireBearer(options?: RequireBearerOptions): ApiMiddleware<object, BearerContext>;
+export function requireBearer(
+  configOrOptions?: AuthConfig | RequireBearerOptions,
+  maybeOptions: RequireBearerOptions = {},
 ): ApiMiddleware<object, BearerContext> {
+  const explicit = isAuthConfig(configOrOptions) ? configOrOptions : undefined;
+  const options = explicit ? maybeOptions : (configOrOptions ?? {}) as RequireBearerOptions;
+  let config = explicit ?? peekActiveAuthConfig();
   // Config-time: an API whose auth can never succeed must fail where it is written.
-  requireApiTokenAdapter(config, "requireBearer");
+  if (config) requireApiTokenAdapter(config, "requireBearer");
+  const resolve = (): AuthConfig => {
+    if (config) return config;
+    config = activeAuthConfig();
+    requireApiTokenAdapter(config, "requireBearer");
+    return config;
+  };
   const middleware: ApiMiddleware<object, BearerContext> = async ({ request }) => {
+    const config = resolve();
     const token = await verifyApiToken(config, bearerToken(request));
     if (!token) throw unauthorized(options);
     const user = await resolveAuthOptions(config).adapter?.getUser(token.userId);

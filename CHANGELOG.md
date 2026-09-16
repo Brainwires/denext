@@ -8,6 +8,96 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.5.0-rc.6] - 2026-09-16
+
+### Added
+
+- DevTools names a custom hook imported through an import-map alias (`@/hooks/auth.ts`, in the
+  default dev loop) and one re-exported by name through a barrel
+  (`export { useAuth } from "./auth.ts"`, one level); `export *` and SPA-mode aliases still
+  stop naming.
+- Optional adapter methods `deleteCredential(userId)` and `deleteMfa(userId)`, implemented by
+  both first-party adapters. Disabling TOTP and a pre-account-hijacking eviction now delete the
+  factor or password instead of writing a placeholder; an adapter without them keeps the old
+  overwrite.
+- `spendMfaAttempt(config, { userId, request? })` (`denext/server`): spends one attempt from the
+  user's MFA budget — the one the `/mfa*` endpoints spend — so a Server Action that checks a code
+  with `verifySecondFactor` or `confirmTotp` is throttled the same way. `examples/auth` drops its
+  own limiter for it.
+- `activeAuthConfig()` (`denext/server`): the config `denextAuth()` was built with.
+  `requireBearer({ scope, role })` uses it, so the config argument is optional; when no auth
+  plugin is active yet where it runs, it looks the config up on the first request.
+- `denext ui`'s compose editor edits `build` (a context path) and `networks` (add and remove,
+  with a warning for a network the top-level `networks:` doesn't declare).
+- `denext ui`'s compose editor follows more of the YAML real compose files use; each of these
+  used to make the whole file read-only:
+  - Line endings: a file mixing LF, CRLF and lone CR is editable, and every line keeps the
+    ending it had.
+  - Document markers: a single document may open with `---` and close with `...`.
+  - Compose's `!reset` and `!override` tags are read.
+  - Flow style: a flow-style field (`ports: ["80:80"]`, `environment: { A: "1" }`) is edited
+    in place and keeps its style, even across lines, and a flow-style `services:` is rewritten
+    as block mappings by its first edit.
+  - Anchors, aliases and merge keys:
+    - A service lists the fields it takes from a merge key (`<<`), and setting one writes an
+      override.
+    - Editing a list or map that an alias or a merge key supplies gives the service its own
+      copy.
+    - A service written as an alias or a flow mapping is rewritten as a block mapping by its
+      first edit.
+    - Editing a node that an alias repeats elsewhere is allowed, and the preview names what
+      else changes.
+
+  A file that is still opaque now says why.
+- `denext ui`'s compose editor edits a long-syntax port or volume key by key (`target`,
+  `published`, `protocol`, …), with a picker where Compose fixes the choices; keys it doesn't
+  know are kept. It also adds and removes entries of a long-form `depends_on` or `networks:`,
+  and sets the `condition` a dependency waits for, rewriting a short `depends_on` list in the
+  long form. Each of these used to be refused.
+- `denext ui`'s compose editor adds and removes services; removing one another service depends
+  on is refused. It edits a mapping `build:` — `context`, `dockerfile`, `target` and build
+  args, turning a context path into a mapping when needed. It declares and drops top-level
+  named volumes and networks, so the panel's "does not declare it" warnings can be fixed from
+  the panel.
+- `denext ui`: a JSR plugin that publishes `denext.catalog.optionsSchema` (a JSON Schema) in its
+  `deno.json` or `jsr.json` gets an options form, like the first-party ones, linked from the
+  Plugins panel's Third-party list. The UI reads the file from `jsr.io` for the version
+  `deno.lock` resolved (else the latest), keeps only the schema keys the form reads — checked
+  and size-bounded — and never loads remote code.
+- `denext --help` lists a project's own verbs, without importing the project: `denext commands`
+  records what it found in `.denext/commands.json`, fingerprinted against `denext.config.*`,
+  `deno.json` and `deno.lock`, and help prints that listing while the fingerprint holds. Before
+  any run of that verb, or once one of those files changes, help points at `denext commands` as
+  it always did.
+
+### Changed
+
+- Decided: `/config/next` being read-only (denext never loads `next.config.*`), and a project
+  verb costing plugin discovery in its own child, are how those features work rather than gaps.
+  Both moved out of KNOWN-LIMITATIONS into the
+  [Project UI guide](https://denext.dev/docs/ui).
+- The emailed auth flows accept an internationalised email domain (`ada@bücher.de`),
+  normalised to its punycode form (`ada@xn--bcher-kva.de`); an SMTPUTF8 local part is still
+  refused.
+- `denext ui` checks JSR net permission per operation: a search needs only `api.jsr.io`, adding
+  a JSR package only `jsr.io`. Either used to need both.
+
+### Fixed
+
+- `denext ui`: a refused Commands run (an unknown or built-in verb, a bad flag or argument
+  value, `--read-only`) answers a form post with the panel, the reason as an alert and the
+  submitted values kept. It answered raw JSON, which replaced the page when JavaScript was off.
+  The Plugins panel intro no longer calls its list "the first-party catalog" (JSR search lists
+  third-party packages too).
+- `denext plugin add` / `remove` and the Plugins panel recognise a plugin imported under
+  another name (`import { openapi as oa }`) or from a full `jsr:` specifier. Adding one used to
+  insert an `openapi()` call no import binds (or a duplicate import), removing one reported it
+  as not wired, and the panel offered it no options form.
+- `denext ui` and `denext generate docker` find a compose file under any name Docker Compose
+  accepts — `compose.yaml`, `compose.yml`, `docker-compose.yaml`, `docker-compose.yml`, in that
+  precedence. The Docker panel edits and regenerates that file, and neither writes a second
+  `docker-compose.yml` next to it; only `docker-compose.yml` used to be found.
+
 ## [2.5.0-rc.5] - 2026-09-15
 
 ### Security
@@ -7355,6 +7445,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.5.0-rc.6]: https://jsr.io/@denext/denext@2.5.0-rc.6
 [2.5.0-rc.5]: https://jsr.io/@denext/denext@2.5.0-rc.5
 [2.5.0-rc.4]: https://jsr.io/@denext/denext@2.5.0-rc.4
 [2.5.0-rc.3]: https://jsr.io/@denext/denext@2.5.0-rc.3

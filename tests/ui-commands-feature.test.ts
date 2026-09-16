@@ -308,7 +308,7 @@ Deno.test("running an unknown verb is refused", async () => {
   await withProject(listing([GREET]), async (dir) => {
     const res = await commandsPanel(
       new Request("http://127.0.0.1/commands", { method: "POST" }),
-      ctx(dir, { method: "POST", form: runBody("rm -rf /") }),
+      ctx(dir, { method: "POST", json: true, form: runBody("rm -rf /") }),
     );
     assertEquals(res.status, 400);
     const body = await res.json();
@@ -322,7 +322,7 @@ Deno.test("running a built-in verb from the browser is refused", async () => {
   await withProject(listing([GREET]), async (dir) => {
     const res = await commandsPanel(
       new Request("http://127.0.0.1/commands", { method: "POST" }),
-      ctx(dir, { method: "POST", form: runBody("dev") }),
+      ctx(dir, { method: "POST", json: true, form: runBody("dev") }),
     );
     assertEquals(res.status, 400);
     assertStringIncludes((await res.json()).reason, "built-in verb");
@@ -333,7 +333,7 @@ Deno.test("read-only refuses to run a verb — a verb may write anything", async
   await withProject(listing([GREET]), async (dir) => {
     const res = await commandsPanel(
       new Request("http://127.0.0.1/commands", { method: "POST" }),
-      ctx(dir, { method: "POST", readOnly: true, form: runBody("greet") }),
+      ctx(dir, { method: "POST", json: true, readOnly: true, form: runBody("greet") }),
     );
     assertEquals(res.status, 403);
     assertStringIncludes((await res.json()).reason, "read-only");
@@ -861,5 +861,34 @@ Deno.test("--offline: the panel says every verb runs without the network", async
         .text();
     assertStringIncludes(await page(true), "every verb runs with --deny-net --cached-only");
     assert(!(await page(false)).includes("--deny-net"));
+  });
+});
+
+Deno.test("with JavaScript off a refused run answers with the panel and the reason, not JSON", async () => {
+  await withProject(listing([GREET, SEED]), async (dir) => {
+    const post = (form: FormData, over: Partial<UiContext> = {}) =>
+      commandsPanel(
+        new Request("http://127.0.0.1/commands", { method: "POST" }),
+        ctx(dir, { method: "POST", form, ...over }),
+      );
+    const unknown = await post(runBody("rm -rf /"));
+    assertEquals(unknown.status, 400);
+    assertStringIncludes(unknown.headers.get("content-type") ?? "", "text/html");
+    const page = await unknown.text();
+    assertStringIncludes(page, 'role="alert"');
+    assertStringIncludes(page, "unknown command");
+
+    const locked = await post(runBody("greet"), { readOnly: true });
+    assertEquals(locked.status, 403);
+    assertStringIncludes(await locked.text(), "read-only — running a verb may write");
+
+    const bad = new FormData();
+    bad.set("verb", "seed");
+    bad.set("pos:0", "--cwd=/etc");
+    const field = await post(bad);
+    assertEquals(field.status, 422);
+    const html = await field.text();
+    assertStringIncludes(html, 'role="alert"');
+    assertStringIncludes(html, "--cwd=/etc", "the submitted value is kept in the form");
   });
 });

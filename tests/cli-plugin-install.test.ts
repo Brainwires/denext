@@ -4,6 +4,7 @@ import {
   ejectPlugin,
   injectPlugin,
   listPlugins,
+  normalizeSpec,
   resolvePluginNames,
 } from "../src/build/plugin-install.ts";
 
@@ -157,8 +158,13 @@ Deno.test("listPlugins: pairs each factory with its import specifier", () => {
     `export default {\n  plugins: [htmx(), pagesRouter()],\n};\n`;
   const list = listPlugins(src);
   assertEquals(list, [
-    { factory: "htmx", call: "htmx()", importSpec: "@denext/htmx" },
-    { factory: "pagesRouter", call: "pagesRouter()", importSpec: "@denext/pages-router" },
+    { factory: "htmx", call: "htmx()", importSpec: "@denext/htmx", imported: "htmx" },
+    {
+      factory: "pagesRouter",
+      call: "pagesRouter()",
+      importSpec: "@denext/pages-router",
+      imported: "pagesRouter",
+    },
   ]);
 });
 
@@ -166,8 +172,18 @@ Deno.test("listPlugins: handles call args and a missing import", () => {
   const src = `import { htmx } from "@denext/htmx";\n\n` +
     `export default {\n  plugins: [htmx({ path: "/x" }), mystery()],\n};\n`;
   const list = listPlugins(src);
-  assertEquals(list[0], { factory: "htmx", call: "htmx()", importSpec: "@denext/htmx" });
-  assertEquals(list[1], { factory: "mystery", call: "mystery()", importSpec: null });
+  assertEquals(list[0], {
+    factory: "htmx",
+    call: "htmx()",
+    importSpec: "@denext/htmx",
+    imported: "htmx",
+  });
+  assertEquals(list[1], {
+    factory: "mystery",
+    call: "mystery()",
+    importSpec: null,
+    imported: "mystery",
+  });
 });
 
 Deno.test("listPlugins: empty or absent plugins array → []", () => {
@@ -183,4 +199,59 @@ Deno.test("eject then re-inject round-trips a lone plugin", () => {
   const readded = injectPlugin(removed, names).source;
   assertStringIncludes(readded, `import { htmx } from "@denext/htmx";`);
   assertStringIncludes(readded, `plugins: [htmx()]`);
+});
+
+// --- aliased and jsr: imports ------------------------------------------------
+
+const OPENAPI_NAMES = resolvePluginNames("@denext/openapi");
+
+Deno.test("normalizeSpec strips the scheme, the version and a subpath", () => {
+  assertEquals(normalizeSpec("jsr:@denext/openapi@^0.3.0/mod.ts"), "@denext/openapi");
+  assertEquals(normalizeSpec("@denext/openapi"), "@denext/openapi");
+  assertEquals(normalizeSpec("npm:left-pad@1.3.0"), "left-pad");
+});
+
+Deno.test("listPlugins: an aliased import and a jsr: specifier are recognised", () => {
+  const src = `import { openapi as oa } from "@denext/openapi";\n` +
+    `import { htmx } from "jsr:@denext/htmx@^2.0.0";\n\n` +
+    `export default {\n  plugins: [oa({ path: "/spec.json" }), htmx()],\n};\n`;
+  assertEquals(listPlugins(src), [
+    { factory: "oa", call: "oa()", importSpec: "@denext/openapi", imported: "openapi" },
+    { factory: "htmx", call: "htmx()", importSpec: "jsr:@denext/htmx@^2.0.0", imported: "htmx" },
+  ]);
+});
+
+Deno.test("injectPlugin: an aliased or jsr: import that is already wired is left alone", () => {
+  const aliased = `import { openapi as oa } from "@denext/openapi";\n\n` +
+    `export default {\n  plugins: [oa()],\n};\n`;
+  assertEquals(injectPlugin(aliased, OPENAPI_NAMES).alreadyPresent, true);
+  const viaJsr = `import { openapi } from "jsr:@denext/openapi@^0.3.0";\n\n` +
+    `export default {\n  plugins: [openapi()],\n};\n`;
+  assertEquals(injectPlugin(viaJsr, OPENAPI_NAMES).alreadyPresent, true);
+});
+
+Deno.test("injectPlugin: an aliased import with no call gets the call under the alias", () => {
+  const src = `import { openapi as oa } from "@denext/openapi";\n\nexport default {};\n`;
+  const result = injectPlugin(src, OPENAPI_NAMES);
+  assertEquals([result.addedImport, result.addedPlugin], [false, true]);
+  assertStringIncludes(result.source, "oa()");
+  assert(!result.source.includes("openapi()"), "no call the imports don't bind");
+});
+
+Deno.test("ejectPlugin: removes an aliased binding and its call", () => {
+  const src = `import { htmx } from "@denext/htmx";\n` +
+    `import { openapi as oa } from "@denext/openapi";\n\n` +
+    `export default {\n  plugins: [htmx(), oa({ path: "/x" })],\n};\n`;
+  const result = ejectPlugin(src, OPENAPI_NAMES);
+  assertEquals([result.removedImport, result.removedPlugin], [true, true]);
+  assert(!result.source.includes("@denext/openapi"), result.source);
+  assertStringIncludes(result.source, "plugins: [htmx()]");
+});
+
+Deno.test("ejectPlugin: removes an import written with a jsr: specifier", () => {
+  const src = `import { openapi } from "jsr:@denext/openapi@^0.3.0";\n\n` +
+    `export default {\n  plugins: [openapi()],\n};\n`;
+  const result = ejectPlugin(src, OPENAPI_NAMES);
+  assertEquals([result.removedImport, result.removedPlugin], [true, true]);
+  assert(!result.source.includes("openapi"), result.source);
 });

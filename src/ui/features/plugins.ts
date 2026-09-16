@@ -17,6 +17,7 @@
 // the registry reports), and the argv is an array. Under `denext ui --offline` every add and
 // remove is refused with a `503` before anything runs (`../offline.ts`).
 
+import { isJsrSpec } from "../jsr.ts";
 import { parse as parseJsonc } from "@std/jsonc";
 import { join } from "@std/path";
 import { CONFIG_FILES } from "../../build/paths.ts";
@@ -28,6 +29,7 @@ import {
   ejectPlugin,
   injectPlugin,
   listPlugins,
+  normalizeSpec,
   type PluginNames,
   resolvePluginNames,
 } from "../../build/plugin-install.ts";
@@ -154,8 +156,9 @@ export async function readProject(dir: string): Promise<ProjectState> {
 
 /** Whether a wired `plugins` entry is this catalogue row's factory. */
 function matches(plugin: ConfiguredPlugin, entry: CatalogRow): boolean {
-  return plugin.importSpec === entry.name ||
-    (plugin.importSpec === null && entry.factory !== undefined && plugin.factory === entry.factory);
+  // An aliased binding (`openapi as oa`) or a `jsr:` specifier names the same package.
+  if (plugin.importSpec !== null) return normalizeSpec(plugin.importSpec) === entry.name;
+  return entry.factory !== undefined && plugin.imported === entry.factory;
 }
 
 /**
@@ -472,7 +475,13 @@ function Cards({ ctx, rows }: { readonly ctx: UiContext; readonly rows: readonly
   );
 }
 
-/** The wired plugins the catalogue does not know, and why they have no options panel. */
+/** The options link for a wired plugin imported from a JSR package (it may publish a schema). */
+function publishedOptionsHref(plugin: ConfiguredPlugin): string | null {
+  const spec = plugin.importSpec === null ? "" : normalizeSpec(plugin.importSpec);
+  return isJsrSpec(spec) ? optionsHref(spec) : null;
+}
+
+/** The wired plugins the catalogue does not know, and where their options live. */
 function ThirdParty({ plugins }: { readonly plugins: readonly ConfiguredPlugin[] }): VNode {
   return h(
     Fragment,
@@ -489,14 +498,17 @@ function ThirdParty({ plugins }: { readonly plugins: readonly ConfiguredPlugin[]
           plugin.importSpec
             ? h(Fragment, null, " from ", h("code", null, plugin.importSpec))
             : null,
+          publishedOptionsHref(plugin)
+            ? h(Fragment, null, " · ", h("a", { href: publishedOptionsHref(plugin)! }, "Options"))
+            : null,
         )
       ),
     ),
     h(
       Note,
       null,
-      "No options panel for these: a third-party plugin publishes no options schema here. ",
-      "Edit its options in denext.config.ts.",
+      "A JSR plugin that publishes denext.catalog.optionsSchema in its deno.json gets an ",
+      "options form, read from jsr.io; set any other plugin's options in denext.config.ts.",
     ),
   );
 }
@@ -524,7 +536,8 @@ function PluginsPanel(
     h(
       "p",
       { class: "lead" },
-      "The first-party catalog. Adding or removing one previews the exact ",
+      "The first-party plugins, and any JSR package you search for below. Adding or removing one ",
+      "previews the exact ",
       h("code", null, "deno"),
       " command and a diff of your config before anything is written.",
     ),

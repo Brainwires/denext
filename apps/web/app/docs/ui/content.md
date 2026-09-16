@@ -121,8 +121,8 @@ redirect, has a five-second deadline that also covers reading the body, and read
 64 KiB of `application/json`; what comes back is normalised and escaped like any other
 untrusted text. `denext ui --offline` turns it off (and keeps every process the UI starts off
 the network too — see [Working offline](#working-offline)), and so does a process that does not
-already hold net permission for both hosts — the UI queries that permission and never
-prompts for it. The page's CSP is unchanged: the browser still talks only to the UI
+already hold net permission for the host a request needs (`api.jsr.io` to search, `jsr.io` to
+add a package) — the UI queries that permission and never prompts for it. The page's CSP is unchanged: the browser still talks only to the UI
 (`connect-src 'self'`), and the registry is called by the server.
 
 **How containment is enforced.** A path the browser named is refused outright when it is
@@ -282,7 +282,8 @@ generated from the workspace packages themselves (name, version, caret-pinned `j
 spec, the factory export, the CLI verb it contributes, its README's first paragraph cut to
 200 characters, and each plugin's options schema)
 — next to what this project already has wired into `denext.config.ts` and pinned in
-`deno.json`. A wired plugin the catalog does not know is listed under **Third-party**.
+`deno.json`. A wired plugin the catalog does not know is listed under **Third-party**, with an
+**Options** link when it comes from a JSR package.
 
 Adding is `deno add jsr:@denext/<pkg>@^<version>` plus the config wiring through the same
 import-preserving injector `denext plugin add` uses; removing is the inverse, ending in
@@ -335,9 +336,9 @@ single keys set, changed or deleted in place.
   is a `409` and writes nothing.
 
 A plugin that is not catalogued with an options schema, or not wired into the config, is a
-`404`. The panel knows a plugin is wired by its import — `import { openapi } from
-"@denext/openapi"` — so an aliased import (`import { openapi as oa } …`) or one from a full
-`jsr:` specifier is not recognised and gets no options link. The JSON twin, `/api/plugins/options?name=…`, reads
+`404`. The panel knows a plugin is wired by its import: a plain
+`import { openapi } from "@denext/openapi"`, an aliased one (`import { openapi as oa } …`, whose
+options are then written into `oa(…)`) or one from a full `jsr:` specifier. The JSON twin, `/api/plugins/options?name=…`, reads
 `{ ok, name, callee, values, codeKeys, schema }` and takes `sets: [{ path, value }]` (a set
 with no `value` deletes the key), plus `confirm: true` to write.
 
@@ -368,14 +369,18 @@ be reached, or answers with anything but a valid version, is a `502`; a UI that 
 JSR answers `503`. From there it is the catalog's path — preview, confirm, `303` or a
 streamed `deno` log.
 
-A third-party plugin gets no options form: option schemas come from the first-party catalog,
-which is generated from denext's own workspace. Set its options in `denext.config.ts`.
+A third-party JSR plugin gets an options form when its package publishes one — a
+`denext.catalog.optionsSchema` (a plain JSON Schema) in its `deno.json` or `jsr.json`; see
+[Publishing an options schema](/docs/plugins#publishing-an-options-schema). The UI reads that
+file from `jsr.io` for the version `deno.lock` resolved (else the latest), keeps only the keys
+the form reads, and caches it for five minutes. Offline, or for a package that publishes none,
+its options stay in `denext.config.ts`.
 
 **Offline.** Under `denext ui --offline` the search box renders disabled with a note, nothing
 is fetched, and `op=add-jsr` is a `503` — as is a catalog add or remove (see
 [Working offline](#working-offline)). Search degrades the same way on its own when the process
-does not hold net permission for both `api.jsr.io` and `jsr.io` — it checks the permission and
-never prompts.
+does not hold net permission for `api.jsr.io`, and adding a JSR package when it lacks `jsr.io` —
+the UI checks the permission and never prompts.
 
 ## Generate
 
@@ -392,9 +397,11 @@ exactly: the kinds that take no name here are the kinds that take no name there.
 
 ## Docker
 
-`/docker` does two things with the Docker files: it **regenerates** `Dockerfile`,
-`docker-compose.yml` and `.dockerignore` from a few options, and it **edits** an existing
-`docker-compose.yml` in place, service by service.
+`/docker` does two things with the Docker files: it **regenerates** `Dockerfile`, the compose
+file and `.dockerignore` from a few options, and it **edits** an existing compose file in
+place, service by service. The compose file is the one Docker Compose would pick —
+`compose.yaml`, `compose.yml`, `docker-compose.yaml`, then `docker-compose.yml` — and a new one
+is written as `docker-compose.yml`.
 
 ### Regenerating
 
@@ -408,12 +415,12 @@ machine and from nowhere else on the network.
 Every file is shown with its state and a per-file unified diff against what is on disk
 before anything is written:
 
-| State       | Meaning                                                                                          |
-| ----------- | ------------------------------------------------------------------------------------------------ |
-| `absent`    | Not present — will be created                                                                    |
-| `generated` | Still carries the generated-file sentinel — safe to regenerate                                   |
-| `edited`    | Hand-edited — will not be overwritten                                                            |
-| `opaque`    | A hand-edited `docker-compose.yml` the editor cannot follow — read-only, will not be overwritten |
+| State       | Meaning                                                                                  |
+| ----------- | ---------------------------------------------------------------------------------------- |
+| `absent`    | Not present — will be created                                                            |
+| `generated` | Still carries the generated-file sentinel — safe to regenerate                           |
+| `edited`    | Hand-edited — will not be overwritten                                                    |
+| `opaque`    | A hand-edited compose file the editor cannot follow — read-only, will not be overwritten |
 
 The sentinel is a header comment every generated file carries:
 
@@ -425,14 +432,26 @@ A file without it was written or edited by a human, so a write refuses to touch 
 shows you its diff anyway, so the change can be copied across by hand. That is the same
 never-clobber honesty `denext migrate` and the config writer apply.
 
-### Editing `docker-compose.yml` in place
+### Editing the compose file in place
 
-Below the regeneration form, every service in `docker-compose.yml` gets its own form, in
+Below the regeneration form, every service in the compose file gets its own form, in
 source order: `image` (text), `restart` (`no`, `always`, `on-failure`, `unless-stopped`, or the
-file's own value — `on-failure:<n>` is accepted too), and row editors for `ports`,
-`environment`, `depends_on` (a picker of the file's other services) and `volumes`. A service
-can be commented out, and a commented-out block — the Postgres example the generated file
-carries, say — can be enabled again; enabling is the only edit a commented service accepts.
+file's own value — `on-failure:<n>` is accepted too), `build` (its context path, plus a
+`dockerfile` and a `target` — setting either writes a mapping `build:` — and a row editor for
+the build args), and row editors for `ports`,
+`environment`, `depends_on` (a picker of the file's other services, and for each dependency the
+`condition` it waits for), `volumes` and `networks` (one the top-level `networks:` doesn't
+declare gets a warning, like an undeclared named volume). A long-syntax port or volume (a
+mapping such as `target: 80` / `published: "8080"`) is edited key by key: a text input per key
+the form knows, and a picker where Compose fixes the choices (`protocol`, `mode`, `type`,
+`read_only`). Keys it doesn't know are kept as written.
+
+A service can be removed (refused while another service depends on it) or commented out. A
+commented-out block — the Postgres example the generated file carries, say — can be enabled
+again or removed, and those are the only edits it accepts. Below the services, **Add a service**
+takes a name and an image, a build context or both. **Named volumes and networks** declares and
+drops the top-level `volumes:` and `networks:` entries; dropping one a service still uses is
+refused.
 
 Nothing is regenerated. [`src/build/compose-edit.ts`](https://github.com/Brainwires/denext/blob/main/src/build/compose-edit.ts)
 parses the file with `@std/yaml` to validate it, locates each service and field line by line
@@ -441,35 +460,66 @@ touches, then re-parses the result and compares it with the same change applied 
 parsed model — a mismatch is a refusal, never a write. Comments, blank lines, quoting and
 every untouched line stay byte for byte. `environment` keeps the form it was written in (a
 `- KEY=value` list or a `KEY: value` map); a new port mapping is always double-quoted
-(`5432:5432` unquoted is a number to a YAML 1.1 reader); a long-syntax port or volume (a
-mapping) can be removed but not rewritten; a flow-style field (`ports: ["80:80"]`) is refused
-with "edit it by hand".
+(`5432:5432` unquoted is a number to a YAML 1.1 reader). A long-form `depends_on` or
+`networks:` (a mapping) gains and loses entries in that form, and choosing a `condition` on a
+short `depends_on` list rewrites it in the long form. A flow-style field (`ports: ["80:80"]`,
+`environment: { A: "1" }`) is edited in place and keeps its style, even across lines; a
+flow-style `services:` is rewritten as block mappings by the first edit.
 
 Each submit is one edit set for one service — every field that differs from the file, every
 filled add row, and the button you pressed — and it takes the usual two steps. The first
 `POST` answers with the unified diff, plus a warning when an enabled service mounts a named
-volume that the top-level `volumes:` does not declare (`docker compose up` refuses such a
-file). The confirm re-posts the same operations — never the edited text — re-reads the file,
+volume or joins a network that the top-level `volumes:` or `networks:` does not declare
+(`docker compose up` refuses such a file). The confirm re-posts the same operations — never the edited text — re-reads the file,
 and writes only when they still apply. Both carry `_base`, the SHA-256 of the file the page
 was rendered from: a stale one is a `409` and writes nothing. Every service, variable, row
 and dependency a request names is checked against the parsed file first, so the editor never
 writes one the file did not report (a `400` otherwise).
 
-A file the editor cannot follow line by line is **opaque**, and gets the regeneration view it
-always had: the file shown read-only next to the regeneration diff, with no edit form. That is
-a file that does not parse, whose top level or `services:` is not a block mapping, or that uses
-anchors, aliases or merge keys, flow-style services, several documents (`---`), or mixed CRLF
-and LF line endings.
+Anchors, aliases and merge keys are followed:
+
+- A service lists the fields it takes from a merge key (`<<`), and setting one writes an
+  override into the service.
+- Editing a list or map that an alias (`ports: *shared`) or a merge key supplies gives the
+  service its own copy of it, with the edit applied.
+- A service written as an alias (`web2: *web`) or as a flow mapping (`web: { image: x }`) is
+  rewritten as a block mapping by its first edit.
+- Editing a node that an alias repeats elsewhere is allowed, and the preview names what else it
+  changes.
+
+Every line keeps the line ending it had, so a file that mixes LF and CRLF stays exactly as mixed.
+A single document may open with `---` and close with `...`, and Compose's `!reset` and
+`!override` tags are read.
+
+A file the editor cannot follow line by line is **opaque**. It gets the regeneration view it
+always had: the file shown read-only next to the regeneration diff, with no edit form, and the
+reason. That is a file that:
+
+- does not parse (two YAML documents in one file do not);
+- has a top level that is not a mapping, or a `services:` that is not a mapping of services;
+- puts content on a document marker (`--- {…}`).
 
 A file that still carries the sentinel is editable as well, with a note: **Write files**
-regenerates it and discards edits made here, so delete the header line to keep them. Only
-`docker-compose.yml` at the project root is discovered — a `compose.yaml` is not.
+regenerates it and discards edits made here, so delete the header line to keep them.
 
 `GET /api/docker` returns the parsed `model` (`null` for a missing or opaque file) and its
 `base` alongside the regeneration view. A compose edit on the twin is a `POST` with
-`editor: "compose"` and `ops` — from the closed set `set` (`image` / `restart`), `ports`,
-`env`, `dependsOn`, `volumes` and `toggleService`, at most 100 per request — plus `base` and
-`confirm: true` to write.
+`editor: "compose"` and `ops`, at most 100 per request, plus `base` and `confirm: true` to
+write. The ops come from a closed set:
+
+- `set`: `image`, `restart` or `build`;
+- `ports`;
+- `entry`: one key of a long-syntax port or volume;
+- `env`;
+- `dependsOn`, optionally with a `condition`;
+- `condition`;
+- `volumes`;
+- `networks`;
+- `toggleService`;
+- `addService` and `removeService`;
+- `build`: a mapping `build:`'s `context`, `dockerfile` or `target`;
+- `buildArg`;
+- `declare`: a top-level volume or network.
 
 Deployment targets, images and platform notes are in the [deployment guide](/docs/deploy).
 
@@ -539,10 +589,14 @@ tries again. A child that cannot start, overruns its budget, or prints nothing p
 becomes a notice on the panel, never an empty page with no explanation. The whole discovery
 child gets 8 seconds; `DENEXT_UI_DISCOVERY_TIMEOUT_MS` raises that on a slow or busy machine.
 
-`denext --help` does **not** list them — it refuses to import your project to render a help
-table, and prints a one-line pointer at `denext commands` instead when it sees a config.
-`denext completions bash|zsh|fish` still enumerates them (a shell can only complete a name
-it was handed) under the same 1.5 s budget, then exits. **A built-in verb always wins a
+`denext --help` lists them too, and still imports nothing: `denext commands` records what it
+found in `.denext/commands.json`, with a fingerprint of `denext.config.*`, `deno.json` and
+`deno.lock`, and help prints that listing while the fingerprint holds. Before the first run — or
+once one of those files changes — help prints a one-line pointer at `denext commands` instead.
+A plugin that changes which verbs it contributes without any of those files changing is the one
+case a listing can be stale, so the footer under it says where it came from.
+`denext completions bash|zsh|fish` enumerates them live instead (a shell can only complete a
+name it was handed) under the same 1.5 s budget, then exits. **A built-in verb always wins a
 name collision** — a `commands:` entry named `dev` is ignored, never shadowing the core
 verb.
 
@@ -564,7 +618,9 @@ spawned. A JSON client posts the same names as keys:
 `{ "verb": "seed", "flag:rows": 5, "pos:0": "users" }`.
 
 Running a verb is a mutation — a verb may write anything — so it is refused under
-`--read-only`, and it pays plugin discovery again in its own child. Under `--offline` both
+`--read-only`. Each run is its own `deno` child, which costs the same plugin discovery as
+running the verb in your terminal: the panel never runs your code in the UI's process, every run
+starts from fresh module state, and a run can be cancelled by killing that child. Under `--offline` both
 children — the listing and every run — start with `--deny-net --cached-only`, so a verb that
 needs the network fails rather than reaching it.
 
@@ -650,16 +706,13 @@ above.
 
 ## What it does not do yet
 
-| Not yet                      | Why                                                                                                                                                                                            |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Compose edits beyond the set | The editor owns `image`, `restart`, `ports`, `environment`, `depends_on`, `volumes` and commenting a service out or in; anything else — a new service, `build`, `networks` — is edited by hand |
-| YAML the editor can't follow | Anchors, aliases, merge keys, flow-style services, several documents and mixed line endings make the file opaque: read-only, with the regeneration diff                                        |
-| Other compose file names     | Only `docker-compose.yml` at the project root is discovered — not `compose.yaml`                                                                                                               |
-| Third-party plugin options   | Option schemas come from the first-party catalog, so a JSR plugin gets no options form; set its options in `denext.config.ts`                                                                  |
-| Aliased plugin imports       | `import { openapi as oa }`, or an import from a full `jsr:` specifier, is not recognised as the catalog's plugin, so it gets no options link                                                   |
-| Code-valued options          | A callback, a variable, a `{}` schema part or a function-wrapped list is shown read-only, never rewritten                                                                                      |
-| Agent / MCP control          | Deferred; every panel already answers a JSON twin so it can be added without changing the wire                                                                                                 |
-| A denext app                 | The UI is server-rendered components built with `h()` — no bundler, no hydration — not an App Router app, which is what lets it start instantly with no build                                  |
+| Not yet                      | Why                                                                                                                                                           |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Compose edits beyond the set | A service field outside the editor's set — `command`, `healthcheck`, `labels`, `env_file`, `deploy` and the rest — is edited by hand                          |
+| YAML the editor can't follow | Several YAML documents in one file make the file opaque: read-only, with the reason and the regeneration diff                                                 |
+| Code-valued options          | A callback, a variable, a `{}` schema part or a function-wrapped list is shown read-only, never rewritten                                                     |
+| Agent / MCP control          | Deferred; every panel already answers a JSON twin so it can be added without changing the wire                                                                |
+| A denext app                 | The UI is server-rendered components built with `h()` — no bundler, no hydration — not an App Router app, which is what lets it start instantly with no build |
 
 ## See also
 

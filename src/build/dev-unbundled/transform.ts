@@ -6,7 +6,7 @@ import { dirname, fromFileUrl, toFileUrl } from "@std/path";
 import { collectComponents, refreshFooter } from "../spa-refresh-plugin.ts";
 import { transformFeatures } from "../feature-transform.ts";
 import { parseModule } from "../swc-ast.ts";
-import { resolveFirstParty, rewriteSpecifier } from "./resolve.ts";
+import { firstPartyResolver, resolveFirstParty, rewriteSpecifier } from "./resolve.ts";
 import {
   addImporter,
   loaderFor,
@@ -70,7 +70,15 @@ async function refreshFooterFor(
     const source = await Deno.readTextFile(abs);
     const parsed = await parseModule(source);
     const url = toFileUrl(abs).href;
-    const { names, metas } = parsed ? collectComponents(parsed, url) : { names: [], metas: {} };
+    // Import-map aliases resolve as the rewrite resolves them, so a hook imported by `@/…` is named.
+    const firstParty = await firstPartyResolver(st, abs);
+    const resolveSpec = (spec: string) => {
+      const hit = firstParty(spec);
+      return hit ? toFileUrl(hit).href : undefined;
+    };
+    const { names, metas } = parsed
+      ? collectComponents(parsed, url, resolveSpec)
+      : { names: [], metas: {} };
     if (names.length > 0) {
       entry.selfAccepting = true;
       st.accepting.add(abs);

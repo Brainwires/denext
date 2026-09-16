@@ -7,7 +7,7 @@
 //              the env says so
 //   email      the emailed-token flows (verification, reset, magic link) and their mailer
 //   mfa        the TOTP second factor
-//   rateLimit  brute-force protection on the login endpoint
+//   rateLimit  brute-force protection on the login endpoint and the second-factor budget
 //   events     the audit trail (lib/audit.ts), and `logger` for what auth would swallow
 //
 // `denext.config.ts` hands this object to `denextAuth()`, which mounts `/auth/*`; the app
@@ -44,7 +44,11 @@ export const authConfig: AuthConfig = {
   // 5 failed attempts per client IP + email per 15 minutes → a generic 429. The emailed
   // flows (3 sends per address per 15 minutes) and the second factor (5 attempts per
   // user per 5 minutes) have their own budgets, on by default too.
-  rateLimit: { max: 5, windowMs: 15 * 60_000 },
+  // Second-factor attempts per user per 5 minutes. The /auth/mfa endpoints and the account
+  // page's actions (spendMfaAttempt) share this budget, and every attempt counts, right or
+  // wrong. 10 leaves room to enrol, step up and disable in one sitting and is still nothing
+  // against a 6-digit code.
+  rateLimit: { max: 5, windowMs: 15 * 60_000, mfa: { max: 10 } },
 
   // Everything durable lives in one sqlite file (see lib/users.ts). Passing an adapter does
   // NOT make sessions stateful by itself — that is the `session` block below.

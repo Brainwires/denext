@@ -100,12 +100,12 @@ export function injectPlugin(source: string, names: PluginNames): InjectResult {
     bailed: false,
   };
 
-  // Is the call already in a plugins array? (crude but effective idempotency)
+  // Is the call already in a plugins array? (crude but effective idempotency) An import that
+  // renames the factory (`openapi as oa`) or names the package by a `jsr:` specifier still counts,
+  // and the array calls it by that local name.
+  const { local, importPresent } = existingBinding(source, names);
   const callInPlugins = new RegExp(
-    `plugins\\s*:\\s*\\[[^\\]]*\\b${escapeRe(names.factory)}\\s*\\(`,
-  ).test(source);
-  const importPresent = new RegExp(
-    `import[^;]*\\b${escapeRe(names.factory)}\\b[^;]*from\\s*["']${escapeRe(names.importSpec)}["']`,
+    `plugins\\s*:\\s*\\[[^\\]]*\\b${escapeRe(local)}\\s*\\(`,
   ).test(source);
   if (callInPlugins && importPresent) return { ...base, alreadyPresent: true };
 
@@ -123,10 +123,37 @@ export function injectPlugin(source: string, names: PluginNames): InjectResult {
   if (objStart === -1) return { ...base, source: out, addedImport, bailed: true };
   return {
     ...base,
-    source: insertPluginCall(out, objStart, names.call),
+    source: insertPluginCall(out, objStart, callAs(names, local)),
     addedImport,
     addedPlugin: true,
   };
+}
+
+/**
+ * How `source` already imports the plugin, if it does: the local binding (`oa` for
+ * `import { openapi as oa }`, else the factory name) and whether an import is present — a named
+ * binding from the same package under any specifier form, or any other import of the factory.
+ */
+function existingBinding(
+  source: string,
+  names: PluginNames,
+): { local: string; importPresent: boolean } {
+  const pkg = normalizeSpec(names.importSpec);
+  const binding = namedImports(source).find((b) =>
+    b.imported === names.factory && normalizeSpec(b.spec) === pkg
+  );
+  if (binding) return { local: binding.local, importPresent: true };
+  const other = new RegExp(
+    `import[^;]*\\b${escapeRe(names.factory)}\\b[^;]*from\\s*["']${escapeRe(names.importSpec)}["']`,
+  );
+  return { local: names.factory, importPresent: other.test(source) };
+}
+
+/** The plugin call spelled with `local` in place of the factory name (`oa()` for `openapi()`). */
+function callAs(names: PluginNames, local: string): string {
+  return names.call.startsWith(names.factory)
+    ? local + names.call.slice(names.factory.length)
+    : names.call;
 }
 
 /** Insert `importLine` after the last top-of-file `import`, else at the very top. */
@@ -171,6 +198,11 @@ export interface ConfiguredPlugin {
   call: string;
   /** The specifier it's imported from (e.g. `@denext/htmx`), or null if not found. */
   importSpec: string | null;
+  /**
+   * The exported name it is imported as — `openapi` for `import { openapi as oa }` — or
+   * `factory` when the binding isn't renamed (or no import was found).
+   */
+  imported: string;
 }
 
 /**
@@ -188,7 +220,13 @@ export function listPlugins(source: string): ConfiguredPlugin[] {
     if (!m) continue;
     const factory = m[1];
     const call = t.includes("(") ? `${factory}()` : factory;
-    out.push({ factory, call, importSpec: namedImportSpec(source, factory) });
+    const binding = namedImports(source).find((b) => b.local === factory);
+    out.push({
+      factory,
+      call,
+      importSpec: binding?.spec ?? null,
+      imported: binding?.imported ?? factory,
+    });
   }
   return out;
 }
@@ -211,12 +249,46 @@ function splitTopLevel(list: string): string[] {
 }
 
 /** The specifier `import { …, name, … } from "spec"` binds `name` from, or null. */
-function namedImportSpec(source: string, name: string): string | null {
+/** One named binding of an `import { … } from "spec"` statement. */
+interface NamedImport {
+  /** The exported name (`openapi` in `openapi as oa`). */
+  imported: string;
+  /** The local binding (`oa`); the same as `imported` when not renamed. */
+  local: string;
+  /** The specifier as written. */
+  spec: string;
+}
+
+/** One `name` or `name as alias` entry of an import clause, or null when it is neither. */
+function parseBinding(part: string): { imported: string; local: string } | null {
+  const m = /^(?:type\s+)?([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?$/.exec(part.trim());
+  return m ? { imported: m[1], local: m[2] ?? m[1] } : null;
+}
+
+/** Every named binding of every `import { … } from "…"` statement in `source`. */
+function namedImports(source: string): NamedImport[] {
+  const out: NamedImport[] = [];
   const impRe = /import\s*\{([^}]*)\}\s*from\s*["']([^"']+)["']/g;
   for (let im = impRe.exec(source); im; im = impRe.exec(source)) {
-    if (im[1].split(",").map((s) => s.trim()).includes(name)) return im[2];
+    for (const part of im[1].split(",")) {
+      const binding = parseBinding(part);
+      if (binding) out.push({ ...binding, spec: im[2] });
+    }
   }
-  return null;
+  return out;
+}
+
+/**
+ * The package a specifier names, without its scheme, version or subpath:
+ * `jsr:@denext/openapi@^0.3.0/mod.ts` → `@denext/openapi`, `npm:left-pad@1` → `left-pad`.
+ *
+ * @param spec An import specifier.
+ * @returns The bare package name (the input when it names no package).
+ */
+export function normalizeSpec(spec: string): string {
+  const bare = spec.replace(/^(?:jsr|npm):/, "");
+  const m = /^(@[^/@]+\/[^/@]+|[^/@]+)/.exec(bare);
+  return m ? m[1] : bare;
 }
 
 /** The result of removing a plugin from a config source. */
@@ -232,22 +304,28 @@ export interface EjectResult {
 }
 
 /** Remove the factory's named binding from an `import … from "spec"` statement. */
-function removeImport(source: string, factory: string, importSpec: string): string | null {
-  const re = new RegExp(
-    `import\\s*\\{([^}]*)\\}\\s*from\\s*["']${escapeRe(importSpec)}["'];?[ \\t]*\\n?`,
-  );
-  const m = re.exec(source);
-  if (!m) return null;
-  const names = m[1].split(",").map((s) => s.trim()).filter(Boolean);
-  if (!names.includes(factory)) return null;
-  const remaining = names.filter((n) => n !== factory);
-  if (remaining.length === 0) {
-    // Drop the whole import line (the regex already consumed a trailing newline).
-    return source.slice(0, m.index) + source.slice(m.index + m[0].length);
+function removeImport(
+  source: string,
+  factory: string,
+  importSpec: string,
+): { source: string; local: string } | null {
+  const pkg = normalizeSpec(importSpec);
+  const re = /import\s*\{([^}]*)\}\s*from\s*["']([^"']+)["'];?[ \t]*\n?/g;
+  for (let m = re.exec(source); m; m = re.exec(source)) {
+    if (normalizeSpec(m[2]) !== pkg) continue;
+    const parts = m[1].split(",").map((s) => s.trim()).filter(Boolean);
+    const index = parts.findIndex((part) => parseBinding(part)?.imported === factory);
+    if (index === -1) continue;
+    const local = parseBinding(parts[index])!.local;
+    const remaining = parts.filter((_, i) => i !== index);
+    // No binding left: drop the whole import line (the regex already consumed its newline).
+    const nl = m[0].endsWith("\n") ? "\n" : "";
+    const stmt = remaining.length === 0
+      ? ""
+      : `import { ${remaining.join(", ")} } from "${m[2]}";${nl}`;
+    return { source: source.slice(0, m.index) + stmt + source.slice(m.index + m[0].length), local };
   }
-  const nl = m[0].endsWith("\n") ? "\n" : "";
-  const stmt = `import { ${remaining.join(", ")} } from "${importSpec}";${nl}`;
-  return source.slice(0, m.index) + stmt + source.slice(m.index + m[0].length);
+  return null;
 }
 
 /**
@@ -283,10 +361,12 @@ function removePluginCall(source: string, factory: string): string | null {
  */
 export function ejectPlugin(source: string, names: PluginNames): EjectResult {
   let out = source;
-  const removedImport = removeImport(out, names.factory, names.importSpec) !== null;
-  if (removedImport) out = removeImport(out, names.factory, names.importSpec)!;
+  const unimported = removeImport(out, names.factory, names.importSpec);
+  const removedImport = unimported !== null;
+  if (unimported) out = unimported.source;
 
-  const afterCall = removePluginCall(out, names.factory);
+  // The array calls the plugin by its local binding (`oa` for `openapi as oa`).
+  const afterCall = removePluginCall(out, unimported?.local ?? names.factory);
   const removedPlugin = afterCall !== null;
   if (afterCall !== null) out = afterCall;
 

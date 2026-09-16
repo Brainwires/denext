@@ -242,10 +242,10 @@ four documented bounds of the opt-in:
   framework, so a column can be added but never renamed or dropped for you. TOTP secrets are
   stored in plaintext at rest by construction — TOTP verification needs the shared secret, so
   protect the database file; backup codes are stored only as `hasher` hashes.
-- **The adapter contract has no delete for a password or a second factor.** Disabling TOTP
-  writes an empty, unconfirmed MFA record, and a pre-account-hijacking eviction replaces the
-  password with the hash of a random secret; both read as absent everywhere (optional
-  `deleteCredential?` / `deleteMfa?` are on the roadmap).
+- **An adapter without `deleteCredential` / `deleteMfa` overwrites instead of deleting.**
+  Disabling TOTP then writes an empty, unconfirmed MFA record, and a pre-account-hijacking
+  eviction replaces the password with the hash of a random secret; both read as absent
+  everywhere. Both first-party adapters implement the deletes.
 - **`inMemoryAuthAdapter` keeps several live tokens per address and purpose;
   `sqliteAuthAdapter` keeps one.** In memory, a second link or code for the same address and
   purpose does not retire the first until that one is used or expires; in SQLite the newer
@@ -263,17 +263,14 @@ four documented bounds of the opt-in:
   as Auth.js). Prefer `emailOtp()` where that matters.
 - **Rotating `secret` invalidates the one-time codes in flight** — they are keyed under the
   current (first) secret, and live for minutes.
-- **Email addresses must be ASCII.** An SMTPUTF8 local part or a non-punycode IDN domain is
-  refused by the emailed flows.
+- **An email address's local part must be ASCII.** The emailed flows refuse an SMTPUTF8 local
+  part; an internationalised domain is accepted and used in its punycode form.
 - **Stateless cookie sessions survive a password reset — and a pre-account-hijacking
   eviction — until they expire.** Run a `sessionStore` (or `session.strategy: "database"`)
   so either one signs out every device. A pending second-factor session in a cookie can't be
   ended early either; it lasts 15 minutes.
 - **`mfa.required: "always"` is trust-on-first-use**: a user with no factor enrolls one
   during the step-up, so whoever holds the first factor at that moment chooses the second.
-- **No public helper spends the MFA attempt budget from a Server Action.** The `/mfa*`
-  endpoints spend it; a Server Action that calls `verifySecondFactor` or `confirmTotp` must
-  throttle itself (`examples/auth` carries its own limiter).
 - **Sliding refresh only happens where a `Response` is being produced.** `session.updateAge`
   re-issues the cookie on `GET {basePath}/session`, in `requireAuth()` and in
   `requireSession()`. A bare `auth()` inside a streamed Server Component cannot set a cookie
@@ -302,46 +299,41 @@ four documented bounds of the opt-in:
   [ROADMAP.md](./ROADMAP.md)), and `microsoftEntra`
   requires a specific tenant — the `common` issuer is a template no discovery document can
   verify.
-- **`requireBearer` takes the auth config as its first argument.** There is no ambient
-  "current auth config" to read, so every call site passes the same object it passed to
-  `denextAuth()`; an `activeAuthConfig()` helper that would make it optional is on the roadmap.
 - **A session issued before 2.5.0-rc.3 has no `authTime`.** Enrolling a factor (the route or
   `enrollTotp()`) and minting an API token both need a recent sign-in, so such a session is
   asked to sign in again.
 
 ### Project UI (`denext ui`)
 
-- **The compose editor owns a closed set of edits**: `image`, `restart`, `ports`,
-  `environment`, `depends_on`, `volumes`, and commenting a service out or back in. A new
-  service, `build`, `networks` and everything else is edited by hand; a long-syntax port or
-  volume (a mapping) can be removed but not rewritten, and a flow-style field
-  (`ports: ["80:80"]`) is refused. A file with anchors, aliases, merge keys, flow-style
-  services, several documents (`---`) or mixed CRLF/LF line endings is **opaque** —
-  read-only, with the regeneration diff. Only `docker-compose.yml` at the project root is
-  discovered; a `compose.yaml` is not.
-- **Third-party plugins get no options form.** Option schemas come from the first-party
-  catalog, generated from denext's own workspace, so a plugin found on JSR is added and wired
-  but its options are set in `denext.config.ts`. A first-party schema expands four
-  interfaces deep.
+- **The compose editor owns a closed set of edits**:
+  - adding and removing a service;
+  - `image`, `restart` and `build` (a context path, or a mapping's `context`, `dockerfile`,
+    `target` and `args`);
+  - `ports` and `volumes`, a long-syntax entry key by key;
+  - `environment`;
+  - `depends_on`, with each dependency's `condition`;
+  - `networks`;
+  - commenting a service out or back in;
+  - the top-level named volumes and networks.
+
+  Every other service field (`command`, `healthcheck`, `labels`, `env_file`, `deploy` and the
+  rest of the Compose specification) is edited by hand, as is a long-syntax key the form
+  doesn't know (a volume's `bind:` options, say). A file holding several YAML documents is
+  **opaque**: it is read-only, with the reason and the regeneration diff.
+- **A field a service takes from a merge key (`<<`) can be overridden but not deleted.**
+  Setting it writes an override into the service. Removing it would need Compose's `!reset`
+  tag, which the editor does not write.
+- **A third-party plugin's options form needs a published schema.** A JSR plugin gets one
+  only if its package publishes `denext.catalog.optionsSchema` in its `deno.json` (or
+  `jsr.json`). The UI reads it from `jsr.io` for the version `deno.lock` resolved — so not
+  under `--offline` — and keeps only the keys the form reads. A first-party schema is
+  generated from the package's types and expands four interfaces deep.
 - **Code-valued plugin options are read-only.** A callback, a variable, a call, a `{}`
-  schema part (a type the generator could not describe) or a function-wrapped list
-  (openapi's `tags`, `securitySchemes`) renders as a read-only cell. A toggle over an option
-  the config does not set is written only when it is switched on.
-- **A plugin is recognised by its plain import.** `import { openapi as oa } from
-  "@denext/openapi"`, or an import from a full `jsr:` specifier, is not recognised as the
-  catalog's plugin, so it gets no options link.
-- **JSR search needs net permission for both `api.jsr.io` and `jsr.io`.** Without it the
-  panel degrades exactly as under `--offline`; the UI checks the permission and never
-  prompts.
-- **`/config/next` is read-only.** denext never loads `next.config.*` at runtime, so writing to
-  it would change nothing; the panel reads it in a bounded subprocess and offers to translate
-  what denext honors into `denext.config.ts`.
-- **`denext --help` does not list a project's own verbs, by design.** Rendering them would
-  mean importing `denext.config.ts` and running every plugin `setup()`; `denext commands`
-  (which the help footer points at) does that in a process that always exits, and shell
-  completions still include them. The UI's Commands panel reads the same subprocess — and
-  **running** a project verb from the panel pays plugin discovery again in its own child, so
-  a slow `setup()` is felt on every run.
+  schema part (a type the generator could not describe, like the values of openapi's
+  `securitySchemes`) or a function-wrapped list (openapi's `tags`) renders as a read-only cell.
+- **JSR search and adding a JSR package each need net permission for their host** —
+  `api.jsr.io` to search, `jsr.io` to read a package's metadata. Without it that half of the
+  panel degrades as under `--offline`; the UI only checks the permission, never prompts.
 
 ### Desktop & mobile (`denext desktop`, Capacitor)
 
@@ -398,9 +390,10 @@ are listed in [FEATURES.md](./FEATURES.md). Its documented boundaries:
   for that component, which then shows kind labels and "names unavailable" rather
   than a plausible-looking wrong name. A custom hook expands when it is declared
   in the same module or bound by a static relative import (extensionless and
-  `index` imports included), up to 3 levels of breadcrumb across modules. A hook
-  imported by a bare, `npm:`/`jsr:`, URL or import-map-alias specifier, through a
-  namespace import, or re-exported through a barrel still aborts naming for that
+  `index` imports included) or — in the default dev loop — by an import-map alias,
+  or re-exported by name through a barrel (one level), up to 3 levels of breadcrumb across modules. A hook
+  imported by a bare, `npm:`/`jsr:`, URL specifier (or, in SPA mode, an import-map
+  alias), through a namespace import, or through a barrel's `export *` still aborts naming for that
   component.
 - **The "owner stack" is the render-parent chain**, an approximation of React's
   JSX-owner stack (they coincide for the common case); per-element `__source` is

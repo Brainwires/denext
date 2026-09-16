@@ -440,6 +440,8 @@ services:
 
 /** A compose file the editor cannot follow (an anchor + a merge key). */
 const ANCHORED = "x-base: &base\n  image: nginx\nservices:\n  web:\n    <<: *base\n";
+/** Two YAML documents in one file — a shape the editor cannot follow. */
+const OPAQUE = "services:\n  web:\n    image: a\n---\nservices:\n  b:\n    image: y\n";
 
 /** The compose file on disk. */
 function composeOnDisk(h: Harness): Promise<string> {
@@ -557,7 +559,7 @@ Deno.test("compose editor: a hand-written file without the sentinel is 'edited' 
 Deno.test("compose editor: an opaque file is read-only with the regeneration diff; edits are 400", async () => {
   const h = await ui();
   try {
-    await Deno.writeTextFile(join(h.dir, COMPOSE), ANCHORED);
+    await Deno.writeTextFile(join(h.dir, COMPOSE), OPAQUE);
     const payload = await (await get(h, "/api/docker")).json();
     assertEquals(payload.files[1].state, "opaque");
     assertEquals(payload.model, null);
@@ -567,7 +569,7 @@ Deno.test("compose editor: an opaque file is read-only with the regeneration dif
       body,
       "YAML the editor cannot follow — read-only, will not be overwritten",
     );
-    assertStringIncludes(body, "cannot follow line by line");
+    assertStringIncludes(body, "cannot follow it line by line: the file does not parse");
     assertStringIncludes(body, "Regeneration diff");
     assertStringIncludes(body, `+${DOCKER_SENTINEL}`);
     assert(!body.includes('id="compose-web"'), "no edit form for an opaque file");
@@ -586,7 +588,135 @@ Deno.test("compose editor: an opaque file is read-only with the regeneration dif
     });
     assertEquals(json.status, 400);
     assertEquals((await json.json()).ok, false);
-    assertEquals(await composeOnDisk(h), ANCHORED);
+    assertEquals(await composeOnDisk(h), OPAQUE);
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("compose editor: a long-syntax port's keys and a dependency's condition post through", async () => {
+  const h = await ui();
+  try {
+    const text = "services:\n  web:\n    image: x\n    ports:\n      - target: 80\n" +
+      '        published: "8080"\n    depends_on:\n      - db\n  db:\n    image: pg\n';
+    await Deno.writeTextFile(join(h.dir, COMPOSE), text);
+    const body = await (await get(h, "/docker")).text();
+    assertStringIncludes(body, 'name="port.0.published"');
+    assertStringIncludes(body, 'name="dep.0.condition"');
+    const res = await post(h, "/docker", {
+      editor: "compose",
+      service: "web",
+      op: "apply",
+      "port.0.target": "80",
+      "port.0.published": "9090",
+      "dep.0.condition": "service_healthy",
+    });
+    assertEquals(res.status, 200);
+    const preview = await res.text();
+    assertStringIncludes(preview, "9090");
+    assertStringIncludes(preview, "condition: service_healthy");
+    const bad = await postJson(h, "/api/docker", {
+      editor: "compose",
+      ops: [{ op: "entry", service: "web", field: "ports", index: 0, key: "target", value: "x" }],
+    });
+    assertEquals(bad.status, 400);
+    assertStringIncludes((await bad.json()).reason, "target needs a integer value");
+    const json = await postJson(h, "/api/docker", {
+      editor: "compose",
+      ops: [
+        { op: "entry", service: "web", field: "ports", index: 0, key: "published", value: "9090" },
+        { op: "condition", service: "web", value: "db", condition: "service_healthy" },
+      ],
+      confirm: true,
+    });
+    assertEquals(json.status, 200);
+    const disk = await composeOnDisk(h);
+    assertStringIncludes(disk, '        published: "9090"\n');
+    assertStringIncludes(disk, "      db:\n        condition: service_healthy\n");
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("compose editor: services are added and removed, and names declared, through the forms", async () => {
+  const h = await ui();
+  try {
+    await Deno.writeTextFile(join(h.dir, COMPOSE), GENERATED);
+    const page = await (await get(h, "/docker")).text();
+    assertStringIncludes(page, 'id="compose-new-service"');
+    assertStringIncludes(page, 'id="compose-declarations"');
+    assertStringIncludes(page, 'name="build.dockerfile"');
+    const added = await previewEdit(h, {
+      op: "addService",
+      "new.name": "cache",
+      "new.image": "redis:7",
+    });
+    assertStringIncludes(added, "+  cache:");
+    assertEquals(JSON.parse(confirmFields(added).ops), [
+      { op: "addService", service: "cache", image: "redis:7" },
+    ]);
+    const declared = await previewEdit(h, {
+      scope: "top",
+      op: "apply",
+      "declare.volumes.new": "data",
+    });
+    assertStringIncludes(declared, "+volumes:");
+    assertStringIncludes(declared, "+  data:");
+    const built = await previewEdit(h, {
+      service: "web",
+      op: "apply",
+      "build.dockerfile": "Dockerfile.prod",
+    });
+    assertStringIncludes(built, "+      dockerfile: Dockerfile.prod");
+    // Every operation is checked against the file as it stands, so a service is added and
+    // removed in two requests, not one.
+    const json = await postJson(h, "/api/docker", {
+      editor: "compose",
+      ops: [
+        { op: "addService", service: "cache", image: "redis:7" },
+        { op: "declare", kind: "networks", action: "add", name: "backend" },
+      ],
+      confirm: true,
+    });
+    assertEquals(json.status, 200);
+    assertStringIncludes(await composeOnDisk(h), "networks:\n  backend:\n");
+    const dropped = await postJson(h, "/api/docker", {
+      editor: "compose",
+      ops: [{ op: "removeService", service: "cache" }],
+      confirm: true,
+    });
+    assertEquals(dropped.status, 200);
+    const disk = await composeOnDisk(h);
+    assertStringIncludes(disk, "networks:\n  backend:\n");
+    assert(!disk.includes("cache:"), "the added service was removed again");
+    const refused = await postJson(h, "/api/docker", {
+      editor: "compose",
+      ops: [{ op: "declare", kind: "volumes", action: "remove", name: "nope" }],
+    });
+    assertEquals(refused.status, 400);
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("compose editor: a merge key's fields are shown as inherited, and a set overrides them", async () => {
+  const h = await ui();
+  try {
+    await Deno.writeTextFile(join(h.dir, COMPOSE), ANCHORED);
+    const body = await (await get(h, "/docker")).text();
+    assertStringIncludes(body, 'id="compose-web"');
+    assertStringIncludes(body, "takes image from its merge key (&lt;&lt;)");
+    const json = await postJson(h, "/api/docker", {
+      editor: "compose",
+      ops: [{ op: "set", service: "web", field: "image", value: "caddy" }],
+      confirm: true,
+    });
+    assertEquals(json.status, 200);
+    assertEquals((await json.json()).model.services[0].image, "caddy");
+    assertEquals(
+      await composeOnDisk(h),
+      "x-base: &base\n  image: nginx\nservices:\n  web:\n    image: caddy\n    <<: *base\n",
+    );
   } finally {
     await stop(h);
   }
@@ -827,6 +957,79 @@ Deno.test("compose editor: the JSON twin previews, then applies, and returns the
     assertStringIncludes(after, "# my stack\n");
     assertStringIncludes(after, "    image: nginx:1.28 # pinned\n");
     assertStringIncludes(after, "    depends_on:\n      - cache\n");
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("compose editor: a compose.yaml is found, edited in place, and named everywhere", async () => {
+  const h = await ui();
+  try {
+    await Deno.writeTextFile(join(h.dir, "compose.yaml"), GENERATED);
+    const preview = await previewEdit(h, { service: "web", op: "apply", "port.new": "9229:9229" });
+    assertStringIncludes(preview, "Write compose.yaml");
+    assertStringIncludes(preview, "a/compose.yaml");
+    const res = await post(h, "/docker", confirmFields(preview));
+    assertEquals(res.status, 303);
+    await res.body?.cancel();
+    assertStringIncludes(await Deno.readTextFile(join(h.dir, "compose.yaml")), '- "9229:9229"');
+    const created = await Deno.stat(join(h.dir, COMPOSE)).then(() => true, () => false);
+    assertEquals(created, false, "no docker-compose.yml appears next to it");
+    const page = await (await get(h, "/docker?saved=compose")).text();
+    assertStringIncludes(page, "Saved compose.yaml.");
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("compose editor: with two compose files, compose.yaml wins, as it does for Docker Compose", async () => {
+  const h = await ui();
+  try {
+    await Deno.writeTextFile(join(h.dir, "compose.yaml"), HAND);
+    await Deno.writeTextFile(join(h.dir, COMPOSE), GENERATED);
+    const page = await (await get(h, "/docker")).text();
+    assertStringIncludes(page, "Edit compose.yaml");
+    assertStringIncludes(page, "redis:7");
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("dockerPlan regenerates an existing compose.yml rather than adding a docker-compose.yml", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_ui_docker_plan_" });
+  try {
+    await Deno.writeTextFile(join(dir, "compose.yml"), GENERATED);
+    const plan = await dockerPlan(dir, { mode: "server" });
+    assertEquals(plan.map((file) => file.path.slice(dir.length + 1)), [
+      "Dockerfile",
+      "compose.yml",
+      ".dockerignore",
+    ]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("compose editor: a build field and a network row post through; an undeclared network warns", async () => {
+  const h = await ui();
+  try {
+    await Deno.writeTextFile(join(h.dir, COMPOSE), GENERATED);
+    const page = await (await get(h, "/docker")).text();
+    assertStringIncludes(page, 'name="build"');
+    assertStringIncludes(page, 'name="network.new"');
+    const body = await previewEdit(h, {
+      service: "web",
+      op: "apply",
+      build: "./app",
+      "network.new": "backend",
+    });
+    assertStringIncludes(body, "+    networks:");
+    assertStringIncludes(body, "+      - backend");
+    assertStringIncludes(body, "does not declare it");
+    assertEquals(JSON.parse(confirmFields(body).ops), [
+      { op: "set", service: "web", field: "build", value: "./app" },
+      { op: "networks", service: "web", action: "add", value: "backend" },
+    ]);
   } finally {
     await stop(h);
   }
