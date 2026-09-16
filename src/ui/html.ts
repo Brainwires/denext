@@ -166,7 +166,15 @@ export function panelResponder(
   return (ctx: UiContext, body: RawHtml, status = 200, viewTitle?: string): Response => {
     if (ctx.fragment) return htmlResponse(toHtml(body), status);
     return htmlResponse(
-      renderPage(layout, { title: viewTitle ?? title, nav: UI_NAV, body, csrf: ctx.csrf, active }),
+      renderPage(layout, {
+        title: viewTitle ?? title,
+        nav: UI_NAV,
+        body,
+        csrf: ctx.csrf,
+        active,
+        readOnly: ctx.readOnly,
+        offline: ctx.offline,
+      }),
       status,
     );
   };

@@ -35,6 +35,10 @@ export interface LayoutOptions {
   readonly csrf: string;
   /** The nav href to mark current. */
   readonly active?: string;
+  /** `--read-only`: every write is refused. Shown in the sidebar, not just on Overview. */
+  readonly readOnly?: boolean;
+  /** `--offline`: nothing the UI starts reaches the network. */
+  readonly offline?: boolean;
 }
 
 /**
@@ -66,10 +70,11 @@ export function layout(options: LayoutOptions): VNode {
         "body",
         null,
         h(
-          "header",
-          { class: "topbar" },
+          "aside",
+          { class: "sidebar" },
           h("span", { class: "brand" }, "denext ui"),
           h("nav", null, options.nav.map((item) => navLink(item, options.active))),
+          modeFooter(options),
         ),
         h("main", { id: "main" }, h(Raw, { html: options.body })),
         h("script", { type: "module", src: UI_JS_PATH }),
@@ -78,7 +83,28 @@ export function layout(options: LayoutOptions): VNode {
   );
 }
 
-/** One top-navigation link, marked `aria-current="page"` when it is the active entry. */
+/**
+ * The modes that change what every panel will do, pinned to the bottom of the sidebar.
+ *
+ * `--read-only` was only ever announced on the Overview, so on any other panel a refused
+ * write looked like a bug rather than the mode it is. A mode belongs in the shell. Nothing
+ * renders when neither is on: the UI does not invent status it does not have.
+ *
+ * The badge spans are spelled out rather than imported from `components.ts`, because this
+ * module deliberately imports only the view substrate (see the header) — two spans are a
+ * smaller price than a new edge in that graph.
+ *
+ * @param options The layout inputs.
+ * @returns The footer, or `null` when no mode is active.
+ */
+function modeFooter(options: LayoutOptions): VNode | null {
+  const modes: VNode[] = [];
+  if (options.readOnly) modes.push(h("span", { key: "ro", class: "badge warn" }, "read-only"));
+  if (options.offline) modes.push(h("span", { key: "off", class: "badge info" }, "offline"));
+  return modes.length === 0 ? null : h("p", { class: "mode" }, modes);
+}
+
+/** One navigation link, marked `aria-current="page"` when it is the active entry. */
 function navLink(item: NavItem, active: string | undefined): VNode {
   const current = item.href === active ? "page" : undefined;
   return h("a", { key: item.href, href: item.href, "aria-current": current }, item.label);

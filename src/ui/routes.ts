@@ -152,7 +152,15 @@ function home(_request: Request, ctx: UiContext): Promise<Response> {
   }
   const body = renderView(h(Overview, { ctx }));
   return Promise.resolve(htmlResponse(
-    renderPage(layout, { title: "Project", nav: UI_NAV, body, csrf: ctx.csrf, active: "/" }),
+    renderPage(layout, {
+      title: "Project",
+      nav: UI_NAV,
+      body,
+      csrf: ctx.csrf,
+      active: "/",
+      readOnly: ctx.readOnly,
+      offline: ctx.offline,
+    }),
   ));
 }
 

@@ -55,8 +55,8 @@ const BODY: RawHtml = {
 function shell(head: string, nav: string, main: string): string {
   return '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width, initial-scale=1">' + head +
-    `<link rel="stylesheet" href="${UI_CSS_PATH}"></head><body><header class="topbar">` +
-    `<span class="brand">denext\u00a0ui</span><nav>${nav}</nav></header>` +
+    `<link rel="stylesheet" href="${UI_CSS_PATH}"></head><body><aside class="sidebar">` +
+    `<span class="brand">denext\u00a0ui</span><nav>${nav}</nav></aside>` +
     `<main id="main">${main}</main><script type="module" src="${UI_JS_PATH}"></script>` +
     "</body></html>";
 }
@@ -95,6 +95,27 @@ Deno.test("the layout escapes an attacker title and nav label, with no entry cur
   assert(!page.includes("aria-current"), "no entry is current");
   assert(!page.includes("<script>alert"), "the title is escaped");
   assert(!page.includes("<img"), "a nav label is escaped");
+});
+
+Deno.test("the sidebar names the modes that change what every panel will do", () => {
+  const base = { title: "t", nav: UI_NAV, body: { __html: "" } as RawHtml, csrf: "c" };
+  // No mode on: no footer at all. The shell does not invent status it does not have.
+  assert(!renderPage(layout, base).includes('class="mode"'), "no footer without a mode");
+  // `--read-only` used to be announced only on the Overview, so on every other panel a refused
+  // write looked like a bug rather than the mode it is.
+  assert(
+    renderPage(layout, { ...base, readOnly: true }).includes(
+      '<p class="mode"><span class="badge warn">read-only</span></p>',
+    ),
+    "read-only is named in the shell",
+  );
+  assert(
+    renderPage(layout, { ...base, readOnly: true, offline: true }).includes(
+      '<p class="mode"><span class="badge warn">read-only</span>' +
+        '<span class="badge info">offline</span></p>',
+    ),
+    "both modes render, in order, with no key attribute leaking",
+  );
 });
 
 Deno.test("Raw nests a rendered fragment inside a component without escaping it twice", () => {

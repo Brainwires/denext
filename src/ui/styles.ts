@@ -85,6 +85,9 @@ body {
   background: var(--background);
   color: var(--foreground);
   font: var(--text-base)/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  display: grid;
+  grid-template-columns: 232px 1fr;
+  min-height: 100vh;
 }
 code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 :where(a):focus-visible,
@@ -94,33 +97,56 @@ code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, m
 }
 
 /* ── shell ─────────────────────────────────────────────────────────────── */
-.topbar {
+.sidebar {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-direction: column;
   gap: var(--space-4);
-  padding: 10px var(--space-5);
-  border-bottom: 1px solid var(--border);
+  padding: var(--space-4) var(--space-3);
+  border-right: 1px solid var(--border);
   background: var(--muted);
   position: sticky;
   top: 0;
-  z-index: 10;
+  align-self: start;
+  height: 100vh;
 }
-.brand { font-weight: 600; letter-spacing: -0.01em; }
-.topbar nav { display: flex; flex-wrap: wrap; gap: var(--space-1); }
-.topbar nav a {
+.brand { font-weight: 600; letter-spacing: -0.01em; padding: 0 10px; }
+.sidebar nav { display: flex; flex-direction: column; gap: 2px; }
+.sidebar nav a {
   color: var(--muted-foreground);
   text-decoration: none;
   padding: var(--space-1) 10px;
   border-radius: var(--radius-sm);
 }
-.topbar nav a:hover { background: var(--background); color: var(--foreground); }
-.topbar nav a[aria-current="page"] {
+.sidebar nav a:hover { background: var(--background); color: var(--foreground); }
+.sidebar nav a[aria-current="page"] {
   background: var(--background);
   color: var(--primary);
   font-weight: 600;
 }
-main { max-width: 940px; margin: 0 auto; padding: 28px var(--space-5) 64px; }
+/* margin-top:auto pins the modes to the bottom of the column; the narrow layout below has
+   no column, so it resets there. */
+.mode { margin: auto 0 0; display: flex; flex-wrap: wrap; gap: var(--space-1); padding: 0 10px; }
+main { max-width: 940px; padding: 28px var(--space-5) 64px; }
+
+/* The stylesheet's first breakpoint. Below it the grid collapses to one column and the sidebar
+   becomes the horizontal strip this UI used to have at every width — which is also the phone
+   layout, so the narrow case is the old behaviour rather than something new to get wrong. */
+@media (max-width: 860px) {
+  body { grid-template-columns: 1fr; }
+  .sidebar {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-4);
+    height: auto;
+    padding: 10px var(--space-5);
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    z-index: 10;
+  }
+  .sidebar nav { flex-direction: row; flex-wrap: wrap; gap: var(--space-1); }
+  .mode { margin: 0; }
+}
 h1 { font-size: var(--text-xl); margin: 0 0 6px; letter-spacing: -0.02em; }
 h2 { font-size: var(--text-lg); margin: 28px 0 var(--space-2); }
 .lead { color: var(--muted-foreground); margin: 0 0 18px; }
