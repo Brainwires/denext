@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.5.0-rc.6] - 2026-09-16
+
 ### Added
 
 - DevTools names a custom hook imported through an import-map alias (`@/hooks/auth.ts`, in the
@@ -7443,6 +7445,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.5.0-rc.6]: https://jsr.io/@denext/denext@2.5.0-rc.6
 [2.5.0-rc.5]: https://jsr.io/@denext/denext@2.5.0-rc.5
 [2.5.0-rc.4]: https://jsr.io/@denext/denext@2.5.0-rc.4
 [2.5.0-rc.3]: https://jsr.io/@denext/denext@2.5.0-rc.3
