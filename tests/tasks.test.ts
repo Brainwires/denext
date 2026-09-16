@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStrictEquals, assertThrows } from "@std/assert";
 import {
   clearTasks,
   collectSchedules,
@@ -8,7 +8,9 @@ import {
   registerTask,
   runTask,
   scheduleTasks,
+  setTaskRecorder,
   taskNames,
+  type TaskRunRecord,
 } from "../src/server/tasks.ts";
 
 function reset() {
@@ -99,4 +101,151 @@ Deno.test("scheduleTasks skips a bad cron and an unknown task, without throwing"
   ]);
   assertEquals(typeof dispose, "function");
   dispose();
+});
+
+// ---- the run-history seam --------------------------------------------------
+//
+// The recorder is module-global, so every test here clears it in a `finally`: a leaked one would
+// silently contaminate the scheduling tests above.
+
+/** Collect the records one block of work produces, with the recorder always removed after. */
+async function recording(work: () => Promise<unknown>): Promise<TaskRunRecord[]> {
+  const seen: TaskRunRecord[] = [];
+  setTaskRecorder((r) => seen.push(r));
+  try {
+    await work().catch(() => {});
+  } finally {
+    setTaskRecorder(null);
+  }
+  return seen;
+}
+
+Deno.test("with no recorder, runTask hands back exactly what the handler produced", async () => {
+  reset();
+  const value = { deep: { object: 1 } };
+  const boom = new Error("nope");
+  registerTask("ok", defineTask({ handler: () => value }));
+  registerTask(
+    "bad",
+    defineTask({
+      handler: () => {
+        throw boom;
+      },
+    }),
+  );
+
+  // Identity, not shape: this is what pins "the caller's value, unchanged".
+  assertStrictEquals(await runTask("ok"), value);
+  const err = await runTask("bad").then(() => null, (e) => e);
+  assertStrictEquals(err, boom);
+});
+
+Deno.test("with a recorder, runTask STILL hands back exactly what the handler produced", async () => {
+  reset();
+  const value = { deep: { object: 1 } };
+  const boom = new Error("nope");
+  registerTask("ok", defineTask({ handler: () => value }));
+  registerTask(
+    "bad",
+    defineTask({
+      handler: () => {
+        throw boom;
+      },
+    }),
+  );
+  setTaskRecorder(() => {});
+  try {
+    assertStrictEquals(await runTask("ok"), value);
+    const err = await runTask("bad").then(() => null, (e) => e);
+    assertStrictEquals(err, boom);
+  } finally {
+    setTaskRecorder(null);
+  }
+});
+
+Deno.test("a recorder that throws disturbs neither the success nor the failure path", async () => {
+  reset();
+  const boom = new Error("handler failed");
+  registerTask("ok", defineTask({ handler: () => "fine" }));
+  registerTask(
+    "bad",
+    defineTask({
+      handler: () => {
+        throw boom;
+      },
+    }),
+  );
+  setTaskRecorder(() => {
+    throw new Error("the history store is broken");
+  });
+  try {
+    assertEquals(await runTask("ok"), "fine");
+    const err = await runTask("bad").then(() => null, (e) => e);
+    assertStrictEquals(err, boom, "the handler's error survives a broken recorder");
+  } finally {
+    setTaskRecorder(null);
+  }
+});
+
+Deno.test("one record per run, carrying what happened", async () => {
+  reset();
+  registerTask("ok", defineTask({ handler: () => "the tail" }));
+  registerTask(
+    "bad",
+    defineTask({
+      handler: () => {
+        throw new Error("kaboom");
+      },
+    }),
+  );
+  registerTask("plain", defineTask({ handler: () => ({ not: "a string" }) }));
+
+  const seen = await recording(async () => {
+    await runTask("ok");
+    await runTask("bad").catch(() => {});
+    await runTask("plain");
+  });
+  assertEquals(seen.length, 3);
+  assertEquals(seen.map((r) => r.name), ["ok", "bad", "plain"]);
+  assertEquals(seen.map((r) => r.ok), [true, false, true]);
+  assertEquals(seen.map((r) => r.trigger), ["manual", "manual", "manual"]);
+  for (const r of seen) assert(r.durationMs >= 0, "a duration is measured");
+  // A string result keeps its tail; an error keeps its head; anything else carries no detail.
+  assertEquals(seen[0].detail, "the tail");
+  assert(seen[1].detail?.includes("kaboom"), seen[1].detail ?? "(none)");
+  assertEquals(seen[2].detail, undefined);
+});
+
+Deno.test("an unknown task is not a run, so nothing is recorded for it", async () => {
+  reset();
+  const seen = await recording(() => runTask("nope"));
+  assertEquals(seen, [], "the rejection happens before any handler — there is no run");
+});
+
+Deno.test("a handler that throws synchronously rejects — it does not throw", async () => {
+  reset();
+  const boom = new Error("guard clause");
+  registerTask(
+    "sync-bad",
+    defineTask({
+      handler: () => {
+        throw boom;
+      },
+    }),
+  );
+
+  // The scheduler's own usage is `runTask(...).catch(onScheduledError)`. While a synchronous
+  // throw escaped the call expression, `.catch` never ran and the error surfaced in the timer
+  // tick instead — despite the declared `Promise<unknown>`.
+  let caught: unknown = null;
+  await runTask("sync-bad").catch((e) => {
+    caught = e;
+  });
+  assertStrictEquals(caught, boom, "the rejection carries the handler's own error");
+
+  // And it is recorded as a failure, which was impossible while the throw bypassed the seam.
+  const seen = await recording(() => runTask("sync-bad").catch(() => {}));
+  assertEquals(seen.length, 1);
+  assertEquals(seen[0].ok, false);
+  assert(seen[0].detail?.includes("guard clause"), seen[0].detail ?? "(no detail)");
 });

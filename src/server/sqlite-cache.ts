@@ -98,8 +98,20 @@ const encodePprExtras = (page: CachedPage): string | null => {
   return Object.keys(extras).length ? JSON.stringify(extras) : null;
 };
 
-/** Open node:sqlite at `path`, wrapped in the {@link SqliteDb} the store drives. */
-function openNodeSqlite(path: string): SqliteDb {
+/**
+ * Open node:sqlite at `path`, wrapped in the {@linkcode SqliteDb} these stores drive.
+ *
+ * Shared with the task-history store rather than copied: a second verbatim wrapper around the
+ * same handle is how two database layers quietly drift apart.
+ *
+ * @param path The database file, or `:memory:`.
+ * @param options `readOnly`: open a reader that cannot write (what another process uses).
+ * @returns The handle.
+ */
+export function openSqliteFile(
+  path: string,
+  options: { readonly readOnly?: boolean } = {},
+): SqliteDb {
   if (path !== ":memory:") {
     try {
       mkdirSync(dirname(path), { recursive: true });
@@ -107,7 +119,9 @@ function openNodeSqlite(path: string): SqliteDb {
       // Directory may already exist; a real perms error surfaces on open below.
     }
   }
-  const raw = new DatabaseSync(path);
+  const raw = options.readOnly
+    ? new DatabaseSync(path, { readOnly: true })
+    : new DatabaseSync(path);
   return {
     exec(sql, params) {
       if (params && params.length) raw.prepare(sql).run(...params);
@@ -252,7 +266,7 @@ class SqliteCache implements CacheStore {
     this.#maxData = options.maxDataEntries ?? DEFAULT_MAX_DATA;
     this.#maxPage = options.maxPageEntries ?? DEFAULT_MAX_PAGE;
     this.#sweepInterval = options.sweepIntervalMs ?? SWEEP_INTERVAL;
-    this.#open = options.openDb ?? openNodeSqlite;
+    this.#open = options.openDb ?? openSqliteFile;
   }
 
   #getDb(): SqliteDb {
