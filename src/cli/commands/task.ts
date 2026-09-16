@@ -7,8 +7,8 @@
 import { resolve } from "@std/path";
 import { join } from "@std/path";
 import type { CommandContext, CommandSpec } from "../command.ts";
-import { resolveProject } from "../../build/paths.ts";
-import { discoverTasks } from "../../server/task-loader.ts";
+import { type ProjectPaths, resolveProject } from "../../build/paths.ts";
+import { discoverTasks, startRunHistory } from "../../server/task-loader.ts";
 import {
   collectSchedules,
   getTask,
@@ -17,9 +17,10 @@ import {
   taskNames,
 } from "../../server/tasks.ts";
 
-async function loadTasks(ctx: CommandContext): Promise<string[]> {
+/** Discover this project's tasks, keeping the resolved paths the caller also needs. */
+async function loadTasks(ctx: CommandContext): Promise<{ names: string[]; paths: ProjectPaths }> {
   const paths = await resolveProject(resolve(ctx.global.cwd ?? "."));
-  return discoverTasks(join(paths.projectDir, "tasks"));
+  return { names: await discoverTasks(join(paths.projectDir, "tasks")), paths };
 }
 
 /** One task, as `denext task --list --json` describes it. */
@@ -54,11 +55,15 @@ interface TaskListing {
    * runs instead — the same schedules, but only while a server process is alive.
    */
   readonly denoCron: boolean;
+  /**
+   * Whether `tasks.history` is on — the RESOLVED value, from the same loader the server uses.
+   * `denext ui` reads this rather than parsing the config source, which it cannot evaluate.
+   */
+  readonly history: boolean;
 }
 
 /** Everything a machine caller needs about this project's tasks and their schedules. */
-async function listing(ctx: CommandContext, names: string[]): Promise<TaskListing> {
-  const paths = await resolveProject(resolve(ctx.global.cwd ?? "."));
+function listing(paths: ProjectPaths, names: string[]): TaskListing {
   const configScheduled = paths.config?.scheduledTasks ?? {};
   return {
     tasks: names.map((name) => ({
@@ -71,6 +76,7 @@ async function listing(ctx: CommandContext, names: string[]): Promise<TaskListin
     schedules: collectSchedules(configScheduled),
     configScheduled,
     denoCron: typeof (Deno as { cron?: unknown }).cron === "function",
+    history: paths.config?.tasks?.history === true,
   };
 }
 
@@ -111,11 +117,11 @@ export const taskCommand: CommandSpec = {
   moduleDir: (ctx) => resolve(ctx.global.cwd ?? "."),
   usage: "denext task <name> [--payload '<json>']\ndenext task --list [--json]",
   run: async (ctx: CommandContext) => {
-    const names = await loadTasks(ctx);
+    const { names, paths } = await loadTasks(ctx);
     const name = ctx.positionals[0];
     if (ctx.flags.list === true || !name) {
       // `--json` is a global flag, so `denext task --list --json` needs no declaration here.
-      if (ctx.global.json) console.log(JSON.stringify(await listing(ctx, names), null, 2));
+      if (ctx.global.json) console.log(JSON.stringify(listing(paths, names), null, 2));
       else listTasks(names, !name && ctx.flags.list !== true);
       return;
     }
@@ -133,13 +139,20 @@ export const taskCommand: CommandSpec = {
       }
     }
     console.log(`running task "${name}"…`);
+    // This verb never boots the scheduler, so without installing the recorder here a manual run
+    // would record nothing while the same task on a schedule recorded fine — false exactly where
+    // someone would look first. A no-op unless the project turned history on.
+    const stopRecording = startRunHistory(paths.config ?? undefined, paths.outDir);
     const started = performance.now();
     try {
       const result = await runTask(name, payload, { trigger: "manual" });
       console.log(`✓ "${name}" finished in ${Math.round(performance.now() - started)} ms`);
       if (result !== undefined) console.log(result);
+      stopRecording();
     } catch (err) {
       console.error(`✗ task "${name}" failed:`, err);
+      // Explicitly, not in a `finally`: `Deno.exit` below would skip one.
+      stopRecording();
       Deno.exit(1);
     }
   },

@@ -86,6 +86,10 @@ export async function bootScheduledTasks(
 /**
  * Install the run recorder when — and only when — the project asked for it.
  *
+ * Exported for `denext task <name>`, which never boots the scheduler and would otherwise record
+ * nothing — the one place a human is most likely to look for a manual run. Not re-exported from
+ * `server/mod.ts`: it is denext's own wiring, not an app's extension point.
+ *
  * This is where "off by default" is decided, deliberately at boot rather than inside `runTask`:
  * a low-level function should not be loading config, and reading it once here means every
  * in-process `runTask` records, whether it came from the scheduler, a route handler or an action.
@@ -94,7 +98,7 @@ export async function bootScheduledTasks(
  * @param outDir The build directory the database lives in.
  * @returns A function that stops recording and closes the handle. A no-op when history is off.
  */
-function startRunHistory(
+export function startRunHistory(
   config: { tasks?: { history?: boolean; historyMaxRuns?: number } } | undefined,
   outDir: string,
 ): () => void {
