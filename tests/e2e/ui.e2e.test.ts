@@ -1,0 +1,180 @@
+// `denext ui` in a real browser — the first thing that ever EXECUTES `src/ui/client.ts`.
+//
+// Every other UI test drives the server the way a JavaScript-disabled browser would: real form
+// posts, real `303`s. That is the guarantee the UI is built around, and it is well covered. But
+// it means the client module was only ever asserted as SOURCE TEXT
+// (`ui-view-substrate.test.ts` greps it), never run — so nothing could catch a module that fails
+// to parse, a CSP that refuses to load it, or an enhanced submit that silently falls back to a
+// full navigation. The dev-server bug this file's second test pins was invisible for exactly
+// that reason.
+//
+// Opt-in and nightly, like the rest of `tests/e2e/`: astral downloads Chromium on first run.
+
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { join } from "@std/path";
+import { startUiServer, type UiServer } from "../../src/ui/server.ts";
+import { assertNoConsoleErrors, collectConsoleErrors, launchBrowser, pollFor } from "./harness.ts";
+
+/** A project directory with a `deno.json` and, optionally, a dev server that is not there. */
+async function project(withStaleDevJson: boolean): Promise<string> {
+  const dir = await Deno.makeTempDir({ prefix: "denext_ui_e2e_" });
+  await Deno.writeTextFile(
+    join(dir, "deno.json"),
+    JSON.stringify({ imports: { denext: "jsr:@denext/denext@^2" }, tasks: { dev: "echo dev" } }),
+  );
+  if (withStaleDevJson) {
+    // A port nothing listens on: bound to learn a free number, then given straight back. The
+    // panel will offer Stop for it, and stopping must discover that it is already gone.
+    const probe = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+    const port = (probe.addr as Deno.NetAddr).port;
+    probe.close();
+    await Deno.mkdir(join(dir, ".denext"), { recursive: true });
+    await Deno.writeTextFile(
+      join(dir, ".denext", "dev.json"),
+      JSON.stringify({
+        origin: `http://127.0.0.1:${port}`,
+        port,
+        hostname: "127.0.0.1",
+        pid: 2147483646, // never signalled: the origin never answers, so this is the stale path
+        startedAt: Date.now(),
+      }),
+    );
+  }
+  return dir;
+}
+
+/** Tear down a UI server and its project directory. */
+async function teardown(server: UiServer, dir: string): Promise<void> {
+  await server.shutdown();
+  await Deno.remove(dir, { recursive: true }).catch(() => {});
+}
+
+Deno.test("denext ui: the ?t= handshake, and ui.js actually loads under the strict CSP", async () => {
+  const dir = await project(false);
+  const server = await startUiServer({ dir, port: 0 });
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    const errors = collectConsoleErrors(page);
+
+    await page.goto(server.url); // the single-use ?t= URL the CLI prints
+
+    // The handshake trades the query parameter for an HttpOnly cookie and redirects to a clean
+    // URL, so the token never lingers in history or a referrer.
+    assertEquals(await page.evaluate("location.search"), "", "?t= must not survive the handshake");
+
+    // The module is same-origin, so `script-src 'self'` admits it. If the CSP or the module
+    // itself were broken, the tag would still be here — so the tag alone proves nothing, and
+    // the next test proves EXECUTION. This asserts it is wired in at all.
+    const tag = await page.evaluate(
+      `!!document.querySelector('script[src*="/_ui/ui.js"]')`,
+    );
+    assertEquals(tag, true, "the page must reference /_ui/ui.js");
+
+    // A CSP refusal or a parse error in the module surfaces here, and nowhere else.
+    assertNoConsoleErrors(errors);
+  } finally {
+    await browser.close();
+    await teardown(server, dir);
+  }
+});
+
+Deno.test("denext ui: Stop swaps the panel in place — no navigation, which is the whole bug", async () => {
+  const dir = await project(true);
+  const server = await startUiServer({ dir, port: 0 });
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    const errors = collectConsoleErrors(page);
+
+    // The origin MUST come from `server.url`: the server binds 127.0.0.1 but publishes the
+    // display host, and the session cookie is `SameSite=Strict` on whichever one that is.
+    // Reconstructing the other spelling is a different origin, so the cookie is never sent and
+    // every panel answers a refusal instead.
+    await page.goto(server.url); // handshake first, so the cookie carries the next navigation
+    await page.goto(`${new URL(server.url).origin}/wizard`);
+
+    // A dev server is published, so the Finish step offers Stop.
+    await pollFor(page, `document.body.textContent.indexOf('Stop denext dev') !== -1`);
+
+    // A full navigation would rebuild the document and clear this — which is exactly what the
+    // `303` used to do, taking `ui.js`'s one EventSource and the output sink with it.
+    await page.evaluate("window.__noReload = true");
+
+    const button = await page.$("button");
+    assert(button, "the Finish step must render a submit button");
+    await page.evaluate(
+      `Array.from(document.querySelectorAll('button'))` +
+        `.find((b) => b.textContent.trim() === 'Stop denext dev').click()`,
+    );
+
+    // The panel re-renders from a fresh survey: the stale dev.json is gone, so the step now
+    // offers Start again. This is `swapPanel` doing its work on an intercepted submit.
+    await pollFor(page, `document.body.textContent.indexOf('Start denext dev') !== -1`);
+    assertEquals(
+      await page.evaluate("window.__noReload === true"),
+      true,
+      "the page must NOT have navigated — a redirect here destroys the output sink",
+    );
+
+    // And the sink itself is on the page, ready for the next run's streamed output.
+    assertEquals(
+      await page.evaluate(`!!document.querySelector('#panel pre.out')`),
+      true,
+      "the dev console must be present for ui.js to append streamed lines into",
+    );
+
+    // The stale file really was cleared, not just re-rendered away.
+    const devJson = join(dir, ".denext", "dev.json");
+    let exists = true;
+    try {
+      await Deno.stat(devJson);
+    } catch {
+      exists = false;
+    }
+    assertEquals(exists, false, "the stale dev.json must be cleared on the server");
+
+    assertNoConsoleErrors(errors);
+  } finally {
+    await browser.close();
+    await teardown(server, dir);
+  }
+});
+
+Deno.test("denext ui: a panel swap re-renders without losing the page's other panels", async () => {
+  const dir = await project(false);
+  const server = await startUiServer({ dir, port: 0 });
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    const errors = collectConsoleErrors(page);
+    await page.goto(server.url);
+    await page.goto(`${new URL(server.url).origin}/wizard`);
+
+    // The shell (nav) and the panel are separate: a fragment swap replaces only `#panel`, so
+    // the navigation must still be there afterwards. This is what keeps `ui.js` an enhancement
+    // rather than a second renderer.
+    assertEquals(await page.evaluate(`!!document.querySelector("#panel")`), true);
+    const navBefore = await page.evaluate(`document.querySelectorAll("nav a").length`);
+    assert(Number(navBefore) > 0, "the shell must render navigation links");
+
+    await page.evaluate("window.__noReload = true");
+    // `refresh()` is what every SSE frame calls; drive the same path directly.
+    await page.evaluate(
+      `fetch(location.pathname, { headers: { accept: "text/html-fragment" } })` +
+        `.then((r) => r.text()).then((t) => { window.__fragment = t; })`,
+    );
+    await pollFor(page, "typeof window.__fragment === 'string'");
+
+    const fragment = String(await page.evaluate("window.__fragment"));
+    assertStringIncludes(fragment, '<section id="panel"', "a fragment must be the bare panel");
+    assert(
+      !fragment.includes("<html"),
+      "a fragment must not be a whole document, or swapPanel would nest one",
+    );
+    assertNoConsoleErrors(errors);
+  } finally {
+    await browser.close();
+    await teardown(server, dir);
+  }
+});
