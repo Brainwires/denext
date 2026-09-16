@@ -769,7 +769,9 @@ async function checkOptionsStale(ui: Ui, confirm: Record<string, string>): Promi
  */
 async function checkComposeEdit(ui: Ui): Promise<void> {
   const file = join(ui.dir, "docker-compose.yml");
-  const base = fieldValue(await getText(ui, "/docker"), "_base");
+  // `_base` is a hidden field of the compose-editor forms, so it is rendered by the view that
+  // carries them: the regeneration form on Files has no file stamp of its own.
+  const base = fieldValue(await getText(ui, "/docker?tab=services"), "_base");
   assertEquals(base, await sha256(COMPOSE), "the service form carries the file's stamp");
   const preview = await send(ui, "/docker", {
     editor: "compose",
@@ -790,7 +792,12 @@ async function checkComposeEdit(ui: Ui): Promise<void> {
   assertStringIncludes(unescapeHtml(preview.text), '+      - "8080:3000" # host:container');
   const confirm = confirmFields(preview.text, ["editor", "_base", "ops", "confirm"]);
   const applied = await send(ui, "/docker", confirm);
-  assertEquals([applied.status, applied.location], [303, "/docker?saved=compose"]);
+  // The Docker panel is three views now, so a compose write lands back on the one it came from
+  // rather than on the regeneration form at the top of a single long page.
+  assertEquals(
+    [applied.status, applied.location],
+    [303, "/docker?tab=services&saved=compose"],
+  );
   assertEquals(
     changedLines(COMPOSE, await Deno.readTextFile(file)),
     [[5, '      - "8080:3000" # host:container']],
@@ -806,7 +813,8 @@ async function checkOpaqueCompose(ui: Ui): Promise<void> {
   const compose = twin.files.find((entry: { path: string }) => entry.path === "docker-compose.yml");
   assertEquals(compose?.state, "opaque");
   assertEquals(twin.model, null);
-  const html = await getText(ui, "/docker");
+  // The editor — and so its refusal to follow this file — lives under Services.
+  const html = await getText(ui, "/docker?tab=services");
   assertStringIncludes(html, "the editor cannot follow it line by line: the file does not parse");
   assertEquals(inputTags(html, "editor").length, 0, "an opaque file gets no editor form");
 

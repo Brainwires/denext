@@ -40,10 +40,58 @@ import {
   Panel,
   type ResultGroup,
   ResultList,
+  Tabs,
 } from "../components.ts";
 import { renderView } from "../view.ts";
 import { writeFileAtomic } from "../security.ts";
 import { composeJson, composeSection, composeSubmit, isComposeSubmit } from "./docker-compose.ts";
+
+/**
+ * The panel's three views. The page used to stack all of them — the three files' states, the
+ * regeneration form, every service's form, and the named volumes/networks — which is a lot of
+ * unrelated machinery to scroll past to reach the one thing you came for.
+ *
+ * `files` is the default, so a bare `/docker` is the regeneration panel it has always been.
+ */
+const DOCKER_TABS = ["files", "services", "names"] as const;
+
+/** One of {@linkcode DOCKER_TABS}. */
+type DockerTab = typeof DOCKER_TABS[number];
+
+/** What each tab is called in the strip. */
+const TAB_LABEL: Record<DockerTab, string> = {
+  files: "Files",
+  services: "Services",
+  names: "Names",
+};
+
+/**
+ * Which view this request is for: `?tab=`, or `files` when it says nothing recognisable.
+ *
+ * A compose write redirects with `?tab=services&saved=compose`. Any `?saved=` selects the
+ * services view even without `?tab=`, so a link saved before this split — or one that drops the
+ * tab — still lands on the editor that produced it rather than on the regeneration form.
+ *
+ * @param ctx The request context.
+ * @returns The tab to render.
+ */
+function tabOf(ctx: UiContext): DockerTab {
+  const asked = ctx.url.searchParams.get("tab");
+  if (DOCKER_TABS.includes(asked as DockerTab)) return asked as DockerTab;
+  return ctx.url.searchParams.has("saved") ? "services" : "files";
+}
+
+/** The tab strip, with the current view marked. */
+function DockerTabs({ tab }: { readonly tab: DockerTab }): VNode {
+  return h(Tabs, {
+    items: DOCKER_TABS.map((name) => ({
+      href: name === "files" ? "/docker" : `/docker?tab=${name}`,
+      label: TAB_LABEL[name],
+    })),
+    active: tab === "files" ? "/docker" : `/docker?tab=${tab}`,
+    label: "Docker views",
+  });
+}
 
 /** The port the form suggests (and the templates' own default). */
 const DEFAULT_PORT = 3000;
@@ -271,8 +319,11 @@ const panelResponse = panelResponder("Docker", "/docker");
  * fragment to swap in place. The compose editor block is read fresh from disk each time.
  */
 async function respond(state: PanelState, ctx: UiContext, status = 200): Promise<Response> {
-  const compose = await composeSection(ctx, renderCompose(optionsOf(state.values, state.mode)));
-  return panelResponse(ctx, renderView(h(DockerPanel, { state, compose })), status);
+  const tab = tabOf(ctx);
+  const compose = tab === "files"
+    ? null
+    : await composeSection(ctx, renderCompose(optionsOf(state.values, state.mode)), tab);
+  return panelResponse(ctx, renderView(h(DockerPanel, { state, compose, tab })), status);
 }
 
 // ── options ──────────────────────────────────────────────────────────────────
@@ -381,20 +432,32 @@ interface ViewProps {
 
 /** The whole `<section id="panel">` — the piece `ui.js` swaps. */
 function DockerPanel(
-  { state, compose }: { readonly state: PanelState; readonly compose: VNode },
+  { state, compose, tab }: {
+    readonly state: PanelState;
+    readonly compose: VNode | null;
+    readonly tab: DockerTab;
+  },
 ): VNode {
   const results = state.written?.length || state.refused?.length;
+  // A refusal or a result belongs to the view whose form raised it, and both submits post from
+  // Files — so they render there. The compose editor renders its own refusals through `compose`.
   return h(
     Panel,
     { name: "Docker", title: "Docker" },
     h(PanelLead, { dir: state.dir }),
+    h(DockerTabs, { tab }),
     state.error ? h(Note, null, `denext ui: ${state.error}`) : null,
     state.notice ?? null,
-    h(FileStates, { files: state.files }),
-    h(DockerForm, { state }),
-    state.previewed ? h(PreviewList, { files: state.files }) : null,
-    results ? h(ResultList, { groups: resultGroups(state) }) : null,
-    compose,
+    tab === "files"
+      ? h(
+        Fragment,
+        null,
+        h(FileStates, { files: state.files }),
+        h(DockerForm, { state }),
+        state.previewed ? h(PreviewList, { files: state.files }) : null,
+        results ? h(ResultList, { groups: resultGroups(state) }) : null,
+      )
+      : compose,
   );
 }
 
@@ -417,7 +480,7 @@ function PanelLead({ dir }: { readonly dir: string }): VNode {
     " for ",
     mono(dir),
     ". Files you have edited by hand are never overwritten — their diff is shown so you can " +
-      "copy it across, and a compose file's services can be edited in place below.",
+      "copy it across; an existing compose file's services are edited in place under Services.",
   );
 }
 

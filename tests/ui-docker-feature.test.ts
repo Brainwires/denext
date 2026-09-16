@@ -501,7 +501,7 @@ Deno.test("compose editor: a generated file lists every service in source order,
   const h = await ui();
   try {
     await Deno.writeTextFile(join(h.dir, COMPOSE), GENERATED);
-    const body = await (await get(h, "/docker")).text();
+    const body = await (await get(h, "/docker?tab=services")).text();
     assertStringIncludes(body, "Edit docker-compose.yml");
     const web = body.indexOf('id="compose-web"');
     const db = body.indexOf('id="compose-db"');
@@ -544,7 +544,7 @@ Deno.test("compose editor: a hand-written file without the sentinel is 'edited' 
     assertEquals(payload.files[1].state, "edited");
     assertEquals(payload.model.sentinel, false);
 
-    const body = await (await get(h, "/docker")).text();
+    const body = await (await get(h, "/docker?tab=services")).text();
     assertStringIncludes(body, 'id="compose-api"');
     assertStringIncludes(body, 'id="compose-cache"');
     assertStringIncludes(body, '<option value="always" selected>always</option>');
@@ -564,11 +564,15 @@ Deno.test("compose editor: an opaque file is read-only with the regeneration dif
     assertEquals(payload.files[1].state, "opaque");
     assertEquals(payload.model, null);
 
-    const body = await (await get(h, "/docker")).text();
+    // The file's STATE is a Files-tab badge; the reason the editor bailed belongs with the
+    // editor, under Services. An opaque file has to say both, on the view that owns each.
+    const files = await (await get(h, "/docker")).text();
     assertStringIncludes(
-      body,
+      files,
       "YAML the editor cannot follow — read-only, will not be overwritten",
     );
+
+    const body = await (await get(h, "/docker?tab=services")).text();
     assertStringIncludes(body, "cannot follow it line by line: the file does not parse");
     assertStringIncludes(body, "Regeneration diff");
     assertStringIncludes(body, `+${DOCKER_SENTINEL}`);
@@ -600,7 +604,7 @@ Deno.test("compose editor: a long-syntax port's keys and a dependency's conditio
     const text = "services:\n  web:\n    image: x\n    ports:\n      - target: 80\n" +
       '        published: "8080"\n    depends_on:\n      - db\n  db:\n    image: pg\n';
     await Deno.writeTextFile(join(h.dir, COMPOSE), text);
-    const body = await (await get(h, "/docker")).text();
+    const body = await (await get(h, "/docker?tab=services")).text();
     assertStringIncludes(body, 'name="port.0.published"');
     assertStringIncludes(body, 'name="dep.0.condition"');
     const res = await post(h, "/docker", {
@@ -642,10 +646,13 @@ Deno.test("compose editor: services are added and removed, and names declared, t
   const h = await ui();
   try {
     await Deno.writeTextFile(join(h.dir, COMPOSE), GENERATED);
-    const page = await (await get(h, "/docker")).text();
+    // Adding a service and declaring a name are two different views now: a service is added
+    // beside the services it joins, a volume/network is declared where every one of them is.
+    const page = await (await get(h, "/docker?tab=services")).text();
     assertStringIncludes(page, 'id="compose-new-service"');
-    assertStringIncludes(page, 'id="compose-declarations"');
     assertStringIncludes(page, 'name="build.dockerfile"');
+    const names = await (await get(h, "/docker?tab=names")).text();
+    assertStringIncludes(names, 'id="compose-declarations"');
     const added = await previewEdit(h, {
       op: "addService",
       "new.name": "cache",
@@ -703,7 +710,7 @@ Deno.test("compose editor: a merge key's fields are shown as inherited, and a se
   const h = await ui();
   try {
     await Deno.writeTextFile(join(h.dir, COMPOSE), ANCHORED);
-    const body = await (await get(h, "/docker")).text();
+    const body = await (await get(h, "/docker?tab=services")).text();
     assertStringIncludes(body, 'id="compose-web"');
     assertStringIncludes(body, "takes image from its merge key (&lt;&lt;)");
     const json = await postJson(h, "/api/docker", {
@@ -755,7 +762,7 @@ Deno.test("compose editor: confirm writes exactly the previewed change, every ot
     const res = await post(h, "/docker", confirmFields(preview));
     assertEquals(res.status, 303);
     await res.body?.cancel();
-    assertEquals(res.headers.get("location"), "/docker?saved=compose");
+    assertEquals(res.headers.get("location"), "/docker?tab=services&saved=compose");
 
     const after = await composeOnDisk(h);
     const expected = applyComposeEdits(GENERATED, [
@@ -826,7 +833,7 @@ Deno.test("compose editor: enabling the commented db service warns about its und
     );
     const model = readCompose(after);
     assertEquals(model?.services.map((s) => s.commented), [false, false]);
-    const page = await (await get(h, "/docker")).text();
+    const page = await (await get(h, "/docker?tab=services")).text();
     assertStringIncludes(page, "named volume &quot;denext-db&quot;");
   } finally {
     await stop(h);
@@ -889,7 +896,7 @@ Deno.test("compose editor: --read-only refuses the confirm (403) and leaves the 
     const res = await post(h, "/docker", { editor: "compose", ops, confirm: "1" });
     assertEquals(res.status, 403);
     await res.body?.cancel();
-    const page = await (await get(h, "/docker")).text();
+    const page = await (await get(h, "/docker?tab=services")).text();
     assertStringIncludes(page, "Read-only mode — editing is refused.");
     assertStringIncludes(page, 'name="op" value="apply" disabled');
   } finally {
@@ -987,7 +994,7 @@ Deno.test("compose editor: with two compose files, compose.yaml wins, as it does
   try {
     await Deno.writeTextFile(join(h.dir, "compose.yaml"), HAND);
     await Deno.writeTextFile(join(h.dir, COMPOSE), GENERATED);
-    const page = await (await get(h, "/docker")).text();
+    const page = await (await get(h, "/docker?tab=services")).text();
     assertStringIncludes(page, "Edit compose.yaml");
     assertStringIncludes(page, "redis:7");
   } finally {
@@ -1014,7 +1021,7 @@ Deno.test("compose editor: a build field and a network row post through; an unde
   const h = await ui();
   try {
     await Deno.writeTextFile(join(h.dir, COMPOSE), GENERATED);
-    const page = await (await get(h, "/docker")).text();
+    const page = await (await get(h, "/docker?tab=services")).text();
     assertStringIncludes(page, 'name="build"');
     assertStringIncludes(page, 'name="network.new"');
     const body = await previewEdit(h, {

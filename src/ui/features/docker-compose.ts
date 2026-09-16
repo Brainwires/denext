@@ -282,7 +282,7 @@ export async function composeSubmit(
   if (ctx.json) return jsonResponse(outcome);
   return new Response(null, {
     status: 303,
-    headers: { location: `/docker?saved=${EDITOR_VALUE}` },
+    headers: { location: `/docker?tab=services&saved=${EDITOR_VALUE}` },
   });
 }
 
@@ -975,7 +975,7 @@ function ComposePreview({ name, csrf, readOnly, base, ops, outcome }: PreviewPro
     outcome.diff
       ? h(OpForm, { csrf, action: "/docker", label, fields, disabled: readOnly })
       : h(Note, null, "Nothing to change — the file already reads this way."),
-    h("p", null, h("a", { href: "/docker#compose" }, "Back to the Docker panel")),
+    h("p", null, h("a", { href: "/docker?tab=services" }, "Back to the Docker panel")),
   );
 }
 
@@ -987,25 +987,39 @@ function ComposePreview({ name, csrf, readOnly, base, ops, outcome }: PreviewPro
  * @param regenerated What the template would write for the panel's current options.
  * @returns The block's element tree.
  */
-export async function composeSection(ctx: UiContext, regenerated: string): Promise<VNode> {
+export async function composeSection(
+  ctx: UiContext,
+  regenerated: string,
+  view: ComposeView = "services",
+): Promise<VNode> {
   const snap = await readSnapshot(ctx.dir);
   return h(
     Fragment,
     null,
     h("h2", { id: "compose" }, `Edit ${snap.name}`),
-    composeBody(ctx, snap, regenerated),
+    composeBody(ctx, snap, regenerated, view),
   );
 }
 
+/** Which half of the editor to render: the services, or the top-level names they refer to. */
+export type ComposeView = "services" | "names";
+
 /** The block under the heading, by what is on disk: nothing, an opaque file, or an editable one. */
-function composeBody(ctx: UiContext, snap: Snapshot, regenerated: string): VNode {
+function composeBody(
+  ctx: UiContext,
+  snap: Snapshot,
+  regenerated: string,
+  view: ComposeView,
+): VNode {
   if (snap.text === undefined) {
     return h(
       "p",
       { class: "lead" },
       "There is no ",
       h("code", null, snap.name),
-      " yet — write the Docker files above, then edit its services here.",
+      " yet — write the Docker files under ",
+      h("a", { href: "/docker" }, "Files"),
+      ", then edit its services here.",
     );
   }
   if (snap.model === null) {
@@ -1014,6 +1028,7 @@ function composeBody(ctx: UiContext, snap: Snapshot, regenerated: string): VNode
   }
   return h(ComposeEditor, {
     ctx,
+    view,
     file: { name: snap.name, text: snap.text, model: snap.model, base: snap.base },
   });
 }
@@ -1051,10 +1066,46 @@ interface EditorProps {
   readonly file: Editable;
 }
 
-/** A parseable file: the notices, then one form per service in source order. */
-function ComposeEditor({ ctx, file }: EditorProps): VNode {
+/**
+ * A parseable file: the notices that describe the whole file, then the half this view asks for.
+ *
+ * The notices (saved, sentinel, read-only) and the warnings are deliberately on BOTH views: an
+ * undeclared volume is raised by a service and fixed under Names, so hiding it on either side
+ * would hide it from exactly the person about to act on it.
+ *
+ * `?service=` narrows the services list to one — every service form already posts its own name,
+ * so this only filters what is rendered, and source order is kept when it is absent.
+ */
+function ComposeEditor({ ctx, file, view }: EditorProps & { readonly view: ComposeView }): VNode {
   const saved = ctx.url.searchParams.get("saved") === EDITOR_VALUE;
-  const services = file.model.services;
+  const only = ctx.url.searchParams.get("service");
+  const services = only === null
+    ? file.model.services
+    : file.model.services.filter((svc) => svc.name === only);
+  const notices = h(
+    Fragment,
+    null,
+    saved ? h(Note, null, `Saved ${file.name}.`) : null,
+    file.model.sentinel ? h(SentinelNote, null) : null,
+    ctx.readOnly ? h(Note, null, "Read-only mode — editing is refused.") : null,
+    h(Warnings, { warnings: [...volumeWarnings(file.model), ...networkWarnings(file.model)] }),
+  );
+  if (view === "names") {
+    return h(
+      Fragment,
+      null,
+      h(
+        "p",
+        { class: "lead" },
+        "The top-level named volumes and networks a service may refer to. Declaring one here " +
+          "does not attach it to anything — a service joins it under ",
+        h("a", { href: "/docker?tab=services" }, "Services"),
+        ".",
+      ),
+      notices,
+      h(DeclarationsForm, { ctx, file }),
+    );
+  }
   return h(
     Fragment,
     null,
@@ -1064,15 +1115,16 @@ function ComposeEditor({ ctx, file }: EditorProps): VNode {
       "Edit services in place: only the lines an edit touches change — comments and " +
         "everything else stay byte for byte. Every change is previewed as a diff first.",
     ),
-    saved ? h(Note, null, `Saved ${file.name}.`) : null,
-    file.model.sentinel ? h(SentinelNote, null) : null,
-    ctx.readOnly ? h(Note, null, "Read-only mode — editing is refused.") : null,
-    h(Warnings, { warnings: [...volumeWarnings(file.model), ...networkWarnings(file.model)] }),
+    notices,
+    only !== null && services.length === 0
+      ? h(Note, { role: "alert" }, `No service named "${only}" in ${file.name}.`)
+      : null,
     services.length
       ? services.map((svc) => h(ServiceForm, { key: svc.name, ctx, file, svc }))
-      : h("p", { class: "lead" }, "No services."),
+      : only === null
+      ? h("p", { class: "lead" }, "No services.")
+      : null,
     h(AddServiceForm, { ctx, file }),
-    h(DeclarationsForm, { ctx, file }),
   );
 }
 
