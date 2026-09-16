@@ -301,6 +301,7 @@
     "GlobalFlags:interface",
     "ParseOutcome:typeAlias",
     "PositionalSpec:interface",
+    "ProjectVerb:interface",
     "suggest:function"
   ],
   "denext/plugin-kit": [

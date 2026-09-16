@@ -11,14 +11,7 @@
 
 import { dirname, join } from "@std/path";
 import { CONFIG_FILES } from "../build/paths.ts";
-
-/** One verb a project contributes, as help lists it. */
-export interface ProjectVerb {
-  /** The verb, as in `denext <name>`. */
-  readonly name: string;
-  /** Its one-line summary. */
-  readonly summary: string;
-}
+import type { ProjectVerb } from "./command.ts";
 
 /** The cache file's contents. */
 interface CommandCache {

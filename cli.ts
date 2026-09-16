@@ -29,11 +29,11 @@ import {
 import { loadEnv } from "./src/server/env.ts";
 import { loadPluginCommands } from "./src/cli/plugin-commands.ts";
 import { VERSION } from "./mod.ts";
-import type { CommandContext, CommandSpec, ParseOutcome } from "./src/cli/command.ts";
+import type { CommandContext, CommandSpec, ParseOutcome, ProjectVerb } from "./src/cli/command.ts";
 import { type CommandRegistry, GLOBAL_FLAGS } from "./src/cli/command.ts";
 import { buildRegistry } from "./src/cli/register.ts";
 import { projectDir, SHUTDOWN_SIGNALS } from "./src/cli/shared.ts";
-import { type ProjectVerb, readCommandCache } from "./src/cli/command-cache.ts";
+import { readCommandCache } from "./src/cli/command-cache.ts";
 
 /**
  * The `--allow-*` flags to give a re-exec child: mirror the parent's coarse

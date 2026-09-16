@@ -13,7 +13,14 @@
 // the toolchain in. (`edit-distance` is a pure, zero-dependency leaf util.)
 
 import { editDistance } from "../utils/edit-distance.ts";
-import type { ProjectVerb } from "./command-cache.ts";
+
+/** One verb a project contributes, as {@linkcode CommandRegistry.formatHelp} lists it. */
+export interface ProjectVerb {
+  /** The verb, as in `denext <name>`. */
+  readonly name: string;
+  /** Its one-line summary. */
+  readonly summary: string;
+}
 
 /** The value kind a flag carries. A `boolean` flag is a bare presence switch. */
 export type FlagType = "boolean" | "string" | "number";
