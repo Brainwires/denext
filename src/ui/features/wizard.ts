@@ -27,7 +27,7 @@ import { FEATURES } from "../../cli/commands/create.ts";
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChildren } from "../../jsx/types.ts";
 import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
-import { DiffBlock, Hidden, Note, OpForm, Out, Panel } from "../components.ts";
+import { Badge, DiffBlock, Hidden, Note, OpForm, Out, Panel } from "../components.ts";
 import { renderView } from "../view.ts";
 import { broadcast } from "../events.ts";
 import { StaleWriteError, uiSafeJoin, writeFileAtomic } from "../security.ts";
@@ -885,7 +885,7 @@ function checkRow(check: DoctorCheck, index: number): VNode {
   return h(
     "li",
     { key: index },
-    h("span", { class: "badge" }, verdict),
+    h(Badge, { tone: verdict }, verdict),
     " ",
     h("strong", null, check.name),
     ` — ${check.detail}`,
@@ -911,7 +911,7 @@ function Step({ ctx, index, view, outcome }: StepProps): VNode {
   return h(
     "section",
     { id: `step-${view.id}`, class: "step" },
-    h("h2", null, `${index + 1}. ${view.title} `, h("span", { class: "badge" }, view.status)),
+    h("h2", null, `${index + 1}. ${view.title} `, h(Badge, { tone: view.status }, view.status)),
     h("p", { class: "lead" }, view.summary),
     view.detail ?? null,
     view.actions.map((action) => h(ActionForm, { key: action.label, ctx, action })),

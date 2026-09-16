@@ -36,7 +36,7 @@ import {
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChild } from "../../jsx/types.ts";
 import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
-import { DiffBlock, Mono, Note, OpForm, Out, Panel, PreviewLead } from "../components.ts";
+import { Badge, DiffBlock, Mono, Note, OpForm, Out, Panel, PreviewLead } from "../components.ts";
 import { renderView } from "../view.ts";
 import { broadcast, sseProcess } from "../events.ts";
 import { runDeno } from "../proc.ts";
@@ -431,17 +431,18 @@ function CardLinks({ row }: { readonly row: PluginRow }): VNode {
 function Card({ ctx, row }: { readonly ctx: UiContext; readonly row: PluginRow }): VNode {
   const { entry } = row;
   const state = row.wired ? "wired" : row.dependency ? "pinned" : "available";
+  const tone = row.wired ? "ok" : row.dependency ? "info" : "todo";
   const op = isInstalled(row) ? "remove" : "add";
   return h(
     "article",
     { class: "card", id: entry.name },
     h("strong", null, entry.name),
     " ",
-    h("span", { class: "badge" }, entry.version),
+    h(Badge, { tone: "info" }, entry.version),
     " ",
-    h("span", { class: "badge" }, state),
+    h(Badge, { tone }, state),
     " ",
-    entry.verb ? h("span", { class: "badge" }, `denext ${entry.verb}`) : null,
+    entry.verb ? h(Badge, { tone: "info" }, `denext ${entry.verb}`) : null,
     " ",
     h("span", null, entry.blurb),
     h(CardLinks, { row }),

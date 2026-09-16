@@ -131,7 +131,8 @@ Deno.test("the HTML wizard renders one section per step, each with a status pill
     const body = await res.text();
     assertStringIncludes(body, '<section id="panel"');
     for (const id of STEP_IDS) assertStringIncludes(body, `id="step-${id}"`);
-    assertStringIncludes(body, '<span class="badge">');
+    // Every step's pill carries its status as a tone, not a flat grey.
+    assertStringIncludes(body, '<span class="badge ');
     assertStringIncludes(body, '<form method="post" action="/wizard"');
     assert(!body.includes("<script>"), "the wizard ships no inline script");
     assert(!body.includes("Not implemented yet"), "the stub is gone");

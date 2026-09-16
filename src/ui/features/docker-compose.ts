@@ -36,7 +36,17 @@ import { createUnifiedDiff } from "../../build/patch-diff.ts";
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChild, VNodeChildren } from "../../jsx/types.ts";
 import { jsonResponse, panelResponder, type UiContext } from "../html.ts";
-import { DiffBlock, Note, OpForm, Out, Panel, PreviewLead, Row } from "../components.ts";
+import {
+  Badge,
+  type BadgeTone,
+  DiffBlock,
+  Note,
+  OpForm,
+  Out,
+  Panel,
+  PreviewLead,
+  Row,
+} from "../components.ts";
 import { Raw, type RawHtml, renderView } from "../view.ts";
 import { control, field as labelled, opButton } from "../form/control.ts";
 import { OP_FIELD, parseOp } from "../form/value.ts";
@@ -1255,9 +1265,10 @@ function SubmitButton({ value, label, disabled, ghost }: SubmitProps): VNode {
 
 /** The service heading with its buttons (first in the form, so Enter previews). */
 function HeadRow(
-  { svc, badge, children }: {
+  { svc, badge, tone, children }: {
     readonly svc: ComposeService;
     readonly badge: string;
+    readonly tone?: BadgeTone;
     readonly children?: VNodeChildren;
   },
 ): VNode {
@@ -1269,7 +1280,7 @@ function HeadRow(
       { class: "grow flush" },
       h("code", null, svc.name),
       " ",
-      h("span", { class: "badge" }, badge),
+      h(Badge, { tone }, badge),
     ),
     children,
   );
@@ -1290,7 +1301,7 @@ function CommentedService(
     null,
     h(
       HeadRow,
-      { svc, badge: `commented out · line ${svc.line}` },
+      { svc, badge: `commented out · line ${svc.line}`, tone: "info" },
       h(SubmitButton, { value: "toggle", label: "Enable", disabled }),
       h(SubmitButton, { value: "removeService", label: "Remove", disabled, ghost: true }),
     ),
@@ -1316,7 +1327,7 @@ function ActiveService(props: ServiceProps & { readonly id: string }): VNode {
     null,
     h(
       HeadRow,
-      { svc, badge: `line ${svc.line}` },
+      { svc, badge: `line ${svc.line}`, tone: "ok" },
       h(SubmitButton, { value: "apply", label: "Preview changes", disabled }),
       h(SubmitButton, { value: "toggle", label: "Comment out", disabled, ghost: true }),
       h(SubmitButton, { value: "removeService", label: "Remove", disabled, ghost: true }),

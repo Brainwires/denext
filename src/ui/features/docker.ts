@@ -33,6 +33,8 @@ import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode } from "../../jsx/types.ts";
 import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
 import {
+  Badge,
+  type BadgeTone,
   CsrfField,
   DiffBlock,
   FileDetails,
@@ -108,6 +110,14 @@ const MODE_LABEL: Record<DockerMode, string> = {
  * file the editor cannot follow (several documents, …), shown read-only.
  */
 type FileState = "absent" | "generated" | "edited" | "opaque";
+
+/** How each state reads: absent is a to-do, a hand-edit is a fact, opaque is a caution. */
+const STATE_TONE: Record<FileState, BadgeTone> = {
+  absent: "todo",
+  generated: "ok",
+  edited: "info",
+  opaque: "warn",
+};
 
 /** What each state means, next to the file's name. */
 const STATE_LABEL: Record<FileState, string> = {
@@ -493,7 +503,7 @@ function FileStates({ files }: { readonly files: readonly FileView[] }): VNode {
       { key: file.path },
       h("code", null, file.path),
       " ",
-      h("span", { class: "badge" }, STATE_LABEL[file.state]),
+      h(Badge, { tone: STATE_TONE[file.state] }, STATE_LABEL[file.state]),
     )
   );
   return h(Fragment, null, h("h2", null, "Current files"), h("ul", null, rows));
@@ -572,11 +582,22 @@ function PreviewList({ files }: { readonly files: readonly FileView[] }): VNode 
 function FilePreview({ file }: { readonly file: FileView }): VNode {
   return h(
     FileDetails,
-    { path: file.path, badge: previewBadge(file), open: file.diff !== undefined },
+    {
+      path: file.path,
+      badge: previewBadge(file),
+      tone: previewTone(file),
+      open: file.diff !== undefined,
+    },
     file.diff === undefined
       ? h(Note, null, "Identical to what is on disk.")
       : h(DiffBlock, { diff: file.diff }),
   );
+}
+
+/** How a preview reads: a caution when the write would refuse, else a pending change. */
+function previewTone(file: FileView): BadgeTone {
+  if (file.diff === undefined) return "info";
+  return file.state === "edited" || file.state === "opaque" ? "warn" : "todo";
 }
 
 /** What a write would do to one file, as its preview badge says. */

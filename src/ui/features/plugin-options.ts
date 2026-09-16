@@ -30,6 +30,7 @@ import {
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChild, VNodeChildren } from "../../jsx/types.ts";
 import {
+  Badge,
   DiffBlock,
   Hidden,
   Mono,
@@ -504,7 +505,7 @@ function IndexView({ state }: { readonly state: ProjectState }): VNode {
           { key: entry.name },
           wiredAs(state, entry)
             ? h("a", { href: optionsHref(entry.name) }, entry.name)
-            : h(Fragment, null, entry.name, " ", h("span", { class: "badge" }, "not wired")),
+            : h(Fragment, null, entry.name, " ", h(Badge, { tone: "todo" }, "not wired")),
         )
       ),
     ),
@@ -527,7 +528,7 @@ function CodeOptions({ reading }: { readonly reading: Reading }): VNode {
       h(
         Fragment,
         { key },
-        h("h3", null, h("code", null, key), " ", h("span", { class: "badge" }, "read-only")),
+        h("h3", null, h("code", null, key), " ", h(Badge, { tone: "info" }, "read-only")),
         h(Out, null, reading.codeText[key] ?? ""),
       )
     ),

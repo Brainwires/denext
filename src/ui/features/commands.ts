@@ -32,6 +32,7 @@ import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode } from "../../jsx/types.ts";
 import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
 import {
+  Badge,
   FilterForm,
   Hidden,
   Input,
@@ -602,7 +603,7 @@ function VerbCard({ info, view }: VerbProps): VNode {
       null,
       h("code", null, `denext ${info.name}`),
       " ",
-      h("span", { class: "badge" }, info.source),
+      h(Badge, { tone: "info" }, info.source),
     ),
     h("p", null, info.summary),
     info.usage ? h("pre", { class: "mono" }, info.usage) : null,

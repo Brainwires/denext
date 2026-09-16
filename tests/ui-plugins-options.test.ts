@@ -495,7 +495,7 @@ Deno.test("a JSR search renders escaped results with an Add form each", async ()
     assertStringIncludes(body, "<strong>@acme/cool-plugin</strong>");
     assertStringIncludes(body, "&lt;script&gt;alert(1)&lt;/script&gt;");
     assert(!body.includes("<script>alert"), "registry text is escaped");
-    assertStringIncludes(body, '<span class="badge">archived</span>');
+    assertStringIncludes(body, '<span class="badge warn">archived</span>');
     assertStringIncludes(body, 'name="op" value="add-jsr"');
     assertStringIncludes(body, 'name="export" value="coolPlugin"');
     const twin = await (await get(h, "/api/plugins?q=cool")).json();

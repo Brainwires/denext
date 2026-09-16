@@ -40,6 +40,28 @@ export function Note(
   return h("p", { class: "note", role }, children);
 }
 
+/**
+ * How a {@linkcode Badge} reads. The CSS colours each one; a badge with no tone stays grey.
+ */
+export type BadgeTone = "ok" | "todo" | "warn" | "fail" | "info";
+
+/**
+ * A `<span class="badge">` — the pill a panel puts beside a name to say what state it is in.
+ *
+ * `tone` is what colours it. Without one the badge renders exactly the markup every call site
+ * emitted before this component existed, so adopting it is never a visual change on its own —
+ * the colour arrives only when the caller has something to say.
+ *
+ * @param props `tone`: `ok` (done/set), `todo` (pending), `warn` (caution), `fail` (broken) or
+ *   `info` (neutral but deliberate); `children`: the label.
+ * @returns The span.
+ */
+export function Badge(
+  { tone, children }: { readonly tone?: BadgeTone; readonly children?: VNodeChildren },
+): VNode {
+  return h("span", { class: tone === undefined ? "badge" : `badge ${tone}` }, children);
+}
+
 /** One entry of a {@linkcode Tabs} strip. */
 export interface TabItem {
   /** Where the tab goes — a real URL, so it works with JavaScript disabled. */
@@ -297,9 +319,10 @@ export function DiffBlock({ diff }: { readonly diff: string }): VNode {
  * @returns The details element.
  */
 export function FileDetails(
-  { path, badge, open, children }: {
+  { path, badge, tone, open, children }: {
     readonly path: string;
     readonly badge: string;
+    readonly tone?: BadgeTone;
     readonly open: boolean;
     readonly children?: VNodeChildren;
   },
@@ -307,7 +330,7 @@ export function FileDetails(
   return h(
     "details",
     { open },
-    h("summary", null, h("code", null, path), " ", h("span", { class: "badge" }, badge)),
+    h("summary", null, h("code", null, path), " ", h(Badge, { tone }, badge)),
     children,
   );
 }

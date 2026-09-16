@@ -288,5 +288,6 @@ form.op { display: inline-block; margin: var(--space-1) var(--space-2) var(--spa
 .badge.ok { color: var(--success); border-color: color-mix(in srgb, var(--success) 40%, var(--border)); }
 .badge.todo { color: var(--primary); border-color: color-mix(in srgb, var(--primary) 40%, var(--border)); }
 .badge.warn { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 40%, var(--border)); }
+.badge.fail { color: var(--destructive); border-color: color-mix(in srgb, var(--destructive) 40%, var(--border)); }
 .badge.info { color: var(--muted-foreground); }
 `;

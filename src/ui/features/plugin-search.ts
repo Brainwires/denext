@@ -12,7 +12,7 @@
 import { type PluginNames, resolvePluginNames } from "../../build/plugin-install.ts";
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode } from "../../jsx/types.ts";
-import { Input, Note, OpForm } from "../components.ts";
+import { Badge, Input, Note, OpForm } from "../components.ts";
 import type { UiContext } from "../html.ts";
 import {
   fetchJsrConfig,
@@ -249,9 +249,9 @@ function HitCard({ ctx, hit }: { readonly ctx: UiContext; readonly hit: JsrHit }
     { class: "card", id: `jsr:${spec}` },
     h("strong", null, spec),
     " ",
-    h("span", { class: "badge" }, hit.version),
+    h(Badge, { tone: "info" }, hit.version),
     " ",
-    hit.archived ? h("span", { class: "badge" }, "archived") : null,
+    hit.archived ? h(Badge, { tone: "warn" }, "archived") : null,
     " ",
     h("span", null, hit.description || "No description."),
     h(OpForm, {

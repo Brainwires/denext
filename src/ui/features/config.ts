@@ -43,6 +43,7 @@ import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode } from "../../jsx/types.ts";
 import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
 import {
+  Badge,
   DiffBlock,
   FilterForm,
   Hidden,
@@ -572,10 +573,11 @@ function SectionBody({ ctx, state, section, feedback }: SectionProps): VNode {
 function ConfigSection({ ctx, state, section, feedback }: SectionProps): VNode {
   const mine = feedback?.key === section.key;
   const badge = section.kind === "editable" ? (section.present ? "set" : "unset") : section.kind;
+  const tone = section.kind === "editable" ? (section.present ? "ok" : "todo") : "info";
   return h(
     "details",
     { id: section.key, open: section.present || mine },
-    h("summary", null, h("strong", null, section.key), " ", h("span", { class: "badge" }, badge)),
+    h("summary", null, h("strong", null, section.key), " ", h(Badge, { tone }, badge)),
     section.description ? h("p", { class: "lead" }, section.description) : null,
     h(SectionBody, { ctx, state, section, feedback: mine ? feedback : undefined }),
   );
