@@ -433,6 +433,11 @@ async function exists(path: string): Promise<boolean> {
 // ── --offline ────────────────────────────────────────────────────────────────
 
 /** The JSON outcome of one wizard operation. */
+/** The wizard page's markup, the way a no-JS browser would read it. */
+async function wizardPage(h: Harness): Promise<string> {
+  return await (await fetch(`${h.base}/wizard`, { headers: h.headers })).text();
+}
+
 async function outcomeOf(h: Harness, op: string): Promise<{ ok: boolean; message: string }> {
   return (await (await post(h, { op }, "/api/wizard")).json()).outcome;
 }
@@ -471,6 +476,29 @@ Deno.test("online, the task and dev buttons stay live and carry no offline note"
     assert(!body.includes("--offline"));
   } finally {
     await stop(h);
+  }
+});
+
+Deno.test("the Dependencies step separates 'nothing to install' from 'not installed yet'", async () => {
+  // No imports at all: `deno install` has nothing to resolve and writes no lockfile, so the step
+  // must not sit on a to-do no run can ever satisfy.
+  const bare = await ui({ "deno.json": "{}\n" });
+  // An import map with no lockfile yet: that IS a to-do, and the action belongs there.
+  const pending = await ui({
+    "deno.json": '{ "imports": { "@std/assert": "jsr:@std/assert@^1" } }\n',
+  });
+  try {
+    const empty = await wizardPage(bare);
+    assertStringIncludes(empty, "Nothing to install");
+    assert(!empty.includes("No deno.lock yet"), "the dead-end wording is gone");
+    assert(!empty.includes("Run deno install"), "and so is the button that cannot help");
+
+    const todo = await wizardPage(pending);
+    assertStringIncludes(todo, "No deno.lock yet");
+    assertStringIncludes(todo, "Run deno install");
+  } finally {
+    await stop(bare);
+    await stop(pending);
   }
 });
 

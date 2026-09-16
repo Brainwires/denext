@@ -61,6 +61,8 @@ interface Survey {
   readonly appDir: string | null;
   /** Whether a `deno.lock` exists (dependencies have been resolved at least once). */
   readonly hasLock: boolean;
+  /** Whether the config declares an import map at all — nothing to install when it does not. */
+  readonly hasImports: boolean;
   /** The `nodeModulesDir` setting, when the project declares one. */
   readonly nodeModulesDir: string | null;
 }
@@ -116,6 +118,7 @@ async function surveyProject(dir: string): Promise<Survey> {
     dev,
     appDir,
     hasLock,
+    hasImports: importCount(deno?.data ?? null) > 0,
     nodeModulesDir: stringAt(deno?.data ?? null, ["nodeModulesDir"]),
   };
 }
@@ -339,16 +342,29 @@ function stepDeps(s: Survey): StepView {
       ") as well.",
     )
     : undefined;
+  // A project whose config declares no imports has nothing for `deno install` to resolve, so it
+  // writes no lockfile — and the step would sit on "todo" for ever, however often it is run.
+  const nothingToDo = !s.hasLock && !s.hasImports;
   return {
     id: "deps",
     title: "Dependencies",
-    status: s.hasLock ? "ok" : "todo",
+    status: s.hasLock ? "ok" : nothingToDo ? "info" : "todo",
     summary: s.hasLock
       ? "deno.lock exists — the import map has been resolved at least once."
+      : nothingToDo
+      ? `Nothing to install — ${s.deno?.name ?? "deno.json"} declares no imports, so ` +
+        "`deno install` has nothing to resolve and writes no deno.lock."
       : "No deno.lock yet — `deno install` resolves and caches the import map.",
     detail: npm,
-    actions: [{ op: "install", label: "Run deno install" }],
+    actions: nothingToDo ? [] : [{ op: "install", label: "Run deno install" }],
   };
+}
+
+/** How many entries the config's import map has (0 when it declares none). */
+function importCount(data: unknown): number {
+  if (typeof data !== "object" || data === null) return 0;
+  const imports = (data as Record<string, unknown>).imports;
+  return typeof imports === "object" && imports !== null ? Object.keys(imports).length : 0;
 }
 
 /** Step 5 — which environment variables does the source read that nothing declares? */
