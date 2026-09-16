@@ -527,3 +527,82 @@ Deno.test("--offline runs doctor through a no-net child and deno install --cache
     await stop(offline);
   }
 });
+
+// ── the dev server: starting it must not destroy the page showing its output ──
+
+/** Publish a `.denext/dev.json` naming a port nothing listens on. */
+async function fakeDevJson(dir: string): Promise<string> {
+  const probe = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  const port = (probe.addr as Deno.NetAddr).port;
+  probe.close();
+  await Deno.mkdir(join(dir, ".denext"), { recursive: true });
+  const path = join(dir, ".denext", "dev.json");
+  await Deno.writeTextFile(
+    path,
+    JSON.stringify({
+      origin: `http://127.0.0.1:${port}`,
+      port,
+      hostname: "127.0.0.1",
+      pid: 2147483646, // never signalled: the origin below never answers
+      startedAt: Date.now(),
+    }),
+  );
+  return path;
+}
+
+Deno.test("starting the dev server answers in place — a 303 would destroy the output sink", async () => {
+  const h = await ui({ "deno.json": DENO_JSON_WITHOUT_DEV });
+  try {
+    await fakeDevJson(h.dir);
+    const res = await post(h, { op: "dev" });
+    // The regression: this branch used to answer `303`, which navigates, rebuilds the document,
+    // and takes `ui.js`'s one EventSource and the <pre class="out"> with it — so every streamed
+    // line was broadcast to nobody and starting a dev server looked like it did nothing.
+    assertEquals(res.status, 200, "the dev op must render in place, not redirect");
+    assertEquals(res.headers.get("location"), null, "no Location header — nothing navigates");
+    const body = await res.text();
+    assertStringIncludes(body, "Already running at");
+    assertMatch(body, /<pre class="out">/, "the output sink must survive the answer");
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("a running dev server is offered a Stop button instead of Start", async () => {
+  const h = await ui({ "deno.json": DENO_JSON_WITHOUT_DEV });
+  try {
+    await fakeDevJson(h.dir);
+    const payload = await (await fetch(`${h.base}/api/wizard`, { headers: h.headers })).json();
+    const finish = payload.steps.find((s: { id: string }) => s.id === "finish");
+    assertEquals(finish.actions, ["stop"], "a running server offers stop, not start");
+    assertMatch(await wizardPage(h), /<button[^>]*>Stop denext dev<\/button>/);
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("the wizard always renders the dev console, so streamed output has somewhere to land", async () => {
+  const h = await ui({ "deno.json": DENO_JSON_WITHOUT_DEV });
+  try {
+    // With no dev server at all, the sink must still be on the page: `ui.js` appends streamed
+    // lines into `#panel pre.out`, and it can only do that if the element is already there.
+    assertMatch(await wizardPage(h), /<pre class="out">/);
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("stopping clears a dev.json whose server is already gone, and never signals its pid", async () => {
+  const h = await ui({ "deno.json": DENO_JSON_WITHOUT_DEV });
+  try {
+    const devJson = await fakeDevJson(h.dir);
+    const res = await post(h, { op: "stop" }, "/api/wizard");
+    assertEquals(res.status, 200);
+    const { outcome } = await res.json();
+    assertEquals(outcome.ok, true);
+    assertStringIncludes(outcome.message, "stale");
+    assertEquals(await exists(devJson), false, "the stale dev.json must be cleared");
+  } finally {
+    await stop(h);
+  }
+});

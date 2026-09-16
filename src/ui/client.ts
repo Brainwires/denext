@@ -192,8 +192,12 @@ const FRAMES = {
   "command-done": () => refresh(),
   "task-done": () => refresh(),
   "dev-output": (payload) => appendOut(payload.line ?? ""),
-  "dev-exit": (payload) => appendOut("\u2014 exited " + payload.code),
+  "dev-exit": (payload) => {
+    appendOut("\u2014 exited " + payload.code);
+    refresh();
+  },
   "dev-ready": (payload) => devReady(payload.url ?? ""),
+  "dev-stopped": () => refresh(),
 };
 
 trackAll();

@@ -29,9 +29,11 @@ import type { VNode, VNodeChildren } from "../../jsx/types.ts";
 import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
 import { Badge, DiffBlock, Hidden, Note, OpForm, Out, Panel } from "../components.ts";
 import { renderView } from "../view.ts";
-import { broadcast } from "../events.ts";
+import { broadcast, exitLine } from "../events.ts";
 import { StaleWriteError, uiSafeJoin, writeFileAtomic } from "../security.ts";
 import { cliInvocation, runDeno } from "../proc.ts";
+import { clearDevLog, devLogText, recordDevLine } from "../dev-log.ts";
+import { stopDevServer } from "../dev-stop.ts";
 import { OFFLINE_REFUSALS, OFFLINE_STATUS } from "../offline.ts";
 import { envExampleSource, type EnvScan, scanEnvUsage } from "../env-scan.ts";
 import { type DenoConfigFile, readDenoConfig, taskMap } from "../tasks.ts";
@@ -464,8 +466,15 @@ function stepFinish(s: Survey): StepView {
     summary: s.dev
       ? `The dev server is up at ${s.dev.origin}.`
       : "Start the dev server; its address appears here once it publishes .denext/dev.json.",
-    detail: s.dev ? h("p", null, devLink(s.dev, "Open the app")) : h(Out, null),
-    actions: s.dev ? [] : [{ op: "dev", label: "Start denext dev", offline: OFFLINE_REFUSALS.dev }],
+    detail: h(
+      Fragment,
+      null,
+      s.dev ? h("p", null, devLink(s.dev, "Open the app")) : null,
+      h(Out, null, devLogText(s.dir)),
+    ),
+    actions: s.dev
+      ? [{ op: "stop", label: "Stop denext dev" }]
+      : [{ op: "dev", label: "Start denext dev", offline: OFFLINE_REFUSALS.dev }],
   };
 }
 
@@ -517,6 +526,7 @@ const OPS: Record<string, Op> = {
   "scaffold-page": opScaffoldPage,
   scaffold: opScaffold,
   dev: opStartDev,
+  stop: opStopDev,
 };
 
 /** Step 3's write: merge the missing template keys into the project's own `deno.json`. */
@@ -709,7 +719,6 @@ function opStartDev(ctx: UiContext, s: Survey): Promise<OpOutcome> {
     return Promise.resolve({
       step: "finish",
       ok: true,
-      redirect: true,
       message: `Already running at ${s.dev.origin}.`,
     });
   }
@@ -717,11 +726,36 @@ function opStartDev(ctx: UiContext, s: Survey): Promise<OpOutcome> {
   return Promise.resolve({
     step: "finish",
     ok: true,
-    redirect: true,
     message: started
       ? "Starting denext dev — its output is streaming to this page."
       : "denext dev is already starting — its output is streaming to this page.",
   });
+}
+
+/**
+ * Step 9's other operation: stop the dev server this project published.
+ *
+ * Nothing here needs the child's process handle, which is exactly what lets it work after
+ * `denext ui` was restarted: the dev server wrote its own pid into `.denext/dev.json`, so a UI
+ * that never spawned it can still stop it. That is why the handle surviving a restart needed no
+ * detached process to survive with it. `../dev-stop.ts` carries the two hazards that shape the
+ * order of operations there (a reused pid, and children left holding the port).
+ *
+ * Deliberately NOT refused under `--offline`: the liveness probe is a loopback request to an
+ * address this project published, needing no network the UI does not already have, and refusing
+ * to stop a server the panel is actively showing as running would be indefensible.
+ */
+async function opStopDev(ctx: UiContext, _s: Survey, _form: FormData): Promise<OpOutcome> {
+  const outcome = await stopDevServer(ctx.dir);
+  // Keep a failed stop's log: it is the only evidence of why the server would not go.
+  if (outcome.status === "stopped") clearDevLog(ctx.dir);
+  // Every other open page is still offering to stop a server that is now gone.
+  broadcast(ctx.events, { type: "dev-stopped" });
+  return {
+    step: "finish",
+    ok: outcome.status !== "failed" && outcome.status !== "unsupported",
+    message: outcome.message,
+  };
 }
 
 /**
@@ -749,11 +783,21 @@ function startDevServer(ctx: UiContext): boolean {
   const push = (event: unknown): void => broadcast(ctx.events, event);
   runDeno([...cliInvocation({ dir: ctx.dir }), "dev", ctx.dir], {
     cwd: ctx.dir,
-    onLine: (line) => push({ type: "dev-output", line }),
+    onLine: (line) => {
+      recordDevLine(ctx.dir, line);
+      push({ type: "dev-output", line });
+    },
     signal: ctx.signal,
   })
-    .then((run) => push({ type: "dev-exit", code: run.code }))
-    .catch((error) => push({ type: "dev-output", line: `denext dev failed: ${reason(error)}` }))
+    .then((run) => {
+      recordDevLine(ctx.dir, exitLine(run.code));
+      push({ type: "dev-exit", code: run.code });
+    })
+    .catch((error) => {
+      const line = `denext dev failed: ${reason(error)}`;
+      recordDevLine(ctx.dir, line);
+      push({ type: "dev-output", line });
+    })
     .finally(() => devStarting.delete(ctx.dir));
   pollDevInfo(ctx.dir, push).catch(() => {/* the UI shut down */});
   return true;

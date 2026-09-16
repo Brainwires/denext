@@ -580,13 +580,27 @@ change as a unified diff and only writes on an explicit confirm.
 | Doctor                | —                                                                                                                                 | Runs `denext doctor --json` as a subprocess and renders every check; offers `app/page.tsx` when there is no app directory |
 | Features              | The feature list `denext create` offers                                                                                           | Scaffolds the project into an empty directory; on an existing project it only lists them                                  |
 | Tasks                 | The tasks your `deno.json` declares                                                                                               | Runs one, streaming its output over SSE                                                                                   |
-| Finish                | Whether the dev server is up                                                                                                      | Starts `denext dev` and waits for it to publish its address                                                               |
+| Finish                | Whether the dev server is up                                                                                                      | Starts `denext dev`, shows its console, offers **Stop**                                                                   |
 
 Nothing in the wizard imports a project module: detection is filesystem probing, and
 doctor, `deno install` and `denext dev` all run as subprocesses. Under `--offline`, doctor
 runs without net, `deno install` runs `--cached-only`, and the Tasks and Finish buttons are
 disabled ([Working offline](#working-offline)). See [Doctor & audit](/docs/doctor-audit) for
 what the checks mean.
+
+**The dev server, and stopping it.** Starting `denext dev` answers _in place_ rather than
+redirecting, and the step keeps a `<pre class="out">` that the server's output streams into over
+SSE. Those lines are also retained in the UI's memory, so a reload, a second tab, or a panel swap
+shows what has been printed so far instead of an empty box. A redirect used to discard all of it: it
+rebuilt the document and took `ui.js`'s single `EventSource` and the output block with it, which is
+what made starting a dev server look like it did nothing at all.
+
+While a server is running the step offers **Stop**, and that works even after `denext ui` has itself
+been restarted: the dev server records its own pid in `.denext/dev.json`, so stopping never needs
+the child's process handle. Nothing is signalled until the address that file names answers as a
+denext dev server — a stale file is cleared instead, because the pid it carries may since have been
+handed to an unrelated process. Stopping asks the server to drain first and kills the process tree
+only if it will not; on Windows, which has no such signal, it is a hard kill and says so.
 
 ## Cron
 
@@ -736,6 +750,11 @@ disabled. A write answers `303` back to the anchor it changed (POST/redirect/GET
 reload never re-applies it); a preview re-renders the page with the diff in place; list
 editors submit real buttons (`op=add|remove|up|down` plus the row index) and the server
 applies the operation, validates, and re-renders.
+
+The one deliberate exception is the Finish step's dev-server actions, which re-render in place: a
+redirect there would rebuild the document and take the output sink with it, so the server's console
+would stream to a page that no longer exists. Re-posting them is harmless — starting is idempotent,
+and stopping an already-stopped server simply says so.
 
 The one client module, `/_ui/ui.js`, is progressive enhancement only. It upgrades those
 same submits to `fetch` with `Accept: text/html-fragment` and swaps the returned

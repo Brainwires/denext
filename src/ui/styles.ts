@@ -273,6 +273,8 @@ pre.out {
   border-radius: var(--radius);
   padding: var(--space-3) 14px;
   overflow-x: auto;
+  max-height: 24rem;
+  overflow-y: auto;
   white-space: pre-wrap;
   font-size: var(--text-sm);
 }
