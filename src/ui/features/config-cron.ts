@@ -19,7 +19,7 @@
 
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode } from "../../jsx/types.ts";
-import { cronError, cronMatches } from "../../runtime/cron.ts";
+import { cronError, cronMatches, describeCron } from "../../runtime/cron.ts";
 import { jsonResponse, panelResponder, type UiContext } from "../html.ts";
 import type { DenextConfig } from "../../server/config.ts";
 import { validateDenextConfig } from "../../server/config-validate.ts";
@@ -44,7 +44,12 @@ import { cliInvocation, runDeno } from "../proc.ts";
 import { parseJsonDocument } from "../child-json.ts";
 import { join } from "@std/path";
 import { CONFIG_FILES } from "../../build/paths.ts";
-import { clearTaskHistory, readTaskHistory, TASK_HISTORY_DB } from "../../server/task-history.ts";
+import {
+  clearTaskHistory,
+  readTaskHistory,
+  TASK_HISTORY_DB,
+  type TaskHistoryRow,
+} from "../../server/task-history.ts";
 import { deleteConfigValue, setConfigValue } from "../../build/config-edit.ts";
 import { readContained, StaleWriteError, stampOf, writeFileAtomic } from "../security.ts";
 import { confirmed, postedField } from "./plugins.ts";
@@ -472,15 +477,25 @@ function fromConfig(entry: ScheduledEntry, configScheduled: Record<string, strin
 
 /** One row of the schedule table: when it fires, what it runs, and whether it really will. */
 function ScheduleRow(
-  { entry, state }: { readonly entry: ScheduledEntry; readonly state: CronState },
+  { entry, state, standing }: {
+    readonly entry: ScheduledEntry;
+    readonly state: CronState;
+    readonly standing: Map<string, TaskHistoryRow> | null;
+  },
 ): VNode {
   const skip = skipReason(entry, state.tasks);
   const editable = fromConfig(entry, state.configScheduled);
   const upcoming = skip === null ? nextRuns(entry.cron, 2) : [];
+  const said = describeCron(entry.cron);
   return h(
     "tr",
     null,
-    h("td", null, h(Mono, null, entry.cron)),
+    h(
+      "td",
+      null,
+      h(Mono, null, entry.cron),
+      said === null ? null : h("div", { class: "lead flush-sm" }, said),
+    ),
     h("td", null, h(Mono, null, entry.task)),
     h(
       "td",
@@ -498,11 +513,52 @@ function ScheduleRow(
         ? "no run in the next year"
         : upcoming.join(", "),
     ),
+    standing === null ? null : h(LastResult, { row: standing.get(entry.task) }),
   );
 }
 
+/**
+ * One task's last result. Absent history is not a failure — it means the task has not run inside
+ * the window, which is a different thing from having failed, and the cell says so.
+ *
+ * @param props `row`: that task's standing, when it has one.
+ * @returns The cell.
+ */
+function LastResult({ row }: { readonly row: TaskHistoryRow | undefined }): VNode {
+  if (row === undefined) return h("td", null, h("span", { class: "lead" }, "not yet"));
+  return h(
+    "td",
+    null,
+    h(Badge, { tone: row.lastOk ? "ok" : "fail" }, row.lastOk ? "ok" : "failed"),
+    ` ${row.lastDurationMs} ms`,
+  );
+}
+
+/**
+ * Each task's last result, keyed by task name — or `null` when there is no history to show.
+ *
+ * Read once here and handed down. A row that fetched its own would open the database once per
+ * schedule, and the answer is per TASK anyway: a task scheduled under two expressions has one
+ * history, shown twice.
+ *
+ * @param ctx The request context.
+ * @param state The panel state.
+ * @returns The lookup, or `null` when history is off or unreadable.
+ */
+function standingOf(ctx: UiContext, state: CronState): Map<string, TaskHistoryRow> | null {
+  if (!state.history) return null;
+  const read = readTaskHistory({ path: historyPath(ctx.dir) }, HISTORY_WINDOW_DAYS);
+  if (!read.available) return null;
+  return new Map(read.tasks.map((row) => [row.task, row]));
+}
+
 /** The schedule table, or an empty state that names the next action. */
-function Schedules({ state }: { readonly state: CronState }): VNode {
+function Schedules(
+  { state, standing }: {
+    readonly state: CronState;
+    readonly standing: Map<string, TaskHistoryRow> | null;
+  },
+): VNode {
   if (state.schedules.length === 0) {
     return h(
       "p",
@@ -516,10 +572,11 @@ function Schedules({ state }: { readonly state: CronState }): VNode {
       " file.",
     );
   }
+  const head = ["When (UTC)", "Task", "Source", "Next runs"];
   return h(Table, {
-    head: ["When (UTC)", "Task", "Source", "Next runs"],
+    head: standing === null ? head : [...head, "Last result"],
     rows: state.schedules.map((entry) =>
-      h(ScheduleRow, { key: `${entry.task} ${entry.cron}`, entry, state })
+      h(ScheduleRow, { key: `${entry.task} ${entry.cron}`, entry, state, standing })
     ),
   });
 }
@@ -607,7 +664,7 @@ function CronPanel(
     notice ?? null,
     h(SchedulerNote, { state }),
     h("h2", null, "Schedule"),
-    h(Schedules, { state }),
+    h(Schedules, { state, standing: standingOf(ctx, state) }),
     h("h2", null, "Tasks"),
     h(Tasks, { state }),
     state.error === undefined ? h("h2", null, "Run history") : null,

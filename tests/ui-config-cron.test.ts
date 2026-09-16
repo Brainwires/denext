@@ -429,3 +429,79 @@ Deno.test("clearing history is refused read-only, and the runs survive", async (
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("a schedule row says what the expression means, in English", async () => {
+  const dir = await project(
+    `export default {
+  scheduledTasks: { "30 3 * * *": "cleanup", "0 8 * * 1": "cleanup" },
+};
+`,
+    { cleanup: task() },
+  );
+  try {
+    const body = await (await call(dir)).text();
+    // The point of the describer: not having to decode five fields in your head.
+    assertStringIncludes(body, "every day at 03:30 UTC");
+    assertStringIncludes(body, "on Mondays at 08:00 UTC");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("last result is a task's fact, shown on every row that schedules it", async () => {
+  const dir = await project(
+    `export default {
+  tasks: { history: true },
+  scheduledTasks: { "30 3 * * *": "cleanup", "0 8 * * 1": "cleanup", "0 0 * * *": "digest" },
+};
+`,
+    { cleanup: task(), digest: task() },
+  );
+  try {
+    // Only cleanup has run, and its most recent run failed. digest has never run.
+    const store = taskHistoryRecorder({ path: join(dir, ".denext", "tasks.db") });
+    const now = Date.now();
+    store.record({
+      name: "cleanup",
+      trigger: "schedule",
+      startedAt: now,
+      durationMs: 77,
+      ok: false,
+    });
+    store.close();
+
+    const body = await (await call(dir)).text();
+    const table = body.slice(body.indexOf("<table"), body.indexOf("</table>") + 8);
+    assertStringIncludes(table, "Last result");
+
+    const rows = [...table.matchAll(/<tr>(?!<th)([\s\S]*?)<\/tr>/g)]
+      .map((m) => m[1])
+      .filter((r) => r.includes("mono"));
+    assertEquals(rows.length, 3);
+
+    // cleanup is scheduled TWICE and has ONE history, so both its rows say the same thing. That
+    // is why the column is headed "Last result" rather than implying per-row history.
+    const cleanupRows = rows.filter((r) => r.includes(">cleanup<"));
+    assertEquals(cleanupRows.length, 2);
+    for (const row of cleanupRows) assert(row.includes(">failed<"), row);
+
+    // Never having run is not a failure, and must not read as one.
+    const digestRow = rows.find((r) => r.includes(">digest<"))!;
+    assertStringIncludes(digestRow, "not yet");
+    assert(!digestRow.includes(">failed<"), "a task that never ran has not failed");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("with history off there is no result column to mislead anyone", async () => {
+  const dir = await project(CONFIG, { cleanup: task() });
+  try {
+    const body = await (await call(dir)).text();
+    const table = body.slice(body.indexOf("<table"), body.indexOf("</table>") + 8);
+    assert(!table.includes("Last result"), "no column when there is nothing to put in it");
+    assert(!table.includes("not yet"), "and no placeholder cells either");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
