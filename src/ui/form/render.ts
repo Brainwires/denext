@@ -129,7 +129,7 @@ function RowButtons(
   const off = props.ctx.readOnly === true;
   return h(
     "span",
-    { style: "display:inline-flex;gap:4px" },
+    { class: "op-group" },
     h(OpButton, { op: "up", at, list, label: "↑", title: "Move up", disabled: off || at === 0 }),
     h(OpButton, {
       op: "down",
@@ -338,7 +338,7 @@ function ChipRow(one: RowProps): VNode {
 function FormRow(one: RowProps): VNode {
   return h(
     "fieldset",
-    { style: "padding:10px 12px" },
+    { class: "pad-box" },
     h("legend", null, one.row.label, " ", rowButtonsOf(one)),
     fieldsOf(one.row, one.entry, one.ctx),
   );
@@ -401,10 +401,10 @@ function UnionWidget({ spec, value, ctx }: WidgetProps): VNode {
 function GroupWidget({ spec, value, ctx }: WidgetProps): VNode {
   return h(
     "details",
-    { open: true, id: `${idOf(nameOf(spec, ctx))}--group`, style: "margin:0 0 14px" },
-    h("summary", { style: "cursor:pointer;font-weight:600" }, spec.label),
-    spec.description ? h("p", { class: "lead", style: "font-size:13px" }, spec.description) : null,
-    h("div", { style: "padding:8px 0 0 12px" }, fieldsOf(spec, value, ctx)),
+    { open: true, id: `${idOf(nameOf(spec, ctx))}--group`, class: "field" },
+    h("summary", { class: "group-summary" }, spec.label),
+    spec.description ? h("p", { class: "lead group-note" }, spec.description) : null,
+    h("div", { class: "group-body" }, fieldsOf(spec, value, ctx)),
   );
 }
 

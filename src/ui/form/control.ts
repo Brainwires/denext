@@ -75,7 +75,7 @@ function textareaElement(attrs: ControlAttrs): VNode {
       ...commonProps(attrs),
       rows: attrs.rows ?? 4,
       placeholder: attrs.placeholder,
-      style: "width:100%",
+      class: "control-wide",
     },
     "\n" + (attrs.value ?? ""),
   );
@@ -167,7 +167,7 @@ type FieldProps = Omit<FieldOptions, "body"> & { readonly children?: VNodeChildr
 export function Field(props: FieldProps): VNode {
   return h(
     "div",
-    { style: "margin:0 0 14px", id: `${props.id}--field` },
+    { class: "field", id: `${props.id}--field` },
     h(
       "label",
       { for: props.id },
@@ -175,12 +175,8 @@ export function Field(props: FieldProps): VNode {
       props.badge ? h(Fragment, null, " ", h("span", { class: "badge" }, props.badge)) : null,
     ),
     props.children,
-    props.help
-      ? h("p", { class: "lead", style: "margin:4px 0 0;font-size:13px" }, props.help)
-      : null,
-    props.error
-      ? h("p", { class: "note", role: "alert", style: "margin:6px 0 0" }, props.error)
-      : null,
+    props.help ? h("p", { class: "lead field-help" }, props.help) : null,
+    props.error ? h("p", { class: "note field-error", role: "alert" }, props.error) : null,
   );
 }
 
@@ -225,14 +221,13 @@ export interface OpButtonOptions {
 export function OpButton(props: OpButtonOptions): VNode {
   return h("button", {
     type: "submit",
-    class: "ghost",
     name: OP_FIELD,
     value: `${props.op}:${props.at}:${props.list}`,
     title: props.title,
     "aria-label": props.title,
     formnovalidate: true,
     disabled: props.disabled ?? false,
-    style: "padding:2px 8px",
+    class: "ghost op-button",
   }, props.label);
 }
 

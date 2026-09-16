@@ -1108,7 +1108,7 @@ function AddServiceForm({ ctx, file }: EditorProps): VNode {
     h(
       Row,
       null,
-      h("h3", { class: "grow", style: "margin:0" }, "Add a service"),
+      h("h3", { class: "grow flush" }, "Add a service"),
       h(SubmitButton, {
         value: "addService",
         label: "Preview new service",
@@ -1147,7 +1147,7 @@ function DeclarationsForm({ ctx, file }: EditorProps): VNode {
     h(
       Row,
       null,
-      h("h3", { class: "grow", style: "margin:0" }, "Named volumes and networks"),
+      h("h3", { class: "grow flush" }, "Named volumes and networks"),
       h(SubmitButton, { value: "apply", label: "Preview changes", disabled }),
     ),
     list("volumes", "volume"),
@@ -1214,7 +1214,7 @@ function HeadRow(
     null,
     h(
       "h3",
-      { class: "grow", style: "margin:0" },
+      { class: "grow flush" },
       h("code", null, svc.name),
       " ",
       h("span", { class: "badge" }, badge),
@@ -1422,7 +1422,7 @@ function ListEditor(
     "fieldset",
     null,
     h("legend", null, legend),
-    rows.length ? rows : h("p", { class: "lead", style: "margin:0 0 6px" }, "none"),
+    rows.length ? rows : h("p", { class: "lead flush-sm" }, "none"),
     add,
   );
 }
