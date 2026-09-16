@@ -218,6 +218,20 @@ Deno.test("cliInvocation adds --deny-net --cached-only after -A only when offlin
   ]);
 });
 
+Deno.test("cliInvocation's dir only decides the CLI version for a compiled binary", () => {
+  // `dir` exists so a binary hands each child the denext THAT PROJECT pins rather than its own
+  // (cliModule in src/ui/proc.ts). Running from a checkout there is nothing to choose — the CLI
+  // and the framework are the same package — so the directory must not perturb the argv at all.
+  // The four call sites in features/commands.ts and features/wizard.ts pass it unconditionally.
+  const online = cliInvocation();
+  assertEquals(cliInvocation({ dir: Deno.cwd() }), online);
+  assertEquals(cliInvocation({ dir: "/nonexistent/project" }), online);
+  assertEquals(
+    cliInvocation({ offline: true, dir: Deno.cwd() }),
+    cliInvocation({ offline: true }),
+  );
+});
+
 Deno.test("/_ui/events is an event stream", async () => {
   const h = await ui();
   try {

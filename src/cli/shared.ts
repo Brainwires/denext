@@ -42,6 +42,11 @@ export function installShutdown(controller: AbortController): void {
   }
 }
 
+/** Whether this invocation asked for diagnostic output (`--verbose` anywhere in argv). */
+function verboseRun(): boolean {
+  return Deno.args.includes("--verbose");
+}
+
 /**
  * Run a build/export step, turning a failure into a clean, `denext:`-prefixed error
  * (printed without a stack by the top-level handler) rather than dumping a raw
@@ -57,6 +62,9 @@ export async function runBuildStep<T>(
   } catch (err) {
     if (err instanceof Error && err.message.startsWith("denext:")) throw err;
     const detail = err instanceof Error ? err.message : String(err);
+    // The cause carries the stack this message hides. A failure inside the build machinery
+    // (rather than in the user's code) is unreadable without it, so `--verbose` prints it.
+    if (err instanceof Error && err.stack && verboseRun()) console.error(err.stack);
     throw new Error(`denext: ${label} failed — ${detail}`, { cause: err });
   }
 }

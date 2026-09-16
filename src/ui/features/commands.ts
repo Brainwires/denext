@@ -228,7 +228,7 @@ function flatten(listing: CommandListing): UiCommandList {
 async function discover(dir: string, offline: boolean): Promise<UiCommandList> {
   const lines: string[] = [];
   const argv = [
-    ...cliInvocation({ offline }),
+    ...cliInvocation({ offline, dir }),
     "commands",
     "--json",
     "--timeout",
@@ -840,7 +840,7 @@ function runArgv(info: UiCommandInfo, dir: string, read: Read, offline: boolean)
     flagArgs(flag, read(flagKey(flag.name)))
   );
   const positionals = positionalArgs(info.positionals, read);
-  return [...cliInvocation({ offline }), info.name, "--cwd", dir, ...flags, ...positionals];
+  return [...cliInvocation({ offline, dir }), info.name, "--cwd", dir, ...flags, ...positionals];
 }
 
 /** The run's argv, or the 422 that names the field it refused. */

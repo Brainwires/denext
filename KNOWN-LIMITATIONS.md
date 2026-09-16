@@ -523,6 +523,19 @@ runtime and transform (reported as review notes, never silently changed):
 
 A few capabilities aren't built yet (none affects the zero-npm runtime):
 
+- **The compiled `denext` binary never builds an app in its own process.** Every module-loading
+  verb (`dev`, `build`, `export`, `start`, `task`, `doctor`, `analyze`, `profile`, `desktop`)
+  re-execs the denext the project pins, as a `deno run` child. This is deliberate — it is what
+  makes `denext build` produce exactly what `deno task build` would rather than substituting the
+  binary's own framework — but it is also load-bearing: a binary _cannot_ bundle in-process,
+  because the generated client entry resolves `denext/client-runtime` and friends against
+  `import.meta.url`, which inside a binary is a `deno-compile://` path the child bundler cannot
+  see. **Consequence:** those verbs need a reachable `deno`, and a directory that pins no denext
+  is refused with a message naming the fix, rather than built. `ui`, `create`, `init`,
+  `commands`, `completions` and `--version` run in the binary itself and need nothing.
+  The `curl … | sh` installer ships the binary unsigned unless the release was built with the
+  Apple Developer ID secrets configured; on macOS it strips the quarantine attribute for you.
+
 - **`next/font/local`: no metric-matched fallback face.** Google fonts get Next's
   `adjustFontFallback` fallback face from a bundled metrics table (the same Capsize set Next
   ships, so the overrides are identical). A **local** font's metrics live in its file, which

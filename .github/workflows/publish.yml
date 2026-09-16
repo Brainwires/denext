@@ -105,3 +105,104 @@ jobs:
 
       - name: Publish to JSR (with provenance)
         run: deno publish --config ${{ steps.pkg.outputs.config }}
+
+  # The in-PATH `denext` binary. Runs only for a root `v*` tag, and only after the JSR publish
+  # succeeded — a failed publish must never ship a binary claiming that version.
+  #
+  # A binary carries one framework version. Inside a project it defers to the project's pinned
+  # denext (see `maybeReexecPinned` in cli.ts), so these artifacts are a CLI, not a second copy
+  # of the framework for an app to build against.
+  binaries:
+    needs: publish
+    if: startsWith(github.ref_name, 'v')
+    permissions:
+      contents: write # attach the binaries to the release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: x86_64-pc-windows-msvc
+            os: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: "2.9.6"
+
+      - name: Compile
+        run: |
+          out=denext
+          case "${{ matrix.target }}" in *windows*) out=denext.exe ;; esac
+          deno compile -A --target ${{ matrix.target }} --output "$out" cli.ts
+          ls -lh "$out"
+
+      # Unsigned macOS binaries are quarantined by Gatekeeper on download. Signing needs an
+      # Apple Developer ID; notarisation needs an App Store Connect key. Both are repository
+      # secrets — when they are absent the step is skipped and the artifact ships unsigned,
+      # which the install script and the docs call out.
+      - name: Sign and notarise (macOS)
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERT: ${{ secrets.APPLE_DEVELOPER_ID_CERT }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -eu
+          # `secrets` is not a context a step-level `if` can read, so the guard lives here in
+          # the shell. With no Developer ID configured the job still ships a binary — unsigned,
+          # which the install script strips quarantine for and the docs call out.
+          if [ -z "${APPLE_CERT:-}" ]; then
+            echo "denext: no Developer ID secrets — shipping this binary UNSIGNED" >&2
+            exit 0
+          fi
+          echo "$APPLE_CERT" | base64 --decode > cert.p12
+          security create-keychain -p actions build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p actions build.keychain
+          security import cert.p12 -k build.keychain -P "$APPLE_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k actions build.keychain
+          # The identity is "Developer ID Application: <Name> (<TEAMID>)" — take the SHA-1 the
+          # keychain reports rather than trying to reconstruct that string from the team ID.
+          identity="$(security find-identity -v -p codesigning build.keychain |
+            awk '/Developer ID Application/ { print $2; exit }')"
+          [ -n "$identity" ] || { echo "no Developer ID Application identity imported" >&2; exit 1; }
+          codesign --force --options runtime --timestamp --sign "$identity" denext
+          codesign --verify --strict --verbose=2 denext
+          echo "$APPLE_API_KEY" | base64 --decode > key.p8
+          ditto -c -k --keepParent denext denext.zip
+          # A bare executable cannot be stapled (stapler takes .app/.dmg/.pkg only), so the
+          # notarisation ticket is checked online by Gatekeeper on first run.
+          xcrun notarytool submit denext.zip --wait \
+            --key key.p8 --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER"
+          rm -f cert.p12 key.p8 denext.zip
+
+      - name: Package
+        run: |
+          name="denext-${{ matrix.target }}"
+          case "${{ matrix.target }}" in
+            *windows*) zip "$name.zip" denext.exe ;;
+            *) tar czf "$name.tar.gz" denext ;;
+          esac
+          shasum -a 256 "$name".* > "$name.sha256"
+
+      - name: Attach to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            denext-${{ matrix.target }}.tar.gz
+            denext-${{ matrix.target }}.zip
+            denext-${{ matrix.target }}.sha256
+          fail_on_unmatched_files: false

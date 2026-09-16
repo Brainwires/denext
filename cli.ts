@@ -15,7 +15,12 @@
  */
 
 import { join, resolve } from "@std/path";
-import { entrypointArg, isStandaloneBinary } from "./src/cli/self-exec.ts";
+import {
+  entrypointArg,
+  isStandaloneBinary,
+  pinnedDenextCli,
+  samePin,
+} from "./src/cli/self-exec.ts";
 import { CONFIG_FILES, resolveProject } from "./src/build/paths.ts";
 import { buildAppCss, injectAppConfigRedirects, restoreAppConfig } from "./src/build/css.ts";
 import { tailwindPaths } from "./src/build/tailwind.ts";
@@ -78,9 +83,11 @@ async function maybeReexecForCss(dir: string, minify: boolean): Promise<boolean>
   if (!css) return false; // no CSS in the project — run normally
 
   if (isStandaloneBinary()) {
-    // Only a `deno compile`d binary cannot re-exec itself under a different `--config`
-    // (there is no `deno` to spawn and no module URL to re-run). Running from JSR or a
-    // remote URL is fine: Deno runs remote entrypoints, so we re-exec `import.meta.url`.
+    // A binary cannot re-exec ITSELF under a different `--config`: there is no module URL to
+    // re-run. Reaching here at all means {@linkcode maybeReexecPinned} did not defer, which for
+    // a module verb it always does — so this is the residual path (a verb that builds CSS
+    // without loading modules). Running from JSR or a remote URL is fine: Deno runs remote
+    // entrypoints, so we re-exec `import.meta.url`.
     console.error(
       "denext: WARNING — this project imports CSS, but a compiled (standalone) denext " +
         'binary cannot apply the CSS import map. `import "./x.css"` will fail at runtime; ' +
@@ -112,6 +119,59 @@ async function maybeReexecForCss(dir: string, minify: boolean): Promise<boolean>
     "DENEXT_CSS_ACTIVE",
     () => restoreAppConfig(paths.configPath, paths.outDir),
   );
+}
+
+/**
+ * A compiled binary never loads an app's modules in its own process — it re-execs the denext the
+ * project pins and lets that child do the work.
+ *
+ * Two reasons, and the second is why this happens even when the pin names this binary's own
+ * version. First, skew: the binary carries ONE framework version while a project pins its own,
+ * and building an app with the wrong one silently swaps its framework. Second, a binary simply
+ * cannot bundle in-process. `frameworkFileUrl()` resolves the generated client entry's imports
+ * (`denext/client-runtime`, `denext/class-runtime`, `denext/devtools` — see `writeMergedConfig`
+ * in src/build/bundle.ts) against `import.meta.url`, which inside a binary is a `deno-compile://`
+ * path visible only to that process; the child `deno bundle` is a separate process and fails with
+ * `Module not found …/deno-compile-denext/src/client/client-runtime.ts`. A compat app fails even
+ * earlier, inside esbuild's Node child-process shim. A `deno run` child has a real framework root
+ * and both paths work, so deferring is the fix for both.
+ *
+ * Only a standalone binary does this. Under `deno run` the CLI and the framework are the same
+ * package by construction, so there is nothing to defer to.
+ *
+ * @param dir The project directory the verb targets.
+ * @returns Whether the process re-exec'd (the caller should stop).
+ */
+async function maybeReexecPinned(dir: string): Promise<boolean> {
+  // The child runs under `deno run`, where `isStandaloneBinary()` is false — but it may itself
+  // re-exec for CSS/modules, so the guard env var (not the version comparison) is what makes a
+  // loop impossible.
+  if (!isStandaloneBinary() || Deno.env.get("DENEXT_PINNED_ACTIVE")) return false;
+  const cli = pinnedDenextCli(dir);
+  if (cli === null) {
+    console.error(
+      `denext: this directory pins no denext, and a compiled binary cannot build an app in its ` +
+        `own process.\n  Add denext to the project's deno.json imports (\`denext create\` does ` +
+        `this), or run the CLI as:\n    deno run -A jsr:@denext/denext@${VERSION}/cli ` +
+        `${Deno.args.join(" ")}`,
+    );
+    Deno.exit(1);
+  }
+  const pinned = cli.slice("jsr:@denext/denext@".length).replace(/\/cli$/, "");
+  // Only worth saying when it is a DIFFERENT denext; announcing a switch to the version already
+  // running would be noise at best and a lie at worst.
+  if (!samePin(cli, VERSION)) {
+    console.error(`denext: using this project's pinned denext (${pinned})`);
+  }
+  const child = new Deno.Command(denoExecutable(), {
+    args: ["run", "-A", ...minDepAgeArgs(), cli, ...Deno.args],
+    env: { DENEXT_PINNED_ACTIVE: "1" },
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  }).spawn();
+  const { code } = await child.status;
+  Deno.exit(code);
 }
 
 /**
@@ -208,6 +268,7 @@ async function maybeReexecForModules(dir: string): Promise<boolean> {
 async function moduleGate(command: CommandSpec, ctx: CommandContext): Promise<boolean> {
   if (!command.loadsModules) return false;
   const dir = command.moduleDir ? command.moduleDir(ctx) : projectDir(ctx);
+  if (await maybeReexecPinned(dir)) return true;
   await loadEnv({ dir });
   // `dev` builds unminified CSS; the other module verbs minify (matching 1.x).
   if (await maybeReexecForCss(dir, command.name !== "dev")) return true;
@@ -336,7 +397,7 @@ function printOutcome(
   project: ProjectHelp | null = null,
 ): void {
   if (outcome.kind === "version") {
-    console.log(`denext ${VERSION}`);
+    console.log(`denext ${VERSION}${isStandaloneBinary() ? " (binary)" : ""}`);
   } else if (outcome.kind === "help") {
     const help = outcome.command
       ? registry.formatCommandHelp(outcome.command)

@@ -747,7 +747,7 @@ function startDevServer(ctx: UiContext): boolean {
   if (devStarting.has(ctx.dir)) return false;
   devStarting.add(ctx.dir);
   const push = (event: unknown): void => broadcast(ctx.events, event);
-  runDeno([...cliInvocation(), "dev", ctx.dir], {
+  runDeno([...cliInvocation({ dir: ctx.dir }), "dev", ctx.dir], {
     cwd: ctx.dir,
     onLine: (line) => push({ type: "dev-output", line }),
     signal: ctx.signal,
@@ -813,7 +813,7 @@ export function setDoctorRunner(runner: DoctorRunner | null): void {
  */
 async function runDoctorSubprocess(dir: string, offline: boolean): Promise<DoctorCheck[]> {
   const run = await runDeno(
-    [...cliInvocation({ offline }), "doctor", "--json", "--cwd", dir],
+    [...cliInvocation({ offline, dir }), "doctor", "--json", "--cwd", dir],
     { cwd: dir, signal: AbortSignal.timeout(120_000) },
   );
   const parsed = run.json();
