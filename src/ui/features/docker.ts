@@ -480,7 +480,8 @@ function PanelLead({ dir }: { readonly dir: string }): VNode {
     " for ",
     mono(dir),
     ". Files you have edited by hand are never overwritten — their diff is shown so you can " +
-      "copy it across; an existing compose file's services are edited in place under Services.",
+      "copy it across; an existing compose file's services are edited in place under Services. ",
+    h("a", { href: "https://denext.dev/docs/ui#docker" }, "Docker ↗"),
   );
 }
 

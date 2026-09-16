@@ -8,6 +8,8 @@
 // Grouping is a presentation decision and lives here rather than in the schema: the schema
 // describes the config's SHAPE, and nothing about `basePath` says "routing" to a validator.
 
+import { matchesTerms, matchNote } from "../filter.ts";
+
 /** The config views, in strip order. */
 export const CONFIG_GROUPS = ["routing", "rendering", "security", "data", "advanced"] as const;
 
@@ -99,12 +101,7 @@ export function groupHref(group: ConfigGroup): string {
  * @returns Whether the section should be shown.
  */
 export function matchesQuery(key: string, description: string | undefined, query: string): boolean {
-  const haystack = `${key} ${description ?? ""}`.toLowerCase();
-  return query
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((term) => term !== "")
-    .every((term) => haystack.includes(term));
+  return matchesTerms(`${key} ${description ?? ""}`, query);
 }
 
 /** The id of the whole-file escape hatch, which is placed like any other key. */
@@ -151,13 +148,13 @@ export function visibleSections<T extends GroupableSection>(
 }
 
 /**
- * What a filtered page says above its results.
+ * What a filtered page says above its results. The "across every group" clause is the point: a
+ * search deliberately ignores the view you are on, and the count only makes sense if you know it.
  *
  * @param count How many sections matched.
  * @param query The search that produced them.
  * @returns The sentence to show.
  */
-export function matchNote(count: number, query: string): string {
-  if (count === 0) return `No config key matches "${query}".`;
-  return `${count} key${count === 1 ? "" : "s"} match "${query}" — across every group.`;
+export function configMatchNote(count: number, query: string): string {
+  return matchNote(count, query, "config key", " — across every group");
 }

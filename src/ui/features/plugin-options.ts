@@ -567,7 +567,10 @@ function OptionsView(
     draft.notice ?? null,
     h(
       "form",
-      { method: "post", action: optionsHref(target.entry.name) },
+      // Dirty-tracked: Preview is inert until an option actually changes, so it cannot preview a
+      // diff of nothing. `ui.js` finds the unnamed submit; with JavaScript off the button simply
+      // works, which is why the server never renders it disabled.
+      { method: "post", action: optionsHref(target.entry.name), "data-dirty-track": "1" },
       h(Raw, { html: form }),
       h(Hidden, { name: BASE_FIELD, value: target.base }),
       h("button", { type: "submit", disabled: ctx.readOnly }, "Preview"),

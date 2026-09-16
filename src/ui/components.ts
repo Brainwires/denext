@@ -82,6 +82,36 @@ export function Tabs(
 }
 
 /**
+ * A panel's filter box: a plain `GET` form that narrows what the page renders.
+ *
+ * Nothing here is a widget either — submitting navigates to the same panel with `?q=`, so the
+ * filter works with scripting off, the query is in the URL (linkable, reloadable, in history),
+ * and the server does the matching it already has the data for. The same shape the docs site
+ * uses, and the same one the plugins panel's JSR search box already uses here.
+ *
+ * @param props `action`: the panel's own path; `query`: the current `?q=`; `label`: the
+ *   accessible name and placeholder (e.g. "Filter config keys").
+ * @returns The form.
+ */
+export function FilterForm(
+  { action, query, label }: {
+    readonly action: string;
+    readonly query: string;
+    readonly label: string;
+  },
+): VNode {
+  return h(
+    "form",
+    { method: "get", action, class: "filter", role: "search" },
+    h(Input, { type: "search", name: "q", value: query, placeholder: label, ariaLabel: label }),
+    h("button", { type: "submit" }, "Filter"),
+    // Only offered once there is something to clear, and it is a link, not a reset: it has to
+    // drop `?q=` from the URL, which a form reset would leave in place.
+    query === "" ? null : h("a", { class: "lead", href: action }, "Clear"),
+  );
+}
+
+/**
  * The lead every two-step write's preview page opens with.
  *
  * @returns The paragraph.

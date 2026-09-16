@@ -44,8 +44,8 @@ import type { VNode } from "../../jsx/types.ts";
 import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
 import {
   DiffBlock,
+  FilterForm,
   Hidden,
-  Input,
   Mono,
   NoChange,
   Note,
@@ -74,11 +74,11 @@ import {
 import { ConfigTabs, isCompatApp, nextConfigPanel } from "./config-next.ts";
 import {
   type ConfigGroup,
+  configMatchNote,
   DEFAULT_GROUP,
   groupHref,
   groupOf,
   isConfigGroup,
-  matchNote,
   visibleSections,
 } from "./config-groups.ts";
 
@@ -713,33 +713,17 @@ function ConfigPanel(
       "Every key of ",
       h(Mono, null, state.path),
       ", rendered from the config schema. A change is previewed as a diff before anything is " +
-        "written; comments and the values you did not touch come through byte for byte.",
+        "written; comments and the values you did not touch come through byte for byte. ",
+      h("a", { href: "https://denext.dev/docs/ui#configuration-editor" }, "Configuration editor ↗"),
     ),
-    h(ConfigFilter, { query }),
+    h(FilterForm, { action: "/config", query, label: "Filter config keys" }),
     ctx.readOnly ? h(Note, null, "Read-only mode — every change is refused.") : null,
     state.exists ? null : h(CreateOffer, { ctx, state }),
     state.exists && state.form === "unsupported" ? h(UnsupportedNote, { name: state.name }) : null,
     notice ?? null,
-    query === "" ? null : h("p", { class: "filter-note" }, matchNote(shown.length, query)),
+    query === "" ? null : h("p", { class: "filter-note" }, configMatchNote(shown.length, query)),
     shown.map((section) => h(ConfigSection, { key: section.key, ctx, state, section, feedback })),
     rawHere ? h(RawFileEditor, { ctx, state }) : null,
-  );
-}
-
-/** The key filter: a plain GET form, so it narrows the page with scripting off. */
-function ConfigFilter({ query }: { readonly query: string }): VNode {
-  return h(
-    "form",
-    { method: "get", action: "/config", class: "filter", role: "search" },
-    h(Input, {
-      type: "search",
-      name: "q",
-      value: query,
-      placeholder: "Filter config keys",
-      ariaLabel: "Filter config keys by name or description",
-    }),
-    h("button", { type: "submit" }, "Filter"),
-    query === "" ? null : h("a", { class: "lead", href: "/config" }, "Clear"),
   );
 }
 

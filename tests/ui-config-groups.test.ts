@@ -9,15 +9,16 @@ import { loadConfigSchema } from "../src/ui/form/schema.ts";
 import {
   CONFIG_GROUPS,
   type ConfigGroup,
+  configMatchNote,
   DEFAULT_GROUP,
   GROUP_LABEL,
   groupHref,
   groupOf,
   isConfigGroup,
   matchesQuery,
-  matchNote,
   visibleSections,
 } from "../src/ui/features/config-groups.ts";
+import { matchesTerms, matchNote } from "../src/ui/filter.ts";
 
 /** Every top-level key the config schema describes. */
 function schemaKeys(): string[] {
@@ -86,8 +87,26 @@ Deno.test("a query ignores the view; a view ignores the query", () => {
   assertEquals(visibleSections(sections, "advanced", "").rawHere, true);
 });
 
-Deno.test("the match note counts what it found, and says when it found nothing", () => {
-  assertEquals(matchNote(0, "zzz"), 'No config key matches "zzz".');
-  assertEquals(matchNote(1, "cache"), '1 key match "cache" — across every group.');
-  assertEquals(matchNote(3, "cache"), '3 keys match "cache" — across every group.');
+Deno.test("the config match note counts what it found, and says when it found nothing", () => {
+  // The "across every group" clause is load-bearing: the search ignores whichever view you are
+  // on, so a count without it would look like it was counting the current page.
+  assertEquals(configMatchNote(0, "zzz"), 'No config key matches "zzz".');
+  assertEquals(configMatchNote(1, "cache"), '1 config key matches "cache" — across every group.');
+  assertEquals(configMatchNote(3, "cache"), '3 config keys match "cache" — across every group.');
+});
+
+Deno.test("the shared matcher is case-insensitive with AND semantics, and empty matches all", () => {
+  assert(matchesTerms("denext build the app", "build"));
+  assert(matchesTerms("denext build the app", "BUILD APP"), "case-insensitive, both terms");
+  assert(!matchesTerms("denext build the app", "build missing"), "every term has to match");
+  assert(matchesTerms("anything at all", ""), "an empty query filters nothing out");
+  assert(matchesTerms("anything at all", "   "), "whitespace is not a term");
+});
+
+Deno.test("the shared match note agrees with itself on number", () => {
+  // `1 verb matches` / `2 verbs match` — the noun and the verb have to move together.
+  assertEquals(matchNote(0, "zzz", "verb"), 'No verb matches "zzz".');
+  assertEquals(matchNote(1, "docker", "verb"), '1 verb matches "docker".');
+  assertEquals(matchNote(4, "build", "verb"), '4 verbs match "build".');
+  assertEquals(matchNote(1, "x", "thing", " — everywhere"), '1 thing matches "x" — everywhere.');
 });

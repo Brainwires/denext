@@ -32,6 +32,7 @@ import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode } from "../../jsx/types.ts";
 import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
 import {
+  FilterForm,
   Hidden,
   Input,
   type InputProps,
@@ -43,6 +44,7 @@ import {
   Table,
 } from "../components.ts";
 import { Raw, renderView } from "../view.ts";
+import { matchesTerms, matchNote } from "../filter.ts";
 import { field, opButton } from "../form/control.ts";
 import { applyListOp, OP_FIELD, parseOp } from "../form/value.ts";
 import { broadcast, exitLine, sseProcess } from "../events.ts";
@@ -679,13 +681,31 @@ type PanelProps = {
   readonly view: View;
   /** The finished run's output lines (empty on a plain page load). */
   readonly output: readonly string[];
+  /** The `?q=` filter over verb name and summary (`""` for none). */
+  readonly query: string;
 };
+
+/**
+ * Whether a verb matches a search: its name or its one-line summary, every term having to match
+ * something. `denext` ships 29 built-ins, so the reference is most of this page — a filter is how
+ * you find the one you meant without reading all of them.
+ *
+ * @param info The verb.
+ * @param query The raw `?q=` value.
+ * @returns Whether to show it.
+ */
+function verbMatches(info: UiCommandInfo, query: string): boolean {
+  return matchesTerms(`${info.name} ${info.summary}`, query);
+}
 
 /**
  * The panel `<section>` — the piece `ui.js` swaps. Its one `pre.out` (after the groups) is the
  * sink `ui.js` streams a run's output into.
  */
-function CommandsPanel({ list, view, output }: PanelProps): VNode {
+function CommandsPanel({ list, view, output, query }: PanelProps): VNode {
+  const commands = query === ""
+    ? list.commands
+    : list.commands.filter((info) => verbMatches(info, query));
   return h(
     Panel,
     { name: "Commands", title: "Commands" },
@@ -697,12 +717,14 @@ function CommandsPanel({ list, view, output }: PanelProps): VNode {
       " — from denext.config.ts or a plugin's addCommand. ",
       h("a", { href: DOCS }, "Project commands ↗"),
     ),
+    h(FilterForm, { action: PATH, query, label: "Filter verbs" }),
     h(Notices, { list }),
     view.notice === undefined ? null : h(Note, { role: "alert" }, view.notice),
     view.offline ? h(Note, null, OFFLINE_NOTE) : null,
-    GROUPS.map((group) =>
-      h(VerbGroup, { key: group.source, group, commands: list.commands, view })
-    ),
+    query === ""
+      ? null
+      : h("p", { class: "filter-note" }, matchNote(commands.length, query, "verb")),
+    GROUPS.map((group) => h(VerbGroup, { key: group.source, group, commands, view })),
     h("h2", null, "Output"),
     h(Out, null, output.join("\n")),
   );
@@ -726,7 +748,12 @@ function panelResponse(
     held,
     notice: refused?.notice,
   };
-  return respond(ctx, renderView(h(CommandsPanel, { list, view, output })), refused?.status);
+  const query = (ctx.url.searchParams.get("q") ?? "").trim();
+  return respond(
+    ctx,
+    renderView(h(CommandsPanel, { list, view, output, query })),
+    refused?.status,
+  );
 }
 
 /**

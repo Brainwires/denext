@@ -933,6 +933,13 @@ function WizardPanel({ ctx, views, outcome }: WizardProps): VNode {
   return h(
     Panel,
     { name: "Wizard", title: "Setup wizard" },
+    h(
+      "p",
+      { class: "lead" },
+      "A fresh clone to a running dev server, one step at a time — each checks itself and " +
+        "offers only the action that moves it on. ",
+      h("a", { href: "https://denext.dev/docs/ui#setup-wizard" }, "Setup wizard ↗"),
+    ),
     h("p", { class: "lead mono" }, ctx.dir),
     ctx.readOnly ? h(Note, null, "Read-only mode — every write is refused.") : null,
     views.map((view, index) => h(Step, { key: view.id, ctx, index, view, outcome })),
