@@ -24,6 +24,7 @@ import { jsonResponse, panelResponder, type UiContext } from "../html.ts";
 import type { DenextConfig } from "../../server/config.ts";
 import { validateDenextConfig } from "../../server/config-validate.ts";
 import {
+  Badge,
   CsrfField,
   DiffBlock,
   Hidden,
@@ -41,13 +42,22 @@ import { renderView } from "../view.ts";
 import { ConfigTabs, isCompatApp } from "./config-next.ts";
 import { cliInvocation, runDeno } from "../proc.ts";
 import { parseJsonDocument } from "../child-json.ts";
+import { join } from "@std/path";
 import { CONFIG_FILES } from "../../build/paths.ts";
+import { readTaskHistory, TASK_HISTORY_DB } from "../../server/task-history.ts";
 import { deleteConfigValue, setConfigValue } from "../../build/config-edit.ts";
 import { readContained, StaleWriteError, stampOf, writeFileAtomic } from "../security.ts";
 import { confirmed, postedField } from "./plugins.ts";
 
 /** Where the feature is documented. */
 const DOCS = "https://denext.dev/docs/tasks";
+
+/**
+ * Why a form built against an older file is refused. Spelled once so the rendered refusal and the
+ * resolver's reason cannot drift into saying different things about the same situation.
+ */
+const STALE_BASE = "changed on disk since this form was rendered — nothing was written. " +
+  "Reload the tab and re-apply your change.";
 
 /** The config key this panel edits. */
 const KEY = "scheduledTasks";
@@ -74,6 +84,14 @@ const INTENT_SAVE = "save";
 
 /** Remove `scheduledTasks` outright — only ever from the button that says so. */
 const INTENT_CLEAR = "clear";
+
+/** Turn `tasks.history` on or off. A different key and a different value type from the
+ * schedules above, so it takes its own path through `submit` rather than through
+ * `proposed()`, whose Proposal is a `scheduledTasks` map. */
+const INTENT_HISTORY = "history";
+
+/** The value the history toggle carries: `"on"` or `"off"`. */
+const HISTORY_FIELD = "history";
 
 /** How long the discovery child gets before the panel gives up on it. */
 const DISCOVERY_BUDGET_MS = 15_000;
@@ -104,6 +122,7 @@ interface TaskListing {
   readonly schedules?: readonly ScheduledEntry[];
   readonly configScheduled?: Record<string, string | string[]>;
   readonly denoCron?: boolean;
+  readonly history?: boolean;
 }
 
 /** What one request knows about this project's tasks. */
@@ -113,6 +132,12 @@ interface CronState {
   readonly configScheduled: Record<string, string | string[]>;
   /** Whether the runtime schedules through `Deno.cron` rather than the userland tick. */
   readonly denoCron: boolean;
+  /**
+   * Whether `tasks.history` is on, as the discovery child RESOLVED it. This panel cannot evaluate
+   * `denext.config.ts` — it reads the source as text — so the answer comes from the same loader
+   * the server uses rather than from parsing a boolean out of TypeScript.
+   */
+  readonly history: boolean;
   /** Why the listing is empty or incomplete, when it is. */
   readonly error?: string;
   /** The denext config's file name (the one that would be created, when there is none). */
@@ -190,6 +215,7 @@ function empty(error?: string): Listing {
     schedules: [],
     configScheduled: {},
     denoCron: false,
+    history: false,
     ...(error === undefined ? {} : { error }),
   };
 }
@@ -214,6 +240,7 @@ async function discover(dir: string, offline: boolean): Promise<Listing> {
     schedules: listing.schedules ?? [],
     configScheduled: listing.configScheduled ?? {},
     denoCron: listing.denoCron === true,
+    history: listing.history === true,
   };
 }
 
@@ -268,6 +295,149 @@ export function nextRuns(expr: string, count = 3, from: Date = new Date()): stri
     if (cronMatches(expr, at)) out.push(`${at.toISOString().slice(0, 16).replace("T", " ")} UTC`);
   }
   return out;
+}
+
+/** How many days the history counts cover. */
+const HISTORY_WINDOW_DAYS = 7;
+
+/**
+ * Where this project's run history lives.
+ *
+ * The convention is joined here rather than resolved: `resolveProject` imports the project's
+ * config module, and this process never evaluates project code. A SQLite file the framework
+ * wrote is data, not code — strictly less dangerous than the TypeScript source this panel
+ * already reads.
+ *
+ * @param dir The project directory.
+ * @returns The database path.
+ */
+function historyPath(dir: string): string {
+  return join(dir, ".denext", TASK_HISTORY_DB);
+}
+
+/**
+ * The history half of the JSON twin.
+ *
+ * Read fresh on every request, deliberately NOT through `listCache`: the subprocess listing
+ * deserves a TTL, but a `SELECT … LIMIT 20` does not, and sharing that cache would hide a
+ * just-finished run for seconds.
+ *
+ * @param state The panel state (only `history` and `dir` matter).
+ * @param dir The project directory.
+ * @returns `available`, the window, and the rows — never `enabled`, which the caller supplies.
+ */
+function historyPayload(state: CronState, dir: string): Record<string, unknown> {
+  // Off: there is nothing to read, and opening the file would be the UI creating state the app
+  // never asked for.
+  if (!state.history) return { available: false, windowDays: HISTORY_WINDOW_DAYS };
+  const read = readTaskHistory({ path: historyPath(dir) }, HISTORY_WINDOW_DAYS);
+  return {
+    available: read.available,
+    ...(read.reason === undefined ? {} : { reason: read.reason }),
+    windowDays: read.windowDays,
+    tasks: read.tasks,
+    recent: read.recent,
+  };
+}
+
+/** A recorded instant, in the same UTC spelling the next-run column uses. */
+function atUtc(ms: number): string {
+  return `${new Date(ms).toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
+/**
+ * Run history: what actually ran, and whether it worked.
+ *
+ * Four states have to look different. "Off" and "on but nothing recorded yet" are the pair that
+ * matters — collapsing them into one empty table is the failure this section exists to avoid.
+ */
+function History(
+  { ctx, state }: { readonly ctx: UiContext; readonly state: CronState },
+): VNode {
+  if (!state.history) return h(HistoryOff, { ctx, state });
+  const read = readTaskHistory({ path: historyPath(ctx.dir) }, HISTORY_WINDOW_DAYS);
+  if (!read.available) {
+    return h(
+      "p",
+      { class: "lead" },
+      read.reason === "no history recorded yet"
+        ? "Enabled, but nothing has been recorded yet. If you just turned this on, restart the app — the recorder is installed at server boot."
+        : `Enabled, but the history could not be read: ${read.reason ?? "unknown reason"}.`,
+    );
+  }
+  if (read.tasks.length === 0) {
+    return h("p", { class: "lead" }, `No runs in the last ${read.windowDays} days.`);
+  }
+  return h(
+    Fragment,
+    null,
+    h(HistoryTable, { read }),
+    h(HistoryToggle, { ctx, state, on: false }),
+  );
+}
+
+/** The table of per-task standing. */
+function HistoryTable({ read }: { readonly read: ReturnType<typeof readTaskHistory> }): VNode {
+  return h(Table, {
+    head: ["Task", "Last run (UTC)", "Last result", "Succeeded", "Failed"],
+    rows: read.tasks.map((row) =>
+      h(
+        "tr",
+        { key: row.task },
+        h("td", null, h(Mono, null, row.task)),
+        h("td", null, atUtc(row.lastRunAt)),
+        h(
+          "td",
+          null,
+          h(Badge, { tone: row.lastOk ? "ok" : "fail" }, row.lastOk ? "ok" : "failed"),
+          ` ${row.lastDurationMs} ms`,
+        ),
+        h("td", null, String(row.successes)),
+        h("td", null, String(row.failures)),
+      )
+    ),
+  });
+}
+
+/** History is off: say so, and offer the switch rather than an empty table. */
+function HistoryOff(
+  { ctx, state }: { readonly ctx: UiContext; readonly state: CronState },
+): VNode {
+  return h(
+    Fragment,
+    null,
+    h(
+      "p",
+      { class: "lead" },
+      "Run history is off, so nothing records what these tasks did. Turning it on writes ",
+      h(Mono, null, "tasks: { history: true }"),
+      " to your denext config and records every run — scheduled and manual — to ",
+      h(Mono, null, ".denext/tasks.db"),
+      ". It takes effect the next time the app starts.",
+    ),
+    h(HistoryToggle, { ctx, state, on: true }),
+  );
+}
+
+/** The switch itself — the ordinary diff-then-confirm, for one boolean. */
+function HistoryToggle(
+  { ctx, state, on }: {
+    readonly ctx: UiContext;
+    readonly state: CronState;
+    readonly on: boolean;
+  },
+): VNode {
+  return h(OpForm, {
+    csrf: ctx.csrf,
+    action: "/config/cron",
+    disabled: ctx.readOnly,
+    label: on ? "Enable run history" : "Disable run history",
+    fields: {
+      [INTENT_FIELD]: INTENT_HISTORY,
+      [HISTORY_FIELD]: on ? "on" : "off",
+      [BASE_FIELD]: state.base,
+    },
+  });
 }
 
 /** Why the scheduler will skip this entry, or null when it will register it. */
@@ -429,6 +599,8 @@ function CronPanel(
     h(Schedules, { state }),
     h("h2", null, "Tasks"),
     h(Tasks, { state }),
+    state.error === undefined ? h("h2", null, "Run history") : null,
+    state.error === undefined ? h(History, { ctx, state }) : null,
     // A pending change replaces the editor with its diff: reviewing and editing at once would
     // let the form drift from the value the confirm button carries.
     body ?? h(ScheduleEditor, { ctx, state }),
@@ -557,12 +729,15 @@ function ScheduleEditor(
 
 /** The preview: the diff, and a confirm form carrying exactly the value it was computed from. */
 function PreviewView(
-  { ctx, diff, value, base }: {
+  { ctx, diff, fields }: {
     readonly ctx: UiContext;
     readonly diff: string;
-    readonly value: Record<string, string | string[]>;
-    /** The stamp of the source the diff was computed against. */
-    readonly base: string;
+    /**
+     * What the confirm button carries back. Supplied by the caller rather than built here: this
+     * panel now writes two different keys, and a preview that knew about only one of them would
+     * have to be duplicated for the other.
+     */
+    readonly fields: Readonly<Record<string, string>>;
   },
 ): VNode {
   return h(
@@ -578,12 +753,7 @@ function PreviewView(
       disabled: ctx.readOnly,
       // `_base` rides along so the SECOND step is stale-checked too: the file can change between
       // reviewing a diff and applying it, and an unguarded confirm would overwrite that.
-      fields: {
-        [VALUE_FIELD]: JSON.stringify(value),
-        [BASE_FIELD]: base,
-        [INTENT_FIELD]: INTENT_SAVE,
-        confirm: "1",
-      },
+      fields: { ...fields, confirm: "1" },
     }),
   );
 }
@@ -594,7 +764,7 @@ function PreviewView(
 const panelResponse = panelResponder("Cron", "/config/cron");
 
 /** The machine view (the `/api/config/cron` payload). */
-function payload(state: CronState): Record<string, unknown> {
+function payload(state: CronState, dir: string): Record<string, unknown> {
   return {
     tasks: state.tasks,
     schedules: state.schedules.map((entry) => ({
@@ -605,6 +775,7 @@ function payload(state: CronState): Record<string, unknown> {
     })),
     configScheduled: state.configScheduled,
     denoCron: state.denoCron,
+    history: { enabled: state.history, ...historyPayload(state, dir) },
     ...(state.error === undefined ? {} : { error: state.error }),
   };
 }
@@ -620,14 +791,98 @@ function payload(state: CronState): Record<string, unknown> {
 export async function cronPanel(_request: Request, ctx: UiContext): Promise<Response> {
   const state = await readState(ctx.dir, ctx.offline === true);
   if (ctx.method === "POST") return await submit(ctx, state);
-  if (ctx.json) return jsonResponse({ ok: true, ...payload(state) });
+  if (ctx.json) return jsonResponse({ ok: true, ...payload(state, ctx.dir) });
   const compat = await isCompatApp(ctx.dir);
   // A write redirects here with `?saved=1` (POST/redirect/GET, so a reload never re-posts); say
   // so, or the page it lands on looks identical to the one it left and the write reads as a no-op.
+  const toggled = ctx.url.searchParams.get("history");
   const notice = ctx.url.searchParams.get("saved") === "1"
-    ? h(Note, null, `Saved ${state.configName}.`)
+    ? h(
+      Note,
+      null,
+      `Saved ${state.configName}.`,
+      toggled === null ? null : ` Run history is ${toggled === "on" ? "on" : "off"} from the ` +
+        "next time the app starts — the recorder is installed at server boot, and the dev " +
+        "server does not re-run task boot on reload.",
+    )
     : undefined;
   return panelResponse(ctx, renderView(h(CronPanel, { ctx, state, compat, notice })));
+}
+
+/**
+ * The refusal for a form built against a file that has since changed, or `null` when it has not.
+ *
+ * Both writers carry `_base`, and both must refuse the same way — a second copy of this message
+ * is how two paths drift into disagreeing about what a stale form means.
+ *
+ * @param ctx The request context.
+ * @param state The panel state.
+ * @returns A `409`, or `null` when the stamp still matches.
+ */
+async function staleBase(ctx: UiContext, state: CronState): Promise<Response | null> {
+  const posted = postedField(ctx, BASE_FIELD);
+  if (posted === "" || posted === state.base) return null;
+  return await refuse(ctx, state, `${state.configName} ${STALE_BASE}`, 409);
+}
+
+/**
+ * The confirmed write itself: atomic, contained, and refused when the file moved underneath it.
+ *
+ * Returns `null` on success so each caller keeps its own answer — the schedules report
+ * `scheduledTasks`, the toggle reports `history` and redirects elsewhere. Only the failure
+ * modes, and the cache clear they both need, live here.
+ *
+ * @param ctx The request context.
+ * @param state The panel state.
+ * @param source The full file text to write.
+ * @returns A refusal, or `null` when the write landed.
+ */
+async function applyWrite(
+  ctx: UiContext,
+  state: CronState,
+  source: string,
+): Promise<Response | null> {
+  try {
+    await writeFileAtomic(ctx.dir, state.configName, source, { unchangedFrom: state.source });
+  } catch (error) {
+    if (error instanceof StaleWriteError) {
+      return await refuse(
+        ctx,
+        state,
+        `${state.configName} changed on disk while this change was being applied — nothing was ` +
+          "written. Reload the tab and re-apply your change.",
+        409,
+      );
+    }
+    const why = error instanceof Error ? error.message : String(error);
+    return await refuse(ctx, state, `${state.configName} could not be written: ${why}`, 403);
+  }
+  // The listing carries both `configScheduled` and `history`, so it is stale the moment the file
+  // changes — without this a write appears not to have worked until the TTL expires.
+  listCache.clear();
+  return null;
+}
+
+/**
+ * The review step both writers share: the diff to confirm, or `null` when there is nothing to
+ * review and the caller should go straight to writing.
+ *
+ * @param ctx The request context.
+ * @param state The panel state.
+ * @param diff The unified diff the edit produced.
+ * @param fields What the confirm button carries back.
+ * @returns The preview page, or `null` when this POST was the confirm.
+ */
+async function previewOr(
+  ctx: UiContext,
+  state: CronState,
+  diff: string,
+  fields: Readonly<Record<string, string>>,
+): Promise<Response | null> {
+  if (confirmed(ctx) && diff !== "") return null;
+  const compat = await isCompatApp(ctx.dir);
+  const preview = h(PreviewView, { ctx, diff, fields });
+  return panelResponse(ctx, renderView(h(CronPanel, { ctx, state, compat, body: preview })));
 }
 
 /** Re-render with a refusal against the form. */
@@ -696,18 +951,6 @@ function validationProblem(
   }
 }
 
-/**
- * Validate the posted entry and send the browser to the editor that owns this key.
- *
- * This panel deliberately does NOT write. `scheduledTasks` is already a fully editable map on
- * `/config` — preview, diff, confirm, the `_base` stale check, the config validator — and a
- * second writer for the same key would mean a second copy of all of those to keep in step. So
- * Cron validates what it can validate better than a generic map widget can (a real cron parse,
- * against the tasks that actually exist) and then hands over rather than half-owning the write.
- *
- * The merged value is still computed, because the JSON twin returns it: a machine client gets
- * the `scheduledTasks` it should POST to `/api/config` itself.
- */
 /** A refusal a resolver hands back: the message, and the status it answers with. */
 interface Refusal {
   readonly reason: string;
@@ -753,13 +996,8 @@ function rowValue(ctx: UiContext, state: CronState): Proposal {
 function proposed(ctx: UiContext, state: CronState): Proposal {
   const posted = postedField(ctx, BASE_FIELD);
   if (posted !== "" && posted !== state.base) {
-    return {
-      no: {
-        reason: `${state.configName} changed on disk since this form was rendered — nothing ` +
-          "was written. Reload the tab and re-apply your change.",
-        status: 409,
-      },
-    };
+    // The message lives in `staleBase`; this resolver only reports that it is stale.
+    return { no: { reason: `${state.configName} ${STALE_BASE}`, status: 409 } };
   }
   const intent = postedField(ctx, INTENT_FIELD);
   if (intent === INTENT_CLEAR) return { value: {} };
@@ -772,6 +1010,7 @@ function proposed(ctx: UiContext, state: CronState): Proposal {
 
 async function submit(ctx: UiContext, state: CronState): Promise<Response> {
   if (ctx.readOnly) return await refuse(ctx, state, "read-only — the config is not written", 403);
+  if (postedField(ctx, INTENT_FIELD) === INTENT_HISTORY) return await submitHistory(ctx, state);
   const proposal = proposed(ctx, state);
   if ("no" in proposal) return await refuse(ctx, state, proposal.no.reason, proposal.no.status);
   const { value } = proposal;
@@ -789,39 +1028,54 @@ async function submit(ctx: UiContext, state: CronState): Promise<Response> {
   if (ctx.json && !confirmed(ctx)) {
     return jsonResponse({ ok: true, applied: false, diff: edit.diff, scheduledTasks: value });
   }
-  if (!confirmed(ctx) || edit.diff === "") {
-    const compat = await isCompatApp(ctx.dir);
-    const preview = h(PreviewView, { ctx, diff: edit.diff, value, base: state.base });
-    return panelResponse(ctx, renderView(h(CronPanel, { ctx, state, compat, body: preview })));
+  const review = await previewOr(ctx, state, edit.diff, {
+    [VALUE_FIELD]: JSON.stringify(value),
+    [BASE_FIELD]: state.base,
+    [INTENT_FIELD]: INTENT_SAVE,
+  });
+  if (review) return review;
+  const refused = await applyWrite(ctx, state, edit.source);
+  if (refused) return refused;
+  if (ctx.json) {
+    return jsonResponse({ ok: true, applied: true, diff: edit.diff, scheduledTasks: value });
   }
-  return await write(ctx, state, edit.source, edit.diff, value);
+  return new Response(null, { status: 303, headers: { location: "/config/cron?saved=1" } });
 }
 
-/** The confirmed write — contained, atomic, and refused when the file moved underneath it. */
-async function write(
-  ctx: UiContext,
-  state: CronState,
-  source: string,
-  diff: string,
-  value: Record<string, string | string[]>,
-): Promise<Response> {
-  try {
-    await writeFileAtomic(ctx.dir, state.configName, source, { unchangedFrom: state.source });
-  } catch (error) {
-    if (error instanceof StaleWriteError) {
-      return await refuse(
-        ctx,
-        state,
-        `${state.configName} changed on disk while this change was being applied — nothing was ` +
-          "written. Reload the tab and re-apply your change.",
-        409,
-      );
-    }
-    const why = error instanceof Error ? error.message : String(error);
-    return await refuse(ctx, state, `${state.configName} could not be written: ${why}`, 403);
+/**
+ * Turn `tasks.history` on or off: the same diff-then-confirm the schedules use, for one boolean.
+ *
+ * It does not go through `proposed()` — that resolver's value is a `scheduledTasks` map, and a
+ * boolean at a nested path is a different write. What it does share is everything that makes the
+ * write safe: the `_base` stale check, a diff you confirm before anything lands, `writeFileAtomic`
+ * and the `409` when the file moved underneath.
+ */
+async function submitHistory(ctx: UiContext, state: CronState): Promise<Response> {
+  const stale = await staleBase(ctx, state);
+  if (stale) return stale;
+  const wanted = postedField(ctx, HISTORY_FIELD);
+  if (wanted !== "on" && wanted !== "off") {
+    return await refuse(ctx, state, "the history toggle named no value", 400);
   }
-  // The listing carries `configScheduled`, so it is stale the moment the file changes.
-  listCache.clear();
-  if (ctx.json) return jsonResponse({ ok: true, applied: true, diff, scheduledTasks: value });
-  return new Response(null, { status: 303, headers: { location: "/config/cron?saved=1" } });
+  const on = wanted === "on";
+  const from = state.source === "" ? EMPTY_CONFIG : state.source;
+  const edit = await setConfigValue(from, ["tasks", "history"], on);
+  if (!edit.ok) return await refuse(ctx, state, edit.reason, 422);
+
+  if (ctx.json && !confirmed(ctx)) {
+    return jsonResponse({ ok: true, applied: false, diff: edit.diff, history: on });
+  }
+  const review = await previewOr(ctx, state, edit.diff, {
+    [INTENT_FIELD]: INTENT_HISTORY,
+    [HISTORY_FIELD]: wanted,
+    [BASE_FIELD]: state.base,
+  });
+  if (review) return review;
+  const refused = await applyWrite(ctx, state, edit.source);
+  if (refused) return refused;
+  if (ctx.json) return jsonResponse({ ok: true, applied: true, diff: edit.diff, history: on });
+  return new Response(null, {
+    status: 303,
+    headers: { location: `/config/cron?saved=1&history=${wanted}` },
+  });
 }

@@ -49,9 +49,11 @@ async function call(
     rows?: Array<[string, string]>;
     readOnly?: boolean;
     query?: string;
+    json?: boolean;
   } = {},
 ): Promise<Response> {
-  const url = new URL(`http://127.0.0.1:5177/config/cron${init.query ?? ""}`);
+  const path = init.json === true ? "/api/config/cron" : "/config/cron";
+  const url = new URL(`http://127.0.0.1:5177${path}${init.query ?? ""}`);
   const posting = init.form !== undefined || init.rows !== undefined;
   const form = posting ? new FormData() : undefined;
   for (const [cron, name] of init.rows ?? []) {
@@ -65,7 +67,7 @@ async function call(
     method: posting ? "POST" : "GET",
     readOnly: init.readOnly === true,
     csrf: "csrf-token",
-    json: false,
+    json: init.json === true,
     fragment: false,
     form,
     events: new Set() as SseClients,
@@ -259,6 +261,113 @@ Deno.test("--read-only refuses the write before anything is computed", async () 
     });
     assertEquals(refused.status, 403);
     assertEquals(await Deno.readTextFile(join(dir, "denext.config.ts")), CONFIG);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+// ── run history ──────────────────────────────────────────────────────────────
+
+/** A config that turns run history on. */
+const HISTORY_ON = `export default {
+  tasks: { history: true },
+};
+`;
+
+Deno.test("history off says so, and offers the switch rather than an empty table", async () => {
+  const dir = await project(CONFIG, { cleanup: task() });
+  try {
+    const body = await (await call(dir)).text();
+    assertStringIncludes(body, "Run history is off");
+    assertStringIncludes(body, "Enable run history");
+    // An empty table would be the failure: it reads as "nothing ran" rather than "nothing is
+    // being recorded", and those are different facts.
+    assert(!body.includes("Last result"), "no table when nothing is recorded");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("history on with nothing recorded does not look like history off", async () => {
+  const dir = await project(HISTORY_ON, { cleanup: task() });
+  try {
+    const body = await (await call(dir)).text();
+    // The whole reason `enabled` and `available` are separate fields.
+    assert(!body.includes("Run history is off"), "it is not off");
+    assertStringIncludes(body, "nothing has been recorded yet");
+    // The restart is the part people would otherwise wait on forever. This is the SECTION's
+    // wording; the `?saved=1` notice says the same thing in its own words, and the round-trip
+    // test above pins that one.
+    assertStringIncludes(body, "restart the app");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("enabling history previews a diff, writes nothing, then writes exactly that", async () => {
+  const dir = await project(CONFIG, { cleanup: task() });
+  const file = join(dir, "denext.config.ts");
+  try {
+    const preview = await call(dir, { form: { intent: "history", history: "on" } });
+    assertEquals(preview.status, 200);
+    assertStringIncludes(await preview.text(), "Review the change");
+    assertEquals(await Deno.readTextFile(file), CONFIG, "a preview writes nothing");
+
+    const applied = await call(dir, {
+      form: { intent: "history", history: "on", confirm: "1" },
+    });
+    assertEquals(applied.status, 303);
+    assertEquals(applied.headers.get("location"), "/config/cron?saved=1&history=on");
+    await applied.body?.cancel();
+
+    // The landing page has to say the easily-missed part: it is not live until a restart.
+    const landed = await (await call(dir, { query: "?saved=1&history=on" })).text();
+    assertStringIncludes(landed, "next time the app starts");
+
+    const after = await Deno.readTextFile(file);
+    assertStringIncludes(after, "tasks: { history: true }");
+    // The key is created in a config that never had it, and everything else survives.
+    assertStringIncludes(after, "// this comment must survive every write");
+    assertStringIncludes(after, 'basePath: "/app"');
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("the JSON twin keeps 'enabled' and 'available' apart", async () => {
+  const dir = await project(CONFIG, { cleanup: task() });
+  try {
+    const off = await (await call(dir, { json: true })).json();
+    assertEquals(off.history.enabled, false);
+    // Off is not the same claim as unreadable: nothing was opened, because nothing was asked for.
+    assertEquals(off.history.available, false);
+    assertEquals(off.history.windowDays, 7);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("the history toggle is refused read-only, and when the file moved underneath", async () => {
+  const dir = await project(CONFIG, { cleanup: task() });
+  const file = join(dir, "denext.config.ts");
+  try {
+    const refused = await call(dir, {
+      form: { intent: "history", history: "on" },
+      readOnly: true,
+    });
+    assertEquals(refused.status, 403);
+    assertEquals(await Deno.readTextFile(file), CONFIG);
+
+    const stale = await call(dir, {
+      form: { intent: "history", history: "on", _base: "0".repeat(64) },
+    });
+    assertEquals(stale.status, 409);
+    assertStringIncludes(await stale.text(), "changed on disk");
+    assertEquals(await Deno.readTextFile(file), CONFIG);
+
+    // A toggle that names no value is a refusal, not a silent default.
+    const empty = await call(dir, { form: { intent: "history" } });
+    assertEquals(empty.status, 400);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

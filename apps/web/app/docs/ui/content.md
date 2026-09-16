@@ -621,6 +621,32 @@ Removing every schedule is its own button. An empty form is refused instead, bec
 field or a stale tab would otherwise read as "delete them all". See
 [Scheduled tasks](/docs/tasks) for the feature itself.
 
+### Run history
+
+The tab can also answer what actually ran, and whether it worked — but only if the project asks.
+Run history is **off by default**: denext records nothing and writes no file until you turn it on,
+so upgrading never gives an app a side effect nobody requested.
+
+Turning it on from this tab writes `tasks: { history: true }` to your denext config through the
+same diff-then-confirm as everything else here — you see the exact change before anything lands.
+From then on every run is recorded, scheduled and manual alike, into `.denext/tasks.db`, and the
+tab shows each task's last result, how long it took, and its successes and failures over the last
+seven days.
+
+Two things are worth knowing. It takes effect **the next time the app starts**, including under
+`denext dev`: the recorder is installed at server boot, and the dev server's watcher re-bundles
+routes without re-running task boot. And recording can never fail or delay a run — a read-only
+filesystem, a full disk or a locked file degrades to no history rather than to a broken job.
+
+The tab distinguishes four states rather than showing one empty table: history off, on but nothing
+recorded yet, on with no runs inside the window, and on with results. "Off" and "on but nothing
+yet" are different facts, and reading one as the other is how you end up waiting for data that was
+never going to arrive.
+
+On Deno Deploy it records and says so: `.denext/tasks.db` is per-isolate and ephemeral there, so
+what you see is one isolate's fragment that resets when it cycles. A history that is quietly wrong
+is worse than none, so the caveat is printed at boot rather than the setting being ignored.
+
 ## Project commands
 
 `/commands` lists every verb available in this project — built-ins, verbs a plugin
