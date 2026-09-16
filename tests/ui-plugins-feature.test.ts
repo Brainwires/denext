@@ -123,6 +123,8 @@ Deno.test("the catalog renders in two groups with each package's installed state
     const body = await (await get(h, "/plugins")).text();
     assertStringIncludes(body, "<h2>Plugins</h2>");
     assertStringIncludes(body, "<h2>Libraries</h2>");
+    // A library is pinned, never wired. The panel said so only in the preview, after the click.
+    assertStringIncludes(body, "a library is a package you import directly");
     assertStringIncludes(body, `id="${HTMX}"`);
     assertStringIncludes(body, `id="${OPENAPI}"`);
     assertStringIncludes(body, "https://denext.dev/docs/openapi");
