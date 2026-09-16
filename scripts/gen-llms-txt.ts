@@ -61,7 +61,8 @@ export function llmsIndex(): string {
 
 ## Tooling for agents
 
-- **MCP server** — \`deno run -A jsr:@denext/denext/cli mcp\`. Tools (derived from the live
+- **MCP server** — \`denext mcp\` (with nothing installed:
+  \`deno run -A jsr:@denext/denext/cli mcp\`). Tools (derived from the live
   registry so this never drifts): ${TOOLS.map((t) => `\`${t.name}\``).join(", ")}. It can lint a
   snippet for Next-isms, map imports, scaffold, run doctor/codemod, list an app's routes, read a
   running dev server's errors + console, and render a route/component server-side.

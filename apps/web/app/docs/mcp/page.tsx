@@ -4,14 +4,14 @@ import mcp from "./mcp.json" with { type: "json" };
 export const metadata = {
   title: "MCP server",
   description:
-    "denext ships a first-party Model Context Protocol server — deno run -A jsr:@denext/denext/cli mcp — so AI coding agents get denext right the first time: lint snippets, map imports, scaffold, render routes, and read the running dev server.",
+    "denext ships a first-party Model Context Protocol server — denext mcp — so AI coding agents get denext right the first time: lint snippets, map imports, scaffold, render routes, and read the running dev server.",
 };
 
-const SETUP = `# stand-alone
-deno run -A jsr:@denext/denext/cli mcp
+const SETUP = `# with the denext CLI installed
+denext mcp
 
-# or, inside a denext project
-denext mcp`;
+# or with nothing installed at all
+deno run -A jsr:@denext/denext/cli mcp`;
 
 export default function Mcp() {
   const toc = [

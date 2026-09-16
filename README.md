@@ -224,14 +224,17 @@ denext JSX toolchain and import map:
 }
 ```
 
-Then run the CLI (see [The `denext` command](#the-denext-command) for nicer ways to invoke it):
+Then run the CLI — with `denext` installed (see [The `denext` command](#the-denext-command)):
 
 ```
-deno run -A jsr:@denext/denext/cli dev .      # dev server + live reload
-deno run -A jsr:@denext/denext/cli build .    # produce .denext/ bundles
-deno run -A jsr:@denext/denext/cli export .   # static export (SSG) to out/
-deno run -A jsr:@denext/denext/cli start .    # serve the production build
+denext dev .      # dev server + live reload
+denext build .    # produce .denext/ bundles
+denext export .   # static export (SSG) to out/
+denext start .    # serve the production build
 ```
+
+Without installing anything, the same four verbs are
+`deno run -A jsr:@denext/denext/cli <verb> .`.
 
 See [`examples/hello`](./examples/hello) for a complete working app.
 
@@ -239,27 +242,40 @@ See [`examples/hello`](./examples/hello) for a complete working app.
 
 Get a real `denext` command instead of typing `deno run -A .../cli.ts` every time:
 
-**1. Install it globally** (a thin launcher that still uses your installed Deno):
+**1. Install the released binary** (no Deno needed to _install_ it):
+
+```
+curl -fsSL https://denext.dev/install.sh | sh
+denext --version        # reports "(binary)" so you know which one ran
+```
+
+It lands in `~/.denext/bin/denext`; add that to your `PATH` (the script tells you how). Pick a
+version with `DENEXT_VERSION=v2.5.0`, or a location with `DENEXT_INSTALL=/opt/denext`. The
+installer verifies the published checksum and, on macOS, strips the quarantine attribute.
+
+**2. Install it globally with Deno** (a thin launcher that uses your installed Deno):
 
 ```
 deno install -A -g -n denext jsr:@denext/denext/cli
 denext dev        # in a project folder with app/ + deno.json
 ```
 
-**2. Compile a standalone binary** (bundles the Deno runtime — no Deno needed to _run_ it):
+**3. Compile it yourself** from a checkout:
 
 ```
 deno task compile        # produces ./denext  (deno compile -A --output denext cli.ts)
-./denext build .
-./denext start .         # fully standalone: serves prebuilt bundles
 ```
 
-> Note: `dev` and `build` produce browser bundles by shelling out to `deno bundle`, so those two
-> subcommands still require a `deno` binary on the machine (found via `DENO_BIN`,
-> `~/.deno/bin/deno`, or `PATH`). `start` only serves already-built output, so a compiled
-> `denext start` needs nothing else. Set `DENO_BIN=/path/to/deno` to point at a specific Deno.
+> Note: the binary is a **CLI, not a second copy of the framework**. Inside a project, every verb
+> that loads your app (`dev`, `build`, `export`, `start`, `task`, `doctor`, …) re-execs the denext
+> that project pins, so `denext build` produces exactly what `deno task build` would — and those
+> verbs therefore need a reachable `deno` (via `DENO_BIN`, `~/.deno/bin/deno`, or `PATH`). A
+> directory that pins no denext is refused with a message naming the fix. `ui`, `create`, `init`,
+> `commands`, `completions` and `--version` run inside the binary and need nothing else.
+> Browser bundling shells out to `deno bundle`; see
+> [Known limitations](./KNOWN-LIMITATIONS.md).
 
-**3. A project task** — add these to your app's `deno.json` `tasks` (what `examples/hello` does),
+**4. A project task** — add these to your app's `deno.json` `tasks` (what `examples/hello` does),
 then `deno task dev` / `build` / `start`:
 
 ```

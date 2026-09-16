@@ -19,7 +19,7 @@ no install step. `tasks` gives you the three commands you will use, `compilerOpt
 points JSX at denext's runtime, and `imports` maps the `denext` specifiers your code
 will import. Because this example lives inside the repository, its import map resolves
 to the local checkout; a standalone app maps `denext` to `jsr:@denext/denext` instead,
-which `deno run -A jsr:@denext/denext/cli create my-app` writes for you — see
+which `denext create my-app` writes for you — see
 [Getting started](/docs/getting-started). A `denext.config.ts` is optional and this
 app has none; [Configuration](/docs/config) lists every field.
 

@@ -24,7 +24,7 @@ If your app is fully static (no per-request data), export it to plain HTML and
 host it anywhere — this very docs site is built that way:
 
 ```sh
-deno run -A jsr:@denext/denext/cli export .   # writes out/ — pure HTML, 0 KB JS on static pages
+denext export .   # writes out/ — pure HTML, 0 KB JS on static pages
 ```
 
 ### Docker

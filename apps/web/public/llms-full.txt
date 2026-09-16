@@ -429,7 +429,8 @@ the map above — that is almost always correct denext.
 
 denext ships tooling so agents get it right the first time:
 
-- **MCP server** — `deno run -A jsr:@denext/denext/cli mcp` (or `denext mcp`). It speaks
+- **MCP server** — `denext mcp` (or, with nothing installed,
+  `deno run -A jsr:@denext/denext/cli mcp`). It speaks
   MCP over stdio; configure it as an MCP server in your client. Tools:
   `denext_check_snippet` (lint a code string for Next-isms before you write it),
   `denext_import_map` (map a Next/React import to denext), `denext_generate` (scaffold —

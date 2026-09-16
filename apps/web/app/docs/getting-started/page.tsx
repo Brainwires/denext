@@ -13,10 +13,27 @@ export default function GettingStarted() {
       title="Getting started"
       lead="A denext project is a Deno project. No package.json, no node_modules — a deno.json and an app/ directory."
     >
+      <h2>Install the CLI</h2>
+      <p>
+        Optional but recommended — it puts a <code>denext</code>{" "}
+        command in your PATH, so every example below is one word instead of a URL:
+      </p>
+      <Code lang="sh">
+        {`curl -fsSL https://denext.dev/install.sh | sh   # ~/.denext/bin/denext
+# or, with Deno already installed:
+deno install -A -g -n denext jsr:@denext/denext/cli`}
+      </Code>
+      <p>
+        The binary is a CLI, not a second copy of the framework: inside a project it runs the denext
+        that project pins, so it never silently swaps your app's framework version. Every command on
+        this page also works with nothing installed — replace <code>denext</code> with{" "}
+        <code>deno run -A jsr:@denext/denext/cli</code>.
+      </p>
+
       <h2>Create a project</h2>
       <p>Scaffold a new app with the CLI:</p>
       <Code lang="sh">
-        {`deno run -A jsr:@denext/denext/cli create my-app
+        {`denext create my-app
 cd my-app
 deno task dev`}
       </Code>
