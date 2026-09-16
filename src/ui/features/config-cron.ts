@@ -44,7 +44,7 @@ import { cliInvocation, runDeno } from "../proc.ts";
 import { parseJsonDocument } from "../child-json.ts";
 import { join } from "@std/path";
 import { CONFIG_FILES } from "../../build/paths.ts";
-import { readTaskHistory, TASK_HISTORY_DB } from "../../server/task-history.ts";
+import { clearTaskHistory, readTaskHistory, TASK_HISTORY_DB } from "../../server/task-history.ts";
 import { deleteConfigValue, setConfigValue } from "../../build/config-edit.ts";
 import { readContained, StaleWriteError, stampOf, writeFileAtomic } from "../security.ts";
 import { confirmed, postedField } from "./plugins.ts";
@@ -89,6 +89,9 @@ const INTENT_CLEAR = "clear";
  * schedules above, so it takes its own path through `submit` rather than through
  * `proposed()`, whose Proposal is a `scheduledTasks` map. */
 const INTENT_HISTORY = "history";
+
+/** Delete every recorded run. Touches no config: only rows go. */
+const INTENT_CLEAR_HISTORY = "clear-history";
 
 /** The value the history toggle carries: `"on"` or `"off"`. */
 const HISTORY_FIELD = "history";
@@ -373,6 +376,14 @@ function History(
     null,
     h(HistoryTable, { read }),
     h(HistoryToggle, { ctx, state, on: false }),
+    h(OpForm, {
+      csrf: ctx.csrf,
+      action: "/config/cron",
+      label: "Clear history",
+      disabled: ctx.readOnly,
+      className: "ghost",
+      fields: { [INTENT_FIELD]: INTENT_CLEAR_HISTORY },
+    }),
   );
 }
 
@@ -795,7 +806,19 @@ export async function cronPanel(_request: Request, ctx: UiContext): Promise<Resp
   const compat = await isCompatApp(ctx.dir);
   // A write redirects here with `?saved=1` (POST/redirect/GET, so a reload never re-posts); say
   // so, or the page it lands on looks identical to the one it left and the write reads as a no-op.
+  const cleared = ctx.url.searchParams.get("cleared") === "1";
   const toggled = ctx.url.searchParams.get("history");
+  if (cleared) {
+    return panelResponse(
+      ctx,
+      renderView(h(CronPanel, {
+        ctx,
+        state,
+        compat,
+        notice: h(Note, null, "Run history cleared. Recording continues."),
+      })),
+    );
+  }
   const notice = ctx.url.searchParams.get("saved") === "1"
     ? h(
       Note,
@@ -1010,7 +1033,9 @@ function proposed(ctx: UiContext, state: CronState): Proposal {
 
 async function submit(ctx: UiContext, state: CronState): Promise<Response> {
   if (ctx.readOnly) return await refuse(ctx, state, "read-only — the config is not written", 403);
-  if (postedField(ctx, INTENT_FIELD) === INTENT_HISTORY) return await submitHistory(ctx, state);
+  const intent = postedField(ctx, INTENT_FIELD);
+  if (intent === INTENT_HISTORY) return await submitHistory(ctx, state);
+  if (intent === INTENT_CLEAR_HISTORY) return await submitClearHistory(ctx, state);
   const proposal = proposed(ctx, state);
   if ("no" in proposal) return await refuse(ctx, state, proposal.no.reason, proposal.no.status);
   const { value } = proposal;
@@ -1050,6 +1075,55 @@ async function submit(ctx: UiContext, state: CronState): Promise<Response> {
  * write safe: the `_base` stale check, a diff you confirm before anything lands, `writeFileAtomic`
  * and the `409` when the file moved underneath.
  */
+function ConfirmClear(
+  { ctx, count, windowDays }: {
+    readonly ctx: UiContext;
+    readonly count: number;
+    readonly windowDays: number;
+  },
+): VNode {
+  return h(
+    Fragment,
+    null,
+    h("h2", null, "Clear run history"),
+    h(
+      "p",
+      { class: "lead" },
+      count === 0
+        ? "This deletes every recorded run. "
+        : `This deletes every recorded run — ${count} in the last ${windowDays} days, and any older ones still kept. `,
+      "It cannot be undone. Your denext config is not changed, and recording continues.",
+    ),
+    h(OpForm, {
+      csrf: ctx.csrf,
+      action: "/config/cron",
+      label: "Delete every recorded run",
+      disabled: ctx.readOnly,
+      fields: { [INTENT_FIELD]: INTENT_CLEAR_HISTORY, confirm: "1" },
+    }),
+  );
+}
+
+async function submitClearHistory(ctx: UiContext, state: CronState): Promise<Response> {
+  // Deleting run data cannot be previewed as a diff — no file changes — so the confirm step says
+  // how much goes instead. Every other write here is two steps, and so is this.
+  if (!confirmed(ctx)) {
+    const read = readTaskHistory({ path: historyPath(ctx.dir) }, HISTORY_WINDOW_DAYS);
+    // The window total, not `recent.length`: the feed is capped at 20, so a project with
+    // hundreds of runs would otherwise be told "at least 20", which is true but useless.
+    const count = read.tasks.reduce((n, row) => n + row.successes + row.failures, 0);
+    const compat = await isCompatApp(ctx.dir);
+    const body = h(ConfirmClear, { ctx, count, windowDays: read.windowDays });
+    return panelResponse(ctx, renderView(h(CronPanel, { ctx, state, compat, body })), 409);
+  }
+  const done = clearTaskHistory({ path: historyPath(ctx.dir) });
+  if (!done.cleared) {
+    return await refuse(ctx, state, `the history could not be cleared: ${done.reason}`, 422);
+  }
+  if (ctx.json) return jsonResponse({ ok: true, applied: true, cleared: true });
+  return new Response(null, { status: 303, headers: { location: "/config/cron?cleared=1" } });
+}
+
 async function submitHistory(ctx: UiContext, state: CronState): Promise<Response> {
   const stale = await staleBase(ctx, state);
   if (stale) return stale;

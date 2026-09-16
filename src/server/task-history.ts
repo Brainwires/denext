@@ -318,3 +318,53 @@ function fileExists(path: string): boolean {
     return false;
   }
 }
+
+/** What clearing the history did, or why it could not. */
+export interface TaskHistoryCleared {
+  /** Whether the rows were removed. */
+  readonly cleared: boolean;
+  /** Why not, when they were not. */
+  readonly reason?: string;
+}
+
+/**
+ * Delete every recorded run, keeping the database itself.
+ *
+ * A `DELETE`, deliberately not a file unlink: the app process may hold this database open with
+ * live `-wal`/`-shm` siblings, and removing a file out from under another process's handle is
+ * exactly the cross-process write this design refuses everywhere else. A `DELETE` is safe against
+ * a concurrent writer; an unlink is not.
+ *
+ * Never throws — a history store that cannot be cleared is not worth a failed response.
+ *
+ * @param options The database path, and an optional open hook.
+ * @returns Whether the rows went, and why not when they did not.
+ */
+export function clearTaskHistory(options: TaskHistoryOptions): TaskHistoryCleared {
+  const open = options.openDb ?? ((path: string) => openSqliteFile(path));
+  // Checked BEFORE opening: this is a writer, and a writer open CREATES the file. Without this,
+  // asking to clear a project that never recorded anything would leave behind the very database
+  // the feature promises not to write unasked — and answer "no such table: runs" while doing it.
+  if (options.openDb === undefined && !fileExists(options.path)) {
+    return { cleared: false, reason: "no history recorded yet" };
+  }
+  let d: SqliteDb;
+  try {
+    d = open(options.path);
+  } catch (err) {
+    return { cleared: false, reason: reasonOf(options.path, err) };
+  }
+  try {
+    try {
+      d.exec(`PRAGMA busy_timeout = ${BUSY_READ_MS}`);
+    } catch { /* keep the default */ }
+    d.exec("DELETE FROM runs");
+    return { cleared: true };
+  } catch (err) {
+    return { cleared: false, reason: err instanceof Error ? err.message : String(err) };
+  } finally {
+    try {
+      d.close();
+    } catch { /* already gone */ }
+  }
+}

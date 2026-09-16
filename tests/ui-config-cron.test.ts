@@ -11,6 +11,7 @@ import type { SseClients } from "../src/build/sse.ts";
 import type { UiContext } from "../src/ui/html.ts";
 import { parseJsonDocument } from "../src/ui/child-json.ts";
 import { cronPanel, nextRuns } from "../src/ui/features/config-cron.ts";
+import { readTaskHistory, taskHistoryRecorder } from "../src/server/task-history.ts";
 
 /** A project with a denext config, a tasks/ directory, and an app — enough for discovery. */
 async function project(
@@ -368,6 +369,62 @@ Deno.test("the history toggle is refused read-only, and when the file moved unde
     // A toggle that names no value is a refusal, not a silent default.
     const empty = await call(dir, { form: { intent: "history" } });
     assertEquals(empty.status, 400);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/** Seed a couple of recorded runs into a project's history. */
+function seedHistory(dir: string): string {
+  const path = join(dir, ".denext", "tasks.db");
+  const store = taskHistoryRecorder({ path });
+  const now = Date.now();
+  store.record({ name: "cleanup", trigger: "schedule", startedAt: now, durationMs: 5, ok: true });
+  store.record({ name: "cleanup", trigger: "manual", startedAt: now, durationMs: 9, ok: false });
+  store.close();
+  return path;
+}
+
+Deno.test("clearing history takes two steps, and the second one can actually be reached", async () => {
+  const dir = await project(HISTORY_ON, { cleanup: task() });
+  const path = seedHistory(dir);
+  try {
+    const first = await call(dir, { form: { intent: "clear-history" } });
+    assertEquals(first.status, 409);
+    const asked = await first.text();
+    assertStringIncludes(asked, "Delete every recorded run");
+    // The regression this guards: the first step must render a form that CARRIES the confirm.
+    // Saying "press again" while posting the same body is an unusable button and a false promise.
+    assertStringIncludes(asked, 'name="confirm" value="1"');
+    assertEquals(readTaskHistory({ path }).recent.length, 2, "step one deletes nothing");
+
+    const second = await call(dir, { form: { intent: "clear-history", confirm: "1" } });
+    assertEquals(second.status, 303);
+    assertEquals(second.headers.get("location"), "/config/cron?cleared=1");
+    await second.body?.cancel();
+
+    // A DELETE, not an unlink — the app may hold this file open.
+    const after = readTaskHistory({ path });
+    assertEquals(after.available, true, "the database is still there");
+    assertEquals(after.recent, []);
+
+    const landed = await (await call(dir, { query: "?cleared=1" })).text();
+    assertStringIncludes(landed, "Run history cleared");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("clearing history is refused read-only, and the runs survive", async () => {
+  const dir = await project(HISTORY_ON, { cleanup: task() });
+  const path = seedHistory(dir);
+  try {
+    const refused = await call(dir, {
+      form: { intent: "clear-history", confirm: "1" },
+      readOnly: true,
+    });
+    assertEquals(refused.status, 403);
+    assertEquals(readTaskHistory({ path }).recent.length, 2, "nothing was deleted");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

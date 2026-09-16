@@ -643,6 +643,11 @@ recorded yet, on with no runs inside the window, and on with results. "Off" and 
 yet" are different facts, and reading one as the other is how you end up waiting for data that was
 never going to arrive.
 
+Clearing is its own button, and its own two steps: the first press says how many runs will go and
+asks you to confirm, the second deletes them. It is a `DELETE`, not a file unlink — the running app
+may hold that database open — so the database survives and recording simply continues. Your denext
+config is not touched, and nothing about the schedules changes.
+
 On Deno Deploy it records and says so: `.denext/tasks.db` is per-isolate and ephemeral there, so
 what you see is one isolate's fragment that resets when it cycles. A history that is quietly wrong
 is worse than none, so the caveat is printed at boot rather than the setting being ignored.

@@ -12,7 +12,11 @@ import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
 import type { SqliteDb, SqlValue } from "../src/server/sqlite-cache.ts";
 import type { TaskRunRecord } from "../src/server/tasks.ts";
-import { readTaskHistory, taskHistoryRecorder } from "../src/server/task-history.ts";
+import {
+  clearTaskHistory,
+  readTaskHistory,
+  taskHistoryRecorder,
+} from "../src/server/task-history.ts";
 
 /** A run, with the boring fields filled in. */
 function run(over: Partial<TaskRunRecord> & { name: string }): TaskRunRecord {
@@ -166,4 +170,56 @@ Deno.test("an enabled store with nothing recorded is distinguishable from a miss
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+/** Whether a path exists. */
+async function present(path: string): Promise<boolean> {
+  try {
+    await Deno.stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+Deno.test("clearing removes every run and keeps the database itself", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_task_history_" });
+  const path = join(dir, "tasks.db");
+  try {
+    const store = taskHistoryRecorder({ path });
+    store.record(run({ name: "cleanup" }));
+    store.record(run({ name: "digest", ok: false, detail: "boom" }));
+    store.close();
+
+    assertEquals(clearTaskHistory({ path }).cleared, true);
+
+    // A DELETE, not an unlink: the app process may hold this file open with live -wal/-shm
+    // siblings, and removing it out from under that handle is the failure mode this avoids.
+    assert(await present(path), "the database survives being cleared");
+    const after = readTaskHistory({ path });
+    assertEquals(after.available, true, "still readable");
+    assertEquals(after.recent, []);
+    assertEquals(after.tasks, []);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("clearing a history that never existed is an ordinary answer", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_task_history_" });
+  try {
+    const done = clearTaskHistory({ path: join(dir, "tasks.db") });
+    assertEquals(done.cleared, false);
+    // Not a raw SQLite string with a filesystem path in it.
+    assertEquals(done.reason, "no history recorded yet");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a store that cannot be opened is reported, never thrown", () => {
+  const s = stub("open-throws");
+  const done = clearTaskHistory({ path: "/nowhere/tasks.db", openDb: s.open });
+  assertEquals(done.cleared, false);
+  assert((done.reason ?? "").length > 0, "it says why");
 });
