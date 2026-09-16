@@ -20,6 +20,7 @@ import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode } from "../../jsx/types.ts";
 import { jsonResponse, panelResponder, type UiContext } from "../html.ts";
 import { Mono, Note, OpForm, Panel, Table, Tabs } from "../components.ts";
+import { CONFIG_GROUPS, GROUP_LABEL, groupHref } from "./config-groups.ts";
 import { renderView } from "../view.ts";
 import { loadConfigSchema, resolveAt } from "../form/schema.ts";
 import { widgetFor } from "../form/widget.ts";
@@ -196,11 +197,14 @@ export async function isCompatApp(dir: string): Promise<boolean> {
 }
 
 /**
- * The Config panel's tab strip. `next.config` is a VIEW of this project's configuration, not a
- * separate destination — which is why it is a tab here rather than a seventh item in the top
- * navigation. It appears only for a compat app; a native one sees a single-tab strip.
+ * The Config panel's tab strip: one tab per group of `denext.config.ts` keys, then `next.config`
+ * when the project is a compat app.
  *
- * Both tabs are real routes, so each is linkable and works with scripting off.
+ * `next.config` is a VIEW of this project's configuration, not a separate destination — which is
+ * why it is a tab here rather than an item in the top navigation. It sits last because it is the
+ * only tab that leaves `denext.config.ts` for another file.
+ *
+ * Every tab is a real route, so each is linkable and works with scripting off.
  *
  * @param props `active`: the href to mark current; `compat`: whether to offer the next.config tab.
  * @returns The strip.
@@ -209,7 +213,10 @@ export function ConfigTabs({ active, compat }: {
   readonly active: string;
   readonly compat: boolean;
 }): VNode {
-  const items = [{ href: "/config", label: "denext.config" }];
+  const items = CONFIG_GROUPS.map((group) => ({
+    href: groupHref(group),
+    label: GROUP_LABEL[group],
+  }));
   if (compat) items.push({ href: "/config/next", label: "next.config" });
   return h(Tabs, { items, active, label: "Configuration views" });
 }

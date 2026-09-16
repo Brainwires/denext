@@ -45,6 +45,7 @@ import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "..
 import {
   DiffBlock,
   Hidden,
+  Input,
   Mono,
   NoChange,
   Note,
@@ -71,6 +72,15 @@ import {
   parseOp,
 } from "../form/value.ts";
 import { ConfigTabs, isCompatApp, nextConfigPanel } from "./config-next.ts";
+import {
+  type ConfigGroup,
+  DEFAULT_GROUP,
+  groupHref,
+  groupOf,
+  isConfigGroup,
+  matchNote,
+  visibleSections,
+} from "./config-groups.ts";
 
 /** The file the editor offers to create when the project has no denext config at all. */
 const EMPTY_CONFIG = "export default {\n};\n";
@@ -676,6 +686,10 @@ interface PanelOptions {
   readonly notice?: VNode;
   /** The posted value and errors of a refused submit. */
   readonly feedback?: Feedback;
+  /** Which group of keys to render (ignored while a search is running). */
+  readonly group?: ConfigGroup;
+  /** The `?q=` filter, which cuts across every group. */
+  readonly query?: string;
 }
 
 /** The whole editor: one collapsible section per top-level key, then the escape hatch. */
@@ -686,10 +700,13 @@ function ConfigPanel(
   },
 ): VNode {
   const { notice, feedback } = options;
+  const query = options.query ?? "";
+  const group = options.group ?? DEFAULT_GROUP;
+  const { shown, rawHere } = visibleSections(state.sections, group, query);
   return h(
     Panel,
     { name: "Config", title: "Config" },
-    h(ConfigTabs, { active: "/config", compat }),
+    h(ConfigTabs, { active: query === "" ? groupHref(group) : "", compat }),
     h(
       "p",
       { class: "lead" },
@@ -698,14 +715,31 @@ function ConfigPanel(
       ", rendered from the config schema. A change is previewed as a diff before anything is " +
         "written; comments and the values you did not touch come through byte for byte.",
     ),
+    h(ConfigFilter, { query }),
     ctx.readOnly ? h(Note, null, "Read-only mode — every change is refused.") : null,
     state.exists ? null : h(CreateOffer, { ctx, state }),
     state.exists && state.form === "unsupported" ? h(UnsupportedNote, { name: state.name }) : null,
     notice ?? null,
-    state.sections.map((section) =>
-      h(ConfigSection, { key: section.key, ctx, state, section, feedback })
-    ),
-    h(RawFileEditor, { ctx, state }),
+    query === "" ? null : h("p", { class: "filter-note" }, matchNote(shown.length, query)),
+    shown.map((section) => h(ConfigSection, { key: section.key, ctx, state, section, feedback })),
+    rawHere ? h(RawFileEditor, { ctx, state }) : null,
+  );
+}
+
+/** The key filter: a plain GET form, so it narrows the page with scripting off. */
+function ConfigFilter({ query }: { readonly query: string }): VNode {
+  return h(
+    "form",
+    { method: "get", action: "/config", class: "filter", role: "search" },
+    h(Input, {
+      type: "search",
+      name: "q",
+      value: query,
+      placeholder: "Filter config keys",
+      ariaLabel: "Filter config keys by name or description",
+    }),
+    h("button", { type: "submit" }, "Filter"),
+    query === "" ? null : h("a", { class: "lead", href: "/config" }, "Clear"),
   );
 }
 
@@ -782,9 +816,24 @@ async function editorResponse(
   status?: number,
 ): Promise<Response> {
   const compat = await isCompatApp(ctx.dir);
+  // Resolved here, like `compat`, so every render path agrees: an explicit `?group=`, else the
+  // group owning the `?section=` being posted (so a refusal or a 422 re-renders on the view the
+  // edit came from), else the default.
+  const params = ctx.url.searchParams;
+  const posted = params.get("section");
+  const group = isConfigGroup(params.get("group"))
+    ? params.get("group") as ConfigGroup
+    : posted
+    ? groupOf(posted)
+    : DEFAULT_GROUP;
   return panelResponse(
     ctx,
-    renderView(h(ConfigPanel, { ctx, state, options, compat })),
+    renderView(h(ConfigPanel, {
+      ctx,
+      state,
+      options: { ...options, group, query: (params.get("q") ?? "").trim() },
+      compat,
+    })),
     status,
   );
 }
@@ -831,7 +880,13 @@ async function write(
   if (ctx.json) return jsonResponse({ ok: true, applied: true, file: next.name });
   const notice = h(Note, null, `Wrote ${next.name}.`);
   if (ctx.fragment) return await editorResponse(ctx, next, { notice });
-  return new Response(null, { status: 303, headers: { location: `/config#${anchor}` } });
+  // The anchor only resolves on the view that renders its key, so the redirect names that view.
+  // `raw-file` needs no special case: it groups to `advanced` like any key this module does not
+  // place, and lands under its own anchor there.
+  return new Response(null, {
+    status: 303,
+    headers: { location: `${groupHref(groupOf(anchor))}#${anchor}` },
+  });
 }
 
 // ── the section write ────────────────────────────────────────────────────────

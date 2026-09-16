@@ -104,20 +104,25 @@ Deno.test("GET /config renders a section per key, the list rows and the plugins 
     assertEquals(res.status, 200);
     const body = await res.text();
     assertStringIncludes(body, '<section id="panel"');
-    // Every top-level key gets a section; the ones that are set are open.
+    // The keys are grouped now, so a section is asserted on the view that owns it. Routing is
+    // what a bare /config opens on; the ones that are set are open.
     assertStringIncludes(body, '<details id="basePath" open>');
-    assertStringIncludes(body, '<details id="mode">');
     // The scalar widgets carry the file's current values.
     assert(hasField(body, "basePath", "/docs"));
     // The rule thunk is unwrapped: one typed sub-form per row, in file order.
     assert(hasField(body, "redirects[0].source", "/old"));
     assert(hasField(body, "redirects[1].destination", "/b"));
     assertStringIncludes(body, 'value="up:1:redirects"');
+
+    const rendering = await (await call(dir, "/config?group=rendering")).text();
+    assertStringIncludes(rendering, '<details id="mode">');
+
+    const advanced = await (await call(dir, "/config?group=advanced")).text();
     // `plugins` is shown, never edited here.
-    assertStringIncludes(body, "plugins panel</a> owns this key");
-    assertStringIncludes(body, "openapi()");
+    assertStringIncludes(advanced, "plugins panel</a> owns this key");
+    assertStringIncludes(advanced, "openapi()");
     // The escape hatch carries the whole file.
-    assertStringIncludes(body, 'name="raw"');
+    assertStringIncludes(advanced, 'name="raw"');
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -275,7 +280,8 @@ Deno.test("the raw editor carries the file byte for byte, markup characters incl
   const source = CONFIG.replace("// the legacy URLs", `// <b>a & b</b> "quoted" 'single' &amp;`);
   const dir = await project(source);
   try {
-    const body = await (await call(dir, "/config")).text();
+    // The whole-file escape hatch lives on Advanced, with the keys denext does not describe.
+    const body = await (await call(dir, "/config?group=advanced")).text();
     assert(!body.includes("<b>a & b</b>"), "the file's markup is escaped, never live");
     const text = textareaText(body);
     assertEquals(text, source);
@@ -294,7 +300,7 @@ Deno.test("the raw editor keeps a file's leading blank lines through the textare
   const source = "\n\n" + CONFIG;
   const dir = await project(source);
   try {
-    const body = await (await call(dir, "/config")).text();
+    const body = await (await call(dir, "/config?group=advanced")).text();
     // The newline the parser drops after `<textarea>`, then the file's own two.
     assertMatch(body, /<textarea name="raw"[^>]*>\n\n\nimport /);
     const text = textareaText(body);

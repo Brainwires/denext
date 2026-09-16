@@ -187,6 +187,11 @@ h2 { font-size: var(--text-lg); margin: 28px 0 var(--space-2); }
   font-weight: 600;
 }
 
+/* A panel's filter box: a plain GET form, so it works with scripting off. */
+.filter { display: flex; gap: var(--space-2); align-items: center; margin: 0 0 var(--space-4); }
+.filter input[type="search"] { flex: 1; max-width: 26rem; }
+.filter-note { color: var(--muted-foreground); font-size: var(--text-sm); margin: 0 0 var(--space-4); }
+
 /* ── controls ──────────────────────────────────────────────────────────── */
 fieldset {
   border: 1px solid var(--border);
