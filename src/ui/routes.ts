@@ -33,6 +33,7 @@ import { pluginsPanel } from "./features/plugins.ts";
 import { pluginOptionsPanel } from "./features/plugin-options.ts";
 import { generatePanel } from "./features/generate.ts";
 import { dockerPanel } from "./features/docker.ts";
+import { desktopPanel } from "./features/desktop.ts";
 import { wizardPanel } from "./features/wizard.ts";
 import { commandsPanel } from "./features/commands.ts";
 
@@ -55,6 +56,7 @@ const FEATURES: readonly FeatureRoute[] = [
   { path: "/plugins/options", methods: ["GET", "POST"], handle: pluginOptionsPanel },
   { path: "/generate", methods: ["GET", "POST"], handle: generatePanel },
   { path: "/docker", methods: ["GET", "POST"], handle: dockerPanel },
+  { path: "/desktop", methods: ["GET"], handle: desktopPanel },
   { path: "/wizard", methods: ["GET", "POST"], handle: wizardPanel },
   { path: "/commands", methods: ["GET", "POST"], handle: commandsPanel },
 ];
@@ -104,6 +106,7 @@ const CARD_LEAD: Record<string, string> = {
   "/plugins": "Browse the catalog; add or remove plugins.",
   "/generate": "Scaffold pages, routes, layouts, components, actions.",
   "/docker": "Edit docker-compose.yml in place, or regenerate the Docker files with a diff.",
+  "/desktop": "Set up code signing for a packaged desktop build.",
   "/wizard": "Take a fresh clone to a running dev server.",
   "/commands": "Run this project's own denext verbs.",
 };

@@ -84,6 +84,7 @@ export const UI_NAV: readonly NavItem[] = [
   { href: "/plugins", label: "Plugins" },
   { href: "/generate", label: "Generate" },
   { href: "/docker", label: "Docker" },
+  { href: "/desktop", label: "Desktop" },
   { href: "/wizard", label: "Wizard" },
   { href: "/commands", label: "Commands" },
 ];

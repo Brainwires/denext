@@ -531,6 +531,39 @@ write. The ops come from a closed set:
 
 Deployment targets, images and platform notes are in the [deployment guide](/docs/deploy).
 
+## Desktop
+
+`/desktop` sets up code signing for a packaged desktop build: macOS, Windows and Linux as three
+views of one panel (`?tab=`). It reads what your machine has and composes the command — it runs
+no build and writes no file.
+
+The packaging scripts `denext create --desktop` writes (`scripts/package-*.ts`) have always been
+driven by `DENEXT_*` environment variables, and nothing told you what to put in them. A project
+without those scripts is told so, rather than shown controls that cannot do anything.
+
+**macOS.** The panel lists the Developer ID Application identities actually in your keychain, so
+`DENEXT_CODESIGN_IDENTITY` becomes a value you copy rather than a string you have to know. Only
+Developer ID Application certificates are listed: a developer Mac usually also holds an
+`Apple Development` certificate, and a build signed with that one neither distributes nor keeps
+its permission grants. That last point is the reason to bother — macOS keys **TCC** grants
+(Screen Recording, Accessibility, Input Monitoring) to the signing identity, so an unsigned or
+ad-hoc-signed app changes identity on every rebuild and has to be re-approved every time.
+Gatekeeper and TCC are different mechanisms: notarization (`DENEXT_NOTARY_PROFILE`) is what
+quiets Gatekeeper on someone else's Mac; a stable identity is what keeps permissions.
+
+**Windows.** `DENEXT_WINDOWS_CERT` (a `.pfx` path), `DENEXT_SIGN_TIMESTAMP_URL` and whether
+`signtool` is on `PATH`.
+
+**Linux.** Nothing to configure — packaging produces a `.tar.gz` (optionally an AppImage) and
+there is no signing step.
+
+**One value this panel will never take.** Of the six variables the scripts read, exactly one is a
+true secret: `DENEXT_WINDOWS_CERT_PASSWORD`. It has **no field** here, its value is never read —
+only whether it is set, via `Deno.env.has` — and it is absent from the JSON twin as well. The
+macOS identity and notary profile are _names_: the private key and the notary credentials stay in
+your keychain, so those values are safe to show, and showing them is the point. Set the password
+in your own shell or CI.
+
 ## Setup wizard
 
 `/wizard` takes a fresh clone to a running dev server in nine steps. Each step inspects one
@@ -700,6 +733,7 @@ the browser and a machine client exercise identical code:
 | `/plugins/options` | `GET` `POST`          | `/api/plugins/options` |
 | `/generate`        | `GET` `POST`          | `/api/generate`        |
 | `/docker`          | `GET` `POST`          | `/api/docker`          |
+| `/desktop`         | `GET`                 | `/api/desktop`         |
 | `/wizard`          | `GET` `POST`          | `/api/wizard`          |
 | `/commands`        | `GET` `POST`          | `/api/commands`        |
 | `/tasks/run`       | `POST`                | `/api/tasks/run` (SSE) |
@@ -749,13 +783,14 @@ above.
 
 ## What it does not do yet
 
-| Not yet                      | Why                                                                                                                                                           |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Compose edits beyond the set | A service field outside the editor's set — `command`, `healthcheck`, `labels`, `env_file`, `deploy` and the rest — is edited by hand                          |
-| YAML the editor can't follow | Several YAML documents in one file make the file opaque: read-only, with the reason and the regeneration diff                                                 |
-| Code-valued options          | A callback, a variable, a `{}` schema part or a function-wrapped list is shown read-only, never rewritten                                                     |
-| Agent / MCP control          | Deferred; every panel already answers a JSON twin so it can be added without changing the wire                                                                |
-| A denext app                 | The UI is server-rendered components built with `h()` — no bundler, no hydration — not an App Router app, which is what lets it start instantly with no build |
+| Not yet                      | Why                                                                                                                                                                                                      |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Compose edits beyond the set | A service field outside the editor's set — `command`, `healthcheck`, `labels`, `env_file`, `deploy` and the rest — is edited by hand                                                                     |
+| YAML the editor can't follow | Several YAML documents in one file make the file opaque: read-only, with the reason and the regeneration diff                                                                                            |
+| Code-valued options          | A callback, a variable, a `{}` schema part or a function-wrapped list is shown read-only, never rewritten                                                                                                |
+| Capacitor / mobile signing   | `denext` scaffolds a Capacitor project and opens it in Xcode or Android Studio; everything past `cap open` — provisioning profiles, keystores — is yours. There is no mobile signing seam to surface yet |
+| Agent / MCP control          | Deferred; every panel already answers a JSON twin so it can be added without changing the wire                                                                                                           |
+| A denext app                 | The UI is server-rendered components built with `h()` — no bundler, no hydration — not an App Router app, which is what lets it start instantly with no build                                            |
 
 ## See also
 
