@@ -80,6 +80,14 @@ export const UI_EVENTS_PATH = "/_ui/events";
 /** The header a fragment response names its document title in (URI-encoded). */
 export const UI_TITLE_HEADER = "x-ui-title";
 
+/**
+ * Where `ui.js` asks what a cron expression means as it is typed.
+ *
+ * Under `/_ui/` on purpose: it is part of the client's own machinery, not a panel anyone
+ * navigates to, and it answers a bare block rather than a `<section id="panel">`.
+ */
+export const UI_CRON_PREVIEW_PATH = "/_ui/cron-preview";
+
 /** The UI's top navigation, in order. */
 export const UI_NAV: readonly NavItem[] = [
   { href: "/", label: "Overview" },

@@ -268,3 +268,62 @@ Deno.test("denext ui: a link the browser should own is left alone", async () => 
     await teardown(server, dir);
   }
 });
+
+Deno.test("denext ui: the cron preview follows what you type, without taking the field", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_ui_e2e_" });
+  await Deno.writeTextFile(
+    join(dir, "deno.json"),
+    JSON.stringify({ imports: { denext: "jsr:@denext/denext@^2" } }),
+  );
+  await Deno.writeTextFile(join(dir, "denext.config.ts"), "export default {};\n");
+  const server = await startUiServer({ dir, port: 0 });
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    const errors = collectConsoleErrors(page);
+    await page.goto(server.url);
+    await page.goto(`${new URL(server.url).origin}/config/cron`);
+
+    // The blank row renders an EMPTY preview container: the client has somewhere to put the
+    // server's answer, which is why the container is rendered even when there is nothing to say.
+    await pollFor(page, `!!document.querySelector("[data-cron-preview]")`);
+    await page.evaluate("window.__noReload = true");
+
+    const field = await page.$('input[name="cron"]');
+    assert(field, "the editor must offer an expression field");
+    await field.click();
+    await field.type("0 3 * * *");
+
+    // The description is the SERVER's `describeCron`, fetched as the expression is typed.
+    await pollFor(
+      page,
+      `document.querySelector("[data-cron-preview]").textContent.indexOf("every day at 03:00 UTC") !== -1`,
+    );
+
+    // The whole point of fetching a block rather than the panel: the field the person is typing
+    // in is never replaced, so it keeps both focus and what they typed.
+    assertEquals(
+      await page.evaluate(
+        `document.activeElement === document.querySelector('input[name="cron"]')`,
+      ),
+      true,
+      "the expression field must keep focus while its preview updates",
+    );
+    assertEquals(
+      await page.evaluate(`document.querySelector('input[name="cron"]').value`),
+      "0 3 * * *",
+      "the field must keep what was typed",
+    );
+    assertEquals(
+      await page.evaluate("window.__noReload === true"),
+      true,
+      "a preview must never reload the page",
+    );
+
+    assertNoConsoleErrors(errors);
+  } finally {
+    await browser.close();
+    await server.shutdown();
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});

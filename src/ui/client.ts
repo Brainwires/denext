@@ -8,7 +8,7 @@
 // the server keeps exactly one rendering path. Untrusted text is never assigned to `innerHTML`:
 // the fragment the server rendered is parsed with `DOMParser` and adopted as nodes.
 
-import { UI_EVENTS_PATH, UI_TITLE_HEADER } from "./html.ts";
+import { UI_CRON_PREVIEW_PATH, UI_EVENTS_PATH, UI_TITLE_HEADER } from "./html.ts";
 import { UI_CSRF_FIELD, UI_CSRF_HEADER } from "./security.ts";
 
 /** The client module served at `/_ui/ui.js`. */
@@ -17,6 +17,7 @@ const CSRF_HEADER = ${JSON.stringify(UI_CSRF_HEADER)};
 const CSRF_FIELD = ${JSON.stringify(UI_CSRF_FIELD)};
 const EVENTS = ${JSON.stringify(UI_EVENTS_PATH)};
 const TITLE_HEADER = ${JSON.stringify(UI_TITLE_HEADER)};
+const CRON_PREVIEW = ${JSON.stringify(UI_CRON_PREVIEW_PATH)};
 const csrf = document.querySelector('meta[name="denext-csrf"]')?.content ?? "";
 
 /** Replace the current panel with a server-rendered fragment (parsed, never innerHTML'd). */
@@ -104,6 +105,41 @@ function markDirty(target) {
 function trackAll() {
   for (const form of document.querySelectorAll("form[data-dirty-track]")) track(form);
 }
+
+/** The newest preview asked for, so a slow answer can never land on top of a newer one. */
+let previewSeq = 0;
+let previewTimer = null;
+
+/**
+ * Ask the server what the expression in \`field\` means, and put its answer beside the field.
+ * The reading is the server's: this module never parses a cron expression, so the live preview
+ * and the saved page cannot disagree.
+ */
+function previewCron(field) {
+  const row = field.closest(".field");
+  const block = row && row.querySelector("[data-cron-preview]");
+  if (!block) return;
+  const seq = ++previewSeq;
+  fetch(CRON_PREVIEW + "?expr=" + encodeURIComponent(field.value), {
+    headers: { accept: "text/html-fragment" },
+  })
+    .then((response) => (response.ok ? response.text() : null))
+    .then((markup) => {
+      if (markup === null || seq !== previewSeq) return;
+      const next = new DOMParser().parseFromString(markup, "text/html")
+        .querySelector("[data-cron-preview]");
+      const current = row.querySelector("[data-cron-preview]");
+      if (next && current) current.replaceWith(document.adoptNode(next));
+    })
+    .catch(() => {/* the block the server already rendered stays as it is */});
+}
+
+document.addEventListener("input", (event) => {
+  const field = event.target;
+  if (!field || field.name !== "cron") return;
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(() => previewCron(field), 250);
+});
 
 document.addEventListener("input", (event) => markDirty(event.target));
 document.addEventListener("change", (event) => markDirty(event.target));

@@ -631,6 +631,15 @@ could never fire is refused rather than saved. The write is the same one the
 a unified diff to review, and only a confirm writes — atomically, and refused with a `409` if the
 file changed since the form was rendered.
 
+**The preview follows what you type.** With JavaScript on, editing an expression asks the server
+what it means and when it next fires, and puts the answer beside the field. The field itself is
+never replaced, so it keeps focus and whatever you have typed so far — which is why the client
+fetches that one block rather than re-rendering the panel. The reading is the server's own
+`describeCron` and `nextRuns`, fetched from `/_ui/cron-preview`; the client module parses no cron
+expressions at all, and that is the only way the live preview and the page you eventually save
+cannot disagree. With JavaScript off the same block is rendered on load and after every submit, so
+nothing is missing — only the round trip.
+
 Removing every schedule is its own button. An empty form is refused instead, because a dropped
 field or a stale tab would otherwise read as "delete them all". See
 [Scheduled tasks](/docs/tasks) for the feature itself.

@@ -116,6 +116,7 @@ Deno.test("the same-origin assets are served with the right content types", asyn
       "dev-output",
       "dev-exit",
       "dev-ready",
+      "dev-stopped",
     ];
     for (const type of frames) assertStringIncludes(source, type);
   } finally {
@@ -438,4 +439,35 @@ Deno.test("decodePatch walks the posted fields through the widget codec", () => 
   form.set("trailingSlash", "on");
   assertEquals(decodePatch(form, loadConfigSchema()), { trailingSlash: true });
   assertEquals(decodePatch(new FormData(), { type: "object" }), {});
+});
+
+Deno.test("the cron preview answers one block for one expression, never a panel", async () => {
+  const h = await ui();
+  try {
+    const ask = (expr: string) =>
+      fetch(`${h.base}/_ui/cron-preview?expr=${encodeURIComponent(expr)}`, { headers: h.headers });
+
+    const ok = await ask("0 3 * * *");
+    assertEquals(ok.status, 200);
+    const body = await ok.text();
+    assertStringIncludes(body, "data-cron-preview");
+    // The reading is the server's own `describeCron`, which is why the live preview and the
+    // saved page can never say different things about the same expression.
+    assertStringIncludes(body, "every day at 03:00 UTC");
+    assert(!body.includes('<section id="panel"'), "the preview is a block, not a panel");
+    assert(!body.includes("<!doctype html>"), "the preview is not a whole document");
+
+    // A malformed expression is refused in words, not described.
+    assertStringIncludes(await (await ask("99 * * * *")).text(), "out of range");
+
+    // An empty field has nothing true to say yet — which is not the same as an error.
+    const empty = await (await ask("")).text();
+    assert(!empty.includes("field-error"), "an empty expression is not an error");
+
+    // `nextRuns` walks minute by minute to a one-year horizon, and this runs on a keystroke:
+    // something far too long to be an expression must never be walked.
+    assertStringIncludes(await (await ask("* ".repeat(200))).text(), "too long");
+  } finally {
+    await stop(h);
+  }
 });

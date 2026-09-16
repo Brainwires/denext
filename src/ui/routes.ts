@@ -12,6 +12,7 @@ import type { VNode } from "../jsx/types.ts";
 import {
   jsonResponse,
   panelResponder,
+  UI_CRON_PREVIEW_PATH,
   UI_EVENTS_PATH,
   UI_NAV,
   type UiContext,
@@ -28,6 +29,7 @@ import { runDeno } from "./proc.ts";
 import { OFFLINE_REFUSALS, OFFLINE_STATUS } from "./offline.ts";
 import { readDenoConfig, taskMap } from "./tasks.ts";
 import { configPanel } from "./features/config.ts";
+import { cronPreviewPanel } from "./features/config-cron.ts";
 import { pluginsPanel } from "./features/plugins.ts";
 import { pluginOptionsPanel } from "./features/plugin-options.ts";
 import { generatePanel } from "./features/generate.ts";
@@ -82,6 +84,7 @@ function buildRoutes(): Record<string, UiRoute> {
     "/api/tasks/run": { methods: ["POST"], handle: runTask },
     [UI_CSS_PATH]: assetRoute(UI_CSS, "text/css; charset=utf-8"),
     [UI_JS_PATH]: assetRoute(UI_JS, "text/javascript; charset=utf-8"),
+    [UI_CRON_PREVIEW_PATH]: { methods: ["GET"], handle: cronPreviewPanel },
     [UI_EVENTS_PATH]: {
       methods: ["GET"],
       handle: (_request, ctx) => Promise.resolve(sseStream(ctx.events)),

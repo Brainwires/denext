@@ -20,7 +20,13 @@
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode } from "../../jsx/types.ts";
 import { cronError, cronMatches, describeCron } from "../../runtime/cron.ts";
-import { jsonResponse, panelResponder, type UiContext } from "../html.ts";
+import {
+  htmlResponse,
+  jsonResponse,
+  panelResponder,
+  type UiContext,
+  type UiHandler,
+} from "../html.ts";
 import type { DenextConfig } from "../../server/config.ts";
 import { validateDenextConfig } from "../../server/config-validate.ts";
 import {
@@ -768,8 +774,6 @@ function ScheduleFields(
   },
 ): VNode {
   const id = `cron-${index}`;
-  const bad = cron === "" ? null : cronError(cron);
-  const said = bad === null && cron !== "" ? describeCron(cron) : null;
   return h(
     "div",
     { class: "field" },
@@ -791,10 +795,58 @@ function ScheduleFields(
         " remove",
       ),
     ),
-    bad === null ? null : h("p", { class: "note field-error", role: "alert" }, bad),
-    said === null ? null : h("p", { class: "lead flush-sm" }, said),
+    h(CronPreview, { cron }),
   );
 }
+
+/**
+ * What an expression means, and when it next fires.
+ *
+ * Its own component because `ui.js` re-fetches exactly this block as you type: the server
+ * renders it on the page AND on its own at `/_ui/cron-preview`, so there is one
+ * rendering path and the live preview cannot say something the saved page would not.
+ *
+ * The cron reading stays here for the same reason. A copy of `describeCron` in the client module
+ * is the only way the two could ever disagree.
+ *
+ * @param props `cron`: the expression to describe.
+ * @returns The block, empty when there is nothing true to say about the expression yet.
+ */
+function CronPreview({ cron }: { readonly cron: string }): VNode {
+  // `nextRuns` walks minute by minute to a one-year horizon, and this now runs on a keystroke.
+  // An expression this long is not one someone is typing, so it is not worth walking a year for.
+  const tooLong = cron.length > MAX_EXPR_CHARS;
+  const bad = cron === ""
+    ? null
+    : tooLong
+    ? "That is too long to be a cron expression."
+    : cronError(cron);
+  const said = bad === null && cron !== "" ? describeCron(cron) : null;
+  const upcoming = bad === null && cron !== "" ? nextRuns(cron, 3) : [];
+  return h(
+    "div",
+    { class: "cron-preview", "data-cron-preview": "" },
+    bad === null ? null : h("p", { class: "note field-error", role: "alert" }, bad),
+    said === null ? null : h("p", { class: "lead flush-sm" }, said),
+    upcoming.length === 0
+      ? null
+      : h("p", { class: "lead flush-sm" }, "Next: ", h(Mono, null, upcoming.join(" · "))),
+  );
+}
+
+/** Longest expression {@linkcode CronPreview} will read before refusing to describe it. */
+const MAX_EXPR_CHARS = 120;
+
+/**
+ * `/_ui/cron-preview?expr=…` — {@linkcode CronPreview} for one expression, and nothing else.
+ *
+ * A GET that reads a query string and renders: no side effects, nothing written, nothing
+ * spawned. With JavaScript off it is never requested, and the same block is already on the page.
+ */
+export const cronPreviewPanel: UiHandler = (_request, ctx) => {
+  const expr = ctx.url.searchParams.get("expr") ?? "";
+  return Promise.resolve(htmlResponse(renderView(h(CronPreview, { cron: expr })).__html));
+};
 
 /**
  * The editor: every schedule the CONFIG declares, as an editable row, plus one blank row to add
