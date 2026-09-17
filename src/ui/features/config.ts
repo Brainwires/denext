@@ -43,6 +43,7 @@ import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode } from "../../jsx/types.ts";
 import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
 import {
+  Badge,
   type BadgeTone,
   DiffBlock,
   FilterForm,
@@ -645,6 +646,25 @@ function SectionBody({ ctx, state, section, feedback }: SectionProps): VNode {
   return h(EditableField, { ctx, base: state.base, section, spec: section.spec, feedback });
 }
 
+/**
+ * Keys whose display name is not just their first letter capitalised.
+ *
+ * `i18n` capitalises to something nobody writes, and the three-letter ones read as words when
+ * they are acronyms. Everything absent from here takes the plain rule.
+ */
+const KEY_LABELS: Readonly<Record<string, string>> = {
+  i18n: "i18n",
+  csp: "CSP",
+  hsts: "HSTS",
+  mdx: "MDX",
+  spa: "SPA",
+};
+
+/** A config key as its tab says it. */
+function tabLabel(key: string): string {
+  return KEY_LABELS[key] ?? key.charAt(0).toUpperCase() + key.slice(1);
+}
+
 /** What a key's pill says, and how it reads. */
 function badgeOf(section: Section): { badge: string; tone: BadgeTone } {
   if (section.kind !== "editable") return { badge: section.kind, tone: "info" };
@@ -720,7 +740,7 @@ function groupingsOf(shown: readonly Section[], rawHere: boolean): Grouping[] {
   }
   for (const section of shown) {
     if (isInlineSection(section)) continue;
-    out.push({ key: section.key, label: section.key, ...badgeOf(section), section });
+    out.push({ key: section.key, label: tabLabel(section.key), ...badgeOf(section), section });
   }
   if (rawHere) {
     out.push({ key: RAW_KEY, label: "The file itself", badge: "escape hatch", tone: "info" });
@@ -876,8 +896,6 @@ function ConfigPanel(
         items: groupings.map((entry) => ({
           href: tabHref(group, entry.key),
           label: entry.label,
-          badge: entry.badge,
-          tone: entry.tone,
         })),
         active: selected ? tabHref(group, selected.key) : "",
         label: "Config keys",
@@ -949,14 +967,28 @@ function GroupingBody(
     readonly feedback?: Feedback;
   },
 ): VNode {
+  // The pill lives here rather than in the strip: repeated across every tab it read as
+  // decoration, and what you want to know is the state of the key actually on screen.
+  const head = h(
+    "h2",
+    { class: "key-head" },
+    grouping.label,
+    h(Badge, { tone: grouping.tone }, grouping.badge),
+  );
   if (grouping.scalars) {
-    return h(InlineBand, { ctx, state, group, sections: grouping.scalars, feedback });
+    return h(
+      Fragment,
+      null,
+      head,
+      h(InlineBand, { ctx, state, group, sections: grouping.scalars, feedback }),
+    );
   }
-  if (!grouping.section) return h(RawFileEditor, { ctx, state });
+  if (!grouping.section) return h(Fragment, null, head, h(RawFileEditor, { ctx, state }));
   const section = grouping.section;
   return h(
     Fragment,
     null,
+    head,
     section.description ? h("p", { class: "lead" }, section.description) : null,
     h(SectionBody, {
       ctx,

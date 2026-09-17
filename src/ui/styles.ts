@@ -296,8 +296,13 @@ h2 { font-size: var(--text-lg); margin: 28px 0 var(--space-2); }
   border-bottom-color: var(--primary);
   font-weight: 600;
 }
-/* A tab may carry a state pill, so the strip says what is set without opening anything. */
-.tabs a .badge { margin-left: var(--space-1); vertical-align: baseline; }
+/* The heading over a tab's content: the key, and whether it is set. */
+.key-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+}
 
 /* A view's plain scalars, in one form with one Save above the grouped keys. */
 .band { margin: 0 0 var(--space-5); }
