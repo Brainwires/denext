@@ -15,6 +15,7 @@
 
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChildren } from "../../jsx/types.ts";
+import type { BadgeTone } from "../components.ts";
 import { Raw, type RawHtml, renderView } from "../view.ts";
 import { OP_FIELD } from "./value.ts";
 import type { WidgetOption } from "./widget.ts";
@@ -149,8 +150,10 @@ export interface FieldOptions {
   readonly help?: string;
   /** A validation message to show against the field. */
   readonly error?: string;
-  /** A short badge after the label (`"read-only"`, `"required"`). */
+  /** A short badge after the label (`"read-only"`, `"required"`, `"set"`). */
   readonly badge?: string;
+  /** How that badge reads; absent leaves it the neutral grey. */
+  readonly badgeTone?: BadgeTone;
   /** The control (or group of controls). */
   readonly body: RawHtml;
 }
@@ -172,7 +175,18 @@ export function Field(props: FieldProps): VNode {
       "label",
       { for: props.id },
       props.label,
-      props.badge ? h(Fragment, null, " ", h("span", { class: "badge" }, props.badge)) : null,
+      props.badge
+        ? h(
+          Fragment,
+          null,
+          " ",
+          h(
+            "span",
+            { class: props.badgeTone === undefined ? "badge" : `badge ${props.badgeTone}` },
+            props.badge,
+          ),
+        )
+        : null,
     ),
     props.children,
     props.help ? h("p", { class: "lead field-help" }, props.help) : null,

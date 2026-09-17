@@ -15,6 +15,7 @@ import type { VNode, VNodeChild, VNodeChildren } from "../../jsx/types.ts";
 import type { RawHtml } from "../html.ts";
 import { UI_CSRF_FIELD } from "../security.ts";
 import { renderView } from "../view.ts";
+import type { BadgeTone } from "../components.ts";
 import { Control, Field, OpButton } from "./control.ts";
 import { resolveAt, type SchemaNode } from "./schema.ts";
 import {
@@ -47,6 +48,11 @@ export interface RenderContext {
    * and the next begins.
    */
   readonly omitTopLabel?: boolean;
+  /**
+   * A state pill for a key, by field name — what the config editor says about whether a key is
+   * set. One per key: an aggregate over several keys is a verdict that belongs to none of them.
+   */
+  readonly badges?: Readonly<Record<string, { readonly text: string; readonly tone?: BadgeTone }>>;
 }
 
 /** What every widget component is handed. */
@@ -97,12 +103,15 @@ function Wrap(
   const { spec, ctx } = props;
   if (ctx.omitTopLabel && spec.path.length === 1) return h(Fragment, null, props.children);
   const name = nameOf(spec, ctx);
+  // An explicit badge (a read-only cell) outranks the key's state, which outranks "required".
+  const stated = props.badge === undefined ? ctx.badges?.[name] : undefined;
   return h(Field, {
     id: idOf(name),
     label: spec.label,
     help: spec.description,
     error: ctx.errors?.[name],
-    badge: props.badge ?? (spec.required ? "required" : undefined),
+    badge: props.badge ?? stated?.text ?? (spec.required ? "required" : undefined),
+    badgeTone: stated?.tone,
   }, props.children);
 }
 

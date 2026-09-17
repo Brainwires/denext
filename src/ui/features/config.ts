@@ -691,10 +691,17 @@ function InlineBand(
     spec: section.spec as WidgetSpec,
     value: feedback?.key === section.key ? feedback.value : section.value,
   }));
+  // A pill per key, which is what they were for. General used to carry one verdict over all of
+  // its scalars, which belonged to none of them.
+  const badges = Object.fromEntries(sections.map((section) => {
+    const { badge, tone } = badgeOf(section);
+    return [section.key, { text: badge, tone }];
+  }));
   const widgets = renderWidgets(fields, {
     csrf: ctx.csrf,
     readOnly: ctx.readOnly,
     errors: feedback?.errors,
+    badges,
   });
   return h(
     "form",
@@ -977,13 +984,10 @@ function GroupingBody(
     grouping.label,
     h(Badge, { tone: grouping.tone }, grouping.badge),
   );
+  // General gets no heading: it is not a key, so there is nothing for one to name — the tab
+  // already says General, and each scalar below carries its own label.
   if (grouping.scalars) {
-    return h(
-      Fragment,
-      null,
-      head,
-      h(InlineBand, { ctx, state, group, sections: grouping.scalars, feedback }),
-    );
+    return h(InlineBand, { ctx, state, group, sections: grouping.scalars, feedback });
   }
   if (!grouping.section) return h(Fragment, null, head, h(RawFileEditor, { ctx, state }));
   const section = grouping.section;

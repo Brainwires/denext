@@ -384,6 +384,7 @@ button.destructive { background: var(--destructive); border-color: var(--destruc
 /* Spacing the markup used to hard-code inline, now owned by the scale. */
 .field { margin: 0 0 14px; }
 .field > label { font-weight: 600; color: var(--foreground); }
+.field > label .badge { font-weight: 400; }
 .field-help { margin: var(--space-1) 0 0; font-size: var(--text-sm); }
 .field-error { margin: 6px 0 0; }
 .control-wide { width: 100%; }
