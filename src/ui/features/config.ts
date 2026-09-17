@@ -1241,6 +1241,29 @@ async function writeSection(
  * @param entries The posted fields.
  * @returns The changes, or the first field-level failure.
  */
+/**
+ * Whether a decoded value is a real edit to this key, or merely what the key already says.
+ *
+ * The two cases are genuinely different, and collapsing them breaks one of them:
+ *
+ * - An ABSENT key stays absent when the form posts what it would be anyway — its DEFAULT, not
+ *   `false`. For a key that is on unless you say otherwise, `false` IS the edit, and discarding
+ *   it made such a key impossible to turn off from the editor at all. A key with no stated
+ *   default reads `false`, which is exactly the rule this replaced.
+ * - A PRESENT key posting `undefined` is a real edit: that is a cleared field, and clearing one
+ *   is how a key gets removed. (Silence cannot reach here — `bandChanges` has already dropped
+ *   every field the submit did not carry.)
+ *
+ * @param section The key's current state in the file.
+ * @param spec Its widget, which carries the schema's stated default.
+ * @param decoded What the form posted for it.
+ * @returns Whether the value should be written.
+ */
+function isEdit(section: Section, spec: WidgetSpec, decoded: unknown): boolean {
+  if (!section.present) return decoded !== undefined && decoded !== (spec.default ?? false);
+  return stable(decoded) !== stable(section.value);
+}
+
 function bandChanges(
   sections: readonly Section[],
   entries: readonly FormEntry[],
@@ -1263,10 +1286,7 @@ function bandChanges(
       if (!(error instanceof FormValueError)) throw error;
       return { key: section.key, error: { field: error.field, message: error.message } };
     }
-    if (!section.present) {
-      if (decoded === undefined || decoded === false) continue;
-    } else if (stable(decoded) === stable(section.value)) continue;
-    changes.set(section.key, decoded);
+    if (isEdit(section, spec, decoded)) changes.set(section.key, decoded);
   }
   return { changes };
 }

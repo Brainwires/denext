@@ -46,11 +46,15 @@ async function onDisk(dir: string): Promise<string> {
 async function call(
   dir: string,
   path: string,
-  init: { form?: Record<string, string>; readOnly?: boolean } = {},
+  init: { form?: Record<string, string | string[]>; readOnly?: boolean } = {},
 ): Promise<Response> {
   const url = new URL(`http://127.0.0.1:5177${path}`);
   const form = init.form === undefined ? undefined : new FormData();
-  for (const [key, value] of Object.entries(init.form ?? {})) form?.set(key, value);
+  // A list posts one name MORE THAN ONCE, which is what a browser does for a toggle: the hidden
+  // companion and then the checkbox. `decodeToggle` reads every value and takes the last.
+  for (const [key, value] of Object.entries(init.form ?? {})) {
+    for (const one of Array.isArray(value) ? value : [value]) form?.append(key, one);
+  }
   const ctx: UiContext = {
     dir,
     url,
@@ -700,6 +704,37 @@ Deno.test("each Config view names itself in the document title", async () => {
       "Config · Security · denext ui",
       "Config · Advanced · denext ui",
     ]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a key that is on by default can finally be turned off", async () => {
+  const dir = await project();
+  try {
+    // The band is scoped to ONE view, so the write goes to the view that owns the key —
+    // `streaming` lives on Rendering, not on the default Routing page.
+    //
+    // `streaming` is absent from the fixture and on unless you say otherwise. Ticking Disable
+    // posts the hidden "on" and then the checkbox "off" — the pair a browser sends — which
+    // decodes to `false`. That used to be discarded as "an absent key with a false", so the key
+    // could not be turned off from the editor at all.
+    const off = await call(dir, "/api/config/rendering", { form: { streaming: ["on", "off"] } });
+    assertEquals(off.status, 200);
+    assertStringIncludes(
+      (await off.json()).diff,
+      "streaming",
+      "opting out of a default-on key has to reach the file",
+    );
+
+    // Left alone, the box posts only its hidden companion: `true`, which is what the key already
+    // is. That must propose nothing, or every untouched opt-out toggle would write noise.
+    const left = await call(dir, "/api/config/rendering", { form: { streaming: ["on"] } });
+    assertEquals((await left.json()).diff, "", "a key left at its default proposes nothing");
+
+    // And an absent opt-in key, unticked, behaves exactly as it always did.
+    const optIn = await call(dir, "/api/config/rendering", { form: { cacheComponents: ["off"] } });
+    assertEquals((await optIn.json()).diff, "", "an absent opt-in key stays absent");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

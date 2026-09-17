@@ -397,3 +397,43 @@ Deno.test("a required key still says it is required, beside its state", () => {
   assertStringIncludes(markup, ">unset<");
   assertStringIncludes(markup, ">required<");
 });
+
+Deno.test("an opt-out toggle says Disable, and ticking it writes false", () => {
+  // `streaming` is on unless you say otherwise (`@default true` in the type). Ticking a box
+  // labelled Enable would write the value it already has; the useful edit is to opt OUT.
+  const spec = specAt("streaming");
+  assertEquals(spec.default, true, "the schema states the default the widget reads");
+  const markup = render(spec, undefined);
+  assertStringIncludes(markup, ">Disable</label>");
+  // Only the two wire values swap. The hidden companion carries "on" so an UNTICKED box posts
+  // the default, and the checkbox carries "off" so a ticked one posts the opt-out.
+  assertStringIncludes(markup, 'type="hidden" value="on"');
+  assertStringIncludes(markup, 'type="checkbox"');
+  assertStringIncludes(markup, 'value="off"');
+
+  // The codec is untouched: it reads values, not checkboxes, so the posted pair still decodes.
+  const name = fieldName(spec.path);
+  assertEquals(decode(spec, [{ name, value: "on" }]), true, "unticked keeps it on");
+  assertEquals(
+    decode(spec, [{ name, value: "on" }, { name, value: "off" }]),
+    false,
+    "ticked opts out",
+  );
+});
+
+Deno.test("an opt-out toggle is ticked when the config has opted out", () => {
+  // The box shows the state it would write, so `streaming: false` reads back as ticked.
+  assertStringIncludes(render(specAt("streaming"), false), "checked");
+  assert(!render(specAt("streaming"), undefined).includes("checked"), "absent is not ticked");
+  assert(!render(specAt("streaming"), true).includes("checked"), "explicitly on is not ticked");
+});
+
+Deno.test("an opt-in toggle is unchanged by any of that", () => {
+  // `trailingSlash` states no default, so it keeps the original polarity and wording.
+  const spec = specAt("trailingSlash");
+  assertEquals(spec.default, undefined);
+  const markup = render(spec, undefined);
+  assertStringIncludes(markup, ">Enable</label>");
+  assertStringIncludes(markup, 'type="hidden" value="off"');
+  assertStringIncludes(render(spec, true), "checked");
+});

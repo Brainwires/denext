@@ -36,6 +36,8 @@ export interface I18nConfig {
    * locale, plus `x-default`) and a per-locale canonical for every page. On by
    * default when i18n is configured; set `false` to opt out. A page that sets its
    * own `alternates.languages` always takes precedence over the generated set.
+   *
+   * @default true
    */
   hreflang?: boolean;
   /**

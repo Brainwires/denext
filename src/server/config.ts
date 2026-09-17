@@ -365,7 +365,11 @@ export interface TasksConfig {
 
 /** Limits for the typed-API batch endpoint (`POST /_denext/api-batch`). */
 export interface ApiBatchConfig {
-  /** Serve the endpoint at all (default true; `false` → 404). */
+  /**
+   * Serve the endpoint at all (default true; `false` → 404).
+   *
+   * @default true
+   */
   enabled?: boolean;
   /**
    * Max items per batch (default 20, at most 100).
@@ -560,6 +564,8 @@ export interface DenextConfig {
    * routes. ISR/PPR-cacheable routes (revalidate/force-static) and soft navigations
    * take their own path first, so streaming never bypasses the page cache. A shipped,
    * default-on capability — not an experiment.
+   *
+   * @default true
    */
   streaming?: boolean;
   /**
@@ -594,6 +600,8 @@ export interface DenextConfig {
    * dependency `exports` — the "seamless migration" contract. Set `false` only to force
    * app deps back through Deno's strict `npm:` loader (escape hatch). The pre-2.0 home,
    * `experimental.nodeResolve`, is still honored.
+   *
+   * @default true
    */
   nodeResolve?: boolean;
   /**

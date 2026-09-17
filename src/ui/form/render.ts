@@ -228,18 +228,32 @@ const NumberWidget = scalar("input", "number");
 /** A checkbox with a hidden `off` companion, so "unchecked" posts a real `false`. */
 function ToggleWidget({ spec, value, ctx }: WidgetProps): VNode {
   const name = nameOf(spec, ctx);
+  const id = idOf(name);
   const common = { tag: "input", name, disabled: ctx.readOnly } as const;
+  // A key that is ON unless you say otherwise is not switched on by ticking a box — it is opted
+  // OUT of. So the box means the opposite thing, and says so: ticking it writes `false`.
+  const optOut = spec.default === true;
   return h(
     Wrap,
     { spec, ctx, value },
-    h(Control, { ...common, type: "hidden", value: "off" }),
-    h(Control, {
-      ...common,
-      type: "checkbox",
-      id: idOf(name),
-      value: "on",
-      checked: value === true,
-    }),
+    // The hidden companion stays FIRST: `decode` takes the last posted value, which is what makes
+    // an unticked box post a real value rather than nothing at all. Only the two wire values swap
+    // between the polarities — `decode` reads values, not checkboxes, so the codec is untouched.
+    h(Control, { ...common, type: "hidden", value: optOut ? "on" : "off" }),
+    // A checkbox alone on a line says nothing about what ticking it does, and gives the pointer a
+    // 13px target. The word rides in the same `Choice` the radios use, so it is part of the
+    // control's own label and clicking it toggles the box.
+    h(
+      Choice,
+      { for: id, label: optOut ? "Disable" : "Enable" },
+      h(Control, {
+        ...common,
+        type: "checkbox",
+        id,
+        value: optOut ? "off" : "on",
+        checked: optOut ? value === false : value === true,
+      }),
+    ),
   );
 }
 

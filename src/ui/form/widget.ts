@@ -72,6 +72,8 @@ export interface WidgetSpec {
   readonly min?: number;
   /** Inclusive upper bound, for `number`. */
   readonly max?: number;
+  /** What the key is when absent, when the schema says (a `@default` JSDoc tag). */
+  readonly default?: unknown;
 }
 
 /**
@@ -131,6 +133,9 @@ function base(input: RuleInput, kind: WidgetKind): WidgetSpec {
     required: input.required,
     label: labelFor(input.path),
     description: input.node.description,
+    // Spread rather than assigned, so a spec without a stated default has no `default` key at
+    // all and still deep-equals the shape the widget tests compare against.
+    ...(input.node.default === undefined ? {} : { default: input.node.default }),
   };
 }
 

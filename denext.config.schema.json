@@ -172,7 +172,8 @@
         },
         "hreflang": {
           "description": "Automatically emit `<link rel=\"alternate\" hreflang>` alternates (one per locale, plus `x-default`) and a per-locale canonical for every page. On by default when i18n is configured; set `false` to opt out. A page that sets its own `alternates.languages` always takes precedence over the generated set.",
-          "type": "boolean"
+          "type": "boolean",
+          "default": true
         },
         "domains": {
           "description": "Serve a locale per **domain** without a URL prefix (Next's `i18n.domains`): `example.fr/about` renders French with no `/fr`. Each entry pins a host to a `defaultLocale` (served unprefixed on that host); a host's other `locales` (if listed) are still prefixed there. Locales not tied to any domain keep the normal prefix behavior on the primary host. Host resolution uses the request's trusted host (honoring `trustForwardedHeaders`), never a raw `Host` header on the render path.",
@@ -657,7 +658,8 @@
     },
     "streaming": {
       "description": "Incremental (Suspense) streaming, **on by default**; set `false` to opt out. A page with a pending Suspense boundary flushes its shell first and streams each boundary's content as it resolves; a fully synchronous page (no holes) is still delivered buffered, so it stays shared-cacheable. Streamed responses carry the same strict hash-based CSP as buffered ones (the swap runtime is a hashed constant), survive a failing boundary (its fallback stays), and cover Flight routes. ISR/PPR-cacheable routes (revalidate/force-static) and soft navigations take their own path first, so streaming never bypasses the page cache. A shipped, default-on capability — not an experiment.",
-      "type": "boolean"
+      "type": "boolean",
+      "default": true
     },
     "live": {
       "description": "Live Server Components security policy: authorization hooks and resource caps for the `<Live>` / `useLive` / `usePresence` WebSocket hub. See LiveConfig. Presence/data are default-deny in production without a policy here — so this is a **security-policy** field, not an on/off experiment.",
@@ -745,7 +747,8 @@
       "properties": {
         "enabled": {
           "description": "Serve the endpoint at all (default true; `false` → 404).",
-          "type": "boolean"
+          "type": "boolean",
+          "default": true
         },
         "maxItems": {
           "description": "Max items per batch (default 20, at most 100).",
@@ -783,7 +786,8 @@
     },
     "nodeResolve": {
       "description": "denext's tolerant node_modules resolver for the compat (npm-React) build — default ON.",
-      "type": "boolean"
+      "type": "boolean",
+      "default": true
     },
     "cacheComponents": {
       "description": "Cache Components (Next.js 16): the `\"use cache\"` directive is compiled into cross-request caching on the server (`src/build/use-cache-transform.ts`), plus the PPR render path — dynamic-by-default rendering with cacheable `use cache` islands (a cached shell with per-request dynamic holes spliced in). A stable, **opt-in** feature, deliberately **off by default**: caching stays a choice, because a cache bug's failure class (a poisoned or cross-user shell) is severe and must not be imposed on apps that never asked. When off, every `\"use cache\"` directive is inert (a plain no-op string statement) and rendering is unchanged.",
