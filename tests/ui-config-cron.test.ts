@@ -5,7 +5,7 @@
 // child); what is unit-tested here is the logic that would be expensive to reach that way — a
 // sparse schedule's horizon, and the noise a child writes around its document.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import type { SseClients } from "../src/build/sse.ts";
 import type { UiContext } from "../src/ui/html.ts";
@@ -506,37 +506,55 @@ Deno.test("with history off there is no result column to mislead anyone", async 
   }
 });
 
-Deno.test("presets fill the expression in, rather than competing with it", async () => {
+Deno.test("the builder composes a schedule, and the expression is still what gets written", async () => {
   const dir = await project(CONFIG, { cleanup: task() });
   try {
     const plain = await (await call(dir)).text();
-    assertStringIncludes(plain, "Start from a common schedule");
-    assertEquals((plain.match(/preset=/g) ?? []).length, 5, "one link per preset");
+    // A GET form, so it works with scripting off — and the add row starts empty until a shape
+    // has actually been chosen.
+    assertStringIncludes(plain, 'class="builder"');
+    assertStringIncludes(plain, 'name="every"');
     assert(/name="cron" value=""/.test(plain), "the add row starts empty");
 
-    const daily = await (await call(dir, { query: "?preset=0%203%20*%20*%20*" })).text();
-    assert(/name="cron" value="0 3 \* \* \*"/.test(daily), "the preset fills the field");
-    // The same describer the schedules table uses, so the editor says what it will save.
+    const daily = await (await call(dir, { query: "?every=daily&hour=3&minute=0" })).text();
+    assert(/name="cron" value="0 3 \* \* \*"/.test(daily), "the builder fills the field");
+    // The same describer the schedules table uses, so the builder says what it will save.
     assertStringIncludes(daily, "every day at 03:00 UTC");
-    // The one you are already on is not a link back to itself.
-    assertStringIncludes(daily, "<strong>Daily</strong>");
+    // The controls reflect the schedule they composed, rather than remembering what was clicked.
+    assertMatch(daily, /value="daily"[^>]*checked/);
+
+    // A weekday only appears for the shape that has one.
+    const weekly = await (await call(dir, { query: "?every=weekly&hour=8&minute=30&dow=1" }))
+      .text();
+    assert(/name="cron" value="30 8 \* \* 1"/.test(weekly));
+    assertStringIncludes(weekly, "on Mondays at 08:30 UTC");
+    assertStringIncludes(weekly, 'name="dow"');
+    assert(!daily.includes('name="dow"'), "a daily schedule is not asked which weekday");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
 });
 
-Deno.test("only a known preset is accepted, so nothing arbitrary reaches the field", async () => {
+Deno.test("only the builder's own vocabulary can reach the expression field", async () => {
   const dir = await project(CONFIG, { cleanup: task() });
   try {
+    // Nothing is copied out of the query: the expression is COMPOSED from a closed set of
+    // shapes, so what lands in the field is only ever digits, spaces and asterisks.
     const junk = await (await call(dir, {
-      query: "?preset=%3Cscript%3Ealert(1)%3C%2Fscript%3E",
+      query: "?every=%3Cscript%3Ealert(1)%3C%2Fscript%3E",
     })).text();
-    assert(/name="cron" value=""/.test(junk), "an unknown preset leaves the row empty");
+    assert(/name="cron" value=""/.test(junk), "an unknown shape composes nothing");
     assert(!junk.includes("alert(1)"), "and nothing is reflected into the page");
 
-    // A valid expression that is not one of the five is still not a preset.
-    const other = await (await call(dir, { query: "?preset=7%207%20*%20*%20*" })).text();
-    assert(/name="cron" value=""/.test(other), "only the offered presets fill the field");
+    // Out-of-range numbers are clamped into their field's domain rather than written as a
+    // broken expression.
+    const wild = await (await call(dir, { query: "?every=daily&hour=99&minute=-4" })).text();
+    assert(/name="cron" value="0 23 \* \* \*"/.test(wild), "clamped, not broken");
+
+    // Custom composes nothing and says so: the expression field below is the full editor.
+    const custom = await (await call(dir, { query: "?every=custom" })).text();
+    assert(/name="cron" value=""/.test(custom));
+    assertStringIncludes(custom, "type the expression");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

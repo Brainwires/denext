@@ -377,3 +377,60 @@ Deno.test("denext ui: filtering swaps the results in place and gives the box bac
     await Deno.remove(dir, { recursive: true }).catch(() => {});
   }
 });
+
+Deno.test("denext ui: the schedule builder composes without reloading the page", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_ui_e2e_" });
+  await Deno.writeTextFile(
+    join(dir, "deno.json"),
+    JSON.stringify({ imports: { denext: "jsr:@denext/denext@^2" } }),
+  );
+  await Deno.writeTextFile(join(dir, "denext.config.ts"), "export default {};\n");
+  const server = await startUiServer({ dir, port: 0 });
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    const errors = collectConsoleErrors(page);
+    await page.goto(server.url);
+    await page.goto(`${new URL(server.url).origin}/config/cron`);
+    await pollFor(page, `!!document.querySelector(".builder")`);
+
+    // The claim under test: the builder needs no client code of its own. It is a GET form, and
+    // `ui.js` already treats one as a navigation it can swap in place — so this must update the
+    // panel WITHOUT a page load, which is what __noReload catches.
+    await page.evaluate("window.__noReload = true");
+
+    const weekly = await page.$('.builder input[value="weekly"]');
+    assert(weekly, "the builder offers a Weekly shape");
+    await weekly.click();
+    const use = await page.$('.builder button[type="submit"]');
+    assert(use, "the builder offers its submit");
+    await use.click();
+
+    // Choosing a shape does not re-render on its own, so this submit carries the selects the
+    // DAILY shape had rendered — hour 3, minute 0 — and the server composes them as a weekly
+    // schedule. The Day picker only appears now that the shape asks for one.
+    await pollFor(
+      page,
+      `document.querySelector('input[name="cron"]').value === "0 3 * * 1"`,
+    );
+    assertEquals(
+      await page.evaluate(`!!document.querySelector('select[name="dow"]')`),
+      true,
+      "a weekly schedule is asked which day",
+    );
+    assertEquals(
+      await page.evaluate("window.__noReload === true"),
+      true,
+      "the builder must swap the panel, never reload the page",
+    );
+    assert(
+      String(await page.evaluate("location.search")).includes("every=weekly"),
+      "the composed schedule is in the address, so it can be linked and reloaded",
+    );
+
+    assertNoConsoleErrors(errors);
+  } finally {
+    await browser.close();
+    await teardown(server, dir);
+  }
+});

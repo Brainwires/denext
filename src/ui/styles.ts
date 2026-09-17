@@ -232,6 +232,18 @@ h2 { font-size: var(--text-lg); margin: 28px 0 var(--space-2); }
 .band { margin: 0 0 var(--space-5); }
 .band > button { margin-top: var(--space-2); }
 
+/* The cron builder: pick a shape, and the server composes the expression. */
+.builder {
+  border: 1px solid var(--border);
+  background: var(--muted);
+  border-radius: var(--radius);
+  padding: var(--space-3) 14px;
+  margin: 0 0 var(--space-4);
+}
+.builder .row { flex-wrap: wrap; gap: var(--space-2); }
+.builder-choice { display: inline-flex; align-items: center; gap: var(--space-1); margin: 0; }
+.builder-field { display: inline-flex; align-items: center; gap: var(--space-1); margin: 0; }
+
 /* A panel's filter box: a plain GET form, so it works with scripting off. */
 .filter { display: flex; gap: var(--space-2); align-items: center; margin: 0 0 var(--space-4); }
 .filter input[type="search"] { flex: 1; max-width: 26rem; }

@@ -276,7 +276,7 @@ export function Table(
 /** One `<input>`'s attributes — every one optional but the type, name and value. */
 export interface InputProps {
   /** The input type. */
-  readonly type?: "text" | "number" | "checkbox" | "hidden" | "search";
+  readonly type?: "text" | "number" | "checkbox" | "radio" | "hidden" | "search";
   /** The form field name. */
   readonly name: string;
   /** The value (a checkbox's posted value). */

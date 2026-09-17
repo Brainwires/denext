@@ -19,7 +19,14 @@
 
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode } from "../../jsx/types.ts";
-import { cronError, cronMatches, describeCron } from "../../runtime/cron.ts";
+import {
+  composeCron,
+  cronError,
+  type CronFrequency,
+  cronMatches,
+  type CronParts,
+  describeCron,
+} from "../../runtime/cron.ts";
 import {
   htmlResponse,
   jsonResponse,
@@ -71,20 +78,33 @@ const STALE_BASE = "changed on disk since this form was rendered — nothing was
   "Reload the tab and re-apply your change.";
 
 /**
- * Common schedules, offered as a starting point.
+ * The shapes the builder offers, in the order it offers them.
  *
- * Links rather than controls, on purpose. A preset, a builder and a free-text box would be three
- * inputs producing one value, and with JavaScript off nothing keeps them in step — so a preset
- * navigates, the server fills the expression in, and there is only ever one field that decides
- * what gets written.
+ * The builder NAVIGATES rather than competing with the expression field. A picker, a set of
+ * selects and a free-text box would be three inputs producing one value, and with JavaScript off
+ * nothing keeps them in step — so choosing a shape is a GET, the server composes the expression,
+ * and there is still only ever one field that decides what gets written.
  */
-const PRESETS: ReadonlyArray<{ readonly label: string; readonly cron: string }> = [
-  { label: "Every minute", cron: "* * * * *" },
-  { label: "Hourly", cron: "0 * * * *" },
-  { label: "Daily", cron: "0 3 * * *" },
-  { label: "Weekly", cron: "0 3 * * 1" },
-  { label: "Monthly", cron: "0 3 1 * *" },
+const FREQUENCIES: ReadonlyArray<{ readonly value: CronFrequency; readonly label: string }> = [
+  { value: "minute", label: "Every minute" },
+  { value: "hourly", label: "Hourly" },
+  { value: "daily", label: "Daily" },
+  { value: "weekly", label: "Weekly" },
+  { value: "monthly", label: "Monthly" },
+  { value: "custom", label: "Custom" },
 ];
+
+/** What the builder starts on before anything has been chosen. */
+const DEFAULT_PARTS: CronParts = {
+  frequency: "daily",
+  minute: 0,
+  hour: 3,
+  dayOfWeek: 1,
+  dayOfMonth: 1,
+};
+
+/** Weekday names, indexed as `parseCron` normalises them (0 = Sunday). */
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 /** The config key this panel edits. */
 const KEY = "scheduledTasks";
@@ -698,48 +718,170 @@ function CronPanel(
 }
 
 /**
- * The expression a `?preset=` asks to start from, or `""`.
+ * The schedule the builder's controls currently describe.
  *
- * Only a KNOWN preset is accepted. The value is escaped on render either way, but matching
- * against the table means the parameter can never put arbitrary text into a form field — and the
- * feature needs nothing more than the five it offers.
+ * A parameter the builder did not offer is simply not a schedule: an unrecognised shape reads as
+ * "nothing chosen", and every number is clamped into its field's domain by `composeCron`. That is
+ * why nothing arbitrary can reach the expression field — what comes out is composed from a closed
+ * vocabulary, never copied from the query.
  *
  * @param ctx The request context.
- * @returns The preset's expression, or `""` when none was asked for.
+ * @returns The chosen controls, or `null` when the request chose nothing.
  */
-function presetOf(ctx: UiContext): string {
-  const asked = ctx.url.searchParams.get("preset") ?? "";
-  return PRESETS.some((p) => p.cron === asked) ? asked : "";
+function draftParts(ctx: UiContext): CronParts | null {
+  const params = ctx.url.searchParams;
+  const every = params.get("every") ?? "";
+  if (!FREQUENCIES.some((entry) => entry.value === every)) return null;
+  const number = (name: string, fallback: number): number => {
+    const raw = params.get(name);
+    const parsed = raw === null ? Number.NaN : Number(raw);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+  return {
+    frequency: every as CronFrequency,
+    minute: number("minute", DEFAULT_PARTS.minute),
+    hour: number("hour", DEFAULT_PARTS.hour),
+    dayOfWeek: number("dow", DEFAULT_PARTS.dayOfWeek),
+    dayOfMonth: number("dom", DEFAULT_PARTS.dayOfMonth),
+  };
+}
+
+/** The expression the builder proposes, or `""` when it proposes none. */
+function draftExpression(ctx: UiContext): string {
+  const parts = draftParts(ctx);
+  return parts === null ? "" : composeCron(parts);
+}
+
+/** Whether a shape uses a given control. */
+function usesField(frequency: CronFrequency, field: "minute" | "hour" | "dow" | "dom"): boolean {
+  if (frequency === "minute" || frequency === "custom") return false;
+  if (field === "minute") return true;
+  if (field === "hour") return frequency !== "hourly";
+  if (field === "dow") return frequency === "weekly";
+  return frequency === "monthly";
+}
+
+/** One `<select>` of numbers, labelled. */
+function NumberPicker(
+  { name, label, value, from, to, pad, names }: {
+    readonly name: string;
+    readonly label: string;
+    readonly value: number;
+    readonly from: number;
+    readonly to: number;
+    readonly pad?: boolean;
+    readonly names?: readonly string[];
+  },
+): VNode {
+  const options = [];
+  for (let n = from; n <= to; n++) {
+    const text = names ? names[n] ?? String(n) : (pad ? String(n).padStart(2, "0") : String(n));
+    options.push(h("option", { key: n, value: String(n), selected: n === value }, text));
+  }
+  return h(
+    "label",
+    { class: "builder-field" },
+    label,
+    h("select", { name, "aria-label": label }, options),
+  );
 }
 
 /**
- * The preset strip: links that fill the expression in, rather than controls that fight the field.
+ * The schedule builder: pick a shape, and the server composes the expression.
  *
- * Rendered outside the form, so nothing here can disturb dirty-tracking or the unnamed-submit
- * contract the editor depends on.
+ * A GET form, so it works with scripting off — and with `ui.js` on, the same submit is swapped in
+ * place like any other link, because the client already treats a GET form as a navigation.
  *
- * @param props `active`: the preset currently filled in, when one is.
- * @returns The strip.
+ * Under `Custom` the builder steps aside: a range or a step is not one of the shapes it can
+ * state, and a second way to compose an expression is a second thing to disagree with the first.
+ * The field below is the full editor, and its preview explains whatever you type there.
+ *
+ * @param props `parts`: the controls' current state.
+ * @returns The builder.
  */
-function Presets({ active }: { readonly active: string }): VNode {
+function ScheduleBuilder({ parts }: { readonly parts: CronParts }): VNode {
+  const expression = composeCron(parts);
   return h(
-    "p",
-    { class: "lead" },
-    "Start from a common schedule: ",
-    PRESETS.map((preset, index) =>
-      h(
-        Fragment,
-        { key: preset.cron },
-        index === 0 ? null : " · ",
-        preset.cron === active ? h("strong", null, preset.label) : h("a", {
-          href: `/config/cron?preset=${encodeURIComponent(preset.cron)}`,
-          // Derived, never hand-written: a description that drifts from its expression is the
-          // exact failure the describer exists to prevent.
-          title: describeCron(preset.cron) ?? preset.cron,
-        }, preset.label),
-      )
+    "form",
+    { method: "get", action: "/config/cron", class: "builder" },
+    h(
+      Row,
+      null,
+      "Runs:",
+      FREQUENCIES.map((entry) =>
+        h(
+          "label",
+          { key: entry.value, class: "builder-choice" },
+          h(Input, {
+            type: "radio",
+            name: "every",
+            value: entry.value,
+            checked: entry.value === parts.frequency,
+            ariaLabel: entry.label,
+          }),
+          " ",
+          entry.label,
+        )
+      ),
     ),
-    ". Each one fills the expression below, which you can then edit.",
+    usesField(parts.frequency, "minute")
+      ? h(
+        Row,
+        null,
+        usesField(parts.frequency, "hour")
+          ? h(NumberPicker, {
+            name: "hour",
+            label: "Hour (UTC)",
+            value: parts.hour,
+            from: 0,
+            to: 23,
+            pad: true,
+          })
+          : null,
+        h(NumberPicker, {
+          name: "minute",
+          label: "Minute",
+          value: parts.minute,
+          from: 0,
+          to: 59,
+          pad: true,
+        }),
+        usesField(parts.frequency, "dow")
+          ? h(NumberPicker, {
+            name: "dow",
+            label: "Day",
+            value: parts.dayOfWeek,
+            from: 0,
+            to: 6,
+            names: WEEKDAYS,
+          })
+          : null,
+        usesField(parts.frequency, "dom")
+          ? h(NumberPicker, {
+            name: "dom",
+            label: "Day of month",
+            value: parts.dayOfMonth,
+            from: 1,
+            to: 31,
+          })
+          : null,
+      )
+      : null,
+    h(
+      "p",
+      { class: "lead flush-sm" },
+      parts.frequency === "custom"
+        ? "Custom: type the expression in the last row below — the preview explains it as you go."
+        : h(
+          Fragment,
+          null,
+          "This is ",
+          h(Mono, null, expression),
+          " — ",
+          describeCron(expression) ?? "",
+        ),
+    ),
+    h("button", { type: "submit" }, "Use this schedule"),
   );
 }
 
@@ -861,7 +1003,7 @@ function ScheduleEditor(
 ): VNode {
   const names = state.tasks.map((task) => task.name);
   const rows = configRows(state.configScheduled);
-  const preset = presetOf(ctx);
+  const draft = draftExpression(ctx);
   return h(
     Fragment,
     null,
@@ -872,7 +1014,7 @@ function ScheduleEditor(
       "The schedules your denext config declares. A change is previewed as a diff before ",
       "anything is written, and every other byte of the file — comments included — is kept.",
     ),
-    h(Presets, { active: preset }),
+    h(ScheduleBuilder, { parts: draftParts(ctx) ?? DEFAULT_PARTS }),
     h(
       "form",
       { method: "post", action: "/config/cron", "data-dirty-track": "1" },
@@ -887,7 +1029,7 @@ function ScheduleEditor(
           names,
         })
       ),
-      h(ScheduleFields, { key: "new", index: rows.length, cron: preset, task: "", names }),
+      h(ScheduleFields, { key: "new", index: rows.length, cron: draft, task: "", names }),
       // The ordinary submit is UNNAMED so `ui.js` recognises it as this form's Save and can hold
       // it inert until something actually changes; its intent rides in a hidden field. The
       // destructive one is named, and a named submitter's value wins over the hidden field.
