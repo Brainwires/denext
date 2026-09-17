@@ -43,7 +43,7 @@ import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode } from "../../jsx/types.ts";
 import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
 import {
-  Badge,
+  type BadgeTone,
   DiffBlock,
   FilterForm,
   Hidden,
@@ -54,6 +54,8 @@ import {
   Panel,
   PreviewLead,
   SourceBlock,
+  type TabItem,
+  Tabs,
 } from "../components.ts";
 import { Raw, renderView } from "../view.ts";
 import {
@@ -64,8 +66,8 @@ import {
   writeFileAtomic,
 } from "../security.ts";
 import { loadConfigSchema, resolveAt, type SchemaNode } from "../form/schema.ts";
-import { widgetFor, type WidgetSpec } from "../form/widget.ts";
-import { readWidget, renderWidget } from "../form/render.ts";
+import { widgetFor, type WidgetKind, type WidgetSpec } from "../form/widget.ts";
+import { readWidget, renderWidget, renderWidgets } from "../form/render.ts";
 import { control } from "../form/control.ts";
 import {
   applyListOp,
@@ -96,6 +98,28 @@ const EMPTY_CONFIG = "export default {\n};\n";
 
 /** The one top-level key this panel shows but never writes (the plugin manager owns it). */
 const MANAGED_KEY = "plugins";
+
+/** Which grouping a view is showing (`/config/security?key=csp`). */
+const KEY_PARAM = "key";
+
+/** The whole-file escape hatch, placed among the groupings like any other key. */
+const RAW_KEY = "raw-file";
+
+/**
+ * Widget kinds that are one control, and so are shown inline rather than behind a tab.
+ *
+ * The split is what a key COSTS to show, not what it means: a text box or a checkbox is a line,
+ * and a dozen of them read fine together. Everything else — a sub-form per row, a key/value map,
+ * a branch picker, a group of fields, a code cell — wants the page to itself.
+ */
+const SCALAR_KINDS: ReadonlySet<WidgetKind> = new Set<WidgetKind>([
+  "text",
+  "textarea",
+  "number",
+  "toggle",
+  "select",
+  "segmented",
+]);
 
 /**
  * The hidden field every form carries: a SHA-256 of the config source the form was rendered
@@ -234,6 +258,33 @@ async function readState(dir: string): Promise<ConfigState> {
   };
 }
 
+/**
+ * Whether a key renders inline with the view's other scalars, rather than behind its own tab.
+ *
+ * Only an editable key can: a code cell has nothing to type into, and a key the plugins panel
+ * owns is a hand-off, so both belong on a page of their own where there is room to say why.
+ *
+ * @param section The section.
+ * @returns Whether it joins the inline band.
+ */
+function isInlineSection(section: Section): boolean {
+  return section.kind === "editable" && section.spec !== undefined &&
+    SCALAR_KINDS.has(section.spec.kind);
+}
+
+/** Where a key is edited: its view, and its tab when it has one. */
+function keyHref(section: Section): string {
+  const view = groupHref(groupOf(section.key));
+  return isInlineSection(section)
+    ? view
+    : `${view}?${KEY_PARAM}=${encodeURIComponent(section.key)}`;
+}
+
+/** Where the whole-file escape hatch lives. */
+function rawHref(): string {
+  return `${groupHref(groupOf(RAW_KEY))}?${KEY_PARAM}=${RAW_KEY}`;
+}
+
 /** The section a key names, or `undefined` when the key is not one the panel knows. */
 function sectionFor(state: ConfigState, key: string): Section | undefined {
   return state.sections.find((section) => section.key === key);
@@ -244,15 +295,30 @@ function held(section: Section, value: unknown): unknown {
   return section.wrapper && value !== undefined ? () => value : value;
 }
 
-/** The whole proposed config: every editable key that is set, with `key` replaced by `value`. */
-function proposedConfig(state: ConfigState, key: string, value: unknown): Record<string, unknown> {
+/**
+ * The whole proposed config: every editable key that is set, with `changes` applied over it.
+ *
+ * Takes a SET of changes rather than one key, because a view's inline scalars are saved together
+ * and the validator has to see the file as it would actually read — one key at a time would pass
+ * a config that never exists.
+ *
+ * @param state The project's config.
+ * @param changes The keys being written, to their new values (`undefined` removes the key).
+ * @returns The config to validate.
+ */
+function proposedConfig(
+  state: ConfigState,
+  changes: ReadonlyMap<string, unknown>,
+): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const section of state.sections) {
-    if (section.kind !== "editable" || !section.present || section.key === key) continue;
+    if (section.kind !== "editable" || !section.present || changes.has(section.key)) continue;
     out[section.key] = held(section, section.value);
   }
-  const target = sectionFor(state, key);
-  if (target && value !== undefined) out[key] = held(target, value);
+  for (const [key, value] of changes) {
+    const target = sectionFor(state, key);
+    if (target && value !== undefined) out[key] = held(target, value);
+  }
   return out;
 }
 
@@ -570,17 +636,101 @@ function SectionBody({ ctx, state, section, feedback }: SectionProps): VNode {
   return h(EditableField, { ctx, base: state.base, section, spec: section.spec, feedback });
 }
 
-/** One top-level key: a collapsible section, open when the key is set. */
-function ConfigSection({ ctx, state, section, feedback }: SectionProps): VNode {
-  const mine = feedback?.key === section.key;
-  const badge = section.kind === "editable" ? (section.present ? "set" : "unset") : section.kind;
-  const tone = section.kind === "editable" ? (section.present ? "ok" : "todo") : "info";
+/** What a key's pill says, and how it reads. */
+function badgeOf(section: Section): { badge: string; tone: BadgeTone } {
+  if (section.kind !== "editable") return { badge: section.kind, tone: "info" };
+  return section.present ? { badge: "set", tone: "ok" } : { badge: "unset", tone: "todo" };
+}
+
+/**
+ * A view's plain scalars, in one form with one Save.
+ *
+ * They are always on screen: a text box is a line, and hiding a dozen of them behind anything at
+ * all costs more than showing them. One Save covers the band, so the whole view is edited in a
+ * single pass and lands as a single diff.
+ */
+function InlineBand(
+  { ctx, state, group, sections, feedback }: StateProps & {
+    readonly group: ConfigGroup;
+    readonly sections: readonly Section[];
+    readonly feedback?: Feedback;
+  },
+): VNode {
+  const fields = sections.map((section) => ({
+    spec: section.spec as WidgetSpec,
+    value: feedback?.key === section.key ? feedback.value : section.value,
+  }));
+  const widgets = renderWidgets(fields, {
+    csrf: ctx.csrf,
+    readOnly: ctx.readOnly,
+    errors: feedback?.errors,
+  });
   return h(
-    "details",
-    { id: section.key, open: section.present || mine },
-    h("summary", null, h("strong", null, section.key), " ", h(Badge, { tone }, badge)),
-    section.description ? h("p", { class: "lead" }, section.description) : null,
-    h(SectionBody, { ctx, state, section, feedback: mine ? feedback : undefined }),
+    "form",
+    {
+      method: "post",
+      action: groupHref(group),
+      class: "band",
+      "data-dirty-track": "1",
+    },
+    hidden(BASE_FIELD, state.base),
+    h(Raw, { html: widgets }),
+    h("button", { type: "submit", disabled: ctx.readOnly }, "Save"),
+  );
+}
+
+/** One key that gets a tab of its own: a grouping, or the escape hatch. */
+interface Grouping {
+  /** The `?key=` value. */
+  readonly key: string;
+  /** The tab's label. */
+  readonly label: string;
+  /** Its state pill. */
+  readonly badge: string;
+  /** How the pill reads. */
+  readonly tone: BadgeTone;
+  /** The section, absent for the escape hatch (which is a file, not a key). */
+  readonly section?: Section;
+}
+
+/** The keys of this view that want a page to themselves, in render order. */
+function groupingsOf(shown: readonly Section[], rawHere: boolean): Grouping[] {
+  const out: Grouping[] = shown.filter((section) => !isInlineSection(section)).map((section) => ({
+    key: section.key,
+    label: section.key,
+    ...badgeOf(section),
+    section,
+  }));
+  if (rawHere) {
+    out.push({ key: RAW_KEY, label: "The file itself", badge: "escape hatch", tone: "info" });
+  }
+  return out;
+}
+
+/**
+ * Which grouping to show: the one asked for, else the first that is actually SET, else the first.
+ *
+ * Opening on the first key in schema order would mean a view whose first key happens to be unset
+ * greets you with an empty form while the key you configured sits behind a tab.
+ */
+function selectedGrouping(list: readonly Grouping[], asked: string): Grouping | undefined {
+  return list.find((entry) => entry.key === asked) ??
+    list.find((entry) => entry.section?.present) ?? list[0];
+}
+
+/** A search's hits, as links — the keys are spread across views, so the answer is where each is. */
+function SearchHits({ shown }: { readonly shown: readonly Section[] }): VNode {
+  return h(
+    "ul",
+    { class: "checks" },
+    shown.map((section) =>
+      h(
+        "li",
+        { key: section.key },
+        h("a", { href: keyHref(section) }, section.key),
+        section.description ? h("span", { class: "lead" }, ` — ${section.description}`) : null,
+      )
+    ),
   );
 }
 
@@ -609,9 +759,8 @@ function RawFileEditor({ ctx, state }: StateProps): VNode {
     }),
   });
   return h(
-    "details",
-    { id: "raw-file" },
-    h("summary", null, h("strong", null, "Edit the file directly")),
+    "div",
+    { id: RAW_KEY },
     h(
       "p",
       { class: "lead" },
@@ -673,19 +822,26 @@ interface PanelOptions {
   readonly group?: ConfigGroup;
   /** The `?q=` filter, which cuts across every group. */
   readonly query?: string;
+  /** Which grouping tab to show (`?key=`). */
+  readonly key?: string;
 }
 
-/** The whole editor: one collapsible section per top-level key, then the escape hatch. */
+/**
+ * One view of the config: its plain scalars inline, then one tab per key that wants the page.
+ *
+ * Nothing here collapses. Every key used to be a `<details>`, so a view read as a list of words
+ * with pills that each had to be opened before it said anything; the scalars are now simply
+ * present, and a grouping is a destination rather than something to unfold.
+ */
 function ConfigPanel(
   { ctx, state, options, compat }: StateProps & {
     readonly options: PanelOptions;
     readonly compat: boolean;
   },
 ): VNode {
-  const { notice, feedback } = options;
+  const { notice } = options;
   const query = options.query ?? "";
   const group = options.group ?? DEFAULT_GROUP;
-  const { shown, rawHere } = visibleSections(state.sections, group, query);
   return h(
     Panel,
     { name: "Config", title: "Config" },
@@ -699,14 +855,87 @@ function ConfigPanel(
         "written; comments and the values you did not touch come through byte for byte. ",
       h("a", { href: "https://denext.dev/docs/ui#configuration-editor" }, "Configuration editor ↗"),
     ),
-    h(FilterForm, { action: "/config", query, label: "Filter config keys" }),
+    h(FilterForm, { action: groupHref(group), query, label: "Filter config keys" }),
     ctx.readOnly ? h(Note, null, "Read-only mode — every change is refused.") : null,
     state.exists ? null : h(CreateOffer, { ctx, state }),
     state.exists && state.form === "unsupported" ? h(UnsupportedNote, { name: state.name }) : null,
     notice ?? null,
-    query === "" ? null : h("p", { class: "filter-note" }, configMatchNote(shown.length, query)),
-    shown.map((section) => h(ConfigSection, { key: section.key, ctx, state, section, feedback })),
-    rawHere ? h(RawFileEditor, { ctx, state }) : null,
+    h(ConfigBody, { ctx, state, options }),
+  );
+}
+
+/** Where one grouping's tab points. */
+function tabHref(group: ConfigGroup, key: string): string {
+  return `${groupHref(group)}?${KEY_PARAM}=${encodeURIComponent(key)}`;
+}
+
+/**
+ * What a view actually shows: its search results, or its editors.
+ *
+ * Split from {@linkcode ConfigPanel} so the choice is made once, at the top, instead of every
+ * child asking again whether a search is running.
+ */
+function ConfigBody(
+  { ctx, state, options }: StateProps & { readonly options: PanelOptions },
+): VNode {
+  const query = options.query ?? "";
+  const group = options.group ?? DEFAULT_GROUP;
+  const { shown, rawHere } = visibleSections(state.sections, group, query);
+  // A search cuts across every view, so it answers with WHERE each key is rather than pulling
+  // the forms out of the pages that own them.
+  if (query !== "") {
+    return h(
+      Fragment,
+      null,
+      h("p", { class: "filter-note" }, configMatchNote(shown.length, query)),
+      h(SearchHits, { shown }),
+    );
+  }
+  const inline = shown.filter(isInlineSection);
+  const groupings = groupingsOf(shown, rawHere);
+  const selected = selectedGrouping(groupings, options.key ?? "");
+  const tabs: TabItem[] = groupings.map((entry) => ({
+    href: tabHref(group, entry.key),
+    label: entry.label,
+    badge: entry.badge,
+    tone: entry.tone,
+  }));
+  return h(
+    Fragment,
+    null,
+    inline.length === 0
+      ? null
+      : h(InlineBand, { ctx, state, group, sections: inline, feedback: options.feedback }),
+    tabs.length === 0 ? null : h(Tabs, {
+      items: tabs,
+      active: selected ? tabHref(group, selected.key) : "",
+      label: "Config keys",
+    }),
+    selected
+      ? h(GroupingBody, { ctx, state, grouping: selected, feedback: options.feedback })
+      : null,
+  );
+}
+
+/** The selected tab's body: the escape hatch, or that key's own form. */
+function GroupingBody(
+  { ctx, state, grouping, feedback }: StateProps & {
+    readonly grouping: Grouping;
+    readonly feedback?: Feedback;
+  },
+): VNode {
+  if (!grouping.section) return h(RawFileEditor, { ctx, state });
+  const section = grouping.section;
+  return h(
+    Fragment,
+    null,
+    section.description ? h("p", { class: "lead" }, section.description) : null,
+    h(SectionBody, {
+      ctx,
+      state,
+      section,
+      feedback: feedback?.key === section.key ? feedback : undefined,
+    }),
   );
 }
 
@@ -813,12 +1042,24 @@ async function editorResponse(
     renderView(h(ConfigPanel, {
       ctx,
       state,
-      options: { ...options, group, query: (params.get("q") ?? "").trim() },
+      options: {
+        ...options,
+        group,
+        query: (params.get("q") ?? "").trim(),
+        // A refused submit has to re-render the key it was posted for, or the value someone
+        // just typed disappears behind whichever tab happened to be set.
+        key: params.get(KEY_PARAM) ?? posted ?? "",
+      },
       compat,
     })),
     status,
-    `Config · ${GROUP_LABEL[group]}`,
+    viewTitle(group, params.get(KEY_PARAM) ?? ""),
   );
+}
+
+/** What names this page in the browser: the view, and the key it is showing. */
+function viewTitle(group: ConfigGroup, key: string): string {
+  return key === "" ? `Config · ${GROUP_LABEL[group]}` : `Config · ${GROUP_LABEL[group]} · ${key}`;
 }
 
 /** A preview page, as the fragment or the whole document. */
@@ -846,7 +1087,7 @@ async function write(
   ctx: UiContext,
   state: ConfigState,
   source: string,
-  anchor: string,
+  location: string,
 ): Promise<Response> {
   try {
     await writeFileAtomic(ctx.dir, state.name, source, { unchangedFrom: state.source });
@@ -863,13 +1104,9 @@ async function write(
   if (ctx.json) return jsonResponse({ ok: true, applied: true, file: next.name });
   const notice = h(Note, null, `Wrote ${next.name}.`);
   if (ctx.fragment) return await editorResponse(ctx, next, { notice });
-  // The anchor only resolves on the view that renders its key, so the redirect names that view.
-  // `raw-file` needs no special case: it groups to `advanced` like any key this module does not
-  // place, and lands under its own anchor there.
-  return new Response(null, {
-    status: 303,
-    headers: { location: `${groupHref(groupOf(anchor))}#${anchor}` },
-  });
+  // A key is only rendered by the view that owns it, and a grouping only by its own tab, so the
+  // redirect names the exact page the change is visible on.
+  return new Response(null, { status: 303, headers: { location } });
 }
 
 // ── the section write ────────────────────────────────────────────────────────
@@ -991,11 +1228,155 @@ async function writeSection(
   if ("error" in posted) return invalid(ctx, state, section.key, section.value, posted.error);
   const request = parseOp(postedField(ctx, OP_FIELD));
   const plan = await buildPlan(state, section, posted.value, request);
-  const error = validationError(proposedConfig(state, section.key, plan.next), state.name);
+  const proposed = proposedConfig(state, new Map([[section.key, plan.next]]));
+  const error = validationError(proposed, state.name);
   if (error) return invalid(ctx, state, section.key, plan.next, error);
   if (!plan.result.ok || plan.result.diff === "") return sectionPreview(ctx, state, plan);
   if (!confirmed(ctx)) return sectionPreview(ctx, state, plan);
-  return await write(ctx, state, plan.result.source, section.key);
+  return await write(ctx, state, plan.result.source, keyHref(section));
+}
+
+// ── the inline band write ────────────────────────────────────────────────────
+
+/**
+ * Which of a view's inline scalars this submit actually changes.
+ *
+ * The guard on an UNSET key is the point. Every toggle the band renders carries a hidden `off`
+ * companion, so an unchecked box decodes to `false` rather than to nothing — and without this,
+ * saving any view would write `false` into the config for every boolean key it happens to show.
+ * `false` is what an absent boolean already means, so it is never a reason to create a key.
+ *
+ * A key that IS set takes its posted value as it comes, `false` included, and a cleared field
+ * decodes to `undefined`, which removes the key.
+ *
+ * @param state The project's config.
+ * @param sections The view's inline scalars.
+ * @param entries The posted fields.
+ * @returns The changes, or the first field-level failure.
+ */
+function bandChanges(
+  sections: readonly Section[],
+  entries: readonly FormEntry[],
+): { changes: Map<string, unknown> } | { error: FieldError; key: string } {
+  const changes = new Map<string, unknown>();
+  for (const section of sections) {
+    let decoded: unknown;
+    try {
+      decoded = decode(section.spec as WidgetSpec, entries);
+    } catch (error) {
+      if (!(error instanceof FormValueError)) throw error;
+      return { key: section.key, error: { field: error.field, message: error.message } };
+    }
+    if (!section.present) {
+      if (decoded === undefined || decoded === false) continue;
+    } else if (stable(decoded) === stable(section.value)) continue;
+    changes.set(section.key, decoded);
+  }
+  return { changes };
+}
+
+/**
+ * Save every scalar a view changed, as one diff and one write.
+ *
+ * The edits are chained through an evolving source and diffed once at the end. If any one of them
+ * bails the whole submit is refused and nothing is written — the chained source is simply dropped,
+ * so a config can never be left holding half of a change.
+ */
+async function chainEdits(
+  state: ConfigState,
+  changes: ReadonlyMap<string, unknown>,
+): Promise<{ ok: true; source: string } | { ok: false; result: EditResult }> {
+  let source = state.exists ? state.source : EMPTY_CONFIG;
+  for (const [key, value] of changes) {
+    const result = value === undefined
+      ? await deleteConfigValue(source, [key])
+      : await setConfigValue(source, [key], value);
+    if (!result.ok) return { ok: false, result };
+    source = result.source;
+  }
+  return { ok: true, source };
+}
+
+/** One edit of the band bailed, so the whole submit is refused and nothing is written. */
+function bandRefusal(
+  ctx: UiContext,
+  state: ConfigState,
+  group: ConfigGroup,
+  result: EditResult,
+): Response {
+  if (result.ok) throw new Error("bandRefusal called for an edit that succeeded");
+  if (ctx.json) return jsonResponse({ ok: false, applied: false, reason: result.reason }, 422);
+  return previewResponse(ctx, {
+    title: `Config · ${GROUP_LABEL[group]}`,
+    action: groupHref(group),
+    base: state.base,
+    fields: [],
+    diff: result.diff ?? "",
+    notes: previewNotes(result),
+    ok: false,
+  }, 422);
+}
+
+/** The band's diff, and the confirm form carrying exactly the values it was computed from. */
+function bandPreview(
+  ctx: UiContext,
+  state: ConfigState,
+  group: ConfigGroup,
+  changes: ReadonlyMap<string, unknown>,
+  diff: string,
+): Response {
+  const fields = [...changes].flatMap(([key, value]) => {
+    const section = sectionFor(state, key);
+    return section
+      ? encode(section.spec as WidgetSpec, value).map((entry) => hidden(entry.name, entry.value))
+      : [];
+  });
+  return previewResponse(ctx, {
+    title: `Config · ${GROUP_LABEL[group]}`,
+    action: groupHref(group),
+    base: state.base,
+    fields,
+    diff,
+    ok: diff !== "",
+    notes: diff === "" ? h(NoChange, null) : undefined,
+  });
+}
+
+/** The validator refused one of the band's values: re-render against the key that caused it. */
+function bandInvalid(
+  ctx: UiContext,
+  state: ConfigState,
+  changes: ReadonlyMap<string, unknown>,
+  error: FieldError,
+): Response | Promise<Response> {
+  const key = [...changes.keys()].find((name) => error.field.startsWith(name)) ??
+    [...changes.keys()][0] ?? "";
+  return invalid(ctx, state, key, changes.get(key), error);
+}
+
+async function writeBand(
+  ctx: UiContext,
+  state: ConfigState,
+  group: ConfigGroup,
+): Promise<Response> {
+  const sections = state.sections.filter((section) =>
+    groupOf(section.key) === group && isInlineSection(section)
+  );
+  const read = bandChanges(sections, ctx.form ? formEntries(ctx.form) : []);
+  if ("error" in read) {
+    return invalid(ctx, state, read.key, sectionFor(state, read.key)?.value, read.error);
+  }
+  const { changes } = read;
+  const error = validationError(proposedConfig(state, changes), state.name);
+  if (error) return await bandInvalid(ctx, state, changes, error);
+
+  const chained = await chainEdits(state, changes);
+  if (!chained.ok) return bandRefusal(ctx, state, group, chained.result);
+
+  const diff = createUnifiedDiff(state.source, chained.source, state.name);
+  if (ctx.json && !confirmed(ctx)) return jsonResponse({ ok: true, applied: false, diff });
+  if (!confirmed(ctx) || diff === "") return bandPreview(ctx, state, group, changes, diff);
+  return await write(ctx, state, chained.source, groupHref(group));
 }
 
 // ── the whole-file writes ────────────────────────────────────────────────────
@@ -1014,7 +1395,7 @@ async function writeRaw(ctx: UiContext, state: ConfigState): Promise<Response> {
     );
   }
   const diff = createUnifiedDiff(state.source, source, state.name);
-  if (confirmed(ctx)) return await write(ctx, state, source, "raw-file");
+  if (confirmed(ctx)) return await write(ctx, state, source, rawHref());
   if (ctx.json) return jsonResponse({ ok: true, applied: false, diff });
   return previewResponse(ctx, {
     title: `Config · ${state.name}`,
@@ -1031,7 +1412,7 @@ async function writeRaw(ctx: UiContext, state: ConfigState): Promise<Response> {
 async function writeCreate(ctx: UiContext, state: ConfigState): Promise<Response> {
   if (state.exists) return refuse(ctx, state, `${state.name} already exists`, 400);
   const diff = createUnifiedDiff("", EMPTY_CONFIG, state.name);
-  if (confirmed(ctx)) return await write(ctx, state, EMPTY_CONFIG, "raw-file");
+  if (confirmed(ctx)) return await write(ctx, state, EMPTY_CONFIG, rawHref());
   if (ctx.json) return jsonResponse({ ok: true, applied: false, diff });
   return previewResponse(ctx, {
     title: `Create ${state.name}`,
@@ -1078,6 +1459,10 @@ async function mutate(ctx: UiContext, state: ConfigState): Promise<Response> {
   if (params.get("raw") === "1") return await writeRaw(ctx, state);
   if (params.get("create") === "1") return await writeCreate(ctx, state);
   const key = params.get("section") ?? postedField(ctx, "section");
+  // No section named: this is a view's inline band, saving whichever of its scalars changed.
+  if (key === "") {
+    return await writeBand(ctx, state, groupFromPath(ctx.url.pathname) ?? DEFAULT_GROUP);
+  }
   const section = sectionFor(state, key);
   if (!section) return refuse(ctx, state, `unknown config section "${key}"`, 400);
   if (section.kind === "managed") {

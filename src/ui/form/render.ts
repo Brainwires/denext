@@ -397,12 +397,18 @@ function UnionWidget({ spec, value, ctx }: WidgetProps): VNode {
   );
 }
 
-/** A collapsible group of fields. */
+/**
+ * A named group of fields.
+ *
+ * Not collapsible. It was a `<details open>`, which offered a control whose only power was to
+ * hide fields you had navigated to in order to see — and the editor now puts one group on screen
+ * at a time, so there is nothing left for it to save you from.
+ */
 function GroupWidget({ spec, value, ctx }: WidgetProps): VNode {
   return h(
-    "details",
-    { open: true, id: `${idOf(nameOf(spec, ctx))}--group`, class: "field" },
-    h("summary", { class: "group-summary" }, spec.label),
+    "div",
+    { id: `${idOf(nameOf(spec, ctx))}--group`, class: "field" },
+    h("p", { class: "group-summary" }, spec.label),
     spec.description ? h("p", { class: "lead group-note" }, spec.description) : null,
     h("div", { class: "group-body" }, fieldsOf(spec, value, ctx)),
   );
@@ -470,6 +476,29 @@ function Widget(props: WidgetProps): VNode {
  * @returns The field markup.
  */
 export function renderWidget(spec: WidgetSpec, value: unknown, ctx: RenderContext): RawHtml {
+  return renderWidgets([{ spec, value }], ctx);
+}
+
+/** One field of a multi-widget form: its widget, and the value to render it holding. */
+export interface WidgetField {
+  /** The widget. */
+  readonly spec: WidgetSpec;
+  /** The current config value at its path. */
+  readonly value: unknown;
+}
+
+/**
+ * Render several widgets into one form body, behind a single CSRF field.
+ *
+ * The config editor puts a view's plain scalars in one form with one Save, so their widgets are
+ * rendered together. Emitting the token once is the point: rendering each field separately would
+ * repeat a hidden `_csrf` for every control in the form.
+ *
+ * @param fields The widgets and their values, in render order.
+ * @param ctx The CSRF token, the name prefix, read-only mode and any validation messages.
+ * @returns The field markup.
+ */
+export function renderWidgets(fields: readonly WidgetField[], ctx: RenderContext): RawHtml {
   const csrf = h(Control, {
     tag: "input",
     type: "hidden",
@@ -477,7 +506,16 @@ export function renderWidget(spec: WidgetSpec, value: unknown, ctx: RenderContex
     value: ctx.csrf,
     disabled: ctx.readOnly,
   });
-  return renderView(h(Fragment, null, csrf, h(Widget, { spec, value, ctx })));
+  return renderView(
+    h(
+      Fragment,
+      null,
+      csrf,
+      fields.map((field, index) =>
+        h(Widget, { key: index, spec: field.spec, value: field.value, ctx })
+      ),
+    ),
+  );
 }
 
 /**

@@ -225,6 +225,12 @@ h2 { font-size: var(--text-lg); margin: 28px 0 var(--space-2); }
   border-bottom-color: var(--primary);
   font-weight: 600;
 }
+/* A tab may carry a state pill, so the strip says what is set without opening anything. */
+.tabs a .badge { margin-left: var(--space-1); vertical-align: baseline; }
+
+/* A view's plain scalars, in one form with one Save above the grouped keys. */
+.band { margin: 0 0 var(--space-5); }
+.band > button { margin-top: var(--space-2); }
 
 /* A panel's filter box: a plain GET form, so it works with scripting off. */
 .filter { display: flex; gap: var(--space-2); align-items: center; margin: 0 0 var(--space-4); }
@@ -273,7 +279,7 @@ button.destructive { background: var(--destructive); border-color: var(--destruc
 .op-button { padding: 2px var(--space-2); }
 .op-group { display: inline-flex; gap: var(--space-1); }
 .group-body { padding: var(--space-2) 0 0 var(--space-3); }
-.group-summary { cursor: pointer; font-weight: 600; }
+.group-summary { font-weight: 600; margin: 0 0 var(--space-1); }
 
 /* ── disclosure ────────────────────────────────────────────────────────── */
 /* A summary's text lines up with its own description and with every other block

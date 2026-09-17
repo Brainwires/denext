@@ -68,6 +68,10 @@ export interface TabItem {
   readonly href: string;
   /** The tab's label. */
   readonly label: string;
+  /** A state pill after the label (the config editor says whether a key is set). */
+  readonly badge?: string;
+  /** How that pill reads. */
+  readonly tone?: BadgeTone;
 }
 
 /**
@@ -94,11 +98,18 @@ export function Tabs(
     "nav",
     { class: "tabs", "aria-label": label },
     items.map((item) =>
-      h("a", {
-        key: item.href,
-        href: item.href,
-        "aria-current": item.href === active ? "page" : undefined,
-      }, item.label)
+      h(
+        "a",
+        {
+          key: item.href,
+          href: item.href,
+          "aria-current": item.href === active ? "page" : undefined,
+        },
+        item.label,
+        item.badge === undefined
+          ? null
+          : h(Fragment, null, " ", h(Badge, { tone: item.tone }, item.badge)),
+      )
     ),
   );
 }

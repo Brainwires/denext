@@ -97,32 +97,42 @@ const RULES = [
   { source: "/a", destination: "/b", permanent: false },
 ];
 
-Deno.test("GET /config renders a section per key, the list rows and the plugins code cell", async () => {
+Deno.test("a view shows its scalars inline and its groupings as tabs, nothing collapsed", async () => {
   const dir = await project();
   try {
     const res = await call(dir, "/config");
     assertEquals(res.status, 200);
     const body = await res.text();
     assertStringIncludes(body, '<section id="panel"');
-    // The keys are grouped now, so a section is asserted on the view that owns it. Routing is
-    // what a bare /config opens on; the ones that are set are open.
-    assertStringIncludes(body, '<details id="basePath" open>');
-    // The scalar widgets carry the file's current values.
+    // Nothing in the editor is a disclosure any more: a view used to read as a list of words
+    // with pills, each of which had to be opened before it said anything.
+    assert(!body.includes("<details"), "the config editor collapses nothing");
+    // The plain scalars are simply present, carrying the file's values, under one Save.
     assert(hasField(body, "basePath", "/docs"));
-    // The rule thunk is unwrapped: one typed sub-form per row, in file order.
+    assert(hasField(body, "trailingSlash", "on"));
+    assertStringIncludes(body, 'class="band"');
+    // The groupings are tabs, each saying whether its key is set.
+    assertStringIncludes(body, 'href="/config?key=redirects"');
+    assertStringIncludes(body, 'href="/config?key=i18n"');
+    // Routing opens on `redirects`, the one this file actually sets — not on the first key the
+    // schema happens to declare.
     assert(hasField(body, "redirects[0].source", "/old"));
     assert(hasField(body, "redirects[1].destination", "/b"));
     assertStringIncludes(body, 'value="up:1:redirects"');
+    assert(!hasField(body, "i18n.defaultLocale", ""), "only the selected tab renders a form");
 
+    // `mode` is one control, so it joins the band rather than taking a tab of its own.
     const rendering = await (await call(dir, "/config/rendering")).text();
-    assertStringIncludes(rendering, '<details id="mode">');
+    assert(hasField(rendering, "mode", "") || rendering.includes('name="mode"'));
+    assertStringIncludes(rendering, 'class="band"');
 
-    const advanced = await (await call(dir, "/config/advanced")).text();
-    // `plugins` is shown, never edited here.
-    assertStringIncludes(advanced, "plugins panel</a> owns this key");
-    assertStringIncludes(advanced, "openapi()");
-    // The escape hatch carries the whole file.
-    assertStringIncludes(advanced, 'name="raw"');
+    // `plugins` is shown, never edited here — on its own tab.
+    const plugins = await (await call(dir, "/config/advanced?key=plugins")).text();
+    assertStringIncludes(plugins, "plugins panel</a> owns this key");
+    assertStringIncludes(plugins, "openapi()");
+    // The escape hatch is a tab of the same strip, carrying the whole file.
+    const raw = await (await call(dir, "/config/advanced?key=raw-file")).text();
+    assertStringIncludes(raw, 'name="raw"');
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -145,7 +155,8 @@ Deno.test("a scalar change previews a diff touching only that value, then writes
       form: { ...fields, confirm: "1" },
     });
     assertEquals(applied.status, 303);
-    assertEquals(applied.headers.get("location"), "/config#basePath");
+    // An inline scalar is visible on its view itself, so that is where the write lands.
+    assertEquals(applied.headers.get("location"), "/config");
     assertStringIncludes(await onDisk(dir), 'basePath: "/site",');
     assertStringIncludes(await onDisk(dir), "// keep this comment");
   } finally {
@@ -214,8 +225,9 @@ Deno.test("a section form tracks edits: Save waits, and Clear is named for what 
     assertStringIncludes(body, 'data-dirty-track="1"');
     assert(!/<button type="submit"[^>]*disabled[^>]*>Save</.test(body), "Save ships enabled");
     // The destructive submit says what it removes, rather than reading like "clear the field".
+    // It belongs to a grouping's own form; a band scalar is removed by clearing its field.
     assertStringIncludes(body, ">Remove key<");
-    assertStringIncludes(body, 'title="Delete basePath from the config"');
+    assertStringIncludes(body, 'title="Delete redirects from the config"');
     assert(!body.includes(">Clear<"), "the old label is gone");
   } finally {
     await Deno.remove(dir, { recursive: true });
@@ -281,7 +293,7 @@ Deno.test("the raw editor carries the file byte for byte, markup characters incl
   const dir = await project(source);
   try {
     // The whole-file escape hatch lives on Advanced, with the keys denext does not describe.
-    const body = await (await call(dir, "/config/advanced")).text();
+    const body = await (await call(dir, "/config/advanced?key=raw-file")).text();
     assert(!body.includes("<b>a & b</b>"), "the file's markup is escaped, never live");
     const text = textareaText(body);
     assertEquals(text, source);
@@ -300,7 +312,7 @@ Deno.test("the raw editor keeps a file's leading blank lines through the textare
   const source = "\n\n" + CONFIG;
   const dir = await project(source);
   try {
-    const body = await (await call(dir, "/config/advanced")).text();
+    const body = await (await call(dir, "/config/advanced?key=raw-file")).text();
     // The newline the parser drops after `<textarea>`, then the file's own two.
     assertMatch(body, /<textarea name="raw"[^>]*>\n\n\nimport /);
     const text = textareaText(body);
@@ -559,7 +571,7 @@ Deno.test("a denext.config.ts symlinked out of the project is neither read nor w
 Deno.test("a write against a stale _base is a 409 and changes nothing", async () => {
   const dir = await project();
   try {
-    const page = await (await call(dir, "/config")).text();
+    const page = await (await call(dir, "/config?key=redirects")).text();
     const base = page.match(/name="_base"[^>]*value="([0-9a-f]{64})"/)?.[1];
     assert(base, "every form carries the source's SHA-256 as _base");
 
@@ -575,7 +587,7 @@ Deno.test("a write against a stale _base is a 409 and changes nothing", async ()
     assertEquals(await onDisk(dir), edited, "the editor's version survived");
 
     // Re-rendering hands out the fresh stamp, and the same write then applies.
-    const fresh = (await (await call(dir, "/config")).text())
+    const fresh = (await (await call(dir, "/config?key=redirects")).text())
       .match(/name="_base"[^>]*value="([0-9a-f]{64})"/)?.[1];
     assert(fresh && fresh !== base);
     const ok = await call(dir, "/config?section=basePath", {
