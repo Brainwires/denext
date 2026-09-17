@@ -143,7 +143,7 @@ Deno.test("every top-level config key maps to the widget its type deserves", () 
     cacheComponents: "toggle",
     experimental: "group",
     classComponents: "toggle",
-    compatibilityMode: "union",
+    compatibilityMode: "segmented",
     plugins: "code",
     commands: "list-of-forms",
   });
@@ -232,7 +232,6 @@ Deno.test("every union field gets a discriminator picker with readable branch la
   assertEquals(labels("spa", "csp"), ["strict", "off", "object"]);
   assertEquals(labels("cache", "store"), ["sqlite", "memory", "object"]);
   assertEquals(labels("hsts"), ["object", "false"]);
-  assertEquals(labels("compatibilityMode"), ["boolean", "auto"]);
   assertEquals(labels("scheduledTasks", MAP_SEGMENT), ["string", "array"]);
 });
 
@@ -328,4 +327,18 @@ Deno.test("itemSchema is total: an array without items yields an empty node", ()
 
 Deno.test("schema-overrides.ts ships empty — gaps are fixed in the generator", () => {
   assertEquals(OVERRIDES, {});
+});
+
+Deno.test("a union of nothing but finite scalars is one control, not a picker", () => {
+  // `boolean | "auto"` is three values, so it renders as one choice over them rather than a
+  // branch picker with a second control nested inside it repeating the key's name.
+  const spec = specAt("compatibilityMode");
+  assertEquals(spec.kind, "segmented");
+  assertEquals(spec.branches, undefined, "there is no shape left to pick");
+  assertEquals(spec.options?.map((option) => option.value), ["", "true", "false", "auto"]);
+
+  // A union with an object branch is a real choice of shape and keeps its picker.
+  assertEquals(specAt("csp").kind, "union");
+  assertEquals(specAt("hsts").kind, "union");
+  assertEquals(specAt("cache", "store").kind, "union");
 });

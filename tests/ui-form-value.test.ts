@@ -77,8 +77,6 @@ Deno.test("a union round-trips through whichever branch holds the value", () => 
   assertRoundTrip(specAt("csp"), { scriptSrc: ["'self'"], imgSrc: ["data:"] }, "object branch");
   assertRoundTrip(specAt("hsts"), false, "a non-string enum branch stays a boolean");
   assertRoundTrip(specAt("hsts"), { maxAge: 63072000, preload: true }, "object branch");
-  assertRoundTrip(specAt("compatibilityMode"), true, "boolean branch");
-  assertRoundTrip(specAt("compatibilityMode"), "auto", "enum branch");
   assertRoundTrip(specAt("cache", "store"), "sqlite", "enum branch");
   assertRoundTrip(specAt("scheduledTasks"), { "0 3 * * *": ["cleanup", "digest"] }, "map of union");
   assertRoundTrip(specAt("scheduledTasks"), { "0 3 * * *": "cleanup" }, "map of union (scalar)");
@@ -436,4 +434,17 @@ Deno.test("an opt-in toggle is unchanged by any of that", () => {
   assertStringIncludes(markup, ">Enable</label>");
   assertStringIncludes(markup, 'type="hidden" value="off"');
   assertStringIncludes(render(spec, true), "checked");
+});
+
+Deno.test("a flattened union keeps the types of its values", () => {
+  // The control posts text, and the config is written from what `decode` returns — so if "true"
+  // came back as a string it would be spliced in as one. `decodeText` maps a posted string back
+  // to the schema's declared member, which is what keeps `true` a boolean.
+  const spec = specAt("compatibilityMode");
+  assertRoundTrip(spec, true, "boolean true");
+  assertRoundTrip(spec, false, "boolean false — the value the old picker hid behind a checkbox");
+  assertRoundTrip(spec, "auto", "the enum member");
+  assertEquals(decode(spec, [{ name: "compatibilityMode", value: "true" }]), true);
+  assertEquals(decode(spec, [{ name: "compatibilityMode", value: "false" }]), false);
+  assertEquals(decode(spec, [{ name: "compatibilityMode", value: "" }]), undefined, "unset");
 });

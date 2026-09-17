@@ -232,7 +232,11 @@ function decodeText(spec: WidgetSpec, lookup: Lookup, prefix: string): unknown {
   const posted = lookup.first(fieldName(spec.path, prefix));
   if (posted === undefined) return undefined;
   if (posted === "" && !spec.required) return undefined;
-  const member = spec.schema.enum?.find((option) => String(option) === posted);
+  // An option that declares the value it stands for wins: a union flattened into one choice
+  // holds values its node does not list together, and they must keep their types.
+  const option = spec.options?.find((entry) => entry.value === posted && entry.typed !== undefined);
+  if (option) return option.typed;
+  const member = spec.schema.enum?.find((choice) => String(choice) === posted);
   return member === undefined ? posted : member;
 }
 

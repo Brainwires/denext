@@ -36,6 +36,14 @@ export interface WidgetOption {
   readonly value: string;
   /** The visible label. */
   readonly label: string;
+  /**
+   * The config value this option stands for, when it is not simply its own text.
+   *
+   * A control posts strings. An `enum` node's members are recovered from the schema itself, but
+   * a union flattened into one choice draws its values from several branches, and no single node
+   * lists them — so they ride here, and `decode` writes `true` rather than the string `"true"`.
+   */
+  readonly typed?: unknown;
 }
 
 /** One alternative shape of a union field, behind the discriminator picker. */
@@ -148,6 +156,42 @@ function enumOptions(input: RuleInput): WidgetOption[] {
   return input.required ? options : [{ value: "", label: "— unset —" }, ...options];
 }
 
+/**
+ * The values a union offers, when every one of its branches offers a finite set of them.
+ *
+ * `boolean | "auto"` is three VALUES — true, false, "auto" — not two shapes. A union with an
+ * object branch (`csp`, `hsts`, `cache.store`) is a real choice of shape and keeps its picker;
+ * so does one over open scalar types (a project flag's `default`).
+ *
+ * @param node The union node.
+ * @returns Every value, in branch order, or `null` when a branch is not a finite scalar set.
+ */
+function flatUnionEnum(node: SchemaNode): unknown[] | null {
+  if (!Array.isArray(node.anyOf) || node.anyOf.length === 0) return null;
+  const values: unknown[] = [];
+  for (const branch of node.anyOf) {
+    if (Array.isArray(branch.enum)) values.push(...branch.enum);
+    else if (typeOf(branch) === "boolean") values.push(true, false);
+    else return null;
+  }
+  return values;
+}
+
+/**
+ * A closed set of values as a widget: radios while they fit on one line, a select once they do
+ * not. Both rules that render a choice come through here, so the same options can never render
+ * as a segmented control in one and a dropdown in the other.
+ *
+ * @param input The rule input the widget is built from.
+ * @param options The choices, in the order they should appear.
+ * @returns The finished `segmented` or `select` spec.
+ */
+function choiceWidget(input: RuleInput, options: WidgetOption[]): WidgetSpec {
+  const short = options.length <= SEGMENTED_MAX &&
+    options.every((option) => option.label.length <= SEGMENTED_LABEL_MAX);
+  return { ...base(input, short ? "segmented" : "select"), options };
+}
+
 /** A union branch's picker label: its lone `enum` value, else its JSON type, else "custom…". */
 function branchLabel(branch: SchemaNode): string {
   if (branch.enum?.length === 1) return String(branch.enum[0]);
@@ -164,11 +208,21 @@ const RULES: readonly Rule[] = [
   // Policy: a path the editor deliberately does not own (see READ_ONLY_PATHS).
   [(i) => READ_ONLY_PATHS.has(i.key), (i) => base(i, "code")],
   // A closed set of values: radios while they fit on one line, a select once they do not.
-  [(i) => Array.isArray(i.node.enum), (i) => {
-    const options = enumOptions(i);
-    const short = options.length <= SEGMENTED_MAX &&
-      options.every((option) => option.label.length <= SEGMENTED_LABEL_MAX);
-    return { ...base(i, short ? "segmented" : "select"), options };
+  [(i) => Array.isArray(i.node.enum), (i) => choiceWidget(i, enumOptions(i))],
+  // A union of nothing but finite scalars is a choice of VALUE, not of shape. As a picker it
+  // made you select "boolean" and then work a second control inside it, with the key's name
+  // printed twice — once by the picker, once by the branch. Flattened it is one control, and
+  // each option carries the value it stands for, so `true` is written as a boolean rather than
+  // as the string "true".
+  [(i) => flatUnionEnum(i.node) !== null, (i) => {
+    const chosen = (flatUnionEnum(i.node) ?? []).map((value) => ({
+      value: String(value),
+      label: String(value),
+      typed: value,
+    }));
+    // The same "— unset —" an optional enum offers. The picker could not say "no value" at all:
+    // it fell back to its first branch, so an unset key looked like a chosen one.
+    return choiceWidget(i, i.required ? chosen : [{ value: "", label: "— unset —" }, ...chosen]);
   }],
   // Several alternative shapes: a discriminator picker plus the selected branch.
   [(i) => Array.isArray(i.node.anyOf), (i) => ({
