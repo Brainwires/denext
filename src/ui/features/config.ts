@@ -600,7 +600,7 @@ function EditableField({ ctx, base, section, spec, feedback }: EditableProps): V
     readOnly: ctx.readOnly,
     errors: feedback?.errors,
     // The tab already says which key this is.
-    omitTopLabel: true,
+    bareAt: fieldName(spec.path),
   });
   const clear = h(
     "button",

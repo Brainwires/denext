@@ -271,7 +271,9 @@ Deno.test("an invalid value is a 422 with the validator's message against its fi
     });
     assertEquals(res.status, 422);
     const body = await res.text();
-    assertStringIncludes(body, "`i18n.defaultLocale` must be one of i18n.locales");
+    // The validator names the field in backticks; the panel formats that like any other
+    // prose, so the message arrives as markup rather than with its markers showing.
+    assertStringIncludes(body, "<code>i18n.defaultLocale</code> must be one of i18n.locales");
     assertStringIncludes(body, 'role="alert"');
     // The message is rendered against the field that caused it, with the posted value kept.
     assert(hasField(body, "i18n.defaultLocale", "de"));

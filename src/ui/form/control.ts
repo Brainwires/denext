@@ -194,7 +194,12 @@ export function Field(props: FieldProps): VNode {
     ),
     props.children,
     props.help ? h("p", { class: "lead field-help" }, inlineMarkdown(props.help)) : null,
-    props.error ? h("p", { class: "note field-error", role: "alert" }, props.error) : null,
+    // Formatted like the help beside it: a validator names the offending field in backticks
+    // (`i18n.defaultLocale`), and showing the backticks is the same wart as showing them
+    // in a description.
+    props.error
+      ? h("p", { class: "note field-error", role: "alert" }, inlineMarkdown(props.error))
+      : null,
   );
 }
 

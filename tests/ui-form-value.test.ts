@@ -480,3 +480,35 @@ Deno.test("a superseded key is not offered until the config actually sets it", (
   assertEquals(decode(group, encode(group, {})), undefined, "an empty group stays absent");
   assertEquals(decode(group, encode(group, { compiler: true })), { compiler: true });
 });
+
+Deno.test("a union names its key once, not once per branch", () => {
+  // A branch renders at its PARENT's path, so the picker and the branch were both labelling the
+  // same key — the name, its pill, its help and its validation message, twice over.
+  const spec = specAt("csp");
+
+  // The enum branch: a single control, which used to bring its own label with it.
+  const strict = render(spec, "strict");
+  assertEquals(strict.match(/<label for="f-csp"/g)?.length ?? 0, 1, "one label for the key");
+
+  // The object branch: a group, which used to bring its own bold summary line.
+  const object = render(spec, { scriptSrc: ["'self'"] });
+  assertEquals(
+    (object.match(/<p class="group-summary">csp/g) ?? []).length,
+    0,
+    "the branch group does not re-introduce the key the picker already named",
+  );
+  // Its CHILDREN keep their labels — that is what separates one key from the next.
+  assertStringIncludes(object, "scriptSrc");
+  // And the picker itself is still there, with the right branch selected.
+  assertStringIncludes(object, 'name="csp~branch" type="radio" value="2" checked');
+});
+
+Deno.test("a validation message is formatted, not shown with its markers", () => {
+  const spec = specAt("basePath");
+  const markup = toHtml(renderWidget(spec, "/app", {
+    csrf: "tok",
+    errors: { basePath: "`basePath` must start with a slash" },
+  }));
+  assertStringIncludes(markup, "<code>basePath</code> must start with a slash");
+  assertStringIncludes(markup, 'role="alert"', "it is still announced");
+});

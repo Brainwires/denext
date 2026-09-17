@@ -41,15 +41,17 @@ export interface RenderContext {
   /** Validation messages to show against fields, keyed by field name. */
   readonly errors?: Readonly<Record<string, string>>;
   /**
-   * The caller already names the OUTERMOST key, so a container must not name it again.
+   * The field name whose label something above already shows.
    *
-   * Only a group is affected, and only at the top level. A group has no control of its own — its
-   * children are the keys you set — so on a tab that already says `i18n`, a bold `i18n` line
-   * carrying a set/unset pill is the heading twice over, claiming a state for something there is
-   * no way to set. A key that IS a control (chips, a select) keeps its label and its pill, because
-   * there the name and the state both belong to something real.
+   * Two places need this, and they are the same situation: a config tab that already says
+   * `i18n` above the form, and a union's branch, which renders at its parent's path — so the
+   * picker labels the key and the branch would label it again, pill, help and validation message
+   * and all. Keyed by NAME rather than by depth, so a branch nested anywhere is covered.
+   *
+   * Only the field with exactly this name is bared; its children keep their own labels, which is
+   * what tells you where one key ends and the next begins.
    */
-  readonly omitTopLabel?: boolean;
+  readonly bareAt?: string;
 }
 
 /** What every widget component is handed. */
@@ -143,6 +145,8 @@ function Wrap(
 ): VNode {
   const { spec, ctx } = props;
   const name = nameOf(spec, ctx);
+  // Already labelled above (a tab's heading, or a union's picker): render the control alone.
+  if (ctx.bareAt === name) return h(Fragment, null, props.children);
   return h(Field, {
     id: idOf(name),
     label: spec.label,
@@ -459,11 +463,12 @@ function UnionWidget({ spec, value, ctx }: WidgetProps): VNode {
       }),
     )
   );
+  const bare = { ...ctx, bareAt: nameOf(spec, ctx) };
   return h(
     Wrap,
     { spec, ctx, value },
     h("div", null, spaced(picker)),
-    branch ? h(Widget, { spec: branch.spec, value, ctx }) : null,
+    branch ? h(Widget, { spec: branch.spec, value, ctx: bare }) : null,
   );
 }
 
@@ -475,7 +480,7 @@ function UnionWidget({ spec, value, ctx }: WidgetProps): VNode {
  * at a time, so there is nothing left for it to save you from.
  */
 function GroupWidget({ spec, value, ctx }: WidgetProps): VNode {
-  if (ctx.omitTopLabel && spec.path.length === 1) {
+  if (ctx.bareAt === nameOf(spec, ctx)) {
     // The description stays: it explains the tab you are on, which the name alone did not.
     return h(
       "div",
