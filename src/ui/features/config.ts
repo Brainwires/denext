@@ -72,6 +72,7 @@ import {
   applyListOp,
   decode,
   encode,
+  fieldName,
   type FormEntry,
   FormValueError,
   type ListOpRequest,
@@ -1285,11 +1286,20 @@ function bandChanges(
   sections: readonly Section[],
   entries: readonly FormEntry[],
 ): { changes: Map<string, unknown> } | { error: FieldError; key: string } {
+  // Which fields this submit actually CARRIED. A browser posts every control the band
+  // rendered, so absence never happens there — but the `/api` twin takes whatever a caller
+  // sends, and a cleared field and an unsent one decode identically to `undefined`. Reading
+  // the second as "delete this key" would let an empty body propose dropping every scalar in
+  // the view. Silence must never delete; the Cron editor refuses an empty form for the same
+  // reason.
+  const carried = new Set(entries.map((entry) => entry.name));
   const changes = new Map<string, unknown>();
   for (const section of sections) {
+    const spec = section.spec as WidgetSpec;
+    if (!carried.has(fieldName(spec.path))) continue;
     let decoded: unknown;
     try {
-      decoded = decode(section.spec as WidgetSpec, entries);
+      decoded = decode(spec, entries);
     } catch (error) {
       if (!(error instanceof FormValueError)) throw error;
       return { key: section.key, error: { field: error.field, message: error.message } };
@@ -1394,6 +1404,13 @@ async function writeBand(
     return invalid(ctx, state, read.key, sectionFor(state, read.key)?.value, read.error);
   }
   const { changes } = read;
+  // Nothing to write is nothing to propose. Without this, a submit that changes no key still
+  // diffs an absent file against the scaffold `chainEdits` starts from, and answers by offering
+  // to CREATE `denext.config.ts` — which nobody asked for, and which `?create=1` already owns.
+  if (changes.size === 0) {
+    if (ctx.json) return jsonResponse({ ok: true, applied: false, diff: "" });
+    return bandPreview(ctx, state, group, changes, "");
+  }
   const error = validationError(proposedConfig(state, changes), state.name);
   if (error) return await bandInvalid(ctx, state, changes, error);
 

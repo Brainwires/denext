@@ -210,6 +210,55 @@ Deno.test("a list op previews the new row, and confirming keeps comments, wrappe
   }
 });
 
+Deno.test("a partial save touches only the keys it carried — silence never deletes", async () => {
+  const dir = await project();
+  try {
+    // A browser posts every control the band rendered, so this cannot arise there. The `/api`
+    // twin takes whatever a caller sends, and a cleared field and an unsent one both decode to
+    // `undefined` — reading the second as a deletion let an EMPTY body propose dropping every
+    // scalar in the view.
+    const empty = await call(dir, "/api/config", { form: {} });
+    assertEquals(empty.status, 200);
+    assertEquals((await empty.json()).diff, "", "an empty body proposes nothing at all");
+
+    // A field that WAS sent, cleared, still removes its key — that is the real gesture.
+    const cleared = await call(dir, "/api/config", { form: { basePath: "" } });
+    assertStringIncludes((await cleared.json()).diff, "-  basePath:");
+
+    // And a partial body leaves the keys it never mentioned exactly where they were.
+    const partial = await call(dir, "/api/config", {
+      form: { trailingSlash: "on", confirm: "1" },
+    });
+    assertEquals(partial.status, 200);
+    const after = await onDisk(dir);
+    assertStringIncludes(after, 'basePath: "/docs"', "an unmentioned key survives the save");
+    assertStringIncludes(after, "// keep this comment");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a no-op save never offers to create the config it did not need", async () => {
+  // The case the first version of this guard missed: with no `denext.config.ts`, a save with
+  // nothing to write still diffed the absent file against the scaffold the writer starts from,
+  // and answered by offering to CREATE it. Nothing to write is nothing to propose — and
+  // creating the file is `?create=1`'s job, not a side effect of saving a view.
+  const dir = await project(null);
+  try {
+    const res = await call(dir, "/api/config", { form: {} });
+    assertEquals(res.status, 200);
+    const body = await res.json();
+    assertEquals([body.ok, body.applied, body.diff], [true, false, ""]);
+    assertEquals(
+      await Deno.stat(join(dir, "denext.config.ts")).catch(() => null),
+      null,
+      "and nothing was written",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("an invalid value is a 422 with the validator's message against its field", async () => {
   const dir = await project();
   try {

@@ -180,10 +180,15 @@ collapses**, and nothing sits outside the tabs. A view opens on General.
 
 General's shared Save writes several keys at once. The edits are chained through an evolving source and
 diffed once, so you review one diff; if any one of them cannot be spliced the whole submit is
-refused and nothing is written. Clearing a scalar removes its key — which is what General
-offers instead of a per-key "Remove key", the button a grouping's own tab still has. One exception is deliberate: a
-key that is not in the file and whose box is unchecked is left alone, because `false` is what an
-absent boolean already means and saving a view should not write one into your config.
+refused and nothing is written. Clearing a field you submitted removes its key — which is what
+General offers instead of a per-key "Remove key", the button a grouping's own tab still has.
+
+Two deliberate exceptions, both about not writing something you did not ask for. A key whose field
+the submit never **carried** is left alone: a browser posts every control the band rendered, but
+the `/api` twin takes whatever a caller sends, and a cleared field and an unsent one look
+identical once decoded — so silence is never read as a deletion. And a key that is not in the file
+whose box is unchecked is left alone too, because `false` is what an absent boolean already
+means.
 
 Each field gets the control its type deserves:
 

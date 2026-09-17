@@ -188,10 +188,12 @@ Deno.test("a POST with the derived CSRF token and a same-origin Origin passes th
       },
       body: new FormData(),
     });
-    // Past every gate: the config panel itself answers — a POST that names no section is its
-    // own 400 — rather than a 403 from the security chain.
-    assertEquals(res.status, 400);
-    assertEquals((await res.json()).reason, 'unknown config section ""');
+    // Past every gate: the config panel itself answers, rather than the security chain bouncing
+    // it with a 403. A POST naming no section is a save of the view's inline scalars, and this
+    // one carries no fields — so the panel's own answer is an honest no-op, not an error.
+    assertEquals(res.status, 200);
+    const body = await res.json();
+    assertEquals([body.ok, body.applied, body.diff], [true, false, ""]);
   } finally {
     await stop(s);
   }
