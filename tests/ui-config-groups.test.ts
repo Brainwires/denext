@@ -16,6 +16,7 @@ import {
   groupOf,
   isConfigGroup,
   matchesQuery,
+  ownedElsewhere,
   visibleSections,
 } from "../src/ui/features/config-groups.ts";
 import { matchesTerms, matchNote } from "../src/ui/filter.ts";
@@ -25,20 +26,52 @@ function schemaKeys(): string[] {
   return Object.keys(loadConfigSchema().properties ?? {});
 }
 
-Deno.test("every schema key lands in exactly one view, and each view is non-empty", () => {
+Deno.test("every schema key lands in one view or is owned elsewhere, and no view is empty", () => {
   const keys = schemaKeys();
   assert(keys.length > 0, "the schema describes some keys");
+  const placed = keys.filter((key) => ownedElsewhere(key) === null);
   const seen = new Map<ConfigGroup, string[]>(CONFIG_GROUPS.map((g) => [g, []]));
-  for (const key of keys) seen.get(groupOf(key))!.push(key);
+  for (const key of placed) seen.get(groupOf(key))!.push(key);
   assertEquals(
     [...seen.values()].reduce((n, list) => n + list.length, 0),
-    keys.length,
-    "every key is placed",
+    placed.length,
+    "every key the views own is placed",
   );
   for (const group of CONFIG_GROUPS) {
     assert(seen.get(group)!.length > 0, `${group} would render an empty page`);
     assert(GROUP_LABEL[group].length > 0, `${group} has a label`);
   }
+});
+
+Deno.test("the cron keys are owned by the Cron page, and no view shows them", () => {
+  // Two editors for one key would mean two forms, two `_base` stamps, and two ways to disagree
+  // about what the file says.
+  assertEquals(ownedElsewhere("scheduledTasks"), "/config/cron");
+  assertEquals(ownedElsewhere("tasks"), "/config/cron");
+  assertEquals(ownedElsewhere("basePath"), null);
+
+  const sections = [
+    { key: "scheduledTasks", description: "Cron schedules for background tasks." },
+    { key: "tasks", description: "Scheduled task behaviour." },
+    { key: "cache", description: "Cache store." },
+  ];
+  // Not on any view...
+  for (const group of CONFIG_GROUPS) {
+    const shown = visibleSections(sections, group, "").shown.map((s) => s.key);
+    assert(!shown.includes("scheduledTasks"), `${group} shows scheduledTasks`);
+    assert(!shown.includes("tasks"), `${group} shows tasks`);
+  }
+  // ...and not in a search either, which would otherwise link to an editor that never renders.
+  const hits = visibleSections(sections, "advanced", "tasks").shown.map((s) => s.key);
+  assertEquals(hits, []);
+});
+
+Deno.test("cache moved to Rendering when Data retired, beside cacheComponents", () => {
+  // `Data` held only `cache` once the cron keys left, and a whole view for one key is worse than
+  // that key sitting with the other caching concern.
+  assertEquals(groupOf("cache"), "rendering");
+  assertEquals(groupOf("cacheComponents"), "rendering");
+  assert(!(CONFIG_GROUPS as readonly string[]).includes("data"));
 });
 
 Deno.test("a key the schema does not describe still has a home", () => {
@@ -72,7 +105,7 @@ Deno.test("search matches key and description, and every term has to match", () 
 Deno.test("a query ignores the view; a view ignores the query", () => {
   const sections = [
     { key: "basePath", description: "Serve under a sub-path." }, // routing
-    { key: "cache", description: "Cache store." }, // data
+    { key: "cache", description: "Cache store." }, // rendering
     { key: "cacheComponents", description: "Cached components." }, // rendering
   ];
   const byView = visibleSections(sections, "routing", "");
@@ -80,7 +113,7 @@ Deno.test("a query ignores the view; a view ignores the query", () => {
   assertEquals(byView.rawHere, false, "the escape hatch is not on routing");
 
   // The same query returns the same set whichever view it is asked from.
-  for (const group of ["routing", "data", "advanced"] as const) {
+  for (const group of ["routing", "rendering", "advanced"] as const) {
     const found = visibleSections(sections, group, "cache");
     assertEquals(found.shown.map((s) => s.key), ["cache", "cacheComponents"]);
   }

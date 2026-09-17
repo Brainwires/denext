@@ -11,7 +11,7 @@
 import { matchesTerms, matchNote } from "../filter.ts";
 
 /** The config views, in strip order. */
-export const CONFIG_GROUPS = ["routing", "rendering", "security", "data", "advanced"] as const;
+export const CONFIG_GROUPS = ["routing", "rendering", "security", "advanced"] as const;
 
 /** One of {@linkcode CONFIG_GROUPS}. */
 export type ConfigGroup = typeof CONFIG_GROUPS[number];
@@ -21,7 +21,6 @@ export const GROUP_LABEL: Record<ConfigGroup, string> = {
   routing: "Routing",
   rendering: "Rendering",
   security: "Security",
-  data: "Data",
   advanced: "Advanced",
 };
 
@@ -45,11 +44,37 @@ const GROUP_KEYS: Record<ConfigGroup, readonly string[]> = {
     "images",
     "tailwind",
     "mdx",
+    "cache",
   ],
   security: ["csp", "hsts", "publicEnv", "apiBatch", "apiMaxBodyBytes"],
-  data: ["cache", "scheduledTasks", "tasks"],
   advanced: ["experimental", "nodeResolve", "compatibilityMode", "plugins", "commands"],
 };
+
+/**
+ * Keys whose editor lives on another panel altogether.
+ *
+ * `scheduledTasks` and `tasks` are cron. The Cron page already writes both — the schedules as
+ * rows, the history as a toggle — and a second editor for them here would mean two forms, two
+ * `_base` stamps and two ways to disagree about one key. They stay in the `/api/config` twin,
+ * which reports what the file holds; they are simply not edited from the key views.
+ *
+ * `Data` retired with them: `cache` was all that remained, and a whole view for one key is worse
+ * than that key sitting beside `cacheComponents` on Rendering.
+ */
+const OWNED_ELSEWHERE: ReadonlyMap<string, string> = new Map([
+  ["scheduledTasks", "/config/cron"],
+  ["tasks", "/config/cron"],
+]);
+
+/**
+ * Where a key is edited, when it is not edited here.
+ *
+ * @param key A top-level config key.
+ * @returns The panel that owns it, or `null` when the key views do.
+ */
+export function ownedElsewhere(key: string): string | null {
+  return OWNED_ELSEWHERE.get(key) ?? null;
+}
 
 /** Key → group, built once from {@linkcode GROUP_KEYS}. */
 const GROUP_OF = new Map<string, ConfigGroup>(
@@ -137,14 +162,17 @@ export function visibleSections<T extends GroupableSection>(
   group: ConfigGroup,
   query: string,
 ): { shown: readonly T[]; rawHere: boolean } {
+  // A key another panel owns is not shown by either path: a search that surfaced an editor this
+  // page will not render would be a link to nowhere.
+  const mine = sections.filter((section) => !OWNED_ELSEWHERE.has(section.key));
   if (query === "") {
     return {
-      shown: sections.filter((section) => groupOf(section.key) === group),
+      shown: mine.filter((section) => groupOf(section.key) === group),
       rawHere: groupOf(RAW_SECTION) === group,
     };
   }
   return {
-    shown: sections.filter((section) => matchesQuery(section.key, section.description, query)),
+    shown: mine.filter((section) => matchesQuery(section.key, section.description, query)),
     rawHere: matchesQuery(RAW_SECTION, RAW_DESCRIPTION, query),
   };
 }

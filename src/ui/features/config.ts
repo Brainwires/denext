@@ -90,6 +90,7 @@ import {
   groupHref,
   groupOf,
   isConfigGroup,
+  ownedElsewhere,
   visibleSections,
 } from "./config-groups.ts";
 
@@ -1462,6 +1463,15 @@ async function mutate(ctx: UiContext, state: ConfigState): Promise<Response> {
   // No section named: this is a view's inline band, saving whichever of its scalars changed.
   if (key === "") {
     return await writeBand(ctx, state, groupFromPath(ctx.url.pathname) ?? DEFAULT_GROUP);
+  }
+  const elsewhere = ownedElsewhere(key);
+  if (elsewhere) {
+    return refuse(
+      ctx,
+      state,
+      `\`${key}\` is edited on the Cron page (${elsewhere}), which owns every cron key`,
+      400,
+    );
   }
   const section = sectionFor(state, key);
   if (!section) return refuse(ctx, state, `unknown config section "${key}"`, 400);

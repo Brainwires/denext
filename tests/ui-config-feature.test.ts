@@ -395,7 +395,7 @@ Deno.test("the JSON twin reports the file, its form and every key's bucket", asy
   }
 });
 
-Deno.test("an unknown or managed section is refused before anything is computed", async () => {
+Deno.test("an unknown, managed or cron-owned section is refused before anything", async () => {
   const dir = await project();
   try {
     const unknown = await call(dir, "/api/config?section=nope", { form: {} });
@@ -405,6 +405,14 @@ Deno.test("an unknown or managed section is refused before anything is computed"
     const managed = await call(dir, "/api/config?section=plugins", { form: {} });
     assertEquals(managed.status, 400);
     assertStringIncludes((await managed.json()).reason, "managed by the plugins panel");
+
+    // The cron keys are written by the Cron page. A second editor here would mean two forms and
+    // two `_base` stamps against one key — which is how two tabs quietly overwrite each other.
+    for (const key of ["scheduledTasks", "tasks"]) {
+      const cron = await call(dir, `/api/config?section=${key}`, { form: {} });
+      assertEquals(cron.status, 400, key);
+      assertStringIncludes((await cron.json()).reason, "/config/cron");
+    }
     assertEquals(await onDisk(dir), CONFIG);
   } finally {
     await Deno.remove(dir, { recursive: true });
