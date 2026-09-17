@@ -764,6 +764,24 @@ function PreviewPanel(
 
 // ── responses ────────────────────────────────────────────────────────────────
 
+/**
+ * The view a request's path names, or `null` when the path names none.
+ *
+ * Each view is its own route (`/config/security`), so the view is read from the path rather than
+ * from a query — one spelling per page, and the same one whether the request came for the HTML
+ * or for its `/api` twin.
+ *
+ * @param pathname The request path.
+ * @returns The view, or `null` for the panel's own address and for `next`/`cron`, which are
+ * pages of their own rather than views of the key list.
+ */
+function groupFromPath(pathname: string): ConfigGroup | null {
+  const path = pathname.startsWith("/api/") ? pathname.slice("/api".length) : pathname;
+  const prefix = "/config/";
+  const segment = path.startsWith(prefix) ? path.slice(prefix.length) : "";
+  return isConfigGroup(segment) ? segment : null;
+}
+
 /** Wrap a panel section as a fragment (the `ui.js` swap) or as the full document. */
 const panelResponse = panelResponder("Config", "/config");
 
@@ -783,16 +801,13 @@ async function editorResponse(
   status?: number,
 ): Promise<Response> {
   const compat = await isCompatApp(ctx.dir);
-  // Resolved here, like `compat`, so every render path agrees: an explicit `?group=`, else the
+  // Resolved here, like `compat`, so every render path agrees: the view's own path, else the
   // group owning the `?section=` being posted (so a refusal or a 422 re-renders on the view the
   // edit came from), else the default.
   const params = ctx.url.searchParams;
   const posted = params.get("section");
-  const group = isConfigGroup(params.get("group"))
-    ? params.get("group") as ConfigGroup
-    : posted
-    ? groupOf(posted)
-    : DEFAULT_GROUP;
+  const group = groupFromPath(ctx.url.pathname) ??
+    (posted ? groupOf(posted) : DEFAULT_GROUP);
   return panelResponse(
     ctx,
     renderView(h(ConfigPanel, {

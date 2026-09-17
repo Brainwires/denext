@@ -114,10 +114,10 @@ Deno.test("GET /config renders a section per key, the list rows and the plugins 
     assert(hasField(body, "redirects[1].destination", "/b"));
     assertStringIncludes(body, 'value="up:1:redirects"');
 
-    const rendering = await (await call(dir, "/config?group=rendering")).text();
+    const rendering = await (await call(dir, "/config/rendering")).text();
     assertStringIncludes(rendering, '<details id="mode">');
 
-    const advanced = await (await call(dir, "/config?group=advanced")).text();
+    const advanced = await (await call(dir, "/config/advanced")).text();
     // `plugins` is shown, never edited here.
     assertStringIncludes(advanced, "plugins panel</a> owns this key");
     assertStringIncludes(advanced, "openapi()");
@@ -281,7 +281,7 @@ Deno.test("the raw editor carries the file byte for byte, markup characters incl
   const dir = await project(source);
   try {
     // The whole-file escape hatch lives on Advanced, with the keys denext does not describe.
-    const body = await (await call(dir, "/config?group=advanced")).text();
+    const body = await (await call(dir, "/config/advanced")).text();
     assert(!body.includes("<b>a & b</b>"), "the file's markup is escaped, never live");
     const text = textareaText(body);
     assertEquals(text, source);
@@ -300,7 +300,7 @@ Deno.test("the raw editor keeps a file's leading blank lines through the textare
   const source = "\n\n" + CONFIG;
   const dir = await project(source);
   try {
-    const body = await (await call(dir, "/config?group=advanced")).text();
+    const body = await (await call(dir, "/config/advanced")).text();
     // The newline the parser drops after `<textarea>`, then the file's own two.
     assertMatch(body, /<textarea name="raw"[^>]*>\n\n\nimport /);
     const text = textareaText(body);
@@ -609,7 +609,7 @@ Deno.test("each Config view names itself in the document title", async () => {
     // views of this panel apart. The label is what ships, not the group key.
     const titles: string[] = [];
     for (const group of ["routing", "security", "advanced"]) {
-      const body = await (await call(dir, `/config?group=${group}`)).text();
+      const body = await (await call(dir, `/config/${group}`)).text();
       titles.push(/<title>([^<]*)<\/title>/.exec(body)?.[1] ?? "");
     }
     assertEquals(titles, [

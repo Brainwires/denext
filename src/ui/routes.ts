@@ -14,7 +14,7 @@ import {
   panelResponder,
   UI_CRON_PREVIEW_PATH,
   UI_EVENTS_PATH,
-  UI_NAV,
+  UI_NAV_SECTIONS,
   type UiContext,
   type UiHandler,
   type UiRoute,
@@ -29,6 +29,7 @@ import { runDeno } from "./proc.ts";
 import { OFFLINE_REFUSALS, OFFLINE_STATUS } from "./offline.ts";
 import { readDenoConfig, taskMap } from "./tasks.ts";
 import { configPanel } from "./features/config.ts";
+import { CONFIG_GROUPS } from "./features/config-groups.ts";
 import { cronPreviewPanel } from "./features/config-cron.ts";
 import { pluginsPanel } from "./features/plugins.ts";
 import { pluginOptionsPanel } from "./features/plugin-options.ts";
@@ -51,6 +52,17 @@ interface FeatureRoute {
 /** Every feature panel, in navigation order. */
 const FEATURES: readonly FeatureRoute[] = [
   { path: "/config", methods: ["GET", "POST"], handle: configPanel },
+  // One route per config view, derived from the group list so the two cannot drift: adding a
+  // group gives it a page (and its `/api` twin) without anything here being edited.
+  //
+  // The DEFAULT group is registered here too, even though `/config` already renders it. The
+  // short address stays the canonical one every link is spelled with, but a path built the way
+  // every other view's is must not be the one that 404s.
+  ...CONFIG_GROUPS.map((group) => ({
+    path: `/config/${group}`,
+    methods: ["GET", "POST"],
+    handle: configPanel,
+  })),
   { path: "/config/next", methods: ["GET"], handle: configPanel },
   { path: "/config/cron", methods: ["GET", "POST"], handle: configPanel },
   { path: "/plugins", methods: ["GET", "POST", "DELETE"], handle: pluginsPanel },
@@ -104,7 +116,7 @@ export const UI_ROUTES: Record<string, UiRoute> = buildRoutes();
 
 /** What each card on the overview says. */
 const CARD_LEAD: Record<string, string> = {
-  "/config": "Edit denext.config.ts through schema-driven widgets.",
+  "/config": "Edit denext.config.ts through schema-driven widgets, one view per subject.",
   "/plugins": "Browse the catalog; add or remove plugins.",
   "/generate": "Scaffold pages, routes, layouts, components, actions.",
   "/docker": "Edit docker-compose.yml in place, or regenerate the Docker files with a diff.",
@@ -128,11 +140,32 @@ function Card({ item }: { readonly item: NavItem }): VNode {
   );
 }
 
+/**
+ * What the overview offers: one card per destination, with a whole nav SECTION standing as a
+ * single card.
+ *
+ * Configuration has six pages; six cards for one subject would bury the five other panels it
+ * sits beside. The section's card points at its first page, which is where following the sidebar
+ * heading would land anyway.
+ *
+ * @returns The cards, in navigation order.
+ */
+function overviewCards(): NavItem[] {
+  const out: NavItem[] = [];
+  for (const section of UI_NAV_SECTIONS) {
+    const first = section.items[0];
+    if (section.label !== undefined) {
+      if (first) out.push({ href: first.href, label: section.label });
+      continue;
+    }
+    for (const item of section.items) if (item.href !== "/") out.push(item);
+  }
+  return out;
+}
+
 /** The overview panel: where the UI is pointed, and a card per panel. */
 function Overview({ ctx }: { readonly ctx: UiContext }): VNode {
-  const cards = UI_NAV.filter((item) => item.href !== "/").map((item) =>
-    h(Card, { key: item.href, item })
-  );
+  const cards = overviewCards().map((item) => h(Card, { key: item.href, item }));
   return h(
     Panel,
     { title: "Project" },

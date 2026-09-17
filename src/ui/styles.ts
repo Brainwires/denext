@@ -123,6 +123,16 @@ code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, m
   color: var(--primary);
   font-weight: 600;
 }
+/* A heading over a run of nav links. Not a control: the UI ships no inline script, so there is
+   nothing here to collapse — it names the group and steps back. */
+.nav-section {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted-foreground);
+  padding: var(--space-3) 10px var(--space-1);
+}
 /* margin-top:auto pins the modes to the bottom of the column; the narrow layout below has
    no column, so it resets there. */
 .mode { margin: auto 0 0; display: flex; flex-wrap: wrap; gap: var(--space-1); padding: 0 10px; }
@@ -145,6 +155,9 @@ main { max-width: 940px; padding: 28px var(--space-5) 64px; }
     z-index: 10;
   }
   .sidebar nav { flex-direction: row; flex-wrap: wrap; gap: var(--space-1); }
+  /* In one horizontal strip a heading has no run to head — it would read as a dead link
+     between two real ones — so the links stand on their own. */
+  .nav-section { display: none; }
   .mode { margin: 0; }
 }
 h1 { font-size: var(--text-xl); margin: 0 0 6px; letter-spacing: -0.02em; }

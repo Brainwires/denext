@@ -13,7 +13,7 @@
 
 import type { VNode } from "../jsx/types.ts";
 import type { SseClients } from "../build/sse.ts";
-import { layout, type NavItem, UI_TITLE_SUFFIX } from "./layout.ts";
+import { layout, type NavItem, type NavSection, UI_TITLE_SUFFIX } from "./layout.ts";
 import { type RawHtml, renderView } from "./view.ts";
 
 export type { RawHtml } from "./view.ts";
@@ -88,17 +88,42 @@ export const UI_TITLE_HEADER = "x-ui-title";
  */
 export const UI_CRON_PREVIEW_PATH = "/_ui/cron-preview";
 
-/** The UI's top navigation, in order. */
-export const UI_NAV: readonly NavItem[] = [
-  { href: "/", label: "Overview" },
-  { href: "/config", label: "Config" },
-  { href: "/plugins", label: "Plugins" },
-  { href: "/generate", label: "Generate" },
-  { href: "/docker", label: "Docker" },
-  { href: "/desktop", label: "Desktop" },
-  { href: "/wizard", label: "Wizard" },
-  { href: "/commands", label: "Commands" },
+/**
+ * The UI's navigation, in order.
+ *
+ * Configuration is a section rather than one entry: its views are separate pages, each a real
+ * route, so they belong in the sidebar beside each other instead of behind a strip of tabs on a
+ * single destination. `next.config` is deliberately NOT here — it exists only for a compat app,
+ * and deciding that per request would mean a subprocess check on every panel's render, so it
+ * stays a link on the config pages themselves.
+ */
+export const UI_NAV_SECTIONS: readonly NavSection[] = [
+  { items: [{ href: "/", label: "Overview" }] },
+  {
+    label: "Configuration",
+    items: [
+      { href: "/config", label: "Routing" },
+      { href: "/config/rendering", label: "Rendering" },
+      { href: "/config/security", label: "Security" },
+      { href: "/config/data", label: "Data" },
+      { href: "/config/advanced", label: "Advanced" },
+      { href: "/config/cron", label: "Cron" },
+    ],
+  },
+  {
+    items: [
+      { href: "/plugins", label: "Plugins" },
+      { href: "/generate", label: "Generate" },
+      { href: "/docker", label: "Docker" },
+      { href: "/desktop", label: "Desktop" },
+      { href: "/wizard", label: "Wizard" },
+      { href: "/commands", label: "Commands" },
+    ],
+  },
 ];
+
+/** Every navigation destination, flattened — the sections' items in order. */
+export const UI_NAV: readonly NavItem[] = UI_NAV_SECTIONS.flatMap((section) => section.items);
 
 // ── the page seam ────────────────────────────────────────────────────────────
 
@@ -193,7 +218,7 @@ export function panelResponder(
     return htmlResponse(
       renderPage(layout, {
         title: viewTitle ?? title,
-        nav: UI_NAV,
+        nav: UI_NAV_SECTIONS,
         body,
         csrf: ctx.csrf,
         active,

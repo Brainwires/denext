@@ -78,14 +78,16 @@ export function isConfigGroup(value: string | null): value is ConfigGroup {
 }
 
 /**
- * The URL of one view. The default group is spelled `/config` with no query, so the panel's own
- * address stays the short one and a link to it does not rot if the default ever changes.
+ * The URL of one view — its own path, as every other destination in this UI has.
+ *
+ * The default group is spelled `/config` with no segment, so the panel's own address stays the
+ * short one and a link to it does not rot if the default ever changes.
  *
  * @param group The view.
  * @returns Its path.
  */
 export function groupHref(group: ConfigGroup): string {
-  return group === DEFAULT_GROUP ? "/config" : `/config?group=${group}`;
+  return group === DEFAULT_GROUP ? "/config" : `/config/${group}`;
 }
 
 /**

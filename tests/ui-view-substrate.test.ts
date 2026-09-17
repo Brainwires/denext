@@ -8,7 +8,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import type { VNode } from "../src/jsx/types.ts";
-import { htmlResponse, type RawHtml, renderPage, toHtml, UI_NAV } from "../src/ui/html.ts";
+import { htmlResponse, type RawHtml, renderPage, toHtml, UI_NAV_SECTIONS } from "../src/ui/html.ts";
 import {
   DiffBlock,
   FileDetails,
@@ -65,15 +65,18 @@ function shell(head: string, nav: string, main: string): string {
 Deno.test("the layout renders its golden document, the body inserted verbatim", () => {
   const options: LayoutOptions = {
     title: `Config <&"'>`,
-    nav: UI_NAV,
+    nav: UI_NAV_SECTIONS,
     body: BODY,
     csrf: `tok"&<'>`,
     active: "/config",
   };
-  const nav = UI_NAV.map((item) =>
-    item.href === "/config"
-      ? `<a href="${item.href}" aria-current="page">${item.label}</a>`
-      : `<a href="${item.href}">${item.label}</a>`
+  const nav = UI_NAV_SECTIONS.map((section) =>
+    (section.label === undefined ? "" : `<span class="nav-section">${section.label}</span>`) +
+    section.items.map((item) =>
+      item.href === "/config"
+        ? `<a href="${item.href}" aria-current="page">${item.label}</a>`
+        : `<a href="${item.href}">${item.label}</a>`
+    ).join("")
   ).join("");
   const head = '<meta name="denext-csrf" content="tok&quot;&amp;&lt;&#39;&gt;">' +
     "<title>Config &lt;&amp;&quot;&#39;&gt; · denext ui</title>";
@@ -84,7 +87,7 @@ Deno.test("the layout renders its golden document, the body inserted verbatim", 
 Deno.test("the layout escapes an attacker title and nav label, with no entry current", () => {
   const options: LayoutOptions = {
     title: "</title><script>alert(1)</script>",
-    nav: [{ href: '/x"onmouseover="alert(1)', label: "<img src=x>" }],
+    nav: [{ items: [{ href: '/x"onmouseover="alert(1)', label: "<img src=x>" }] }],
     body: { __html: "" },
     csrf: "c",
   };
@@ -99,7 +102,7 @@ Deno.test("the layout escapes an attacker title and nav label, with no entry cur
 });
 
 Deno.test("the sidebar names the modes that change what every panel will do", () => {
-  const base = { title: "t", nav: UI_NAV, body: { __html: "" } as RawHtml, csrf: "c" };
+  const base = { title: "t", nav: UI_NAV_SECTIONS, body: { __html: "" } as RawHtml, csrf: "c" };
   // No mode on: no footer at all. The shell does not invent status it does not have.
   assert(!renderPage(layout, base).includes('class="mode"'), "no footer without a mode");
   // `--read-only` used to be announced only on the Overview, so on every other panel a refused
@@ -127,7 +130,7 @@ Deno.test("Raw nests a rendered fragment inside a component without escaping it 
   const page = toHtml(renderView(h("p", null, "a", h(Raw, { html: "<br>" }), "b")));
   assertEquals(page, "<p>a<br>b</p>");
   assert(
-    !renderPage(layout, { title: "t", nav: UI_NAV, body: BODY, csrf: "c" }).includes(
+    !renderPage(layout, { title: "t", nav: UI_NAV_SECTIONS, body: BODY, csrf: "c" }).includes(
       "denext-ui-raw",
     ),
   );
@@ -193,7 +196,7 @@ Deno.test("renderPage takes a component tree, a rendered fragment, or a markup s
   assertEquals(renderPage(() => fragment, props), "<p>&#60;n&#62;</p>");
   assertEquals(renderPage(() => "<p>x</p>", props), "<p>x</p>");
   // The layout through the seam is exactly its own rendered tree.
-  const options = { title: "t", nav: UI_NAV, body: BODY, csrf: "c", active: "/" };
+  const options = { title: "t", nav: UI_NAV_SECTIONS, body: BODY, csrf: "c", active: "/" };
   assertEquals(renderPage(layout, options), toHtml(renderView(layout(options))));
 });
 

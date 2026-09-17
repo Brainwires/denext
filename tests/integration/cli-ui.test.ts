@@ -51,6 +51,11 @@ export default {
 const PAGES = [
   "/",
   "/config",
+  "/config/routing",
+  "/config/rendering",
+  "/config/security",
+  "/config/data",
+  "/config/advanced",
   "/config/next",
   "/config/cron",
   "/plugins",
@@ -65,6 +70,11 @@ const PAGES = [
 const API_TWINS = [
   "/api/overview",
   "/api/config",
+  "/api/config/routing",
+  "/api/config/rendering",
+  "/api/config/security",
+  "/api/config/data",
+  "/api/config/advanced",
   "/api/config/next",
   "/api/config/cron",
   "/api/plugins",

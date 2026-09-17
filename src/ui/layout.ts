@@ -22,7 +22,7 @@ export const UI_JS_PATH = "/_ui/ui.js";
  */
 export const UI_TITLE_SUFFIX = " · denext ui";
 
-/** One item of the UI's top navigation. */
+/** One item of the UI's navigation. */
 export interface NavItem {
   /** The path it links to. */
   readonly href: string;
@@ -30,12 +30,26 @@ export interface NavItem {
   readonly label: string;
 }
 
+/**
+ * One run of navigation items, optionally under a heading.
+ *
+ * The heading is a plain `<span>`, never a link or a button: the UI ships no inline script, so
+ * there is nothing to collapse and nothing for a heading to do. It names a group of destinations
+ * and that is all.
+ */
+export interface NavSection {
+  /** The heading, or absent for an unlabelled run of items. */
+  readonly label?: string;
+  /** The items, in order. */
+  readonly items: readonly NavItem[];
+}
+
 /** Inputs to {@linkcode layout}. */
 export interface LayoutOptions {
   /** The document title (also the page heading). */
   readonly title: string;
-  /** The navigation to render. */
-  readonly nav: readonly NavItem[];
+  /** The navigation to render, in sections. */
+  readonly nav: readonly NavSection[];
   /** The page body (already-safe markup). */
   readonly body: RawHtml;
   /** The session CSRF token, published to `ui.js` as a `<meta>`. */
@@ -80,7 +94,11 @@ export function layout(options: LayoutOptions): VNode {
           "aside",
           { class: "sidebar" },
           h("span", { class: "brand" }, "denext ui"),
-          h("nav", null, options.nav.map((item) => navLink(item, options.active))),
+          h(
+            "nav",
+            null,
+            options.nav.map((section, index) => navSection(section, index, options.active)),
+          ),
           modeFooter(options),
         ),
         h("main", { id: "main" }, h(Raw, { html: options.body })),
@@ -109,6 +127,27 @@ function modeFooter(options: LayoutOptions): VNode | null {
   if (options.readOnly) modes.push(h("span", { key: "ro", class: "badge warn" }, "read-only"));
   if (options.offline) modes.push(h("span", { key: "off", class: "badge info" }, "offline"));
   return modes.length === 0 ? null : h("p", { class: "mode" }, modes);
+}
+
+/**
+ * One section of the navigation: its heading, when it has one, then its links.
+ *
+ * The links stay bare anchors in one flat `<nav>` rather than gaining a wrapper per section — a
+ * heading is a label for the run that follows it, not a container, and the flat shape is what
+ * keeps every link addressable the same way.
+ *
+ * @param section The section.
+ * @param index Its position, used only as the render key.
+ * @param active The href to mark current.
+ * @returns The heading and links.
+ */
+function navSection(section: NavSection, index: number, active: string | undefined): VNode {
+  return h(
+    Fragment,
+    { key: index },
+    section.label === undefined ? null : h("span", { class: "nav-section" }, section.label),
+    section.items.map((item) => navLink(item, active)),
+  );
 }
 
 /** One navigation link, marked `aria-current="page"` when it is the active entry. */
