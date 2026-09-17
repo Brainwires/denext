@@ -16,6 +16,7 @@ import type { RawHtml } from "../html.ts";
 import { UI_CSRF_FIELD } from "../security.ts";
 import { renderView } from "../view.ts";
 import type { BadgeTone } from "../components.ts";
+import { inlineMarkdown } from "../markdown.ts";
 import { Control, Field, OpButton } from "./control.ts";
 import { resolveAt, type SchemaNode } from "./schema.ts";
 import {
@@ -476,7 +477,9 @@ function GroupWidget({ spec, value, ctx }: WidgetProps): VNode {
     return h(
       "div",
       { id: `${idOf(nameOf(spec, ctx))}--group` },
-      spec.description ? h("p", { class: "lead group-note" }, spec.description) : null,
+      spec.description
+        ? h("p", { class: "lead group-note" }, inlineMarkdown(spec.description))
+        : null,
       fieldsOf(spec, value, ctx),
     );
   }
@@ -498,7 +501,9 @@ function GroupWidget({ spec, value, ctx }: WidgetProps): VNode {
         )
       ),
     ),
-    spec.description ? h("p", { class: "lead group-note" }, spec.description) : null,
+    spec.description
+      ? h("p", { class: "lead group-note" }, inlineMarkdown(spec.description))
+      : null,
     h("div", { class: "group-body" }, fieldsOf(spec, value, ctx)),
   );
 }

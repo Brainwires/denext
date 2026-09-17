@@ -234,6 +234,8 @@ main { max-width: 940px; padding: 28px var(--space-5) 64px; }
 h1 { font-size: var(--text-xl); margin: 0 0 6px; letter-spacing: -0.02em; }
 h2 { font-size: var(--text-lg); margin: 28px 0 var(--space-2); }
 .lead { color: var(--muted-foreground); margin: 0 0 18px; }
+/* Inline code in prose: already monospace, lifted out of the muted grey so it reads as code. */
+.lead code { color: var(--foreground); }
 
 /* ── surfaces ──────────────────────────────────────────────────────────── */
 .note {

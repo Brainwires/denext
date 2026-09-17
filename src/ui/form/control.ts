@@ -16,6 +16,7 @@
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChildren } from "../../jsx/types.ts";
 import type { BadgeTone } from "../components.ts";
+import { inlineMarkdown } from "../markdown.ts";
 import { Raw, type RawHtml, renderView } from "../view.ts";
 import { OP_FIELD } from "./value.ts";
 import type { WidgetOption } from "./widget.ts";
@@ -192,7 +193,7 @@ export function Field(props: FieldProps): VNode {
       ),
     ),
     props.children,
-    props.help ? h("p", { class: "lead field-help" }, props.help) : null,
+    props.help ? h("p", { class: "lead field-help" }, inlineMarkdown(props.help)) : null,
     props.error ? h("p", { class: "note field-error", role: "alert" }, props.error) : null,
   );
 }
