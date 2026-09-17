@@ -1,9 +1,9 @@
 // The predicate behind every `?q=` box in the panel.
 //
-// Two panels filter a list server-side — config keys and CLI verbs — and a third (the plugins
-// panel's JSR search) queries a registry instead. The two local ones share this, so "how a query
-// matches" is decided once: the form they render is `FilterForm` in `components.ts`, and the
-// matching is here.
+// The verbs list filters server-side through this; the plugins panel's JSR search queries a
+// registry instead. Config keys no longer filter at all — they are organised into views and tabs,
+// which is navigation rather than a query. The form is `FilterForm` in `components.ts`, and "how
+// a query matches" is decided here, once.
 
 /**
  * Whether `haystack` satisfies every term of `query`.

@@ -362,3 +362,38 @@ Deno.test("readWidget decodes one posted field on its own", () => {
   assertEquals(readWidget(SCHEMA, "apiBatch.maxItems", "10"), 10);
   assertThrows(() => readWidget(SCHEMA, "nope", "x"), Error, "no schema at `nope`");
 });
+
+/** The `<p class="group-summary">` line, which is where a group states its own name and state. */
+function summaryOf(markup: string): string {
+  return markup.match(/<p class="group-summary">.*?<\/p>/s)?.[0] ?? "";
+}
+
+Deno.test("a key's pill says set or unset, by the same rule the writer uses", () => {
+  // Emptying a box and saving REMOVES the key — `decode` turns "" into undefined — so an empty
+  // field that still read "set" would state the opposite of what the file is about to say.
+  assertStringIncludes(render(specAt("basePath"), undefined), ">unset<");
+  assertStringIncludes(render(specAt("basePath"), ""), ">unset<");
+  assertStringIncludes(render(specAt("basePath"), "/app"), ">set<");
+
+  // An absent key arrives as `undefined`, never as `false`, so a `false` in hand is one the file
+  // really declares. It is set, and saying otherwise would hide a deliberate opt-out.
+  assertStringIncludes(render(specAt("trailingSlash"), undefined), ">unset<");
+  assertStringIncludes(render(specAt("trailingSlash"), false), ">set<");
+  assertStringIncludes(render(specAt("trailingSlash"), true), ">set<");
+
+  // The empty shapes `decode` also reports as undefined: an empty group and an empty list.
+  assertStringIncludes(summaryOf(render(specAt("tailwind"), {})), ">unset<");
+  assertStringIncludes(summaryOf(render(specAt("tailwind"), { input: "a.css" })), ">set<");
+  assertStringIncludes(render(specAt("publicEnv"), []), ">unset<");
+  assertStringIncludes(render(specAt("publicEnv"), ["API_URL"]), ">set<");
+});
+
+Deno.test("a required key still says it is required, beside its state", () => {
+  // Both facts matter, and they are different questions: "required" says the form will not take
+  // a blank, "unset" says it currently holds one. Showing only one of them loses the other.
+  const path = ["i18n", "defaultLocale"];
+  const spec = widgetFor(resolveAt(SCHEMA, path), path, true);
+  const markup = render(spec, undefined);
+  assertStringIncludes(markup, ">unset<");
+  assertStringIncludes(markup, ">required<");
+});

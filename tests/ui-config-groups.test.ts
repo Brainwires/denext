@@ -1,4 +1,4 @@
-// Which view of `denext.config.ts` each key belongs to, and the filter that cuts across them.
+// Which view of `denext.config.ts` each key belongs to.
 //
 // The grouping is what keeps `/config` from rendering all ~30 sections at once, so the property
 // that matters is TOTALITY: every key the schema describes lands in exactly one view, and a key
@@ -9,13 +9,11 @@ import { loadConfigSchema } from "../src/ui/form/schema.ts";
 import {
   CONFIG_GROUPS,
   type ConfigGroup,
-  configMatchNote,
   DEFAULT_GROUP,
   GROUP_LABEL,
   groupHref,
   groupOf,
   isConfigGroup,
-  matchesQuery,
   ownedElsewhere,
   visibleSections,
 } from "../src/ui/features/config-groups.ts";
@@ -57,13 +55,10 @@ Deno.test("the cron keys are owned by the Cron page, and no view shows them", ()
   ];
   // Not on any view...
   for (const group of CONFIG_GROUPS) {
-    const shown = visibleSections(sections, group, "").shown.map((s) => s.key);
+    const shown = visibleSections(sections, group).shown.map((s) => s.key);
     assert(!shown.includes("scheduledTasks"), `${group} shows scheduledTasks`);
     assert(!shown.includes("tasks"), `${group} shows tasks`);
   }
-  // ...and not in a search either, which would otherwise link to an editor that never renders.
-  const hits = visibleSections(sections, "advanced", "tasks").shown.map((s) => s.key);
-  assertEquals(hits, []);
 });
 
 Deno.test("cache moved to Rendering when Data retired, beside cacheComponents", () => {
@@ -92,40 +87,19 @@ Deno.test("the default view is spelled as the panel's own address", () => {
   assert(!isConfigGroup(null));
 });
 
-Deno.test("search matches key and description, and every term has to match", () => {
-  assert(matchesQuery("cacheComponents", "Opt into cached components.", "cache"));
-  assert(matchesQuery("experimental", "Unstable options, including the cache.", "cache"));
-  assert(matchesQuery("basePath", "Serve the app under a sub-path.", "base path"));
-  // AND semantics: a second term that matches nothing rules the section out.
-  assert(!matchesQuery("basePath", "Serve the app under a sub-path.", "base zzz"));
-  assert(matchesQuery("mode", undefined, "mode"), "a key with no description still matches");
-  assertEquals(matchesQuery("mode", "Rendering mode.", "MODE"), true, "case-insensitive");
-});
-
-Deno.test("a query ignores the view; a view ignores the query", () => {
+Deno.test("a view shows its own keys, and the escape hatch has exactly one home", () => {
   const sections = [
     { key: "basePath", description: "Serve under a sub-path." }, // routing
     { key: "cache", description: "Cache store." }, // rendering
     { key: "cacheComponents", description: "Cached components." }, // rendering
   ];
-  const byView = visibleSections(sections, "routing", "");
+  const byView = visibleSections(sections, "routing");
   assertEquals(byView.shown.map((s) => s.key), ["basePath"]);
   assertEquals(byView.rawHere, false, "the escape hatch is not on routing");
 
-  // The same query returns the same set whichever view it is asked from.
-  for (const group of ["routing", "rendering", "advanced"] as const) {
-    const found = visibleSections(sections, group, "cache");
-    assertEquals(found.shown.map((s) => s.key), ["cache", "cacheComponents"]);
-  }
-  assertEquals(visibleSections(sections, "advanced", "").rawHere, true);
-});
-
-Deno.test("the config match note counts what it found, and says when it found nothing", () => {
-  // The "across every group" clause is load-bearing: the search ignores whichever view you are
-  // on, so a count without it would look like it was counting the current page.
-  assertEquals(configMatchNote(0, "zzz"), 'No config key matches "zzz".');
-  assertEquals(configMatchNote(1, "cache"), '1 config key matches "cache" — across every group.');
-  assertEquals(configMatchNote(3, "cache"), '3 config keys match "cache" — across every group.');
+  const rendering = visibleSections(sections, "rendering");
+  assertEquals(rendering.shown.map((s) => s.key), ["cache", "cacheComponents"]);
+  assertEquals(visibleSections(sections, "advanced").rawHere, true);
 });
 
 Deno.test("the shared matcher is case-insensitive with AND semantics, and empty matches all", () => {

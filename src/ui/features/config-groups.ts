@@ -8,8 +8,6 @@
 // Grouping is a presentation decision and lives here rather than in the schema: the schema
 // describes the config's SHAPE, and nothing about `basePath` says "routing" to a validator.
 
-import { matchesTerms, matchNote } from "../filter.ts";
-
 /** The config views, in strip order. */
 export const CONFIG_GROUPS = ["routing", "rendering", "security", "advanced"] as const;
 
@@ -115,27 +113,8 @@ export function groupHref(group: ConfigGroup): string {
   return group === DEFAULT_GROUP ? "/config" : `/config/${group}`;
 }
 
-/**
- * Whether a section matches a search.
- *
- * Matching is a case-insensitive substring over the key AND its schema description, so searching
- * "cache" finds `cacheComponents` by name and `experimental` by its prose. Every term has to
- * match something (AND semantics), which is how the docs-site search behaves.
- *
- * @param key The section's key.
- * @param description Its schema description, when it has one.
- * @param query The raw `?q=` value.
- * @returns Whether the section should be shown.
- */
-export function matchesQuery(key: string, description: string | undefined, query: string): boolean {
-  return matchesTerms(`${key} ${description ?? ""}`, query);
-}
-
 /** The id of the whole-file escape hatch, which is placed like any other key. */
 const RAW_SECTION = "raw-file";
-
-/** What the escape hatch matches on, since it has no schema description of its own. */
-const RAW_DESCRIPTION = "edit the whole file directly, the raw source escape hatch";
 
 /** One section, as far as picking which to show is concerned. */
 export interface GroupableSection {
@@ -146,45 +125,25 @@ export interface GroupableSection {
 }
 
 /**
- * Which sections a request shows, and whether the raw-file editor is among them.
+ * Which sections a view shows, and whether the raw-file editor is among them.
  *
- * A search cuts across every group — you are looking for a key, not for a view — so a query
- * ignores `group` entirely. Without one, the view decides. Kept here beside {@linkcode groupOf}
- * so the panel component only renders what it is handed.
+ * There is no search any more: the keys are organised into views and, within a view, into tabs,
+ * so finding one is navigation rather than a query. Kept here beside {@linkcode groupOf} so the
+ * panel component only renders what it is handed.
  *
  * @param sections Every section the config has, in the order they should render.
- * @param group The view, used only when there is no query.
- * @param query The `?q=` filter (`""` for none).
+ * @param group The view being rendered.
  * @returns The sections to render, and whether the escape hatch belongs on this page.
  */
 export function visibleSections<T extends GroupableSection>(
   sections: readonly T[],
   group: ConfigGroup,
-  query: string,
 ): { shown: readonly T[]; rawHere: boolean } {
-  // A key another panel owns is not shown by either path: a search that surfaced an editor this
-  // page will not render would be a link to nowhere.
+  // A key another panel owns is not shown here: its editor lives on the page that owns it, and
+  // two editors for one key could write it from two forms with different stamps.
   const mine = sections.filter((section) => !OWNED_ELSEWHERE.has(section.key));
-  if (query === "") {
-    return {
-      shown: mine.filter((section) => groupOf(section.key) === group),
-      rawHere: groupOf(RAW_SECTION) === group,
-    };
-  }
   return {
-    shown: mine.filter((section) => matchesQuery(section.key, section.description, query)),
-    rawHere: matchesQuery(RAW_SECTION, RAW_DESCRIPTION, query),
+    shown: mine.filter((section) => groupOf(section.key) === group),
+    rawHere: groupOf(RAW_SECTION) === group,
   };
-}
-
-/**
- * What a filtered page says above its results. The "across every group" clause is the point: a
- * search deliberately ignores the view you are on, and the count only makes sense if you know it.
- *
- * @param count How many sections matched.
- * @param query The search that produced them.
- * @returns The sentence to show.
- */
-export function configMatchNote(count: number, query: string): string {
-  return matchNote(count, query, "config key", " — across every group");
 }

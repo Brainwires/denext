@@ -150,10 +150,13 @@ export interface FieldOptions {
   readonly help?: string;
   /** A validation message to show against the field. */
   readonly error?: string;
-  /** A short badge after the label (`"read-only"`, `"required"`, `"set"`). */
-  readonly badge?: string;
-  /** How that badge reads; absent leaves it the neutral grey. */
-  readonly badgeTone?: BadgeTone;
+  /**
+   * The pills after the label, in order.
+   *
+   * A list rather than one, so a key can say both what state it is in and that it is required —
+   * neither has to overwrite the other.
+   */
+  readonly badges?: ReadonlyArray<{ readonly text: string; readonly tone?: BadgeTone }>;
   /** The control (or group of controls). */
   readonly body: RawHtml;
 }
@@ -175,18 +178,18 @@ export function Field(props: FieldProps): VNode {
       "label",
       { for: props.id },
       props.label,
-      props.badge
-        ? h(
+      (props.badges ?? []).map((pill, index) =>
+        h(
           Fragment,
-          null,
+          { key: index },
           " ",
           h(
             "span",
-            { class: props.badgeTone === undefined ? "badge" : `badge ${props.badgeTone}` },
-            props.badge,
+            { class: pill.tone === undefined ? "badge" : `badge ${pill.tone}` },
+            pill.text,
           ),
         )
-        : null,
+      ),
     ),
     props.children,
     props.help ? h("p", { class: "lead field-help" }, props.help) : null,

@@ -296,13 +296,8 @@ h2 { font-size: var(--text-lg); margin: 28px 0 var(--space-2); }
   border-bottom-color: var(--primary);
   font-weight: 600;
 }
-/* The heading over a tab's content: the key, and whether it is set. */
-.key-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin: 0 0 var(--space-2);
-}
+/* A pill sits beside a key's name, not inside it, so it keeps its own weight. */
+.group-summary .badge { font-weight: 400; }
 
 /* A view's plain scalars, in one form with one Save above the grouped keys. */
 .band { margin: 0 0 var(--space-5); }
@@ -331,8 +326,6 @@ h2 { font-size: var(--text-lg); margin: 28px 0 var(--space-2); }
   margin: 0 0 var(--space-5);
 }
 .panel-head .tabs { border-bottom: 0; margin: 0; flex: 1 1 auto; }
-.panel-head .filter { margin: 0 0 6px; flex: 0 1 auto; }
-.panel-head .filter input[type="search"] { max-width: 15rem; }
 .head-aside { text-decoration: none; margin: 0 0 10px; white-space: nowrap; }
 /* The standing explanation, out of the way of the thing you came to edit. */
 .foot-note {

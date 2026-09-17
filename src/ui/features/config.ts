@@ -46,7 +46,6 @@ import {
   Badge,
   type BadgeTone,
   DiffBlock,
-  FilterForm,
   Hidden,
   Mono,
   NoChange,
@@ -85,7 +84,6 @@ import { isCompatApp, nextConfigPanel } from "./config-next.ts";
 import { cronPanel } from "./config-cron.ts";
 import {
   type ConfigGroup,
-  configMatchNote,
   DEFAULT_GROUP,
   GROUP_LABEL,
   groupHref,
@@ -546,9 +544,12 @@ function sectionAction(key: string): string {
 function ReadOnlyCell(
   { state, section }: { readonly state: ConfigState; readonly section: Section },
 ): VNode {
+  const { badge, tone } = badgeOf(section);
   return h(
     Fragment,
     null,
+    // A code cell has no control, so nothing else here would say which key this is.
+    h("p", { class: "group-summary" }, section.key, " ", h(Badge, { tone }, badge)),
     h(SourceBlock, { source: section.text ?? "— not set —" }),
     h(
       "p",
@@ -603,8 +604,6 @@ function EditableField({ ctx, base, section, spec, feedback }: EditableProps): V
     csrf: ctx.csrf,
     readOnly: ctx.readOnly,
     errors: feedback?.errors,
-    // The tab's heading above this form already says the key and whether it is set.
-    omitTopLabel: true,
   });
   const clear = h(
     "button",
@@ -691,17 +690,10 @@ function InlineBand(
     spec: section.spec as WidgetSpec,
     value: feedback?.key === section.key ? feedback.value : section.value,
   }));
-  // A pill per key, which is what they were for. General used to carry one verdict over all of
-  // its scalars, which belonged to none of them.
-  const badges = Object.fromEntries(sections.map((section) => {
-    const { badge, tone } = badgeOf(section);
-    return [section.key, { text: badge, tone }];
-  }));
   const widgets = renderWidgets(fields, {
     csrf: ctx.csrf,
     readOnly: ctx.readOnly,
     errors: feedback?.errors,
-    badges,
   });
   return h(
     "form",
@@ -765,21 +757,6 @@ function selectedGrouping(list: readonly Grouping[], asked: string): Grouping | 
 }
 
 /** A search's hits, as links — the keys are spread across views, so the answer is where each is. */
-function SearchHits({ shown }: { readonly shown: readonly Section[] }): VNode {
-  return h(
-    "ul",
-    { class: "checks" },
-    shown.map((section) =>
-      h(
-        "li",
-        { key: section.key },
-        h("a", { href: keyHref(section) }, section.key),
-        section.description ? h("span", { class: "lead" }, ` — ${section.description}`) : null,
-      )
-    ),
-  );
-}
-
 /** The request and the config state, which every page-level piece of the editor takes. */
 interface StateProps {
   /** The current request. */
@@ -864,10 +841,8 @@ interface PanelOptions {
   readonly notice?: VNode;
   /** The posted value and errors of a refused submit. */
   readonly feedback?: Feedback;
-  /** Which group of keys to render (ignored while a search is running). */
+  /** Which group of keys to render. */
   readonly group?: ConfigGroup;
-  /** The `?q=` filter, which cuts across every group. */
-  readonly query?: string;
   /** Which grouping tab to show (`?key=`). */
   readonly key?: string;
 }
@@ -886,10 +861,9 @@ function ConfigPanel(
   },
 ): VNode {
   const { notice } = options;
-  const query = options.query ?? "";
   const group = options.group ?? DEFAULT_GROUP;
-  const { shown, rawHere } = visibleSections(state.sections, group, query);
-  const groupings = query === "" ? groupingsOf(shown, rawHere) : [];
+  const { shown, rawHere } = visibleSections(state.sections, group);
+  const groupings = groupingsOf(shown, rawHere);
   const selected = selectedGrouping(groupings, options.key ?? "");
   return h(
     Panel,
@@ -909,14 +883,13 @@ function ConfigPanel(
         active: selected ? tabHref(group, selected.key) : "",
         label: "Config keys",
       }),
-      h(FilterForm, { action: groupHref(group), query, label: "Filter config keys" }),
       compat ? h("a", { class: "lead head-aside", href: "/config/next" }, "next.config ↗") : null,
     ),
     ctx.readOnly ? h(Note, null, "Read-only mode — every change is refused.") : null,
     state.exists ? null : h(CreateOffer, { ctx, state }),
     state.exists && state.form === "unsupported" ? h(UnsupportedNote, { name: state.name }) : null,
     notice ?? null,
-    h(ConfigBody, { ctx, state, options, selected, shown }),
+    h(ConfigBody, { ctx, state, options, selected }),
     // The standing explanation, demoted to a footnote: it is the same on every view, and above
     // the strip it was three lines of prose between the heading and the thing you came to edit.
     h(
@@ -936,28 +909,17 @@ function tabHref(group: ConfigGroup, key: string): string {
 }
 
 /**
- * What a view actually shows: its search results, or its editors.
+ * What a view shows: the selected tab's editors.
  *
- * Split from {@linkcode ConfigPanel} so the choice is made once, at the top, instead of every
- * child asking again whether a search is running.
+ * Split from {@linkcode ConfigPanel} to keep that component's branching down, which is the only
+ * reason it is a component of its own rather than a line in the panel.
  */
 function ConfigBody(
-  { ctx, state, options, selected, shown }: StateProps & {
+  { ctx, state, options, selected }: StateProps & {
     readonly options: PanelOptions;
     readonly selected: Grouping | undefined;
-    readonly shown: readonly Section[];
   },
 ): VNode {
-  // A search cuts across every view, so it answers with WHERE each key is rather than pulling
-  // the forms out of the pages that own them.
-  if ((options.query ?? "") !== "") {
-    return h(
-      Fragment,
-      null,
-      h("p", { class: "filter-note" }, configMatchNote(shown.length, options.query ?? "")),
-      h(SearchHits, { shown }),
-    );
-  }
   if (!selected) return h(Fragment, null);
   return h(GroupingBody, {
     ctx,
@@ -976,33 +938,17 @@ function GroupingBody(
     readonly feedback?: Feedback;
   },
 ): VNode {
-  // The pill lives here rather than in the strip: repeated across every tab it read as
-  // decoration, and what you want to know is the state of the key actually on screen.
-  const head = h(
-    "h2",
-    { class: "key-head" },
-    grouping.label,
-    h(Badge, { tone: grouping.tone }, grouping.badge),
-  );
-  // General gets no heading: it is not a key, so there is nothing for one to name — the tab
-  // already says General, and each scalar below carries its own label.
   if (grouping.scalars) {
     return h(InlineBand, { ctx, state, group, sections: grouping.scalars, feedback });
   }
-  if (!grouping.section) return h(Fragment, null, head, h(RawFileEditor, { ctx, state }));
+  if (!grouping.section) return h(RawFileEditor, { ctx, state });
   const section = grouping.section;
-  return h(
-    Fragment,
-    null,
-    head,
-    section.description ? h("p", { class: "lead" }, section.description) : null,
-    h(SectionBody, {
-      ctx,
-      state,
-      section,
-      feedback: feedback?.key === section.key ? feedback : undefined,
-    }),
-  );
+  return h(SectionBody, {
+    ctx,
+    state,
+    section,
+    feedback: feedback?.key === section.key ? feedback : undefined,
+  });
 }
 
 /** A not-yet-applied write: the diff, the fields that re-post it, and the Confirm button. */
@@ -1111,7 +1057,6 @@ async function editorResponse(
       options: {
         ...options,
         group,
-        query: (params.get("q") ?? "").trim(),
         // A refused submit has to re-render the key it was posted for, or the value someone
         // just typed disappears behind whichever tab happened to be set.
         key: params.get(KEY_PARAM) ?? posted ?? "",

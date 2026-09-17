@@ -39,20 +39,6 @@ export interface RenderContext {
   readonly readOnly?: boolean;
   /** Validation messages to show against fields, keyed by field name. */
   readonly errors?: Readonly<Record<string, string>>;
-  /**
-   * Render the OUTERMOST widget without its own label and description.
-   *
-   * A caller that already names the key above the form would otherwise show it twice: the tab's
-   * heading says `i18n`, and the widget says `i18n` again directly beneath it. Only the top
-   * level is affected — nested keys keep their labels, which is what tells you where one ends
-   * and the next begins.
-   */
-  readonly omitTopLabel?: boolean;
-  /**
-   * A state pill for a key, by field name — what the config editor says about whether a key is
-   * set. One per key: an aggregate over several keys is a verdict that belongs to none of them.
-   */
-  readonly badges?: Readonly<Record<string, { readonly text: string; readonly tone?: BadgeTone }>>;
 }
 
 /** What every widget component is handed. */
@@ -91,27 +77,64 @@ function spaced(nodes: readonly VNode[]): VNodeChild[] {
   return nodes.flatMap((node, index) => index === 0 ? [node] : [" ", node]);
 }
 
+/**
+ * Whether a value means "this key is not set".
+ *
+ * These are the SAME shapes `decode` turns back into `undefined` when a form is posted: an
+ * emptied text box (`value.ts` — `posted === "" && !spec.required`), and a group whose fields are
+ * all empty. Emptying `defaultLocale` and saving REMOVES the key, so calling it "set" until the
+ * next reload would state the opposite of what the file is about to say.
+ *
+ * `false` is deliberately not here. An absent key arrives as `undefined` (`classify` gives it no
+ * value at all), so a `false` in hand is one the file really declares.
+ */
+function isUnset(value: unknown): boolean {
+  if (value === undefined || value === null || value === "") return true;
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === "object") return Object.keys(value as Record<string, unknown>).length === 0;
+  return false;
+}
+
+/**
+ * The pills one key's label carries.
+ *
+ * A key is SET when it has a value in the config and UNSET when it does not — read off the value
+ * being rendered, so a nested key answers for itself rather than inheriting its parent's verdict.
+ * An explicit badge (a read-only cell) replaces the state; `required` joins it rather than
+ * overwriting it, because both are worth knowing.
+ */
+function pillsFor(
+  spec: WidgetSpec,
+  value: unknown,
+  explicit: string | undefined,
+): Array<{ text: string; tone?: BadgeTone }> {
+  const pills: Array<{ text: string; tone?: BadgeTone }> = [];
+  if (explicit !== undefined) pills.push({ text: explicit, tone: "info" });
+  else if (isUnset(value)) pills.push({ text: "unset", tone: "todo" });
+  else pills.push({ text: "set", tone: "ok" });
+  if (spec.required) pills.push({ text: "required" });
+  return pills;
+}
+
 /** A control in its label, help and validation message. */
 function Wrap(
   props: {
     readonly spec: WidgetSpec;
     readonly ctx: RenderContext;
+    /** The value at this key, which is what decides whether it is set. */
+    readonly value?: unknown;
     readonly badge?: string;
     readonly children?: VNodeChildren;
   },
 ): VNode {
   const { spec, ctx } = props;
-  if (ctx.omitTopLabel && spec.path.length === 1) return h(Fragment, null, props.children);
   const name = nameOf(spec, ctx);
-  // An explicit badge (a read-only cell) outranks the key's state, which outranks "required".
-  const stated = props.badge === undefined ? ctx.badges?.[name] : undefined;
   return h(Field, {
     id: idOf(name),
     label: spec.label,
     help: spec.description,
     error: ctx.errors?.[name],
-    badge: props.badge ?? stated?.text ?? (spec.required ? "required" : undefined),
-    badgeTone: stated?.tone,
+    badges: pillsFor(spec, props.value, props.badge),
   }, props.children);
 }
 
@@ -168,7 +191,7 @@ function scalar(tag: "input" | "textarea", type?: string): WidgetComponent {
     const name = nameOf(spec, ctx);
     return h(
       Wrap,
-      { spec, ctx },
+      { spec, ctx, value },
       h(Control, {
         tag,
         type,
@@ -198,7 +221,7 @@ function ToggleWidget({ spec, value, ctx }: WidgetProps): VNode {
   const common = { tag: "input", name, disabled: ctx.readOnly } as const;
   return h(
     Wrap,
-    { spec, ctx },
+    { spec, ctx, value },
     h(Control, { ...common, type: "hidden", value: "off" }),
     h(Control, {
       ...common,
@@ -230,7 +253,7 @@ function SegmentedWidget({ spec, value, ctx }: WidgetProps): VNode {
       }),
     );
   });
-  return h(Wrap, { spec, ctx }, h("div", null, spaced(radios)));
+  return h(Wrap, { spec, ctx, value }, h("div", null, spaced(radios)));
 }
 
 /** A `<select>` for a closed set too long to sit on one line. */
@@ -238,7 +261,7 @@ function SelectWidget({ spec, value, ctx }: WidgetProps): VNode {
   const name = nameOf(spec, ctx);
   return h(
     Wrap,
-    { spec, ctx },
+    { spec, ctx, value },
     h(Control, {
       tag: "select",
       name,
@@ -270,7 +293,7 @@ function MultiSelectWidget({ spec, value, ctx }: WidgetProps): VNode {
   );
   return h(
     Wrap,
-    { spec, ctx },
+    { spec, ctx, value },
     h("div", null, h(Marker, { name, length: chosen.length, ctx }), spaced(boxes)),
   );
 }
@@ -330,7 +353,7 @@ function listWidget(Row: (props: RowProps) => VNode, toRows: ToRows = asArray): 
     });
     return h(
       Wrap,
-      { spec, ctx },
+      { spec, ctx, value },
       h("div", null, h(Marker, { name, length: rows.length, ctx }), rows, add),
     );
   };
@@ -410,7 +433,7 @@ function UnionWidget({ spec, value, ctx }: WidgetProps): VNode {
   );
   return h(
     Wrap,
-    { spec, ctx },
+    { spec, ctx, value },
     h("div", null, spaced(picker)),
     branch ? h(Widget, { spec: branch.spec, value, ctx }) : null,
   );
@@ -424,13 +447,24 @@ function UnionWidget({ spec, value, ctx }: WidgetProps): VNode {
  * at a time, so there is nothing left for it to save you from.
  */
 function GroupWidget({ spec, value, ctx }: WidgetProps): VNode {
-  if (ctx.omitTopLabel && spec.path.length === 1) {
-    return h("div", { id: `${idOf(nameOf(spec, ctx))}--group` }, fieldsOf(spec, value, ctx));
-  }
   return h(
     "div",
     { id: `${idOf(nameOf(spec, ctx))}--group`, class: "field" },
-    h("p", { class: "group-summary" }, spec.label),
+    h(
+      "p",
+      { class: "group-summary" },
+      spec.label,
+      ...pillsFor(spec, value, undefined).map((pill) =>
+        h(
+          Fragment,
+          { key: pill.text },
+          " ",
+          h("span", {
+            class: pill.tone === undefined ? "badge" : `badge ${pill.tone}`,
+          }, pill.text),
+        )
+      ),
+    ),
     spec.description ? h("p", { class: "lead group-note" }, spec.description) : null,
     h("div", { class: "group-body" }, fieldsOf(spec, value, ctx)),
   );
@@ -441,7 +475,7 @@ function CodeCell({ spec, value, ctx }: WidgetProps): VNode {
   const name = nameOf(spec, ctx);
   return h(
     Wrap,
-    { spec, ctx, badge: "read-only" },
+    { spec, ctx, value, badge: "read-only" },
     h(Control, {
       tag: "textarea",
       name,

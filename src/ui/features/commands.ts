@@ -473,8 +473,8 @@ function PositionalControl(
       disabled: view.readOnly,
     });
   const label = spec.variadic ? `${spec.name}…` : spec.name;
-  const badge = spec.required ? "required" : undefined;
-  return h(Raw, { html: field({ id, label, help: spec.help, badge, body: renderView(body) }) });
+  const badges = spec.required ? [{ text: "required" }] : [];
+  return h(Raw, { html: field({ id, label, help: spec.help, badges, body: renderView(body) }) });
 }
 
 /**
