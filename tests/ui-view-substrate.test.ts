@@ -56,8 +56,11 @@ const BODY: RawHtml = {
 function shell(head: string, nav: string, main: string): string {
   return '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width, initial-scale=1">' + head +
-    `<link rel="stylesheet" href="${UI_CSS_PATH}"></head><body><aside class="sidebar">` +
-    `<span class="brand">denext\u00a0ui</span><nav>${nav}</nav></aside>` +
+    `<link rel="stylesheet" href="${UI_CSS_PATH}"></head><body>` +
+    '<input type="checkbox" id="nav-toggle" class="nav-toggle" aria-label="Navigation">' +
+    `<aside class="sidebar"><span class="brand">denext\u00a0ui</span>` +
+    '<label for="nav-toggle" class="nav-burger" aria-hidden="true">\u2630</label>' +
+    `<nav>${nav}</nav></aside>` +
     `<main id="main">${main}</main><script type="module" src="${UI_JS_PATH}"></script>` +
     "</body></html>";
 }

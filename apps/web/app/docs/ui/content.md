@@ -818,6 +818,15 @@ the box included — so the caret is put back where it was, and a second keystro
 expect it to. The filtering itself stays on the server: `matchesTerms` is the only implementation
 of how a query matches, and a copy in the client module could only ever come to disagree with it.
 
+**The navigation, on a phone.** Below 860px the sidebar becomes a bar holding the brand and one
+button, and the navigation is what that button reveals — as the same vertical list the wide layout
+shows, section headings included. The button is a `<label>` driving a hidden checkbox, not a
+scripted control: opening the drawer involves no JavaScript at all, because a navigation you could
+reach only with scripting on is not one this UI is allowed to have. The checkbox is hidden from
+view but not from the keyboard, so it toggles with Space like any other. `ui.js` does exactly one
+thing to it — unchecks it after a panel swap, since a swap has no reload to reset it and the drawer
+would otherwise sit open on top of the panel you just asked for.
+
 **A builder that navigates.** The Cron page's schedule builder works the same way: it is a `GET`
 form, so choosing a shape is a navigation the server answers by composing an expression, and with
 JavaScript on that submit is swapped in place like any other link. No client code of its own was

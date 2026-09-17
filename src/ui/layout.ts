@@ -16,6 +16,14 @@ export const UI_CSS_PATH = "/_ui/ui.css";
 export const UI_JS_PATH = "/_ui/ui.js";
 
 /**
+ * The id of the narrow-layout navigation toggle.
+ *
+ * Exported because `ui.js` unchecks it after a panel swap, and a second spelling of an id is a
+ * drawer that silently stops closing.
+ */
+export const NAV_TOGGLE_ID = "nav-toggle";
+
+/**
  * The suffix every UI document title carries. Exported because `ui.js` swaps panels without a
  * navigation and has to set `document.title` itself — one spelling, used by the shell and by the
  * header the fragment response carries, so the two can never drift apart.
@@ -90,10 +98,28 @@ export function layout(options: LayoutOptions): VNode {
       h(
         "body",
         null,
+        // The narrow-layout navigation toggle. A real checkbox, not a scripted button: this UI
+        // ships no inline script and guarantees the JavaScript-off path, and a hamburger that
+        // needed JavaScript to open would be a navigation you could not reach without it. It
+        // sits BEFORE the sidebar so the stylesheet can reach the drawer as its sibling, and it
+        // is hidden from view but not from the keyboard.
+        h("input", {
+          type: "checkbox",
+          id: NAV_TOGGLE_ID,
+          class: "nav-toggle",
+          "aria-label": "Navigation",
+        }),
         h(
           "aside",
           { class: "sidebar" },
           h("span", { class: "brand" }, "denext ui"),
+          // The visible affordance. Decorative to a screen reader, which is handed the checkbox
+          // above instead — one control, announced once, carrying its own open/closed state.
+          h(
+            "label",
+            { for: NAV_TOGGLE_ID, class: "nav-burger", "aria-hidden": "true" },
+            "\u2630",
+          ),
           h(
             "nav",
             null,

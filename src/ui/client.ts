@@ -9,6 +9,7 @@
 // the fragment the server rendered is parsed with `DOMParser` and adopted as nodes.
 
 import { UI_CRON_PREVIEW_PATH, UI_EVENTS_PATH, UI_TITLE_HEADER } from "./html.ts";
+import { NAV_TOGGLE_ID } from "./layout.ts";
 import { UI_CSRF_FIELD, UI_CSRF_HEADER } from "./security.ts";
 
 /** The client module served at `/_ui/ui.js`. */
@@ -18,6 +19,7 @@ const CSRF_FIELD = ${JSON.stringify(UI_CSRF_FIELD)};
 const EVENTS = ${JSON.stringify(UI_EVENTS_PATH)};
 const TITLE_HEADER = ${JSON.stringify(UI_TITLE_HEADER)};
 const CRON_PREVIEW = ${JSON.stringify(UI_CRON_PREVIEW_PATH)};
+const NAV_TOGGLE = ${JSON.stringify(NAV_TOGGLE_ID)};
 const csrf = document.querySelector('meta[name="denext-csrf"]')?.content ?? "";
 
 /** Replace the current panel with a server-rendered fragment (parsed, never innerHTML'd). */
@@ -202,6 +204,18 @@ function enhanceable(link, event) {
   return true;
 }
 
+/**
+ * Close the narrow-layout navigation drawer.
+ *
+ * With scripting off a nav click is a real navigation, and the fresh document arrives with the
+ * toggle unchecked. A swap has no such reset, so the drawer would stay open across the panel the
+ * person just asked for — on the screen that can least afford it.
+ */
+function closeNav() {
+  const toggle = document.getElementById(NAV_TOGGLE);
+  if (toggle) toggle.checked = false;
+}
+
 /** Move aria-current to the sidebar link for whatever path is on screen now. */
 function markCurrent() {
   for (const link of document.querySelectorAll(".sidebar nav a")) {
@@ -255,6 +269,7 @@ async function show(href, push, keepFocus) {
   }
   if (push) history.pushState(null, "", href);
   markCurrent();
+  closeNav();
   if (title) document.title = decodeURIComponent(title);
   if (push) globalThis.scrollTo(0, 0);
 }

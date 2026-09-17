@@ -434,3 +434,62 @@ Deno.test("denext ui: the schedule builder composes without reloading the page",
     await teardown(server, dir);
   }
 });
+
+Deno.test("denext ui: on a phone the navigation is a drawer, not a strip", async () => {
+  const dir = await project(false);
+  const server = await startUiServer({ dir, port: 0 });
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    const errors = collectConsoleErrors(page);
+    await page.goto(server.url);
+    await page.setViewportSize({ width: 390, height: 780 });
+    await page.goto(`${new URL(server.url).origin}/config`);
+    await pollFor(page, `!!document.querySelector(".nav-burger")`);
+
+    // `getClientRects()` rather than computed display: an element inside a `display:none`
+    // ancestor still computes its OWN display, so checking that would pass while shut.
+    const shown = (selector: string) =>
+      page.evaluate(
+        `document.querySelector(${JSON.stringify(selector)}).getClientRects().length > 0`,
+      );
+
+    // Closed by default — the bar keeps the brand and the button, and gives the screen back.
+    assertEquals(await shown(".sidebar nav"), false, "the navigation starts closed on a phone");
+    assertEquals(await shown(".nav-burger"), true, "the button is there to open it");
+
+    await page.evaluate("window.__noReload = true");
+
+    // Opening is pure CSS: a label driving a checkbox, so it works with scripting off too.
+    const burger = await page.$(".nav-burger");
+    assert(burger, "the bar offers a button");
+    await burger.click();
+    await pollFor(page, `document.querySelector(".sidebar nav").getClientRects().length > 0`);
+    // The drawer is the vertical list the wide layout shows, headings included — which is why
+    // the narrow layout stopped hiding them when it stopped being a strip.
+    assertEquals(await shown(".nav-section"), true, "the section heading comes with it");
+
+    // Following a link closes it again. A swap has no reload to reset the checkbox, so the
+    // drawer would otherwise sit open on top of the panel that was just asked for.
+    const link = await page.$('.sidebar nav a[href="/plugins"]');
+    assert(link, "the drawer lists the panels");
+    await link.click();
+    await pollFor(page, `location.pathname === "/plugins"`);
+    await pollFor(page, `document.querySelector(".sidebar nav").getClientRects().length === 0`);
+    assertEquals(
+      await page.evaluate("window.__noReload === true"),
+      true,
+      "and it closed by swapping, never by reloading",
+    );
+
+    // Widen it: the button is a narrow-layout affordance only, and the column comes back.
+    await page.setViewportSize({ width: 1200, height: 900 });
+    await pollFor(page, `document.querySelector(".sidebar nav").getClientRects().length > 0`);
+    assertEquals(await shown(".nav-burger"), false, "no button once there is a column");
+
+    assertNoConsoleErrors(errors);
+  } finally {
+    await browser.close();
+    await teardown(server, dir);
+  }
+});

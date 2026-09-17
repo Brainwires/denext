@@ -86,7 +86,10 @@ body {
   color: var(--foreground);
   font: var(--text-base)/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   display: grid;
-  grid-template-columns: 232px 1fr;
+  /* minmax(0, …) rather than a bare 1fr. A bare 1fr means minmax(auto, 1fr), and that auto
+     refuses to shrink below its content's min-content width, so one wide table or output block
+     in a panel stretched the whole shell past the viewport and the page scrolled sideways. */
+  grid-template-columns: 232px minmax(0, 1fr);
   min-height: 100vh;
 }
 code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
@@ -133,32 +136,79 @@ code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, m
   color: var(--muted-foreground);
   padding: var(--space-3) 10px var(--space-1);
 }
+/* The narrow-layout toggle: a real checkbox, hidden from view but NOT from the keyboard, so the
+   drawer opens without a pointer and without any script. */
+.nav-toggle {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+/* There is nothing to toggle while the sidebar is a column, so the button only exists narrow. */
+.nav-burger { display: none; }
+
 /* margin-top:auto pins the modes to the bottom of the column; the narrow layout below has
    no column, so it resets there. */
 .mode { margin: auto 0 0; display: flex; flex-wrap: wrap; gap: var(--space-1); padding: 0 10px; }
 main { max-width: 940px; padding: 28px var(--space-5) 64px; }
 
-/* The stylesheet's first breakpoint. Below it the grid collapses to one column and the sidebar
-   becomes the horizontal strip this UI used to have at every width — which is also the phone
-   layout, so the narrow case is the old behaviour rather than something new to get wrong. */
+/* The stylesheet's only breakpoint. Below it the grid collapses to one column and the sidebar
+   becomes a bar holding the brand and a button: twelve destinations laid out as a horizontal
+   strip cost more of a phone screen than the panel they lead to. The navigation is what the
+   button reveals, and it reveals it as the same vertical list the wide layout shows — so the
+   section headings mean what they mean there, rather than being dropped. */
 @media (max-width: 860px) {
-  body { grid-template-columns: 1fr; }
+  body { grid-template-columns: minmax(0, 1fr); }
   .sidebar {
     flex-direction: row;
     flex-wrap: wrap;
     align-items: center;
-    gap: var(--space-4);
+    gap: var(--space-3);
     height: auto;
-    padding: 10px var(--space-5);
+    padding: 10px var(--space-4);
     border-right: 0;
     border-bottom: 1px solid var(--border);
     z-index: 10;
   }
-  .sidebar nav { flex-direction: row; flex-wrap: wrap; gap: var(--space-1); }
-  /* In one horizontal strip a heading has no run to head — it would read as a dead link
-     between two real ones — so the links stand on their own. */
-  .nav-section { display: none; }
-  .mode { margin: 0; }
+  .nav-burger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: auto;
+    width: 38px;
+    height: 32px;
+    font-size: var(--text-lg);
+    line-height: 1;
+    color: var(--foreground);
+    background: var(--background);
+    border: 1px solid var(--input);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+  /* The checkbox is what is focused, so the ring has to be drawn on what is seen. */
+  .nav-toggle:focus-visible + .sidebar .nav-burger {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  /* Closed by default, and closed again on every load — so a fresh page never opens covered. */
+  .sidebar nav,
+  .mode { display: none; }
+  .nav-toggle:checked + .sidebar nav {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    gap: 2px;
+  }
+  .nav-toggle:checked + .sidebar .mode {
+    display: flex;
+    width: 100%;
+    margin: var(--space-2) 0 0;
+  }
 }
 h1 { font-size: var(--text-xl); margin: 0 0 6px; letter-spacing: -0.02em; }
 h2 { font-size: var(--text-lg); margin: 28px 0 var(--space-2); }
