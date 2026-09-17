@@ -278,3 +278,125 @@ export function cronMatches(expr: CronExpr | string, date: Date = new Date()): b
     dayMatch
   );
 }
+
+// --- the schedule builder's view of an expression ----------------------------
+//
+// `denext ui`'s cron editor offers a frequency and a few fields rather than five cron columns.
+// Both directions live here, beside the parser, so the panel never assembles an expression by
+// hand: the controls are DERIVED from the expression (`cronParts`), and the expression is
+// composed back from the controls (`composeCron`). That is what keeps the JavaScript-on and
+// JavaScript-off paths from ever disagreeing about what the page is about to write.
+
+/** The shapes the builder can state outright; everything else is `custom`. */
+export type CronFrequency = "minute" | "hourly" | "daily" | "weekly" | "monthly" | "custom";
+
+/** A schedule as the builder's controls hold it. */
+export interface CronParts {
+  /** Which shape the expression takes. */
+  readonly frequency: CronFrequency;
+  /** Minute of the hour (0-59). */
+  readonly minute: number;
+  /** Hour of the day, UTC (0-23). */
+  readonly hour: number;
+  /** Day of the week, `0` = Sunday (as {@linkcode parseCron} normalises it). */
+  readonly dayOfWeek: number;
+  /** Day of the month (1-31). */
+  readonly dayOfMonth: number;
+}
+
+/** The single value a field matches, or `null` when it matches none or several. */
+function loneValue(field: Set<number>): number | null {
+  return field.size === 1 ? [...field][0] : null;
+}
+
+/** A control's value forced into its field's domain (a truncated integer, clamped). */
+function clampField(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  const n = Math.trunc(value);
+  return n < min ? min : n > max ? max : n;
+}
+
+/**
+ * The shape an expression takes, given which of its fields are unrestricted and which name
+ * exactly one value.
+ *
+ * Every named shape requires an unrestricted MONTH: a schedule pinned to January is a real
+ * schedule, but it is not one of the five the builder offers, and calling it "monthly" would be
+ * a lie the user could not see.
+ */
+function frequencyOf(c: CronExpr): CronFrequency {
+  const anyMonth = isAny(c.month, 12);
+  const anyDom = isAny(c.dom, 31);
+  const anyDow = isAny(c.dow, 7);
+  if (!anyMonth) return "custom";
+  const minute = loneValue(c.minute);
+  const hour = loneValue(c.hour);
+  if (isAny(c.minute, 60) && isAny(c.hour, 24) && anyDom && anyDow) return "minute";
+  if (minute === null) return "custom";
+  if (isAny(c.hour, 24) && anyDom && anyDow) return "hourly";
+  if (hour === null) return "custom";
+  if (anyDom && anyDow) return "daily";
+  if (anyDom && loneValue(c.dow) !== null) return "weekly";
+  if (anyDow && loneValue(c.dom) !== null) return "monthly";
+  return "custom";
+}
+
+/**
+ * Read an expression into the builder's controls.
+ *
+ * The controls are derived from the expression and never the other way round, so what the
+ * builder shows is always what the expression actually says. An expression outside the five
+ * offered shapes reads as `custom` — the builder then steps aside rather than misdescribing it —
+ * and a field the shape does not use carries a sensible default rather than a stale number.
+ *
+ * @param expr The 5-field expression.
+ * @returns The controls, or `null` when the expression is malformed (which is not `custom`:
+ * `custom` is a schedule this cannot summarise, `null` is not a schedule at all).
+ */
+export function cronParts(expr: string): CronParts | null {
+  let c: CronExpr;
+  try {
+    c = parseCron(expr);
+  } catch {
+    return null;
+  }
+  return {
+    frequency: frequencyOf(c),
+    minute: loneValue(c.minute) ?? 0,
+    hour: loneValue(c.hour) ?? 0,
+    dayOfWeek: loneValue(c.dow) ?? 1,
+    dayOfMonth: loneValue(c.dom) ?? 1,
+  };
+}
+
+/**
+ * Compose the expression a set of controls stands for.
+ *
+ * Only the fields the frequency actually uses are written; the rest stay `*`, so switching from
+ * Weekly to Daily cannot leave a weekday behind in the expression.
+ *
+ * @param parts The controls.
+ * @returns The expression, or `""` for `custom` — under Custom the five fields are edited
+ * directly and the expression already on the page is the one that stands, so there is nothing
+ * here to compose.
+ */
+export function composeCron(parts: CronParts): string {
+  const minute = clampField(parts.minute, 0, 59);
+  const hour = clampField(parts.hour, 0, 23);
+  const dayOfWeek = clampField(parts.dayOfWeek, 0, 6);
+  const dayOfMonth = clampField(parts.dayOfMonth, 1, 31);
+  switch (parts.frequency) {
+    case "minute":
+      return "* * * * *";
+    case "hourly":
+      return `${minute} * * * *`;
+    case "daily":
+      return `${minute} ${hour} * * *`;
+    case "weekly":
+      return `${minute} ${hour} * * ${dayOfWeek}`;
+    case "monthly":
+      return `${minute} ${hour} ${dayOfMonth} * *`;
+    default:
+      return "";
+  }
+}

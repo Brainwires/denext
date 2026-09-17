@@ -1,5 +1,12 @@
 import { assert, assertEquals, assertThrows } from "@std/assert";
-import { cronError, cronMatches, describeCron, parseCron } from "../src/runtime/cron.ts";
+import {
+  composeCron,
+  cronError,
+  cronMatches,
+  cronParts,
+  describeCron,
+  parseCron,
+} from "../src/runtime/cron.ts";
 
 // A fixed UTC date (cronMatches evaluates in UTC): 2026-03-04 is a Wednesday
 // (getUTCDay()===3); 09:05 UTC.
@@ -110,4 +117,74 @@ Deno.test("describeCron: it reads as English, not as assembled fragments", () =>
     assert(!/\bthe the\b/.test(said), said);
     assert(said.length > 0 && said === said.trim(), `"${said}" is untrimmed`);
   }
+});
+
+// --- the schedule builder ----------------------------------------------------
+//
+// The UI's cron editor offers a frequency and a few fields. These pin the contract that keeps it
+// honest: the controls are DERIVED from the expression, so the builder can never claim a
+// schedule says something it does not.
+
+Deno.test("cronParts: the five shapes the builder offers, and custom for everything else", () => {
+  assertEquals(cronParts("* * * * *")?.frequency, "minute");
+  assertEquals(cronParts("0 * * * *")?.frequency, "hourly");
+  assertEquals(cronParts("30 3 * * *")?.frequency, "daily");
+  assertEquals(cronParts("0 8 * * 1")?.frequency, "weekly");
+  assertEquals(cronParts("0 3 1 * *")?.frequency, "monthly");
+  // Real schedules the five shapes cannot state: a step, a list of days, a pinned month.
+  assertEquals(cronParts("*/15 * * * *")?.frequency, "custom");
+  assertEquals(cronParts("0 0 * * 1,3,5")?.frequency, "custom");
+  assertEquals(cronParts("0 6 1 1 *")?.frequency, "custom", "January is not monthly");
+  // Malformed is not `custom`: custom is a schedule this cannot summarise, null is no schedule.
+  assertEquals(cronParts("99 * * * *"), null);
+  assertEquals(cronParts("* * *"), null);
+});
+
+Deno.test("cronParts: the controls carry what the expression actually says", () => {
+  const daily = cronParts("30 3 * * *")!;
+  assertEquals([daily.minute, daily.hour], [30, 3]);
+  const weekly = cronParts("15 8 * * 5")!;
+  assertEquals([weekly.minute, weekly.hour, weekly.dayOfWeek], [15, 8, 5]);
+  const monthly = cronParts("0 4 12 * *")!;
+  assertEquals([monthly.minute, monthly.hour, monthly.dayOfMonth], [0, 4, 12]);
+  // Sunday is 0, because that is what parseCron normalises `7` to.
+  assertEquals(cronParts("0 0 * * 7")?.dayOfWeek, 0);
+});
+
+Deno.test("composeCron round-trips every expression the builder can produce", () => {
+  // The expression is what gets written to the config, so this is the direction that matters:
+  // reading one into the controls and composing it back must be the same schedule, character
+  // for character — otherwise opening the editor would silently rewrite a saved expression.
+  for (const expr of ["* * * * *", "0 * * * *", "0 3 * * *", "0 3 * * 1", "0 3 1 * *"]) {
+    const parts = cronParts(expr);
+    assert(parts !== null, expr);
+    assertEquals(composeCron(parts), expr, expr);
+  }
+  // And every shape the controls can be set to reads back as that same shape.
+  for (const frequency of ["minute", "hourly", "daily", "weekly", "monthly"] as const) {
+    const parts = { frequency, minute: 7, hour: 13, dayOfWeek: 4, dayOfMonth: 9 };
+    assertEquals(cronParts(composeCron(parts))?.frequency, frequency, frequency);
+  }
+});
+
+Deno.test("composeCron writes only the fields its frequency uses", () => {
+  const weekly = { frequency: "weekly" as const, minute: 30, hour: 8, dayOfWeek: 1, dayOfMonth: 9 };
+  assertEquals(composeCron(weekly), "30 8 * * 1", "the day-of-month is not carried along");
+  assert(cronMatches("30 8 * * 1", at(30, 8, 2, 3)), "Monday 2026-03-02");
+  assert(!cronMatches("30 8 * * 1", at(30, 8, 4, 3)), "but not the Wednesday");
+  // Switching to Daily must not leave the weekday behind in the expression.
+  assertEquals(composeCron({ ...weekly, frequency: "daily" }), "30 8 * * *");
+  // Custom composes nothing: the expression already on the page is the one that stands.
+  assertEquals(composeCron({ ...weekly, frequency: "custom" }), "");
+});
+
+Deno.test("composeCron clamps a control rather than writing a broken expression", () => {
+  assertEquals(
+    composeCron({ frequency: "daily", minute: 99, hour: -3, dayOfWeek: 0, dayOfMonth: 1 }),
+    "59 0 * * *",
+  );
+  // Whatever the controls hold, what comes out always parses.
+  const wild = { frequency: "monthly" as const, minute: 0, hour: 0, dayOfWeek: 0, dayOfMonth: 99 };
+  assertEquals(cronError(composeCron(wild)), null);
+  assertEquals(composeCron(wild), "0 0 31 * *");
 });
