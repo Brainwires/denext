@@ -493,3 +493,57 @@ Deno.test("denext ui: on a phone the navigation is a drawer, not a strip", async
     await teardown(server, dir);
   }
 });
+
+Deno.test("denext ui: a sidebar taller than the window scrolls to its last entry", async () => {
+  const dir = await project(false);
+  const server = await startUiServer({ dir, port: 0 });
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    const errors = collectConsoleErrors(page);
+    await page.goto(server.url);
+    // Wide enough for the column layout, short enough that the navigation does not fit: the
+    // column is pinned to the viewport, so anything past its bottom edge has nowhere to go
+    // unless the list itself scrolls. It used to render outside the box, unreachable.
+    await page.setViewportSize({ width: 1200, height: 420 });
+    await pollFor(page, `!!document.querySelector(".sidebar nav a")`);
+
+    const overflows = await page.evaluate(
+      `(() => { const n = document.querySelector(".sidebar nav");
+        return n.scrollHeight > n.clientHeight; })()`,
+    );
+    assertEquals(
+      overflows,
+      true,
+      "this viewport must actually overflow, or the test proves nothing",
+    );
+
+    // The last entry is out of view to begin with...
+    const bottomOf = `(() => { const a = [...document.querySelectorAll(".sidebar nav a")].pop();
+      return Math.round(a.getBoundingClientRect().bottom); })()`;
+    assert(
+      Number(await page.evaluate(bottomOf)) > 420,
+      "the last entry should start below the fold",
+    );
+
+    // ...and scrolling the list brings it back, which is the whole fix.
+    await page.evaluate(
+      `(() => { const n = document.querySelector(".sidebar nav"); n.scrollTop = n.scrollHeight; })()`,
+    );
+    await pollFor(page, `${bottomOf} <= 421`);
+
+    // The brand stays put: the list scrolls, not the whole column.
+    assertEquals(
+      await page.evaluate(
+        `Math.round(document.querySelector(".brand").getBoundingClientRect().top) >= 0`,
+      ),
+      true,
+      "the brand must not scroll away with the list",
+    );
+
+    assertNoConsoleErrors(errors);
+  } finally {
+    await browser.close();
+    await teardown(server, dir);
+  }
+});

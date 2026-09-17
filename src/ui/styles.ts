@@ -111,9 +111,25 @@ code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, m
   top: 0;
   align-self: start;
   height: 100vh;
+  /* The column is pinned to the viewport, so anything past its bottom edge has nowhere to go:
+     the page scrolls main, not this. Without a scroll container the surplus simply rendered
+     outside the box and could not be reached at all. */
+  min-height: 0;
 }
 .brand { font-weight: 600; letter-spacing: -0.01em; padding: 0 10px; }
-.sidebar nav { display: flex; flex-direction: column; gap: 2px; }
+/* The list is what scrolls, not the whole column — the brand and the mode badges stay put.
+   min-height: 0 is load-bearing: a flex child defaults to min-height: auto and refuses to
+   shrink below its content, so without it the nav just overhangs and overflow never engages.
+   (The same trap as a bare 1fr grid column, which is minmax(auto, 1fr).) */
+.sidebar nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
 .sidebar nav a {
   color: var(--muted-foreground);
   text-decoration: none;
@@ -205,6 +221,9 @@ main { max-width: 940px; padding: 28px var(--space-5) 64px; }
     flex-direction: column;
     width: 100%;
     gap: 2px;
+    /* In the drawer the PAGE scrolls, so the list must not become its own scroll box. */
+    flex: 0 1 auto;
+    overflow-y: visible;
   }
   .nav-toggle:checked + .sidebar .mode {
     display: flex;
