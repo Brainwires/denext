@@ -172,15 +172,16 @@ read-only `403`.
 sidebar rather than a single destination: each view — Routing, Rendering, Security, Advanced and
 Cron — is its own page at `/config/<view>`, and `/config` opens on Routing.
 
-A view puts its plain scalars inline, together, under one Save, and gives every key that wants
-more room a tab of its own; the strip says whether each of those is set. **Nothing collapses.**
-The tab that opens is the first one actually set, so a view never greets you with an empty form
-while the key you configured waits behind a tab.
+A view carries **one** strip of tabs, directly under its heading, listing the keys of that view —
+the views themselves are the sidebar's job, so nothing on the page repeats them. The first tab,
+**General**, holds the view's plain scalars together under one Save; every key that wants more
+room follows with a tab of its own, and each tab says whether its key is set. **Nothing
+collapses**, and nothing sits outside the tabs. A view opens on General.
 
-That shared Save writes several keys at once. The edits are chained through an evolving source and
+General's shared Save writes several keys at once. The edits are chained through an evolving source and
 diffed once, so you review one diff; if any one of them cannot be spliced the whole submit is
-refused and nothing is written. Clearing a scalar removes its key — which is what the band offers
-instead of a per-key "Remove key", the button a grouping still has. One exception is deliberate: a
+refused and nothing is written. Clearing a scalar removes its key — which is what General
+offers instead of a per-key "Remove key", the button a grouping's own tab still has. One exception is deliberate: a
 key that is not in the file and whose box is unchecked is left alone, because `false` is what an
 absent boolean already means and saving a view should not write one into your config.
 
@@ -817,6 +818,11 @@ address and swaps the results in place instead of navigating. That swap replaces
 the box included — so the caret is put back where it was, and a second keystroke lands where you
 expect it to. The filtering itself stays on the server: `matchesTerms` is the only implementation
 of how a query matches, and a copy in the client module could only ever come to disagree with it.
+
+**The sidebar.** Configuration is a heading with its views indented beneath it; every other
+panel sits in an unlabelled run. The heading is a plain `<span>`, never a link — the UI ships no
+inline script, so there is nothing for it to collapse, and it names the group rather than doing
+anything.
 
 **The navigation, on a phone.** Below 860px the sidebar becomes a bar holding the brand and one
 button, and the navigation is what that button reveals — as the same vertical list the wide layout

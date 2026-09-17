@@ -52,7 +52,6 @@ import {
   Table,
 } from "../components.ts";
 import { renderView } from "../view.ts";
-import { ConfigTabs, isCompatApp } from "./config-next.ts";
 import { cliInvocation, runDeno } from "../proc.ts";
 import { parseJsonDocument } from "../child-json.ts";
 import { join } from "@std/path";
@@ -679,10 +678,9 @@ function SchedulerNote({ state }: { readonly state: CronState }): VNode {
 
 /** The whole panel. */
 function CronPanel(
-  { ctx, state, compat, notice, body }: {
+  { ctx, state, notice, body }: {
     readonly ctx: UiContext;
     readonly state: CronState;
-    readonly compat: boolean;
     readonly notice?: VNode;
     /** Rendered in place of the editor — the diff preview of a pending change. */
     readonly body?: VNode;
@@ -690,8 +688,7 @@ function CronPanel(
 ): VNode {
   return h(
     Panel,
-    { name: "Cron", title: "Config" },
-    h(ConfigTabs, { active: "/config/cron", compat }),
+    { name: "Cron", title: "Cron" },
     h(
       "p",
       { class: "lead" },
@@ -1120,7 +1117,6 @@ export async function cronPanel(_request: Request, ctx: UiContext): Promise<Resp
   const state = await readState(ctx.dir, ctx.offline === true);
   if (ctx.method === "POST") return await submit(ctx, state);
   if (ctx.json) return jsonResponse({ ok: true, ...payload(state, ctx.dir) });
-  const compat = await isCompatApp(ctx.dir);
   // A write redirects here with `?saved=1` (POST/redirect/GET, so a reload never re-posts); say
   // so, or the page it lands on looks identical to the one it left and the write reads as a no-op.
   const cleared = ctx.url.searchParams.get("cleared") === "1";
@@ -1131,7 +1127,6 @@ export async function cronPanel(_request: Request, ctx: UiContext): Promise<Resp
       renderView(h(CronPanel, {
         ctx,
         state,
-        compat,
         notice: h(Note, null, "Run history cleared. Recording continues."),
       })),
     );
@@ -1146,7 +1141,7 @@ export async function cronPanel(_request: Request, ctx: UiContext): Promise<Resp
         "server does not re-run task boot on reload.",
     )
     : undefined;
-  return panelResponse(ctx, renderView(h(CronPanel, { ctx, state, compat, notice })));
+  return panelResponse(ctx, renderView(h(CronPanel, { ctx, state, notice })));
 }
 
 /**
@@ -1159,10 +1154,10 @@ export async function cronPanel(_request: Request, ctx: UiContext): Promise<Resp
  * @param state The panel state.
  * @returns A `409`, or `null` when the stamp still matches.
  */
-async function staleBase(ctx: UiContext, state: CronState): Promise<Response | null> {
+function staleBase(ctx: UiContext, state: CronState): Response | null {
   const posted = postedField(ctx, BASE_FIELD);
   if (posted === "" || posted === state.base) return null;
-  return await refuse(ctx, state, `${state.configName} ${STALE_BASE}`, 409);
+  return refuse(ctx, state, `${state.configName} ${STALE_BASE}`, 409);
 }
 
 /**
@@ -1186,7 +1181,7 @@ async function applyWrite(
     await writeFileAtomic(ctx.dir, state.configName, source, { unchangedFrom: state.source });
   } catch (error) {
     if (error instanceof StaleWriteError) {
-      return await refuse(
+      return refuse(
         ctx,
         state,
         `${state.configName} changed on disk while this change was being applied — nothing was ` +
@@ -1195,7 +1190,7 @@ async function applyWrite(
       );
     }
     const why = error instanceof Error ? error.message : String(error);
-    return await refuse(ctx, state, `${state.configName} could not be written: ${why}`, 403);
+    return refuse(ctx, state, `${state.configName} could not be written: ${why}`, 403);
   }
   // The listing carries both `configScheduled` and `history`, so it is stale the moment the file
   // changes — without this a write appears not to have worked until the TTL expires.
@@ -1213,24 +1208,22 @@ async function applyWrite(
  * @param fields What the confirm button carries back.
  * @returns The preview page, or `null` when this POST was the confirm.
  */
-async function previewOr(
+function previewOr(
   ctx: UiContext,
   state: CronState,
   diff: string,
   fields: Readonly<Record<string, string>>,
-): Promise<Response | null> {
+): Response | null {
   if (confirmed(ctx) && diff !== "") return null;
-  const compat = await isCompatApp(ctx.dir);
   const preview = h(PreviewView, { ctx, diff, fields });
-  return panelResponse(ctx, renderView(h(CronPanel, { ctx, state, compat, body: preview })));
+  return panelResponse(ctx, renderView(h(CronPanel, { ctx, state, body: preview })));
 }
 
 /** Re-render with a refusal against the form. */
-async function refuse(ctx: UiContext, state: CronState, reason: string, status: number) {
+function refuse(ctx: UiContext, state: CronState, reason: string, status: number): Response {
   if (ctx.json) return jsonResponse({ ok: false, reason }, status);
-  const compat = await isCompatApp(ctx.dir);
   const notice = h(Note, { role: "alert" }, reason);
-  return panelResponse(ctx, renderView(h(CronPanel, { ctx, state, compat, notice })), status);
+  return panelResponse(ctx, renderView(h(CronPanel, { ctx, state, notice })), status);
 }
 
 /** Every value of a repeated field, in document order. */
@@ -1349,28 +1342,28 @@ function proposed(ctx: UiContext, state: CronState): Proposal {
 }
 
 async function submit(ctx: UiContext, state: CronState): Promise<Response> {
-  if (ctx.readOnly) return await refuse(ctx, state, "read-only — the config is not written", 403);
+  if (ctx.readOnly) return refuse(ctx, state, "read-only — the config is not written", 403);
   const intent = postedField(ctx, INTENT_FIELD);
   if (intent === INTENT_HISTORY) return await submitHistory(ctx, state);
-  if (intent === INTENT_CLEAR_HISTORY) return await submitClearHistory(ctx, state);
+  if (intent === INTENT_CLEAR_HISTORY) return submitClearHistory(ctx, state);
   const proposal = proposed(ctx, state);
-  if ("no" in proposal) return await refuse(ctx, state, proposal.no.reason, proposal.no.status);
+  if ("no" in proposal) return refuse(ctx, state, proposal.no.reason, proposal.no.status);
   const { value } = proposal;
 
   const invalid = validationProblem(value, state.configName);
-  if (invalid !== null) return await refuse(ctx, state, invalid, 422);
+  if (invalid !== null) return refuse(ctx, state, invalid, 422);
 
   // An empty map means "no schedules": remove the key rather than leave `scheduledTasks: {}`.
   const from = state.source === "" ? EMPTY_CONFIG : state.source;
   const edit = Object.keys(value).length === 0
     ? await deleteConfigValue(from, [KEY])
     : await setConfigValue(from, [KEY], value);
-  if (!edit.ok) return await refuse(ctx, state, edit.reason, 422);
+  if (!edit.ok) return refuse(ctx, state, edit.reason, 422);
 
   if (ctx.json && !confirmed(ctx)) {
     return jsonResponse({ ok: true, applied: false, diff: edit.diff, scheduledTasks: value });
   }
-  const review = await previewOr(ctx, state, edit.diff, {
+  const review = previewOr(ctx, state, edit.diff, {
     [VALUE_FIELD]: JSON.stringify(value),
     [BASE_FIELD]: state.base,
     [INTENT_FIELD]: INTENT_SAVE,
@@ -1421,7 +1414,7 @@ function ConfirmClear(
   );
 }
 
-async function submitClearHistory(ctx: UiContext, state: CronState): Promise<Response> {
+function submitClearHistory(ctx: UiContext, state: CronState): Response {
   // Deleting run data cannot be previewed as a diff — no file changes — so the confirm step says
   // how much goes instead. Every other write here is two steps, and so is this.
   if (!confirmed(ctx)) {
@@ -1429,34 +1422,33 @@ async function submitClearHistory(ctx: UiContext, state: CronState): Promise<Res
     // The window total, not `recent.length`: the feed is capped at 20, so a project with
     // hundreds of runs would otherwise be told "at least 20", which is true but useless.
     const count = read.tasks.reduce((n, row) => n + row.successes + row.failures, 0);
-    const compat = await isCompatApp(ctx.dir);
     const body = h(ConfirmClear, { ctx, count, windowDays: read.windowDays });
-    return panelResponse(ctx, renderView(h(CronPanel, { ctx, state, compat, body })), 409);
+    return panelResponse(ctx, renderView(h(CronPanel, { ctx, state, body })), 409);
   }
   const done = clearTaskHistory({ path: historyPath(ctx.dir) });
   if (!done.cleared) {
-    return await refuse(ctx, state, `the history could not be cleared: ${done.reason}`, 422);
+    return refuse(ctx, state, `the history could not be cleared: ${done.reason}`, 422);
   }
   if (ctx.json) return jsonResponse({ ok: true, applied: true, cleared: true });
   return new Response(null, { status: 303, headers: { location: "/config/cron?cleared=1" } });
 }
 
 async function submitHistory(ctx: UiContext, state: CronState): Promise<Response> {
-  const stale = await staleBase(ctx, state);
+  const stale = staleBase(ctx, state);
   if (stale) return stale;
   const wanted = postedField(ctx, HISTORY_FIELD);
   if (wanted !== "on" && wanted !== "off") {
-    return await refuse(ctx, state, "the history toggle named no value", 400);
+    return refuse(ctx, state, "the history toggle named no value", 400);
   }
   const on = wanted === "on";
   const from = state.source === "" ? EMPTY_CONFIG : state.source;
   const edit = await setConfigValue(from, ["tasks", "history"], on);
-  if (!edit.ok) return await refuse(ctx, state, edit.reason, 422);
+  if (!edit.ok) return refuse(ctx, state, edit.reason, 422);
 
   if (ctx.json && !confirmed(ctx)) {
     return jsonResponse({ ok: true, applied: false, diff: edit.diff, history: on });
   }
-  const review = await previewOr(ctx, state, edit.diff, {
+  const review = previewOr(ctx, state, edit.diff, {
     [INTENT_FIELD]: INTENT_HISTORY,
     [HISTORY_FIELD]: wanted,
     [BASE_FIELD]: state.base,

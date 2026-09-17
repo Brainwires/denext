@@ -107,24 +107,35 @@ Deno.test("a view shows its scalars inline and its groupings as tabs, nothing co
     // Nothing in the editor is a disclosure any more: a view used to read as a list of words
     // with pills, each of which had to be opened before it said anything.
     assert(!body.includes("<details"), "the config editor collapses nothing");
-    // The plain scalars are simply present, carrying the file's values, under one Save.
+    // ONE strip, and it lists the keys of THIS view — the views themselves are the sidebar's
+    // job, so nothing here repeats them.
+    assertStringIncludes(body, 'class="panel-head"');
+    // ONE strip inside the panel. The views are the sidebar's job, and the sidebar is part of
+    // this document — so the question has to be asked of the panel alone.
+    const panel = body.slice(body.indexOf('<section id="panel"'));
+    assert(!panel.includes('href="/config/rendering"'), "no second strip repeating the views");
+    // The plain scalars share the first tab rather than floating above the strip.
+    assertStringIncludes(body, 'href="/config?key=general"');
     assert(hasField(body, "basePath", "/docs"));
     assert(hasField(body, "trailingSlash", "on"));
     assertStringIncludes(body, 'class="band"');
-    // The groupings are tabs, each saying whether its key is set.
+    // The groupings follow it, each saying whether its key is set.
     assertStringIncludes(body, 'href="/config?key=redirects"');
     assertStringIncludes(body, 'href="/config?key=i18n"');
-    // Routing opens on `redirects`, the one this file actually sets — not on the first key the
-    // schema happens to declare.
-    assert(hasField(body, "redirects[0].source", "/old"));
-    assert(hasField(body, "redirects[1].destination", "/b"));
-    assertStringIncludes(body, 'value="up:1:redirects"');
-    assert(!hasField(body, "i18n.defaultLocale", ""), "only the selected tab renders a form");
+    // A view opens on General, so only its fields are rendered — a grouping's form arrives when
+    // its own tab is asked for.
+    assert(!hasField(body, "redirects[0].source", "/old"), "only the selected tab renders a form");
+    const rows = await (await call(dir, "/config?key=redirects")).text();
+    assert(hasField(rows, "redirects[0].source", "/old"));
+    assert(hasField(rows, "redirects[1].destination", "/b"));
+    assertStringIncludes(rows, 'value="up:1:redirects"');
 
     // `mode` is one control, so it joins the band rather than taking a tab of its own.
     const rendering = await (await call(dir, "/config/rendering")).text();
     assert(hasField(rendering, "mode", "") || rendering.includes('name="mode"'));
     assertStringIncludes(rendering, 'class="band"');
+    // The heading names the view; "Config" on all of them said nothing the sidebar had not.
+    assertStringIncludes(rendering, "<h1>Rendering</h1>");
 
     // `plugins` is shown, never edited here — on its own tab.
     const plugins = await (await call(dir, "/config/advanced?key=plugins")).text();
@@ -155,8 +166,9 @@ Deno.test("a scalar change previews a diff touching only that value, then writes
       form: { ...fields, confirm: "1" },
     });
     assertEquals(applied.status, 303);
-    // An inline scalar is visible on its view itself, so that is where the write lands.
-    assertEquals(applied.headers.get("location"), "/config");
+    // An inline scalar lives on the General tab, so that is where the write lands — on the
+    // field you just edited, not merely on the view that contains it.
+    assertEquals(applied.headers.get("location"), "/config?key=general");
     assertStringIncludes(await onDisk(dir), 'basePath: "/site",');
     assertStringIncludes(await onDisk(dir), "// keep this comment");
   } finally {
@@ -219,7 +231,9 @@ Deno.test("an invalid value is a 422 with the validator's message against its fi
 Deno.test("a section form tracks edits: Save waits, and Clear is named for what it does", async () => {
   const dir = await project();
   try {
-    const body = await (await call(dir, "/config")).text();
+    // A grouping's tab, because "Remove key" belongs to a grouping's own form; a scalar on
+    // General is removed by clearing its field instead.
+    const body = await (await call(dir, "/config?key=redirects")).text();
     // `ui.js` disables Save until something changes and adds Discard; the server must not
     // render Save disabled, or a browser with JavaScript off could never save at all.
     assertStringIncludes(body, 'data-dirty-track="1"');
@@ -419,7 +433,7 @@ Deno.test("an unknown, managed or cron-owned section is refused before anything"
   }
 });
 
-Deno.test("the Config tab strip offers next.config only for a compat app, on every render", async () => {
+Deno.test("next.config is offered only to a compat app, on every render", async () => {
   // `next.config` is a VIEW of this project's configuration, so it is a tab on /config rather
   // than a seventh item in the top navigation. Two things have to hold: a native app is never
   // offered a tab that would only say "there is nothing here", and a compat app keeps the tab
@@ -428,8 +442,8 @@ Deno.test("the Config tab strip offers next.config only for a compat app, on eve
   const native = await project();
   try {
     const body = await (await call(native, "/config")).text();
-    assertStringIncludes(body, 'href="/config"');
-    assert(!body.includes('href="/config/next"'), "a native app is offered no next.config tab");
+    assertStringIncludes(body, 'class="panel-head"');
+    assert(!body.includes('href="/config/next"'), "a native app is offered no next.config link");
   } finally {
     await Deno.remove(native, { recursive: true });
   }

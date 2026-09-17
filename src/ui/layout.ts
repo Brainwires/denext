@@ -172,12 +172,23 @@ function navSection(section: NavSection, index: number, active: string | undefin
     Fragment,
     { key: index },
     section.label === undefined ? null : h("span", { class: "nav-section" }, section.label),
-    section.items.map((item) => navLink(item, active)),
+    section.items.map((item) => navLink(item, active, section.label !== undefined)),
   );
 }
 
-/** One navigation link, marked `aria-current="page"` when it is the active entry. */
-function navLink(item: NavItem, active: string | undefined): VNode {
+/**
+ * One navigation link, marked `aria-current="page"` when it is the active entry.
+ *
+ * An item under a heading is indented by a class rather than by a wrapper element: the nav is one
+ * flat run, so `.nav-section ~ a` would also catch the unlabelled items further down. The anchor
+ * stays bare either way.
+ */
+function navLink(item: NavItem, active: string | undefined, nested: boolean): VNode {
   const current = item.href === active ? "page" : undefined;
-  return h("a", { key: item.href, href: item.href, "aria-current": current }, item.label);
+  return h("a", {
+    key: item.href,
+    href: item.href,
+    class: nested ? "nested" : undefined,
+    "aria-current": current,
+  }, item.label);
 }

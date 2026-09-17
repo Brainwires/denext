@@ -54,7 +54,6 @@ import {
   Panel,
   PreviewLead,
   SourceBlock,
-  type TabItem,
   Tabs,
 } from "../components.ts";
 import { Raw, renderView } from "../view.ts";
@@ -80,7 +79,7 @@ import {
   parseFieldName,
   parseOp,
 } from "../form/value.ts";
-import { ConfigTabs, isCompatApp, nextConfigPanel } from "./config-next.ts";
+import { isCompatApp, nextConfigPanel } from "./config-next.ts";
 import { cronPanel } from "./config-cron.ts";
 import {
   type ConfigGroup,
@@ -105,6 +104,15 @@ const KEY_PARAM = "key";
 
 /** The whole-file escape hatch, placed among the groupings like any other key. */
 const RAW_KEY = "raw-file";
+
+/**
+ * The tab a view's plain scalars share.
+ *
+ * One control each, so a tab apiece would be a strip of single-field pages. They get one tab
+ * between them instead — and a tab rather than a band above the strip, because content sitting
+ * outside the tabs reads as belonging to none of them.
+ */
+const GENERAL_KEY = "general";
 
 /**
  * Widget kinds that are one control, and so are shown inline rather than behind a tab.
@@ -276,9 +284,8 @@ function isInlineSection(section: Section): boolean {
 /** Where a key is edited: its view, and its tab when it has one. */
 function keyHref(section: Section): string {
   const view = groupHref(groupOf(section.key));
-  return isInlineSection(section)
-    ? view
-    : `${view}?${KEY_PARAM}=${encodeURIComponent(section.key)}`;
+  const key = isInlineSection(section) ? GENERAL_KEY : section.key;
+  return `${view}?${KEY_PARAM}=${encodeURIComponent(key)}`;
 }
 
 /** Where the whole-file escape hatch lives. */
@@ -690,18 +697,30 @@ interface Grouping {
   readonly badge: string;
   /** How the pill reads. */
   readonly tone: BadgeTone;
-  /** The section, absent for the escape hatch (which is a file, not a key). */
+  /** The section, for a tab that edits one key. */
   readonly section?: Section;
+  /** The view's scalars, for the General tab. */
+  readonly scalars?: readonly Section[];
 }
 
-/** The keys of this view that want a page to themselves, in render order. */
+/** Every tab this view offers: General, then a key each, then the escape hatch. */
 function groupingsOf(shown: readonly Section[], rawHere: boolean): Grouping[] {
-  const out: Grouping[] = shown.filter((section) => !isInlineSection(section)).map((section) => ({
-    key: section.key,
-    label: section.key,
-    ...badgeOf(section),
-    section,
-  }));
+  const out: Grouping[] = [];
+  const scalars = shown.filter(isInlineSection);
+  if (scalars.length > 0) {
+    const anySet = scalars.some((section) => section.present);
+    out.push({
+      key: GENERAL_KEY,
+      label: "General",
+      badge: anySet ? "set" : "unset",
+      tone: anySet ? "ok" : "todo",
+      scalars,
+    });
+  }
+  for (const section of shown) {
+    if (isInlineSection(section)) continue;
+    out.push({ key: section.key, label: section.key, ...badgeOf(section), section });
+  }
   if (rawHere) {
     out.push({ key: RAW_KEY, label: "The file itself", badge: "escape hatch", tone: "info" });
   }
@@ -709,14 +728,10 @@ function groupingsOf(shown: readonly Section[], rawHere: boolean): Grouping[] {
 }
 
 /**
- * Which grouping to show: the one asked for, else the first that is actually SET, else the first.
- *
- * Opening on the first key in schema order would mean a view whose first key happens to be unset
- * greets you with an empty form while the key you configured sits behind a tab.
+ * Which tab to show: the one asked for, else the first — which is General wherever there is one.
  */
 function selectedGrouping(list: readonly Grouping[], asked: string): Grouping | undefined {
-  return list.find((entry) => entry.key === asked) ??
-    list.find((entry) => entry.section?.present) ?? list[0];
+  return list.find((entry) => entry.key === asked) ?? list[0];
 }
 
 /** A search's hits, as links — the keys are spread across views, so the answer is where each is. */
@@ -843,25 +858,47 @@ function ConfigPanel(
   const { notice } = options;
   const query = options.query ?? "";
   const group = options.group ?? DEFAULT_GROUP;
+  const { shown, rawHere } = visibleSections(state.sections, group, query);
+  const groupings = query === "" ? groupingsOf(shown, rawHere) : [];
+  const selected = selectedGrouping(groupings, options.key ?? "");
   return h(
     Panel,
-    { name: "Config", title: "Config" },
-    h(ConfigTabs, { active: query === "" ? groupHref(group) : "", compat }),
+    // The heading names the view. Which panel this is comes from the sidebar; repeating "Config"
+    // on all five of them said nothing the page did not already say.
+    { name: "Config", title: GROUP_LABEL[group] },
+    // ONE strip, directly under the heading: the keys of THIS view. The views themselves are the
+    // sidebar's job, and a second strip repeating them pushed these to the foot of the page.
     h(
-      "p",
-      { class: "lead" },
-      "Every key of ",
-      h(Mono, null, state.path),
-      ", rendered from the config schema. A change is previewed as a diff before anything is " +
-        "written; comments and the values you did not touch come through byte for byte. ",
-      h("a", { href: "https://denext.dev/docs/ui#configuration-editor" }, "Configuration editor ↗"),
+      "div",
+      { class: "panel-head" },
+      groupings.length === 0 ? null : h(Tabs, {
+        items: groupings.map((entry) => ({
+          href: tabHref(group, entry.key),
+          label: entry.label,
+          badge: entry.badge,
+          tone: entry.tone,
+        })),
+        active: selected ? tabHref(group, selected.key) : "",
+        label: "Config keys",
+      }),
+      h(FilterForm, { action: groupHref(group), query, label: "Filter config keys" }),
+      compat ? h("a", { class: "lead head-aside", href: "/config/next" }, "next.config ↗") : null,
     ),
-    h(FilterForm, { action: groupHref(group), query, label: "Filter config keys" }),
     ctx.readOnly ? h(Note, null, "Read-only mode — every change is refused.") : null,
     state.exists ? null : h(CreateOffer, { ctx, state }),
     state.exists && state.form === "unsupported" ? h(UnsupportedNote, { name: state.name }) : null,
     notice ?? null,
-    h(ConfigBody, { ctx, state, options }),
+    h(ConfigBody, { ctx, state, options, selected, shown }),
+    // The standing explanation, demoted to a footnote: it is the same on every view, and above
+    // the strip it was three lines of prose between the heading and the thing you came to edit.
+    h(
+      "p",
+      { class: "lead foot-note" },
+      "Editing ",
+      h(Mono, null, state.path),
+      " — every change is previewed as a diff, and the bytes you did not touch are kept. ",
+      h("a", { href: "https://denext.dev/docs/ui#configuration-editor" }, "Configuration editor ↗"),
+    ),
   );
 }
 
@@ -877,54 +914,43 @@ function tabHref(group: ConfigGroup, key: string): string {
  * child asking again whether a search is running.
  */
 function ConfigBody(
-  { ctx, state, options }: StateProps & { readonly options: PanelOptions },
+  { ctx, state, options, selected, shown }: StateProps & {
+    readonly options: PanelOptions;
+    readonly selected: Grouping | undefined;
+    readonly shown: readonly Section[];
+  },
 ): VNode {
-  const query = options.query ?? "";
-  const group = options.group ?? DEFAULT_GROUP;
-  const { shown, rawHere } = visibleSections(state.sections, group, query);
   // A search cuts across every view, so it answers with WHERE each key is rather than pulling
   // the forms out of the pages that own them.
-  if (query !== "") {
+  if ((options.query ?? "") !== "") {
     return h(
       Fragment,
       null,
-      h("p", { class: "filter-note" }, configMatchNote(shown.length, query)),
+      h("p", { class: "filter-note" }, configMatchNote(shown.length, options.query ?? "")),
       h(SearchHits, { shown }),
     );
   }
-  const inline = shown.filter(isInlineSection);
-  const groupings = groupingsOf(shown, rawHere);
-  const selected = selectedGrouping(groupings, options.key ?? "");
-  const tabs: TabItem[] = groupings.map((entry) => ({
-    href: tabHref(group, entry.key),
-    label: entry.label,
-    badge: entry.badge,
-    tone: entry.tone,
-  }));
-  return h(
-    Fragment,
-    null,
-    inline.length === 0
-      ? null
-      : h(InlineBand, { ctx, state, group, sections: inline, feedback: options.feedback }),
-    tabs.length === 0 ? null : h(Tabs, {
-      items: tabs,
-      active: selected ? tabHref(group, selected.key) : "",
-      label: "Config keys",
-    }),
-    selected
-      ? h(GroupingBody, { ctx, state, grouping: selected, feedback: options.feedback })
-      : null,
-  );
+  if (!selected) return h(Fragment, null);
+  return h(GroupingBody, {
+    ctx,
+    state,
+    group: options.group ?? DEFAULT_GROUP,
+    grouping: selected,
+    feedback: options.feedback,
+  });
 }
 
 /** The selected tab's body: the escape hatch, or that key's own form. */
 function GroupingBody(
-  { ctx, state, grouping, feedback }: StateProps & {
+  { ctx, state, group, grouping, feedback }: StateProps & {
+    readonly group: ConfigGroup;
     readonly grouping: Grouping;
     readonly feedback?: Feedback;
   },
 ): VNode {
+  if (grouping.scalars) {
+    return h(InlineBand, { ctx, state, group, sections: grouping.scalars, feedback });
+  }
   if (!grouping.section) return h(RawFileEditor, { ctx, state });
   const section = grouping.section;
   return h(

@@ -120,6 +120,8 @@ code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, m
   padding: var(--space-1) 10px;
   border-radius: var(--radius-sm);
 }
+/* An item that sits under a heading is its child, and should read as one. */
+.sidebar nav a.nested { padding-left: 22px; }
 .sidebar nav a:hover { background: var(--background); color: var(--foreground); }
 .sidebar nav a[aria-current="page"] {
   background: var(--background);
@@ -293,6 +295,28 @@ h2 { font-size: var(--text-lg); margin: 28px 0 var(--space-2); }
 .builder .row { flex-wrap: wrap; gap: var(--space-2); }
 .builder-choice { display: inline-flex; align-items: center; gap: var(--space-1); margin: 0; }
 .builder-field { display: inline-flex; align-items: center; gap: var(--space-1); margin: 0; }
+
+/* A panel's one header row: the tabs for what is on this page, and the box that searches
+   across every page, sharing a single rule. */
+.panel-head {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+  margin: 0 0 var(--space-5);
+}
+.panel-head .tabs { border-bottom: 0; margin: 0; flex: 1 1 auto; }
+.panel-head .filter { margin: 0 0 6px; flex: 0 1 auto; }
+.panel-head .filter input[type="search"] { max-width: 15rem; }
+.head-aside { text-decoration: none; margin: 0 0 10px; white-space: nowrap; }
+/* The standing explanation, out of the way of the thing you came to edit. */
+.foot-note {
+  margin: var(--space-6) 0 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+  font-size: var(--text-sm);
+}
 
 /* A panel's filter box: a plain GET form, so it works with scripting off. */
 .filter { display: flex; gap: var(--space-2); align-items: center; margin: 0 0 var(--space-4); }

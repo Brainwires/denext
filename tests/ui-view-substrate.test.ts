@@ -73,14 +73,18 @@ Deno.test("the layout renders its golden document, the body inserted verbatim", 
     csrf: `tok"&<'>`,
     active: "/config",
   };
-  const nav = UI_NAV_SECTIONS.map((section) =>
-    (section.label === undefined ? "" : `<span class="nav-section">${section.label}</span>`) +
-    section.items.map((item) =>
-      item.href === "/config"
-        ? `<a href="${item.href}" aria-current="page">${item.label}</a>`
-        : `<a href="${item.href}">${item.label}</a>`
-    ).join("")
-  ).join("");
+  const nav = UI_NAV_SECTIONS.map((section) => {
+    // An item under a heading carries `nested`, which is what indents it.
+    const cls = section.label === undefined ? "" : ' class="nested"';
+    return (section.label === undefined
+      ? ""
+      : `<span class="nav-section">${section.label}</span>`) +
+      section.items.map((item) =>
+        item.href === "/config"
+          ? `<a href="${item.href}"${cls} aria-current="page">${item.label}</a>`
+          : `<a href="${item.href}"${cls}>${item.label}</a>`
+      ).join("");
+  }).join("");
   const head = '<meta name="denext-csrf" content="tok&quot;&amp;&lt;&#39;&gt;">' +
     "<title>Config &lt;&amp;&quot;&#39;&gt; · denext ui</title>";
   // The body fragment is inserted verbatim: its own numeric references survive untouched.

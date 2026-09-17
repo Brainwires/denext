@@ -673,10 +673,10 @@ async function checkConfigWrite(ui: Ui): Promise<void> {
   });
   await applied.body?.cancel();
   assertEquals(applied.status, 303);
-  // The view itself, with no fragment: `#basePath` used to name the <details> that wrapped the
-  // key, and nothing collapses any more. A scalar is simply present on its view, so that is
-  // where the write lands.
-  assertEquals(applied.headers.get("location"), "/config");
+  // The General tab, which is where a scalar lives: `#basePath` used to name the <details> that
+  // wrapped the key, and nothing collapses any more. The write lands on the field it changed,
+  // not merely on the view containing it.
+  assertEquals(applied.headers.get("location"), "/config?key=general");
   assertEquals(
     await Deno.readTextFile(path),
     CONFIG.replace('"/docs"', '"/site"'),
