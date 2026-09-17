@@ -177,6 +177,65 @@ export function Out({ children }: { readonly children?: VNodeChildren }): VNode 
 }
 
 /**
+ * The common leading whitespace of every non-blank line, or `""` when they do not share one.
+ *
+ * @param lines The lines to compare.
+ * @returns The shared prefix.
+ */
+function commonIndent(lines: readonly string[]): string {
+  let common: string | null = null;
+  for (const line of lines) {
+    if (line.trim() === "") continue;
+    const indent = /^[ \t]*/.exec(line)?.[0] ?? "";
+    if (common === null) {
+      common = indent;
+      continue;
+    }
+    let i = 0;
+    while (i < common.length && i < indent.length && common[i] === indent[i]) i++;
+    common = common.slice(0, i);
+  }
+  return common ?? "";
+}
+
+/**
+ * A sliced value's source, with its continuation lines brought back to its first line's column.
+ *
+ * @param source The value's source text.
+ * @returns The same text, re-indented.
+ */
+function dedentSource(source: string): string {
+  const lines = source.split("\n");
+  if (lines.length < 2) return source;
+  const indent = commonIndent(lines.slice(1));
+  if (indent === "") return source;
+  const rest = lines.slice(1).map((line) =>
+    line.startsWith(indent) ? line.slice(indent.length) : line
+  );
+  return [lines[0], ...rest].join("\n");
+}
+
+/**
+ * A `<pre class="out">` holding source text that was sliced out of a file.
+ *
+ * The config reader hands a value's bytes back verbatim, and the span starts at the value itself
+ * — so the first line carries no indentation while every line under it keeps the indentation it
+ * had in the file. Rendered as-is that reads as a misaligned block: `[` at column 0, its entries
+ * at 4, its closing bracket at 2. The writer must keep those bytes exact, because splicing an
+ * edit back in uses the same spans, so the re-indent belongs here at the render instead.
+ *
+ * Only the leading whitespace shared by every continuation line is removed, so the value's own
+ * internal shape survives. A block whose lines do not share one prefix — tabs mixed with spaces
+ * — is left exactly as it arrived: showing it plainly beats guessing at it.
+ *
+ * @param props `source`: the value's source text.
+ * @returns The block.
+ */
+export function SourceBlock({ source }: { readonly source: string }): VNode {
+  return h("pre", { class: "out" }, dedentSource(source));
+}
+
+/**
  * One flex row of cells (`<div class="row">`).
  *
  * @param props `children`: the cells.

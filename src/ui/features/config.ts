@@ -51,9 +51,9 @@ import {
   NoChange,
   Note,
   OpForm,
-  Out,
   Panel,
   PreviewLead,
+  SourceBlock,
 } from "../components.ts";
 import { Raw, renderView } from "../view.ts";
 import {
@@ -473,7 +473,7 @@ function ReadOnlyCell(
   return h(
     Fragment,
     null,
-    h(Out, null, section.text ?? "— not set —"),
+    h(SourceBlock, { source: section.text ?? "— not set —" }),
     h(
       "p",
       { class: "lead" },
@@ -962,7 +962,7 @@ function previewNotes(result: EditResult): VNode | undefined {
     Fragment,
     null,
     h(Note, { role: "alert" }, result.reason),
-    h(Out, null, result.snippet),
+    h(SourceBlock, { source: result.snippet ?? "" }),
   );
 }
 

@@ -18,6 +18,7 @@ import {
   Out,
   Panel,
   ResultList,
+  SourceBlock,
   Table,
 } from "../src/ui/components.ts";
 import { layout, type LayoutOptions, UI_CSS_PATH, UI_JS_PATH } from "../src/ui/layout.ts";
@@ -246,6 +247,28 @@ Deno.test("Note and Out render the panels' note and output block", () => {
   );
   assertEquals(toHtml(renderView(h(Out, null))), '<pre class="out"></pre>');
   assertEquals(toHtml(renderView(h(Out, null, "x\n<y>"))), '<pre class="out">x\n&lt;y&gt;</pre>');
+});
+
+Deno.test("SourceBlock brings a sliced value's lines back to its own column", () => {
+  const render = (source: string) => toHtml(renderView(h(SourceBlock, { source })));
+  // The shape the config reader hands back for `plugins: [ … ]`: the span starts AT the bracket,
+  // so line 1 arrives with no indent while the lines under it keep the file's. Rendered raw that
+  // is the misalignment this component exists to undo.
+  assertEquals(
+    render("[\n    openapi(),\n  ]"),
+    '<pre class="out">[\n  openapi(),\n]</pre>',
+  );
+  // One line has no continuation to move.
+  assertEquals(render("true"), '<pre class="out">true</pre>');
+  // A blank line inside the value does not get a vote on the common indent, and is not padded.
+  assertEquals(
+    render("[\n    a,\n\n    b,\n  ]"),
+    '<pre class="out">[\n  a,\n\n  b,\n]</pre>',
+  );
+  // Lines sharing no prefix — a tab beside spaces — are left exactly as they arrived: showing
+  // the value plainly beats guessing at what its author meant.
+  const mixed = "{\n\ta: 1,\n  b: 2,\n}";
+  assertEquals(render(mixed), '<pre class="out">' + mixed + "</pre>");
 });
 
 Deno.test("the shared panel pieces render one fixed markup each", () => {

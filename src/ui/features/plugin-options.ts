@@ -37,9 +37,9 @@ import {
   NoChange,
   Note,
   OpForm,
-  Out,
   Panel,
   PreviewLead,
+  SourceBlock,
 } from "../components.ts";
 import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
 import { Raw, renderView } from "../view.ts";
@@ -529,7 +529,7 @@ function CodeOptions({ reading }: { readonly reading: Reading }): VNode {
         Fragment,
         { key },
         h("h3", null, h("code", null, key), " ", h(Badge, { tone: "info" }, "read-only")),
-        h(Out, null, reading.codeText[key] ?? ""),
+        h(SourceBlock, { source: reading.codeText[key] ?? "" }),
       )
     ),
   );
@@ -588,7 +588,7 @@ function BailView(
     Frame,
     { title: titleOf(target) },
     h(Note, null, failure.reason),
-    failure.snippet ? h(Out, null, failure.snippet) : null,
+    failure.snippet ? h(SourceBlock, { source: failure.snippet }) : null,
     h(
       "p",
       { class: "lead" },
