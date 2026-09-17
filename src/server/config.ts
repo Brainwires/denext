@@ -831,8 +831,7 @@ export interface ExperimentalConfig {
    * Enable the build-time auto-memoization compiler (a React-Compiler-style pass) — an
    * opt-in optimization. Conservative by construction: it bails to identity whenever a
    * transform isn't provably safe, so it only ever adds memoization, never changes
-   * behavior. Off by default while its coverage is still widening. Named as in Next.js
-   * (`experimental.reactCompiler`), so a migrated `next.config` needs no rewrite.
+   * behavior. Off by default.
    */
   reactCompiler?: boolean;
   /**
