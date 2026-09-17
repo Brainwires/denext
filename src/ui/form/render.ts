@@ -38,6 +38,15 @@ export interface RenderContext {
   readonly readOnly?: boolean;
   /** Validation messages to show against fields, keyed by field name. */
   readonly errors?: Readonly<Record<string, string>>;
+  /**
+   * Render the OUTERMOST widget without its own label and description.
+   *
+   * A caller that already names the key above the form would otherwise show it twice: the tab's
+   * heading says `i18n`, and the widget says `i18n` again directly beneath it. Only the top
+   * level is affected — nested keys keep their labels, which is what tells you where one ends
+   * and the next begins.
+   */
+  readonly omitTopLabel?: boolean;
 }
 
 /** What every widget component is handed. */
@@ -86,6 +95,7 @@ function Wrap(
   },
 ): VNode {
   const { spec, ctx } = props;
+  if (ctx.omitTopLabel && spec.path.length === 1) return h(Fragment, null, props.children);
   const name = nameOf(spec, ctx);
   return h(Field, {
     id: idOf(name),
@@ -405,6 +415,9 @@ function UnionWidget({ spec, value, ctx }: WidgetProps): VNode {
  * at a time, so there is nothing left for it to save you from.
  */
 function GroupWidget({ spec, value, ctx }: WidgetProps): VNode {
+  if (ctx.omitTopLabel && spec.path.length === 1) {
+    return h("div", { id: `${idOf(nameOf(spec, ctx))}--group` }, fieldsOf(spec, value, ctx));
+  }
   return h(
     "div",
     { id: `${idOf(nameOf(spec, ctx))}--group`, class: "field" },

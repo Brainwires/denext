@@ -603,6 +603,8 @@ function EditableField({ ctx, base, section, spec, feedback }: EditableProps): V
     csrf: ctx.csrf,
     readOnly: ctx.readOnly,
     errors: feedback?.errors,
+    // The tab's heading above this form already says the key and whether it is set.
+    omitTopLabel: true,
   });
   const clear = h(
     "button",
