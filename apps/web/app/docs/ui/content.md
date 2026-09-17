@@ -168,8 +168,23 @@ read-only `403`.
 
 `/config` is a form generated from
 [`denext.config.schema.json`](https://github.com/Brainwires/denext/blob/main/denext.config.schema.json)
-— the same schema your editor uses for completions — with one collapsible section per
-top-level key. Each field gets the control its type deserves:
+— the same schema your editor uses for completions. **Configuration** is a section of the
+sidebar rather than a single destination: each view — Routing, Rendering, Security, Advanced and
+Cron — is its own page at `/config/<view>`, and `/config` opens on Routing.
+
+A view puts its plain scalars inline, together, under one Save, and gives every key that wants
+more room a tab of its own; the strip says whether each of those is set. **Nothing collapses.**
+The tab that opens is the first one actually set, so a view never greets you with an empty form
+while the key you configured waits behind a tab.
+
+That shared Save writes several keys at once. The edits are chained through an evolving source and
+diffed once, so you review one diff; if any one of them cannot be spliced the whole submit is
+refused and nothing is written. Clearing a scalar removes its key — which is what the band offers
+instead of a per-key "Remove key", the button a grouping still has. One exception is deliberate: a
+key that is not in the file and whose box is unchecked is left alone, because `false` is what an
+absent boolean already means and saving a view should not write one into your config.
+
+Each field gets the control its type deserves:
 
 | Schema shape                       | Widget                                                                                                                                                      |
 | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -180,7 +195,7 @@ top-level key. Each field gets the control its type deserves:
 | Array of scalars                   | Chips: add, remove, reorder (`publicEnv`, `i18n.locales`)                                                                                                   |
 | Array of objects                   | A typed sub-form per row with `↑` `↓` `✕` and `+ Add` (`redirects`, `rewrites`, `headers`, `images.remotePatterns`, `images.localPatterns`, `i18n.domains`) |
 | `Record<string, T>`                | Key/value map rows (`scheduledTasks`, `experimental.features`)                                                                                              |
-| Object with properties             | A collapsible group                                                                                                                                         |
+| Object with properties             | A named group of fields                                                                                                                                     |
 | `boolean` / `number` / `string`    | Toggle / number (with the schema's bounds) / one-line text                                                                                                  |
 | `string` tagged `@widget textarea` | A multi-line textarea (`spa.head`, `spa.loading`)                                                                                                           |
 | Anything opaque                    | A read-only code cell                                                                                                                                       |
@@ -604,7 +619,8 @@ only if it will not; on Windows, which has no such signal, it is a hard kill and
 
 ## Cron
 
-`/config/cron` is the Config panel's Cron tab: every cron schedule this project registers at
+`/config/cron` is the Configuration section's Cron page: every cron schedule this project
+registers at
 server startup, when each next fires, and which of them will not fire at all.
 
 A schedule reaches the scheduler from one of two places, and the tab is explicit about which:
@@ -630,6 +646,18 @@ could never fire is refused rather than saved. The write is the same one the
 [configuration editor](#configuration-editor) performs: `setConfigValue` splices the key, you get
 a unified diff to review, and only a confirm writes — atomically, and refused with a `409` if the
 file changed since the form was rendered.
+
+**Pick a shape, and the server composes the expression.** Above the rows sits a builder: Every
+minute, Hourly, Daily, Weekly, Monthly or Custom, showing only the fields that shape uses — a
+minute for Hourly, an hour and minute for Daily, a weekday for Weekly, a day of the month for
+Monthly. It is a `GET` form, so choosing a shape submits it, the server composes the expression
+with `composeCron`, and the field below receives it. The builder never edits that field directly:
+a picker, a row of selects and a free-text box all writing one value is three inputs that nothing
+keeps in step once scripting is off, so only the field is ever written. Nothing is copied out of
+the query either — an unrecognised shape composes nothing and every number is clamped into its
+field's domain, so what reaches the field is only ever digits, spaces and asterisks. Under
+**Custom** the builder steps aside: a range or a step is not a shape it can state, and the field
+below is already the full editor.
 
 **The preview follows what you type.** With JavaScript on, editing an expression asks the server
 what it means and when it next fires, and puts the answer beside the field. The field itself is
@@ -790,6 +818,11 @@ the box included — so the caret is put back where it was, and a second keystro
 expect it to. The filtering itself stays on the server: `matchesTerms` is the only implementation
 of how a query matches, and a copy in the client module could only ever come to disagree with it.
 
+**A builder that navigates.** The Cron page's schedule builder works the same way: it is a `GET`
+form, so choosing a shape is a navigation the server answers by composing an expression, and with
+JavaScript on that submit is swapped in place like any other link. No client code of its own was
+needed, and none parses a cron expression — the reading and the composing are both the server's.
+
 **How the views are built.** Every panel is a component tree built with `h()` from denext's
 own JSX runtime, in plain `.ts` modules, and rendered once to a string on the server. That
 changes nothing on the wire: there is still no client bundle, no hydration and no island,
@@ -804,6 +837,7 @@ the browser and a machine client exercise identical code:
 | ------------------ | --------------------- | ---------------------- |
 | `/`                | `GET` `HEAD`          | `/api/overview`        |
 | `/config`          | `GET` `POST`          | `/api/config`          |
+| `/config/<view>`   | `GET` `POST`          | `/api/config/<view>`   |
 | `/config/next`     | `GET`                 | `/api/config/next`     |
 | `/config/cron`     | `GET` `POST`          | `/api/config/cron`     |
 | `/plugins`         | `GET` `POST` `DELETE` | `/api/plugins`         |
