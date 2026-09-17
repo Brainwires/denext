@@ -103,14 +103,14 @@ export function isConfigGroup(value: string | null): value is ConfigGroup {
 /**
  * The URL of one view — its own path, as every other destination in this UI has.
  *
- * The default group is spelled `/config` with no segment, so the panel's own address stays the
- * short one and a link to it does not rot if the default ever changes.
+ * Every view is spelled the same way, the default included. A bare `/config` used to be the
+ * default's short address, which made it the one page whose URL did not say which view it was.
  *
  * @param group The view.
  * @returns Its path.
  */
 export function groupHref(group: ConfigGroup): string {
-  return group === DEFAULT_GROUP ? "/config" : `/config/${group}`;
+  return `/config/${group}`;
 }
 
 /** The id of the whole-file escape hatch, which is placed like any other key. */

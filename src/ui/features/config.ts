@@ -41,7 +41,7 @@ import type { DenextConfig } from "../../server/config.ts";
 import { validateDenextConfig, warnUnknownConfigKeys } from "../../server/config-validate.ts";
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode } from "../../jsx/types.ts";
-import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
+import { jsonResponse, panelResponder, UI_NAV, type UiContext, type UiHandler } from "../html.ts";
 import {
   DiffBlock,
   Hidden,
@@ -999,8 +999,72 @@ function groupFromPath(pathname: string): ConfigGroup | null {
   return isConfigGroup(segment) ? segment : null;
 }
 
-/** Wrap a panel section as a fragment (the `ui.js` swap) or as the full document. */
-const panelResponse = panelResponder("Config", "/config");
+/**
+ * Wrap a panel section as a fragment (the `ui.js` swap) or as the full document.
+ *
+ * One responder per view, because the responder is what tells the shell which nav entry is
+ * current. A single `/config` for all of them marked Routing on every view — invisible while
+ * clicking, since `ui.js` re-derives the marker after a swap, but the served HTML was wrong on
+ * every reload and stayed wrong with scripting off.
+ */
+const PANEL_RESPONSE = new Map<string, ReturnType<typeof panelResponder>>();
+
+/** The responder for one view, built once per view. */
+function panelResponseFor(active: string): ReturnType<typeof panelResponder> {
+  let responder = PANEL_RESPONSE.get(active);
+  if (!responder) {
+    responder = panelResponder("Config", active);
+    PANEL_RESPONSE.set(active, responder);
+  }
+  return responder;
+}
+
+/** What each card on the Configuration index says. */
+const VIEW_LEAD: Readonly<Record<string, string>> = {
+  "/config/routing": "Base path, trailing slash, redirects, rewrites, headers and i18n.",
+  "/config/rendering": "Rendering mode, streaming, SPA, images, Tailwind, MDX, Live and cache.",
+  "/config/security": "CSP, HSTS, the public env allowlist, and the API body and batch limits.",
+  "/config/advanced": "Experimental flags, compatibility, plugins, project verbs, the raw file.",
+  "/config/cron": "Scheduled tasks, their expressions, and the run history.",
+};
+
+/**
+ * The Configuration index: a card per view, the way the overview is a card per panel.
+ *
+ * The views are read off the navigation rather than listed here, so this page and the sidebar
+ * cannot come to disagree about which views exist. `/config` is not among them — it is this page,
+ * and its own address is what the overview's Configuration card points at.
+ */
+function ConfigIndex(): VNode {
+  const views = UI_NAV.filter((item) => item.href.startsWith("/config/"));
+  return h(
+    Panel,
+    { name: "Config", title: "Configuration" },
+    h(
+      "p",
+      { class: "lead" },
+      "Every denext.config.ts key, grouped by subject. A view edits its keys as a form, previews " +
+        "the change as a diff, and keeps the bytes you did not touch.",
+    ),
+    h(
+      "div",
+      { class: "cards" },
+      views.map((item) =>
+        h(
+          "a",
+          { key: item.href, class: "card", href: item.href },
+          h("strong", null, item.label),
+          h("span", null, VIEW_LEAD[item.href] ?? ""),
+        )
+      ),
+    ),
+  );
+}
+
+/** The Configuration index, as the fragment or the whole document. */
+function indexResponse(ctx: UiContext): Response {
+  return panelResponseFor("/config")(ctx, renderView(h(ConfigIndex, null)), 200, "Configuration");
+}
 
 /**
  * The editor page, with an optional notice above the sections and a refused submit's feedback.
@@ -1025,7 +1089,7 @@ async function editorResponse(
   const posted = params.get("section");
   const group = groupFromPath(ctx.url.pathname) ??
     (posted ? groupOf(posted) : DEFAULT_GROUP);
-  return panelResponse(
+  return panelResponseFor(groupHref(group))(
     ctx,
     renderView(h(ConfigPanel, {
       ctx,
@@ -1051,7 +1115,9 @@ function viewTitle(group: ConfigGroup, key: string): string {
 
 /** A preview page, as the fragment or the whole document. */
 function previewResponse(ctx: UiContext, pending: Pending, status?: number): Response {
-  return panelResponse(ctx, renderView(h(PreviewPanel, { ctx, pending })), status);
+  // A diff is not one of the views, so it marks the editor itself rather than borrowing the
+  // highlight of whichever view the edit happened to come from.
+  return panelResponseFor("/config")(ctx, renderView(h(PreviewPanel, { ctx, pending })), status);
 }
 
 /** A refusal, in whichever shape the caller asked for. */
@@ -1538,6 +1604,12 @@ export const configPanel: UiHandler = async (
 ): Promise<Response> => {
   if (ctx.url.pathname.endsWith("/config/next")) return await nextConfigPanel(request, ctx);
   if (ctx.url.pathname.endsWith("/config/cron")) return await cronPanel(request, ctx);
+  // The bare `/config` is the front door: a card per view, and no config file read to render it.
+  // Only the HTML GET — `/api/config` answers above with the editor's payload, which is what
+  // scripts call it for, and a POST here still writes.
+  if (!ctx.json && ctx.url.pathname === "/config" && ctx.method !== "POST") {
+    return indexResponse(ctx);
+  }
   const state = await readState(ctx.dir);
   if (ctx.method === "GET" || ctx.method === "HEAD") {
     if (ctx.json) {

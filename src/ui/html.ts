@@ -102,7 +102,7 @@ export const UI_NAV_SECTIONS: readonly NavSection[] = [
   {
     label: "Configuration",
     items: [
-      { href: "/config", label: "Routing" },
+      { href: "/config/routing", label: "Routing" },
       { href: "/config/rendering", label: "Rendering" },
       { href: "/config/security", label: "Security" },
       { href: "/config/advanced", label: "Advanced" },

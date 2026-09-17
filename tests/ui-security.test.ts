@@ -76,13 +76,15 @@ Deno.test("a wrong cookie is 401", async () => {
   }
 });
 
-Deno.test("?t= sets the cookie and 302s to the same path WITHOUT the query", async () => {
+Deno.test("?t= sets the cookie and 302s to the overview, never the requested path", async () => {
   const s = await ui();
   try {
     const res = await fetch(`${s.base}/config?t=${s.server.token}`, { redirect: "manual" });
     await res.body?.cancel();
     assertEquals(res.status, 302);
-    assertEquals(res.headers.get("location"), "/config");
+    // Always the overview: the launcher only ever prints `/?t=`, and a copied link must not
+    // decide which page a session opens on.
+    assertEquals(res.headers.get("location"), "/");
     const cookie = res.headers.get("set-cookie") ?? "";
     assertStringIncludes(cookie, `${UI_COOKIE}=${s.server.token}`);
     assertStringIncludes(cookie, "HttpOnly");
@@ -582,7 +584,14 @@ Deno.test("the handshake never answers with a protocol-relative Location", async
     });
     await res.body?.cancel();
     assertEquals(res.status, 302);
-    assertEquals(res.headers.get("location"), "/evil.example/x");
+    // The destination is fixed, so the hostile path is not scrubbed — it never reaches the
+    // header at all. This used to answer `/evil.example/x`, a leading-slash repair of the
+    // request's own path; nothing is repaired now because nothing is borrowed.
+    const location = res.headers.get("location");
+    assertEquals(location, "/");
+    // The property, not the string: whatever the handshake ever redirects to, it must stay on
+    // this origin. `//host/path` is a URL to somewhere else.
+    assert(!(location ?? "").startsWith("//"), "a Location must never be protocol-relative");
   } finally {
     await stop(s);
   }

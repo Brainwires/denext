@@ -54,10 +54,6 @@ const FEATURES: readonly FeatureRoute[] = [
   { path: "/config", methods: ["GET", "POST"], handle: configPanel },
   // One route per config view, derived from the group list so the two cannot drift: adding a
   // group gives it a page (and its `/api` twin) without anything here being edited.
-  //
-  // The DEFAULT group is registered here too, even though `/config` already renders it. The
-  // short address stays the canonical one every link is spelled with, but a path built the way
-  // every other view's is must not be the one that 404s.
   ...CONFIG_GROUPS.map((group) => ({
     path: `/config/${group}`,
     methods: ["GET", "POST"],
@@ -144,18 +140,17 @@ function Card({ item }: { readonly item: NavItem }): VNode {
  * What the overview offers: one card per destination, with a whole nav SECTION standing as a
  * single card.
  *
- * Configuration has six pages; six cards for one subject would bury the five other panels it
- * sits beside. The section's card points at its first page, which is where following the sidebar
- * heading would land anyway.
+ * Configuration's card points at `/config`, which is itself a page of cards — one per view. Five
+ * of them here would bury the panels they sit beside, and would leave `/config` with nothing
+ * linking to it, since the sidebar lists those views directly.
  *
  * @returns The cards, in navigation order.
  */
 function overviewCards(): NavItem[] {
   const out: NavItem[] = [];
   for (const section of UI_NAV_SECTIONS) {
-    const first = section.items[0];
     if (section.label !== undefined) {
-      if (first) out.push({ href: first.href, label: section.label });
+      out.push({ href: "/config", label: section.label });
       continue;
     }
     for (const item of section.items) if (item.href !== "/") out.push(item);

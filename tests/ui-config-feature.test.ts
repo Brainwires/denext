@@ -104,7 +104,7 @@ const RULES = [
 Deno.test("a view shows its scalars inline and its groupings as tabs, nothing collapsed", async () => {
   const dir = await project();
   try {
-    const res = await call(dir, "/config");
+    const res = await call(dir, "/config/routing");
     assertEquals(res.status, 200);
     const body = await res.text();
     assertStringIncludes(body, '<section id="panel"');
@@ -119,17 +119,17 @@ Deno.test("a view shows its scalars inline and its groupings as tabs, nothing co
     const panel = body.slice(body.indexOf('<section id="panel"'));
     assert(!panel.includes('href="/config/rendering"'), "no second strip repeating the views");
     // The plain scalars share the first tab rather than floating above the strip.
-    assertStringIncludes(body, 'href="/config?key=general"');
+    assertStringIncludes(body, 'href="/config/routing?key=general"');
     assert(hasField(body, "basePath", "/docs"));
     assert(hasField(body, "trailingSlash", "on"));
     assertStringIncludes(body, 'class="band"');
     // The groupings follow it, each saying whether its key is set.
-    assertStringIncludes(body, 'href="/config?key=redirects"');
-    assertStringIncludes(body, 'href="/config?key=i18n"');
+    assertStringIncludes(body, 'href="/config/routing?key=redirects"');
+    assertStringIncludes(body, 'href="/config/routing?key=i18n"');
     // A view opens on General, so only its fields are rendered — a grouping's form arrives when
     // its own tab is asked for.
     assert(!hasField(body, "redirects[0].source", "/old"), "only the selected tab renders a form");
-    const rows = await (await call(dir, "/config?key=redirects")).text();
+    const rows = await (await call(dir, "/config/routing?key=redirects")).text();
     assert(hasField(rows, "redirects[0].source", "/old"));
     assert(hasField(rows, "redirects[1].destination", "/b"));
     assertStringIncludes(rows, 'value="up:1:redirects"');
@@ -172,7 +172,7 @@ Deno.test("a scalar change previews a diff touching only that value, then writes
     assertEquals(applied.status, 303);
     // An inline scalar lives on the General tab, so that is where the write lands — on the
     // field you just edited, not merely on the view that contains it.
-    assertEquals(applied.headers.get("location"), "/config?key=general");
+    assertEquals(applied.headers.get("location"), "/config/routing?key=general");
     assertStringIncludes(await onDisk(dir), 'basePath: "/site",');
     assertStringIncludes(await onDisk(dir), "// keep this comment");
   } finally {
@@ -286,7 +286,7 @@ Deno.test("a section form tracks edits: Save waits, and Clear is named for what 
   try {
     // A grouping's tab, because "Remove key" belongs to a grouping's own form; a scalar on
     // General is removed by clearing its field instead.
-    const body = await (await call(dir, "/config?key=redirects")).text();
+    const body = await (await call(dir, "/config/routing?key=redirects")).text();
     // `ui.js` disables Save until something changes and adds Discard; the server must not
     // render Save disabled, or a browser with JavaScript off could never save at all.
     assertStringIncludes(body, 'data-dirty-track="1"');
@@ -305,7 +305,7 @@ Deno.test("a config shape the writer cannot own bails honestly, and writes nothi
   const source = 'const config = { basePath: "/x" };\nexport default config;\n';
   const dir = await project(source);
   try {
-    const page = await call(dir, "/config");
+    const page = await call(dir, "/config/routing");
     assertStringIncludes(await page.text(), "cannot be edited key by key");
 
     const res = await call(dir, "/config?section=basePath", { form: { basePath: "/site" } });
@@ -410,7 +410,7 @@ Deno.test("read-only refuses every write, confirmed or not", async () => {
 Deno.test("a project with no config is offered one, previewed before it is created", async () => {
   const dir = await project(null);
   try {
-    const page = await call(dir, "/config");
+    const page = await call(dir, "/config/routing");
     assertStringIncludes(await page.text(), "This project has no denext config");
 
     const preview = await call(dir, "/config?create=1", { form: {} });
@@ -494,7 +494,7 @@ Deno.test("next.config is offered only to a compat app, on every render", async 
   // the compat flag from the handler once left those POST paths rendering without it.
   const native = await project();
   try {
-    const body = await (await call(native, "/config")).text();
+    const body = await (await call(native, "/config/routing")).text();
     assertStringIncludes(body, 'class="panel-head"');
     assert(!body.includes('href="/config/next"'), "a native app is offered no next.config link");
   } finally {
@@ -514,7 +514,7 @@ Deno.test("next.config is offered only to a compat app, on every render", async 
         ["an unknown section", { form: { section: "nope" } }],
       ] as const
     ) {
-      const res = await call(compat, "/config", init);
+      const res = await call(compat, "/config/routing", init);
       assertStringIncludes(
         await res.text(),
         'href="/config/next"',
@@ -646,7 +646,7 @@ Deno.test("a denext.config.ts symlinked out of the project is neither read nor w
 Deno.test("a write against a stale _base is a 409 and changes nothing", async () => {
   const dir = await project();
   try {
-    const page = await (await call(dir, "/config?key=redirects")).text();
+    const page = await (await call(dir, "/config/routing?key=redirects")).text();
     const base = page.match(/name="_base"[^>]*value="([0-9a-f]{64})"/)?.[1];
     assert(base, "every form carries the source's SHA-256 as _base");
 
@@ -662,7 +662,7 @@ Deno.test("a write against a stale _base is a 409 and changes nothing", async ()
     assertEquals(await onDisk(dir), edited, "the editor's version survived");
 
     // Re-rendering hands out the fresh stamp, and the same write then applies.
-    const fresh = (await (await call(dir, "/config?key=redirects")).text())
+    const fresh = (await (await call(dir, "/config/routing?key=redirects")).text())
       .match(/name="_base"[^>]*value="([0-9a-f]{64})"/)?.[1];
     assert(fresh && fresh !== base);
     const ok = await call(dir, "/config?section=basePath", {
@@ -735,6 +735,41 @@ Deno.test("a key that is on by default can finally be turned off", async () => {
     // And an absent opt-in key, unticked, behaves exactly as it always did.
     const optIn = await call(dir, "/api/config/rendering", { form: { cacheComponents: ["off"] } });
     assertEquals((await optIn.json()).diff, "", "an absent opt-in key stays absent");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("/config is the Configuration index, and its twin is still the editor", async () => {
+  const dir = await project();
+  try {
+    // The page is a front door: a card per view, and no editor of its own. It does not even
+    // read the config file — the views do that.
+    const index = await call(dir, "/config");
+    assertEquals(index.status, 200);
+    const body = await index.text();
+    for (const view of ["routing", "rendering", "security", "advanced", "cron"]) {
+      assertStringIncludes(body, `href="/config/${view}"`, `${view} needs a card`);
+    }
+    assert(!body.includes("<form"), "the index offers cards, not a form");
+
+    // The twin is NOT the index. Scripts call `/api/config` for the editor's payload, and that
+    // contract predates the page being split into views — it must not move because a page did.
+    const twin = await call(dir, "/api/config");
+    assertEquals(twin.status, 200);
+    const payload = await twin.json();
+    assertEquals(payload.ok, true);
+    assertEquals(payload.file, "denext.config.ts");
+    assertEquals(payload.form, "object");
+    assertEquals(payload.keys.basePath, { kind: "editable", value: "/docs" });
+
+    // And a write still posts to `/config`, which is why the page keeps its POST.
+    const wrote = await call(dir, "/config?section=basePath", {
+      form: { basePath: "/site", confirm: "1" },
+    });
+    assertEquals(wrote.status, 303);
+    assertEquals(wrote.headers.get("location"), "/config/routing?key=general");
+    assertStringIncludes(await onDisk(dir), 'basePath: "/site"');
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

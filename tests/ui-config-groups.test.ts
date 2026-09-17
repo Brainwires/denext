@@ -77,10 +77,10 @@ Deno.test("a key the schema does not describe still has a home", () => {
   assertEquals(groupOf(""), "advanced");
 });
 
-Deno.test("the default view is spelled as the panel's own address", () => {
-  // `/config` and `/config/routing` would be two URLs for one page; the short one wins, so
-  // a link to the panel does not rot if the default ever moves.
-  assertEquals(groupHref(DEFAULT_GROUP), "/config");
+Deno.test("every view is spelled the same way, the default included", () => {
+  // `/config` is the Configuration index — a card per view — so the default view needs a path
+  // that says which view it is, exactly like the others.
+  assertEquals(groupHref(DEFAULT_GROUP), "/config/routing");
   assertEquals(groupHref("security"), "/config/security");
   assert(isConfigGroup("security"));
   assert(!isConfigGroup("nope"));

@@ -170,7 +170,9 @@ read-only `403`.
 [`denext.config.schema.json`](https://github.com/Brainwires/denext/blob/main/denext.config.schema.json)
 — the same schema your editor uses for completions. **Configuration** is a section of the
 sidebar rather than a single destination: each view — Routing, Rendering, Security, Advanced and
-Cron — is its own page at `/config/<view>`, and `/config` opens on Routing.
+Cron — is its own page at `/config/<view>`. `/config` itself is an index of those views, a card
+each, and is where the overview's **Configuration** card points; its `/api/config` twin is
+unchanged and still answers with the editor's payload.
 
 A view carries **one** strip of tabs, directly under its heading, listing the keys of that view —
 the views themselves are the sidebar's job, so nothing on the page repeats them. The first tab,

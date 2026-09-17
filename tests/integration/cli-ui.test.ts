@@ -660,7 +660,7 @@ async function exists(path: string): Promise<boolean> {
  */
 async function checkConfigWrite(ui: Ui): Promise<void> {
   const path = join(ui.dir, "denext.config.ts");
-  const form = await (await authed(ui, "/config")).text();
+  const form = await (await authed(ui, "/config/routing")).text();
   assertMatch(form, /name="basePath"[^>]*value="\/docs"/);
 
   const preview = await mutate(ui, "/config?section=basePath", { basePath: "/site" });
@@ -676,7 +676,7 @@ async function checkConfigWrite(ui: Ui): Promise<void> {
   // The General tab, which is where a scalar lives: `#basePath` used to name the <details> that
   // wrapped the key, and nothing collapses any more. The write lands on the field it changed,
   // not merely on the view containing it.
-  assertEquals(applied.headers.get("location"), "/config?key=general");
+  assertEquals(applied.headers.get("location"), "/config/routing?key=general");
   assertEquals(
     await Deno.readTextFile(path),
     CONFIG.replace('"/docs"', '"/site"'),

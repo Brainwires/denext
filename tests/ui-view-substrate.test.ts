@@ -71,7 +71,7 @@ Deno.test("the layout renders its golden document, the body inserted verbatim", 
     nav: UI_NAV_SECTIONS,
     body: BODY,
     csrf: `tok"&<'>`,
-    active: "/config",
+    active: "/config/routing",
   };
   const nav = UI_NAV_SECTIONS.map((section) => {
     // An item under a heading carries `nested`, which is what indents it.
@@ -80,7 +80,7 @@ Deno.test("the layout renders its golden document, the body inserted verbatim", 
       ? ""
       : `<span class="nav-section">${section.label}</span>`) +
       section.items.map((item) =>
-        item.href === "/config"
+        item.href === "/config/routing"
           ? `<a href="${item.href}"${cls} aria-current="page">${item.label}</a>`
           : `<a href="${item.href}"${cls}>${item.label}</a>`
       ).join("");

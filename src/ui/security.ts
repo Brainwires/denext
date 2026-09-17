@@ -197,8 +197,13 @@ function loopbackHost(hostname: string): boolean {
 
 /**
  * The `?t=<token>` handshake: on a valid token, park it in an `HttpOnly; SameSite=Strict` cookie
- * and 302 to the same path **without** the query, so the secret never survives in the address
- * bar, `document.referrer`, history, or a copied link.
+ * and 302 to the **overview**, so the secret never survives in the address bar,
+ * `document.referrer`, history, or a copied link.
+ *
+ * The destination is always `/` rather than whatever path the link carried. The launcher only
+ * ever prints `/?t=…`, so this is where a handshake landed in practice anyway; sending it
+ * anywhere else would let a copied link decide the first page, and echoing the request's own
+ * path back as a `Location` is a shape worth not having at all.
  *
  * The exchange is **single-use**. Once it has run, a `?t=` is honoured only for a caller that
  * already holds the session cookie (the same tab re-opening its own link), so the token that is
@@ -221,13 +226,10 @@ export function handshake(request: Request, url: URL, session: UiSession): Respo
     });
   }
   session.handshakeSpent = true;
-  const clean = new URL(url.href);
-  clean.searchParams.delete("t");
-  // One leading slash: a request for `//evil.example/` would otherwise answer with a
-  // protocol-relative `Location` that leaves the loopback origin.
-  const path = "/" + clean.pathname.replace(/^\/+/, "");
-  const location = path + (clean.search === "?" ? "" : clean.search);
-  const headers = new Headers({ location });
+  // A fixed destination, so nothing from the request reaches the `Location` header: a request
+  // for `//evil.example/` cannot become a protocol-relative redirect off the loopback origin,
+  // because the path is not built from the URL at all.
+  const headers = new Headers({ location: "/" });
   headers.append(
     "set-cookie",
     `${UI_COOKIE}=${session.token}; HttpOnly; SameSite=Strict; Path=/`,

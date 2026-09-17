@@ -260,7 +260,7 @@ Deno.test("denext ui: a link the browser should own is left alone", async () => 
     assert(declined, "the probe must run");
     // A cross-origin link and a _blank link are both still ordinary links in the document.
     assertEquals(
-      await page.evaluate(`!!document.querySelector('.sidebar nav a[href="/config"]')`),
+      await page.evaluate(`!!document.querySelector('.sidebar nav a[href="/config/routing"]')`),
       true,
     );
   } finally {
@@ -341,19 +341,22 @@ Deno.test("denext ui: filtering swaps the results in place and gives the box bac
     const page = await browser.newPage();
     const errors = collectConsoleErrors(page);
     await page.goto(server.url);
-    await page.goto(`${new URL(server.url).origin}/config`);
+    // The config views stopped filtering when they became pages and tabs: finding a key is
+    // navigation now, not a query. The verbs list still filters, and it is the same path —
+    // a GET form submitted as the link someone assembled.
+    await page.goto(`${new URL(server.url).origin}/commands`);
 
     await pollFor(page, `!!document.querySelector("form.filter")`);
     await page.evaluate("window.__noReload = true");
 
     const box = await page.$("form.filter input");
-    assert(box, "the config panel must offer a filter box");
+    assert(box, "the commands panel must offer a filter box");
     await box.click();
-    await box.type("base");
+    await box.type("build");
 
     // A GET form is a link someone assembled: it goes the same way a nav click does.
     await page.evaluate(`document.querySelector("form.filter").requestSubmit()`);
-    await pollFor(page, `location.search.indexOf("base") !== -1`);
+    await pollFor(page, `location.search.indexOf("build") !== -1`);
 
     assertEquals(
       await page.evaluate("window.__noReload === true"),
@@ -366,7 +369,7 @@ Deno.test("denext ui: filtering swaps the results in place and gives the box bac
     await pollFor(page, `document.activeElement === document.querySelector("form.filter input")`);
     assertEquals(
       await page.evaluate(`document.querySelector("form.filter input").value`),
-      "base",
+      "build",
       "the filter box must come back with the query still in it",
     );
 
@@ -559,10 +562,10 @@ Deno.test("denext ui: leaving a config view with unsaved edits asks first", asyn
     await page.goto(server.url);
     await pollFor(page, `location.pathname === "/"`);
 
-    const toConfig = await page.$('.sidebar nav a[href="/config"]');
-    assert(toConfig, "the sidebar must link to the config editor");
+    const toConfig = await page.$('.sidebar nav a[href="/config/routing"]');
+    assert(toConfig, "the sidebar must link to the Routing view");
     await toConfig.click();
-    await pollFor(page, `location.pathname === "/config"`);
+    await pollFor(page, `location.pathname === "/config/routing"`);
     await pollFor(page, `!!document.querySelector("#f-basePath")`);
 
     // Nothing is dirty yet, so a link still navigates straight through.
@@ -587,7 +590,7 @@ Deno.test("denext ui: leaving a config view with unsaved edits asks first", asyn
     await pollFor(page, `!!document.querySelector("dialog.nav-guard[open]")`);
     assertEquals(
       await page.evaluate(`location.pathname`),
-      "/config",
+      "/config/routing",
       "the navigation must not have happened while the question is open",
     );
     // The dialog lives outside the panel, or a swap would take it away mid-decision.
@@ -603,7 +606,7 @@ Deno.test("denext ui: leaving a config view with unsaved edits asks first", asyn
         .find((b) => b.textContent === "Cancel").click()`,
     );
     await pollFor(page, `!document.querySelector("dialog.nav-guard[open]")`);
-    assertEquals(await page.evaluate(`location.pathname`), "/config");
+    assertEquals(await page.evaluate(`location.pathname`), "/config/routing");
     assertEquals(
       await page.evaluate(`document.querySelector("#f-basePath").value`),
       "/docs",
