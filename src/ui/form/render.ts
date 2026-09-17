@@ -124,6 +124,9 @@ function pillsFor(
   else if (isUnset(value)) pills.push({ text: "unset", tone: "todo" });
   else pills.push({ text: "set", tone: "ok" });
   if (spec.required) pills.push({ text: "required" });
+  // Said last, and said plainly: two keys that do the same thing are otherwise offered as an
+  // equal pair, with nothing to say which one a new config should use.
+  if (spec.deprecated) pills.push({ text: "deprecated", tone: "warn" });
   return pills;
 }
 

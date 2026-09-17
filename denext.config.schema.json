@@ -294,9 +294,11 @@
               "type": "object",
               "properties": {
                 "key": {
+                  "description": "The header name, e.g. `Cache-Control`.",
                   "type": "string"
                 },
                 "value": {
+                  "description": "The value to send, e.g. `public, max-age=3600`.",
                   "type": "string"
                 }
               },
@@ -358,6 +360,7 @@
         },
         "domains": {
           "description": "Exact remote hosts allowed as sources (host only, e.g. `cdn.example.com`).",
+          "deprecated": true,
           "type": "array",
           "items": {
             "type": "string"
@@ -802,6 +805,8 @@
           "type": "boolean"
         },
         "compiler": {
+          "description": "Deprecated. Renamed `experimental.reactCompiler` (Next.js's key) in 2.0. Honored as an alias through 2.x; removed in 3.0.",
+          "deprecated": true,
           "type": "boolean"
         },
         "asyncContext": {
@@ -816,6 +821,8 @@
           }
         },
         "nodeResolve": {
+          "description": "Deprecated. Moved to the top-level `nodeResolve` in 2.0 — it is load-bearing for every compat migration, not an incomplete feature. Honored as an alias through 2.x.",
+          "deprecated": true,
           "type": "boolean"
         }
       },

@@ -448,3 +448,16 @@ Deno.test("a flattened union keeps the types of its values", () => {
   assertEquals(decode(spec, [{ name: "compatibilityMode", value: "false" }]), false);
   assertEquals(decode(spec, [{ name: "compatibilityMode", value: "" }]), undefined, "unset");
 });
+
+Deno.test("a superseded key says so on its label", () => {
+  // `experimental.compiler` and `experimental.reactCompiler` are the SAME switch — the effective
+  // flag is `reactCompiler ?? compiler`. Side by side with no mark, they read as two features.
+  const spec = specAt("experimental", "compiler");
+  assertEquals(spec.deprecated, true);
+  const markup = render(spec, undefined);
+  assertStringIncludes(markup, ">deprecated<");
+  assertStringIncludes(markup, ">unset<", "it still says whether the old key is set");
+
+  // The key that replaced it carries no such pill.
+  assert(!render(specAt("experimental", "reactCompiler"), undefined).includes(">deprecated<"));
+});

@@ -33,7 +33,12 @@ export interface HeaderRule {
   /** Path pattern to match, with `:name` params. */
   source: string;
   /** Header name/value pairs to add to matching responses. */
-  headers: Array<{ key: string; value: string }>;
+  headers: Array<{
+    /** The header name, e.g. `Cache-Control`. */
+    key: string;
+    /** The value to send, e.g. `public, max-age=3600`. */
+    value: string;
+  }>;
 }
 
 /**

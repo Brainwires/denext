@@ -82,6 +82,8 @@ export interface WidgetSpec {
   readonly max?: number;
   /** What the key is when absent, when the schema says (a `@default` JSDoc tag). */
   readonly default?: unknown;
+  /** Whether the key is superseded by another (a `@deprecated` JSDoc tag). */
+  readonly deprecated?: boolean;
 }
 
 /**
@@ -144,6 +146,7 @@ function base(input: RuleInput, kind: WidgetKind): WidgetSpec {
     // Spread rather than assigned, so a spec without a stated default has no `default` key at
     // all and still deep-equals the shape the widget tests compare against.
     ...(input.node.default === undefined ? {} : { default: input.node.default }),
+    ...(input.node.deprecated === true ? { deprecated: true } : {}),
   };
 }
 
