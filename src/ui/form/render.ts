@@ -552,11 +552,26 @@ function fieldOf(value: unknown, child: WidgetSpec): unknown {
   return key === undefined ? undefined : (value as Record<string, unknown>)[key];
 }
 
+/**
+ * Whether a child is worth showing at all.
+ *
+ * A superseded key that the config does not even set is an offer to start using the old name —
+ * so it is hidden until it is actually there. One that IS set keeps rendering, pill and all,
+ * because seeing it is the only way to clear it.
+ *
+ * Hiding is inert, never a deletion: an unrendered field posts nothing, that decodes to
+ * `undefined`, and `undefined` for a key that is already absent means "leave it alone".
+ */
+function worthShowing(spec: WidgetSpec, value: unknown): boolean {
+  return !(spec.deprecated === true && isUnset(value));
+}
+
 /** The widgets of a group's (or a form row's) children, each given its slice of `value`. */
 function fieldsOf(spec: WidgetSpec, value: unknown, ctx: RenderContext): VNode[] {
-  return (spec.children ?? []).map((child, index) =>
-    h(Widget, { key: index, spec: child, value: fieldOf(value, child), ctx })
-  );
+  return (spec.children ?? [])
+    .map((child, index) => ({ child, index, held: fieldOf(value, child) }))
+    .filter((entry) => worthShowing(entry.child, entry.held))
+    .map((entry) => h(Widget, { key: entry.index, spec: entry.child, value: entry.held, ctx }));
 }
 
 /** One spec, dispatched to its kind's component (the recursive half, without the CSRF field). */

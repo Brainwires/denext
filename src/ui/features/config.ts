@@ -712,6 +712,11 @@ interface Grouping {
   readonly scalars?: readonly Section[];
 }
 
+/** Whether the schema marks this key as superseded by another. */
+function deprecated(section: Section): boolean {
+  return section.spec?.deprecated === true;
+}
+
 /** Every tab this view offers: General, then a key each, then the escape hatch. */
 function groupingsOf(shown: readonly Section[], rawHere: boolean): Grouping[] {
   const out: Grouping[] = [];
@@ -839,7 +844,13 @@ function ConfigPanel(
   const { notice } = options;
   const group = options.group ?? DEFAULT_GROUP;
   const { shown, rawHere } = visibleSections(state.sections, group);
-  const groupings = groupingsOf(shown, rawHere);
+  // The same rule the form renderer applies to a group's children, at the top level: a key that
+  // is superseded AND absent is not offered. No top-level key is deprecated today, so this
+  // changes nothing now — it is here so that the day one is, it behaves like the nested ones.
+  const groupings = groupingsOf(
+    shown.filter((section) => section.present || !deprecated(section)),
+    rawHere,
+  );
   const selected = selectedGrouping(groupings, options.key ?? "");
   return h(
     Panel,

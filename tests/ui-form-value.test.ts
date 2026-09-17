@@ -449,15 +449,34 @@ Deno.test("a flattened union keeps the types of its values", () => {
   assertEquals(decode(spec, [{ name: "compatibilityMode", value: "" }]), undefined, "unset");
 });
 
-Deno.test("a superseded key says so on its label", () => {
+Deno.test("a superseded key that IS set says so on its label", () => {
   // `experimental.compiler` and `experimental.reactCompiler` are the SAME switch — the effective
   // flag is `reactCompiler ?? compiler`. Side by side with no mark, they read as two features.
+  // The pill only ever appears on a key the config actually sets: an unset one is not shown.
   const spec = specAt("experimental", "compiler");
   assertEquals(spec.deprecated, true);
-  const markup = render(spec, undefined);
+  const markup = render(spec, true);
   assertStringIncludes(markup, ">deprecated<");
-  assertStringIncludes(markup, ">unset<", "it still says whether the old key is set");
+  assertStringIncludes(markup, ">set<", "and that it is the one the config is using");
 
   // The key that replaced it carries no such pill.
-  assert(!render(specAt("experimental", "reactCompiler"), undefined).includes(">deprecated<"));
+  assert(!render(specAt("experimental", "reactCompiler"), true).includes(">deprecated<"));
+});
+
+Deno.test("a superseded key is not offered until the config actually sets it", () => {
+  // Showing `experimental.compiler` to someone who never used it is an invitation to start
+  // using the name that was replaced. Showing it when it IS set is the only way to clear it.
+  const group = specAt("experimental");
+  const empty = render(group, {});
+  assert(!empty.includes("experimental.compiler"), "an unset superseded key is not rendered");
+  assert(!empty.includes("experimental.nodeResolve"), "nor the other one");
+  assertStringIncludes(empty, "experimental.reactCompiler", "the key that replaced it still is");
+
+  const held = render(group, { compiler: true });
+  assertStringIncludes(held, "experimental.compiler", "a key the config sets is always shown");
+  assertStringIncludes(held, ">deprecated<");
+
+  // Hiding is not deleting: the group posts nothing for it, which reads as "leave it alone".
+  assertEquals(decode(group, encode(group, {})), undefined, "an empty group stays absent");
+  assertEquals(decode(group, encode(group, { compiler: true })), { compiler: true });
 });
