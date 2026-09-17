@@ -547,3 +547,81 @@ Deno.test("denext ui: a sidebar taller than the window scrolls to its last entry
     await teardown(server, dir);
   }
 });
+
+Deno.test("denext ui: leaving a config view with unsaved edits asks first", async () => {
+  const dir = await project(false);
+  await Deno.writeTextFile(join(dir, "denext.config.ts"), "export default {};\n");
+  const server = await startUiServer({ dir, port: 0 });
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    const errors = collectConsoleErrors(page);
+    await page.goto(server.url);
+    await pollFor(page, `location.pathname === "/"`);
+
+    const toConfig = await page.$('.sidebar nav a[href="/config"]');
+    assert(toConfig, "the sidebar must link to the config editor");
+    await toConfig.click();
+    await pollFor(page, `location.pathname === "/config"`);
+    await pollFor(page, `!!document.querySelector("#f-basePath")`);
+
+    // Nothing is dirty yet, so a link still navigates straight through.
+    assertEquals(
+      await page.evaluate(`!!document.querySelector('form[data-dirty-track][data-dirty="1"]')`),
+      false,
+      "a freshly rendered view has no unsaved edits",
+    );
+
+    // Type into the band the way a person would: the tracker listens for input events.
+    await page.evaluate(`
+      const field = document.querySelector("#f-basePath");
+      field.value = "/docs";
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    `);
+    await pollFor(page, `!!document.querySelector('form[data-dirty-track][data-dirty="1"]')`);
+
+    // Now the same click has to stop and ask instead of swapping the panel away.
+    const away = await page.$('.sidebar nav a[href="/wizard"]');
+    assert(away, "the sidebar must link to the wizard");
+    await away.click();
+    await pollFor(page, `!!document.querySelector("dialog.nav-guard[open]")`);
+    assertEquals(
+      await page.evaluate(`location.pathname`),
+      "/config",
+      "the navigation must not have happened while the question is open",
+    );
+    // The dialog lives outside the panel, or a swap would take it away mid-decision.
+    assertEquals(
+      await page.evaluate(`!!document.querySelector("#panel dialog.nav-guard")`),
+      false,
+      "the guard must not be inside the swapped panel",
+    );
+
+    // Cancel: stay exactly where we were, edits intact.
+    await page.evaluate(
+      `[...document.querySelectorAll("dialog.nav-guard button")]
+        .find((b) => b.textContent === "Cancel").click()`,
+    );
+    await pollFor(page, `!document.querySelector("dialog.nav-guard[open]")`);
+    assertEquals(await page.evaluate(`location.pathname`), "/config");
+    assertEquals(
+      await page.evaluate(`document.querySelector("#f-basePath").value`),
+      "/docs",
+      "cancelling keeps the edit",
+    );
+
+    // Discard: the edit goes back, and the navigation the person asked for finally happens.
+    await away.click();
+    await pollFor(page, `!!document.querySelector("dialog.nav-guard[open]")`);
+    await page.evaluate(
+      `[...document.querySelectorAll("dialog.nav-guard button")]
+        .find((b) => b.textContent === "Discard").click()`,
+    );
+    await pollFor(page, `location.pathname === "/wizard"`);
+
+    assertNoConsoleErrors(errors);
+  } finally {
+    await browser.close();
+    await teardown(server, dir);
+  }
+});

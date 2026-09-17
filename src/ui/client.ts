@@ -274,10 +274,106 @@ async function show(href, push, keepFocus) {
   if (push) globalThis.scrollTo(0, 0);
 }
 
+/**
+ * The form on this page holding unsaved edits, if there is one.
+ *
+ * Only a form the tracker actually took can be dirty, so this is exactly the set the injected
+ * Discard button already appears in — the guard and that button agree on what "unsaved" means.
+ */
+function dirtyForm() {
+  return document.querySelector('form[data-dirty-track][data-dirty="1"]');
+}
+
+/** The one guard dialog, and the address the person asked for while edits were pending. */
+let guard = null;
+let pending = "";
+
+/** Leave the dialog, forgetting the address that opened it. */
+function closeGuard() {
+  pending = "";
+  if (guard && guard.open) guard.close();
+}
+
+/**
+ * Build the guard dialog, once.
+ *
+ * It is appended to the body rather than to the panel: a swap replaces #panel wholesale, and a
+ * dialog inside it would be taken away mid-decision. Built here rather than rendered by the
+ * server because with scripting off nothing can intercept a navigation anyway, so the markup
+ * would be dead weight on every page — and the shell document stays byte-for-byte as it was.
+ */
+function guardDialog() {
+  if (guard) return guard;
+  const dialog = document.createElement("dialog");
+  dialog.className = "nav-guard";
+  const heading = document.createElement("h2");
+  heading.textContent = "Unsaved changes";
+  const lead = document.createElement("p");
+  lead.className = "lead";
+  lead.textContent =
+    "This section has edits that have not been written to the file. Saving opens the change preview to confirm, and keeps you on this page.";
+  const actions = document.createElement("div");
+  actions.className = "guard-actions";
+
+  const save = document.createElement("button");
+  save.type = "button";
+  save.textContent = "Save";
+  save.addEventListener("click", () => {
+    const form = dirtyForm();
+    closeGuard();
+    if (!form) return;
+    // Submitting through the Save button is what carries the diff-then-confirm flow, so the
+    // person lands on the preview. The navigation is deliberately dropped rather than resumed
+    // behind a confirmation they have not given yet.
+    const button = saveOf(form);
+    if (button) form.requestSubmit(button);
+    else form.requestSubmit();
+  });
+
+  const throwAway = document.createElement("button");
+  throwAway.type = "button";
+  throwAway.className = "ghost";
+  throwAway.textContent = "Discard";
+  throwAway.addEventListener("click", () => {
+    const form = dirtyForm();
+    const href = pending;
+    closeGuard();
+    if (form) discard(form);
+    if (href) show(href, true).catch((error) => console.error("denext ui:", error));
+  });
+
+  const stay = document.createElement("button");
+  stay.type = "button";
+  stay.className = "ghost";
+  stay.textContent = "Cancel";
+  stay.addEventListener("click", closeGuard);
+
+  // Escape closes a modal dialog on its own; this is only here to forget the pending address.
+  dialog.addEventListener("cancel", () => {
+    pending = "";
+  });
+
+  actions.append(save, document.createTextNode(" "), throwAway, document.createTextNode(" "), stay);
+  dialog.append(heading, lead, actions);
+  document.body.append(dialog);
+  guard = dialog;
+  return dialog;
+}
+
 document.addEventListener("click", (event) => {
   const link = event.target?.closest?.("a[href]");
   if (!enhanceable(link, event)) return;
   event.preventDefault();
+  // Leaving a panel with unsaved edits silently loses them: the panel is swapped away and the
+  // form goes with it. Ask first, and only for a navigation this module owns — a link the
+  // browser keeps (a new tab, another origin) never reaches here.
+  if (dirtyForm()) {
+    pending = link.href;
+    const dialog = guardDialog();
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.setAttribute("open", "");
+    return;
+  }
   show(link.href, true).catch((error) => console.error("denext ui:", error));
 });
 

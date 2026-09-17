@@ -436,4 +436,14 @@ Deno.test("the flip adds exactly the three view modules to the UI server's graph
 Deno.test("the client module is unchanged by the flip: no JSX, no hydration", () => {
   assert(!/jsx|hydrat/i.test(UI_JS), "ui.js stays progressive enhancement only");
   assertStringIncludes(UI_JS, "DOMParser");
+  // The unsaved-changes guard: its BEHAVIOUR is the e2e suite's subject (nightly, a real
+  // browser), so this is the cheap always-run check that it is still there at all — and that it
+  // is still built as nodes rather than assembled as markup, which is what keeps the strict CSP
+  // and the no-innerHTML rule intact.
+  assertStringIncludes(UI_JS, "nav-guard");
+  assertStringIncludes(UI_JS, 'form[data-dirty-track][data-dirty="1"]');
+  assertStringIncludes(UI_JS, "document.body.append(dialog)");
+  // The word itself appears in swapPanel's comment, which is the rule being stated rather
+  // than broken; what must never appear is an ASSIGNMENT.
+  assert(!/\.innerHTML\s*=/.test(UI_JS), "nothing in ui.js is assigned as markup");
 });

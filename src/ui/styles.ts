@@ -237,6 +237,22 @@ h2 { font-size: var(--text-lg); margin: 28px 0 var(--space-2); }
 /* Inline code in prose: already monospace, lifted out of the muted grey so it reads as code. */
 .lead code { color: var(--foreground); }
 
+/* The unsaved-changes guard: the UI's only modal, built by ui.js and never rendered by the
+   server — with scripting off there is no navigation to intercept, so there is nothing to show. */
+.nav-guard {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--background);
+  color: var(--foreground);
+  padding: var(--space-4);
+  max-width: 30rem;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 35%);
+}
+.nav-guard::backdrop { background: rgb(0 0 0 / 45%); }
+.nav-guard h2 { margin: 0 0 var(--space-2); font-size: 1.05rem; }
+.nav-guard .lead { margin: 0 0 var(--space-4); }
+.guard-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+
 /* ── surfaces ──────────────────────────────────────────────────────────── */
 .note {
   border: 1px solid var(--border);
