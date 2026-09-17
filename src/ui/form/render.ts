@@ -39,6 +39,16 @@ export interface RenderContext {
   readonly readOnly?: boolean;
   /** Validation messages to show against fields, keyed by field name. */
   readonly errors?: Readonly<Record<string, string>>;
+  /**
+   * The caller already names the OUTERMOST key, so a container must not name it again.
+   *
+   * Only a group is affected, and only at the top level. A group has no control of its own — its
+   * children are the keys you set — so on a tab that already says `i18n`, a bold `i18n` line
+   * carrying a set/unset pill is the heading twice over, claiming a state for something there is
+   * no way to set. A key that IS a control (chips, a select) keeps its label and its pill, because
+   * there the name and the state both belong to something real.
+   */
+  readonly omitTopLabel?: boolean;
 }
 
 /** What every widget component is handed. */
@@ -447,6 +457,15 @@ function UnionWidget({ spec, value, ctx }: WidgetProps): VNode {
  * at a time, so there is nothing left for it to save you from.
  */
 function GroupWidget({ spec, value, ctx }: WidgetProps): VNode {
+  if (ctx.omitTopLabel && spec.path.length === 1) {
+    // The description stays: it explains the tab you are on, which the name alone did not.
+    return h(
+      "div",
+      { id: `${idOf(nameOf(spec, ctx))}--group` },
+      spec.description ? h("p", { class: "lead group-note" }, spec.description) : null,
+      fieldsOf(spec, value, ctx),
+    );
+  }
   return h(
     "div",
     { id: `${idOf(nameOf(spec, ctx))}--group`, class: "field" },

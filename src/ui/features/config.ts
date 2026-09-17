@@ -43,8 +43,6 @@ import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode } from "../../jsx/types.ts";
 import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
 import {
-  Badge,
-  type BadgeTone,
   DiffBlock,
   Hidden,
   Mono,
@@ -544,12 +542,9 @@ function sectionAction(key: string): string {
 function ReadOnlyCell(
   { state, section }: { readonly state: ConfigState; readonly section: Section },
 ): VNode {
-  const { badge, tone } = badgeOf(section);
   return h(
     Fragment,
     null,
-    // A code cell has no control, so nothing else here would say which key this is.
-    h("p", { class: "group-summary" }, section.key, " ", h(Badge, { tone }, badge)),
     h(SourceBlock, { source: section.text ?? "— not set —" }),
     h(
       "p",
@@ -604,6 +599,8 @@ function EditableField({ ctx, base, section, spec, feedback }: EditableProps): V
     csrf: ctx.csrf,
     readOnly: ctx.readOnly,
     errors: feedback?.errors,
+    // The tab already says which key this is.
+    omitTopLabel: true,
   });
   const clear = h(
     "button",
@@ -666,12 +663,6 @@ function tabLabel(key: string): string {
   return KEY_LABELS[key] ?? key.charAt(0).toUpperCase() + key.slice(1);
 }
 
-/** What a key's pill says, and how it reads. */
-function badgeOf(section: Section): { badge: string; tone: BadgeTone } {
-  if (section.kind !== "editable") return { badge: section.kind, tone: "info" };
-  return section.present ? { badge: "set", tone: "ok" } : { badge: "unset", tone: "todo" };
-}
-
 /**
  * A view's plain scalars, in one form with one Save.
  *
@@ -715,10 +706,6 @@ interface Grouping {
   readonly key: string;
   /** The tab's label. */
   readonly label: string;
-  /** Its state pill. */
-  readonly badge: string;
-  /** How the pill reads. */
-  readonly tone: BadgeTone;
   /** The section, for a tab that edits one key. */
   readonly section?: Section;
   /** The view's scalars, for the General tab. */
@@ -729,23 +716,12 @@ interface Grouping {
 function groupingsOf(shown: readonly Section[], rawHere: boolean): Grouping[] {
   const out: Grouping[] = [];
   const scalars = shown.filter(isInlineSection);
-  if (scalars.length > 0) {
-    const anySet = scalars.some((section) => section.present);
-    out.push({
-      key: GENERAL_KEY,
-      label: "General",
-      badge: anySet ? "set" : "unset",
-      tone: anySet ? "ok" : "todo",
-      scalars,
-    });
-  }
+  if (scalars.length > 0) out.push({ key: GENERAL_KEY, label: "General", scalars });
   for (const section of shown) {
     if (isInlineSection(section)) continue;
-    out.push({ key: section.key, label: tabLabel(section.key), ...badgeOf(section), section });
+    out.push({ key: section.key, label: tabLabel(section.key), section });
   }
-  if (rawHere) {
-    out.push({ key: RAW_KEY, label: "The file itself", badge: "escape hatch", tone: "info" });
-  }
+  if (rawHere) out.push({ key: RAW_KEY, label: "The file itself" });
   return out;
 }
 
