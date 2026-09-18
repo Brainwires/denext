@@ -246,12 +246,38 @@ function toScheduledTasks(
 
 // ── discovery ────────────────────────────────────────────────────────────────
 
-const listCache = new Map<string, { at: number; state: Listing }>();
+const listCache = new Map<string, { at: number; base: string; state: Listing }>();
 const inFlight = new Map<string, Promise<Listing>>();
 
 /** The child's listing, or `null` when it printed nothing parsable. */
 function parseTaskListing(output: string): TaskListing | null {
   return parseJsonDocument<TaskListing>(output);
+}
+
+/** Terminal colour and cursor sequences, which a child's error line may carry. */
+// deno-lint-ignore no-control-regex
+const ANSI = /\x1b\[[0-9;?]*[A-Za-z]/g;
+
+/**
+ * Lines the child prints that say nothing about why it failed: Deno's own download, check and
+ * warning chatter, and the box-drawing frame around a warning.
+ */
+const CHATTER = /^(?:Download |Check |Warning|[\u2500-\u257f])/;
+
+/**
+ * The last line the child printed that says something — the real cause when it printed no
+ * listing. "printed no listing" hides "invalid denext.config.ts: `redirects` must be a function",
+ * and the child already said that; it only has to be repeated.
+ *
+ * @param lines Everything the child wrote, stdout and stderr, in order.
+ * @returns The line, or `null` when nothing it wrote was more than chatter.
+ */
+function lastMeaningful(lines: readonly string[]): string | null {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].replace(ANSI, "").trim();
+    if (line !== "" && !CHATTER.test(line)) return line;
+  }
+  return null;
 }
 
 /** The listing half of the state — what the discovery child found. */
@@ -283,7 +309,12 @@ async function discover(dir: string, offline: boolean): Promise<Listing> {
     return empty("the task listing did not finish — tasks and schedules are not shown");
   }
   const listing = parseTaskListing(lines.join("\n"));
-  if (!listing) return empty("denext task --list printed no listing");
+  if (!listing) {
+    const why = lastMeaningful(lines);
+    return empty(
+      why === null ? "denext task --list printed no listing" : `denext task --list failed: ${why}`,
+    );
+  }
   return {
     tasks: listing.tasks ?? [],
     schedules: listing.schedules ?? [],
@@ -297,24 +328,36 @@ async function discover(dir: string, offline: boolean): Promise<Listing> {
  * This project's tasks and schedules. Overlapping requests share one child, and a successful
  * listing is reused briefly; a failure is never cached.
  *
+ * The config is read FIRST, because the listing is only reusable for the file it was computed
+ * from: `configScheduled` is what the editor's rows come from, and `_base` is the fresh stamp
+ * the write is checked against. A listing older than the file would put rows on the page that
+ * the file no longer has — and a save would then propose deleting a schedule someone just
+ * hand-wrote, with a stamp that lets it through.
+ *
  * @param dir The project directory.
  * @param offline `denext ui --offline`: the child runs `--deny-net --cached-only`.
  * @returns The state the panel renders.
  */
 async function readState(dir: string, offline: boolean): Promise<CronState> {
-  const [listing, config] = await Promise.all([listingFor(dir, offline), readConfigFile(dir)]);
+  const config = await readConfigFile(dir);
+  const listing = await listingFor(dir, offline, config.base);
   return { ...listing, ...config };
 }
 
-/** The cached half: overlapping requests share one child, and only a real answer is reused. */
-function listingFor(dir: string, offline: boolean): Promise<Listing> {
+/**
+ * The cached half: overlapping requests share one child, and only a real answer is reused —
+ * and only while the config it was read from is the one on disk.
+ */
+function listingFor(dir: string, offline: boolean, base: string): Promise<Listing> {
   const key = `${offline}:${dir}`;
   const cached = listCache.get(key);
-  if (cached && Date.now() - cached.at < LIST_TTL_MS) return Promise.resolve(cached.state);
+  if (cached && cached.base === base && Date.now() - cached.at < LIST_TTL_MS) {
+    return Promise.resolve(cached.state);
+  }
   const pending = inFlight.get(key);
   if (pending) return pending;
   const started = discover(dir, offline).then((state) => {
-    if (state.error === undefined) listCache.set(key, { at: Date.now(), state });
+    if (state.error === undefined) listCache.set(key, { at: Date.now(), base, state });
     return state;
   }).finally(() => inFlight.delete(key));
   inFlight.set(key, started);
@@ -899,6 +942,10 @@ function TaskField(
   return h(
     "select",
     { id, name: "task", "aria-label": "Task" },
+    // The add row starts on a blank choice. A `<select>` always posts SOMETHING — with no blank
+    // option a browser posts the first task's name for the untouched add row, and every save
+    // was then refused as "<task> has no cron expression", whichever row was actually edited.
+    value === "" ? h("option", { value: "", selected: true }, "— choose a task —") : null,
     options.map((name) => h("option", { key: name, value: name, selected: name === value }, name)),
   );
 }

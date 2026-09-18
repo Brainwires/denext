@@ -60,11 +60,16 @@ Deno.test("collectSchedules merges config + per-task schedules and dedupes", () 
   ]);
 });
 
-Deno.test("scheduleTasks uses Deno.cron when available and passes the schedule string through", async () => {
-  reset();
-  let ran = 0;
-  registerTask("job", defineTask({ handler: () => ++ran }));
-  const calls: Array<{ name: string; schedule: string; handler: () => unknown }> = [];
+/** A recorded `Deno.cron` registration. */
+interface CronCall {
+  name: string;
+  schedule: string;
+  handler: () => unknown;
+}
+
+/** Run `work` with `Deno.cron` replaced by a recorder, restoring whatever was there after. */
+async function withFakeDenoCron(work: (calls: CronCall[]) => Promise<void> | void) {
+  const calls: CronCall[] = [];
   const denoAny = Deno as { cron?: unknown };
   const had = "cron" in denoAny;
   const prev = denoAny.cron;
@@ -72,6 +77,18 @@ Deno.test("scheduleTasks uses Deno.cron when available and passes the schedule s
     calls.push({ name, schedule, handler });
   };
   try {
+    await work(calls);
+  } finally {
+    if (had) denoAny.cron = prev;
+    else delete denoAny.cron;
+  }
+}
+
+Deno.test("scheduleTasks uses Deno.cron when available and hands it the schedule", async () => {
+  reset();
+  let ran = 0;
+  registerTask("job", defineTask({ handler: () => ++ran }));
+  await withFakeDenoCron(async (calls) => {
     const dispose = scheduleTasks([{ cron: "*/5 * * * *", task: "job" }]);
     assertEquals(calls.length, 1);
     assertEquals(calls[0].schedule, "*/5 * * * *");
@@ -83,10 +100,69 @@ Deno.test("scheduleTasks uses Deno.cron when available and passes the schedule s
     await result;
     assertEquals(ran, 1, "the returned promise resolves once the task ran");
     dispose();
-  } finally {
-    if (had) denoAny.cron = prev;
-    else delete denoAny.cron;
+  });
+});
+
+Deno.test("scheduleTasks hands Deno.cron the POSIX weekday respelled in names", async () => {
+  reset();
+  registerTask("job", defineTask({ handler: () => {} }));
+  // Deno.cron numbers weekdays 1-7 from Sunday and rejects 0: handed `0 0 * * 1` verbatim it
+  // would fire on Sunday, and `0 0 * * 0` would not register at all. The user-facing convention
+  // stays POSIX (every documented example says `1` is Monday); the platform gets names.
+  await withFakeDenoCron((calls) => {
+    scheduleTasks([
+      { cron: "0 0 * * 1", task: "job" },
+      { cron: "0 0 * * 0", task: "job" },
+      { cron: "0 0 * * 1-5/2", task: "job" },
+      { cron: "0 3 ? * ?", task: "job" },
+    ]);
+    assertEquals(calls.map((c) => c.schedule), [
+      "0 0 * * MON",
+      "0 0 * * SUN",
+      "0 0 * * MON,WED,FRI",
+      "0 3 * * *",
+    ]);
+  });
+});
+
+Deno.test("scheduleTasks registers under a name Deno.cron accepts, unique per (task, cron)", async () => {
+  reset();
+  // Deno.cron refuses a name outside [A-Za-z0-9 _-], longer than 64 characters, or already
+  // taken. `task@cron` failed the first rule on every schedule (`*`, `/` and `@`), so under
+  // --unstable-cron and on Deno Deploy no schedule ever registered.
+  const long = "reports/" + "x".repeat(80);
+  registerTask("job", defineTask({ handler: () => {} }));
+  registerTask("reports/daily", defineTask({ handler: () => {} }));
+  registerTask(long, defineTask({ handler: () => {} }));
+  await withFakeDenoCron((calls) => {
+    scheduleTasks([
+      { cron: "*/5 * * * *", task: "job" },
+      { cron: "*,5 * * * *", task: "job" }, // folds to the same readable text as the step
+      { cron: "0 3 * * *", task: "reports/daily" },
+      { cron: "0 3 * * *", task: long },
+      { cron: "0 4 * * *", task: long },
+    ]);
+    assertEquals(calls.length, 5);
+    for (const { name, schedule } of calls) {
+      assert(
+        /^[A-Za-z0-9 _-]+$/.test(name),
+        `"${name}" (${schedule}) uses only allowed characters`,
+      );
+      assert(name.length <= 64, `"${name}" is at most 64 characters`);
+    }
+    assertEquals(new Set(calls.map((c) => c.name)).size, 5, "every pairing has its own name");
+    assert(calls[2].name.startsWith("reports_daily 0 3"), "the task and schedule stay readable");
+  });
+  // And the same pairing gets the same name every boot, so Deno Deploy sees one cron rather
+  // than a new one per deploy.
+  const names: string[] = [];
+  for (let boot = 0; boot < 2; boot++) {
+    await withFakeDenoCron((calls) => {
+      scheduleTasks([{ cron: "0 3 * * *", task: "reports/daily" }]);
+      names.push(calls[0].name);
+    });
   }
+  assertEquals(names[0], names[1]);
 });
 
 Deno.test("scheduleTasks skips a bad cron and an unknown task, without throwing", () => {

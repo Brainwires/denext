@@ -12,6 +12,7 @@ import type { UiContext } from "../src/ui/html.ts";
 import { parseJsonDocument } from "../src/ui/child-json.ts";
 import { cronPanel, nextRuns } from "../src/ui/features/config-cron.ts";
 import { readTaskHistory, taskHistoryRecorder } from "../src/server/task-history.ts";
+import { browserPost, formContaining } from "./helpers/browser-form.ts";
 
 /** A project with a denext config, a tasks/ directory, and an app — enough for discovery. */
 async function project(
@@ -48,6 +49,8 @@ async function call(
   init: {
     form?: Record<string, string>;
     rows?: Array<[string, string]>;
+    /** A whole body in document order — what {@linkcode browserBody} read off a rendered form. */
+    pairs?: Array<[string, string]>;
     readOnly?: boolean;
     query?: string;
     json?: boolean;
@@ -55,8 +58,9 @@ async function call(
 ): Promise<Response> {
   const path = init.json === true ? "/api/config/cron" : "/config/cron";
   const url = new URL(`http://127.0.0.1:5177${path}${init.query ?? ""}`);
-  const posting = init.form !== undefined || init.rows !== undefined;
+  const posting = init.form !== undefined || init.rows !== undefined || init.pairs !== undefined;
   const form = posting ? new FormData() : undefined;
+  for (const [name, value] of init.pairs ?? []) form?.append(name, value);
   for (const [cron, name] of init.rows ?? []) {
     form?.append("cron", cron);
     form?.append("task", name);
@@ -85,6 +89,27 @@ function stampIn(markup: string): string {
 function carriedIn(markup: string): string {
   return (/name="value" value="([^"]*)"/.exec(markup)?.[1] ?? "")
     .replaceAll("&quot;", '"').replaceAll("&amp;", "&");
+}
+
+/**
+ * The body a browser would post for the editor's form when its default submit is pressed with
+ * nothing touched — read off the real markup by the shared scraper (`tests/helpers/browser-form.ts`).
+ * The audit found the existing suite drove the panel with hand-built bodies, which is how a form
+ * that could never be saved from a browser shipped.
+ */
+function browserBody(markup: string): Array<[string, string]> {
+  return browserPost(formContaining(markup, 'data-dirty-track="1"'));
+}
+
+/** `body` with the ONE pair at `index` among those named `name` replaced. */
+function edited(
+  body: Array<[string, string]>,
+  name: string,
+  index: number,
+  value: string,
+): Array<[string, string]> {
+  let seen = -1;
+  return body.map(([n, v]) => n === name && ++seen === index ? [n, value] : [n, v]);
 }
 
 Deno.test("a child's JSON document survives the noise Deno writes around it", () => {
@@ -181,6 +206,119 @@ Deno.test("an edit previews a diff, writes nothing, then confirms exactly that",
     assertEquals(applied.headers.get("location"), "/config/cron?saved=1");
     const landed = await (await call(dir, { query: "?saved=1" })).text();
     assertStringIncludes(landed, "Saved denext.config.ts.");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/** Two config schedules, so removing one is a change rather than "remove every schedule". */
+const TWO_ROWS = `export default {
+  scheduledTasks: { "0 3 * * *": "cleanup", "0 0 * * 1": "digest" },
+};
+`;
+
+Deno.test("what a browser posts for the untouched editor is not refused", async () => {
+  const dir = await project(TWO_ROWS, { cleanup: task(), digest: task() });
+  try {
+    const page = await (await call(dir)).text();
+    const body = browserBody(page);
+    // The add row's task picker starts BLANK. Without a blank option the browser posts the
+    // first task's name beside an empty expression, and every save — an edit to another row, a
+    // ticked remove — was refused as "cleanup has no cron expression".
+    const posted = body.filter(([n]) => n === "task").map(([, v]) => v);
+    assertEquals(posted, ["cleanup", "digest", ""]);
+    assertEquals(body.filter(([n]) => n === "cron").map(([, v]) => v), [
+      "0 3 * * *",
+      "0 0 * * 1",
+      "",
+    ]);
+
+    const res = await call(dir, { pairs: body });
+    const text = await res.text();
+    assertEquals(res.status, 200, text.slice(0, 400));
+    assert(!text.includes("has no cron expression"), "the blank add row is not a row");
+    assertStringIncludes(text, "No change", "an untouched form proposes nothing");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("editing one row's expression in the browser previews exactly that change", async () => {
+  const dir = await project(TWO_ROWS, { cleanup: task(), digest: task() });
+  try {
+    const body = browserBody(await (await call(dir)).text());
+    const res = await call(dir, { pairs: edited(body, "cron", 0, "0 5 * * *") });
+    const preview = await res.text();
+    assertEquals(res.status, 200, preview.slice(0, 400));
+    assertStringIncludes(preview, "Review the change");
+    assertEquals(JSON.parse(carriedIn(preview)), { "0 5 * * *": "cleanup", "0 0 * * 1": "digest" });
+    assertEquals(
+      await Deno.readTextFile(join(dir, "denext.config.ts")),
+      TWO_ROWS,
+      "nothing written",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("ticking remove on a row in the browser previews its removal", async () => {
+  const dir = await project(TWO_ROWS, { cleanup: task(), digest: task() });
+  try {
+    const page = await (await call(dir)).text();
+    assertStringIncludes(page, 'name="drop.0"');
+    // A checked box posts its value; every other control is exactly as rendered.
+    const body: Array<[string, string]> = [...browserBody(page), ["drop.0", "on"]];
+    const res = await call(dir, { pairs: body });
+    const preview = await res.text();
+    assertEquals(res.status, 200, preview.slice(0, 400));
+    assertEquals(JSON.parse(carriedIn(preview)), { "0 0 * * 1": "digest" });
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a hand edit to the config shows up on the very next render, cache or no cache", async () => {
+  const dir = await project(CONFIG, { cleanup: task(), digest: task() });
+  const file = join(dir, "denext.config.ts");
+  try {
+    // The first render fills the 5-second listing cache with ONE config row.
+    const before = browserBody(await (await call(dir)).text());
+    assertEquals(before.filter(([n]) => n === "cron").length, 2, "one row plus the add row");
+
+    // Someone adds a schedule by hand, and reloads within the TTL.
+    await Deno.writeTextFile(file, TWO_ROWS);
+    const page = await (await call(dir)).text();
+    const after = browserBody(page);
+    // The rows come from the listing; `_base` from the file. Served from the stale listing, the
+    // page would show the old row with the NEW stamp — and saving it would propose deleting the
+    // schedule that was just written, with a stamp that lets the write through.
+    assertEquals(after.filter(([n]) => n === "cron").map(([, v]) => v), [
+      "0 3 * * *",
+      "0 0 * * 1",
+      "",
+    ]);
+    const res = await call(dir, { pairs: after });
+    assertStringIncludes(await res.text(), "No change", "the untouched page proposes nothing");
+    assertEquals(await Deno.readTextFile(file), TWO_ROWS);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("when the listing child fails, the page says why, not just that it did", async () => {
+  const dir = await project("export default { redirects: 5 };\n", { cleanup: task() });
+  try {
+    const res = await call(dir);
+    const page = await res.text();
+    // The child printed "invalid denext.config.ts: `redirects` must be a function …" and exited;
+    // "printed no listing" hid that behind the symptom.
+    assertStringIncludes(page, "denext task --list failed:");
+    assertStringIncludes(page, "`redirects` must be a function");
+    assert(!page.includes("printed no listing"), "the cause replaces the symptom");
+    // And the JSON twin carries the same reason.
+    const twin = await (await call(dir, { json: true })).json();
+    assertStringIncludes(twin.error, "`redirects` must be a function");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

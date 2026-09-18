@@ -7,7 +7,7 @@
 // dependency-free minute-tick scheduler otherwise. File discovery lives in `./task-loader.ts` so
 // this module — which user task files import `defineTask` from — stays lean.
 
-import { cronError, type CronExpr, cronMatches, parseCron } from "../runtime/cron.ts";
+import { cronError, type CronExpr, cronMatches, parseCron, toDenoCron } from "../runtime/cron.ts";
 
 /** Context passed to a task's handler. */
 export interface TaskContext {
@@ -218,7 +218,7 @@ export function collectSchedules(
   const seen = new Set<string>();
   const out: ScheduledEntry[] = [];
   const add = (cron: string, task: string) => {
-    const key = `${task} ${cron}`;
+    const key = `${task}\0${cron}`;
     if (seen.has(key)) return;
     seen.add(key);
     out.push({ cron, task });
@@ -245,6 +245,38 @@ function denoCron():
   return typeof c === "function"
     ? c as (name: string, schedule: string, handler: () => unknown) => void
     : null;
+}
+
+/** What `Deno.cron` allows in a registration name: `[A-Za-z0-9 _-]`, at most this many characters. */
+const DENO_CRON_NAME_MAX = 64;
+
+/** FNV-1a over a string, as 8 hex digits — a cheap, synchronous fingerprint for a name. */
+function fnv1a(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
+/**
+ * The name one (task, cron) pairing is registered under with `Deno.cron`.
+ *
+ * `Deno.cron` refuses a name outside `[A-Za-z0-9 _-]`, longer than 64 characters, or already
+ * registered — and `*`, `/` and `,` are most of a cron expression, so `task@cron` was refused
+ * every time. The readable part keeps the task and expression with each run of other characters
+ * folded to `_`; the fingerprint keeps two schedules that fold alike (a step and a list at the
+ * same position) from colliding, and stays the same across restarts so Deno Deploy sees one cron.
+ *
+ * @param task The task's registered name.
+ * @param cron The schedule as the user wrote it.
+ * @returns A name `Deno.cron` accepts, unique to the pairing.
+ */
+function denoCronName(task: string, cron: string): string {
+  const fingerprint = fnv1a(`${task}\0${cron}`);
+  const readable = `${task} ${cron}`.replace(/[^A-Za-z0-9 _-]+/g, "_");
+  return `${readable.slice(0, DENO_CRON_NAME_MAX - fingerprint.length - 1)} ${fingerprint}`;
 }
 
 /**
@@ -274,9 +306,12 @@ export function scheduleTasks(entries: ScheduledEntry[]): () => void {
         // RETURN the promise: Deno.cron keeps the isolate alive until it settles and uses it to
         // serialize runs (no overlap). A void handler would let Deno Deploy freeze the isolate
         // mid-task and run overlapping copies of a task that overruns its interval.
+        //
+        // The schedule goes through `toDenoCron`: Deno.cron numbers weekdays 1-7 from Sunday and
+        // rejects `0`, so a POSIX `0 0 * * 1` (Monday) handed over verbatim would fire on Sunday.
         cron(
-          `${e.task}@${e.cron}`,
-          e.cron,
+          denoCronName(e.task, e.cron),
+          toDenoCron(e.cron),
           () => runTask(e.task, undefined, { trigger: "schedule" }).catch(onScheduledError(e.task)),
         );
       } catch (err) {
