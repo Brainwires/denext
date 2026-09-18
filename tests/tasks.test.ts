@@ -179,6 +179,131 @@ Deno.test("scheduleTasks skips a bad cron and an unknown task, without throwing"
   dispose();
 });
 
+// ---- the userland scheduler (the default self-host path) --------------------
+//
+// `@std/testing/time` is not a dependency of this repo, so the clock is faked here: timers run
+// on a monotonic clock (`tick`), the wall clock behind `Date` can be stepped independently
+// (`jump`) — which is exactly what an NTP correction does to a real process.
+
+/** Fake `Date` + `setTimeout`/`clearTimeout` for the duration of `fn`. */
+async function withFakeClock(
+  fn: (clock: { tick: (ms: number) => Promise<void>; jump: (ms: number) => void }) => Promise<void>,
+): Promise<void> {
+  const RealDate = Date;
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  let wall = 1_700_000_000_000 + 20_000; // 20 s into a minute
+  let mono = 0;
+  let nextId = 1;
+  const timers = new Map<number, { at: number; fn: () => void }>();
+  class FakeDate extends RealDate {
+    /** `new Date()` reads the fake wall clock; `new Date(x)` is untouched. */
+    constructor(...args: [] | [number | string | Date]) {
+      super(...(args.length === 0 ? [wall] : args) as [number]);
+    }
+    static override now(): number {
+      return wall;
+    }
+  }
+  globalThis.Date = FakeDate as DateConstructor;
+  (globalThis as { setTimeout: unknown }).setTimeout = (fn: () => void, ms = 0) => {
+    const id = nextId++;
+    timers.set(id, { at: mono + ms, fn });
+    return id;
+  };
+  (globalThis as { clearTimeout: unknown }).clearTimeout = (id: number) => void timers.delete(id);
+  /** Let the promise chains a fired timer started settle (a real macrotask hop). */
+  const settle = () => new Promise<void>((r) => realSetTimeout(r, 0));
+  const clock = {
+    async tick(ms: number) {
+      const target = mono + ms;
+      for (;;) {
+        let due: [number, { at: number; fn: () => void }] | undefined;
+        for (const entry of timers) {
+          if (entry[1].at <= target && (!due || entry[1].at < due[1].at)) due = entry;
+        }
+        if (!due) break;
+        timers.delete(due[0]);
+        wall += due[1].at - mono;
+        mono = due[1].at;
+        due[1].fn();
+        await settle();
+      }
+      wall += target - mono;
+      mono = target;
+      await settle();
+    },
+    jump(ms: number) {
+      wall += ms;
+    },
+  };
+  try {
+    await fn(clock);
+  } finally {
+    globalThis.Date = RealDate;
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.clearTimeout = realClearTimeout;
+  }
+}
+
+/** A task whose every run blocks until the test releases it, recording the run's signal. */
+function blockingTask() {
+  const runs: { signal: AbortSignal; release: () => void }[] = [];
+  const task = defineTask({
+    handler: ({ signal }) =>
+      new Promise<void>((release) => {
+        runs.push({ signal, release });
+      }),
+  });
+  return { task, runs };
+}
+
+Deno.test("userland scheduler: never on registration, once per matching minute, never overlapping, aborted on dispose", async () => {
+  reset();
+  const { task, runs } = blockingTask();
+  registerTask("job", task);
+  await withFakeClock(async ({ tick }) => {
+    const dispose = scheduleTasks([{ cron: "* * * * *", task: "job" }]);
+    await tick(0);
+    assertEquals(runs.length, 0, "Deno.cron never fires on registration; neither does this");
+    await tick(60_000);
+    assertEquals(runs.length, 1, "the next minute fires the task once");
+    await tick(60_000);
+    assertEquals(runs.length, 1, "a still-running instance is not started again");
+    runs[0].release();
+    await tick(60_000);
+    assertEquals(runs.length, 2, "once it finished, the next matching minute fires");
+    assert(!runs[1].signal.aborted);
+    dispose();
+    assert(runs[1].signal.aborted, "dispose aborts the in-flight run's signal");
+    runs[1].release();
+    await tick(120_000);
+    assertEquals(runs.length, 2, "and the tick is stopped");
+  });
+});
+
+Deno.test("userland scheduler: a wall clock stepped backwards does not re-fire an already-run minute", async () => {
+  reset();
+  const { task, runs } = blockingTask();
+  registerTask("job", task);
+  await withFakeClock(async ({ tick, jump }) => {
+    const dispose = scheduleTasks([{ cron: "* * * * *", task: "job" }]);
+    await tick(60_000);
+    assertEquals(runs.length, 1);
+    runs[0].release();
+    // An NTP correction steps the wall clock back two minutes; the process keeps ticking.
+    jump(-120_000);
+    await tick(60_000);
+    assertEquals(runs.length, 1, "a minute that already fired is not fired again");
+    await tick(60_000);
+    assertEquals(runs.length, 1, "…nor is the last fired minute itself, reached a second time");
+    await tick(60_000);
+    assertEquals(runs.length, 2, "the first minute past it fires as usual");
+    runs[1].release();
+    dispose();
+  });
+});
+
 // ---- the run-history seam --------------------------------------------------
 //
 // The recorder is module-global, so every test here clears it in a `finally`: a leaked one would

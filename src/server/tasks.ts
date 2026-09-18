@@ -343,7 +343,10 @@ function startUserlandScheduler(entries: ScheduledEntry[]): () => void {
   const tick = () => {
     const now = new Date();
     const minute = Math.floor(now.getTime() / 60000);
-    if (minute !== lastMinute) {
+    // Strictly later, not merely different: a wall clock stepped BACKWARDS (an NTP correction)
+    // would otherwise re-fire a minute that already ran. Like Deno.cron, a minute fires at most
+    // once — after a backwards step nothing fires until the clock passes the last fired minute.
+    if (minute > lastMinute) {
       lastMinute = minute;
       for (const p of parsed) {
         if (!cronMatches(p.expr, now)) continue;

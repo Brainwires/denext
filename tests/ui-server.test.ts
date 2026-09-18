@@ -9,7 +9,7 @@ import { cliInvocation } from "../src/ui/proc.ts";
 import { projectTasks, UI_ROUTES } from "../src/ui/routes.ts";
 import { UI_CSRF_HEADER } from "../src/ui/security.ts";
 import { uiHandshake } from "./helpers/ui-session.ts";
-import { toHtml, UI_NAV } from "../src/ui/html.ts";
+import { toHtml, UI_NAV, UI_TITLE_HEADER } from "../src/ui/html.ts";
 import { Fragment, h } from "../src/jsx/jsx-runtime.ts";
 import { DiffBlock, OpForm } from "../src/ui/components.ts";
 import { Raw, renderView } from "../src/ui/view.ts";
@@ -177,6 +177,61 @@ Deno.test("a fragment request returns only the section ui.js swaps", async () =>
     const body = await res.text();
     assert(!body.includes("<!doctype html>"));
     assertStringIncludes(body, '<section id="panel"');
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test('every panel GET answers a fragment request with the bare <section id="panel"> and a title header', async () => {
+  const h = await ui();
+  try {
+    // A config wiring a catalogued plugin, so its options sub-panel has something to render.
+    await Deno.writeTextFile(
+      join(h.dir, "denext.config.ts"),
+      'import { openapi } from "@denext/openapi";\nexport default { plugins: [openapi()] };\n',
+    );
+    // Every navigable panel in the route table (the overview included), plus the one sub-panel
+    // that needs a query to name its subject. `/_ui/*` is the client's own machinery and
+    // `/api/*` the JSON twins — neither is a panel ui.js swaps.
+    const panels = Object.entries(UI_ROUTES)
+      .filter(([path, route]) =>
+        !path.startsWith("/api/") && !path.startsWith("/_ui/") && route.methods.includes("GET")
+      )
+      .map(([path]) => path);
+    panels.push(`/plugins/options?name=${encodeURIComponent("@denext/openapi")}`);
+    for (const view of ["", "routing", "rendering", "security", "advanced", "cron", "next"]) {
+      assert(panels.includes(`/config${view && `/${view}`}`), `/config/${view} is a route`);
+    }
+    for (
+      const path of ["/", "/plugins", "/generate", "/docker", "/desktop", "/wizard", "/commands"]
+    ) {
+      assert(panels.includes(path), `${path} is a route`);
+    }
+    for (const path of panels) {
+      const res = await fetch(`${h.base}${path}`, {
+        headers: { ...h.headers, accept: "text/html-fragment" },
+      });
+      const body = await res.text();
+      assertEquals(res.status, 200, path);
+      assertStringIncludes(res.headers.get("content-type") ?? "", "text/html", path);
+      assert(
+        body.startsWith('<section id="panel"'),
+        `${path} starts with the panel: ${body.slice(0, 80)}`,
+      );
+      assert(
+        !/<html|<!doctype|<head>|<body|<script|<link /i.test(body),
+        `${path} carries no document shell`,
+      );
+      assertEquals(body.match(/<section id="panel"/g)?.length, 1, `${path} has ONE panel`);
+      const title = res.headers.get(UI_TITLE_HEADER);
+      assert(title, `${path} names its title in ${UI_TITLE_HEADER}`);
+      assertStringIncludes(decodeURIComponent(title), "denext", path);
+      // The same GET without the header is the full document around that very panel.
+      const page = await fetch(`${h.base}${path}`, { headers: h.headers });
+      const doc = await page.text();
+      assertStringIncludes(doc, "<!doctype html>", path);
+      assertStringIncludes(doc, '<section id="panel"', path);
+    }
   } finally {
     await stop(h);
   }

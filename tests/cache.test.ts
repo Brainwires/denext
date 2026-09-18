@@ -579,6 +579,124 @@ Deno.test({
   assertEquals(regenStarts, 2, "the freed key allowed a second regen (no permanent freeze)");
 });
 
+// Own path again: the regen backoff is keyed per cache key and lives for the process, so a
+// failure recorded here must not leak into the "/cached" tests above (or they into it).
+const backoffManifest = (): RouteManifest => ({
+  pages: [{
+    kind: "page",
+    layoutChain: [],
+    loading: null,
+    error: null,
+    notFound: null,
+    forbidden: null,
+    unauthorized: null,
+    templateChain: [],
+    pattern: parsePattern("bo"),
+    routePath: "/bo",
+    filePath: "bo.tsx",
+  }],
+  api: [],
+  rootLayout: null,
+  rootNotFound: null,
+  rootGlobalError: null,
+});
+
+Deno.test("app ISR: a failed background regen backs the key off (5 s, doubling), cleared on success, bounded to 1000 keys", async () => {
+  const store = inMemoryCacheStore();
+  setCacheStore(store);
+  let renders = 0;
+  let failing = true;
+  const modules: Record<string, unknown> = {
+    "bo.tsx": {
+      default: (_p: PageProps) => {
+        renders++;
+        if (failing) throw new Error("upstream down");
+        return h("h1", null, `fresh ${renders}`);
+      },
+      revalidate: 60,
+    },
+  };
+  const app = createApp({
+    getManifest: backoffManifest,
+    load: (fp) => Promise.resolve(modules[fp]),
+    pageCache: new PageCache(),
+  });
+  // The backoff window is wall-clock time; step it instead of sleeping.
+  const realNow = Date.now;
+  let skew = 0;
+  Date.now = () => realNow() + skew;
+  // Every failed regen logs its stack (a thousand of them below): keep the run readable.
+  const realError = console.error;
+  console.error = () => {};
+  /** A stale hit: served STALE now; whether it ALSO triggers a regen is what's under test. */
+  const hit = async (key = "/bo") => {
+    await store.setPage(key, staleEntry(key)); // a failed regen never wrote; keep it stale
+    const res = await app(new Request(`http://localhost${key}`));
+    assertEquals(res.headers.get("x-denext-cache"), "STALE");
+    await res.text();
+  };
+  /** Let any background regen render and settle (its result bookkeeping trails the render). */
+  const settle = async (expectRenders: number) => {
+    for (let i = 0; i < 1000 && renders < expectRenders; i++) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 5));
+    assertEquals(renders, expectRenders);
+  };
+  try {
+    await hit();
+    await settle(1); // regen #1 ran — and threw
+    await hit();
+    await settle(1); // inside the 5 s window: served STALE, NO regen re-triggered
+    skew += 4_000;
+    await hit();
+    await settle(1); // 4 s in: still backed off
+    skew += 2_000;
+    await hit();
+    await settle(2); // 6 s: the window is over — regen #2 runs (and fails: window now 10 s)
+    skew += 6_000;
+    await hit();
+    await settle(2); // 6 s later: the DOUBLED window is still open
+    skew += 5_000;
+    failing = false;
+    await hit();
+    await settle(3); // 11 s: regen #3 runs and succeeds → the key's backoff is cleared
+    for (let i = 0; i < 100; i++) {
+      const probe = await store.getPage("/bo");
+      if (probe && probe.staleAt != null && probe.staleAt > Date.now()) break;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    const fresh = await app(new Request("http://localhost/bo"));
+    assertEquals(fresh.headers.get("x-denext-cache"), "HIT");
+    assertStringIncludes(await fresh.text(), "fresh 3");
+
+    // Cleared means the NEXT failure restarts at the 5 s base, not at 20 s.
+    failing = true;
+    await hit();
+    await settle(4); // no backoff in force: regen #4 runs immediately (and fails)
+    await hit();
+    await settle(4); // backed off again…
+    skew += 6_000;
+    await hit();
+    await settle(5); // …for 5 s, not 20 s
+
+    // The table is bounded: 1000 other failing keys push "/bo" (the oldest) out, so a stale
+    // hit on it regens at once even though its own window has not passed.
+    const before = renders;
+    const others = Array.from({ length: 1000 }, (_, i) => `/bo?k=${i}`);
+    for (const key of others) await hit(key);
+    await settle(before + 1000);
+    await hit(others[0]);
+    await settle(before + 1000); // a bounded-in key is still backed off…
+    await hit();
+    await settle(before + 1001); // …but "/bo", evicted as the oldest, regens immediately
+  } finally {
+    Date.now = realNow;
+    console.error = realError;
+    failing = false;
+  }
+});
+
 Deno.test("app ISR: an opted-in page that reads cookies() is NOT cached (per-user safety)", async () => {
   setCacheStore(inMemoryCacheStore());
   let renders = 0;
