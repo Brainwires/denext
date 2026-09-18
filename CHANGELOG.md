@@ -67,6 +67,12 @@ and this project adheres to
 
 ### Added
 
+- Four more guides — Production checklist, Route handler recipes (webhooks, SSE past the request
+  deadline, a verified WebSocket upgrade in a route handler, CORS by hand), Multi-instance
+  deployments (every per-node store and its interface) and Deployment targets — plus a verified
+  Migrations & seeding section on the database guide, route-handler / Server Action / task /
+  env / fetch-stub / CI / browser recipes on the testing guide, and "Debugging the cache" + CDN
+  headers on Data & caching.
 - `suppressHydrationWarning` (React's opt-out for a text child that differs between server and
   client, such as a clock) is honoured: the element's own text mismatch is not reported, one
   level deep, and the marker is never serialised as an attribute. It used to render as a bare
