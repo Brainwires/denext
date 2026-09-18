@@ -14,6 +14,27 @@
 
 import { editDistance } from "../utils/edit-distance.ts";
 
+/**
+ * A project CLI verb name: lowercase, digits and dashes, starting with a letter. The grammar
+ * `denext.config.ts`'s `commands:` validation enforces (`src/server/config-validate.ts`), and
+ * what the help cache accepts back from disk.
+ */
+export const VERB_NAME = /^[a-z][a-z0-9-]*$/;
+
+/**
+ * `text` with every control character removed — C0 (`\x00`–`\x1f`), DEL and C1
+ * (`\x7f`–`\x9f`). A verb name or summary is project content on its way to the terminal:
+ * ESC opens every ANSI/OSC sequence (cursor moves, line clears, title changes, hyperlinks),
+ * and removing the control bytes disarms them all while keeping the words.
+ *
+ * @param text Text a project wrote.
+ * @returns The same text, printable characters only.
+ */
+export function plainText(text: string): string {
+  // deno-lint-ignore no-control-regex
+  return text.replace(/[\x00-\x1f\x7f-\x9f]/g, "");
+}
+
 /** One verb a project contributes, as {@linkcode CommandRegistry.formatHelp} lists it. */
 export interface ProjectVerb {
   /** The verb, as in `denext <name>`. */
@@ -105,6 +126,13 @@ export interface CommandSpec {
    * `MODULE_COMMANDS` gate, now declared per command).
    */
   readonly loadsModules?: boolean;
+  /**
+   * The `.env` tier this verb loads when neither `DENEXT_ENV` nor `NODE_ENV` says otherwise.
+   * `build`, `export` and `start` are production verbs: without this, `deno task start` read
+   * `.env.development` and never `.env.production`, because the env files are loaded before
+   * `start` marks the process as production.
+   */
+  readonly envTier?: "production";
   /**
    * Override how the module gate (and env loading) derive the project directory.
    * Defaults to the first positional; a verb whose first positional is not the dir
@@ -288,13 +316,15 @@ export class CommandRegistry {
    */
   formatHelp(version: string, project: readonly ProjectVerb[] = []): string {
     const visible = this.#canonical.filter((c) => !c.hidden);
+    // Every label and summary passes through `plainText`: a project's verbs (registered by a
+    // plugin, or read back from the cache) are its own text, and the terminal is the sink.
     const rows = (specs: CommandSpec[]) =>
-      specs.map((c) => ({ label: label(c), summary: c.summary }));
+      specs.map((c) => ({ label: plainText(label(c)), summary: plainText(c.summary) }));
     const builtIns = rows(visible.filter((c) => !isProjectSourced(c)));
     const own = [
       ...rows(visible.filter(isProjectSourced)),
       ...project.filter((verb) => this.get(verb.name) === undefined)
-        .map((verb) => ({ label: verb.name, summary: verb.summary })),
+        .map((verb) => ({ label: plainText(verb.name), summary: plainText(verb.summary) })),
     ];
     const width = Math.max(...[...builtIns, ...own].map((row) => row.label.length)) + 3;
     const table = (list: { label: string; summary: string }[]) =>

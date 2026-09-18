@@ -6,21 +6,24 @@
 // HTML UI and a machine client exercise identical code. Anything not `GET`/`HEAD` is a mutation
 // and passes the origin + CSRF + `--read-only` gates in `server.ts` before arriving here.
 
+import { basename } from "@std/path";
 import { sseStream } from "../build/sse.ts";
+import { pinnedDenextCli, pinnedVersion } from "../cli/self-exec.ts";
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode } from "../jsx/types.ts";
+import { readDevInfo } from "../mcp/dev-client.ts";
 import {
-  htmlResponse,
   jsonResponse,
-  renderPage,
+  panelResponder,
+  UI_CRON_PREVIEW_PATH,
   UI_EVENTS_PATH,
-  UI_NAV,
+  UI_NAV_SECTIONS,
   type UiContext,
   type UiHandler,
   type UiRoute,
 } from "./html.ts";
-import { layout, type NavItem, UI_CSS_PATH, UI_JS_PATH } from "./layout.ts";
-import { Note, Panel } from "./components.ts";
+import { type NavItem, UI_CSS_PATH, UI_JS_PATH } from "./layout.ts";
+import { Badge, Mono, Note, Panel } from "./components.ts";
 import { renderView } from "./view.ts";
 import { UI_CSS } from "./styles.ts";
 import { UI_JS } from "./client.ts";
@@ -29,11 +32,16 @@ import { runDeno } from "./proc.ts";
 import { OFFLINE_REFUSALS, OFFLINE_STATUS } from "./offline.ts";
 import { readDenoConfig, taskMap } from "./tasks.ts";
 import { configPanel } from "./features/config.ts";
+import { CONFIG_GROUPS } from "./features/config-groups.ts";
+import { cronPreviewPanel } from "./features/config-cron.ts";
 import { pluginsPanel } from "./features/plugins.ts";
 import { pluginOptionsPanel } from "./features/plugin-options.ts";
 import { generatePanel } from "./features/generate.ts";
 import { dockerPanel } from "./features/docker.ts";
-import { wizardPanel } from "./features/wizard.ts";
+import { desktopPanel } from "./features/desktop.ts";
+import { devPanel } from "./features/dev.ts";
+import { tasksPanel } from "./features/tasks.ts";
+import { setupPanel } from "./features/setup.ts";
 import { commandsPanel } from "./features/commands.ts";
 
 /** One feature panel: its HTML path, the methods it answers, and its module's handler. */
@@ -49,12 +57,23 @@ interface FeatureRoute {
 /** Every feature panel, in navigation order. */
 const FEATURES: readonly FeatureRoute[] = [
   { path: "/config", methods: ["GET", "POST"], handle: configPanel },
+  // One route per config view, derived from the group list so the two cannot drift: adding a
+  // group gives it a page (and its `/api` twin) without anything here being edited.
+  ...CONFIG_GROUPS.map((group) => ({
+    path: `/config/${group}`,
+    methods: ["GET", "POST"],
+    handle: configPanel,
+  })),
   { path: "/config/next", methods: ["GET"], handle: configPanel },
+  { path: "/config/cron", methods: ["GET", "POST"], handle: configPanel },
   { path: "/plugins", methods: ["GET", "POST", "DELETE"], handle: pluginsPanel },
   { path: "/plugins/options", methods: ["GET", "POST"], handle: pluginOptionsPanel },
   { path: "/generate", methods: ["GET", "POST"], handle: generatePanel },
   { path: "/docker", methods: ["GET", "POST"], handle: dockerPanel },
-  { path: "/wizard", methods: ["GET", "POST"], handle: wizardPanel },
+  { path: "/desktop", methods: ["GET"], handle: desktopPanel },
+  { path: "/dev", methods: ["GET", "POST"], handle: devPanel },
+  { path: "/tasks", methods: ["GET"], handle: tasksPanel },
+  { path: "/setup", methods: ["GET", "POST"], handle: setupPanel },
   { path: "/commands", methods: ["GET", "POST"], handle: commandsPanel },
 ];
 
@@ -80,6 +99,7 @@ function buildRoutes(): Record<string, UiRoute> {
     "/api/tasks/run": { methods: ["POST"], handle: runTask },
     [UI_CSS_PATH]: assetRoute(UI_CSS, "text/css; charset=utf-8"),
     [UI_JS_PATH]: assetRoute(UI_JS, "text/javascript; charset=utf-8"),
+    [UI_CRON_PREVIEW_PATH]: { methods: ["GET"], handle: cronPreviewPanel },
     [UI_EVENTS_PATH]: {
       methods: ["GET"],
       handle: (_request, ctx) => Promise.resolve(sseStream(ctx.events)),
@@ -99,12 +119,14 @@ export const UI_ROUTES: Record<string, UiRoute> = buildRoutes();
 
 /** What each card on the overview says. */
 const CARD_LEAD: Record<string, string> = {
-  "/config": "Edit denext.config.ts through schema-driven widgets.",
-  "/config/next": "Read a compat app's next.config and translate it.",
+  "/config": "Edit denext.config.ts through schema-driven widgets, one view per subject.",
   "/plugins": "Browse the catalog; add or remove plugins.",
   "/generate": "Scaffold pages, routes, layouts, components, actions.",
   "/docker": "Edit docker-compose.yml in place, or regenerate the Docker files with a diff.",
-  "/wizard": "Take a fresh clone to a running dev server.",
+  "/desktop": "Set up code signing for a packaged desktop build.",
+  "/dev": "Start and stop the project's dev server, and watch its output.",
+  "/tasks": "Run the scripts your deno.json declares, streaming their output.",
+  "/setup": "Check what this project needs to run, and write the missing pieces.",
   "/commands": "Run this project's own denext verbs.",
 };
 
@@ -123,37 +145,137 @@ function Card({ item }: { readonly item: NavItem }): VNode {
   );
 }
 
-/** The overview panel: where the UI is pointed, and a card per panel. */
-function Overview({ ctx }: { readonly ctx: UiContext }): VNode {
-  const cards = UI_NAV.filter((item) => item.href !== "/").map((item) =>
-    h(Card, { key: item.href, item })
+/**
+ * What the overview offers: one card per destination, with a whole nav SECTION standing as a
+ * single card.
+ *
+ * Configuration's card points at `/config`, which is itself a page of cards — one per view. Five
+ * of them here would bury the panels they sit beside, and would leave `/config` with nothing
+ * linking to it, since the sidebar lists those views directly.
+ *
+ * @returns The cards, in navigation order.
+ */
+function overviewCards(): NavItem[] {
+  const out: NavItem[] = [];
+  for (const section of UI_NAV_SECTIONS) {
+    if (section.label !== undefined) {
+      out.push({ href: "/config", label: section.label });
+      continue;
+    }
+    for (const item of section.items) if (item.href !== "/") out.push(item);
+  }
+  return out;
+}
+
+/**
+ * What the overview's status block says about the project — read from its files alone. No
+ * subprocess and no HTTP probe: the page must open instantly, and whether the dev server
+ * `dev.json` names is really answering is the Dev page's job to find out.
+ */
+interface ProjectStatus {
+  /** The `name` in `deno.json`, else the directory's own name. */
+  readonly name: string;
+  /**
+   * The denext the import map pins, as written (`^2.5.0`; `latest` for an unversioned
+   * `jsr:@denext/denext`), or null when the project pins none.
+   */
+  readonly denext: string | null;
+  /** The origin `.denext/dev.json` names, or null when there is no such file. */
+  readonly dev: string | null;
+}
+
+/** Where the dev server is started and stopped. */
+const DEV_PAGE = "/dev";
+
+/**
+ * Read the project's status for the overview: three cheap file reads, nothing spawned.
+ *
+ * The pin follows the rules `deno run` would (`pinnedDenextCli`: `deno.jsonc`, an `importMap`
+ * file, a workspace root), so the overview and a compiled binary name the same denext.
+ *
+ * @param dir The project directory.
+ * @returns The status.
+ */
+async function projectStatus(dir: string): Promise<ProjectStatus> {
+  const name = (await readDenoConfig(dir))?.data?.name;
+  const cli = pinnedDenextCli(dir);
+  const dev = await readDevInfo(dir);
+  return {
+    name: typeof name === "string" && name !== "" ? name : basename(dir),
+    denext: cli === null ? null : pinnedVersion(cli) ?? "latest",
+    dev: dev === null ? null : dev.origin,
+  };
+}
+
+/** The overview's status block: the project's name, its denext, and its dev server. */
+function StatusBlock({ status }: { readonly status: ProjectStatus }): VNode {
+  return h(
+    "dl",
+    { class: "status" },
+    h("dt", null, "Project"),
+    h("dd", null, status.name),
+    h("dt", null, "denext"),
+    h(
+      "dd",
+      null,
+      status.denext === null
+        ? h(Badge, { tone: "warn" }, "not pinned")
+        : h(Mono, null, status.denext),
+    ),
+    h("dt", null, "Dev server"),
+    h(
+      "dd",
+      null,
+      status.dev === null ? ["Not running · ", h("a", { href: DEV_PAGE }, "Start it from Dev")] : [
+        h(Mono, null, ".denext/dev.json"),
+        " says running at ",
+        h("a", { href: status.dev }, status.dev),
+        " · ",
+        h("a", { href: DEV_PAGE }, "Stop it from Dev"),
+      ],
+    ),
   );
+}
+
+/** The overview panel: where the UI is pointed, what the project is, and a card per panel. */
+function Overview(
+  { ctx, status }: { readonly ctx: UiContext; readonly status: ProjectStatus },
+): VNode {
+  const cards = overviewCards().map((item) => h(Card, { key: item.href, item }));
   return h(
     Panel,
     { title: "Project" },
     h("p", { class: "lead mono" }, ctx.dir),
-    ctx.readOnly ? h(Note, null, "Read-only mode — every change is refused.") : null,
-    ctx.offline === true ? h(Note, null, OFFLINE_OVERVIEW) : null,
+    ctx.readOnly ? h(Note, { tone: "warn" }, "Read-only mode — every change is refused.") : null,
+    ctx.offline === true ? h(Note, { tone: "warn" }, OFFLINE_OVERVIEW) : null,
+    h(StatusBlock, { status }),
     h("div", { class: "cards" }, cards),
   );
 }
 
-/** The overview page (always the whole document), or its JSON twin. */
-function home(_request: Request, ctx: UiContext): Promise<Response> {
+/**
+ * The overview's responder — the same one every other panel answers through.
+ *
+ * It used to render the whole document unconditionally, alone among the panels. That was
+ * invisible until `ui.js` began swapping panels in place: a nav click to the overview fetched an
+ * ENTIRE document, `swapPanel` dug the `<section id="panel">` back out of it, and the page looked
+ * right while shipping a shell nobody used and carrying no title for the tab to take.
+ */
+const homeResponse = panelResponder("Project", "/");
+
+/** The overview page, the bare panel for a swap, or its JSON twin (the status included). */
+async function home(_request: Request, ctx: UiContext): Promise<Response> {
+  const status = await projectStatus(ctx.dir);
   if (ctx.json) {
-    return Promise.resolve(
-      jsonResponse({
-        ok: true,
-        dir: ctx.dir,
-        readOnly: ctx.readOnly,
-        routes: Object.keys(UI_ROUTES),
-      }),
-    );
+    return jsonResponse({
+      ok: true,
+      dir: ctx.dir,
+      readOnly: ctx.readOnly,
+      ...status,
+      routes: Object.keys(UI_ROUTES),
+    });
   }
-  const body = renderView(h(Overview, { ctx }));
-  return Promise.resolve(htmlResponse(
-    renderPage(layout, { title: "Project", nav: UI_NAV, body, csrf: ctx.csrf, active: "/" }),
-  ));
+  return homeResponse(ctx, renderView(h(Overview, { ctx, status })));
 }
 
 // ── `/tasks/run` ─────────────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertStringIncludes } from "@std/assert";
 import plugin from "../src/lint/denext-plugin.ts";
 
 // The `Deno.lint` testing API is runtime-available under `deno test` but not in
@@ -180,7 +180,13 @@ Deno.test("the three hook findings report under their own rule ids", () => {
   // inside `rules-of-hooks`, so they couldn't be toggled/ignored independently).
   assertEquals(
     Object.keys(plugin.rules).sort(),
-    ["directive-placement", "hooks-in-component", "no-hooks-in-async", "rules-of-hooks"],
+    [
+      "directive-placement",
+      "hooks-in-component",
+      "no-handlers-in-async",
+      "no-hooks-in-async",
+      "rules-of-hooks",
+    ],
   );
 
   const idsFor = (src: string): string[] => diagnostics(src).map((d) => d.id as string);
@@ -195,4 +201,86 @@ Deno.test("the three hook findings report under their own rule ids", () => {
   assertEquals(idsFor(`function C(){ if(x){ useState(0); } return null; }`), [
     "denext/rules-of-hooks",
   ]);
+});
+
+// ---- no-handlers-in-async ------------------------------------------------------
+
+Deno.test("flags an inline arrow / function handler in an async component", () => {
+  const src = `
+    async function Page() {
+      const data = await load();
+      return <button onClick={() => alert(data)} onInput={function () {}}>go</button>;
+    }
+  `;
+  assertEquals(count(src, "no-handlers-in-async"), 2);
+  const [msg] = lint(src).filter((m) => m.includes("no-handlers-in-async"));
+  assertStringIncludes(msg, "`onClick` receives a function in async component `Page`");
+  assertStringIncludes(msg, "Server Action");
+  assertStringIncludes(msg, '"use client"');
+});
+
+Deno.test("flags a handler bound to a module-local function, through a .map() callback too", () => {
+  const src = `
+    function handle() {}
+    async function List({ items }) {
+      const go = () => {};
+      return <ul>{items.map((i) => <li key={i} onClick={handle} onFocus={go}>{i}</li>)}</ul>;
+    }
+  `;
+  assertEquals(count(src, "no-handlers-in-async"), 2);
+});
+
+Deno.test("no-handlers-in-async: an inline or local server action does not count", () => {
+  const src = `
+    async function save() { "use server"; await db.save(); }
+    async function Page() {
+      return <form onSubmit={save}><button onClick={async () => { "use server"; }}>x</button></form>;
+    }
+  `;
+  assertEquals(count(src, "no-handlers-in-async"), 0);
+});
+
+Deno.test("no-handlers-in-async: an imported or unresolved identifier is left alone", () => {
+  // `save` may come from a "use server" module; `onPick` is a prop we cannot see into.
+  const src = `
+    import { save } from "./actions.ts";
+    async function Page({ onPick }) {
+      return <button onClick={save} onPointerDown={onPick}>x</button>;
+    }
+  `;
+  assertEquals(count(src, "no-handlers-in-async"), 0);
+});
+
+Deno.test("no-handlers-in-async: a sync component and a client module are not flagged", () => {
+  assertEquals(
+    count(`function C() { return <button onClick={() => 1}>x</button>; }`, "no-handlers-in-async"),
+    0,
+  );
+  assertEquals(
+    count(
+      `"use client";\nexport default function C() { return <button onClick={() => 1}>x</button>; }`,
+      "no-handlers-in-async",
+    ),
+    0,
+  );
+  // A non-handler prop holding a function in an async component is not this rule's concern.
+  assertEquals(
+    count(`async function P() { return <List render={() => 1} />; }`, "no-handlers-in-async"),
+    0,
+  );
+  // A nested (sync) component defined inside an async one owns its own handlers.
+  assertEquals(
+    count(
+      `async function P() { function Inner() { return <b onClick={() => 1}/>; } return <Inner/>; }`,
+      "no-handlers-in-async",
+    ),
+    0,
+  );
+});
+
+Deno.test("no-handlers-in-async reports under its own rule id", () => {
+  assertEquals(
+    diagnostics(`async function P(){ return <b onClick={() => 1}/>; }`).map((d) => d.id),
+    ["denext/no-handlers-in-async"],
+  );
 });

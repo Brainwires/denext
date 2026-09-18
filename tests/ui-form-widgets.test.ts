@@ -127,6 +127,7 @@ Deno.test("every top-level config key maps to the widget its type deserves", () 
     rewrites: "list-of-forms",
     headers: "list-of-forms",
     scheduledTasks: "map",
+    tasks: "group",
     images: "group",
     tailwind: "group",
     mdx: "group",
@@ -138,11 +139,21 @@ Deno.test("every top-level config key maps to the widget its type deserves", () 
     live: "group",
     apiBatch: "group",
     apiMaxBodyBytes: "number",
+    actionMaxBodyBytes: "number",
+    canonicalOrigin: "text",
+    trustForwardedHeaders: "toggle",
+    requestTimeout: "number",
+    maxConcurrency: "number",
+    slotBackstop: "number",
+    cacheKeyParams: "chips",
     nodeResolve: "toggle",
     cacheComponents: "toggle",
+    reactCompiler: "toggle",
+    asyncContext: "toggle",
+    features: "map",
     experimental: "group",
     classComponents: "toggle",
-    compatibilityMode: "union",
+    compatibilityMode: "segmented",
     plugins: "code",
     commands: "list-of-forms",
   });
@@ -231,7 +242,6 @@ Deno.test("every union field gets a discriminator picker with readable branch la
   assertEquals(labels("spa", "csp"), ["strict", "off", "object"]);
   assertEquals(labels("cache", "store"), ["sqlite", "memory", "object"]);
   assertEquals(labels("hsts"), ["object", "false"]);
-  assertEquals(labels("compatibilityMode"), ["boolean", "auto"]);
   assertEquals(labels("scheduledTasks", MAP_SEGMENT), ["string", "array"]);
 });
 
@@ -249,10 +259,11 @@ Deno.test("a union branch is a widget of its own, rendered at the union's path",
 
 Deno.test("records become key/value maps, opaque ones stay read-only", () => {
   assertEquals(kindAt("scheduledTasks"), "map");
-  assertEquals(kindAt("experimental", "features"), "map");
+  assertEquals(kindAt("features"), "map");
+  assertEquals(kindAt("experimental", "features"), "map", "the legacy alias keeps its shape");
   assertEquals(kindAt("spa", "env"), "map");
   assertEquals(specAt("spa", "env").items?.kind, "text");
-  assertEquals(specAt("experimental", "features").items?.kind, "toggle");
+  assertEquals(specAt("features").items?.kind, "toggle");
   assertEquals(specAt("scheduledTasks").items?.kind, "union");
   // A map carries no marker; with opaque values (`Record<string, unknown>`) it stays read-only.
   assertEquals(resolveAt(SCHEMA, ["i18n", "messages"])["x-denext"], undefined);
@@ -327,4 +338,18 @@ Deno.test("itemSchema is total: an array without items yields an empty node", ()
 
 Deno.test("schema-overrides.ts ships empty — gaps are fixed in the generator", () => {
   assertEquals(OVERRIDES, {});
+});
+
+Deno.test("a union of nothing but finite scalars is one control, not a picker", () => {
+  // `boolean | "auto"` is three values, so it renders as one choice over them rather than a
+  // branch picker with a second control nested inside it repeating the key's name.
+  const spec = specAt("compatibilityMode");
+  assertEquals(spec.kind, "segmented");
+  assertEquals(spec.branches, undefined, "there is no shape left to pick");
+  assertEquals(spec.options?.map((option) => option.value), ["", "true", "false", "auto"]);
+
+  // A union with an object branch is a real choice of shape and keeps its picker.
+  assertEquals(specAt("csp").kind, "union");
+  assertEquals(specAt("hsts").kind, "union");
+  assertEquals(specAt("cache", "store").kind, "union");
 });

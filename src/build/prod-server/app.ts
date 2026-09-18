@@ -11,6 +11,7 @@ import {
   resolveCacheComponents,
   resolveConfigRules,
   resolveLive,
+  resolveServerOptions,
   resolveStreaming,
 } from "../../server/config.ts";
 import {
@@ -90,7 +91,7 @@ async function warmRouteModules(manifest: RouteManifest, load: ModuleLoader): Pr
 
 /**
  * Build the request handler: middleware, instrumentation (`NEXT_RUNTIME`, `register()`
- * once at boot, `onRequestError`), the denext.config redirect/rewrite/header rules, the
+ * once at boot, `onRequestError`, `onRequest`), the denext.config redirect/rewrite/header rules, the
  * durable default cache store (node:sqlite in THIS project's .denext — separate apps never
  * share/poison one cache; fails safe to in-memory) and `createApp`. Live Server
  * Components: the WebSocket hub is mounted only when the app has a Flight route (only
@@ -112,7 +113,7 @@ export async function createProdApp(
   await runRegister(instrumentation);
   // Discover tasks/ and register cron schedules (Deno.cron on Deploy, else a userland tick). The
   // scheduler lives for the server process (created once here); the disposer is not retained.
-  await bootScheduledTasks(paths.projectDir, paths.config ?? undefined);
+  await bootScheduledTasks(paths.projectDir, paths.config ?? undefined, paths.outDir);
   const rules = await resolveConfigRules(paths.config);
   await resolveDefaultCacheStore(
     paths.config?.cache?.path
@@ -129,6 +130,7 @@ export async function createProdApp(
     matchExternal: getPluginRequestHandler(),
     getMiddleware: () => middlewareRunner,
     onRequestError: instrumentation.onRequestError,
+    onRequest: instrumentation.onRequest,
     i18n: paths.i18n ?? undefined,
     basePath: paths.config?.basePath,
     trailingSlash: paths.config?.trailingSlash,
@@ -148,6 +150,9 @@ export async function createProdApp(
     publicEnvKeys: info.publicEnvKeys,
     apiBatch: paths.config?.apiBatch,
     apiMaxBodyBytes: paths.config?.apiMaxBodyBytes,
+    // canonicalOrigin / trustForwardedHeaders / requestTimeout / maxConcurrency /
+    // slotBackstop / actionMaxBodyBytes / cacheKeyParams — config, else their env vars.
+    ...resolveServerOptions(paths.config),
   });
   if (flightRoutes.size > 0) {
     installLiveHub({ appHandler, originAllowed: sameOrigin, config: resolveLive(paths.config) });

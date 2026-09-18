@@ -15,6 +15,8 @@ import type { VNode, VNodeChild, VNodeChildren } from "../../jsx/types.ts";
 import type { RawHtml } from "../html.ts";
 import { UI_CSRF_FIELD } from "../security.ts";
 import { renderView } from "../view.ts";
+import type { BadgeTone } from "../components.ts";
+import { inlineMarkdown } from "../markdown.ts";
 import { Control, Field, OpButton } from "./control.ts";
 import { resolveAt, type SchemaNode } from "./schema.ts";
 import {
@@ -38,6 +40,18 @@ export interface RenderContext {
   readonly readOnly?: boolean;
   /** Validation messages to show against fields, keyed by field name. */
   readonly errors?: Readonly<Record<string, string>>;
+  /**
+   * The field name whose label something above already shows.
+   *
+   * Two places need this, and they are the same situation: a config tab that already says
+   * `i18n` above the form, and a union's branch, which renders at its parent's path — so the
+   * picker labels the key and the branch would label it again, pill, help and validation message
+   * and all. Keyed by NAME rather than by depth, so a branch nested anywhere is covered.
+   *
+   * Only the field with exactly this name is bared; its children keep their own labels, which is
+   * what tells you where one key ends and the next begins.
+   */
+  readonly bareAt?: string;
 }
 
 /** What every widget component is handed. */
@@ -76,23 +90,69 @@ function spaced(nodes: readonly VNode[]): VNodeChild[] {
   return nodes.flatMap((node, index) => index === 0 ? [node] : [" ", node]);
 }
 
+/**
+ * Whether a value means "this key is not set".
+ *
+ * These are the SAME shapes `decode` turns back into `undefined` when a form is posted: an
+ * emptied text box (`value.ts` — `posted === "" && !spec.required`), and a group whose fields are
+ * all empty. Emptying `defaultLocale` and saving REMOVES the key, so calling it "set" until the
+ * next reload would state the opposite of what the file is about to say.
+ *
+ * `false` is deliberately not here. An absent key arrives as `undefined` (`classify` gives it no
+ * value at all), so a `false` in hand is one the file really declares.
+ */
+function isUnset(value: unknown): boolean {
+  if (value === undefined || value === null || value === "") return true;
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === "object") return Object.keys(value as Record<string, unknown>).length === 0;
+  return false;
+}
+
+/**
+ * The pills one key's label carries.
+ *
+ * A key is SET when it has a value in the config and UNSET when it does not — read off the value
+ * being rendered, so a nested key answers for itself rather than inheriting its parent's verdict.
+ * An explicit badge (a read-only cell) replaces the state; `required` joins it rather than
+ * overwriting it, because both are worth knowing.
+ */
+function pillsFor(
+  spec: WidgetSpec,
+  value: unknown,
+  explicit: string | undefined,
+): Array<{ text: string; tone?: BadgeTone }> {
+  const pills: Array<{ text: string; tone?: BadgeTone }> = [];
+  if (explicit !== undefined) pills.push({ text: explicit, tone: "info" });
+  else if (isUnset(value)) pills.push({ text: "unset", tone: "todo" });
+  else pills.push({ text: "set", tone: "ok" });
+  if (spec.required) pills.push({ text: "required" });
+  // Said last, and said plainly: two keys that do the same thing are otherwise offered as an
+  // equal pair, with nothing to say which one a new config should use.
+  if (spec.deprecated) pills.push({ text: "deprecated", tone: "warn" });
+  return pills;
+}
+
 /** A control in its label, help and validation message. */
 function Wrap(
   props: {
     readonly spec: WidgetSpec;
     readonly ctx: RenderContext;
+    /** The value at this key, which is what decides whether it is set. */
+    readonly value?: unknown;
     readonly badge?: string;
     readonly children?: VNodeChildren;
   },
 ): VNode {
   const { spec, ctx } = props;
   const name = nameOf(spec, ctx);
+  // Already labelled above (a tab's heading, or a union's picker): render the control alone.
+  if (ctx.bareAt === name) return h(Fragment, null, props.children);
   return h(Field, {
     id: idOf(name),
     label: spec.label,
     help: spec.description,
     error: ctx.errors?.[name],
-    badge: props.badge ?? (spec.required ? "required" : undefined),
+    badges: pillsFor(spec, props.value, props.badge),
   }, props.children);
 }
 
@@ -103,10 +163,24 @@ function Choice(
   return h("label", { for: props.for, style: CHOICE_STYLE }, props.children, props.label);
 }
 
-/** The hidden marker that tells `decode` a list or map was present in the form. */
+/**
+ * The hidden marker that tells `decode` a list or map was present in the form.
+ *
+ * Rendered only for a value the config actually holds. A key the file never set has no rows to
+ * mark, and marking it anyway made every save of the section write `[]` for it — an empty
+ * allowlist where the runtime's default was meant (`images.deviceSizes: []` refuses every
+ * width). Silence about an absent key must post nothing, so `decode` leaves it alone; a row
+ * added later is rendered with its marker, because by then the value is a real list.
+ */
 function Marker(
-  props: { readonly name: string; readonly length: number; readonly ctx: RenderContext },
+  props: {
+    readonly name: string;
+    /** The row count, or `undefined` when the key is not set at all. */
+    readonly length: number | undefined;
+    readonly ctx: RenderContext;
+  },
 ): VNode {
+  if (props.length === undefined) return h(Fragment, null);
   return h(Control, {
     tag: "input",
     type: "hidden",
@@ -129,7 +203,7 @@ function RowButtons(
   const off = props.ctx.readOnly === true;
   return h(
     "span",
-    { style: "display:inline-flex;gap:4px" },
+    { class: "op-group" },
     h(OpButton, { op: "up", at, list, label: "↑", title: "Move up", disabled: off || at === 0 }),
     h(OpButton, {
       op: "down",
@@ -149,7 +223,7 @@ function scalar(tag: "input" | "textarea", type?: string): WidgetComponent {
     const name = nameOf(spec, ctx);
     return h(
       Wrap,
-      { spec, ctx },
+      { spec, ctx, value },
       h(Control, {
         tag,
         type,
@@ -173,21 +247,45 @@ const TextareaWidget = scalar("textarea");
 /** A number input, carrying the schema's bounds. */
 const NumberWidget = scalar("input", "number");
 
-/** A checkbox with a hidden `off` companion, so "unchecked" posts a real `false`. */
+/**
+ * A checkbox with a hidden companion, so "unchecked" posts a real value for a key the file sets.
+ *
+ * The companion is rendered only when the key IS set. An unticked box for a key the file never
+ * mentions then posts nothing, which `decode` reads as "leave it alone" — where a companion
+ * would have turned every save of the section into `<key>: false` for each boolean it happened
+ * to show. Ticking such a box still posts its own value, so a key can be switched on (or, for a
+ * default-on key, off) from unset in one save.
+ */
 function ToggleWidget({ spec, value, ctx }: WidgetProps): VNode {
   const name = nameOf(spec, ctx);
+  const id = idOf(name);
   const common = { tag: "input", name, disabled: ctx.readOnly } as const;
+  // A key that is ON unless you say otherwise is not switched on by ticking a box — it is opted
+  // OUT of. So the box means the opposite thing, and says so: ticking it writes `false`.
+  const optOut = spec.default === true;
   return h(
     Wrap,
-    { spec, ctx },
-    h(Control, { ...common, type: "hidden", value: "off" }),
-    h(Control, {
-      ...common,
-      type: "checkbox",
-      id: idOf(name),
-      value: "on",
-      checked: value === true,
-    }),
+    { spec, ctx, value },
+    // The hidden companion stays FIRST: `decode` takes the last posted value, which is what makes
+    // an unticked box post a real value rather than nothing at all. Only the two wire values swap
+    // between the polarities — `decode` reads values, not checkboxes, so the codec is untouched.
+    value === undefined
+      ? null
+      : h(Control, { ...common, type: "hidden", value: optOut ? "on" : "off" }),
+    // A checkbox alone on a line says nothing about what ticking it does, and gives the pointer a
+    // 13px target. The word rides in the same `Choice` the radios use, so it is part of the
+    // control's own label and clicking it toggles the box.
+    h(
+      Choice,
+      { for: id, label: optOut ? "Disable" : "Enable" },
+      h(Control, {
+        ...common,
+        type: "checkbox",
+        id,
+        value: optOut ? "off" : "on",
+        checked: optOut ? value === false : value === true,
+      }),
+    ),
   );
 }
 
@@ -211,7 +309,7 @@ function SegmentedWidget({ spec, value, ctx }: WidgetProps): VNode {
       }),
     );
   });
-  return h(Wrap, { spec, ctx }, h("div", null, spaced(radios)));
+  return h(Wrap, { spec, ctx, value }, h("div", null, spaced(radios)));
 }
 
 /** A `<select>` for a closed set too long to sit on one line. */
@@ -219,7 +317,7 @@ function SelectWidget({ spec, value, ctx }: WidgetProps): VNode {
   const name = nameOf(spec, ctx);
   return h(
     Wrap,
-    { spec, ctx },
+    { spec, ctx, value },
     h(Control, {
       tag: "select",
       name,
@@ -251,8 +349,17 @@ function MultiSelectWidget({ spec, value, ctx }: WidgetProps): VNode {
   );
   return h(
     Wrap,
-    { spec, ctx },
-    h("div", null, h(Marker, { name, length: chosen.length, ctx }), spaced(boxes)),
+    { spec, ctx, value },
+    h(
+      "div",
+      null,
+      h(Marker, {
+        name,
+        length: Array.isArray(value) ? chosen.length : undefined,
+        ctx,
+      }),
+      spaced(boxes),
+    ),
   );
 }
 
@@ -274,15 +381,15 @@ type RowProps = {
   readonly name: string;
 };
 
-/** The value of a list widget, as the rows it holds. */
-type ToRows = (value: unknown) => readonly unknown[];
+/** The value of a list widget, as the rows it holds — `undefined` when the key is not set. */
+type ToRows = (value: unknown) => readonly unknown[] | undefined;
 
 /** An array value (the default row source). */
-const asArray: ToRows = (value) => Array.isArray(value) ? value : [];
+const asArray: ToRows = (value) => Array.isArray(value) ? value : undefined;
 
 /** A record value, as `[key, value]` rows. */
 const asPairs: ToRows = (value) =>
-  typeof value === "object" && value !== null ? Object.entries(value) : [];
+  typeof value === "object" && value !== null ? Object.entries(value) : undefined;
 
 /** A row's `↑ ↓ ✕` buttons. */
 function rowButtonsOf(one: RowProps): VNode {
@@ -296,7 +403,8 @@ function rowButtonsOf(one: RowProps): VNode {
 function listWidget(Row: (props: RowProps) => VNode, toRows: ToRows = asArray): WidgetComponent {
   return ({ spec, value, ctx }) => {
     const name = nameOf(spec, ctx);
-    const list = toRows(value);
+    const held = toRows(value);
+    const list = held ?? [];
     const last = list.length - 1;
     const rows = list.map((entry, index) =>
       h(Row, { key: index, spec, row: rowSpec(spec, index), entry, index, last, ctx, name })
@@ -311,8 +419,8 @@ function listWidget(Row: (props: RowProps) => VNode, toRows: ToRows = asArray): 
     });
     return h(
       Wrap,
-      { spec, ctx },
-      h("div", null, h(Marker, { name, length: rows.length, ctx }), rows, add),
+      { spec, ctx, value },
+      h("div", null, h(Marker, { name, length: held?.length, ctx }), rows, add),
     );
   };
 }
@@ -338,7 +446,7 @@ function ChipRow(one: RowProps): VNode {
 function FormRow(one: RowProps): VNode {
   return h(
     "fieldset",
-    { style: "padding:10px 12px" },
+    { class: "pad-box" },
     h("legend", null, one.row.label, " ", rowButtonsOf(one)),
     fieldsOf(one.row, one.entry, one.ctx),
   );
@@ -389,22 +497,56 @@ function UnionWidget({ spec, value, ctx }: WidgetProps): VNode {
       }),
     )
   );
+  const bare = { ...ctx, bareAt: nameOf(spec, ctx) };
   return h(
     Wrap,
-    { spec, ctx },
+    { spec, ctx, value },
     h("div", null, spaced(picker)),
-    branch ? h(Widget, { spec: branch.spec, value, ctx }) : null,
+    branch ? h(Widget, { spec: branch.spec, value, ctx: bare }) : null,
   );
 }
 
-/** A collapsible group of fields. */
+/**
+ * A named group of fields.
+ *
+ * Not collapsible. It was a `<details open>`, which offered a control whose only power was to
+ * hide fields you had navigated to in order to see — and the editor now puts one group on screen
+ * at a time, so there is nothing left for it to save you from.
+ */
 function GroupWidget({ spec, value, ctx }: WidgetProps): VNode {
+  if (ctx.bareAt === nameOf(spec, ctx)) {
+    // The description stays: it explains the tab you are on, which the name alone did not.
+    return h(
+      "div",
+      { id: `${idOf(nameOf(spec, ctx))}--group` },
+      spec.description
+        ? h("p", { class: "lead group-note" }, inlineMarkdown(spec.description))
+        : null,
+      fieldsOf(spec, value, ctx),
+    );
+  }
   return h(
-    "details",
-    { open: true, id: `${idOf(nameOf(spec, ctx))}--group`, style: "margin:0 0 14px" },
-    h("summary", { style: "cursor:pointer;font-weight:600" }, spec.label),
-    spec.description ? h("p", { class: "lead", style: "font-size:13px" }, spec.description) : null,
-    h("div", { style: "padding:8px 0 0 12px" }, fieldsOf(spec, value, ctx)),
+    "div",
+    { id: `${idOf(nameOf(spec, ctx))}--group`, class: "field" },
+    h(
+      "p",
+      { class: "group-summary" },
+      spec.label,
+      ...pillsFor(spec, value, undefined).map((pill) =>
+        h(
+          Fragment,
+          { key: pill.text },
+          " ",
+          h("span", {
+            class: pill.tone === undefined ? "badge" : `badge ${pill.tone}`,
+          }, pill.text),
+        )
+      ),
+    ),
+    spec.description
+      ? h("p", { class: "lead group-note" }, inlineMarkdown(spec.description))
+      : null,
+    h("div", { class: "group-body" }, fieldsOf(spec, value, ctx)),
   );
 }
 
@@ -413,7 +555,7 @@ function CodeCell({ spec, value, ctx }: WidgetProps): VNode {
   const name = nameOf(spec, ctx);
   return h(
     Wrap,
-    { spec, ctx, badge: "read-only" },
+    { spec, ctx, value, badge: "read-only" },
     h(Control, {
       tag: "textarea",
       name,
@@ -449,11 +591,26 @@ function fieldOf(value: unknown, child: WidgetSpec): unknown {
   return key === undefined ? undefined : (value as Record<string, unknown>)[key];
 }
 
+/**
+ * Whether a child is worth showing at all.
+ *
+ * A superseded key that the config does not even set is an offer to start using the old name —
+ * so it is hidden until it is actually there. One that IS set keeps rendering, pill and all,
+ * because seeing it is the only way to clear it.
+ *
+ * Hiding is inert, never a deletion: an unrendered field posts nothing, that decodes to
+ * `undefined`, and `undefined` for a key that is already absent means "leave it alone".
+ */
+function worthShowing(spec: WidgetSpec, value: unknown): boolean {
+  return !(spec.deprecated === true && isUnset(value));
+}
+
 /** The widgets of a group's (or a form row's) children, each given its slice of `value`. */
 function fieldsOf(spec: WidgetSpec, value: unknown, ctx: RenderContext): VNode[] {
-  return (spec.children ?? []).map((child, index) =>
-    h(Widget, { key: index, spec: child, value: fieldOf(value, child), ctx })
-  );
+  return (spec.children ?? [])
+    .map((child, index) => ({ child, index, held: fieldOf(value, child) }))
+    .filter((entry) => worthShowing(entry.child, entry.held))
+    .map((entry) => h(Widget, { key: entry.index, spec: entry.child, value: entry.held, ctx }));
 }
 
 /** One spec, dispatched to its kind's component (the recursive half, without the CSRF field). */
@@ -470,6 +627,29 @@ function Widget(props: WidgetProps): VNode {
  * @returns The field markup.
  */
 export function renderWidget(spec: WidgetSpec, value: unknown, ctx: RenderContext): RawHtml {
+  return renderWidgets([{ spec, value }], ctx);
+}
+
+/** One field of a multi-widget form: its widget, and the value to render it holding. */
+export interface WidgetField {
+  /** The widget. */
+  readonly spec: WidgetSpec;
+  /** The current config value at its path. */
+  readonly value: unknown;
+}
+
+/**
+ * Render several widgets into one form body, behind a single CSRF field.
+ *
+ * The config editor puts a view's plain scalars in one form with one Save, so their widgets are
+ * rendered together. Emitting the token once is the point: rendering each field separately would
+ * repeat a hidden `_csrf` for every control in the form.
+ *
+ * @param fields The widgets and their values, in render order.
+ * @param ctx The CSRF token, the name prefix, read-only mode and any validation messages.
+ * @returns The field markup.
+ */
+export function renderWidgets(fields: readonly WidgetField[], ctx: RenderContext): RawHtml {
   const csrf = h(Control, {
     tag: "input",
     type: "hidden",
@@ -477,7 +657,16 @@ export function renderWidget(spec: WidgetSpec, value: unknown, ctx: RenderContex
     value: ctx.csrf,
     disabled: ctx.readOnly,
   });
-  return renderView(h(Fragment, null, csrf, h(Widget, { spec, value, ctx })));
+  return renderView(
+    h(
+      Fragment,
+      null,
+      csrf,
+      fields.map((field, index) =>
+        h(Widget, { key: index, spec: field.spec, value: field.value, ctx })
+      ),
+    ),
+  );
 }
 
 /**

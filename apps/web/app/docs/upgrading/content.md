@@ -26,8 +26,47 @@ links back to the release that introduced it.
 
 ## Upgrading to 2.5
 
-2.5 is in release candidates; this section covers every rc so far.
+2.5 shipped through six release candidates; this section covers every change that needs
+action since 2.4, whichever rc introduced it.
 
+- **The binary's checksum assets are named `<archive>.sha256`** —
+  `denext-x86_64-apple-darwin.tar.gz.sha256`, not `denext-<target>.sha256` — and a combined
+  `SHA256SUMS` sits beside them. Nothing installed is affected (no release had shipped with the
+  old name); a script written against the earlier workflow reads the new names, and the
+  installer now refuses to install without a checksum (`DENEXT_INSECURE=1` overrides).
+  ([2.5.0](/docs/changelog))
+- **`experimental.reactCompiler` → `reactCompiler`, `experimental.asyncContext` →
+  `asyncContext`, `experimental.features` → `features`.** Every `experimental.*` key is now a
+  top-level field (beside the earlier `nodeResolve` and `cacheComponents`); the old spellings —
+  `experimental.compiler` included — still work as deprecated aliases and dev-warn, with the
+  top-level field winning when both are set. Move them when convenient; the block is removed in
+  3.0. ([2.5.0](/docs/changelog))
+- **The `denext` binary treats an unversioned `jsr:@denext/denext` import as a pin to the
+  latest published version** and re-execs `jsr:@denext/denext/cli`, where it used to refuse
+  the directory as unpinned. Pin a version (`jsr:@denext/denext@^2.5.0`) for a reproducible
+  build. ([2.5.0](/docs/changelog))
+- **Schedules reach `Deno.cron` under a new registration name and with the weekday field
+  respelled.** The old `task@cron` name was refused by `Deno.cron` for every expression, so
+  nothing on Deno Deploy had ever registered — there is nothing to migrate, but a Deploy
+  dashboard will show crons for the first time. Weekdays are POSIX (`0` = Sunday) and are
+  translated to names; if you had written a schedule in `Deno.cron`'s `1–7` numbering to work
+  around the difference, rewrite it as POSIX. A cron token that is not plain digits (`-5`,
+  `0x10`, `1e1`, `5,,`) is now refused at parse time, and `N/S` on a lone number means
+  `N`-to-max. ([2.5.0](/docs/changelog))
+- **`runTask` rejects instead of throwing synchronously** when a handler throws before its
+  first `await`; a `try { runTask(…) } catch` that expected a synchronous throw needs an
+  `await`. ([2.5.0](/docs/changelog))
+- **`denext ui` is served and opened at `http://127.0.0.1:<port>`**, not `localhost`, and its
+  session cookie is a secret minted at the handshake rather than the launch token. A script that
+  reconstructed a `localhost` origin from `--json`'s `port`, or sent the token as the cookie,
+  uses the printed `url` and the cookie the handshake set. Config writes redirect to
+  `/config/<view>?key=<key>` rather than `/config#<section>`.
+  ([2.5.0](/docs/changelog))
+- **`signIn(provider, { credentials })` answers `{ ok: false, error, status }` for a refusal**
+  (`"invalid_credentials"`, `"throttled"` with `retryAfter`, `"access_denied"`, `"unavailable"`,
+  `"rejected"`) instead of rejecting with the server's generic message; only a network failure or
+  a non-JSON answer still throws. A `try`/`catch` around it that showed `err.message` needs
+  `if (!result.ok)`. ([2.5.0](/docs/changelog))
 - **The TOTP and email-request functions answer `{ ok, … }` unions.**
   `enrollTotp(config, session)` (was `(config, user)`) answers
   `{ ok: true, secret, uri }` or `{ ok: false, error }` and refuses a complete
@@ -37,55 +76,58 @@ links back to the release that introduced it.
   `requestPasswordReset()` / `requestEmailVerification()` answer `{ ok: true }` or
   `{ ok: false, error: "throttled", retryAfter }` instead of `{ throttled }`. A
   truthiness check on an old nullable result now always passes — test `.ok`.
-  ([2.5.0-rc.5](/docs/changelog#250-rc5---2026-09-15))
+  ([2.5.0-rc.5](/docs/changelog#250---2026-09-18))
 - **`MfaStatus.enrolled` now means a confirmed factor, and `confirmed` is gone.**
   Read `pendingConfirmation` for an enrollment that was started but not
-  confirmed. ([2.5.0-rc.5](/docs/changelog#250-rc5---2026-09-15))
+  confirmed. ([2.5.0-rc.5](/docs/changelog#250---2026-09-18))
 - **Minting an API token needs a recent sign-in.** `POST /auth/tokens` from an
   older session answers `403 { error: "reauth_required" }`; sign in again first.
-  ([2.5.0-rc.5](/docs/changelog#250-rc5---2026-09-15))
+  ([2.5.0-rc.5](/docs/changelog#250---2026-09-18))
 - **`verifyEmail()` answers `{ ok: true, user }` / `{ ok: false, error }`**
   instead of the user or `null`: `if (await verifyEmail(…))` now always passes —
-  test `result.ok`. ([2.5.0-rc.3](/docs/changelog#250-rc3---2026-09-14))
+  test `result.ok`. ([2.5.0-rc.3](/docs/changelog#250---2026-09-18))
 - **`useSession().status` can be `"mfa-required"`.** An exhaustive `switch` or a
   `Record<status, …>` needs the new member.
-  ([2.5.0-rc.2](/docs/changelog#250-rc2---2026-09-14))
+  ([2.5.0-rc.2](/docs/changelog#250---2026-09-18))
 - **`denextAuth` rate-limits sign-in starts and session reads by default** — 100
   per client IP per 15 minutes and 300 per minute. A load test, or many users
   behind one address, can meet a `429`; `SessionProvider` keeps its session
   through one. Tune `rateLimit.signin` / `rateLimit.session`, or turn every
-  limiter off with `rateLimit: false`. ([2.5](/docs/changelog))
+  limiter off with `rateLimit: false`. ([2.5.0](/docs/changelog))
 
 - **A help flag before the verb prints help instead of running the verb.**
   `denext --help build` used to run a build; it now prints `build`'s help. A
   script that relied on it runs `denext build`. An unknown flag before the verb
-  is now an error instead of being silently ignored. ([2.5.0-rc.2](/docs/changelog#250-rc2---2026-09-14))
+  is now an error instead of being silently ignored. ([2.5.0-rc.2](/docs/changelog#250---2026-09-18))
 - **`AuthProvider` has a third member, `EmailProvider` (`type: "email"`).** An
   exhaustive `switch` over `provider.type` needs an `"email"` case.
   `credentials()`'s `authorize` became optional and the internal
   `issueAuthSession` gained a trailing options argument — both source-compatible,
-  nothing to change. ([2.5.0-rc.2](/docs/changelog#250-rc2---2026-09-14))
+  nothing to change. ([2.5.0-rc.2](/docs/changelog#250---2026-09-18))
 - **The config schema no longer emits `x-denext.widget: "map"`.** Only a tool
   reading `denext.config.schema.json` is affected: detect a map from its
-  `additionalProperties`. ([2.5.0-rc.2](/docs/changelog#250-rc2---2026-09-14))
+  `additionalProperties`. ([2.5.0-rc.2](/docs/changelog#250---2026-09-18))
 - **The `linkAccount` event carries identity only** — provider, provider-side id,
   type and owner. A handler that read provider tokens off it reads the stored
   account back through the adapter.
-  ([2.5.0-rc.1](/docs/changelog#250-rc1---2026-09-14))
+  ([2.5.0-rc.1](/docs/changelog#250---2026-09-18))
 - **`Await<T>` is renamed `MaybePromise<T>`** (`denext/server`). Rename the
-  import. ([2.5.0-rc.1](/docs/changelog#250-rc1---2026-09-14))
+  import. ([2.5.0-rc.1](/docs/changelog#250---2026-09-18))
 - **`InspectNode.source` (`denext/devtools`) is a `SourceLocation` object.** The
   old string stays as `sourceId` for one minor.
-  ([2.5.0-rc.1](/docs/changelog#250-rc1---2026-09-14))
+  ([2.5.0-rc.1](/docs/changelog#250---2026-09-18))
 - **Raised the scrypt `cost`? Pass the same options to `verifyPassword`**, or an
   unknown account rejects measurably faster than a known one.
-  ([2.5.0-rc.1](/docs/changelog#250-rc1---2026-09-14))
+  ([2.5.0-rc.1](/docs/changelog#250---2026-09-18))
 - **A custom `SessionStore` needs `update` for sliding expiry.** Without it a
   session is never slid forward, and the store warns once.
-  ([2.5.0-rc.1](/docs/changelog#250-rc1---2026-09-14))
-- **`denext --help` no longer lists a project's own verbs** — `denext commands`
-  does, and shell completions still include them.
-  ([2.5.0-rc.1](/docs/changelog#250-rc1---2026-09-14))
+  ([2.5.0-rc.1](/docs/changelog#250---2026-09-18))
+- **`denext --help` lists a project's own verbs only from the cache `denext commands`
+  wrote** (`.denext/commands.json`, fingerprinted against `denext.config.*`, `deno.json` and
+  `deno.lock`) — it never imports your config. Before the first `denext commands`, or once one
+  of those files changes, help points at `denext commands` instead; shell completions still
+  enumerate them live. ([2.5.0-rc.1](/docs/changelog#250---2026-09-18),
+  [2.5.0-rc.6](/docs/changelog#250---2026-09-18))
 
 ## Upgrading to 2.4
 
@@ -126,9 +168,9 @@ below are a break only if your code depended on the old, non-Next shape.
   set top-level `streaming: false`.
   ([2.0.0](/docs/changelog#200---2026-09-05))
 - **`experimental.nodeResolve` → `nodeResolve` and `experimental.compiler` →
-  `experimental.reactCompiler`.** Both old keys still work as deprecated aliases
-  (removed in 3.0) and dev-warn — move them when convenient. Likewise
-  `experimental.cacheComponents` → top-level `cacheComponents`.
+  `experimental.reactCompiler`** (itself top-level `reactCompiler` since 2.5). Both old
+  keys still work as deprecated aliases (removed in 3.0) and dev-warn — move them when
+  convenient. Likewise `experimental.cacheComponents` → top-level `cacheComponents`.
   ([2.0.0](/docs/changelog#200---2026-09-05))
 - **`trailingSlash` defaults to Next's behavior.** An unset `trailingSlash` now
   redirects `/about/` → `/about` (308); set `trailingSlash: true` to keep the

@@ -6,6 +6,8 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
 import { compileFeatureModules, transformFeatures } from "../src/build/feature-transform.ts";
 import { bundleSourceFiles } from "../src/build/bundle.ts";
+import { spaSourceTransformPlugin } from "../src/build/spa-compiler-plugin.ts";
+import type * as esbuild from "esbuild";
 
 const IMPORT = `import { feature } from "denext/feature";\n`;
 
@@ -111,6 +113,62 @@ async function bundleWithFold(flag: boolean): Promise<string> {
     await Deno.remove(dir, { recursive: true });
   }
 }
+
+/** Drive the SPA transform plugin's `onLoad` on one file, as esbuild would. */
+async function loadThrough(
+  plugin: esbuild.Plugin | undefined,
+  path: string,
+): Promise<string | undefined> {
+  assert(plugin, "the feature fold is enabled for this config");
+  let fn: ((args: { path: string }) => Promise<{ contents: string } | null>) | undefined;
+  plugin.setup(
+    {
+      onLoad: (_f: unknown, cb: typeof fn) => {
+        fn = cb;
+      },
+      onResolve: () => {},
+    } as unknown as esbuild.PluginBuild,
+  );
+  assert(fn, "the plugin registered no onLoad");
+  return (await fn({ path }))?.contents;
+}
+
+Deno.test("the fold reads the top-level `features` config key (and its legacy alias)", async () => {
+  // `features` graduated out of `experimental` in 2.5: the top-level key drives the fold, the
+  // legacy spelling still does when the top-level one is absent, and top-level wins when both
+  // are set (the maps are not merged).
+  const dir = await Deno.makeTempDir({ prefix: "denext_feature_cfg_" });
+  try {
+    const file = join(dir, "App.tsx");
+    await Deno.writeTextFile(
+      file,
+      `${IMPORT}export const on = feature("FLAG");
+`,
+    );
+    const graduated = await loadThrough(
+      spaSourceTransformPlugin(dir, { features: { FLAG: true } }),
+      file,
+    );
+    assertStringIncludes(graduated ?? "", "export const on = true;");
+    const legacy = await loadThrough(
+      spaSourceTransformPlugin(dir, { experimental: { features: { FLAG: true } } }),
+      file,
+    );
+    assertStringIncludes(legacy ?? "", "export const on = true;");
+    const both = await loadThrough(
+      spaSourceTransformPlugin(dir, {
+        features: { FLAG: false },
+        experimental: { features: { FLAG: true } },
+      }),
+      file,
+    );
+    assertStringIncludes(both ?? "", "export const on = false;");
+    // No flags configured anywhere → the plugin is not even installed.
+    assertEquals(spaSourceTransformPlugin(dir, {}), undefined);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
 
 Deno.test("e2e: an OFF flag DCEs the gated branch + its import from deno bundle", async () => {
   const all = await bundleWithFold(false);

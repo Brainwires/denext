@@ -180,6 +180,21 @@ async function usesCompatMode(dir: string): Promise<boolean> {
   return false;
 }
 
+/**
+ * Whether the project at `dir` is a Next.js compat app — the one fact `/config` needs to decide
+ * whether to offer its `next.config` tab. A native denext app has no `next.config` to read, so
+ * the tab would lead somewhere that exists only to say "there is nothing here".
+ *
+ * Lives here, beside {@linkcode detect}, because the dependency runs `config.ts` →
+ * `config-next.ts` and must keep running that way.
+ *
+ * @param dir The project directory.
+ * @returns Whether the compat pipeline applies.
+ */
+export async function isCompatApp(dir: string): Promise<boolean> {
+  return (await detect(dir)).compat;
+}
+
 /** Decide whether this is a compat app, and find its `next.config.*`. */
 async function detect(dir: string): Promise<Compat> {
   let file: string | null = null;
@@ -320,7 +335,9 @@ function TranslatePreview(
 function NotCompatView(): VNode {
   return h(
     Panel,
-    { name: "next.config", title: "next.config" },
+    { name: "next.config", title: "Config" },
+    // Reached by visiting `/config/next` directly: a native app is offered no such tab, so the
+    // strip here shows only the tab that does exist rather than one marked current-but-absent.
     h(
       "p",
       { class: "lead" },
@@ -347,7 +364,7 @@ function NextConfigView(
 ): VNode {
   return h(
     Panel,
-    { name: "next.config", title: "next.config" },
+    { name: "next.config", title: "Config" },
     h(
       "p",
       { class: "lead" },

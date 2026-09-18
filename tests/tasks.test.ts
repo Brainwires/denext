@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStrictEquals, assertThrows } from "@std/assert";
 import {
   clearTasks,
   collectSchedules,
@@ -8,7 +8,9 @@ import {
   registerTask,
   runTask,
   scheduleTasks,
+  setTaskRecorder,
   taskNames,
+  type TaskRunRecord,
 } from "../src/server/tasks.ts";
 
 function reset() {
@@ -58,11 +60,16 @@ Deno.test("collectSchedules merges config + per-task schedules and dedupes", () 
   ]);
 });
 
-Deno.test("scheduleTasks uses Deno.cron when available and passes the schedule string through", async () => {
-  reset();
-  let ran = 0;
-  registerTask("job", defineTask({ handler: () => ++ran }));
-  const calls: Array<{ name: string; schedule: string; handler: () => unknown }> = [];
+/** A recorded `Deno.cron` registration. */
+interface CronCall {
+  name: string;
+  schedule: string;
+  handler: () => unknown;
+}
+
+/** Run `work` with `Deno.cron` replaced by a recorder, restoring whatever was there after. */
+async function withFakeDenoCron(work: (calls: CronCall[]) => Promise<void> | void) {
+  const calls: CronCall[] = [];
   const denoAny = Deno as { cron?: unknown };
   const had = "cron" in denoAny;
   const prev = denoAny.cron;
@@ -70,6 +77,18 @@ Deno.test("scheduleTasks uses Deno.cron when available and passes the schedule s
     calls.push({ name, schedule, handler });
   };
   try {
+    await work(calls);
+  } finally {
+    if (had) denoAny.cron = prev;
+    else delete denoAny.cron;
+  }
+}
+
+Deno.test("scheduleTasks uses Deno.cron when available and hands it the schedule", async () => {
+  reset();
+  let ran = 0;
+  registerTask("job", defineTask({ handler: () => ++ran }));
+  await withFakeDenoCron(async (calls) => {
     const dispose = scheduleTasks([{ cron: "*/5 * * * *", task: "job" }]);
     assertEquals(calls.length, 1);
     assertEquals(calls[0].schedule, "*/5 * * * *");
@@ -81,10 +100,69 @@ Deno.test("scheduleTasks uses Deno.cron when available and passes the schedule s
     await result;
     assertEquals(ran, 1, "the returned promise resolves once the task ran");
     dispose();
-  } finally {
-    if (had) denoAny.cron = prev;
-    else delete denoAny.cron;
+  });
+});
+
+Deno.test("scheduleTasks hands Deno.cron the POSIX weekday respelled in names", async () => {
+  reset();
+  registerTask("job", defineTask({ handler: () => {} }));
+  // Deno.cron numbers weekdays 1-7 from Sunday and rejects 0: handed `0 0 * * 1` verbatim it
+  // would fire on Sunday, and `0 0 * * 0` would not register at all. The user-facing convention
+  // stays POSIX (every documented example says `1` is Monday); the platform gets names.
+  await withFakeDenoCron((calls) => {
+    scheduleTasks([
+      { cron: "0 0 * * 1", task: "job" },
+      { cron: "0 0 * * 0", task: "job" },
+      { cron: "0 0 * * 1-5/2", task: "job" },
+      { cron: "0 3 ? * ?", task: "job" },
+    ]);
+    assertEquals(calls.map((c) => c.schedule), [
+      "0 0 * * MON",
+      "0 0 * * SUN",
+      "0 0 * * MON,WED,FRI",
+      "0 3 * * *",
+    ]);
+  });
+});
+
+Deno.test("scheduleTasks registers under a name Deno.cron accepts, unique per (task, cron)", async () => {
+  reset();
+  // Deno.cron refuses a name outside [A-Za-z0-9 _-], longer than 64 characters, or already
+  // taken. `task@cron` failed the first rule on every schedule (`*`, `/` and `@`), so under
+  // --unstable-cron and on Deno Deploy no schedule ever registered.
+  const long = "reports/" + "x".repeat(80);
+  registerTask("job", defineTask({ handler: () => {} }));
+  registerTask("reports/daily", defineTask({ handler: () => {} }));
+  registerTask(long, defineTask({ handler: () => {} }));
+  await withFakeDenoCron((calls) => {
+    scheduleTasks([
+      { cron: "*/5 * * * *", task: "job" },
+      { cron: "*,5 * * * *", task: "job" }, // folds to the same readable text as the step
+      { cron: "0 3 * * *", task: "reports/daily" },
+      { cron: "0 3 * * *", task: long },
+      { cron: "0 4 * * *", task: long },
+    ]);
+    assertEquals(calls.length, 5);
+    for (const { name, schedule } of calls) {
+      assert(
+        /^[A-Za-z0-9 _-]+$/.test(name),
+        `"${name}" (${schedule}) uses only allowed characters`,
+      );
+      assert(name.length <= 64, `"${name}" is at most 64 characters`);
+    }
+    assertEquals(new Set(calls.map((c) => c.name)).size, 5, "every pairing has its own name");
+    assert(calls[2].name.startsWith("reports_daily 0 3"), "the task and schedule stay readable");
+  });
+  // And the same pairing gets the same name every boot, so Deno Deploy sees one cron rather
+  // than a new one per deploy.
+  const names: string[] = [];
+  for (let boot = 0; boot < 2; boot++) {
+    await withFakeDenoCron((calls) => {
+      scheduleTasks([{ cron: "0 3 * * *", task: "reports/daily" }]);
+      names.push(calls[0].name);
+    });
   }
+  assertEquals(names[0], names[1]);
 });
 
 Deno.test("scheduleTasks skips a bad cron and an unknown task, without throwing", () => {
@@ -99,4 +177,276 @@ Deno.test("scheduleTasks skips a bad cron and an unknown task, without throwing"
   ]);
   assertEquals(typeof dispose, "function");
   dispose();
+});
+
+// ---- the userland scheduler (the default self-host path) --------------------
+//
+// `@std/testing/time` is not a dependency of this repo, so the clock is faked here: timers run
+// on a monotonic clock (`tick`), the wall clock behind `Date` can be stepped independently
+// (`jump`) — which is exactly what an NTP correction does to a real process.
+
+/** Fake `Date` + `setTimeout`/`clearTimeout` for the duration of `fn`. */
+async function withFakeClock(
+  fn: (clock: { tick: (ms: number) => Promise<void>; jump: (ms: number) => void }) => Promise<void>,
+): Promise<void> {
+  const RealDate = Date;
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  let wall = 1_700_000_000_000 + 20_000; // 20 s into a minute
+  let mono = 0;
+  let nextId = 1;
+  const timers = new Map<number, { at: number; fn: () => void }>();
+  class FakeDate extends RealDate {
+    /** `new Date()` reads the fake wall clock; `new Date(x)` is untouched. */
+    constructor(...args: [] | [number | string | Date]) {
+      super(...(args.length === 0 ? [wall] : args) as [number]);
+    }
+    static override now(): number {
+      return wall;
+    }
+  }
+  globalThis.Date = FakeDate as DateConstructor;
+  (globalThis as { setTimeout: unknown }).setTimeout = (fn: () => void, ms = 0) => {
+    const id = nextId++;
+    timers.set(id, { at: mono + ms, fn });
+    return id;
+  };
+  (globalThis as { clearTimeout: unknown }).clearTimeout = (id: number) => void timers.delete(id);
+  /** Let the promise chains a fired timer started settle (a real macrotask hop). */
+  const settle = () => new Promise<void>((r) => realSetTimeout(r, 0));
+  const clock = {
+    async tick(ms: number) {
+      const target = mono + ms;
+      for (;;) {
+        let due: [number, { at: number; fn: () => void }] | undefined;
+        for (const entry of timers) {
+          if (entry[1].at <= target && (!due || entry[1].at < due[1].at)) due = entry;
+        }
+        if (!due) break;
+        timers.delete(due[0]);
+        wall += due[1].at - mono;
+        mono = due[1].at;
+        due[1].fn();
+        await settle();
+      }
+      wall += target - mono;
+      mono = target;
+      await settle();
+    },
+    jump(ms: number) {
+      wall += ms;
+    },
+  };
+  try {
+    await fn(clock);
+  } finally {
+    globalThis.Date = RealDate;
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.clearTimeout = realClearTimeout;
+  }
+}
+
+/** A task whose every run blocks until the test releases it, recording the run's signal. */
+function blockingTask() {
+  const runs: { signal: AbortSignal; release: () => void }[] = [];
+  const task = defineTask({
+    handler: ({ signal }) =>
+      new Promise<void>((release) => {
+        runs.push({ signal, release });
+      }),
+  });
+  return { task, runs };
+}
+
+Deno.test("userland scheduler: never on registration, once per matching minute, never overlapping, aborted on dispose", async () => {
+  reset();
+  const { task, runs } = blockingTask();
+  registerTask("job", task);
+  await withFakeClock(async ({ tick }) => {
+    const dispose = scheduleTasks([{ cron: "* * * * *", task: "job" }]);
+    await tick(0);
+    assertEquals(runs.length, 0, "Deno.cron never fires on registration; neither does this");
+    await tick(60_000);
+    assertEquals(runs.length, 1, "the next minute fires the task once");
+    await tick(60_000);
+    assertEquals(runs.length, 1, "a still-running instance is not started again");
+    runs[0].release();
+    await tick(60_000);
+    assertEquals(runs.length, 2, "once it finished, the next matching minute fires");
+    assert(!runs[1].signal.aborted);
+    dispose();
+    assert(runs[1].signal.aborted, "dispose aborts the in-flight run's signal");
+    runs[1].release();
+    await tick(120_000);
+    assertEquals(runs.length, 2, "and the tick is stopped");
+  });
+});
+
+Deno.test("userland scheduler: a wall clock stepped backwards does not re-fire an already-run minute", async () => {
+  reset();
+  const { task, runs } = blockingTask();
+  registerTask("job", task);
+  await withFakeClock(async ({ tick, jump }) => {
+    const dispose = scheduleTasks([{ cron: "* * * * *", task: "job" }]);
+    await tick(60_000);
+    assertEquals(runs.length, 1);
+    runs[0].release();
+    // An NTP correction steps the wall clock back two minutes; the process keeps ticking.
+    jump(-120_000);
+    await tick(60_000);
+    assertEquals(runs.length, 1, "a minute that already fired is not fired again");
+    await tick(60_000);
+    assertEquals(runs.length, 1, "…nor is the last fired minute itself, reached a second time");
+    await tick(60_000);
+    assertEquals(runs.length, 2, "the first minute past it fires as usual");
+    runs[1].release();
+    dispose();
+  });
+});
+
+// ---- the run-history seam --------------------------------------------------
+//
+// The recorder is module-global, so every test here clears it in a `finally`: a leaked one would
+// silently contaminate the scheduling tests above.
+
+/** Collect the records one block of work produces, with the recorder always removed after. */
+async function recording(work: () => Promise<unknown>): Promise<TaskRunRecord[]> {
+  const seen: TaskRunRecord[] = [];
+  setTaskRecorder((r) => seen.push(r));
+  try {
+    await work().catch(() => {});
+  } finally {
+    setTaskRecorder(null);
+  }
+  return seen;
+}
+
+Deno.test("with no recorder, runTask hands back exactly what the handler produced", async () => {
+  reset();
+  const value = { deep: { object: 1 } };
+  const boom = new Error("nope");
+  registerTask("ok", defineTask({ handler: () => value }));
+  registerTask(
+    "bad",
+    defineTask({
+      handler: () => {
+        throw boom;
+      },
+    }),
+  );
+
+  // Identity, not shape: this is what pins "the caller's value, unchanged".
+  assertStrictEquals(await runTask("ok"), value);
+  const err = await runTask("bad").then(() => null, (e) => e);
+  assertStrictEquals(err, boom);
+});
+
+Deno.test("with a recorder, runTask STILL hands back exactly what the handler produced", async () => {
+  reset();
+  const value = { deep: { object: 1 } };
+  const boom = new Error("nope");
+  registerTask("ok", defineTask({ handler: () => value }));
+  registerTask(
+    "bad",
+    defineTask({
+      handler: () => {
+        throw boom;
+      },
+    }),
+  );
+  setTaskRecorder(() => {});
+  try {
+    assertStrictEquals(await runTask("ok"), value);
+    const err = await runTask("bad").then(() => null, (e) => e);
+    assertStrictEquals(err, boom);
+  } finally {
+    setTaskRecorder(null);
+  }
+});
+
+Deno.test("a recorder that throws disturbs neither the success nor the failure path", async () => {
+  reset();
+  const boom = new Error("handler failed");
+  registerTask("ok", defineTask({ handler: () => "fine" }));
+  registerTask(
+    "bad",
+    defineTask({
+      handler: () => {
+        throw boom;
+      },
+    }),
+  );
+  setTaskRecorder(() => {
+    throw new Error("the history store is broken");
+  });
+  try {
+    assertEquals(await runTask("ok"), "fine");
+    const err = await runTask("bad").then(() => null, (e) => e);
+    assertStrictEquals(err, boom, "the handler's error survives a broken recorder");
+  } finally {
+    setTaskRecorder(null);
+  }
+});
+
+Deno.test("one record per run, carrying what happened", async () => {
+  reset();
+  registerTask("ok", defineTask({ handler: () => "the tail" }));
+  registerTask(
+    "bad",
+    defineTask({
+      handler: () => {
+        throw new Error("kaboom");
+      },
+    }),
+  );
+  registerTask("plain", defineTask({ handler: () => ({ not: "a string" }) }));
+
+  const seen = await recording(async () => {
+    await runTask("ok");
+    await runTask("bad").catch(() => {});
+    await runTask("plain");
+  });
+  assertEquals(seen.length, 3);
+  assertEquals(seen.map((r) => r.name), ["ok", "bad", "plain"]);
+  assertEquals(seen.map((r) => r.ok), [true, false, true]);
+  assertEquals(seen.map((r) => r.trigger), ["manual", "manual", "manual"]);
+  for (const r of seen) assert(r.durationMs >= 0, "a duration is measured");
+  // A string result keeps its tail; an error keeps its head; anything else carries no detail.
+  assertEquals(seen[0].detail, "the tail");
+  assert(seen[1].detail?.includes("kaboom"), seen[1].detail ?? "(none)");
+  assertEquals(seen[2].detail, undefined);
+});
+
+Deno.test("an unknown task is not a run, so nothing is recorded for it", async () => {
+  reset();
+  const seen = await recording(() => runTask("nope"));
+  assertEquals(seen, [], "the rejection happens before any handler — there is no run");
+});
+
+Deno.test("a handler that throws synchronously rejects — it does not throw", async () => {
+  reset();
+  const boom = new Error("guard clause");
+  registerTask(
+    "sync-bad",
+    defineTask({
+      handler: () => {
+        throw boom;
+      },
+    }),
+  );
+
+  // The scheduler's own usage is `runTask(...).catch(onScheduledError)`. While a synchronous
+  // throw escaped the call expression, `.catch` never ran and the error surfaced in the timer
+  // tick instead — despite the declared `Promise<unknown>`.
+  let caught: unknown = null;
+  await runTask("sync-bad").catch((e) => {
+    caught = e;
+  });
+  assertStrictEquals(caught, boom, "the rejection carries the handler's own error");
+
+  // And it is recorded as a failure, which was impossible while the throw bypassed the seam.
+  const seen = await recording(() => runTask("sync-bad").catch(() => {}));
+  assertEquals(seen.length, 1);
+  assertEquals(seen[0].ok, false);
+  assert(seen[0].detail?.includes("guard clause"), seen[0].detail ?? "(no detail)");
 });

@@ -5,9 +5,10 @@
 // with a "did you mean" suggestion — a typo like `basepath` would otherwise be
 // silently dropped by the loader's field whitelist.
 
-import type { DenextConfig } from "./config.ts";
+import { type DenextConfig, isOrigin } from "./config.ts";
 import { CONFIG_KEYS, EXPERIMENTAL_KEYS } from "./config-keys.generated.ts";
 import { editDistance } from "../utils/edit-distance.ts";
+import { VERB_NAME } from "../cli/command.ts";
 
 /**
  * The recognized top-level {@link DenextConfig} keys — the generated
@@ -54,11 +55,19 @@ function unknownKeyMessage(name: string, key: string, suggestion: string | undef
 /**
  * `experimental.*` keys that graduated to top-level config, with whether the old alias is
  * still read. Setting one gets a "moved" message instead of a generic unknown-key warning.
+ * An honored alias may still be a (deprecated) `ExperimentalConfig` member so a 2.x config
+ * keeps type-checking; this map is consulted before the generated key list, so it warns
+ * either way.
  */
 const MOVED_EXPERIMENTAL_KEYS: ReadonlyMap<string, { to: string; honored: boolean }> = new Map([
   ["streaming", { to: "streaming", honored: false }], // alias removed in 2.0
   ["live", { to: "live", honored: false }], // alias removed in 2.0
   ["cacheComponents", { to: "cacheComponents", honored: true }], // graduated in 2.0; alias kept
+  ["nodeResolve", { to: "nodeResolve", honored: true }], // graduated in 2.0; alias kept
+  ["reactCompiler", { to: "reactCompiler", honored: true }], // graduated in 2.5; alias kept
+  ["compiler", { to: "reactCompiler", honored: true }], // the pre-2.0 name of the same switch
+  ["asyncContext", { to: "asyncContext", honored: true }], // graduated in 2.5; alias kept
+  ["features", { to: "features", honored: true }], // graduated in 2.5; alias kept
 ]);
 
 /** The warning for a graduated `experimental.<key>`, pointing at its top-level home. */
@@ -67,18 +76,21 @@ function movedKeyMessage(name: string, key: string, to: string, honored: boolean
   return `denext: ${name} sets \`experimental.${key}\`, which ${status} — set top-level \`${to}\` instead.`;
 }
 
-/** One level down: warn on `experimental.*` keys outside the generated `EXPERIMENTAL_KEYS`. */
+/**
+ * One level down: a "moved" pointer for every graduated `experimental.*` key, and an
+ * unknown-key warning for anything outside the generated `EXPERIMENTAL_KEYS`.
+ */
 function warnUnknownExperimentalKeys(experimental: unknown, name: string): void {
   if (typeof experimental !== "object" || experimental === null || Array.isArray(experimental)) {
     return;
   }
   for (const key of Object.keys(experimental)) {
-    if (KNOWN_EXPERIMENTAL_KEYS.includes(key)) continue;
     const moved = MOVED_EXPERIMENTAL_KEYS.get(key);
     if (moved) {
       console.warn(movedKeyMessage(name, key, moved.to, moved.honored));
       continue;
     }
+    if (KNOWN_EXPERIMENTAL_KEYS.includes(key)) continue;
     const suggestion = didYouMean(key, KNOWN_EXPERIMENTAL_KEYS);
     console.warn(unknownKeyMessage(name, `experimental.${key}`, suggestion));
   }
@@ -89,8 +101,8 @@ function warnUnknownExperimentalKeys(experimental: unknown, name: string): void 
  * and one level down on any `experimental.*` key not in the generated `EXPERIMENTAL_KEYS`.
  * The loader reconstructs config from a fixed field list, so an unrecognized key (a typo,
  * a stale Next.js option) is otherwise dropped with no signal. Emits a "did you mean"
- * suggestion when a close known key exists, and a "moved to top-level" pointer for the
- * graduated `experimental.streaming` / `experimental.live` / `experimental.cacheComponents`.
+ * suggestion when a close known key exists, and a "moved to top-level" pointer for every
+ * graduated `experimental.*` key (see `MOVED_EXPERIMENTAL_KEYS`).
  *
  * @param config The raw config object as authored (before the loader's whitelist).
  * @param name The config file name, for the message (default `"denext.config"`).
@@ -299,6 +311,46 @@ function validateSecurity(config: DenextConfig, fail: Fail): void {
   if (config.apiMaxBodyBytes !== undefined) {
     num(fail, "apiMaxBodyBytes", config.apiMaxBodyBytes, { int: true, min: 1 });
   }
+  validateServerOptions(config, fail);
+}
+
+/**
+ * The production-server knobs (`canonicalOrigin`, `trustForwardedHeaders`, `requestTimeout`,
+ * `maxConcurrency`, `slotBackstop`, `actionMaxBodyBytes`, `cacheKeyParams`): a bare origin,
+ * a boolean, whole numbers in range, a list of param names. A bad `canonicalOrigin` would
+ * otherwise silently 403 every Server Action (the origin check compares against it).
+ */
+function validateServerOptions(config: DenextConfig, fail: Fail): void {
+  const { canonicalOrigin, trustForwardedHeaders, cacheKeyParams } = config;
+  if (
+    canonicalOrigin !== undefined &&
+    (typeof canonicalOrigin !== "string" || !isOrigin(canonicalOrigin))
+  ) {
+    fail(
+      "canonicalOrigin",
+      'must be an origin — scheme + host, no path (e.g. "https://example.com")',
+    );
+  }
+  if (trustForwardedHeaders !== undefined && typeof trustForwardedHeaders !== "boolean") {
+    fail("trustForwardedHeaders", "must be a boolean");
+  }
+  if (config.requestTimeout !== undefined) {
+    num(fail, "requestTimeout", config.requestTimeout, { int: true, min: 0 }); // ms; 0 disables
+  }
+  if (config.maxConcurrency !== undefined) {
+    num(fail, "maxConcurrency", config.maxConcurrency, { int: true, min: 1 });
+  }
+  if (config.slotBackstop !== undefined) {
+    num(fail, "slotBackstop", config.slotBackstop, { int: true, min: 1 });
+  }
+  if (config.actionMaxBodyBytes !== undefined) {
+    num(fail, "actionMaxBodyBytes", config.actionMaxBodyBytes, { int: true, min: 1 });
+  }
+  if (cacheKeyParams !== undefined) {
+    if (!Array.isArray(cacheKeyParams) || cacheKeyParams.some((p) => typeof p !== "string")) {
+      fail("cacheKeyParams", "must be an array of query-parameter-name strings");
+    }
+  }
 }
 
 /** `apiBatch` caps are finite whole numbers in sane ranges; `enabled` is a boolean. */
@@ -348,6 +400,13 @@ function validateCacheAndEnv(config: DenextConfig, fail: Fail): void {
   }
 }
 
+/** `tasks.historyMaxRuns` is a finite whole number >= 1. */
+function validateTasks(tasks: DenextConfig["tasks"], fail: Fail): void {
+  if (tasks?.historyMaxRuns !== undefined) {
+    num(fail, "tasks.historyMaxRuns", tasks.historyMaxRuns, { int: true, min: 1 });
+  }
+}
+
 /** `tailwind.input`/`output` are required non-empty path strings. */
 function validateTailwind(tailwind: unknown, fail: Fail): void {
   if (tailwind === undefined) return;
@@ -377,24 +436,21 @@ function validateI18n(i18n: unknown, fail: Fail): void {
 
 /** Nested fields whose absence would crash at request time rather than at boot. */
 /**
- * `experimental.features` must be a flat map of booleans — the fold replaces a `feature("KEY")`
- * call with the literal, so a non-boolean value would emit invalid code (and a nested object is
- * always a mistake). Absent keeps every flag off.
+ * `features` (and its legacy alias `experimental.features`) must be a flat map of booleans —
+ * the fold replaces a `feature("KEY")` call with the literal, so a non-boolean value would emit
+ * invalid code (and a nested object is always a mistake). Absent keeps every flag off.
  */
-function validateFeatures(features: unknown, fail: Fail): void {
+function validateFeatures(features: unknown, at: string, fail: Fail): void {
   if (features === undefined) return;
   if (typeof features !== "object" || features === null || Array.isArray(features)) {
-    fail("experimental.features", "must be an object mapping flag names to booleans");
+    fail(at, "must be an object mapping flag names to booleans");
   }
   for (const [key, value] of Object.entries(features as Record<string, unknown>)) {
     if (typeof value !== "boolean") {
-      fail(`experimental.features.${key}`, "must be a boolean");
+      fail(`${at}.${key}`, "must be a boolean");
     }
   }
 }
-
-/** A project CLI verb name: lowercase, digits and dashes, starting with a letter. */
-const COMMAND_NAME = /^[a-z][a-z0-9-]*$/;
 
 /**
  * One `commands[i]` entry: a usable verb name, a summary to show in `denext --help`,
@@ -408,8 +464,10 @@ function validateCommand(command: unknown, index: number, seen: Set<string>, fai
     return fail(at, "must be an object with `name`, `summary`, and `run`");
   }
   const { name, summary, run } = command as Record<string, unknown>;
-  if (typeof name !== "string" || !COMMAND_NAME.test(name)) {
-    fail(`${at}.name`, "must be a lowercase verb name matching /^[a-z][a-z0-9-]*$/");
+  // The one grammar for a verb name, shared with the CLI's help cache: what validation admits
+  // here is exactly what the cache accepts back from disk (`src/cli/command-cache.ts`).
+  if (typeof name !== "string" || !VERB_NAME.test(name)) {
+    fail(`${at}.name`, `must be a lowercase verb name matching ${VERB_NAME}`);
   }
   if (seen.has(name as string)) {
     fail(`${at}.name`, `duplicates an earlier \`commands\` entry ("${name}")`);
@@ -430,7 +488,8 @@ function validateCommands(commands: unknown, fail: Fail): void {
 }
 
 function validateNestedRequired(config: DenextConfig, fail: Fail): void {
-  validateFeatures(config.experimental?.features, fail);
+  validateFeatures(config.features, "features", fail);
+  validateFeatures(config.experimental?.features, "experimental.features", fail);
   validateTailwind(config.tailwind, fail);
   validateI18n(config.i18n, fail);
 }
@@ -447,6 +506,7 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
   validateImageNumerics(config.images, fail);
   validateSecurity(config, fail);
   validateCacheAndEnv(config, fail);
+  validateTasks(config.tasks, fail);
   validateCommands(config.commands, fail);
   validateNestedRequired(config, fail);
 }

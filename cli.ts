@@ -15,7 +15,11 @@
  */
 
 import { join, resolve } from "@std/path";
-import { entrypointArg, isStandaloneBinary } from "./src/cli/self-exec.ts";
+import {
+  entrypointArg,
+  isStandaloneBinary,
+  maybeReexecPinned as reexecPinned,
+} from "./src/cli/self-exec.ts";
 import { CONFIG_FILES, resolveProject } from "./src/build/paths.ts";
 import { buildAppCss, injectAppConfigRedirects, restoreAppConfig } from "./src/build/css.ts";
 import { tailwindPaths } from "./src/build/tailwind.ts";
@@ -32,7 +36,7 @@ import { VERSION } from "./mod.ts";
 import type { CommandContext, CommandSpec, ParseOutcome, ProjectVerb } from "./src/cli/command.ts";
 import { type CommandRegistry, GLOBAL_FLAGS } from "./src/cli/command.ts";
 import { buildRegistry } from "./src/cli/register.ts";
-import { projectDir, SHUTDOWN_SIGNALS } from "./src/cli/shared.ts";
+import { envTierFor, projectDir, SHUTDOWN_SIGNALS } from "./src/cli/shared.ts";
 import { readCommandCache } from "./src/cli/command-cache.ts";
 
 /**
@@ -78,9 +82,11 @@ async function maybeReexecForCss(dir: string, minify: boolean): Promise<boolean>
   if (!css) return false; // no CSS in the project — run normally
 
   if (isStandaloneBinary()) {
-    // Only a `deno compile`d binary cannot re-exec itself under a different `--config`
-    // (there is no `deno` to spawn and no module URL to re-run). Running from JSR or a
-    // remote URL is fine: Deno runs remote entrypoints, so we re-exec `import.meta.url`.
+    // A binary cannot re-exec ITSELF under a different `--config`: there is no module URL to
+    // re-run. Reaching here at all means {@linkcode maybeReexecPinned} did not defer, which for
+    // a module verb it always does — so this is the residual path (a verb that builds CSS
+    // without loading modules). Running from JSR or a remote URL is fine: Deno runs remote
+    // entrypoints, so we re-exec `import.meta.url`.
     console.error(
       "denext: WARNING — this project imports CSS, but a compiled (standalone) denext " +
         'binary cannot apply the CSS import map. `import "./x.css"` will fail at runtime; ' +
@@ -112,6 +118,62 @@ async function maybeReexecForCss(dir: string, minify: boolean): Promise<boolean>
     "DENEXT_CSS_ACTIVE",
     () => restoreAppConfig(paths.configPath, paths.outDir),
   );
+}
+
+/**
+ * Forward the shutdown signals this process receives to `child` (as SIGTERM on Unix; as a
+ * plain termination on Windows, which has no signals), so `kill <pid>` / `docker stop` / Ctrl-C
+ * reach a re-exec'd server instead of orphaning it, then resolve with the code the process
+ * should exit with: the child's own, or — when the child died of a signal — `128 + signal`,
+ * as a shell would report (Deno's `status.code` already carries that on Unix).
+ */
+async function forwardShutdown(child: Deno.ChildProcess): Promise<number> {
+  const forward = () => {
+    try {
+      // Windows has no signal to forward: `kill()` terminates the child outright.
+      if (Deno.build.os === "windows") child.kill();
+      else child.kill("SIGTERM");
+    } catch { /* already exited */ }
+  };
+  for (const sig of SHUTDOWN_SIGNALS) {
+    try {
+      Deno.addSignalListener(sig, forward);
+    } catch { /* unsupported */ }
+  }
+  const { code } = await child.status;
+  for (const sig of SHUTDOWN_SIGNALS) {
+    try {
+      Deno.removeSignalListener(sig, forward);
+    } catch { /* not installed */ }
+  }
+  return code;
+}
+
+/**
+ * A compiled binary defers a module verb to the denext the project pins — the decision is
+ * {@linkcode reexecPinned} (src/cli/self-exec.ts, where it is testable); this wires it to the
+ * process: the pinned CLI runs as a `deno run` child with stdio and shutdown signals forwarded,
+ * and the process exits with the child's code. Returns whether the caller should stop.
+ *
+ * @param dir The project directory the verb targets.
+ */
+function maybeReexecPinned(dir: string): Promise<boolean> {
+  return reexecPinned(dir, VERSION, Deno.args, {
+    standalone: isStandaloneBinary,
+    env: (name) => Deno.env.get(name),
+    spawn: (cli) =>
+      forwardShutdown(
+        new Deno.Command(denoExecutable(), {
+          args: ["run", "-A", ...minDepAgeArgs(), cli, ...Deno.args],
+          env: { DENEXT_PINNED_ACTIVE: "1" },
+          stdin: "inherit",
+          stdout: "inherit",
+          stderr: "inherit",
+        }).spawn(),
+      ),
+    exit: (code) => Deno.exit(code),
+    warn: (message) => console.error(message),
+  });
 }
 
 /**
@@ -151,17 +213,7 @@ async function reexecWithConfig(
     stdout: "inherit",
     stderr: "inherit",
   }).spawn();
-  const forward = () => {
-    try {
-      child.kill("SIGTERM");
-    } catch { /* already exited */ }
-  };
-  for (const sig of SHUTDOWN_SIGNALS) {
-    try {
-      Deno.addSignalListener(sig, forward);
-    } catch { /* unsupported */ }
-  }
-  const { code } = await child.status;
+  const code = await forwardShutdown(child);
   // Restore any transiently-mutated app config now the build child is done (runs on a
   // clean exit AND after a forwarded shutdown signal — the child exits, status resolves).
   if (cleanup) await cleanup().catch(() => {});
@@ -208,7 +260,8 @@ async function maybeReexecForModules(dir: string): Promise<boolean> {
 async function moduleGate(command: CommandSpec, ctx: CommandContext): Promise<boolean> {
   if (!command.loadsModules) return false;
   const dir = command.moduleDir ? command.moduleDir(ctx) : projectDir(ctx);
-  await loadEnv({ dir });
+  if (await maybeReexecPinned(dir)) return true;
+  await loadEnv({ dir, mode: envTierFor(command) });
   // `dev` builds unminified CSS; the other module verbs minify (matching 1.x).
   if (await maybeReexecForCss(dir, command.name !== "dev")) return true;
   if (await maybeReexecForModules(dir)) return true;
@@ -336,7 +389,7 @@ function printOutcome(
   project: ProjectHelp | null = null,
 ): void {
   if (outcome.kind === "version") {
-    console.log(`denext ${VERSION}`);
+    console.log(`denext ${VERSION}${isStandaloneBinary() ? " (binary)" : ""}`);
   } else if (outcome.kind === "help") {
     const help = outcome.command
       ? registry.formatCommandHelp(outcome.command)

@@ -2,7 +2,7 @@
 // reconciler keeps its time-window entanglement for async `startTransition`,
 // byte-for-byte unchanged (no regression, no added cost).
 //
-// When `experimental.asyncContext` is enabled, the build instruments client
+// When `asyncContext` is enabled, the build instruments client
 // modules (src/build/async-context-transform.ts) so context survives `await`, and
 // redirects THIS module — via the same import-map seam the transform uses — to a
 // generated `export const asyncContextScopingEnabled = true;`. The reconciler then

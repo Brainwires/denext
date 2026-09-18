@@ -2,7 +2,7 @@
 // every widget kind, list buttons move rows without JavaScript, out-of-range numbers are
 // reported rather than clamped, and nothing a config file contains can escape into markup.
 
-import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
+import { assert, assertEquals, assertMatch, assertStringIncludes, assertThrows } from "@std/assert";
 import {
   loadConfigSchema,
   MAP_SEGMENT,
@@ -77,8 +77,6 @@ Deno.test("a union round-trips through whichever branch holds the value", () => 
   assertRoundTrip(specAt("csp"), { scriptSrc: ["'self'"], imgSrc: ["data:"] }, "object branch");
   assertRoundTrip(specAt("hsts"), false, "a non-string enum branch stays a boolean");
   assertRoundTrip(specAt("hsts"), { maxAge: 63072000, preload: true }, "object branch");
-  assertRoundTrip(specAt("compatibilityMode"), true, "boolean branch");
-  assertRoundTrip(specAt("compatibilityMode"), "auto", "enum branch");
   assertRoundTrip(specAt("cache", "store"), "sqlite", "enum branch");
   assertRoundTrip(specAt("scheduledTasks"), { "0 3 * * *": ["cleanup", "digest"] }, "map of union");
   assertRoundTrip(specAt("scheduledTasks"), { "0 3 * * *": "cleanup" }, "map of union (scalar)");
@@ -343,8 +341,10 @@ function parsedTextarea(markup: string, name: string): string {
 Deno.test("a textarea keeps a value's leading newlines through render and parse", () => {
   const value = '\n\n<meta name="x">\n';
   const markup = toHtml(control({ tag: "textarea", name: "t", value }));
-  // The one newline the parser eats, then the value's own two.
-  assertStringIncludes(markup, 'style="width:100%">\n\n\n&lt;meta');
+  // The one newline the parser eats, then the value's own two — anchored on the end of the start
+  // tag rather than on whichever attribute happens to come last, so restyling a control cannot
+  // fail this. What is being pinned is that NOTHING sits between `>` and the value's newlines.
+  assertMatch(markup, /<textarea [^>]*>\n\n\n&lt;meta/);
   assertEquals(parsedTextarea(markup, "t"), value);
   // The same through a schema-driven textarea widget, and back through the form codec.
   const spec = specAt("spa", "head");
@@ -359,4 +359,169 @@ Deno.test("readWidget decodes one posted field on its own", () => {
   assertEquals(readWidget(SCHEMA, "basePath", "/app"), "/app");
   assertEquals(readWidget(SCHEMA, "apiBatch.maxItems", "10"), 10);
   assertThrows(() => readWidget(SCHEMA, "nope", "x"), Error, "no schema at `nope`");
+});
+
+/** The `<p class="group-summary">` line, which is where a group states its own name and state. */
+function summaryOf(markup: string): string {
+  return markup.match(/<p class="group-summary">.*?<\/p>/s)?.[0] ?? "";
+}
+
+Deno.test("a key's pill says set or unset, by the same rule the writer uses", () => {
+  // Emptying a box and saving REMOVES the key — `decode` turns "" into undefined — so an empty
+  // field that still read "set" would state the opposite of what the file is about to say.
+  assertStringIncludes(render(specAt("basePath"), undefined), ">unset<");
+  assertStringIncludes(render(specAt("basePath"), ""), ">unset<");
+  assertStringIncludes(render(specAt("basePath"), "/app"), ">set<");
+
+  // An absent key arrives as `undefined`, never as `false`, so a `false` in hand is one the file
+  // really declares. It is set, and saying otherwise would hide a deliberate opt-out.
+  assertStringIncludes(render(specAt("trailingSlash"), undefined), ">unset<");
+  assertStringIncludes(render(specAt("trailingSlash"), false), ">set<");
+  assertStringIncludes(render(specAt("trailingSlash"), true), ">set<");
+
+  // The empty shapes `decode` also reports as undefined: an empty group and an empty list.
+  assertStringIncludes(summaryOf(render(specAt("tailwind"), {})), ">unset<");
+  assertStringIncludes(summaryOf(render(specAt("tailwind"), { input: "a.css" })), ">set<");
+  assertStringIncludes(render(specAt("publicEnv"), []), ">unset<");
+  assertStringIncludes(render(specAt("publicEnv"), ["API_URL"]), ">set<");
+});
+
+Deno.test("a required key still says it is required, beside its state", () => {
+  // Both facts matter, and they are different questions: "required" says the form will not take
+  // a blank, "unset" says it currently holds one. Showing only one of them loses the other.
+  const path = ["i18n", "defaultLocale"];
+  const spec = widgetFor(resolveAt(SCHEMA, path), path, true);
+  const markup = render(spec, undefined);
+  assertStringIncludes(markup, ">unset<");
+  assertStringIncludes(markup, ">required<");
+});
+
+Deno.test("an opt-out toggle says Disable, and ticking it writes false", () => {
+  // `streaming` is on unless you say otherwise (`@default true` in the type). Ticking a box
+  // labelled Enable would write the value it already has; the useful edit is to opt OUT.
+  const spec = specAt("streaming");
+  assertEquals(spec.default, true, "the schema states the default the widget reads");
+  const markup = render(spec, undefined);
+  assertStringIncludes(markup, ">Disable</label>");
+  // Only the two wire values swap: the checkbox carries "off" so a ticked box posts the opt-out.
+  // Unset, there is NO hidden companion — an unticked box for a key the file never mentions
+  // posts nothing, and nothing is "leave it alone" (a companion made every save write `false`
+  // for every boolean the view happened to show). Set, the companion carries "on" so an
+  // UNTICKED box posts the default back, which is how opting out is undone.
+  assertStringIncludes(markup, 'type="checkbox"');
+  assertStringIncludes(markup, 'value="off"');
+  assert(!markup.includes('type="hidden" value="on"'), "unset: no companion");
+  assertStringIncludes(render(spec, false), 'type="hidden" value="on"');
+
+  // The codec is untouched: it reads values, not checkboxes, so the posted pair still decodes.
+  const name = fieldName(spec.path);
+  assertEquals(decode(spec, [{ name, value: "on" }]), true, "unticked keeps it on");
+  assertEquals(
+    decode(spec, [{ name, value: "on" }, { name, value: "off" }]),
+    false,
+    "ticked opts out",
+  );
+});
+
+Deno.test("an opt-out toggle is ticked when the config has opted out", () => {
+  // The box shows the state it would write, so `streaming: false` reads back as ticked.
+  assertStringIncludes(render(specAt("streaming"), false), "checked");
+  assert(!render(specAt("streaming"), undefined).includes("checked"), "absent is not ticked");
+  assert(!render(specAt("streaming"), true).includes("checked"), "explicitly on is not ticked");
+});
+
+Deno.test("an opt-in toggle is unchanged by any of that", () => {
+  // `trailingSlash` states no default, so it keeps the original polarity and wording.
+  const spec = specAt("trailingSlash");
+  assertEquals(spec.default, undefined);
+  const markup = render(spec, undefined);
+  assertStringIncludes(markup, ">Enable</label>");
+  assert(
+    !markup.includes('type="hidden" value="off"'),
+    "unset: no companion, so unticked posts nothing",
+  );
+  assertStringIncludes(render(spec, true), 'type="hidden" value="off"');
+  assertStringIncludes(render(spec, true), "checked");
+});
+
+Deno.test("a flattened union keeps the types of its values", () => {
+  // The control posts text, and the config is written from what `decode` returns — so if "true"
+  // came back as a string it would be spliced in as one. `decodeText` maps a posted string back
+  // to the schema's declared member, which is what keeps `true` a boolean.
+  const spec = specAt("compatibilityMode");
+  assertRoundTrip(spec, true, "boolean true");
+  assertRoundTrip(spec, false, "boolean false — the value the old picker hid behind a checkbox");
+  assertRoundTrip(spec, "auto", "the enum member");
+  assertEquals(decode(spec, [{ name: "compatibilityMode", value: "true" }]), true);
+  assertEquals(decode(spec, [{ name: "compatibilityMode", value: "false" }]), false);
+  assertEquals(decode(spec, [{ name: "compatibilityMode", value: "" }]), undefined, "unset");
+});
+
+Deno.test("a superseded key that IS set says so on its label", () => {
+  // `experimental.reactCompiler` and the top-level `reactCompiler` are the SAME switch — the
+  // effective flag is `reactCompiler ?? experimental.reactCompiler ?? experimental.compiler`.
+  // Side by side with no mark, they read as two features. The pill only ever appears on a key
+  // the config actually sets: an unset one is not shown.
+  const spec = specAt("experimental", "reactCompiler");
+  assertEquals(spec.deprecated, true);
+  const markup = render(spec, true);
+  assertStringIncludes(markup, ">deprecated<");
+  assertStringIncludes(markup, ">set<", "and that it is the one the config is using");
+
+  // The key that replaced it carries no such pill.
+  assert(!render(specAt("reactCompiler"), true).includes(">deprecated<"));
+  assert(!render(specAt("asyncContext"), true).includes(">deprecated<"));
+  assert(!render(specAt("features"), { A: true }).includes(">deprecated<"));
+});
+
+Deno.test("a superseded key is not offered until the config actually sets it", () => {
+  // Showing `experimental.compiler` to someone who never used it is an invitation to start
+  // using the name that was replaced. Showing it when it IS set is the only way to clear it.
+  // Every `experimental.*` key graduated to a top-level twin, so an empty block offers none.
+  const group = specAt("experimental");
+  assertEquals(group.deprecated, true, "the block itself is superseded");
+  const empty = render(group, {});
+  for (const key of ["compiler", "reactCompiler", "asyncContext", "features", "nodeResolve"]) {
+    assert(!empty.includes(`experimental.${key}`), `an unset superseded key is not rendered`);
+  }
+
+  const held = render(group, { compiler: true });
+  assertStringIncludes(held, "experimental.compiler", "a key the config sets is always shown");
+  assertStringIncludes(held, ">deprecated<");
+
+  // Hiding is not deleting: the group posts nothing for it, which reads as "leave it alone".
+  assertEquals(decode(group, encode(group, {})), undefined, "an empty group stays absent");
+  assertEquals(decode(group, encode(group, { compiler: true })), { compiler: true });
+});
+
+Deno.test("a union names its key once, not once per branch", () => {
+  // A branch renders at its PARENT's path, so the picker and the branch were both labelling the
+  // same key — the name, its pill, its help and its validation message, twice over.
+  const spec = specAt("csp");
+
+  // The enum branch: a single control, which used to bring its own label with it.
+  const strict = render(spec, "strict");
+  assertEquals(strict.match(/<label for="f-csp"/g)?.length ?? 0, 1, "one label for the key");
+
+  // The object branch: a group, which used to bring its own bold summary line.
+  const object = render(spec, { scriptSrc: ["'self'"] });
+  assertEquals(
+    (object.match(/<p class="group-summary">csp/g) ?? []).length,
+    0,
+    "the branch group does not re-introduce the key the picker already named",
+  );
+  // Its CHILDREN keep their labels — that is what separates one key from the next.
+  assertStringIncludes(object, "scriptSrc");
+  // And the picker itself is still there, with the right branch selected.
+  assertStringIncludes(object, 'name="csp~branch" type="radio" value="2" checked');
+});
+
+Deno.test("a validation message is formatted, not shown with its markers", () => {
+  const spec = specAt("basePath");
+  const markup = toHtml(renderWidget(spec, "/app", {
+    csrf: "tok",
+    errors: { basePath: "`basePath` must start with a slash" },
+  }));
+  assertStringIncludes(markup, "<code>basePath</code> must start with a slash");
+  assertStringIncludes(markup, 'role="alert"', "it is still announced");
 });

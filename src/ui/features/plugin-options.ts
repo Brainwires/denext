@@ -13,7 +13,9 @@
 // and answers with the unified diff plus a confirm form carrying the exact option writes; the
 // second POST (`confirm=1`) re-reads the file, re-applies those writes and writes only when they
 // still apply. Both carry `_base`, a SHA-256 of the source the form was rendered from, so an edit
-// made elsewhere in the meantime is a `409` rather than a lost update.
+// made elsewhere in the meantime is a `409` rather than a lost update — and a browser form
+// WITHOUT the stamp is refused as stale, since no page this panel renders posts without one.
+// Only the `/api/plugins/options` twin may omit it.
 
 import { normalizeSpec } from "../../build/plugin-install.ts";
 import { publishedOptionsSchema } from "./third-party-options.ts";
@@ -30,15 +32,16 @@ import {
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChild, VNodeChildren } from "../../jsx/types.ts";
 import {
+  Badge,
   DiffBlock,
   Hidden,
   Mono,
   NoChange,
   Note,
   OpForm,
-  Out,
   Panel,
   PreviewLead,
+  SourceBlock,
 } from "../components.ts";
 import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
 import { Raw, renderView } from "../view.ts";
@@ -504,7 +507,7 @@ function IndexView({ state }: { readonly state: ProjectState }): VNode {
           { key: entry.name },
           wiredAs(state, entry)
             ? h("a", { href: optionsHref(entry.name) }, entry.name)
-            : h(Fragment, null, entry.name, " ", h("span", { class: "badge" }, "not wired")),
+            : h(Fragment, null, entry.name, " ", h(Badge, { tone: "todo" }, "not wired")),
         )
       ),
     ),
@@ -527,8 +530,8 @@ function CodeOptions({ reading }: { readonly reading: Reading }): VNode {
       h(
         Fragment,
         { key },
-        h("h3", null, h("code", null, key), " ", h("span", { class: "badge" }, "read-only")),
-        h(Out, null, reading.codeText[key] ?? ""),
+        h("h3", null, h("code", null, key), " ", h(Badge, { tone: "info" }, "read-only")),
+        h(SourceBlock, { source: reading.codeText[key] ?? "" }),
       )
     ),
   );
@@ -563,11 +566,14 @@ function OptionsView(
       ", rendered from the plugin's options schema. A change is previewed as a diff before ",
       "anything is written.",
     ),
-    ctx.readOnly ? h(Note, null, "Read-only mode — every change is refused.") : null,
+    ctx.readOnly ? h(Note, { tone: "warn" }, "Read-only mode — every change is refused.") : null,
     draft.notice ?? null,
     h(
       "form",
-      { method: "post", action: optionsHref(target.entry.name) },
+      // Dirty-tracked: Preview is inert until an option actually changes, so it cannot preview a
+      // diff of nothing. `ui.js` finds the unnamed submit; with JavaScript off the button simply
+      // works, which is why the server never renders it disabled.
+      { method: "post", action: optionsHref(target.entry.name), "data-dirty-track": "1" },
       h(Raw, { html: form }),
       h(Hidden, { name: BASE_FIELD, value: target.base }),
       h("button", { type: "submit", disabled: ctx.readOnly }, "Preview"),
@@ -583,8 +589,8 @@ function BailView(
   return h(
     Frame,
     { title: titleOf(target) },
-    h(Note, null, failure.reason),
-    failure.snippet ? h(Out, null, failure.snippet) : null,
+    h(Note, { tone: "warn" }, failure.reason),
+    failure.snippet ? h(SourceBlock, { source: failure.snippet }) : null,
     h(
       "p",
       { class: "lead" },
@@ -714,7 +720,7 @@ async function write(
     return new Response(null, { status: 303, headers: { location } });
   }
   const next = { ...target, source: edit.source, base: await stamp(edit.source) };
-  const notice = h(Note, null, `Wrote ${target.configName}.`);
+  const notice = h(Note, { tone: "ok" }, `Wrote ${target.configName}.`);
   return show(ctx, next, reading, { value: values, notice });
 }
 
@@ -758,6 +764,13 @@ function propose(ctx: UiContext, target: OptionsTarget, reading: Reading): Propo
 async function submit(ctx: UiContext, target: OptionsTarget, reading: Reading): Promise<Response> {
   if (ctx.readOnly) return refuse(ctx, titleOf(target), "read-only", 403);
   const posted = postedField(ctx, BASE_FIELD);
+  if (posted === "" && ctx.form !== undefined && !ctx.json) {
+    // A browser form always carries the stamp; one without was not built from this page.
+    const reason = `this form carries no ${BASE_FIELD} stamp, so it cannot be checked against ` +
+      `the ${target.configName} on disk — nothing was written. Reload the options and re-apply ` +
+      "your change.";
+    return refuse(ctx, titleOf(target), reason, 400);
+  }
   if (posted !== "" && posted !== target.base) {
     const reason = `${target.configName} changed on disk since this form was rendered — ` +
       "nothing was written. Reload the options and re-apply your change.";

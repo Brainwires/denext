@@ -234,7 +234,7 @@ A native `await` exposes no runtime hook — it never calls a patched
 `Promise.prototype.then`, so no Zone.js-style monkeypatch can carry context across it.
 Scoping an async `startTransition` by transition identity therefore needs either the
 engine's own `AsyncContext` (unshipped) or a build transform. denext ships the latter,
-opt-in via `experimental.asyncContext`: `src/build/async-context-transform.ts` brackets
+opt-in via `asyncContext`: `src/build/async-context-transform.ts` brackets
 each `await`/`for await` (`const $ = __asyncScope(); try { … await __asyncAwait($, X) … }
 finally { __asyncScopeEnd($); }`) so the frame's context is restored on resume **and** the
 ambient context is restored on completion — no trailing leak, so an urgent update after a

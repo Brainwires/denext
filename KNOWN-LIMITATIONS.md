@@ -82,7 +82,7 @@ next-compat interop path — denext's own apps are unaffected):
   own `fonts` or set `offline: true` (which errors instead of fetching — see the
   Security note below).
 - **Async `startTransition` scopes by a time _window_ by default; opt into
-  identity scoping with `experimental.asyncContext`.** React scopes
+  identity scoping with `asyncContext`.** React scopes
   async-transition entanglement with an async-context primitive browsers haven't
   shipped (`AsyncLocalStorage` is server-only; TC39 `AsyncContext` is still a
   proposal). By default denext uses a time window: while any async transition's
@@ -93,7 +93,7 @@ next-compat interop path — denext's own apps are unaffected):
   raised _outside_ any event handler (e.g. from an unrelated timer) while the
   window is open. Rather than wait on the platform, denext ships its own
   first-party `AsyncContext` plus a build transform that makes it survive
-  `await`; enable `experimental: { asyncContext: true }` and priority is scoped
+  `await`; enable `asyncContext: true` in `denext.config.ts` and priority is scoped
   by transition **identity** — a post-`await` update stays a transition, an
   unrelated urgent update in the window keeps its priority. The transform
   instruments every `await` in client code (a small per-`await` cost), so it is
@@ -144,11 +144,29 @@ caveat — being a denext original is not the same as being incomplete.
 - **`client:only` skips SSR** (no first paint / SEO for that subtree);
   **`client:media`** hydrates eagerly when `matchMedia` is unavailable.
 
+### Boundary diagnostics (dropped function props, server-only leaks)
+
+- **The dropped-function warning covers what the renderer can attribute.** A `"use client"`
+  component's props warn on every Flight renderer; a host element's `onClick` in a Server
+  Component warns on the streaming and PPR renderers, which know whether they are inside an
+  island. Under streaming, an island's own Suspense content that resolves after the island
+  finished is attributed to the server, so a handler it renders may warn spuriously (dev only).
+- **The server-only leak check reads the bundle where one is produced** (`denext build`,
+  `denext export`, the bundled dev path: the source map's shipped modules, so a helper that
+  tree-shaking removed is not a leak). The unbundled per-module dev loop (the default
+  `denext dev`) never bundles, so it checks the route's import graph instead — every local
+  module counts, only `"use server"` modules are exempt — and only for a route the build would
+  hydrate; a route the build ships without JavaScript is never checked there.
+- **`denext/no-handlers-in-async` resolves module-local bindings only.** An imported handler
+  or a prop-passed one is not flagged (it may be a server action), and a function inside a
+  string or a non-`on*` prop is out of scope.
+
 ### Cache Components (`use cache` + PPR)
 
 A stable, **opt-in** feature: enable it with top-level `cacheComponents: true`
 in `denext.config.ts` (the pre-2.0 `experimental.cacheComponents` still works
-and dev-warns to move). Off, `use cache` is inert and the render path is
+and dev-warns to move — as does every other `experimental.*` key, all of which
+graduated to top-level fields by 2.5). Off, `use cache` is inert and the render path is
 byte-for-byte unchanged. Caching is a choice, not a default — these are the
 four documented bounds of the opt-in:
 
@@ -358,7 +376,7 @@ four documented bounds of the opt-in:
 
 - **DCE covers some paths, not all — but the value is always correct.** `feature("KEY")`
   (`denext/feature`) always returns the configured value: the server and every client bundle are
-  seeded with `experimental.features`. **Dead-code elimination** of the untaken branch happens
+  seeded with the top-level `features` map. **Dead-code elimination** of the untaken branch happens
   only where the build folds the call: the native App Router's **component (`.tsx`/`.jsx`)**
   modules, the whole SPA bundle, and dev. On the **compat (drop-in) App Router** path, and for
   **non-component (`.ts`) modules on the native path**, `feature()` reads the seeded value at
@@ -436,8 +454,13 @@ provide — use denext's own panel for those.
 
 ## Experimental / unstable APIs
 
-Implemented for compatibility but tracking still-unstable upstream surfaces, so
-they may change: `unstable_cache` (still `unstable_` in Next 16),
+Nothing denext ships is experimental: every `experimental.*` config key graduated to a
+top-level field by 2.5, and the `unstable_*` / `experimental_*` export names below are
+**upstream's** names, kept for drop-in compatibility — the features behind them are stable
+in denext. In new code use the un-prefixed twins on `denext/server`: `after`, `cacheLife`,
+`cacheTag`, `noStore`, `connection` (the prefixed `unstable_after` / `unstable_cacheLife` /
+`unstable_cacheTag` / `unstable_noStore` on `next/cache` are aliases of them). Still spelled
+the upstream way because upstream is: `unstable_cache` (still `unstable_` in Next 16),
 `unstable_batchedUpdates` (a no-op — see [the architecture guide](https://denext.dev/docs/architecture)),
 `useMemoCache`/`c` (React Compiler runtime — the compiler hit 1.0 stable; this
 is an internal helper). **Not provided:** Next 16.4 canary's navigation-stage APIs
@@ -522,6 +545,25 @@ runtime and transform (reported as review notes, never silently changed):
 ## Not yet available
 
 A few capabilities aren't built yet (none affects the zero-npm runtime):
+
+- **The compiled `denext` binary never builds an app in its own process.** Every module-loading
+  verb (`dev`, `build`, `export`, `start`, `task`, `doctor`, `analyze`, `profile`, `desktop`)
+  re-execs the denext the project pins, as a `deno run` child. This is deliberate — it is what
+  makes `denext build` produce exactly what `deno task build` would rather than substituting the
+  binary's own framework — but it is also load-bearing: a binary _cannot_ bundle in-process,
+  because the generated client entry resolves `denext/client-runtime` and friends against
+  `import.meta.url`, which inside a binary is a `deno-compile://` path the child bundler cannot
+  see. **Consequence:** those verbs need a reachable `deno`, and a directory that pins no denext
+  is refused with a message naming the fix, rather than built. `create`, `init`, `commands`,
+  `completions` and `--version` run in the binary itself and need nothing; `ui` starts without
+  Deno but its panels spawn `deno` for every project-touching operation. Signing is not a gap:
+  the release workflow code-signs and notarises the macOS binary when the Apple Developer ID
+  secrets are configured, and a `curl | sh` download never carries the quarantine attribute (a
+  bare executable cannot be stapled either) — that is documented in
+  [The `denext` command](./README.md#the-denext-command). What _is_ still missing: a Windows
+  installer script (the `.zip` is on the release page; `deno install` covers it), and the
+  installer's `curl | sh` path needs a published non-prerelease release to resolve, because a
+  release candidate is a GitHub prerelease and never "latest" — pass `DENEXT_VERSION`.
 
 - **`next/font/local`: no metric-matched fallback face.** Google fonts get Next's
   `adjustFontFallback` fallback face from a bundled metrics table (the same Capsize set Next

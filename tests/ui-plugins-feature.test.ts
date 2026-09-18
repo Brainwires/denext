@@ -9,7 +9,8 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { startUiServer, type UiServer } from "../src/ui/server.ts";
-import { deriveCsrf, UI_COOKIE, UI_CSRF_HEADER } from "../src/ui/security.ts";
+import { UI_CSRF_HEADER } from "../src/ui/security.ts";
+import { uiHandshake } from "./helpers/ui-session.ts";
 import { setProcRunner } from "../src/ui/features/plugins.ts";
 import type { ProcResult, RunDenoOptions } from "../src/ui/proc.ts";
 
@@ -21,6 +22,9 @@ interface Harness {
   server: UiServer;
   base: string;
   dir: string;
+  /** The session cookie the handshake minted (never the launch token). */
+  cookie: string;
+  /** The CSRF token derived from that cookie. */
   csrf: string;
   ran: string[][];
 }
@@ -53,13 +57,8 @@ async function ui(
       json: () => null,
     });
   });
-  return {
-    server,
-    dir,
-    base: `http://127.0.0.1:${server.port}`,
-    csrf: await deriveCsrf(server.token),
-    ran,
-  };
+  const { cookie, csrf } = await uiHandshake(server);
+  return { server, dir, base: `http://127.0.0.1:${server.port}`, cookie, csrf, ran };
 }
 
 async function stop(h: Harness): Promise<void> {
@@ -70,7 +69,7 @@ async function stop(h: Harness): Promise<void> {
 
 /** GET a UI path with the session cookie. */
 function get(h: Harness, path: string, accept?: string): Promise<Response> {
-  const headers: Record<string, string> = { cookie: `${UI_COOKIE}=${h.server.token}` };
+  const headers: Record<string, string> = { cookie: h.cookie };
   if (accept) headers.accept = accept;
   return fetch(`${h.base}${path}`, { headers });
 }
@@ -85,7 +84,7 @@ function post(
   const body = new FormData();
   for (const [key, value] of Object.entries(fields)) body.set(key, value);
   const headers: Record<string, string> = {
-    cookie: `${UI_COOKIE}=${h.server.token}`,
+    cookie: h.cookie,
     origin: h.base,
     [UI_CSRF_HEADER]: h.csrf,
   };
@@ -123,6 +122,8 @@ Deno.test("the catalog renders in two groups with each package's installed state
     const body = await (await get(h, "/plugins")).text();
     assertStringIncludes(body, "<h2>Plugins</h2>");
     assertStringIncludes(body, "<h2>Libraries</h2>");
+    // A library is pinned, never wired. The panel said so only in the preview, after the click.
+    assertStringIncludes(body, "a library is a package you import directly");
     assertStringIncludes(body, `id="${HTMX}"`);
     assertStringIncludes(body, `id="${OPENAPI}"`);
     assertStringIncludes(body, "https://denext.dev/docs/openapi");

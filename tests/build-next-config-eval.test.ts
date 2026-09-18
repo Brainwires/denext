@@ -184,6 +184,39 @@ export default { wrote, fetched, readOutside, readInside };
   });
 });
 
+Deno.test("a project path with a comma is refused, not spawned with a widened read grant", async () => {
+  // `--allow-read=<dir>` is a comma-separated LIST: `/a/project,etc` grants `/a/project` AND
+  // `etc` (relative to the cwd — which is the project). The `,,` escape is refused by Deno 2.9.
+  const parent = await Deno.makeTempDir({ prefix: "denext-next-eval-" });
+  try {
+    const dir = join(parent, "project,etc");
+    await Deno.mkdir(dir);
+    await Deno.writeTextFile(join(dir, "next.config.mjs"), "export default { basePath: '/x' };\n");
+    let spawned = false;
+    const probe = program(
+      `console.log(${JSON.stringify(MARKER)} + JSON.stringify(cfg));\nDeno.exit(0);`,
+    );
+    const originalCommand = Deno.Command;
+    // The refusal must come BEFORE any child exists: the grant is on the command line.
+    (Deno as { Command: typeof Deno.Command }).Command = class extends originalCommand {
+      constructor(...args: ConstructorParameters<typeof Deno.Command>) {
+        spawned = true;
+        super(...args);
+      }
+    };
+    try {
+      const reason = reasonOf(await evalIn(dir, "next.config.mjs", probe));
+      assertStringIncludes(reason, "comma");
+      assertStringIncludes(reason, "--allow-read");
+      assertFalse(spawned, "no evaluator was started for a path that cannot be granted safely");
+    } finally {
+      (Deno as { Command: typeof Deno.Command }).Command = originalCommand;
+    }
+  } finally {
+    await Deno.remove(parent, { recursive: true });
+  }
+});
+
 Deno.test("DENEXT_NEXT_EVAL_TIMEOUT_MS sets the default deadline; an explicit timeoutMs wins", async () => {
   const prior = Deno.env.get("DENEXT_NEXT_EVAL_TIMEOUT_MS");
   try {

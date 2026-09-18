@@ -17,13 +17,13 @@ export interface ScaffoldFeature {
   readonly key: string;
   /** The `denext create` flag that pre-selects it. */
   readonly flag: string;
-  /** The human-readable label shown in the picker (and in `denext ui`'s wizard). */
+  /** The human-readable label shown in the picker (and on `denext ui`'s Setup page). */
   readonly label: string;
 }
 
 /**
  * Feature toggles offered at scaffold time (flag pre-selects; TTY multi-select otherwise).
- * Exported so `denext ui`'s setup wizard offers exactly the same list as the CLI.
+ * Exported so `denext ui`'s Setup page offers exactly the same list as the CLI.
  */
 export const FEATURES: readonly ScaffoldFeature[] = [
   { key: "tailwind", flag: "tailwind", label: "Tailwind CSS" },
@@ -31,7 +31,7 @@ export const FEATURES: readonly ScaffoldFeature[] = [
   {
     key: "compiler",
     flag: "compiler",
-    label: "Auto-memo compiler (experimental)",
+    label: "Auto-memo compiler",
   },
   {
     key: "desktop",
@@ -57,6 +57,11 @@ const SCAFFOLD_FLAGS = [
     type: "string" as const,
     valueName: "<name>",
     help: `Starter template (${SCAFFOLD_TEMPLATES.join(" | ")}; default: default)`,
+  },
+  {
+    name: "no-vscode",
+    type: "boolean" as const,
+    help: "Don't write .vscode/settings.json + extensions.json (Deno LSP)",
   },
   {
     name: "yes",
@@ -91,6 +96,7 @@ async function runCreate(
     desktop: on("desktop"),
     capacitor: on("capacitor"),
     compatibilityMode: on("compatibility"),
+    vscode: ctx.flags["no-vscode"] !== true,
     allowExisting: mode === "init",
   });
   for (const p of written) console.log(`   + ${p}`);
@@ -109,7 +115,7 @@ function createTarget(ctx: CommandContext, mode: "create" | "init"): string {
   if (target) return target;
   console.error(
     "denext create: missing target directory.\n" +
-      "  denext create my-app [--tailwind] [--src-dir] [--compiler] [--desktop] [--capacitor] [--compatibility]\n" +
+      "  denext create my-app [--tailwind] [--src-dir] [--compiler] [--desktop] [--capacitor] [--compatibility] [--no-vscode]\n" +
       "  denext init            (scaffold into the current directory)",
   );
   Deno.exit(1);

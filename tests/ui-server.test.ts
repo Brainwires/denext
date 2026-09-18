@@ -7,9 +7,9 @@ import { join } from "@std/path";
 import { startUiServer, type UiServer } from "../src/ui/server.ts";
 import { cliInvocation } from "../src/ui/proc.ts";
 import { projectTasks, UI_ROUTES } from "../src/ui/routes.ts";
-import { UI_COOKIE, UI_CSRF_HEADER } from "../src/ui/security.ts";
-import { deriveCsrf } from "../src/ui/security.ts";
-import { toHtml, UI_NAV } from "../src/ui/html.ts";
+import { UI_CSRF_HEADER } from "../src/ui/security.ts";
+import { uiHandshake } from "./helpers/ui-session.ts";
+import { toHtml, UI_NAV, UI_TITLE_HEADER } from "../src/ui/html.ts";
 import { Fragment, h } from "../src/jsx/jsx-runtime.ts";
 import { DiffBlock, OpForm } from "../src/ui/components.ts";
 import { Raw, renderView } from "../src/ui/view.ts";
@@ -25,31 +25,36 @@ interface Harness {
   server: UiServer;
   base: string;
   dir: string;
+  /** The session cookie the handshake minted (never the launch token). */
   headers: Record<string, string>;
+  /** The CSRF token derived from that cookie. */
+  csrf: string;
 }
 
-async function ui(options: { offline?: boolean } = {}): Promise<Harness> {
+/**
+ * A UI server over a fresh project. `denoJson` is the project's `deno.json` text — the default
+ * declares one task — and `null` leaves the project with no config file at all.
+ */
+async function ui(
+  { denoJson = '{ "tasks": { "hello": "eval console.log(1)" } }', ...options }: {
+    offline?: boolean;
+    denoJson?: string | null;
+  } = {},
+): Promise<Harness> {
   const dir = await Deno.makeTempDir({ prefix: "denext_ui_srv_" });
-  await Deno.writeTextFile(
-    join(dir, "deno.json"),
-    '{ "tasks": { "hello": "eval console.log(1)" } }',
-  );
+  if (denoJson !== null) await Deno.writeTextFile(join(dir, "deno.json"), denoJson);
   const server = await startUiServer({ dir, port: 0, ...options });
-  return {
-    server,
-    dir,
-    base: `http://127.0.0.1:${server.port}`,
-    headers: { cookie: `${UI_COOKIE}=${server.token}` },
-  };
+  const { cookie, csrf } = await uiHandshake(server);
+  return { server, dir, base: `http://127.0.0.1:${server.port}`, headers: { cookie }, csrf };
 }
 
-/** POST `/tasks/run` for `task`, as the wizard's no-JS form would. */
+/** POST `/tasks/run` for `task`, as the Tasks page's no-JS form would. */
 async function postTask(h: Harness, task: string): Promise<Response> {
   const form = new FormData();
   form.set("task", task);
   return await fetch(`${h.base}/tasks/run`, {
     method: "POST",
-    headers: { ...h.headers, origin: h.base, [UI_CSRF_HEADER]: await deriveCsrf(h.server.token) },
+    headers: { ...h.headers, origin: h.base, [UI_CSRF_HEADER]: h.csrf },
     body: form,
   });
 }
@@ -64,9 +69,10 @@ Deno.test("the server binds loopback only and hands back its URL + token", async
   try {
     assertEquals(h.server.hostname, "127.0.0.1");
     assert(h.server.port > 0);
-    assertStringIncludes(h.server.url, `:${h.server.port}/?t=${h.server.token}`);
-    assert(/^https?:\/\/(localhost|127\.0\.0\.1)/.test(h.server.url), h.server.url);
-    assert(h.server.token.length >= 43, "the session token carries 256 bits of entropy");
+    // 127.0.0.1 by name, never `localhost`: a loopback cookie is shared across every port of
+    // its host, and `localhost` is the name every other local server is reached at.
+    assertEquals(h.server.url, `http://127.0.0.1:${h.server.port}/?t=${h.server.token}`);
+    assert(h.server.token.length >= 43, "the launch token carries 256 bits of entropy");
   } finally {
     await stop(h);
   }
@@ -96,7 +102,14 @@ Deno.test("the same-origin assets are served with the right content types", asyn
     const css = await fetch(`${h.base}/_ui/ui.css`, { headers: h.headers });
     assertEquals(css.status, 200);
     assertStringIncludes(css.headers.get("content-type") ?? "", "text/css");
-    assertStringIncludes(await css.text(), "prefers-color-scheme");
+    const sheet = await css.text();
+    assertStringIncludes(sheet, "prefers-color-scheme");
+    // A panel waiting on the server is drawn as such — dimmed, a progress cursor and a bar —
+    // and the bar holds still for someone who asked for no motion.
+    assertStringIncludes(sheet, '#panel[aria-busy="true"]');
+    assertStringIncludes(sheet, "cursor: progress");
+    assertStringIncludes(sheet, "@keyframes ui-busy");
+    assertStringIncludes(sheet, "prefers-reduced-motion");
 
     const js = await fetch(`${h.base}/_ui/ui.js`, { headers: h.headers });
     assertEquals(js.status, 200);
@@ -107,6 +120,18 @@ Deno.test("the same-origin assets are served with the right content types", asyn
     assert(!source.includes(".innerHTML ="), "untrusted text is never innerHTML'd");
     // It is a string in `client.ts`, so nothing else parses it: do it here.
     new Function(source);
+    // While a fragment is in flight the panel (and a submitting form) says so, and the mark is
+    // taken off again — a swap replaces the panel, and the form is cleared by hand.
+    assertStringIncludes(source, 'setAttribute("aria-busy", "true")');
+    assertStringIncludes(source, 'removeAttribute("aria-busy")');
+    // A GET form inside the panel (the cron builder, a filter) keeps its place on screen across
+    // the swap it asked for; only a navigation link scrolls to the top.
+    assertStringIncludes(source, "globalThis.scrollY");
+    assertStringIncludes(source, 'form.closest("#panel") ? anchorOf(form) : null');
+    assertStringIncludes(
+      source,
+      "if (anchor) restoreAnchor(anchor);\n  else if (push) globalThis.scrollTo(0, 0);",
+    );
     // Every frame the panels push is dispatched (an unknown one is ignored, not thrown on).
     const frames = [
       "reload",
@@ -116,6 +141,7 @@ Deno.test("the same-origin assets are served with the right content types", asyn
       "dev-output",
       "dev-exit",
       "dev-ready",
+      "dev-stopped",
     ];
     for (const type of frames) assertStringIncludes(source, type);
   } finally {
@@ -156,6 +182,71 @@ Deno.test("a fragment request returns only the section ui.js swaps", async () =>
   }
 });
 
+Deno.test('every panel GET answers a fragment request with the bare <section id="panel"> and a title header', async () => {
+  const h = await ui();
+  try {
+    // A config wiring a catalogued plugin, so its options sub-panel has something to render.
+    await Deno.writeTextFile(
+      join(h.dir, "denext.config.ts"),
+      'import { openapi } from "@denext/openapi";\nexport default { plugins: [openapi()] };\n',
+    );
+    // Every navigable panel in the route table (the overview included), plus the one sub-panel
+    // that needs a query to name its subject. `/_ui/*` is the client's own machinery and
+    // `/api/*` the JSON twins — neither is a panel ui.js swaps.
+    const panels = Object.entries(UI_ROUTES)
+      .filter(([path, route]) =>
+        !path.startsWith("/api/") && !path.startsWith("/_ui/") && route.methods.includes("GET")
+      )
+      .map(([path]) => path);
+    panels.push(`/plugins/options?name=${encodeURIComponent("@denext/openapi")}`);
+    for (const view of ["", "routing", "rendering", "security", "advanced", "cron", "next"]) {
+      assert(panels.includes(`/config${view && `/${view}`}`), `/config/${view} is a route`);
+    }
+    for (
+      const path of [
+        "/",
+        "/plugins",
+        "/generate",
+        "/docker",
+        "/desktop",
+        "/setup",
+        "/dev",
+        "/tasks",
+        "/commands",
+      ]
+    ) {
+      assert(panels.includes(path), `${path} is a route`);
+    }
+    for (const path of panels) {
+      const res = await fetch(`${h.base}${path}`, {
+        headers: { ...h.headers, accept: "text/html-fragment" },
+      });
+      const body = await res.text();
+      assertEquals(res.status, 200, path);
+      assertStringIncludes(res.headers.get("content-type") ?? "", "text/html", path);
+      assert(
+        body.startsWith('<section id="panel"'),
+        `${path} starts with the panel: ${body.slice(0, 80)}`,
+      );
+      assert(
+        !/<html|<!doctype|<head>|<body|<script|<link /i.test(body),
+        `${path} carries no document shell`,
+      );
+      assertEquals(body.match(/<section id="panel"/g)?.length, 1, `${path} has ONE panel`);
+      const title = res.headers.get(UI_TITLE_HEADER);
+      assert(title, `${path} names its title in ${UI_TITLE_HEADER}`);
+      assertStringIncludes(decodeURIComponent(title), "denext", path);
+      // The same GET without the header is the full document around that very panel.
+      const page = await fetch(`${h.base}${path}`, { headers: h.headers });
+      const doc = await page.text();
+      assertStringIncludes(doc, "<!doctype html>", path);
+      assertStringIncludes(doc, '<section id="panel"', path);
+    }
+  } finally {
+    await stop(h);
+  }
+});
+
 Deno.test("the overview's JSON twin reports the project and the route table", async () => {
   const h = await ui();
   try {
@@ -169,6 +260,71 @@ Deno.test("the overview's JSON twin reports the project and the route table", as
       assert(payload.routes.includes(path), path);
       assert(Object.keys(UI_ROUTES).includes(path), path);
     }
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("the overview names the project, its pinned denext and the dev server dev.json says is up", async () => {
+  const h = await ui({
+    denoJson: '{ "name": "@acme/shop", "imports": { "denext": "jsr:@denext/denext@^2.5.0" } }',
+  });
+  try {
+    await Deno.mkdir(join(h.dir, ".denext"));
+    await Deno.writeTextFile(
+      join(h.dir, ".denext", "dev.json"),
+      JSON.stringify({
+        origin: "http://127.0.0.1:3456",
+        port: 3456,
+        hostname: "127.0.0.1",
+        pid: 2147483646,
+        startedAt: Date.now(),
+      }),
+    );
+    const body = await (await fetch(`${h.base}/`, { headers: h.headers })).text();
+    assertStringIncludes(body, '<dl class="status">');
+    assertStringIncludes(body, "<dt>Project</dt><dd>@acme/shop</dd>");
+    assertStringIncludes(body, '<dt>denext</dt><dd><code class="mono">^2.5.0</code></dd>');
+    // Nothing here probes the address: the page says what the file says, and offers the Dev
+    // — whose Stop is what finds out whether the server is really there.
+    assertStringIncludes(body, "says running at ");
+    assertStringIncludes(body, '<a href="http://127.0.0.1:3456">http://127.0.0.1:3456</a>');
+    assertStringIncludes(body, '<a href="/dev">Stop it from Dev</a>');
+    assert(!body.includes("Not running"), "a published address is not reported as absent");
+    // The status block sits above the cards, so it is read first.
+    assert(body.indexOf('<dl class="status">') < body.indexOf('<div class="cards">'));
+
+    // The JSON twin carries the same three facts.
+    const twin = await (await fetch(`${h.base}/api/overview`, { headers: h.headers })).json();
+    assertEquals(twin.name, "@acme/shop");
+    assertEquals(twin.denext, "^2.5.0");
+    assertEquals(twin.dev, "http://127.0.0.1:3456");
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("the overview falls back to the directory name, 'not pinned' and 'not running'", async () => {
+  const h = await ui({ denoJson: null });
+  try {
+    const body = await (await fetch(`${h.base}/`, { headers: h.headers })).text();
+    assertStringIncludes(body, `<dt>Project</dt><dd>${h.dir.split("/").pop()}</dd>`);
+    assertStringIncludes(
+      body,
+      '<dt>denext</dt><dd><span class="badge warn">not pinned</span></dd>',
+    );
+    assertStringIncludes(body, "<dt>Dev server</dt><dd>Not running · ");
+    assertStringIncludes(body, '<a href="/dev">Start it from Dev</a>');
+    assert(!body.includes("says running at"), "no dev.json, no address");
+
+    // An unversioned `jsr:@denext/denext` is a pin to the latest release — `deno run` resolves it
+    // to one — so it is named as such rather than counted as no pin.
+    await Deno.writeTextFile(
+      join(h.dir, "deno.jsonc"),
+      '{ /* comments are fine */ "imports": { "denext": "jsr:@denext/denext" } }',
+    );
+    const again = await (await fetch(`${h.base}/`, { headers: h.headers })).text();
+    assertStringIncludes(again, '<dt>denext</dt><dd><code class="mono">latest</code></dd>');
   } finally {
     await stop(h);
   }
@@ -216,6 +372,20 @@ Deno.test("cliInvocation adds --deny-net --cached-only after -A only when offlin
     "--cached-only",
     online[2],
   ]);
+});
+
+Deno.test("cliInvocation's dir only decides the CLI version for a compiled binary", () => {
+  // `dir` exists so a binary hands each child the denext THAT PROJECT pins rather than its own
+  // (cliModule in src/ui/proc.ts). Running from a checkout there is nothing to choose — the CLI
+  // and the framework are the same package — so the directory must not perturb the argv at all.
+  // The four call sites in features/commands.ts and features/setup.ts pass it unconditionally.
+  const online = cliInvocation();
+  assertEquals(cliInvocation({ dir: Deno.cwd() }), online);
+  assertEquals(cliInvocation({ dir: "/nonexistent/project" }), online);
+  assertEquals(
+    cliInvocation({ offline: true, dir: Deno.cwd() }),
+    cliInvocation({ offline: true }),
+  );
 });
 
 Deno.test("/_ui/events is an event stream", async () => {
@@ -308,7 +478,7 @@ Deno.test({
     // read-only: the UI refuses every write of its own, and a GET still lists verbs — the
     // discovery CHILD is allowed to execute the project, which is the whole point of the split.
     const server = await startUiServer({ dir, port: 0, readOnly: true });
-    const headers = { cookie: `${UI_COOKIE}=${server.token}` };
+    const { headers } = await uiHandshake(server);
     const base = `http://127.0.0.1:${server.port}`;
     try {
       const page = await fetch(`${base}/commands`, { headers });
@@ -355,13 +525,13 @@ Deno.test("a view escapes text and attributes, and Raw passes trusted markup thr
 Deno.test("OpForm renders the CSRF token, the hidden fields and the button", () => {
   const markup = toHtml(renderView(h(OpForm, {
     csrf: "tok",
-    action: "/wizard",
+    action: "/setup",
     label: "Apply",
     fields: { op: "denojson", confirm: "1" },
     className: "op",
     disabled: true,
   })));
-  assertStringIncludes(markup, 'action="/wizard"');
+  assertStringIncludes(markup, 'action="/setup"');
   assertStringIncludes(markup, 'class="op"');
   assertStringIncludes(markup, 'name="_csrf" value="tok"');
   assertStringIncludes(markup, 'name="op" value="denojson"');
@@ -424,4 +594,35 @@ Deno.test("decodePatch walks the posted fields through the widget codec", () => 
   form.set("trailingSlash", "on");
   assertEquals(decodePatch(form, loadConfigSchema()), { trailingSlash: true });
   assertEquals(decodePatch(new FormData(), { type: "object" }), {});
+});
+
+Deno.test("the cron preview answers one block for one expression, never a panel", async () => {
+  const h = await ui();
+  try {
+    const ask = (expr: string) =>
+      fetch(`${h.base}/_ui/cron-preview?expr=${encodeURIComponent(expr)}`, { headers: h.headers });
+
+    const ok = await ask("0 3 * * *");
+    assertEquals(ok.status, 200);
+    const body = await ok.text();
+    assertStringIncludes(body, "data-cron-preview");
+    // The reading is the server's own `describeCron`, which is why the live preview and the
+    // saved page can never say different things about the same expression.
+    assertStringIncludes(body, "every day at 03:00 UTC");
+    assert(!body.includes('<section id="panel"'), "the preview is a block, not a panel");
+    assert(!body.includes("<!doctype html>"), "the preview is not a whole document");
+
+    // A malformed expression is refused in words, not described.
+    assertStringIncludes(await (await ask("99 * * * *")).text(), "out of range");
+
+    // An empty field has nothing true to say yet — which is not the same as an error.
+    const empty = await (await ask("")).text();
+    assert(!empty.includes("field-error"), "an empty expression is not an error");
+
+    // `nextRuns` walks minute by minute to a one-year horizon, and this runs on a keystroke:
+    // something far too long to be an expression must never be walked.
+    assertStringIncludes(await (await ask("* ".repeat(200))).text(), "too long");
+  } finally {
+    await stop(h);
+  }
 });

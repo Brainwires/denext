@@ -11,7 +11,7 @@
 
 import { dirname, join } from "@std/path";
 import { CONFIG_FILES } from "../build/paths.ts";
-import type { ProjectVerb } from "./command.ts";
+import { type ProjectVerb, VERB_NAME } from "./command.ts";
 
 /** The cache file's contents. */
 interface CommandCache {
@@ -71,7 +71,11 @@ async function fingerprintOf(dir: string): Promise<string> {
   return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-/** Whether a parsed cache has the shape this module writes. */
+/**
+ * Whether a parsed cache has the shape this module writes. The file is project content (a
+ * clone can commit one), so a name is held to the verb-name grammar rather than taken as any
+ * string: help prints the names, and `denext <name>` is what they invite.
+ */
 function isCache(value: unknown): value is CommandCache {
   if (typeof value !== "object" || value === null) return false;
   const { fingerprint, verbs } = value as Record<string, unknown>;
@@ -79,6 +83,7 @@ function isCache(value: unknown): value is CommandCache {
     verbs.every((verb) =>
       typeof verb === "object" && verb !== null &&
       typeof (verb as ProjectVerb).name === "string" &&
+      VERB_NAME.test((verb as ProjectVerb).name) &&
       typeof (verb as ProjectVerb).summary === "string"
     );
 }

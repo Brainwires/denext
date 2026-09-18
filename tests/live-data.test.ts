@@ -33,6 +33,7 @@ import { h } from "../src/jsx/jsx-runtime.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { makeDom } from "./helpers/dom.ts";
 import { useLive, useLiveOptimistic, usePresence } from "../src/client/live-data.ts";
+import { configureLive, subscribeLiveData } from "../src/client/live-client.ts";
 import { useState } from "../src/runtime/hooks.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -1183,6 +1184,134 @@ Deno.test("useSubscription client: initial → live → structured error; a refu
     // the same path: the refused (dead) sub is skipped, so no data-subscribe for it is queued.
     void again;
     root.unmount();
+  });
+});
+
+/**
+ * Fake `setTimeout`/`clearTimeout` for the duration of `body`: the live client's reconnect timer
+ * is the only timer the transport arms, so `tick(ms)` advances it deterministically.
+ */
+function withFakeTimers(body: (tick: (ms: number) => void) => void): void {
+  const g = globalThis as Any;
+  const realSet = g.setTimeout;
+  const realClear = g.clearTimeout;
+  let now = 0;
+  let nextId = 1;
+  const timers = new Map<number, { at: number; fn: () => void }>();
+  g.setTimeout = (fn: () => void, ms = 0) => {
+    const id = nextId++;
+    timers.set(id, { at: now + ms, fn });
+    return id;
+  };
+  g.clearTimeout = (id: number) => void timers.delete(id);
+  const tick = (ms: number) => {
+    const target = now + ms;
+    for (;;) {
+      const due = [...timers].filter(([, t]) =>
+        t.at <= target
+      ).sort((a, b) => a[1].at - b[1].at)[0];
+      if (!due) break;
+      timers.delete(due[0]);
+      now = due[1].at;
+      due[1].fn();
+    }
+    now = target;
+  };
+  try {
+    body(tick);
+  } finally {
+    g.setTimeout = realSet;
+    g.clearTimeout = realClear;
+  }
+}
+
+/** The parsed frames of one type a fake socket was handed. */
+function framesOf(ws: FakeWS, type: string): Any[] {
+  return ws.sent.map((s) => JSON.parse(s)).filter((m) => m.type === type);
+}
+
+Deno.test("live client reconnect: a NEW socket after backoff, live subs re-sent (dead ones skipped), one refresh; open resets the backoff", () => {
+  withFakeSocket(() => {
+    withFakeTimers((tick) => {
+      let refreshes = 0;
+      configureLive({ parse: () => null, refresh: () => void refreshes++ });
+      const errorsB: (string | undefined)[] = [];
+      const unsubA = subscribeLiveData("act#a", [], ["a"], () => {});
+      const unsubB = subscribeLiveData("act#b", [{ id: 1 }], ["b"], (_v, err) => {
+        errorsB.push(err);
+      });
+      try {
+        assertEquals(FakeWS.instances.length, 1, "both subs share one socket");
+        const ws1 = FakeWS.instances[0];
+        ws1.open();
+        const first = framesOf(ws1, "data-subscribe");
+        assertEquals(first.map((f) => f.actionId), ["act#a", "act#b"], "both subs sent on open");
+        assertEquals(refreshes, 0, "a FIRST connection is not a reconnect: no refresh");
+        const subB = first[1].subId;
+        // The server refuses B for good: re-sending it could only fail again.
+        ws1.deliver({
+          type: "error",
+          code: "invalid-input",
+          reason: "Validation failed",
+          subId: subB,
+        });
+        assertEquals(errorsB, ["Validation failed"]);
+
+        // The socket drops. Nothing reconnects before the 500 ms floor…
+        ws1.close();
+        tick(499);
+        assertEquals(FakeWS.instances.length, 1, "no reconnect before the backoff elapses");
+        // …then a NEW socket opens (the old one is never reused).
+        tick(1);
+        assertEquals(FakeWS.instances.length, 2, "a second socket after 500 ms");
+        const ws2 = FakeWS.instances[1];
+        assert(ws2 !== ws1);
+        assertEquals(ws2.sent, [], "nothing is sent on a socket that is still connecting");
+        ws2.open();
+        const resent = framesOf(ws2, "data-subscribe");
+        assertEquals(resent.length, 1, "exactly one data-subscribe re-sent");
+        assertEquals(resent[0].actionId, "act#a", "the refused (dead) sub is skipped");
+        assertEquals(resent[0].subId, first[0].subId, "under the SAME subId as before");
+        assertEquals(resent[0].args, [], "with the same encoded args");
+        assertEquals(refreshes, 1, "a reconnect reconciles with exactly one refresh");
+        assertEquals(errorsB.length, 1, "the dead sub hears nothing new");
+
+        // A successful open resets the backoff: the next drop reconnects after 500 ms again.
+        ws2.close();
+        tick(499);
+        assertEquals(FakeWS.instances.length, 2);
+        tick(1);
+        assertEquals(FakeWS.instances.length, 3, "500 ms again after a socket that had opened");
+        assertEquals(refreshes, 1, "no refresh until that socket actually opens");
+
+        // Sockets that never open double the wait: 1 s, 2 s, 4 s, 8 s, then capped at 15 s.
+        let expectedSockets = 3;
+        for (const delay of [1000, 2000, 4000, 8000, 15_000, 15_000]) {
+          FakeWS.instances.at(-1)!.close();
+          tick(delay - 1);
+          assertEquals(FakeWS.instances.length, expectedSockets, `no socket before ${delay} ms`);
+          tick(1);
+          assertEquals(FakeWS.instances.length, ++expectedSockets, `a socket at ${delay} ms`);
+        }
+        // Opening one resets the ladder to the floor.
+        const late = FakeWS.instances.at(-1)!;
+        late.open();
+        assertEquals(refreshes, 2);
+        assertEquals(framesOf(late, "data-subscribe").length, 1, "still only the live sub");
+        late.close();
+        tick(500);
+        assertEquals(FakeWS.instances.length, expectedSockets + 1, "back to 500 ms after an open");
+      } finally {
+        // Dropping the last subscription closes the socket and clears any pending reconnect.
+        unsubA();
+        unsubB();
+        configureLive({ parse: () => null, refresh: () => {} });
+      }
+      const total = FakeWS.instances.length;
+      assertEquals(FakeWS.instances.at(-1)!.readyState, FakeWS.CLOSED, "closed on unsubscribe");
+      tick(60_000);
+      assertEquals(FakeWS.instances.length, total, "no reconnect once every subscription is gone");
+    });
   });
 });
 

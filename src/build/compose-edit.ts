@@ -224,8 +224,53 @@ export function readCompose(text: string): ComposeModel | null {
 export function inspectCompose(
   text: string,
 ): { model: ComposeModel; reason?: undefined } | { model: null; reason: string } {
-  const state = load(text);
+  const state = loadBounded(text);
   return typeof state === "string" ? { model: null, reason: state } : { model: toModel(state) };
+}
+
+/**
+ * How many nodes a parsed compose file may EXPAND to before the editor refuses to model it.
+ *
+ * `@std/yaml` resolves an alias to the node it names, so the parse of an alias bomb — nine
+ * anchors of nine aliases each — is small and quick. Everything after it walks the tree as a
+ * tree: `toModel` prints a field as JSON, `detach` copies the document, `deepEqual` compares two.
+ * Each of those is exponential in the file's alias depth, and a 500-byte file froze the UI for
+ * ten seconds before throwing "Invalid string length". Counting expanded nodes bounds the walk
+ * itself; the cap is generous next to any compose file a person writes (a service is a few dozen
+ * nodes).
+ */
+const MAX_EXPANDED_NODES = 10_000;
+
+/**
+ * {@linkcode load}, refusing a document that expands past {@linkcode MAX_EXPANDED_NODES}. Every
+ * reader here goes through it — the model, the first read of an edit and the re-read after each
+ * splice — so no walk over `state.raw` happens on a document the cap did not admit.
+ */
+function loadBounded(text: string): State | string {
+  const state = load(text);
+  if (typeof state === "string") return state;
+  return overExpanded(state.raw)
+    ? `its anchors and aliases expand to more than ${MAX_EXPANDED_NODES} nodes, which the ` +
+      "editor cannot follow"
+    : state;
+}
+
+/**
+ * Whether `raw` has more than {@linkcode MAX_EXPANDED_NODES} nodes once every alias is followed.
+ * Iterative and counting VISITS, not distinct objects: a node an alias repeats counts each time,
+ * which is what the walks it protects would pay. Stops at the cap, so the check itself is
+ * bounded by it.
+ */
+function overExpanded(raw: unknown): boolean {
+  const pending: unknown[] = [raw];
+  let visited = 0;
+  while (pending.length > 0) {
+    if (++visited > MAX_EXPANDED_NODES) return true;
+    const node = pending.pop();
+    const children = Array.isArray(node) ? node : isMapping(node) ? Object.values(node) : [];
+    for (const child of children) pending.push(child);
+  }
+  return false;
 }
 
 // --- writing ----------------------------------------------------------------
@@ -247,7 +292,7 @@ export function applyComposeEdits(
   ops: ComposeOp[],
   label: string = LABEL,
 ): ComposeEditResult {
-  let state = load(text);
+  let state = loadBounded(text);
   if (typeof state === "string") return bail(state, text.slice(0, SNIPPET_MAX));
   const notes: string[] = [];
   for (const op of ops) {
@@ -292,7 +337,7 @@ function commit(state: State, change: Change, op: ComposeOp, notes: string[]): S
   const next = spliceDoc(state.doc, change.at, change.remove, change.insert);
   const want: Expected = { raw: detach(state.raw), commented: commentedOf(state) };
   change.expect(want);
-  const reread = load(next);
+  const reread = loadBounded(next);
   const carried = typeof reread === "string" ? null : readsBack(state, change, op, reread, want);
   if (carried === null) {
     return bail(mismatchReason(state, change, op), JSON.stringify(op), diffOf(state.text, next));

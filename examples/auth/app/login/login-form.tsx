@@ -1,10 +1,11 @@
 "use client";
 
 // With JavaScript: `signIn("credentials", …)` POSTs JSON to the auth endpoint and shows
-// the generic error (401 "invalid credentials" or 429 "too many attempts") inline.
-// Without JavaScript the same <form> posts form-encoded to the endpoint directly.
+// the refusal inline — `{ ok: false, error: "invalid_credentials" }` (a 401 that never says
+// whether the account exists) or `"throttled"` with `retryAfter` (a 429). Only a network
+// failure rejects. Without JavaScript the same <form> posts form-encoded to the endpoint.
 
-import { signIn, useState } from "denext";
+import { type CredentialsSignInResult, signIn, useState } from "denext";
 
 export function LoginForm({ callbackUrl }: { callbackUrl: string }) {
   const [error, setError] = useState<string | null>(null);
@@ -18,11 +19,12 @@ export function LoginForm({ callbackUrl }: { callbackUrl: string }) {
     setBusy(true);
     setError(null);
     try {
-      await signIn("credentials", {
+      const result = await signIn("credentials", {
         callbackUrl,
         credentials: credentialsFrom(data),
       });
-      location.href = callbackUrl;
+      if (result.ok) location.href = callbackUrl;
+      else setError(describe(result));
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -58,6 +60,20 @@ export function LoginForm({ callbackUrl }: { callbackUrl: string }) {
       </button>
     </form>
   );
+}
+
+/** The line shown for a refusal — routed on the stable code, never the server's text. */
+function describe(result: Extract<CredentialsSignInResult, { ok: false }>): string {
+  switch (result.error) {
+    case "invalid_credentials":
+      return "Wrong email or password.";
+    case "throttled":
+      return `Too many attempts — try again in ${result.retryAfter}s.`;
+    case "access_denied":
+      return "This account may not sign in here.";
+    default:
+      return `Sign-in failed (${result.status}).`;
+  }
 }
 
 function credentialsFrom(data: FormData): { email: string; password: string } {

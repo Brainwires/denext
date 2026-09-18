@@ -22,20 +22,54 @@ async function tempModule(contents: string): Promise<string> {
 
 Deno.test("loadInstrumentation reads named exports", async () => {
   const path = await tempModule(
-    "export function register() {}\nexport function onRequestError() {}\n",
+    "export function register() {}\nexport function onRequestError() {}\n" +
+      "export function onRequest() {}\n",
   );
   const instr = await loadInstrumentation(path);
   assertEquals(typeof instr.register, "function");
   assertEquals(typeof instr.onRequestError, "function");
+  assertEquals(typeof instr.onRequest, "function");
 });
 
 Deno.test("loadInstrumentation reads a default-export object", async () => {
   const path = await tempModule(
-    "export default { register() {}, onRequestError() {} };\n",
+    "export default { register() {}, onRequestError() {}, onRequest() {} };\n",
   );
   const instr = await loadInstrumentation(path);
   assertEquals(typeof instr.register, "function");
   assertEquals(typeof instr.onRequestError, "function");
+  assertEquals(typeof instr.onRequest, "function");
+});
+
+Deno.test("an instrumentation onRequest export is the app's per-request hook (method, path, status, duration)", async () => {
+  // What `denext start` wires: `onRequest: instrumentation.onRequest` into createApp. The
+  // module records what it is handed, so the assertion is on the info a real request yields.
+  const path = await tempModule(
+    "export const seen = [];\nexport function onRequest(info) { seen.push(info); }\n",
+  );
+  const instr = await loadInstrumentation(path);
+  const app = createApp({
+    getManifest: () => ({
+      pages: [],
+      api: [],
+      rootLayout: null,
+      rootNotFound: null,
+      rootGlobalError: null,
+    }),
+    load: () => Promise.resolve({}),
+    onRequest: instr.onRequest,
+  });
+  const res = await app(new Request("http://localhost/nowhere"));
+  await res.body?.cancel();
+  const { seen } = await import(`file://${path}`) as {
+    seen: { method: string; path: string; status: number; durationMs: number; requestId: string }[];
+  };
+  assertEquals(seen.length, 1);
+  assertEquals(seen[0].method, "GET");
+  assertEquals(seen[0].path, "/nowhere");
+  assertEquals(seen[0].status, 404);
+  assert(seen[0].durationMs >= 0);
+  assert(seen[0].requestId.length > 0);
 });
 
 Deno.test("loadInstrumentation tolerates null and unloadable modules", async () => {

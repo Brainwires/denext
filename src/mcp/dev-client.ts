@@ -16,7 +16,8 @@ import type { InspectSnapshot } from "../client/devtools-inspect-sink.ts";
 /**
  * The DevTools bridge endpoint (`src/build/dev-server/state.ts`'s `DEV_INSPECT_PATH`).
  *
- * A copy of the VALUE, not an import: this module is reached by the `denext ui` wizard,
+ * A copy of the VALUE, not an import: this module is reached by `denext ui`'s Setup and Dev
+ * pages,
  * whose module graph is asserted never to touch `src/build/dev-server/` (and through it
  * the bundler). A test asserts the two spellings stay equal.
  */
@@ -40,23 +41,37 @@ export interface DevInfo {
 export interface DevStateResponse {
   events: DevEvent[];
   total: number;
+  /** The dev server's own process id — the one its `dev.json` names. */
+  pid: number;
+  /** The project directory it serves, as it resolved it. */
+  projectDir: string;
 }
 
 /**
  * Read `<dir>/.denext/dev.json`, the address a running dev server published.
  *
  * @param dir The project directory.
- * @returns The dev-server info, or null when no dev server is running (no file) or the file
- *   names anything but a loopback http(s) origin.
+ * @returns The dev-server info, or null when no dev server is running (no file), the file
+ *   names anything but a loopback http(s) origin, or its `pid` is not a real process id.
  */
 export async function readDevInfo(dir: string): Promise<DevInfo | null> {
   try {
     const info = JSON.parse(await Deno.readTextFile(join(dir, ".denext", "dev.json")));
     const origin = loopbackOrigin(info?.origin);
-    return origin ? { ...info, origin } as DevInfo : null;
+    return origin && processId(info?.pid) ? { ...info, origin } as DevInfo : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * Whether `value` can be the pid a dev server wrote about itself: a safe integer above 1. A
+ * dev server only ever writes its own `Deno.pid`; `-1` (every process the caller may signal),
+ * `0` (the caller's process group) and `1` (init) are what a committed or planted file would
+ * name to turn "stop the dev server" into something else.
+ */
+function processId(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 1;
 }
 
 /** The hosts a dev server's published origin can name (it rewrites `0.0.0.0` to loopback). */
@@ -72,6 +87,16 @@ function loopbackOrigin(value: unknown): string | null {
   const url = new URL(value);
   const web = url.protocol === "http:" || url.protocol === "https:";
   return web && LOOPBACK_HOSTS.has(url.hostname) ? url.origin : null;
+}
+
+/**
+ * How every request to the dev server is made: with a deadline (a wedged dev server must not
+ * hang the tool — the MCP loop dispatches serially) and with redirects REFUSED. The origin was
+ * checked to be loopback, and `fetch` following a `Location` would undo that check: a planted
+ * loopback listener answering `302` to another host would carry the tool off the machine.
+ */
+function devRequest(): RequestInit {
+  return { signal: AbortSignal.timeout(5000), redirect: "error" };
 }
 
 /**
@@ -92,10 +117,7 @@ export async function fetchDevState(
   if (opts.limit) params.set("limit", String(opts.limit));
   const qs = params.toString();
   try {
-    // A wedged dev server must not hang the tool (the MCP loop dispatches serially).
-    const res = await fetch(`${info.origin}/_denext/dev-state${qs ? `?${qs}` : ""}`, {
-      signal: AbortSignal.timeout(5000),
-    });
+    const res = await fetch(`${info.origin}/_denext/dev-state${qs ? `?${qs}` : ""}`, devRequest());
     if (!res.ok) {
       await res.body?.cancel();
       return null;
@@ -137,10 +159,7 @@ export async function fetchDevInspect(dir: string, url?: string): Promise<DevIns
   if (!info) return { ok: false, reason: "no-dev-server" };
   const qs = url ? `?url=${encodeURIComponent(url)}` : "";
   try {
-    // A wedged dev server must not hang the tool (the MCP loop dispatches serially).
-    const res = await fetch(`${info.origin}${DEV_INSPECT_PATH}${qs}`, {
-      signal: AbortSignal.timeout(5000),
-    });
+    const res = await fetch(`${info.origin}${DEV_INSPECT_PATH}${qs}`, devRequest());
     if (!res.ok) {
       await res.body?.cancel();
       return { ok: false, reason: res.status === 404 ? "no-snapshot" : "no-dev-server" };

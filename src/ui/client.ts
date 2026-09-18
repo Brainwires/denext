@@ -8,7 +8,8 @@
 // the server keeps exactly one rendering path. Untrusted text is never assigned to `innerHTML`:
 // the fragment the server rendered is parsed with `DOMParser` and adopted as nodes.
 
-import { UI_EVENTS_PATH } from "./html.ts";
+import { UI_CRON_PREVIEW_PATH, UI_EVENTS_PATH, UI_TITLE_HEADER } from "./html.ts";
+import { NAV_TOGGLE_ID } from "./layout.ts";
 import { UI_CSRF_FIELD, UI_CSRF_HEADER } from "./security.ts";
 
 /** The client module served at `/_ui/ui.js`. */
@@ -16,6 +17,9 @@ export const UI_JS = `// denext ui — progressive enhancement (served same-orig
 const CSRF_HEADER = ${JSON.stringify(UI_CSRF_HEADER)};
 const CSRF_FIELD = ${JSON.stringify(UI_CSRF_FIELD)};
 const EVENTS = ${JSON.stringify(UI_EVENTS_PATH)};
+const TITLE_HEADER = ${JSON.stringify(UI_TITLE_HEADER)};
+const CRON_PREVIEW = ${JSON.stringify(UI_CRON_PREVIEW_PATH)};
+const NAV_TOGGLE = ${JSON.stringify(NAV_TOGGLE_ID)};
 const csrf = document.querySelector('meta[name="denext-csrf"]')?.content ?? "";
 
 /** Replace the current panel with a server-rendered fragment (parsed, never innerHTML'd). */
@@ -28,6 +32,52 @@ function swapPanel(markup) {
     return;
   }
   current.replaceWith(document.adoptNode(next));
+  trackAll();
+}
+
+/**
+ * Mark the panel — and the form that asked, when one did — as waiting on the server, or clear
+ * the mark. The Cron page lists tasks through a subprocess and the Commands page discovers
+ * verbs through one, so an answer can take seconds; until it lands the click looked like
+ * nothing. The stylesheet draws the state. A swap replaces the panel and takes the mark with
+ * it; the form is cleared by hand because it is the one thing that may outlive its request.
+ */
+function setBusy(form, on) {
+  for (const node of [document.querySelector("#panel"), form]) {
+    if (!node) continue;
+    if (on) node.setAttribute("aria-busy", "true");
+    else node.removeAttribute("aria-busy");
+  }
+}
+
+/**
+ * Where a form inside the panel sits before a swap it asked for, so the swap can put it back.
+ *
+ * A GET form in the panel — the cron builder's shapes, a filter box — goes through the same
+ * path as a nav click, and that path scrolls to the top: a shape picked below the fold sent
+ * the viewport to the heading and left the builder out of sight. The anchor is the scroll
+ * offset plus where the form itself was on screen; it is found again by id when it has one,
+ * else by its place among the panel's forms, since the panel re-renders in the same shape.
+ */
+function anchorOf(form) {
+  return {
+    y: globalThis.scrollY,
+    id: form.id || "",
+    index: Array.from(document.querySelectorAll("#panel form")).indexOf(form),
+    top: form.getBoundingClientRect().top,
+  };
+}
+
+/** Put the viewport back where an anchored form was, after the panel around it was swapped. */
+function restoreAnchor(anchor) {
+  globalThis.scrollTo(0, anchor.y);
+  const again = anchor.id
+    ? document.getElementById(anchor.id)
+    : document.querySelectorAll("#panel form")[anchor.index];
+  if (!again) return;
+  // What sits above it may have grown or shrunk; keep the form where the eye left it.
+  const drift = again.getBoundingClientRect().top - anchor.top;
+  if (drift !== 0) globalThis.scrollBy(0, drift);
 }
 
 /** Stream a task's output into the panel's <pre class="out"> as it arrives. */
@@ -52,53 +102,385 @@ async function streamInto(response, sink) {
   }
 }
 
+/**
+ * Dirty tracking for a form that asked for it (\`data-dirty-track\`): Save is inert until
+ * something actually changes, and a Discard button appears beside it to put the form back.
+ * With JavaScript off none of this runs and Save simply works, which is why the server never
+ * renders it disabled. A button the server disabled (--read-only) is never touched.
+ */
+function saveOf(form) {
+  return form.querySelector('button[type="submit"]:not([name])');
+}
+
+/** Take a pristine snapshot of one form: Save off until an edit. */
+function track(form) {
+  if (form.dataset.tracking === "1") return;
+  const save = saveOf(form);
+  if (!save || save.disabled) return;
+  form.dataset.tracking = "1";
+  save.dataset.pristine = "1";
+  save.disabled = true;
+}
+
+/** Put a form back the way the server rendered it. */
+function discard(form) {
+  form.reset();
+  delete form.dataset.dirty;
+  const save = saveOf(form);
+  if (save && save.dataset.pristine === "1") save.disabled = true;
+  form.querySelector("[data-discard]")?.remove();
+}
+
+/** The first edit in a tracked form: Save wakes up, and Discard appears next to it. */
+function markDirty(target) {
+  const form = target?.closest?.("form[data-dirty-track]");
+  if (!form || form.dataset.tracking !== "1" || form.dataset.dirty === "1") return;
+  form.dataset.dirty = "1";
+  const save = saveOf(form);
+  if (save && save.dataset.pristine === "1") save.disabled = false;
+  if (!save || form.querySelector("[data-discard]")) return;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "ghost";
+  button.setAttribute("data-discard", "1");
+  button.title = "Put this section back the way it was";
+  button.textContent = "Discard";
+  save.after(document.createTextNode(" "), button);
+}
+
+/** Snapshot every tracked form on the page (again after each panel swap). */
+function trackAll() {
+  for (const form of document.querySelectorAll("form[data-dirty-track]")) track(form);
+}
+
+/** The newest panel asked for, so a slow answer can never land on top of a newer one. */
+let showSeq = 0;
+
+/** The newest preview asked for, so a slow answer can never land on top of a newer one. */
+let previewSeq = 0;
+let previewTimer = null;
+
+/**
+ * Ask the server what the expression in \`field\` means, and put its answer beside the field.
+ * The reading is the server's: this module never parses a cron expression, so the live preview
+ * and the saved page cannot disagree.
+ */
+function previewCron(field) {
+  const row = field.closest(".field");
+  const block = row && row.querySelector("[data-cron-preview]");
+  if (!block) return;
+  const seq = ++previewSeq;
+  fetch(CRON_PREVIEW + "?expr=" + encodeURIComponent(field.value), {
+    headers: { accept: "text/html-fragment" },
+  })
+    .then((response) => (response.ok ? response.text() : null))
+    .then((markup) => {
+      if (markup === null || seq !== previewSeq) return;
+      const next = new DOMParser().parseFromString(markup, "text/html")
+        .querySelector("[data-cron-preview]");
+      const current = row.querySelector("[data-cron-preview]");
+      if (next && current) current.replaceWith(document.adoptNode(next));
+    })
+    .catch(() => {/* the block the server already rendered stays as it is */});
+}
+
+document.addEventListener("input", (event) => {
+  const field = event.target;
+  if (!field || field.name !== "cron") return;
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(() => previewCron(field), 250);
+});
+
+document.addEventListener("input", (event) => markDirty(event.target));
+document.addEventListener("change", (event) => markDirty(event.target));
+document.addEventListener("click", (event) => {
+  const button = event.target?.closest?.("[data-discard]");
+  const form = button?.closest("form");
+  if (!form) return;
+  event.preventDefault();
+  discard(form);
+});
+
 /** Submit one enhanced form; the submitter carries a list row's op field, so it is included. */
 async function submit(form, submitter) {
   const body = new FormData(form, submitter instanceof HTMLElement ? submitter : undefined);
   body.set(CSRF_FIELD, csrf);
-  const response = await fetch(form.action, {
-    method: "POST",
-    body,
-    headers: { accept: "text/html-fragment", [CSRF_HEADER]: csrf },
-  });
-  const type = response.headers.get("content-type") ?? "";
-  const sink = form.closest("#panel")?.querySelector("pre.out");
-  if (type.includes("text/event-stream") && sink) {
-    sink.replaceChildren();
-    await streamInto(response, sink);
-    return;
-  }
-  if (type.includes("text/html")) {
-    swapPanel(await response.text());
-    return;
-  }
-  const payload = await response.json().catch(() => null);
-  if (payload && payload.ok === false) {
-    const note = document.createElement("p");
-    note.className = "note";
-    note.textContent = "denext ui: " + (payload.reason ?? "request refused");
-    form.closest("#panel")?.prepend(note);
+  setBusy(form, true);
+  try {
+    const response = await fetch(form.action, {
+      method: "POST",
+      body,
+      headers: { accept: "text/html-fragment", [CSRF_HEADER]: csrf },
+    });
+    const type = response.headers.get("content-type") ?? "";
+    const sink = form.closest("#panel")?.querySelector("pre.out");
+    if (type.includes("text/event-stream") && sink) {
+      // The wait is over once output starts arriving: what streams in is there to be read.
+      setBusy(form, false);
+      sink.replaceChildren();
+      await streamInto(response, sink);
+      return;
+    }
+    if (type.includes("text/html")) {
+      swapPanel(await response.text());
+      return;
+    }
+    const payload = await response.json().catch(() => null);
+    if (payload && payload.ok === false) {
+      const note = document.createElement("p");
+      note.className = "note";
+      note.textContent = "denext ui: " + (payload.reason ?? "request refused");
+      form.closest("#panel")?.prepend(note);
+    }
+  } finally {
+    setBusy(form, false);
   }
 }
+
+/**
+ * Whether this click is one the enhancement may take over. Anything a browser would do
+ * specially — a new tab, a download, a cross-origin address, a modified click — is left alone,
+ * so the link keeps behaving like a link.
+ */
+function enhanceable(link, event) {
+  if (event.defaultPrevented || event.button !== 0) return false;
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return false;
+  if (!link || !link.getAttribute("href")) return false;
+  if (link.target || link.hasAttribute("download")) return false;
+  const url = new URL(link.href);
+  if (url.origin !== location.origin) return false;
+  // A jump within this same page is the browser's job, not ours.
+  if (url.pathname === location.pathname && url.search === location.search && url.hash) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Close the narrow-layout navigation drawer.
+ *
+ * With scripting off a nav click is a real navigation, and the fresh document arrives with the
+ * toggle unchecked. A swap has no such reset, so the drawer would stay open across the panel the
+ * person just asked for — on the screen that can least afford it.
+ */
+function closeNav() {
+  const toggle = document.getElementById(NAV_TOGGLE);
+  if (toggle) toggle.checked = false;
+}
+
+/** Move aria-current to the sidebar link for whatever path is on screen now. */
+function markCurrent() {
+  for (const link of document.querySelectorAll(".sidebar nav a")) {
+    if (new URL(link.href).pathname === location.pathname) {
+      link.setAttribute("aria-current", "page");
+    } else {
+      link.removeAttribute("aria-current");
+    }
+  }
+}
+
+/**
+ * Put a same-origin panel on screen without a navigation. Anything unexpected — a failed
+ * request, a response that is not a panel — hands the address back to the browser, so the
+ * enhancement can never strand someone on a page that will not move.
+ *
+ * \`anchor\` is where the form that asked for this panel sat (see anchorOf); a navigation link
+ * passes none and lands at the top, the way a fresh page would.
+ */
+async function show(href, push, keepFocus, anchor) {
+  const seq = ++showSeq;
+  setBusy(null, true);
+  let response;
+  try {
+    response = await fetch(href, { headers: { accept: "text/html-fragment" } });
+  } catch {
+    setBusy(null, false);
+    location.href = href;
+    return;
+  }
+  const type = response.headers.get("content-type") || "";
+  if (!response.ok || type.indexOf("text/html") === -1) {
+    setBusy(null, false);
+    location.href = href;
+    return;
+  }
+  // A search the registry answered slowly must not replace a newer one's results.
+  if (seq !== showSeq) return;
+  const title = response.headers.get(TITLE_HEADER);
+  const markup = await response.text();
+  if (seq !== showSeq) return;
+  // A filter box is typed in while its own results are replaced, so put the caret back where it
+  // was: the panel around it is swapped wholesale, and the field is part of what is swapped.
+  const focused = keepFocus ? document.activeElement : null;
+  const restore = focused && focused.name
+    ? { name: focused.name, start: focused.selectionStart, end: focused.selectionEnd }
+    : null;
+  swapPanel(markup);
+  if (restore) {
+    const again = document.querySelector('#panel [name="' + restore.name + '"]');
+    if (again) {
+      again.focus();
+      try {
+        again.setSelectionRange(restore.start, restore.end);
+      } catch { /* not a field with a caret */ }
+    }
+  }
+  if (push) history.pushState(null, "", href);
+  markCurrent();
+  closeNav();
+  if (title) document.title = decodeURIComponent(title);
+  if (anchor) restoreAnchor(anchor);
+  else if (push) globalThis.scrollTo(0, 0);
+}
+
+/**
+ * The form on this page holding unsaved edits, if there is one.
+ *
+ * Only a form the tracker actually took can be dirty, so this is exactly the set the injected
+ * Discard button already appears in — the guard and that button agree on what "unsaved" means.
+ */
+function dirtyForm() {
+  return document.querySelector('form[data-dirty-track][data-dirty="1"]');
+}
+
+/** The one guard dialog, and the address the person asked for while edits were pending. */
+let guard = null;
+let pending = "";
+
+/** Leave the dialog, forgetting the address that opened it. */
+function closeGuard() {
+  pending = "";
+  if (guard && guard.open) guard.close();
+}
+
+/**
+ * Build the guard dialog, once.
+ *
+ * It is appended to the body rather than to the panel: a swap replaces #panel wholesale, and a
+ * dialog inside it would be taken away mid-decision. Built here rather than rendered by the
+ * server because with scripting off nothing can intercept a navigation anyway, so the markup
+ * would be dead weight on every page — and the shell document stays byte-for-byte as it was.
+ */
+function guardDialog() {
+  if (guard) return guard;
+  const dialog = document.createElement("dialog");
+  dialog.className = "nav-guard";
+  const heading = document.createElement("h2");
+  heading.textContent = "Unsaved changes";
+  const lead = document.createElement("p");
+  lead.className = "lead";
+  lead.textContent =
+    "This section has edits that have not been written to the file. Saving opens the change preview to confirm, and keeps you on this page.";
+  const actions = document.createElement("div");
+  actions.className = "guard-actions";
+
+  const save = document.createElement("button");
+  save.type = "button";
+  save.textContent = "Save";
+  save.addEventListener("click", () => {
+    const form = dirtyForm();
+    closeGuard();
+    if (!form) return;
+    // Submitting through the Save button is what carries the diff-then-confirm flow, so the
+    // person lands on the preview. The navigation is deliberately dropped rather than resumed
+    // behind a confirmation they have not given yet.
+    const button = saveOf(form);
+    if (button) form.requestSubmit(button);
+    else form.requestSubmit();
+  });
+
+  const throwAway = document.createElement("button");
+  throwAway.type = "button";
+  throwAway.className = "ghost";
+  throwAway.textContent = "Discard";
+  throwAway.addEventListener("click", () => {
+    const form = dirtyForm();
+    const href = pending;
+    closeGuard();
+    if (form) discard(form);
+    if (href) show(href, true).catch((error) => console.error("denext ui:", error));
+  });
+
+  const stay = document.createElement("button");
+  stay.type = "button";
+  stay.className = "ghost";
+  stay.textContent = "Cancel";
+  stay.addEventListener("click", closeGuard);
+
+  // Escape closes a modal dialog on its own; this is only here to forget the pending address.
+  dialog.addEventListener("cancel", () => {
+    pending = "";
+  });
+
+  actions.append(save, document.createTextNode(" "), throwAway, document.createTextNode(" "), stay);
+  dialog.append(heading, lead, actions);
+  document.body.append(dialog);
+  guard = dialog;
+  return dialog;
+}
+
+document.addEventListener("click", (event) => {
+  const link = event.target?.closest?.("a[href]");
+  if (!enhanceable(link, event)) return;
+  event.preventDefault();
+  // Leaving a panel with unsaved edits silently loses them: the panel is swapped away and the
+  // form goes with it. Ask first, and only for a navigation this module owns — a link the
+  // browser keeps (a new tab, another origin) never reaches here.
+  if (dirtyForm()) {
+    pending = link.href;
+    const dialog = guardDialog();
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.setAttribute("open", "");
+    return;
+  }
+  show(link.href, true).catch((error) => console.error("denext ui:", error));
+});
+
+// Back and forward: the browser has already changed the address, so only the panel is behind.
+globalThis.addEventListener("popstate", () => {
+  show(location.href, false).catch((error) => console.error("denext ui:", error));
+});
 
 document.addEventListener("submit", (event) => {
   const form = event.target;
   if (!(form instanceof HTMLFormElement)) return;
-  if ((form.method || "get").toLowerCase() !== "post") return;
+  if ((form.method || "get").toLowerCase() !== "post") {
+    // A GET form — the ?q= filters, the plugin search — is a link the person assembled, so it
+    // goes the same way a nav click does. The filtering itself stays on the server: matchesTerms
+    // is the only implementation of how a query matches, and a copy here could only disagree.
+    const url = new URL(form.action, location.href);
+    url.search = new URLSearchParams(new FormData(form)).toString();
+    event.preventDefault();
+    // A form inside the panel keeps its place on screen; one in the shell is a navigation.
+    const anchor = form.closest("#panel") ? anchorOf(form) : null;
+    show(url.pathname + url.search, true, true, anchor)
+      .catch((error) => console.error("denext ui:", error));
+    return;
+  }
   event.preventDefault();
   submit(form, event.submitter).catch((error) => console.error("denext ui:", error));
 });
 
-// Server-pushed events: progress broadcast to every open page, the wizard's dev-server run,
+// Server-pushed events: progress broadcast to every open page, the dev server's run,
 // and the --ui-dev reload. Each frame is one JSON object with a "type"; anything unknown is
 // ignored, so a newer server never breaks an older page.
 
-/** Re-fetch the panel this page is showing, so a change made elsewhere lands here too. */
+/**
+ * Re-fetch the panel this page is showing, so a change made elsewhere lands here too.
+ *
+ * Output this page streamed into its <pre class="out"> is carried across the swap: the server
+ * renders that block empty, and a "task-done" refresh would otherwise wipe the very output the
+ * task just finished producing, exit line and all, the moment it was worth reading.
+ */
 async function refresh() {
   const response = await fetch(location.pathname + location.search, {
     headers: { accept: "text/html-fragment" },
   });
-  if (response.ok) swapPanel(await response.text());
+  if (!response.ok) return;
+  const streamed = document.querySelector("#panel pre.out")?.textContent ?? "";
+  swapPanel(await response.text());
+  const sink = document.querySelector("#panel pre.out");
+  if (sink && streamed !== "" && sink.textContent === "") sink.textContent = streamed;
 }
 
 /** Append one line to the panel's output block, if it is showing one. */
@@ -130,9 +512,15 @@ const FRAMES = {
   "command-done": () => refresh(),
   "task-done": () => refresh(),
   "dev-output": (payload) => appendOut(payload.line ?? ""),
-  "dev-exit": (payload) => appendOut("\u2014 exited " + payload.code),
+  "dev-exit": (payload) => {
+    appendOut("\u2014 exited " + payload.code);
+    refresh();
+  },
   "dev-ready": (payload) => devReady(payload.url ?? ""),
+  "dev-stopped": () => refresh(),
 };
+
+trackAll();
 
 const events = new EventSource(EVENTS);
 events.addEventListener("message", (event) => {

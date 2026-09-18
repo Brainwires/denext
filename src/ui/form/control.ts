@@ -15,6 +15,8 @@
 
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChildren } from "../../jsx/types.ts";
+import type { BadgeTone } from "../components.ts";
+import { inlineMarkdown } from "../markdown.ts";
 import { Raw, type RawHtml, renderView } from "../view.ts";
 import { OP_FIELD } from "./value.ts";
 import type { WidgetOption } from "./widget.ts";
@@ -75,7 +77,7 @@ function textareaElement(attrs: ControlAttrs): VNode {
       ...commonProps(attrs),
       rows: attrs.rows ?? 4,
       placeholder: attrs.placeholder,
-      style: "width:100%",
+      class: "control-wide",
     },
     "\n" + (attrs.value ?? ""),
   );
@@ -149,8 +151,13 @@ export interface FieldOptions {
   readonly help?: string;
   /** A validation message to show against the field. */
   readonly error?: string;
-  /** A short badge after the label (`"read-only"`, `"required"`). */
-  readonly badge?: string;
+  /**
+   * The pills after the label, in order.
+   *
+   * A list rather than one, so a key can say both what state it is in and that it is required —
+   * neither has to overwrite the other.
+   */
+  readonly badges?: ReadonlyArray<{ readonly text: string; readonly tone?: BadgeTone }>;
   /** The control (or group of controls). */
   readonly body: RawHtml;
 }
@@ -167,19 +174,31 @@ type FieldProps = Omit<FieldOptions, "body"> & { readonly children?: VNodeChildr
 export function Field(props: FieldProps): VNode {
   return h(
     "div",
-    { style: "margin:0 0 14px", id: `${props.id}--field` },
+    { class: "field", id: `${props.id}--field` },
     h(
       "label",
       { for: props.id },
       props.label,
-      props.badge ? h(Fragment, null, " ", h("span", { class: "badge" }, props.badge)) : null,
+      (props.badges ?? []).map((pill, index) =>
+        h(
+          Fragment,
+          { key: index },
+          " ",
+          h(
+            "span",
+            { class: pill.tone === undefined ? "badge" : `badge ${pill.tone}` },
+            pill.text,
+          ),
+        )
+      ),
     ),
     props.children,
-    props.help
-      ? h("p", { class: "lead", style: "margin:4px 0 0;font-size:13px" }, props.help)
-      : null,
+    props.help ? h("p", { class: "lead field-help" }, inlineMarkdown(props.help)) : null,
+    // Formatted like the help beside it: a validator names the offending field in backticks
+    // (`i18n.defaultLocale`), and showing the backticks is the same wart as showing them
+    // in a description.
     props.error
-      ? h("p", { class: "note", role: "alert", style: "margin:6px 0 0" }, props.error)
+      ? h("p", { class: "note field-error", role: "alert" }, inlineMarkdown(props.error))
       : null,
   );
 }
@@ -225,14 +244,13 @@ export interface OpButtonOptions {
 export function OpButton(props: OpButtonOptions): VNode {
   return h("button", {
     type: "submit",
-    class: "ghost",
     name: OP_FIELD,
     value: `${props.op}:${props.at}:${props.list}`,
     title: props.title,
     "aria-label": props.title,
     formnovalidate: true,
     disabled: props.disabled ?? false,
-    style: "padding:2px 8px",
+    class: "ghost op-button",
   }, props.label);
 }
 

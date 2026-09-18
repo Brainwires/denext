@@ -31,6 +31,20 @@ export interface SchemaNode {
   /** Inclusive upper bound of a number field (from a `@maximum` JSDoc tag). */
   maximum?: number;
   /**
+   * Whether the key is superseded, from a `@deprecated` JSDoc tag.
+   *
+   * It stays in the editor rather than being hidden: a config that already sets the old key
+   * needs somewhere to see it and clear it. Its description says what replaced it.
+   */
+  deprecated?: boolean;
+  /**
+   * The value the key takes when it is absent, from a `@default` JSDoc tag.
+   *
+   * Only a key that is ON unless you say otherwise states one, and that is the whole point: a
+   * toggle cannot tell "tick to switch on" from "tick to opt out" without it.
+   */
+  default?: unknown;
+  /**
    * denext's generator hints: `widget: "textarea"` (from a `@widget textarea` JSDoc tag) for a
    * multi-line string, and `wrapper: "function"` for a list written back as `() => [...]`.
    */

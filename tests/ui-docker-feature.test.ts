@@ -9,7 +9,8 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { startUiServer, type UiServer } from "../src/ui/server.ts";
-import { deriveCsrf, UI_COOKIE, UI_CSRF_FIELD, UI_CSRF_HEADER } from "../src/ui/security.ts";
+import { UI_CSRF_FIELD, UI_CSRF_HEADER } from "../src/ui/security.ts";
+import { uiHandshake } from "./helpers/ui-session.ts";
 import { dockerPanel } from "../src/ui/features/docker.ts";
 import type { UiContext } from "../src/ui/html.ts";
 import { applyComposeEdits, readCompose } from "../src/build/compose-edit.ts";
@@ -29,6 +30,9 @@ interface Harness {
   server: UiServer;
   base: string;
   dir: string;
+  /** The session cookie the handshake minted (never the launch token). */
+  cookie: string;
+  /** The CSRF token derived from that cookie. */
   csrf: string;
 }
 
@@ -39,12 +43,8 @@ async function ui(options: { readOnly?: boolean; spa?: boolean } = {}): Promise<
     await Deno.writeTextFile(join(dir, "denext.config.ts"), `export default { mode: "spa" };\n`);
   }
   const server = await startUiServer({ dir, port: 0, readOnly: options.readOnly });
-  return {
-    server,
-    dir,
-    base: `http://127.0.0.1:${server.port}`,
-    csrf: await deriveCsrf(server.token),
-  };
+  const { cookie, csrf } = await uiHandshake(server);
+  return { server, dir, base: `http://127.0.0.1:${server.port}`, cookie, csrf };
 }
 
 async function stop(h: Harness): Promise<void> {
@@ -54,7 +54,7 @@ async function stop(h: Harness): Promise<void> {
 
 /** A `GET` past the token gate. */
 function get(h: Harness, path: string): Promise<Response> {
-  return fetch(`${h.base}${path}`, { headers: { cookie: `${UI_COOKIE}=${h.server.token}` } });
+  return fetch(`${h.base}${path}`, { headers: { cookie: h.cookie } });
 }
 
 /** A `POST` past the origin + token + CSRF gates, as a browser form submit. */
@@ -66,7 +66,7 @@ function post(h: Harness, path: string, fields: Record<string, string>): Promise
     method: "POST",
     redirect: "manual",
     headers: {
-      cookie: `${UI_COOKIE}=${h.server.token}`,
+      cookie: h.cookie,
       origin: h.base,
       [UI_CSRF_HEADER]: h.csrf,
     },
@@ -117,6 +117,37 @@ Deno.test("every rendered Docker file carries the sentinel, and options flow int
   const spa = renderDockerfile({ mode: "static", port: 8080 });
   assertStringIncludes(spa, "RUN deno task export");
   assertStringIncludes(spa, `"--port", "8080"`);
+});
+
+Deno.test("the SSR Dockerfile is non-root, layer-caches dependencies, and health-checks the built-in probe", () => {
+  const server = renderDockerfile({ mode: "server", port: 8080 });
+  const at = (needle: string) => {
+    const i = server.indexOf(needle);
+    assert(i >= 0, `missing: ${needle}`);
+    return i;
+  };
+  // Non-root: /app handed to the image's `deno` user BEFORE the build writes .denext/ there,
+  // so the runtime cache (.denext/cache.db) is writable by the same user.
+  assert(at("RUN chown deno:deno /app") < at("USER deno"));
+  assert(at("USER deno") < at("RUN deno task build"));
+  assert(!/^USER root/m.test(server));
+  // Dependency layer: deno.json (+ lock) copied and installed before the sources.
+  assert(at("COPY --chown=deno:deno deno.json deno.lock* ./") < at("RUN deno install"));
+  assert(at("RUN deno install") < at("COPY --chown=deno:deno . ."));
+  assert(at("COPY --chown=deno:deno . .") < at("RUN deno task build"));
+  assert(!server.includes("\nCOPY . .\n"), "no un-chowned whole-tree copy");
+  // A real HEALTHCHECK on the framework probe, at the configured port, before the CMD.
+  const health = at("HEALTHCHECK --interval=30s");
+  assertStringIncludes(server, "http://127.0.0.1:8080/_denext/health");
+  assert(!/^# HEALTHCHECK/m.test(server), "the healthcheck is live, not a commented example");
+  assert(health < at(`CMD ["deno", "task", "start", "--", "--port", "8080"]`));
+  // The write grant the start task must carry is spelled out next to the CMD.
+  assertStringIncludes(server, "--allow-write=.denext");
+  // The static image gets the same user + dependency layer, and a probe on `/`.
+  const spa = renderDockerfile({ mode: "static", port: 8080 });
+  assertStringIncludes(spa, "USER deno");
+  assertStringIncludes(spa, "RUN deno install");
+  assertStringIncludes(spa, "http://127.0.0.1:8080/");
 });
 
 Deno.test("the compose file's Postgres service is commented out unless it is asked for", () => {
@@ -385,7 +416,7 @@ Deno.test("the JSON twin accepts a JSON body and answers the documented shape", 
     const res = await fetch(`${h.base}/api/docker`, {
       method: "POST",
       headers: {
-        cookie: `${UI_COOKIE}=${h.server.token}`,
+        cookie: h.cookie,
         origin: h.base,
         [UI_CSRF_HEADER]: h.csrf,
         "content-type": "application/json",
@@ -411,7 +442,7 @@ Deno.test("a fragment request returns only the panel section ui.js swaps", async
   const h = await ui();
   try {
     const res = await fetch(`${h.base}/docker`, {
-      headers: { cookie: `${UI_COOKIE}=${h.server.token}`, accept: "text/html-fragment" },
+      headers: { cookie: h.cookie, accept: "text/html-fragment" },
     });
     const body = await res.text();
     assert(body.trimStart().startsWith('<section id="panel"'), body.slice(0, 80));
@@ -454,7 +485,7 @@ function postJson(h: Harness, path: string, body: unknown): Promise<Response> {
     method: "POST",
     redirect: "manual",
     headers: {
-      cookie: `${UI_COOKIE}=${h.server.token}`,
+      cookie: h.cookie,
       origin: h.base,
       [UI_CSRF_HEADER]: h.csrf,
       "content-type": "application/json",
@@ -501,7 +532,7 @@ Deno.test("compose editor: a generated file lists every service in source order,
   const h = await ui();
   try {
     await Deno.writeTextFile(join(h.dir, COMPOSE), GENERATED);
-    const body = await (await get(h, "/docker")).text();
+    const body = await (await get(h, "/docker?tab=services")).text();
     assertStringIncludes(body, "Edit docker-compose.yml");
     const web = body.indexOf('id="compose-web"');
     const db = body.indexOf('id="compose-db"');
@@ -544,7 +575,7 @@ Deno.test("compose editor: a hand-written file without the sentinel is 'edited' 
     assertEquals(payload.files[1].state, "edited");
     assertEquals(payload.model.sentinel, false);
 
-    const body = await (await get(h, "/docker")).text();
+    const body = await (await get(h, "/docker?tab=services")).text();
     assertStringIncludes(body, 'id="compose-api"');
     assertStringIncludes(body, 'id="compose-cache"');
     assertStringIncludes(body, '<option value="always" selected>always</option>');
@@ -564,11 +595,15 @@ Deno.test("compose editor: an opaque file is read-only with the regeneration dif
     assertEquals(payload.files[1].state, "opaque");
     assertEquals(payload.model, null);
 
-    const body = await (await get(h, "/docker")).text();
+    // The file's STATE is a Files-tab badge; the reason the editor bailed belongs with the
+    // editor, under Services. An opaque file has to say both, on the view that owns each.
+    const files = await (await get(h, "/docker")).text();
     assertStringIncludes(
-      body,
+      files,
       "YAML the editor cannot follow — read-only, will not be overwritten",
     );
+
+    const body = await (await get(h, "/docker?tab=services")).text();
     assertStringIncludes(body, "cannot follow it line by line: the file does not parse");
     assertStringIncludes(body, "Regeneration diff");
     assertStringIncludes(body, `+${DOCKER_SENTINEL}`);
@@ -594,17 +629,58 @@ Deno.test("compose editor: an opaque file is read-only with the regeneration dif
   }
 });
 
+/**
+ * An alias bomb (see tests/build-compose-edit.test.ts): a tiny file whose aliases expand to
+ * 9^9 nodes. Modelling it used to block the single-threaded UI server for ten seconds and end in
+ * a 500 — `inspectCompose` ran outside the snapshot's try.
+ */
+const BOMB = (() => {
+  let text = 'x-a0: &a0 ["lol"]\n';
+  for (let i = 1; i < 9; i++) {
+    text += `x-a${i}: &a${i} [${Array(9).fill(`*a${i - 1}`).join(", ")}]\n`;
+  }
+  return `${text}services:\n  web:\n    image: nginx\n    environment: *a8\n`;
+})();
+
+Deno.test("compose editor: an alias bomb is an opaque file answered within a second, never a 500", async () => {
+  const h = await ui();
+  try {
+    await Deno.writeTextFile(join(h.dir, COMPOSE), BOMB);
+    const started = performance.now();
+    const payload = await (await get(h, "/api/docker")).json();
+    assertEquals(payload.files[1].state, "opaque");
+    assertEquals(payload.model, null);
+    const page = await get(h, "/docker?tab=services");
+    assertEquals(page.status, 200);
+    assertStringIncludes(await page.text(), "expand to more than 10000 nodes");
+    const res = await post(h, "/docker", {
+      editor: "compose",
+      _base: payload.base,
+      service: "web",
+      op: "apply",
+      "port.new": "1:1",
+    });
+    assertEquals(res.status, 400);
+    assertStringIncludes(await res.text(), "cannot follow it");
+    assert(performance.now() - started < 1000, "answered within a second");
+    assertEquals(await composeOnDisk(h), BOMB);
+  } finally {
+    await stop(h);
+  }
+});
+
 Deno.test("compose editor: a long-syntax port's keys and a dependency's condition post through", async () => {
   const h = await ui();
   try {
     const text = "services:\n  web:\n    image: x\n    ports:\n      - target: 80\n" +
       '        published: "8080"\n    depends_on:\n      - db\n  db:\n    image: pg\n';
     await Deno.writeTextFile(join(h.dir, COMPOSE), text);
-    const body = await (await get(h, "/docker")).text();
+    const body = await (await get(h, "/docker?tab=services")).text();
     assertStringIncludes(body, 'name="port.0.published"');
     assertStringIncludes(body, 'name="dep.0.condition"');
     const res = await post(h, "/docker", {
       editor: "compose",
+      _base: await baseOf(h),
       service: "web",
       op: "apply",
       "port.0.target": "80",
@@ -642,10 +718,13 @@ Deno.test("compose editor: services are added and removed, and names declared, t
   const h = await ui();
   try {
     await Deno.writeTextFile(join(h.dir, COMPOSE), GENERATED);
-    const page = await (await get(h, "/docker")).text();
+    // Adding a service and declaring a name are two different views now: a service is added
+    // beside the services it joins, a volume/network is declared where every one of them is.
+    const page = await (await get(h, "/docker?tab=services")).text();
     assertStringIncludes(page, 'id="compose-new-service"');
-    assertStringIncludes(page, 'id="compose-declarations"');
     assertStringIncludes(page, 'name="build.dockerfile"');
+    const names = await (await get(h, "/docker?tab=names")).text();
+    assertStringIncludes(names, 'id="compose-declarations"');
     const added = await previewEdit(h, {
       op: "addService",
       "new.name": "cache",
@@ -703,7 +782,7 @@ Deno.test("compose editor: a merge key's fields are shown as inherited, and a se
   const h = await ui();
   try {
     await Deno.writeTextFile(join(h.dir, COMPOSE), ANCHORED);
-    const body = await (await get(h, "/docker")).text();
+    const body = await (await get(h, "/docker?tab=services")).text();
     assertStringIncludes(body, 'id="compose-web"');
     assertStringIncludes(body, "takes image from its merge key (&lt;&lt;)");
     const json = await postJson(h, "/api/docker", {
@@ -755,7 +834,7 @@ Deno.test("compose editor: confirm writes exactly the previewed change, every ot
     const res = await post(h, "/docker", confirmFields(preview));
     assertEquals(res.status, 303);
     await res.body?.cancel();
-    assertEquals(res.headers.get("location"), "/docker?saved=compose");
+    assertEquals(res.headers.get("location"), "/docker?tab=services&saved=compose");
 
     const after = await composeOnDisk(h);
     const expected = applyComposeEdits(GENERATED, [
@@ -826,7 +905,7 @@ Deno.test("compose editor: enabling the commented db service warns about its und
     );
     const model = readCompose(after);
     assertEquals(model?.services.map((s) => s.commented), [false, false]);
-    const page = await (await get(h, "/docker")).text();
+    const page = await (await get(h, "/docker?tab=services")).text();
     assertStringIncludes(page, "named volume &quot;denext-db&quot;");
   } finally {
     await stop(h);
@@ -855,6 +934,7 @@ Deno.test("compose editor: a service, key or dependency the model did not report
     await Deno.writeTextFile(join(h.dir, COMPOSE), GENERATED);
     const res = await post(h, "/docker", {
       editor: "compose",
+      _base: await baseOf(h),
       service: "nope",
       op: "apply",
       "port.new": "1:1",
@@ -881,6 +961,35 @@ Deno.test("compose editor: a service, key or dependency the model did not report
   }
 });
 
+Deno.test("compose editor: a browser form without _base is refused as stale; the JSON twin may omit it", async () => {
+  const h = await ui();
+  try {
+    await Deno.writeTextFile(join(h.dir, COMPOSE), GENERATED);
+    // Every form the page renders carries the stamp — so a post without one was not built from
+    // this page, and skipping the stale check for it is the hole, not a convenience.
+    const page = await (await get(h, "/docker?tab=services")).text();
+    assertStringIncludes(page, `<input name="_base" type="hidden" value="${await baseOf(h)}">`);
+    const ops = JSON.stringify([{ op: "ports", service: "web", action: "add", value: "1:1" }]);
+    const unstamped: Record<string, string>[] = [
+      { editor: "compose", service: "web", op: "apply", "port.new": "1:1" },
+      { editor: "compose", ops, confirm: "1" },
+      { editor: "compose", _base: "", ops, confirm: "1" },
+    ];
+    for (const fields of unstamped) {
+      const res = await post(h, "/docker", fields);
+      assertEquals(res.status, 400, JSON.stringify(fields));
+      assertStringIncludes(await res.text(), "carries no _base stamp");
+    }
+    assertEquals(await composeOnDisk(h), GENERATED, "nothing was written");
+    // The twin keeps the opt-out: a script that just read the file has no page to be stale.
+    const twin = await postJson(h, "/api/docker", { editor: "compose", ops: JSON.parse(ops) });
+    assertEquals(twin.status, 200);
+    assertEquals((await twin.json()).applied, false);
+  } finally {
+    await stop(h);
+  }
+});
+
 Deno.test("compose editor: --read-only refuses the confirm (403) and leaves the file untouched", async () => {
   const h = await ui({ readOnly: true });
   try {
@@ -889,7 +998,7 @@ Deno.test("compose editor: --read-only refuses the confirm (403) and leaves the 
     const res = await post(h, "/docker", { editor: "compose", ops, confirm: "1" });
     assertEquals(res.status, 403);
     await res.body?.cancel();
-    const page = await (await get(h, "/docker")).text();
+    const page = await (await get(h, "/docker?tab=services")).text();
     assertStringIncludes(page, "Read-only mode — editing is refused.");
     assertStringIncludes(page, 'name="op" value="apply" disabled');
   } finally {
@@ -987,7 +1096,7 @@ Deno.test("compose editor: with two compose files, compose.yaml wins, as it does
   try {
     await Deno.writeTextFile(join(h.dir, "compose.yaml"), HAND);
     await Deno.writeTextFile(join(h.dir, COMPOSE), GENERATED);
-    const page = await (await get(h, "/docker")).text();
+    const page = await (await get(h, "/docker?tab=services")).text();
     assertStringIncludes(page, "Edit compose.yaml");
     assertStringIncludes(page, "redis:7");
   } finally {
@@ -1014,7 +1123,7 @@ Deno.test("compose editor: a build field and a network row post through; an unde
   const h = await ui();
   try {
     await Deno.writeTextFile(join(h.dir, COMPOSE), GENERATED);
-    const page = await (await get(h, "/docker")).text();
+    const page = await (await get(h, "/docker?tab=services")).text();
     assertStringIncludes(page, 'name="build"');
     assertStringIncludes(page, 'name="network.new"');
     const body = await previewEdit(h, {
@@ -1030,6 +1139,35 @@ Deno.test("compose editor: a build field and a network row post through; an unde
       { op: "set", service: "web", field: "build", value: "./app" },
       { op: "networks", service: "web", action: "add", value: "backend" },
     ]);
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("each Docker tab names itself in the title; a fragment still carries none", async () => {
+  const h = await ui();
+  try {
+    // All three tabs of this one panel rendered "Docker · denext ui", so two of them open
+    // side by side in a browser were indistinguishable.
+    const titles: string[] = [];
+    for (const tab of ["files", "services", "names"]) {
+      const body = await (await get(h, `/docker?tab=${tab}`)).text();
+      titles.push(/<title>([^<]*)<\/title>/.exec(body)?.[1] ?? "");
+    }
+    assertEquals(titles, [
+      "Docker · Files · denext ui",
+      "Docker · Services · denext ui",
+      "Docker · Names · denext ui",
+    ]);
+
+    // `ui.js` swaps one `<section>`: the per-view title must not turn that into a document.
+    const fragment = await (await fetch(`${h.base}/docker?tab=services`, {
+      headers: { cookie: h.cookie, accept: "text/html-fragment" },
+    })).text();
+    assert(
+      !fragment.includes("<title>"),
+      `a fragment must stay a section: ${fragment.slice(0, 90)}`,
+    );
   } finally {
     await stop(h);
   }

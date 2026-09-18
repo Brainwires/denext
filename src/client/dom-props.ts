@@ -26,7 +26,8 @@ export type ErrorRouter = (error: unknown) => void;
 
 /** Props that are never DOM attributes: reconciler-owned names and framework-internal markers. */
 function isReconcilerProp(name: string): boolean {
-  return name === "children" || name === "key" || name === "ref" || name.startsWith("__dnx");
+  return name === "children" || name === "key" || name === "ref" ||
+    name === "suppressHydrationWarning" || name.startsWith("__dnx");
 }
 
 function isEventProp(name: string): boolean {

@@ -19,6 +19,14 @@
       "dom.asynciterable"
     ]
   },
+  "fmt": {
+    "useTabs": false,
+    "lineWidth": 100,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false,
+    "proseWrap": "preserve"
+  },
   "imports": {
     "deno-dom": "jsr:@b-fuze/deno-dom@^0.1.49",
     "denext": "../../mod.ts",

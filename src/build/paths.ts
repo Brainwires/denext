@@ -3,7 +3,7 @@
 import { join, toFileUrl } from "@std/path";
 import { frameworkFileUrl } from "./bundle.ts";
 import type { I18nConfig } from "../server/i18n.ts";
-import type { DenextConfig } from "../server/config.ts";
+import { type DenextConfig, featureFlags } from "../server/config.ts";
 import { validateDenextConfig, warnUnknownConfigKeys } from "../server/config-validate.ts";
 import { CONFIG_KEYS } from "../server/config-keys.generated.ts";
 
@@ -97,7 +97,7 @@ export async function resolveProject(projectDir: string): Promise<ProjectPaths> 
   // `feature()` reads this seeded map (see denext/feature). resolveProject runs in the build,
   // dev, and prod-server processes, so this one seed covers SSR in every mode.
   (globalThis as { __DENEXT_FEATURES__?: Record<string, boolean> }).__DENEXT_FEATURES__ =
-    config?.experimental?.features ?? {};
+    featureFlags(config);
 
   return {
     projectDir,

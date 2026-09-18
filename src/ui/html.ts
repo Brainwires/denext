@@ -13,7 +13,7 @@
 
 import type { VNode } from "../jsx/types.ts";
 import type { SseClients } from "../build/sse.ts";
-import { layout, type NavItem } from "./layout.ts";
+import { layout, type NavItem, type NavSection, UI_TITLE_SUFFIX } from "./layout.ts";
 import { type RawHtml, renderView } from "./view.ts";
 
 export type { RawHtml } from "./view.ts";
@@ -56,7 +56,7 @@ export interface UiContext {
   readonly events: SseClients;
   /**
    * The UI server's shutdown signal. Every child process a feature spawns is handed this (alone
-   * or combined with a per-request deadline), so Ctrl+C takes the `deno task` and the wizard's
+   * or combined with a per-request deadline), so Ctrl+C takes the `deno task` and Setup's
    * `denext dev` with it instead of leaving them running. Absent when a caller (a unit test)
    * built the context by hand.
    */
@@ -77,17 +77,53 @@ export interface UiRoute {
 /** The broadcast channel path (also the route that serves it). */
 export const UI_EVENTS_PATH = "/_ui/events";
 
-/** The UI's top navigation, in order. */
-export const UI_NAV: readonly NavItem[] = [
-  { href: "/", label: "Overview" },
-  { href: "/config", label: "Config" },
-  { href: "/config/next", label: "next.config" },
-  { href: "/plugins", label: "Plugins" },
-  { href: "/generate", label: "Generate" },
-  { href: "/docker", label: "Docker" },
-  { href: "/wizard", label: "Wizard" },
-  { href: "/commands", label: "Commands" },
+/** The header a fragment response names its document title in (URI-encoded). */
+export const UI_TITLE_HEADER = "x-ui-title";
+
+/**
+ * Where `ui.js` asks what a cron expression means as it is typed.
+ *
+ * Under `/_ui/` on purpose: it is part of the client's own machinery, not a panel anyone
+ * navigates to, and it answers a bare block rather than a `<section id="panel">`.
+ */
+export const UI_CRON_PREVIEW_PATH = "/_ui/cron-preview";
+
+/**
+ * The UI's navigation, in order.
+ *
+ * Configuration is a section rather than one entry: its views are separate pages, each a real
+ * route, so they belong in the sidebar beside each other instead of behind a strip of tabs on a
+ * single destination. `next.config` is deliberately NOT here — it exists only for a compat app,
+ * and deciding that per request would mean a subprocess check on every panel's render, so it
+ * stays a link on the config pages themselves.
+ */
+export const UI_NAV_SECTIONS: readonly NavSection[] = [
+  { items: [{ href: "/", label: "Overview" }, { href: "/setup", label: "Setup" }] },
+  {
+    label: "Configuration",
+    items: [
+      { href: "/config/routing", label: "Routing" },
+      { href: "/config/rendering", label: "Rendering" },
+      { href: "/config/security", label: "Security" },
+      { href: "/config/advanced", label: "Advanced" },
+      { href: "/config/cron", label: "Cron" },
+    ],
+  },
+  {
+    items: [
+      { href: "/plugins", label: "Plugins" },
+      { href: "/generate", label: "Generate" },
+      { href: "/docker", label: "Docker" },
+      { href: "/desktop", label: "Desktop" },
+      { href: "/dev", label: "Dev" },
+      { href: "/tasks", label: "Tasks" },
+      { href: "/commands", label: "Commands" },
+    ],
+  },
 ];
+
+/** Every navigation destination, flattened — the sections' items in order. */
+export const UI_NAV: readonly NavItem[] = UI_NAV_SECTIONS.flatMap((section) => section.items);
 
 // ── the page seam ────────────────────────────────────────────────────────────
 
@@ -139,10 +175,14 @@ export function jsonResponse(body: unknown, status = 200): Response {
  * @param status HTTP status (default 200).
  * @returns The response.
  */
-export function htmlResponse(markup: string, status = 200): Response {
+export function htmlResponse(
+  markup: string,
+  status = 200,
+  headers: Record<string, string> = {},
+): Response {
   return new Response(markup, {
     status,
-    headers: { "content-type": "text/html; charset=utf-8" },
+    headers: { "content-type": "text/html; charset=utf-8", ...headers },
   });
 }
 
@@ -155,16 +195,36 @@ export function htmlResponse(markup: string, status = 200): Response {
  *
  * @param title The panel's title (the document title, and its heading in the tab bar).
  * @param active The nav href to mark current — the panel's own HTML path.
- * @returns The `(ctx, body, status?) => Response` the module answers every HTML request with.
+ * @returns The `(ctx, body, status?, viewTitle?) => Response` the module answers every HTML
+ *   request with. A tabbed panel passes `viewTitle` to name the view it is actually showing
+ *   (`Docker · Services`), so two of its tabs open side by side are told apart in the browser;
+ *   panels with one view pass nothing and keep the bound title.
  */
 export function panelResponder(
   title: string,
   active: string,
-): (ctx: UiContext, body: RawHtml, status?: number) => Response {
-  return (ctx: UiContext, body: RawHtml, status = 200): Response => {
-    if (ctx.fragment) return htmlResponse(toHtml(body), status);
+): (ctx: UiContext, body: RawHtml, status?: number, viewTitle?: string) => Response {
+  return (ctx: UiContext, body: RawHtml, status = 200, viewTitle?: string): Response => {
+    if (ctx.fragment) {
+      // A fragment is the bare panel: it carries no <title>, and `ui.js` swaps it without a
+      // navigation, so the tab would keep naming the panel the user just left. The title rides
+      // along as a header instead of as markup, because the shell document is pinned byte-exact
+      // by a golden test. URI-encoded: a header is a byte string, and a title is not always
+      // latin-1.
+      return htmlResponse(toHtml(body), status, {
+        [UI_TITLE_HEADER]: encodeURIComponent((viewTitle ?? title) + UI_TITLE_SUFFIX),
+      });
+    }
     return htmlResponse(
-      renderPage(layout, { title, nav: UI_NAV, body, csrf: ctx.csrf, active }),
+      renderPage(layout, {
+        title: viewTitle ?? title,
+        nav: UI_NAV_SECTIONS,
+        body,
+        csrf: ctx.csrf,
+        active,
+        readOnly: ctx.readOnly,
+        offline: ctx.offline,
+      }),
       status,
     );
   };

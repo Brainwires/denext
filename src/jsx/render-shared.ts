@@ -16,7 +16,12 @@ import {
   ERROR_BOUNDARY,
   reportBoundaryError,
 } from "../runtime/error-boundary.ts";
-import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
+import {
+  componentDisplayName,
+  invokeComponent,
+  isComponentType,
+  resolveComponentType,
+} from "../runtime/react-brands.ts";
 import { type ClientRefInfo, clientRefOf } from "../runtime/client-reference.ts";
 import { isServerAction } from "../runtime/server-action.ts";
 import { DNX_H_ATTR } from "../runtime/qrl.ts";
@@ -39,7 +44,7 @@ import { enterScope, ID_PATH_PROP, type IdHolder, type IdScope, scopePrefix } fr
 import { FRAGMENT, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
 import { islandWrapper, warnClientOnlySeoContent } from "./island-wrapper.ts";
 import type { FlightNode, FlightProps, FlightValue } from "./render-to-flight.ts";
-import { serializeScalar, serializeThenable } from "./flight-scalar.ts";
+import { serializeScalar, serializeThenable, warnDroppedFunctionProps } from "./flight-scalar.ts";
 
 /** A renderer output that carries both the SSR HTML and the Flight tree for the same subtree. */
 export interface Dual {
@@ -308,6 +313,13 @@ export async function renderHostHtml(
 
 /** What {@link renderHostDual} needs from a dual renderer, bound to explicit scopes. */
 export interface DualHost {
+  /**
+   * True while rendering inside a client island's subtree — where a host element's function
+   * props were authored by CLIENT code and will exist again after hydration. When a renderer
+   * reports `false`, a host element's dropped function prop is a Server Component's mistake
+   * and warns in dev ({@link warnDroppedFunctionProps}); left unset, nothing warns.
+   */
+  insideIsland?: boolean;
   /** Serialize one prop value for Flight. */
   serializeValue(value: unknown, scopes: ProviderScope[]): Promise<Serialized>;
   /** Render children into both outputs; `head` is null for a hoisted `<title>`'s text. */
@@ -331,6 +343,9 @@ export async function renderHostDual(
 ): Promise<Dual> {
   const props = node.props ?? {};
   const tag = node.type as string;
+  // A server-authored `<button onClick={fn}>`: the function is dropped from Flight below and
+  // never reaches the browser — say so in dev instead of rendering an inert button.
+  if (r.insideIsland === false) warnDroppedFunctionProps(`<${tag}>`, props);
   const attrs = hostAttrs(props, tag, resumable);
   const children = hostChildren(tag, props);
   if (hoistsToHead(head, tag)) {
@@ -603,6 +618,11 @@ export async function renderClientIsland(
   const parsed = parseStrategy(props, ref.moduleHydrate);
   const rest = parsed.rest;
   const wasInside = r.insideIsland;
+  // A top-level island's props were authored by a Server Component: a plain function among
+  // them is dropped by the serialization below (Next's "Event handlers cannot be passed to
+  // Client Component props") — warn in dev. Inside another island the props are client code's
+  // own and exist again after hydration, so they are not checked.
+  if (!wasInside) warnDroppedFunctionProps(`<${componentDisplayName(type)}>`, rest);
   if (parsed.strategy === "only") {
     const flight = await islandFlightInside(r, ref.id, rest, prefix, scopes, wasInside);
     carveIsland(r, node, { id: prefix, strategy: "only", flight }, wasInside);

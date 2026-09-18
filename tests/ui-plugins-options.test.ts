@@ -10,7 +10,8 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { startUiServer, type UiServer } from "../src/ui/server.ts";
-import { deriveCsrf, UI_COOKIE, UI_CSRF_HEADER } from "../src/ui/security.ts";
+import { stampOf, UI_CSRF_HEADER } from "../src/ui/security.ts";
+import { uiHandshake } from "./helpers/ui-session.ts";
 import { setProcRunner } from "../src/ui/features/plugins.ts";
 import { setJsrClient } from "../src/ui/features/plugin-search.ts";
 import { sanitizeOptionsSchema } from "../src/ui/features/third-party-options.ts";
@@ -39,7 +40,6 @@ const UNTOUCHED: Record<string, string> = {
   "o.info.title": "",
   "o.info.version": "",
   "o.info.description": "",
-  "o.servers~n": "0",
   "o.expose": "",
   "o.outFile~branch": "0",
   "o.outFile": "",
@@ -65,6 +65,9 @@ interface Harness {
   server: UiServer;
   base: string;
   dir: string;
+  /** The session cookie the handshake minted (never the launch token). */
+  cookie: string;
+  /** The CSRF token derived from that cookie. */
   csrf: string;
   /** Every stubbed `deno` argv. */
   ran: string[][];
@@ -91,11 +94,13 @@ async function ui(files: Record<string, string>, options: HarnessOptions = {}): 
     readOnly: options.readOnly,
     offline: options.offline,
   });
+  const { cookie, csrf } = await uiHandshake(server);
   const h: Harness = {
     server,
     dir,
     base: `http://127.0.0.1:${server.port}`,
-    csrf: await deriveCsrf(server.token),
+    cookie,
+    csrf,
     ran: [],
     searches: [],
     metas: [],
@@ -126,19 +131,30 @@ async function stop(h: Harness): Promise<void> {
 
 /** GET a UI path with the session cookie. */
 function get(h: Harness, path: string): Promise<Response> {
-  return fetch(`${h.base}${path}`, { headers: { cookie: `${UI_COOKIE}=${h.server.token}` } });
+  return fetch(`${h.base}${path}`, { headers: { cookie: h.cookie } });
 }
 
 /** The session headers every mutation carries. */
 function mutationHeaders(h: Harness): Record<string, string> {
-  return { cookie: `${UI_COOKIE}=${h.server.token}`, origin: h.base, [UI_CSRF_HEADER]: h.csrf };
+  return { cookie: h.cookie, origin: h.base, [UI_CSRF_HEADER]: h.csrf };
 }
 
 /** POST a form with the session cookie, a same-origin `Origin` and the CSRF token. */
-function post(h: Harness, path: string, fields: Record<string, string>): Promise<Response> {
+async function post(
+  h: Harness,
+  path: string,
+  fields: Record<string, string>,
+  options: { readonly unstamped?: boolean } = {},
+): Promise<Response> {
   const body = new FormData();
   for (const [key, value] of Object.entries(fields)) body.set(key, value);
-  return fetch(`${h.base}${path}`, {
+  // A browser form always carries the file's stamp (the panel refuses one that does not), so a
+  // post that names none gets the stamp of the file as it stands — what a fresh page would carry.
+  // `unstamped` posts exactly `fields`, for the test that proves the refusal.
+  if (path.startsWith("/plugins/options") && !("_base" in fields) && !options.unstamped) {
+    body.set("_base", await stampOf(await config(h).catch(() => "")));
+  }
+  return await fetch(`${h.base}${path}`, {
     method: "POST",
     headers: mutationHeaders(h),
     body,
@@ -197,10 +213,12 @@ Deno.test("the options form renders from the plugin's optionsSchema with the con
     assertStringIncludes(body, `action="${OPTIONS}"`);
     assertStringIncludes(body, 'name="o.path" id="f-o-path" type="text" value="/spec.json"');
     // An enum → radios with the file's value checked; a nested object → a group; an array of
-    // objects → a list editor with its presence marker.
+    // objects → a list editor. `servers` is not in the file, so it carries NO presence marker: an
+    // untouched save must post nothing for it, not an empty list.
     assertStringIncludes(body, 'type="radio" value="scalar" checked');
     assertStringIncludes(body, 'name="o.info.title"');
-    assertStringIncludes(body, 'name="o.servers~n" type="hidden" value="0"');
+    assertStringIncludes(body, 'value="add:0:o.servers"');
+    assert(!body.includes('name="o.servers~n"'), "an unset list has no marker to post");
     assertStringIncludes(body, 'name="_base"');
     assertStringIncludes(body, ">Preview<");
   } finally {
@@ -388,6 +406,29 @@ Deno.test("a confirm against a file edited since the preview is a 409 and writes
   }
 });
 
+Deno.test("a browser form without _base is refused as stale; the JSON twin may omit it", async () => {
+  const h = await ui({ "denext.config.ts": CONFIG });
+  try {
+    const unstamped = [{ ...UNTOUCHED, "o.path": "/y" }, {
+      ...UNTOUCHED,
+      "o.path": "/y",
+      _base: "",
+    }];
+    for (const fields of unstamped) {
+      const res = await post(h, OPTIONS, fields, { unstamped: true });
+      assertEquals(res.status, 400);
+      assertStringIncludes(await res.text(), "carries no _base stamp");
+    }
+    assertEquals(await config(h), CONFIG, "nothing was written");
+    const sets = [{ path: ["path"], value: "/y" }];
+    const twin = await postJson(h, `/api${OPTIONS}`, { sets });
+    assertEquals(twin.status, 200);
+    assertEquals((await twin.json()).applied, false);
+  } finally {
+    await stop(h);
+  }
+});
+
 Deno.test("a list row button re-renders the draft with the new row and writes nothing", async () => {
   const h = await ui({ "denext.config.ts": CONFIG });
   try {
@@ -495,7 +536,7 @@ Deno.test("a JSR search renders escaped results with an Add form each", async ()
     assertStringIncludes(body, "<strong>@acme/cool-plugin</strong>");
     assertStringIncludes(body, "&lt;script&gt;alert(1)&lt;/script&gt;");
     assert(!body.includes("<script>alert"), "registry text is escaped");
-    assertStringIncludes(body, '<span class="badge">archived</span>');
+    assertStringIncludes(body, '<span class="badge warn">archived</span>');
     assertStringIncludes(body, 'name="op" value="add-jsr"');
     assertStringIncludes(body, 'name="export" value="coolPlugin"');
     const twin = await (await get(h, "/api/plugins?q=cool")).json();

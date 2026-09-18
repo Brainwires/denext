@@ -1,20 +1,23 @@
-// `denext ui`'s setup wizard (J9): the nine steps, the previews that precede every write, the
+// `denext ui`'s Setup page: the readiness steps, the previews that precede every write, the
 // env scan's lexical honesty, the doctor seam, and the refusals (`--read-only`, an unknown
-// operation, a task name the project never declared).
+// operation).
+//
+// The dev server and the `deno task` scripts are no longer steps — they are `/dev` and
+// `/tasks`, and their tests live in `ui-dev-feature.test.ts` and `ui-tasks-feature.test.ts`.
 //
 // Everything runs against a real server on loopback, driven the way a browser with JavaScript
 // disabled would drive it: real form posts, `303` back to the step anchor.
 
-import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { startUiServer, type UiServer } from "../src/ui/server.ts";
-import { deriveCsrf, UI_COOKIE, UI_CSRF_HEADER } from "../src/ui/security.ts";
-import { type DoctorCheck, setDoctorRunner } from "../src/ui/features/wizard.ts";
+import { UI_CSRF_HEADER } from "../src/ui/security.ts";
+import { exists, type Harness, postTo, stopUi, uiOn } from "./helpers/ui-panel.ts";
+import { type DoctorCheck, setDoctorRunner } from "../src/ui/features/setup.ts";
 import { envExampleSource, envNamesIn, scanEnvUsage } from "../src/ui/env-scan.ts";
 import { readDenoConfig, taskMap } from "../src/ui/tasks.ts";
 import { FEATURES } from "../src/cli/commands/create.ts";
 
-/** The step ids, in the order the wizard must present them. */
+/** The step ids, in the order Setup must present them. */
 const STEP_IDS = [
   "detect",
   "runtime",
@@ -23,61 +26,31 @@ const STEP_IDS = [
   "env",
   "doctor",
   "features",
-  "tasks",
-  "finish",
 ];
 
-interface Harness {
-  server: UiServer;
-  base: string;
-  dir: string;
-  csrf: string;
-  headers: Record<string, string>;
-}
-
-/** Start the UI on a temp dir, optionally seeded with files. */
-async function ui(
+/** Start the UI on a temp project. */
+function ui(
   files: Record<string, string> = {},
   opts: { readOnly?: boolean; offline?: boolean } = {},
 ): Promise<Harness> {
-  const dir = await Deno.makeTempDir({ prefix: "denext_ui_wizard_" });
-  for (const [path, content] of Object.entries(files)) {
-    const abs = join(dir, path);
-    await Deno.mkdir(join(abs, ".."), { recursive: true });
-    await Deno.writeTextFile(abs, content);
-  }
-  const server = await startUiServer({ dir, port: 0, ...opts });
-  return {
-    server,
-    dir,
-    base: `http://127.0.0.1:${server.port}`,
-    csrf: await deriveCsrf(server.token),
-    headers: { cookie: `${UI_COOKIE}=${server.token}` },
-  };
+  return uiOn(files, opts, "denext_ui_setup_");
 }
 
-async function stop(h: Harness): Promise<void> {
-  await h.server.shutdown();
-  await Deno.remove(h.dir, { recursive: true });
+/** Shut it down and remove the project. */
+function stop(h: Harness): Promise<void> {
+  return stopUi(h);
 }
 
-/** Post one wizard operation the way a no-JS form would. */
+/** Post one Setup operation the way a no-JS form would. */
 function post(
   h: Harness,
   fields: Record<string, string>,
-  path = "/wizard",
+  path = "/setup",
 ): Promise<Response> {
-  const form = new FormData();
-  for (const [key, value] of Object.entries(fields)) form.set(key, value);
-  return fetch(`${h.base}${path}`, {
-    method: "POST",
-    redirect: "manual",
-    headers: { ...h.headers, origin: h.base, [UI_CSRF_HEADER]: h.csrf },
-    body: form,
-  });
+  return postTo(h, fields, path);
 }
 
-/** A `deno.json` with every wizard-managed key except the `dev` task, and comments. */
+/** A `deno.json` with every Setup-managed key except the `dev` task, and comments. */
 const DENO_JSON_WITHOUT_DEV = `{
   // the framework, pinned
   "imports": {
@@ -89,19 +62,19 @@ const DENO_JSON_WITHOUT_DEV = `{
   },
   "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "denext" },
   "tasks": {
-    // no dev task yet — the wizard adds it
+    // no dev task yet — Setup adds it
     "build": "deno run -A jsr:@denext/denext/cli build .",
     "start": "deno run -A jsr:@denext/denext/cli start ."
   }
 }
 `;
 
-// ── the nine steps ───────────────────────────────────────────────────────────
+// ── the steps ────────────────────────────────────────────────────────────────
 
-Deno.test("an empty directory gets nine steps in order, and is offered a scaffold", async () => {
+Deno.test("an empty directory gets every step in order, and is offered a scaffold", async () => {
   const h = await ui();
   try {
-    const res = await fetch(`${h.base}/api/wizard`, { headers: h.headers });
+    const res = await fetch(`${h.base}/api/setup`, { headers: h.headers });
     assertEquals(res.status, 200);
     const payload = await res.json();
     assertEquals(payload.ok, true);
@@ -123,17 +96,18 @@ Deno.test("an empty directory gets nine steps in order, and is offered a scaffol
   }
 });
 
-Deno.test("the HTML wizard renders one section per step, each with a status pill", async () => {
+Deno.test("the HTML page renders one section per step, each with a status pill", async () => {
   const h = await ui({ "deno.json": DENO_JSON_WITHOUT_DEV });
   try {
-    const res = await fetch(`${h.base}/wizard`, { headers: h.headers });
+    const res = await fetch(`${h.base}/setup`, { headers: h.headers });
     assertEquals(res.status, 200);
     const body = await res.text();
     assertStringIncludes(body, '<section id="panel"');
     for (const id of STEP_IDS) assertStringIncludes(body, `id="step-${id}"`);
-    assertStringIncludes(body, '<span class="badge">');
-    assertStringIncludes(body, '<form method="post" action="/wizard"');
-    assert(!body.includes("<script>"), "the wizard ships no inline script");
+    // Every step's pill carries its status as a tone, not a flat grey.
+    assertStringIncludes(body, '<span class="badge ');
+    assertStringIncludes(body, '<form method="post" action="/setup"');
+    assert(!body.includes("<script>"), "Setup ships no inline script");
     assert(!body.includes("Not implemented yet"), "the stub is gone");
     // Every feature toggle the CLI offers is offered here too.
     for (const feature of FEATURES) assertStringIncludes(body, feature.label);
@@ -174,7 +148,7 @@ Deno.test("a missing dev task previews as a merge that adds only that key", asyn
 
     const applied = await post(h, { op: "denojson", confirm: "1" });
     assertEquals(applied.status, 303);
-    assertEquals(applied.headers.get("location"), "/wizard#step-denojson");
+    assertEquals(applied.headers.get("location"), "/setup#step-denojson");
     await applied.body?.cancel();
 
     const after = await Deno.readTextFile(join(h.dir, "deno.json"));
@@ -206,7 +180,7 @@ Deno.test("a variable read in source but declared nowhere lands in .env.example"
     assertEquals(scan.missing, ["FOO"]);
     assertEquals(scan.files, [], "the project has no .env files");
 
-    const page = await fetch(`${h.base}/api/wizard`, { headers: h.headers });
+    const page = await fetch(`${h.base}/api/setup`, { headers: h.headers });
     const env = (await page.json()).steps.find((s: { id: string }) => s.id === "env");
     assertEquals(env.status, "todo");
     assertStringIncludes(env.summary, "FOO");
@@ -218,11 +192,11 @@ Deno.test("a variable read in source but declared nowhere lands in .env.example"
 
     const applied = await post(h, { op: "envexample", confirm: "1" });
     assertEquals(applied.status, 303);
-    assertEquals(applied.headers.get("location"), "/wizard#step-env");
+    assertEquals(applied.headers.get("location"), "/setup#step-env");
     await applied.body?.cancel();
 
     assertStringIncludes(await Deno.readTextFile(join(h.dir, ".env.example")), "FOO=");
-    assertEquals(await exists(join(h.dir, ".env")), false, "the wizard never writes .env");
+    assertEquals(await exists(join(h.dir, ".env")), false, "Setup never writes .env");
   } finally {
     await stop(h);
   }
@@ -291,7 +265,7 @@ Deno.test("the doctor panel renders an injected report without spawning anything
     // The failing app-dir check offers the repair.
     assertStringIncludes(body, 'name="op" value="scaffold-page"');
 
-    const api = await fetch(`${h.base}/api/wizard`, {
+    const api = await fetch(`${h.base}/api/setup`, {
       method: "POST",
       redirect: "manual",
       headers: {
@@ -304,7 +278,7 @@ Deno.test("the doctor panel renders an injected report without spawning anything
     });
     // A JSON body carries no `op`, so the operation table refuses it.
     assertEquals(api.status, 400);
-    assertStringIncludes((await api.json()).reason, "unknown wizard operation");
+    assertStringIncludes((await api.json()).reason, "unknown setup operation");
   } finally {
     setDoctorRunner(null);
     await stop(h);
@@ -313,41 +287,20 @@ Deno.test("the doctor panel renders an injected report without spawning anything
 
 // ── refusals ────────────────────────────────────────────────────────────────
 
-Deno.test("a task name the project does not declare is refused before any spawn", async () => {
-  const h = await ui({ "deno.json": DENO_JSON_WITHOUT_DEV });
-  try {
-    const res = await post(h, { task: "rm -rf /" }, "/tasks/run");
-    assertEquals(res.status, 400);
-    const payload = await res.json();
-    assertEquals(payload.ok, false);
-    assertStringIncludes(payload.reason, "unknown task");
-    assertEquals(payload.tasks, ["build", "start"]);
-
-    // The step only ever offers names that are in the file.
-    const page = await fetch(`${h.base}/wizard`, { headers: h.headers });
-    const body = await page.text();
-    assertStringIncludes(body, 'name="task" value="build"');
-    assertStringIncludes(body, 'action="/tasks/run"');
-    assert(!body.includes('value="rm -rf /"'));
-  } finally {
-    await stop(h);
-  }
-});
-
 Deno.test("an operation outside the table never runs", async () => {
   const h = await ui();
   try {
     for (const op of ["", "nope", "constructor", "__proto__", "toString"]) {
       const res = await post(h, { op });
       assertEquals(res.status, 400, op);
-      assertStringIncludes((await res.json()).reason, "unknown wizard operation");
+      assertStringIncludes((await res.json()).reason, "unknown setup operation");
     }
   } finally {
     await stop(h);
   }
 });
 
-Deno.test("--read-only refuses every wizard write and says so on the page", async () => {
+Deno.test("--read-only refuses every Setup write and says so on the page", async () => {
   const h = await ui({ "deno.json": DENO_JSON_WITHOUT_DEV }, { readOnly: true });
   try {
     for (
@@ -370,7 +323,7 @@ Deno.test("--read-only refuses every wizard write and says so on the page", asyn
       DENO_JSON_WITHOUT_DEV,
       "nothing was written",
     );
-    const page = await fetch(`${h.base}/wizard`, { headers: h.headers });
+    const page = await fetch(`${h.base}/setup`, { headers: h.headers });
     const body = await page.text();
     assertStringIncludes(body, "Read-only mode");
     assertStringIncludes(body, '<button type="submit" disabled>');
@@ -384,7 +337,7 @@ Deno.test("--read-only refuses every wizard write and says so on the page", asyn
 Deno.test("the JSON twin reports { id, status, summary, actions } per step", async () => {
   const h = await ui({ "deno.json": DENO_JSON_WITHOUT_DEV, "app/page.tsx": "export default 1;\n" });
   try {
-    const res = await fetch(`${h.base}/api/wizard`, { headers: h.headers });
+    const res = await fetch(`${h.base}/api/setup`, { headers: h.headers });
     const payload = await res.json();
     assertEquals(payload.kind, "denext");
     for (const step of payload.steps) {
@@ -395,11 +348,6 @@ Deno.test("the JSON twin reports { id, status, summary, actions } per step", asy
     const denojson = payload.steps.find((s: { id: string }) => s.id === "denojson");
     assertEquals(denojson.status, "todo");
     assertStringIncludes(denojson.summary, "tasks.dev");
-    const tasks = payload.steps.find((s: { id: string }) => s.id === "tasks");
-    assertEquals(tasks.status, "ok");
-    assertStringIncludes(tasks.summary, "build, start");
-    const finish = payload.steps.find((s: { id: string }) => s.id === "finish");
-    assertEquals(finish.actions, ["dev"]);
   } finally {
     await stop(h);
   }
@@ -411,7 +359,7 @@ Deno.test("a Next.js drop-in is detected from its package.json", async () => {
     "app/page.tsx": "export default function Page() { return null; }\n",
   });
   try {
-    const payload = await (await fetch(`${h.base}/api/wizard`, { headers: h.headers })).json();
+    const payload = await (await fetch(`${h.base}/api/setup`, { headers: h.headers })).json();
     assertEquals(payload.kind, "compat");
     const detect = payload.steps.find((s: { id: string }) => s.id === "detect");
     assertStringIncludes(detect.summary, "Next.js");
@@ -420,57 +368,37 @@ Deno.test("a Next.js drop-in is detected from its package.json", async () => {
   }
 });
 
-/** Whether a path exists. */
-async function exists(path: string): Promise<boolean> {
-  try {
-    await Deno.stat(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 // ── --offline ────────────────────────────────────────────────────────────────
 
-/** The JSON outcome of one wizard operation. */
-async function outcomeOf(h: Harness, op: string): Promise<{ ok: boolean; message: string }> {
-  return (await (await post(h, { op }, "/api/wizard")).json()).outcome;
+/** The page's markup, the way a no-JS browser would read it. */
+async function setupPage(h: Harness): Promise<string> {
+  return await (await fetch(`${h.base}/setup`, { headers: h.headers })).text();
 }
 
-Deno.test("--offline refuses denext dev and every task with a 503, and renders them disabled", async () => {
-  const h = await ui({ "deno.json": DENO_JSON_WITHOUT_DEV }, { offline: true });
+async function outcomeOf(h: Harness, op: string): Promise<{ ok: boolean; message: string }> {
+  return (await (await post(h, { op }, "/api/setup")).json()).outcome;
+}
+
+Deno.test("the Dependencies step separates 'nothing to install' from 'not installed yet'", async () => {
+  // No imports at all: `deno install` has nothing to resolve and writes no lockfile, so the step
+  // must not sit on a to-do no run can ever satisfy.
+  const bare = await ui({ "deno.json": "{}\n" });
+  // An import map with no lockfile yet: that IS a to-do, and the action belongs there.
+  const pending = await ui({
+    "deno.json": '{ "imports": { "@std/assert": "jsr:@std/assert@^1" } }\n',
+  });
   try {
-    const dev = await post(h, { op: "dev" }, "/api/wizard");
-    assertEquals(dev.status, 503);
-    const { outcome } = await dev.json();
-    assertEquals([outcome.ok, outcome.step], [false, "finish"]);
-    assertStringIncludes(outcome.message, "a dev server needs net permission to listen");
+    const empty = await setupPage(bare);
+    assertStringIncludes(empty, "Nothing to install");
+    assert(!empty.includes("No deno.lock yet"), "the dead-end wording is gone");
+    assert(!empty.includes("Run deno install"), "and so is the button that cannot help");
 
-    const task = await post(h, { task: "build" }, "/tasks/run");
-    assertEquals(task.status, 503, "a declared task is refused, not spawned");
-    assertStringIncludes((await task.json()).reason, "a task is arbitrary shell");
-
-    const page = await post(h, { op: "dev" });
-    assertEquals(page.status, 503, "the no-JS answer carries the same status");
-    const body = await page.text();
-    assertStringIncludes(body, "denext dev is unavailable — the UI runs --offline");
-    assertStringIncludes(body, "deno task is unavailable — the UI runs --offline");
-    assertMatch(body, /<button[^>]*\sdisabled[^>]*>deno task build<\/button>/);
-    assertMatch(body, /<button[^>]*\sdisabled[^>]*>Start denext dev<\/button>/);
+    const todo = await setupPage(pending);
+    assertStringIncludes(todo, "No deno.lock yet");
+    assertStringIncludes(todo, "Run deno install");
   } finally {
-    await stop(h);
-  }
-});
-
-Deno.test("online, the task and dev buttons stay live and carry no offline note", async () => {
-  const h = await ui({ "deno.json": DENO_JSON_WITHOUT_DEV });
-  try {
-    const body = await (await fetch(`${h.base}/wizard`, { headers: h.headers })).text();
-    assertMatch(body, /<button type="submit">deno task build<\/button>/);
-    assertMatch(body, /<button type="submit">Start denext dev<\/button>/);
-    assert(!body.includes("--offline"));
-  } finally {
-    await stop(h);
+    await stop(bare);
+    await stop(pending);
   }
 });
 
@@ -498,3 +426,5 @@ Deno.test("--offline runs doctor through a no-net child and deno install --cache
     await stop(offline);
   }
 });
+
+// ── the dev server: starting it must not destroy the page showing its output ──

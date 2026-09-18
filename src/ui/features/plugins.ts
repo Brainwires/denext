@@ -36,12 +36,12 @@ import {
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChild } from "../../jsx/types.ts";
 import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
-import { DiffBlock, Mono, Note, OpForm, Out, Panel, PreviewLead } from "../components.ts";
+import { Badge, DiffBlock, Mono, Note, OpForm, Out, Panel, PreviewLead } from "../components.ts";
 import { renderView } from "../view.ts";
 import { broadcast, sseProcess } from "../events.ts";
 import { runDeno } from "../proc.ts";
 import { OFFLINE_REFUSALS, OFFLINE_STATUS } from "../offline.ts";
-import { StaleWriteError, uiSafeJoin, writeFileAtomic } from "../security.ts";
+import { readContained, StaleWriteError, writeFileAtomic } from "../security.ts";
 import type { SchemaNode } from "../form/schema.ts";
 import {
   discover,
@@ -110,23 +110,10 @@ export interface ProjectState {
   readonly deps: readonly string[];
 }
 
-/**
- * The text of `dir/name`, or `null` when it does not exist, cannot be read, or is a symlink
- * whose target leaves the project — {@linkcode uiSafeJoin} refuses that, so neither the catalogue
- * view nor the writer can be pointed at a file outside the directory the UI was opened on.
- */
-async function readText(dir: string, name: string): Promise<string | null> {
-  try {
-    return await Deno.readTextFile(await uiSafeJoin(dir, name));
-  } catch {
-    return null;
-  }
-}
-
 /** The bare specifiers declared in the project's `deno.json` / `deno.jsonc` import map. */
 async function readDeps(dir: string): Promise<string[]> {
   for (const name of ["deno.json", "deno.jsonc"]) {
-    const text = await readText(dir, name);
+    const text = await readContained(dir, name);
     if (text === null) continue;
     try {
       const imports = (parseJsonc(text) as { imports?: Record<string, unknown> } | null)?.imports;
@@ -145,7 +132,7 @@ async function readDeps(dir: string): Promise<string[]> {
 export async function readProject(dir: string): Promise<ProjectState> {
   const deps = await readDeps(dir);
   for (const name of CONFIG_FILES) {
-    const source = await readText(dir, name);
+    const source = await readContained(dir, name);
     if (source === null) continue;
     const configPath = join(dir, name);
     return { configPath, configName: name, source, wired: listPlugins(source), deps };
@@ -444,19 +431,25 @@ function CardLinks({ row }: { readonly row: PluginRow }): VNode {
 function Card({ ctx, row }: { readonly ctx: UiContext; readonly row: PluginRow }): VNode {
   const { entry } = row;
   const state = row.wired ? "wired" : row.dependency ? "pinned" : "available";
+  const tone = row.wired ? "ok" : row.dependency ? "info" : "todo";
   const op = isInstalled(row) ? "remove" : "add";
   return h(
     "article",
     { class: "card", id: entry.name },
     h("strong", null, entry.name),
-    " ",
-    h("span", { class: "badge" }, entry.version),
-    " ",
-    h("span", { class: "badge" }, state),
-    " ",
-    entry.verb ? h("span", { class: "badge" }, `denext ${entry.verb}`) : null,
-    " ",
-    h("span", null, entry.blurb),
+    // The pills on a line of their own, then the blurb as a paragraph: run together, the
+    // blurb's first words read as one more pill, and a long one crowds the links below it.
+    h(
+      "p",
+      { class: "card-meta" },
+      h(Badge, { tone: "info" }, entry.version),
+      " ",
+      h(Badge, { tone }, state),
+      entry.verb
+        ? h(Fragment, null, " ", h(Badge, { tone: "info" }, `denext ${entry.verb}`))
+        : null,
+    ),
+    h("p", { class: "card-blurb" }, entry.blurb),
     h(CardLinks, { row }),
     h(PluginForm, {
       ctx,
@@ -539,14 +532,23 @@ function PluginsPanel(
       "The first-party plugins, and any JSR package you search for below. Adding or removing one ",
       "previews the exact ",
       h("code", null, "deno"),
-      " command and a diff of your config before anything is written.",
+      " command and a diff of your config before anything is written. ",
+      h("a", { href: "https://denext.dev/docs/ui#plugins" }, "Plugins ↗"),
     ),
-    ctx.readOnly ? h(Note, null, "Read-only mode — add and remove are refused.") : null,
-    ctx.offline === true ? h(Note, null, OFFLINE_NOTE) : null,
+    ctx.readOnly ? h(Note, { tone: "warn" }, "Read-only mode — add and remove are refused.") : null,
+    ctx.offline === true ? h(Note, { tone: "warn" }, OFFLINE_NOTE) : null,
     notice ?? null,
     h("h2", null, "Plugins"),
     group("plugin"),
     h("h2", null, "Libraries"),
+    h(
+      "p",
+      { class: "lead" },
+      "Not plugins: a library is a package you import directly. Adding one pins the dependency ",
+      "and leaves the config's ",
+      h("code", null, "plugins"),
+      " array untouched.",
+    ),
     group("library"),
     others.length > 0 ? h(ThirdParty, { plugins: others }) : null,
     h(JsrDiscovery, { ctx, discovery }),
@@ -611,7 +613,7 @@ function OutcomeNotice(
   return h(
     Fragment,
     null,
-    h(Note, null, outcomeHead(plan, outcome)),
+    h(Note, { tone: outcome.code === 0 ? "ok" : "warn" }, outcomeHead(plan, outcome)),
     outcome.output ? h(Out, null, outcome.output) : null,
   );
 }

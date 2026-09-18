@@ -8,10 +8,198 @@ and this project adheres to
 
 ## [Unreleased]
 
-## [2.5.0-rc.6] - 2026-09-16
+## [2.5.0] - 2026-09-18
+
+### Breaking
+
+- **Breaking (rc):** `signIn(provider, { credentials })` answers `{ ok: false, error, status }` for a
+  refusal instead of rejecting with the server's generic message — `error` is
+  `"invalid_credentials"` (`401`), `"throttled"` (`429`, with `retryAfter` in seconds, like
+  `EmailRequestResult`), `"access_denied"` (`403`), `"unavailable"` (`5xx`) or `"rejected"`, derived
+  from the status because the server's `error` text is generic by design. `CredentialsSignInResult`
+  is now that `{ ok: true, user?, mfa? } | { ok: false, … }` union (it was an interface whose `ok`
+  could only be `true`), in line with every other `{ ok, … }` result in the auth API. Only a network
+  failure or a non-JSON answer still rejects. A `try { await signIn(…) } catch` that showed the
+  message needs `if (!result.ok)`.
+- **Breaking (checksum assets):** the per-archive checksum is named `<archive>.sha256`
+  (`denext-x86_64-apple-darwin.tar.gz.sha256`), not `denext-<target>.sha256`, and a combined
+  `SHA256SUMS` is published beside them. No release had shipped with the old name, so nothing
+  installed is affected; a script written against the earlier workflow needs the new name.
+- **Breaking (binary, unversioned pin):** a `deno.json` whose `denext` import is an unversioned
+  `jsr:@denext/denext` is treated as a pin to the latest published version and re-exec'd
+  (`jsr:@denext/denext/cli`), rather than counting as "no pin" and being refused. Pin a version
+  (`jsr:@denext/denext@^2.5.0`) to make the binary defer to something reproducible.
+- **Breaking (since rc.2):** the auth API settles on one shape before 2.5.0. The config comes
+  first, then a single identifier as a positional argument or anything more as an options
+  object, and a failure is `{ ok: false, error }`, as `verifyEmail()` and `resetPassword()`
+  already answer.
+  - `enrollTotp(config, session)` (was `(config, user)`) answers `EnrollTotpResult`, not
+    `TotpEnrollment | null`, and enforces the recent-sign-in rule its route does
+    (`error: "reauth_required"`).
+  - `confirmTotp(config, { user, code })` (was positional) fails with
+    `error: "invalid_code" | "not_pending"`.
+  - `verifySecondFactor(config, { userId, code })` (was positional) answers
+    `SecondFactorResult` (`{ ok: true, method }`), not `MfaMethod | null`.
+  - `verifyTotp()` fails with `error: "invalid_code"`.
+  - `MfaStatus` is `{ enrolled, pendingConfirmation, backupCodesRemaining }`: `enrolled` now
+    means a confirmed factor, as `mfa.required: "enrolled"` does, and `confirmed` is gone.
+  - `requestPasswordReset()` / `requestEmailVerification()` resolve
+    `{ ok: true } | { ok: false, error: "throttled", retryAfter }` (was `{ throttled,
+    retryAfter? }`).
+- **Breaking (since rc.2):** `verifyEmail()` answers `{ ok: true, user }` or `{ ok: false, error: "invalid_token" }`
+  (`VerifyEmailResult`, exported from `denext/server`) — the shape `resetPassword()` has —
+  instead of `AdapterUser | null`, so later failure reasons can be added without a breaking
+  change. A truthiness check (`if (await verifyEmail(…))`) now always passes: test `result.ok`.
+- **The `linkAccount` event payload carries identity only** — provider, provider-side id, type,
+  owner. The account row still persists whatever tokens the provider returned; the event no longer
+  hands an access/refresh/id token to an audit sink. **Breaking** for a handler that read tokens off
+  the event: read the stored account back through the adapter instead.
 
 ### Added
 
+- **`denext ui` — the wizard is three pages.** `/setup` readies a project (detect, the Deno
+  runtime, `deno.json`, dependencies, environment variables, doctor, scaffold; a write answers
+  `303` to `/setup#step-<id>`), `/dev` starts and stops the dev server and shows its console, and
+  `/tasks` runs the scripts `deno.json` declares. `/wizard` and `/api/wizard` are gone; the twins
+  are `/api/setup`, `/api/dev` and `/api/tasks`. Cron's task table is headed "Scheduled tasks" —
+  those are `defineTask` modules, not `deno.json` scripts.
+- Four more guides — Production checklist, Route handler recipes (webhooks, SSE past the request
+  deadline, a verified WebSocket upgrade in a route handler, CORS by hand), Multi-instance
+  deployments (every per-node store and its interface) and Deployment targets — plus a verified
+  Migrations & seeding section on the database guide, route-handler / Server Action / task /
+  env / fetch-stub / CI / browser recipes on the testing guide, and "Debugging the cache" + CDN
+  headers on Data & caching.
+- `suppressHydrationWarning` (React's opt-out for a text child that differs between server and
+  client, such as a clock) is honoured: the element's own text mismatch is not reported, one
+  level deep, and the marker is never serialised as an attribute. It used to render as a bare
+  attribute and silence nothing.
+- New guides: Environment variables (`.env` tiers, the mode each verb loads, `publicEnv()`, a
+  boot-time validation recipe, every `DENEXT_*` variable), npm React libraries in a native app
+  (the compat build path, setup, cost, what is verified), File uploads (action, route handler and
+  streamed; the body caps; progress), Client Components (form hooks, `dynamic`/`lazy`, portals,
+  providers, the SSR-safe utility hooks); a full Navigation section on the Routing page (`Link`,
+  `useRouter`, the URL hooks incl. `useSearchParams(schema)`, typed routes, navigating after an
+  action); five Troubleshooting entries (hydration mismatch, `window is not defined`,
+  `redirect()` in try/catch, a dropped handler in a Server Component, a server-only leak).
+- Getting started gains "Server and client code — what ships to the browser" (what crosses the
+  boundary, server-only modules and the build-time leak failure, the isomorphic-route
+  compatibility path) and "Editor setup"; the tutorial gains a chapter that crosses the boundary
+  — a `"use client"` island with `useFormStatus` and `useOptimistic` that keeps the no-JS path —
+  pinned by a test that type-checks and runs its snippets against a copy of `examples/notes`.
+- `denext.config.ts` gains the production-server keys `canonicalOrigin`, `trustForwardedHeaders`,
+  `requestTimeout`, `maxConcurrency`, `slotBackstop`, `actionMaxBodyBytes` and `cacheKeyParams`
+  — validated at boot and forwarded by `denext start` and `denext dev`. They were `createApp()`
+  options only, so a stock deployment behind a proxy that rewrites `Host` had no fix for every
+  Server Action answering 403, and no way to raise the 1 MiB action-body cap. When the config
+  leaves one unset, `DENEXT_CANONICAL_ORIGIN`, `DENEXT_TRUST_PROXY=1`, `DENEXT_REQUEST_TIMEOUT_MS`
+  and `DENEXT_MAX_CONCURRENCY` fill it in (config > env > default).
+- `instrumentation.ts` may export `onRequest(info)` beside `register` and `onRequestError`:
+  called once after every response with method, path, status, duration and request id under
+  both servers — request metrics without a custom server.
+- `/_denext/health` reports `cacheStore: "sqlite" | "memory" | "custom"` beside `cache`, so a
+  silent fall-back to the per-process memory store is visible from the probe.
+- **A function prop that cannot cross the server→client boundary now says so.** A Server
+  Component passing `onClick={() => …}` (or any plain function) to a `"use client"` component —
+  Next's "Event handlers cannot be passed to Client Component props", the first mistake most
+  people make — used to become a button that does nothing: the Flight serializer dropped the
+  function silently. In dev the renderer now warns once per (component, prop), naming both,
+  with the fix (pass a Server Action, or move the handler into a `"use client"` component); a
+  host element's `onClick` inside an async Server Component warns the same way on the streaming
+  and PPR renderers. A Server Action, qrl or channel prop crosses as a reference and never
+  warns; production stays silent. The warning rides the captured server console, so it reaches
+  the terminal and `denext_dev_logs`. The lint plugin gains its static twin,
+  **`denext/no-handlers-in-async`**: a JSX `on*` attribute given an inline function, or a
+  module-local one, inside an `async` component — an inline `"use server"` body, an imported
+  name and an unresolved binding are left alone.
+- **Server-only code can no longer ship to the browser unnoticed on the native path.** A route
+  that hydrates as a whole (a hook or event handler, no `"use client"` boundary) bundles its
+  page, layouts and everything they import; `deno bundle --platform=browser` emitted a
+  `lib/db.ts` with `node:sqlite` + `Deno.env.get` verbatim, and the page failed only in the
+  browser. `denext build` / `export` and the bundled dev server now fail that bundle — naming
+  the module, why it is server-only (a static `node:` import, the `server-only` marker or
+  `serverOnly()`, an unguarded `Deno.` access) and the entry that shipped it (the route of
+  `app/page.tsx`, or the `"use client"` islands bundle) — with the fix: move the interactive
+  part into a `"use client"` component so the route stays a Server Component, and keep the
+  module marked `import "server-only"`. The verdict reads what the bundle actually emitted (its
+  source maps' `sources`), so a pure helper the entry never used is tree-shaken and not a leak;
+  strings, comments, type-only imports, dynamic `import()` and a `typeof Deno` guard never
+  count; a `"use server"` module stubbed out of the bundle is never seen. The compat (esbuild)
+  path, SPA mode and plugin bundles are unchanged. In dev the failure lands in the error
+  overlay + console; `denext build` exits non-zero.
+- **A compiled `denext` binary** — `curl -fsSL https://denext.dev/install.sh | sh` (or
+  `deno install -A -g -n denext jsr:@denext/denext/cli`, or `deno task compile` from a checkout).
+  It is a CLI, not a second copy of the framework: inside a project every module-loading verb
+  (`dev`, `build`, `export`, `start`, `task`, `doctor`, `analyze`, `profile`, `desktop`) re-execs
+  the denext the project pins as a `deno run` child, so `denext build` produces exactly what
+  `deno task build` would, and a directory that pins no denext is refused with a message naming
+  the fix. `--version` reports `(binary)`. The pin is read the way `deno run` would resolve it:
+  `deno.json` or `deno.jsonc` (comments and trailing commas), the import under `denext`,
+  `denext/` or `@denext/denext`, an `imports` map held in a separate `importMap` file, and a
+  workspace member's root config; an **unversioned** `jsr:@denext/denext` is a pin to the latest
+  published version. Shutdown signals (`kill`, `docker stop`, Ctrl-C) are forwarded to the child,
+  so a re-exec'd server is never orphaned. Releases publish five archives
+  (`denext-<target>.tar.gz`, `.zip` on Windows), a combined `SHA256SUMS` and a per-archive
+  `<archive>.sha256`; an rc tag is a GitHub prerelease and never "latest", so the installer with no
+  `DENEXT_VERSION` resolves a stable version. macOS binaries are signed and notarised when the
+  Developer ID secrets are configured. The `ui` verb runs inside the binary, but its panels spawn
+  `deno` for every project-touching operation.
+- **Task run history** — `tasks: { history: true }` in `denext.config.ts` records every run,
+  scheduled and on demand alike (`runTask`, the scheduler, and `denext task <name>`), to
+  `.denext/tasks.db`: status, duration, the tail of a returned string (2 KB) and, for a failure,
+  the error's message and stack. Off unless set, and once on it can never fail or delay a run — a
+  read-only filesystem, a full disk or a locked file degrades to no history. Retention is 14 days
+  and `tasks.historyMaxRuns` (default 500) per task, applied on the first recorded run of every
+  process, so a one-shot `denext task` from system cron prunes too. `denext task --list --json`
+  reports `history`. `TasksConfig` is exported from `denext/server`. On Deno Deploy the file is
+  per-isolate and ephemeral; recording still happens and a warning says so at boot.
+- **`denext ui` — Cron page** (`/config/cron`, a page of the Configuration section that owns
+  `scheduledTasks` and `tasks`): every schedule that will register at boot with its next two
+  firings in UTC and an English reading (`describeCron`: "every day at 03:30 UTC"), which half it
+  came from (config, editable; a task file's own `schedule:`, code), which will **never fire** (a
+  malformed expression, an unknown task), and whether this runtime has `Deno.cron`. Schedules are
+  edited as rows — expression, a task picker, a drop box — with a builder that composes the
+  expression on the server from a shape (every minute, hourly, daily, weekly, monthly; Custom
+  steps aside) and a preview that follows what you type (`/_ui/cron-preview`; the client parses no
+  cron). Run history is shown per task with a switch to turn recording on and a two-step Clear
+  that deletes rows and leaves the database file in place.
+- **`denext ui` — Desktop panel** (`/desktop`): macOS, Windows and Linux as three views, reading
+  what the machine has (the Developer ID Application identities in the keychain, `signtool` on
+  `PATH`, which `DENEXT_*` variables are set) and composing the `denext desktop package`
+  invocation with a copy-paste `export` line per unset variable. It runs no build, writes no
+  file, and never reads `DENEXT_WINDOWS_CERT_PASSWORD` (only whether it is set).
+- **`denext ui` — the shell.** A persistent sidebar (a drawer below 860px, opened by a
+  `<label>`-driven checkbox — no script) with **Configuration** as a section listing one page per
+  view (`/config/routing`, `/config/rendering`, `/config/security`, `/config/advanced`,
+  `/config/cron`; `/config` is an index of them); the `--read-only` / `--offline` mode badges on
+  every page; a design-token stylesheet (semantic surfaces, intent colours, a spacing scale, both
+  colour schemes) with no inline styles; toned status pills (`ok`/`todo`/`warn`/`info`/`fail`);
+  a per-view document title; zebra-striped tables; a sidebar that scrolls when it is taller than
+  the window.
+- **`denext ui` — navigation without a page rebuild.** With JavaScript on, a same-origin link
+  (sidebar, tabs, a filter, the cron builder's `GET`) fetches the panel as a fragment, swaps it in
+  place and pushes the address, so Back and Forward work; a `?q=` search or filter box swaps its
+  results in place and keeps the caret; the dev server's console streams into the Dev page and
+  survives a reload, a second tab or a panel swap; a running dev server offers **Stop**,
+  which works after `denext ui` itself has been restarted. Leaving a view with unsaved edits asks
+  — Save, Discard or Cancel — through a native `<dialog>` `ui.js` builds at runtime. Everything
+  still works with JavaScript off.
+- **`denext ui` — the config editor's views.** A view shows its plain scalars together under one
+  Save (General) and gives every key that wants room a tab of its own; nothing collapses. Each
+  key carries its own set/unset pill, a toggle says what ticking it does (Enable / Disable, read
+  from the schema's `@default`), a default-on key can be turned off, `boolean | "auto"` is one row
+  of radios, JSDoc prose is formatted (code spans and bold) instead of shown raw, a superseded
+  key explains what replaced it and is hidden until a config actually sets it, and every named
+  schema key now describes itself (a test holds the line). `/commands?q=` filters verbs by name
+  and summary; every panel links to its section of the guide.
+- **`denext ui` — Docker as three views** (`?tab=files|services|names`), `next.config` as a
+  link on the config views instead of a top-level destination, and a `Libraries` heading that
+  says a library is pinned without being wired.
+- Note tones in `denext ui`: a plain note is neutral, `ok` marks a result to be glad of ("Wrote
+  denext.config.ts."), `warn` a caution; every note used to carry the amber bar.
+- CI runs the fast `check` job on every push to `development` (a newer push cancels the run
+  before it); the heavy jobs stay on pull requests and `main`. The release workflow builds the
+  five binaries, smoke-tests the two it can execute (`--version`, `--help`, and the unpinned-build
+  refusal), and creates ONE release after every leg has uploaded.
 - DevTools names a custom hook imported through an import-map alias (`@/hooks/auth.ts`, in the
   default dev loop) and one re-exported by name through a barrel
   (`export { useAuth } from "./auth.ts"`, one level); `export *` and SPA-mode aliases still
@@ -47,8 +235,7 @@ and this project adheres to
       first edit.
     - Editing a node that an alias repeats elsewhere is allowed, and the preview names what
       else changes.
-
-  A file that is still opaque now says why.
+      A file that is still opaque now says why.
 - `denext ui`'s compose editor edits a long-syntax port or volume key by key (`target`,
   `published`, `protocol`, …), with a picker where Compose fixes the choices; keys it doesn't
   know are kept. It also adds and removes entries of a long-form `depends_on` or `networks:`,
@@ -69,200 +256,11 @@ and this project adheres to
   `deno.json` and `deno.lock`, and help prints that listing while the fingerprint holds. Before
   any run of that verb, or once one of those files changes, help points at `denext commands` as
   it always did.
-
-### Changed
-
-- Decided: `/config/next` being read-only (denext never loads `next.config.*`), and a project
-  verb costing plugin discovery in its own child, are how those features work rather than gaps.
-  Both moved out of KNOWN-LIMITATIONS into the
-  [Project UI guide](https://denext.dev/docs/ui).
-- The emailed auth flows accept an internationalised email domain (`ada@bücher.de`),
-  normalised to its punycode form (`ada@xn--bcher-kva.de`); an SMTPUTF8 local part is still
-  refused.
-- `denext ui` checks JSR net permission per operation: a search needs only `api.jsr.io`, adding
-  a JSR package only `jsr.io`. Either used to need both.
-
-### Fixed
-
-- `denext ui`: a refused Commands run (an unknown or built-in verb, a bad flag or argument
-  value, `--read-only`) answers a form post with the panel, the reason as an alert and the
-  submitted values kept. It answered raw JSON, which replaced the page when JavaScript was off.
-  The Plugins panel intro no longer calls its list "the first-party catalog" (JSR search lists
-  third-party packages too).
-- `denext plugin add` / `remove` and the Plugins panel recognise a plugin imported under
-  another name (`import { openapi as oa }`) or from a full `jsr:` specifier. Adding one used to
-  insert an `openapi()` call no import binds (or a duplicate import), removing one reported it
-  as not wired, and the panel offered it no options form.
-- `denext ui` and `denext generate docker` find a compose file under any name Docker Compose
-  accepts — `compose.yaml`, `compose.yml`, `docker-compose.yaml`, `docker-compose.yml`, in that
-  precedence. The Docker panel edits and regenerates that file, and neither writes a second
-  `docker-compose.yml` next to it; only `docker-compose.yml` used to be found.
-
-## [2.5.0-rc.5] - 2026-09-15
-
-### Security
-
-- The next.config evaluator (`denext migrate`, the `denext ui` next.config panel) starts from
-  an empty environment (only `NODE_ENV`, `NEXT_PUBLIC_*` and the variables Deno needs to find
-  its cache pass through) and downloads nothing (`--cached-only`, a manual `node_modules`).
-  npm resolution runs outside Deno's permission sandbox, so a repository's `.npmrc` could aim
-  an `npm:` import at a host of its choosing and carry a shell secret out in the package name;
-  `--no-remote` alone did not stop that. This also keeps `denext ui --offline` true for this
-  child.
-- `POST {basePath}/tokens` needs a recent sign-in (`authTime` within `mfa.freshness`, five
-  minutes at least), as `/mfa/enroll` does; otherwise it answers
-  `403 { error: "reauth_required" }`. `resetPassword()` now also revokes the user's bearer API
-  tokens along with their sessions. A stolen session could mint a token that outlived both
-  the session and the owner's password reset.
-- `requireBearer({ scope: [] })` refuses every token, as `role: []` does; an empty scope list
-  used to admit every live token.
-- The MCP live tools (`denext_dev_logs`, `denext_component_tree`, …) only talk to a loopback
-  http(s) origin read from `.denext/dev.json`, rebuilt from its parts: a committed or planted
-  file can no longer point them at another host.
-- An OAuth callback's `?error=` reaches the sign-in page and `signInFailed.reason` only when it
-  is a protocol-shaped code (`access_denied`); free text reads `oauth_failed` and is logged, so
-  a crafted link can't put its own message on the sign-in page.
-
-### Added
-
 - `DENEXT_UI_DISCOVERY_TIMEOUT_MS`: the deadline, in milliseconds, for `denext ui`'s Commands
   discovery child (default 8000). On a heavily loaded machine that child can miss the
   default, and the panel then lists no project verbs.
-
-### Changed
-
-- **Breaking (since rc.2):** the auth API settles on one shape before 2.5.0. The config comes
-  first, then a single identifier as a positional argument or anything more as an options
-  object, and a failure is `{ ok: false, error }`, as `verifyEmail()` and `resetPassword()`
-  already answer.
-  - `enrollTotp(config, session)` (was `(config, user)`) answers `EnrollTotpResult`, not
-    `TotpEnrollment | null`, and enforces the recent-sign-in rule its route does
-    (`error: "reauth_required"`).
-  - `confirmTotp(config, { user, code })` (was positional) fails with
-    `error: "invalid_code" | "not_pending"`.
-  - `verifySecondFactor(config, { userId, code })` (was positional) answers
-    `SecondFactorResult` (`{ ok: true, method }`), not `MfaMethod | null`.
-  - `verifyTotp()` fails with `error: "invalid_code"`.
-  - `MfaStatus` is `{ enrolled, pendingConfirmation, backupCodesRemaining }`: `enrolled` now
-    means a confirmed factor, as `mfa.required: "enrolled"` does, and `confirmed` is gone.
-  - `requestPasswordReset()` / `requestEmailVerification()` resolve
-    `{ ok: true } | { ok: false, error: "throttled", retryAfter }` (was `{ throttled,
-    retryAfter? }`).
-- `signIn()` is typed by overload: a `credentials` sign-in resolves `CredentialsSignInResult`
-  (`{ ok: true, user?, mfa? }`), any other the sign-in URL. It was `Promise<unknown>`.
-- The default auth rate limits leave room for many users behind one IP: sign-in starts allow
-  100 per IP per 15 minutes (was 20), session reads 300 per IP per minute (was 60). Both limits
-  are new in 2.5; tune them with `rateLimit.signin` / `rateLimit.session`.
-
-### Fixed
-
-- `useSession()`: a `429`, a server error or a network failure no longer reads as "signed
-  out". `SessionProvider` keeps the session it knew (only a first load that learns nothing
-  shows the logged-out view), and a `429`'s `Retry-After` pauses its focus and interval
-  refetches. Users sharing one IP (an office NAT) could flip to the logged-out UI once the
-  per-IP session-read budget ran out.
-- The SQLite auth adapter, session store and cache set a 5 s `busy_timeout`: a second writer
-  (a seed script, `denext task`) makes a request wait instead of failing at once with
-  "database is locked".
-- The `/mfa*` and `/tokens` endpoints log an adapter or store failure and answer
-  `503 { error: "unavailable" }` instead of a bare `500`.
-- The 50-live-token cap on `POST {basePath}/tokens` holds under concurrent requests (per
-  process).
-- `denext ui` sends `referrer-policy: same-origin` (was `no-referrer`). Under `no-referrer` a
-  browser sends `Origin: null` on a form POST, so with JavaScript off every panel form failed
-  the origin check.
-- `denext ui`: the Plugins panel's config write (after `deno add`, which can take minutes) and
-  the wizard's `deno.json` / `.env.example` writes refuse when the file changed on disk since
-  it was read, like the config, plugin-options and compose writers.
-- `denext ui` config edits keep a CRLF file CRLF; inserted lines used a bare LF.
-- `denext ui` streams a child's output that never prints a newline in 64 KiB pieces instead of
-  holding it until the child exits.
-- A mistyped 6-digit code at the second-factor step no longer runs the password hasher once per
-  stored backup code.
-
-## [2.5.0-rc.4] - 2026-09-15
-
-### Security
-
-- The next.config evaluator (`denext migrate`, the `denext ui` next.config panel) runs with
-  `--no-remote`: an evaluated config can still import the project's own files and its
-  `node_modules` packages, but no longer code from a registry or a URL (not even the hosts
-  Deno allows imports from by default).
-
-### Fixed
-
-- `denext export`: a staging swap that fails to move the new output into place puts the
-  previous output back; it used to leave no output directory at all.
-- DevTools (bundled dev path): a route file deleted since it was cached no longer keeps its
-  entry in the dev server's route-metadata cache.
-- The TS→JSON-Schema mapper behind the config schema and the plugin catalog no longer recurses
-  until the stack overflows on a self-referencing type alias.
-
-## [2.5.0-rc.3] - 2026-09-14
-
-### Added
-
 - `AuthSession.authTime`: when the user last authenticated (sign-in, or a second-factor
   step-up), in epoch seconds. Sliding expiry never moves it, unlike `issuedAt`.
-
-### Security
-
-- `POST {basePath}/mfa/enroll` from a complete session needs a recent sign-in: `authTime`
-  within `mfa.freshness`, and at least five minutes. Otherwise it answers
-  `403 { error: "reauth_required" }`. A stolen long-lived session can no longer set up a
-  factor of its own and lock the owner out. An app that calls `enrollTotp()` from its own
-  Server Action should check `session.authTime` the same way, as `examples/auth` now does.
-- `denext export`: the output-directory guard compares real locations (symlinks resolved, case
-  folded where the filesystem ignores it, inodes matched), so `outDir: ".GIT"` on a
-  case-insensitive disk can no longer select and wipe `.git`, and a symlinked or non-directory
-  target is refused. The Pages Router export now writes through the same guarded staging swap
-  instead of deleting its output directory unchecked.
-- `denext ui`: the token handshake redirects with a single leading slash, so a `//host/…` path
-  can't produce a protocol-relative `Location`; a bare carriage return in a streamed output
-  line is flattened like a newline, so it can't start a new SSE field.
-- `denext ui`: the compose editor treats a file holding U+2028, U+2029 or NEL as read-only (a
-  YAML parser and a line splicer disagree on those), and the plugin-options writer refuses
-  `__proto__` / `constructor` / `prototype` keys and values that aren't plain JSON (`NaN`,
-  functions, `Date`s) instead of silently coercing them.
-
-### Changed
-
-- `POST {basePath}/mfa/disable`'s no-code shortcut (the session's own step-up within
-  `mfa.freshness`) is measured from `authTime`, so it works with sliding expiry on as well; it
-  used to be void whenever `session.updateAge > 0`.
-- **Breaking (since rc.2):** `verifyEmail()` answers `{ ok: true, user }` or `{ ok: false, error: "invalid_token" }`
-  (`VerifyEmailResult`, exported from `denext/server`) — the shape `resetPassword()` has —
-  instead of `AdapterUser | null`, so later failure reasons can be added without a breaking
-  change. A truthiness check (`if (await verifyEmail(…))`) now always passes: test `result.ok`.
-
-### Fixed
-
-- Config writes (`denext ui`, `denext plugin add`) keep a leading byte-order mark; it was
-  silently dropped from every rewritten `denext.config.ts`.
-- `denext/mobile`: `openExternal()` rejects for a refused URL instead of throwing
-  synchronously from a function that returns a promise.
-- SPA dev: the first-party Fast Refresh plugin no longer treats a sibling directory whose name
-  starts with the project's (`/app-2` next to `/app`) as project source.
-- `denextAuth`: `mfa.freshness: 0` is kept (every action that demands a fresh second factor
-  asks for a code) instead of silently becoming the 900-second default.
-- `denext ui`: a confirmed config, plugin-options or compose write re-reads the file just
-  before the atomic rename and answers `409` if it changed after the form's stamp was checked,
-  instead of silently replacing a concurrent edit.
-- The next.config evaluator (`denext migrate` and the `denext ui` next.config panel) reads a
-  CommonJS `next.config.js` (`module.exports`) and calls a function-form config the way Next.js
-  does, `(phase, { defaultConfig })`.
-- `denext ui` compose editor: removing a field's last entry keeps the comment lines inside it;
-  enabling a commented-out service with a blank line inside enables all of it; a failed write is
-  a refusal at the panel instead of a bare 500.
-- DevTools: a custom hook imported as `./auth.js` from `auth.ts` (the TypeScript convention) is
-  named across the import.
-- `denextAuth`: deciding whether a sign-in owes a second factor reads the MFA record the way
-  every other MFA check does (a confirmed record that still holds a secret).
-
-## [2.5.0-rc.2] - 2026-09-14
-
-### Added
-
 - **Auth: password sign-in without an `authorize`.** With an adapter that stores password
   hashes, `credentials()` needs no callback: the trimmed, lower-cased `email` is looked up
   with `getUserByEmail` and the `password` checked against `getCredential`'s hash with the
@@ -394,130 +392,6 @@ and this project adheres to
   search and `--offline`; [DevTools](https://denext.dev/docs/devtools) the bundled path,
   cross-module hook names and debug values; and
   [Writing a plugin](https://denext.dev/docs/plugins) the first-party catalog block.
-
-### Changed
-
-- **`credentials(options?)` — the options, and `authorize`, are optional**
-  (`CredentialsProvider.authorize?`). Existing providers are unaffected.
-- **`AuthProvider` gained a third member, `EmailProvider` (`type: "email"`).** A `switch`
-  over `provider.type` that was exhaustive needs an `"email"` case.
-- **The internal `issueAuthSession(config, user, provider, options?)` takes a trailing
-  options argument** (`mfaPending`, `amr`, `lifetime`); the change is source-compatible.
-  Every first factor — credentials, OAuth / OIDC and the email providers — now ends in one
-  sign-in tail that decides the step-up before minting a session.
-- **`AuthSession.issuedAt` is documented as re-stamped by sliding expiry**, which it always
-  was — so with `session.updateAge > 0`, `/mfa/disable` always needs a code.
-- **Every `denext ui` view is a component.** The panels are server-rendered `h()` components
-  in `.ts` files (`src/ui/view.ts`, `src/ui/components.ts`); the `html` template-string
-  helpers are gone. Published source carries no JSX syntax, so the CLI still runs straight
-  from `jsr:` with no bundler.
-- **`denext migrate` and `denext ui` share one `next.config` evaluator**
-  (`src/build/next-config-eval.ts`: a read-only `deno` child with no net, write or run
-  permission), each keeping its own translation table. `DENEXT_NEXT_EVAL_TIMEOUT_MS` now
-  applies to the UI too.
-- **The config schema describes `commands[].flags` and `positionals` item by item**, and
-  `Record` maps no longer carry `x-denext.widget: "map"` — `"textarea"` is the only
-  `x-denext.widget` value emitted or read.
-- **A project verb with a required positional can be run from the Commands panel.**
-- **`denext create --capacitor` scaffolds Capacitor 8.** `@capacitor/core`, `cli`, `ios` and
-  `android` are pinned to `^8.5.2` (the `mobile:*` tasks run that CLI), and `ios/` and
-  `android/` are no longer gitignored: Capacitor 8 builds iOS with Swift Package Manager and
-  the native projects are meant to be committed. Only their build outputs and the web assets
-  `cap sync` copies in are ignored.
-- **`staticExport` refuses an output dir it must not replace.** Both export paths replace
-  their output directory wholesale, so an `outDir` that is the project root, lies outside the
-  project, or overlaps `app/`, `public/`, `.denext/`, `node_modules/`, `.git/` or the SPA entry
-  now throws before anything is written.
-
-### Security
-
-- **Verification tokens are single-use secrets, stored only as hashes.** A link token is
-  256 random bits kept as its SHA-256, scoped to one `(address, purpose)` and consumed
-  atomically, so a wrong token cannot burn the real one and a spent one never works twice; an
-  emailed one-time code is stored as an HMAC-SHA-256 under the auth `secret` over
-  `(purpose, address, code)` — an unkeyed hash of six digits is reversed by trying every
-  value. Links are built only on `canonicalOrigin` in production.
-- **Reset, verification and email sign-in answer the same for every address.** A known
-  address, an unknown one and an invalid one get the same response for comparable work: the
-  send budget is spent before the lookup and, inside a request, the mail is sent after the
-  response (`after()`), so the mailer's latency reveals nothing.
-- **One address, never split — the next-auth CVE-2022-35924 class.** The emailed flows
-  normalise their input to exactly one address; a list (`a@x.com,b@y.com`), a display-name
-  form or anything else sends nothing and gets the generic answer.
-- **Pre-account hijacking is closed.** A first magic-link or one-time-code sign-in into an
-  existing account whose address was never verified retires everything set up without that
-  proof — the password (replaced by the hash of a random secret), any TOTP factor and its
-  backup codes, every bearer API token and every server-side session — before marking the
-  address verified. If any step fails the address stays unverified and the redeem gets the
-  generic failure.
-- **The step-up mints a fresh session.** A pending session is a credential issued before
-  authentication finished, so completing the second factor deletes it (and its store
-  record) and issues a new one — never an in-place upgrade. The `/mfa*` endpoints read only
-  the cookie, so a bearer token can neither step up nor enroll, and the eight bypass paths
-  (`auth()`, `requireAuth`, `requireSession`, `GET /session`, Live `authorize`,
-  `requireBearer`, `POST /auth/tokens`, `/mfa/disable`) are each gated and each tested
-  (`tests/auth-mfa-bypass.test.ts`).
-- **Every second-factor code works once.** A TOTP step is claimed through the adapter's
-  atomic `claimTotpStep` — not even confirm-then-step-up can reuse one — backup codes are
-  stored only as `hasher` hashes and spent atomically, every code check spends the per-user
-  budget (a correct guess can't reset it), and disabling needs a fresh second factor.
-- **A completed password reset revokes every server-side session** of that user.
-- **`denext ui` takes nothing version-shaped from the browser.** `op=add-jsr` validates the
-  `@scope/name` spec and the export identifier before any request or argv, and pins the
-  version the registry reports; the Commands form's argv is allowlisted by the verb's own
-  declared flags.
-- A `callbacks.session` that returns a rebuilt object can no longer turn a first-factor-only
-  (MFA-pending) sign-in into a complete session: the framework re-applies `mfaPending`, `amr`,
-  `v`, `issuedAt` and the pending lifetime after the callback runs. The callback may still add
-  `mfaPending`, never remove it.
-- Attempt budgets are counted before they are checked, so a concurrent burst of password,
-  one-time-code or TOTP guesses can no longer all pass the check before any of it is counted.
-  A success refunds its unit on the failure-only budgets. `RateLimitStore` gains an optional
-  `decrement`; a store without it simply keeps the unit.
-- A password reset on an account whose address was never verified now retires what was set up
-  without proof of the mailbox (bearer API tokens, the TOTP factor and backup codes, server-side
-  sessions) and marks the address verified, exactly as a first email sign-in does.
-- An adapter that stores `null` for an unverified address (Auth.js style) is no longer read as
-  verified, which used to skip the pre-account-hijacking defence.
-- `denext migrate` and the `denext ui` next.config panel: a `next.config` that prints its own
-  result line can no longer plant keys or code in the generated `denext.config.ts`. The
-  evaluator's marker carries a per-run nonce, dropped keys are escaped into their comments, and
-  a key that isn't an identifier is quoted.
-- `denext ui`: the Docker panel no longer reads a `Dockerfile`, `docker-compose.yml` or
-  `.dockerignore` that resolves outside the project through a symlink.
-
-### Fixed
-
-- `denext ui`: a verb run from the Commands panel is stopped when the page goes away or the UI
-  shuts down (it used to keep running).
-- `denextAuth()` refuses `mfa.required: "always"` without an adapter MFA group at construction;
-  it used to accept it and lock every user out at the step-up.
-- **`denext --help build` ran `build`.** A help flag before the verb now prints that verb's
-  help and never runs it; `denext --help <dir>` prints the top-level help for that directory
-  instead of erroring; leading global flags (`denext --cwd ./app build`) reach the command;
-  and an unknown flag before the verb is an error instead of being silently ignored.
-- **A `denext ui` textarea dropped a value's leading newline.** HTML discards the first
-  newline after `<textarea>`, so a value starting with one lost it on every round trip; the
-  control now writes a newline ahead of the value.
-- **A CommonJS `next.config` under a symlinked project could not be read** by the
-  evaluator: paths are now `realpath`ed before they become `--allow-read`.
-- **The SPA export replaces `out/` instead of piling builds into it.** It wrote into the
-  existing `out/` and never cleared it, so content-hashed chunks and `.gz` siblings from every
-  earlier build accumulated and shipped in anything that bundles `out/`, such as a Capacitor
-  app. It now builds into `out.staging/` and swaps it in, like the App Router export: `out/`
-  holds exactly the current build, and a failed export leaves the previous one intact.
-- **SPA mode keeps an app's own viewport meta.** `denext migrate` stripped every
-  `<meta name="viewport">` from the source `index.html`, and the SPA shell always emitted
-  `width=device-width, initial-scale=1`, so a migrated app lost `viewport-fit=cover` (every
-  `env(safe-area-inset-*)` resolved to 0 — content under the iOS status bar and home
-  indicator) and `interactive-widget`. Migrate now carries a viewport that asks for more than
-  the default into `spa.head`, and the shell omits its default when `spa.head` has a viewport
-  meta, so exactly one is emitted.
-
-## [2.5.0-rc.1] - 2026-09-14
-
-### Added
-
 - **`denext ui` — a loopback project-management GUI served by the CLI.**
   `denext ui [dir] --port <port> --no-open --read-only --token <token>` binds `127.0.0.1`,
   opens a browser, and serves a server-rendered, zero-bundler, progressive-enhancement UI
@@ -541,24 +415,24 @@ and this project adheres to
   - **Docker** — regenerate `Dockerfile` / `docker-compose.yml` / `.dockerignore` with options
     (`server` | `static`, port, `denoland/deno` tag, optional Postgres service) and a per-file
     diff; a hand-edited file (no generated-file sentinel) is never clobbered.
-  - **Setup wizard** — nine steps for a fresh clone: detect, Deno runtime, a comment-preserving
-    `deno.json` merge, `deno install`, an env-var scan that writes `.env.example` (never `.env`),
-    `denext doctor --json`, the `denext create` feature toggles, tasks, and start dev.
+  - **Setup** (`/setup`; it began as a nine-step wizard and was split into `/setup`, `/dev` and
+    `/tasks` before the release) — readying a fresh clone: detect, Deno runtime, a
+    comment-preserving `deno.json` merge, `deno install`, an env-var scan that writes
+    `.env.example` (never `.env`), `denext doctor --json`, and the `denext create` feature toggles.
   - **Commands** — the project's own verbs with their flags and arguments, runnable with streamed
     output.
-
-  Six layers guard the local write surface: loopback-only bind; a DNS-rebinding / `Sec-Fetch-Site`
-  host gate; a per-launch 256-bit token exchanged once for an `HttpOnly; SameSite=Strict` cookie;
-  same-origin plus an HMAC-derived CSRF token on every mutation; realpath-checked path containment;
-  and a strict CSP with `COOP`/`CORP` and `no-store`. **Project code never runs in the UI's
-  privileged process** — doctor, tasks, `next.config` evaluation, `deno add` and even
-  project-verb discovery (`denext commands --json`) are each a `deno` subprocess; `--read-only`
-  prevents writes by the UI, not execution of the project's own config inside that discovery
-  child. Every action works with JavaScript disabled, and every feature path has an `/api/*`
-  JSON twin served by the same handler: the two writers that splice a file (`/api/config`,
-  `/api/plugins`) answer `{ ok, applied, diff }`, and the others answer their own panel's shape
-  (`/api/docker` `{ ok, mode, files }`, `/api/generate` `{ ok, written, skipped, preview }`,
-  `/api/commands` `{ ok, verb, code, output }`); every refusal is `{ ok: false, reason }`.
+    Six layers guard the local write surface: loopback-only bind; a DNS-rebinding / `Sec-Fetch-Site`
+    host gate; a per-launch 256-bit token exchanged once for an `HttpOnly; SameSite=Strict` cookie;
+    same-origin plus an HMAC-derived CSRF token on every mutation; realpath-checked path containment;
+    and a strict CSP with `COOP`/`CORP` and `no-store`. **Project code never runs in the UI's
+    privileged process** — doctor, tasks, `next.config` evaluation, `deno add` and even
+    project-verb discovery (`denext commands --json`) are each a `deno` subprocess; `--read-only`
+    prevents writes by the UI, not execution of the project's own config inside that discovery
+    child. Every action works with JavaScript disabled, and every feature path has an `/api/*`
+    JSON twin served by the same handler: the two writers that splice a file (`/api/config`,
+    `/api/plugins`) answer `{ ok, applied, diff }`, and the others answer their own panel's shape
+    (`/api/docker` `{ ok, mode, files }`, `/api/generate` `{ ok, written, skipped, preview }`,
+    `/api/commands` `{ ok, verb, code, output }`); every refusal is `{ ok: false, reason }`.
 - **Project-local CLI verbs without a plugin — `commands:` in `denext.config.ts`.** Declare
   `{ name, summary, usage?, flags?, positionals?, run }` (the `DenextCommand` type, structurally
   the `CommandSpec` a plugin's `addCommand` takes) and run it as `denext <name>`, with the same
@@ -658,16 +532,14 @@ and this project adheres to
   - **Cache** — the page/data cache counters, from `/_denext/dev-cache`.
   - **Routes** — the render tree at a path (`/_denext/dev-routes?path=`) with server/client badges and
     click-to-editor.
-
-  `registerComponentMeta` is exported from `denext/client-runtime` for the transport; emission is
-  capped at 64 hooks and 16 KB per module and killed outright by `DENEXT_DEV_META=0`.
+    `registerComponentMeta` is exported from `denext/client-runtime` for the transport; emission is
+    capped at 64 hooks and 16 KB per module and killed outright by `DENEXT_DEV_META=0`.
 - **DevTools → MCP: `denext_component_tree`, `denext_why_render`, `denext_hook_state`.** The dev page
   pushes a snapshot of the live component tree to `POST /_denext/dev-inspect` and the three tools read
   it. Every answer states the snapshot's age; all three need `deno task dev` running **and** the app
   open in a browser, and the page pushes only once one of them has armed the dev server
   (`DENEXT_DEV_INSPECT=1` arms it at startup), so the first call on a fresh session may answer "posted
   nothing yet".
-
   This is the first dev endpoint that **stores** browser-supplied structured data, so it is fenced
   accordingly: dev only, loopback + `Sec-Fetch-Site` gated like every `/_denext/*` endpoint, `POST`
   with a `content-type` whose media type is exactly `application/json`, a 256 KB cap, every stored
@@ -681,6 +553,116 @@ and this project adheres to
 
 ### Changed
 
+- `denext create`'s default template is the App Router shape: `app/page.tsx` is a Server
+  Component that renders a `"use client"` counter island (`app/counter.tsx`) — the shape
+  `denext generate component` writes — instead of a hooks-bearing page that hydrated the whole
+  route. `create` and `init` also write `.vscode/settings.json` + `extensions.json` for the Deno
+  LSP (merged additively; `--no-vscode` skips them), with the writer `denext migrate` uses.
+- `denext create` scaffolds the `start` task with `--allow-write=.denext`: the durable
+  `node:sqlite` cache is the default and, without the grant, production ran on the memory store
+  in silence. When the durable cache cannot open, denext now logs one boot line in every mode
+  naming the path and the grant (it was dev-only).
+- `denext generate docker` and the Project UI's Docker panel build an image that runs as the
+  unprivileged `deno` user (with `/app` owned by it so `.denext/cache.db` stays writable),
+  layer-caches `deno.json`/`deno.lock` + `deno install` before `COPY . .`, and carries a live
+  `HEALTHCHECK` on `/_denext/health`; the static image gets the same user and dependency layer.
+- The userland cron scheduler (every plain-Deno deployment) fires a minute at most once: a
+  wall-clock step backwards no longer re-fires a minute that already ran.
+- **The `experimental` config block graduated.** Everything denext shipped under it is denext's
+  own finished work, and the label only kept developers from using it, so `reactCompiler`,
+  `asyncContext` and `features` are now top-level `denext.config.ts` fields beside the earlier
+  graduates `nodeResolve` and `cacheComponents`. The `experimental.*` spellings (and the pre-2.0
+  `experimental.compiler`) still work and warn in dev, naming the top-level field; the top-level
+  field wins when both are set. `ExperimentalConfig` stays exported with every member
+  `@deprecated`, so an existing config keeps type-checking; the block is removed in 3.0. The
+  scaffold and `denext migrate` write `reactCompiler: true` at the top level, the create wizard's
+  toggle reads "Auto-memo compiler", and `denext ui`'s config editor places `reactCompiler` and
+  `asyncContext` on Rendering and `features` on Advanced (the superseded `experimental` block is
+  offered only when the file still sets it). If a Next.js experimental feature these track
+  changes upstream, denext adapts then.
+- **`Deno.cron` registration names.** A (task, cron) pairing is registered as
+  `<task> <cron with non-name characters folded to _> <fnv1a fingerprint>` (at most 64
+  characters), not `task@cron`. `Deno.cron` refuses a name outside `[A-Za-z0-9 _-]`, so the old
+  name was refused for every expression (see Fixed); nothing on Deploy was ever registered under
+  it, so there is nothing to migrate.
+- **`runTask` rejects instead of throwing synchronously** when a handler throws before its first
+  `await`. The declared type was already `Promise<unknown>`; a scheduled failure of that shape
+  used to escape the scheduler's `.catch` into the timer tick, and would have bypassed run history.
+- `cronError()` / `parseCron()` are strict about what a field item may be: `*`, a number, `a-b`,
+  each with an optional `/step` — digits only. `-5`, `+5`, `0x10`, `1e1`, `5.` and an empty item
+  (`5,,`) used to pass through `Number()` and were then refused by `Deno.cron`, so a schedule that
+  parsed here never ran on Deploy. `n/step` on a lone number means `n` to the field's maximum
+  (`5/15` is `5-59/15`), as Vixie and `Deno.cron` read it; it used to match the single value.
+- `denext ui`'s config editor tracks whether a section actually changed: Save is inert until you
+  edit something, and a Discard button appears beside it to put the section back the way it was.
+  `Clear` is now `Remove key`, which is what it always did — it deletes the key from the config,
+  it does not clear the form. With JavaScript off none of this applies and Save simply works, so
+  the server never renders it disabled; `--read-only` still disables everything.
+- `denext ui`'s config writes land on the page that shows the change:
+  `/config/<view>?key=<key>` (`?key=general` for a scalar), rather than `/config#<section>`; a
+  compose write lands on `/docker?tab=services`. The `?t=` handshake always redirects to `/`
+  (the overview) rather than echoing the path the link carried.
+- `denext ui`'s `/config` twin, `/api/config`, still reports `scheduledTasks` and `tasks` but a
+  write posted at them through a config view is refused with a pointer at the Cron page, which
+  owns them; the former Data view is retired (`cache` sits on Rendering).
+- The nightly end-to-end suite compares a generated file against the child's **stdout** alone
+  (a stderr warning no longer ends up "inside" a generated file), picks the newest published
+  denext by semver for the JSR-runtime prebuild comparison (prereleases included, skipping
+  entries the tree has that the registry does not), and drives the UI's sidebar at a desktop
+  viewport. New suites: the installer (`tests/install-sh.test.ts`), the binary's pin lookup and
+  re-exec decision, a table over every UI route's guards, and browser-shaped config posts
+  (`tests/ui-config-browser-post.test.ts`, which builds each body from the rendered form's own
+  controls — the shape that let the `[]`/`false` bug below ship).
+- Six source files that keyed maps on a literal NUL byte spell it `"\0"`, so git diffs them as
+  text again.
+- Decided: `/config/next` being read-only (denext never loads `next.config.*`), and a project
+  verb costing plugin discovery in its own child, are how those features work rather than gaps.
+  Both moved out of KNOWN-LIMITATIONS into the
+  [Project UI guide](https://denext.dev/docs/ui).
+- The emailed auth flows accept an internationalised email domain (`ada@bücher.de`),
+  normalised to its punycode form (`ada@xn--bcher-kva.de`); an SMTPUTF8 local part is still
+  refused.
+- `denext ui` checks JSR net permission per operation: a search needs only `api.jsr.io`, adding
+  a JSR package only `jsr.io`. Either used to need both.
+- `signIn()` is typed by overload: a `credentials` sign-in resolves `CredentialsSignInResult`
+  (`{ ok: true, user?, mfa? }`), any other the sign-in URL. It was `Promise<unknown>`.
+- The default auth rate limits leave room for many users behind one IP: sign-in starts allow
+  100 per IP per 15 minutes (was 20), session reads 300 per IP per minute (was 60). Both limits
+  are new in 2.5; tune them with `rateLimit.signin` / `rateLimit.session`.
+- `POST {basePath}/mfa/disable`'s no-code shortcut (the session's own step-up within
+  `mfa.freshness`) is measured from `authTime`, so it works with sliding expiry on as well; it
+  used to be void whenever `session.updateAge > 0`.
+- **`credentials(options?)` — the options, and `authorize`, are optional**
+  (`CredentialsProvider.authorize?`). Existing providers are unaffected.
+- **`AuthProvider` gained a third member, `EmailProvider` (`type: "email"`).** A `switch`
+  over `provider.type` that was exhaustive needs an `"email"` case.
+- **The internal `issueAuthSession(config, user, provider, options?)` takes a trailing
+  options argument** (`mfaPending`, `amr`, `lifetime`); the change is source-compatible.
+  Every first factor — credentials, OAuth / OIDC and the email providers — now ends in one
+  sign-in tail that decides the step-up before minting a session.
+- **`AuthSession.issuedAt` is documented as re-stamped by sliding expiry**, which it always
+  was — so with `session.updateAge > 0`, `/mfa/disable` always needs a code.
+- **Every `denext ui` view is a component.** The panels are server-rendered `h()` components
+  in `.ts` files (`src/ui/view.ts`, `src/ui/components.ts`); the `html` template-string
+  helpers are gone. Published source carries no JSX syntax, so the CLI still runs straight
+  from `jsr:` with no bundler.
+- **`denext migrate` and `denext ui` share one `next.config` evaluator**
+  (`src/build/next-config-eval.ts`: a read-only `deno` child with no net, write or run
+  permission), each keeping its own translation table. `DENEXT_NEXT_EVAL_TIMEOUT_MS` now
+  applies to the UI too.
+- **The config schema describes `commands[].flags` and `positionals` item by item**, and
+  `Record` maps no longer carry `x-denext.widget: "map"` — `"textarea"` is the only
+  `x-denext.widget` value emitted or read.
+- **A project verb with a required positional can be run from the Commands panel.**
+- **`denext create --capacitor` scaffolds Capacitor 8.** `@capacitor/core`, `cli`, `ios` and
+  `android` are pinned to `^8.5.2` (the `mobile:*` tasks run that CLI), and `ios/` and
+  `android/` are no longer gitignored: Capacitor 8 builds iOS with Swift Package Manager and
+  the native projects are meant to be committed. Only their build outputs and the web assets
+  `cap sync` copies in are ignored.
+- **`staticExport` refuses an output dir it must not replace.** Both export paths replace
+  their output directory wholesale, so an `outDir` that is the project root, lies outside the
+  project, or overlaps `app/`, `public/`, `.denext/`, `node_modules/`, `.git/` or the SPA entry
+  now throws before anything is written.
 - **The generated config schema describes list items, maps and function-returned arrays.**
   `redirects` / `rewrites` / `headers` now carry the rule-array schema (marked
   `x-denext.wrapper: "function"` because the config key is a function returning the array),
@@ -722,16 +704,377 @@ and this project adheres to
   raised `cost` makes an unknown account reject measurably faster than a known one.
 - **`Await<T>` is renamed `MaybePromise<T>`** (the adapter contract's sync-or-async alias, exported
   from `denext/server`).
-- **The `linkAccount` event payload carries identity only** — provider, provider-side id, type,
-  owner. The account row still persists whatever tokens the provider returned; the event no longer
-  hands an access/refresh/id token to an audit sink. **Breaking** for a handler that read tokens off
-  the event: read the stored account back through the adapter instead.
 - **`examples/auth` demonstrates the adapter** (no app-side user table), roles with an `/admin` page,
   OIDC discovery, audit events and bearer tokens (`/account/tokens`, `/api/me`); `examples/openapi`
   drops its hand-rolled bearer middleware for `requireBearer`.
 
+### Removed
+
+- **The never-exported `DevPanel` server component.** It injected an inline `<style>` and `<script>`
+  that denext's own dev CSP blocks, so it could not have worked in a denext app; its data is the
+  DevTools Cache tab now. `getCacheStats()` stays public.
+
+### Fixed
+
+- **Control signals and request APIs inside a streamed Suspense hole.** With streaming on
+  (the default), a component that resolved _after_ the shell flushed was cut off from the
+  response: `after(cb)` in a hole never ran (the pipeline drained the callbacks when the
+  Response object was created, before the body finished); `redirect("/login")` and
+  `notFound()` were treated as a failed hole (a 200 with the loading fallback forever and a
+  `console.error`), so `(await auth()) ?? redirect("/login")` behind `<Suspense>` hung the
+  visitor on the fallback; `cookies().set()` in a hole silently set nothing. Now, matching
+  Next: `after()` drains when the **stream ends** (last hole settled, or aborted) on every
+  streaming path — HTML, Flight, PPR and PPR+Flight; `redirect()`/`permanentRedirect()`
+  stream a client-side redirect into the hole (`<meta http-equiv="refresh">`, destination
+  through the redirect sanitiser, nothing else); `notFound()`/`forbidden()`/`unauthorized()`
+  reveal the nearest boundary's UI (`not-found.tsx` … or the built-in) in place of the hole
+  with the status left at 200; and a `cookies().set()`/`.delete()` after the first flush
+  throws in dev ("cookies can only be modified before the response starts — in a Server
+  Action, a Route Handler, middleware, or a component that renders before the first flush;
+  this component rendered inside a streamed Suspense boundary …") and is logged once per
+  request and ignored in production. A soft navigation is never streamed, so its redirect
+  stays a real HTTP redirect. `RequestContext` gains `headersCommitted` (set at the first
+  flush) and `bodyStreaming`. Documented in KNOWN-DIFFERENCES and the Rendering guide.
+- **`denext ui`'s config editor wrote values you never set.** Saving _any_ change on a view
+  (toggling `images.formats`, say) materialised every unset child of the key's object — `[]` for
+  each list, `false` for each boolean — so a save of Rendering wrote `images.deviceSizes: []`,
+  `images.qualities: []` and `images.remotePatterns: []`, and an empty `deviceSizes` allowlist
+  made the image endpoint refuse every width. The list marker and a toggle's hidden companion are
+  now rendered only for a key the file actually holds, an absent key posts nothing and decodes to
+  "leave it alone", and a set key emptied of its rows still decodes to `[]`. A group save also
+  carries the sub-keys the form does not show (`experimental.cacheComponents`, an unknown key)
+  through unchanged instead of dropping them; an untouched save answers "No change" and writes
+  nothing; a required field left empty is not written as `""`.
+- `denext ui`: a **+ Add** row on a list hands the editor back with the row instead of running the
+  whole form through the validator as if it were a save (the red "invalid denext.config.ts" that
+  followed, and the pills flipping to set, were that); clearing a scalar survives the confirm
+  step (the confirm form used to carry nothing, so the diff you reviewed and the change applied
+  could differ); a view's save touches only the keys the submit carried, so an `/api/config` post
+  naming two keys cannot delete a third.
+- `denext ui`'s Cron editor could not save from a browser: the add row's task `<select>` had no
+  blank option, so an untouched row posted the first task's name and every save was refused as
+  "`<task>` has no cron expression". It starts on "— choose a task —" now. The page also reports
+  the child's real error ("invalid denext.config.ts: `redirects` must be a function") instead of
+  "printed no listing", and its cached listing is keyed on the file's stamp, so a hand edit is
+  never overwritten with rows from before it.
+- **No schedule was ever registered with `Deno.cron`.** The registration name was `task@cron`,
+  and `Deno.cron` refuses a name outside `[A-Za-z0-9 _-]` — `*`, `/` and `,` are most of a cron
+  expression — so every registration threw, was caught and logged, and on Deno Deploy (and a
+  self-host started with `--unstable-cron`) nothing scheduled ever fired. The userland scheduler
+  was unaffected. See Security for the weekday respelling that the same hand-off needed.
+- The cron builder's reading of `0 0 5 * 0-6` — both day fields written out — is `custom`, not
+  "monthly": Vixie fires when **either** day field matches, so that schedule runs daily, and
+  recomposing it as `0 0 5 * *` would have changed it.
+- `denext task <name>` records its run when history is on, like a scheduled run does; it never
+  booted the scheduler, so it never installed the recorder.
+- Task-history retention could never run for a task that only ever ran from `denext task`: the
+  prune was amortised to one in 200 inserts per process, and a one-shot process writes one row.
+  The first insert of a process now prunes (every task, in one windowed `DELETE`), and the file
+  stamps `PRAGMA user_version = 1` so a later schema has a number to migrate from.
+- `denext ui` opens in a browser again. Its origin gate accepted only
+  `Sec-Fetch-Site: same-origin`, but a browser sends `none` for the navigation that starts a
+  session — the printed URL handed to the launcher, typed, or opened from a bookmark — so the
+  first load was refused with `{"ok":false,"reason":"forbidden origin"}`, the token handshake
+  never ran, and no session could be established. A user-initiated navigation is now read; a
+  mutation still has to come from the UI's own page and pass the CSRF gate. Present since the UI
+  landed in 2.5.0-rc.1: curl sends no fetch-metadata header and the end-to-end suite drives the
+  server with `fetch`, so every test passed while no browser could open the UI.
+- `denext ui`: starting `denext dev` from the UI looked like it did nothing — the op
+  redirected, which rebuilt the document and took the output sink and the single `EventSource`
+  with it. The dev ops answer in place and the console lines are kept per project.
+- `denext ui`: the Setup page's Dependencies step says when there is nothing to install (no imports
+  declared, so Deno writes no `deno.lock`) instead of staying a to-do forever; the plugin cards put
+  their pills on one line and the blurb under them; tab labels read `Public env`, `API batch`,
+  `Compatibility mode`; a config view's active sidebar entry is right on reload and with scripting
+  off (one hard-coded `/config` marked Routing current everywhere); a value's source in a code
+  cell lines up with its own first line; the phone layout no longer scrolls sideways.
+- The installer and the release workflow disagreed about the checksum file's name (the script's
+  first URL, `<archive>.sha256`, was never uploaded; the workflow wrote `denext-<target>.sha256`
+  over a glob that could include the checksum file itself), and five matrix legs each created the
+  release independently, so a failed leg left a half-populated "latest". The workflow now writes
+  `<archive>.sha256` per leg, the release job concatenates them into `SHA256SUMS`, verifies every
+  archive is listed and present, and creates the release once.
+- `denext ui`: a refused Commands run (an unknown or built-in verb, a bad flag or argument
+  value, `--read-only`) answers a form post with the panel, the reason as an alert and the
+  submitted values kept. It answered raw JSON, which replaced the page when JavaScript was off.
+  The Plugins panel intro no longer calls its list "the first-party catalog" (JSR search lists
+  third-party packages too).
+- `denext plugin add` / `remove` and the Plugins panel recognise a plugin imported under
+  another name (`import { openapi as oa }`) or from a full `jsr:` specifier. Adding one used to
+  insert an `openapi()` call no import binds (or a duplicate import), removing one reported it
+  as not wired, and the panel offered it no options form.
+- `denext ui` and `denext generate docker` find a compose file under any name Docker Compose
+  accepts — `compose.yaml`, `compose.yml`, `docker-compose.yaml`, `docker-compose.yml`, in that
+  precedence. The Docker panel edits and regenerates that file, and neither writes a second
+  `docker-compose.yml` next to it; only `docker-compose.yml` used to be found.
+- `useSession()`: a `429`, a server error or a network failure no longer reads as "signed
+  out". `SessionProvider` keeps the session it knew (only a first load that learns nothing
+  shows the logged-out view), and a `429`'s `Retry-After` pauses its focus and interval
+  refetches. Users sharing one IP (an office NAT) could flip to the logged-out UI once the
+  per-IP session-read budget ran out.
+- The SQLite auth adapter, session store and cache set a 5 s `busy_timeout`: a second writer
+  (a seed script, `denext task`) makes a request wait instead of failing at once with
+  "database is locked".
+- The `/mfa*` and `/tokens` endpoints log an adapter or store failure and answer
+  `503 { error: "unavailable" }` instead of a bare `500`.
+- The 50-live-token cap on `POST {basePath}/tokens` holds under concurrent requests (per
+  process).
+- `denext ui` sends `referrer-policy: same-origin` (was `no-referrer`). Under `no-referrer` a
+  browser sends `Origin: null` on a form POST, so with JavaScript off every panel form failed
+  the origin check.
+- `denext ui`: the Plugins panel's config write (after `deno add`, which can take minutes) and
+  the Setup page's `deno.json` / `.env.example` writes refuse when the file changed on disk since
+  it was read, like the config, plugin-options and compose writers.
+- `denext ui` config edits keep a CRLF file CRLF; inserted lines used a bare LF.
+- `denext ui` streams a child's output that never prints a newline in 64 KiB pieces instead of
+  holding it until the child exits.
+- A mistyped 6-digit code at the second-factor step no longer runs the password hasher once per
+  stored backup code.
+- `denext export`: a staging swap that fails to move the new output into place puts the
+  previous output back; it used to leave no output directory at all.
+- DevTools (bundled dev path): a route file deleted since it was cached no longer keeps its
+  entry in the dev server's route-metadata cache.
+- The TS→JSON-Schema mapper behind the config schema and the plugin catalog no longer recurses
+  until the stack overflows on a self-referencing type alias.
+- Config writes (`denext ui`, `denext plugin add`) keep a leading byte-order mark; it was
+  silently dropped from every rewritten `denext.config.ts`.
+- `denext/mobile`: `openExternal()` rejects for a refused URL instead of throwing
+  synchronously from a function that returns a promise.
+- SPA dev: the first-party Fast Refresh plugin no longer treats a sibling directory whose name
+  starts with the project's (`/app-2` next to `/app`) as project source.
+- `denextAuth`: `mfa.freshness: 0` is kept (every action that demands a fresh second factor
+  asks for a code) instead of silently becoming the 900-second default.
+- `denext ui`: a confirmed config, plugin-options or compose write re-reads the file just
+  before the atomic rename and answers `409` if it changed after the form's stamp was checked,
+  instead of silently replacing a concurrent edit.
+- The next.config evaluator (`denext migrate` and the `denext ui` next.config panel) reads a
+  CommonJS `next.config.js` (`module.exports`) and calls a function-form config the way Next.js
+  does, `(phase, { defaultConfig })`.
+- `denext ui` compose editor: removing a field's last entry keeps the comment lines inside it;
+  enabling a commented-out service with a blank line inside enables all of it; a failed write is
+  a refusal at the panel instead of a bare 500.
+- DevTools: a custom hook imported as `./auth.js` from `auth.ts` (the TypeScript convention) is
+  named across the import.
+- `denextAuth`: deciding whether a sign-in owes a second factor reads the MFA record the way
+  every other MFA check does (a confirmed record that still holds a secret).
+- `denext ui`: a verb run from the Commands panel is stopped when the page goes away or the UI
+  shuts down (it used to keep running).
+- `denextAuth()` refuses `mfa.required: "always"` without an adapter MFA group at construction;
+  it used to accept it and lock every user out at the step-up.
+- **`denext --help build` ran `build`.** A help flag before the verb now prints that verb's
+  help and never runs it; `denext --help <dir>` prints the top-level help for that directory
+  instead of erroring; leading global flags (`denext --cwd ./app build`) reach the command;
+  and an unknown flag before the verb is an error instead of being silently ignored.
+- **A `denext ui` textarea dropped a value's leading newline.** HTML discards the first
+  newline after `<textarea>`, so a value starting with one lost it on every round trip; the
+  control now writes a newline ahead of the value.
+- **A CommonJS `next.config` under a symlinked project could not be read** by the
+  evaluator: paths are now `realpath`ed before they become `--allow-read`.
+- **The SPA export replaces `out/` instead of piling builds into it.** It wrote into the
+  existing `out/` and never cleared it, so content-hashed chunks and `.gz` siblings from every
+  earlier build accumulated and shipped in anything that bundles `out/`, such as a Capacitor
+  app. It now builds into `out.staging/` and swaps it in, like the App Router export: `out/`
+  holds exactly the current build, and a failed export leaves the previous one intact.
+- **SPA mode keeps an app's own viewport meta.** `denext migrate` stripped every
+  `<meta name="viewport">` from the source `index.html`, and the SPA shell always emitted
+  `width=device-width, initial-scale=1`, so a migrated app lost `viewport-fit=cover` (every
+  `env(safe-area-inset-*)` resolved to 0 — content under the iOS status bar and home
+  indicator) and `interactive-widget`. Migrate now carries a viewport that asks for more than
+  the default into `spa.head`, and the shell omits its default when `spa.head` has a viewport
+  meta, so exactly one is emitted.
+- **The MCP `denext_generate` tool advertised 8 of the 13 artifact kinds.** Its enum is now derived from
+  `GENERATE_KINDS`, so it can never drift again.
+- **The DevTools panel never mounted in SPA dev** — the generated SPA dev entry never set
+  `window.__denextDev`, so `installDevtools()` bailed. `DENEXT_DEV_UNBUNDLED=0` on the App Router path
+  mounts too.
+- **A component tree over 64 KiB never reached the MCP tools.** The sink posted with `keepalive`,
+  which browsers refuse above 64 KiB and refuse unobservably — so any page past roughly 115
+  components answered `denext_component_tree` with "open the app in a browser" while the app was
+  open. The throttled post drops `keepalive`, the `pagehide` flush uses `sendBeacon` and skips above
+  60 KiB, an oversized snapshot is truncated and flagged rather than dropped, and every byte cap
+  counts UTF-8 bytes.
+- **A `Set-Cookie` written inside a typed-API sub-request was lost.** A batched or in-process client
+  call now carries the child's `Set-Cookie` back onto the parent response, so a sliding session
+  refresh (or a sign-in) inside one survives.
+- **Fifty cold logins made fifty discovery / JWKS fetches.** Concurrent misses for one issuer (or one
+  JWKS URL) now share a single in-flight request, and a discovery document is vetted before it is
+  cached rather than after.
+- **One legacy row pair could make `sqliteAuthAdapter` a permanent 500.** A unique index cannot be
+  created over a table that already violates it (two pre-2.5 users whose emails differ only in case),
+  and the throw failed `initSchema` on every open, so every request re-ran and re-threw it. The
+  failure is now reported **once**, with the query that finds the offending rows, and the adapter runs
+  without that index — uniqueness still enforced by its own check on write.
+- **An `adapter`'s `close()` was never wired up**, so a `sqliteAuthAdapter` kept its file handle for
+  the life of the process. Both a closable session store and a closable adapter are released on
+  server drain through the plugin teardown seam.
+- **A credentials adapter that threw escaped as a raw `500`** with no `signInFailed` at all — a
+  UNIQUE race between two concurrent first sign-ins, or a database that went away, was distinguishable
+  from a wrong password. It is now the same generic `401`, plus a logged exception and
+  `signInFailed { reason: "adapter_error" }`.
+- **`signIn.isNewUser` and `signInFailed.ip` are actually emitted.** Both were declared on the event
+  payloads and never populated; `ip` carries the bucket the limiter counted the attempt against
+  (an IPv6 client as its /64).
+- **One `Ctrl+C` stops `denext ui` with pages open.** The shutdown closes every `/_ui/events` stream
+  before draining, so an open tab's SSE connection no longer pins the server (5 ms, was a 5 s+ hang).
+  A streamed run keeps an 8 KB tail instead of the whole log (a wedged `deno task` retained tens of
+  megabytes), every child dies with the request that started it and with the UI, `deno add`/`deno
+  remove` get a five-minute deadline, only one `denext dev` is spawned at a time, and a config splice
+  whose result no longer parses is refused before it reaches disk.
+- **A plugin discovery cut short by its time budget could make the next one skip a plugin.** Verb
+  discovery is generation-stamped (`pluginGeneration()`), so a superseded run's result can never be
+  applied and a plugin whose `setup` lost one race is still registered by the next.
+
 ### Security
 
+- **`denext ui`'s session cookie is no longer the launch token.** The `?t=` handshake now mints a
+  second, fresh 256-bit secret and parks _that_ in the `HttpOnly; SameSite=Strict` cookie; the
+  CSRF token is derived from the cookie secret (`HMAC-SHA256(cookieSecret, "csrf")`), and the
+  launch token takes part in nothing after the exchange. A cookie set by a loopback host is sent
+  to every port of that host, so the project's own `denext dev` — or anything else listening on
+  the machine — used to receive the very credential the launcher had printed. The UI is also now
+  served and opened at `http://127.0.0.1:<port>`, never `localhost`, so the cookie is not shared
+  with dev servers on that name at all. The printed URL and `--json`'s `url` say `127.0.0.1`.
+- **`denext ui`'s Stop-dev-server button proves who it is stopping.** `.denext/dev.json` is
+  project content — a clone can commit one — and its `pid` was signalled after nothing more than
+  a `200` from the origin it named. Now the pid must be a safe integer above 1 (never `-1`, the
+  caller's process group, or `init`), is never the UI's own process or its parent, and the probe
+  (`GET /_denext/dev-state`, which now answers `{ pid, projectDir }` alongside the events) must
+  report the same pid **and** this project's directory (realpath-compared) before any signal is
+  sent. A different server on that port is reported as a mismatch and neither signalled nor
+  cleaned up. The MCP dev tools apply the same pid rule when they read `dev.json`.
+- **`Deno.cron` weekdays.** Every schedule handed to `Deno.cron` is respelled first: `Deno.cron`
+  numbers weekdays `1–7` with `1` = Sunday and rejects `0` and `?`, while denext's convention (and
+  every documented example) is POSIX `0–6` with `0` = Sunday. A `0 0 * * 1` (Monday) handed over
+  verbatim fired on Sunday on Deno Deploy, and any `0` or `?` was refused outright. The
+  day-of-week field is now spelled in names (`MON`, `MON-FRI`, an exact list for anything
+  stepped) and `?` becomes `*`, which both readers agree on. See the Fixed entry below for the
+  registration-name defect that meant none of this had ever reached Deploy.
+- `denext ui` writes keep the file's permission bits: a `0600` `denext.config.ts`,
+  `docker-compose.yml` or `deno.json` came back `0644` after one edit, because the atomic write's
+  temp file was created at the default mode. Windows and a new file are unaffected.
+- `denext ui`'s Desktop panel shell-quotes the `export DENEXT_CODESIGN_IDENTITY=…` line it
+  composes (single quotes, `'\''` inside), so a keychain identity name is never pasted into a
+  shell as something the shell would expand; it was JSON-quoted.
+- A project verb's name and summary are held to the verb-name grammar (`^[a-z][a-z0-9-]*$`) when
+  read back from `.denext/commands.json`, and every name, summary and child error line the CLI
+  prints (`denext --help`, `denext commands`) has its control characters removed, so a committed
+  cache or a plugin cannot put an escape sequence on your terminal. `VERB_NAME` and `plainText`
+  are exported from `denext/cli/command`.
+- The task run-history database (`.denext/tasks.db`) is created owner-only (`0600`; its
+  `-wal`/`-shm` siblings inherit the mode), since each row keeps a run's returned text and error
+  message in plain text. The UI opens it read-only without creating its directory.
+- The next.config evaluator refuses a project directory whose path contains a comma, with the
+  reason: `--allow-read=<a>,<b>` is a list to Deno, and the `,,` escape its docs describe is refused
+  by Deno 2.9, so such a path was granted as its pieces — never itself, and a piece may name a real
+  directory outside the project.
+- The emailed auth flows, the credentials provider, the OAuth match-by-email step and both
+  bundled adapters key an address the same way (`emailKey`: trimmed, lower-cased, an
+  internationalised domain in its punycode form), so `a@bücher.de` and `a@xn--bcher-kva.de` are
+  one account through every flow and a custom adapter. Only the token paths punycoded before, so
+  a credentials sign-up at the Unicode spelling was duplicated by a magic link and unfindable by a
+  password reset. The SQLite adapter re-keys existing rows on open (a row whose new key another
+  row already holds is left alone and reported once).
+- `scripts/install.sh` (served as `denext.dev/install.sh`) fails closed: a download whose
+  checksum cannot be fetched is not installed (it used to warn and install anyway), a mismatch
+  never is, and `DENEXT_INSECURE=1` is the one loud override for the missing-checksum case. Every
+  `curl` is `--proto '=https' --tlsv1.2`, the script runs entirely inside `main()` called on its
+  last line (a truncated download executes nothing), and it warns when no `deno` is on `PATH`.
+- The binary release job pins every action by commit SHA.
+- The next.config evaluator (`denext migrate`, the `denext ui` next.config panel) starts from
+  an empty environment (only `NODE_ENV`, `NEXT_PUBLIC_*` and the variables Deno needs to find
+  its cache pass through) and downloads nothing (`--cached-only`, a manual `node_modules`).
+  npm resolution runs outside Deno's permission sandbox, so a repository's `.npmrc` could aim
+  an `npm:` import at a host of its choosing and carry a shell secret out in the package name;
+  `--no-remote` alone did not stop that. This also keeps `denext ui --offline` true for this
+  child.
+- `POST {basePath}/tokens` needs a recent sign-in (`authTime` within `mfa.freshness`, five
+  minutes at least), as `/mfa/enroll` does; otherwise it answers
+  `403 { error: "reauth_required" }`. `resetPassword()` now also revokes the user's bearer API
+  tokens along with their sessions. A stolen session could mint a token that outlived both
+  the session and the owner's password reset.
+- `requireBearer({ scope: [] })` refuses every token, as `role: []` does; an empty scope list
+  used to admit every live token.
+- The MCP live tools (`denext_dev_logs`, `denext_component_tree`, …) only talk to a loopback
+  http(s) origin read from `.denext/dev.json`, rebuilt from its parts: a committed or planted
+  file can no longer point them at another host.
+- An OAuth callback's `?error=` reaches the sign-in page and `signInFailed.reason` only when it
+  is a protocol-shaped code (`access_denied`); free text reads `oauth_failed` and is logged, so
+  a crafted link can't put its own message on the sign-in page.
+- The next.config evaluator (`denext migrate`, the `denext ui` next.config panel) runs with
+  `--no-remote`: an evaluated config can still import the project's own files and its
+  `node_modules` packages, but no longer code from a registry or a URL (not even the hosts
+  Deno allows imports from by default).
+- `POST {basePath}/mfa/enroll` from a complete session needs a recent sign-in: `authTime`
+  within `mfa.freshness`, and at least five minutes. Otherwise it answers
+  `403 { error: "reauth_required" }`. A stolen long-lived session can no longer set up a
+  factor of its own and lock the owner out. An app that calls `enrollTotp()` from its own
+  Server Action should check `session.authTime` the same way, as `examples/auth` now does.
+- `denext export`: the output-directory guard compares real locations (symlinks resolved, case
+  folded where the filesystem ignores it, inodes matched), so `outDir: ".GIT"` on a
+  case-insensitive disk can no longer select and wipe `.git`, and a symlinked or non-directory
+  target is refused. The Pages Router export now writes through the same guarded staging swap
+  instead of deleting its output directory unchecked.
+- `denext ui`: the token handshake redirects with a single leading slash, so a `//host/…` path
+  can't produce a protocol-relative `Location`; a bare carriage return in a streamed output
+  line is flattened like a newline, so it can't start a new SSE field.
+- `denext ui`: the compose editor treats a file holding U+2028, U+2029 or NEL as read-only (a
+  YAML parser and a line splicer disagree on those), and the plugin-options writer refuses
+  `__proto__` / `constructor` / `prototype` keys and values that aren't plain JSON (`NaN`,
+  functions, `Date`s) instead of silently coercing them.
+- **Verification tokens are single-use secrets, stored only as hashes.** A link token is
+  256 random bits kept as its SHA-256, scoped to one `(address, purpose)` and consumed
+  atomically, so a wrong token cannot burn the real one and a spent one never works twice; an
+  emailed one-time code is stored as an HMAC-SHA-256 under the auth `secret` over
+  `(purpose, address, code)` — an unkeyed hash of six digits is reversed by trying every
+  value. Links are built only on `canonicalOrigin` in production.
+- **Reset, verification and email sign-in answer the same for every address.** A known
+  address, an unknown one and an invalid one get the same response for comparable work: the
+  send budget is spent before the lookup and, inside a request, the mail is sent after the
+  response (`after()`), so the mailer's latency reveals nothing.
+- **One address, never split — the next-auth CVE-2022-35924 class.** The emailed flows
+  normalise their input to exactly one address; a list (`a@x.com,b@y.com`), a display-name
+  form or anything else sends nothing and gets the generic answer.
+- **Pre-account hijacking is closed.** A first magic-link or one-time-code sign-in into an
+  existing account whose address was never verified retires everything set up without that
+  proof — the password (replaced by the hash of a random secret), any TOTP factor and its
+  backup codes, every bearer API token and every server-side session — before marking the
+  address verified. If any step fails the address stays unverified and the redeem gets the
+  generic failure.
+- **The step-up mints a fresh session.** A pending session is a credential issued before
+  authentication finished, so completing the second factor deletes it (and its store
+  record) and issues a new one — never an in-place upgrade. The `/mfa*` endpoints read only
+  the cookie, so a bearer token can neither step up nor enroll, and the eight bypass paths
+  (`auth()`, `requireAuth`, `requireSession`, `GET /session`, Live `authorize`,
+  `requireBearer`, `POST /auth/tokens`, `/mfa/disable`) are each gated and each tested
+  (`tests/auth-mfa-bypass.test.ts`).
+- **Every second-factor code works once.** A TOTP step is claimed through the adapter's
+  atomic `claimTotpStep` — not even confirm-then-step-up can reuse one — backup codes are
+  stored only as `hasher` hashes and spent atomically, every code check spends the per-user
+  budget (a correct guess can't reset it), and disabling needs a fresh second factor.
+- **A completed password reset revokes every server-side session** of that user.
+- **`denext ui` takes nothing version-shaped from the browser.** `op=add-jsr` validates the
+  `@scope/name` spec and the export identifier before any request or argv, and pins the
+  version the registry reports; the Commands form's argv is allowlisted by the verb's own
+  declared flags.
+- A `callbacks.session` that returns a rebuilt object can no longer turn a first-factor-only
+  (MFA-pending) sign-in into a complete session: the framework re-applies `mfaPending`, `amr`,
+  `v`, `issuedAt` and the pending lifetime after the callback runs. The callback may still add
+  `mfaPending`, never remove it.
+- Attempt budgets are counted before they are checked, so a concurrent burst of password,
+  one-time-code or TOTP guesses can no longer all pass the check before any of it is counted.
+  A success refunds its unit on the failure-only budgets. `RateLimitStore` gains an optional
+  `decrement`; a store without it simply keeps the unit.
+- A password reset on an account whose address was never verified now retires what was set up
+  without proof of the mailbox (bearer API tokens, the TOTP factor and backup codes, server-side
+  sessions) and marks the address verified, exactly as a first email sign-in does.
+- An adapter that stores `null` for an unverified address (Auth.js style) is no longer read as
+  verified, which used to skip the pre-account-hijacking defence.
+- `denext migrate` and the `denext ui` next.config panel: a `next.config` that prints its own
+  result line can no longer plant keys or code in the generated `denext.config.ts`. The
+  evaluator's marker carries a per-run nonce, dropped keys are escaped into their comments, and
+  a key that isn't an identifier is quoted.
+- `denext ui`: the Docker panel no longer reads a `Dockerfile`, `docker-compose.yml` or
+  `.dockerignore` that resolves outside the project through a symlink.
 - **`id_token` audience validation is strict by default (`strictAudience`).** A multi-valued `aud` must
   now be accompanied by an `azp` naming this client, a single `aud` must _be_ this client, and an `azp`
   naming someone else is refused even when `aud` still lists us — OIDC Core §3.1.3.7 steps 3–5. This
@@ -802,56 +1145,6 @@ and this project adheres to
   the `content-type` must be exactly `application/json`, a snapshot expires after 10 minutes, a page
   can read only its own snapshot (the MCP bridge passes `?url=`), and dev request-log entries are
   clamped the same way.
-
-### Fixed
-
-- **The MCP `denext_generate` tool advertised 8 of the 13 artifact kinds.** Its enum is now derived from
-  `GENERATE_KINDS`, so it can never drift again.
-- **The DevTools panel never mounted in SPA dev** — the generated SPA dev entry never set
-  `window.__denextDev`, so `installDevtools()` bailed. `DENEXT_DEV_UNBUNDLED=0` on the App Router path
-  mounts too.
-- **A component tree over 64 KiB never reached the MCP tools.** The sink posted with `keepalive`,
-  which browsers refuse above 64 KiB and refuse unobservably — so any page past roughly 115
-  components answered `denext_component_tree` with "open the app in a browser" while the app was
-  open. The throttled post drops `keepalive`, the `pagehide` flush uses `sendBeacon` and skips above
-  60 KiB, an oversized snapshot is truncated and flagged rather than dropped, and every byte cap
-  counts UTF-8 bytes.
-- **A `Set-Cookie` written inside a typed-API sub-request was lost.** A batched or in-process client
-  call now carries the child's `Set-Cookie` back onto the parent response, so a sliding session
-  refresh (or a sign-in) inside one survives.
-- **Fifty cold logins made fifty discovery / JWKS fetches.** Concurrent misses for one issuer (or one
-  JWKS URL) now share a single in-flight request, and a discovery document is vetted before it is
-  cached rather than after.
-- **One legacy row pair could make `sqliteAuthAdapter` a permanent 500.** A unique index cannot be
-  created over a table that already violates it (two pre-2.5 users whose emails differ only in case),
-  and the throw failed `initSchema` on every open, so every request re-ran and re-threw it. The
-  failure is now reported **once**, with the query that finds the offending rows, and the adapter runs
-  without that index — uniqueness still enforced by its own check on write.
-- **An `adapter`'s `close()` was never wired up**, so a `sqliteAuthAdapter` kept its file handle for
-  the life of the process. Both a closable session store and a closable adapter are released on
-  server drain through the plugin teardown seam.
-- **A credentials adapter that threw escaped as a raw `500`** with no `signInFailed` at all — a
-  UNIQUE race between two concurrent first sign-ins, or a database that went away, was distinguishable
-  from a wrong password. It is now the same generic `401`, plus a logged exception and
-  `signInFailed { reason: "adapter_error" }`.
-- **`signIn.isNewUser` and `signInFailed.ip` are actually emitted.** Both were declared on the event
-  payloads and never populated; `ip` carries the bucket the limiter counted the attempt against
-  (an IPv6 client as its /64).
-- **One `Ctrl+C` stops `denext ui` with pages open.** The shutdown closes every `/_ui/events` stream
-  before draining, so an open tab's SSE connection no longer pins the server (5 ms, was a 5 s+ hang).
-  A streamed run keeps an 8 KB tail instead of the whole log (a wedged `deno task` retained tens of
-  megabytes), every child dies with the request that started it and with the UI, `deno add`/`deno
-  remove` get a five-minute deadline, only one `denext dev` is spawned at a time, and a config splice
-  whose result no longer parses is refused before it reaches disk.
-- **A plugin discovery cut short by its time budget could make the next one skip a plugin.** Verb
-  discovery is generation-stamped (`pluginGeneration()`), so a superseded run's result can never be
-  applied and a plugin whose `setup` lost one race is still registered by the next.
-
-### Removed
-
-- **The never-exported `DevPanel` server component.** It injected an inline `<style>` and `<script>`
-  that denext's own dev CSP blocks, so it could not have worked in a denext app; its data is the
-  DevTools Cache tab now. `getCacheStats()` stays public.
 
 ## [2.4.3] - 2026-09-14
 
@@ -7445,6 +7738,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.5.0]: https://jsr.io/@denext/denext@2.5.0
+[2.5.0-rc.7]: https://jsr.io/@denext/denext@2.5.0-rc.7
 [2.5.0-rc.6]: https://jsr.io/@denext/denext@2.5.0-rc.6
 [2.5.0-rc.5]: https://jsr.io/@denext/denext@2.5.0-rc.5
 [2.5.0-rc.4]: https://jsr.io/@denext/denext@2.5.0-rc.4

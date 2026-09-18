@@ -39,6 +39,7 @@ import type {
   VerificationTokenRecord,
   VerificationTokenRef,
 } from "./adapter.ts";
+import { emailKey } from "./email-key.ts";
 import { inMemorySessionStore, type SessionStore } from "./session-store.ts";
 
 /** Options for {@linkcode inMemoryAuthAdapter}. */
@@ -181,11 +182,6 @@ function forgetUser(state: MemoryState, id: string, user: AdapterUser): void {
  */
 function copy<T extends object>(value: T | undefined): T | undefined {
   return value === undefined ? undefined : { ...value };
-}
-
-/** Case-insensitive, whitespace-trimmed email key. */
-function emailKey(email: string): string {
-  return email.trim().toLowerCase();
 }
 
 /** The key one linked provider account lives under. */

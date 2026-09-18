@@ -488,10 +488,10 @@
         {
           "name": "CredentialsSignInResult",
           "slug": "CredentialsSignInResult",
-          "kind": "interface",
-          "signature": "interface CredentialsSignInResult",
-          "doc": "What a credentials sign-in resolves; a refused sign-in rejects instead.",
-          "docFull": "What a `credentials` sign-in resolves; a refused sign-in rejects instead.",
+          "kind": "typeAlias",
+          "signature": "type CredentialsSignInResult = object | object | object",
+          "doc": "What a credentials sign-in resolves — the sign-in, or why the callback refused it. The refusal code is derived from the callback's status, because the server's error text is a generic message by design (a 401 never says whether the account exists). Only a network failure or a non-JSON answer rejects.",
+          "docFull": "What a `credentials` sign-in resolves — the sign-in, or why the callback refused it.\nThe refusal code is derived from the callback's status, because the server's `error`\ntext is a generic message by design (a `401` never says whether the account exists).\nOnly a network failure or a non-JSON answer rejects.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -2397,8 +2397,8 @@
           "slug": "signIn",
           "kind": "function",
           "signature": "signIn(provider: string, options: SignInOptions & object): Promise<CredentialsSignInResult>",
-          "doc": "Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with redirect: false, resolves with the URL it would have gone to); for a Credentials provider (pass credentials) it POSTs and resolves with the result.",
-          "docFull": "Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with\n`redirect: false`, resolves with the URL it would have gone to); for a Credentials\nprovider (pass `credentials`) it POSTs and resolves with the result.",
+          "doc": "Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with redirect: false, resolves with the URL it would have gone to); for a Credentials provider (pass credentials) it POSTs and resolves with the result — { ok: false } for a refusal (a wrong password, a spent attempt budget), never a rejection; test result.ok.",
+          "docFull": "Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with\n`redirect: false`, resolves with the URL it would have gone to); for a Credentials\nprovider (pass `credentials`) it POSTs and resolves with the result — `{ ok: false }`\nfor a refusal (a wrong password, a spent attempt budget), never a rejection; test\n`result.ok`.",
           "params": [
             {
               "name": "provider",
@@ -2472,7 +2472,7 @@
           "kind": "function",
           "signature": "startTransition(callback: () => void): void",
           "doc": "Run callback as a low-priority \"transition\": the callback runs synchronously (like React), but any state updates it triggers are scheduled at transition priority — flushed after the reconciler yields to the browser, so urgent updates and paint/input happen first. On the server (no scheduler installed) it just runs the callback. The transition render is time-sliced and interruptible: a higher-priority (sync) update abandons the in-flight transition and restarts it (see the Async transitions guide: /docs/rendering#async-transitions).",
-          "docFull": "Run `callback` as a low-priority \"transition\": the callback runs synchronously\n(like React), but any state updates it triggers are scheduled at transition\npriority — flushed after the reconciler yields to the browser, so urgent updates\nand paint/input happen first. On the server (no scheduler installed) it just runs\nthe callback. The transition render is time-sliced and interruptible: a\nhigher-priority (sync) update abandons the in-flight transition and restarts it\n(see the Async transitions guide: /docs/rendering#async-transitions).\n\nAn **async** callback (`startTransition(async () => { await x; setState() })`) is\nsupported: the transition stays active across the `await`, so updates scheduled\nafter it still land at transition priority. By default denext entangles by a time\nwindow while the returned promise is pending; enable `experimental.asyncContext` to\nscope by transition identity instead, so an unrelated urgent update in that window\nkeeps its priority (see the Async transitions guide / KNOWN-LIMITATIONS).",
+          "docFull": "Run `callback` as a low-priority \"transition\": the callback runs synchronously\n(like React), but any state updates it triggers are scheduled at transition\npriority — flushed after the reconciler yields to the browser, so urgent updates\nand paint/input happen first. On the server (no scheduler installed) it just runs\nthe callback. The transition render is time-sliced and interruptible: a\nhigher-priority (sync) update abandons the in-flight transition and restarts it\n(see the Async transitions guide: /docs/rendering#async-transitions).\n\nAn **async** callback (`startTransition(async () => { await x; setState() })`) is\nsupported: the transition stays active across the `await`, so updates scheduled\nafter it still land at transition priority. By default denext entangles by a time\nwindow while the returned promise is pending; enable `asyncContext` in\n`denext.config.ts` to scope by transition identity instead, so an unrelated urgent\nupdate in that window keeps its priority (see the Async transitions guide /\nKNOWN-LIMITATIONS).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -3758,7 +3758,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 2.5.0-rc.6",
+          "signature": "VERSION: 2.5.0",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -5701,8 +5701,8 @@
           "slug": "ExperimentalConfig",
           "kind": "interface",
           "signature": "interface ExperimentalConfig",
-          "doc": "Opt-in experimental features, set under experimental in denext.config.ts. Each is off by default. A feature lives here only while it is genuinely **incomplete** — being new is not enough — so shipped, complete capabilities (streaming, Live, islands, resumability, SPA mode, Cache Components) are top-level config, not here.",
-          "docFull": "Opt-in experimental features, set under `experimental` in `denext.config.ts`. Each is\noff by default. A feature lives here only while it is genuinely **incomplete** — being\nnew is not enough — so shipped, complete capabilities (streaming, Live, islands,\nresumability, SPA mode, Cache Components) are top-level config, not here.",
+          "doc": "The legacy experimental block of denext.config.ts. Every key in it graduated to a top-level DenextConfig field — what denext ships is its own finished work, and an \"experimental\" label only kept developers from using it — so each member is a deprecated alias of its top-level twin: still honored (with a dev warning) when the top-level field is absent, and ignored when both are set. The interface stays exported so a config written against 2.x keeps type-checking; it is removed in 3.0.",
+          "docFull": "The legacy `experimental` block of `denext.config.ts`. Every key in it graduated to a\ntop-level {@link DenextConfig} field — what denext ships is its own finished work, and an\n\"experimental\" label only kept developers from using it — so each member is a deprecated\nalias of its top-level twin: still honored (with a dev warning) when the top-level field\nis absent, and ignored when both are set. The interface stays exported so a config written\nagainst 2.x keeps type-checking; it is removed in 3.0.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -7526,6 +7526,18 @@
           "signature": "interface OktaOptions",
           "doc": "Options for okta.",
           "docFull": "Options for {@link okta}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "OnRequest",
+          "slug": "OnRequest",
+          "kind": "typeAlias",
+          "signature": "type OnRequest = (info: RequestLogInfo) => void",
+          "doc": "The onRequest export: per-request observability, called once after every response with the method, path, final status, duration and request id (a denext extension — Next has no equivalent; it is the same hook a custom server passes to createApp()). A throw from it is swallowed: observability never breaks the response.",
+          "docFull": "The `onRequest` export: per-request observability, called once after every response\nwith the method, path, final status, duration and request id (a denext extension —\nNext has no equivalent; it is the same hook a custom server passes to `createApp()`).\nA throw from it is swallowed: observability never breaks the response.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -9847,6 +9859,18 @@
           "denextOnly": true
         },
         {
+          "name": "TasksConfig",
+          "slug": "TasksConfig",
+          "kind": "interface",
+          "signature": "interface TasksConfig",
+          "doc": "Scheduled/background task behaviour (DenextConfig.tasks).",
+          "docFull": "Scheduled/background task behaviour ({@link DenextConfig.tasks}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "ThemeColorDescriptor",
           "slug": "ThemeColorDescriptor",
           "kind": "interface",
@@ -10725,10 +10749,10 @@
         {
           "name": "CredentialsSignInResult",
           "slug": "CredentialsSignInResult",
-          "kind": "interface",
-          "signature": "interface CredentialsSignInResult",
-          "doc": "What a credentials sign-in resolves; a refused sign-in rejects instead.",
-          "docFull": "What a `credentials` sign-in resolves; a refused sign-in rejects instead.",
+          "kind": "typeAlias",
+          "signature": "type CredentialsSignInResult = object | object | object",
+          "doc": "What a credentials sign-in resolves — the sign-in, or why the callback refused it. The refusal code is derived from the callback's status, because the server's error text is a generic message by design (a 401 never says whether the account exists). Only a network failure or a non-JSON answer rejects.",
+          "docFull": "What a `credentials` sign-in resolves — the sign-in, or why the callback refused it.\nThe refusal code is derived from the callback's status, because the server's `error`\ntext is a generic message by design (a `401` never says whether the account exists).\nOnly a network failure or a non-JSON answer rejects.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -11724,8 +11748,8 @@
           "slug": "signIn",
           "kind": "function",
           "signature": "signIn(provider: string, options: SignInOptions & object): Promise<CredentialsSignInResult>",
-          "doc": "Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with redirect: false, resolves with the URL it would have gone to); for a Credentials provider (pass credentials) it POSTs and resolves with the result.",
-          "docFull": "Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with\n`redirect: false`, resolves with the URL it would have gone to); for a Credentials\nprovider (pass `credentials`) it POSTs and resolves with the result.",
+          "doc": "Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with redirect: false, resolves with the URL it would have gone to); for a Credentials provider (pass credentials) it POSTs and resolves with the result — { ok: false } for a refusal (a wrong password, a spent attempt budget), never a rejection; test result.ok.",
+          "docFull": "Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with\n`redirect: false`, resolves with the URL it would have gone to); for a Credentials\nprovider (pass `credentials`) it POSTs and resolves with the result — `{ ok: false }`\nfor a refusal (a wrong password, a spent attempt budget), never a rejection; test\n`result.ok`.",
           "params": [
             {
               "name": "provider",
@@ -11787,7 +11811,7 @@
           "kind": "function",
           "signature": "startTransition(callback: () => void): void",
           "doc": "Run callback as a low-priority \"transition\": the callback runs synchronously (like React), but any state updates it triggers are scheduled at transition priority — flushed after the reconciler yields to the browser, so urgent updates and paint/input happen first. On the server (no scheduler installed) it just runs the callback. The transition render is time-sliced and interruptible: a higher-priority (sync) update abandons the in-flight transition and restarts it (see the Async transitions guide: /docs/rendering#async-transitions).",
-          "docFull": "Run `callback` as a low-priority \"transition\": the callback runs synchronously\n(like React), but any state updates it triggers are scheduled at transition\npriority — flushed after the reconciler yields to the browser, so urgent updates\nand paint/input happen first. On the server (no scheduler installed) it just runs\nthe callback. The transition render is time-sliced and interruptible: a\nhigher-priority (sync) update abandons the in-flight transition and restarts it\n(see the Async transitions guide: /docs/rendering#async-transitions).\n\nAn **async** callback (`startTransition(async () => { await x; setState() })`) is\nsupported: the transition stays active across the `await`, so updates scheduled\nafter it still land at transition priority. By default denext entangles by a time\nwindow while the returned promise is pending; enable `experimental.asyncContext` to\nscope by transition identity instead, so an unrelated urgent update in that window\nkeeps its priority (see the Async transitions guide / KNOWN-LIMITATIONS).",
+          "docFull": "Run `callback` as a low-priority \"transition\": the callback runs synchronously\n(like React), but any state updates it triggers are scheduled at transition\npriority — flushed after the reconciler yields to the browser, so urgent updates\nand paint/input happen first. On the server (no scheduler installed) it just runs\nthe callback. The transition render is time-sliced and interruptible: a\nhigher-priority (sync) update abandons the in-flight transition and restarts it\n(see the Async transitions guide: /docs/rendering#async-transitions).\n\nAn **async** callback (`startTransition(async () => { await x; setState() })`) is\nsupported: the transition stays active across the `await`, so updates scheduled\nafter it still land at transition priority. By default denext entangles by a time\nwindow while the returned promise is pending; enable `asyncContext` in\n`denext.config.ts` to scope by transition identity instead, so an unrelated urgent\nupdate in that window keeps its priority (see the Async transitions guide /\nKNOWN-LIMITATIONS).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -14346,6 +14370,23 @@
           "denextOnly": true
         },
         {
+          "name": "plainText",
+          "slug": "plainText",
+          "kind": "function",
+          "signature": "plainText(text: string): string",
+          "doc": "text with every control character removed — C0 (\\x00–\\x1f), DEL and C1 (\\x7f–\\x9f). A verb name or summary is project content on its way to the terminal: ESC opens every ANSI/OSC sequence (cursor moves, line clears, title changes, hyperlinks), and removing the control bytes disarms them all while keeping the words.",
+          "docFull": "`text` with every control character removed — C0 (`\\x00`–`\\x1f`), DEL and C1\n(`\\x7f`–`\\x9f`). A verb name or summary is project content on its way to the terminal:\nESC opens every ANSI/OSC sequence (cursor moves, line clears, title changes, hyperlinks),\nand removing the control bytes disarms them all while keeping the words.",
+          "params": [
+            {
+              "name": "text",
+              "doc": "Text a project wrote."
+            }
+          ],
+          "returns": "The same text, printable characters only.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "PositionalSpec",
           "slug": "PositionalSpec",
           "kind": "interface",
@@ -14376,6 +14417,18 @@
           "signature": "suggest(input: string, candidates: typeOperator): string | undefined",
           "doc": "The closest name in candidates to input within a small edit-distance threshold (scaled to the input length), or undefined when nothing is close — powering \"did you mean\" hints for both unknown verbs and unknown flags.",
           "docFull": "The closest name in `candidates` to `input` within a small edit-distance\nthreshold (scaled to the input length), or `undefined` when nothing is close —\npowering \"did you mean\" hints for both unknown verbs and unknown flags.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "VERB_NAME",
+          "slug": "VERB_NAME",
+          "kind": "variable",
+          "signature": "VERB_NAME: RegExp",
+          "doc": "A project CLI verb name: lowercase, digits and dashes, starting with a letter. The grammar denext.config.ts's commands: validation enforces (src/server/config-validate.ts), and what the help cache accepts back from disk.",
+          "docFull": "A project CLI verb name: lowercase, digits and dashes, starting with a letter. The grammar\n`denext.config.ts`'s `commands:` validation enforces (`src/server/config-validate.ts`), and\nwhat the help cache accepts back from disk.",
           "params": [],
           "returns": "",
           "examples": [],

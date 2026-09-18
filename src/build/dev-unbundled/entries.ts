@@ -3,7 +3,10 @@
 import { toFileUrl } from "@std/path";
 import type { PageRoute } from "../../router/manifest.ts";
 import { generateFlightEntry, generateRouteEntry, routeSourceFiles } from "../bundle.ts";
-import type { BoundaryManifest } from "../module-graph.ts";
+import { scanDirective } from "../directives.ts";
+import { routeNeedsHydration } from "../hydration.ts";
+import { type BoundaryManifest, crawlLocalModules, isFrameworkSource } from "../module-graph.ts";
+import { findServerOnlyLeaks, formatServerOnlyLeaks } from "../server-only-scan.ts";
 import { ensureClientDeps } from "./deps.ts";
 import { ENTRY_PATH, norm, type UnbundledState } from "./state.ts";
 import { transformGeneratedEntry } from "./transform.ts";
@@ -34,8 +37,9 @@ export function supportsRoute(route: PageRoute): boolean {
  * transformed through {@linkcode transformGeneratedEntry}. Its imported modules become
  * `@fs` dev URLs served unbundled with per-module footers.
  */
-export function serveEntry(st: UnbundledState, route: PageRoute): Promise<string> {
-  return transformGeneratedEntry(
+export async function serveEntry(st: UnbundledState, route: PageRoute): Promise<string> {
+  await assertNoDevServerOnlyLeaks(st, route);
+  return await transformGeneratedEntry(
     st,
     generateRouteEntry(route, {
       dev: true,
@@ -47,6 +51,51 @@ export function serveEntry(st: UnbundledState, route: PageRoute): Promise<string
     }),
     `entry:${route.routePath}`,
   );
+}
+
+/**
+ * Refuse to serve a route entry whose module graph would ship server-only code.
+ *
+ * The bundled paths catch this from the bundle's source map (`assertNoServerOnlyLeaks`), but the
+ * unbundled loop never bundles: the browser imports the route's modules one by one, so every
+ * local module the route reaches is shipped as written. The graph is the truth here — nothing is
+ * tree-shaken — except a `"use server"` module, which the transform replaces with an action stub
+ * and is therefore never shipped. A hit throws the same message `denext build` prints, which the
+ * entry handler turns into a console error the page shows instead of hydrating.
+ *
+ * Only a route that `denext build` would hydrate is checked: dev links an entry for every
+ * non-Flight route, but a page with no interactivity is a static route in the build — it ships
+ * no JavaScript there, so a `lib/db.ts` it imports is no leak, and dev must not say otherwise.
+ *
+ * @param st The unbundled dev state (for the project directory).
+ * @param route The route whose entry is about to be served.
+ * @throws When the route would ship a server-only module.
+ */
+export async function assertNoDevServerOnlyLeaks(
+  st: UnbundledState,
+  route: PageRoute,
+): Promise<void> {
+  const files = routeSourceFiles(route);
+  if (files.length === 0 || !(await routeNeedsHydration(route))) return;
+  const modules = await crawlLocalModules(files, { exclude: isFrameworkSource });
+  const shipped: string[] = [];
+  for (const m of modules) {
+    let src: string;
+    try {
+      src = await Deno.readTextFile(m);
+    } catch {
+      continue;
+    }
+    // Realpath'd like the bundle's sources: the leak scan compares against the realpath'd
+    // project dir, and a temp dir or a symlinked checkout spells the two differently.
+    if (scanDirective(src) !== "server") shipped.push(await Deno.realPath(m).catch(() => m));
+  }
+  const leaks = await findServerOnlyLeaks(shipped, st.opts.projectDir);
+  if (leaks.length === 0) return;
+  const byModule = new Map(
+    leaks.map((leak) => [leak.module, { leak, entries: [`the route of ${route.routePath}`] }]),
+  );
+  throw new Error(formatServerOnlyLeaks(byModule, st.opts.projectDir));
 }
 
 /**

@@ -1,6 +1,10 @@
-// `/wizard` — the nine-step setup wizard that takes a fresh clone to a running dev server.
+// `/setup` — readying a project: what it is, what it is missing, and the writes that fill the
+// gaps. Formerly `/wizard`, which named the shape of the page rather than its job.
 //
-// Shape: the nine steps are a TABLE. Each entry inspects one aspect of the project (from a
+// The dev server is `/dev` and the project's `deno task` scripts are `/tasks`: both are places
+// you come back to, not steps you finish once.
+//
+// Shape: the steps are a TABLE. Each entry inspects one aspect of the project (from a
 // single {@linkcode Survey} taken per request, so nine steps do not re-read the disk nine
 // times) and returns a {@linkcode StepView}: a status pill, a one-line summary, optional
 // detail, and the operations it offers. Each operation that WRITES previews its change as a
@@ -14,7 +18,7 @@
 // `--cached-only`, and `denext dev` and the task buttons are refused (`../offline.ts`).
 //
 // Everything works with JavaScript disabled: every operation is a real `<form method="post">`,
-// a completed write answers `303` back to `/wizard#step-<id>`, and a preview re-renders the
+// a completed write answers `303` back to `/setup#step-<id>`, and a preview re-renders the
 // page with the diff in place. `ui.js` upgrades the same forms to fetch + panel swap.
 
 import { createUnifiedDiff } from "../../build/patch-diff.ts";
@@ -27,18 +31,16 @@ import { FEATURES } from "../../cli/commands/create.ts";
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChildren } from "../../jsx/types.ts";
 import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
-import { DiffBlock, Hidden, Note, OpForm, Out, Panel } from "../components.ts";
+import { Badge, DiffBlock, Hidden, Note, OpForm, Out, Panel } from "../components.ts";
 import { renderView } from "../view.ts";
-import { broadcast } from "../events.ts";
 import { StaleWriteError, uiSafeJoin, writeFileAtomic } from "../security.ts";
 import { cliInvocation, runDeno } from "../proc.ts";
-import { OFFLINE_REFUSALS, OFFLINE_STATUS } from "../offline.ts";
 import { envExampleSource, type EnvScan, scanEnvUsage } from "../env-scan.ts";
 import { type DenoConfigFile, readDenoConfig, taskMap } from "../tasks.ts";
 
 // ── the project survey ───────────────────────────────────────────────────────
 
-/** How the wizard classifies the directory it was pointed at. */
+/** How Setup classifies the directory it was pointed at. */
 type ProjectKind = "denext" | "compat" | "empty" | "other";
 
 /** One request's reading of the project. Taken once; every step renders from it. */
@@ -49,7 +51,7 @@ interface Survey {
   readonly kind: ProjectKind;
   /** Its `deno.json` / `deno.jsonc`, when it has one. */
   readonly deno: DenoConfigFile | null;
-  /** The wizard-managed `deno.json` keys the file is missing. */
+  /** The Setup-managed `deno.json` keys the file is missing. */
   readonly missing: string[][];
   /** The declared tasks, `name → command`. */
   readonly tasks: Record<string, string>;
@@ -61,11 +63,13 @@ interface Survey {
   readonly appDir: string | null;
   /** Whether a `deno.lock` exists (dependencies have been resolved at least once). */
   readonly hasLock: boolean;
+  /** Whether the config declares an import map at all — nothing to install when it does not. */
+  readonly hasImports: boolean;
   /** The `nodeModulesDir` setting, when the project declares one. */
   readonly nodeModulesDir: string | null;
 }
 
-/** The `deno.json` keys the wizard knows how to fill in, from the scaffold template. */
+/** The `deno.json` keys Setup knows how to fill in, from the scaffold template. */
 const DENO_JSON_KEYS: readonly string[][] = [
   ["imports", "denext"],
   ["imports", "denext/jsx-runtime"],
@@ -116,6 +120,7 @@ async function surveyProject(dir: string): Promise<Survey> {
     dev,
     appDir,
     hasLock,
+    hasImports: importCount(deno?.data ?? null) > 0,
     nodeModulesDir: stringAt(deno?.data ?? null, ["nodeModulesDir"]),
   };
 }
@@ -174,7 +179,7 @@ async function firstExisting(dir: string, candidates: string[]): Promise<string 
   return null;
 }
 
-/** Contained join: every path the wizard reads or writes goes through the containment gate. */
+/** Contained join: every path Setup reads or writes goes through the containment gate. */
 function safe(dir: string, rel: string): Promise<string> {
   return uiSafeJoin(dir, rel);
 }
@@ -223,7 +228,8 @@ interface StepAction {
   readonly label: string;
   /** Extra hidden/visible fields the form carries. */
   readonly fields?: VNodeChildren;
-  /** Post somewhere other than `/wizard` (step 8 posts to the kernel's task runner). */
+  /** Post somewhere other than `/setup` — nothing does today, and the field is what lets a
+   * step offer an action another route owns. */
   readonly action?: string;
   /** Why `--offline` refuses it (its button renders disabled, with this note); absent otherwise. */
   readonly offline?: string;
@@ -245,7 +251,7 @@ interface StepView {
   readonly actions: StepAction[];
 }
 
-/** The nine steps, in order. Each renders from the one survey; none of them touches disk. */
+/** The steps, in order. Each renders from the one survey; none of them touches disk. */
 const STEPS: readonly { id: string; title: string; view: (s: Survey) => StepView }[] = [
   { id: "detect", title: "Detect the project", view: stepDetect },
   { id: "runtime", title: "Deno runtime", view: stepRuntime },
@@ -254,15 +260,13 @@ const STEPS: readonly { id: string; title: string; view: (s: Survey) => StepView
   { id: "env", title: "Environment variables", view: stepEnv },
   { id: "doctor", title: "Doctor", view: stepDoctor },
   { id: "features", title: "Features", view: stepFeatures },
-  { id: "tasks", title: "Tasks", view: stepTasks },
-  { id: "finish", title: "Finish", view: stepFinish },
 ];
 
 /** What each project kind reads as in step 1. */
 const KIND_SUMMARY: Record<ProjectKind, string> = {
   denext: "A denext app.",
   compat: "A Next.js app — denext runs it through the compatibility aliases.",
-  empty: "An empty directory — the wizard can scaffold a new app into it.",
+  empty: "An empty directory — Setup can scaffold a new app into it.",
   other: "A directory with no denext project in it yet.",
 };
 
@@ -339,16 +343,29 @@ function stepDeps(s: Survey): StepView {
       ") as well.",
     )
     : undefined;
+  // A project whose config declares no imports has nothing for `deno install` to resolve, so it
+  // writes no lockfile — and the step would sit on "todo" for ever, however often it is run.
+  const nothingToDo = !s.hasLock && !s.hasImports;
   return {
     id: "deps",
     title: "Dependencies",
-    status: s.hasLock ? "ok" : "todo",
+    status: s.hasLock ? "ok" : nothingToDo ? "info" : "todo",
     summary: s.hasLock
       ? "deno.lock exists — the import map has been resolved at least once."
+      : nothingToDo
+      ? `Nothing to install — ${s.deno?.name ?? "deno.json"} declares no imports, so ` +
+        "`deno install` has nothing to resolve and writes no deno.lock."
       : "No deno.lock yet — `deno install` resolves and caches the import map.",
     detail: npm,
-    actions: [{ op: "install", label: "Run deno install" }],
+    actions: nothingToDo ? [] : [{ op: "install", label: "Run deno install" }],
   };
+}
+
+/** How many entries the config's import map has (0 when it declares none). */
+function importCount(data: unknown): number {
+  if (typeof data !== "object" || data === null) return 0;
+  const imports = (data as Record<string, unknown>).imports;
+  return typeof imports === "object" && imports !== null ? Object.keys(imports).length : 0;
 }
 
 /** Step 5 — which environment variables does the source read that nothing declares? */
@@ -418,41 +435,6 @@ function stepFeatures(s: Survey): StepView {
   };
 }
 
-/** Step 8 — the project's own tasks, each runnable through the kernel's SSE task runner. */
-function stepTasks(s: Survey): StepView {
-  const names = Object.keys(s.tasks);
-  return {
-    id: "tasks",
-    title: "Tasks",
-    status: names.length > 0 ? "ok" : "todo",
-    summary: names.length > 0
-      ? `${names.length} task(s) declared: ${names.join(", ")}.`
-      : "No tasks are declared yet — step 3 adds dev, build and start.",
-    detail: names.length > 0 ? h(Out, null) : undefined,
-    actions: names.map((name) => ({
-      op: "task",
-      label: `deno task ${name}`,
-      action: "/tasks/run",
-      fields: h("input", { type: "hidden", name: "task", value: name }),
-      offline: OFFLINE_REFUSALS.task,
-    })),
-  };
-}
-
-/** Step 9 — start the dev server and wait for it to publish its address. */
-function stepFinish(s: Survey): StepView {
-  return {
-    id: "finish",
-    title: "Finish",
-    status: s.dev ? "ok" : "todo",
-    summary: s.dev
-      ? `The dev server is up at ${s.dev.origin}.`
-      : "Start the dev server; its address appears here once it publishes .denext/dev.json.",
-    detail: s.dev ? h("p", null, devLink(s.dev, "Open the app")) : h(Out, null),
-    actions: s.dev ? [] : [{ op: "dev", label: "Start denext dev", offline: OFFLINE_REFUSALS.dev }],
-  };
-}
-
 // ── operations ───────────────────────────────────────────────────────────────
 
 /** One check line of `denext doctor --json` (the JSON twin of its `Check` interface). */
@@ -492,7 +474,7 @@ interface OpOutcome {
 /** An operation implementation. */
 type Op = (ctx: UiContext, survey: Survey, form: FormData) => Promise<OpOutcome>;
 
-/** Every operation `/wizard` accepts. An `op` outside this table never reaches a subprocess. */
+/** Every operation `/setup` accepts. An `op` outside this table never reaches a subprocess. */
 const OPS: Record<string, Op> = {
   denojson: opDenoJson,
   install: opInstall,
@@ -500,7 +482,6 @@ const OPS: Record<string, Op> = {
   doctor: opDoctor,
   "scaffold-page": opScaffoldPage,
   scaffold: opScaffold,
-  dev: opStartDev,
 };
 
 /** Step 3's write: merge the missing template keys into the project's own `deno.json`. */
@@ -676,88 +657,9 @@ async function opScaffold(ctx: UiContext, s: Survey, form: FormData): Promise<Op
   }
 }
 
-/**
- * Step 9's operation: start `denext dev` in the background and stream it to every open page.
- * Refused under `--offline` with a `503`: a dev server needs net permission to listen.
- */
-function opStartDev(ctx: UiContext, s: Survey): Promise<OpOutcome> {
-  if (ctx.offline === true) {
-    return Promise.resolve({
-      step: "finish",
-      ok: false,
-      status: OFFLINE_STATUS,
-      message: OFFLINE_REFUSALS.dev,
-    });
-  }
-  if (s.dev !== null) {
-    return Promise.resolve({
-      step: "finish",
-      ok: true,
-      redirect: true,
-      message: `Already running at ${s.dev.origin}.`,
-    });
-  }
-  const started = startDevServer(ctx);
-  return Promise.resolve({
-    step: "finish",
-    ok: true,
-    redirect: true,
-    message: started
-      ? "Starting denext dev — its output is streaming to this page."
-      : "denext dev is already starting — its output is streaming to this page.",
-  });
-}
-
-/**
- * The projects this process has already started a `denext dev` for. Two quick POSTs (a
- * double-click, or a no-JS submit the user repeated) would otherwise race two dev servers onto
- * the same project, the second one falling forward onto a different port.
- */
-const devStarting = new Set<string>();
-
-/**
- * Spawn `denext dev` (the framework's own `cli.ts`, in whatever scheme denext itself runs
- * under), stream its output to every open UI page, and announce the address as soon as the
- * dev server publishes `.denext/dev.json`. Deliberately not awaited: the request returns
- * immediately and the page follows the SSE channel.
- *
- * The child is tied to the UI's own shutdown signal, so Ctrl+C on `denext ui` takes the dev
- * server with it rather than leaving it running with nothing to stop it.
- *
- * @param ctx The request context.
- * @returns Whether a dev server was started (`false` when one is already coming up).
- */
-function startDevServer(ctx: UiContext): boolean {
-  if (devStarting.has(ctx.dir)) return false;
-  devStarting.add(ctx.dir);
-  const push = (event: unknown): void => broadcast(ctx.events, event);
-  runDeno([...cliInvocation(), "dev", ctx.dir], {
-    cwd: ctx.dir,
-    onLine: (line) => push({ type: "dev-output", line }),
-    signal: ctx.signal,
-  })
-    .then((run) => push({ type: "dev-exit", code: run.code }))
-    .catch((error) => push({ type: "dev-output", line: `denext dev failed: ${reason(error)}` }))
-    .finally(() => devStarting.delete(ctx.dir));
-  pollDevInfo(ctx.dir, push).catch(() => {/* the UI shut down */});
-  return true;
-}
-
 /** A per-request deadline, widened to also fire when the UI server itself shuts down. */
 function withShutdown(ctx: UiContext, deadline: AbortSignal): AbortSignal {
   return ctx.signal ? AbortSignal.any([ctx.signal, deadline]) : deadline;
-}
-
-/** Poll `.denext/dev.json` for at most 30 s, then push the address it published. */
-async function pollDevInfo(dir: string, push: (event: unknown) => void): Promise<void> {
-  for (let attempt = 0; attempt < 60; attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    const info = await readDevInfo(dir);
-    if (info !== null) {
-      push({ type: "dev-ready", url: info.origin });
-      return;
-    }
-  }
 }
 
 /** The last 8 KB of a subprocess's output (a page is not a log file). */
@@ -797,7 +699,7 @@ export function setDoctorRunner(runner: DoctorRunner | null): void {
  */
 async function runDoctorSubprocess(dir: string, offline: boolean): Promise<DoctorCheck[]> {
   const run = await runDeno(
-    [...cliInvocation({ offline }), "doctor", "--json", "--cwd", dir],
+    [...cliInvocation({ offline, dir }), "doctor", "--json", "--cwd", dir],
     { cwd: dir, signal: AbortSignal.timeout(120_000) },
   );
   const parsed = run.json();
@@ -815,7 +717,7 @@ function isCheck(value: unknown): value is DoctorCheck {
 
 // ── rendering ────────────────────────────────────────────────────────────────
 
-/** The request context every rendered piece of the wizard needs (token, read-only). */
+/** The request context every rendered piece of Setup needs (token, read-only). */
 interface CtxProps {
   /** The current request. */
   readonly ctx: UiContext;
@@ -825,7 +727,7 @@ interface CtxProps {
 function ActionForm({ ctx, action }: CtxProps & { readonly action: StepAction }): VNode {
   return h(OpForm, {
     csrf: ctx.csrf,
-    action: action.action ?? "/wizard",
+    action: action.action ?? "/setup",
     label: action.label,
     fields: { op: action.op },
     extra: action.fields,
@@ -869,7 +771,7 @@ function checkRow(check: DoctorCheck, index: number): VNode {
   return h(
     "li",
     { key: index },
-    h("span", { class: "badge" }, verdict),
+    h(Badge, { tone: verdict }, verdict),
     " ",
     h("strong", null, check.name),
     ` — ${check.detail}`,
@@ -895,7 +797,7 @@ function Step({ ctx, index, view, outcome }: StepProps): VNode {
   return h(
     "section",
     { id: `step-${view.id}`, class: "step" },
-    h("h2", null, `${index + 1}. ${view.title} `, h("span", { class: "badge" }, view.status)),
+    h("h2", null, `${index + 1}. ${view.title} `, h(Badge, { tone: view.status }, view.status)),
     h("p", { class: "lead" }, view.summary),
     view.detail ?? null,
     view.actions.map((action) => h(ActionForm, { key: action.label, ctx, action })),
@@ -904,19 +806,26 @@ function Step({ ctx, index, view, outcome }: StepProps): VNode {
   );
 }
 
-/** What {@linkcode WizardPanel} renders: the nine step views and the posted outcome. */
-interface WizardProps extends CtxProps {
-  /** The nine step views, in order. */
+/** What {@linkcode SetupPanel} renders: the step views and the posted outcome. */
+interface SetupProps extends CtxProps {
+  /** The step views, in order. */
   readonly views: StepView[];
   /** The outcome of the operation just posted, when there is one. */
   readonly outcome?: OpOutcome;
 }
 
-/** The whole panel: the one `<section id="panel">` `ui.js` swaps, with the nine steps inside. */
-function WizardPanel({ ctx, views, outcome }: WizardProps): VNode {
+/** The whole panel: the one `<section id="panel">` `ui.js` swaps, with the steps inside. */
+function SetupPanel({ ctx, views, outcome }: SetupProps): VNode {
   return h(
     Panel,
-    { name: "Wizard", title: "Setup wizard" },
+    { name: "Setup", title: "Setup" },
+    h(
+      "p",
+      { class: "lead" },
+      "What this project is, what it is missing, and the writes that fill the gaps — each step " +
+        "checks itself and offers only the action that moves it on. ",
+      h("a", { href: "https://denext.dev/docs/ui#setup" }, "Setup ↗"),
+    ),
     h("p", { class: "lead mono" }, ctx.dir),
     ctx.readOnly ? h(Note, null, "Read-only mode — every write is refused.") : null,
     views.map((view, index) => h(Step, { key: view.id, ctx, index, view, outcome })),
@@ -934,9 +843,9 @@ function jsonStep(view: StepView): Record<string, unknown> {
 }
 
 /** The panel shell: the bare section for `ui.js`, the whole document for a navigation. */
-const panelResponse = panelResponder("Wizard", "/wizard");
+const panelResponse = panelResponder("Setup", "/setup");
 
-/** Render the wizard as a page, a fragment, or the JSON twin. */
+/** Render Setup as a page, a fragment, or the JSON twin. */
 function respond(ctx: UiContext, survey: Survey, outcome?: OpOutcome): Response {
   const views = STEPS.map((step) => step.view(survey));
   if (ctx.json) {
@@ -948,19 +857,19 @@ function respond(ctx: UiContext, survey: Survey, outcome?: OpOutcome): Response 
       ...(outcome ? { outcome } : {}),
     }, outcome?.status ?? (outcome && !outcome.ok ? 400 : 200));
   }
-  return panelResponse(ctx, renderView(h(WizardPanel, { ctx, views, outcome })), outcome?.status);
+  return panelResponse(ctx, renderView(h(SetupPanel, { ctx, views, outcome })), outcome?.status);
 }
 
 /** A completed write: `303` back to the step that did it, so a reload never re-posts. */
 function seeStep(step: string): Response {
-  return new Response(null, { status: 303, headers: { location: `/wizard#step-${step}` } });
+  return new Response(null, { status: 303, headers: { location: `/setup#step-${step}` } });
 }
 
 /**
- * Serve the setup wizard: `GET` renders the nine steps (or their JSON twin), `POST` runs one
+ * Serve the setup page: `GET` renders the steps (or their JSON twin), `POST` runs one
  * table-listed operation — previewing every write before it happens.
  */
-export const wizardPanel: UiHandler = async (
+export const setupPanel: UiHandler = async (
   _request: Request,
   ctx: UiContext,
 ): Promise<Response> => {
@@ -969,7 +878,7 @@ export const wizardPanel: UiHandler = async (
   const form = ctx.form ?? new FormData();
   const op = String(form.get("op") ?? "");
   if (!Object.hasOwn(OPS, op)) {
-    return jsonResponse({ ok: false, reason: `unknown wizard operation "${op}"` }, 400);
+    return jsonResponse({ ok: false, reason: `unknown setup operation "${op}"` }, 400);
   }
   const outcome = await OPS[op](ctx, survey, form);
   if (ctx.json) return respond(ctx, survey, outcome);

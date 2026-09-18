@@ -84,6 +84,7 @@ export const devCommand: CommandSpec = {
 
 export const buildCommand: CommandSpec = {
   name: "build",
+  envTier: "production",
   summary: "Build for production",
   loadsModules: true,
   positionals: [{ name: "dir", help: "Project directory (default: .)" }],
@@ -96,6 +97,7 @@ export const buildCommand: CommandSpec = {
 
 export const exportCommand: CommandSpec = {
   name: "export",
+  envTier: "production",
   summary: "Static export (SSG) to out/",
   loadsModules: true,
   positionals: [{ name: "dir", help: "Project directory (default: .)" }],
@@ -147,6 +149,7 @@ function markProduction(): void {
 
 export const startCommand: CommandSpec = {
   name: "start",
+  envTier: "production",
   summary: "Serve a production build",
   loadsModules: true,
   flags: SERVE_FLAGS,

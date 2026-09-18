@@ -34,6 +34,7 @@ import {
   type ProviderEndpoints,
   resolveProviderEndpoints,
 } from "./discovery.ts";
+import { emailKey } from "./email-key.ts";
 import { emitAuthEvent } from "./events.ts";
 import {
   exchangeCodeForTokens,
@@ -315,7 +316,12 @@ export async function resolveSessionUser(
   try {
     // The linking rules read only the two fields `LinkingProvider` names, which is what
     // lets the credentials route — whose provider has neither concept — share them.
-    return await resolveSignInUser(ctx.options, provider as OAuthProvider, profile, account);
+    return await resolveSignInUser(
+      ctx.options,
+      provider as OAuthProvider,
+      keyedProfile(ctx, profile),
+      account,
+    );
   } catch (error) {
     if (!accountNotLinkedCode(error)) throw error;
     ctx.options.logger.error(
@@ -324,6 +330,19 @@ export async function resolveSessionUser(
     );
     return undefined;
   }
+}
+
+/**
+ * `profile` with its email in the one spelling the adapters key on ({@link emailKey}), so
+ * the match-by-email step finds the record a credentials sign-up or a magic link made for
+ * `a@bücher.de` / `a@xn--bcher-kva.de` — through a custom adapter as much as a bundled
+ * one — and a record this sign-in creates is keyed the way the emailed flows key theirs.
+ * Without an adapter the profile IS the session user and passes through untouched.
+ */
+function keyedProfile(ctx: AuthRouteContext, profile: AuthUser): AuthUser {
+  if (!ctx.options.adapter || typeof profile.email !== "string") return profile;
+  const email = emailKey(profile.email);
+  return email === profile.email ? profile : { ...profile, email };
 }
 
 /**

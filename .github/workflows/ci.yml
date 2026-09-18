@@ -1,13 +1,25 @@
 name: CI
 
+# All work lands on `development` (see AGENTS.md → Releasing); `main` only ever receives the
+# development → main merge PR at a release. Triggering on `main` alone meant an rc could be
+# tagged from sixty commits none of which had been through CI. So every push to `development`
+# runs the fast `check` job; the three heavy jobs (integration builds, real-npm next-compat,
+# the coverage re-run of the whole suite) stay on pull requests and `main`, where they gate
+# the release merge — a dozen pushes a day to the working branch would otherwise queue an
+# hour of runners each. A newer push to `development` cancels the run of the one before it;
+# `main` and PR runs are never cancelled.
 on:
   push:
-    branches: [main]
+    branches: [main, development]
   pull_request:
     branches: [main]
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/development' }}
 
 jobs:
   # Fast feedback: formatting, lint, type-check, the unit test suite, and doc
@@ -65,6 +77,8 @@ jobs:
   # Split out so it runs in parallel with `check` instead of extending it.
   integration:
     runs-on: ubuntu-latest
+    # Heavy: PRs and `main` only (see the trigger comment at the top).
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v5
 
@@ -90,6 +104,8 @@ jobs:
   # npm-React compat regressions early. Runs in parallel with `check`/`integration`.
   next-compat:
     runs-on: ubuntu-latest
+    # Heavy: PRs and `main` only (see the trigger comment at the top).
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v5
 
@@ -120,6 +136,8 @@ jobs:
   # (currently 80%; baseline ~84-86%). Parallel with the other jobs.
   coverage:
     runs-on: ubuntu-latest
+    # Heavy: PRs and `main` only (see the trigger comment at the top).
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v5
 

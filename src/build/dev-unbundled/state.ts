@@ -33,7 +33,7 @@ export const DEP_ENTRYPOINTS: Record<string, string> = {
   "denext_client-runtime": "src/client/client-runtime.ts",
   "denext_devtools": "src/devtools.ts",
   // `feature()` calls are folded at build, but the IMPORT stays in the module (and nothing is
-  // folded without `experimental.features`), so a "use client" file importing it needs the dep.
+  // folded without `features`), so a "use client" file importing it needs the dep.
   "denext_feature": "src/feature.ts",
   // The Capacitor-shell client runtime — imported only from "use client" modules.
   "denext_mobile": "src/mobile/mod.ts",
@@ -105,7 +105,7 @@ export interface UnbundledDevOptions {
   /** Class-component runtime flag, threaded into the react→denext runtime prebuild. */
   classComponents?: boolean;
   /**
-   * Compile-time feature flags (`experimental.features`). Folded into each first-party module
+   * Compile-time feature flags (`features`). Folded into each first-party module
    * in dev too, so `feature("KEY")` behaves the same in dev as in a build (dev doesn't need
    * the DCE, only the value parity). Empty/absent → nothing folded.
    */

@@ -18,12 +18,13 @@
 // a budget or a broken config degrades into `timedOut` / `error` — data, not a failure — so the
 // listing (and the exit code) is the same shape for every caller.
 
-import type {
-  CommandContext,
-  CommandRegistry,
-  CommandSpec,
-  FlagSpec,
-  PositionalSpec,
+import {
+  type CommandContext,
+  type CommandRegistry,
+  type CommandSpec,
+  type FlagSpec,
+  plainText,
+  type PositionalSpec,
 } from "../command.ts";
 import { writeCommandCache } from "../command-cache.ts";
 import { COMMAND_LOAD_BUDGET_MS, loadPluginCommands } from "../plugin-commands.ts";
@@ -117,20 +118,31 @@ function printNotices(listing: CommandListing, timeoutMs: number): void {
     );
   }
   if (listing.error !== undefined) {
-    console.log(`  project verbs not listed: denext.config could not be read — ${listing.error}`);
+    console.log(
+      `  project verbs not listed: denext.config could not be read — ${plainText(listing.error)}`,
+    );
   }
 }
 
-/** The project half of the human listing: one padded row per verb, with where it came from. */
+/**
+ * The project half of the human listing: one padded row per verb, with where it came from.
+ * Names and summaries are the project's own text and the terminal is the sink, so they are
+ * printed through `plainText` — a summary is not a place to carry an escape sequence.
+ */
 function printProject(listing: CommandListing): void {
   if (listing.project.length === 0) {
     console.log("\nProject commands: none — see https://denext.dev/docs/plugins#project-commands");
     return;
   }
-  const width = Math.max(...listing.project.map((info) => info.name.length)) + 3;
-  console.log(`\nProject commands (${listing.project.length}):`);
-  for (const info of listing.project) {
-    console.log(`  denext ${info.name.padEnd(width)}${info.summary}  [${origin(info)}]`);
+  const rows = listing.project.map((info) => ({
+    name: plainText(info.name),
+    summary: plainText(info.summary),
+    origin: origin(info),
+  }));
+  const width = Math.max(...rows.map((row) => row.name.length)) + 3;
+  console.log(`\nProject commands (${rows.length}):`);
+  for (const row of rows) {
+    console.log(`  denext ${row.name.padEnd(width)}${row.summary}  [${row.origin}]`);
   }
 }
 

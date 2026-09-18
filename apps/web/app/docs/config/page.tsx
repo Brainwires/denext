@@ -5,7 +5,7 @@ import { MarkdownDoc } from "../../../components/markdown.tsx";
 export const metadata = {
   title: "Configuration",
   description:
-    "Every field of denext.config.ts — routing, rendering mode, images, caching, security, compatibility, plugins, and experimental features.",
+    "Every field of denext.config.ts — routing, rendering mode, images, caching, security, compatibility, plugins, and the build-time switches.",
 };
 
 export default async function Config() {

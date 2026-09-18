@@ -7,6 +7,8 @@
 // become a command.
 
 import { denoExecutable, frameworkFileUrl } from "../build/bundle.ts";
+import { isStandaloneBinary, pinnedDenextCli } from "../cli/self-exec.ts";
+import { VERSION } from "../../mod.ts";
 
 /**
  * How much of a *streamed* run's output is kept in memory. A streaming caller consumes every
@@ -38,22 +40,80 @@ export interface RunDenoOptions {
  * precedence over `-A` (and refuses listening as well as connecting); `--cached-only` covers the
  * module loader, which the net permission does not govern — without it a child would still
  * download an uncached import.
+ *
+ * What neither flag reaches is a GRANDCHILD: `-A` grants `--allow-run`, and a process the child
+ * spawns starts with whatever permissions the OS gives it, not Deno's. That is why the discovery
+ * children add {@linkcode DENY_RUN} — see {@linkcode cliInvocation}.
  */
 const OFFLINE_FLAGS: readonly string[] = ["--deny-net", "--cached-only"];
 
 /**
- * The argv prefix that runs this framework's own CLI as a child process — under whatever
- * scheme denext itself was loaded from, so a checkout runs its `cli.ts` and an installed copy
- * runs the JSR one.
- *
- * @param options `offline`: `denext ui --offline` — the child may neither open a socket nor
- *   download a module.
- * @returns `["run", "-A", "<framework>/cli.ts"]` (with `--deny-net --cached-only` after `-A`
- *   when offline), to be spread before the verb and its flags.
+ * What closes the grandchild gap for a child that only READS the project: `--deny-run` takes
+ * precedence over `-A`, so a `denext.config.ts` (or a plugin `setup()`) evaluated inside
+ * `denext commands --json` or `denext task --list --json` cannot reach the network through a
+ * `curl` of its own. Those verbs never spawn anything themselves, so nothing legitimate is lost.
  */
-export function cliInvocation(options: { readonly offline?: boolean } = {}): string[] {
+const DENY_RUN: readonly string[] = ["--deny-run"];
+
+/** Options for {@linkcode cliInvocation}. */
+export interface CliInvocationOptions {
+  /** `denext ui --offline`: the child may neither open a socket nor download a module. */
+  readonly offline?: boolean;
+  /**
+   * The project the child will act on, which decides WHICH denext a compiled binary hands it
+   * (see {@linkcode cliModule}).
+   */
+  readonly dir?: string;
+  /**
+   * Under `offline`, also refuse the child every subprocess (`--deny-run`). For a DISCOVERY
+   * child — one that evaluates the project's config and prints a listing — so that config cannot
+   * route around `--deny-net` by spawning. Never for a verb run or `denext doctor`: a project
+   * verb may legitimately spawn (a `seed` that shells out), and doctor's route conformance runs
+   * `deno` itself; those children keep `-A`, and the panel says so.
+   */
+  readonly denyRun?: boolean;
+}
+
+/**
+ * The argv prefix that runs a denext CLI as a child process — under whatever scheme denext
+ * itself was loaded from, so a checkout runs its `cli.ts` and an installed copy runs the JSR
+ * one.
+ *
+ * @param options See {@linkcode CliInvocationOptions}.
+ * @returns `["run", "-A", "<cli module>"]` (with `--deny-net --cached-only` after `-A` when
+ *   offline, then `--deny-run` when `denyRun` too), to be spread before the verb and its flags.
+ */
+export function cliInvocation(options: CliInvocationOptions = {}): string[] {
   const offline = options.offline === true ? OFFLINE_FLAGS : [];
-  return ["run", "-A", ...offline, frameworkFileUrl("cli.ts")];
+  const denyRun = options.offline === true && options.denyRun === true ? DENY_RUN : [];
+  return ["run", "-A", ...offline, ...denyRun, cliModule(options.dir)];
+}
+
+/**
+ * The module a child `deno run` should load as the CLI.
+ *
+ * Normally that is this framework's own `cli.ts`, under whatever scheme denext was loaded from.
+ * Inside a `deno compile`d binary there is no such file: `import.meta.url` was baked in at
+ * compile time and names the BUILD machine's checkout, which does not exist on the machine the
+ * binary was shipped to, so the child loads a JSR specifier instead.
+ *
+ * WHICH version it loads follows the rule the binary's own verbs follow (`maybeReexecPinned` in
+ * cli.ts): the project's pin wins. `ui` is deliberately not a `loadsModules` verb, so the UI
+ * process never defers on its own — without this the UI would run a project's verbs under the
+ * binary's framework rather than the one the project pins, which is the exact substitution that
+ * rule exists to prevent. Only a directory pinning no denext falls back to the binary's version.
+ *
+ * Under `--offline` a JSR specifier resolves only if it is already in the module cache: a binary
+ * on a machine that never fetched that version fails loudly instead of reaching the network,
+ * which is the guarantee `--offline` is making.
+ *
+ * @param dir The project the child will act on, when the caller knows it.
+ * @returns The module specifier for the child.
+ */
+function cliModule(dir?: string): string {
+  if (!isStandaloneBinary()) return frameworkFileUrl("cli.ts");
+  const pinned = dir === undefined ? null : pinnedDenextCli(dir);
+  return pinned ?? `jsr:@denext/denext@${VERSION}/cli`;
 }
 
 /** The outcome of a {@linkcode runDeno} call. */

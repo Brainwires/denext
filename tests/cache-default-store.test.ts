@@ -3,9 +3,10 @@
 // falls back to the in-memory store otherwise — so pre-publish these assert the fallback
 // path and the config/latch behavior; the SQLite path is validated in Phase 2 once the
 // package publishes. Run with `deno test -A`.
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import {
   type CacheStore,
+  cacheStoreKind,
   chooseCacheStore,
   type DataEntry,
   getCacheStore,
@@ -79,4 +80,77 @@ Deno.test("resolveDefaultCacheStore: an explicit store wins — resolution is a 
     explicit,
     "a default resolution must never override an explicitly-set store",
   );
+});
+
+Deno.test("chooseCacheStore: an unwritable sqlite path falls back to memory with ONE boot line naming the path and the grant", async () => {
+  // The prod symptom this guards: `denext start` without `--allow-write=.denext` silently
+  // ran on the per-process store while /_denext/health said the cache was fine. The path
+  // here is inside a plain FILE, so node:sqlite cannot create its parent directory.
+  const tmp = Deno.makeTempDirSync({ prefix: "denext-cache-unwritable-" });
+  const blocker = `${tmp}/not-a-dir`;
+  Deno.writeTextFileSync(blocker, "");
+  const path = `${blocker}/cache.db`;
+  const original = console.warn;
+  const warned: string[] = [];
+  console.warn = (...args: unknown[]) => warned.push(args.map(String).join(" "));
+  try {
+    const store = await chooseCacheStore({ path });
+    await assertFunctional(store, "fallback-key"); // still a working (memory) store
+  } finally {
+    console.warn = original;
+    Deno.removeSync(tmp, { recursive: true });
+  }
+  assertEquals(warned.length, 1, "exactly one line");
+  assertStringIncludes(warned[0], `durable node:sqlite cache unavailable at ${path}`);
+  assertStringIncludes(warned[0], "--allow-write=.denext");
+  assertStringIncludes(warned[0], 'cache: { store: "memory" }');
+});
+
+Deno.test("cacheStoreKind: sqlite for the durable default, memory for the fallback/explicit memory, custom for the app's own", async () => {
+  const tmp = Deno.makeTempDirSync({ prefix: "denext-cache-kind-" });
+  const saved = getCacheStore();
+  try {
+    setCacheStore(await chooseCacheStore({ path: `${tmp}/cache.db` }));
+    assertEquals(cacheStoreKind(), "sqlite");
+    setCacheStore(await chooseCacheStore({ store: "memory" }));
+    assertEquals(cacheStoreKind(), "memory");
+    setCacheStore(inMemoryCacheStore());
+    assertEquals(cacheStoreKind(), "memory");
+    const custom: CacheStore = {
+      getData: () => undefined,
+      setData: () => {},
+      getPage: () => undefined,
+      setPage: () => {},
+      deleteByTag: () => {},
+      deleteByPath: () => {},
+    };
+    setCacheStore(custom);
+    assertEquals(cacheStoreKind(), "custom");
+  } finally {
+    setCacheStore(saved);
+    Deno.removeSync(tmp, { recursive: true });
+  }
+});
+
+Deno.test("/_denext/health reports the store kind, so a silent fallback to memory is visible from the probe", async () => {
+  // The prod handler in front of createApp serves the probe itself; a bare ProjectPaths
+  // (no config) is all it reads for it. The body keeps `cache` (reachability) and adds
+  // `cacheStore` (what backs it).
+  const { createProdHandler } = await import("../src/build/prod-server/handler.ts");
+  const handler = createProdHandler(
+    { config: null } as unknown as Parameters<typeof createProdHandler>[0],
+    "/nonexistent-client-dir",
+    "",
+    false,
+    () => Promise.resolve(new Response("app")),
+  );
+  const saved = getCacheStore();
+  try {
+    setCacheStore(inMemoryCacheStore());
+    const res = await handler(new Request("http://localhost/_denext/health"));
+    assertEquals(res.status, 200);
+    assertEquals(await res.json(), { status: "ok", cache: "ok", cacheStore: "memory" });
+  } finally {
+    setCacheStore(saved);
+  }
 });

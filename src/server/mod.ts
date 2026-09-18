@@ -237,6 +237,7 @@ export {
   type SpaDesktopConfig,
   type SpaProxyConfig,
   type TailwindConfig,
+  type TasksConfig,
 } from "./config.ts";
 export { defineConfig } from "./define-config.ts";
 
@@ -308,7 +309,7 @@ export type { Session, SessionOptions } from "./session.ts";
 export { absoluteUrl, type OriginOptions, requestOrigin } from "./absolute-url.ts";
 
 // Instrumentation (instrumentation.ts): register() + onRequestError().
-export { type Instrumentation } from "./instrumentation.ts";
+export { type Instrumentation, type OnRequest } from "./instrumentation.ts";
 export type {
   InstrumentationRequest,
   OnRequestError,

@@ -34,7 +34,12 @@ const SPAWN_TIMEOUT_MS = 120_000;
 const DISCOVERY_TIMEOUT_MS = "60000";
 
 /** How long a signalled server gets to drain and exit. */
-const SHUTDOWN_TIMEOUT_MS = 5_000;
+// A failure bound, not a latency claim, for the same reason as `SPAWN_TIMEOUT_MS`: an idle
+// machine drains in well under a second, but `test:integration` runs this file `--parallel`
+// beside build tests, and a starved child's signal handler can wait many seconds for a turn
+// of its event loop. What the tests assert is that ONE signal drains the server; how fast is
+// not their subject, and a tight bound here has aborted releases on a loaded machine.
+const SHUTDOWN_TIMEOUT_MS = 120_000;
 
 /** The project's config — the fixture the config editor writes into. */
 const CONFIG = `// the app's own config — this comment must survive every write
@@ -51,12 +56,19 @@ export default {
 const PAGES = [
   "/",
   "/config",
+  "/config/routing",
+  "/config/rendering",
+  "/config/security",
+  "/config/advanced",
   "/config/next",
+  "/config/cron",
   "/plugins",
   "/plugins/options",
   "/generate",
   "/docker",
-  "/wizard",
+  "/setup",
+  "/dev",
+  "/tasks",
   "/commands",
 ];
 
@@ -64,12 +76,19 @@ const PAGES = [
 const API_TWINS = [
   "/api/overview",
   "/api/config",
+  "/api/config/routing",
+  "/api/config/rendering",
+  "/api/config/security",
+  "/api/config/advanced",
   "/api/config/next",
+  "/api/config/cron",
   "/api/plugins",
   "/api/plugins/options",
   "/api/generate",
   "/api/docker",
-  "/api/wizard",
+  "/api/setup",
+  "/api/dev",
+  "/api/tasks",
   "/api/commands",
 ];
 
@@ -546,8 +565,9 @@ async function checkUnauthenticated(ui: Ui): Promise<void> {
 }
 
 /**
- * The `?t=` exchange: a 302 to the same path with the query stripped, and the token parked in an
- * `HttpOnly; SameSite=Strict` cookie. Also picks the CSRF token out of the page's `<meta>`.
+ * The `?t=` exchange: a 302 to the overview, and a freshly minted secret — never the launch
+ * token, which a loopback cookie would otherwise carry to every other local server — parked in
+ * an `HttpOnly; SameSite=Strict` cookie. Also picks the CSRF token out of the page's `<meta>`.
  */
 async function handshake(ui: Ui): Promise<void> {
   const res = await fetch(`${ui.base}/?t=${ui.token}`, { redirect: "manual" });
@@ -558,7 +578,8 @@ async function handshake(ui: Ui): Promise<void> {
   assertStringIncludes(setCookie, "HttpOnly");
   assertStringIncludes(setCookie, "SameSite=Strict");
   ui.cookie = setCookie.split(";")[0];
-  assertStringIncludes(ui.cookie, ui.token);
+  assert(!ui.cookie.includes(ui.token), "the cookie is a separate secret, not the launch token");
+  assert(ui.cookie.split("=")[1].length >= 43, "and carries 256 bits of entropy");
 
   const home = await authed(ui, "/");
   assertEquals(home.status, 200);
@@ -650,20 +671,27 @@ async function exists(path: string): Promise<boolean> {
  */
 async function checkConfigWrite(ui: Ui): Promise<void> {
   const path = join(ui.dir, "denext.config.ts");
-  const form = await (await authed(ui, "/config")).text();
+  const form = await (await authed(ui, "/config/routing")).text();
   assertMatch(form, /name="basePath"[^>]*value="\/docs"/);
+  // A browser form carries the file's `_base` stamp; without it the editor refuses (400), so
+  // the POST sends the stamp the rendered form holds, exactly as a browser would.
+  const base = fieldValue(form, "_base");
 
-  const preview = await mutate(ui, "/config?section=basePath", { basePath: "/site" });
+  const preview = await mutate(ui, "/config?section=basePath", { basePath: "/site", _base: base });
   assertEquals(await statusOf(preview), 200, "the first POST only previews");
   assertEquals(await Deno.readTextFile(path), CONFIG, "a preview never touches the file");
 
   const applied = await mutate(ui, "/config?section=basePath", {
     basePath: "/site",
+    _base: base,
     confirm: "1",
   });
   await applied.body?.cancel();
   assertEquals(applied.status, 303);
-  assertEquals(applied.headers.get("location"), "/config#basePath");
+  // The General tab, which is where a scalar lives: `#basePath` used to name the <details> that
+  // wrapped the key, and nothing collapses any more. The write lands on the field it changed,
+  // not merely on the view containing it.
+  assertEquals(applied.headers.get("location"), "/config/routing?key=general");
   assertEquals(
     await Deno.readTextFile(path),
     CONFIG.replace('"/docs"', '"/site"'),
@@ -769,7 +797,9 @@ async function checkOptionsStale(ui: Ui, confirm: Record<string, string>): Promi
  */
 async function checkComposeEdit(ui: Ui): Promise<void> {
   const file = join(ui.dir, "docker-compose.yml");
-  const base = fieldValue(await getText(ui, "/docker"), "_base");
+  // `_base` is a hidden field of the compose-editor forms, so it is rendered by the view that
+  // carries them: the regeneration form on Files has no file stamp of its own.
+  const base = fieldValue(await getText(ui, "/docker?tab=services"), "_base");
   assertEquals(base, await sha256(COMPOSE), "the service form carries the file's stamp");
   const preview = await send(ui, "/docker", {
     editor: "compose",
@@ -790,7 +820,12 @@ async function checkComposeEdit(ui: Ui): Promise<void> {
   assertStringIncludes(unescapeHtml(preview.text), '+      - "8080:3000" # host:container');
   const confirm = confirmFields(preview.text, ["editor", "_base", "ops", "confirm"]);
   const applied = await send(ui, "/docker", confirm);
-  assertEquals([applied.status, applied.location], [303, "/docker?saved=compose"]);
+  // The Docker panel is three views now, so a compose write lands back on the one it came from
+  // rather than on the regeneration form at the top of a single long page.
+  assertEquals(
+    [applied.status, applied.location],
+    [303, "/docker?tab=services&saved=compose"],
+  );
   assertEquals(
     changedLines(COMPOSE, await Deno.readTextFile(file)),
     [[5, '      - "8080:3000" # host:container']],
@@ -806,7 +841,8 @@ async function checkOpaqueCompose(ui: Ui): Promise<void> {
   const compose = twin.files.find((entry: { path: string }) => entry.path === "docker-compose.yml");
   assertEquals(compose?.state, "opaque");
   assertEquals(twin.model, null);
-  const html = await getText(ui, "/docker");
+  // The editor — and so its refusal to follow this file — lives under Services.
+  const html = await getText(ui, "/docker?tab=services");
   assertStringIncludes(html, "the editor cannot follow it line by line: the file does not parse");
   assertEquals(inputTags(html, "editor").length, 0, "an opaque file gets no editor form");
 

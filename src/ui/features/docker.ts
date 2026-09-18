@@ -33,6 +33,8 @@ import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode } from "../../jsx/types.ts";
 import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
 import {
+  Badge,
+  type BadgeTone,
   CsrfField,
   DiffBlock,
   FileDetails,
@@ -40,10 +42,58 @@ import {
   Panel,
   type ResultGroup,
   ResultList,
+  Tabs,
 } from "../components.ts";
 import { renderView } from "../view.ts";
 import { writeFileAtomic } from "../security.ts";
 import { composeJson, composeSection, composeSubmit, isComposeSubmit } from "./docker-compose.ts";
+
+/**
+ * The panel's three views. The page used to stack all of them — the three files' states, the
+ * regeneration form, every service's form, and the named volumes/networks — which is a lot of
+ * unrelated machinery to scroll past to reach the one thing you came for.
+ *
+ * `files` is the default, so a bare `/docker` is the regeneration panel it has always been.
+ */
+const DOCKER_TABS = ["files", "services", "names"] as const;
+
+/** One of {@linkcode DOCKER_TABS}. */
+type DockerTab = typeof DOCKER_TABS[number];
+
+/** What each tab is called in the strip. */
+const TAB_LABEL: Record<DockerTab, string> = {
+  files: "Files",
+  services: "Services",
+  names: "Names",
+};
+
+/**
+ * Which view this request is for: `?tab=`, or `files` when it says nothing recognisable.
+ *
+ * A compose write redirects with `?tab=services&saved=compose`. Any `?saved=` selects the
+ * services view even without `?tab=`, so a link saved before this split — or one that drops the
+ * tab — still lands on the editor that produced it rather than on the regeneration form.
+ *
+ * @param ctx The request context.
+ * @returns The tab to render.
+ */
+function tabOf(ctx: UiContext): DockerTab {
+  const asked = ctx.url.searchParams.get("tab");
+  if (DOCKER_TABS.includes(asked as DockerTab)) return asked as DockerTab;
+  return ctx.url.searchParams.has("saved") ? "services" : "files";
+}
+
+/** The tab strip, with the current view marked. */
+function DockerTabs({ tab }: { readonly tab: DockerTab }): VNode {
+  return h(Tabs, {
+    items: DOCKER_TABS.map((name) => ({
+      href: name === "files" ? "/docker" : `/docker?tab=${name}`,
+      label: TAB_LABEL[name],
+    })),
+    active: tab === "files" ? "/docker" : `/docker?tab=${tab}`,
+    label: "Docker views",
+  });
+}
 
 /** The port the form suggests (and the templates' own default). */
 const DEFAULT_PORT = 3000;
@@ -60,6 +110,14 @@ const MODE_LABEL: Record<DockerMode, string> = {
  * file the editor cannot follow (several documents, …), shown read-only.
  */
 type FileState = "absent" | "generated" | "edited" | "opaque";
+
+/** How each state reads: absent is a to-do, a hand-edit is a fact, opaque is a caution. */
+const STATE_TONE: Record<FileState, BadgeTone> = {
+  absent: "todo",
+  generated: "ok",
+  edited: "info",
+  opaque: "warn",
+};
 
 /** What each state means, next to the file's name. */
 const STATE_LABEL: Record<FileState, string> = {
@@ -271,8 +329,16 @@ const panelResponse = panelResponder("Docker", "/docker");
  * fragment to swap in place. The compose editor block is read fresh from disk each time.
  */
 async function respond(state: PanelState, ctx: UiContext, status = 200): Promise<Response> {
-  const compose = await composeSection(ctx, renderCompose(optionsOf(state.values, state.mode)));
-  return panelResponse(ctx, renderView(h(DockerPanel, { state, compose })), status);
+  const tab = tabOf(ctx);
+  const compose = tab === "files"
+    ? null
+    : await composeSection(ctx, renderCompose(optionsOf(state.values, state.mode)), tab);
+  return panelResponse(
+    ctx,
+    renderView(h(DockerPanel, { state, compose, tab })),
+    status,
+    `Docker · ${TAB_LABEL[tab]}`,
+  );
 }
 
 // ── options ──────────────────────────────────────────────────────────────────
@@ -381,20 +447,32 @@ interface ViewProps {
 
 /** The whole `<section id="panel">` — the piece `ui.js` swaps. */
 function DockerPanel(
-  { state, compose }: { readonly state: PanelState; readonly compose: VNode },
+  { state, compose, tab }: {
+    readonly state: PanelState;
+    readonly compose: VNode | null;
+    readonly tab: DockerTab;
+  },
 ): VNode {
   const results = state.written?.length || state.refused?.length;
+  // A refusal or a result belongs to the view whose form raised it, and both submits post from
+  // Files — so they render there. The compose editor renders its own refusals through `compose`.
   return h(
     Panel,
     { name: "Docker", title: "Docker" },
     h(PanelLead, { dir: state.dir }),
-    state.error ? h(Note, null, `denext ui: ${state.error}`) : null,
+    h(DockerTabs, { tab }),
+    state.error ? h(Note, { tone: "warn" }, `denext ui: ${state.error}`) : null,
     state.notice ?? null,
-    h(FileStates, { files: state.files }),
-    h(DockerForm, { state }),
-    state.previewed ? h(PreviewList, { files: state.files }) : null,
-    results ? h(ResultList, { groups: resultGroups(state) }) : null,
-    compose,
+    tab === "files"
+      ? h(
+        Fragment,
+        null,
+        h(FileStates, { files: state.files }),
+        h(DockerForm, { state }),
+        state.previewed ? h(PreviewList, { files: state.files }) : null,
+        results ? h(ResultList, { groups: resultGroups(state) }) : null,
+      )
+      : compose,
   );
 }
 
@@ -417,7 +495,8 @@ function PanelLead({ dir }: { readonly dir: string }): VNode {
     " for ",
     mono(dir),
     ". Files you have edited by hand are never overwritten — their diff is shown so you can " +
-      "copy it across, and a compose file's services can be edited in place below.",
+      "copy it across; an existing compose file's services are edited in place under Services. ",
+    h("a", { href: "https://denext.dev/docs/ui#docker" }, "Docker ↗"),
   );
 }
 
@@ -429,7 +508,7 @@ function FileStates({ files }: { readonly files: readonly FileView[] }): VNode {
       { key: file.path },
       h("code", null, file.path),
       " ",
-      h("span", { class: "badge" }, STATE_LABEL[file.state]),
+      h(Badge, { tone: STATE_TONE[file.state] }, STATE_LABEL[file.state]),
     )
   );
   return h(Fragment, null, h("h2", null, "Current files"), h("ul", null, rows));
@@ -449,7 +528,7 @@ function DockerForm({ state }: ViewProps): VNode {
       { type: "submit", name: "confirm", value: "1", class: "ghost", disabled: state.readOnly },
       "Write files",
     ),
-    state.readOnly ? h(Note, null, "Read-only mode — writing is refused.") : null,
+    state.readOnly ? h(Note, { tone: "warn" }, "Read-only mode — writing is refused.") : null,
   );
 }
 
@@ -508,11 +587,22 @@ function PreviewList({ files }: { readonly files: readonly FileView[] }): VNode 
 function FilePreview({ file }: { readonly file: FileView }): VNode {
   return h(
     FileDetails,
-    { path: file.path, badge: previewBadge(file), open: file.diff !== undefined },
+    {
+      path: file.path,
+      badge: previewBadge(file),
+      tone: previewTone(file),
+      open: file.diff !== undefined,
+    },
     file.diff === undefined
       ? h(Note, null, "Identical to what is on disk.")
       : h(DiffBlock, { diff: file.diff }),
   );
+}
+
+/** How a preview reads: a caution when the write would refuse, else a pending change. */
+function previewTone(file: FileView): BadgeTone {
+  if (file.diff === undefined) return "info";
+  return file.state === "edited" || file.state === "opaque" ? "warn" : "todo";
 }
 
 /** What a write would do to one file, as its preview badge says. */

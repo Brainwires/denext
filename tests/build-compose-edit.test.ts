@@ -4,6 +4,7 @@ import {
   applyComposeEdits,
   type ComposeOp,
   type ComposeService,
+  inspectCompose,
   readCompose,
 } from "../src/build/compose-edit.ts";
 import { renderCompose } from "../src/build/docker-template.ts";
@@ -81,6 +82,43 @@ Deno.test("readCompose: unsupported shapes are opaque (null)", () => {
       "volumes: {}\n", // no services
     ]
   ) assertEquals(readCompose(text), null, text);
+});
+
+/**
+ * An alias bomb: nine anchors, each a list of nine aliases of the one before, hung on a service
+ * field. Under 600 bytes, and `@std/yaml` parses it in milliseconds — but anything that walks
+ * the parse as a tree visits 9^9 nodes, which is what used to hold the UI for ten seconds and
+ * then throw "Invalid string length".
+ */
+function aliasBomb(levels = 9, width = 9): string {
+  let text = 'x-a0: &a0 ["lol"]\n';
+  for (let i = 1; i < levels; i++) {
+    text += `x-a${i}: &a${i} [${Array(width).fill(`*a${i - 1}`).join(", ")}]\n`;
+  }
+  return `${text}services:\n  web:\n    image: nginx\n    environment: *a${levels - 1}\n`;
+}
+
+Deno.test("an alias bomb is opaque within a second, with the reason, not a hang or a throw", () => {
+  const bomb = aliasBomb();
+  assert(bomb.length < 600, "the bomb is small");
+  const started = performance.now();
+  const { model, reason } = inspectCompose(bomb);
+  assertEquals(model, null);
+  assertStringIncludes(reason ?? "", "expand to more than 10000 nodes");
+  assertStringIncludes(reason ?? "", "cannot follow");
+  assertEquals(readCompose(bomb), null);
+  const refused = refusal(bomb, [{ op: "set", service: "web", field: "image", value: "x" }]);
+  assertStringIncludes(refused, "expand to more than");
+  assert(performance.now() - started < 1000, "the three reads together stay under a second");
+
+  // The cap is on EXPANSION, not on the use of aliases: a file that repeats one anchor a few
+  // times is well inside it and still edits.
+  const modest = aliasBomb(3, 3);
+  assert(readCompose(modest) !== null, "a modest alias tree is still modelled");
+  assertStringIncludes(
+    edit(modest, [{ op: "set", service: "web", field: "image", value: "x" }]),
+    "image: x",
+  );
 });
 
 Deno.test("mixed line endings: each line keeps its break; a new line takes its neighbour's", () => {

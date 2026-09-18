@@ -11,6 +11,7 @@
     "jsr:@deno/wasmbuild@*": "0.23.0",
     "jsr:@deno/wasmbuild@0.23.0": "0.23.0",
     "jsr:@luca/esbuild-deno-loader@0.11": "0.11.1",
+    "jsr:@luca/esbuild-deno-loader@0.11.1": "0.11.1",
     "jsr:@std/assert@1": "1.0.19",
     "jsr:@std/async@1": "1.5.0",
     "jsr:@std/bytes@^1.0.2": "1.0.6",
@@ -1603,7 +1604,7 @@
     "members": {
       "packages/content-collections": {
         "dependencies": [
-          "jsr:@denext/denext@^2.5.0-rc.6",
+          "jsr:@denext/denext@^2.5.0",
           "jsr:@std/front-matter@1",
           "jsr:@std/fs@1",
           "jsr:@std/path@1",
@@ -1612,13 +1613,13 @@
       },
       "packages/effect": {
         "dependencies": [
-          "jsr:@denext/denext@^2.5.0-rc.6",
+          "jsr:@denext/denext@^2.5.0",
           "npm:effect@^3.22.0"
         ]
       },
       "packages/graphql": {
         "dependencies": [
-          "jsr:@denext/denext@^2.5.0-rc.6",
+          "jsr:@denext/denext@^2.5.0",
           "jsr:@std/path@1",
           "npm:graphql-yoga@^5.10.0",
           "npm:graphql@^16.9.0"
@@ -1626,25 +1627,25 @@
       },
       "packages/htmx": {
         "dependencies": [
-          "jsr:@denext/denext@^2.5.0-rc.6",
+          "jsr:@denext/denext@^2.5.0",
           "jsr:@std/path@1"
         ]
       },
       "packages/openapi": {
         "dependencies": [
-          "jsr:@denext/denext@^2.5.0-rc.6",
+          "jsr:@denext/denext@^2.5.0",
           "jsr:@std/path@1"
         ]
       },
       "packages/pages-router": {
         "dependencies": [
-          "jsr:@denext/denext@^2.5.0-rc.6",
+          "jsr:@denext/denext@^2.5.0",
           "jsr:@std/path@1"
         ]
       },
       "packages/react-router": {
         "dependencies": [
-          "jsr:@denext/denext@^2.5.0-rc.6",
+          "jsr:@denext/denext@^2.5.0",
           "jsr:@std/fs@1",
           "jsr:@std/path@1"
         ]

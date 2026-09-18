@@ -274,9 +274,10 @@ function GeneratePanel({ state }: ViewProps): VNode {
       { class: "lead" },
       "Scaffold a route, boundary, component, API handler, action, task, test or Docker setup into ",
       h("span", { class: "mono" }, state.dir),
-      ".",
+      ". ",
+      h("a", { href: "https://denext.dev/docs/ui#generate" }, "Generate ↗"),
     ),
-    state.error ? h(Note, null, `denext generate: ${state.error}`) : null,
+    state.error ? h(Note, { tone: "warn" }, `denext generate: ${state.error}`) : null,
     h(GenerateForm, { state }),
     results(state),
   );
@@ -327,7 +328,7 @@ function GenerateForm({ state }: ViewProps): VNode {
       { type: "submit", name: "op", value: "apply", class: "ghost", disabled: state.readOnly },
       "Write files",
     ),
-    state.readOnly ? h(Note, null, "Read-only mode — writing is refused.") : null,
+    state.readOnly ? h(Note, { tone: "warn" }, "Read-only mode — writing is refused.") : null,
   );
 }
 

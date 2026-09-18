@@ -161,9 +161,16 @@ class StreamFlightRenderer extends VNodeRenderer<Dual> implements IslandRenderer
     const parentScope = this.ids.scope;
     const boundaryScope = enterScope(parentScope);
     // The id is captured in closure, so a rejected boundary still reports it (ok:false):
-    // its shell fallback stays and the rest of the stream is unaffected.
+    // its shell fallback stays and the rest of the stream is unaffected. A control signal
+    // thrown in the hole resolves to its replacement instead (`resolveHoleSignal`): a
+    // client-side redirect carries no Flight (the client is leaving), a signal boundary's
+    // UI carries its own so the tail Flight hydrates what was streamed.
+    const holeScope = rootScope(scopePrefix(boundaryScope));
     this.active.add(
-      this.resolve(props.children as VNodeChildren, scopes, rootScope(scopePrefix(boundaryScope)))
+      this.resolve(props.children as VNodeChildren, scopes, holeScope)
+        .catch((err) =>
+          this.resolveHoleSignal(err, scopes, holeScope, (html) => ({ html, flight: null }))
+        )
         .then((d) => {
           this.holes.set(id, d.flight);
           return { id, html: d.html, flight: d.flight, ok: true };

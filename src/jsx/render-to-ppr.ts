@@ -26,7 +26,7 @@ import type { VNode, VNodeChild, VNodeChildren } from "./types.ts";
 import { setDispatcher } from "../runtime/hooks.ts";
 import { isPostpone } from "../runtime/postpone.ts";
 import { escapeHtml, type HeadCollector, type ProviderScope } from "./render-to-string.ts";
-import { type IdScope, scopePrefix } from "./tree-id.ts";
+import { type IdScope, rootScope, scopePrefix } from "./tree-id.ts";
 import { holeClose, holeOpen, hostAttrs, renderHostHtml } from "./render-shared.ts";
 import { type PprMode, PprVNodeRenderer } from "./renderer-base.ts";
 
@@ -109,10 +109,16 @@ class PPRRenderer extends PprVNodeRenderer<string> {
     scopes: ProviderScope[],
     boundaryScope: IdScope,
   ): string {
+    // A control signal thrown in the hole (`redirect()`, `notFound()`, …) can't unwind the
+    // cached shell that already flushed: the sub-renderer resolves it to the hole's
+    // replacement instead (see `resolveHoleSignal`).
+    const prefix = scopePrefix(boundaryScope);
+    const sub = new PPRRenderer("buffered", null, new Set(), prefix);
+    const html = sub.resolveChildren(children, scopes)
+      .catch((err) => sub.resolveHoleSignal(err, scopes, rootScope(prefix), (h) => h));
     // The hole's promise is consumed later by the streamer; a rejection between creation and
     // that consumer must not surface as an unhandled rejection (which crashes the process
     // under Deno's default handler). The consumer still observes it through its own handler.
-    const html = this.renderBuffered(children, scopes, scopePrefix(boundaryScope));
     html.catch(() => {});
     this.holes.push({ id, html });
     return `<div data-dnx-b="${id}"></div>`;

@@ -4,11 +4,14 @@
 //   - `register()`      — run once when the server boots (set up tracing,
 //                         metrics, error reporting, DB pools, etc.);
 //   - `onRequestError(error, request, context)` — called for each server-side
-//                         error while handling a request (report to Sentry/etc.).
-// Both may be async and are optional; either may be a named export or a property
+//                         error while handling a request (report to Sentry/etc.);
+//   - `onRequest(info)`  — called once after every response with its method, path,
+//                         status and duration (request metrics / a custom access log).
+// All may be async and are optional; each may be a named export or a property
 // of the module's default export.
 
 import { toFileUrl } from "@std/path";
+import type { RequestLogInfo } from "./app-config.ts";
 
 /**
  * Context passed to {@linkcode OnRequestError} describing where the error
@@ -54,12 +57,22 @@ export type OnRequestError = (
   context: RequestErrorContext,
 ) => void | Promise<void>;
 
+/**
+ * The `onRequest` export: per-request observability, called once after every response
+ * with the method, path, final status, duration and request id (a denext extension —
+ * Next has no equivalent; it is the same hook a custom server passes to `createApp()`).
+ * A throw from it is swallowed: observability never breaks the response.
+ */
+export type OnRequest = (info: RequestLogInfo) => void;
+
 /** The shape of a project's `instrumentation` module. */
 export interface Instrumentation {
   /** Run once when the server starts. */
   register?: RegisterFn;
   /** Called for each server-side error during request handling. */
   onRequestError?: OnRequestError;
+  /** Called once after every response, with its method, path, status and duration. */
+  onRequest?: OnRequest;
 }
 
 /**
@@ -81,6 +94,7 @@ export async function loadInstrumentation(path: string | null): Promise<Instrume
     return {
       register: mod.register ?? mod.default?.register,
       onRequestError: mod.onRequestError ?? mod.default?.onRequestError,
+      onRequest: mod.onRequest ?? mod.default?.onRequest,
     };
   } catch (err) {
     console.error("denext: failed to load instrumentation module", err);

@@ -9,7 +9,8 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { startUiServer, type UiServer } from "../src/ui/server.ts";
-import { deriveCsrf, UI_COOKIE, UI_CSRF_FIELD, UI_CSRF_HEADER } from "../src/ui/security.ts";
+import { UI_CSRF_FIELD, UI_CSRF_HEADER } from "../src/ui/security.ts";
+import { uiHandshake } from "./helpers/ui-session.ts";
 import { generatePanel } from "../src/ui/features/generate.ts";
 import type { UiContext } from "../src/ui/html.ts";
 import { GENERATE_KINDS } from "../src/build/generate.ts";
@@ -19,6 +20,9 @@ interface Harness {
   server: UiServer;
   base: string;
   dir: string;
+  /** The session cookie the handshake minted (never the launch token). */
+  cookie: string;
+  /** The CSRF token derived from that cookie. */
   csrf: string;
   exits: number[];
   restore: () => void;
@@ -30,11 +34,13 @@ async function ui(options: { readOnly?: boolean } = {}): Promise<Harness> {
   await Deno.mkdir(join(dir, "app"), { recursive: true });
   const server = await startUiServer({ dir, port: 0, readOnly: options.readOnly });
   const exit = stubExit();
+  const { cookie, csrf } = await uiHandshake(server);
   return {
     server,
     dir,
     base: `http://127.0.0.1:${server.port}`,
-    csrf: await deriveCsrf(server.token),
+    cookie,
+    csrf,
     exits: exit.calls,
     restore: exit.restore,
   };
@@ -48,7 +54,7 @@ async function stop(h: Harness): Promise<void> {
 
 /** A `GET` past the token gate. */
 function get(h: Harness, path: string, accept?: string): Promise<Response> {
-  const headers: Record<string, string> = { cookie: `${UI_COOKIE}=${h.server.token}` };
+  const headers: Record<string, string> = { cookie: h.cookie };
   if (accept) headers.accept = accept;
   return fetch(`${h.base}${path}`, { headers });
 }
@@ -62,7 +68,7 @@ function post(h: Harness, path: string, fields: Record<string, string>): Promise
     method: "POST",
     redirect: "manual",
     headers: {
-      cookie: `${UI_COOKIE}=${h.server.token}`,
+      cookie: h.cookie,
       origin: h.base,
       [UI_CSRF_HEADER]: h.csrf,
     },
@@ -272,7 +278,7 @@ Deno.test("the JSON twin accepts a JSON body as well as a form", async () => {
     const res = await fetch(`${h.base}/api/generate`, {
       method: "POST",
       headers: {
-        cookie: `${UI_COOKIE}=${h.server.token}`,
+        cookie: h.cookie,
         origin: h.base,
         [UI_CSRF_HEADER]: h.csrf,
         "content-type": "application/json",

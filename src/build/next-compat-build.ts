@@ -267,7 +267,7 @@ export interface BuildNextCompatClientOptions {
    */
   catalogPackages?: string[];
   /**
-   * `experimental.nodeResolve`: resolve every bare npm specifier from `node_modules`
+   * `nodeResolve`: resolve every bare npm specifier from `node_modules`
    * (supersedes {@link catalogPackages}). Forwarded to
    * {@link BundleNextCompatModulesOptions.resolveAllNodeModules}.
    */

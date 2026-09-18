@@ -86,6 +86,51 @@ function serializeRef(value: unknown): ScalarResult | null {
   return { kind: "value", value: { $: "ch", i: value.denextChannelId } };
 }
 
+// ---- Dropped function props (dev warning) ---------------------------------------------------
+
+/** `<owner>.<prop>` pairs already warned about, so a re-render doesn't repeat the warning. */
+const warnedDroppedFns = new Set<string>();
+
+/**
+ * A callable that cannot cross the server→client boundary: any function that is not a
+ * server action or a qrl (those cross as references — see {@link serializeRef}).
+ */
+function isDroppedFunction(value: unknown): boolean {
+  return typeof value === "function" && serializeRef(value) === null;
+}
+
+/**
+ * Dev-only warning, once per (owner, prop): a Server Component passed a plain function — an
+ * `onClick`, a render callback — to a client component or a host element of a Flight tree.
+ * Functions are not serializable, so the prop is dropped and the handler never runs: Next's
+ * "Event handlers cannot be passed to Client Component props", which denext used to turn
+ * into a button that does nothing. A server action / qrl / channel crosses as a reference
+ * and never warns; `children`/`key`/`ref` are structural and never serialize as props. The
+ * warning goes through the console like every SSR dev warning, which the dev server
+ * captures into the black box (`denext_dev_logs`) and prints to the terminal.
+ *
+ * @param owner The receiving component's display name or host tag, as `<Name>`.
+ * @param props The props as the Server Component authored them.
+ */
+export function warnDroppedFunctionProps(owner: string, props: Record<string, unknown>): void {
+  if ((globalThis as { __denextDev?: boolean }).__denextDev !== true) return;
+  for (const [name, value] of Object.entries(props)) {
+    if (name === "children" || name === "key" || name === "ref") continue;
+    if (!isDroppedFunction(value)) continue;
+    const key = `${owner}.${name}`;
+    if (warnedDroppedFns.has(key)) continue;
+    // Bound the set so per-request-varying owners can't leak; it may then re-warn.
+    if (warnedDroppedFns.size >= 256) warnedDroppedFns.clear();
+    warnedDroppedFns.add(key);
+    console.warn(
+      `denext: ${owner} received a function as its "${name}" prop from a Server Component. ` +
+        `Functions cannot cross to the client, so the prop was dropped and the handler will ` +
+        `never run. Pass a Server Action ("use server") instead, or move the handler into a ` +
+        `"use client" component. (dev-only warning)`,
+    );
+  }
+}
+
 /** A finite number is itself; NaN / ±Infinity / -0 (which JSON turns into null / 0) are tagged. */
 function serializeNumber(n: number): FlightValue {
   if (Number.isFinite(n) && !Object.is(n, -0)) return n;

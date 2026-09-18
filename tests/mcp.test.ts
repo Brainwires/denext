@@ -336,7 +336,12 @@ Deno.test("fetchDevState: reads .denext/dev.json and fetches the running server'
     await Deno.mkdir(`${dir}/.denext`, { recursive: true });
     await Deno.writeTextFile(
       `${dir}/.denext/dev.json`,
-      JSON.stringify({ origin: `http://127.0.0.1:${port}`, port, hostname: "127.0.0.1" }),
+      JSON.stringify({
+        origin: `http://127.0.0.1:${port}`,
+        port,
+        hostname: "127.0.0.1",
+        pid: 4242,
+      }),
     );
     const state = await fetchDevState(dir);
     assertEquals(state?.events[0].message, "kaboom");

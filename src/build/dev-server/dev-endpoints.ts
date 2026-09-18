@@ -110,7 +110,12 @@ export async function devLogResponse(st: DevState, request: Request): Promise<Re
 
 const EVENT_KINDS: readonly DevEventKind[] = ["error", "console", "request", "hmr"];
 
-/** GET /_denext/dev-state — the recent dev events (server errors + browser console). */
+/**
+ * GET /_denext/dev-state — the recent dev events (server errors + browser console), plus the
+ * server's identity (`pid`, `projectDir`). The identity is what lets an out-of-process reader
+ * that found this origin through `.denext/dev.json` prove the server answering is the one that
+ * file describes, before it signals the pid the file names (`src/ui/dev-stop.ts`).
+ */
 export function devStateResponse(st: DevState, url: URL): Response {
   const kindParam = url.searchParams.get("kind") as DevEventKind | null;
   const kind = kindParam && EVENT_KINDS.includes(kindParam) ? kindParam : undefined;
@@ -118,6 +123,8 @@ export function devStateResponse(st: DevState, url: URL): Response {
   return Response.json({
     events: st.devEvents.snapshot({ kind, limit }),
     total: st.devEvents.size,
+    pid: Deno.pid,
+    projectDir: st.paths.projectDir,
   });
 }
 

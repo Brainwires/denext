@@ -26,12 +26,18 @@
 //
 // Under `denext ui --offline` both children — discovery and every run — start with `--deny-net
 // --cached-only` after `-A` (`proc.ts`): a verb can neither open a socket nor download a module.
+// Discovery adds `--deny-run`, because evaluating the config is all it does and a config that
+// spawned could reach the network through a grandchild. A run keeps `--allow-run` — a project
+// verb may legitimately shell out — so what THAT verb spawns is outside the flags, and the
+// panel's offline note says so.
 
 import { type FlagSpec, GLOBAL_FLAGS, type PositionalSpec } from "../../cli/command.ts";
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode } from "../../jsx/types.ts";
 import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
 import {
+  Badge,
+  FilterForm,
   Hidden,
   Input,
   type InputProps,
@@ -43,6 +49,8 @@ import {
   Table,
 } from "../components.ts";
 import { Raw, renderView } from "../view.ts";
+import { matchesTerms, matchNote } from "../filter.ts";
+import { parseJsonDocument } from "../child-json.ts";
 import { field, opButton } from "../form/control.ts";
 import { applyListOp, OP_FIELD, parseOp } from "../form/value.ts";
 import { broadcast, exitLine, sseProcess } from "../events.ts";
@@ -56,7 +64,8 @@ const DOCS = "https://denext.dev/docs/plugins#project-commands";
 
 /** What the panel says under `--offline`. */
 const OFFLINE_NOTE = "Offline — every verb runs with --deny-net --cached-only: it can neither " +
-  "open a socket nor download a module.";
+  "open a socket nor download a module. A verb may still spawn processes of its own, and " +
+  "those are not covered by these flags.";
 
 /**
  * How long the whole discovery subprocess may take by default before the panel gives up on it.
@@ -199,16 +208,7 @@ export interface CommandListing {
  * @returns The parsed listing, or `null` when there was no parsable document.
  */
 export function parseListing(output: string): CommandListing | null {
-  const lines = output.split("\n").map((line) => line.replace(/\r$/, ""));
-  const open = lines.indexOf("{");
-  const close = lines.lastIndexOf("}");
-  if (open < 0 || close < open) return null;
-  try {
-    const parsed = JSON.parse(lines.slice(open, close + 1).join("\n"));
-    return parsed !== null && typeof parsed === "object" ? parsed as CommandListing : null;
-  } catch {
-    return null;
-  }
+  return parseJsonDocument<CommandListing>(output);
 }
 
 /** Built-ins first, then the project's own verbs — the order the panel and the JSON twin use. */
@@ -228,7 +228,7 @@ function flatten(listing: CommandListing): UiCommandList {
 async function discover(dir: string, offline: boolean): Promise<UiCommandList> {
   const lines: string[] = [];
   const argv = [
-    ...cliInvocation({ offline }),
+    ...cliInvocation({ offline, dir, denyRun: true }),
     "commands",
     "--json",
     "--timeout",
@@ -266,7 +266,8 @@ function cacheable(list: UiCommandList): boolean {
  * for {@linkcode LIST_TTL_MS}; a timeout or a failure is never cached.
  *
  * @param dir The project directory.
- * @param offline `denext ui --offline`: the discovery child runs `--deny-net --cached-only`.
+ * @param offline `denext ui --offline`: the discovery child runs `--deny-net --cached-only
+ *   --deny-run`.
  * @returns The verb list, plus whether discovery was cut short by the budget or a bad config.
  */
 export function listCommands(dir: string, offline = false): Promise<UiCommandList> {
@@ -478,8 +479,8 @@ function PositionalControl(
       disabled: view.readOnly,
     });
   const label = spec.variadic ? `${spec.name}…` : spec.name;
-  const badge = spec.required ? "required" : undefined;
-  return h(Raw, { html: field({ id, label, help: spec.help, badge, body: renderView(body) }) });
+  const badges = spec.required ? [{ text: "required" }] : [];
+  return h(Raw, { html: field({ id, label, help: spec.help, badges, body: renderView(body) }) });
 }
 
 /**
@@ -608,7 +609,7 @@ function VerbCard({ info, view }: VerbProps): VNode {
       null,
       h("code", null, `denext ${info.name}`),
       " ",
-      h("span", { class: "badge" }, info.source),
+      h(Badge, { tone: "info" }, info.source),
     ),
     h("p", null, info.summary),
     info.usage ? h("pre", { class: "mono" }, info.usage) : null,
@@ -679,13 +680,31 @@ type PanelProps = {
   readonly view: View;
   /** The finished run's output lines (empty on a plain page load). */
   readonly output: readonly string[];
+  /** The `?q=` filter over verb name and summary (`""` for none). */
+  readonly query: string;
 };
+
+/**
+ * Whether a verb matches a search: its name or its one-line summary, every term having to match
+ * something. `denext` ships 29 built-ins, so the reference is most of this page — a filter is how
+ * you find the one you meant without reading all of them.
+ *
+ * @param info The verb.
+ * @param query The raw `?q=` value.
+ * @returns Whether to show it.
+ */
+function verbMatches(info: UiCommandInfo, query: string): boolean {
+  return matchesTerms(`${info.name} ${info.summary}`, query);
+}
 
 /**
  * The panel `<section>` — the piece `ui.js` swaps. Its one `pre.out` (after the groups) is the
  * sink `ui.js` streams a run's output into.
  */
-function CommandsPanel({ list, view, output }: PanelProps): VNode {
+function CommandsPanel({ list, view, output, query }: PanelProps): VNode {
+  const commands = query === ""
+    ? list.commands
+    : list.commands.filter((info) => verbMatches(info, query));
   return h(
     Panel,
     { name: "Commands", title: "Commands" },
@@ -697,12 +716,14 @@ function CommandsPanel({ list, view, output }: PanelProps): VNode {
       " — from denext.config.ts or a plugin's addCommand. ",
       h("a", { href: DOCS }, "Project commands ↗"),
     ),
+    h(FilterForm, { action: PATH, query, label: "Filter verbs" }),
     h(Notices, { list }),
     view.notice === undefined ? null : h(Note, { role: "alert" }, view.notice),
-    view.offline ? h(Note, null, OFFLINE_NOTE) : null,
-    GROUPS.map((group) =>
-      h(VerbGroup, { key: group.source, group, commands: list.commands, view })
-    ),
+    view.offline ? h(Note, { tone: "warn" }, OFFLINE_NOTE) : null,
+    query === ""
+      ? null
+      : h("p", { class: "filter-note" }, matchNote(commands.length, query, "verb")),
+    GROUPS.map((group) => h(VerbGroup, { key: group.source, group, commands, view })),
     h("h2", null, "Output"),
     h(Out, null, output.join("\n")),
   );
@@ -726,7 +747,12 @@ function panelResponse(
     held,
     notice: refused?.notice,
   };
-  return respond(ctx, renderView(h(CommandsPanel, { list, view, output })), refused?.status);
+  const query = (ctx.url.searchParams.get("q") ?? "").trim();
+  return respond(
+    ctx,
+    renderView(h(CommandsPanel, { list, view, output, query })),
+    refused?.status,
+  );
 }
 
 /**
@@ -840,7 +866,7 @@ function runArgv(info: UiCommandInfo, dir: string, read: Read, offline: boolean)
     flagArgs(flag, read(flagKey(flag.name)))
   );
   const positionals = positionalArgs(info.positionals, read);
-  return [...cliInvocation({ offline }), info.name, "--cwd", dir, ...flags, ...positionals];
+  return [...cliInvocation({ offline, dir }), info.name, "--cwd", dir, ...flags, ...positionals];
 }
 
 /** The run's argv, or the 422 that names the field it refused. */

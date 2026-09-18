@@ -1,9 +1,16 @@
 // The client auth surface: `SessionProvider`/`useSession` (SSR seeding, the mount fetch,
 // the `mfa-required` status), `session.update()`, the `refetchInterval` poll and the
-// window-focus refetch, and `signIn({ redirect: false })`.
+// window-focus refetch, `signIn({ redirect: false })`, and `signIn({ credentials })`'s
+// `{ ok, … }` result (a refusal resolves; only a network failure or a non-JSON answer rejects).
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { type ClientSession, SessionProvider, signIn, useSession } from "denext";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import {
+  type ClientSession,
+  type CredentialsSignInResult,
+  SessionProvider,
+  signIn,
+  useSession,
+} from "denext";
 import { h } from "denext/jsx-runtime";
 import { render, waitFor } from "denext/testing";
 
@@ -192,6 +199,67 @@ Deno.test("signIn({ credentials }) POSTs to the callback endpoint and resolves w
   } finally {
     globalThis.fetch = real;
   }
+});
+
+/** `signIn("credentials", …)` against one stubbed callback answer. */
+async function attempt(answer: Response | Promise<Response>): Promise<CredentialsSignInResult> {
+  const stubbed = stubResponses(() => answer);
+  try {
+    return await signIn("credentials", { credentials: { email: "a@x.test", password: "pw" } });
+  } finally {
+    stubbed.restore();
+  }
+}
+
+Deno.test("signIn({ credentials }): a refusal resolves { ok: false, error, status } instead of rejecting", async () => {
+  // The server's `error` text is generic by design; the code comes from the status.
+  const wrong = await attempt(Response.json({ error: "invalid credentials" }, { status: 401 }));
+  assertEquals(wrong, { ok: false, error: "invalid_credentials", status: 401 });
+
+  const denied = await attempt(Response.json({ error: "access denied" }, { status: 403 }));
+  assertEquals(denied, { ok: false, error: "access_denied", status: 403 });
+
+  const down = await attempt(Response.json({ error: "unavailable" }, { status: 503 }));
+  assertEquals(down, { ok: false, error: "unavailable", status: 503 });
+
+  const unknown = await attempt(Response.json({ error: "unknown provider" }, { status: 404 }));
+  assertEquals(unknown, { ok: false, error: "rejected", status: 404 });
+
+  const pending = await attempt(Response.json({ ok: true, mfa: "required" }));
+  assertEquals(pending, { ok: true, mfa: "required" }, "a pending second factor is not a refusal");
+});
+
+Deno.test("signIn({ credentials }): a 429 resolves 'throttled' with retryAfter from Retry-After", async () => {
+  const throttled = await attempt(
+    new Response(JSON.stringify({ error: "too many attempts" }), {
+      status: 429,
+      headers: { "content-type": "application/json", "retry-after": "17" },
+    }),
+  );
+  assertEquals(throttled, { ok: false, error: "throttled", status: 429, retryAfter: 17 });
+
+  const unsaid = await attempt(Response.json({ error: "too many attempts" }, { status: 429 }));
+  assert(!unsaid.ok && unsaid.error === "throttled");
+  assertEquals(unsaid.retryAfter, 60, "no Retry-After header: the one-minute default");
+});
+
+Deno.test("signIn({ credentials }): a network failure or a non-JSON answer still rejects", async () => {
+  await assertRejects(
+    () => attempt(Promise.reject(new TypeError("network down"))),
+    TypeError,
+    "network down",
+  );
+  await assertRejects(
+    () => attempt(new Response("<h1>Bad Gateway</h1>", { status: 502 })),
+    Error,
+    "sign in failed: 502",
+  );
+  // No auth mounted at basePath: an HTML 404 describes the endpoint, not the attempt.
+  await assertRejects(
+    () => attempt(new Response("<h1>Not Found</h1>", { status: 404 })),
+    Error,
+    "sign in failed: 404",
+  );
 });
 
 Deno.test("signIn/signOut: a foreign or javascript: callbackUrl is coerced to a same-origin path", async () => {

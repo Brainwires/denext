@@ -36,7 +36,17 @@ import { createUnifiedDiff } from "../../build/patch-diff.ts";
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChild, VNodeChildren } from "../../jsx/types.ts";
 import { jsonResponse, panelResponder, type UiContext } from "../html.ts";
-import { DiffBlock, Note, OpForm, Out, Panel, PreviewLead, Row } from "../components.ts";
+import {
+  Badge,
+  type BadgeTone,
+  DiffBlock,
+  Note,
+  OpForm,
+  Out,
+  Panel,
+  PreviewLead,
+  Row,
+} from "../components.ts";
 import { Raw, type RawHtml, renderView } from "../view.ts";
 import { control, field as labelled, opButton } from "../form/control.ts";
 import { OP_FIELD, parseOp } from "../form/value.ts";
@@ -163,9 +173,23 @@ async function readSnapshot(dir: string): Promise<Snapshot> {
   } catch {
     return { name, model: null, base: "" };
   }
-  const { model, reason } = inspectCompose(text);
+  const { model, reason } = inspect(text);
   const base = await stampOf(text);
   return reason === undefined ? { name, text, model, base } : { name, text, model, reason, base };
+}
+
+/**
+ * {@linkcode inspectCompose}, with a throw read as one more way the editor cannot follow the
+ * file. The reader caps alias expansion itself; this is the guard for whatever it did not
+ * foresee, so a file crafted against the parser is an opaque file shown read-only, never a 500.
+ */
+function inspect(text: string): ReturnType<typeof inspectCompose> {
+  try {
+    return inspectCompose(text);
+  } catch (err) {
+    const why = err instanceof Error ? err.message : String(err);
+    return { model: null, reason: `reading it failed (${why})` };
+  }
 }
 
 /**
@@ -187,6 +211,14 @@ export async function composeJson(
 /** Whether `value` is a plain object. */
 function isRecord(value: unknown): value is Dict {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Whether this POST is a browser form submit to the panel itself — the requests every rendered
+ * form makes — as opposed to the `/api/docker` twin, which a script drives with either body.
+ */
+function isBrowserForm(ctx: UiContext): boolean {
+  return ctx.form !== undefined && !ctx.json;
 }
 
 /** Read posted fields from the form body, else from the JSON body. */
@@ -212,8 +244,20 @@ export function isComposeSubmit(ctx: UiContext): boolean {
   return getter(ctx)(EDITOR_FIELD) === EDITOR_VALUE;
 }
 
-/** The file, when it can be edited against the stamp the page was rendered with. */
-function editableFile(snap: Snapshot, base: string): Editable | Blocked {
+/**
+ * The file, when it can be edited against the stamp the page was rendered with.
+ *
+ * A browser form always carries `_base` (every editor form is rendered with it), so a form
+ * without one is not a form this page rendered — a stale or hand-built post — and is refused
+ * rather than let through unchecked. Only the `/api/docker` twin may omit the stamp: a script
+ * that has just read the file has no rendered page to be stale against.
+ *
+ * @param snap The file as it stands on disk.
+ * @param base The posted stamp (`""` when none was posted).
+ * @param stampRequired Whether an absent stamp is a refusal (a browser form) or an opt-out
+ * (the JSON twin).
+ */
+function editableFile(snap: Snapshot, base: string, stampRequired: boolean): Editable | Blocked {
   if (snap.text === undefined) {
     return {
       reason: `there is no ${snap.name} to edit — write the Docker files first`,
@@ -223,6 +267,13 @@ function editableFile(snap: Snapshot, base: string): Editable | Blocked {
   if (snap.model === null) {
     return {
       reason: `${snap.name} is read-only here — the editor cannot follow it: ${snap.reason}`,
+      status: 400,
+    };
+  }
+  if (base === "" && stampRequired) {
+    return {
+      reason: `this form carries no ${BASE_FIELD} stamp, so it cannot be checked against the ` +
+        `${snap.name} on disk — nothing was written. Reload the page and re-apply your change.`,
       status: 400,
     };
   }
@@ -256,7 +307,7 @@ export async function composeSubmit(
       ? Promise.resolve(jsonResponse({ ok: false, reason, model: snap.model, diff }, status))
       : refusePanel(h(Refusal, { reason, diff }), status);
   if (write && ctx.readOnly) return await deny("read-only", 403);
-  const file = editableFile(snap, get(BASE_FIELD) ?? get("base") ?? "");
+  const file = editableFile(snap, get(BASE_FIELD) ?? get("base") ?? "", isBrowserForm(ctx));
   if ("reason" in file) return await deny(file.reason, file.status);
   const ops = requestedOps(ctx, get, file.model);
   if (typeof ops === "string") return await deny(ops, 400);
@@ -282,7 +333,7 @@ export async function composeSubmit(
   if (ctx.json) return jsonResponse(outcome);
   return new Response(null, {
     status: 303,
-    headers: { location: `/docker?saved=${EDITOR_VALUE}` },
+    headers: { location: `/docker?tab=services&saved=${EDITOR_VALUE}` },
   });
 }
 
@@ -975,7 +1026,7 @@ function ComposePreview({ name, csrf, readOnly, base, ops, outcome }: PreviewPro
     outcome.diff
       ? h(OpForm, { csrf, action: "/docker", label, fields, disabled: readOnly })
       : h(Note, null, "Nothing to change — the file already reads this way."),
-    h("p", null, h("a", { href: "/docker#compose" }, "Back to the Docker panel")),
+    h("p", null, h("a", { href: "/docker?tab=services" }, "Back to the Docker panel")),
   );
 }
 
@@ -987,25 +1038,39 @@ function ComposePreview({ name, csrf, readOnly, base, ops, outcome }: PreviewPro
  * @param regenerated What the template would write for the panel's current options.
  * @returns The block's element tree.
  */
-export async function composeSection(ctx: UiContext, regenerated: string): Promise<VNode> {
+export async function composeSection(
+  ctx: UiContext,
+  regenerated: string,
+  view: ComposeView = "services",
+): Promise<VNode> {
   const snap = await readSnapshot(ctx.dir);
   return h(
     Fragment,
     null,
     h("h2", { id: "compose" }, `Edit ${snap.name}`),
-    composeBody(ctx, snap, regenerated),
+    composeBody(ctx, snap, regenerated, view),
   );
 }
 
+/** Which half of the editor to render: the services, or the top-level names they refer to. */
+export type ComposeView = "services" | "names";
+
 /** The block under the heading, by what is on disk: nothing, an opaque file, or an editable one. */
-function composeBody(ctx: UiContext, snap: Snapshot, regenerated: string): VNode {
+function composeBody(
+  ctx: UiContext,
+  snap: Snapshot,
+  regenerated: string,
+  view: ComposeView,
+): VNode {
   if (snap.text === undefined) {
     return h(
       "p",
       { class: "lead" },
       "There is no ",
       h("code", null, snap.name),
-      " yet — write the Docker files above, then edit its services here.",
+      " yet — write the Docker files under ",
+      h("a", { href: "/docker" }, "Files"),
+      ", then edit its services here.",
     );
   }
   if (snap.model === null) {
@@ -1014,6 +1079,7 @@ function composeBody(ctx: UiContext, snap: Snapshot, regenerated: string): VNode
   }
   return h(ComposeEditor, {
     ctx,
+    view,
     file: { name: snap.name, text: snap.text, model: snap.model, base: snap.base },
   });
 }
@@ -1051,10 +1117,46 @@ interface EditorProps {
   readonly file: Editable;
 }
 
-/** A parseable file: the notices, then one form per service in source order. */
-function ComposeEditor({ ctx, file }: EditorProps): VNode {
+/**
+ * A parseable file: the notices that describe the whole file, then the half this view asks for.
+ *
+ * The notices (saved, sentinel, read-only) and the warnings are deliberately on BOTH views: an
+ * undeclared volume is raised by a service and fixed under Names, so hiding it on either side
+ * would hide it from exactly the person about to act on it.
+ *
+ * `?service=` narrows the services list to one — every service form already posts its own name,
+ * so this only filters what is rendered, and source order is kept when it is absent.
+ */
+function ComposeEditor({ ctx, file, view }: EditorProps & { readonly view: ComposeView }): VNode {
   const saved = ctx.url.searchParams.get("saved") === EDITOR_VALUE;
-  const services = file.model.services;
+  const only = ctx.url.searchParams.get("service");
+  const services = only === null
+    ? file.model.services
+    : file.model.services.filter((svc) => svc.name === only);
+  const notices = h(
+    Fragment,
+    null,
+    saved ? h(Note, { tone: "ok" }, `Saved ${file.name}.`) : null,
+    file.model.sentinel ? h(SentinelNote, null) : null,
+    ctx.readOnly ? h(Note, { tone: "warn" }, "Read-only mode — editing is refused.") : null,
+    h(Warnings, { warnings: [...volumeWarnings(file.model), ...networkWarnings(file.model)] }),
+  );
+  if (view === "names") {
+    return h(
+      Fragment,
+      null,
+      h(
+        "p",
+        { class: "lead" },
+        "The top-level named volumes and networks a service may refer to. Declaring one here " +
+          "does not attach it to anything — a service joins it under ",
+        h("a", { href: "/docker?tab=services" }, "Services"),
+        ".",
+      ),
+      notices,
+      h(DeclarationsForm, { ctx, file }),
+    );
+  }
   return h(
     Fragment,
     null,
@@ -1064,15 +1166,16 @@ function ComposeEditor({ ctx, file }: EditorProps): VNode {
       "Edit services in place: only the lines an edit touches change — comments and " +
         "everything else stay byte for byte. Every change is previewed as a diff first.",
     ),
-    saved ? h(Note, null, `Saved ${file.name}.`) : null,
-    file.model.sentinel ? h(SentinelNote, null) : null,
-    ctx.readOnly ? h(Note, null, "Read-only mode — editing is refused.") : null,
-    h(Warnings, { warnings: [...volumeWarnings(file.model), ...networkWarnings(file.model)] }),
+    notices,
+    only !== null && services.length === 0
+      ? h(Note, { role: "alert" }, `No service named "${only}" in ${file.name}.`)
+      : null,
     services.length
       ? services.map((svc) => h(ServiceForm, { key: svc.name, ctx, file, svc }))
-      : h("p", { class: "lead" }, "No services."),
+      : only === null
+      ? h("p", { class: "lead" }, "No services.")
+      : null,
     h(AddServiceForm, { ctx, file }),
-    h(DeclarationsForm, { ctx, file }),
   );
 }
 
@@ -1108,7 +1211,7 @@ function AddServiceForm({ ctx, file }: EditorProps): VNode {
     h(
       Row,
       null,
-      h("h3", { class: "grow", style: "margin:0" }, "Add a service"),
+      h("h3", { class: "grow flush" }, "Add a service"),
       h(SubmitButton, {
         value: "addService",
         label: "Preview new service",
@@ -1147,7 +1250,7 @@ function DeclarationsForm({ ctx, file }: EditorProps): VNode {
     h(
       Row,
       null,
-      h("h3", { class: "grow", style: "margin:0" }, "Named volumes and networks"),
+      h("h3", { class: "grow flush" }, "Named volumes and networks"),
       h(SubmitButton, { value: "apply", label: "Preview changes", disabled }),
     ),
     list("volumes", "volume"),
@@ -1203,9 +1306,10 @@ function SubmitButton({ value, label, disabled, ghost }: SubmitProps): VNode {
 
 /** The service heading with its buttons (first in the form, so Enter previews). */
 function HeadRow(
-  { svc, badge, children }: {
+  { svc, badge, tone, children }: {
     readonly svc: ComposeService;
     readonly badge: string;
+    readonly tone?: BadgeTone;
     readonly children?: VNodeChildren;
   },
 ): VNode {
@@ -1214,10 +1318,10 @@ function HeadRow(
     null,
     h(
       "h3",
-      { class: "grow", style: "margin:0" },
+      { class: "grow flush" },
       h("code", null, svc.name),
       " ",
-      h("span", { class: "badge" }, badge),
+      h(Badge, { tone }, badge),
     ),
     children,
   );
@@ -1238,7 +1342,7 @@ function CommentedService(
     null,
     h(
       HeadRow,
-      { svc, badge: `commented out · line ${svc.line}` },
+      { svc, badge: `commented out · line ${svc.line}`, tone: "info" },
       h(SubmitButton, { value: "toggle", label: "Enable", disabled }),
       h(SubmitButton, { value: "removeService", label: "Remove", disabled, ghost: true }),
     ),
@@ -1264,7 +1368,7 @@ function ActiveService(props: ServiceProps & { readonly id: string }): VNode {
     null,
     h(
       HeadRow,
-      { svc, badge: `line ${svc.line}` },
+      { svc, badge: `line ${svc.line}`, tone: "ok" },
       h(SubmitButton, { value: "apply", label: "Preview changes", disabled }),
       h(SubmitButton, { value: "toggle", label: "Comment out", disabled, ghost: true }),
       h(SubmitButton, { value: "removeService", label: "Remove", disabled, ghost: true }),
@@ -1422,7 +1526,7 @@ function ListEditor(
     "fieldset",
     null,
     h("legend", null, legend),
-    rows.length ? rows : h("p", { class: "lead", style: "margin:0 0 6px" }, "none"),
+    rows.length ? rows : h("p", { class: "lead flush-sm" }, "none"),
     add,
   );
 }

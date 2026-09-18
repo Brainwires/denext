@@ -25,7 +25,11 @@ emit correct denext instead of Next.js.
    `app/layout.tsx`, `app/loading.tsx`, `app/error.tsx`, `app/not-found.tsx`,
    `app/api/x/route.ts`, `app/blog/[slug]/page.tsx`, `middleware.ts`. Server
    Components by default; add `"use client"` at the top of a file for
-   interactivity.
+   interactivity. Keep hooks and event handlers in that `"use client"` file and
+   render it from the page — a `page.tsx`/layout that calls a hook itself turns
+   the whole route into a client bundle (a compatibility path for migrated apps),
+   and that build fails the moment the route reaches a server-only module such as
+   `lib/db.ts`.
 4. **Async Server Components work**
    (`export default async function Page() { const d =
    await db.query(); ... }`).
@@ -247,15 +251,20 @@ export default {
 };
 // `denext seed` — same flag parsing, --help and did-you-mean as a built-in. List this
 // project's own verbs with `denext commands [--json]`; they are in shell completions too.
-// `denext --help` shows only the built-ins, because help never imports your config.
+// `denext --help` lists them from the cache `denext commands` wrote (`.denext/commands.json`,
+// fingerprinted against denext.config.* / deno.json / deno.lock) without importing your
+// config; before the first run, or once one of those files changes, it points at `denext commands`.
 ```
 
 **A GUI over the project:** `denext ui` serves a loopback (127.0.0.1) project-management
 page — schema-driven `denext.config.ts` editing (a comment-preserving splice: outside the
-value span it replaces, the file keeps its bytes), plugins with option forms for the
-first-party ones and JSR search, every `generate` kind, Docker files plus in-place
-`docker-compose.yml` editing, a
-setup wizard and the project's own verbs. It works with JavaScript disabled, and
+value span it replaces, the file keeps its bytes), a Cron page (every schedule, when it
+next fires, an editor with a shape builder, and run history when `tasks.history` is on),
+plugins with option forms for the first-party ones and JSR search, every `generate` kind,
+Docker files plus in-place `docker-compose.yml` editing, a Desktop panel that composes the
+signing setup from the identities the keychain holds, a Setup page that readies a fresh
+clone, a Dev page that starts and stops the dev server, a Tasks page for the scripts
+`deno.json` declares, and the project's own verbs. It works with JavaScript disabled, and
 **project code never runs in the UI's process** — every project-touching operation,
 including verb discovery (`denext commands --json`), is a `deno` subprocess.
 `--read-only` prevents writes by the UI, not execution of your config inside that
@@ -282,7 +291,10 @@ Open the connection once at module scope; do writes in Server Actions.
 `denext.config.ts` (`scheduledTasks`) or per-task; run it on demand with `runTask(name)`
 or `denext task <name>`. Uses `Deno.cron` where available (Deno Deploy), else a userland
 tick — no npm cron dependency. **Cron expressions are evaluated in UTC** (matching `Deno.cron`),
+weekdays are **POSIX** (`0–6`, `0` = Sunday; denext translates them to names for `Deno.cron`),
 and a schedule never fires on startup nor overlaps a still-running instance of the same task.
+`tasks: { history: true }` records every run to `.denext/tasks.db` (`historyMaxRuns` per task,
+14 days); the Cron page of `denext ui` shows it.
 
 ```ts
 // tasks/cleanup.ts
@@ -331,7 +343,7 @@ export default async function Blog() {
 ```
 
 **A compile-time feature flag (dead-code-eliminated):** `feature("KEY")` from `denext/feature`
-folds to a boolean literal at build time for any KEY in `experimental.features` — denext's
+folds to a boolean literal at build time for any KEY in `features` — denext's
 `feature()` (cf. Bun's `bun:bundle`). `feature()` always returns the configured value; the untaken
 branch is dead-code eliminated where it folds (native App Router component modules, SPA, dev), and
 read at runtime on the compat drop-in App Router path. Keep the argument a string literal; a key
@@ -342,7 +354,7 @@ import { feature } from "denext/feature";
 export function Checkout() {
   return feature("NEW_CHECKOUT") ? <NewCheckout /> : <LegacyCheckout />;
 }
-// denext.config.ts → experimental: { features: { NEW_CHECKOUT: false } }
+// denext.config.ts → features: { NEW_CHECKOUT: false }
 ```
 
 **Inspect / shrink the client bundle:** `denext analyze` breaks the bundle down by chunk + role;
@@ -384,7 +396,7 @@ if (!report.ok) throw new Error(formatReport(report)); // or run `denext doctor`
 ```
 
 **Config:** `denext.config.ts` exports `{ ... }` (redirects, rewrites, headers,
-i18n, images, `cacheComponents`, `streaming`, `live`, `plugins`, `experimental`,
+i18n, images, `cacheComponents`, `streaming`, `live`, `reactCompiler`, `features`, `plugins`,
 `tailwind`, `csp`, `compatibilityMode`;
 `mode: "spa"` + `spa: { entry, … }` for SPA mode). Not `next.config.js`.
 
@@ -403,7 +415,9 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   plugin (`plugins: [pagesRouter()]` in `denext.config.ts`).
 - **Cache Components / PPR** are a stable **opt-in**: `cacheComponents: true`
   (top-level) in `denext.config.ts`. Not `experimental.cacheComponents` — that
-  legacy key still works but dev-warns.
+  legacy key still works but dev-warns. The same goes for every other
+  `experimental.*` key: `reactCompiler`, `asyncContext`, `features` and
+  `nodeResolve` are top-level fields; the old spellings work and dev-warn.
 - **Zero runtime npm**: nothing the framework ships to the runtime pulls npm
   (CI-enforced). The build-time toolchain still uses a few npm tools — `esbuild`
   (core) plus opt-in `sass` / `@mdx-js/mdx` / `ws`; the CSS + swc-AST tooling is
@@ -425,7 +439,8 @@ the map above — that is almost always correct denext.
 
 denext ships tooling so agents get it right the first time:
 
-- **MCP server** — `deno run -A jsr:@denext/denext/cli mcp` (or `denext mcp`). It speaks
+- **MCP server** — `denext mcp` (or, with nothing installed,
+  `deno run -A jsr:@denext/denext/cli mcp`). It speaks
   MCP over stdio; configure it as an MCP server in your client. Tools:
   `denext_check_snippet` (lint a code string for Next-isms before you write it),
   `denext_import_map` (map a Next/React import to denext), `denext_generate` (scaffold —

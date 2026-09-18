@@ -172,7 +172,8 @@
         },
         "hreflang": {
           "description": "Automatically emit `<link rel=\"alternate\" hreflang>` alternates (one per locale, plus `x-default`) and a per-locale canonical for every page. On by default when i18n is configured; set `false` to opt out. A page that sets its own `alternates.languages` always takes precedence over the generated set.",
-          "type": "boolean"
+          "type": "boolean",
+          "default": true
         },
         "domains": {
           "description": "Serve a locale per **domain** without a URL prefix (Next's `i18n.domains`): `example.fr/about` renders French with no `/fr`. Each entry pins a host to a `defaultLocale` (served unprefixed on that host); a host's other `locales` (if listed) are still prefixed there. Locales not tied to any domain keep the normal prefix behavior on the primary host. Host resolution uses the request's trusted host (honoring `trustForwardedHeaders`), never a raw `Host` header on the render path.",
@@ -293,9 +294,11 @@
               "type": "object",
               "properties": {
                 "key": {
+                  "description": "The header name, e.g. `Cache-Control`.",
                   "type": "string"
                 },
                 "value": {
+                  "description": "The value to send, e.g. `public, max-age=3600`.",
                   "type": "string"
                 }
               },
@@ -332,6 +335,21 @@
         ]
       }
     },
+    "tasks": {
+      "description": "Scheduled/background task behaviour. Currently run history, which is off unless asked for.",
+      "type": "object",
+      "properties": {
+        "history": {
+          "description": "Record every task run — scheduled and on demand — to `.denext/tasks.db`, so `denext ui`'s Cron panel can show last status, success/failure counts and a recent-run feed.",
+          "type": "boolean"
+        },
+        "historyMaxRuns": {
+          "description": "Runs kept per task before the oldest are dropped (default 500).",
+          "type": "number",
+          "minimum": 1
+        }
+      }
+    },
     "images": {
       "description": "Image-optimization config. Remote sources are refused by default (local-only, SSRF-safe); allowlist hosts here to enable optimizing remote images.",
       "type": "object",
@@ -342,6 +360,7 @@
         },
         "domains": {
           "description": "Exact remote hosts allowed as sources (host only, e.g. `cdn.example.com`).",
+          "deprecated": true,
           "type": "array",
           "items": {
             "type": "string"
@@ -462,7 +481,7 @@
       ]
     },
     "mdx": {
-      "description": "MDX compilation options for `.mdx`/`.md` sources in a compat (npm-React) app. The baseline loader compiles plain MDX/CommonMark; set this to thread app-configured unified plugins (e.g. Codehike, GFM, syntax highlighting) into MDX's `compile`. Because `denext.config.ts` is a real module, import the plugins and pass function references directly:",
+      "description": "MDX compilation options for `.mdx`/`.md` sources in a compat (npm-React) app. The baseline loader compiles plain MDX/CommonMark; set this to thread app-configured unified plugins (e.g. Codehike, GFM, syntax highlighting) into MDX's `compile`. Because `denext.config.ts` is a real module, the plugins are imported and passed as function references, not named as strings.",
       "type": "object",
       "properties": {
         "remarkPlugins": {
@@ -642,7 +661,8 @@
     },
     "streaming": {
       "description": "Incremental (Suspense) streaming, **on by default**; set `false` to opt out. A page with a pending Suspense boundary flushes its shell first and streams each boundary's content as it resolves; a fully synchronous page (no holes) is still delivered buffered, so it stays shared-cacheable. Streamed responses carry the same strict hash-based CSP as buffered ones (the swap runtime is a hashed constant), survive a failing boundary (its fallback stays), and cover Flight routes. ISR/PPR-cacheable routes (revalidate/force-static) and soft navigations take their own path first, so streaming never bypasses the page cache. A shipped, default-on capability — not an experiment.",
-      "type": "boolean"
+      "type": "boolean",
+      "default": true
     },
     "live": {
       "description": "Live Server Components security policy: authorization hooks and resource caps for the `<Live>` / `useLive` / `usePresence` WebSocket hub. See LiveConfig. Presence/data are default-deny in production without a policy here — so this is a **security-policy** field, not an on/off experiment.",
@@ -730,7 +750,8 @@
       "properties": {
         "enabled": {
           "description": "Serve the endpoint at all (default true; `false` → 404).",
-          "type": "boolean"
+          "type": "boolean",
+          "default": true
         },
         "maxItems": {
           "description": "Max items per batch (default 20, at most 100).",
@@ -766,44 +787,103 @@
       "type": "number",
       "minimum": 1
     },
+    "actionMaxBodyBytes": {
+      "description": "The request-body cap for Server Actions, in bytes — default 1 MiB (Next's default). Raise it only for actions that accept large payloads (multipart uploads); over the cap → 413 before the action runs. `denext start`/`dev` forward it to the server; a custom server passes `actionMaxBodyBytes` to `createApp()` itself.",
+      "type": "number",
+      "minimum": 1
+    },
+    "canonicalOrigin": {
+      "description": "The app's public origin (e.g. `\"https://example.com\"`), pinned outright: absolute URLs (canonical, `og:image`), the Server Action origin check and HSTS all use it instead of the `Host` / forwarded headers — the robust choice behind a proxy that rewrites `Host`. A full origin (scheme + host, no path). Unset, the `DENEXT_CANONICAL_ORIGIN` env var is read at boot (config > env > derived from the request).",
+      "type": "string"
+    },
+    "trustForwardedHeaders": {
+      "description": "Trust `X-Forwarded-Proto` / `X-Forwarded-Host` from a reverse proxy when deriving the request origin (absolute URLs, the Server Action origin check, HSTS, rate-limit keys). Enable ONLY when clients cannot reach denext directly — a client that can spoofs the origin. Ignored when DenextConfig.canonicalOrigin is set. Unset, `DENEXT_TRUST_PROXY=1` turns it on (config > env > `false`).",
+      "type": "boolean"
+    },
+    "requestTimeout": {
+      "description": "Per-request deadline in milliseconds — default 30 000. A request still running past it is aborted and answered `503`; the per-request `AbortSignal` fires so cooperative work (`fetch(url, { signal })`) cancels. `0` disables the deadline. Unset, the `DENEXT_REQUEST_TIMEOUT_MS` env var is read at boot (config > env > default).",
+      "type": "number",
+      "minimum": 0
+    },
+    "maxConcurrency": {
+      "description": "In-process concurrency ceiling: the max number of client requests one instance handles at once. A request arriving at capacity is shed immediately with `503` + `Retry-After` (never queued). Bounds work up to the point the `Response` is produced (a streaming body's client-read time is not counted); background ISR regeneration is exempt. A complement to — not a replacement for — the edge/load-balancer ceiling. Default: no limit. Unset, the `DENEXT_MAX_CONCURRENCY` env var is read at boot (config > env > unlimited).",
+      "type": "number",
+      "minimum": 1
+    },
+    "slotBackstop": {
+      "description": "With DenextConfig.maxConcurrency set and DenextConfig.requestTimeout `0`, the milliseconds after which a never-settling request's concurrency slot is force-freed (default 120 000). It frees only the slot — the render is not aborted, since the request timeout was opted out of. Inert while a request timeout is in place.",
+      "type": "number",
+      "minimum": 1
+    },
+    "cacheKeyParams": {
+      "description": "Allowlist of query-parameter names that fork the ISR page-cache key. When set, only these params make a distinct cached entry; every other param (`?utm_*`, `?fbclid`, a random cache-buster) is ignored for keying — but still reaches the render via `searchParams`, so list every param whose value changes cacheable output. Unset, every param participates.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "nodeResolve": {
       "description": "denext's tolerant node_modules resolver for the compat (npm-React) build — default ON.",
-      "type": "boolean"
+      "type": "boolean",
+      "default": true
     },
     "cacheComponents": {
       "description": "Cache Components (Next.js 16): the `\"use cache\"` directive is compiled into cross-request caching on the server (`src/build/use-cache-transform.ts`), plus the PPR render path — dynamic-by-default rendering with cacheable `use cache` islands (a cached shell with per-request dynamic holes spliced in). A stable, **opt-in** feature, deliberately **off by default**: caching stays a choice, because a cache bug's failure class (a poisoned or cross-user shell) is severe and must not be imposed on apps that never asked. When off, every `\"use cache\"` directive is inert (a plain no-op string statement) and rendering is unchanged.",
       "type": "boolean"
     },
+    "reactCompiler": {
+      "description": "The build-time auto-memoization compiler (a React-Compiler-style pass), an opt-in optimization that is off by default. Conservative by construction: it bails to identity whenever a transform isn't provably safe, so it only ever adds memoization, never changes behavior.",
+      "type": "boolean"
+    },
+    "asyncContext": {
+      "description": "Scope async `startTransition` by transition IDENTITY instead of a time window, so a post-`await` update is attributed to its transition while an unrelated urgent update in the pending window keeps its priority. Off by default.",
+      "type": "boolean"
+    },
+    "features": {
+      "description": "Compile-time feature flags: `feature(\"KEY\")` (from `denext/feature`) always returns the configured value, and a call with a string-literal KEY is folded to a literal where the build can, so the bundler dead-code-eliminates the untaken branch. A key not listed reads `false`.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "boolean"
+      }
+    },
     "experimental": {
-      "description": "Experimental, opt-in features (default off).",
+      "description": "Deprecated. Every `experimental.*` key graduated to a top-level field by 2.5 (`reactCompiler`, `asyncContext`, `features`, `nodeResolve`, `cacheComponents`). The old spellings are still honored, with a dev warning, when the top-level field is absent; the top-level field wins when both are set. Removed in 3.0.",
+      "deprecated": true,
       "type": "object",
       "properties": {
         "reactCompiler": {
-          "description": "Enable the build-time auto-memoization compiler (a React-Compiler-style pass) — an opt-in optimization. Conservative by construction: it bails to identity whenever a transform isn't provably safe, so it only ever adds memoization, never changes behavior. Off by default while its coverage is still widening. Named as in Next.js (`experimental.reactCompiler`), so a migrated `next.config` needs no rewrite.",
+          "description": "Deprecated. Graduated to the top-level `reactCompiler` in 2.5. Honored as an alias through 2.x; removed in 3.0.",
+          "deprecated": true,
           "type": "boolean"
         },
         "compiler": {
+          "description": "Deprecated. Renamed `reactCompiler` (Next.js's key) in 2.0, now the top-level `reactCompiler`. Honored as an alias through 2.x; removed in 3.0.",
+          "deprecated": true,
           "type": "boolean"
         },
         "asyncContext": {
-          "description": "Scope async `startTransition` by transition IDENTITY instead of a time window. Enables a build-time transform that makes denext's first-party AsyncContext survive `await` (src/build/async-context-transform.ts), so a post-`await` update is attributed to its transition while an unrelated urgent update in the pending window keeps its priority. Off by default: it instruments every `await` in client code (a small per-await cost) and the default time-window behavior is unchanged. Removes the async-`startTransition` gap in KNOWN-LIMITATIONS when on.",
+          "description": "Deprecated. Graduated to the top-level `asyncContext` in 2.5. Honored as an alias through 2.x; removed in 3.0.",
+          "deprecated": true,
           "type": "boolean"
         },
         "features": {
-          "description": "Compile-time feature flags. `feature(\"KEY\")` (from `denext/feature`) always returns the configured value — the server and every client bundle are seeded with this map — and a call with a string-literal KEY is additionally folded to a literal where the build can, so the bundler dead-code-eliminates the untaken branch (gated code costs zero bytes when off). A key not listed reads `false`. Experimental while the fold's coverage widens: DCE covers the native App Router's component (`.tsx`/`.jsx`) modules, the SPA bundle, and dev; the compat drop-in App Router path and non-component modules on the native path read the seeded value without DCE.",
+          "description": "Deprecated. Graduated to the top-level `features` in 2.5. Honored as an alias through 2.x; removed in 3.0.",
+          "deprecated": true,
           "type": "object",
           "additionalProperties": {
             "type": "boolean"
           }
         },
         "nodeResolve": {
+          "description": "Deprecated. Moved to the top-level `nodeResolve` in 2.0 — it is load-bearing for every compat migration, not an incomplete feature. Honored as an alias through 2.x.",
+          "deprecated": true,
           "type": "boolean"
         }
       },
       "additionalProperties": false
     },
     "classComponents": {
-      "description": "How the client bundle gets the React class-component runtime (`class X extends React.Component`: lifecycle, setState batching, class error boundaries). It is a code-split chunk (`denext/class-runtime`), so the default needs no configuration:",
+      "description": "How the client bundle gets the React class-component runtime (`class X extends React.Component`: lifecycle, setState batching, class error boundaries). It is a code-split chunk (`denext/class-runtime`), so the default needs no configuration. Unset, `denext build` scans your sources and installs it eagerly when a class is found, otherwise a page loads it on demand; `true` always installs it eagerly; `false` never ships it — the runtime is dead-code-eliminated and a class used anyway throws a guided error.",
       "type": "boolean"
     },
     "compatibilityMode": {

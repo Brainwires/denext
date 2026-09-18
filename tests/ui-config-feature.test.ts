@@ -15,6 +15,8 @@ import { type NextConfigRead, setNextConfigEvaluator } from "../src/ui/features/
 import { loadConfigSchema, resolveAt } from "../src/ui/form/schema.ts";
 import { widgetFor } from "../src/ui/form/widget.ts";
 import { encode } from "../src/ui/form/value.ts";
+import { browserPostByName, formContaining } from "./helpers/browser-form.ts";
+import { readContained, stampOf } from "../src/ui/security.ts";
 
 const CONFIG = `import { openapi } from "@denext/openapi";
 
@@ -46,11 +48,26 @@ async function onDisk(dir: string): Promise<string> {
 async function call(
   dir: string,
   path: string,
-  init: { form?: Record<string, string>; readOnly?: boolean } = {},
+  init: {
+    form?: Record<string, string | string[]>;
+    readOnly?: boolean;
+    /** Post exactly `form`, without the stamp a rendered page would carry. */
+    unstamped?: boolean;
+  } = {},
 ): Promise<Response> {
   const url = new URL(`http://127.0.0.1:5177${path}`);
   const form = init.form === undefined ? undefined : new FormData();
-  for (const [key, value] of Object.entries(init.form ?? {})) form?.set(key, value);
+  // A list posts one name MORE THAN ONCE, which is what a browser does for a toggle: the hidden
+  // companion and then the checkbox. `decodeToggle` reads every value and takes the last.
+  for (const [key, value] of Object.entries(init.form ?? {})) {
+    for (const one of Array.isArray(value) ? value : [value]) form?.append(key, one);
+  }
+  // A browser form always carries `_base` (the editor refuses one that does not), so a post to
+  // the panel that names none gets the stamp a fresh page would carry: of the config as the
+  // panel reads it (through containment — a file it will not read stamps as no file).
+  if (form && !form.has("_base") && !url.pathname.startsWith("/api/") && !init.unstamped) {
+    form.set("_base", await stampOf(await readContained(dir, "denext.config.ts") ?? ""));
+  }
   const ctx: UiContext = {
     dir,
     url,
@@ -97,27 +114,53 @@ const RULES = [
   { source: "/a", destination: "/b", permanent: false },
 ];
 
-Deno.test("GET /config renders a section per key, the list rows and the plugins code cell", async () => {
+Deno.test("a view shows its scalars inline and its groupings as tabs, nothing collapsed", async () => {
   const dir = await project();
   try {
-    const res = await call(dir, "/config");
+    const res = await call(dir, "/config/routing");
     assertEquals(res.status, 200);
     const body = await res.text();
     assertStringIncludes(body, '<section id="panel"');
-    // Every top-level key gets a section; the ones that are set are open.
-    assertStringIncludes(body, '<details id="basePath" open>');
-    assertStringIncludes(body, '<details id="mode">');
-    // The scalar widgets carry the file's current values.
+    // Nothing in the editor is a disclosure any more: a view used to read as a list of words
+    // with pills, each of which had to be opened before it said anything.
+    assert(!body.includes("<details"), "the config editor collapses nothing");
+    // ONE strip, and it lists the keys of THIS view — the views themselves are the sidebar's
+    // job, so nothing here repeats them.
+    assertStringIncludes(body, 'class="panel-head"');
+    // ONE strip inside the panel. The views are the sidebar's job, and the sidebar is part of
+    // this document — so the question has to be asked of the panel alone.
+    const panel = body.slice(body.indexOf('<section id="panel"'));
+    assert(!panel.includes('href="/config/rendering"'), "no second strip repeating the views");
+    // The plain scalars share the first tab rather than floating above the strip.
+    assertStringIncludes(body, 'href="/config/routing?key=general"');
     assert(hasField(body, "basePath", "/docs"));
-    // The rule thunk is unwrapped: one typed sub-form per row, in file order.
-    assert(hasField(body, "redirects[0].source", "/old"));
-    assert(hasField(body, "redirects[1].destination", "/b"));
-    assertStringIncludes(body, 'value="up:1:redirects"');
-    // `plugins` is shown, never edited here.
-    assertStringIncludes(body, "plugins panel</a> owns this key");
-    assertStringIncludes(body, "openapi()");
-    // The escape hatch carries the whole file.
-    assertStringIncludes(body, 'name="raw"');
+    assert(hasField(body, "trailingSlash", "on"));
+    assertStringIncludes(body, 'class="band"');
+    // The groupings follow it, each saying whether its key is set.
+    assertStringIncludes(body, 'href="/config/routing?key=redirects"');
+    assertStringIncludes(body, 'href="/config/routing?key=i18n"');
+    // A view opens on General, so only its fields are rendered — a grouping's form arrives when
+    // its own tab is asked for.
+    assert(!hasField(body, "redirects[0].source", "/old"), "only the selected tab renders a form");
+    const rows = await (await call(dir, "/config/routing?key=redirects")).text();
+    assert(hasField(rows, "redirects[0].source", "/old"));
+    assert(hasField(rows, "redirects[1].destination", "/b"));
+    assertStringIncludes(rows, 'value="up:1:redirects"');
+
+    // `mode` is one control, so it joins the band rather than taking a tab of its own.
+    const rendering = await (await call(dir, "/config/rendering")).text();
+    assert(hasField(rendering, "mode", "") || rendering.includes('name="mode"'));
+    assertStringIncludes(rendering, 'class="band"');
+    // The heading names the view; "Config" on all of them said nothing the sidebar had not.
+    assertStringIncludes(rendering, "<h1>Rendering</h1>");
+
+    // `plugins` is shown, never edited here — on its own tab.
+    const plugins = await (await call(dir, "/config/advanced?key=plugins")).text();
+    assertStringIncludes(plugins, "plugins panel</a> owns this key");
+    assertStringIncludes(plugins, "openapi()");
+    // The escape hatch is a tab of the same strip, carrying the whole file.
+    const raw = await (await call(dir, "/config/advanced?key=raw-file")).text();
+    assertStringIncludes(raw, 'name="raw"');
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -140,7 +183,9 @@ Deno.test("a scalar change previews a diff touching only that value, then writes
       form: { ...fields, confirm: "1" },
     });
     assertEquals(applied.status, 303);
-    assertEquals(applied.headers.get("location"), "/config#basePath");
+    // An inline scalar lives on the General tab, so that is where the write lands — on the
+    // field you just edited, not merely on the view that contains it.
+    assertEquals(applied.headers.get("location"), "/config/routing?key=general");
     assertStringIncludes(await onDisk(dir), 'basePath: "/site",');
     assertStringIncludes(await onDisk(dir), "// keep this comment");
   } finally {
@@ -148,25 +193,38 @@ Deno.test("a scalar change previews a diff touching only that value, then writes
   }
 });
 
-Deno.test("a list op previews the new row, and confirming keeps comments, wrapper and order", async () => {
+Deno.test("a list op hands the form back unvalidated; saving keeps comments, wrapper and order", async () => {
   const dir = await project();
   try {
-    // + Add at the end: the preview shows a third row, nothing is written.
+    // + Add at the end: the editor comes back with a blank third row and NO validation
+    // message — a row button is not a save, and refusing the blank row it just added (for the
+    // `source` nobody has typed yet) is what the old preview did. Nothing is written.
     const added = await call(dir, "/config?section=redirects", {
       form: { ...fieldsFor("redirects", RULES), op: "add:2:redirects" },
     });
     assertEquals(added.status, 200);
-    const preview = await added.text();
-    assertStringIncludes(preview, 'name="redirects[2].source"');
+    const draft = await added.text();
+    assertStringIncludes(draft, 'name="redirects[2].source"');
+    assert(!draft.includes("invalid denext.config.ts"), "a blank row is not an error yet");
+    assert(!draft.includes("Confirm"), "a row op is not a preview");
     assertEquals(await onDisk(dir), CONFIG);
 
-    // Type into the new row and move it up — one submit, exactly what the browser posts.
+    // Type into the new row and move it up — one submit, exactly what the browser posts. The
+    // editor comes back with the rows in their new order.
     const typed = [...RULES, { source: "/c", destination: "/d", permanent: false }];
-    const form = { ...fieldsFor("redirects", typed), op: "up:2:redirects" };
-    const moved = await call(dir, "/config?section=redirects", { form });
+    const moved = await call(dir, "/config?section=redirects", {
+      form: { ...fieldsFor("redirects", typed), op: "up:2:redirects" },
+    });
     assertEquals(moved.status, 200);
     assert(hasField(await moved.text(), "redirects[1].source", "/c"));
+    assertEquals(await onDisk(dir), CONFIG);
 
+    // Save posts the rows as the browser now shows them: a preview, then the confirm.
+    const reordered = [RULES[0], typed[2], RULES[1]];
+    const form = fieldsFor("redirects", reordered);
+    const preview = await call(dir, "/config?section=redirects", { form });
+    assertEquals(preview.status, 200);
+    assertStringIncludes(await preview.text(), "Confirm");
     const applied = await call(dir, "/config?section=redirects", {
       form: { ...form, confirm: "1" },
     });
@@ -182,6 +240,90 @@ Deno.test("a list op previews the new row, and confirming keeps comments, wrappe
   }
 });
 
+Deno.test("a partial save touches only the keys it carried — silence never deletes", async () => {
+  const dir = await project();
+  try {
+    // A browser posts every control the band rendered, so this cannot arise there. The `/api`
+    // twin takes whatever a caller sends, and a cleared field and an unsent one both decode to
+    // `undefined` — reading the second as a deletion let an EMPTY body propose dropping every
+    // scalar in the view.
+    const empty = await call(dir, "/api/config", { form: {} });
+    assertEquals(empty.status, 200);
+    assertEquals((await empty.json()).diff, "", "an empty body proposes nothing at all");
+
+    // A field that WAS sent, cleared, still removes its key — that is the real gesture.
+    const cleared = await call(dir, "/api/config", { form: { basePath: "" } });
+    assertStringIncludes((await cleared.json()).diff, "-  basePath:");
+
+    // And a partial body leaves the keys it never mentioned exactly where they were.
+    const partial = await call(dir, "/api/config", {
+      form: { trailingSlash: "on", confirm: "1" },
+    });
+    assertEquals(partial.status, 200);
+    const after = await onDisk(dir);
+    assertStringIncludes(after, 'basePath: "/docs"', "an unmentioned key survives the save");
+    assertStringIncludes(after, "// keep this comment");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/** The body a browser posts for a view's scalar band, untouched — read off the real markup. */
+function bandBody(markup: string): Record<string, string[]> {
+  return browserPostByName(formContaining(markup, 'class="band" data-dirty-track="1"'));
+}
+
+Deno.test("saving one view's band never touches a key another view owns", async () => {
+  // `basePath` is Routing's; `cacheComponents` and `streaming` are Rendering's. A save posted
+  // from the Rendering page carries only what that page rendered, and the writer has to read
+  // the keys it was never sent as "leave alone" — across views, not just within one.
+  const dir = await project(
+    'export default {\n  basePath: "/docs",\n  cacheComponents: true,\n};\n',
+  );
+  try {
+    const page = await (await call(dir, "/config/rendering")).text();
+    const untouched = bandBody(page);
+    assertEquals(untouched.cacheComponents, ["off", "on"], "a set key posts its companion pair");
+    assertEquals(untouched.basePath, undefined, "Routing's key is not on this page at all");
+
+    // Tick Disable on streaming — the one edit — and save the band as the browser would.
+    const edited = { ...untouched, streaming: ["off"] };
+    const preview = await call(dir, "/config/rendering", { form: edited });
+    assertEquals(preview.status, 200);
+    assertEquals(changed(diffText(await preview.text())), ["+  streaming: false,"]);
+
+    const applied = await call(dir, "/config/rendering", { form: { ...edited, confirm: "1" } });
+    assertEquals(applied.status, 303);
+    const after = await onDisk(dir);
+    assertStringIncludes(after, 'basePath: "/docs"', "another view's key survives the save");
+    assertStringIncludes(after, "cacheComponents: true", "an untouched key on this view too");
+    assertStringIncludes(after, "streaming: false", "and the one edit landed");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a no-op save never offers to create the config it did not need", async () => {
+  // The case the first version of this guard missed: with no `denext.config.ts`, a save with
+  // nothing to write still diffed the absent file against the scaffold the writer starts from,
+  // and answered by offering to CREATE it. Nothing to write is nothing to propose — and
+  // creating the file is `?create=1`'s job, not a side effect of saving a view.
+  const dir = await project(null);
+  try {
+    const res = await call(dir, "/api/config", { form: {} });
+    assertEquals(res.status, 200);
+    const body = await res.json();
+    assertEquals([body.ok, body.applied, body.diff], [true, false, ""]);
+    assertEquals(
+      await Deno.stat(join(dir, "denext.config.ts")).catch(() => null),
+      null,
+      "and nothing was written",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("an invalid value is a 422 with the validator's message against its field", async () => {
   const dir = await project();
   try {
@@ -190,7 +332,9 @@ Deno.test("an invalid value is a 422 with the validator's message against its fi
     });
     assertEquals(res.status, 422);
     const body = await res.text();
-    assertStringIncludes(body, "`i18n.defaultLocale` must be one of i18n.locales");
+    // The validator names the field in backticks; the panel formats that like any other
+    // prose, so the message arrives as markup rather than with its markers showing.
+    assertStringIncludes(body, "<code>i18n.defaultLocale</code> must be one of i18n.locales");
     assertStringIncludes(body, 'role="alert"');
     // The message is rendered against the field that caused it, with the posted value kept.
     assert(hasField(body, "i18n.defaultLocale", "de"));
@@ -200,11 +344,31 @@ Deno.test("an invalid value is a 422 with the validator's message against its fi
   }
 });
 
+Deno.test("a section form tracks edits: Save waits, and Clear is named for what it does", async () => {
+  const dir = await project();
+  try {
+    // A grouping's tab, because "Remove key" belongs to a grouping's own form; a scalar on
+    // General is removed by clearing its field instead.
+    const body = await (await call(dir, "/config/routing?key=redirects")).text();
+    // `ui.js` disables Save until something changes and adds Discard; the server must not
+    // render Save disabled, or a browser with JavaScript off could never save at all.
+    assertStringIncludes(body, 'data-dirty-track="1"');
+    assert(!/<button type="submit"[^>]*disabled[^>]*>Save</.test(body), "Save ships enabled");
+    // The destructive submit says what it removes, rather than reading like "clear the field".
+    // It belongs to a grouping's own form; a band scalar is removed by clearing its field.
+    assertStringIncludes(body, ">Remove key<");
+    assertStringIncludes(body, 'title="Delete redirects from the config"');
+    assert(!body.includes(">Clear<"), "the old label is gone");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("a config shape the writer cannot own bails honestly, and writes nothing", async () => {
   const source = 'const config = { basePath: "/x" };\nexport default config;\n';
   const dir = await project(source);
   try {
-    const page = await call(dir, "/config");
+    const page = await call(dir, "/config/routing");
     assertStringIncludes(await page.text(), "cannot be edited key by key");
 
     const res = await call(dir, "/config?section=basePath", { form: { basePath: "/site" } });
@@ -258,7 +422,8 @@ Deno.test("the raw editor carries the file byte for byte, markup characters incl
   const source = CONFIG.replace("// the legacy URLs", `// <b>a & b</b> "quoted" 'single' &amp;`);
   const dir = await project(source);
   try {
-    const body = await (await call(dir, "/config")).text();
+    // The whole-file escape hatch lives on Advanced, with the keys denext does not describe.
+    const body = await (await call(dir, "/config/advanced?key=raw-file")).text();
     assert(!body.includes("<b>a & b</b>"), "the file's markup is escaped, never live");
     const text = textareaText(body);
     assertEquals(text, source);
@@ -277,7 +442,7 @@ Deno.test("the raw editor keeps a file's leading blank lines through the textare
   const source = "\n\n" + CONFIG;
   const dir = await project(source);
   try {
-    const body = await (await call(dir, "/config")).text();
+    const body = await (await call(dir, "/config/advanced?key=raw-file")).text();
     // The newline the parser drops after `<textarea>`, then the file's own two.
     assertMatch(body, /<textarea name="raw"[^>]*>\n\n\nimport /);
     const text = textareaText(body);
@@ -308,7 +473,7 @@ Deno.test("read-only refuses every write, confirmed or not", async () => {
 Deno.test("a project with no config is offered one, previewed before it is created", async () => {
   const dir = await project(null);
   try {
-    const page = await call(dir, "/config");
+    const page = await call(dir, "/config/routing");
     assertStringIncludes(await page.text(), "This project has no denext config");
 
     const preview = await call(dir, "/config?create=1", { form: {} });
@@ -360,7 +525,7 @@ Deno.test("the JSON twin reports the file, its form and every key's bucket", asy
   }
 });
 
-Deno.test("an unknown or managed section is refused before anything is computed", async () => {
+Deno.test("an unknown, managed or cron-owned section is refused before anything", async () => {
   const dir = await project();
   try {
     const unknown = await call(dir, "/api/config?section=nope", { form: {} });
@@ -370,9 +535,57 @@ Deno.test("an unknown or managed section is refused before anything is computed"
     const managed = await call(dir, "/api/config?section=plugins", { form: {} });
     assertEquals(managed.status, 400);
     assertStringIncludes((await managed.json()).reason, "managed by the plugins panel");
+
+    // The cron keys are written by the Cron page. A second editor here would mean two forms and
+    // two `_base` stamps against one key — which is how two tabs quietly overwrite each other.
+    for (const key of ["scheduledTasks", "tasks"]) {
+      const cron = await call(dir, `/api/config?section=${key}`, { form: {} });
+      assertEquals(cron.status, 400, key);
+      assertStringIncludes((await cron.json()).reason, "/config/cron");
+    }
     assertEquals(await onDisk(dir), CONFIG);
   } finally {
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("next.config is offered only to a compat app, on every render", async () => {
+  // `next.config` is a VIEW of this project's configuration, so it is a tab on /config rather
+  // than a seventh item in the top navigation. Two things have to hold: a native app is never
+  // offered a tab that would only say "there is nothing here", and a compat app keeps the tab
+  // on EVERY render — a refusal and a 422 render the panel just as a GET does, and threading
+  // the compat flag from the handler once left those POST paths rendering without it.
+  const native = await project();
+  try {
+    const body = await (await call(native, "/config/routing")).text();
+    assertStringIncludes(body, 'class="panel-head"');
+    assert(!body.includes('href="/config/next"'), "a native app is offered no next.config link");
+  } finally {
+    await Deno.remove(native, { recursive: true });
+  }
+
+  const compat = await project();
+  try {
+    await Deno.writeTextFile(
+      join(compat, "package.json"),
+      '{ "dependencies": { "next": "15.0.0" } }',
+    );
+    for (
+      const [label, init] of [
+        ["a plain GET", {}],
+        ["a read-only refusal", { readOnly: true, form: { section: "basePath" } }],
+        ["an unknown section", { form: { section: "nope" } }],
+      ] as const
+    ) {
+      const res = await call(compat, "/config/routing", init);
+      assertStringIncludes(
+        await res.text(),
+        'href="/config/next"',
+        `the next.config tab is missing on ${label} (${res.status})`,
+      );
+    }
+  } finally {
+    await Deno.remove(compat, { recursive: true });
   }
 });
 
@@ -493,10 +706,41 @@ Deno.test("a denext.config.ts symlinked out of the project is neither read nor w
   }
 });
 
+Deno.test("a browser form without _base is refused as stale, for every writer; the JSON twin may omit it", async () => {
+  const dir = await project();
+  try {
+    // Every form the editor renders carries the stamp, so a post without one was not built from
+    // this page. Letting it through unchecked made the stale check optional for exactly the
+    // requests most likely to be stale (a hand-built or long-dead form).
+    const page = await (await call(dir, "/config/routing?key=redirects")).text();
+    assertMatch(page, /name="_base"[^>]*value="[0-9a-f]{64}"/);
+    const writes: Array<[string, Record<string, string>]> = [
+      ["/config?section=basePath", { ...fieldsFor("basePath", "/mine"), confirm: "1" }],
+      ["/config?section=basePath", { ...fieldsFor("basePath", "/mine"), _base: "" }],
+      ["/config?raw=1", { raw: 'export default {\n  basePath: "/raw",\n};\n', confirm: "1" }],
+      ["/config/routing", { basePath: "/band", confirm: "1" }],
+    ];
+    for (const [path, form] of writes) {
+      const res = await call(dir, path, { form, unstamped: true });
+      assertEquals(res.status, 400, `${path} ${JSON.stringify(form)}`);
+      assertStringIncludes(await res.text(), "carries no _base stamp");
+    }
+    assertEquals(await onDisk(dir), CONFIG, "nothing was written");
+    // The twin keeps the opt-out: a script that just read the file has no page to be stale.
+    const twin = await call(dir, "/api/config?section=basePath", {
+      form: fieldsFor("basePath", "/mine"),
+    });
+    assertEquals(twin.status, 200);
+    assertEquals((await twin.json()).applied, false);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("a write against a stale _base is a 409 and changes nothing", async () => {
   const dir = await project();
   try {
-    const page = await (await call(dir, "/config")).text();
+    const page = await (await call(dir, "/config/routing?key=redirects")).text();
     const base = page.match(/name="_base"[^>]*value="([0-9a-f]{64})"/)?.[1];
     assert(base, "every form carries the source's SHA-256 as _base");
 
@@ -512,7 +756,7 @@ Deno.test("a write against a stale _base is a 409 and changes nothing", async ()
     assertEquals(await onDisk(dir), edited, "the editor's version survived");
 
     // Re-rendering hands out the fresh stamp, and the same write then applies.
-    const fresh = (await (await call(dir, "/config")).text())
+    const fresh = (await (await call(dir, "/config/routing?key=redirects")).text())
       .match(/name="_base"[^>]*value="([0-9a-f]{64})"/)?.[1];
     assert(fresh && fresh !== base);
     const ok = await call(dir, "/config?section=basePath", {
@@ -534,6 +778,114 @@ Deno.test("the /api twin, which posts no _base, opts out of the base-version che
     assertEquals(res.status, 200);
     assertEquals((await res.json()).applied, true);
     assertStringIncludes(await onDisk(dir), 'basePath: "/api-written"');
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("each Config view names itself in the document title", async () => {
+  const dir = await project();
+  try {
+    // The five groups all rendered "Config · denext ui", so a browser could not tell two open
+    // views of this panel apart. The label is what ships, not the group key.
+    const titles: string[] = [];
+    for (const group of ["routing", "security", "advanced"]) {
+      const body = await (await call(dir, `/config/${group}`)).text();
+      titles.push(/<title>([^<]*)<\/title>/.exec(body)?.[1] ?? "");
+    }
+    assertEquals(titles, [
+      "Config · Routing · denext ui",
+      "Config · Security · denext ui",
+      "Config · Advanced · denext ui",
+    ]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a key that is on by default can finally be turned off", async () => {
+  const dir = await project();
+  try {
+    // The band is scoped to ONE view, so the write goes to the view that owns the key —
+    // `streaming` lives on Rendering, not on the default Routing page.
+    //
+    // `streaming` is absent from the fixture and on unless you say otherwise. Ticking Disable
+    // posts the hidden "on" and then the checkbox "off" — the pair a browser sends — which
+    // decodes to `false`. That used to be discarded as "an absent key with a false", so the key
+    // could not be turned off from the editor at all.
+    const off = await call(dir, "/api/config/rendering", { form: { streaming: ["on", "off"] } });
+    assertEquals(off.status, 200);
+    const proposed = changed((await off.json()).diff);
+    assertEquals(
+      proposed,
+      ["+  streaming: false,"],
+      "opting out of a default-on key proposes exactly that line, and nothing else",
+    );
+    assertEquals(await onDisk(dir), CONFIG, "a preview never touches the file");
+
+    // Confirmed, the opt-out is in the file — and the view now renders the box TICKED, because
+    // ticking it is what `false` means for a default-on key. A re-render that showed it clear
+    // would invite the next save to "turn it off" again.
+    const applied = await call(dir, "/api/config/rendering", {
+      form: { streaming: ["on", "off"], confirm: "1" },
+    });
+    assertEquals(applied.status, 200);
+    assertEquals((await applied.json()).applied, true);
+    assertStringIncludes(await onDisk(dir), "streaming: false,");
+    const view = await (await call(dir, "/config/rendering")).text();
+    const box = view.match(/<input[^>]*name="streaming"[^>]*type="checkbox"[^>]*>/)?.[0];
+    assert(box, "the Rendering view renders the streaming toggle");
+    assertMatch(box, /\schecked(?=[\s>])/);
+    assertStringIncludes(box, 'value="off"', "ticking the box is what writes false");
+
+    // Left alone, the box posts only its hidden companion: `true`, which is what the key already
+    // is. That must propose nothing, or every untouched opt-out toggle would write noise.
+    const fresh = await project();
+    try {
+      const left = await call(fresh, "/api/config/rendering", { form: { streaming: ["on"] } });
+      assertEquals((await left.json()).diff, "", "a key left at its default proposes nothing");
+    } finally {
+      await Deno.remove(fresh, { recursive: true });
+    }
+
+    // And an absent opt-in key, unticked, behaves exactly as it always did.
+    const optIn = await call(dir, "/api/config/rendering", { form: { cacheComponents: ["off"] } });
+    assertEquals((await optIn.json()).diff, "", "an absent opt-in key stays absent");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("/config is the Configuration index, and its twin is still the editor", async () => {
+  const dir = await project();
+  try {
+    // The page is a front door: a card per view, and no editor of its own. It does not even
+    // read the config file — the views do that.
+    const index = await call(dir, "/config");
+    assertEquals(index.status, 200);
+    const body = await index.text();
+    for (const view of ["routing", "rendering", "security", "advanced", "cron"]) {
+      assertStringIncludes(body, `href="/config/${view}"`, `${view} needs a card`);
+    }
+    assert(!body.includes("<form"), "the index offers cards, not a form");
+
+    // The twin is NOT the index. Scripts call `/api/config` for the editor's payload, and that
+    // contract predates the page being split into views — it must not move because a page did.
+    const twin = await call(dir, "/api/config");
+    assertEquals(twin.status, 200);
+    const payload = await twin.json();
+    assertEquals(payload.ok, true);
+    assertEquals(payload.file, "denext.config.ts");
+    assertEquals(payload.form, "object");
+    assertEquals(payload.keys.basePath, { kind: "editable", value: "/docs" });
+
+    // And a write still posts to `/config`, which is why the page keeps its POST.
+    const wrote = await call(dir, "/config?section=basePath", {
+      form: { basePath: "/site", confirm: "1" },
+    });
+    assertEquals(wrote.status, 303);
+    assertEquals(wrote.headers.get("location"), "/config/routing?key=general");
+    assertStringIncludes(await onDisk(dir), 'basePath: "/site"');
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

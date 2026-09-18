@@ -1,9 +1,11 @@
 // Project scaffolding for `denext create`. Generates a clean minimal starter
-// (deno.json wired to the published JSR package, an app/ with a layout + an
-// interactive home page), optionally with Tailwind, a `src/` layout, and the
-// experimental compiler enabled.
+// (deno.json wired to the published JSR package, an app/ with a layout, a Server
+// Component home page and a `"use client"` counter island, plus the `.vscode` files
+// that turn on the Deno LSP), optionally with Tailwind, a `src/` layout, and the
+// auto-memo compiler enabled.
 
-import { basename, join } from "@std/path";
+import { basename, join, relative } from "@std/path";
+import { parse as parseJsonc } from "@std/jsonc";
 import { VERSION } from "../../mod.ts";
 import { reactCompatImportMap } from "./react-specifiers.ts";
 
@@ -16,15 +18,23 @@ export interface ScaffoldOptions {
   /** Absolute target directory (created if missing; must be empty). */
   dir: string;
   /**
-   * Starter template: `"default"` (an interactive counter demoing SSR+hydration)
-   * or `"minimal"` (a bare page). Defaults to `"default"`.
+   * Starter template: `"default"` (a Server Component page rendering a `"use client"`
+   * counter island — the SSR + hydration round-trip) or `"minimal"` (a bare page).
+   * Defaults to `"default"`.
    */
   template?: ScaffoldTemplate;
+  /**
+   * Write `.vscode/settings.json` (`"deno.enable": true`) and `.vscode/extensions.json`
+   * (recommending the Deno extension) so the editor resolves the `denext` import map the
+   * way `deno` does. Defaults to `true`; `denext create --no-vscode` turns it off. Merged
+   * additively into files that already exist (`denext init`), like `denext migrate`.
+   */
+  vscode?: boolean;
   /** Wire up Tailwind (input CSS, config, `import "./globals.css"`). */
   tailwind?: boolean;
   /** Use a `src/` directory layout (`src/app` instead of `app`). */
   srcDir?: boolean;
-  /** Enable the experimental auto-memo compiler in `denext.config.ts`. */
+  /** Enable the auto-memo compiler (`reactCompiler`) in `denext.config.ts`. */
   compiler?: boolean;
   /**
    * Wire up a native desktop app via `deno desktop`: a `desktop.ts` entry
@@ -75,11 +85,25 @@ are cached.
 
 - \`${appBase}/page.tsx\`, \`${appBase}/layout.tsx\` — routes are files, exactly like the
   Next.js App Router (\`app/blog/[slug]/page.tsx\`, \`app/api/x/route.ts\`, \`loading.tsx\`,
-  \`error.tsx\`, \`middleware.ts\`).
-- \`denext.config.ts\` — redirects, rewrites, headers, images, i18n, CSP, \`cacheComponents\`.
+  \`error.tsx\`, \`middleware.ts\`). They are Server Components: they can be \`async\`, read
+  the database directly, and ship no JavaScript.
+${
+    opts.template === "minimal"
+      ? ""
+      : `- \`${appBase}/counter.tsx\` — a \`"use client"\` island: the one file that ships to the
+  browser. Hooks and event handlers live in files like this one; the page passes it
+  serialisable props (and Server Actions).
+`
+  }- \`denext.config.ts\` — redirects, rewrites, headers, images, i18n, CSP, \`cacheComponents\`.
 - Imports come from \`denext\` (hooks, \`Link\`, \`Image\`, \`redirect\`), \`denext/server\`
   (\`cookies\`, \`headers\`, \`getSession\`, caching) and \`denext/client\`.
-
+${
+    opts.vscode === false
+      ? ""
+      : `- \`.vscode/\` — turns on the Deno language server (and recommends the Deno extension), so
+  the editor resolves \`denext\` exactly as \`deno check\` does.
+`
+  }
 ## Learn more
 
 - Guide + API: https://denext.dev/docs
@@ -121,12 +145,14 @@ function scaffoldTasks(opts: ScaffoldOptions): Record<string, string> {
   const tasks: Record<string, string> = {
     // `dev`/`build` compile, write `.denext`, and spawn tooling (Tailwind, esbuild),
     // so they use broad permissions. `start` only serves, so it runs least-privilege:
-    // net + read + env (add `--allow-write=.denext` if you enable the SQLite cache).
-    // The CLI is pinned to the same range as the `denext` import so the two never skew
-    // (an unversioned `jsr:@denext/denext/cli` would resolve to JSR `latest`).
+    // net + read + env, plus write to `.denext` alone — the durable node:sqlite cache
+    // (the default) lives there, and without the grant it silently downgrades to the
+    // per-process memory store. The CLI is pinned to the same range as the `denext`
+    // import so the two never skew (an unversioned `jsr:@denext/denext/cli` would resolve
+    // to JSR `latest`).
     dev: `deno run -A ${cli} dev .`,
     build: `deno run -A ${cli} build .`,
-    start: `deno run --allow-net --allow-read --allow-env ${cli} start .`,
+    start: `deno run --allow-net --allow-read --allow-env --allow-write=.denext ${cli} start .`,
   };
   // Both native targets ship the static export (SSG) from `out/`.
   if (opts.desktop || opts.capacitor) {
@@ -197,7 +223,7 @@ function scaffoldImports(opts: ScaffoldOptions): Record<string, string> {
 }
 
 /**
- * The `deno.json` a fresh `denext create` writes — also the template the UI's setup wizard
+ * The `deno.json` a fresh `denext create` writes — also the template the UI's Setup page
  * diffs an existing project's config against.
  *
  * @param opts The scaffold options (only the feature flags are read).
@@ -354,31 +380,62 @@ export default function Home(_props: PageProps) {
 `;
 }
 
+/**
+ * The `default` template's home page — a Server Component (no hooks, no `"use client"`,
+ * ships no JavaScript) that renders the `Counter` island. The split is the App Router's:
+ * the page fetches and lays out, the island is the one file the browser runs.
+ */
 function page(opts: ScaffoldOptions): string {
   const tw = opts.tailwind;
   const sectionCls = tw ? ' class="mx-auto max-w-xl p-8"' : "";
   const h1Cls = tw ? ' class="text-3xl font-bold"' : "";
+  return `// Home page — a Server Component. It runs only on the server (make it \`async\` and
+// await your data here; a \`lib/db.ts\` import stays server-side) and ships no
+// JavaScript. The interactive part is the <Counter /> island in ./counter.tsx.
+
+import type { PageProps } from "denext/server";
+import { Counter } from "./counter.tsx";
+
+export const metadata = { title: "denext — home" };
+
+export default function Home(_props: PageProps) {
+  return (
+    <section${sectionCls}>
+      <h1${h1Cls}>Hello from denext 👋</h1>
+      <p>This page is a Server Component; the button below is a client island.</p>
+      <Counter />
+    </section>
+  );
+}
+`;
+}
+
+/**
+ * The `default` template's `"use client"` island: hooks and an event handler, so it
+ * renders on the server AND hydrates — the counter proves the round-trip.
+ */
+function counter(opts: ScaffoldOptions): string {
+  const tw = opts.tailwind;
   const buttonCls = tw ? ' class="mt-4 rounded bg-black px-4 py-2 text-white"' : "";
   // A dynamic class expression driven by the hydrated flag.
   const statusExpr = tw
     ? `{hydrated ? "text-green-600" : "text-gray-500"}`
     : `{hydrated ? "on" : "off"}`;
-  return `// Home page. Uses hooks, so it renders on the server AND hydrates into an
-// interactive counter — proving the SSR + hydration round-trip.
+  return `"use client";
+
+// A client island. \`"use client"\` marks the boundary: this file (and what it
+// imports) is bundled for the browser, hooks and event handlers work, and the
+// Server Component that renders it passes plain serialisable props.
 
 import { useEffect, useState } from "denext";
-import type { PageProps } from "denext/server";
 
-export const metadata = { title: "denext — home" };
-
-export default function Home(_props: PageProps) {
+export function Counter() {
   const [count, setCount] = useState(0);
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => setHydrated(true), []);
 
   return (
-    <section${sectionCls}>
-      <h1${h1Cls}>Hello from denext 👋</h1>
+    <div>
       <p>
         Status:{" "}
         <span class=${statusExpr}>
@@ -388,7 +445,7 @@ export default function Home(_props: PageProps) {
       <button${buttonCls} type="button" onClick={() => setCount((c) => c + 1)}>
         Clicked {count} {count === 1 ? "time" : "times"}
       </button>
-    </section>
+    </div>
   );
 }
 `;
@@ -416,7 +473,7 @@ function denextConfig(opts: ScaffoldOptions): string {
   }
   if (opts.compiler) {
     lines.push(
-      `  experimental: { reactCompiler: true }, // auto-memoization (experimental)`,
+      `  reactCompiler: true, // auto-memoization`,
     );
   }
   return `import type { DenextConfig } from "denext/server";
@@ -454,6 +511,9 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
       content: opts.template === "minimal" ? minimalPage(opts) : page(opts),
     },
   ];
+  if (opts.template !== "minimal") {
+    files.push({ path: `${appBase}/counter.tsx`, content: counter(opts) });
+  }
   if (opts.tailwind) {
     files.push({ path: "styles/tailwind.css", content: TAILWIND_INPUT });
   } else {
@@ -487,7 +547,10 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
 
 /**
  * Scaffold a new denext project into `opts.dir`. Refuses to overwrite a
- * non-empty directory.
+ * non-empty directory. Unless `opts.vscode` is `false`, also writes (or additively
+ * merges) the `.vscode` files that turn on the Deno LSP — kept out of
+ * {@linkcode scaffoldFiles} because they are merged into an existing file rather than
+ * refused by `init`.
  *
  * @param opts Target directory and feature toggles.
  * @returns The relative paths written.
@@ -496,6 +559,23 @@ export async function scaffoldProject(
   opts: ScaffoldOptions,
 ): Promise<string[]> {
   const files = scaffoldFiles(opts);
+  await refuseToClobber(files, opts);
+  for (const f of files) {
+    const abs = join(opts.dir, f.path);
+    await Deno.mkdir(join(abs, ".."), { recursive: true });
+    await Deno.writeTextFile(abs, f.content);
+  }
+  const written = files.map((f) => f.path);
+  if (opts.vscode !== false) {
+    const vscode: string[] = [];
+    await ensureVscodeDeno(opts.dir, vscode);
+    written.push(...vscode.map((p) => relative(opts.dir, p)));
+  }
+  return written;
+}
+
+/** `init`: never clobber an existing file; `create`: the target must be empty or absent. */
+async function refuseToClobber(files: ScaffoldFile[], opts: ScaffoldOptions): Promise<void> {
   if (opts.allowExisting) {
     // `init` into an existing dir: never clobber a file that already exists. A README is
     // the one file a repo commonly already has — keep theirs and skip ours.
@@ -519,12 +599,70 @@ export async function scaffoldProject(
       if (!(err instanceof Deno.errors.NotFound)) throw err; // NotFound → create it
     }
   }
-  for (const f of files) {
-    const abs = join(opts.dir, f.path);
-    await Deno.mkdir(join(abs, ".."), { recursive: true });
-    await Deno.writeTextFile(abs, f.content);
+}
+
+/**
+ * Enable the Deno language server for a project so editors resolve the `denext` import
+ * map (and, in a migrated app, the react aliases) exactly the way `deno` does. Without
+ * this, VSCode's built-in TypeScript server — which knows nothing about `deno.json`'s
+ * `imports` — flags `denext`/`denext/desktop` and the aliased `react` as unresolved even
+ * though `deno check` passes and the app builds.
+ *
+ * Writes `.vscode/settings.json` (`"deno.enable": true`) and `.vscode/extensions.json`
+ * (recommending `denoland.vscode-deno`, so the LSP is one prompt away). Both are merged
+ * additively: any existing keys/recommendations are preserved, the entry is added only when
+ * missing, and a re-run with it already present writes nothing (idempotent). Pushes each
+ * changed path onto `written`. Scoped to this app dir — VSCode only reads a folder's
+ * `.vscode` when that folder is a workspace root, so a monorepo's other (Node) packages are
+ * unaffected unless this app is opened directly. Shared by `denext create` / `init` and
+ * `denext migrate`.
+ *
+ * @param dir The app directory.
+ * @param written Accumulator each changed `.vscode` path (absolute) is pushed onto.
+ */
+export async function ensureVscodeDeno(dir: string, written: string[]): Promise<void> {
+  const vscodeDir = join(dir, ".vscode");
+
+  // settings.json → turn on the Deno LSP for this workspace folder.
+  const settingsPath = join(vscodeDir, "settings.json");
+  const settings = (await readVscodeJson(settingsPath)) ?? {};
+  if (settings["deno.enable"] !== true) {
+    settings["deno.enable"] = true;
+    await writeVscodeJson(vscodeDir, settingsPath, settings, written);
   }
-  return files.map((f) => f.path);
+
+  // extensions.json → recommend the Deno extension so the LSP is a click away.
+  const extPath = join(vscodeDir, "extensions.json");
+  const ext = (await readVscodeJson(extPath)) ?? {};
+  const recs = Array.isArray(ext.recommendations) ? ext.recommendations as string[] : [];
+  if (!recs.includes("denoland.vscode-deno")) {
+    ext.recommendations = [...recs, "denoland.vscode-deno"];
+    await writeVscodeJson(vscodeDir, extPath, ext, written);
+  }
+}
+
+/** Read a `.vscode/*.json` file (JSONC — VSCode allows comments), or null when absent/invalid. */
+async function readVscodeJson(path: string): Promise<Record<string, unknown> | null> {
+  try {
+    return parseJsonc(await Deno.readTextFile(path)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+/** Write a `.vscode/*.json` file (mkdir + symlink-safe overwrite), pushing it to `written`. */
+async function writeVscodeJson(
+  vscodeDir: string,
+  path: string,
+  obj: Record<string, unknown>,
+  written: string[],
+): Promise<void> {
+  await Deno.mkdir(vscodeDir, { recursive: true });
+  // Same symlink guard as migrate's `ensureGitignore`: unlink first so a symlinked target
+  // (possible in a cloned third-party repo) isn't followed out of tree.
+  await Deno.remove(path).catch(() => {});
+  await Deno.writeTextFile(path, JSON.stringify(obj, null, 2) + "\n");
+  written.push(path);
 }
 
 /** Remove the generated README from `files` when the target dir already has one. */

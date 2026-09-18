@@ -142,6 +142,9 @@ async function assertSharedRuntimeChunk(clientDir: string): Promise<void> {
  * load (`awaitClassRuntime`) — measured 60,196 B (+0.7 KB) — while the class runtime itself
  * (2.5 KB) now ships as a `class-runtime-*` chunk a function-only page never fetches, and an
  * app whose scan tripped on the word `Component` no longer carries it in this total at all.
+ * Re-based 61 → 62 KB for 2.5.0: the hydrator's `suppressHydrationWarning` walk (the nearest
+ * host's opt-out, one level) and the DOM-props skip for the marker, on top of the 2.5 cycle's
+ * navigation and session additions — measured 61,122 B (+0.9 KB over the 2.4 base).
  */
 async function assertBundleBudgets(clientDir: string): Promise<void> {
   let sharedTotal = 0;
@@ -150,7 +153,7 @@ async function assertBundleBudgets(clientDir: string): Promise<void> {
       sharedTotal += (await Deno.stat(join(clientDir, e.name))).size;
     }
   }
-  assert(sharedTotal < 61_000, `shared chunks total ${sharedTotal} bytes (budget 61 KB raw)`);
+  assert(sharedTotal < 62_000, `shared chunks total ${sharedTotal} bytes (budget 62 KB raw)`);
   for (const f of ["about.js", "blog___slug_.js"]) {
     const n = (await Deno.stat(join(clientDir, f))).size;
     assert(n < 6_000, `${f} is ${n} bytes (budget 6 KB) — is the runtime inlined again?`);

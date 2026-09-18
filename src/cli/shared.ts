@@ -14,6 +14,26 @@ export const SHUTDOWN_SIGNALS: Deno.Signal[] = Deno.build.os === "windows"
   : ["SIGINT", "SIGTERM"];
 
 /**
+ * The `.env` tier the module gate loads for a verb: the process's own mode when the deployer
+ * set one (`DENEXT_ENV`, else `NODE_ENV`), else the verb's declared tier, else `undefined` so
+ * {@linkcode loadEnv} falls back to its default (`development`).
+ *
+ * @param command The verb about to run.
+ * @param env The process environment (`Deno.env.get`; a read may throw under `--allow-env=X`).
+ * @returns The tier, or `undefined` for the default.
+ */
+export function envTierFor(
+  command: { readonly envTier?: "production" },
+  env: (key: string) => string | undefined = (key) => Deno.env.get(key),
+): string | undefined {
+  try {
+    return env("DENEXT_ENV") ?? env("NODE_ENV") ?? command.envTier;
+  } catch {
+    return command.envTier;
+  }
+}
+
+/**
  * The project directory a command operates on: `--cwd` wins, else the first
  * positional, else the current directory — resolved to an absolute path.
  */
@@ -42,6 +62,11 @@ export function installShutdown(controller: AbortController): void {
   }
 }
 
+/** Whether this invocation asked for diagnostic output (`--verbose` anywhere in argv). */
+function verboseRun(): boolean {
+  return Deno.args.includes("--verbose");
+}
+
 /**
  * Run a build/export step, turning a failure into a clean, `denext:`-prefixed error
  * (printed without a stack by the top-level handler) rather than dumping a raw
@@ -57,6 +82,9 @@ export async function runBuildStep<T>(
   } catch (err) {
     if (err instanceof Error && err.message.startsWith("denext:")) throw err;
     const detail = err instanceof Error ? err.message : String(err);
+    // The cause carries the stack this message hides. A failure inside the build machinery
+    // (rather than in the user's code) is unreadable without it, so `--verbose` prints it.
+    if (err instanceof Error && err.stack && verboseRun()) console.error(err.stack);
     throw new Error(`denext: ${label} failed — ${detail}`, { cause: err });
   }
 }

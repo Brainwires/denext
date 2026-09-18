@@ -5,7 +5,7 @@ import { MarkdownDoc } from "../../../components/markdown.tsx";
 export const metadata = {
   title: "Tutorial",
   description:
-    "Build the repository's examples/notes app step by step — SQLite, Server Components, a no-JS Server Action form, sessions, ISR, tests, and a build.",
+    "Build the repository's examples/notes app step by step — SQLite, Server Components, a no-JS Server Action form, sessions, ISR, tests, a client island, and a build.",
 };
 
 export default async function Tutorial() {

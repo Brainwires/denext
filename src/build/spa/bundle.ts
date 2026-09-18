@@ -133,7 +133,7 @@ async function bundleCompatSpa(
     // resolves these straight from node_modules (front-runs the loader).
     catalogPackages: await pnpmCatalogPackages(paths.projectDir),
     // Resolve ALL app npm deps from node_modules (supersedes the narrow catalog set) —
-    // the seamless-migration path. Default-on; `experimental.nodeResolve: false` opts out.
+    // the seamless-migration path. Default-on; `nodeResolve: false` opts out.
     resolveAllNodeModules: nodeResolveEnabled(paths.config),
     // App-configured MDX plugins (denext.config `mdx`) for `.mdx`/`.md` sources.
     mdxOptions: config.mdx,
@@ -151,8 +151,8 @@ async function bundleCompatSpa(
 /**
  * The extra esbuild onLoad plugins for a SPA bundle: in DEV, Fast Refresh family
  * registrations (front-runs the deno-loader); in PROD, the source transforms the app enabled —
- * the auto-memo compiler (`experimental.reactCompiler`) and/or the feature-flag fold
- * (`experimental.features`), chained in one plugin. All transform only first-party app source
+ * the auto-memo compiler (`reactCompiler`) and/or the feature-flag fold
+ * (`features`), chained in one plugin. All transform only first-party app source
  * and are omitted otherwise so nothing extra runs. (Dev keeps the untransformed fast-rebuild +
  * Fast Refresh; these are prod optimizations.)
  */

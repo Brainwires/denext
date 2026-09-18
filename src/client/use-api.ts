@@ -272,7 +272,7 @@ export function useApi<
   }, [entry]);
 
   // Tag invalidation through the installed transport.
-  const tagsKey = options.tags?.join(" ") ?? "";
+  const tagsKey = options.tags?.join("\0") ?? "";
   useEffect(() => {
     if (!tagsKey) return;
     if (!invalidationSource) return warnNoTransport();

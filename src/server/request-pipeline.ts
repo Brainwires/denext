@@ -528,8 +528,11 @@ export async function runPipeline(
     // response — after() must not delay it. runDeferred swallows every error, so the
     // detached promise can never reject. (On a serverless runtime that freezes the
     // isolate the instant the response is sent, this work is best-effort — the same
-    // caveat as the platform's own after().)
-    void runDeferred(ctx);
+    // caveat as the platform's own after().) A STREAMED response is still rendering
+    // its Suspense holes when the Response object leaves here; its assembler drains
+    // when the body ends instead (`beginStreamedBody`), so an after() registered inside
+    // a hole runs too.
+    if (!ctx.bodyStreaming) void runDeferred(ctx);
     // Release any ISR single-flight followers waiting on this key (the cache is
     // populated by now if the render was cacheable).
     if (state.releasePageLeader) state.releasePageLeader();

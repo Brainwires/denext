@@ -91,7 +91,8 @@ export interface AppConfig {
    * Opt-in per-request observability: called once after every response with the
    * method, path, final status, and duration. Errors thrown by it are swallowed
    * (observability must never break the response). A default logger emitting one
-   * line per request is used instead when the `DENEXT_LOG` env var is set.
+   * line per request is used instead when the `DENEXT_LOG` env var is set. Under
+   * `denext start`/`dev` this is the project's `instrumentation.ts` `onRequest` export.
    */
   onRequest?: (info: RequestLogInfo) => void;
   /**
@@ -101,7 +102,8 @@ export interface AppConfig {
    * server action that hangs (e.g. a request-driven unbounded loop). The deadline stays
    * armed across a streamed body (a hole that never settles ends the stream with its
    * fallback in place). **Default: 30 000 ms**; `0` disables it (a slow request body is
-   * always bounded separately).
+   * always bounded separately). `denext start`/`dev` take it from the config's
+   * `requestTimeout` (or `DENEXT_REQUEST_TIMEOUT_MS`).
    */
   requestTimeout?: number;
   /**
@@ -123,7 +125,8 @@ export interface AppConfig {
    * replace, that.
    *
    * Background ISR regeneration (an internal detached task) is exempt. Default: no
-   * limit.
+   * limit. `denext start`/`dev` take it from the config's `maxConcurrency` (or
+   * `DENEXT_MAX_CONCURRENCY`).
    */
   maxConcurrency?: number;
   /**
@@ -132,7 +135,8 @@ export interface AppConfig {
    * without a request deadline, a render that never settles would hold its slot
    * forever and could eventually wedge the whole ceiling to 503s. The backstop frees
    * **only the slot** after this many ms (it does not abort the render — the operator
-   * opted out of timing requests out). Default: 120000 (2 min).
+   * opted out of timing requests out). Default: 120000 (2 min). `denext start`/`dev` take
+   * it from the config's `slotBackstop`.
    */
   slotBackstop?: number;
   /** Optional i18n config enabling optional-prefix locale routing. */
@@ -157,7 +161,8 @@ export interface AppConfig {
    * ALL params participate, preserving existing behavior. Values still key
    * verbatim; only which names count is narrowed. A param not in the allowlist
    * still reaches the render (via `searchParams`) — it just doesn't fork the key,
-   * so list every param whose value changes cacheable output.
+   * so list every param whose value changes cacheable output. `denext start`/`dev` take
+   * it from the config's `cacheKeyParams`.
    */
   cacheKeyParams?: string[];
   /**
@@ -169,7 +174,7 @@ export interface AppConfig {
   /**
    * Max Server Action request body size in bytes (default 1 MiB, matching Next.js).
    * Raise this only for actions that accept large payloads (e.g. multipart file
-   * uploads).
+   * uploads). `denext start`/`dev` take it from the config's `actionMaxBodyBytes`.
    */
   actionMaxBodyBytes?: number;
   /**
@@ -186,13 +191,16 @@ export interface AppConfig {
    * absolute URLs (auto-populated `og:image`, canonical). Overrides request
    * headers — the most robust option when the origin is fixed. Also makes Server
    * Action origin checks scheme-strict (rejects an `http` origin for an `https` app).
+   * `denext start`/`dev` take it from the config's `canonicalOrigin` (or
+   * `DENEXT_CANONICAL_ORIGIN`).
    */
   canonicalOrigin?: string;
   /**
    * Trust `X-Forwarded-Proto`/`X-Forwarded-Host` when building absolute URLs.
    * Enable ONLY behind a trusted reverse proxy that sets those headers; otherwise
    * a client can spoof the generated origin. Ignored when {@link canonicalOrigin}
-   * is set. Default false (forwarded headers are not trusted).
+   * is set. Default false (forwarded headers are not trusted). `denext start`/`dev` take
+   * it from the config's `trustForwardedHeaders` (or `DENEXT_TRUST_PROXY=1`).
    */
   trustForwardedHeaders?: boolean;
   /**

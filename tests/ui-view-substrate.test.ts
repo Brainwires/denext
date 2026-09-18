@@ -8,7 +8,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import type { VNode } from "../src/jsx/types.ts";
-import { htmlResponse, type RawHtml, renderPage, toHtml, UI_NAV } from "../src/ui/html.ts";
+import { htmlResponse, type RawHtml, renderPage, toHtml, UI_NAV_SECTIONS } from "../src/ui/html.ts";
 import {
   DiffBlock,
   FileDetails,
@@ -18,13 +18,14 @@ import {
   Out,
   Panel,
   ResultList,
+  SourceBlock,
   Table,
 } from "../src/ui/components.ts";
 import { layout, type LayoutOptions, UI_CSS_PATH, UI_JS_PATH } from "../src/ui/layout.ts";
 import { Raw, renderView } from "../src/ui/view.ts";
 import { UI_ROUTES } from "../src/ui/routes.ts";
 import { startUiServer } from "../src/ui/server.ts";
-import { UI_COOKIE } from "../src/ui/security.ts";
+import { uiHandshake } from "./helpers/ui-session.ts";
 import { UI_JS } from "../src/ui/client.ts";
 
 /** The named references the renderer (or literal markup) emits. */
@@ -55,8 +56,11 @@ const BODY: RawHtml = {
 function shell(head: string, nav: string, main: string): string {
   return '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width, initial-scale=1">' + head +
-    `<link rel="stylesheet" href="${UI_CSS_PATH}"></head><body><header class="topbar">` +
-    `<span class="brand">denext\u00a0ui</span><nav>${nav}</nav></header>` +
+    `<link rel="stylesheet" href="${UI_CSS_PATH}"></head><body>` +
+    '<input type="checkbox" id="nav-toggle" class="nav-toggle" aria-label="Navigation">' +
+    `<aside class="sidebar"><span class="brand">denext\u00a0ui</span>` +
+    '<label for="nav-toggle" class="nav-burger" aria-hidden="true">\u2630</label>' +
+    `<nav>${nav}</nav></aside>` +
     `<main id="main">${main}</main><script type="module" src="${UI_JS_PATH}"></script>` +
     "</body></html>";
 }
@@ -64,16 +68,23 @@ function shell(head: string, nav: string, main: string): string {
 Deno.test("the layout renders its golden document, the body inserted verbatim", () => {
   const options: LayoutOptions = {
     title: `Config <&"'>`,
-    nav: UI_NAV,
+    nav: UI_NAV_SECTIONS,
     body: BODY,
     csrf: `tok"&<'>`,
-    active: "/config",
+    active: "/config/routing",
   };
-  const nav = UI_NAV.map((item) =>
-    item.href === "/config"
-      ? `<a href="${item.href}" aria-current="page">${item.label}</a>`
-      : `<a href="${item.href}">${item.label}</a>`
-  ).join("");
+  const nav = UI_NAV_SECTIONS.map((section) => {
+    // An item under a heading carries `nested`, which is what indents it.
+    const cls = section.label === undefined ? "" : ' class="nested"';
+    return (section.label === undefined
+      ? ""
+      : `<span class="nav-section">${section.label}</span>`) +
+      section.items.map((item) =>
+        item.href === "/config/routing"
+          ? `<a href="${item.href}"${cls} aria-current="page">${item.label}</a>`
+          : `<a href="${item.href}"${cls}>${item.label}</a>`
+      ).join("");
+  }).join("");
   const head = '<meta name="denext-csrf" content="tok&quot;&amp;&lt;&#39;&gt;">' +
     "<title>Config &lt;&amp;&quot;&#39;&gt; · denext ui</title>";
   // The body fragment is inserted verbatim: its own numeric references survive untouched.
@@ -83,7 +94,7 @@ Deno.test("the layout renders its golden document, the body inserted verbatim", 
 Deno.test("the layout escapes an attacker title and nav label, with no entry current", () => {
   const options: LayoutOptions = {
     title: "</title><script>alert(1)</script>",
-    nav: [{ href: '/x"onmouseover="alert(1)', label: "<img src=x>" }],
+    nav: [{ items: [{ href: '/x"onmouseover="alert(1)', label: "<img src=x>" }] }],
     body: { __html: "" },
     csrf: "c",
   };
@@ -97,6 +108,27 @@ Deno.test("the layout escapes an attacker title and nav label, with no entry cur
   assert(!page.includes("<img"), "a nav label is escaped");
 });
 
+Deno.test("the sidebar names the modes that change what every panel will do", () => {
+  const base = { title: "t", nav: UI_NAV_SECTIONS, body: { __html: "" } as RawHtml, csrf: "c" };
+  // No mode on: no footer at all. The shell does not invent status it does not have.
+  assert(!renderPage(layout, base).includes('class="mode"'), "no footer without a mode");
+  // `--read-only` used to be announced only on the Overview, so on every other panel a refused
+  // write looked like a bug rather than the mode it is.
+  assert(
+    renderPage(layout, { ...base, readOnly: true }).includes(
+      '<p class="mode"><span class="badge warn">read-only</span></p>',
+    ),
+    "read-only is named in the shell",
+  );
+  assert(
+    renderPage(layout, { ...base, readOnly: true, offline: true }).includes(
+      '<p class="mode"><span class="badge warn">read-only</span>' +
+        '<span class="badge info">offline</span></p>',
+    ),
+    "both modes render, in order, with no key attribute leaking",
+  );
+});
+
 Deno.test("Raw nests a rendered fragment inside a component without escaping it twice", () => {
   const fragment: RawHtml = { __html: '<b title="&#34;">&#60;i&#62;</b>' };
   const out = toHtml(renderView(h("div", { id: "d" }, h(Raw, { html: fragment }))));
@@ -105,7 +137,7 @@ Deno.test("Raw nests a rendered fragment inside a component without escaping it 
   const page = toHtml(renderView(h("p", null, "a", h(Raw, { html: "<br>" }), "b")));
   assertEquals(page, "<p>a<br>b</p>");
   assert(
-    !renderPage(layout, { title: "t", nav: UI_NAV, body: BODY, csrf: "c" }).includes(
+    !renderPage(layout, { title: "t", nav: UI_NAV_SECTIONS, body: BODY, csrf: "c" }).includes(
       "denext-ui-raw",
     ),
   );
@@ -171,13 +203,13 @@ Deno.test("renderPage takes a component tree, a rendered fragment, or a markup s
   assertEquals(renderPage(() => fragment, props), "<p>&#60;n&#62;</p>");
   assertEquals(renderPage(() => "<p>x</p>", props), "<p>x</p>");
   // The layout through the seam is exactly its own rendered tree.
-  const options = { title: "t", nav: UI_NAV, body: BODY, csrf: "c", active: "/" };
+  const options = { title: "t", nav: UI_NAV_SECTIONS, body: BODY, csrf: "c", active: "/" };
   assertEquals(renderPage(layout, options), toHtml(renderView(layout(options))));
 });
 
 Deno.test("OpForm renders its golden markup: token, hidden fields, extras, button", () => {
   const options = {
-    action: '/wizard?a="b"',
+    action: '/setup?a="b"',
     label: "Apply <this> & that",
     fields: { op: "denojson", confirm: "1", odd: `"'<>&` },
     className: "op",
@@ -186,7 +218,7 @@ Deno.test("OpForm renders its golden markup: token, hidden fields, extras, butto
   const extra = h("input", { type: "hidden", name: "task", value: "build" });
   assertEquals(
     toHtml(renderView(h(OpForm, { csrf: `tok"&`, ...options, extra }))),
-    '<form method="post" action="/wizard?a=&quot;b&quot;" class="op">' +
+    '<form method="post" action="/setup?a=&quot;b&quot;" class="op">' +
       '<input type="hidden" name="_csrf" value="tok&quot;&amp;">' +
       '<input type="hidden" name="op" value="denojson">' +
       '<input type="hidden" name="confirm" value="1">' +
@@ -219,12 +251,40 @@ Deno.test("DiffBlock renders its golden markup, every newline kept as content", 
 
 Deno.test("Note and Out render the panels' note and output block", () => {
   assertEquals(toHtml(renderView(h(Note, null, "a <b>"))), '<p class="note">a &lt;b&gt;</p>');
+  // A tone is a class the stylesheet colours; a plain note is neutral, not a caution.
+  assertEquals(
+    toHtml(renderView(h(Note, { tone: "ok" }, "saved"))),
+    '<p class="note ok">saved</p>',
+  );
+  assertEquals(toHtml(renderView(h(Note, { tone: "warn" }, "x"))), '<p class="note warn">x</p>');
   assertEquals(
     toHtml(renderView(h(Note, { role: "alert" }, "a"))),
     '<p class="note" role="alert">a</p>',
   );
   assertEquals(toHtml(renderView(h(Out, null))), '<pre class="out"></pre>');
   assertEquals(toHtml(renderView(h(Out, null, "x\n<y>"))), '<pre class="out">x\n&lt;y&gt;</pre>');
+});
+
+Deno.test("SourceBlock brings a sliced value's lines back to its own column", () => {
+  const render = (source: string) => toHtml(renderView(h(SourceBlock, { source })));
+  // The shape the config reader hands back for `plugins: [ … ]`: the span starts AT the bracket,
+  // so line 1 arrives with no indent while the lines under it keep the file's. Rendered raw that
+  // is the misalignment this component exists to undo.
+  assertEquals(
+    render("[\n    openapi(),\n  ]"),
+    '<pre class="out">[\n  openapi(),\n]</pre>',
+  );
+  // One line has no continuation to move.
+  assertEquals(render("true"), '<pre class="out">true</pre>');
+  // A blank line inside the value does not get a vote on the common indent, and is not padded.
+  assertEquals(
+    render("[\n    a,\n\n    b,\n  ]"),
+    '<pre class="out">[\n  a,\n\n  b,\n]</pre>',
+  );
+  // Lines sharing no prefix — a tab beside spaces — are left exactly as they arrived: showing
+  // the value plainly beats guessing at what its author meant.
+  const mixed = "{\n\ta: 1,\n  b: 2,\n}";
+  assertEquals(render(mixed), '<pre class="out">' + mixed + "</pre>");
 });
 
 Deno.test("the shared panel pieces render one fixed markup each", () => {
@@ -270,7 +330,7 @@ async function fetchVia(path: string, view: () => unknown): Promise<Response[]> 
     handle: () => Promise.resolve(htmlResponse(renderPage(view as () => string, undefined))),
   };
   const server = await startUiServer({ dir, port: 0 });
-  const headers = { cookie: `${UI_COOKIE}=${server.token}` };
+  const { headers } = await uiHandshake(server);
   const base = `http://127.0.0.1:${server.port}`;
   const logged = console.error;
   console.error = () => {};
@@ -382,4 +442,14 @@ Deno.test("the flip adds exactly the three view modules to the UI server's graph
 Deno.test("the client module is unchanged by the flip: no JSX, no hydration", () => {
   assert(!/jsx|hydrat/i.test(UI_JS), "ui.js stays progressive enhancement only");
   assertStringIncludes(UI_JS, "DOMParser");
+  // The unsaved-changes guard: its BEHAVIOUR is the e2e suite's subject (nightly, a real
+  // browser), so this is the cheap always-run check that it is still there at all — and that it
+  // is still built as nodes rather than assembled as markup, which is what keeps the strict CSP
+  // and the no-innerHTML rule intact.
+  assertStringIncludes(UI_JS, "nav-guard");
+  assertStringIncludes(UI_JS, 'form[data-dirty-track][data-dirty="1"]');
+  assertStringIncludes(UI_JS, "document.body.append(dialog)");
+  // The word itself appears in swapPanel's comment, which is the rule being stated rather
+  // than broken; what must never appear is an ASSIGNMENT.
+  assert(!/\.innerHTML\s*=/.test(UI_JS), "nothing in ui.js is assigned as markup");
 });

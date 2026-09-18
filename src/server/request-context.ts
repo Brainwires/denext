@@ -245,6 +245,21 @@ export interface RequestContext {
   /** Callbacks registered via {@link after}, drained after the response. */
   deferred: Array<() => unknown>;
   /**
+   * Set once the response headers are committed — the streaming path sets it at its
+   * first flush (see {@link beginStreamedBody}). From then on `cookies().set()`/`.delete()`
+   * can't reach the response: dev throws, prod logs once and ignores the write.
+   */
+  headersCommitted?: boolean;
+  /**
+   * True while a streamed body is still being produced: the pipeline leaves the
+   * {@link after} drain to the stream's end instead of running it when the Response
+   * object is created (a callback registered inside a streamed Suspense hole would
+   * otherwise never run). Cleared by the `end` {@link beginStreamedBody} returns.
+   */
+  bodyStreaming?: boolean;
+  /** Guards the prod "cookies modified after the response started" log (once per request). */
+  warnedCommittedCookies?: boolean;
+  /**
    * Serialized `<link>`/`<script>` resource hints emitted during SSR by
    * `preload`/`preinit`/`preconnect`/`prefetchDNS` (React's resource-hint APIs).
    * Merged into the document `<head>` by the page renderer. Populated lazily via
@@ -422,6 +437,28 @@ export function connection(): Promise<void> {
   if (shouldPostpone()) postponeDynamic("connection");
   if (ctx) ctx.usedDynamicApi = true;
   return Promise.resolve();
+}
+
+/**
+ * Mark `ctx`'s response as a streamed body whose headers are now committed. Called by the
+ * streaming document assemblers at their first flush: from here on {@link cookies} writes
+ * can't reach the response (see {@link RequestContext.headersCommitted}), and the
+ * {@link after} drain moves from "the Response object exists" to "the body ended" — the
+ * pipeline skips its own drain while {@link RequestContext.bodyStreaming} is set.
+ *
+ * @returns `end`: call it when the stream closes, errors or is cancelled (idempotent). It
+ *   clears `bodyStreaming` and drains the deferred callbacks without blocking anything.
+ */
+export function beginStreamedBody(ctx: RequestContext): () => void {
+  ctx.headersCommitted = true;
+  ctx.bodyStreaming = true;
+  let ended = false;
+  return () => {
+    if (ended) return;
+    ended = true;
+    ctx.bodyStreaming = false;
+    void runDeferred(ctx);
+  };
 }
 
 /** Run all {@link after} callbacks registered on `ctx` (errors are swallowed). */
@@ -697,6 +734,27 @@ export function draftMode(): AwaitableDraftMode {
   });
 }
 
+/**
+ * A `cookies().set()`/`.delete()` after the response headers were committed (a component
+ * inside a streamed Suspense boundary, an `after()` callback of a streamed response) can't
+ * reach the response. Dev throws so the bug is seen; prod logs once per request and the
+ * write is ignored. Returns whether the write may proceed.
+ */
+function cookieWriteAllowed(ctx: RequestContext, op: "set" | "delete", name: string): boolean {
+  if (!ctx.headersCommitted) return true;
+  const message = `cookies().${op}("${name}"): cookies can only be modified before the ` +
+    `response starts — in a Server Action, a Route Handler, middleware, or a component ` +
+    `that renders before the first flush; this component rendered inside a streamed ` +
+    `Suspense boundary (or after the response was sent), so the response headers are ` +
+    `already committed.`;
+  if (isDev()) throw new Error(message);
+  if (!ctx.warnedCommittedCookies) {
+    ctx.warnedCommittedCookies = true;
+    console.error(`denext: ${message} The write was ignored.`);
+  }
+  return false;
+}
+
 /** Access the current request's cookies (reads incoming, writes Set-Cookie). */
 export function cookies(): AwaitableCookieStore {
   const ctx = requireContext("cookies");
@@ -716,6 +774,7 @@ export function cookies(): AwaitableCookieStore {
   return awaitable(cookieStoreOver(
     incoming,
     (name, value, options = {}) => {
+      if (!cookieWriteAllowed(ctx, "set", name)) return;
       incoming[name] = value; // visible to later `cookies().get()` in this request
       setCookie(ctx.outgoingHeaders, {
         name,
@@ -733,6 +792,7 @@ export function cookies(): AwaitableCookieStore {
       });
     },
     (name, options = {}) => {
+      if (!cookieWriteAllowed(ctx, "delete", name)) return;
       delete incoming[name];
       deleteCookie(ctx.outgoingHeaders, name, {
         path: options.path ?? "/",

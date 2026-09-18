@@ -72,6 +72,108 @@ export default {
         stacked.
       </Callout>
 
+      <h2 id="cron-syntax">Cron syntax</h2>
+      <p>
+        Standard five-field Vixie cron: minute (0–59), hour (0–23), day of month (1–31), month
+        (1–12), day of week. Each field is <code>*</code>, a number, an <code>a-b</code>{" "}
+        range, or one of those with a{" "}
+        <code>/step</code>, and a comma list of any of them. Tokens are{" "}
+        <strong>plain digits</strong>: <code>-5</code>, <code>0x10</code>, <code>1e1</code>,{" "}
+        <code>5.</code>{" "}
+        and an empty item (<code>5,,</code>) are refused, so an expression that parses here is one
+        {" "}
+        <code>Deno.cron</code> accepts too. Names (<code>JAN</code>,{" "}
+        <code>MON</code>) are not accepted — keep it numeric.
+      </p>
+      <ul>
+        <li>
+          <strong>Weekdays are POSIX:</strong> <code>0–6</code> with <code>0</code>{" "}
+          = Sunday (<code>7</code> is Sunday too), so <code>0 0 * * 1</code> is Monday.{" "}
+          <code>Deno.cron</code> numbers them <code>1–7</code> from Sunday and rejects{" "}
+          <code>0</code>, which is why denext never hands it the expression verbatim: the
+          day-of-week field is translated into names (<code>MON</code>,{" "}
+          <code>MON-FRI</code>, an exact list for anything stepped), which both conventions agree
+          on. Write POSIX and nothing fires a day late.
+        </li>
+        <li>
+          <code>?</code> is accepted as an alias for <code>*</code>{" "}
+          (a Quartz habit) and translated to <code>*</code> for{" "}
+          <code>Deno.cron</code>, which rejects it.
+        </li>
+        <li>
+          <code>N/S</code> on a lone number means <em>N to the field's maximum, step S</em>:{" "}
+          <code>5/15</code> in the minute field is <code>5-59/15</code>, as Vixie and{" "}
+          <code>Deno.cron</code> read it.
+        </li>
+        <li>
+          When <strong>both</strong>{" "}
+          day fields are restricted (<code>0 0 5 * 1</code>), Vixie fires when <em>either</em>{" "}
+          matches — the 5th <em>and</em>{" "}
+          every Monday. denext does the same; the Project UI's builder reports such an expression as
+          custom rather than misdescribing it.
+        </li>
+      </ul>
+
+      <h2 id="run-history">Run history</h2>
+      <p>
+        Off by default: denext records nothing and writes no file until you ask. With{" "}
+        <code>tasks: {"{ history: true }"}</code> in <code>denext.config.ts</code>{" "}
+        every run is recorded — the scheduler's, <code>runTask</code> from app code, and{" "}
+        <code>denext task &lt;name&gt;</code>{" "}
+        from the command line — and the Project UI's Cron page shows each task's last result, its
+        duration, and its successes and failures over the last seven days.
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+export default {
+  tasks: {
+    history: true,       // record every run to .denext/tasks.db
+    historyMaxRuns: 500, // runs kept per task (default 500); 14 days either way
+  },
+} satisfies import("denext/server").DenextConfig;`}
+      </Code>
+      <ul>
+        <li>
+          <strong>Where:</strong> <code>.denext/tasks.db</code>{" "}
+          (a SQLite file through Deno's built-in <code>node:sqlite</code>, with its{" "}
+          <code>-wal</code>/<code>-shm</code>{" "}
+          siblings), created owner-only (<code>0600</code>) on the first recorded run. The recorder
+          is installed at server boot, so turning it on takes effect the next time the app starts —
+          under <code>denext dev</code> too.
+        </li>
+        <li>
+          <strong>What is recorded:</strong>{" "}
+          the task, trigger, start time, duration and status, plus the run's output in{" "}
+          <strong>plain text</strong>: the tail of a string the handler returned (up to 2 KB) and,
+          for a failure, the error's message and the head of its stack (2 KB). A task that would
+          return a token, a DSN or another secret should return nothing instead.
+        </li>
+        <li>
+          <strong>Retention:</strong> 14 days, and <code>tasks.historyMaxRuns</code>{" "}
+          per task (default 500; per task, so a minute-cron task cannot evict a daily task's
+          history). Both are applied on the <em>first</em>{" "}
+          recorded run of every process and then amortised, so a one-shot <code>denext task</code>
+          {" "}
+          from system cron prunes as well.
+        </li>
+        <li>
+          <strong>Never in the way:</strong>{" "}
+          recording can neither fail nor delay a run. A read-only filesystem, a full disk, a locked
+          file or a denied write permission degrades to no history, not to a broken job.
+        </li>
+        <li>
+          <strong>Clearing:</strong>{" "}
+          the Cron page's Clear button deletes the rows (two steps, with the count) and leaves the
+          file in place, because the running app may hold it open.
+        </li>
+        <li>
+          <strong>Deno Deploy:</strong>{" "}
+          the file is per-isolate and ephemeral, so what you see is one isolate's fragment that
+          resets when it cycles. Recording still happens and a warning says so at boot — a history
+          that is quietly wrong is worse than none.
+        </li>
+      </ul>
+
       <h2>Run on demand</h2>
       <p>
         Trigger a task yourself from a route handler or a Server Action with{" "}

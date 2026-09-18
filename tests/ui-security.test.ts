@@ -11,7 +11,9 @@ import {
   deriveCsrf,
   MIN_UI_TOKEN_LENGTH,
   newToken,
+  readContained,
   StaleWriteError,
+  stampOf,
   UI_COOKIE,
   UI_CSRF_HEADER,
   uiOriginAllowed,
@@ -20,19 +22,29 @@ import {
   writeFileAtomic,
 } from "../src/ui/security.ts";
 import { startUiServer, type UiServer } from "../src/ui/server.ts";
+import { uiHandshake } from "./helpers/ui-session.ts";
 
+/**
+ * A started server, handshaken: `cookie` is the `Cookie` header value the exchange minted and
+ * `csrf` the token derived from it. `server.token` (the launch token) is deliberately NOT what a
+ * request authenticates with — that is the point of layer 3.
+ */
 async function ui(options: { readOnly?: boolean } = {}): Promise<
-  { server: UiServer; base: string; csrf: string; dir: string }
+  { server: UiServer; base: string; cookie: string; csrf: string; dir: string }
 > {
   const dir = await Deno.makeTempDir({ prefix: "denext_ui_sec_" });
   await Deno.writeTextFile(join(dir, "deno.json"), '{ "tasks": { "hello": "echo hi" } }');
   const server = await startUiServer({ dir, port: 0, ...options });
-  return {
-    server,
-    base: `http://127.0.0.1:${server.port}`,
-    csrf: await deriveCsrf(server.token),
-    dir,
-  };
+  const { cookie, csrf } = await uiHandshake(server);
+  return { server, base: `http://127.0.0.1:${server.port}`, cookie, csrf, dir };
+}
+
+/** A started server whose handshake has NOT run — for the tests of the exchange itself. */
+async function fresh(): Promise<{ server: UiServer; base: string; dir: string }> {
+  const dir = await Deno.makeTempDir({ prefix: "denext_ui_sec_" });
+  await Deno.writeTextFile(join(dir, "deno.json"), '{ "tasks": { "hello": "echo hi" } }');
+  const server = await startUiServer({ dir, port: 0 });
+  return { server, base: `http://127.0.0.1:${server.port}`, dir };
 }
 
 async function stop(s: { server: UiServer; dir: string }): Promise<void> {
@@ -74,18 +86,67 @@ Deno.test("a wrong cookie is 401", async () => {
   }
 });
 
-Deno.test("?t= sets the cookie and 302s to the same path WITHOUT the query", async () => {
-  const s = await ui();
+Deno.test("?t= sets the cookie and 302s to the overview, never the requested path", async () => {
+  const s = await fresh();
   try {
     const res = await fetch(`${s.base}/config?t=${s.server.token}`, { redirect: "manual" });
     await res.body?.cancel();
     assertEquals(res.status, 302);
-    assertEquals(res.headers.get("location"), "/config");
+    // Always the overview: the launcher only ever prints `/?t=`, and a copied link must not
+    // decide which page a session opens on.
+    assertEquals(res.headers.get("location"), "/");
     const cookie = res.headers.get("set-cookie") ?? "";
-    assertStringIncludes(cookie, `${UI_COOKIE}=${s.server.token}`);
+    assertStringIncludes(cookie, `${UI_COOKIE}=`);
     assertStringIncludes(cookie, "HttpOnly");
     assertStringIncludes(cookie, "SameSite=Strict");
     assertStringIncludes(cookie, "Path=/");
+  } finally {
+    await stop(s);
+  }
+});
+
+Deno.test("the cookie is a fresh secret, never the launch token — the launch token opens nothing", async () => {
+  // A cookie set on a loopback host reaches every other local server on that host (the
+  // project's own `denext dev`, say). So what the browser carries must not be the credential the
+  // launcher printed — and holding the printed token must not authenticate a request either.
+  const s = await fresh();
+  try {
+    const res = await fetch(`${s.base}/?t=${s.server.token}`, { redirect: "manual" });
+    await res.body?.cancel();
+    const cookie = (res.headers.get("set-cookie") ?? "").split(";")[0];
+    const secret = cookie.slice(UI_COOKIE.length + 1);
+    assert(secret.length >= 43, "the cookie secret carries 256 bits of entropy");
+    assert(!cookie.includes(s.server.token), "the cookie never holds the launch token");
+    assert(secret !== s.server.token);
+
+    const asToken = await fetch(`${s.base}/`, {
+      headers: { cookie: `${UI_COOKIE}=${s.server.token}` },
+    });
+    assertEquals(asToken.status, 401, "the launch token is not a session");
+    await asToken.body?.cancel();
+    const asCookie = await fetch(`${s.base}/`, { headers: { cookie } });
+    assertEquals(asCookie.status, 200, "the minted cookie is");
+    await asCookie.body?.cancel();
+
+    // And the CSRF token is derived from the cookie's secret, not from the launch token: the
+    // page publishes the one the server will accept.
+    const page = await fetch(`${s.base}/`, { headers: { cookie } });
+    const meta = /<meta name="denext-csrf" content="([^"]+)">/.exec(await page.text());
+    assert(meta, "the layout publishes the CSRF token");
+    assertEquals(meta[1], await deriveCsrf(secret));
+    assert(meta[1] !== await deriveCsrf(s.server.token));
+  } finally {
+    await stop(s);
+  }
+});
+
+Deno.test("the UI is served and opened at 127.0.0.1, never localhost", async () => {
+  // `localhost` cookies are shared across every port of that name; `127.0.0.1` is the address
+  // only this UI is opened at. The printed/opened URL is the one the cookie is set for.
+  const s = await fresh();
+  try {
+    assert(s.server.url.startsWith(`http://127.0.0.1:${s.server.port}/?t=`), s.server.url);
+    assertEquals(s.server.hostname, "127.0.0.1");
   } finally {
     await stop(s);
   }
@@ -95,7 +156,7 @@ Deno.test("a cross-site Sec-Fetch-Site is 403 even with a valid cookie", async (
   const s = await ui();
   try {
     const res = await fetch(`${s.base}/`, {
-      headers: { cookie: `${UI_COOKIE}=${s.server.token}`, "sec-fetch-site": "cross-site" },
+      headers: { cookie: s.cookie, "sec-fetch-site": "cross-site" },
     });
     assertEquals(res.status, 403);
     assertEquals((await res.json()).reason, "forbidden origin");
@@ -127,7 +188,7 @@ Deno.test("a rebound Host (evil.test) is 403 even with a valid cookie", async ()
     const rebound = await rawRequest(s.server.port, [
       "GET / HTTP/1.1",
       "Host: evil.test",
-      `Cookie: ${UI_COOKIE}=${s.server.token}`,
+      `Cookie: ${s.cookie}`,
       "Connection: close",
     ]);
     assertStringIncludes(rebound, "403");
@@ -135,7 +196,7 @@ Deno.test("a rebound Host (evil.test) is 403 even with a valid cookie", async ()
     const loopback = await rawRequest(s.server.port, [
       "GET / HTTP/1.1",
       `Host: 127.0.0.1:${s.server.port}`,
-      `Cookie: ${UI_COOKIE}=${s.server.token}`,
+      `Cookie: ${s.cookie}`,
       "Connection: close",
     ]);
     assertStringIncludes(loopback, "200");
@@ -149,7 +210,7 @@ Deno.test("a POST without a CSRF token is 403", async () => {
   try {
     const res = await fetch(`${s.base}/api/config`, {
       method: "POST",
-      headers: { cookie: `${UI_COOKIE}=${s.server.token}`, origin: s.base },
+      headers: { cookie: s.cookie, origin: s.base },
       body: new FormData(),
     });
     assertEquals(res.status, 403);
@@ -164,7 +225,7 @@ Deno.test("a POST with no Origin at all is refused (a mutation defaults to deny)
   try {
     const res = await fetch(`${s.base}/api/config`, {
       method: "POST",
-      headers: { cookie: `${UI_COOKIE}=${s.server.token}`, [UI_CSRF_HEADER]: s.csrf },
+      headers: { cookie: s.cookie, [UI_CSRF_HEADER]: s.csrf },
       body: new FormData(),
     });
     assertEquals(res.status, 403);
@@ -180,16 +241,18 @@ Deno.test("a POST with the derived CSRF token and a same-origin Origin passes th
     const res = await fetch(`${s.base}/api/config`, {
       method: "POST",
       headers: {
-        cookie: `${UI_COOKIE}=${s.server.token}`,
+        cookie: s.cookie,
         origin: s.base,
         [UI_CSRF_HEADER]: s.csrf,
       },
       body: new FormData(),
     });
-    // Past every gate: the config panel itself answers — a POST that names no section is its
-    // own 400 — rather than a 403 from the security chain.
-    assertEquals(res.status, 400);
-    assertEquals((await res.json()).reason, 'unknown config section ""');
+    // Past every gate: the config panel itself answers, rather than the security chain bouncing
+    // it with a 403. A POST naming no section is a save of the view's inline scalars, and this
+    // one carries no fields — so the panel's own answer is an honest no-op, not an error.
+    assertEquals(res.status, 200);
+    const body = await res.json();
+    assertEquals([body.ok, body.applied, body.diff], [true, false, ""]);
   } finally {
     await stop(s);
   }
@@ -199,7 +262,7 @@ Deno.test("GET on a POST-only mutation route is 405", async () => {
   const s = await ui();
   try {
     const res = await fetch(`${s.base}/tasks/run`, {
-      headers: { cookie: `${UI_COOKIE}=${s.server.token}` },
+      headers: { cookie: s.cookie },
     });
     assertEquals(res.status, 405);
     assertEquals((await res.json()).reason, "method not allowed");
@@ -215,7 +278,7 @@ Deno.test("--read-only refuses every mutation before the feature runs", async ()
       const res = await fetch(`${s.base}${path}`, {
         method: "POST",
         headers: {
-          cookie: `${UI_COOKIE}=${s.server.token}`,
+          cookie: s.cookie,
           origin: s.base,
           [UI_CSRF_HEADER]: s.csrf,
         },
@@ -233,7 +296,7 @@ Deno.test("every response carries the exact CSP / COOP / CORP / no-store header 
   const s = await ui();
   try {
     const res = await fetch(`${s.base}/`, {
-      headers: { cookie: `${UI_COOKIE}=${s.server.token}` },
+      headers: { cookie: s.cookie },
     });
     await res.body?.cancel();
     assertEquals(
@@ -256,12 +319,32 @@ Deno.test("refusals are hardened too", async () => {
   const s = await ui();
   try {
     const res = await fetch(`${s.base}/nope`, {
-      headers: { cookie: `${UI_COOKIE}=${s.server.token}` },
+      headers: { cookie: s.cookie },
     });
     assertEquals(res.status, 404);
     await res.body?.cancel();
     assertEquals(res.headers.get("cache-control"), "no-store");
     assert(res.headers.get("content-security-policy")?.includes("frame-ancestors 'none'"));
+  } finally {
+    await stop(s);
+  }
+});
+
+Deno.test("a browser's own navigation completes the token handshake", async () => {
+  const s = await fresh();
+  try {
+    // What Chrome sends when `denext ui` hands it the printed URL: no initiator at all.
+    const browser = { "sec-fetch-site": "none", "sec-fetch-mode": "navigate" };
+    const res = await fetch(`${s.base}/?t=${s.server.token}`, {
+      headers: browser,
+      redirect: "manual",
+    });
+    assertEquals(res.status, 302, "the token is exchanged, not refused");
+    const cookie = (res.headers.get("set-cookie") ?? "").split(";")[0];
+    assert(cookie.startsWith(UI_COOKIE), "the session cookie is set");
+    const page = await fetch(`${s.base}/`, { headers: { ...browser, cookie } });
+    assertEquals(page.status, 200, "and the page it redirects to renders");
+    assertStringIncludes(await page.text(), "<title>Project · denext ui</title>");
   } finally {
     await stop(s);
   }
@@ -277,6 +360,13 @@ Deno.test("uiOriginAllowed: loopback hosts, Sec-Fetch-Site, Origin fallback", ()
   assert(uiOriginAllowed(req({ "sec-fetch-site": "same-origin" }), url));
   assert(!uiOriginAllowed(req({ "sec-fetch-site": "cross-site" }), url));
   assert(!uiOriginAllowed(req({ "sec-fetch-site": "same-site" }), url));
+  // `none` is the user opening the printed URL — the one shape every browser's first load has.
+  assert(uiOriginAllowed(req({ "sec-fetch-site": "none" }), url), "a user-opened URL is read");
+  const post = new Request("http://127.0.0.1:5177/", {
+    method: "POST",
+    headers: { "sec-fetch-site": "none" },
+  });
+  assert(!uiOriginAllowed(post, url), "a mutation must come from the UI's own page");
   assert(!uiOriginAllowed(req({}), new URL("http://evil.test:5177/")));
   assert(uiOriginAllowed(req({}), new URL("http://localhost:5177/")));
   assert(uiOriginAllowed(req({}), new URL("http://[::1]:5177/")));
@@ -333,6 +423,41 @@ Deno.test("uiSafeJoin rejects .., absolute paths, and a symlink escaping the roo
     await Deno.remove(root, { recursive: true });
     await Deno.remove(outside, { recursive: true });
   }
+});
+
+Deno.test("readContained reads inside the project and refuses an escape", async () => {
+  // Every panel that shows a project file goes through this, so the containment gate is the
+  // whole point: a config symlinked at something private must reach neither page nor writer.
+  const root = await Deno.makeTempDir({ prefix: "denext_ui_read_" });
+  const outside = await Deno.makeTempDir({ prefix: "denext_ui_read_out_" });
+  try {
+    await Deno.writeTextFile(join(root, "denext.config.ts"), "export default {};\n");
+    await Deno.writeTextFile(join(outside, "secret.txt"), "AKIA-not-yours");
+    await Deno.symlink(outside, join(root, "escape"));
+
+    assertEquals(await readContained(root, "denext.config.ts"), "export default {};\n");
+    // A missing file is `null`, not a throw: "this project has no config yet" is ordinary.
+    assertEquals(await readContained(root, "nothing.ts"), null);
+    // And an escape reads as absent rather than leaking the file.
+    assertEquals(await readContained(root, "escape/secret.txt"), null);
+    assertEquals(await readContained(root, "../secret.txt"), null);
+    assertEquals(await readContained(root, join(outside, "secret.txt")), null);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
+  }
+});
+
+Deno.test("stampOf is a stable SHA-256 that changes with a single byte", async () => {
+  // The `_base` stamp is what makes a lost update a 409 rather than a silent overwrite, so it
+  // has to be deterministic and sensitive to any edit at all.
+  const source = 'export default { basePath: "/app" };\n';
+  const stamp = await stampOf(source);
+  assertEquals(stamp.length, 64, "SHA-256, hex");
+  assert(/^[0-9a-f]{64}$/.test(stamp));
+  assertEquals(await stampOf(source), stamp, "the same bytes stamp the same");
+  assert(await stampOf(source + " ") !== stamp, "one added byte changes it");
+  assertEquals((await stampOf("")).length, 64, "a project with no config still stamps");
 });
 
 Deno.test("applySecurityHeaders never allows inline script", () => {
@@ -509,14 +634,21 @@ Deno.test("writeFileAtomic renames into place, contains, and leaves no temp behi
 });
 
 Deno.test("the handshake never answers with a protocol-relative Location", async () => {
-  const s = await ui();
+  const s = await fresh();
   try {
     const res = await fetch(`${s.base}//evil.example/x?t=${s.server.token}`, {
       redirect: "manual",
     });
     await res.body?.cancel();
     assertEquals(res.status, 302);
-    assertEquals(res.headers.get("location"), "/evil.example/x");
+    // The destination is fixed, so the hostile path is not scrubbed — it never reaches the
+    // header at all. This used to answer `/evil.example/x`, a leading-slash repair of the
+    // request's own path; nothing is repaired now because nothing is borrowed.
+    const location = res.headers.get("location");
+    assertEquals(location, "/");
+    // The property, not the string: whatever the handshake ever redirects to, it must stay on
+    // this origin. `//host/path` is a URL to somewhere else.
+    assert(!(location ?? "").startsWith("//"), "a Location must never be protocol-relative");
   } finally {
     await stop(s);
   }
@@ -543,4 +675,28 @@ Deno.test("writeFileAtomic: unchangedFrom refuses a file that changed since it w
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test({
+  name: "writeFileAtomic: an existing file keeps its permission bits across the rename",
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    // The temp file is created at the default mode; renaming it over a `0600` config used to
+    // hand the secrets in it to every user on the machine.
+    const dir = await Deno.makeTempDir({ prefix: "denext_ui_mode_" });
+    try {
+      const path = join(dir, "denext.config.ts");
+      await Deno.writeTextFile(path, "export default { secret: 1 };\n");
+      await Deno.chmod(path, 0o600);
+      await writeFileAtomic(dir, "denext.config.ts", "export default { secret: 2 };\n");
+      assertEquals(await Deno.readTextFile(path), "export default { secret: 2 };\n");
+      assertEquals((await Deno.stat(path)).mode! & 0o777, 0o600, "0600 stays 0600");
+
+      // A new file gets the default mode: there was nothing to keep.
+      const fresh = await writeFileAtomic(dir, "new.json", "{}\n");
+      assert(((await Deno.stat(fresh)).mode! & 0o777) !== 0, "a new file is created normally");
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
 });

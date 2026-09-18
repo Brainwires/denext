@@ -17,7 +17,7 @@ provided, so a compat build of an app importing them fails to link.
 importing them. There is no shim — the upstream surface is still a canary
 experiment.
 
-See [Known limitations](/docs/limitations) for the full list of experimental and
+See [Known limitations](/docs/limitations) for the full list of upstream-named unstable and
 unprovided APIs.
 
 ## `denext migrate` fails resolving the CLI's own build dependencies
@@ -277,6 +277,123 @@ after the first `denext_component_tree`, `denext_why_render` or
 
 **Fix.** Call the tool again after the page's next render, or start
 `deno task dev` with `DENEXT_DEV_INSPECT=1` so pages push from the start.
+
+## `denext: hydration mismatch — …`
+
+**Cause.** A component's first client render produced different markup from the
+server's (`expected <div>, but the server rendered text "…"`, or
+`server text
+"3:05 PM" became "15:05"`). denext keeps the client render and
+warns in dev (in production it is silent unless the root has an
+`onRecoverableError`). The usual sources, in order of frequency: `Date.now()` /
+`new Date()` formatting, the user's locale or timezone, `Math.random()` or an
+incrementing id, reading `window` / `localStorage` / `matchMedia` during render,
+invalid HTML nesting the browser repaired (`<p>` inside `<p>`, `<div>` inside
+`<table>`), and a browser extension that edited the DOM before hydration.
+
+**Fix.** Make the first client render equal the server's, then adopt the browser
+value afterwards:
+
+- Read browser state in `useEffect`, or through a hook that already does it —
+  `useLocalStorage`, `useSessionStorage`, `useMediaQuery`, `useWindowSize`,
+  `useNetworkState` return the server value on the first render by design.
+- Format dates on the server and pass the string as a prop, or format in an
+  effect; use `useId()` for ids, never a counter or `Math.random()`.
+- Fix the nesting the message names.
+- A component that cannot render on the server:
+  `dynamic(() => import(…), { ssr: false })`.
+
+- A value that legitimately differs (a clock): `<time suppressHydrationWarning>` silences
+  the warning for that element's own text, as in React — one level, never its descendants —
+  and the client value still wins. The marker never reaches the DOM.
+
+## `ReferenceError: window is not defined` (or `document`, `localStorage`)
+
+**Cause.** The code ran on the server — Deno has no `window` at all — either at
+module top level (`const w = window.innerWidth` next to the imports) or during a
+render, which happens on the server for every component, `"use client"` ones
+included.
+
+**Fix.** Move the access into `useEffect` (or an event handler), guard it
+(`typeof document !== "undefined"`), or load the component only on the client
+with `dynamic(…, { ssr: false })` / the `client:only` island directive. Note
+that `"use client"` is not "client only": denext server-renders client
+components for the initial HTML, so `import "denext/client-only"` is inert at
+runtime (it is a build-time marker on the compat path). A module-scoped browser
+global is a bug in the library, not in denext — wrap the import in
+`dynamic(…, { ssr: false })`. See [Client Components](/docs/client-components)
+and [Islands & hydration](/docs/islands).
+
+## `redirect()` (or `notFound()`) inside `try/catch` does nothing
+
+**Cause.** `redirect()`, `permanentRedirect()`, `notFound()`, `forbidden()` and
+`unauthorized()` work by **throwing** a control-flow signal. A `catch` around
+them swallows it, so the redirect never happens (a common shape:
+`try { await db.save(); redirect("/done"); } catch { return { error } }`).
+
+**Fix.** Move the call after the `try`, or re-throw the signal from the `catch`:
+
+```ts
+import { isRedirect, redirect, unstable_rethrow } from "denext";
+
+try {
+  await db.save(data);
+  redirect("/done");
+} catch (err) {
+  unstable_rethrow(err); // re-throws any denext control signal (also one wrapped in `cause`)
+  return { error: "save failed" };
+}
+// or: if (isRedirect(err) || isNotFound(err)) throw err;
+```
+
+`isRedirect`, `isNotFound`, `isForbidden` and `isUnauthorized` are exported from
+`denext` and `denext/server`; `unstable_rethrow` from `denext`. See
+[Error handling](/docs/error-handling).
+
+## A button or handler in a Server Component does nothing
+
+**Cause.** An `onClick={() => …}` (any plain function) on an element inside an
+`async` Server Component, or passed as a prop to a `"use client"` component,
+cannot cross to the browser: functions do not serialise, so the prop is dropped
+and the button renders with no handler. In dev the renderer now warns once per
+component and prop —
+`denext: <Component> received a function as its "onClick" prop from a Server Component. Functions cannot cross to the client, so the prop was dropped…`
+— and the lint rule `denext/no-handlers-in-async` flags a JSX `on*` attribute
+given an inline or module-local function inside an `async` component before you
+run anything.
+
+**Fix.** Either make it a Server Action (`"use server"` — the function crosses
+as a reference and runs on the server), or move the element and its handler into
+a `"use client"` component and render that from the Server Component. A Server
+Action, a qrl and a channel are the only function-shaped props that cross. See
+[Server Actions](/docs/server-actions) and [Islands & hydration](/docs/islands).
+
+## `denext: server-only code would ship to the browser` / `shipped by the route of app/….tsx`
+
+**Cause.** A route that hydrates as a whole — it has a hook or an event handler
+and no `"use client"` boundary — bundles its page, its layouts and everything
+they import for the browser, and a `"use client"` island ships with its imports
+too. One of those modules is server-only: it imports a `node:` built-in
+(`node:sqlite`), carries the `server-only` marker or `serverOnly()`, or reads
+`Deno.…` unguarded. The message names the module, why it is server-only, and the
+entry that pulled it in (the route of `app/page.tsx`, or the `"use client"`
+islands bundle). `denext build` / `export` exit non-zero; `denext dev` shows it
+in the overlay and console, and the unbundled dev loop refuses to serve the
+route's entry with the same message.
+
+**Fix.** Two, and usually both:
+
+1. Move the interactive part into a `"use client"` component so the route stays
+   a Server Component — its imports then never leave the server (`lib/db.ts` is
+   fine to import from `app/page.tsx` once the page has no hooks of its own).
+2. Keep the module marked — `import "denext/server-only"` at its top, or a
+   `serverOnly()` call — so a future leak fails here too rather than in the
+   browser.
+
+Only what the bundle actually emitted counts (a helper the route never used is
+tree-shaken and not a leak), and a `typeof Deno` guard marks a module isomorphic
+by intent. See [Islands & hydration](/docs/islands) and the boundary section of
+[Known limitations](/docs/limitations).
 
 ## Still stuck?
 

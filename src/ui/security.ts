@@ -4,17 +4,23 @@
 //   1. bind          — `127.0.0.1` only, never `--host` (enforced in `server.ts`).
 //   2. host/origin   — {@linkcode uiOriginAllowed}: the Host the browser sent must be a loopback
 //                      name (DNS-rebinding defence, cf. CVE-2025-48068) and a present
-//                      `Sec-Fetch-Site` must say `same-origin`. Mirrors the dev server's
+//                      `Sec-Fetch-Site` must say `same-origin` (or `none` — the address bar —
+//                      for a read). Mirrors the dev server's
 //                      `devOriginAllowed` rule; re-implemented here (with no `allowedDevOrigins`
 //                      list, which the UI has no concept of) because
 //                      `src/build/dev-server/dev-endpoints.ts` transitively imports esbuild and
 //                      `denext ui` must never load the bundler.
 //   3. session token — a per-launch 256-bit token handed over ONCE in `?t=` and exchanged for an
-//                      `HttpOnly; SameSite=Strict` cookie ({@linkcode handshake}); the query token
-//                      is single-use, so a leaked link is not a second way in, and every request
-//                      without the cookie is a 401 ({@linkcode authorized}).
+//                      `HttpOnly; SameSite=Strict` cookie holding a SECOND, freshly minted secret
+//                      ({@linkcode handshake}); the query token is single-use, so a leaked link is
+//                      not a second way in, and every request without the cookie is a 401
+//                      ({@linkcode authorized}). The cookie is never the launch token: a
+//                      loopback cookie is shared across every port of its host, so whatever the
+//                      browser sends to another local server must not be the credential the
+//                      launcher printed — and the UI is served on `127.0.0.1`, not `localhost`,
+//                      to keep even that secret off the name every other local server shares.
 //   4. CSRF          — a mutation additionally needs `verifyOrigin` plus a token derived as
-//                      HMAC-SHA256(sessionToken, "csrf") ({@linkcode checkCsrf}).
+//                      HMAC-SHA256(cookieSecret, "csrf") ({@linkcode checkCsrf}).
 //   5. containment   — {@linkcode uiSafeJoin} / {@linkcode uiSafeUnder} for every project path
 //                      (lexical + realpath), and {@linkcode writeFileAtomic} for every write.
 //   6. headers       — {@linkcode applySecurityHeaders}: strict CSP, COOP/CORP, same-origin referrer,
@@ -23,9 +29,10 @@
 // `--read-only` refuses every mutation before any of it runs.
 
 import { dirname, isAbsolute, relative, resolve } from "@std/path";
+import { encodeHex } from "@std/encoding/hex";
 import { verifyOrigin } from "../server/origin-check.ts";
 
-/** The cookie the session token is parked in after the `?t=` handshake. */
+/** The cookie the session secret is parked in after the `?t=` handshake. */
 export const UI_COOKIE = "denext_ui_token";
 
 /** The header a JSON (non-form) mutation carries its CSRF token in. */
@@ -58,36 +65,47 @@ const UI_HEADERS: readonly (readonly [string, string])[] = [
  */
 export const MIN_UI_TOKEN_LENGTH = 22;
 
+/** The credential the handshake parks in the cookie, and the CSRF token derived from it. */
+export interface UiCookie {
+  /** A fresh 256-bit secret (base64url), distinct from the launch token, stored in the cookie. */
+  readonly secret: string;
+  /** The CSRF token derived from the secret; every mutation must present this. */
+  readonly csrf: string;
+}
+
 /** One launch's credentials. */
 export interface UiSession {
-  /** The 256-bit bearer token (base64url) handed over in `?t=` and stored in the cookie. */
+  /** The 256-bit launch token (base64url) handed over in `?t=`; never stored in the cookie. */
   readonly token: string;
-  /** The CSRF token derived from it; every mutation must present this. */
-  readonly csrf: string;
   /**
-   * Whether the `?t=` query token has already been exchanged for the cookie. The handshake is
-   * single-use: once spent, a `?t=` from a caller that does not already hold the session cookie
-   * is refused, so the token left behind in a shell history or an `open` argv cannot be replayed.
+   * The cookie credential, minted by the handshake; `null` until it has run. Its presence is
+   * what makes the handshake single-use: once minted, a `?t=` from a caller that does not
+   * already hold this cookie is refused, so the token left behind in a shell history or an
+   * `open` argv cannot be replayed into a second session.
    */
-  handshakeSpent: boolean;
+  cookie: UiCookie | null;
 }
 
 /**
- * Mint (or adopt) the credentials for one `denext ui` launch.
+ * Mint (or adopt) the launch token for one `denext ui` launch. The cookie credential is not
+ * minted here: it comes into being at the handshake, for the caller that presents the token.
  *
  * @param token An explicit `--token`; a fresh 256-bit token is generated when omitted.
- * @returns The session token and its derived CSRF token.
- * @throws When an explicit token is shorter than {@linkcode MIN_UI_TOKEN_LENGTH}.
+ * @returns The session, holding the launch token and no cookie yet.
+ * @throws When an explicit token is shorter than {@linkcode MIN_UI_TOKEN_LENGTH} (a rejection,
+ *   so `startUiServer` stays a promise its caller can `catch` either way).
  */
-export async function createUiSession(token?: string): Promise<UiSession> {
+export function createUiSession(token?: string): Promise<UiSession> {
   if (token !== undefined && token.length > 0 && token.length < MIN_UI_TOKEN_LENGTH) {
-    throw new Error(
-      `denext: --token must be at least ${MIN_UI_TOKEN_LENGTH} characters ` +
-        "(base64url, \u2265 128 bits of entropy) \u2014 omit it to have one minted for you.",
+    return Promise.reject(
+      new Error(
+        `denext: --token must be at least ${MIN_UI_TOKEN_LENGTH} characters ` +
+          "(base64url, \u2265 128 bits of entropy) \u2014 omit it to have one minted for you.",
+      ),
     );
   }
   const value = token && token.length > 0 ? token : newToken();
-  return { token: value, csrf: await deriveCsrf(value), handshakeSpent: false };
+  return Promise.resolve({ token: value, cookie: null });
 }
 
 /**
@@ -100,17 +118,18 @@ export function newToken(): string {
 }
 
 /**
- * The CSRF token for a session: HMAC-SHA256 of the literal `"csrf"` under the session token.
- * Deriving (rather than minting a second random value) keeps the pair inseparable, so a token
- * leaked through the URL bar is the only secret there is to reason about.
+ * The CSRF token for a session: HMAC-SHA256 of the literal `"csrf"` under the cookie secret.
+ * Deriving (rather than minting a third random value) keeps the pair inseparable, so the cookie
+ * is the only secret a session has to reason about — the launch token is spent at the handshake
+ * and takes part in nothing after it.
  *
- * @param token The session token.
+ * @param secret The cookie secret.
  * @returns The derived CSRF token (base64url).
  */
-export async function deriveCsrf(token: string): Promise<string> {
+export async function deriveCsrf(secret: string): Promise<string> {
   const key = await crypto.subtle.importKey(
     "raw",
-    new TextEncoder().encode(token) as BufferSource,
+    new TextEncoder().encode(secret) as BufferSource,
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign"],
@@ -160,7 +179,12 @@ export function constantTimeEqual(a: string, b: string): boolean {
 export function uiOriginAllowed(request: Request, url: URL): boolean {
   if (!loopbackHost(url.hostname)) return false;
   const site = request.headers.get("sec-fetch-site");
-  if (site) return site === "same-origin";
+  // `none` is a navigation the user started themselves: the printed URL handed to the browser
+  // launcher, typed, or opened from a bookmark. No other site's page can produce it — a
+  // page-initiated request is `same-origin`, `same-site` or `cross-site` — so it is safe to READ
+  // the UI with, and it is how every browser asks for the first page. A mutation still has to
+  // come from the UI's own page (`same-origin`), and passes the CSRF gate besides.
+  if (site) return site === "same-origin" || (site === "none" && !isMutation(request.method));
   const origin = request.headers.get("origin");
   if (!origin) return true; // curl / tests — no ambient-credential risk
   try {
@@ -168,6 +192,17 @@ export function uiOriginAllowed(request: Request, url: URL): boolean {
   } catch {
     return false; // malformed Origin
   }
+}
+
+/**
+ * Whether `method` changes state, and therefore passes the read-only, origin and CSRF gates
+ * that a read does not.
+ *
+ * @param method An HTTP method.
+ * @returns Whether it is anything but a read.
+ */
+export function isMutation(method: string): boolean {
+  return method !== "GET" && method !== "HEAD";
 }
 
 /** Whether `hostname` (possibly a bracketed IPv6 literal) names the loopback interface. */
@@ -179,41 +214,56 @@ function loopbackHost(hostname: string): boolean {
 // ── layer 3: the token handshake ─────────────────────────────────────────────
 
 /**
- * The `?t=<token>` handshake: on a valid token, park it in an `HttpOnly; SameSite=Strict` cookie
- * and 302 to the same path **without** the query, so the secret never survives in the address
- * bar, `document.referrer`, history, or a copied link.
+ * The `?t=<token>` handshake: on a valid token, mint a fresh cookie secret, park it in an
+ * `HttpOnly; SameSite=Strict` cookie and 302 to the **overview**, so the launch token never
+ * survives in the address bar, `document.referrer`, history, or a copied link — and is never
+ * what the cookie holds.
+ *
+ * The cookie is a second secret, not the token, because a cookie set by a loopback host is sent
+ * to every port of that host: the project's own `denext dev`, or anything else listening there,
+ * receives it. A cookie the launcher never printed is all such a server can learn; the launch
+ * token, which is in the shell history and the browser launcher's argv, stays out of it.
+ *
+ * The destination is always `/` rather than whatever path the link carried. The launcher only
+ * ever prints `/?t=…`, so this is where a handshake landed in practice anyway; sending it
+ * anywhere else would let a copied link decide the first page, and echoing the request's own
+ * path back as a `Location` is a shape worth not having at all.
  *
  * The exchange is **single-use**. Once it has run, a `?t=` is honoured only for a caller that
- * already holds the session cookie (the same tab re-opening its own link), so the token that is
- * left behind in `open`'s argv, a shell history or a copied URL cannot be replayed into a second
- * session for the server's lifetime.
+ * already holds the session cookie (the same tab re-opening its own link, which keeps the cookie
+ * it has), so the token that is left behind in `open`'s argv, a shell history or a copied URL
+ * cannot be replayed into a second session for the server's lifetime.
  *
  * @param request The incoming request (its cookie decides whether a spent token is still its own).
  * @param url The parsed request URL.
- * @param session The launch credentials (spent by a successful exchange).
+ * @param session The launch credentials (the cookie is minted by the first successful exchange).
  * @returns The redirect, the 401 for a wrong or replayed token, or `null` when there was no `?t=`.
  */
-export function handshake(request: Request, url: URL, session: UiSession): Response | null {
+export async function handshake(
+  request: Request,
+  url: URL,
+  session: UiSession,
+): Promise<Response | null> {
   const presented = url.searchParams.get("t");
   if (presented === null) return null;
   const correct = constantTimeEqual(presented, session.token);
-  if (!correct || (session.handshakeSpent && !authorized(request, session))) {
+  if (!correct || (session.cookie !== null && authorized(request, session) === null)) {
     return new Response(JSON.stringify({ ok: false, reason: "unauthorized" }), {
       status: 401,
       headers: { "content-type": "application/json; charset=utf-8" },
     });
   }
-  session.handshakeSpent = true;
-  const clean = new URL(url.href);
-  clean.searchParams.delete("t");
-  // One leading slash: a request for `//evil.example/` would otherwise answer with a
-  // protocol-relative `Location` that leaves the loopback origin.
-  const path = "/" + clean.pathname.replace(/^\/+/, "");
-  const location = path + (clean.search === "?" ? "" : clean.search);
-  const headers = new Headers({ location });
+  if (session.cookie === null) {
+    const secret = newToken();
+    session.cookie = { secret, csrf: await deriveCsrf(secret) };
+  }
+  // A fixed destination, so nothing from the request reaches the `Location` header: a request
+  // for `//evil.example/` cannot become a protocol-relative redirect off the loopback origin,
+  // because the path is not built from the URL at all.
+  const headers = new Headers({ location: "/" });
   headers.append(
     "set-cookie",
-    `${UI_COOKIE}=${session.token}; HttpOnly; SameSite=Strict; Path=/`,
+    `${UI_COOKIE}=${session.cookie.secret}; HttpOnly; SameSite=Strict; Path=/`,
   );
   return new Response(null, { status: 302, headers });
 }
@@ -223,11 +273,15 @@ export function handshake(request: Request, url: URL, session: UiSession): Respo
  *
  * @param request The incoming request.
  * @param session The launch credentials.
- * @returns Whether the caller is authenticated.
+ * @returns The cookie credential the caller holds, or `null` when it is absent, wrong, or not
+ *   minted yet (no handshake has run).
  */
-export function authorized(request: Request, session: UiSession): boolean {
+export function authorized(request: Request, session: UiSession): UiCookie | null {
   const cookie = readCookie(request.headers.get("cookie"), UI_COOKIE);
-  return cookie !== null && constantTimeEqual(cookie, session.token);
+  const minted = session.cookie;
+  return cookie !== null && minted !== null && constantTimeEqual(cookie, minted.secret)
+    ? minted
+    : null;
 }
 
 /** The value of `name` in a `Cookie` header, or `null`. */
@@ -245,21 +299,21 @@ function readCookie(header: string | null, name: string): string | null {
  *
  * @param request The incoming request.
  * @param url Its parsed URL.
- * @param session The launch credentials.
+ * @param cookie The cookie credential the caller holds (from {@linkcode authorized}).
  * @param form The decoded form body, when the mutation carried one.
  * @returns `null` when the mutation may proceed, else the refusal reason.
  */
 export function checkCsrf(
   request: Request,
   url: URL,
-  session: UiSession,
+  cookie: UiCookie,
   form?: FormData,
 ): string | null {
   if (!verifyOrigin(request, { canonicalOrigin: url.origin })) return "bad origin";
   const header = request.headers.get(UI_CSRF_HEADER);
   const field = form?.get(UI_CSRF_FIELD);
   const presented = header ?? (typeof field === "string" ? field : null);
-  if (presented === null || !constantTimeEqual(presented, session.csrf)) return "bad csrf token";
+  if (presented === null || !constantTimeEqual(presented, cookie.csrf)) return "bad csrf token";
   return null;
 }
 
@@ -278,6 +332,41 @@ export function checkCsrf(
 export async function uiSafeJoin(root: string, rel: string): Promise<string> {
   if (isAbsolute(rel)) throw escapeError(rel);
   return await contained(root, resolve(resolve(root), rel), rel);
+}
+
+/**
+ * The text of `root/rel`, or `null` when it does not exist, cannot be read, or is a symlink whose
+ * target leaves the project.
+ *
+ * The containment gate is the point: every panel that shows a project file — the config editor,
+ * the plugin manager, the cron tab — reads it through here, so a `denext.config.ts` symlinked at
+ * `~/.aws/credentials` reaches neither the page nor the writer. A missing file is `null` rather
+ * than a throw, because "the project has no config yet" is an ordinary state for these panels.
+ *
+ * @param root The project directory.
+ * @param rel The project-relative file name.
+ * @returns Its text, or `null`.
+ */
+export async function readContained(root: string, rel: string): Promise<string | null> {
+  try {
+    return await Deno.readTextFile(await uiSafeJoin(root, rel));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The optimistic-concurrency stamp for one file's text: its SHA-256, hex.
+ *
+ * Every editing form carries this as `_base`, and the write is refused when the file on disk no
+ * longer matches — so an edit made in a real editor (or a second tab) is never silently lost.
+ *
+ * @param source The file's text (`""` when there is no file yet).
+ * @returns The hex digest.
+ */
+export async function stampOf(source: string): Promise<string> {
+  const bytes = new TextEncoder().encode(source) as BufferSource;
+  return encodeHex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
 }
 
 /**
@@ -338,6 +427,10 @@ export interface WriteFileAtomicOptions {
  * made elsewhere after the caller's own stale-check (the `_base` stamp) is a refusal, not a
  * lost update. An absent file reads as `""`.
  *
+ * An existing target keeps its permission bits: the temp file is created at the default mode,
+ * so without this a `0600` config would come back `0644` after one edit. Skipped where there
+ * is no mode to keep (a new file, Windows, an unreadable stat).
+ *
  * @param root The project directory.
  * @param rel The project-relative path to write.
  * @param text The file's new contents.
@@ -357,6 +450,7 @@ export async function writeFileAtomic(
   try {
     await Deno.mkdir(dirname(path), { recursive: true });
     await Deno.writeTextFile(temp, text);
+    await keepMode(path, temp);
     if (options.unchangedFrom !== undefined) {
       const current = await Deno.readTextFile(path).catch(() => "");
       if (current !== options.unchangedFrom) throw new StaleWriteError(rel);
@@ -367,6 +461,22 @@ export async function writeFileAtomic(
     throw error;
   }
   return path;
+}
+
+/**
+ * Give `temp` the permission bits `target` has, so the rename does not change them. A missing
+ * target, a platform with no modes (Windows) or a failed stat leaves the temp file as created.
+ */
+async function keepMode(target: string, temp: string): Promise<void> {
+  if (Deno.build.os === "windows") return;
+  let mode: number | null;
+  try {
+    mode = (await Deno.stat(target)).mode;
+  } catch {
+    return; // a new file: nothing to keep
+  }
+  if (mode === null) return;
+  await Deno.chmod(temp, mode & 0o7777);
 }
 
 /** The realpath of `path`, or of its nearest existing ancestor when it does not exist yet. */

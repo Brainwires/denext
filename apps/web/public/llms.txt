@@ -28,7 +28,8 @@
 
 ## Tooling for agents
 
-- **MCP server** — `deno run -A jsr:@denext/denext/cli mcp`. Tools (derived from the live
+- **MCP server** — `denext mcp` (with nothing installed:
+  `deno run -A jsr:@denext/denext/cli mcp`). Tools (derived from the live
   registry so this never drifts): `denext_check_snippet`, `denext_import_map`, `denext_generate`, `denext_doctor`, `denext_codemod`, `denext_list_routes`, `denext_dev_logs`, `denext_render`, `denext_route_map`, `denext_profile`, `denext_search_docs`, `denext_index_codebase`, `denext_query_codebase`, `denext_find_definition`, `denext_find_references`, `denext_component_tree`, `denext_why_render`, `denext_hook_state`. It can lint a
   snippet for Next-isms, map imports, scaffold, run doctor/codemod, list an app's routes, read a
   running dev server's errors + console, and render a route/component server-side.

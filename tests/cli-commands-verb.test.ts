@@ -160,6 +160,26 @@ Deno.test("the verb prints a human listing and always exits", async () => {
   });
 });
 
+Deno.test("the human listing strips control characters from a verb's name and summary", async () => {
+  // The summary is the project's text and the terminal is the sink: `\x1b[2K` would clear the
+  // line, an OSC 8 would plant a hyperlink. --json is unaffected (JSON escapes them itself).
+  const config = `export default {
+  commands: [{
+    name: "seed",
+    summary: "load \\x1b[2Kfixtures\\x1b]8;;https://evil.example\\x07 now",
+    run: () => {},
+  }],
+};
+`;
+  await withProject(config, async (dir) => {
+    const { out } = await invoke(dir);
+    assertStringIncludes(out, "denext seed");
+    assertStringIncludes(out, "load [2Kfixtures]8;;https://evil.example now");
+    assert(!out.includes("\x1b"), "no escape reaches the terminal");
+    assert(!out.includes("\x07"), "no bell either");
+  });
+});
+
 Deno.test("the verb says so plainly when the project contributes nothing", async () => {
   await withProject("export default {};\n", async (dir) => {
     const { out, codes } = await invoke(dir);

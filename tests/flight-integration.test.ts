@@ -146,3 +146,81 @@ Deno.test("unified HTML matches renderToString for an isomorphic tree", async ()
   const { html } = await renderToHtmlFlight(tree);
   assertEquals(html, await renderToString(tree));
 });
+
+// ---- Dropped function props: the dev warning ------------------------------------------
+
+/** Run `fn` with `__denextDev` set (or not) and `console.warn` captured. */
+async function withWarnings(
+  dev: boolean,
+  fn: () => Promise<void>,
+): Promise<string[]> {
+  const g = globalThis as { __denextDev?: boolean };
+  const prevDev = g.__denextDev;
+  const origWarn = console.warn;
+  const warnings: string[] = [];
+  g.__denextDev = dev;
+  console.warn = (...a: unknown[]) => warnings.push(a.map(String).join(" "));
+  try {
+    await fn();
+  } finally {
+    console.warn = origWarn;
+    if (prevDev === undefined) delete g.__denextDev;
+    else g.__denextDev = prevDev;
+  }
+  return warnings;
+}
+
+function Picker(_props: { onSelect?: unknown; save?: unknown; label: string }): VNode {
+  return h("button", { class: "picker" }, "pick");
+}
+const pickerMod = { Picker };
+tagClientExports(pickerMod as Record<string, unknown>, "c_picker");
+
+Deno.test("a function prop from a Server Component to a client component warns once in dev", async () => {
+  const warnings = await withWarnings(true, async () => {
+    const tree = h("div", null, h(Picker, { onSelect: () => {}, label: "a" }));
+    const { flight } = await renderToHtmlFlight(tree);
+    // The prop really is dropped — a button that does nothing without the warning.
+    const json = JSON.stringify(flight);
+    assert(!json.includes("onSelect"), "the function prop must not reach the Flight payload");
+    assertStringIncludes(json, '"label":"a"');
+    // A second render with the same (component, prop) does not repeat itself.
+    await renderToHtmlFlight(h(Picker, { onSelect: () => {}, label: "b" }));
+  });
+  assertEquals(warnings.length, 1);
+  assertStringIncludes(warnings[0], "<Picker>");
+  assertStringIncludes(warnings[0], '"onSelect"');
+  assertStringIncludes(warnings[0], "Server Action");
+  assertStringIncludes(warnings[0], '"use client"');
+});
+
+Deno.test("a Server Action prop does not warn (it crosses as a reference)", async () => {
+  const { serverAction } = await import("../src/runtime/server-action.ts");
+  const save = serverAction("picker-save", () => 1);
+  const warnings = await withWarnings(true, async () => {
+    const { flight } = await renderToHtmlFlight(h(Picker, { save, label: "c" }));
+    assertStringIncludes(JSON.stringify(flight), '"save":{"$":"a"');
+  });
+  assertEquals(warnings, []);
+});
+
+Deno.test("a function prop authored INSIDE a client island does not warn (client code owns it)", async () => {
+  // The island's own render passes a function to a nested client component: that code runs
+  // again in the browser, so the prop exists there — no boundary was crossed.
+  function Shell(): VNode {
+    return h("div", null, h(Picker, { onSelect: () => {}, label: "nested" }));
+  }
+  tagClientExports({ Shell } as Record<string, unknown>, "c_shell");
+  const warnings = await withWarnings(true, async () => {
+    await renderToHtmlFlight(h(Shell, {}));
+  });
+  assertEquals(warnings, []);
+});
+
+Deno.test("the dropped-function warning is silent in production", async () => {
+  const warnings = await withWarnings(false, async () => {
+    const { flight } = await renderToHtmlFlight(h(Picker, { onSelect: () => {}, label: "p" }));
+    assert(!JSON.stringify(flight).includes("onSelect"), "still dropped — just silently");
+  });
+  assertEquals(warnings, []);
+});

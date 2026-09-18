@@ -87,6 +87,49 @@ export function generateStaticParams() {
         {`// denext.config.ts — opt out if you need fully-buffered responses
 export default { streaming: false };`}
       </Code>
+      <p>
+        <strong>Inside a streamed boundary, the headers are already gone.</strong>{" "}
+        Once the shell has flushed, a component that resolves later inside a{" "}
+        <code>&lt;Suspense&gt;</code>{" "}
+        hole can no longer change the status line or the response headers. denext follows Next here
+        — the same rules apply to a PPR hole and a Flight-route hole:
+      </p>
+      <ul>
+        <li>
+          <code>after(cb)</code> runs when the <strong>stream ends</strong>{" "}
+          (after the last hole settled, or the stream was aborted), not when the Response object was
+          created — so an <code>after()</code> registered inside a hole still runs, once.
+        </li>
+        <li>
+          <code>redirect()</code> / <code>permanentRedirect()</code> become a{" "}
+          <strong>client-side redirect</strong> streamed into the hole: a{" "}
+          <code>&lt;meta http-equiv="refresh"&gt;</code>{" "}
+          (honoured by browsers when the swap runtime inserts it) and nothing else in the hole. The
+          destination goes through the same sanitiser as an HTTP{" "}
+          <code>Location</code>. The response stays a 200. A <em>soft</em>{" "}
+          navigation is never streamed, so there it is a real HTTP redirect as before.
+        </li>
+        <li>
+          <code>notFound()</code> / <code>forbidden()</code> / <code>unauthorized()</code>{" "}
+          reveal the <strong>nearest boundary's UI</strong> in place of the hole — the segment's
+          {" "}
+          <code>not-found.tsx</code>{" "}
+          (…) or the built-in page — with the status left at 200, as in Next. Put the boundary{" "}
+          <em>above</em> the <code>&lt;Suspense&gt;</code> if you need the 404 status itself.
+        </li>
+        <li>
+          <code>cookies().set()</code> / <code>.delete()</code>{" "}
+          cannot reach the response: in dev they throw ("cookies can only be modified before the
+          response starts …"); in production the write is logged once per request and ignored. Set
+          cookies in middleware, a Server Action, a Route Handler, or a component that renders in
+          the shell.
+        </li>
+      </ul>
+      <p>
+        The common <code>const session = (await auth()) ?? redirect("/login")</code>{" "}
+        inside a Suspense'd component therefore works as expected: the visitor lands on{" "}
+        <code>/login</code>, they just get there via the streamed tail.
+      </p>
 
       <h3>PPR / Cache Components</h3>
       <p>
@@ -287,14 +330,15 @@ export default function Page() {
         Rather than wait on the platform, denext ships its own first-party <code>AsyncContext</code>
         {" "}
         plus a build transform that makes it survive an <code>await</code>. Enable{" "}
-        <code>experimental.asyncContext</code> and async transitions are scoped by{" "}
-        <strong>identity</strong> instead: a post-<code>await</code>{" "}
+        <code>asyncContext</code> in <code>denext.config.ts</code>{" "}
+        and async transitions are scoped by <strong>identity</strong>{" "}
+        instead: a post-<code>await</code>{" "}
         update stays a transition, while an unrelated urgent update in the window keeps its
         priority.
       </p>
       <Code lang="tsx">
         {`// An async transition. By default (window mode) an urgent click during the
-// pending window is also deferred; with experimental.asyncContext it stays urgent.
+// pending window is also deferred; with asyncContext it stays urgent.
 const [isPending, startTransition] = useTransition();
 startTransition(async () => {
   await save();          // network work
@@ -302,11 +346,11 @@ startTransition(async () => {
 });
 
 // denext.config.ts — opt in to identity scoping
-export default { experimental: { asyncContext: true } };`}
+export default { asyncContext: true };`}
       </Code>
       <Callout kind="warn">
-        <code>experimental.asyncContext</code> is opt-in: the transform instruments every{" "}
-        <code>await</code> in client code (a small per-<code>await</code>{" "}
+        <code>asyncContext</code> is opt-in: the transform instruments every <code>await</code>{" "}
+        in client code (a small per-<code>await</code>{" "}
         cost), so it is off by default and the time-window behavior is unchanged. In v1 the
         transform leaves async generators (<code>
           async function*

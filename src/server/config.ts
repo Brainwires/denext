@@ -6,6 +6,7 @@ import type { I18nConfig } from "./i18n.ts";
 import type { DenextPlugin } from "../plugin/mod.ts";
 import type { CspSetting } from "./segment-config.ts";
 import type { CacheStore } from "./cache.ts";
+import { envGet } from "../runtime/env-safe.ts";
 // Type-only (erased at runtime) — `src/cli/command.ts` is a dependency-free leaf whose
 // only import is a pure util, so naming it here adds no runtime edge and no cycle.
 import type { CommandContext, FlagSpec, PositionalSpec } from "../cli/command.ts";
@@ -33,7 +34,12 @@ export interface HeaderRule {
   /** Path pattern to match, with `:name` params. */
   source: string;
   /** Header name/value pairs to add to matching responses. */
-  headers: Array<{ key: string; value: string }>;
+  headers: Array<{
+    /** The header name, e.g. `Cache-Control`. */
+    key: string;
+    /** The value to send, e.g. `public, max-age=3600`. */
+    value: string;
+  }>;
 }
 
 /**
@@ -341,9 +347,41 @@ export interface CacheConfig {
   maxPageEntries?: number;
 }
 
+/** Scheduled/background task behaviour ({@link DenextConfig.tasks}). */
+export interface TasksConfig {
+  /**
+   * Record every task run — scheduled and on demand — to `.denext/tasks.db`, so `denext ui`'s
+   * Cron panel can show last status, success/failure counts and a recent-run feed.
+   *
+   * Off unless set: denext writes no run history unasked. Once on, recording can never fail or
+   * delay a run — a read-only filesystem or a locked file degrades to no history instead.
+   *
+   * Each row keeps the run's output in plain text: the tail of a string the handler returned
+   * (up to 2 KB) and, for a failure, the error's message and stack. A task that returns a token,
+   * a DSN or another secret should return nothing instead. The file is `tasks.db` (with its
+   * `-wal`/`-shm` siblings) inside the build output directory, `.denext/` by default, created
+   * owner-only (mode 0600) where the platform has file modes.
+   */
+  history?: boolean;
+  /**
+   * Runs kept per task before the oldest are dropped (default 500).
+   *
+   * Per task rather than overall, so a task running every minute cannot evict a daily task's
+   * history. A task running more often than roughly every 20 minutes fills this inside a week,
+   * so raise it for such a task if its counts should cover the whole window.
+   *
+   * @minimum 1
+   */
+  historyMaxRuns?: number;
+}
+
 /** Limits for the typed-API batch endpoint (`POST /_denext/api-batch`). */
 export interface ApiBatchConfig {
-  /** Serve the endpoint at all (default true; `false` → 404). */
+  /**
+   * Serve the endpoint at all (default true; `false` → 404).
+   *
+   * @default true
+   */
   enabled?: boolean;
   /**
    * Max items per batch (default 20, at most 100).
@@ -456,6 +494,14 @@ export interface DenextConfig {
    */
   scheduledTasks?: Record<string, string | string[]>;
   /**
+   * Scheduled/background task behaviour. Currently run history, which is off unless asked for.
+   *
+   * ```ts
+   * tasks: { history: true }
+   * ```
+   */
+  tasks?: TasksConfig;
+  /**
    * Image-optimization config. Remote sources are refused by default (local-only,
    * SSRF-safe); allowlist hosts here to enable optimizing remote images.
    */
@@ -469,8 +515,8 @@ export interface DenextConfig {
    * MDX compilation options for `.mdx`/`.md` sources in a compat (npm-React) app.
    * The baseline loader compiles plain MDX/CommonMark; set this to thread
    * app-configured unified plugins (e.g. Codehike, GFM, syntax highlighting) into
-   * MDX's `compile`. Because `denext.config.ts` is a real module, import the plugins
-   * and pass function references directly:
+   * MDX's `compile`. Because `denext.config.ts` is a real module, the plugins are imported
+   * and passed as function references, not named as strings.
    *
    * ```ts
    * import { remarkCodeHike, recmaCodeHike } from "codehike/mdx";
@@ -530,6 +576,8 @@ export interface DenextConfig {
    * routes. ISR/PPR-cacheable routes (revalidate/force-static) and soft navigations
    * take their own path first, so streaming never bypasses the page cache. A shipped,
    * default-on capability — not an experiment.
+   *
+   * @default true
    */
   streaming?: boolean;
   /**
@@ -554,6 +602,68 @@ export interface DenextConfig {
    */
   apiMaxBodyBytes?: number;
   /**
+   * The request-body cap for Server Actions, in bytes — default 1 MiB (Next's default). Raise
+   * it only for actions that accept large payloads (multipart uploads); over the cap → 413
+   * before the action runs. `denext start`/`dev` forward it to the server; a custom server
+   * passes `actionMaxBodyBytes` to `createApp()` itself.
+   *
+   * @minimum 1
+   */
+  actionMaxBodyBytes?: number;
+  /**
+   * The app's public origin (e.g. `"https://example.com"`), pinned outright: absolute URLs
+   * (canonical, `og:image`), the Server Action origin check and HSTS all use it instead of
+   * the `Host` / forwarded headers — the robust choice behind a proxy that rewrites `Host`.
+   * A full origin (scheme + host, no path). Unset, the `DENEXT_CANONICAL_ORIGIN` env var is
+   * read at boot (config > env > derived from the request).
+   */
+  canonicalOrigin?: string;
+  /**
+   * Trust `X-Forwarded-Proto` / `X-Forwarded-Host` from a reverse proxy when deriving the
+   * request origin (absolute URLs, the Server Action origin check, HSTS, rate-limit keys).
+   * Enable ONLY when clients cannot reach denext directly — a client that can spoofs the
+   * origin. Ignored when {@link DenextConfig.canonicalOrigin} is set. Unset, `DENEXT_TRUST_PROXY=1`
+   * turns it on (config > env > `false`).
+   */
+  trustForwardedHeaders?: boolean;
+  /**
+   * Per-request deadline in milliseconds — default 30 000. A request still running past it
+   * is aborted and answered `503`; the per-request `AbortSignal` fires so cooperative work
+   * (`fetch(url, { signal })`) cancels. `0` disables the deadline. Unset, the
+   * `DENEXT_REQUEST_TIMEOUT_MS` env var is read at boot (config > env > default).
+   *
+   * @minimum 0
+   */
+  requestTimeout?: number;
+  /**
+   * In-process concurrency ceiling: the max number of client requests one instance handles
+   * at once. A request arriving at capacity is shed immediately with `503` + `Retry-After`
+   * (never queued). Bounds work up to the point the `Response` is produced (a streaming
+   * body's client-read time is not counted); background ISR regeneration is exempt. A
+   * complement to — not a replacement for — the edge/load-balancer ceiling. Default: no
+   * limit. Unset, the `DENEXT_MAX_CONCURRENCY` env var is read at boot (config > env >
+   * unlimited).
+   *
+   * @minimum 1
+   */
+  maxConcurrency?: number;
+  /**
+   * With {@link DenextConfig.maxConcurrency} set and {@link DenextConfig.requestTimeout} `0`,
+   * the milliseconds after which a never-settling request's concurrency slot is force-freed
+   * (default 120 000). It frees only the slot — the render is not aborted, since the request
+   * timeout was opted out of. Inert while a request timeout is in place.
+   *
+   * @minimum 1
+   */
+  slotBackstop?: number;
+  /**
+   * Allowlist of query-parameter names that fork the ISR page-cache key. When set, only these
+   * params make a distinct cached entry; every other param (`?utm_*`, `?fbclid`, a random
+   * cache-buster) is ignored for keying — but still reaches the render via `searchParams`, so
+   * list every param whose value changes cacheable output. Unset, every param participates.
+   */
+  cacheKeyParams?: string[];
+  /**
    * denext's tolerant node_modules resolver for the compat (npm-React) build — default ON.
    *
    * Every bare npm specifier is resolved straight from the app's installed `node_modules`
@@ -564,6 +674,8 @@ export interface DenextConfig {
    * dependency `exports` — the "seamless migration" contract. Set `false` only to force
    * app deps back through Deno's strict `npm:` loader (escape hatch). The pre-2.0 home,
    * `experimental.nodeResolve`, is still honored.
+   *
+   * @default true
    */
   nodeResolve?: boolean;
   /**
@@ -587,12 +699,60 @@ export interface DenextConfig {
    * {@linkcode resolveCacheComponents}) but this top-level field is the canonical home.
    */
   cacheComponents?: boolean;
-  /** Experimental, opt-in features (default off). */
+  /**
+   * The build-time auto-memoization compiler (a React-Compiler-style pass), an opt-in
+   * optimization that is off by default. Conservative by construction: it bails to
+   * identity whenever a transform isn't provably safe, so it only ever adds memoization,
+   * never changes behavior.
+   *
+   * Graduated from `experimental.reactCompiler` in 2.5; that spelling (and the older
+   * `experimental.compiler`) is still honored, with a dev warning, when this field is absent.
+   */
+  reactCompiler?: boolean;
+  /**
+   * Scope async `startTransition` by transition IDENTITY instead of a time window, so a
+   * post-`await` update is attributed to its transition while an unrelated urgent update in
+   * the pending window keeps its priority. Off by default.
+   *
+   * Enables a build-time transform that makes denext's first-party {@link AsyncContext}
+   * survive `await` (src/build/async-context-transform.ts). It instruments every `await`
+   * in client code (a small per-await cost); the default time-window behavior is unchanged
+   * when off. Removes the async-`startTransition` gap in KNOWN-LIMITATIONS when on.
+   *
+   * Graduated from `experimental.asyncContext` in 2.5; that spelling is still honored, with
+   * a dev warning, when this field is absent.
+   */
+  asyncContext?: boolean;
+  /**
+   * Compile-time feature flags: `feature("KEY")` (from `denext/feature`) always returns the
+   * configured value, and a call with a string-literal KEY is folded to a literal where the
+   * build can, so the bundler dead-code-eliminates the untaken branch. A key not listed
+   * reads `false`.
+   *
+   * The server and every client bundle are seeded with this map. The fold (DCE) covers the
+   * native App Router's component (`.tsx`/`.jsx`) modules, the SPA bundle, and dev; the
+   * compat drop-in App Router path and non-component modules on the native path read the
+   * seeded value without DCE. Flag names and states are embedded in the client bundle.
+   *
+   * Graduated from `experimental.features` in 2.5; that spelling is still honored, with a
+   * dev warning, when this field is absent.
+   */
+  features?: Record<string, boolean>;
+  /**
+   * @deprecated Every `experimental.*` key graduated to a top-level field by 2.5
+   * (`reactCompiler`, `asyncContext`, `features`, `nodeResolve`, `cacheComponents`). The
+   * old spellings are still honored, with a dev warning, when the top-level field is absent;
+   * the top-level field wins when both are set. Removed in 3.0.
+   */
   experimental?: ExperimentalConfig;
   /**
    * How the client bundle gets the React class-component runtime (`class X extends
    * React.Component`: lifecycle, setState batching, class error boundaries). It is a
-   * code-split chunk (`denext/class-runtime`), so the default needs no configuration:
+   * code-split chunk (`denext/class-runtime`), so the default needs no configuration.
+   * Unset, `denext build` scans your sources and installs it eagerly when a class is found,
+   * otherwise a page loads it on demand; `true` always installs it eagerly; `false` never
+   * ships it — the runtime is dead-code-eliminated and a class used anyway throws a guided
+   * error.
    *
    * - **unset** (default): loaded **on demand**. `denext build` scans your app's own sources
    *   (and sibling workspace packages) for `Component`/`PureComponent` and, when it finds
@@ -778,43 +938,32 @@ export interface LiveConfig {
 }
 
 /**
- * Opt-in experimental features, set under `experimental` in `denext.config.ts`. Each is
- * off by default. A feature lives here only while it is genuinely **incomplete** — being
- * new is not enough — so shipped, complete capabilities (streaming, Live, islands,
- * resumability, SPA mode, Cache Components) are top-level config, not here.
+ * The legacy `experimental` block of `denext.config.ts`. Every key in it graduated to a
+ * top-level {@link DenextConfig} field — what denext ships is its own finished work, and an
+ * "experimental" label only kept developers from using it — so each member is a deprecated
+ * alias of its top-level twin: still honored (with a dev warning) when the top-level field
+ * is absent, and ignored when both are set. The interface stays exported so a config written
+ * against 2.x keeps type-checking; it is removed in 3.0.
  */
 export interface ExperimentalConfig {
   /**
-   * Enable the build-time auto-memoization compiler (a React-Compiler-style pass) — an
-   * opt-in optimization. Conservative by construction: it bails to identity whenever a
-   * transform isn't provably safe, so it only ever adds memoization, never changes
-   * behavior. Off by default while its coverage is still widening. Named as in Next.js
-   * (`experimental.reactCompiler`), so a migrated `next.config` needs no rewrite.
+   * @deprecated Graduated to the top-level `reactCompiler` in 2.5. Honored as an alias
+   * through 2.x; removed in 3.0.
    */
   reactCompiler?: boolean;
   /**
-   * @deprecated Renamed `experimental.reactCompiler` (Next.js's key) in 2.0. Honored as an
-   * alias through 2.x; removed in 3.0.
+   * @deprecated Renamed `reactCompiler` (Next.js's key) in 2.0, now the top-level
+   * `reactCompiler`. Honored as an alias through 2.x; removed in 3.0.
    */
   compiler?: boolean;
   /**
-   * Scope async `startTransition` by transition IDENTITY instead of a time window.
-   * Enables a build-time transform that makes denext's first-party {@link AsyncContext}
-   * survive `await` (src/build/async-context-transform.ts), so a post-`await` update is
-   * attributed to its transition while an unrelated urgent update in the pending window
-   * keeps its priority. Off by default: it instruments every `await` in client code (a
-   * small per-await cost) and the default time-window behavior is unchanged. Removes the
-   * async-`startTransition` gap in KNOWN-LIMITATIONS when on.
+   * @deprecated Graduated to the top-level `asyncContext` in 2.5. Honored as an alias
+   * through 2.x; removed in 3.0.
    */
   asyncContext?: boolean;
   /**
-   * Compile-time feature flags. `feature("KEY")` (from `denext/feature`) always returns the
-   * configured value — the server and every client bundle are seeded with this map — and a call
-   * with a string-literal KEY is additionally folded to a literal where the build can, so the
-   * bundler dead-code-eliminates the untaken branch (gated code costs zero bytes when off). A key
-   * not listed reads `false`. Experimental while the fold's coverage widens: DCE covers the native
-   * App Router's component (`.tsx`/`.jsx`) modules, the SPA bundle, and dev; the compat drop-in App
-   * Router path and non-component modules on the native path read the seeded value without DCE.
+   * @deprecated Graduated to the top-level `features` in 2.5. Honored as an alias through
+   * 2.x; removed in 3.0.
    */
   features?: Record<string, boolean>;
   /**
@@ -826,25 +975,40 @@ export interface ExperimentalConfig {
 
 /**
  * Whether the tolerant node_modules resolver is active for the compat build. Default-on:
- * only an explicit `experimental.nodeResolve: false` disables it. Threaded into every
- * compat bundler (SSR/client/flight + SPA) so App Router and SPA behave identically.
+ * only an explicit `nodeResolve: false` (or the legacy `experimental.nodeResolve: false`)
+ * disables it. Threaded into every compat bundler (SSR/client/flight + SPA) so App Router
+ * and SPA behave identically.
  */
 export function nodeResolveEnabled(config: DenextConfig | null | undefined): boolean {
   return (config?.nodeResolve ?? config?.experimental?.nodeResolve) !== false;
 }
 
-/** The effective auto-memo compiler flag: `experimental.reactCompiler`, or the legacy `compiler`. */
+/**
+ * The effective auto-memo compiler flag: the top-level `reactCompiler`, else the legacy
+ * `experimental.reactCompiler` / `experimental.compiler` aliases (top-level wins).
+ */
 export function reactCompilerEnabled(config: DenextConfig | null | undefined): boolean {
-  return (config?.experimental?.reactCompiler ?? config?.experimental?.compiler) === true;
+  return (config?.reactCompiler ?? config?.experimental?.reactCompiler ??
+    config?.experimental?.compiler) === true;
 }
 
 /**
- * The configured compile-time feature flags (`experimental.features`), or an empty map. The
- * build folds `feature("KEY")` calls to these values (see src/build/feature-transform.ts) and
- * seeds the same map for server rendering (`resolveProject`) and the esbuild compat `define`.
+ * The effective AsyncContext transition-scoping flag: the top-level `asyncContext`, else the
+ * legacy `experimental.asyncContext` alias (top-level wins). Gates the build transform in
+ * src/build/async-context-transform.ts.
+ */
+export function asyncContextEnabled(config: DenextConfig | null | undefined): boolean {
+  return (config?.asyncContext ?? config?.experimental?.asyncContext) === true;
+}
+
+/**
+ * The configured compile-time feature flags — the top-level `features`, else the legacy
+ * `experimental.features` alias (top-level wins) — or an empty map. The build folds
+ * `feature("KEY")` calls to these values (see src/build/feature-transform.ts) and seeds the
+ * same map for server rendering (`resolveProject`) and the esbuild compat `define`.
  */
 export function featureFlags(config: DenextConfig | null | undefined): Record<string, boolean> {
-  return config?.experimental?.features ?? {};
+  return config?.features ?? config?.experimental?.features ?? {};
 }
 
 /**
@@ -878,6 +1042,97 @@ export function resolveCacheComponents(
 ): boolean | undefined {
   return config?.cacheComponents ??
     (config?.experimental as { cacheComponents?: boolean } | undefined)?.cacheComponents;
+}
+
+/**
+ * The production-server knobs `denext start` / `denext dev` hand to `createApp()`: the
+ * config's `canonicalOrigin`, `trustForwardedHeaders`, `requestTimeout`, `maxConcurrency`,
+ * `slotBackstop`, `actionMaxBodyBytes` and `cacheKeyParams`, each falling back to its env
+ * var when the config leaves it unset (`DENEXT_CANONICAL_ORIGIN`, `DENEXT_TRUST_PROXY=1`,
+ * `DENEXT_REQUEST_TIMEOUT_MS`, `DENEXT_MAX_CONCURRENCY`), else `undefined` so `createApp`'s
+ * own default applies — config > env > default. A malformed env value (a non-numeric
+ * timeout, a non-origin) is ignored with one warning rather than failing the boot, since
+ * env is set by an operator, not type-checked like the config.
+ */
+export interface ServerOptions {
+  /** The pinned public origin, if any. */
+  canonicalOrigin?: string;
+  /** Whether `X-Forwarded-*` headers are trusted. */
+  trustForwardedHeaders?: boolean;
+  /** The per-request deadline (ms; `0` = none). */
+  requestTimeout?: number;
+  /** The in-process concurrency ceiling. */
+  maxConcurrency?: number;
+  /** The slot backstop (ms) for `requestTimeout: 0`. */
+  slotBackstop?: number;
+  /** The Server Action body cap (bytes). */
+  actionMaxBodyBytes?: number;
+  /** The ISR cache-key query-param allowlist. */
+  cacheKeyParams?: string[];
+}
+
+/** One env var, or `undefined` when unset, empty, or not permitted (a narrowed `--allow-env`). */
+function envValue(name: string): string | undefined {
+  return envGet(name) || undefined;
+}
+
+/** A non-negative integer env value (`DENEXT_REQUEST_TIMEOUT_MS`, …), or `undefined` + a warning. */
+function envInteger(name: string, min: number): number | undefined {
+  const raw = envValue(name);
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  if (Number.isInteger(n) && n >= min) return n;
+  console.warn(`denext: ignoring ${name}="${raw}" — expected an integer >= ${min}`);
+  return undefined;
+}
+
+/** `DENEXT_CANONICAL_ORIGIN` as a bare origin, or `undefined` + a warning when it is not one. */
+function envOrigin(name: string): string | undefined {
+  const raw = envValue(name);
+  if (raw === undefined) return undefined;
+  if (isOrigin(raw)) return raw;
+  console.warn(`denext: ignoring ${name}="${raw}" — expected an origin like https://example.com`);
+  return undefined;
+}
+
+/**
+ * Whether `value` is exactly an http(s) origin — scheme + host (+ port), no path, query,
+ * hash or credentials — the shape `canonicalOrigin` accepts.
+ */
+export function isOrigin(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (url.protocol === "http:" || url.protocol === "https:") && url.origin === value;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve the {@link ServerOptions} for `createApp()` from the config, with the env-var
+ * fallbacks applied (see {@link ServerOptions}).
+ */
+export function resolveServerOptions(config: DenextConfig | null | undefined): ServerOptions {
+  return {
+    canonicalOrigin: config?.canonicalOrigin ?? envOrigin("DENEXT_CANONICAL_ORIGIN"),
+    trustForwardedHeaders: config?.trustForwardedHeaders ?? envFlag("DENEXT_TRUST_PROXY"),
+    requestTimeout: config?.requestTimeout ?? envInteger("DENEXT_REQUEST_TIMEOUT_MS", 0),
+    maxConcurrency: config?.maxConcurrency ?? envInteger("DENEXT_MAX_CONCURRENCY", 1),
+    slotBackstop: config?.slotBackstop,
+    actionMaxBodyBytes: config?.actionMaxBodyBytes,
+    cacheKeyParams: config?.cacheKeyParams,
+  };
+}
+
+/**
+ * A `=1` flag env var (`DENEXT_TRUST_PROXY`): `true` for `1`/`true`/`yes`/`on` (any case),
+ * `false` for any other value, `undefined` when unset.
+ */
+function envFlag(name: string): boolean | undefined {
+  const raw = envValue(name);
+  if (raw === undefined) return undefined;
+  const v = raw.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
 }
 
 /** A source pattern compiled to a matcher with its capture keys. */

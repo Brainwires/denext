@@ -6,6 +6,7 @@ import { componentErrorInfo, devHydrationActive } from "./fiber-utils.ts";
 import { safeCallback } from "./root-callbacks.ts";
 import { type Cursor, type Fiber, Placement } from "./fiber.ts";
 import { doc } from "./state.ts";
+import { TEXT_TYPE } from "../vnode-utils.ts";
 
 // Hydration state: a live cursor over server-rendered DOM during the first hydrateRoot
 // render. `hydrationStack` mirrors the recursive reconciler's per-host child cursors;
@@ -137,7 +138,21 @@ export function claimText(wip: Fiber): void {
  * where denext keeps the client render. Fires the callback if registered (any env),
  * else falls back to the dev-only console warning.
  */
+/**
+ * Whether the nearest host element above `fiber` opted out of the warning with React's
+ * `suppressHydrationWarning` — one level, like React: the element's own text content and
+ * attributes are exempt, its descendants are not.
+ */
+function suppressed(fiber: Fiber): boolean {
+  let f: Fiber | null = fiber;
+  while (f !== null && (typeof f.vnode?.type !== "string" || f.vnode.type === TEXT_TYPE)) {
+    f = f.return;
+  }
+  return f !== null && f.vnode.props?.suppressHydrationWarning === true;
+}
+
 function reportHydrationMismatch(fiber: Fiber, detail: string): void {
+  if (suppressed(fiber)) return;
   const cb = rootHandleOf(fiber)?.onRecoverableError;
   if (cb) safeCallback(cb, new Error(`Hydration failed: ${detail}`), componentErrorInfo(fiber));
   else if (devHydrationActive()) warnHydrationMismatch(detail);

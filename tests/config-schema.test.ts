@@ -2,7 +2,7 @@
 // denext.config.schema.json) against the `DenextConfig` type, plus unit tests of the
 // deno-doc → JSON-Schema mapping shared through scripts/lib/ts-to-schema.ts.
 
-import { assert, assertEquals, assertThrows } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { generate, KEYS_OUT, SCHEMA_OUT } from "../scripts/gen-config-schema.ts";
 import {
   constraints,
@@ -60,12 +60,15 @@ Deno.test("the committed schema mirrors the runtime validator's contract", async
     items: { enum: ["image/webp", "image/avif"] },
   });
   // A `Record<K, V>` is an open object with one value schema — key/value rows, not fields.
-  assertEquals(schema.properties.experimental.properties.features.type, "object");
-  assertEquals(schema.properties.experimental.properties.features.additionalProperties, {
-    type: "boolean",
-  });
+  assertEquals(schema.properties.features.type, "object");
+  assertEquals(schema.properties.features.additionalProperties, { type: "boolean" });
   // No marker: a map is recognised structurally, from its `additionalProperties`.
-  assertEquals(schema.properties.experimental.properties.features["x-denext"], undefined);
+  assertEquals(schema.properties.features["x-denext"], undefined);
+  // The legacy block and every member of it carry the `@deprecated` mark the editor hides on.
+  assertEquals(schema.properties.experimental.deprecated, true);
+  for (const key of EXPERIMENTAL_KEYS) {
+    assertEquals(schema.properties.experimental.properties[key].deprecated, true, key);
+  }
   // A bound reaches the schema only from an explicit JSDoc tag backing a validator rule.
   assertEquals(schema.properties.apiBatch.properties.maxItems.minimum, 1);
   assertEquals(schema.properties.apiBatch.properties.maxItems.maximum, 100);
@@ -279,4 +282,85 @@ Deno.test("symbolTable + propertyNames read a v2 deno doc document in source ord
   const table = symbolTable(doc);
   assertEquals(propertyNames(table, "A"), ["a", "b", "m"]);
   assertThrows(() => propertyNames(table, "Nope"), Error, "not found");
+});
+
+/** Every node of the committed schema, with the path it sits at. */
+function nodesOf(
+  schema: Record<string, unknown>,
+): { path: string[]; node: Record<string, unknown>; named: boolean }[] {
+  const out: { path: string[]; node: Record<string, unknown>; named: boolean }[] = [];
+  const walk = (node: unknown, path: string[], named: boolean): void => {
+    if (typeof node !== "object" || node === null) return;
+    const n = node as Record<string, unknown>;
+    if (path.length > 0) out.push({ path, node: n, named });
+    for (const [key, child] of Object.entries((n.properties ?? {}) as Record<string, unknown>)) {
+      walk(child, [...path, key], true);
+    }
+    // A row template, a map's value and a union branch all render under their PARENT's label,
+    // so none of them is a place a person meets a name with nothing said about it.
+    walk(n.items, [...path, "[]"], false);
+    if (typeof n.additionalProperties === "object") {
+      walk(n.additionalProperties, [...path, "<value>"], false);
+    }
+    ((n.anyOf ?? []) as unknown[]).forEach((branch, i) =>
+      walk(branch, [...path, `anyOf[${i}]`], false)
+    );
+  };
+  for (const [key, child] of Object.entries((schema.properties ?? {}) as Record<string, unknown>)) {
+    walk(child, [key], true);
+  }
+  return out;
+}
+
+Deno.test("every named config key describes itself", async () => {
+  // The editor renders a key's JSDoc as its help text, so a key without any is a labelled
+  // control with nothing to say what it does — which is how `experimental.compiler` and
+  // `experimental.nodeResolve` came to sit unexplained beside the keys that replaced them.
+  const schema = JSON.parse(await Deno.readTextFile(SCHEMA_OUT)) as Record<string, unknown>;
+  const bare = nodesOf(schema)
+    .filter((entry) => entry.named)
+    .filter((entry) =>
+      entry.node.type || entry.node.enum || entry.node.anyOf || entry.node.properties
+    )
+    .filter((entry) => !String(entry.node.description ?? "").trim())
+    .map((entry) => entry.path.join("."));
+  assertEquals(bare, [], `these keys render with no help text: ${bare.join(", ")}`);
+});
+
+Deno.test("a superseded key is marked, and says what replaced it", async () => {
+  const schema = JSON.parse(await Deno.readTextFile(SCHEMA_OUT)) as Record<string, unknown>;
+  /** One node of the committed schema, by the path it sits at. */
+  const at = (...path: string[]): Record<string, unknown> => {
+    let node = schema;
+    for (const step of path) {
+      const properties = node.properties as Record<string, Record<string, unknown>> | undefined;
+      node = properties?.[step] ?? {};
+    }
+    return node;
+  };
+
+  // A block that is ONLY `@deprecated` leaves no summary paragraph — deno doc reports the tag
+  // structurally — so without this the key reached the editor with nothing at all to say what
+  // it was, sitting beside the key that replaced it.
+  assertEquals(at("experimental", "compiler").deprecated, true);
+  assertStringIncludes(
+    String(at("experimental", "compiler").description),
+    "top-level `reactCompiler`",
+  );
+  assertEquals(at("experimental", "nodeResolve").deprecated, true);
+  assertEquals(at("experimental", "reactCompiler").deprecated, true);
+  assertStringIncludes(
+    String(at("experimental", "reactCompiler").description),
+    "top-level `reactCompiler`",
+  );
+
+  // The keys that REPLACED them are not marked, or the pair would look equally discouraged.
+  assertEquals(at("reactCompiler").deprecated, undefined);
+  assertEquals(at("asyncContext").deprecated, undefined);
+  assertEquals(at("features").deprecated, undefined);
+  assertEquals(at("nodeResolve").deprecated, undefined);
+
+  // One that has its own summary keeps it, and gains only the flag.
+  assertEquals(at("images", "domains").deprecated, true);
+  assertStringIncludes(String(at("images", "domains").description), "remote hosts");
 });

@@ -10,12 +10,18 @@ import { FRAGMENT, PORTAL, type VNode, type VNodeChild, type VNodeChildren } fro
 import { type Dispatcher, setDispatcher } from "../runtime/hooks.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 import { ACTIVITY } from "../runtime/react-extras.ts";
-import { boundaryLetsThrough, ERROR_BOUNDARY } from "../runtime/error-boundary.ts";
+import {
+  boundaryLetsThrough,
+  ERROR_BOUNDARY,
+  isRedirect,
+  type RedirectError,
+} from "../runtime/error-boundary.ts";
 import { isComponentType } from "../runtime/react-brands.ts";
 import { type ClientRefInfo, clientRefOf } from "../runtime/client-reference.ts";
 import { isPostpone } from "../runtime/postpone.ts";
 import {
   createSSRDispatcher,
+  escapeHtml,
   type HeadCollector,
   type IdHolder,
   type ProviderScope,
@@ -28,9 +34,33 @@ import {
   renderBoundaryFallback,
   scopesWithProvider,
 } from "./render-shared.ts";
+import { safeRedirectLocation } from "../server/config.ts";
 
 /** A VNode's props with the null-props normalization applied. */
 type Props = Record<string, unknown>;
+
+/**
+ * Scope key under which a signal boundary (`catches` set — `not-found.tsx` and friends)
+ * records its props for the subtree it wraps. A streamed Suspense hole that throws a
+ * control signal AFTER the shell flushed reads it to find the boundary that would have
+ * caught the signal in a buffered render (see {@link VNodeRenderer.resolveHoleSignal}).
+ * Private to the renderers: `useContext` looks contexts up by their own ids.
+ */
+const SIGNAL_BOUNDARY: unique symbol = Symbol("denext.signalBoundary");
+
+/**
+ * The hole replacement for a `redirect()`/`permanentRedirect()` thrown inside a streamed
+ * Suspense boundary. The status line and headers are already on the wire, so the redirect
+ * becomes a client-side one: a `<meta http-equiv="refresh">` — honored by every browser
+ * when inserted into the document, which the swap runtime does — and nothing else. No
+ * inline `<script>` (Next also emits one): a streamed hole is not covered by the hashed
+ * streaming CSP, so a script there would be blocked. The destination goes through the
+ * same {@link safeRedirectLocation} sanitiser as an HTTP `Location`.
+ */
+function redirectHoleHtml(err: RedirectError): string {
+  const location = escapeHtml(safeRedirectLocation(err.url));
+  return `<meta http-equiv="refresh" content="0;url=${location}">`;
+}
 
 export abstract class VNodeRenderer<T> {
   /** Path-based useId state (rooted at `idPrefix` for a buffered sub-render). */
@@ -178,6 +208,9 @@ export abstract class VNodeRenderer<T> {
     head: HeadCollector | null,
   ): Promise<T> {
     const checkpoint = checkpointScope(this.ids);
+    // A signal boundary travels with the render path (like a provider) so a streamed hole
+    // below it can still reach it once the boundary itself has already flushed.
+    if (props.catches) scopes = [...scopes, new Map([[SIGNAL_BOUNDARY, props]])];
     let rendered: T;
     try {
       rendered = await this.resolveBoundaryChildren(props.children as VNodeChildren, scopes, head);
@@ -188,6 +221,40 @@ export abstract class VNodeRenderer<T> {
       rendered = await this.renderChild(fallback, scopes, head);
     }
     return this.wrapErrorBoundary(props, rendered);
+  }
+
+  /**
+   * A control signal escaped a streamed Suspense hole's render AFTER the shell (and the
+   * boundary that would have caught it) flushed. Resolve it to the hole's replacement:
+   *
+   * - `redirect()`/`permanentRedirect()`: the headers are committed, so a client-side
+   *   redirect ({@link redirectHoleHtml}, wrapped by `redirect`) and nothing else.
+   * - `notFound()`/`forbidden()`/`unauthorized()`: the nearest enclosing signal boundary
+   *   that catches it — the route's `not-found.tsx` (…) or the root's built-in UI —
+   *   rendered in the hole's id scope, exactly as the buffered render would have shown
+   *   it (its `onCaught` fires, but the 200 status is already on the wire, as in Next).
+   *
+   * Anything else — a real error, a signal no boundary catches — is rethrown so the
+   * caller keeps its failed-hole handling (the shell fallback stays).
+   */
+  protected async resolveHoleSignal(
+    err: unknown,
+    scopes: ProviderScope[],
+    holeScope: IdScope,
+    redirect: (html: string) => T,
+  ): Promise<T> {
+    if (isRedirect(err)) return redirect(redirectHoleHtml(err));
+    const boundary = signalBoundaryFor(scopes, err);
+    if (!boundary) throw err;
+    const checkpoint = { scope: holeScope, count: 0, local: 0 };
+    const fallback = await renderBoundaryFallback(
+      boundary,
+      err,
+      this.ids,
+      checkpoint,
+      () => this.activate(scopes),
+    );
+    return await this.resolve(fallback, scopes, holeScope);
   }
 
   /**
@@ -373,6 +440,18 @@ export abstract class PprVNodeRenderer<T> extends VNodeRenderer<T> {
       return await this.postponedFallback(id, props, scopes, boundaryScope);
     }
   }
+}
+
+/**
+ * The innermost signal boundary on the render path (`scopes`, see {@link SIGNAL_BOUNDARY})
+ * whose `catches` predicate accepts `err`, or null when none does.
+ */
+function signalBoundaryFor(scopes: ProviderScope[], err: unknown): Props | null {
+  for (let i = scopes.length - 1; i >= 0; i--) {
+    const props = scopes[i].get(SIGNAL_BOUNDARY) as Props | undefined;
+    if (props && (props.catches as (e: unknown) => boolean)(err)) return props;
+  }
+  return null;
 }
 
 /**

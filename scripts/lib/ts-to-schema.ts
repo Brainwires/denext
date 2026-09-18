@@ -37,6 +37,8 @@ export interface DocTag {
   kind: string;
   /** The raw tag text (e.g. `"@minimum 1"`) for tags deno doc doesn't model. */
   value?: string;
+  /** The tag's prose, for a tag deno doc DOES model (`@deprecated`). */
+  doc?: string;
 }
 /** An interface property (or method) as `deno doc --json` reports it. */
 export interface DocProp {
@@ -315,6 +317,23 @@ export function constraints(tags: DocTag[] | undefined): Schema {
   return out;
 }
 
+/**
+ * What a property's `@deprecated` tag says, or `undefined` when it carries none.
+ *
+ * Unlike `@default` and friends, deno doc MODELS this tag: it arrives as
+ * `{ kind: "deprecated", doc }` rather than as raw `@tag body` text, so it is read by kind
+ * rather than by the pattern {@link constraints} uses.
+ *
+ * @param tags The property's JSDoc tags, as `deno doc --json` reports them.
+ * @returns The tag's prose (empty string when the tag is present but says nothing).
+ */
+export function deprecation(tags: DocTag[] | undefined): string | undefined {
+  for (const tag of tags ?? []) {
+    if (tag.kind === "deprecated") return description(tag.doc ?? "");
+  }
+  return undefined;
+}
+
 /** The only form-widget hints a `@widget` tag may name (what the UI renders specially). */
 const WIDGET_HINTS: ReadonlySet<string> = new Set(["textarea"]);
 
@@ -336,9 +355,14 @@ export function widgetHint(tags: DocTag[] | undefined): string | undefined {
 
 /** One property's schema: description, type, tag constraints, and any widget hint. */
 function propertySchema(p: DocProp, ctx: SchemaContext): Schema {
-  const desc = description(p.jsDoc?.doc);
+  const gone = deprecation(p.jsDoc?.tags);
+  // A block that is ONLY `@deprecated` leaves no summary paragraph, so the key reached the
+  // editor with no help text at all beside the key that replaced it. The tag's own prose says
+  // what to use instead, which is exactly what someone looking at the old name needs.
+  const desc = description(p.jsDoc?.doc) || (gone ? `Deprecated. ${gone}` : "");
   const schema: Schema = {
     ...(desc ? { description: desc } : {}),
+    ...(gone === undefined ? {} : { deprecated: true }),
     ...tsTypeToSchema(p.tsType, ctx),
     ...constraints(p.jsDoc?.tags),
   };
